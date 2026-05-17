@@ -5,11 +5,11 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "outDir": "./out-tsc/vitest",
-    "rootDir": "../../",
+    "rootDir": ".",
     "types": ["vitest/globals", "vitest/importMeta", "vite/client", "node", "vitest"]
   },
   "include": [
-    "../../vitest.shared.ts",
+    "vitest.shared.ts",
     "vitest.config.ts",
     "src/testHelpers/**/*.ts",
     "src/**/*.test.ts",

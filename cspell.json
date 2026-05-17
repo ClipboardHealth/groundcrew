@@ -4,10 +4,10 @@
     ".claude/setup.sh",
     "knip.json",
     "package-lock.json",
-    "packages/*/dist/**",
-    "packages/*/dist",
-    "packages/*/test-output/**",
-    "packages/*/test-output"
+    "dist/**",
+    "dist",
+    "test-output/**",
+    "test-output"
   ],
   "words": [
     "assertname",

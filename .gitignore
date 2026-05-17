@@ -8,8 +8,6 @@ data/
 dist/
 node_modules/
 out-tsc/
-packages/*/dist/
-packages/*/test-output/
 tmp/
 
 # Alphabetical files
@@ -20,7 +18,6 @@ tmp/
 .env
 .nx/polygraph
 CLAUDE.local.md
-packages/*/plans/
 tsconfig.tsbuildinfo
 vitest.config.*.timestamp*
 

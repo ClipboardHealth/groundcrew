@@ -1,5 +1,5 @@
 import { mkdirSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { coverageConfigDefaults, defineConfig } from "vitest/config";
 
@@ -22,7 +22,7 @@ export function createVitestConfig(
 ): ReturnType<typeof defineConfig> {
   const { importMetaUrl, name, coverageExclude, coverageThresholds } = input;
   const packageRoot = dirname(fileURLToPath(importMetaUrl));
-  const workspaceRoot = resolve(packageRoot, "../..");
+  const workspaceRoot = packageRoot;
   const directory = relative(workspaceRoot, packageRoot);
   const coverageDirectory = join(packageRoot, "test-output", "vitest", "coverage");
 

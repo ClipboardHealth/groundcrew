@@ -12,8 +12,8 @@ interface CheckResult {
 
 // These run a pre-push hook and should not modify files
 const CHECKS = [
-  { cmd: "node --run affected", name: "affected" },
   { cmd: "node --run architecture:check", name: "architecture:check" },
+  { cmd: "node --run build", name: "build" },
   { cmd: "node --run cpd", name: "cpd" },
   { cmd: "node --run format:check", name: "format:check" },
   { cmd: "node --run knip", name: "knip" },
@@ -21,6 +21,7 @@ const CHECKS = [
   { cmd: "node --run markdown:lint", name: "markdown:lint" },
   { cmd: "node --run spell:check -- .", name: "spell:check" },
   { cmd: "node --run syncpack:lint", name: "syncpack:lint" },
+  { cmd: "node --run test", name: "test" },
 ] as const;
 
 async function main(): Promise<void> {

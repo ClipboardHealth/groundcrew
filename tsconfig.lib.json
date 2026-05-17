@@ -11,7 +11,7 @@
     "rewriteRelativeImportExtensions": true,
     "rootDir": "./src",
     "types": ["node"],
-    "tsBuildInfoFile": "../../.nx/tsbuildinfo/packages/groundcrew/tsconfig.lib.tsbuildinfo"
+    "tsBuildInfoFile": "./.nx/tsbuildinfo/groundcrew/tsconfig.lib.tsbuildinfo"
   },
   "include": ["src/**/*.ts"],
   "exclude": ["vitest.config.ts", "src/testHelpers/**/*.ts", "src/**/*.test.ts"]
