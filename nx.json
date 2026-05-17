@@ -38,6 +38,28 @@
       }
     }
   ],
+  "release": {
+    "changelog": {
+      "automaticFromRef": true,
+      "projectChangelogs": {
+        "createRelease": "github",
+        "file": false
+      },
+      "workspaceChangelogs": false
+    },
+    "git": {
+      "commit": true,
+      "commitMessage": "chore(release): publish {projectName} {version} [skip actions]"
+    },
+    "projects": ["packages/*"],
+    "projectsRelationship": "independent",
+    "version": {
+      "conventionalCommits": true,
+      "fallbackCurrentVersionResolver": "disk",
+      "updateDependents": "auto",
+      "preserveLocalDependencyProtocols": false
+    }
+  },
   "targetDefaults": {
     "test": {
       "dependsOn": ["^build"],
@@ -45,6 +67,11 @@
         "ci": {
           "coverage": true
         }
+      }
+    },
+    "nx-release-publish": {
+      "options": {
+        "packageRoot": "packages/{projectName}"
       }
     }
   },

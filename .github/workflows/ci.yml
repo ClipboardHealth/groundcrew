@@ -41,3 +41,46 @@ jobs:
 
       - run: npx nx fix-ci
         if: always()
+
+  release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: main
+    permissions:
+      actions: read
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - id: token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          app-id: ${{ secrets.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+          token: ${{ steps.token.outputs.token }}
+
+      - uses: nrwl/nx-set-shas@afb73a62d26e41464e9254689e1fd6122ee683c1 # v5.0.1
+
+      - uses: ClipboardHealth/action-build-nodejs@v4
+        with:
+          npm_token: ${{ secrets.NPM_TOKEN }}
+
+      - run: |
+          git config user.name "GitHub Bot"
+          git config user.email "open-source@clipboardhealth.com"
+
+      - env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          NX_PREFER_NODE_STRIP_TYPES: "true"
+        run: npx nx release --skip-publish
+
+      - run: npx nx run-many --target=build --skip-nx-cache
+
+      - env:
+          NPM_TOKEN: ${{ secrets.NPM_PUBLISH_TOKEN }}
+          NX_PREFER_NODE_STRIP_TYPES: "true"
+        run: npx nx release publish
