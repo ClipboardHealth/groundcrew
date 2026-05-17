@@ -11,11 +11,11 @@
     "orchestrator",
     "worktree"
   ],
-  "bugs": "https://github.com/ClipboardHealth/core-utils/issues",
+  "bugs": "https://github.com/ClipboardHealth/groundcrew/issues",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ClipboardHealth/core-utils.git"
+    "url": "git+https://github.com/ClipboardHealth/groundcrew.git"
   },
   "bin": {
     "crew": "./bin/run.js"

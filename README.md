@@ -82,8 +82,8 @@ This installs the `crew` binary. `@clipboard-health/clearance` is pulled in tran
      --codex \
      --copy-local-codex-auth \
      --github \
-     --git-name "Rocky Warren" \
-     --git-email "1085683+therockstorm@users.noreply.github.com" \
+     --git-name "Your Name" \
+     --git-email "you@users.noreply.github.com" \
      --mcp linear \
      --mcp slack \
      --checkpoint
