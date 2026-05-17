@@ -1,9 +1,17 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
+    "allowImportingTsExtensions": true,
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "types": ["vitest/globals", "node"]
+    "outDir": "./out-tsc/vitest",
+    "rootDir": "../../",
+    "types": ["vitest/globals", "vitest/importMeta", "vite/client", "node", "vitest"]
   },
-  "include": ["vitest.config.ts", "src/**/*.test.ts", "src/**/*.d.ts"]
+  "include": ["../../vitest.shared.ts", "vitest.config.ts", "src/**/*.test.ts", "src/**/*.d.ts"],
+  "references": [
+    {
+      "path": "./tsconfig.lib.json"
+    }
+  ]
 }

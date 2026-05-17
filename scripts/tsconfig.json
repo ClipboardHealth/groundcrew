@@ -1,0 +1,11 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "emitDeclarationOnly": true,
+    "noEmit": false,
+    "outDir": "../dist/scripts",
+    "types": ["node"]
+  },
+  "include": ["./**/*.ts", "./**/*.mts"]
+}

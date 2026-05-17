@@ -28,7 +28,7 @@ module.exports = {
   options: {
     doNotFollow: { path: "node_modules" },
     enhancedResolveOptions: {
-      conditionNames: ["import", "require", "node", "default", "@clipboard/source"],
+      conditionNames: ["import", "require", "node", "default", "@clipboard-health/source"],
       exportsFields: ["exports"],
       mainFields: ["main", "types", "typings"],
     },

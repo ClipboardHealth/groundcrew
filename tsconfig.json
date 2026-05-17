@@ -4,6 +4,9 @@
   "files": [],
   "references": [
     {
+      "path": "./scripts"
+    },
+    {
       "path": "./packages/clearance"
     },
     {
