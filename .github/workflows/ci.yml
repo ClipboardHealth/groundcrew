@@ -25,22 +25,11 @@ jobs:
           filter: tree:0
           fetch-depth: 0
 
-      - uses: nrwl/nx-set-shas@afb73a62d26e41464e9254689e1fd6122ee683c1 # v5.0.1
-
-      # This enables task distribution via Nx Cloud
-      # Run this command as early as possible, before dependencies are installed
-      # Learn more at https://nx.dev/ci/reference/nx-cloud-cli#npx-nxcloud-startcirun
-      # Uncomment this line to enable task distribution
-      # - run: npx nx start-ci-run --distribute-on="3 linux-medium-js" --stop-agents-after="build"
-
       - uses: ClipboardHealth/action-build-nodejs@v4
         with:
           npm_token: ${{ secrets.NPM_TOKEN }}
 
       - run: node --run verify
-
-      - run: npx nx fix-ci
-        if: always()
 
   release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -63,8 +52,6 @@ jobs:
           fetch-depth: 0
           token: ${{ steps.token.outputs.token }}
 
-      - uses: nrwl/nx-set-shas@afb73a62d26e41464e9254689e1fd6122ee683c1 # v5.0.1
-
       - uses: ClipboardHealth/action-build-nodejs@v4
         with:
           npm_token: ${{ secrets.NPM_TOKEN }}
@@ -78,7 +65,7 @@ jobs:
           NX_PREFER_NODE_STRIP_TYPES: "true"
         run: npx nx release --skip-publish
 
-      - run: npx nx run-many --target=build --skip-nx-cache
+      - run: node --run build
 
       - env:
           NPM_TOKEN: ${{ secrets.NPM_PUBLISH_TOKEN }}

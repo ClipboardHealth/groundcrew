@@ -1,16 +1,55 @@
 {
-  "name": "@clipboard/source",
-  "version": "0.0.0",
-  "private": true,
+  "name": "@clipboard-health/groundcrew",
+  "version": "1.7.4",
+  "description": "Linear-driven orchestrator that launches AI coding agents in git worktrees, with workspace lifecycle, remote runners, and usage tracking.",
+  "keywords": [
+    "agent",
+    "ai",
+    "claude",
+    "codex",
+    "linear",
+    "orchestrator",
+    "worktree"
+  ],
+  "bugs": "https://github.com/ClipboardHealth/core-utils/issues",
   "license": "MIT",
-  "workspaces": [
-    "packages/groundcrew"
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ClipboardHealth/core-utils.git"
+  },
+  "bin": {
+    "crew": "./bin/run.js"
+  },
+  "files": [
+    "README.md",
+    "bin",
+    "clearance-allow-hosts",
+    "configExample.ts",
+    "dist",
+    "static"
   ],
   "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "typings": "./dist/index.d.ts",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
-    "affected": "nx run-many --configuration ci --targets build,lint,test",
+    "architecture:check": "depcruise src bin configExample.ts vitest.config.ts",
+    "build": "tsgo --build --force tsconfig.lib.json",
     "cpd": "jscpd .",
-    "architecture:check": "depcruise packages",
+    "crew": "node ./bin/run.js",
+    "crew:op": "op run --env-file \"${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/op.env\" -- node ./bin/run.js",
     "format": "oxfmt",
     "format:check": "oxfmt --check",
     "hook:pre-commit": "lint-staged",
@@ -18,24 +57,23 @@
     "knip": "knip",
     "lint": "oxlint --deny-warnings",
     "markdown:lint": "markdownlint-cli2",
-    "merge-queue:categorize-reasons": "tsx scripts/categorizeMergeQueueReasons.ts",
-    "postinstall": "node --run sync-ai-rules",
-    "pr:failing-checks": "npx tsx scripts/prFailingChecks.ts",
+    "prepack": "node --run build",
     "prepare": "husky",
-    "spell:check": "cspell  --no-summary --no-progress --no-must-find-files",
+    "spell:check": "cspell --no-summary --no-progress --no-must-find-files",
     "sync-ai-rules": "node ./node_modules/@clipboard-health/ai-rules/scripts/sync.js common",
     "syncpack:lint": "syncpack lint",
     "test": "vitest run --coverage",
     "verify": "node scripts/verifyAll.mts"
   },
+  "dependencies": {
+    "@clipboard-health/clearance": "1.0.6",
+    "@linear/sdk": "84.0.0",
+    "tslib": "2.8.1"
+  },
   "devDependencies": {
     "@clipboard-health/ai-rules": "2.18.4",
     "@clipboard-health/oxlint-config": "1.7.0",
     "@nx/js": "22.7.1",
-    "@nx/vitest": "22.7.1",
-    "@swc-node/register": "1.11.1",
-    "@swc/core": "1.15.33",
-    "@swc/helpers": "0.5.21",
     "@tsconfig/node24": "24.0.4",
     "@tsconfig/strictest": "2.0.8",
     "@types/node": "24.12.2",
@@ -53,12 +91,14 @@
     "oxlint": "1.60.0",
     "oxlint-tsgolint": "0.21.1",
     "syncpack": "15.0.0",
-    "tslib": "2.8.1",
     "vite": "8.0.10",
     "vitest": "4.1.5"
   },
   "engines": {
     "node": "24.14.1",
     "npm": "~11.11.0"
+  },
+  "nx": {
+    "name": "groundcrew"
   }
 }

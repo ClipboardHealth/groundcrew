@@ -1,12 +1,22 @@
 {
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "allowJs": true,
     "composite": false,
     "declarationMap": false,
     "emitDeclarationOnly": false,
+    "noEmit": true,
     "noEmitOnError": false,
     "types": ["vitest/globals", "node"]
   },
-  "include": ["packages", "scripts"],
-  "exclude": ["coverage", "dist", "node_modules", "**/dist"]
+  "include": [
+    "*.ts",
+    "bin/**/*.js",
+    "configExample.ts",
+    "scripts/**/*.mts",
+    "scripts/**/*.ts",
+    "src/**/*.ts"
+  ],
+  "exclude": ["coverage", "dist", "node_modules", "out-tsc", "test-output"]
 }

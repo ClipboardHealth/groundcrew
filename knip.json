@@ -1,13 +1,6 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
-  "ignoreDependencies": ["tslib"],
-  "ignoreBinaries": ["tsx"],
-  "workspaces": {
-    ".": {
-      "entry": ["vitest.shared.ts"]
-    },
-    "packages/groundcrew": {
-      "entry": ["bin/*.js", "configExample.ts", "src/main.ts"]
-    }
-  }
+  "entry": ["bin/*.js", "configExample.ts", "src/index.ts", "src/main.ts", "vitest.shared.ts"],
+  "ignoreBinaries": ["op"],
+  "ignoreDependencies": ["@nx/js"]
 }

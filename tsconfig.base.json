@@ -9,7 +9,7 @@
     "moduleResolution": "nodenext",
     "noEmitOnError": true,
     "paths": {
-      "@clipboard-health/groundcrew": ["./packages/groundcrew/src/index.ts"]
+      "@clipboard-health/groundcrew": ["./src/index.ts"]
     }
   }
 }
