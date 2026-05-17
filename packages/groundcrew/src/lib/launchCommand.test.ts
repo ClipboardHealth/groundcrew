@@ -86,7 +86,9 @@ describe(buildLaunchCommand, () => {
     expect(out).toContain("_p=$(cat '/tmp/prompt-team-1/prompt.txt')");
     expect(out).toContain("rm -rf '/tmp/prompt-team-1'");
     expect(out).toContain("exec '/");
-    expect(out).toContain("/packages/clearance/safehouse/safehouse-clearance' claude");
+    expect(out).toContain(
+      "/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance' claude",
+    );
     expect(out).toMatch(/claude "\$_p"$/);
   });
 

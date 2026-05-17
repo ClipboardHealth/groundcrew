@@ -503,7 +503,9 @@ describe(setupWorkspace, () => {
     expect(command).toContain("cd '/work/repo-a-team-1'");
     expect(command).toContain("./.claude/setup.sh --deps-only");
     expect(command).toContain("exec '/");
-    expect(command).toContain("/packages/clearance/safehouse/safehouse-clearance' claude");
+    expect(command).toContain(
+      "/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance' claude",
+    );
     expect(command).toContain('claude --permission-mode auto "$_p"');
     // setup-status guard so a failed install still launches the agent
     expect(command).toContain('"$setup_status" -ne 0');

@@ -14,10 +14,5 @@
     "tsBuildInfoFile": "../../.nx/tsbuildinfo/packages/groundcrew/tsconfig.lib.tsbuildinfo"
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["vitest.config.ts", "src/testHelpers/**/*.ts", "src/**/*.test.ts"],
-  "references": [
-    {
-      "path": "../clearance/tsconfig.lib.json"
-    }
-  ]
+  "exclude": ["vitest.config.ts", "src/testHelpers/**/*.ts", "src/**/*.test.ts"]
 }

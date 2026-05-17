@@ -7,9 +7,6 @@
       "path": "./scripts"
     },
     {
-      "path": "./packages/clearance"
-    },
-    {
       "path": "./packages/groundcrew"
     }
   ]

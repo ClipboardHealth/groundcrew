@@ -58,7 +58,7 @@ This installs the `crew` binary. `@clipboard-health/clearance` is pulled in tran
 
    Local setup fails before creating a worktree when the host is not macOS or `safehouse` is missing. `models.isolation`, per-model `isolation`, and per-model `sandbox` are legacy keys and now fail config validation.
 
-6. **Set the clearance allowlist for local macOS runs.** Groundcrew starts `clearance` from `@clipboard-health/clearance` on `http://127.0.0.1:19999` (skipping the launch if something is already listening) and runs the agent through the bundled `safehouse-clearance` wrapper. Clearance refuses to start without an allowlist — see [its README](../clearance/README.md) for the proxy's env vars, log paths, and DNS rules. The shortest path is to set the env before `crew run`:
+6. **Set the clearance allowlist for local macOS runs.** Groundcrew starts `clearance` from `@clipboard-health/clearance` on `http://127.0.0.1:19999` (skipping the launch if something is already listening) and runs the agent through the bundled `safehouse-clearance` wrapper. Clearance refuses to start without an allowlist — see [its README](https://github.com/ClipboardHealth/core-utils/tree/main/packages/clearance) for the proxy's env vars, log paths, and DNS rules. The shortest path is to set the env before `crew run`:
 
    ```bash
    CLEARANCE_ALLOW_HOSTS="api.openai.com,auth.openai.com,api.anthropic.com,mcp.linear.app,api.linear.app" \
@@ -182,10 +182,10 @@ crew cleanup <TICKET>
 
 ## Hacking on groundcrew
 
-For developers working on the package itself, the source lives in [`ClipboardHealth/core-utils`](https://github.com/ClipboardHealth/core-utils). Clone it, run `npm install`, and the repo's `crew` / `crew:op` scripts execute groundcrew straight from TypeScript source — no build step. The bin's `runCli` helper re-execs node with `--conditions @clipboard-health/source` so `@clipboard-health/clearance` also resolves to source.
+For developers working on the package itself, clone this repo, run `npm install`, and the repo's `crew` / `crew:op` scripts execute groundcrew straight from TypeScript source — no build step. Package dependencies, including `@clipboard-health/clearance`, resolve through normal npm package exports.
 
 ```bash
-cd ~/dev/c/core-utils
+cd ~/dev/c/groundcrew
 node --run crew -- doctor
 
 # With 1Password for LINEAR_API_KEY:
@@ -196,4 +196,4 @@ Both forms read `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/config.ts` by defa
 
 Logs land in `${XDG_STATE_HOME:-$HOME/.local/state}/groundcrew/groundcrew.log` by default (override via `logging.file` in your config). The "Loaded config from …" line at startup tells you which config won.
 
-Source edits in `packages/{clearance,groundcrew}/src/**` are picked up on the next invocation. Requires Node ≥ 24.3 (the version with native `.ts` type stripping enabled by default).
+Source edits in `packages/groundcrew/src/**` are picked up on the next invocation. Requires Node ≥ 24.3 (the version with native `.ts` type stripping enabled by default).

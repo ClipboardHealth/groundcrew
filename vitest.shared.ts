@@ -30,9 +30,6 @@ export function createVitestConfig(
 
   return defineConfig({
     cacheDir: join(workspaceRoot, "node_modules", ".vite", directory),
-    resolve: {
-      conditions: ["@clipboard-health/source"],
-    },
     root: packageRoot,
     test: {
       coverage: {
