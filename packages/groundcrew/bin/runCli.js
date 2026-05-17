@@ -7,9 +7,8 @@ import { pathToFileURL } from "node:url";
 /**
  * Load a side-effecting entrypoint by basename. In published/built mode,
  * dynamically imports the compiled `dist/${name}.js` in-process. In source/dev
- * mode (no compiled output present), spawns a child node that loads the `.ts` source with
- * `--conditions @clipboard-health/source` so cross-package bare imports of
- * `@clipboard-health/*` workspace deps also resolve to source.
+ * mode (no compiled output present), spawns a child node that loads the `.ts`
+ * source while dependencies resolve through normal package exports.
  *
  * @param {string} packageRoot
  * @param {string} name
@@ -22,11 +21,9 @@ export async function runCli(packageRoot, name) {
   }
 
   const sourcePath = join(packageRoot, "src", `${name}.ts`);
-  const result = spawnSync(
-    process.execPath,
-    ["--conditions", "@clipboard-health/source", sourcePath, ...process.argv.slice(2)],
-    { stdio: "inherit" },
-  );
+  const result = spawnSync(process.execPath, [sourcePath, ...process.argv.slice(2)], {
+    stdio: "inherit",
+  });
 
   if (result.error !== undefined) {
     throw result.error;

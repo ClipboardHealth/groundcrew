@@ -4,14 +4,13 @@
   "private": true,
   "license": "MIT",
   "workspaces": [
-    "packages/*"
+    "packages/groundcrew"
   ],
   "type": "module",
   "scripts": {
     "affected": "nx run-many --configuration ci --targets build,lint,test",
     "cpd": "jscpd .",
     "architecture:check": "depcruise packages",
-    "clip:dev": "./packages/clip/bin/dev.js",
     "format": "oxfmt",
     "format:check": "oxfmt --check",
     "hook:pre-commit": "lint-staged",
