@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
 import { run } from "./cli.ts";
@@ -40,6 +41,7 @@ const cleanupMock = vi.mocked(cleanupWorkspaceCli);
 const remoteMock = vi.mocked(remoteCli);
 const requireFromTest = createRequire(import.meta.url);
 const PACKAGE_VERSION = readPackageVersion();
+const README_TEXT = readFileSync(new URL("../README.md", import.meta.url), "utf8");
 
 function packageMetadataHasVersion(value: unknown): value is { version: string } {
   return (
@@ -167,6 +169,11 @@ describe(run, () => {
 
     expect(setupMock).toHaveBeenCalledWith("team-220", { dryRun: false });
     expect(orchestrateMock).not.toHaveBeenCalled();
+  });
+
+  it("documents `run --ticket <TICKET>` as the manual ticket setup command", () => {
+    expect(README_TEXT).toContain("crew run --ticket <TICKET>");
+    expect(README_TEXT).not.toContain("crew setup <TICKET>");
   });
 
   it("forwards --dry-run to setupWorkspaceCli on the --ticket path", async () => {
