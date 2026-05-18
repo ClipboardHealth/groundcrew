@@ -460,6 +460,129 @@ describe("loadConfig", () => {
     );
   });
 
+  it("rejects `disabled: false` on a model definition", async () => {
+    const path = writeConfigFile(
+      temporary,
+      [
+        "export const config = {",
+        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        "  models: { definitions: { codex: { disabled: false } } },",
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(
+      /models\.definitions\.codex\.disabled must be exactly `true` when set/,
+    );
+  });
+
+  it('rejects a non-boolean `disabled` value (e.g. the string "true")', async () => {
+    const path = writeConfigFile(
+      temporary,
+      [
+        "export const config = {",
+        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        '  models: { definitions: { codex: { disabled: "true" } } },',
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(
+      /models\.definitions\.codex\.disabled must be exactly `true` when set/,
+    );
+  });
+
+  it("rejects `disabled: true` combined with other fields (cmd / color / usage)", async () => {
+    const path = writeConfigFile(
+      temporary,
+      [
+        "export const config = {",
+        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        "  models: { definitions: { codex: { disabled: true, cmd: 'override' } } },",
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(
+      /models\.definitions\.codex: cannot combine `disabled: true` with other fields \(cmd\)/,
+    );
+  });
+
+  it("drops a shipped default when `disabled: true` is set", async () => {
+    const path = writeConfigFile(
+      temporary,
+      [
+        "export const config = {",
+        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        "  models: { definitions: { codex: { disabled: true } } },",
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+
+    expect(Object.keys(actual.models.definitions).toSorted()).toStrictEqual(["claude"]);
+    expect(actual.models.definitions["codex"]).toBeUndefined();
+    expect(actual.models.default).toBe("claude");
+  });
+
+  it("rejects `disabled: true` on a key that isn't a shipped default", async () => {
+    const path = writeConfigFile(
+      temporary,
+      [
+        "export const config = {",
+        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        // cspell:disable-next-line
+        "  models: { definitions: { codexx: { disabled: true } } },",
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(
+      // cspell:disable-next-line
+      /models\.definitions\.codexx: `disabled: true` is only valid for shipped defaults \(claude, codex\)\. Remove the entry instead\./,
+    );
+  });
+
+  it("rejects disabling the model used as `models.default`", async () => {
+    const path = writeConfigFile(
+      temporary,
+      [
+        "export const config = {",
+        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        "  models: { default: 'codex', definitions: { codex: { disabled: true } } },",
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(
+      /models\.default \("codex"\) is disabled\. Either re-enable it or set models\.default to an enabled model\./,
+    );
+  });
+
   it("defaults workspaceKind to auto when omitted", async () => {
     const path = writeConfigFile(
       temporary,

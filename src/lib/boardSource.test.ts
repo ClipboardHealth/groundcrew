@@ -394,6 +394,57 @@ describe(createBoardSource, () => {
       expect(first?.runner).toBe("local");
     });
 
+    it("falls back to models.default with a warning when an agent-<model> label refers to a disabled shipped default", async () => {
+      // Simulates the post-filter state of a config with codex disabled: codex
+      // is absent from `definitions` but present in `disabledShippedDefaults`.
+      // The ticket explicitly opted into codex, so silently rerouting it to
+      // claude would be surprising — the warning gives observability without
+      // blocking the ticket.
+      const configWithCodexDisabled = makeConfig({
+        models: {
+          default: "claude",
+          definitions: {
+            claude: { cmd: "claude", color: "#fff" },
+          },
+        },
+      });
+
+      const { source } = makeBoardSource(
+        makeClient({
+          pages: [
+            [issueNode({ identifier: "STAFF-1", labels: { nodes: [{ name: "agent-codex" }] } })],
+          ],
+        }),
+        configWithCodexDisabled,
+      );
+      const state = await source.fetch();
+      const [first] = state.issues;
+
+      expect(first?.model).toBe("claude");
+      expect(first?.runner).toBe("local");
+      expect(consoleLog.output()).toMatch(
+        /staff-1: agent-codex label refers to a disabled model; falling back to models\.default \(claude\)/,
+      );
+    });
+
+    it("falls back silently to models.default for an unknown (not disabled) agent label", async () => {
+      // Unknown labels (e.g. typos, removed-but-not-disabled models) keep the
+      // existing silent fallback — only explicitly-disabled labels warn, since
+      // those are the cases where the user opted in to a model they themselves
+      // disabled and would want to know about.
+      const { source } = makeBoardSource(
+        makeClient({
+          // cspell:disable-next-line
+          pages: [[issueNode({ labels: { nodes: [{ name: "agent-mystery" }] } })]],
+        }),
+      );
+      const state = await source.fetch();
+      const [first] = state.issues;
+
+      expect(first?.model).toBe("claude");
+      expect(consoleLog.output()).not.toMatch(/falling back to models\.default/);
+    });
+
     it("defaults the local runner for labeled tickets without agent-remote", async () => {
       const { source } = makeBoardSource(
         makeClient({

@@ -134,6 +134,7 @@ Required fields are marked **required**; everything else has a default and can b
 | `models.definitions.<name>.cmd`         | —                                     | Shell command launched for the model. Local macOS runs execute in the worktree through Safehouse/clearance; remote runs execute inside the remote worktree. `{{worktree}}` is replaced before launch and legacy `{{sandbox}}` expands to an empty string.       |
 | `models.definitions.<name>.color`       | —                                     | Color for the workspace status pill (cmux only; tmux silently drops it).                                                                                                                                                                                        |
 | `models.definitions.<name>.usage`       | optional                              | If set, codexbar usage is fetched for this model and gated by `sessionLimitPercentage`. Omit to never gate. When `usage.codexbar.source` is omitted, groundcrew uses `auto` on macOS and `cli` elsewhere.                                                       |
+| `models.definitions.<name>.disabled`    | optional                              | When set to exactly `true`, drops the named shipped default (`claude` or `codex`). Doctor skips probing it; `agent-<name>` labels fall back to `models.default` with a warning. See "Disabling a shipped default" below.                                        |
 | `prompts.initial`                       | (template)                            | First message sent to the agent. Placeholders: `{{ticket}}`, `{{worktree}}`, `{{title}}`, `{{description}}`.                                                                                                                                                    |
 | `workspaceKind`                         | `"auto"`                              | Terminal session manager. `"auto"` picks `cmux` when on PATH, else `tmux`. Set to `"cmux"` or `"tmux"` to fail loudly when the chosen backend is missing. tmux windows live in a dedicated `groundcrew` session.                                                |
 | `remote.provider`                       | `"sprite"`                            | Remote runner provider used for tickets labeled `agent-remote`. Sprite is currently the only provider.                                                                                                                                                          |
@@ -145,6 +146,36 @@ Required fields are marked **required**; everything else has a default and can b
 | `logging.file`                          | XDG state path                        | Append-mode log file destination. `log()` / `logEvent()` tee here in addition to stdout, so a vanished workspace doesn't take the evidence with it. Defaults to `${XDG_STATE_HOME:-$HOME/.local/state}/groundcrew/groundcrew.log`.                              |
 
 The branch prefix (`<prefix>-<TICKET>`) is derived from your OS username (`os.userInfo().username`), not configured. Agent selection looks for a top-level Linear label named `agent-<model>` (e.g. `agent-claude`, `agent-codex`). Add `agent-remote` to run that ticket in the configured remote runner instead of locally; `agent-remote` is a modifier label, not a model. **`crew run` only fetches tickets with an `agent-*` label** — the GraphQL query filters them server-side, so unlabeled tickets are never returned by Linear's API and do not appear in the rendered board. Use `crew setup <TICKET>` to provision an unlabeled ticket on demand (manual setup falls back to `models.default`). The reserved label `agent-any` routes the ticket to the configured model with the most available session capacity (lowest codexbar session-used percent), skipping any model already over `sessionLimitPercentage`. With no usage data, `agent-any` resolves to `models.default`. The name `any` cannot be used in `models.definitions`. Todo tickets blocked by Linear issues that are not in `linear.statuses.terminal` are skipped until their blockers reach a terminal status.
+
+### Disabling a shipped default
+
+Groundcrew ships `claude` and `codex` as default model definitions, additively merged into every resolved config. If you only ever route work through one of them, set `disabled: true` on the other so doctor stops probing for the unused CLI:
+
+```ts
+// config.ts
+export const config = {
+  // …
+  models: {
+    default: "claude",
+    definitions: {
+      codex: { disabled: true },
+    },
+  },
+};
+```
+
+Effects:
+
+- `crew doctor` does not probe the disabled model's CLI. `crew doctor || exit 1` becomes viable as a CI gate when you only have one agent installed.
+- `agent-any` only resolves to enabled models.
+- An `agent-<disabled>` label on a ticket (e.g. `agent-codex` after disabling codex) falls back to `models.default` with a warning in the log, so the ticket still runs and you can see the mismatch.
+
+Rules:
+
+- `disabled` only accepts shipped-default keys (`claude`, `codex`). A typo on the key fails loudly at config load instead of silently disabling nothing.
+- `disabled` must be exactly the boolean `true`.
+- It cannot be combined with `cmd`, `color`, or `usage` in the same entry — disable a model or override its fields, not both.
+- `models.default` must point at an enabled model.
 
 ## Manual commands
 
@@ -177,7 +208,7 @@ crew cleanup <TICKET>
 - **Project must be on a single Linear team in practice.** Cross-team projects work — the orchestrator caches the in-progress state ID per team — but every team in the project must use the same status name for `linear.statuses.inProgress`.
 - **Claude launches in bypass-permissions mode by default.** Groundcrew creates isolated per-ticket worktrees and unattended remote sessions, so the shipped `claude` command is `claude --permission-mode bypassPermissions` to avoid workspace-trust and tool-permission prompts blocking automation. Override `models.definitions.claude.cmd` if you want a stricter mode.
 - **Doctor's command introspection is shallow.** Doctor reports whether the host can run local tickets with macOS plus Safehouse, then tokenizes model `cmd` and checks the first two non-flag tokens against PATH (so `safehouse claude --foo` checks both `safehouse` and `claude`). Boolean flags without values, env-var assignments (`FOO=1`), shell pipelines, and subshells are not parsed — verify those manually. In particular, `npx -y claude` and `env FOO=1 claude` only check the wrapper, not the wrapped CLI.
-- **Doctor checks every configured model, including shipped defaults you don't use.** `models.definitions` always contains `claude` and `codex` (additive merge with the shipped defaults). If you only intend to label tickets `agent-claude`, doctor will still fail on a missing `codex` binary and exit non-zero. `crew run` itself only routes to the model named in a ticket's `agent-*` label, so a doctor failure for an unused model does not block actual ticket dispatch.
+- **Doctor checks every enabled model, including shipped defaults you didn't disable.** `models.definitions` includes both shipped defaults (`claude`, `codex`) by default via additive merge. If you only intend to label tickets `agent-claude` and don't have `codex` installed, set `models.definitions.codex: { disabled: true }` (see "Disabling a shipped default" under "Config reference"). Without that, doctor exits non-zero on a missing `codex` binary even though `crew run` would never route to it.
 - **Switch to tmux if cmux is misbehaving.** Set `workspaceKind: "tmux"` to force the tmux backend when cmux's CLI/socket bridge is flaky (symptoms: `cmux --json list-workspaces` returning `Failed to write to socket (Broken pipe)` or `Socket not found at ...cmux.sock` on every tick). tmux is more reliable — just a unix socket, no GUI app — at the cost of losing cmux's status pills, notifications, and vertical-tab sidebar.
 - **Agent CLI must accept a positional prompt.** The handoff is `<your cmd> "<prompt>"`. `claude`, `codex`, and `cursor-agent` all support this.
 

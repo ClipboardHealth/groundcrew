@@ -74,7 +74,17 @@ export interface RemoteRunnerConfig {
   secretNames: string[];
 }
 
-type UserModelDefinition = Partial<ModelDefinition>;
+/**
+ * User-facing model entry shape. Discriminated union so the type system
+ * mirrors the runtime contract: an entry is either a pure overlay
+ * (every concrete field optional, no `disabled` key) or a pure
+ * disable directive (`{ disabled: true }` and nothing else).
+ */
+type EnabledUserModelDefinition = Partial<ModelDefinition> & { disabled?: never };
+interface DisabledUserModelDefinition {
+  disabled: true;
+}
+type UserModelDefinition = EnabledUserModelDefinition | DisabledUserModelDefinition;
 
 /**
  * Setup command run inside sibling worktrees on the host. The host is
@@ -478,6 +488,37 @@ function failIfLegacyModelKeys(
       `models.definitions.${name}.sandbox is no longer supported: Docker Sandboxes are no longer supported`,
     );
   }
+  if (Object.hasOwn(override, "disabled")) {
+    if (override["disabled"] !== true) {
+      fail(
+        `models.definitions.${name}.disabled must be exactly \`true\` when set (got ${JSON.stringify(override["disabled"])})`,
+      );
+    }
+    const conflicting = (["cmd", "color", "usage"] as const).filter((key) =>
+      Object.hasOwn(override, key),
+    );
+    if (conflicting.length > 0) {
+      fail(
+        `models.definitions.${name}: cannot combine \`disabled: true\` with other fields (${conflicting.join(", ")}). Either disable the model or override its fields, not both.`,
+      );
+    }
+  }
+}
+
+/**
+ * True when `name` is a shipped default the user removed via `disabled: true`.
+ * Derived from absence in `definitions` — that's the only path that removes a
+ * shipped default, codified in `failIfLegacyModelKeys` + `mergeDefinitions`.
+ * Consumers needing to distinguish disabled-by-user from unknown-label use this.
+ */
+export function isShippedDefaultDisabled(
+  config: Pick<ResolvedConfig, "models">,
+  name: string,
+): boolean {
+  return (
+    Object.hasOwn(DEFAULT_MODEL_DEFINITIONS, name) &&
+    !Object.hasOwn(config.models.definitions, name)
+  );
 }
 
 function mergeDefinitions(
@@ -494,6 +535,21 @@ function mergeDefinitions(
   );
   for (const [name, override] of Object.entries(user ?? {})) {
     failIfLegacyModelKeys(name, override);
+
+    if (override.disabled === true) {
+      if (!Object.hasOwn(DEFAULT_MODEL_DEFINITIONS, name)) {
+        fail(
+          `models.definitions.${name}: \`disabled: true\` is only valid for shipped defaults (${Object.keys(DEFAULT_MODEL_DEFINITIONS).join(", ")}). Remove the entry instead.`,
+        );
+      }
+      // Drop the key so downstream iterators (doctor, eligibility, usage) ignore
+      // the model automatically; `isShippedDefaultDisabled` lets the few consumers
+      // that need to distinguish disabled from unknown re-derive the set.
+      // oxlint-disable-next-line typescript/no-dynamic-delete -- `merged` is a fresh function-local clone of DEFAULT_MODEL_DEFINITIONS; no V8 dictionary-mode/pollution concerns
+      delete merged[name];
+      continue;
+    }
+
     const base: Partial<ModelDefinition> =
       merged[name] === undefined ? {} : cloneModelDefinition(merged[name]);
     // Per-key spread so overriding `cmd` alone preserves the default
@@ -658,6 +714,14 @@ function validate(config: ResolvedConfig): void {
     }
   }
 
+  // Disabled-default check must run before the generic "not a key" check so
+  // the user gets the specific "is disabled" message instead of a stale-list
+  // message they can't act on without realizing they need to re-enable.
+  if (isShippedDefaultDisabled(config, config.models.default)) {
+    fail(
+      `models.default ("${config.models.default}") is disabled. Either re-enable it or set models.default to an enabled model.`,
+    );
+  }
   if (!(config.models.default in definitions)) {
     fail(
       `models.default ("${config.models.default}") is not a key in models.definitions (have: ${Object.keys(definitions).join(", ")})`,

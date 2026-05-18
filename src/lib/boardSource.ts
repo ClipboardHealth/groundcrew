@@ -6,7 +6,12 @@
 
 import type { LinearClient } from "@linear/sdk";
 
-import { AGENT_ANY_MODEL, type ResolvedConfig, type WorkspaceRunner } from "./config.ts";
+import {
+  AGENT_ANY_MODEL,
+  isShippedDefaultDisabled,
+  type ResolvedConfig,
+  type WorkspaceRunner,
+} from "./config.ts";
 import { log } from "./util.ts";
 
 const AGENT_LABEL_PREFIX = "agent-";
@@ -243,6 +248,7 @@ async function fetchBoard(client: LinearClient, config: ResolvedConfig): Promise
     .filter((node) => node.children.nodes.length === 0)
     .map((node) => {
       const parsedAgentLabels = parseAgentLabels(node.labels.nodes, config);
+      warnIfDisabledFallback(node.identifier, parsedAgentLabels, config);
       const repository =
         parsedAgentLabels === undefined
           ? undefined
@@ -342,6 +348,7 @@ export async function fetchResolvedIssue(arguments_: {
   // unlabeled ticket still resolves to `models.default` — different from
   // the auto-pickup path, where unlabeled tickets are ignored.
   const parsed = parseAgentLabels(issue.labels.nodes, config);
+  warnIfDisabledFallback(ticket, parsed, config);
   const model =
     parsed === undefined || parsed.model === AGENT_ANY_MODEL ? config.models.default : parsed.model;
   const runner = parsed?.runner ?? "local";
@@ -378,10 +385,17 @@ function parseRepository(arguments_: ParseRepositoryArguments): string {
  * ticket has no `agent-*` label — those tickets are not groundcrew's concern
  * and downstream code skips them. An explicit `agent-<unknown>` label still
  * falls back to `models.default` because the user opted in by labeling.
+ *
+ * `disabledFallback` is set when the label matched a shipped default the user
+ * explicitly disabled (e.g. `agent-codex` against `codex: { disabled: true }`).
+ * Callers warn on this so the user can spot the config/labeling mismatch; we
+ * still fall back rather than skip because skipping would block the ticket
+ * indefinitely. Unknown labels stay silent — those are likelier to be typos.
  */
 interface ParsedAgentLabels {
   model: string;
   runner: WorkspaceRunner;
+  disabledFallback?: string;
 }
 
 function parseAgentLabels(
@@ -393,6 +407,7 @@ function parseAgentLabels(
     return undefined;
   }
   const runner = agentLabels.some((label) => label.name === "agent-remote") ? "remote" : "local";
+  let disabledFallback: string | undefined;
   for (const label of agentLabels) {
     if (label.name === "agent-remote") {
       continue;
@@ -407,8 +422,28 @@ function parseAgentLabels(
     if (Object.hasOwn(config.models.definitions, name)) {
       return { model: name, runner };
     }
+    if (disabledFallback === undefined && isShippedDefaultDisabled(config, name)) {
+      disabledFallback = name;
+    }
   }
-  return { model: config.models.default, runner };
+  const fallback: ParsedAgentLabels = { model: config.models.default, runner };
+  if (disabledFallback !== undefined) {
+    fallback.disabledFallback = disabledFallback;
+  }
+  return fallback;
+}
+
+function warnIfDisabledFallback(
+  ticket: string,
+  parsed: ParsedAgentLabels | undefined,
+  config: ResolvedConfig,
+): void {
+  if (parsed?.disabledFallback === undefined) {
+    return;
+  }
+  log(
+    `${ticket.toLowerCase()}: agent-${parsed.disabledFallback} label refers to a disabled model; falling back to models.default (${config.models.default})`,
+  );
 }
 
 function blockersFromRelations(relations: IssueRelationNode[]): Blocker[] {

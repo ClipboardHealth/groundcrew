@@ -268,6 +268,20 @@ describe(doctor, () => {
     expect(checked).not.toContain("script.ts");
   });
 
+  it("does not probe a disabled shipped default's CLI binary", async () => {
+    // The default makeConfig fixture has only `claude` in `definitions` — the
+    // same shape `mergeDefinitions` produces for `codex: { disabled: true }`.
+    // `gatherToolTokens` iterates `Object.values(definitions)`, so codex is
+    // never gathered.
+    loadConfigMock.mockResolvedValue(makeConfig());
+
+    await doctor();
+
+    const checked = checkedCommands();
+    expect(checked).not.toContain("codex");
+    expect(checked).toContain("claude");
+  });
+
   it("reports missing Safehouse as a local runner warning", async () => {
     detectHostMock.mockResolvedValue({
       hasSafehouse: false,
