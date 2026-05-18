@@ -1,6 +1,7 @@
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 
 import {
   BUILD_SECRET_NAMES,
@@ -79,6 +80,8 @@ const DEFAULT_REPOSITORY_OWNER = "ClipboardHealth";
 const DEFAULT_BASE_BRANCH = "main";
 const DATADOG_PUP_VERSION = "0.63.0";
 const DATADOG_OAUTH_CALLBACK_PORT = 8000;
+const DATADOG_AUTH_STATUS_RETRY_ATTEMPTS = 5;
+const DATADOG_AUTH_STATUS_RETRY_DELAY_MS = 250;
 const REMOTE_SECRETS_FILE = "/tmp/groundcrew-build-secrets.env";
 const REMOTE_CODEX_AUTH_UPLOAD_FILE = "/tmp/groundcrew-codex-auth.json";
 const REMOTE_CODEX_AUTH_FILE = "/home/sprite/.codex/auth.json";
@@ -627,14 +630,15 @@ function datadogPupInstallCommand(): string {
     'binary="$HOME/.local/bin/pup"',
     'mkdir -p "$HOME/.local/bin"',
     `if [ -x "$binary" ] && "$binary" version | grep -q "Pup ${shellVariable}{version} "; then "$binary" version; exit 0; fi`,
-    `archive="/tmp/${shellVariable}{asset}"`,
-    `checksums="/tmp/pup_${shellVariable}{version}_checksums.txt"`,
+    'install_dir="$(mktemp -d)"',
+    "trap 'rm -rf \"$install_dir\"' EXIT",
+    `archive="${shellVariable}{install_dir}/${shellVariable}{asset}"`,
+    `checksums="${shellVariable}{install_dir}/pup_${shellVariable}{version}_checksums.txt"`,
     'curl -fsSL -o "$archive" "$base_url/$asset"',
     `curl -fsSL -o "$checksums" "$base_url/pup_${shellVariable}{version}_checksums.txt"`,
-    `(cd /tmp && grep " ${shellVariable}{asset}$" "$checksums" | sha256sum -c -)`,
+    `(cd "$install_dir" && grep " ${shellVariable}{asset}$" "$checksums" | sha256sum -c -)`,
     'tar -xzf "$archive" -C "$HOME/.local/bin" pup',
     'chmod 755 "$binary"',
-    'rm -f "$archive" "$checksums"',
     '"$binary" version',
   ].join("\n");
 }
@@ -674,6 +678,23 @@ async function validateDatadogLogin(
   });
 }
 
+async function waitForDatadogLogin(
+  provider: RemoteRunnerProvider,
+  config: RemoteRunnerConfig,
+): Promise<boolean> {
+  for (let attempt = 1; attempt <= DATADOG_AUTH_STATUS_RETRY_ATTEMPTS; attempt += 1) {
+    // oxlint-disable-next-line no-await-in-loop -- bounded polling smooths over Datadog OAuth propagation delay.
+    if (await validateDatadogLogin(provider, config)) {
+      return true;
+    }
+    if (attempt < DATADOG_AUTH_STATUS_RETRY_ATTEMPTS) {
+      // oxlint-disable-next-line no-await-in-loop -- retries are intentionally spaced.
+      await sleep(DATADOG_AUTH_STATUS_RETRY_DELAY_MS);
+    }
+  }
+  return false;
+}
+
 async function authenticateDatadog(
   provider: RemoteRunnerProvider,
   config: RemoteRunnerConfig,
@@ -707,7 +728,7 @@ async function authenticateDatadog(
     await proxy.close();
   }
 
-  if (await validateDatadogLogin(provider, config)) {
+  if (await waitForDatadogLogin(provider, config)) {
     return;
   }
   throw new Error(

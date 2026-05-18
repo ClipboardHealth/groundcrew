@@ -1,3 +1,5 @@
+import { createServer, type AddressInfo, type Server } from "node:net";
+
 import type { RunCommandOptions } from "./commandRunner.ts";
 import type { RemoteRunnerConfig } from "./config.ts";
 import {
@@ -34,8 +36,37 @@ function remoteConfig(overrides: Partial<RemoteRunnerConfig> = {}): RemoteRunner
   };
 }
 
+async function listenOnLoopback(port = 0): Promise<{ port: number; server: Server }> {
+  const server = createServer();
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, "127.0.0.1", resolve);
+  });
+  return { port: portFromAddress(server.address()), server };
+}
+
+async function closeServer(server: Server): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => {
+      if (error !== undefined) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
+function portFromAddress(address: AddressInfo | string | null): number {
+  if (typeof address === "object" && address !== null) {
+    return address.port;
+  }
+  throw new Error(`Expected TCP server address, got ${String(address)}.`);
+}
+
 describe("Sprite remote runner provider", () => {
   afterEach(() => {
+    vi.useRealTimers();
     runCommandMock.mockReset();
   });
 
@@ -75,6 +106,7 @@ describe("Sprite remote runner provider", () => {
 
   it("starts and closes Sprite port proxies", async () => {
     const config = remoteConfig();
+    const listener = await listenOnLoopback();
     runCommandMock.mockImplementation(
       async (_command, _arguments, options) =>
         await new Promise<string>((_resolve, reject) => {
@@ -84,28 +116,120 @@ describe("Sprite remote runner provider", () => {
         }),
     );
 
-    const proxy = await spriteRemoteRunnerProvider.startPortProxy(config, 8000);
-    await proxy.close();
+    try {
+      const proxy = await spriteRemoteRunnerProvider.startPortProxy(config, listener.port);
+      await proxy.close();
+    } finally {
+      await closeServer(listener.server);
+    }
 
     expect(runCommandMock).toHaveBeenCalledWith(
       "sprite",
-      ["proxy", "-s", "crew-special", "8000"],
+      ["proxy", "-s", "crew-special", String(listener.port)],
       expect.objectContaining({ stdio: "inherit", timeoutMs: 0 }),
     );
     expect(runCommandMock.mock.calls[0]?.[2]?.signal).toBeInstanceOf(AbortSignal);
   });
 
-  it("surfaces Sprite port proxy startup failures on close", async () => {
+  it("allows Sprite port proxy commands to exit cleanly during close", async () => {
     const config = remoteConfig();
+    const listener = await listenOnLoopback();
+    runCommandMock.mockImplementation(
+      async (_command, _arguments, options) =>
+        await new Promise<string>((resolve) => {
+          options?.signal?.addEventListener("abort", () => {
+            resolve("");
+          });
+        }),
+    );
+
+    try {
+      const proxy = await spriteRemoteRunnerProvider.startPortProxy(config, listener.port);
+
+      await expect(proxy.close()).resolves.toBeUndefined();
+    } finally {
+      await closeServer(listener.server);
+    }
+  });
+
+  it("waits for Sprite port proxies to accept connections before resolving", async () => {
+    const config = remoteConfig();
+    const { port, server: reservedServer } = await listenOnLoopback();
+    await closeServer(reservedServer);
+    let didResolve = false;
+    runCommandMock.mockImplementation(
+      async (_command, _arguments, options) =>
+        await new Promise<string>((_resolve, reject) => {
+          options?.signal?.addEventListener("abort", () => {
+            reject(Object.assign(new Error("aborted"), { signal: "SIGINT" }));
+          });
+        }),
+    );
+
+    const proxyPromise = spriteRemoteRunnerProvider.startPortProxy(config, port).then((proxy) => {
+      didResolve = true;
+      return proxy;
+    });
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 50);
+    });
+    const listener = await listenOnLoopback(port);
+
+    try {
+      expect(didResolve).toBe(false);
+      const proxy = await proxyPromise;
+      expect(didResolve).toBe(true);
+      await proxy.close();
+    } finally {
+      await closeServer(listener.server);
+    }
+  });
+
+  it("surfaces Sprite port proxy startup failures before readiness", async () => {
+    const config = remoteConfig();
+    const { port, server: reservedServer } = await listenOnLoopback();
+    await closeServer(reservedServer);
     runCommandMock.mockRejectedValue(new Error("missing sprite auth"));
 
-    const proxy = await spriteRemoteRunnerProvider.startPortProxy(config, 8000);
+    await expect(spriteRemoteRunnerProvider.startPortProxy(config, port)).rejects.toThrow(
+      /missing sprite auth/,
+    );
+  });
 
-    await expect(proxy.close()).rejects.toThrow(/missing sprite auth/);
+  it("surfaces Sprite port proxy exits before readiness", async () => {
+    const config = remoteConfig();
+    const { port, server: reservedServer } = await listenOnLoopback();
+    await closeServer(reservedServer);
+    runCommandMock.mockResolvedValue("");
+
+    await expect(spriteRemoteRunnerProvider.startPortProxy(config, port)).rejects.toThrow(
+      /Sprite proxy exited before it was closed/,
+    );
+  });
+
+  it("times out when Sprite port proxies never accept connections", async () => {
+    const config = remoteConfig();
+    const { port, server: reservedServer } = await listenOnLoopback();
+    await closeServer(reservedServer);
+    vi.useFakeTimers();
+    runCommandMock.mockImplementation(
+      async (_command, _arguments, options) =>
+        await new Promise<string>((_resolve, reject) => {
+          options?.signal?.addEventListener("abort", () => {
+            reject(Object.assign(new Error("aborted"), { signal: "SIGINT" }));
+          });
+        }),
+    );
+
+    const proxyPromise = spriteRemoteRunnerProvider.startPortProxy(config, port);
+    await vi.advanceTimersByTimeAsync(6000);
+
+    await expect(proxyPromise).rejects.toThrow(/Timed out waiting for Sprite proxy/);
   });
 
   it("surfaces Sprite port proxy failures that are not caused by close", async () => {
     const config = remoteConfig();
+    const listener = await listenOnLoopback();
     runCommandMock.mockImplementation(
       async (_command, _arguments, options) =>
         await new Promise<string>((_resolve, reject) => {
@@ -115,13 +239,18 @@ describe("Sprite remote runner provider", () => {
         }),
     );
 
-    const proxy = await spriteRemoteRunnerProvider.startPortProxy(config, 8000);
+    try {
+      const proxy = await spriteRemoteRunnerProvider.startPortProxy(config, listener.port);
 
-    await expect(proxy.close()).rejects.toThrow(/proxy failed/);
+      await expect(proxy.close()).rejects.toThrow(/proxy failed/);
+    } finally {
+      await closeServer(listener.server);
+    }
   });
 
   it("surfaces Sprite port proxy failures with empty causes", async () => {
     const config = remoteConfig();
+    const listener = await listenOnLoopback();
     runCommandMock.mockImplementation(
       async (_command, _arguments, options) =>
         await new Promise<string>((_resolve, reject) => {
@@ -131,9 +260,13 @@ describe("Sprite remote runner provider", () => {
         }),
     );
 
-    const proxy = await spriteRemoteRunnerProvider.startPortProxy(config, 8000);
+    try {
+      const proxy = await spriteRemoteRunnerProvider.startPortProxy(config, listener.port);
 
-    await expect(proxy.close()).rejects.toThrow(/proxy failed/);
+      await expect(proxy.close()).rejects.toThrow(/proxy failed/);
+    } finally {
+      await closeServer(listener.server);
+    }
   });
 
   it("runs captured remote commands with files, working directory, and caller options", async () => {
