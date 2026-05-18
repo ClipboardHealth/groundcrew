@@ -371,6 +371,7 @@ describe("Sprite remote runner provider", () => {
       ticket: "GC-12",
       branchName: "feature/remote-runner",
       baseBranch: "main",
+      gitRemote: "origin",
       signal: controller.signal,
     });
 
@@ -397,6 +398,28 @@ describe("Sprite remote runner provider", () => {
     expect(script).toContain('git -C "$repo_dir" worktree add -b "$branch"');
   });
 
+  it("uses the configured git remote for remote worktree fetches and refs", async () => {
+    const config = remoteConfig();
+    runCommandMock.mockResolvedValue("");
+
+    await spriteRemoteRunnerProvider.createWorktree({
+      config,
+      repository: "tools.git",
+      ticket: "GC-12",
+      branchName: "feature/remote-runner",
+      baseBranch: "main",
+      gitRemote: "upstream",
+    });
+
+    const script = runCommandMock.mock.calls[0]?.[1].at(-1);
+    expect(script).toContain("git_remote='upstream'");
+    expect(script).toContain('git -C "$repo_dir" remote add "$git_remote" "$origin_url"');
+    expect(script).toContain('git -C "$repo_dir" fetch "$git_remote" --prune');
+    expect(script).toContain("branch_remote_ref='refs/remotes/upstream/feature/remote-runner'");
+    expect(script).toContain("branch_ref='upstream/feature/remote-runner'");
+    expect(script).toContain("base_ref='upstream/main'");
+  });
+
   it("keeps owner-qualified repositories distinct in remote directory names", async () => {
     const config = remoteConfig();
     runCommandMock.mockResolvedValue("");
@@ -407,6 +430,7 @@ describe("Sprite remote runner provider", () => {
       ticket: "GC-12",
       branchName: "feature/remote-runner",
       baseBranch: "main",
+      gitRemote: "origin",
     });
 
     expect(actual).toStrictEqual({
@@ -428,6 +452,7 @@ describe("Sprite remote runner provider", () => {
         ticket: "GC/../../other",
         branchName: "feature/remote-runner",
         baseBranch: "main",
+        gitRemote: "origin",
       }),
     ).rejects.toThrow(/Invalid ticket for remote worktree path/);
     await expect(
@@ -437,6 +462,7 @@ describe("Sprite remote runner provider", () => {
         ticket: String.raw`GC\12`,
         branchName: "feature/remote-runner",
         baseBranch: "main",
+        gitRemote: "origin",
       }),
     ).rejects.toThrow(/Invalid ticket for remote worktree path/);
     expect(runCommandMock).not.toHaveBeenCalled();

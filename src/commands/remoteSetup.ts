@@ -49,10 +49,22 @@ export interface RemoteBootstrapOptions {
   repository: string;
   owner: string;
   baseBranch: string;
+  gitRemote?: string;
   secretNames: string[];
   shouldRequireSelectedSecrets: boolean;
   shouldUseSecrets: boolean;
   branchName?: string;
+}
+
+interface ResolvedRemoteBootstrapOptions extends RemoteBootstrapOptions {
+  gitRemote: string;
+}
+
+interface ParsedRemoteBootstrapOptions extends Omit<
+  RemoteBootstrapOptions,
+  "baseBranch" | "gitRemote"
+> {
+  baseBranch?: string;
 }
 
 export interface RemoteSessionsOptions {
@@ -77,7 +89,7 @@ const DEFAULT_CHECKPOINT_COMMENT =
   "groundcrew remote runner baseline: selected agent auth, git identity, and MCP config";
 const CLAUDE_SUBSCRIPTION_LOGIN_FLAG = ["--claude", "ai"].join("");
 const DEFAULT_REPOSITORY_OWNER = "ClipboardHealth";
-const DEFAULT_BASE_BRANCH = "main";
+const DEFAULT_GIT_REMOTE = "origin";
 const DATADOG_PUP_VERSION = "0.63.0";
 const DATADOG_OAUTH_CALLBACK_PORT = 8000;
 const DATADOG_AUTH_STATUS_RETRY_ATTEMPTS = 5;
@@ -116,7 +128,7 @@ function usage(): string {
     "",
     "Bootstrap options:",
     "  --branch <branch>           Checkout/create a ticket branch before installing deps",
-    "  --base <branch>             Base branch used when creating a missing branch (default: main)",
+    "  --base <branch>             Base branch used when creating a missing branch (default: git.defaultBranch)",
     "  --owner <owner>             GitHub owner for bare repo names (default: ClipboardHealth)",
     "  --secret <env-name>         Forward one required build secret; repeat for multiple",
     "  --no-secrets                Do not forward NPM_TOKEN/BUF_TOKEN even if present",
@@ -302,7 +314,7 @@ function parseArguments(argv: readonly string[]): RemoteSetupOptions {
   };
 }
 
-function parseBootstrapArguments(argv: readonly string[]): RemoteBootstrapOptions {
+function parseBootstrapArguments(argv: readonly string[]): ParsedRemoteBootstrapOptions {
   const [runnerName, repository] = argv;
   if (
     runnerName === undefined ||
@@ -315,7 +327,7 @@ function parseBootstrapArguments(argv: readonly string[]): RemoteBootstrapOption
   validateRepository(repository);
 
   let owner = DEFAULT_REPOSITORY_OWNER;
-  let baseBranch = DEFAULT_BASE_BRANCH;
+  let baseBranch: string | undefined;
   let branchName: string | undefined;
   let shouldUseSecrets = true;
   let shouldRequireSelectedSecrets = false;
@@ -360,10 +372,10 @@ function parseBootstrapArguments(argv: readonly string[]): RemoteBootstrapOption
     runnerName,
     repository,
     owner,
-    baseBranch,
     secretNames: selectedSecretNames.length > 0 ? selectedSecretNames : [...BUILD_SECRET_NAMES],
     shouldRequireSelectedSecrets,
     shouldUseSecrets,
+    ...(baseBranch === undefined ? {} : { baseBranch }),
     ...(branchName === undefined ? {} : { branchName }),
   };
 }
@@ -820,7 +832,7 @@ async function checkpoint(arguments_: {
   await provider.checkpoint(config, options.checkpointComment);
 }
 
-function repositorySlug(options: RemoteBootstrapOptions): string {
+function repositorySlug(options: Pick<RemoteBootstrapOptions, "owner" | "repository">): string {
   return options.repository.includes("/")
     ? options.repository
     : `${options.owner}/${options.repository}`;
@@ -833,21 +845,20 @@ function repositoryDirectoryName(repository: string): string {
   return name.endsWith(".git") ? name.slice(0, -4) : name;
 }
 
-function remoteBootstrapCommand(options: RemoteBootstrapOptions): string {
+function remoteBootstrapCommand(options: ResolvedRemoteBootstrapOptions): string {
   const slug = repositorySlug(options);
   const directoryName = repositoryDirectoryName(options.repository);
+  const baseRef = `${options.gitRemote}/${options.baseBranch}`;
   const unsetSecretsLine =
     options.secretNames.length === 0 ? ":" : `unset ${options.secretNames.join(" ")}`;
   const checkoutLines =
     options.branchName === undefined
-      ? [
-          `git checkout -B ${shellSingleQuote(options.baseBranch)} ${shellSingleQuote(`origin/${options.baseBranch}`)}`,
-        ]
+      ? [`git checkout -B ${shellSingleQuote(options.baseBranch)} ${shellSingleQuote(baseRef)}`]
       : [
-          `if git show-ref --verify --quiet ${shellSingleQuote(`refs/remotes/origin/${options.branchName}`)}; then`,
-          `  git checkout -B ${shellSingleQuote(options.branchName)} ${shellSingleQuote(`origin/${options.branchName}`)}`,
+          `if git show-ref --verify --quiet ${shellSingleQuote(`refs/remotes/${options.gitRemote}/${options.branchName}`)}; then`,
+          `  git checkout -B ${shellSingleQuote(options.branchName)} ${shellSingleQuote(`${options.gitRemote}/${options.branchName}`)}`,
           "else",
-          `  git checkout -B ${shellSingleQuote(options.branchName)} ${shellSingleQuote(`origin/${options.baseBranch}`)}`,
+          `  git checkout -B ${shellSingleQuote(options.branchName)} ${shellSingleQuote(baseRef)}`,
           "fi",
         ];
 
@@ -855,17 +866,33 @@ function remoteBootstrapCommand(options: RemoteBootstrapOptions): string {
     "set -euo pipefail",
     `cleanup() { rm -f ${shellSingleQuote(REMOTE_SECRETS_FILE)}; ${unsetSecretsLine}; }`,
     "trap cleanup EXIT",
+    `git_remote=${shellSingleQuote(options.gitRemote)}`,
     'mkdir -p "$HOME/dev"',
     `repo_dir="$HOME/dev/${directoryName}"`,
     'if [ ! -d "$repo_dir/.git" ]; then',
     `  gh repo clone ${shellSingleQuote(slug)} "$repo_dir"`,
     "fi",
     'cd "$repo_dir"',
-    "git fetch origin --prune",
+    'if ! git remote get-url "$git_remote" >/dev/null 2>&1; then',
+    '  origin_url="$(git remote get-url origin)"',
+    '  git remote add "$git_remote" "$origin_url"',
+    "fi",
+    'git fetch "$git_remote" --prune',
     ...checkoutLines,
     `if [ -f ${shellSingleQuote(REMOTE_SECRETS_FILE)} ]; then set -a && . ${shellSingleQuote(REMOTE_SECRETS_FILE)} && set +a; fi`,
     DEFAULT_REMOTE_SETUP_COMMAND,
   ].join("\n");
+}
+
+async function resolveBootstrapOptions(
+  options: ParsedRemoteBootstrapOptions,
+): Promise<ResolvedRemoteBootstrapOptions> {
+  const config = await loadConfig();
+  return {
+    ...options,
+    baseBranch: options.baseBranch ?? config.git.defaultBranch,
+    gitRemote: config.git.remote,
+  };
 }
 
 interface StagedSecrets {
@@ -913,6 +940,10 @@ function stageBuildSecrets(options: RemoteBootstrapOptions): StagedSecrets {
 }
 
 export async function bootstrapRemoteRepository(options: RemoteBootstrapOptions): Promise<void> {
+  const bootstrapOptions: ResolvedRemoteBootstrapOptions = {
+    ...options,
+    gitRemote: options.gitRemote ?? DEFAULT_GIT_REMOTE,
+  };
   const config = remoteConfigWithRunnerName(options.runnerName);
   const provider = providerFor(config);
   if (!(await provider.runnerExists(config))) {
@@ -921,7 +952,7 @@ export async function bootstrapRemoteRepository(options: RemoteBootstrapOptions)
     );
   }
 
-  const stagedSecrets = stageBuildSecrets(options);
+  const stagedSecrets = stageBuildSecrets(bootstrapOptions);
   try {
     if (stagedSecrets.names.length > 0) {
       log(`Forwarding build secret names for setup only: ${stagedSecrets.names.join(", ")}`);
@@ -931,11 +962,11 @@ export async function bootstrapRemoteRepository(options: RemoteBootstrapOptions)
         ? []
         : [{ localPath: stagedSecrets.filePath, remotePath: REMOTE_SECRETS_FILE }];
 
-    log(`Bootstrapping ${repositorySlug(options)} in ${options.runnerName}`);
+    log(`Bootstrapping ${repositorySlug(bootstrapOptions)} in ${options.runnerName}`);
     await provider.runCommand({
       config,
       files,
-      remoteArguments: ["bash", "-lc", remoteBootstrapCommand(options)],
+      remoteArguments: ["bash", "-lc", remoteBootstrapCommand(bootstrapOptions)],
       options: { stdio: "inherit", timeoutMs: 0 },
     });
   } finally {
@@ -1024,7 +1055,7 @@ export async function remoteCli(argv: string[]): Promise<void> {
     return;
   }
   if (action === "bootstrap") {
-    await bootstrapRemoteRepository(parseBootstrapArguments(rest));
+    await bootstrapRemoteRepository(await resolveBootstrapOptions(parseBootstrapArguments(rest)));
     return;
   }
   if (action === "sessions") {

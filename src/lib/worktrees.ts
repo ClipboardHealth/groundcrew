@@ -365,6 +365,7 @@ const remoteWorktreeAdapter: WorktreeAdapter = {
       ticket: spec.ticket,
       branchName: base.branchName,
       baseBranch: config.git.defaultBranch,
+      gitRemote: config.git.remote,
       ...signalProperty(signal),
     });
 

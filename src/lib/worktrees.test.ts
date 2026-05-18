@@ -49,6 +49,7 @@ const userInfoMock = vi.mocked(userInfo);
 
 function makeConfig(overrides: {
   projectDir: string;
+  git?: ResolvedConfig["git"];
   knownRepositories?: string[];
   models?: ResolvedConfig["models"]["definitions"];
 }): ResolvedConfig {
@@ -60,7 +61,7 @@ function makeConfig(overrides: {
       slugId: "aaaaaaaaaaaa",
       statuses: { todo: "Todo", inProgress: "In Progress", done: "Done", terminal: ["Done"] },
     },
-    git: { remote: "origin", defaultBranch: "main" },
+    git: overrides.git ?? { remote: "origin", defaultBranch: "main" },
     workspace: {
       projectDir: overrides.projectDir,
       knownRepositories,
@@ -417,6 +418,25 @@ describe(create, () => {
       remoteRepoDir: "/home/sprite/dev/ClipboardHealth--repo-a",
     });
     expect(readRemoteStateEntries()).toStrictEqual([actual]);
+  });
+
+  it("passes configured git remote and default branch to remote worktree creation", async () => {
+    mkdirSync(join(projectDir, "repo-a"));
+    const config = makeConfig({
+      projectDir,
+      git: { remote: "upstream", defaultBranch: "develop" },
+    });
+
+    await create(config, {
+      repository: "repo-a",
+      ticket: "team-1",
+      model: "claude",
+      runner: "remote",
+    });
+
+    const spriteCommand = runCommandMock.mock.calls.find(([cmd]) => cmd === "sprite")?.[1].at(-1);
+    expect(spriteCommand).toStrictEqual(expect.stringContaining("git_remote='upstream'"));
+    expect(spriteCommand).toStrictEqual(expect.stringContaining("base_ref='upstream/develop'"));
   });
 
   it("creates remote worktrees for owner-qualified repositories without double-prefixing the owner", async () => {

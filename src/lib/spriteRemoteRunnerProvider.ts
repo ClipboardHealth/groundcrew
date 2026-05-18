@@ -45,6 +45,7 @@ interface RemoteWorktreeCreateArguments {
   ticket: string;
   branchName: string;
   baseBranch: string;
+  gitRemote: string;
   signal?: AbortSignal;
 }
 
@@ -201,10 +202,14 @@ function spriteCreateWorktreeCommand(arguments_: {
   worktreeDir: string;
   branchName: string;
   baseBranch: string;
+  gitRemote: string;
   repoRoot: string;
   worktreeRoot: string;
 }): string {
   const slug = repositorySlug(arguments_.owner, arguments_.repository);
+  const branchRemoteRef = `refs/remotes/${arguments_.gitRemote}/${arguments_.branchName}`;
+  const branchRef = `${arguments_.gitRemote}/${arguments_.branchName}`;
+  const baseRef = `${arguments_.gitRemote}/${arguments_.baseBranch}`;
   return [
     "set -euo pipefail",
     `repo_root=${shellSingleQuote(arguments_.repoRoot)}`,
@@ -212,20 +217,27 @@ function spriteCreateWorktreeCommand(arguments_: {
     `repo_dir=${shellSingleQuote(arguments_.repoDir)}`,
     `worktree_dir=${shellSingleQuote(arguments_.worktreeDir)}`,
     `branch=${shellSingleQuote(arguments_.branchName)}`,
-    `base_branch=${shellSingleQuote(arguments_.baseBranch)}`,
+    `git_remote=${shellSingleQuote(arguments_.gitRemote)}`,
+    `branch_remote_ref=${shellSingleQuote(branchRemoteRef)}`,
+    `branch_ref=${shellSingleQuote(branchRef)}`,
+    `base_ref=${shellSingleQuote(baseRef)}`,
     'mkdir -p "$repo_root" "$worktree_root"',
     'if [ ! -d "$repo_dir/.git" ]; then',
     `  gh repo clone ${shellSingleQuote(slug)} "$repo_dir"`,
     "fi",
-    'git -C "$repo_dir" fetch origin --prune',
+    'if ! git -C "$repo_dir" remote get-url "$git_remote" >/dev/null 2>&1; then',
+    '  origin_url="$(git -C "$repo_dir" remote get-url origin)"',
+    '  git -C "$repo_dir" remote add "$git_remote" "$origin_url"',
+    "fi",
+    'git -C "$repo_dir" fetch "$git_remote" --prune',
     'if [ -e "$worktree_dir" ]; then',
     '  echo "Remote worktree already exists: $worktree_dir" >&2',
     "  exit 1",
     "fi",
-    'if git -C "$repo_dir" show-ref --verify --quiet "refs/remotes/origin/$branch"; then',
-    '  git -C "$repo_dir" worktree add -B "$branch" "$worktree_dir" "origin/$branch"',
+    'if git -C "$repo_dir" show-ref --verify --quiet "$branch_remote_ref"; then',
+    '  git -C "$repo_dir" worktree add -B "$branch" "$worktree_dir" "$branch_ref"',
     "else",
-    '  git -C "$repo_dir" worktree add -b "$branch" "$worktree_dir" "origin/$base_branch"',
+    '  git -C "$repo_dir" worktree add -b "$branch" "$worktree_dir" "$base_ref"',
     "fi",
   ].join("\n");
 }
@@ -439,7 +451,7 @@ export const spriteRemoteRunnerProvider: RemoteRunnerProvider = {
     );
   },
   async createWorktree(arguments_) {
-    const { config, repository, ticket, branchName, baseBranch, signal } = arguments_;
+    const { config, repository, ticket, branchName, baseBranch, gitRemote, signal } = arguments_;
     const remoteRepositoryName = repositoryDirectoryName(config.owner, repository);
     const remoteRepoDir = remotePathJoin(config.repoRoot, remoteRepositoryName);
     const remoteWorktreeDir = remotePathJoin(
@@ -463,6 +475,7 @@ export const spriteRemoteRunnerProvider: RemoteRunnerProvider = {
           worktreeDir: remoteWorktreeDir,
           branchName,
           baseBranch,
+          gitRemote,
           repoRoot: config.repoRoot,
           worktreeRoot: config.worktreeRoot,
         }),
