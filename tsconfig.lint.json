@@ -10,13 +10,6 @@
     "noEmitOnError": false,
     "types": ["vitest/globals", "node"]
   },
-  "include": [
-    "*.ts",
-    "bin/**/*.js",
-    "configExample.ts",
-    "scripts/**/*.mts",
-    "scripts/**/*.ts",
-    "src/**/*.ts"
-  ],
+  "include": ["*.ts", "bin/**/*.js", "scripts/**/*.mts", "scripts/**/*.ts", "src/**/*.ts"],
   "exclude": ["coverage", "dist", "node_modules", "out-tsc", "test-output"]
 }

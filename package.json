@@ -24,8 +24,9 @@
     "README.md",
     "bin",
     "clearance-allow-hosts",
-    "configExample.ts",
+    "configExample.jsonc",
     "dist",
+    "scripts/migrateConfigToJsonc.mts",
     "static"
   ],
   "type": "module",
@@ -45,8 +46,10 @@
     "access": "public"
   },
   "scripts": {
-    "architecture:check": "depcruise src bin configExample.ts vitest.config.ts",
+    "architecture:check": "depcruise src bin vitest.config.ts",
     "build": "tsgo --build --force tsconfig.lib.json",
+    "config:check": "node scripts/checkConfigExample.mts",
+    "config:migrate": "node scripts/migrateConfigToJsonc.mts",
     "cpd": "jscpd .",
     "crew": "node ./bin/run.js",
     "crew:op": "op run --env-file \"${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/op.env\" -- node ./bin/run.js",
@@ -68,7 +71,9 @@
   "dependencies": {
     "@clipboard-health/clearance": "1.0.8",
     "@linear/sdk": "84.0.0",
-    "tslib": "2.8.1"
+    "jsonc-parser": "3.3.1",
+    "tslib": "2.8.1",
+    "zod": "4.4.3"
   },
   "devDependencies": {
     "@clipboard-health/ai-rules": "2.18.4",

@@ -1,7 +1,9 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+
+import { type ParseError, parse as parseJsonc, printParseErrorCode } from "jsonc-parser";
+import { z } from "zod";
 
 import { BUILD_SECRET_NAMES } from "./buildSecrets.ts";
 import { SPRITE_REMOTE_PROVIDER_DEFAULTS } from "./spriteRemoteRunnerProvider.ts";
@@ -54,9 +56,6 @@ export interface ModelDefinition {
    * with Safehouse/clearance; for remote runs it executes inside the remote
    * runner workspace. The rendered prompt is appended as a single quoted
    * positional argument. `{{worktree}}` is replaced before launch.
-   *
-   * Keep this agent-native (e.g., `claude --permission-mode bypassPermissions`).
-   * Groundcrew adds the Safehouse wrapper for local runs.
    */
   cmd: string;
   color: string;
@@ -75,18 +74,6 @@ export interface RemoteRunnerConfig {
 }
 
 /**
- * User-facing model entry shape. Discriminated union so the type system
- * mirrors the runtime contract: an entry is either a pure overlay
- * (every concrete field optional, no `disabled` key) or a pure
- * disable directive (`{ disabled: true }` and nothing else).
- */
-type EnabledUserModelDefinition = Partial<ModelDefinition> & { disabled?: never };
-interface DisabledUserModelDefinition {
-  disabled: true;
-}
-type UserModelDefinition = EnabledUserModelDefinition | DisabledUserModelDefinition;
-
-/**
  * Setup command run inside sibling worktrees on the host. The host is
  * assumed to already have the right Node and npm versions, so this skips
  * the `n`/global-npm bootstrap that the remote setup command does.
@@ -94,73 +81,141 @@ type UserModelDefinition = EnabledUserModelDefinition | DisabledUserModelDefinit
 export const DEFAULT_HOST_SETUP_COMMAND =
   "if [ -x .claude/setup.sh ]; then ./.claude/setup.sh --deps-only; elif [ -f .claude/setup.sh ] && command -v bash >/dev/null 2>&1; then bash .claude/setup.sh --deps-only; else npm clean-install; fi";
 
+const PERCENT_MIN_EXCLUSIVE = 0;
+const PERCENT_MAX = 100;
+
+const ENV_VAR_NAME_RE = /^[A-Z_][A-Z0-9_]*$/;
+// Linear project URL slugs end with a 12-char lowercase hex `slugId`.
+const SLUG_ID_RE = /-([\da-f]{12})$/i;
+
+const stringNonEmpty = z.string().trim().min(1);
+
+const StatusesSchema = z
+  .object({
+    todo: stringNonEmpty.optional(),
+    inProgress: stringNonEmpty.optional(),
+    done: stringNonEmpty.optional(),
+    terminal: z.array(stringNonEmpty).optional(),
+  })
+  .strict();
+
+const LinearSchema = z
+  .object({
+    /**
+     * Project URL slug as it appears in Linear's URL bar — e.g.
+     * `ai-strategy-5152195762f3`. The trailing 12-character hex `slugId`
+     * is what's used for the GraphQL filter; the leading name segment
+     * keeps the config self-documenting and survives project renames.
+     */
+    projectSlug: stringNonEmpty.refine((value: string) => SLUG_ID_RE.test(value), {
+      error: (issue) =>
+        `must end with a 12-character hex slugId (got ${JSON.stringify(issue.input)}). Copy the trailing segment from your Linear project URL, e.g. "ai-strategy-5152195762f3" from "https://linear.app/<workspace>/project/ai-strategy-5152195762f3".`,
+    }),
+    statuses: StatusesSchema.optional(),
+  })
+  .strict();
+
+const GitSchema = z
+  .object({
+    remote: stringNonEmpty.optional(),
+    defaultBranch: stringNonEmpty.optional(),
+  })
+  .strict();
+
+const WorkspaceSchema = z
+  .object({
+    /** Parent directory under which groundcrew clones repos and creates per-ticket worktrees. */
+    projectDir: stringNonEmpty,
+    /** Repos searched for in ticket descriptions; non-empty. */
+    knownRepositories: z.array(stringNonEmpty).min(1, "must be a non-empty array"),
+  })
+  .strict();
+
+const OrchestratorSchema = z
+  .object({
+    maximumInProgress: z.number().int().min(1).optional(),
+    pollIntervalMilliseconds: z.number().int().min(1).optional(),
+    sessionLimitPercentage: z.number().gt(PERCENT_MIN_EXCLUSIVE).lte(PERCENT_MAX).optional(),
+  })
+  .strict();
+
+const ModelUsageSchema = z
+  .object({
+    codexbar: z
+      .object({
+        provider: stringNonEmpty,
+        source: stringNonEmpty.optional(),
+      })
+      .strict(),
+  })
+  .strict();
+
+// `disabled` is allowed here as an optional literal `true` so legacy
+// pre-validation can run first and produce specific errors for invalid
+// shapes (e.g. `disabled: "true"`, `disabled: true` mixed with `cmd`).
+// By the time zod sees the entry, either everything else is unset or
+// preValidateDisabledFlag has already failed.
+const ModelDefSchema = z
+  .object({
+    cmd: stringNonEmpty.optional(),
+    color: stringNonEmpty.optional(),
+    usage: ModelUsageSchema.optional(),
+    disabled: z.literal(true).optional(),
+  })
+  .strict();
+
+const ModelsSchema = z
+  .object({
+    default: stringNonEmpty.optional(),
+    definitions: z.record(z.string(), ModelDefSchema).optional(),
+  })
+  .strict();
+
+const PromptsSchema = z
+  .object({
+    initial: stringNonEmpty.optional(),
+  })
+  .strict();
+
+const RemoteSchema = z
+  .object({
+    provider: z.enum(REMOTE_RUNNER_PROVIDER_NAMES).optional(),
+    runnerName: stringNonEmpty.optional(),
+    owner: stringNonEmpty.optional(),
+    repoRoot: stringNonEmpty.optional(),
+    worktreeRoot: stringNonEmpty.optional(),
+    secretNames: z
+      .array(stringNonEmpty.regex(ENV_VAR_NAME_RE, "must be a valid environment variable name"))
+      .optional(),
+  })
+  .strict();
+
+const LoggingSchema = z
+  .object({
+    file: stringNonEmpty.optional(),
+  })
+  .strict();
+
+export const ConfigSchema = z
+  .object({
+    linear: LinearSchema,
+    git: GitSchema.optional(),
+    workspace: WorkspaceSchema,
+    orchestrator: OrchestratorSchema.optional(),
+    models: ModelsSchema.optional(),
+    prompts: PromptsSchema.optional(),
+    workspaceKind: z.enum(WORKSPACE_KIND_SETTINGS).optional(),
+    remote: RemoteSchema.optional(),
+    logging: LoggingSchema.optional(),
+  })
+  .strict();
+
 /**
- * Loose user-facing shape — what a `config.ts` file declares.
+ * Loose user-facing shape — what a `config.jsonc` file declares.
  * Fields with defaults are optional; only `linear.projectSlug` and the
  * `workspace.*` fields are required.
  */
-export interface Config {
-  linear: {
-    /**
-     * Project URL slug as it appears in Linear's URL bar — e.g.
-     * `ai-strategy-5152195762f3` from
-     * `https://linear.app/<workspace>/project/ai-strategy-5152195762f3`.
-     * The trailing 12-character hex `slugId` is what's used for the
-     * GraphQL filter; the leading name segment is kept intact in the
-     * config so `config.ts` is self-documenting at a glance, and so it
-     * survives Linear project renames.
-     */
-    projectSlug: string;
-    statuses?: {
-      todo?: string;
-      inProgress?: string;
-      done?: string;
-      terminal?: string[];
-    };
-  };
-  git?: {
-    remote?: string;
-    defaultBranch?: string;
-  };
-  workspace: {
-    projectDir: string;
-    knownRepositories: string[];
-  };
-  orchestrator?: {
-    maximumInProgress?: number;
-    pollIntervalMilliseconds?: number;
-    sessionLimitPercentage?: number;
-  };
-  models?: {
-    default?: string;
-    /**
-     * Additive: each entry merges over the shipped default for that key.
-     * Override `claude.cmd` only by declaring `{ claude: { cmd: "..." } }` —
-     * the other fields stay at their default values. Brand-new model
-     * names must supply enough fields to satisfy `validate()`.
-     */
-    definitions?: Record<string, UserModelDefinition>;
-  };
-  prompts?: {
-    initial?: string;
-  };
-  /**
-   * Terminal session manager that hosts agent processes. Defaults to
-   * `"auto"` — cmux on macOS when installed, else tmux. Set explicitly
-   * to fail loudly when the chosen backend is missing.
-   */
-  workspaceKind?: WorkspaceKindSetting;
-  remote?: Partial<RemoteRunnerConfig>;
-  logging?: {
-    /**
-     * Append-mode log file destination. `log()` and `logEvent()` tee here
-     * in addition to stdout, so a vanished workspace doesn't take the
-     * evidence with it. Defaults to
-     * `${XDG_STATE_HOME:-~/.local/state}/groundcrew/groundcrew.log`.
-     */
-    file?: string;
-  };
-}
+export type Config = z.input<typeof ConfigSchema>;
 
 /**
  * Strict shape after defaults are applied — what scripts work with.
@@ -261,13 +316,11 @@ const ALLOWED_PROMPT_PLACEHOLDERS = new Set([
 ]);
 const PROMPT_PLACEHOLDER_RE = /{{[^{}]*}}/g;
 
-// import.meta.dirname is `<package>/src/lib`; the user's `config.ts` lives
-// at the package root (gitignored), two levels up. Last-resort fallback
-// when neither GROUNDCREW_CONFIG nor the XDG path resolves to a file.
-const PACKAGE_CONFIG_PATH = resolve(import.meta.dirname, "..", "..", "config.ts");
-
-const PERCENT_MIN_EXCLUSIVE = 0;
-const PERCENT_MAX = 100;
+// import.meta.dirname is `<package>/src/lib`; the user's `config.jsonc`
+// lives at the package root (gitignored), two levels up. Last-resort
+// fallback when neither GROUNDCREW_CONFIG nor the XDG path resolves to
+// a file.
+const PACKAGE_CONFIG_PATH = resolve(import.meta.dirname, "..", "..", "config.jsonc");
 
 function xdgBase(envName: string, fallbackSegments: readonly string[]): string {
   const override = readEnvironmentVariable(envName);
@@ -294,9 +347,15 @@ function resolveConfigPath(): string {
   if (override !== undefined && override.length > 0) {
     return resolve(override);
   }
-  const xdgPath = xdgConfigPath("groundcrew", "config.ts");
-  if (existsSync(xdgPath)) {
-    return xdgPath;
+  const xdgJsonc = xdgConfigPath("groundcrew", "config.jsonc");
+  if (existsSync(xdgJsonc)) {
+    return xdgJsonc;
+  }
+  const xdgLegacyTs = xdgConfigPath("groundcrew", "config.ts");
+  if (existsSync(xdgLegacyTs)) {
+    fail(
+      `${xdgLegacyTs} is a legacy TypeScript config. Groundcrew now reads JSONC; convert it with \`node "$(npm root -g)/@clipboard-health/groundcrew/scripts/migrateConfigToJsonc.mts" ${xdgLegacyTs}\` (preserves comments) and then rerun \`crew doctor\`.`,
+    );
   }
   return PACKAGE_CONFIG_PATH;
 }
@@ -315,60 +374,8 @@ function fail(message: string): never {
   throw new Error(`groundcrew config: ${message}`);
 }
 
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.length > 0;
-}
-
-function requireString(value: unknown, path: string): asserts value is string {
-  if (!isNonEmptyString(value)) {
-    fail(`${path} must be a non-empty string (got ${JSON.stringify(value)})`);
-  }
-}
-
-function requirePositiveInt(value: unknown, path: string, min = 1): asserts value is number {
-  if (typeof value !== "number" || !Number.isInteger(value) || value < min) {
-    fail(`${path} must be an integer ≥ ${min} (got ${JSON.stringify(value)})`);
-  }
-}
-
-function requirePercent(value: unknown, path: string): asserts value is number {
-  if (
-    typeof value !== "number" ||
-    !Number.isFinite(value) ||
-    value <= PERCENT_MIN_EXCLUSIVE ||
-    value > PERCENT_MAX
-  ) {
-    fail(`${path} must be a finite number in (0, 100] (got ${JSON.stringify(value)})`);
-  }
-}
-
-function cloneModelDefinition(definition: ModelDefinition): ModelDefinition {
-  return structuredClone(definition);
-}
-
-function normalizeOptionalString(value: unknown, path: string): string | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (typeof value !== "string" || value.trim().length === 0) {
-    fail(`${path} must be a non-empty string`);
-  }
-  return value.trim();
-}
-
-function normalizeOptionalStringArray(value: unknown, path: string): string[] | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (!Array.isArray(value)) {
-    fail(`${path} must be an array`);
-  }
-  return value.map((entry, index) => {
-    if (typeof entry !== "string" || entry.trim().length === 0) {
-      fail(`${path}[${index}] must be a non-empty string`);
-    }
-    return entry.trim();
-  });
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function uniqueStrings(values: string[]): string[] {
@@ -384,111 +391,112 @@ function uniqueStrings(values: string[]): string[] {
   return out;
 }
 
-function normalizeStatusName(value: unknown, fallback: string, path: string): string {
-  return normalizeOptionalString(value, path) ?? fallback;
+function cloneModelDefinition(definition: ModelDefinition): ModelDefinition {
+  return structuredClone(definition);
 }
 
-function normalizeStatuses(
-  user: Config["linear"]["statuses"],
-): ResolvedConfig["linear"]["statuses"] {
-  const todo = normalizeStatusName(user?.todo, DEFAULT_STATUSES.todo, "linear.statuses.todo");
-  const inProgress = normalizeStatusName(
-    user?.inProgress,
-    DEFAULT_STATUSES.inProgress,
-    "linear.statuses.inProgress",
-  );
-  const done = normalizeStatusName(user?.done, DEFAULT_STATUSES.done, "linear.statuses.done");
-  const terminal = normalizeOptionalStringArray(user?.terminal, "linear.statuses.terminal") ?? [];
-  return {
-    todo,
-    inProgress,
-    done,
-    terminal: uniqueStrings([...terminal, done]),
-  };
-}
-
-function normalizeSecretNames(value: unknown, path: string): string[] | undefined {
-  const names = normalizeOptionalStringArray(value, path);
-  if (names === undefined) {
-    return undefined;
-  }
-  names.forEach((name, index) => {
-    if (!/^[A-Z_][A-Z0-9_]*$/.test(name)) {
-      fail(`${path}[${index}] must be a valid environment variable name`);
+function formatPath(path: readonly PropertyKey[]): string {
+  let out = "";
+  for (const segment of path) {
+    /* v8 ignore next 3 @preserve -- JSON keys are never symbols, defensive only */
+    if (typeof segment === "symbol") {
+      continue;
     }
-  });
-  return names;
+    if (typeof segment === "number") {
+      out += `[${segment}]`;
+    } else if (out.length === 0) {
+      out += segment;
+    } else {
+      out += `.${segment}`;
+    }
+  }
+  return out;
 }
 
-function normalizeRemoteProvider(value: unknown): RemoteRunnerProviderName | undefined {
-  if (value === undefined) {
-    return undefined;
+function formatZodIssue(issue: z.core.$ZodIssue): string {
+  const path = formatPath(issue.path);
+  // Rewrite zod's default messages for the cases tests rely on. Anything
+  // else falls back to zod's own message — still readable, just less
+  // tailored to the CLI's path-prefixed conventions.
+  let humanMessage = issue.message;
+  if (issue.code === "invalid_type") {
+    if (issue.expected === "object") {
+      humanMessage = "must be an object";
+    } else if (issue.expected === "array") {
+      humanMessage = "must be an array";
+    }
+  } else if (issue.code === "too_small" && issue.origin === "string") {
+    humanMessage = "must be a non-empty string";
   }
-  if (!isRemoteRunnerProviderName(value)) {
-    fail(`remote.provider must be "sprite" (got ${JSON.stringify(value)})`);
-  }
-  return value;
+  /* v8 ignore next @preserve -- the root object is gated by isPlainObject, so every issue has a non-empty path */
+  return path.length > 0 ? `${path} ${humanMessage}` : humanMessage;
 }
 
-function normalizeRemoteRunnerConfig(user: Config["remote"] | undefined): ResolvedConfig["remote"] {
-  if (isPlainObject(user) && Object.hasOwn(user, "sprite")) {
+function failFromZod(error: z.ZodError): never {
+  /* v8 ignore next @preserve -- zod always reports at least one issue on failure */
+  const first = error.issues[0] ?? {
+    code: "custom",
+    message: "unknown validation error",
+    path: [],
+  };
+  fail(formatZodIssue(first));
+}
+
+function preValidateLegacyKeys(raw: unknown): void {
+  /* v8 ignore next 3 @preserve -- loadConfig already enforces raw is a plain object */
+  if (!isPlainObject(raw)) {
+    return;
+  }
+  const { models, remote } = raw;
+  if (isPlainObject(models) && Object.hasOwn(models, "isolation")) {
+    fail(
+      "models.isolation is no longer supported: local isolation is always Safehouse; remove this key",
+    );
+  }
+  if (isPlainObject(models) && isPlainObject(models["definitions"])) {
+    for (const [name, override] of Object.entries(models["definitions"])) {
+      if (!isPlainObject(override)) {
+        continue;
+      }
+      if (Object.hasOwn(override, "isolation")) {
+        fail(
+          `models.definitions.${name}.isolation is no longer supported: per-model isolation is no longer supported`,
+        );
+      }
+      if (Object.hasOwn(override, "sandbox")) {
+        fail(
+          `models.definitions.${name}.sandbox is no longer supported: Docker Sandboxes are no longer supported`,
+        );
+      }
+    }
+  }
+  if (isPlainObject(remote) && Object.hasOwn(remote, "sprite")) {
     fail(
       "remote.sprite is no longer supported: use remote.provider, remote.runnerName, remote.owner, remote.repoRoot, remote.worktreeRoot, and remote.secretNames",
     );
   }
-  const provider = normalizeRemoteProvider(user?.provider) ?? DEFAULT_REMOTE.provider;
-  return {
-    provider,
-    runnerName:
-      normalizeOptionalString(user?.runnerName, "remote.runnerName") ?? DEFAULT_REMOTE.runnerName,
-    owner: normalizeOptionalString(user?.owner, "remote.owner") ?? DEFAULT_REMOTE.owner,
-    repoRoot: normalizeOptionalString(user?.repoRoot, "remote.repoRoot") ?? DEFAULT_REMOTE.repoRoot,
-    worktreeRoot:
-      normalizeOptionalString(user?.worktreeRoot, "remote.worktreeRoot") ??
-      DEFAULT_REMOTE.worktreeRoot,
-    secretNames: [
-      ...(normalizeSecretNames(user?.secretNames, "remote.secretNames") ??
-        DEFAULT_REMOTE.secretNames),
-    ],
-  };
 }
 
-function isWorkspaceKindSetting(value: unknown): value is WorkspaceKindSetting {
-  return (
-    typeof value === "string" && (WORKSPACE_KIND_SETTINGS as readonly string[]).includes(value)
-  );
-}
-
-function normalizeWorkspaceKind(value: unknown, path: string): WorkspaceKindSetting | undefined {
-  if (value === undefined) {
-    return undefined;
+function preValidateDisabledFlag(raw: unknown): void {
+  /* v8 ignore next 3 @preserve -- loadConfig already enforces raw is a plain object */
+  if (!isPlainObject(raw)) {
+    return;
   }
-  if (!isWorkspaceKindSetting(value)) {
-    fail(
-      `${path} must be one of ${WORKSPACE_KIND_SETTINGS.join(", ")} (got ${JSON.stringify(value)})`,
-    );
+  const { models } = raw as { models?: unknown };
+  if (!isPlainObject(models)) {
+    return;
   }
-  return value;
-}
-
-function failIfLegacyModelKeys(
-  name: string,
-  override: unknown,
-): asserts override is UserModelDefinition {
-  if (!isPlainObject(override)) {
-    fail(`models.definitions.${name} must be an object`);
+  const { definitions } = models as { definitions?: unknown };
+  if (!isPlainObject(definitions)) {
+    return;
   }
-  if (Object.hasOwn(override, "isolation")) {
-    fail(
-      `models.definitions.${name}.isolation is no longer supported: per-model isolation is no longer supported`,
-    );
-  }
-  if (Object.hasOwn(override, "sandbox")) {
-    fail(
-      `models.definitions.${name}.sandbox is no longer supported: Docker Sandboxes are no longer supported`,
-    );
-  }
-  if (Object.hasOwn(override, "disabled")) {
+  for (const [name, override] of Object.entries(definitions)) {
+    if (!isPlainObject(override)) {
+      continue;
+    }
+    if (!Object.hasOwn(override, "disabled")) {
+      continue;
+    }
     if (override["disabled"] !== true) {
       fail(
         `models.definitions.${name}.disabled must be exactly \`true\` when set (got ${JSON.stringify(override["disabled"])})`,
@@ -508,8 +516,8 @@ function failIfLegacyModelKeys(
 /**
  * True when `name` is a shipped default the user removed via `disabled: true`.
  * Derived from absence in `definitions` — that's the only path that removes a
- * shipped default, codified in `failIfLegacyModelKeys` + `mergeDefinitions`.
- * Consumers needing to distinguish disabled-by-user from unknown-label use this.
+ * shipped default. Consumers needing to distinguish disabled-by-user from
+ * unknown-label use this.
  */
 export function isShippedDefaultDisabled(
   config: Pick<ResolvedConfig, "models">,
@@ -522,11 +530,8 @@ export function isShippedDefaultDisabled(
 }
 
 function mergeDefinitions(
-  user: Record<string, UserModelDefinition> | undefined,
+  user: NonNullable<Config["models"]>["definitions"] | undefined,
 ): Record<string, ModelDefinition> {
-  if (user !== undefined && !isPlainObject(user)) {
-    fail("models.definitions must be an object");
-  }
   const merged: Record<string, ModelDefinition> = Object.fromEntries(
     Object.entries(DEFAULT_MODEL_DEFINITIONS).map(([name, definition]) => [
       name,
@@ -534,35 +539,40 @@ function mergeDefinitions(
     ]),
   );
   for (const [name, override] of Object.entries(user ?? {})) {
-    failIfLegacyModelKeys(name, override);
-
-    if (override.disabled === true) {
+    /* v8 ignore next 3 @preserve -- Object.entries never yields undefined values for plain objects */
+    if (override === undefined) {
+      continue;
+    }
+    if ("disabled" in override && override.disabled === true) {
       if (!Object.hasOwn(DEFAULT_MODEL_DEFINITIONS, name)) {
         fail(
           `models.definitions.${name}: \`disabled: true\` is only valid for shipped defaults (${Object.keys(DEFAULT_MODEL_DEFINITIONS).join(", ")}). Remove the entry instead.`,
         );
       }
-      // Drop the key so downstream iterators (doctor, eligibility, usage) ignore
-      // the model automatically; `isShippedDefaultDisabled` lets the few consumers
-      // that need to distinguish disabled from unknown re-derive the set.
-      // oxlint-disable-next-line typescript/no-dynamic-delete -- `merged` is a fresh function-local clone of DEFAULT_MODEL_DEFINITIONS; no V8 dictionary-mode/pollution concerns
+      // oxlint-disable-next-line typescript/no-dynamic-delete -- `merged` is a fresh function-local clone of DEFAULT_MODEL_DEFINITIONS
       delete merged[name];
       continue;
     }
 
     const base: Partial<ModelDefinition> =
       merged[name] === undefined ? {} : cloneModelDefinition(merged[name]);
-    // Per-key spread so overriding `cmd` alone preserves the default
-    // `color` / `usage`. Brand-new entries must supply both required fields.
     const candidate: Partial<ModelDefinition> = { ...base };
-    if (override.cmd !== undefined) {
+    if ("cmd" in override && override.cmd !== undefined) {
       candidate.cmd = override.cmd;
     }
-    if (override.color !== undefined) {
+    if ("color" in override && override.color !== undefined) {
       candidate.color = override.color;
     }
-    if (override.usage !== undefined) {
-      candidate.usage = override.usage;
+    if ("usage" in override && override.usage !== undefined) {
+      candidate.usage =
+        override.usage.codexbar.source === undefined
+          ? { codexbar: { provider: override.usage.codexbar.provider } }
+          : {
+              codexbar: {
+                provider: override.usage.codexbar.provider,
+                source: override.usage.codexbar.source,
+              },
+            };
     }
     const { cmd, color, usage } = candidate;
     if (typeof cmd !== "string" || cmd.length === 0) {
@@ -580,54 +590,65 @@ function mergeDefinitions(
   return merged;
 }
 
-// Linear project URL slugs end with a 12-char lowercase hex `slugId`.
-const SLUG_ID_RE = /-([\da-f]{12})$/i;
-
-function extractSlugId(slug: string): string | undefined {
-  return SLUG_ID_RE.exec(slug)?.[1]?.toLowerCase();
+function normalizeStatuses(
+  user: NonNullable<Config["linear"]>["statuses"],
+): ResolvedConfig["linear"]["statuses"] {
+  const todo = user?.todo ?? DEFAULT_STATUSES.todo;
+  const inProgress = user?.inProgress ?? DEFAULT_STATUSES.inProgress;
+  const done = user?.done ?? DEFAULT_STATUSES.done;
+  const terminal = user?.terminal ?? [];
+  return {
+    todo,
+    inProgress,
+    done,
+    terminal: uniqueStrings([...terminal, done]),
+  };
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function normalizeRemote(user: Config["remote"]): ResolvedConfig["remote"] {
+  return {
+    provider: user?.provider ?? DEFAULT_REMOTE.provider,
+    runnerName: user?.runnerName ?? DEFAULT_REMOTE.runnerName,
+    owner: user?.owner ?? DEFAULT_REMOTE.owner,
+    repoRoot: user?.repoRoot ?? DEFAULT_REMOTE.repoRoot,
+    worktreeRoot: user?.worktreeRoot ?? DEFAULT_REMOTE.worktreeRoot,
+    secretNames: [...(user?.secretNames ?? DEFAULT_REMOTE.secretNames)],
+  };
 }
 
-function requireObject(value: unknown, path: string): void {
-  if (!isPlainObject(value)) {
-    fail(`${path} must be an object (got ${JSON.stringify(value)})`);
+function extractSlugId(slug: string): string {
+  const match = SLUG_ID_RE.exec(slug);
+  /* v8 ignore next 3 @preserve -- LinearSchema's refine rejects bad slugs before we get here */
+  if (match?.[1] === undefined) {
+    fail(`linear.projectSlug missing slugId tail (got ${JSON.stringify(slug)})`);
   }
+  return match[1].toLowerCase();
 }
 
 function applyDefaults(user: Config): ResolvedConfig {
-  // Guard the top-level shape before reading nested fields, so a
-  // malformed runtime config produces a `groundcrew config: ...` error
-  // instead of a raw `TypeError: Cannot read properties of undefined`.
-  requireObject(user.linear, "linear");
-  requireString(user.linear.projectSlug, "linear.projectSlug");
-  requireObject(user.workspace, "workspace");
-  if (isPlainObject(user.models) && Object.hasOwn(user.models, "isolation")) {
-    fail(
-      "models.isolation is no longer supported: local isolation is always Safehouse; remove this key",
-    );
-  }
-
-  const slugId = extractSlugId(user.linear.projectSlug);
-  if (slugId === undefined) {
-    fail(
-      `linear.projectSlug must end with a 12-character hex slugId (got ${JSON.stringify(user.linear.projectSlug)}). Copy the trailing segment from your Linear project URL, e.g. "ai-strategy-5152195762f3" from "https://linear.app/<workspace>/project/ai-strategy-5152195762f3".`,
-    );
-  }
   return {
     linear: {
       projectSlug: user.linear.projectSlug,
-      slugId,
+      slugId: extractSlugId(user.linear.projectSlug),
       statuses: normalizeStatuses(user.linear.statuses),
     },
-    git: { ...DEFAULT_GIT, ...user.git },
+    git: {
+      remote: user.git?.remote ?? DEFAULT_GIT.remote,
+      defaultBranch: user.git?.defaultBranch ?? DEFAULT_GIT.defaultBranch,
+    },
     workspace: {
       projectDir: expandHome(user.workspace.projectDir),
-      knownRepositories: user.workspace.knownRepositories,
+      knownRepositories: [...user.workspace.knownRepositories],
     },
-    orchestrator: { ...DEFAULT_ORCHESTRATOR, ...user.orchestrator },
+    orchestrator: {
+      maximumInProgress:
+        user.orchestrator?.maximumInProgress ?? DEFAULT_ORCHESTRATOR.maximumInProgress,
+      pollIntervalMilliseconds:
+        user.orchestrator?.pollIntervalMilliseconds ??
+        DEFAULT_ORCHESTRATOR.pollIntervalMilliseconds,
+      sessionLimitPercentage:
+        user.orchestrator?.sessionLimitPercentage ?? DEFAULT_ORCHESTRATOR.sessionLimitPercentage,
+    },
     models: {
       default: user.models?.default ?? "claude",
       definitions: mergeDefinitions(user.models?.definitions),
@@ -635,12 +656,10 @@ function applyDefaults(user: Config): ResolvedConfig {
     prompts: {
       initial: user.prompts?.initial ?? DEFAULT_PROMPT_INITIAL,
     },
-    workspaceKind: normalizeWorkspaceKind(user.workspaceKind, "workspaceKind") ?? "auto",
-    remote: normalizeRemoteRunnerConfig(user.remote),
+    workspaceKind: user.workspaceKind ?? "auto",
+    remote: normalizeRemote(user.remote),
     logging: {
-      file: expandHome(
-        normalizeOptionalString(user.logging?.file, "logging.file") ?? defaultLogFile(),
-      ),
+      file: expandHome(user.logging?.file ?? defaultLogFile()),
     },
   };
 }
@@ -656,40 +675,8 @@ function validatePromptPlaceholders(template: string): void {
 }
 
 function validate(config: ResolvedConfig): void {
-  requireString(config.linear.projectSlug, "linear.projectSlug");
-  requireString(config.linear.slugId, "linear.slugId");
-  requireString(config.linear.statuses.todo, "linear.statuses.todo");
-  requireString(config.linear.statuses.inProgress, "linear.statuses.inProgress");
-  requireString(config.linear.statuses.done, "linear.statuses.done");
-  config.linear.statuses.terminal.forEach((status, index) => {
-    requireString(status, `linear.statuses.terminal[${index}]`);
-  });
-
-  requireString(config.git.remote, "git.remote");
-  requireString(config.git.defaultBranch, "git.defaultBranch");
-
-  requireString(config.workspace.projectDir, "workspace.projectDir");
-
-  if (
-    !Array.isArray(config.workspace.knownRepositories) ||
-    config.workspace.knownRepositories.length === 0
-  ) {
-    fail("workspace.knownRepositories must be a non-empty array");
-  }
-  config.workspace.knownRepositories.forEach((repository, index) => {
-    requireString(repository, `workspace.knownRepositories[${index}]`);
-  });
-
-  requirePositiveInt(config.orchestrator.maximumInProgress, "orchestrator.maximumInProgress");
-  requirePositiveInt(
-    config.orchestrator.pollIntervalMilliseconds,
-    "orchestrator.pollIntervalMilliseconds",
-  );
-
-  requirePercent(config.orchestrator.sessionLimitPercentage, "orchestrator.sessionLimitPercentage");
-
   const { definitions } = config.models;
-  /* v8 ignore next 3 @preserve -- mergeDefinitions seeds claude+codex defaults, so an empty map is unreachable */
+  /* v8 ignore next 3 @preserve -- mergeDefinitions seeds claude+codex defaults */
   if (Object.keys(definitions).length === 0) {
     fail("models.definitions must contain at least one model");
   }
@@ -697,21 +684,6 @@ function validate(config: ResolvedConfig): void {
     fail(
       `models.definitions cannot contain "${AGENT_ANY_MODEL}" — it is reserved for the agent-any label, which routes to the model with the most available session capacity`,
     );
-  }
-  for (const [name, definition] of Object.entries(definitions)) {
-    requireString(definition.cmd, `models.definitions.${name}.cmd`);
-    requireString(definition.color, `models.definitions.${name}.color`);
-    if (definition.usage !== undefined) {
-      const usagePath = `models.definitions.${name}.usage`;
-      if (typeof definition.usage !== "object" || definition.usage === null) {
-        fail(`${usagePath} must be an object`);
-      }
-      const { codexbar } = definition.usage;
-      if (typeof codexbar !== "object" || codexbar === null) {
-        fail(`${usagePath}.codexbar must be an object`);
-      }
-      requireString(codexbar.provider, `${usagePath}.codexbar.provider`);
-    }
   }
 
   // Disabled-default check must run before the generic "not a key" check so
@@ -728,26 +700,14 @@ function validate(config: ResolvedConfig): void {
     );
   }
 
-  requireString(config.prompts.initial, "prompts.initial");
   validatePromptPlaceholders(config.prompts.initial);
+}
 
-  /* v8 ignore next 3 @preserve -- normalizeRemoteProvider rejects this before validate() runs */
-  if (config.remote.provider !== "sprite") {
-    fail(`remote.provider must be "sprite" (got ${JSON.stringify(config.remote.provider)})`);
-  }
-  requireString(config.remote.runnerName, "remote.runnerName");
-  requireString(config.remote.owner, "remote.owner");
-  requireString(config.remote.repoRoot, "remote.repoRoot");
-  requireString(config.remote.worktreeRoot, "remote.worktreeRoot");
-  config.remote.secretNames.forEach((name, index) => {
-    requireString(name, `remote.secretNames[${index}]`);
-    /* v8 ignore next 3 @preserve -- normalizeSecretNames already enforces this before validate() runs */
-    if (!/^[A-Z_][A-Z0-9_]*$/.test(name)) {
-      fail(`remote.secretNames[${index}] must be a valid environment variable name`);
-    }
-  });
-
-  requireString(config.logging.file, "logging.file");
+function describeJsoncErrors(path: string, errors: ParseError[]): never {
+  const messages = errors
+    .map((error) => `${printParseErrorCode(error.error)} at offset ${error.offset}`)
+    .join("; ");
+  fail(`${path} is not valid JSONC: ${messages}`);
 }
 
 let cached: Readonly<ResolvedConfig> | undefined;
@@ -760,22 +720,30 @@ export async function loadConfig(): Promise<Readonly<ResolvedConfig>> {
   const path = resolveConfigPath();
   if (!existsSync(path)) {
     fail(
-      `${path} not found. Copy configExample.ts to ${xdgConfigPath("groundcrew", "config.ts")} (or set GROUNDCREW_CONFIG to a different path) and edit it.`,
+      `${path} not found. Copy configExample.jsonc to ${xdgConfigPath("groundcrew", "config.jsonc")} (or set GROUNDCREW_CONFIG to a different path) and edit it.`,
     );
   }
   log(`Loaded config from ${path}`);
 
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- user config is TS-typed against Config; runtime fields are validated below
-  const module_ = (await import(pathToFileURL(path).href)) as { config?: Config };
-  const { config: userConfig } = module_;
-  if (!userConfig) {
-    fail(
-      `${path} must export a named "config" object (e.g. \`export const config: Config = { ... }\`)`,
-    );
+  const source = readFileSync(path, "utf8");
+  const errors: ParseError[] = [];
+  const raw: unknown = parseJsonc(source, errors, { allowTrailingComma: true });
+  if (errors.length > 0) {
+    describeJsoncErrors(path, errors);
+  }
+  if (!isPlainObject(raw)) {
+    fail(`${path} must contain a JSON object at the top level`);
   }
 
-  const resolved = applyDefaults(userConfig);
+  preValidateLegacyKeys(raw);
+  preValidateDisabledFlag(raw);
 
+  const parsed = ConfigSchema.safeParse(raw);
+  if (!parsed.success) {
+    failFromZod(parsed.error);
+  }
+
+  const resolved = applyDefaults(parsed.data);
   validate(resolved);
 
   setLogFile(resolved.logging.file);

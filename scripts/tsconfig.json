@@ -1,11 +1,13 @@
 {
   "extends": "../tsconfig.base.json",
   "compilerOptions": {
+    "allowImportingTsExtensions": true,
     "composite": true,
     "emitDeclarationOnly": true,
     "noEmit": false,
     "outDir": "../dist/scripts",
     "types": ["node"]
   },
-  "include": ["./**/*.ts", "./**/*.mts"]
+  "include": ["./**/*.ts", "./**/*.mts", "../src/lib/**/*.ts"],
+  "exclude": ["../src/lib/**/*.test.ts"]
 }

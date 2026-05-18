@@ -19,16 +19,16 @@ This installs the `crew` binary. `@clipboard-health/clearance` is pulled in tran
 
 2. **Create a Linear project to scope your work.** Any team works — make a project inside it and drop tickets in. The orchestrator polls by project, not by team, so you don't need a dedicated team.
 
-3. **Create your config.** Copy the shipped example into the XDG config path and edit it:
+3. **Create your config.** Copy the shipped example into the XDG config path and edit it. groundcrew reads the config as JSONC — JSON with comments and trailing commas — so it stays editable by both humans and the CLI:
 
    ```bash
    mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew"
-   cp "$(npm root -g)/@clipboard-health/groundcrew/configExample.ts" \
-      "${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/config.ts"
-   $EDITOR "${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/config.ts"
+   cp "$(npm root -g)/@clipboard-health/groundcrew/configExample.jsonc" \
+      "${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/config.jsonc"
+   $EDITOR "${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/config.jsonc"
    ```
 
-   At minimum set `linear.projectSlug` (paste the trailing segment of your Linear project URL, e.g. `ai-strategy-5152195762f3`), `workspace.projectDir`, and `workspace.knownRepositories`. Everything else has a default.
+   At minimum set `linear.projectSlug` (paste the trailing segment of your Linear project URL, e.g. `ai-strategy-5152195762f3`), `workspace.projectDir`, and `workspace.knownRepositories`. Everything else has a default. The config is validated with [zod](https://zod.dev/) on every run, so typos and stale keys fail loudly at startup with a path-prefixed error.
 
    Create `workspace.projectDir` if it does not exist, and clone each repo in `workspace.knownRepositories` into `<projectDir>/<repo>` before the first `crew run`. Groundcrew creates per-ticket worktrees from these clones; it does not auto-clone. Use the literal `knownRepositories` string as the path under `projectDir` — `"owner/repo"` lives at `<projectDir>/owner/repo`, bare `"repo"` lives at `<projectDir>/repo`.
 
@@ -47,7 +47,20 @@ This installs the `crew` binary. `@clipboard-health/clearance` is pulled in tran
 
    `crew setup repos` is idempotent — already-cloned repos are reported `[exists]` and untouched. Bare-name entries (no `owner/`) are skipped with an instruction to clone manually, since groundcrew can't safely guess the org. The command fails fast with an install hint when `gh` is not on `PATH`.
 
-   `crew` resolves the config path as: `GROUNDCREW_CONFIG` if set → `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/config.ts` if it exists → a `config.ts` sitting next to `crew`'s own source files (only useful from a local checkout; see [Hacking on groundcrew](#hacking-on-groundcrew)). Set `GROUNDCREW_CONFIG` only when you want to override the XDG location.
+   `crew` resolves the config path as: `GROUNDCREW_CONFIG` if set → `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/config.jsonc` if it exists → a `config.jsonc` sitting next to `crew`'s own source files (only useful from a local checkout; see [Hacking on groundcrew](#hacking-on-groundcrew)). Set `GROUNDCREW_CONFIG` only when you want to override the XDG location.
+
+   A `config.ts` left over from earlier groundcrew versions is no longer loaded. If one is found at the XDG path the CLI fails fast and asks you to rename it to `config.jsonc`.
+
+   To migrate without losing comments, run the bundled converter — it strips the TypeScript wrapper, quotes bare keys, rewrites single-quoted strings and numeric separators, and preserves every comment and trailing comma in place:
+
+   ```bash
+   CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew"
+   node "$(npm root -g)/@clipboard-health/groundcrew/scripts/migrateConfigToJsonc.mts" \
+     "$CONFIG_DIR/config.ts" "$CONFIG_DIR/config.jsonc"
+   crew doctor   # validates the new config against the zod schema
+   ```
+
+   Re-run with `MIGRATE_CONFIG_FORCE=1` if the destination already exists. The converter does not execute the file, so dynamic expressions (function calls, template strings, spreads) need a manual rewrite — everything else round-trips automatically.
 
 4. **Provide a Linear API key.** `crew` expects `LINEAR_API_KEY` in its environment. Any mechanism works — shell export, [direnv](https://direnv.net/), a `.env` file you `source`, or piping through `op run` if you store the credential in 1Password:
 
@@ -124,11 +137,11 @@ This installs the `crew` binary. `@clipboard-health/clearance` is pulled in tran
 
 ## Config reference
 
-Required fields are marked **required**; everything else has a default and can be omitted from `config.ts`.
+Required fields are marked **required**; everything else has a default and can be omitted from `config.jsonc`.
 
 | Key                                     | Default                               | What it does                                                                                                                                                                                                                                                                              |
 | --------------------------------------- | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `linear.projectSlug`                    | **required**                          | Linear project URL slug (e.g. `ai-strategy-5152195762f3`). The trailing 12-char hex `slugId` is what's matched against Linear's API; the leading name keeps `config.ts` self-documenting and the lookup survives project renames.                                                         |
+| `linear.projectSlug`                    | **required**                          | Linear project URL slug (e.g. `ai-strategy-5152195762f3`). The trailing 12-char hex `slugId` is what's matched against Linear's API; the leading name keeps `config.jsonc` self-documenting and the lookup survives project renames.                                                      |
 | `linear.statuses.todo`                  | `"Todo"`                              | Status name picked up for new work.                                                                                                                                                                                                                                                       |
 | `linear.statuses.inProgress`            | `"In Progress"`                       | Status set after a workspace is provisioned; counts toward `maximumInProgress`.                                                                                                                                                                                                           |
 | `linear.statuses.done`                  | `"Done"`                              | Status that triggers worktree cleanup.                                                                                                                                                                                                                                                    |
@@ -162,17 +175,17 @@ The branch prefix (`<prefix>-<TICKET>`) is derived from your OS username (`os.us
 
 Groundcrew ships `claude` and `codex` as default model definitions, additively merged into every resolved config. If you only ever route work through one of them, set `disabled: true` on the other so doctor stops probing for the unused CLI:
 
-```ts
-// config.ts
-export const config = {
+```jsonc
+// config.jsonc
+{
   // …
-  models: {
-    default: "claude",
-    definitions: {
-      codex: { disabled: true },
+  "models": {
+    "default": "claude",
+    "definitions": {
+      "codex": { "disabled": true },
     },
   },
-};
+}
 ```
 
 Effects:
@@ -227,7 +240,7 @@ crew cleanup <TICKET>
 
 ## Hacking on groundcrew
 
-For developers working on the package itself, clone this repo, run `npm install`, and the repo's `crew` / `crew:op` scripts execute groundcrew straight from TypeScript source — no build step. Package dependencies, including `@clipboard-health/clearance`, resolve through normal npm package exports.
+For developers working on the package itself, clone this repo, run `npm install`, and the repo's `crew` / `crew:op` scripts execute groundcrew straight from TypeScript source — no build step. Package dependencies, including `@clipboard-health/clearance`, resolve through normal npm package exports. The user-facing config format is JSONC; the schema is enforced with zod in `src/lib/config.ts`.
 
 ```bash
 cd ~/dev/c/groundcrew
@@ -237,7 +250,7 @@ node --run crew -- doctor
 node --run crew:op -- run --watch
 ```
 
-Both forms read `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/config.ts` by default; set `GROUNDCREW_CONFIG` to point elsewhere. The `crew:op` wrapper additionally reads `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/op.env` (1Password env-file with `op://` references resolved at launch) — symlink it there if you keep yours elsewhere; the path is not configurable.
+Both forms read `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/config.jsonc` by default; set `GROUNDCREW_CONFIG` to point elsewhere. The `crew:op` wrapper additionally reads `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/op.env` (1Password env-file with `op://` references resolved at launch) — symlink it there if you keep yours elsewhere; the path is not configurable.
 
 Logs land in `${XDG_STATE_HOME:-$HOME/.local/state}/groundcrew/groundcrew.log` by default (override via `logging.file` in your config). The "Loaded config from …" line at startup tells you which config won.
 

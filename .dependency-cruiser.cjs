@@ -16,7 +16,6 @@ module.exports = {
           String.raw`/bin/.*\.js$`,
           String.raw`\.test\.ts$`,
           String.raw`\.spec\.ts$`,
-          String.raw`configExample\.ts$`,
           String.raw`vitest\.config\.ts$`,
         ],
       },

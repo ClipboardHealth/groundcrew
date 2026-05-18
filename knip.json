@@ -1,6 +1,6 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
-  "entry": ["bin/*.js", "configExample.ts", "src/index.ts", "src/main.ts", "vitest.shared.ts"],
+  "entry": ["bin/*.js", "src/index.ts", "src/main.ts", "vitest.shared.ts"],
   "ignoreBinaries": ["op"],
   "ignoreDependencies": ["@nx/js"]
 }
