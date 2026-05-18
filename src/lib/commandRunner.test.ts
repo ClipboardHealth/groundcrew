@@ -7,7 +7,6 @@ const spawnMock = vi.hoisted(() =>
   vi.fn<(command: string, arguments_: readonly string[], options: unknown) => FakeChildProcess>(),
 );
 
-// oxlint-disable-next-line jest/no-untyped-mock-factory -- this is a partial Node builtin mock.
 vi.mock("node:child_process", () => ({
   execFileSync: vi.fn<typeof execFileSync>(),
   spawn: spawnMock,

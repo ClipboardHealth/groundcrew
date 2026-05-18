@@ -12,7 +12,6 @@ import { deleteEnvironmentVariable, setEnvironmentVariable } from "../testHelper
 import { emptyTeardownResult } from "../testHelpers/teardownResult.ts";
 import { setupWorkspace, setupWorkspaceCli } from "./setupWorkspace.ts";
 
-// oxlint-disable-next-line jest/no-untyped-mock-factory -- typed dynamic imports conflict with Node builtin module typings
 vi.mock("node:fs", () => ({
   existsSync: vi.fn<typeof existsSync>().mockReturnValue(true),
   mkdtempSync: vi.fn<typeof mkdtempSync>(),

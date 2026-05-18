@@ -39,7 +39,6 @@ vi.mock(import("./workspaces.ts"), async (importOriginal) => {
     },
   };
 });
-// oxlint-disable-next-line jest/no-untyped-mock-factory -- typed dynamic imports conflict with Node builtin module typings
 vi.mock("node:os", async (importOriginal) => {
   const actual = await importOriginal<typeof nodeOs>();
   return { ...actual, userInfo: vi.fn<typeof actual.userInfo>(actual.userInfo) };

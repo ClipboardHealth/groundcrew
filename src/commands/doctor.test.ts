@@ -8,7 +8,6 @@ import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCa
 import { deleteEnvironmentVariable, setEnvironmentVariable } from "../testHelpers/env.ts";
 import { doctor } from "./doctor.ts";
 
-// oxlint-disable-next-line jest/no-untyped-mock-factory -- typed dynamic imports conflict with Node builtin module typings
 vi.mock("node:fs", () => ({
   existsSync: vi.fn<typeof existsSync>(),
   statSync: vi.fn<typeof statSync>(),
