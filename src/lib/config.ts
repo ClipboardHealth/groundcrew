@@ -289,7 +289,7 @@ function defaultLogFile(): string {
   return xdgStatePath("groundcrew", "groundcrew.log");
 }
 
-function resolveConfigPath(): string {
+export function resolveConfigPath(): string {
   const override = readEnvironmentVariable("GROUNDCREW_CONFIG");
   if (override !== undefined && override.length > 0) {
     return resolve(override);

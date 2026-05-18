@@ -47,6 +47,15 @@ This installs the `crew` binary. `@clipboard-health/clearance` is pulled in tran
 
    `crew setup repos` is idempotent — already-cloned repos are reported `[exists]` and untouched. Bare-name entries (no `owner/`) are skipped with an instruction to clone manually, since groundcrew can't safely guess the org. The command fails fast with an install hint when `gh` is not on `PATH`.
 
+   Or let `crew` discover them for you:
+
+   ```bash
+   crew setup discover-repos your-org           # add every active repo to knownRepositories
+   crew setup discover-repos --dry-run your-org # preview without writing
+   ```
+
+   `discover-repos` adds entries shaped `your-org/<repo>` to `workspace.knownRepositories` in your `config.ts`, skipping archived/fork/disabled repos. Pair with `crew setup repos` to actually clone them.
+
    `crew` resolves the config path as: `GROUNDCREW_CONFIG` if set → `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/config.ts` if it exists → a `config.ts` sitting next to `crew`'s own source files (only useful from a local checkout; see [Hacking on groundcrew](#hacking-on-groundcrew)). Set `GROUNDCREW_CONFIG` only when you want to override the XDG location.
 
 4. **Provide a Linear API key.** `crew` expects `LINEAR_API_KEY` in its environment. Any mechanism works — shell export, [direnv](https://direnv.net/), a `.env` file you `source`, or piping through `op run` if you store the credential in 1Password:
@@ -198,6 +207,7 @@ crew remote ps crew-claude-1
 crew remote interrupt <process-group-id> --runner crew-claude-1
 crew run --ticket <TICKET>
 crew setup repos [--dry-run] [<repo>...]
+crew setup discover-repos [--dry-run] <org>
 crew cleanup <TICKET>
 ```
 
@@ -222,6 +232,7 @@ crew cleanup <TICKET>
 - **Doctor checks every enabled model, including shipped defaults you didn't disable.** `models.definitions` includes both shipped defaults (`claude`, `codex`) by default via additive merge. If you only intend to label tickets `agent-claude` and don't have `codex` installed, set `models.definitions.codex: { disabled: true }` (see "Disabling a shipped default" under "Config reference"). Without that, doctor exits non-zero on a missing `codex` binary even though `crew run` would never route to it.
 - **Switch to tmux if cmux is misbehaving.** Set `workspaceKind: "tmux"` to force the tmux backend when cmux's CLI/socket bridge is flaky (symptoms: `cmux --json list-workspaces` returning `Failed to write to socket (Broken pipe)` or `Socket not found at ...cmux.sock` on every tick). tmux is more reliable — just a unix socket, no GUI app — at the cost of losing cmux's status pills, notifications, and vertical-tab sidebar.
 - **Agent CLI must accept a positional prompt.** The handoff is `<your cmd> "<prompt>"`. `claude`, `codex`, and `cursor-agent` all support this.
+- **`crew setup discover-repos` rewrites your `config.ts`.** It edits the `knownRepositories` array literal in-place; back up the file or use `--dry-run` first if your config has unusual structure. The writer aborts cleanly if the literal isn't a single, simple `knownRepositories: [...]` declaration.
 - **`crew setup repos` only auto-clones `owner/repo` entries.** Bare-name entries in `workspace.knownRepositories` (e.g. `"api"` rather than `"clipboardhealth/api"`) are skipped with a hint to clone manually — the command refuses to guess the owner. After a partial setup, the exit code is non-zero so CI gates notice; rerun is idempotent once you clone the bare ones into `<projectDir>/<name>` yourself. Adding a new repo to `knownRepositories` later? Just rerun `crew setup repos`; already-present entries report `[exists]` and are untouched.
 
 ## Hacking on groundcrew

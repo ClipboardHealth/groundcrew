@@ -1,6 +1,7 @@
 import { createRequire } from "node:module";
 
 import { cleanupWorkspaceCli } from "./commands/cleanupWorkspace.ts";
+import { discoverReposCli } from "./commands/discoverRepos.ts";
 import { doctor } from "./commands/doctor.ts";
 import { orchestrate } from "./commands/orchestrator.ts";
 import { remoteCli } from "./commands/remoteSetup.ts";
@@ -21,13 +22,21 @@ interface Subcommand {
 const requireFromCli = createRequire(import.meta.url);
 
 function setupUsage(): string {
-  return "Usage: crew setup repos [--dry-run] [<repo>...]";
+  return [
+    "Usage:",
+    "  crew setup repos [--dry-run] [<repo>...]",
+    "  crew setup discover-repos [--dry-run] <org>",
+  ].join("\n");
 }
 
 async function setupCli(argv: string[]): Promise<void> {
   const [verb, ...rest] = argv;
   if (verb === "repos") {
     await setupReposCli(rest);
+    return;
+  }
+  if (verb === "discover-repos") {
+    await discoverReposCli(rest);
     return;
   }
   throw new Error(setupUsage());
@@ -92,8 +101,10 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
     invoke: cleanupWorkspaceCli,
   },
   setup: {
-    summary: "Project-level setup commands (currently: repos)",
-    usage: "repos [--dry-run] [<repo>...]",
+    summary: "Project-level setup commands (repos, discover-repos)",
+    usage:
+      "repos [--dry-run] [<repo>...]\n" +
+      "           → crew setup discover-repos [--dry-run] <org>",
     invoke: setupCli,
   },
   remote: {

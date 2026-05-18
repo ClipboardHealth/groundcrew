@@ -34,6 +34,7 @@
     "maxtimeout",
     "Metabase",
     "mintimeout",
+    "myorg",
     "noproxy",
     "nrwl",
     "npmjs",
@@ -59,6 +60,7 @@
     "unstub",
     "vitest",
     "worktree",
-    "worktrees"
+    "worktrees",
+    "writeback"
   ]
 }
