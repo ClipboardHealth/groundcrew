@@ -1,6 +1,6 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import type { RunCommandOptions } from "../lib/commandRunner.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
@@ -111,6 +111,21 @@ describe(setupRepos, () => {
     );
     expect(result.cloned).toStrictEqual(["owner/repo"]);
     expect(result.existing).toStrictEqual([]);
+    expect(result.failed).toStrictEqual([]);
+  });
+
+  it("creates the owner parent directory before cloning into an owner/repo target", async () => {
+    runCommandMock.mockImplementationOnce((_command, arguments_) => {
+      const { 3: target = "" } = arguments_;
+      expect(target).toBe(join(projectDir, "owner/repo"));
+      expect(existsSync(dirname(target))).toBe(true);
+      return "";
+    });
+    const config = makeConfig({ projectDir, knownRepositories: ["owner/repo"] });
+
+    const result = await setupRepos(config, {});
+
+    expect(result.cloned).toStrictEqual(["owner/repo"]);
     expect(result.failed).toStrictEqual([]);
   });
 

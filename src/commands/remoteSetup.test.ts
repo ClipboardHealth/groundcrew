@@ -24,7 +24,6 @@ const loadConfigMock = vi.hoisted(() => vi.fn<() => Promise<Readonly<ResolvedCon
 const connectMock = vi.hoisted(() => vi.fn<ConnectMock>());
 const CLAUDE_SUBSCRIPTION_LOGIN_FLAG = ["--claude", "ai"].join("");
 
-// oxlint-disable-next-line jest/no-untyped-mock-factory -- typed dynamic imports conflict with Node builtin module typings.
 vi.mock("node:net", () => ({ connect: connectMock }));
 
 vi.mock(import("../lib/commandRunner.ts"), async (importOriginal) => {

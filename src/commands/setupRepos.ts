@@ -6,8 +6,8 @@
  * we can guess at without involving the user's gh login. Idempotent.
  */
 
-import { opendirSync, statSync } from "node:fs";
-import { isAbsolute, relative, resolve } from "node:path";
+import { mkdirSync, opendirSync, statSync } from "node:fs";
+import { dirname, isAbsolute, relative, resolve } from "node:path";
 
 import { runCommandAsync } from "../lib/commandRunner.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
@@ -249,6 +249,7 @@ export async function setupRepos(
     const target = resolve(projectDir, entry);
     log(`[clone] ${entry} → ${target}`);
     try {
+      mkdirSync(dirname(target), { recursive: true });
       // oxlint-disable-next-line no-await-in-loop -- see comment above
       await runCommandAsync("gh", ["repo", "clone", entry, target], {
         stdio: "inherit",
