@@ -97,6 +97,8 @@ const DEFAULT_CHECKPOINT_COMMENT =
   "groundcrew remote runner baseline: selected agent auth, git identity, and MCP config";
 const CLAUDE_SUBSCRIPTION_LOGIN_FLAG = ["--claude", "ai"].join("");
 const DEFAULT_GIT_REMOTE = "origin";
+const BOOTSTRAP_SECRET_FLAGS_CONFLICT_MESSAGE =
+  "--secret and --no-secrets are mutually exclusive. Use --secret to forward selected build secrets or --no-secrets to disable secret forwarding.";
 const DATADOG_PUP_VERSION = "0.63.0";
 const DATADOG_OAUTH_CALLBACK_PORT = 8000;
 const DATADOG_AUTH_STATUS_RETRY_ATTEMPTS = 5;
@@ -361,6 +363,9 @@ function parseBootstrapArguments(argv: readonly string[]): ParsedRemoteBootstrap
       continue;
     }
     if (argument === "--secret") {
+      if (!shouldUseSecrets) {
+        throw new Error(BOOTSTRAP_SECRET_FLAGS_CONFLICT_MESSAGE);
+      }
       const secretName = requireValue(argv, index, "--secret");
       validateSecretName(secretName);
       selectedSecretNames.push(secretName);
@@ -369,6 +374,9 @@ function parseBootstrapArguments(argv: readonly string[]): ParsedRemoteBootstrap
       continue;
     }
     if (argument === "--no-secrets") {
+      if (selectedSecretNames.length > 0 || shouldRequireSelectedSecrets) {
+        throw new Error(BOOTSTRAP_SECRET_FLAGS_CONFLICT_MESSAGE);
+      }
       shouldUseSecrets = false;
       continue;
     }

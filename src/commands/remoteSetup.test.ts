@@ -1064,6 +1064,26 @@ describe(bootstrapRemoteRepository, () => {
       remoteCli(["bootstrap", "crew-claude-1", "core-utils", "--secret", "bad-secret"]),
     ).rejects.toThrow(/Invalid secret name/);
     await expect(
+      remoteCli([
+        "bootstrap",
+        "crew-claude-1",
+        "core-utils",
+        "--secret",
+        "NPM_TOKEN",
+        "--no-secrets",
+      ]),
+    ).rejects.toThrow(/--secret and --no-secrets are mutually exclusive/);
+    await expect(
+      remoteCli([
+        "bootstrap",
+        "crew-claude-1",
+        "core-utils",
+        "--no-secrets",
+        "--secret",
+        "NPM_TOKEN",
+      ]),
+    ).rejects.toThrow(/--secret and --no-secrets are mutually exclusive/);
+    await expect(
       remoteCli(["bootstrap", "crew-claude-1", "core-utils", "--bogus"]),
     ).rejects.toThrow(/Unknown remote bootstrap argument/);
   });
