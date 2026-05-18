@@ -1,0 +1,177 @@
+name: Setup Node environment
+description: |
+  Set up Node.js and install dependencies.
+  Mirrors ClipboardHealth/action-build-nodejs@v4 for use in public repos
+  that cannot reference internal GitHub Actions.
+
+  - Validates repo configuration;
+  - Sets up Node.js from .nvmrc;
+  - Aligns npm version with engines.npm;
+  - Caches ~/.npm (download cache);
+  - Runs `npm ci` for deterministic installs.
+
+inputs:
+  npm_token:
+    description: The `NPM_TOKEN` to download CBH private NPM packages.
+    required: true
+  start_services:
+    description: Start repo services with Docker Compose before running `npm ci`.
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - uses: nrwl/nx-set-shas@afb73a62d26e41464e9254689e1fd6122ee683c1 # v5.0.1
+
+    - name: Validate repo configuration files
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        if [ ! -f .nvmrc ]; then
+          echo "Expected a repo-root .nvmrc, but none was found." >&2
+          exit 1
+        fi
+
+        if [ ! -f package.json ]; then
+          echo "Expected a repo-root package.json, but none was found." >&2
+          exit 1
+        fi
+
+        if [ ! -f .npmrc ]; then
+          echo "Expected a repo-root .npmrc, but none was found." >&2
+          exit 1
+        fi
+
+        if ! grep -q '^engine-strict=true$' .npmrc; then
+          echo "Expected .npmrc to contain 'engine-strict=true', but it was not found." >&2
+          exit 1
+        fi
+
+        if [ ! -f package-lock.json ]; then
+          echo "Expected a repo-root package-lock.json for 'npm ci', but none was found." >&2
+          exit 1
+        fi
+
+    - name: Setup Node
+      uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+      with:
+        node-version-file: .nvmrc
+        check-latest: true
+        package-manager-cache: false
+      env:
+        NPM_TOKEN: ${{ inputs.npm_token }}
+
+    - name: Validate engines field
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        engines_node="$(node -p "const fs=require('fs'); const pkg=JSON.parse(fs.readFileSync('package.json','utf8')); typeof pkg.engines?.node === 'string' ? pkg.engines.node : ''")"
+        engines_npm="$(node -p "const fs=require('fs'); const pkg=JSON.parse(fs.readFileSync('package.json','utf8')); typeof pkg.engines?.npm === 'string' ? pkg.engines.npm : ''")"
+
+        if [ -z "$engines_node" ]; then
+          echo "Expected package.json to contain engines.node, but none was found." >&2
+          exit 1
+        fi
+
+        if ! [[ "$engines_node" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          echo "engines.node must be an exact version (e.g., '24.12.0'), not a range: $engines_node" >&2
+          exit 1
+        fi
+
+        if [ -z "$engines_npm" ]; then
+          echo "Expected package.json to contain engines.npm, but none was found." >&2
+          exit 1
+        fi
+
+        if ! [[ "$engines_npm" =~ ^(~)?[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          echo "engines.npm must be an exact version or a patch range (e.g., '11.6.2' or '~11.11.0'): $engines_npm" >&2
+          exit 1
+        fi
+
+    - name: Align npm version with engines.npm
+      shell: bash
+      env:
+        NPM_TOKEN: ${{ inputs.npm_token }}
+      run: |
+        set -euo pipefail
+
+        npm_satisfies_spec() {
+          local current="$1"
+          local spec="$2"
+
+          if [[ "$spec" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            [[ "$current" == "$spec" ]]
+            return
+          fi
+
+          if [[ "$spec" =~ ^~([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            local spec_major="${BASH_REMATCH[1]}"
+            local spec_minor="${BASH_REMATCH[2]}"
+            local spec_patch="${BASH_REMATCH[3]}"
+
+            if ! [[ "$current" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+              return 1
+            fi
+
+            local current_major="${BASH_REMATCH[1]}"
+            local current_minor="${BASH_REMATCH[2]}"
+            local current_patch="${BASH_REMATCH[3]}"
+
+            [[ "$current_major" -eq "$spec_major" ]] &&
+              [[ "$current_minor" -eq "$spec_minor" ]] &&
+              [[ "$current_patch" -ge "$spec_patch" ]]
+            return
+          fi
+
+          return 1
+        }
+
+        engines_npm="$(node -p "JSON.parse(require('fs').readFileSync('package.json','utf8')).engines.npm")"
+        current_npm="$(npm --version)"
+
+        if ! npm_satisfies_spec "$current_npm" "$engines_npm"; then
+          echo "npm $current_npm does not satisfy engines.npm $engines_npm, installing..."
+          npm install -g "npm@$engines_npm"
+        fi
+
+        current_npm="$(npm --version)"
+
+        if ! npm_satisfies_spec "$current_npm" "$engines_npm"; then
+          echo "npm $current_npm still does not satisfy engines.npm $engines_npm after installation." >&2
+          exit 1
+        fi
+
+    - name: Restore ~/.npm cache
+      uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+      id: npm-cache
+      with:
+        path: ~/.npm
+        key: ${{ runner.os }}-npm-${{ hashFiles('.nvmrc') }}-${{ hashFiles('**/package-lock.json') }}
+        restore-keys: |
+          ${{ runner.os }}-npm-${{ hashFiles('.nvmrc') }}-
+
+    - name: Start services and install dependencies
+      shell: bash
+      env:
+        NPM_TOKEN: ${{ inputs.npm_token }}
+        START_SERVICES: ${{ inputs.start_services }}
+      run: |
+        set -euo pipefail
+        if [ "$START_SERVICES" = 'true' ]; then
+          docker compose up -d --wait --wait-timeout 120 &
+          DOCKER_PID=$!
+        fi
+        npm ci --audit false --fund false
+        if [ "$START_SERVICES" = 'true' ]; then
+          wait "$DOCKER_PID"
+        fi
+
+    - name: Save ~/.npm cache
+      if: steps.npm-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+      with:
+        path: ~/.npm
+        key: ${{ steps.npm-cache.outputs.cache-primary-key }}

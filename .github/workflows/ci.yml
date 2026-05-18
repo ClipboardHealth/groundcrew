@@ -25,7 +25,7 @@ jobs:
           filter: tree:0
           fetch-depth: 0
 
-      - uses: ClipboardHealth/action-build-nodejs@v4
+      - uses: ./.github/actions/setup-node
         with:
           npm_token: ${{ secrets.NPM_TOKEN }}
 
@@ -52,7 +52,7 @@ jobs:
           fetch-depth: 0
           token: ${{ steps.token.outputs.token }}
 
-      - uses: ClipboardHealth/action-build-nodejs@v4
+      - uses: ./.github/actions/setup-node
         with:
           npm_token: ${{ secrets.NPM_TOKEN }}
 
