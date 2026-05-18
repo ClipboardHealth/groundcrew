@@ -366,6 +366,26 @@ describe(setupWorkspace, () => {
     expect(launchScript).toContain("sprite exec --tty");
   });
 
+  it("keeps the local cmux command short by staging the full launcher in a local script", async () => {
+    const config = makeConfig();
+    mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
+
+    await setupWorkspace(config, {
+      ticket: "team-1",
+      repository: "repo-a",
+      model: "claude",
+    });
+
+    const command = lastRunArgumentFromCallWithArgument("new-workspace");
+    const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
+
+    expect(command).toBe("bash '/tmp/groundcrew-team-1-x/launch.sh'");
+    expect(command).not.toContain("safehouse-clearance");
+    expect(command).not.toContain("prompt.txt");
+    expect(launchScript).toContain("safehouse-clearance");
+    expect(launchScript).toContain("_p=$(cat '/tmp/groundcrew-team-1-x/prompt.txt')");
+  });
+
   it("uses configured remote build-secret names without exposing values in the final command", async () => {
     setEnvironmentVariable("NPM_TOKEN", "npm_test_token");
     setEnvironmentVariable("BUF_TOKEN", "buf_test_token");
@@ -500,15 +520,17 @@ describe(setupWorkspace, () => {
       firstInvocationOrder(createMock),
     );
     const command = lastRunArgumentFromCallWithArgument("new-workspace");
-    expect(command).toContain("cd '/work/repo-a-team-1'");
-    expect(command).toContain("./.claude/setup.sh --deps-only");
-    expect(command).toContain("exec '/");
-    expect(command).toContain(
+    const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
+    expect(command).toBe("bash '/tmp/groundcrew-team-1-x/launch.sh'");
+    expect(launchScript).toContain("cd '/work/repo-a-team-1'");
+    expect(launchScript).toContain("./.claude/setup.sh --deps-only");
+    expect(launchScript).toContain("exec '/");
+    expect(launchScript).toContain(
       "/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance' claude",
     );
-    expect(command).toContain('claude --permission-mode auto "$_p"');
+    expect(launchScript).toContain('claude --permission-mode auto "$_p"');
     // setup-status guard so a failed install still launches the agent
-    expect(command).toContain('"$setup_status" -ne 0');
+    expect(launchScript).toContain('"$setup_status" -ne 0');
   });
 
   it("does not create a worktree when the safehouse clearance cannot start", async () => {
@@ -552,8 +574,10 @@ describe(setupWorkspace, () => {
     await setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" });
 
     const command = lastRunArgumentFromCallWithArgument("new-workspace");
-    expect(command).toContain('exec safehouse claude --permission-mode auto "$_p"');
-    expect(command).not.toContain("safehouse safehouse");
+    const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
+    expect(command).toBe("bash '/tmp/groundcrew-team-1-x/launch.sh'");
+    expect(launchScript).toContain('exec safehouse claude --permission-mode auto "$_p"');
+    expect(launchScript).not.toContain("safehouse safehouse");
   });
 
   describe("build-time secret shuttling", () => {
@@ -579,8 +603,10 @@ describe(setupWorkspace, () => {
         { mode: 0o600 },
       );
       const command = lastRunArgumentFromCallWithArgument("new-workspace");
-      expect(command).toContain(". '/tmp/groundcrew-team-1-x/secrets.env'");
-      expect(command).toContain("unset NPM_TOKEN BUF_TOKEN");
+      const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
+      expect(command).toBe("bash '/tmp/groundcrew-team-1-x/launch.sh'");
+      expect(launchScript).toContain(". '/tmp/groundcrew-team-1-x/secrets.env'");
+      expect(launchScript).toContain("unset NPM_TOKEN BUF_TOKEN");
     });
 
     it("escapes single quotes in secret values so the file is sourceable", async () => {
@@ -636,8 +662,11 @@ describe(setupWorkspace, () => {
         expect.anything(),
       );
       const command = lastRunArgumentFromCallWithArgument("new-workspace");
+      const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
       expect(command).not.toContain("secrets.env");
       expect(command).not.toContain("unset NPM_TOKEN");
+      expect(launchScript).not.toContain("secrets.env");
+      expect(launchScript).not.toContain("unset NPM_TOKEN");
     });
   });
 
@@ -927,7 +956,7 @@ describe(setupWorkspace, () => {
     expect(writeCall?.[1]).not.toContain("undefined");
   });
 
-  it("escapes single quotes in the prompt path inside the launch command", async () => {
+  it("escapes single quotes in the launch script path and prompt path", async () => {
     mkdtempMock.mockReturnValue("/tmp/with'quote-1");
     mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:1" }));
 
@@ -938,7 +967,9 @@ describe(setupWorkspace, () => {
     });
 
     const cmd = lastRunArgumentFromCallWithArgument("new-workspace");
+    const launchScript = writtenFileContent("/tmp/with'quote-1/launch.sh");
     expect(cmd).toContain(String.raw`'\''`);
+    expect(launchScript).toContain(String.raw`_p=$(cat '/tmp/with'\''quote-1/prompt.txt')`);
   });
 });
 

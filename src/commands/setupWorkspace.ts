@@ -99,6 +99,10 @@ function stageLaunchScript(promptDir: string, command: string): string {
   return launcherFile;
 }
 
+function stageWorkspaceLaunchCommand(promptDir: string, command: string): string {
+  return `bash ${shellSingleQuote(stageLaunchScript(promptDir, command))}`;
+}
+
 function stagePrompt(input: {
   config: ResolvedConfig;
   ticket: string;
@@ -174,12 +178,13 @@ export async function setupWorkspace(
 
     const secretsFile = stageBuildSecrets(promptDir);
 
-    const launchCmd = buildLaunchCommand({
+    const launchCommand = buildLaunchCommand({
       definition,
       promptFile: stagedPrompt.file,
       worktreeDir: launchDir,
       secretsFile,
     });
+    const launchCmd = stageWorkspaceLaunchCommand(promptDir, launchCommand);
 
     log("Opening workspace...");
     await workspaces.open(
@@ -252,7 +257,7 @@ async function setupRemoteWorkspace(arguments_: {
       secretNames: config.remote.secretNames,
       ...(secretsFile === undefined ? {} : { secretsFile, remoteSecretsFile }),
     });
-    const launchCmd = `bash ${shellSingleQuote(stageLaunchScript(promptDir, remoteLaunchCommand))}`;
+    const launchCmd = stageWorkspaceLaunchCommand(promptDir, remoteLaunchCommand);
 
     log("Opening workspace...");
     await workspaces.open(
