@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -77,6 +77,12 @@ function makeConfig(overrides: {
 
 let projectDir: string;
 
+function makeGitRepositoryTarget(...segments: string[]): string {
+  const target = join(projectDir, ...segments);
+  mkdirSync(join(target, ".git"), { recursive: true });
+  return target;
+}
+
 describe(setupRepos, () => {
   let consoleLog: ConsoleCapture;
 
@@ -108,8 +114,8 @@ describe(setupRepos, () => {
     expect(result.failed).toStrictEqual([]);
   });
 
-  it("skips a repo whose target directory already exists", async () => {
-    mkdirSync(join(projectDir, "owner", "repo"), { recursive: true });
+  it("skips a repo whose target is already a git repository", async () => {
+    makeGitRepositoryTarget("owner", "repo");
     const config = makeConfig({ projectDir, knownRepositories: ["owner/repo"] });
 
     const result = await setupRepos(config, {});
@@ -119,8 +125,51 @@ describe(setupRepos, () => {
     expect(result.cloned).toStrictEqual([]);
   });
 
+  it("clones into an existing empty target directory", async () => {
+    mkdirSync(join(projectDir, "owner", "repo"), { recursive: true });
+    const config = makeConfig({ projectDir, knownRepositories: ["owner/repo"] });
+
+    const result = await setupRepos(config, {});
+
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "gh",
+      ["repo", "clone", "owner/repo", join(projectDir, "owner/repo")],
+      expect.anything(),
+    );
+    expect(result.cloned).toStrictEqual(["owner/repo"]);
+    expect(result.existing).toStrictEqual([]);
+  });
+
+  it("skips a non-git directory target instead of reporting it as existing", async () => {
+    mkdirSync(join(projectDir, "owner", "repo"), { recursive: true });
+    writeFileSync(join(projectDir, "owner", "repo", "README.md"), "not a clone");
+    const config = makeConfig({ projectDir, knownRepositories: ["owner/repo"] });
+
+    const result = await setupRepos(config, {});
+
+    expect(runCommandMock).not.toHaveBeenCalled();
+    expect(result.existing).toStrictEqual([]);
+    expect(result.skipped).toHaveLength(1);
+    expect(result.skipped[0]?.repo).toBe("owner/repo");
+    expect(result.skipped[0]?.kind).toBe("invalid-target");
+    expect(result.skipped[0]?.reason).toContain("not a git repository");
+  });
+
+  it("skips a file target instead of reporting it as existing", async () => {
+    mkdirSync(join(projectDir, "owner"), { recursive: true });
+    writeFileSync(join(projectDir, "owner", "repo"), "not a directory");
+    const config = makeConfig({ projectDir, knownRepositories: ["owner/repo"] });
+
+    const result = await setupRepos(config, {});
+
+    expect(runCommandMock).not.toHaveBeenCalled();
+    expect(result.skipped).toHaveLength(1);
+    expect(result.skipped[0]?.repo).toBe("owner/repo");
+    expect(result.skipped[0]?.kind).toBe("invalid-target");
+  });
+
   it("clones only the missing entries when some already exist", async () => {
-    mkdirSync(join(projectDir, "owner", "have"), { recursive: true });
+    makeGitRepositoryTarget("owner", "have");
     const config = makeConfig({
       projectDir,
       knownRepositories: ["owner/have", "owner/missing"],
@@ -200,8 +249,22 @@ describe(setupRepos, () => {
     expect(result.cloned).toStrictEqual(["owner/repo"]);
     expect(result.skipped).toHaveLength(1);
     expect(result.skipped[0]?.repo).toBe("bare");
+    expect(result.skipped[0]?.kind).toBe("bare-name");
     expect(result.skipped[0]?.reason).toContain("owner/");
     expect(consoleLog.output()).toContain("[skip] bare");
+  });
+
+  it("skips malformed owner/repo entries instead of passing them to gh", async () => {
+    const config = makeConfig({ projectDir, knownRepositories: ["owner/repo/extra"] });
+
+    const result = await setupRepos(config, {});
+
+    expect(runCommandMock).not.toHaveBeenCalled();
+    expect(result.cloned).toStrictEqual([]);
+    expect(result.skipped).toHaveLength(1);
+    expect(result.skipped[0]?.repo).toBe("owner/repo/extra");
+    expect(result.skipped[0]?.kind).toBe("invalid-repository");
+    expect(result.skipped[0]?.reason).toContain("owner/repo");
   });
 
   it("fails fast with an install hint when gh is not on PATH", async () => {
@@ -214,11 +277,12 @@ describe(setupRepos, () => {
     expect(runCommandMock).not.toHaveBeenCalled();
     expect(result.ghMissing).toBe(true);
     expect(result.cloned).toStrictEqual([]);
-    expect(consoleLog.output()).toMatch(/gh.*not found.*brew install gh/);
+    expect(result.skipped).toStrictEqual([]);
+    expect(consoleLog.output()).toMatch(/gh.*not found.*cli\.github\.com/);
   });
 
   it("does not probe for gh when there is nothing to clone", async () => {
-    mkdirSync(join(projectDir, "owner", "have"), { recursive: true });
+    makeGitRepositoryTarget("owner", "have");
     const config = makeConfig({ projectDir, knownRepositories: ["owner/have"] });
 
     await setupRepos(config, {});
@@ -337,7 +401,7 @@ describe(setupReposCli, () => {
   });
 
   it("sets process.exitCode = 1 when bare-name entries are skipped", async () => {
-    mkdirSync(join(projectDir, "owner", "repo"), { recursive: true });
+    makeGitRepositoryTarget("owner", "repo");
     loadConfigMock.mockResolvedValue(
       makeConfig({ projectDir, knownRepositories: ["owner/repo", "bare"] }),
     );
@@ -347,8 +411,17 @@ describe(setupReposCli, () => {
     expect(process.exitCode).toBe(1);
   });
 
-  it("leaves process.exitCode unset when every repo is already present", async () => {
+  it("sets process.exitCode = 1 when an existing target is invalid", async () => {
     mkdirSync(join(projectDir, "owner", "repo"), { recursive: true });
+    writeFileSync(join(projectDir, "owner", "repo", "README.md"), "not a clone");
+
+    await setupReposCli([]);
+
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("leaves process.exitCode unset when every repo is already present", async () => {
+    makeGitRepositoryTarget("owner", "repo");
 
     await setupReposCli([]);
 

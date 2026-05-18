@@ -6,7 +6,7 @@
  * we can guess at without involving the user's gh login. Idempotent.
  */
 
-import { existsSync } from "node:fs";
+import { opendirSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { runCommandAsync } from "../lib/commandRunner.ts";
@@ -25,6 +25,14 @@ export interface SetupReposOptions {
   only?: readonly string[];
 }
 
+export type SetupReposSkipKind = "bare-name" | "invalid-repository" | "invalid-target";
+
+export interface SetupReposSkip {
+  repo: string;
+  kind: SetupReposSkipKind;
+  reason: string;
+}
+
 export interface SetupReposResult {
   /** Entries already present under `projectDir`. */
   existing: string[];
@@ -32,8 +40,8 @@ export interface SetupReposResult {
   planned: string[];
   /** Entries successfully cloned this run. */
   cloned: string[];
-  /** Entries skipped with a reason (e.g. bare names, dry-run). */
-  skipped: { repo: string; reason: string }[];
+  /** Entries skipped with a reason (e.g. bare names, invalid targets). */
+  skipped: SetupReposSkip[];
   /** Entries that failed during clone. */
   failed: { repo: string; error: Error }[];
   /** True when `gh` is missing and at least one clone was needed. */
@@ -43,8 +51,11 @@ export interface SetupReposResult {
 interface ClonePlan {
   toClone: string[];
   existing: string[];
-  skipped: { repo: string; reason: string }[];
+  skipped: SetupReposSkip[];
 }
+
+type ExistingTargetPlan = "clone" | "existing" | "skip-invalid";
+type RepositoryEntryPlan = "clone" | "bare-name" | "invalid-repository";
 
 function emptyResult(): SetupReposResult {
   return {
@@ -74,11 +85,73 @@ function selectRepositories(
   return only;
 }
 
+function pathExists(path: string): boolean {
+  return statSync(path, { throwIfNoEntry: false }) !== undefined;
+}
+
+function isDirectoryEmpty(path: string): boolean {
+  const directory = opendirSync(path);
+  try {
+    return directory.readSync() === null;
+  } finally {
+    directory.closeSync();
+  }
+}
+
+function existingTargetPlan(target: string): ExistingTargetPlan {
+  const stats = statSync(target, { throwIfNoEntry: false });
+  if (stats === undefined) {
+    return "clone";
+  }
+  if (!stats.isDirectory()) {
+    return "skip-invalid";
+  }
+  if (pathExists(resolve(target, ".git"))) {
+    return "existing";
+  }
+  return isDirectoryEmpty(target) ? "clone" : "skip-invalid";
+}
+
+function repositoryEntryPlan(repo: string): RepositoryEntryPlan {
+  const parts = repo.split("/");
+  if (parts.length === 1) {
+    return "bare-name";
+  }
+  if (parts.length === 2 && parts.every((part) => part.length > 0)) {
+    return "clone";
+  }
+  return "invalid-repository";
+}
+
+function bareNameSkip(repo: string, target: string): SetupReposSkip {
+  return {
+    repo,
+    kind: "bare-name",
+    reason: `bare name needs owner/ prefix to auto-clone; clone manually into ${target}`,
+  };
+}
+
+function invalidTargetSkip(repo: string, target: string): SetupReposSkip {
+  return {
+    repo,
+    kind: "invalid-target",
+    reason: `target exists but is not a git repository or empty directory: ${target}`,
+  };
+}
+
+function invalidRepositorySkip(repo: string, target: string): SetupReposSkip {
+  return {
+    repo,
+    kind: "invalid-repository",
+    reason: `repository must be owner/repo to auto-clone; clone manually into ${target}`,
+  };
+}
+
 function planClones(config: ResolvedConfig, repositories: readonly string[]): ClonePlan {
   const projectDir = resolve(config.workspace.projectDir);
   const toClone: string[] = [];
   const existing: string[] = [];
-  const skipped: { repo: string; reason: string }[] = [];
+  const skipped: SetupReposSkip[] = [];
   const seen = new Set<string>();
 
   for (const entry of repositories) {
@@ -87,15 +160,22 @@ function planClones(config: ResolvedConfig, repositories: readonly string[]): Cl
     }
     seen.add(entry);
     const target = resolve(projectDir, entry);
-    if (existsSync(target)) {
+    const targetPlan = existingTargetPlan(target);
+    if (targetPlan === "existing") {
       existing.push(entry);
       continue;
     }
-    if (!entry.includes("/")) {
-      skipped.push({
-        repo: entry,
-        reason: `bare name needs owner/ prefix to auto-clone; clone manually into ${target}`,
-      });
+    if (targetPlan === "skip-invalid") {
+      skipped.push(invalidTargetSkip(entry, target));
+      continue;
+    }
+    const repositoryPlan = repositoryEntryPlan(entry);
+    if (repositoryPlan === "bare-name") {
+      skipped.push(bareNameSkip(entry, target));
+      continue;
+    }
+    if (repositoryPlan === "invalid-repository") {
+      skipped.push(invalidRepositorySkip(entry, target));
       continue;
     }
     toClone.push(entry);
@@ -137,11 +217,8 @@ export async function setupRepos(
   if (ghPath === undefined) {
     result.ghMissing = true;
     writeOutput(
-      "gh CLI not found — install with 'brew install gh' (or clone the missing repos manually).",
+      "gh CLI not found - install GitHub CLI from https://cli.github.com/ (or clone the missing repos manually).",
     );
-    for (const entry of plan.toClone) {
-      result.skipped.push({ repo: entry, reason: "gh CLI not installed" });
-    }
     return result;
   }
 
@@ -200,9 +277,8 @@ export async function setupReposCli(argv: string[]): Promise<void> {
     process.exitCode = 1;
     return;
   }
-  // Bare-name skips mean setup is incomplete — signal that to CI gates.
-  const bareSkips = result.skipped.filter(({ reason }) => reason.includes("bare name"));
-  if (bareSkips.length > 0) {
+  // Remaining skips mean setup is incomplete — signal that to CI gates.
+  if (result.skipped.length > 0) {
     process.exitCode = 1;
   }
 }
