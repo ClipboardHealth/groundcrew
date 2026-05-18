@@ -17,8 +17,11 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  renameSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { homedir, userInfo } from "node:os";
 import { dirname, resolve } from "node:path";
 
@@ -354,8 +357,20 @@ function readRemoteEntries(): RemoteStateEntry[] {
 
 function writeRemoteEntries(entries: readonly RemoteStateEntry[]): void {
   const path = remoteStateFilePath();
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify({ entries }, undefined, 2)}\n`);
+  const directory = dirname(path);
+  mkdirSync(directory, { recursive: true });
+  const temporaryPath = resolve(directory, `.remote-worktrees-${process.pid}-${randomUUID()}.tmp`);
+  let didReplaceStateFile = false;
+
+  try {
+    writeFileSync(temporaryPath, `${JSON.stringify({ entries }, undefined, 2)}\n`);
+    renameSync(temporaryPath, path);
+    didReplaceStateFile = true;
+  } finally {
+    if (!didReplaceStateFile) {
+      removeTemporaryRemoteStateFileBestEffort(temporaryPath);
+    }
+  }
 }
 
 function remoteStateEntryFor(namespace: string, entry: RemoteStateEntry): RemoteStateEntry {
@@ -407,6 +422,15 @@ function upsertRemoteEntry(config: ResolvedConfig, entry: RemoteStateEntry): voi
   ]);
 }
 
+function removeTemporaryRemoteStateFileBestEffort(path: string): void {
+  try {
+    rmSync(path, { force: true });
+  } catch (error) {
+    /* v8 ignore next @preserve -- only external filesystem races can make best-effort temp cleanup fail */
+    log(`Temporary remote state file cleanup skipped: ${errorMessage(error)}`);
+  }
+}
+
 function deleteRemoteEntry(config: ResolvedConfig, entry: WorktreeEntry): void {
   const namespace = remoteStateNamespaceFor(config);
   writeRemoteEntries(
@@ -418,6 +442,29 @@ function deleteRemoteEntry(config: ResolvedConfig, entry: WorktreeEntry): void {
 
 function remoteProviderFor(config: ResolvedConfig, entry?: WorktreeEntry): RemoteRunnerProvider {
   return getRemoteRunnerProvider(entry?.remoteProvider ?? config.remote.provider);
+}
+
+async function removeCreatedRemoteWorktreeBestEffort(arguments_: {
+  config: ResolvedConfig;
+  provider: RemoteRunnerProvider;
+  entry: WorktreeEntry;
+  signal?: AbortSignal;
+}): Promise<void> {
+  try {
+    log(
+      `Rolling back remote worktree ${arguments_.entry.dir} after local state persistence failed...`,
+    );
+    await arguments_.provider.removeWorktree({
+      config: arguments_.config.remote,
+      entry: arguments_.entry,
+      force: true,
+      ...signalProperty(arguments_.signal),
+    });
+  } catch (error) {
+    log(
+      `Remote worktree rollback skipped after local state persistence failed: ${errorMessage(error)}`,
+    );
+  }
 }
 
 const remoteWorktreeAdapter: WorktreeAdapter = {
@@ -446,7 +493,17 @@ const remoteWorktreeAdapter: WorktreeAdapter = {
       remoteRunnerName: config.remote.runnerName,
       remoteRepoDir,
     };
-    upsertRemoteEntry(config, entry);
+    try {
+      upsertRemoteEntry(config, entry);
+    } catch (error) {
+      await removeCreatedRemoteWorktreeBestEffort({
+        config,
+        provider,
+        entry,
+        ...signalProperty(signal),
+      });
+      throw error;
+    }
     return entry;
   },
   list(config) {
