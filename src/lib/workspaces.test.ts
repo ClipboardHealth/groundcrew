@@ -792,13 +792,14 @@ describe(resolveWorkspaceKind, () => {
     }).toThrow(/cmux binary is not on PATH/);
   });
 
-  it("rejects explicit cmux on non-macOS hosts even when the binary is present", () => {
-    expect(() => {
-      resolveWorkspaceKind({
-        config: makeConfig("cmux"),
-        host: makeHost({ isMacOS: false, hasCmux: true }),
-      });
-    }).toThrow(/only supported on macOS/);
+  it("returns cmux when explicitly set on non-macOS hosts and cmux is on PATH", () => {
+    const result = resolveWorkspaceKind({
+      config: makeConfig("cmux"),
+      host: makeHost({ isMacOS: false, hasCmux: true }),
+    });
+
+    expect(result.resolved).toBe("cmux");
+    expect(result.requested).toBe("cmux");
   });
 
   it("returns tmux when explicitly set and tmux is on PATH", () => {
@@ -818,22 +819,22 @@ describe(resolveWorkspaceKind, () => {
     }).toThrow(/tmux binary is not on PATH/);
   });
 
-  it("auto prefers cmux when present on macOS", () => {
+  it("auto prefers cmux when present", () => {
     const result = resolveWorkspaceKind({
       config: makeConfig("auto"),
       host: makeHost({ isMacOS: true, hasCmux: true, hasTmux: true }),
     });
     expect(result.resolved).toBe("cmux");
-    expect(result.reason).toMatch(/macOS with cmux/);
+    expect(result.reason).toMatch(/cmux available/);
   });
 
-  it("auto skips cmux on non-macOS even when the binary is on PATH", () => {
+  it("auto prefers cmux on non-macOS when the binary is on PATH", () => {
     const result = resolveWorkspaceKind({
       config: makeConfig("auto"),
       host: makeHost({ isMacOS: false, hasCmux: true, hasTmux: true }),
     });
-    expect(result.resolved).toBe("tmux");
-    expect(result.reason).toMatch(/non-macOS/);
+    expect(result.resolved).toBe("cmux");
+    expect(result.reason).toMatch(/cmux available/);
   });
 
   it("auto falls back to tmux when cmux is missing", () => {

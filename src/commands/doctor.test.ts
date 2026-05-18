@@ -404,7 +404,7 @@ describe(doctor, () => {
     expect(checked).toContain("alpha");
   });
 
-  it("reports non-macOS hosts as unsupported for local runs", async () => {
+  it("reports non-macOS local-runner guidance while accepting cmux workspaces", async () => {
     detectHostMock.mockResolvedValue({
       hasSafehouse: false,
       hasCmux: true,
@@ -416,10 +416,13 @@ describe(doctor, () => {
 
     const actual = await doctor();
 
-    expect(actual).toBe(false);
+    expect(actual).toBe(true);
     const lines = consoleLog.output();
     expect(lines).toContain("Local runner");
     expect(lines).toContain("use agent-remote with the remote runner");
+    expect(lines).toMatch(/requested=auto, resolved=cmux/);
+    expect(checkedCommands()).toContain("cmux");
+    expect(checkedCommands()).not.toContain("tmux");
     expect(lines).not.toContain("sbx diagnose");
   });
 

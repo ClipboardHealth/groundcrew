@@ -3,7 +3,7 @@
   <img alt="Groundcrew logo." height="250px" src="./static/groundcrew.svg">
 </p>
 
-Watch a Linear project and farm out ready tickets to coding-agent CLIs running in workspaces backed by git worktrees. Workspaces are [`cmux`](https://github.com/clayton-cole/cmux) panes on macOS or `tmux` windows on Linux/macOS.
+Watch a Linear project and farm out ready tickets to coding-agent CLIs running in workspaces backed by git worktrees. Workspaces are [`cmux`](https://github.com/clayton-cole/cmux) panes or `tmux` windows.
 
 ## Install
 
@@ -64,7 +64,7 @@ This installs the `crew` binary. `@clipboard-health/clearance` is pulled in tran
 5. **Prepare the runner and agent auth.** Groundcrew supports one local runner and one remote runner:
    - macOS local: `cmux` or `tmux` workspace, Safehouse on `PATH`, `clearance`, and locally authenticated agent CLIs.
    - macOS remote: local `cmux` or `tmux` workspace that launches the configured remote runner.
-   - Linux/WSL remote: `tmux` workspace that launches the configured remote runner. Label tickets `agent-remote`; local execution is not supported.
+   - Linux/WSL remote: `cmux` or `tmux` workspace that launches the configured remote runner. Label tickets `agent-remote`; local execution is not supported.
 
    Local setup fails before creating a worktree when the host is not macOS or `safehouse` is missing. `models.isolation`, per-model `isolation`, and per-model `sandbox` are legacy keys and now fail config validation.
 

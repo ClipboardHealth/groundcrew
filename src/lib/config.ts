@@ -35,8 +35,7 @@ export function isRemoteRunnerProviderName(value: unknown): value is RemoteRunne
 /**
  * Which terminal session manager hosts the agent process:
  *
- * - `auto`: pick the first available — cmux on macOS when installed,
- *   else tmux.
+ * - `auto`: pick the first available — cmux when installed, else tmux.
  * - `cmux`: require the cmux binary; fail loudly if missing.
  * - `tmux`: require the tmux binary; fail loudly if missing.
  */
@@ -200,7 +199,7 @@ export interface ResolvedConfig {
   };
   /**
    * Terminal session manager. Always present — defaults to `"auto"`.
-   * `auto` resolves to cmux on macOS when installed, else tmux.
+   * `auto` resolves to cmux when installed, else tmux.
    */
   workspaceKind: WorkspaceKindSetting;
   remote: RemoteRunnerConfig;

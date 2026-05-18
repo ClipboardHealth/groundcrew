@@ -15,7 +15,7 @@ export interface HostCapabilities {
   hasCmux: boolean;
   /** True when the `tmux` binary is on PATH. */
   hasTmux: boolean;
-  /** True when the host platform is macOS. cmux and safehouse are macOS-only. */
+  /** True when the host platform is macOS. Safehouse is macOS-only. */
   isMacOS: boolean;
   /**
    * True when the host platform is one Safehouse supports. Safehouse is

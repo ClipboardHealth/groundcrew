@@ -249,17 +249,14 @@ function resolveAuto(arguments_: {
   host: HostCapabilities;
 }): WorkspaceResolution {
   const { requested, host } = arguments_;
-  // cmux is macOS-only; non-macOS hosts with cmux on PATH (e.g. a stale
-  // build artifact) still resolve to tmux so `auto` matches the documented
-  // default and behaves correctly cross-platform.
-  if (host.isMacOS && host.hasCmux) {
-    return { requested, resolved: "cmux", reason: "auto: macOS with cmux available" };
+  if (host.hasCmux) {
+    return { requested, resolved: "cmux", reason: "auto: cmux available" };
   }
   if (host.hasTmux) {
     return {
       requested,
       resolved: "tmux",
-      reason: "auto: cmux unavailable or non-macOS, falling back to tmux",
+      reason: "auto: cmux unavailable, falling back to tmux",
     };
   }
   throw new Error(
@@ -273,11 +270,6 @@ const HOST_CAPABILITY_BY_KIND: Record<WorkspaceKind, "hasCmux" | "hasTmux"> = {
 };
 
 function failIfBinaryUnavailable(kind: WorkspaceKind, host: HostCapabilities): void {
-  if (kind === "cmux" && !host.isMacOS) {
-    throw new Error(
-      "workspaceKind 'cmux' is only supported on macOS. Switch to 'tmux' or 'auto' on this platform.",
-    );
-  }
   if (!host[HOST_CAPABILITY_BY_KIND[kind]]) {
     throw new Error(
       `workspaceKind '${kind}' is set but the ${kind} binary is not on PATH. Install ${kind} or change the setting.`,
