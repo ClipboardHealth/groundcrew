@@ -93,6 +93,13 @@ interface MockedIssue {
 const issueResolver = vi.fn<(id: string) => Promise<MockedIssue>>();
 const rawRequestMock =
   vi.fn<(query: string, variables?: Record<string, unknown>) => Promise<unknown>>();
+const teamStatesMock = vi.fn<() => Promise<{ nodes: { id: string; name: string }[] }>>();
+const teamMock =
+  vi.fn<
+    (id: string) => Promise<{ states: () => Promise<{ nodes: { id: string; name: string }[] }> }>
+  >();
+const updateIssueMock =
+  vi.fn<(id: string, input: { stateId: string }) => Promise<Record<string, never>>>();
 
 function buildMockedIssue(overrides: {
   title?: string;
@@ -105,6 +112,8 @@ function buildMockedIssue(overrides: {
 }
 
 function buildResolveIssueResponse(overrides: {
+  uuid?: string;
+  teamId?: string;
   title?: string;
   description?: string | null | undefined;
   labels?: MockedLabel[];
@@ -112,9 +121,11 @@ function buildResolveIssueResponse(overrides: {
   return {
     data: {
       issue: {
+        id: overrides.uuid ?? "uuid-1",
         title: overrides.title ?? "Title",
         description: "description" in overrides ? overrides.description : "Body for repo-a",
         labels: { nodes: overrides.labels ?? [] },
+        team: { id: overrides.teamId ?? "team-1" },
       },
     },
   };
@@ -185,7 +196,15 @@ function makeConfig(overrides: Partial<ResolvedConfig["models"]> = {}): Resolved
 }
 
 function mockLinearClient(): void {
-  const linearClient = { issue: issueResolver, client: { rawRequest: rawRequestMock } };
+  teamStatesMock.mockResolvedValue({ nodes: [{ id: "state-in-progress", name: "In Progress" }] });
+  teamMock.mockResolvedValue({ states: teamStatesMock });
+  updateIssueMock.mockResolvedValue({});
+  const linearClient = {
+    issue: issueResolver,
+    team: teamMock,
+    updateIssue: updateIssueMock,
+    client: { rawRequest: rawRequestMock },
+  };
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests stub only the surfaces touched by setupWorkspace + fetchResolvedIssue
   const typedLinearClient = linearClient as unknown as ReturnType<typeof getLinearClient>;
   linearClientMock.mockReturnValue(typedLinearClient);
@@ -1008,6 +1027,47 @@ describe(setupWorkspaceCli, () => {
       "cmux",
       expect.arrayContaining(["set-status", "model", "claude"]),
     );
+  });
+
+  it("marks the ticket In Progress after launching the workspace", async () => {
+    rawRequestMock.mockResolvedValue(
+      buildResolveIssueResponse({ uuid: "issue-uuid-1", teamId: "linear-team-1" }),
+    );
+
+    await setupWorkspaceCli("team-1");
+
+    expect(teamMock).toHaveBeenCalledWith("linear-team-1");
+    expect(updateIssueMock).toHaveBeenCalledWith("issue-uuid-1", {
+      stateId: "state-in-progress",
+    });
+    expect(firstInvocationOrder(runCommandMock)).toBeLessThan(
+      firstInvocationOrder(updateIssueMock),
+    );
+  });
+
+  it("does not mark the ticket In Progress in dry-run mode", async () => {
+    await setupWorkspaceCli("team-1", { dryRun: true });
+
+    expect(createMock).not.toHaveBeenCalled();
+    expect(teamMock).not.toHaveBeenCalled();
+    expect(updateIssueMock).not.toHaveBeenCalled();
+  });
+
+  it("fails clearly when the configured In Progress status is missing", async () => {
+    teamStatesMock.mockResolvedValue({ nodes: [{ id: "state-other", name: "Other" }] });
+
+    await expect(setupWorkspaceCli("team-1")).rejects.toThrow(
+      /Could not find "In Progress" state for team-1/,
+    );
+    expect(updateIssueMock).not.toHaveBeenCalled();
+  });
+
+  it("does not mark the ticket In Progress when workspace setup fails", async () => {
+    createMock.mockRejectedValue(new Error("worktree failed"));
+
+    await expect(setupWorkspaceCli("team-1")).rejects.toThrow(/worktree failed/);
+    expect(teamMock).not.toHaveBeenCalled();
+    expect(updateIssueMock).not.toHaveBeenCalled();
   });
 
   it("rejects when the ticket description has no known repository", async () => {

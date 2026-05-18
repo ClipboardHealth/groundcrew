@@ -17,6 +17,7 @@ import {
   buildRemoteLaunchCommand,
   shellSingleQuote,
 } from "../lib/launchCommand.ts";
+import { createLinearIssueStatusUpdater } from "../lib/linearIssueStatus.ts";
 import { assertLocalRunnerRequirements } from "../lib/localRunner.ts";
 import { getRemoteRunnerProvider } from "../lib/spriteRemoteRunnerProvider.ts";
 import { errorMessage, getLinearClient, log, readEnvironmentVariable } from "../lib/util.ts";
@@ -346,5 +347,10 @@ export async function setupWorkspaceCli(
     model: resolved.model,
     runner: resolved.runner,
     details: { title: resolved.title, description: resolved.description },
+  });
+  await createLinearIssueStatusUpdater({ config, client }).markInProgress({
+    id: ticket.toLowerCase(),
+    uuid: resolved.uuid,
+    teamId: resolved.teamId,
   });
 }

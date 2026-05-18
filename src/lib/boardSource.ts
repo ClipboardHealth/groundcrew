@@ -294,11 +294,13 @@ function buildRepositoryRegex(config: ResolvedConfig): RegExp {
 }
 
 interface ResolvedIssue {
+  uuid: string;
   title: string;
   description: string;
   repository: string;
   model: string;
   runner: WorkspaceRunner;
+  teamId: string;
 }
 
 const ISSUE_LABEL_PAGE_SIZE = 50;
@@ -317,8 +319,10 @@ export async function fetchResolvedIssue(arguments_: {
   const response: { data?: unknown } = await client.client.rawRequest(
     `query ResolveIssue($id: String!) {
       issue(id: $id) {
+        id
         title
         description
+        team { id }
         labels(first: ${ISSUE_LABEL_PAGE_SIZE}) {
           nodes { name }
         }
@@ -329,8 +333,10 @@ export async function fetchResolvedIssue(arguments_: {
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- shape is fixed by our GraphQL query above
   const { issue } = response.data as {
     issue: {
+      id: string;
       title: string;
       description?: string | null;
+      team?: { id: string } | null;
       labels: { nodes: { name: string }[] };
     } | null;
   };
@@ -352,7 +358,15 @@ export async function fetchResolvedIssue(arguments_: {
   const model =
     parsed === undefined || parsed.model === AGENT_ANY_MODEL ? config.models.default : parsed.model;
   const runner = parsed?.runner ?? "local";
-  return { title: issue.title, description, repository, model, runner };
+  return {
+    uuid: issue.id,
+    title: issue.title,
+    description,
+    repository,
+    model,
+    runner,
+    teamId: issue.team?.id ?? "",
+  };
 }
 
 interface ParseRepositoryArguments {

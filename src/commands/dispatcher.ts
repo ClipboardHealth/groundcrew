@@ -9,13 +9,9 @@
 
 import type { LinearClient } from "@linear/sdk";
 
-import {
-  type BoardState,
-  type GroundcrewIssue,
-  isGroundcrewIssue,
-  type Issue,
-} from "../lib/boardSource.ts";
+import { type BoardState, type GroundcrewIssue, isGroundcrewIssue } from "../lib/boardSource.ts";
 import type { ResolvedConfig } from "../lib/config.ts";
+import { createLinearIssueStatusUpdater } from "../lib/linearIssueStatus.ts";
 import type { UsageByModel } from "../lib/usage.ts";
 import { errorMessage, log, logEvent } from "../lib/util.ts";
 import { type WorkspaceProbe, workspaces } from "../lib/workspaces.ts";
@@ -51,8 +47,7 @@ export interface Dispatcher {
 
 export function createDispatcher(deps: DispatcherDeps): Dispatcher {
   const { config, client } = deps;
-  const inProgressStateByTeam = new Map<string, string>();
-  let teamsMissingInProgress = new Set<string>();
+  const issueStatusUpdater = createLinearIssueStatusUpdater({ config, client });
 
   function buildExhaustedSet(usage: UsageByModel): Set<string> {
     const exhausted = new Set<string>();
@@ -89,49 +84,6 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
       }
     }
     return exhausted;
-  }
-
-  async function getInProgressStateId(teamId: string): Promise<string | undefined> {
-    if (teamId.length === 0) {
-      return undefined;
-    }
-    const cached = inProgressStateByTeam.get(teamId);
-    if (cached !== undefined) {
-      return cached;
-    }
-    // Negative cache is per-iteration so a team that's fixed in Linear during
-    // a `crew watch` session auto-recovers next tick. Within one iteration,
-    // every eligible ticket in a misconfigured team would otherwise re-fetch.
-    if (teamsMissingInProgress.has(teamId)) {
-      return undefined;
-    }
-
-    const team = await client.team(teamId);
-    const states = await team.states();
-    const inProgress = states.nodes.find(
-      (state) => state.name === config.linear.statuses.inProgress,
-    );
-    if (inProgress?.id === undefined) {
-      teamsMissingInProgress.add(teamId);
-      return undefined;
-    }
-    inProgressStateByTeam.set(teamId, inProgress.id);
-    return inProgress.id;
-  }
-
-  async function markInProgress(issue: Issue): Promise<void> {
-    const stateId = await getInProgressStateId(issue.teamId);
-    if (stateId === undefined) {
-      // Throw rather than log+return: if we silently swallowed this, the
-      // ticket would stay Todo forever while the workspace runs, which means
-      // every iteration re-enters the recovery path and the agent never
-      // counts toward maximumInProgress.
-      throw new Error(
-        `Could not find "${config.linear.statuses.inProgress}" state for ${issue.id} (team ${issue.teamId.length > 0 ? issue.teamId : "?"}). Verify the status name in linear.statuses.inProgress matches the team's workflow.`,
-      );
-    }
-    await client.updateIssue(issue.uuid, { stateId });
-    log(`Marked ${issue.id} as ${config.linear.statuses.inProgress}`);
   }
 
   function logSkip(verdict: SkipVerdict): void {
@@ -186,7 +138,7 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
           ? setupWorkspace(config, setupOptions)
           : setupWorkspace(config, setupOptions, { signal }));
       }
-      await markInProgress(issue);
+      await issueStatusUpdater.markInProgress(issue);
       logEvent("dispatch", {
         outcome: recovery ? "resumed" : "started",
         ticket: issue.id,
@@ -215,7 +167,7 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     signal?: AbortSignal;
   }): Promise<void> {
     const { state, worktreeEntries, usage, dryRun, signal } = arguments_;
-    teamsMissingInProgress = new Set();
+    issueStatusUpdater.resetMissingInProgressCache();
 
     const activeCount = state.issues.filter(
       (issue) => issue.status === config.linear.statuses.inProgress,

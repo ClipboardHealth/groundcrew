@@ -140,8 +140,10 @@ function makeClient(options: { projectFound?: boolean; pages?: IssueNodeStub[][]
       return {
         data: {
           issue: {
+            id: "uuid-1",
             title: "Title",
             description: "Touches repo-a.",
+            team: { id: "team-default" },
             labels: { nodes: [] },
           },
         },
@@ -679,8 +681,10 @@ describe(fetchResolvedIssue, () => {
     client.client.rawRequest.mockResolvedValueOnce({
       data: {
         issue: {
+          id: "uuid-1",
           title: "Title",
           description: "Touches repo-a.",
+          team: { id: "team-default" },
           labels: { nodes: [{ name: "agent-remote" }, { name: "agent-codex" }] },
         },
       },
@@ -693,7 +697,37 @@ describe(fetchResolvedIssue, () => {
       ticket: "team-1",
     });
 
-    expect(actual).toMatchObject({ repository: "repo-a", model: "codex", runner: "remote" });
+    expect(actual).toMatchObject({
+      uuid: "uuid-1",
+      repository: "repo-a",
+      model: "codex",
+      runner: "remote",
+      teamId: "team-default",
+    });
+  });
+
+  it("returns an empty team id when Linear omits the issue team", async () => {
+    const client = makeClient({ pages: [[]] });
+    client.client.rawRequest.mockResolvedValueOnce({
+      data: {
+        issue: {
+          id: "uuid-1",
+          title: "Title",
+          description: "Touches repo-a.",
+          team: null,
+          labels: { nodes: [] },
+        },
+      },
+    });
+
+    const actual = await fetchResolvedIssue({
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests use the LinearClient surface consumed by boardSource
+      client: client as unknown as LinearClient,
+      config: makeConfig(),
+      ticket: "team-1",
+    });
+
+    expect(actual.teamId).toBe("");
   });
 });
 
