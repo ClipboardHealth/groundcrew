@@ -532,7 +532,7 @@ describe(remoteCli, () => {
     expect(command).toStrictEqual(
       expect.stringContaining("gh repo clone 'ClipboardHealth/core-utils' \"$repo_dir\""),
     );
-    expect(command).toStrictEqual(expect.stringContaining('repo_dir="$HOME/dev/core-utils"'));
+    expect(command).toStrictEqual(expect.stringContaining(`repo_dir="$HOME/dev"/'core-utils'`));
     expect(command).toStrictEqual(expect.stringContaining("git_remote='origin'"));
     expect(command).toStrictEqual(expect.stringContaining('git fetch "$git_remote" --prune'));
     expect(command).toStrictEqual(
@@ -886,6 +886,23 @@ describe(bootstrapRemoteRepository, () => {
     vi.clearAllMocks();
   });
 
+  it("rejects unsafe direct repository values before running the provider", async () => {
+    await expect(
+      bootstrapRemoteRepository({
+        runnerName: "crew-claude-1",
+        repository: "ClipboardHealth/core-utils$(touch /tmp/pwn)",
+        owner: "ClipboardHealth",
+        baseBranch: "main",
+        gitRemote: "origin",
+        secretNames: [],
+        shouldRequireSelectedSecrets: false,
+        shouldUseSecrets: false,
+      }),
+    ).rejects.toThrow(/Invalid repository/);
+
+    expect(runCommandMock).not.toHaveBeenCalled();
+  });
+
   it("does not upload a secrets file when secrets are disabled", async () => {
     mockExistingSpriteForBootstrap();
 
@@ -998,7 +1015,7 @@ describe(bootstrapRemoteRepository, () => {
       hasRemoteCommand(call, ["bash", "-lc"]),
     );
     expect(bootstrapCall?.[1]?.at(-1)).toStrictEqual(
-      expect.stringContaining('repo_dir="$HOME/dev/core-utils"'),
+      expect.stringContaining(`repo_dir="$HOME/dev"/'core-utils'`),
     );
   });
 
