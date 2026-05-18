@@ -1,3 +1,5 @@
+import { createRequire } from "node:module";
+
 import { cleanupWorkspaceCli } from "./commands/cleanupWorkspace.ts";
 import { doctor } from "./commands/doctor.ts";
 import { orchestrate } from "./commands/orchestrator.ts";
@@ -5,11 +7,17 @@ import { remoteCli } from "./commands/remoteSetup.ts";
 import { setupWorkspaceCli } from "./commands/setupWorkspace.ts";
 import { errorMessage, writeError, writeOutput } from "./lib/util.ts";
 
+interface PackageMetadata {
+  version: string;
+}
+
 interface Subcommand {
   summary: string;
   usage?: string;
   invoke: (argv: string[]) => Promise<void>;
 }
+
+const requireFromCli = createRequire(import.meta.url);
 
 async function runCli(argv: string[]): Promise<void> {
   let watch = false;
@@ -85,6 +93,10 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
 function printHelp(): void {
   const width = Math.max(...Object.keys(SUBCOMMANDS).map((key) => key.length));
   writeOutput("Usage: crew <command> [...args]\n");
+  writeOutput("Options:");
+  writeOutput("  -h, --help     Show help");
+  writeOutput("  -v, --version  Print version");
+  writeOutput("");
   writeOutput("Commands:");
   for (const [name, command] of Object.entries(SUBCOMMANDS)) {
     writeOutput(`  ${name.padEnd(width)}  ${command.summary}`);
@@ -95,6 +107,12 @@ function printHelp(): void {
   writeOutput("\nSee README.md for full configuration and behavior.");
 }
 
+function packageVersion(): string {
+  // oxlint-disable-next-line typescript-eslint/no-unsafe-assignment -- package.json is shipped with this package and is the version source of truth.
+  const packageMetadata: PackageMetadata = requireFromCli("../package.json");
+  return packageMetadata.version;
+}
+
 export async function run(argv: string[]): Promise<void> {
   const [subcommand, ...rest] = argv;
 
@@ -103,6 +121,11 @@ export async function run(argv: string[]): Promise<void> {
     if (subcommand === undefined) {
       process.exitCode = 1;
     }
+    return;
+  }
+
+  if (subcommand === "-v" || subcommand === "--version") {
+    writeOutput(packageVersion());
     return;
   }
 

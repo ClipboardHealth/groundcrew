@@ -1,3 +1,5 @@
+import { createRequire } from "node:module";
+
 import { run } from "./cli.ts";
 import { cleanupWorkspaceCli } from "./commands/cleanupWorkspace.ts";
 import { doctor } from "./commands/doctor.ts";
@@ -31,6 +33,25 @@ const doctorMock = vi.mocked(doctor);
 const setupMock = vi.mocked(setupWorkspaceCli);
 const cleanupMock = vi.mocked(cleanupWorkspaceCli);
 const remoteMock = vi.mocked(remoteCli);
+const requireFromTest = createRequire(import.meta.url);
+const PACKAGE_VERSION = readPackageVersion();
+
+function packageMetadataHasVersion(value: unknown): value is { version: string } {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "version" in value &&
+    typeof value.version === "string"
+  );
+}
+
+function readPackageVersion(): string {
+  const packageMetadata: unknown = requireFromTest("../package.json");
+  if (!packageMetadataHasVersion(packageMetadata)) {
+    throw new Error("Unable to read package version");
+  }
+  return packageMetadata.version;
+}
 
 describe(run, () => {
   let consoleLog: ConsoleCapture;
@@ -60,6 +81,7 @@ describe(run, () => {
     expect(consoleLog.calls.length).toBeGreaterThan(0);
     const helpOutput = consoleLog.output();
     expect(helpOutput).toContain("Usage: crew <command>");
+    expect(helpOutput).toContain("-v, --version");
     expect(helpOutput).toContain("run");
     expect(helpOutput).not.toContain("sandbox");
     expect(process.exitCode).toBe(1);
@@ -77,6 +99,22 @@ describe(run, () => {
 
     expect(consoleLog.calls.length).toBeGreaterThan(0);
     expect(process.exitCode).toBeUndefined();
+  });
+
+  it("prints the package version on -v without setting exit code", async () => {
+    await run(["-v"]);
+
+    expect(consoleLog.output()).toBe(PACKAGE_VERSION);
+    expect(process.exitCode).toBeUndefined();
+    expect(orchestrateMock).not.toHaveBeenCalled();
+  });
+
+  it("prints the package version on --version without setting exit code", async () => {
+    await run(["--version"]);
+
+    expect(consoleLog.output()).toBe(PACKAGE_VERSION);
+    expect(process.exitCode).toBeUndefined();
+    expect(orchestrateMock).not.toHaveBeenCalled();
   });
 
   it("reports unknown subcommands and exits with code 1", async () => {
