@@ -275,6 +275,14 @@ interface RemoteStateFile {
   entries: unknown[];
 }
 
+interface RemoteStateEntry extends WorktreeEntry {
+  kind: "remote";
+  remoteProvider: ResolvedConfig["remote"]["provider"];
+  remoteRunnerName: string;
+  remoteRepoDir: string;
+  remoteStateNamespace?: string;
+}
+
 function isRemoteStateFile(value: unknown): value is RemoteStateFile {
   return (
     typeof value === "object" &&
@@ -298,11 +306,30 @@ function remoteStateFilePath(): string {
   return resolve(stateBaseDir(), "groundcrew", "remote-worktrees.json");
 }
 
-function isRemoteEntry(value: unknown): value is WorktreeEntry {
+function normalizeRemoteStateNamespacePath(path: string): string {
+  const normalized = path.replace(/\/+$/u, "");
+  return normalized.length === 0 ? "/" : normalized;
+}
+
+function remoteStateNamespaceFor(config: ResolvedConfig): string {
+  return JSON.stringify({
+    version: 1,
+    projectDir: resolve(config.workspace.projectDir),
+    remote: {
+      provider: config.remote.provider,
+      runnerName: config.remote.runnerName,
+      owner: config.remote.owner,
+      repoRoot: normalizeRemoteStateNamespacePath(config.remote.repoRoot),
+      worktreeRoot: normalizeRemoteStateNamespacePath(config.remote.worktreeRoot),
+    },
+  });
+}
+
+function isRemoteEntry(value: unknown): value is RemoteStateEntry {
   if (typeof value !== "object" || value === null) {
     return false;
   }
-  const entry = value as Partial<WorktreeEntry>;
+  const entry = value as Partial<RemoteStateEntry>;
   return (
     typeof entry.repository === "string" &&
     typeof entry.ticket === "string" &&
@@ -311,11 +338,12 @@ function isRemoteEntry(value: unknown): value is WorktreeEntry {
     entry.kind === "remote" &&
     isRemoteRunnerProviderName(entry.remoteProvider) &&
     typeof entry.remoteRunnerName === "string" &&
-    typeof entry.remoteRepoDir === "string"
+    typeof entry.remoteRepoDir === "string" &&
+    (entry.remoteStateNamespace === undefined || typeof entry.remoteStateNamespace === "string")
   );
 }
 
-function readRemoteEntries(): WorktreeEntry[] {
+function readRemoteEntries(): RemoteStateEntry[] {
   try {
     const parsed: unknown = JSON.parse(readFileSync(remoteStateFilePath(), "utf8"));
     return isRemoteStateFile(parsed) ? parsed.entries.filter(isRemoteEntry) : [];
@@ -324,26 +352,66 @@ function readRemoteEntries(): WorktreeEntry[] {
   }
 }
 
-function writeRemoteEntries(entries: readonly WorktreeEntry[]): void {
+function writeRemoteEntries(entries: readonly RemoteStateEntry[]): void {
   const path = remoteStateFilePath();
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify({ entries }, undefined, 2)}\n`);
 }
 
-function upsertRemoteEntry(entry: WorktreeEntry): void {
-  writeRemoteEntries([...readRemoteEntries(), entry]);
+function remoteStateEntryFor(namespace: string, entry: RemoteStateEntry): RemoteStateEntry {
+  return { ...entry, remoteStateNamespace: namespace };
 }
 
-function deleteRemoteEntry(entry: WorktreeEntry): void {
+function remoteStateEntryMatchesNamespace(namespace: string, entry: RemoteStateEntry): boolean {
+  // Legacy records have no project/config identity. Keep them on disk, but do
+  // not expose them to cleanup paths that could remove another config's remote
+  // worktree.
+  return entry.remoteStateNamespace === namespace;
+}
+
+function remoteStateEntryMatchesWorktree(
+  namespace: string,
+  candidate: RemoteStateEntry,
+  entry: WorktreeEntry,
+): boolean {
+  return (
+    candidate.remoteStateNamespace === namespace &&
+    candidate.repository === entry.repository &&
+    candidate.ticket === entry.ticket &&
+    candidate.dir === entry.dir &&
+    candidate.kind === "remote"
+  );
+}
+
+function worktreeEntryFromRemoteState(entry: RemoteStateEntry): WorktreeEntry {
+  return {
+    repository: entry.repository,
+    ticket: entry.ticket,
+    branchName: entry.branchName,
+    dir: entry.dir,
+    kind: entry.kind,
+    remoteProvider: entry.remoteProvider,
+    remoteRunnerName: entry.remoteRunnerName,
+    remoteRepoDir: entry.remoteRepoDir,
+  };
+}
+
+function upsertRemoteEntry(config: ResolvedConfig, entry: RemoteStateEntry): void {
+  const namespace = remoteStateNamespaceFor(config);
+  const stateEntry = remoteStateEntryFor(namespace, entry);
+  writeRemoteEntries([
+    ...readRemoteEntries().filter(
+      (candidate) => !remoteStateEntryMatchesWorktree(namespace, candidate, entry),
+    ),
+    stateEntry,
+  ]);
+}
+
+function deleteRemoteEntry(config: ResolvedConfig, entry: WorktreeEntry): void {
+  const namespace = remoteStateNamespaceFor(config);
   writeRemoteEntries(
     readRemoteEntries().filter(
-      (candidate) =>
-        !(
-          candidate.repository === entry.repository &&
-          candidate.ticket === entry.ticket &&
-          candidate.dir === entry.dir &&
-          candidate.kind === "remote"
-        ),
+      (candidate) => !remoteStateEntryMatchesWorktree(namespace, candidate, entry),
     ),
   );
 }
@@ -368,7 +436,7 @@ const remoteWorktreeAdapter: WorktreeAdapter = {
       ...signalProperty(signal),
     });
 
-    const entry: WorktreeEntry = {
+    const entry: RemoteStateEntry = {
       repository: spec.repository,
       ticket: spec.ticket,
       branchName: base.branchName,
@@ -378,13 +446,15 @@ const remoteWorktreeAdapter: WorktreeAdapter = {
       remoteRunnerName: config.remote.runnerName,
       remoteRepoDir,
     };
-    upsertRemoteEntry(entry);
+    upsertRemoteEntry(config, entry);
     return entry;
   },
   list(config) {
-    return readRemoteEntries().filter((entry) =>
-      config.workspace.knownRepositories.includes(entry.repository),
-    );
+    const namespace = remoteStateNamespaceFor(config);
+    return readRemoteEntries()
+      .filter((entry) => remoteStateEntryMatchesNamespace(namespace, entry))
+      .filter((entry) => config.workspace.knownRepositories.includes(entry.repository))
+      .map(worktreeEntryFromRemoteState);
   },
   async remove(config, entry, options) {
     log(`Removing remote worktree ${entry.dir}${options.force ? " (--force)" : ""}...`);
@@ -399,7 +469,7 @@ const remoteWorktreeAdapter: WorktreeAdapter = {
       force: options.force,
       ...signalProperty(options.signal),
     });
-    deleteRemoteEntry(entry);
+    deleteRemoteEntry(config, entry);
   },
 };
 
