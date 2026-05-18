@@ -80,7 +80,7 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
   remote: {
     summary: "Create, authenticate, bootstrap, and inspect a remote runner",
     usage:
-      "setup <runner-name> [--claude] [--github] [--mcp <alias|name=url>] [--checkpoint]\n" +
+      "setup <runner-name> [--claude] [--codex] [--datadog] [--github] [--mcp <alias|name=url>] [--checkpoint]\n" +
       "           → crew remote bootstrap <runner-name> <repo> [--branch <branch>]\n" +
       "           → crew remote sessions [<runner-name>]\n" +
       "           → crew remote attach <session-id-or-command> [--runner <runner-name>]\n" +

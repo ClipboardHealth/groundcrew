@@ -33,6 +33,7 @@ export interface RemoteSetupOptions {
   shouldAuthenticateClaude: boolean;
   shouldAuthenticateCodex: boolean;
   shouldCopyLocalCodexAuth?: boolean;
+  shouldSetupDatadog?: boolean;
   shouldAuthenticateGithub: boolean;
   shouldAuthenticateMcp: boolean;
   shouldCheckpoint: boolean;
@@ -76,6 +77,8 @@ const DEFAULT_CHECKPOINT_COMMENT =
 const CLAUDE_SUBSCRIPTION_LOGIN_FLAG = ["--claude", "ai"].join("");
 const DEFAULT_REPOSITORY_OWNER = "ClipboardHealth";
 const DEFAULT_BASE_BRANCH = "main";
+const DATADOG_PUP_VERSION = "0.63.0";
+const DATADOG_OAUTH_CALLBACK_PORT = 8000;
 const REMOTE_SECRETS_FILE = "/tmp/groundcrew-build-secrets.env";
 const REMOTE_CODEX_AUTH_UPLOAD_FILE = "/tmp/groundcrew-codex-auth.json";
 const REMOTE_CODEX_AUTH_FILE = "/home/sprite/.codex/auth.json";
@@ -94,6 +97,7 @@ function usage(): string {
     "  --claude                    Authenticate Claude Code with a Claude subscription",
     "  --codex                     Authenticate Codex CLI",
     "  --copy-local-codex-auth     With --codex, copy local CODEX_HOME auth.json into the remote runner",
+    "  --datadog                   Install pup, add dd-pup skills, and authenticate Datadog",
     "  --github                    Authenticate gh for GitHub PRs",
     "  --mcp <alias|name=url>      Add/authenticate one MCP server; repeat for multiple",
     "                              Known aliases: linear, slack, notion",
@@ -209,6 +213,7 @@ function parseArguments(argv: readonly string[]): RemoteSetupOptions {
   let shouldAuthenticateClaude = false;
   let shouldAuthenticateCodex = false;
   let shouldCopyLocalCodexAuth = false;
+  let shouldSetupDatadog = false;
   let shouldAuthenticateGithub = false;
   let shouldAuthenticateMcp = true;
   let shouldCheckpoint = false;
@@ -230,6 +235,10 @@ function parseArguments(argv: readonly string[]): RemoteSetupOptions {
     if (argument === "--copy-local-codex-auth") {
       shouldAuthenticateCodex = true;
       shouldCopyLocalCodexAuth = true;
+      continue;
+    }
+    if (argument === "--datadog") {
+      shouldSetupDatadog = true;
       continue;
     }
     if (argument === "--github") {
@@ -279,6 +288,7 @@ function parseArguments(argv: readonly string[]): RemoteSetupOptions {
     shouldAuthenticateClaude,
     shouldAuthenticateCodex,
     shouldCopyLocalCodexAuth,
+    shouldSetupDatadog,
     shouldAuthenticateGithub,
     shouldAuthenticateMcp,
     shouldCheckpoint,
@@ -602,6 +612,118 @@ async function authenticateCodex(arguments_: {
   );
 }
 
+function datadogPupInstallCommand(): string {
+  const shellVariable = "$";
+  return [
+    "set -euo pipefail",
+    `version=${shellSingleQuote(DATADOG_PUP_VERSION)}`,
+    'case "$(uname -m)" in',
+    "  x86_64|amd64) arch=x86_64 ;;",
+    "  aarch64|arm64) arch=arm64 ;;",
+    '  *) echo "Unsupported Linux architecture: $(uname -m)" >&2; exit 1 ;;',
+    "esac",
+    `asset="pup_${shellVariable}{version}_Linux_${shellVariable}{arch}.tar.gz"`,
+    `base_url="https://github.com/DataDog/pup/releases/download/v${shellVariable}{version}"`,
+    'binary="$HOME/.local/bin/pup"',
+    'mkdir -p "$HOME/.local/bin"',
+    `if [ -x "$binary" ] && "$binary" version | grep -q "Pup ${shellVariable}{version} "; then "$binary" version; exit 0; fi`,
+    `archive="/tmp/${shellVariable}{asset}"`,
+    `checksums="/tmp/pup_${shellVariable}{version}_checksums.txt"`,
+    'curl -fsSL -o "$archive" "$base_url/$asset"',
+    `curl -fsSL -o "$checksums" "$base_url/pup_${shellVariable}{version}_checksums.txt"`,
+    `(cd /tmp && grep " ${shellVariable}{asset}$" "$checksums" | sha256sum -c -)`,
+    'tar -xzf "$archive" -C "$HOME/.local/bin" pup',
+    'chmod 755 "$binary"',
+    'rm -f "$archive" "$checksums"',
+    '"$binary" version',
+  ].join("\n");
+}
+
+async function installDatadogPup(
+  provider: RemoteRunnerProvider,
+  config: RemoteRunnerConfig,
+): Promise<void> {
+  log(`Installing Datadog pup ${DATADOG_PUP_VERSION} inside the remote runner`);
+  await provider.runCommand({
+    config,
+    remoteArguments: ["bash", "-lc", datadogPupInstallCommand()],
+  });
+}
+
+async function installDatadogPupSkills(
+  provider: RemoteRunnerProvider,
+  config: RemoteRunnerConfig,
+): Promise<void> {
+  for (const platform of ["claude-code", "codex"] as const) {
+    // oxlint-disable-next-line no-await-in-loop -- installs are quick and ordered so logs stay readable.
+    await provider.runCommand({
+      config,
+      remoteArguments: ["pup", "skills", "install", platform, "--name", "dd-pup", "--yes"],
+    });
+  }
+}
+
+async function validateDatadogLogin(
+  provider: RemoteRunnerProvider,
+  config: RemoteRunnerConfig,
+): Promise<boolean> {
+  return await commandSucceeds({
+    provider,
+    config,
+    remoteArguments: ["pup", "auth", "status"],
+  });
+}
+
+async function authenticateDatadog(
+  provider: RemoteRunnerProvider,
+  config: RemoteRunnerConfig,
+): Promise<void> {
+  if (await validateDatadogLogin(provider, config)) {
+    return;
+  }
+
+  writeOutput();
+  writeOutput("Datadog OAuth will run inside the remote runner.");
+  writeOutput(
+    `Groundcrew is forwarding local port ${DATADOG_OAUTH_CALLBACK_PORT} to the remote callback server while login runs.`,
+  );
+  writeOutput("Open the Datadog URL printed by pup if your terminal does not open it for you.");
+  writeOutput();
+
+  const proxy = await provider.startPortProxy(config, DATADOG_OAUTH_CALLBACK_PORT);
+  try {
+    await provider.runTtyCommand({
+      config,
+      remoteArguments: [
+        "pup",
+        "auth",
+        "login",
+        "--read-only",
+        "--callback-port",
+        String(DATADOG_OAUTH_CALLBACK_PORT),
+      ],
+    });
+  } finally {
+    await proxy.close();
+  }
+
+  if (await validateDatadogLogin(provider, config)) {
+    return;
+  }
+  throw new Error(
+    "Datadog auth finished, but `pup auth status` still reports not logged in inside the remote runner.",
+  );
+}
+
+async function setupDatadog(
+  provider: RemoteRunnerProvider,
+  config: RemoteRunnerConfig,
+): Promise<void> {
+  await installDatadogPup(provider, config);
+  await installDatadogPupSkills(provider, config);
+  await authenticateDatadog(provider, config);
+}
+
 async function addMcpServer(arguments_: {
   provider: RemoteRunnerProvider;
   config: RemoteRunnerConfig;
@@ -859,6 +981,9 @@ export async function setupRemoteRunner(options: RemoteSetupOptions): Promise<vo
       config,
       shouldCopyLocalAuth: options.shouldCopyLocalCodexAuth === true,
     });
+  }
+  if (options.shouldSetupDatadog === true) {
+    await setupDatadog(provider, config);
   }
 
   for (const server of options.mcpServers) {

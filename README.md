@@ -81,6 +81,7 @@ This installs the `crew` binary. `@clipboard-health/clearance` is pulled in tran
      --claude \
      --codex \
      --copy-local-codex-auth \
+     --datadog \
      --github \
      --git-name "Your Name" \
      --git-email "you@users.noreply.github.com" \
@@ -89,7 +90,7 @@ This installs the `crew` binary. `@clipboard-health/clearance` is pulled in tran
      --checkpoint
    ```
 
-   Known MCP aliases are `linear`, `slack`, and `notion`. For another HTTP MCP server, pass `--mcp name=https://example.com/mcp`. The command creates the remote runner if needed, prepares `~/dev`, configures Git, runs selected auth flows, adds selected MCP servers to Claude Code, and then opens Claude so you can run `/mcp` and authenticate only those selected servers. With the Sprite provider, `--copy-local-codex-auth` copies `${CODEX_HOME:-$HOME/.codex}/auth.json` into `/home/sprite/.codex/auth.json` and then verifies `codex login status`; it never prints the file contents. Use `--skip-mcp-auth` when you only want to add MCP definitions, and run the `/mcp` step later.
+   Known MCP aliases are `linear`, `slack`, and `notion`. For another HTTP MCP server, pass `--mcp name=https://example.com/mcp`. The command creates the remote runner if needed, prepares `~/dev`, configures Git, runs selected auth flows, adds selected MCP servers to Claude Code, and then opens Claude so you can run `/mcp` and authenticate only those selected servers. With the Sprite provider, `--copy-local-codex-auth` copies `${CODEX_HOME:-$HOME/.codex}/auth.json` into `/home/sprite/.codex/auth.json` and then verifies `codex login status`; it never prints the file contents. `--datadog` installs a pinned `pup` release in the remote runner, verifies its checksum, installs the `dd-pup` guidance for Claude and Codex, verifies `pup auth status`, and when auth is missing temporarily runs `sprite proxy` for the OAuth callback while `pup auth login --read-only` runs in the remote runner. Open the Datadog URL printed by `pup` if your terminal does not open it automatically. Use `--skip-mcp-auth` when you only want to add MCP definitions, and run the `/mcp` step later.
 
    Repo setup is separate from runner setup and should run after the ticket branch exists, immediately before launching an agent. It clones/fetches the repo in the remote runner, checks out the requested branch (creating it from the base branch when it does not exist on origin), forwards only build-time secrets for the dependency install, removes the temporary secret file, clears those env vars, and then exits. It uses groundcrew's remote setup command.
 
@@ -180,7 +181,7 @@ Rules:
 ## Manual commands
 
 ```bash
-crew remote setup crew-claude-1 --claude --codex --copy-local-codex-auth --github --mcp linear --checkpoint
+crew remote setup crew-claude-1 --claude --codex --copy-local-codex-auth --datadog --github --mcp linear --checkpoint
 crew remote bootstrap crew-claude-1 core-utils --branch rocky-team-123
 crew remote sessions
 crew remote attach <session-id-or-command> --runner crew-claude-1

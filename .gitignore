@@ -1,5 +1,6 @@
 # Alphabetical directories
 .cache/
+.clawpatch/
 .nx/cache
 .nx/tsbuildinfo
 .nx/workspace-data

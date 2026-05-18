@@ -73,6 +73,69 @@ describe("Sprite remote runner provider", () => {
     );
   });
 
+  it("starts and closes Sprite port proxies", async () => {
+    const config = remoteConfig();
+    runCommandMock.mockImplementation(
+      async (_command, _arguments, options) =>
+        await new Promise<string>((_resolve, reject) => {
+          options?.signal?.addEventListener("abort", () => {
+            reject(Object.assign(new Error("aborted"), { signal: "SIGINT" }));
+          });
+        }),
+    );
+
+    const proxy = await spriteRemoteRunnerProvider.startPortProxy(config, 8000);
+    await proxy.close();
+
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "sprite",
+      ["proxy", "-s", "crew-special", "8000"],
+      expect.objectContaining({ stdio: "inherit", timeoutMs: 0 }),
+    );
+    expect(runCommandMock.mock.calls[0]?.[2]?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("surfaces Sprite port proxy startup failures on close", async () => {
+    const config = remoteConfig();
+    runCommandMock.mockRejectedValue(new Error("missing sprite auth"));
+
+    const proxy = await spriteRemoteRunnerProvider.startPortProxy(config, 8000);
+
+    await expect(proxy.close()).rejects.toThrow(/missing sprite auth/);
+  });
+
+  it("surfaces Sprite port proxy failures that are not caused by close", async () => {
+    const config = remoteConfig();
+    runCommandMock.mockImplementation(
+      async (_command, _arguments, options) =>
+        await new Promise<string>((_resolve, reject) => {
+          options?.signal?.addEventListener("abort", () => {
+            reject(new Error("proxy failed", { cause: { signal: "SIGTERM" } }));
+          });
+        }),
+    );
+
+    const proxy = await spriteRemoteRunnerProvider.startPortProxy(config, 8000);
+
+    await expect(proxy.close()).rejects.toThrow(/proxy failed/);
+  });
+
+  it("surfaces Sprite port proxy failures with empty causes", async () => {
+    const config = remoteConfig();
+    runCommandMock.mockImplementation(
+      async (_command, _arguments, options) =>
+        await new Promise<string>((_resolve, reject) => {
+          options?.signal?.addEventListener("abort", () => {
+            reject(new Error("proxy failed", { cause: null }));
+          });
+        }),
+    );
+
+    const proxy = await spriteRemoteRunnerProvider.startPortProxy(config, 8000);
+
+    await expect(proxy.close()).rejects.toThrow(/proxy failed/);
+  });
+
   it("runs captured remote commands with files, working directory, and caller options", async () => {
     const config = remoteConfig();
     runCommandMock.mockResolvedValue("ok");

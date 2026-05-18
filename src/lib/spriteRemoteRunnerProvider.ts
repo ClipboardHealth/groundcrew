@@ -3,6 +3,7 @@ import type { RemoteRunnerConfig, RemoteRunnerProviderName } from "./config.ts";
 import { shellSingleQuote } from "./shell.ts";
 
 const LONG_RUNNING_COMMAND_OPTIONS = { stdio: "inherit", timeoutMs: 0 } as const;
+const PROXY_CLOSE_SIGNAL = "SIGINT";
 
 export const SPRITE_REMOTE_PROVIDER_DEFAULTS = {
   provider: "sprite",
@@ -65,6 +66,7 @@ export interface RemoteRunnerProvider {
   runCommand(arguments_: RemoteRunArguments): Promise<string | undefined>;
   runTtyCommand(arguments_: RemoteRunArguments): Promise<void>;
   buildTtyCommand(arguments_: RemoteTtyCommandArguments): string;
+  startPortProxy(config: RemoteRunnerConfig, port: number): Promise<{ close(): Promise<void> }>;
   listSessions(config: RemoteRunnerConfig): Promise<string>;
   attachSession(config: RemoteRunnerConfig, target: string): Promise<void>;
   listProcesses(config: RemoteRunnerConfig): Promise<string>;
@@ -260,6 +262,51 @@ async function createSpriteRunner(config: RemoteRunnerConfig): Promise<void> {
   });
 }
 
+async function startSpritePortProxy(
+  config: RemoteRunnerConfig,
+  port: number,
+): Promise<{ close(): Promise<void> }> {
+  const controller = new AbortController();
+  let closeWasRequested = false;
+  let proxyError: Error | undefined;
+  const proxy = runCommandAsync("sprite", ["proxy", "-s", config.runnerName, String(port)], {
+    signal: controller.signal,
+    stdio: "inherit",
+    timeoutMs: 0,
+  }).catch((error: unknown) => {
+    if (closeWasRequested && errorHasSignal(error, PROXY_CLOSE_SIGNAL)) {
+      return;
+    }
+    proxyError = new Error(`Sprite proxy exited before it was closed: ${String(error)}`, {
+      cause: error,
+    });
+  });
+
+  return {
+    async close() {
+      closeWasRequested = true;
+      controller.abort();
+      await proxy;
+      if (proxyError !== undefined) {
+        throw new Error(proxyError.message, { cause: proxyError });
+      }
+    },
+  };
+}
+
+function errorHasSignal(error: unknown, signal: string): boolean {
+  if (typeof error !== "object" || error === null) {
+    return false;
+  }
+  if ("signal" in error && error.signal === signal) {
+    return true;
+  }
+  if (error instanceof Error && error.cause !== undefined) {
+    return errorHasSignal(error.cause, signal);
+  }
+  return false;
+}
+
 export const spriteRemoteRunnerProvider: RemoteRunnerProvider = {
   name: "sprite",
   async runnerExists(config) {
@@ -279,6 +326,9 @@ export const spriteRemoteRunnerProvider: RemoteRunnerProvider = {
     });
   },
   buildTtyCommand: buildSpriteTtyCommand,
+  async startPortProxy(config, port) {
+    return await startSpritePortProxy(config, port);
+  },
   async listSessions(config) {
     const output = await runCommandAsync("sprite", ["sessions", "list", "-s", config.runnerName], {
       trim: false,
