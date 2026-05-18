@@ -7,7 +7,7 @@
  */
 
 import { opendirSync, statSync } from "node:fs";
-import { resolve } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
 
 import { runCommandAsync } from "../lib/commandRunner.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
@@ -112,6 +112,13 @@ function existingTargetPlan(target: string): ExistingTargetPlan {
   return isDirectoryEmpty(target) ? "clone" : "skip-invalid";
 }
 
+function isInsideProjectDir(projectDir: string, target: string): boolean {
+  const relativeTarget = relative(projectDir, target);
+  return (
+    relativeTarget.length > 0 && !relativeTarget.startsWith("..") && !isAbsolute(relativeTarget)
+  );
+}
+
 function repositoryEntryPlan(repo: string): RepositoryEntryPlan {
   const parts = repo.split("/");
   if (parts.length === 1) {
@@ -147,6 +154,14 @@ function invalidRepositorySkip(repo: string, target: string): SetupReposSkip {
   };
 }
 
+function escapingTargetSkip(repo: string, projectDir: string, target: string): SetupReposSkip {
+  return {
+    repo,
+    kind: "invalid-repository",
+    reason: `repository resolves outside workspace.projectDir (${projectDir}): ${target}`,
+  };
+}
+
 function planClones(config: ResolvedConfig, repositories: readonly string[]): ClonePlan {
   const projectDir = resolve(config.workspace.projectDir);
   const toClone: string[] = [];
@@ -160,6 +175,10 @@ function planClones(config: ResolvedConfig, repositories: readonly string[]): Cl
     }
     seen.add(entry);
     const target = resolve(projectDir, entry);
+    if (!isInsideProjectDir(projectDir, target)) {
+      skipped.push(escapingTargetSkip(entry, projectDir, target));
+      continue;
+    }
     const targetPlan = existingTargetPlan(target);
     if (targetPlan === "existing") {
       existing.push(entry);

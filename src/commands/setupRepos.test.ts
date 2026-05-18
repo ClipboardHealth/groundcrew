@@ -267,6 +267,19 @@ describe(setupRepos, () => {
     expect(result.skipped[0]?.reason).toContain("owner/repo");
   });
 
+  it("skips repository entries whose target would escape projectDir", async () => {
+    const config = makeConfig({ projectDir, knownRepositories: ["../outside"] });
+
+    const result = await setupRepos(config, {});
+
+    expect(runCommandMock).not.toHaveBeenCalled();
+    expect(result.cloned).toStrictEqual([]);
+    expect(result.skipped).toHaveLength(1);
+    expect(result.skipped[0]?.repo).toBe("../outside");
+    expect(result.skipped[0]?.kind).toBe("invalid-repository");
+    expect(result.skipped[0]?.reason).toContain("outside workspace.projectDir");
+  });
+
   it("fails fast with an install hint when gh is not on PATH", async () => {
     // oxlint-disable-next-line unicorn/no-useless-undefined -- `which` returns Promise<string | undefined>; passing nothing is a TS error
     whichMock.mockResolvedValue(undefined);
