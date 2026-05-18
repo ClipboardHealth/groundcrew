@@ -4,7 +4,6 @@ import { join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import {
-  BUILD_SECRET_NAMES,
   DEFAULT_REMOTE_SETUP_COMMAND,
   loadConfig,
   type RemoteRunnerConfig,
@@ -12,7 +11,10 @@ import {
 import { shellSingleQuote } from "../lib/shell.ts";
 import {
   getRemoteRunnerProvider,
+  remotePathJoin,
   remoteConfigWithRunnerName,
+  remoteRepositoryDirectoryName,
+  remoteRepositorySlug,
   type RemoteRunnerProvider,
 } from "../lib/spriteRemoteRunnerProvider.ts";
 import { log, readEnvironmentVariable, writeOutput } from "../lib/util.ts";
@@ -50,6 +52,8 @@ export interface RemoteBootstrapOptions {
   owner: string;
   baseBranch: string;
   gitRemote?: string;
+  repoRoot?: string;
+  remoteConfig?: RemoteRunnerConfig;
   secretNames: string[];
   shouldRequireSelectedSecrets: boolean;
   shouldUseSecrets: boolean;
@@ -58,13 +62,17 @@ export interface RemoteBootstrapOptions {
 
 interface ResolvedRemoteBootstrapOptions extends RemoteBootstrapOptions {
   gitRemote: string;
+  repoRoot: string;
+  remoteConfig: RemoteRunnerConfig;
 }
 
 interface ParsedRemoteBootstrapOptions extends Omit<
   RemoteBootstrapOptions,
-  "baseBranch" | "gitRemote"
+  "baseBranch" | "gitRemote" | "owner" | "remoteConfig" | "repoRoot" | "secretNames"
 > {
+  owner?: string;
   baseBranch?: string;
+  secretNames?: string[];
 }
 
 export interface RemoteSessionsOptions {
@@ -88,7 +96,6 @@ export interface RemoteInterruptOptions {
 const DEFAULT_CHECKPOINT_COMMENT =
   "groundcrew remote runner baseline: selected agent auth, git identity, and MCP config";
 const CLAUDE_SUBSCRIPTION_LOGIN_FLAG = ["--claude", "ai"].join("");
-const DEFAULT_REPOSITORY_OWNER = "ClipboardHealth";
 const DEFAULT_GIT_REMOTE = "origin";
 const DATADOG_PUP_VERSION = "0.63.0";
 const DATADOG_OAUTH_CALLBACK_PORT = 8000;
@@ -129,9 +136,9 @@ function usage(): string {
     "Bootstrap options:",
     "  --branch <branch>           Checkout/create a ticket branch before installing deps",
     "  --base <branch>             Base branch used when creating a missing branch (default: git.defaultBranch)",
-    "  --owner <owner>             GitHub owner for bare repo names (default: ClipboardHealth)",
+    "  --owner <owner>             GitHub owner for bare repo names (default: remote.owner)",
     "  --secret <env-name>         Forward one required build secret; repeat for multiple",
-    "  --no-secrets                Do not forward NPM_TOKEN/BUF_TOKEN even if present",
+    "  --no-secrets                Do not forward configured build secrets even if present",
     "",
     "Bootstrap example:",
     "  crew remote bootstrap crew-claude-1 core-utils --branch rocky-team-123",
@@ -326,7 +333,7 @@ function parseBootstrapArguments(argv: readonly string[]): ParsedRemoteBootstrap
   }
   validateRepository(repository);
 
-  let owner = DEFAULT_REPOSITORY_OWNER;
+  let owner: string | undefined;
   let baseBranch: string | undefined;
   let branchName: string | undefined;
   let shouldUseSecrets = true;
@@ -371,10 +378,10 @@ function parseBootstrapArguments(argv: readonly string[]): ParsedRemoteBootstrap
   return {
     runnerName,
     repository,
-    owner,
-    secretNames: selectedSecretNames.length > 0 ? selectedSecretNames : [...BUILD_SECRET_NAMES],
     shouldRequireSelectedSecrets,
     shouldUseSecrets,
+    ...(owner === undefined ? {} : { owner }),
+    ...(selectedSecretNames.length > 0 ? { secretNames: selectedSecretNames } : {}),
     ...(baseBranch === undefined ? {} : { baseBranch }),
     ...(branchName === undefined ? {} : { branchName }),
   };
@@ -832,19 +839,6 @@ async function checkpoint(arguments_: {
   await provider.checkpoint(config, options.checkpointComment);
 }
 
-function repositorySlug(options: Pick<RemoteBootstrapOptions, "owner" | "repository">): string {
-  return options.repository.includes("/")
-    ? options.repository
-    : `${options.owner}/${options.repository}`;
-}
-
-function repositoryDirectoryName(repository: string): string {
-  const name = repository.includes("/")
-    ? repository.slice(repository.lastIndexOf("/") + 1)
-    : repository;
-  return name.endsWith(".git") ? name.slice(0, -4) : name;
-}
-
 function validateRemoteBootstrapOptions(options: ResolvedRemoteBootstrapOptions): void {
   validateRepository(options.repository);
   validateRepositoryOwner(options.owner);
@@ -859,8 +853,9 @@ function validateRemoteBootstrapOptions(options: ResolvedRemoteBootstrapOptions)
 }
 
 function remoteBootstrapCommand(options: ResolvedRemoteBootstrapOptions): string {
-  const slug = repositorySlug(options);
-  const directoryName = repositoryDirectoryName(options.repository);
+  const slug = remoteRepositorySlug(options.owner, options.repository);
+  const directoryName = remoteRepositoryDirectoryName(options.owner, options.repository);
+  const repoDir = remotePathJoin(options.repoRoot, directoryName);
   const baseRef = `${options.gitRemote}/${options.baseBranch}`;
   const unsetSecretsLine =
     options.secretNames.length === 0 ? ":" : `unset ${options.secretNames.join(" ")}`;
@@ -879,9 +874,10 @@ function remoteBootstrapCommand(options: ResolvedRemoteBootstrapOptions): string
     "set -euo pipefail",
     `cleanup() { rm -f ${shellSingleQuote(REMOTE_SECRETS_FILE)}; ${unsetSecretsLine}; }`,
     "trap cleanup EXIT",
+    `repo_root=${shellSingleQuote(options.repoRoot)}`,
+    `repo_dir=${shellSingleQuote(repoDir)}`,
     `git_remote=${shellSingleQuote(options.gitRemote)}`,
-    'mkdir -p "$HOME/dev"',
-    `repo_dir="$HOME/dev"/${shellSingleQuote(directoryName)}`,
+    'mkdir -p "$repo_root"',
     'if [ ! -d "$repo_dir/.git" ]; then',
     `  gh repo clone ${shellSingleQuote(slug)} "$repo_dir"`,
     "fi",
@@ -901,10 +897,19 @@ async function resolveBootstrapOptions(
   options: ParsedRemoteBootstrapOptions,
 ): Promise<ResolvedRemoteBootstrapOptions> {
   const config = await loadConfig();
+  const remoteConfig: RemoteRunnerConfig = {
+    ...config.remote,
+    runnerName: options.runnerName,
+    secretNames: [...config.remote.secretNames],
+  };
   return {
     ...options,
+    owner: options.owner ?? remoteConfig.owner,
     baseBranch: options.baseBranch ?? config.git.defaultBranch,
     gitRemote: config.git.remote,
+    repoRoot: remoteConfig.repoRoot,
+    remoteConfig,
+    secretNames: options.secretNames ?? [...remoteConfig.secretNames],
   };
 }
 
@@ -953,12 +958,14 @@ function stageBuildSecrets(options: RemoteBootstrapOptions): StagedSecrets {
 }
 
 export async function bootstrapRemoteRepository(options: RemoteBootstrapOptions): Promise<void> {
+  const config = options.remoteConfig ?? remoteConfigWithRunnerName(options.runnerName);
   const bootstrapOptions: ResolvedRemoteBootstrapOptions = {
     ...options,
     gitRemote: options.gitRemote ?? DEFAULT_GIT_REMOTE,
+    repoRoot: options.repoRoot ?? config.repoRoot,
+    remoteConfig: config,
   };
   validateRemoteBootstrapOptions(bootstrapOptions);
-  const config = remoteConfigWithRunnerName(options.runnerName);
   const provider = providerFor(config);
   if (!(await provider.runnerExists(config))) {
     throw new Error(
@@ -976,7 +983,9 @@ export async function bootstrapRemoteRepository(options: RemoteBootstrapOptions)
         ? []
         : [{ localPath: stagedSecrets.filePath, remotePath: REMOTE_SECRETS_FILE }];
 
-    log(`Bootstrapping ${repositorySlug(bootstrapOptions)} in ${options.runnerName}`);
+    log(
+      `Bootstrapping ${remoteRepositorySlug(bootstrapOptions.owner, bootstrapOptions.repository)} in ${options.runnerName}`,
+    );
     await provider.runCommand({
       config,
       files,

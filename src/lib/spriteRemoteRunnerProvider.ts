@@ -170,7 +170,7 @@ function buildSpriteTtyCommand(arguments_: RemoteTtyCommandArguments): string {
   ].join(" ");
 }
 
-function remotePathJoin(root: string, leaf: string): string {
+export function remotePathJoin(root: string, leaf: string): string {
   let end = root.length;
   while (end > 0 && root[end - 1] === "/") {
     end -= 1;
@@ -178,12 +178,12 @@ function remotePathJoin(root: string, leaf: string): string {
   return `${root.slice(0, end)}/${leaf}`;
 }
 
-function repositorySlug(owner: string, repository: string): string {
+export function remoteRepositorySlug(owner: string, repository: string): string {
   return repository.includes("/") ? repository : `${owner}/${repository}`;
 }
 
-function repositoryDirectoryName(owner: string, repository: string): string {
-  const slug = repositorySlug(owner, repository);
+export function remoteRepositoryDirectoryName(owner: string, repository: string): string {
+  const slug = remoteRepositorySlug(owner, repository);
   const normalizedSlug = slug.endsWith(".git") ? slug.slice(0, -4) : slug;
   return normalizedSlug.replaceAll("/", "--");
 }
@@ -206,7 +206,7 @@ function spriteCreateWorktreeCommand(arguments_: {
   repoRoot: string;
   worktreeRoot: string;
 }): string {
-  const slug = repositorySlug(arguments_.owner, arguments_.repository);
+  const slug = remoteRepositorySlug(arguments_.owner, arguments_.repository);
   const branchRemoteRef = `refs/remotes/${arguments_.gitRemote}/${arguments_.branchName}`;
   const branchRef = `${arguments_.gitRemote}/${arguments_.branchName}`;
   const baseRef = `${arguments_.gitRemote}/${arguments_.baseBranch}`;
@@ -452,7 +452,7 @@ export const spriteRemoteRunnerProvider: RemoteRunnerProvider = {
   },
   async createWorktree(arguments_) {
     const { config, repository, ticket, branchName, baseBranch, gitRemote, signal } = arguments_;
-    const remoteRepositoryName = repositoryDirectoryName(config.owner, repository);
+    const remoteRepositoryName = remoteRepositoryDirectoryName(config.owner, repository);
     const remoteRepoDir = remotePathJoin(config.repoRoot, remoteRepositoryName);
     const remoteWorktreeDir = remotePathJoin(
       config.worktreeRoot,
