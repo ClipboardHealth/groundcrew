@@ -845,6 +845,19 @@ function repositoryDirectoryName(repository: string): string {
   return name.endsWith(".git") ? name.slice(0, -4) : name;
 }
 
+function validateRemoteBootstrapOptions(options: ResolvedRemoteBootstrapOptions): void {
+  validateRepository(options.repository);
+  validateRepositoryOwner(options.owner);
+  validateGitRef(options.baseBranch, "base branch");
+  validateGitRef(options.gitRemote, "git remote");
+  if (options.branchName !== undefined) {
+    validateGitRef(options.branchName, "branch");
+  }
+  for (const name of options.secretNames) {
+    validateSecretName(name);
+  }
+}
+
 function remoteBootstrapCommand(options: ResolvedRemoteBootstrapOptions): string {
   const slug = repositorySlug(options);
   const directoryName = repositoryDirectoryName(options.repository);
@@ -868,7 +881,7 @@ function remoteBootstrapCommand(options: ResolvedRemoteBootstrapOptions): string
     "trap cleanup EXIT",
     `git_remote=${shellSingleQuote(options.gitRemote)}`,
     'mkdir -p "$HOME/dev"',
-    `repo_dir="$HOME/dev/${directoryName}"`,
+    `repo_dir="$HOME/dev"/${shellSingleQuote(directoryName)}`,
     'if [ ! -d "$repo_dir/.git" ]; then',
     `  gh repo clone ${shellSingleQuote(slug)} "$repo_dir"`,
     "fi",
@@ -944,6 +957,7 @@ export async function bootstrapRemoteRepository(options: RemoteBootstrapOptions)
     ...options,
     gitRemote: options.gitRemote ?? DEFAULT_GIT_REMOTE,
   };
+  validateRemoteBootstrapOptions(bootstrapOptions);
   const config = remoteConfigWithRunnerName(options.runnerName);
   const provider = providerFor(config);
   if (!(await provider.runnerExists(config))) {
