@@ -41,6 +41,7 @@ interface GhRepoEntry {
 const USAGE = "Usage: crew setup discover-repos [--dry-run] <org>";
 const GH_INSTALL_HINT =
   "gh CLI not found — install from https://cli.github.com/ (or add entries to workspace.knownRepositories manually).";
+const GH_REPO_LIST_LIMIT = 1000;
 
 function emptyResult(org: string): DiscoverReposResult {
   return {
@@ -122,11 +123,16 @@ export async function discoverRepos(
     "--no-archived",
     "--source",
     "--limit",
-    "1000",
+    String(GH_REPO_LIST_LIMIT),
     "--json",
     "name,isArchived,isFork,isDisabled",
   ]);
   const entries = parseGhRepoList(stdout);
+  if (entries.length === GH_REPO_LIST_LIMIT) {
+    writeError(
+      `discover-repos: warning — gh returned exactly ${GH_REPO_LIST_LIMIT} repos for ${org}; the org may have more. Results may be incomplete.`,
+    );
+  }
 
   const active: string[] = [];
   for (const entry of entries) {

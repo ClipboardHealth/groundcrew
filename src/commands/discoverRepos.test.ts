@@ -272,6 +272,24 @@ describe(discoverRepos, () => {
 
     await expect(discoverRepos(config, "myorg", {})).rejects.toThrow(/did not return an array/);
   });
+
+  it("warns to stderr when gh returns exactly the page-size limit", async () => {
+    const PAGE = 1000;
+    const entries = Array.from({ length: PAGE }, (_, i) => ({
+      name: `repo-${i}`,
+      isArchived: false,
+      isFork: false,
+      isDisabled: false,
+    }));
+    runCommandMock.mockReturnValue(JSON.stringify(entries));
+    const config = makeConfig({ knownRepositories: [] });
+
+    await discoverRepos(config, "myorg", { dryRun: true });
+
+    expect(consoleError.output()).toContain("warning");
+    expect(consoleError.output()).toContain("1000");
+    expect(consoleError.output()).toContain("myorg");
+  });
 });
 
 describe(discoverReposCli, () => {
