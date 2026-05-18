@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import type * as nodeOs from "node:os";
 import { tmpdir, userInfo } from "node:os";
 import { join, sep } from "node:path";
@@ -417,6 +417,78 @@ describe(create, () => {
       remoteRepoDir: "/home/sprite/dev/ClipboardHealth--repo-a",
     });
     expect(readRemoteStateEntries()).toStrictEqual([actual]);
+  });
+
+  it("rolls back the remote worktree when local state persistence fails", async () => {
+    mkdirSync(join(projectDir, "repo-a"));
+    writeFileSync(join(projectDir, "state"), "not a directory");
+    const config = makeConfig({ projectDir });
+
+    await expect(
+      create(config, {
+        repository: "repo-a",
+        ticket: "team-1",
+        model: "claude",
+        runner: "remote",
+      }),
+    ).rejects.toThrow(/ENOTDIR|not a directory/);
+
+    const spriteCalls = runCommandMock.mock.calls.filter(([command]) => command === "sprite");
+    expect(spriteCalls).toHaveLength(2);
+    const removeCommand = spriteCalls[1]?.[1].at(-1);
+    expect(removeCommand).toStrictEqual(
+      expect.stringContaining(
+        "git -C '/home/sprite/dev/ClipboardHealth--repo-a' worktree remove --force '/home/sprite/groundcrew/worktrees/ClipboardHealth--repo-a-team-1'",
+      ),
+    );
+    expect(removeCommand).toStrictEqual(
+      expect.stringContaining(
+        "git -C '/home/sprite/dev/ClipboardHealth--repo-a' branch -D 'rocky-team-1' || true",
+      ),
+    );
+  });
+
+  it("removes the temporary state file when an atomic state replace fails", async () => {
+    mkdirSync(join(projectDir, "repo-a"));
+    mkdirSync(join(projectDir, "state", "groundcrew"), { recursive: true });
+    mkdirSync(remoteStatePath());
+    const config = makeConfig({ projectDir });
+
+    await expect(
+      create(config, {
+        repository: "repo-a",
+        ticket: "team-1",
+        model: "claude",
+        runner: "remote",
+      }),
+    ).rejects.toThrow(/EISDIR|directory|remote-worktrees\.json/);
+
+    expect(readdirSync(join(projectDir, "state", "groundcrew"))).toStrictEqual([
+      "remote-worktrees.json",
+    ]);
+    const spriteCalls = runCommandMock.mock.calls.filter(([command]) => command === "sprite");
+    expect(spriteCalls).toHaveLength(2);
+  });
+
+  it("rethrows the state persistence error when remote rollback fails", async () => {
+    mkdirSync(join(projectDir, "repo-a"));
+    writeFileSync(join(projectDir, "state"), "not a directory");
+    const config = makeConfig({ projectDir });
+    runCommandMock.mockReturnValueOnce("").mockImplementationOnce(() => {
+      throw new Error("rollback failed");
+    });
+
+    await expect(
+      create(config, {
+        repository: "repo-a",
+        ticket: "team-1",
+        model: "claude",
+        runner: "remote",
+      }),
+    ).rejects.toThrow(/ENOTDIR|not a directory/);
+
+    const spriteCalls = runCommandMock.mock.calls.filter(([command]) => command === "sprite");
+    expect(spriteCalls).toHaveLength(2);
   });
 
   it("creates remote worktrees for owner-qualified repositories without double-prefixing the owner", async () => {
