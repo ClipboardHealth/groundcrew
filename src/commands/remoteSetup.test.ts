@@ -533,7 +533,8 @@ describe(remoteCli, () => {
       expect.stringContaining("gh repo clone 'ClipboardHealth/core-utils' \"$repo_dir\""),
     );
     expect(command).toStrictEqual(expect.stringContaining('repo_dir="$HOME/dev/core-utils"'));
-    expect(command).toStrictEqual(expect.stringContaining("git fetch origin --prune"));
+    expect(command).toStrictEqual(expect.stringContaining("git_remote='origin'"));
+    expect(command).toStrictEqual(expect.stringContaining('git fetch "$git_remote" --prune'));
     expect(command).toStrictEqual(
       expect.stringContaining("git checkout -B 'rocky-team-123' 'origin/rocky-team-123'"),
     );
@@ -542,6 +543,39 @@ describe(remoteCli, () => {
     );
     expect(command).toStrictEqual(expect.stringContaining("unset NPM_TOKEN BUF_TOKEN"));
     expect(command).toStrictEqual(expect.stringContaining("./.claude/setup.sh --deps-only"));
+  });
+
+  it("uses configured git remote and default branch for bootstrap refs", async () => {
+    loadConfigMock.mockResolvedValue({
+      ...makeConfig(),
+      git: { remote: "upstream", defaultBranch: "develop" },
+    });
+    mockExistingSpriteForBootstrap();
+
+    await remoteCli([
+      "bootstrap",
+      "crew-claude-1",
+      "core-utils",
+      "--branch",
+      "rocky-team-123",
+      "--no-secrets",
+    ]);
+
+    const bootstrapCall = runCommandMock.mock.calls.find((call) =>
+      hasRemoteCommand(call, ["bash", "-lc"]),
+    );
+    const command = bootstrapCall?.[1]?.at(-1);
+    expect(command).toStrictEqual(expect.stringContaining("git_remote='upstream'"));
+    expect(command).toStrictEqual(
+      expect.stringContaining('git remote add "$git_remote" "$origin_url"'),
+    );
+    expect(command).toStrictEqual(expect.stringContaining('git fetch "$git_remote" --prune'));
+    expect(command).toStrictEqual(
+      expect.stringContaining("git checkout -B 'rocky-team-123' 'upstream/rocky-team-123'"),
+    );
+    expect(command).toStrictEqual(
+      expect.stringContaining("git checkout -B 'rocky-team-123' 'upstream/develop'"),
+    );
   });
 });
 
@@ -844,6 +878,7 @@ describe(setupRemoteRunner, () => {
 describe(bootstrapRemoteRepository, () => {
   beforeEach(() => {
     resetProxyPortReadyMock();
+    loadConfigMock.mockResolvedValue(makeConfig());
   });
 
   afterEach(() => {
@@ -868,6 +903,12 @@ describe(bootstrapRemoteRepository, () => {
       stdio: "inherit",
       timeoutMs: 0,
     });
+    const bootstrapCall = runCommandMock.mock.calls.find((call) =>
+      hasRemoteCommand(call, ["bash", "-lc"]),
+    );
+    expect(bootstrapCall?.[1]?.at(-1)).toStrictEqual(
+      expect.stringContaining("git_remote='origin'"),
+    );
   });
 
   it("skips unset optional build secrets without uploading a file", async () => {
@@ -880,6 +921,7 @@ describe(bootstrapRemoteRepository, () => {
       repository: "core-utils",
       owner: "ClipboardHealth",
       baseBranch: "main",
+      gitRemote: "origin",
       secretNames: ["NPM_TOKEN", "BUF_TOKEN"],
       shouldRequireSelectedSecrets: false,
       shouldUseSecrets: true,
@@ -901,6 +943,7 @@ describe(bootstrapRemoteRepository, () => {
       repository: "core-utils",
       owner: "ClipboardHealth",
       baseBranch: "main",
+      gitRemote: "origin",
       secretNames: ["NPM_TOKEN", "BUF_TOKEN"],
       shouldRequireSelectedSecrets: false,
       shouldUseSecrets: true,
@@ -945,6 +988,7 @@ describe(bootstrapRemoteRepository, () => {
       repository: "core-utils.git",
       owner: "ClipboardHealth",
       baseBranch: "main",
+      gitRemote: "origin",
       secretNames: [],
       shouldRequireSelectedSecrets: false,
       shouldUseSecrets: false,
@@ -986,6 +1030,7 @@ describe(bootstrapRemoteRepository, () => {
         repository: "core-utils",
         owner: "ClipboardHealth",
         baseBranch: "main",
+        gitRemote: "origin",
         secretNames: ["NPM_TOKEN"],
         shouldRequireSelectedSecrets: true,
         shouldUseSecrets: true,
@@ -1002,6 +1047,7 @@ describe(bootstrapRemoteRepository, () => {
         repository: "core-utils",
         owner: "ClipboardHealth",
         baseBranch: "main",
+        gitRemote: "origin",
         secretNames: ["NPM_TOKEN"],
         shouldRequireSelectedSecrets: false,
         shouldUseSecrets: true,
