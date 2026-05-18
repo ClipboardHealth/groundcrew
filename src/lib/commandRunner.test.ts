@@ -7,10 +7,18 @@ const spawnMock = vi.hoisted(() =>
   vi.fn<(command: string, arguments_: readonly string[], options: unknown) => FakeChildProcess>(),
 );
 
-vi.mock("node:child_process", () => ({
-  execFileSync: vi.fn<typeof execFileSync>(),
-  spawn: spawnMock,
-}));
+interface ChildProcessMockModule {
+  execFileSync: ReturnType<typeof vi.fn<typeof execFileSync>>;
+  spawn: typeof spawnMock;
+}
+
+vi.mock(
+  "node:child_process",
+  (): ChildProcessMockModule => ({
+    execFileSync: vi.fn<typeof execFileSync>(),
+    spawn: spawnMock,
+  }),
+);
 
 const execFileMock = vi.mocked(execFileSync);
 

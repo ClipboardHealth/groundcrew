@@ -8,10 +8,18 @@ import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCa
 import { deleteEnvironmentVariable, setEnvironmentVariable } from "../testHelpers/env.ts";
 import { doctor } from "./doctor.ts";
 
-vi.mock("node:fs", () => ({
-  existsSync: vi.fn<typeof existsSync>(),
-  statSync: vi.fn<typeof statSync>(),
-}));
+interface NodeFsMock {
+  existsSync: ReturnType<typeof vi.fn<typeof existsSync>>;
+  statSync: ReturnType<typeof vi.fn<typeof statSync>>;
+}
+
+vi.mock(
+  "node:fs",
+  (): NodeFsMock => ({
+    existsSync: vi.fn<typeof existsSync>(),
+    statSync: vi.fn<typeof statSync>(),
+  }),
+);
 vi.mock(import("../lib/config.ts"), async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, loadConfig: vi.fn<typeof loadConfig>() };

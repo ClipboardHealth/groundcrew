@@ -11,6 +11,10 @@ import { type WorktreeEntry, worktrees } from "./worktrees.ts";
 
 const { create, findByBranch, findByTicket, list, remove, teardown } = worktrees;
 
+type NodeOsMock = Omit<typeof nodeOs, "userInfo"> & {
+  userInfo: ReturnType<typeof vi.fn<typeof userInfo>>;
+};
+
 type RunCommandMock = (
   command: string,
   arguments_: readonly string[],
@@ -39,7 +43,7 @@ vi.mock(import("./workspaces.ts"), async (importOriginal) => {
     },
   };
 });
-vi.mock("node:os", async (importOriginal) => {
+vi.mock("node:os", async (importOriginal): Promise<NodeOsMock> => {
   const actual = await importOriginal<typeof nodeOs>();
   return { ...actual, userInfo: vi.fn<typeof actual.userInfo>(actual.userInfo) };
 });
