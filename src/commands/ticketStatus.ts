@@ -545,14 +545,22 @@ async function probePullRequestSection(
  * function itself does no filesystem, network, or stdout work.
  */
 export async function ticketStatus(deps: TicketStatusDependencies): Promise<TicketStatusResult> {
-  const ticket = deps.ticket.toUpperCase();
+  // The Linear probe wants the uppercase form (Linear's API treats ticket ids
+  // as uppercase canonically). All local-state probes — worktree dirs,
+  // workspace pane names, and branch-name fallbacks — are derived from the
+  // lowercase ticket convention used by `setupWorkspaceCli` (it passes
+  // `ticket.toLowerCase()` to `setupWorkspace`, which becomes both the worktree
+  // dir suffix and the workspace `name`). Mixing cases here is the root cause
+  // of the "no worktree found" bug when the user types `--ticket HRD-442`.
+  const upperTicket = deps.ticket.toUpperCase();
+  const lowerTicket = deps.ticket.toLowerCase();
   const skipReasons = emptySkipReasons();
 
-  const linearResult = await probeLinear(deps, ticket);
+  const linearResult = await probeLinear(deps, upperTicket);
   skipReasons.linear = linearResult.skipReason;
 
-  const worktreeResult = await probeWorktreeSection(deps, ticket);
-  const workspaceResult = await probeWorkspaceSection(deps, ticket);
+  const worktreeResult = await probeWorktreeSection(deps, lowerTicket);
+  const workspaceResult = await probeWorkspaceSection(deps, lowerTicket);
   const localResult = await probeLocalBranchSection(deps, worktreeResult.entry);
   const remoteResult = await probeRemoteBranchSection(deps, worktreeResult.entry);
   const prResult = await probePullRequestSection(deps, worktreeResult.entry);
@@ -576,13 +584,13 @@ export async function ticketStatus(deps: TicketStatusDependencies): Promise<Tick
     localBranch: localResult.probe,
     remoteBranch: remoteResult.probe,
     pullRequest: prResult.probe,
-    branch: worktreeResult.entry?.branchName ?? ticket.toLowerCase(),
+    branch: worktreeResult.entry?.branchName ?? lowerTicket,
     worktreeDir: worktreeResult.entry?.dir,
     workspaceName: workspaceResult.workspaceName,
   });
 
   return {
-    ticket,
+    ticket: upperTicket,
     ...(linearResult.title === undefined ? {} : { title: linearResult.title }),
     linear: linearResult.checks,
     worktree: worktreeResult.checks,

@@ -54,6 +54,12 @@ function assertInFlight(
   expect(verdict.kind).toBe("in-flight");
 }
 
+function assertLost(
+  verdict: StatusVerdict,
+): asserts verdict is Extract<StatusVerdict, { kind: "lost" }> {
+  expect(verdict.kind).toBe("lost");
+}
+
 describe("decideVerdict pure verdict logic", () => {
   it("row 1 — terminal + nothing local + no PR → lost", () => {
     const actual = decideVerdict(makeInput());
@@ -481,13 +487,13 @@ describe("ticketStatus — Workspace section", () => {
     const deps = makeDeps({
       probeWorkspaces: vi
         .fn<TicketStatusDependencies["probeWorkspaces"]>()
-        .mockResolvedValue({ kind: "ok", names: new Set(["HRD-1"]) }),
+        .mockResolvedValue({ kind: "ok", names: new Set(["hrd-1"]) }),
     });
 
     const actual = await ticketStatus(deps);
 
     expect(actual.workspace).toStrictEqual([
-      { name: "Workspace pane open", status: "ok", detail: "HRD-1" },
+      { name: "Workspace pane open", status: "ok", detail: "hrd-1" },
     ]);
   });
 
@@ -517,6 +523,61 @@ describe("ticketStatus — Workspace section", () => {
     expect(actual.workspace).toStrictEqual([
       { name: "Workspace pane open", status: "skipped", detail: "workspace probe unavailable" },
     ]);
+  });
+});
+
+describe("ticketStatus — ticket case normalization", () => {
+  // Regression guard: `setupWorkspaceCli` passes `ticket.toLowerCase()` when
+  // creating worktrees and opening workspaces (their dir suffix / pane name is
+  // the lowercase ticket). The orchestrator must use the lowercase form for
+  // local-state probes regardless of whether the user typed `HRD-1` or
+  // `hrd-1`. The uppercase form is reserved for the Linear probe and the
+  // rendered title.
+  it("passes the lowercase ticket to findWorktree even when the caller supplies HRD-1", async () => {
+    const findWorktree = vi
+      .fn<TicketStatusDependencies["findWorktree"]>()
+      // oxlint-disable-next-line unicorn/no-useless-undefined -- findWorktree returns `WorktreeEntry | undefined`; passing nothing is a TS error
+      .mockReturnValue(undefined);
+    const deps = makeDeps({ ticket: "HRD-1", findWorktree });
+
+    await ticketStatus(deps);
+
+    expect(findWorktree).toHaveBeenCalledWith("hrd-1");
+  });
+
+  it("matches a workspace whose probe set holds the lowercase ticket even when the caller supplies HRD-1", async () => {
+    const deps = makeDeps({
+      ticket: "HRD-1",
+      probeWorkspaces: vi
+        .fn<TicketStatusDependencies["probeWorkspaces"]>()
+        .mockResolvedValue({ kind: "ok", names: new Set(["hrd-1"]) }),
+    });
+
+    const actual = await ticketStatus(deps);
+
+    expect(actual.workspace).toStrictEqual([
+      { name: "Workspace pane open", status: "ok", detail: "hrd-1" },
+    ]);
+  });
+
+  it("keeps the uppercase ticket in the result header for cosmetics", async () => {
+    const deps = makeDeps({ ticket: "hrd-1" });
+
+    const actual = await ticketStatus(deps);
+
+    expect(actual.ticket).toBe("HRD-1");
+  });
+
+  it("falls back to the lowercase ticket in the verdict branch when no worktree resolves", async () => {
+    const deps = makeDeps({
+      ticket: "HRD-1",
+      fetchRawIssue: undefined,
+    });
+
+    const actual = await ticketStatus(deps);
+
+    assertLost(actual.verdict);
+    expect(actual.verdict.reason).toMatch(/crew run --ticket hrd-1/);
   });
 });
 
