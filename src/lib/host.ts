@@ -4,7 +4,7 @@
  * so tests don't have to mock `which`.
  */
 
-import { platform } from "node:process";
+import process from "node:process";
 
 import { runCommandAsync } from "./commandRunner.ts";
 
@@ -57,8 +57,8 @@ export async function which(cmd: string, signal?: AbortSignal): Promise<string |
 }
 
 export async function detectHostCapabilities(signal?: AbortSignal): Promise<HostCapabilities> {
-  const isMacOS = platform === "darwin";
-  const isLinux = platform === "linux";
+  const isMacOS = process.platform === "darwin";
+  const isLinux = process.platform === "linux";
   const [safehouse, sbx, cmux, tmux] = await Promise.all([
     which("safehouse", signal),
     which("sbx", signal),

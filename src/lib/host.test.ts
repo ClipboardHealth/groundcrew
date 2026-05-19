@@ -1,4 +1,4 @@
-import { platform } from "node:process";
+import process, { platform } from "node:process";
 
 import type { RunCommandOptions } from "./commandRunner.ts";
 import { detectHostCapabilities, which } from "./host.ts";
@@ -33,8 +33,11 @@ function mockWhich(presentBinaries: readonly string[]): void {
 }
 
 describe(detectHostCapabilities, () => {
+  const originalPlatform = platform;
+
   afterEach(() => {
     vi.clearAllMocks();
+    Object.defineProperty(process, "platform", { value: originalPlatform });
   });
 
   it("reports safehouse, sbx, cmux, and tmux as present when all are on PATH", async () => {
@@ -74,6 +77,29 @@ describe(detectHostCapabilities, () => {
       isLinux: platform === "linux",
       isSdxSupported: sdxPlatforms.has(platform),
     });
+  });
+
+  it("flags isLinux and isSdxSupported when process.platform is linux", async () => {
+    mockWhich([]);
+    Object.defineProperty(process, "platform", { value: "linux" });
+
+    const actual = await detectHostCapabilities();
+
+    expect(actual.isMacOS).toBe(false);
+    expect(actual.isLinux).toBe(true);
+    expect(actual.isSdxSupported).toBe(true);
+    expect(actual.isSafehouseSupported).toBe(false);
+  });
+
+  it("clears isSdxSupported when process.platform is neither macOS nor linux", async () => {
+    mockWhich([]);
+    Object.defineProperty(process, "platform", { value: "win32" });
+
+    const actual = await detectHostCapabilities();
+
+    expect(actual.isMacOS).toBe(false);
+    expect(actual.isLinux).toBe(false);
+    expect(actual.isSdxSupported).toBe(false);
   });
 
   it("reports a binary missing when which returns whitespace only", async () => {
