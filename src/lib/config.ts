@@ -18,15 +18,17 @@ export const AGENT_ANY_MODEL = "any";
 /**
  * Which terminal session manager hosts the agent process:
  *
- * - `auto`: pick the first available — cmux when installed, else tmux.
+ * - `auto`: pick the first available — cmux, then herdr, then tmux.
  * - `cmux`: require the cmux binary; fail loudly if missing.
+ * - `herdr`: require the herdr binary; fail loudly if missing.
  * - `tmux`: require the tmux binary; fail loudly if missing.
  */
-export type WorkspaceKindSetting = "auto" | "cmux" | "tmux";
+export type WorkspaceKindSetting = "auto" | "cmux" | "herdr" | "tmux";
 
 export const WORKSPACE_KIND_SETTINGS: readonly WorkspaceKindSetting[] = [
   "auto",
   "cmux",
+  "herdr",
   "tmux",
 ] as const;
 

@@ -125,6 +125,7 @@ function host(overrides: Partial<HostCapabilities> = {}): HostCapabilities {
     hasSafehouse: true,
     hasSbx: false,
     hasCmux: true,
+    hasHerdr: false,
     hasTmux: false,
     isMacOS: true,
     isLinux: false,

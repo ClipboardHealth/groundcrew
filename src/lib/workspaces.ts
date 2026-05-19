@@ -11,7 +11,15 @@ import { detectHostCapabilities, type HostCapabilities } from "./host.ts";
 import { shellSingleQuote } from "./shell.ts";
 import { errorMessage, log, readEnvironmentVariable } from "./util.ts";
 
-export type WorkspaceKind = "cmux" | "tmux";
+export type WorkspaceKind = "cmux" | "tmux" | "herdr";
+
+/**
+ * Semantic agent state. Herdr renders pane visuals from this; cmux/tmux
+ * ignore it because their status painting is text/icon/color-driven (and
+ * cmux v2+ dropped `set-status` entirely). Callers SHOULD set this when
+ * they can; adapters that need a default treat `undefined` as `working`.
+ */
+export type WorkspaceAgentState = "idle" | "working" | "blocked" | "unknown";
 
 export interface Workspace {
   /** Ticket id; the join key callers use. */
@@ -22,6 +30,8 @@ export interface WorkspaceStatus {
   text: string;
   color?: string;
   icon?: string;
+  /** Semantic state; consumed by herdr `pane.report_agent`. */
+  state?: WorkspaceAgentState;
 }
 
 export interface WorkspaceAccessHint {
@@ -49,6 +59,19 @@ export type WorkspaceProbe =
   | { kind: "unavailable"; error?: unknown };
 
 interface Adapter {
+  /** The backend kind this adapter implements. */
+  readonly kind: WorkspaceKind;
+  /**
+   * Lower wins when `workspaceKind: auto` resolves the backend. Used to
+   * order the adapter registry; first available adapter is picked.
+   */
+  readonly autoPriority: number;
+  /**
+   * Whether this adapter can run on the given host (typically: required
+   * binary on PATH). The auto-resolver and explicit-kind validator both
+   * consult this — adapters self-report so resolver code stays generic.
+   */
+  isAvailable(host: HostCapabilities): boolean;
   open(spec: OpenSpec, signal?: AbortSignal): Promise<void>;
   /**
    * Live workspaces only. Returns:
@@ -295,6 +318,11 @@ async function closeCmuxWorkspace(workspaceId: string, signal?: AbortSignal): Pr
 }
 
 const cmuxAdapter: Adapter = {
+  kind: "cmux",
+  autoPriority: 0,
+  isAvailable(host) {
+    return host.hasCmux;
+  },
   async open(spec, signal) {
     const inheritedRemote = await probeCurrentCmuxRemote(signal);
     const newWorkspaceArguments = ["--json", "new-workspace", "--name", spec.name];
@@ -382,8 +410,13 @@ export function resolveWorkspaceKind(arguments_: ResolveArguments): WorkspaceRes
   const { config, host } = arguments_;
   const requested = config.workspaceKind;
 
-  if (requested === "cmux" || requested === "tmux") {
-    failIfBinaryUnavailable(requested, host);
+  if (requested !== "auto") {
+    const adapter = ADAPTERS_BY_KIND.get(requested);
+    /* v8 ignore next 5 @preserve -- WORKSPACE_KIND_SETTINGS keeps the union in sync with the registry; this guards against drift only. */
+    if (adapter === undefined) {
+      throw new Error(`workspaceKind '${requested}' has no registered adapter (registry drift).`);
+    }
+    failIfBinaryUnavailable(adapter, host);
     return { requested, resolved: requested, reason: `workspaceKind set to ${requested}` };
   }
 
@@ -395,30 +428,25 @@ function resolveAuto(arguments_: {
   host: HostCapabilities;
 }): WorkspaceResolution {
   const { requested, host } = arguments_;
-  if (host.hasCmux) {
-    return { requested, resolved: "cmux", reason: "auto: cmux available" };
+  for (const adapter of ADAPTERS_BY_PRIORITY) {
+    if (adapter.isAvailable(host)) {
+      const reason =
+        adapter === ADAPTERS_BY_PRIORITY[0]
+          ? `auto: ${adapter.kind} available`
+          : `auto: higher-priority backends unavailable, falling back to ${adapter.kind}`;
+      return { requested, resolved: adapter.kind, reason };
+    }
   }
-  if (host.hasTmux) {
-    return {
-      requested,
-      resolved: "tmux",
-      reason: "auto: cmux unavailable, falling back to tmux",
-    };
-  }
+  const names = ADAPTERS_BY_PRIORITY.map((a) => a.kind).join(", ");
   throw new Error(
-    "workspaceKind 'auto' could not pick a backend: neither cmux nor tmux is on PATH. Install one or set workspaceKind explicitly.",
+    `workspaceKind 'auto' could not pick a backend: none of [${names}] are on PATH. Install one or set workspaceKind explicitly.`,
   );
 }
 
-const HOST_CAPABILITY_BY_KIND: Record<WorkspaceKind, "hasCmux" | "hasTmux"> = {
-  cmux: "hasCmux",
-  tmux: "hasTmux",
-};
-
-function failIfBinaryUnavailable(kind: WorkspaceKind, host: HostCapabilities): void {
-  if (!host[HOST_CAPABILITY_BY_KIND[kind]]) {
+function failIfBinaryUnavailable(adapter: Adapter, host: HostCapabilities): void {
+  if (!adapter.isAvailable(host)) {
     throw new Error(
-      `workspaceKind '${kind}' is set but the ${kind} binary is not on PATH. Install ${kind} or change the setting.`,
+      `workspaceKind '${adapter.kind}' is set but the ${adapter.kind} binary is not on PATH. Install ${adapter.kind} or change the setting.`,
     );
   }
 }
@@ -528,6 +556,11 @@ function parseTmuxWindows(output: string): Workspace[] {
 }
 
 const tmuxAdapter: Adapter = {
+  kind: "tmux",
+  autoPriority: 2,
+  isAvailable(host) {
+    return host.hasTmux;
+  },
   async open(spec, signal) {
     await ensureTmuxSession(signal);
     const target = tmuxTarget(spec.name);
@@ -592,6 +625,225 @@ const tmuxAdapter: Adapter = {
   },
 };
 
+/**
+ * Herdr adapter. Herdr (https://herdr.dev) is an agent-aware terminal
+ * multiplexer with a client/server split: the server runs on the same
+ * host as the PTYs, so unlike cmux there is no remote-front-end / local-
+ * PTY mismatch to work around. Status painting flows through
+ * `pane.report_agent` whose semantic `state` enum maps cleanly onto
+ * `WorkspaceStatus.state`.
+ *
+ * Several flags below — notably `workspace create`'s stdout shape and
+ * the `--json` switches on `workspace list` / `pane list` — are inferred
+ * from the documented CLI surface at https://herdr.dev/docs/cli-reference/
+ * and are guarded with parse-fallbacks. Once herdr ships a binary we can
+ * pin against, the parse helpers below are the only places that need
+ * tightening.
+ */
+const HERDR_AGENT_LABEL = "groundcrew";
+const HERDR_REPORT_SOURCE = "groundcrew";
+
+interface HerdrRawWorkspace {
+  id: string;
+  label: string;
+}
+
+function parseHerdrWorkspaceList(output: string): HerdrRawWorkspace[] {
+  const trimmed = output.trim();
+  if (trimmed.length === 0) {
+    return [];
+  }
+  // Documented: `herdr workspace list` exists. Format is not pinned in
+  // the public docs — assume `--json` emits either a top-level array or
+  // an object with a `workspaces` field, matching the cmux/session-list
+  // convention. Anything else falls through to an error so we don't
+  // silently mistake an unknown format for "no workspaces".
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- documented shape per inferred --json contract; mismatches surface as parse errors.
+  const parsed = JSON.parse(trimmed) as
+    | { workspaces?: { id?: string; label?: string }[] }
+    | { id?: string; label?: string }[];
+  const rows = Array.isArray(parsed) ? parsed : (parsed.workspaces ?? []);
+  const items: HerdrRawWorkspace[] = [];
+  for (const ws of rows) {
+    if (typeof ws.id !== "string" || ws.id.length === 0) {
+      continue;
+    }
+    if (typeof ws.label !== "string" || ws.label.length === 0) {
+      log(`herdr workspace list returned workspace ${ws.id} without a label; skipping`);
+      continue;
+    }
+    items.push({ id: ws.id, label: ws.label });
+  }
+  return items;
+}
+
+interface HerdrRawPane {
+  id: string;
+}
+
+function parseHerdrPaneList(output: string): HerdrRawPane[] {
+  const trimmed = output.trim();
+  if (trimmed.length === 0) {
+    return [];
+  }
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- documented shape per inferred --json contract; mismatches surface as parse errors.
+  const parsed = JSON.parse(trimmed) as { panes?: { id?: string }[] } | { id?: string }[];
+  const rows = Array.isArray(parsed) ? parsed : (parsed.panes ?? []);
+  const items: HerdrRawPane[] = [];
+  for (const pane of rows) {
+    if (typeof pane.id === "string" && pane.id.length > 0) {
+      items.push({ id: pane.id });
+    }
+  }
+  return items;
+}
+
+/**
+ * Pull the workspace id out of `herdr workspace create` stdout. The CLI
+ * docs don't pin the format — we accept either a bare id on stdout
+ * (typical CLI convention) or a JSON envelope `{id|workspace_id: "..."}`.
+ */
+function extractHerdrWorkspaceId(output: string): string | undefined {
+  const trimmed = output.trim();
+  if (trimmed.length === 0) {
+    return undefined;
+  }
+  try {
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- JSON envelope is one of the documented possibilities; non-JSON falls through.
+    const parsed = JSON.parse(trimmed) as { id?: string; workspace_id?: string };
+    const id = parsed.id ?? parsed.workspace_id;
+    if (typeof id === "string" && id.length > 0) {
+      return id;
+    }
+  } catch {
+    /* not JSON; fall through to last-line heuristic */
+  }
+  const lines = trimmed.split("\n").filter((line) => line.length > 0);
+  /* v8 ignore next 3 @preserve -- trimmed length>0 guarantees at least one non-empty line; default keeps the loop safe. */
+  if (lines.length === 0) {
+    return undefined;
+  }
+  return lines.at(-1);
+}
+
+async function listHerdrRaw(signal?: AbortSignal): Promise<HerdrRawWorkspace[] | undefined> {
+  try {
+    return parseHerdrWorkspaceList(
+      await runWorkspaceCommand("herdr", ["workspace", "list", "--json"], signal),
+    );
+  } catch (error) {
+    if (isSignalAborted(signal)) {
+      throw error;
+    }
+    log(`herdr workspace list failed: ${errorMessage(error)}`);
+    return undefined;
+  }
+}
+
+async function pickHerdrDefaultPane(
+  workspaceId: string,
+  signal?: AbortSignal,
+): Promise<string | undefined> {
+  const output = await runWorkspaceCommand(
+    "herdr",
+    ["pane", "list", "--workspace", workspaceId, "--json"],
+    signal,
+  );
+  const panes = parseHerdrPaneList(output);
+  return panes[0]?.id;
+}
+
+async function applyHerdrStatus(
+  paneId: string,
+  status: WorkspaceStatus,
+  signal?: AbortSignal,
+): Promise<void> {
+  const state: WorkspaceAgentState = status.state ?? "working";
+  const arguments_ = [
+    "pane",
+    "report-agent",
+    paneId,
+    "--source",
+    HERDR_REPORT_SOURCE,
+    "--agent",
+    HERDR_AGENT_LABEL,
+    "--state",
+    state,
+    "--custom-status",
+    status.text,
+  ];
+  await runWorkspaceCommand("herdr", arguments_, signal);
+}
+
+const herdrAdapter: Adapter = {
+  kind: "herdr",
+  autoPriority: 1,
+  isAvailable(host) {
+    return host.hasHerdr;
+  },
+  async open(spec, signal) {
+    const createOutput = await runWorkspaceCommand(
+      "herdr",
+      ["workspace", "create", "--cwd", spec.cwd, "--label", spec.name, "--no-focus"],
+      signal,
+    );
+    const workspaceId = extractHerdrWorkspaceId(createOutput);
+    if (workspaceId === undefined) {
+      log(
+        `herdr workspace create returned unrecognized output for ${spec.name}; if a workspace was created, run \`herdr workspace close <id>\` manually.`,
+      );
+      throw new Error(`Unexpected herdr output: ${createOutput}`);
+    }
+    const paneId = await pickHerdrDefaultPane(workspaceId, signal);
+    if (paneId === undefined) {
+      throw new Error(
+        `herdr workspace ${workspaceId} (${spec.name}) was created but has no panes to run the agent command in.`,
+      );
+    }
+    await runWorkspaceCommand("herdr", ["pane", "run", paneId, spec.command], signal);
+    if (spec.status !== undefined) {
+      await applyHerdrStatus(paneId, spec.status, signal);
+    }
+  },
+  async list(signal) {
+    const raw = await listHerdrRaw(signal);
+    return raw?.map((ws) => ({ name: ws.label }));
+  },
+  async close(name, signal) {
+    const raw = await listHerdrRaw(signal);
+    if (raw === undefined) {
+      log(`herdr workspace close skipped for ${name}: workspace list failed, no usable id`);
+      return;
+    }
+    const match = raw.find((ws) => ws.label === name);
+    if (match === undefined) {
+      return;
+    }
+    await runWorkspaceCommand("herdr", ["workspace", "close", match.id], signal);
+  },
+  accessHint(_name) {
+    // Herdr has no `attach` subcommand; users open workspaces by running
+    // `herdr` (locally) or `herdr --remote <host>` (remote) and switching
+    // inside the TUI. No concise shell hint to surface.
+    // oxlint-disable-next-line unicorn/no-useless-undefined -- explicit signal that the backend has no hint
+    return undefined;
+  },
+};
+
+/**
+ * Adapter registry. Add a new backend by appending its adapter to the
+ * `ADAPTERS` array — the resolver derives `auto` priority and the
+ * explicit-kind lookup from this single list, so nothing else needs
+ * editing in this file.
+ */
+const ADAPTERS: readonly Adapter[] = [cmuxAdapter, herdrAdapter, tmuxAdapter];
+const ADAPTERS_BY_KIND: ReadonlyMap<WorkspaceKind, Adapter> = new Map(
+  ADAPTERS.map((adapter) => [adapter.kind, adapter]),
+);
+const ADAPTERS_BY_PRIORITY: readonly Adapter[] = ADAPTERS.toSorted(
+  (a, b) => a.autoPriority - b.autoPriority,
+);
+
 // Per-config cache: production resolves the adapter once at first use
 // (loadConfig returns a frozen, cached instance); each test uses a fresh
 // config object so the cache invalidates naturally between tests.
@@ -606,7 +858,13 @@ async function adapterFor(config: ResolvedConfig, signal?: AbortSignal): Promise
     config,
     host: await detectHostCapabilities(signal),
   });
-  const adapter = resolved === "cmux" ? cmuxAdapter : tmuxAdapter;
+  const adapter = ADAPTERS_BY_KIND.get(resolved);
+  /* v8 ignore next 5 @preserve -- resolveWorkspaceKind only returns a kind backed by a registered adapter; this guards against drift only. */
+  if (adapter === undefined) {
+    throw new Error(
+      `Resolved workspaceKind '${resolved}' has no registered adapter (registry drift).`,
+    );
+  }
   adapterCache.set(config, adapter);
   return adapter;
 }

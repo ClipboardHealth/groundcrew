@@ -40,14 +40,15 @@ describe(detectHostCapabilities, () => {
     Object.defineProperty(process, "platform", { value: originalPlatform });
   });
 
-  it("reports safehouse, sbx, cmux, and tmux as present when all are on PATH", async () => {
-    mockWhich(["safehouse", "sbx", "cmux", "tmux"]);
+  it("reports safehouse, sbx, cmux, herdr, and tmux as present when all are on PATH", async () => {
+    mockWhich(["safehouse", "sbx", "cmux", "herdr", "tmux"]);
 
     const actual = await detectHostCapabilities();
 
     expect(actual.hasSafehouse).toBe(true);
     expect(actual.hasSbx).toBe(true);
     expect(actual.hasCmux).toBe(true);
+    expect(actual.hasHerdr).toBe(true);
     expect(actual.hasTmux).toBe(true);
   });
 
@@ -59,6 +60,7 @@ describe(detectHostCapabilities, () => {
     expect(actual.hasSafehouse).toBe(false);
     expect(actual.hasSbx).toBe(false);
     expect(actual.hasCmux).toBe(false);
+    expect(actual.hasHerdr).toBe(false);
     expect(actual.hasTmux).toBe(false);
   });
 

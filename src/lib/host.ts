@@ -15,6 +15,8 @@ export interface HostCapabilities {
   hasSbx: boolean;
   /** True when the `cmux` binary is on PATH. */
   hasCmux: boolean;
+  /** True when the `herdr` binary is on PATH. */
+  hasHerdr: boolean;
   /** True when the `tmux` binary is on PATH. */
   hasTmux: boolean;
   /** True when the host platform is macOS. Safehouse is macOS-only. */
@@ -59,16 +61,18 @@ export async function which(cmd: string, signal?: AbortSignal): Promise<string |
 export async function detectHostCapabilities(signal?: AbortSignal): Promise<HostCapabilities> {
   const isMacOS = process.platform === "darwin";
   const isLinux = process.platform === "linux";
-  const [safehouse, sbx, cmux, tmux] = await Promise.all([
+  const [safehouse, sbx, cmux, herdr, tmux] = await Promise.all([
     which("safehouse", signal),
     which("sbx", signal),
     which("cmux", signal),
+    which("herdr", signal),
     which("tmux", signal),
   ]);
   return {
     hasSafehouse: safehouse !== undefined,
     hasSbx: sbx !== undefined,
     hasCmux: cmux !== undefined,
+    hasHerdr: herdr !== undefined,
     hasTmux: tmux !== undefined,
     isMacOS,
     isLinux,
