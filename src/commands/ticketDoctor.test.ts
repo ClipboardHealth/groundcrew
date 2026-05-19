@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { RawLinearIssue } from "../lib/boardSource.ts";
 import type { ResolvedConfig } from "../lib/config.ts";
 import { ticketDoctor, type TicketDoctorDependencies } from "./ticketDoctor.ts";
@@ -251,5 +254,90 @@ describe("ticketDoctor resolution checks", () => {
     expect(labelCheck?.status).toBe("ok");
     expect(modelCheck?.status).toBe("ok");
     expect(modelCheck?.detail).toMatch(/claude/);
+  });
+});
+
+describe("ticketDoctor — env checks", () => {
+  it("records repo-dir-missing as fail when the resolved repo isn't cloned", async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "td-"));
+    try {
+      const dependencies = makeStubDependencies({
+        config: makeConfig({
+          workspace: {
+            knownRepositories: ["herds-social/herds"],
+            projectDir,
+          },
+        }),
+        fetchRawIssue: vi.fn<TicketDoctorDependencies["fetchRawIssue"]>().mockResolvedValue({
+          uuid: "u",
+          title: "X",
+          description: "see herds-social/herds",
+          teamId: "team-1",
+          labels: [{ name: "agent-claude" }],
+          stateName: "Todo",
+        }),
+      });
+      const result = await ticketDoctor(dependencies);
+      const repoDir = result.resolution.find(
+        (check) => check.name === "Resolved repo is cloned locally",
+      );
+      expect(repoDir?.status).toBe("fail");
+      expect(repoDir?.detail).toMatch(/herds-social\/herds/);
+      expect(repoDir?.detail).toMatch(/crew setup repos/);
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("records repo-dir as ok when the resolved repo exists on disk", async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "td-"));
+    mkdirSync(join(projectDir, "herds-social", "herds"), { recursive: true });
+    try {
+      const dependencies = makeStubDependencies({
+        config: makeConfig({
+          workspace: {
+            knownRepositories: ["herds-social/herds"],
+            projectDir,
+          },
+        }),
+        fetchRawIssue: vi.fn<TicketDoctorDependencies["fetchRawIssue"]>().mockResolvedValue({
+          uuid: "u",
+          title: "X",
+          description: "see herds-social/herds",
+          teamId: "team-1",
+          labels: [{ name: "agent-claude" }],
+          stateName: "Todo",
+        }),
+      });
+      const result = await ticketDoctor(dependencies);
+      const repoDir = result.resolution.find(
+        (check) => check.name === "Resolved repo is cloned locally",
+      );
+      expect(repoDir?.status).toBe("ok");
+      expect(repoDir?.detail).toContain(projectDir);
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("skips the repo-dir check when the repo couldn't be resolved", async () => {
+    const dependencies = makeStubDependencies({
+      config: makeConfig({
+        workspace: { knownRepositories: ["herds-social/herds"], projectDir: "/tmp" },
+      }),
+      fetchRawIssue: vi.fn<TicketDoctorDependencies["fetchRawIssue"]>().mockResolvedValue({
+        uuid: "u",
+        title: "X",
+        description: "no known repo mentioned here",
+        teamId: "team-1",
+        labels: [{ name: "agent-claude" }],
+        stateName: "Todo",
+      }),
+    });
+    const result = await ticketDoctor(dependencies);
+    const repoDir = result.resolution.find(
+      (check) => check.name === "Resolved repo is cloned locally",
+    );
+    expect(repoDir?.status).toBe("skipped");
   });
 });

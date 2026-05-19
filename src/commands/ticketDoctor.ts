@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { resolveModelFor, resolveRepositoryFor, type RawLinearIssue } from "../lib/boardSource.ts";
 import type { ResolvedConfig } from "../lib/config.ts";
 
@@ -142,6 +144,29 @@ export async function ticketDoctor(
       name: "Description mentions known repo",
       status: "fail",
       detail: `no entry from workspace.knownRepositories (${config.workspace.knownRepositories.join(", ")}) appears in description`,
+    });
+  }
+
+  // Repo cloned-locally check
+  if (repositoryResolution.kind === "ok") {
+    const repoDir = join(config.workspace.projectDir, repositoryResolution.repository);
+    if (existsSync(repoDir)) {
+      resolution.push({
+        name: "Resolved repo is cloned locally",
+        status: "ok",
+        detail: repoDir,
+      });
+    } else {
+      resolution.push({
+        name: "Resolved repo is cloned locally",
+        status: "fail",
+        detail: `${repositoryResolution.repository} not found at ${repoDir} — run \`crew setup repos ${repositoryResolution.repository}\``,
+      });
+    }
+  } else {
+    resolution.push({
+      name: "Resolved repo is cloned locally",
+      status: "skipped",
     });
   }
 
