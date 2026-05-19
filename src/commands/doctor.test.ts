@@ -464,6 +464,84 @@ describe(doctor, () => {
     expect(lines).toContain("resolved=bubblewrap");
   });
 
+  it("returns false when resolveLocalRunner can't pick a backend (host is neither macOS nor Linux)", async () => {
+    detectHostMock.mockResolvedValue({
+      hasSafehouse: false,
+      hasBwrap: false,
+      hasCmux: false,
+      hasTmux: true,
+      isMacOS: false,
+      isLinux: false,
+      isSafehouseSupported: false,
+    });
+    loadConfigMock.mockResolvedValue(makeConfig());
+
+    const actual = await doctor();
+
+    expect(actual).toBe(false);
+    expect(consoleLog.output()).toContain("local.runner");
+  });
+
+  it("reports the safehouse check off-macOS when local.runner='safehouse' is forced", async () => {
+    detectHostMock.mockResolvedValue({
+      hasSafehouse: false,
+      hasBwrap: true,
+      hasCmux: true,
+      hasTmux: false,
+      isMacOS: false,
+      isLinux: true,
+      isSafehouseSupported: false,
+    });
+    loadConfigMock.mockResolvedValue({
+      ...makeConfig(),
+      local: {
+        runner: "safehouse",
+        linux: {
+          allowedReadPaths: [],
+          allowedWritePaths: [],
+          envPass: ["HOME"],
+          network: "host",
+        },
+      },
+    });
+
+    const actual = await doctor();
+
+    expect(actual).toBe(true);
+    expect(consoleLog.output()).toContain("local runner (safehouse, macOS)");
+    expect(consoleLog.output()).toContain("required only when local.runner='safehouse'");
+  });
+
+  it("reports the bubblewrap check on macOS when local.runner='bubblewrap' is forced", async () => {
+    detectHostMock.mockResolvedValue({
+      hasSafehouse: true,
+      hasBwrap: false,
+      hasCmux: true,
+      hasTmux: false,
+      isMacOS: true,
+      isLinux: false,
+      isSafehouseSupported: true,
+    });
+    loadConfigMock.mockResolvedValue({
+      ...makeConfig(),
+      local: {
+        runner: "bubblewrap",
+        linux: {
+          allowedReadPaths: [],
+          allowedWritePaths: [],
+          envPass: ["HOME"],
+          network: "host",
+        },
+      },
+    });
+
+    const actual = await doctor();
+
+    expect(actual).toBe(true);
+    expect(consoleLog.output()).toContain("local runner (bubblewrap, Linux)");
+    expect(consoleLog.output()).toContain("required only when local.runner='bubblewrap'");
+  });
+
   it("warns loudly when local.runner='none' is configured", async () => {
     detectHostMock.mockResolvedValue({
       hasSafehouse: false,

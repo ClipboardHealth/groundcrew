@@ -136,13 +136,13 @@ describe("loadConfig", () => {
     expect(actual.local.linux.allowedWritePaths).toContain("~/.claude");
   });
 
-  it("accepts a custom local.runner override", async () => {
+  it("accepts a custom local.runner override and a user-supplied envPass list", async () => {
     const path = writeConfigFile(
       temporary,
       configSource({
         linear: { ...VALID_LINEAR },
         workspace: VALID_WORKSPACE(temporary),
-        local: { runner: "bubblewrap" },
+        local: { runner: "bubblewrap", linux: { envPass: ["HOME", "PATH", "USER"] } },
       }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
@@ -151,6 +151,7 @@ describe("loadConfig", () => {
     const actual = await loadConfig();
 
     expect(actual.local.runner).toBe("bubblewrap");
+    expect(actual.local.linux.envPass).toStrictEqual(["HOME", "PATH", "USER"]);
   });
 
   it("rejects unknown local.runner values", async () => {
@@ -168,6 +169,61 @@ describe("loadConfig", () => {
     const { loadConfig } = await loadFreshConfig();
 
     await expect(loadConfig()).rejects.toThrow(/local\.runner must be one of/u);
+  });
+
+  it("accepts a 'none' network override on local.linux", async () => {
+    const path = writeConfigFile(
+      temporary,
+      configSource({
+        linear: { ...VALID_LINEAR },
+        workspace: VALID_WORKSPACE(temporary),
+        local: { linux: { network: "none" } },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+
+    expect(actual.local.linux.network).toBe("none");
+  });
+
+  it("rejects a non-object local block", async () => {
+    // String-template instead of configSource() so we can write a value
+    // (`local: "nope"`) that the Config type would reject at compile time.
+    const path = join(temporary, "bad-local.ts");
+    writeFileSync(
+      path,
+      `export const config = {
+  linear: { projectSlug: "ai-strategy-5152195762f3" },
+  workspace: { projectDir: "${temporary}", knownRepositories: ["repo-a"] },
+  local: "nope",
+};
+`,
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(/local must be an object/u);
+  });
+
+  it("rejects a non-object local.linux block", async () => {
+    const path = join(temporary, "bad-local-linux.ts");
+    writeFileSync(
+      path,
+      `export const config = {
+  linear: { projectSlug: "ai-strategy-5152195762f3" },
+  workspace: { projectDir: "${temporary}", knownRepositories: ["repo-a"] },
+  local: { linux: "nope" },
+};
+`,
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(/local\.linux must be an object/u);
   });
 
   it("rejects unknown local.linux.network values", async () => {

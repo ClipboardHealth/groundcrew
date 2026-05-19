@@ -105,6 +105,16 @@ describe(buildBubblewrapArgs, () => {
     expect(args).toContain("/home/test/.claude");
   });
 
+  it("rejects '~' alone (would mount the entire $HOME) even when listed in policy", () => {
+    expect(() =>
+      buildBubblewrapArgs({
+        policy: policy({ allowedReadPaths: ["~"] }),
+        worktreeDir: "/work/repo-a-team-1",
+        homeDir: "/home/test",
+      }),
+    ).toThrow(/Refusing to bind \/home\/test/u);
+  });
+
   it("rejects broad mounts (/, /home, /etc) even when listed in policy", () => {
     expect(() =>
       buildBubblewrapArgs({

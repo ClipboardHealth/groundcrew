@@ -96,11 +96,15 @@ function expandHome(value: string, home: string): string {
   return value;
 }
 
-function assertSafeMount(path: string, origin: string): void {
+function assertSafeMount(path: string, origin: string, home: string): void {
   // Strip trailing slashes so `/etc/` is rejected alongside `/etc`. Bare
   // `/` collapses to `""` after the strip — match either form.
   const normalized = path === "/" ? "/" : path.replace(/\/+$/u, "");
-  if (FORBIDDEN_MOUNT_PATHS.has(normalized) || normalized === "") {
+  // Reject the static forbidden set plus the resolved `$HOME` itself,
+  // which a config like `allowedReadPaths: ["~"]` would otherwise mount
+  // wholesale and defeat the sandbox.
+  const homeNormalized = home.replace(/\/+$/u, "");
+  if (FORBIDDEN_MOUNT_PATHS.has(normalized) || normalized === "" || normalized === homeNormalized) {
     throw new Error(
       `Refusing to bind ${path} into the bubblewrap sandbox (${origin}). Grant a more specific path under it instead.`,
     );
@@ -166,12 +170,12 @@ export function buildBubblewrapArgs(input: BubblewrapWrapInput): string[] {
 
   for (const rawPath of input.policy.allowedReadPaths) {
     const expanded = expandHome(rawPath, home);
-    assertSafeMount(expanded, "local.linux.allowedReadPaths");
+    assertSafeMount(expanded, "local.linux.allowedReadPaths", home);
     args.push("--ro-bind-try", expanded, expanded);
   }
   for (const rawPath of input.policy.allowedWritePaths) {
     const expanded = expandHome(rawPath, home);
-    assertSafeMount(expanded, "local.linux.allowedWritePaths");
+    assertSafeMount(expanded, "local.linux.allowedWritePaths", home);
     args.push("--bind-try", expanded, expanded);
   }
 
