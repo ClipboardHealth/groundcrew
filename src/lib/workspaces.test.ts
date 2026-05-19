@@ -300,56 +300,44 @@ describe("workspaces.open (cmux)", () => {
     ]);
   });
 
-  it("treats malformed current-workspace output as no remote to inherit", async () => {
+  it("rejects malformed current-workspace output while CMUX_WORKSPACE_ID is set", async () => {
     setEnvironmentVariable("CMUX_WORKSPACE_ID", "current-ws-id");
-    runMock
-      .mockReturnValueOnce("garbage that is not JSON")
-      .mockReturnValueOnce(JSON.stringify({ workspace_id: "new-ws-id" }))
-      .mockReturnValue("");
+    runMock.mockReturnValueOnce("garbage that is not JSON").mockReturnValue("");
 
-    await workspaces.open(makeConfig(), {
-      name: "TEAM-1",
-      cwd: "/srv/x",
-      command: "exec claude",
-    });
+    await expect(
+      workspaces.open(makeConfig(), {
+        name: "TEAM-1",
+        cwd: "/srv/x",
+        command: "exec claude",
+      }),
+    ).rejects.toThrow(/cmux current-workspace returned malformed output while CMUX_WORKSPACE_ID/);
 
-    expect(runMock).toHaveBeenCalledWith("cmux", [
-      "--json",
-      "new-workspace",
-      "--name",
-      "TEAM-1",
-      "--working-directory",
-      "/srv/x",
-      "--command",
-      "exec claude",
-    ]);
+    expect(runMock).not.toHaveBeenCalledWith(
+      "cmux",
+      expect.arrayContaining(["new-workspace", "--name", "TEAM-1"]),
+    );
   });
 
-  it("treats a current-workspace probe failure as no remote to inherit", async () => {
+  it("rejects a current-workspace probe failure while CMUX_WORKSPACE_ID is set", async () => {
     setEnvironmentVariable("CMUX_WORKSPACE_ID", "current-ws-id");
     runMock
       .mockImplementationOnce(() => {
         throw new Error("current-workspace failed");
       })
-      .mockReturnValueOnce(JSON.stringify({ workspace_id: "new-ws-id" }))
       .mockReturnValue("");
 
-    await workspaces.open(makeConfig(), {
-      name: "TEAM-1",
-      cwd: "/srv/x",
-      command: "exec claude",
-    });
+    await expect(
+      workspaces.open(makeConfig(), {
+        name: "TEAM-1",
+        cwd: "/srv/x",
+        command: "exec claude",
+      }),
+    ).rejects.toThrow(/cmux current-workspace probe failed while CMUX_WORKSPACE_ID/);
 
-    expect(runMock).toHaveBeenCalledWith("cmux", [
-      "--json",
-      "new-workspace",
-      "--name",
-      "TEAM-1",
-      "--working-directory",
-      "/srv/x",
-      "--command",
-      "exec claude",
-    ]);
+    expect(runMock).not.toHaveBeenCalledWith(
+      "cmux",
+      expect.arrayContaining(["new-workspace", "--name", "TEAM-1"]),
+    );
   });
 
   it("rethrows current-workspace failures after the shutdown signal fires", async () => {
@@ -438,7 +426,12 @@ describe("workspaces.probe (cmux)", () => {
 
   it("returns kind=ok with the workspaces' titles as names", async () => {
     runMock.mockReturnValue(
-      JSON.stringify({ workspaces: [{ title: "TEAM-1" }, { title: "TEAM-2" }] }),
+      JSON.stringify({
+        workspaces: [
+          { title: "TEAM-1", id: "id-1" },
+          { title: "TEAM-2", id: "id-2" },
+        ],
+      }),
     );
 
     await expect(workspaces.probe(makeConfig())).resolves.toStrictEqual({
@@ -477,7 +470,21 @@ describe("workspaces.probe (cmux)", () => {
 
   it("skips entries that lack a title", async () => {
     runMock.mockReturnValue(
-      JSON.stringify({ workspaces: [{ title: "TEAM-1" }, { ref: "workspace:9" }] }),
+      JSON.stringify({
+        workspaces: [{ title: "TEAM-1", id: "id-1" }, { ref: "workspace:9" }],
+      }),
+    );
+    await expect(workspaces.probe(makeConfig())).resolves.toStrictEqual({
+      kind: "ok",
+      names: new Set(["TEAM-1"]),
+    });
+  });
+
+  it("skips workspaces that have a title but no usable id or ref (cmux v2 close requires a stable handle)", async () => {
+    runMock.mockReturnValue(
+      JSON.stringify({
+        workspaces: [{ title: "TEAM-1", id: "id-1" }, { title: "TEAM-2" }],
+      }),
     );
     await expect(workspaces.probe(makeConfig())).resolves.toStrictEqual({
       kind: "ok",
@@ -520,27 +527,13 @@ describe("workspaces.close (cmux)", () => {
     expect(runMock).not.toHaveBeenCalledWith("cmux", expect.arrayContaining(["close-workspace"]));
   });
 
-  it("falls back to closing by workspace name when the cmux list itself fails", async () => {
-    runMock
-      .mockImplementationOnce(() => {
-        throw new Error("cmux down");
-      })
-      .mockReturnValueOnce("");
+  it("skips close-workspace entirely when the cmux list itself fails (v2 close rejects titles)", async () => {
+    runMock.mockImplementationOnce(() => {
+      throw new Error("cmux down");
+    });
 
     await expect(workspaces.close(makeConfig(), "TEAM-1")).resolves.toBeUndefined();
-    expect(runMock).toHaveBeenCalledWith("cmux", ["close-workspace", "--workspace", "TEAM-1"]);
-  });
-
-  it("rethrows fallback close failures when the cmux list itself fails", async () => {
-    runMock
-      .mockImplementationOnce(() => {
-        throw new Error("cmux down");
-      })
-      .mockImplementationOnce(() => {
-        throw new Error("close down");
-      });
-
-    await expect(workspaces.close(makeConfig(), "TEAM-1")).rejects.toThrow("close down");
+    expect(runMock).not.toHaveBeenCalledWith("cmux", expect.arrayContaining(["close-workspace"]));
   });
 
   it("is a no-op when the workspace disappears between cmux list and close", async () => {

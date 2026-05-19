@@ -87,25 +87,33 @@ function parseCmuxList(output: string): CmuxRawWorkspace[] {
     if (typeof ws.title !== "string" || ws.title.length === 0) {
       continue;
     }
-    items.push({ title: ws.title, id: pickCmuxId({ ...ws, title: ws.title }) });
+    const id = pickCmuxId(ws);
+    if (id === undefined) {
+      log(
+        `cmux list-workspaces returned workspace "${ws.title}" without a usable id or ref; skipping`,
+      );
+      continue;
+    }
+    items.push({ title: ws.title, id });
   }
   return items;
 }
 
 /**
  * The stable workspace handle cmux v2 expects in JSON-RPC params. Prefer
- * the UUID; fall back to the legacy `workspace:N` short ref or the title
- * when older cmux builds don't surface it. v2 `workspace.close` only
- * accepts UUIDs, so production paths must always end up here with `id`.
+ * the UUID; fall back to the legacy `workspace:N` short ref when older
+ * cmux builds don't surface it. Returns `undefined` when neither is
+ * available — cmux v2 `workspace.close` rejects titles, so we must never
+ * forward `title` as a workspace handle.
  */
-function pickCmuxId(ws: { title: string; ref?: string; id?: string }): string {
+function pickCmuxId(ws: { ref?: string; id?: string }): string | undefined {
   if (typeof ws.id === "string" && ws.id.length > 0) {
     return ws.id;
   }
   if (typeof ws.ref === "string" && ws.ref.length > 0) {
     return ws.ref;
   }
-  return ws.title;
+  return undefined;
 }
 
 async function listCmuxRaw(signal?: AbortSignal): Promise<CmuxRawWorkspace[] | undefined> {
@@ -174,8 +182,16 @@ async function probeCurrentCmuxRemote(
     if (isSignalAborted(signal)) {
       throw error;
     }
-    log(`cmux current-workspace failed: ${errorMessage(error)}`);
-    return undefined;
+    // CMUX_WORKSPACE_ID is set, so we are inside a cmux workspace and a
+    // probe failure means we cannot tell whether this is an SSH context.
+    // Silently degrading to the local path would point cmux at a working
+    // directory that lives on a remote host; surface the failure instead
+    // so the caller can roll the worktree back rather than launch into
+    // the void.
+    throw new Error(
+      `cmux current-workspace probe failed while CMUX_WORKSPACE_ID is set: ${errorMessage(error)}`,
+      { cause: error },
+    );
   }
   try {
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- cmux --json current-workspace shape per v2 API
@@ -213,8 +229,14 @@ async function probeCurrentCmuxRemote(
     }
     return inherited;
   } catch (error) {
-    log(`cmux current-workspace returned malformed output: ${errorMessage(error)}`);
-    return undefined;
+    // Same reasoning as the command-failure branch above: with
+    // CMUX_WORKSPACE_ID set, malformed JSON means we cannot decide
+    // between local and SSH context, so refuse rather than silently
+    // launching at the wrong working directory.
+    throw new Error(
+      `cmux current-workspace returned malformed output while CMUX_WORKSPACE_ID is set: ${errorMessage(error)}`,
+      { cause: error },
+    );
   }
 }
 
@@ -300,7 +322,10 @@ const cmuxAdapter: Adapter = {
   async close(name, signal) {
     const raw = await listCmuxRaw(signal);
     if (raw === undefined) {
-      await closeCmuxWorkspace(name, signal);
+      // cmux v2 `workspace.close` rejects titles, so forwarding `name`
+      // would always fail. The list failure has already been logged by
+      // `listCmuxRaw`; bail rather than guarantee a downstream error.
+      log(`cmux close-workspace skipped for ${name}: list-workspaces failed, no usable id`);
       return;
     }
     const match = raw.find((ws) => ws.title === name);

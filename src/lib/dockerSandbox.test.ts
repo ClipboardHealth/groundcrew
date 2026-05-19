@@ -179,4 +179,79 @@ describe(ensureSandbox, () => {
     expect(calls[0]?.[2]).toMatchObject({ signal: controller.signal });
     expect(calls[1]?.[2]).toMatchObject({ signal: controller.signal });
   });
+
+  it("treats a concurrent create as success when sbx create fails but the sandbox now exists", async () => {
+    const counters = mockConcurrentCreate("groundcrew-repo-a-claude");
+
+    await expect(
+      ensureSandbox({
+        sandboxName: "groundcrew-repo-a-claude",
+        sandbox: { agent: "claude" },
+        mountPath: "/home/user/dev",
+      }),
+    ).resolves.toBeUndefined();
+    expect(counters.createCalls).toBe(1);
+    expect(counters.lsCalls).toBe(2);
+  });
+
+  it("rethrows the create error when the sandbox is still missing on the recheck", async () => {
+    mockMissingThenFailingCreate(new Error("Error: sbx daemon unreachable"));
+
+    await expect(
+      ensureSandbox({
+        sandboxName: "groundcrew-repo-a-claude",
+        sandbox: { agent: "claude" },
+        mountPath: "/home/user/dev",
+      }),
+    ).rejects.toThrow(/sbx daemon unreachable/);
+  });
 });
+
+interface SbxCallCounters {
+  readonly lsCalls: number;
+  readonly createCalls: number;
+}
+
+/**
+ * Simulate a concurrent creator winning the race: first `sbx ls` reports
+ * missing, `sbx create` fails (already-exists race), and the post-create
+ * `sbx ls` re-check reports the sandbox present. Returns a live counters
+ * object so tests can assert call counts without inspecting the mock
+ * directly.
+ */
+function mockConcurrentCreate(sandboxName: string): SbxCallCounters {
+  const counters = { lsCalls: 0, createCalls: 0 };
+  runCommandMock.mockImplementation((command, arguments_) => {
+    const isLs = command === "sbx" && arguments_[0] === "ls";
+    const isCreate = command === "sbx" && arguments_[0] === "create";
+    if (isLs) {
+      counters.lsCalls += 1;
+      return counters.createCalls > 0 ? `NAME STATUS\n${sandboxName} running\n` : "NAME STATUS\n";
+    }
+    if (isCreate) {
+      counters.createCalls += 1;
+      throw new Error(`Error: sandbox '${sandboxName}' already exists`);
+    }
+    return "";
+  });
+  return counters;
+}
+
+/**
+ * Simulate `sbx create` failing with `error` while `sbx ls` keeps reporting
+ * the sandbox missing — verifies the recheck rethrows rather than swallowing
+ * unrelated failures.
+ */
+function mockMissingThenFailingCreate(error: Error): void {
+  runCommandMock.mockImplementation((command, arguments_) => {
+    const isLs = command === "sbx" && arguments_[0] === "ls";
+    const isCreate = command === "sbx" && arguments_[0] === "create";
+    if (isLs) {
+      return "NAME STATUS\n";
+    }
+    if (isCreate) {
+      throw error;
+    }
+    return "";
+  });
+}

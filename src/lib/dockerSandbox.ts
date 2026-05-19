@@ -65,5 +65,12 @@ export async function ensureSandbox(
   }
   createArguments.push(arguments_.sandbox.agent, arguments_.mountPath);
   const options = signal === undefined ? {} : { signal };
-  await runCommandAsync("sbx", createArguments, options);
+  try {
+    await runCommandAsync("sbx", createArguments, options);
+  } catch (error) {
+    if (await sandboxExists(arguments_.sandboxName, signal)) {
+      return;
+    }
+    throw error;
+  }
 }
