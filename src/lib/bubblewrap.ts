@@ -194,6 +194,18 @@ export function buildBubblewrapArgs(input: BubblewrapWrapInput): string[] {
   // hostname allowlist gates egress the same way macOS Safehouse does.
   // Skipped when the sandbox joins an empty net namespace — clearance
   // lives on host loopback and would be unreachable.
+  //
+  // KNOWN LIMITATION: this is honor-system. With `network: "host"` bwrap
+  // shares the host's net namespace, so a process inside the sandbox can
+  // ignore HTTP_PROXY and connect directly to the internet. Macos
+  // Safehouse closes this via `clearance-only.sb` denying all
+  // network-outbound at the sandbox layer; Linux has no equivalent without
+  // root-level nftables/iptables or a routed namespace via
+  // `slirp4netns` --- both out of scope for this default. Well-behaved
+  // agent CLIs (claude/codex/git/npm/curl) honor HTTP_PROXY, so the
+  // typical attack surface is covered, but a hostile or buggy process
+  // can still reach the internet directly. Set `network: "none"` to
+  // close egress entirely (at the cost of no API access).
   if (input.policy.network !== "none") {
     const proxyUrl = input.clearanceProxyUrl ?? DEFAULT_CLEARANCE_PROXY_URL;
     for (const name of ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"]) {
