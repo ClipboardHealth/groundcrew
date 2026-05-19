@@ -13,7 +13,9 @@ import {
 import { errorMessage, log } from "./util.ts";
 
 export const cmuxAdapter: Adapter = {
-  async open(spec, signal) {
+  // cmux keeps its own per-workspace output history, so it never captures to a
+  // groundcrew agent log; `_config` is accepted to satisfy the Adapter contract.
+  async open(_config, spec, signal) {
     const output = await runWorkspaceCommand(
       "cmux",
       [
@@ -47,6 +49,7 @@ export const cmuxAdapter: Adapter = {
         }
       }
     }
+    return {};
   },
   async list(signal) {
     const raw = await listCmuxRaw(signal);

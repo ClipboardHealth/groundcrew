@@ -1,5 +1,15 @@
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  type mkdirSync,
+  mkdtempSync,
+  type renameSync,
+  rmSync,
+  type symlinkSync,
+  type unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import type * as nodeFs from "node:fs";
+
 import { ensureClearance } from "@clipboard-health/clearance";
 import type { RunCommandOptions } from "../lib/commandRunner.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
@@ -29,8 +39,12 @@ interface NodeFsMock extends Omit<
   "existsSync" | "mkdtempSync" | "rmSync" | "writeFileSync"
 > {
   existsSync: ReturnType<typeof vi.fn<typeof existsSync>>;
+  mkdirSync: ReturnType<typeof vi.fn<typeof mkdirSync>>;
   mkdtempSync: ReturnType<typeof vi.fn<typeof mkdtempSync>>;
+  renameSync: ReturnType<typeof vi.fn<typeof renameSync>>;
   rmSync: ReturnType<typeof vi.fn<typeof rmSync>>;
+  symlinkSync: ReturnType<typeof vi.fn<typeof symlinkSync>>;
+  unlinkSync: ReturnType<typeof vi.fn<typeof unlinkSync>>;
   writeFileSync: ReturnType<typeof vi.fn<typeof writeFileSync>>;
 }
 
@@ -39,8 +53,12 @@ vi.mock("node:fs", async (importOriginal): Promise<NodeFsMock> => {
   return {
     ...actual,
     existsSync: vi.fn<typeof existsSync>().mockReturnValue(true),
+    mkdirSync: vi.fn<typeof mkdirSync>(),
     mkdtempSync: vi.fn<typeof mkdtempSync>(),
+    renameSync: vi.fn<typeof renameSync>(),
     rmSync: vi.fn<typeof rmSync>(),
+    symlinkSync: vi.fn<typeof symlinkSync>(),
+    unlinkSync: vi.fn<typeof unlinkSync>(),
     writeFileSync: vi.fn<typeof writeFileSync>(),
   };
 });
@@ -195,7 +213,7 @@ function makeConfig(overrides: Partial<ResolvedConfig["models"]> = {}): Resolved
     },
     workspaceKind: "auto",
     local: { runner: "auto" },
-    logging: { file: "/tmp/groundcrew-test.log" },
+    logging: { file: "/tmp/groundcrew-test.log", agentLogDir: false },
   };
 }
 
@@ -701,7 +719,7 @@ describe(setupWorkspace, () => {
     const command = lastRunArgumentFromCallWithArgument("new-workspace");
     const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
     expect(command).toBe("bash '/tmp/groundcrew-team-1-x/launch.sh'");
-    expect(launchScript).toContain('exec safehouse claude --permission-mode auto "$_p"');
+    expect(launchScript).toContain('safehouse claude --permission-mode auto "$_p"');
     expect(launchScript).not.toContain("safehouse safehouse");
   });
 
@@ -1307,6 +1325,29 @@ describe(setupWorkspace, () => {
     type _DetailsRequired = SetupWorkspaceOptions["details"] extends TicketDetails ? true : never;
     const _check: _DetailsRequired = true;
     expect(_check).toBe(true);
+  });
+
+  describe("agent log path surfacing", () => {
+    function withAgentLogDir(dir: string): ResolvedConfig {
+      const config = makeConfig();
+      config.workspaceKind = "tmux";
+      config.logging.agentLogDir = dir;
+      return config;
+    }
+
+    it("logs the agent log path when capture is active", async () => {
+      detectHostMock.mockResolvedValue(host({ hasCmux: false, hasTmux: true }));
+      const config = withAgentLogDir("/tmp/groundcrew-test-agents");
+
+      await setupWorkspace(config, {
+        ticket: "team-1",
+        repository: "repo-a",
+        model: "claude",
+        details: { title: "Test Title", description: "Body" },
+      });
+
+      expect(logMock).toHaveBeenCalledWith("  Log:      /tmp/groundcrew-test-agents/team-1.log");
+    });
   });
 });
 

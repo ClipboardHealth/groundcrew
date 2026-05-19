@@ -112,7 +112,7 @@ function makeConfig(overrides: Partial<ResolvedConfig["models"]> = {}): Resolved
     prompts: { initial: "x" },
     workspaceKind: "auto",
     local: { runner: "auto" },
-    logging: { file: "/tmp/groundcrew-test.log" },
+    logging: { file: "/tmp/groundcrew-test.log", agentLogDir: false },
   };
 }
 

@@ -123,7 +123,7 @@ export async function setupWorkspace(
     const launchCmd = stageWorkspaceLaunchCommand(promptDir, launchCommand);
 
     log("Opening workspace...");
-    await openAgentWorkspace({
+    const openResult = await openAgentWorkspace({
       config,
       name: ticket,
       cwd: launchDir,
@@ -148,6 +148,9 @@ export async function setupWorkspace(
     log(`Workspace "${ticket}" launched (${model})`);
     log(`  Worktree: ${launchDir}`);
     log(`  Branch:   ${branchName}`);
+    if (openResult.agentLogPath !== undefined) {
+      log(`  Log:      ${openResult.agentLogPath}`);
+    }
     if (accessHint !== undefined) {
       logAccessHint(accessHint);
     }

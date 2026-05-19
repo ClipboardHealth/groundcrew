@@ -33,7 +33,7 @@ function makeConfig(stateRoot: string): ResolvedConfig {
     prompts: { initial: "x" },
     workspaceKind: "auto",
     local: { runner: "auto" },
-    logging: { file: join(stateRoot, "groundcrew.log") },
+    logging: { file: join(stateRoot, "groundcrew.log"), agentLogDir: false },
   };
 }
 

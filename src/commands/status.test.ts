@@ -144,7 +144,7 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
     prompts: { initial: "x", ...overrides.prompts },
     workspaceKind: overrides.workspaceKind ?? "auto",
     local: { runner: "auto", ...overrides.local },
-    logging: { file: "/tmp/groundcrew-test.log", ...overrides.logging },
+    logging: { file: "/tmp/groundcrew-test.log", agentLogDir: false, ...overrides.logging },
   };
 }
 
@@ -214,7 +214,7 @@ describe(status, () => {
         '[09:01:00] Workspace "TEAM-1" launched',
       ].join("\n"),
     );
-    const config = makeConfig({ logging: { file: logFile } });
+    const config = makeConfig({ logging: { file: logFile, agentLogDir: false } });
     const entries = [
       worktree({ repository: "repo-a", dir: "/work/repo-a-team-1" }),
       worktree({ repository: "repo-b", dir: "/work/repo-b-team-1", branchName: "rocky-team-1-b" }),
@@ -268,7 +268,9 @@ describe(status, () => {
   });
 
   it("prints unavailable fields without attempting recovery", async () => {
-    const config = makeConfig({ logging: { file: join(temporaryDirectory, "missing.log") } });
+    const config = makeConfig({
+      logging: { file: join(temporaryDirectory, "missing.log"), agentLogDir: false },
+    });
     findByTicketMock.mockReturnValue([]);
     workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set() });
     readRunStateMock.mockReset();

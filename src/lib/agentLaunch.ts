@@ -5,6 +5,7 @@ import { detectHostCapabilities } from "./host.ts";
 import { assertLocalRunnerRequirements, resolveLocalRunner } from "./localRunner.ts";
 import { sandboxNameFor } from "./sandboxName.ts";
 import { log, sleep } from "./util.ts";
+import type { OpenResult } from "./workspaceAdapter.ts";
 import { workspaces } from "./workspaces.ts";
 
 interface PreparedAgentLaunch {
@@ -57,14 +58,14 @@ export async function openAgentWorkspace(input: {
   model: string;
   color: string;
   signal?: AbortSignal;
-}): Promise<void> {
+}): Promise<OpenResult> {
   const spec = {
     name: input.name,
     cwd: input.cwd,
     command: input.command,
     status: { text: input.model, color: input.color, icon: "sparkle" },
   };
-  await (input.signal === undefined
+  return await (input.signal === undefined
     ? workspaces.open(input.config, spec)
     : workspaces.open(input.config, spec, input.signal));
 }

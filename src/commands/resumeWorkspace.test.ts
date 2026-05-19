@@ -145,7 +145,7 @@ function makeConfig(): ResolvedConfig {
     prompts: { initial: "x" },
     workspaceKind: "auto",
     local: { runner: "auto" },
-    logging: { file: "/tmp/groundcrew-test.log" },
+    logging: { file: "/tmp/groundcrew-test.log", agentLogDir: false },
   };
 }
 
@@ -200,7 +200,7 @@ describe(resumeWorkspace, () => {
     readRunStateMock.mockReturnValue(makeRunState());
     findByTicketMock.mockReturnValue([makeWorktree()]);
     workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set<string>() });
-    workspacesOpenMock.mockResolvedValue();
+    workspacesOpenMock.mockResolvedValue({});
     detectHostMock.mockResolvedValue(host());
     ensureClearanceMock.mockResolvedValue({
       logPath: "/tmp/clearance/clearance.log",

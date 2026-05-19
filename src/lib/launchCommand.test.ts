@@ -22,6 +22,10 @@ function arguments_(
   };
 }
 
+function stepMarker(name: string): string {
+  return `echo '[groundcrew] step: ${name}' >&2`;
+}
+
 describe(resolveSafehouseClearancePath, () => {
   it("resolves through Node module resolution to the real safehouse-clearance file", () => {
     const wrapperPath = resolveSafehouseClearancePath();
@@ -216,7 +220,7 @@ describe(buildLaunchCommand, () => {
       }),
     );
 
-    expect(out).toMatch(/exec safehouse claude "\$_p"$/);
+    expect(out).toMatch(/safehouse claude "\$_p"$/);
     expect(out).not.toContain("safehouse safehouse");
     // A bring-your-own-safehouse cmd owns its sandbox flags; groundcrew must
     // not splice its own --enable into a command it does not control.
@@ -259,6 +263,36 @@ describe(buildLaunchCommand, () => {
 
     expect(out).toContain("setup_status=$?");
     expect(out).toContain("groundcrew setup command exited with status $setup_status");
+  });
+
+  // The EXIT trap / no-exec diagnostics live on the unwrapped host path only;
+  // safehouse and sdx hand off via `exec` into a wrapper/sandbox.
+  describe("EXIT trap (runner='none')", () => {
+    const noneArguments = (
+      overrides: Partial<Parameters<typeof buildLaunchCommand>[0]> = {},
+    ): Parameters<typeof buildLaunchCommand>[0] => arguments_({ runner: "none", ...overrides });
+
+    it("installs an EXIT trap that echoes the exit code with a [groundcrew] sentinel", () => {
+      const out = buildLaunchCommand(noneArguments());
+
+      expect(out).toContain(`trap 'echo "[groundcrew] exit=$?" >&2' EXIT`);
+    });
+
+    it("does not exec the agent command (so the EXIT trap fires when the agent returns)", () => {
+      const out = buildLaunchCommand(noneArguments());
+
+      // The "exec" keyword would replace the shell, preventing the trap from firing.
+      expect(out).not.toMatch(/(?:^|[\s&;])exec\s/);
+    });
+
+    it("places the trap at the head of the chain so it's installed before any step can fail", () => {
+      const out = buildLaunchCommand(noneArguments());
+
+      const trapIndex = out.indexOf("trap 'echo");
+      const firstCdIndex = out.indexOf("cd '/work");
+      expect(trapIndex).toBeGreaterThan(-1);
+      expect(firstCdIndex).toBeGreaterThan(trapIndex);
+    });
   });
 
   describe("secretsFile (build-time secret shuttling)", () => {
@@ -311,12 +345,14 @@ describe(buildLaunchCommand, () => {
   });
 
   describe("runner='none'", () => {
-    it("execs the agent directly without the safehouse wrapper", () => {
+    it("runs the agent directly without the safehouse wrapper", () => {
       const out = buildLaunchCommand(arguments_({ runner: "none" }));
 
       expect(out).not.toContain("safehouse-clearance");
       expect(out).not.toContain("--enable=all-agents");
-      expect(out).toMatch(/exec claude "\$_p"$/);
+      // No `exec` — the launch wrapper drops it so the EXIT trap can fire.
+      expect(out).not.toMatch(/(?:^|[\s&;])exec claude/);
+      expect(out).toMatch(/claude "\$_p"$/);
     });
 
     it("sources and clears build secrets on the host (no sandbox to forward into)", () => {
@@ -327,11 +363,13 @@ describe(buildLaunchCommand, () => {
       const sourceIndex = out.indexOf(". '/tmp/prompt-team-1/secrets.env'");
       const setupIndex = out.indexOf("setup_status=$?");
       const unsetIndex = out.indexOf("unset NPM_TOKEN BUF_TOKEN");
-      const execIndex = out.indexOf(`exec claude "$_p"`);
+      // The unwrapped path drops `exec` so the EXIT trap can fire; the agent is
+      // the final `&&`-chained command.
+      const agentIndex = out.indexOf(`claude "$_p"`);
       expect(sourceIndex).toBeGreaterThan(-1);
       expect(setupIndex).toBeGreaterThan(sourceIndex);
       expect(unsetIndex).toBeGreaterThan(setupIndex);
-      expect(execIndex).toBeGreaterThan(unsetIndex);
+      expect(agentIndex).toBeGreaterThan(unsetIndex);
       expect(out).not.toContain("--env-pass");
     });
   });
@@ -420,6 +458,78 @@ describe(buildLaunchCommand, () => {
 
       expect(out).not.toContain("-e NPM_TOKEN");
       expect(out).not.toContain("-e BUF_TOKEN");
+    });
+  });
+
+  // Step markers + the pipe-pane TUI-boundary close live on the unwrapped host
+  // path only (safehouse/sdx exec into a wrapper/sandbox).
+  describe("step markers (runner='none')", () => {
+    const noneArguments = (
+      overrides: Partial<Parameters<typeof buildLaunchCommand>[0]> = {},
+    ): Parameters<typeof buildLaunchCommand>[0] => arguments_({ runner: "none", ...overrides });
+
+    it("emits a step marker before each chained step (default config, no secrets)", () => {
+      const out = buildLaunchCommand(noneArguments());
+
+      expect(out).toContain(stepMarker("cd to worktree"));
+      expect(out).toContain(stepMarker("run host setup"));
+      expect(out).toContain(stepMarker("stage prompt"));
+      expect(out).toContain(stepMarker("agent starting"));
+    });
+
+    it("emits source/unset step markers when secretsFile is set", () => {
+      const out = buildLaunchCommand(noneArguments({ secretsFile: "/tmp/secrets.env" }));
+
+      expect(out).toContain(stepMarker("source build secrets"));
+      expect(out).toContain(stepMarker("unset build secrets"));
+    });
+
+    it("omits source/unset step markers when secretsFile is absent", () => {
+      const out = buildLaunchCommand(noneArguments());
+
+      expect(out).not.toContain("source build secrets");
+      expect(out).not.toContain("unset build secrets");
+    });
+
+    it("places step markers in chain order (cd → setup → stage → agent)", () => {
+      const out = buildLaunchCommand(noneArguments());
+
+      const cdIdx = out.indexOf(stepMarker("cd to worktree"));
+      const setupIdx = out.indexOf(stepMarker("run host setup"));
+      const stageIdx = out.indexOf(stepMarker("stage prompt"));
+      const agentIdx = out.indexOf(stepMarker("agent starting"));
+
+      expect(cdIdx).toBeGreaterThan(-1);
+      expect(setupIdx).toBeGreaterThan(cdIdx);
+      expect(stageIdx).toBeGreaterThan(setupIdx);
+      expect(agentIdx).toBeGreaterThan(stageIdx);
+    });
+
+    it("places the pipe-pane disable + `agent starting` marker before the agent command (TUI boundary)", () => {
+      const out = buildLaunchCommand(noneArguments());
+
+      // The boundary line is: marker echo → pipe-pane disable → agent command.
+      // The disable closes the capture pipe from inside the pane so the agent's
+      // TUI output isn't logged. Regex pins the exact disable form to prevent
+      // a regression that re-enables capture (e.g., removes the disable, or
+      // accidentally chains another command in front of the agent).
+      expect(out).toMatch(
+        /agent starting' >&2 && \(tmux pipe-pane -t "\$TMUX_PANE" \|\| true\) && [^&;|\n]*"\$_p"$/,
+      );
+    });
+
+    it("disables pipe-pane from inside the pane right before the agent runs", () => {
+      const out = buildLaunchCommand(noneArguments());
+
+      expect(out).toContain(`(tmux pipe-pane -t "$TMUX_PANE" || true)`);
+
+      // Order: agent-starting marker → pipe-pane disable → agent command.
+      const markerIdx = out.indexOf("agent starting");
+      const disableIdx = out.indexOf("tmux pipe-pane");
+      const agentIdx = out.lastIndexOf(`claude "$_p"`);
+      expect(markerIdx).toBeGreaterThan(-1);
+      expect(disableIdx).toBeGreaterThan(markerIdx);
+      expect(agentIdx).toBeGreaterThan(disableIdx);
     });
   });
 });

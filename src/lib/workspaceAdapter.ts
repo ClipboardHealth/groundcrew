@@ -7,6 +7,7 @@
  * plugin contract — nothing here is a published extension point.
  */
 
+import type { ResolvedConfig } from "./config.ts";
 import { runCommandAsync } from "./commandRunner.ts";
 
 export type WorkspaceKind = "cmux" | "tmux";
@@ -39,6 +40,20 @@ export interface OpenSpec {
 }
 
 /**
+ * Returned by `Adapter.open` / `workspaces.open`. Currently only carries the
+ * agent log path so callers can surface it to the user; future fields would
+ * slot in alongside.
+ */
+export interface OpenResult {
+  /**
+   * Path to the per-launch log file when capture is active, or `undefined`
+   * when capture was disabled (config opt-out, cmux backend, or a soft-failed
+   * mkdir/write). Adapters that don't capture return `undefined`.
+   */
+  agentLogPath?: string;
+}
+
+/**
  * `unavailable` is "we don't know" — never treat it as "empty," or callers
  * would close every live workspace by deduction.
  */
@@ -57,7 +72,7 @@ export type WorkspaceCloseResult =
   | { kind: "unavailable"; error?: unknown };
 
 export interface Adapter {
-  open(spec: OpenSpec, signal?: AbortSignal): Promise<void>;
+  open(config: ResolvedConfig, spec: OpenSpec, signal?: AbortSignal): Promise<OpenResult>;
   /**
    * Live workspaces only. Returns:
    * - `Workspace[]` when the adapter probe succeeded (may be empty).

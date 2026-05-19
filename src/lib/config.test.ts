@@ -840,6 +840,76 @@ describe("loadConfig", () => {
     await expect(loadConfig()).rejects.toThrow(/logging\.file must be a non-empty string/);
   });
 
+  it("defaults logging.agentLogDir to the XDG state agents path", async () => {
+    setEnvironmentVariable("XDG_STATE_HOME", join(temporary, "state"));
+    const path = writeConfigFile(
+      temporary,
+      configSource({
+        workspace: VALID_WORKSPACE(temporary),
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+
+    expect(actual.logging.agentLogDir).toBe(join(temporary, "state", "groundcrew", "agents"));
+  });
+
+  it("respects a user-supplied logging.agentLogDir (with ~ expansion)", async () => {
+    setEnvironmentVariable("HOME", temporary);
+    const path = writeConfigFile(
+      temporary,
+      configSource({
+        workspace: VALID_WORKSPACE(temporary),
+        logging: { agentLogDir: "~/my-logs/agents" },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+
+    expect(actual.logging.agentLogDir).toBe(join(temporary, "my-logs", "agents"));
+  });
+
+  it("accepts logging.agentLogDir: false to disable capture", async () => {
+    const path = writeConfigFile(
+      temporary,
+      configSource({
+        workspace: VALID_WORKSPACE(temporary),
+        logging: { agentLogDir: false },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+
+    expect(actual.logging.agentLogDir).toBe(false);
+  });
+
+  it.each([
+    ["true", "true"],
+    ["empty string", '""'],
+    ["number", "42"],
+  ])("rejects logging.agentLogDir = %s", async (_label, literal) => {
+    const path = writeConfigFile(
+      temporary,
+      [
+        "export default {",
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        `  logging: { agentLogDir: ${literal} },`,
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(/logging\.agentLogDir/);
+  });
+
   it("falls back to the XDG crew.config.ts when GROUNDCREW_CONFIG is unset", async () => {
     const xdgDir = join(temporary, "xdg-config", "groundcrew");
     mkdirSync(xdgDir, { recursive: true });

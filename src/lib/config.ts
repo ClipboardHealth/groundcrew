@@ -194,6 +194,14 @@ export interface Config {
      * `${XDG_STATE_HOME:-~/.local/state}/groundcrew/groundcrew.log`.
      */
     file?: string;
+    /**
+     * Directory under which per-launch agent terminal output is captured
+     * (tmux backend only). Each launch writes `<TICKET>-<UTC-timestamp>.log`
+     * and refreshes a `<TICKET>.log` symlink to the latest. Set to `false`
+     * to disable capture. Defaults to
+     * `${XDG_STATE_HOME:-~/.local/state}/groundcrew/agents`.
+     */
+    agentLogDir?: string | false;
   };
 }
 
@@ -243,6 +251,7 @@ export interface ResolvedConfig {
   };
   logging: {
     file: string;
+    agentLogDir: string | false;
   };
 }
 
@@ -308,6 +317,15 @@ const PERCENT_MAX = 100;
 
 function defaultLogFile(): string {
   return xdgStatePath("groundcrew", "groundcrew.log");
+}
+
+function resolveAgentLogDir(value: string | false | undefined): string | false {
+  if (value === false) {
+    return false;
+  }
+  return expandHome(
+    normalizeOptionalString(value, "logging.agentLogDir") ?? xdgStatePath("groundcrew", "agents"),
+  );
 }
 
 function expandHome(p: string): string {
@@ -687,6 +705,7 @@ function applyDefaults(user: Config): ResolvedConfig {
       file: expandHome(
         normalizeOptionalString(user.logging?.file, "logging.file") ?? defaultLogFile(),
       ),
+      agentLogDir: resolveAgentLogDir(user.logging?.agentLogDir),
     },
   };
 }

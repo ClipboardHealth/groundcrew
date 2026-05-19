@@ -160,8 +160,8 @@ interface LaunchCommandArguments {
    * Optional path to a `KEY='value'` env file containing build-time
    * secrets (see `BUILD_SECRET_NAMES`). Sourced on the host shell before
    * setup; for the sdx runner the names are propagated into the sandbox
-   * via `sbx exec -e KEY`. Always unset before exec'ing the agent so the
-   * agent process never inherits them.
+   * via `sbx exec -e KEY`. Always unset before launching the agent so
+   * the agent process never inherits them.
    */
   secretsFile?: string | undefined;
   /**
@@ -182,10 +182,11 @@ interface LaunchCommandArguments {
 /**
  * Build the shell command that runs inside the workspace. The prompt is
  * staged in a temp file (so backticks/quotes/$ in the description survive),
- * read into `$_p`, the temp dir is removed, then the agent CLI is exec'd
- * with the prompt as its trailing positional argument. This removes the
- * need for a `readyMarker` poll because the agent starts up with the
- * prompt in hand.
+ * read into `$_p`, the temp dir is removed, then the agent CLI runs with
+ * the prompt as its trailing positional argument. This removes the need
+ * for a `readyMarker` poll because the agent starts up with the prompt
+ * in hand. The shell stays as the agent's parent so an EXIT trap can
+ * capture the final exit code to the log.
  */
 export function buildLaunchCommand(arguments_: LaunchCommandArguments): string {
   if (arguments_.runner === "sdx") {
@@ -211,6 +212,16 @@ function shouldWrapWithSafehouse(arguments_: LaunchCommandArguments): boolean {
 }
 
 /**
+ * Wrap a launch-chain command with a `[groundcrew] step: <name>` echo to stderr
+ * so the captured tmux log reads as a structured timeline. The `agent starting`
+ * marker doubles as the TUI boundary — everything after it in the log is the
+ * agent's own (often ANSI-laden) output.
+ */
+function launchStep(name: string, command: string): string {
+  return `echo ${shellSingleQuote(`[groundcrew] step: ${name}`)} >&2 && ${command}`;
+}
+
+/**
  * Unsandboxed host launch (`runner === "none"`, or a `safehouse …` cmd that
  * brings its own wrap). Setup, secret sourcing, and the agent all run on the
  * host shell because there is no groundcrew-managed sandbox to run them inside.
@@ -223,18 +234,32 @@ function buildUnwrappedHostLaunchCommand(arguments_: LaunchCommandArguments): st
     sandboxName: "",
   });
 
-  const lines: string[] = [`cd ${shellSingleQuote(arguments_.worktreeDir)}`];
+  // EXIT trap captures the shell's final $? to the log — fires for clean exit,
+  // crash, Ctrl-C, OOM, anything. We can't `exec` the agent command below;
+  // exec would replace this shell and skip the trap entirely.
+  const lines: string[] = [
+    `trap 'echo "[groundcrew] exit=$?" >&2' EXIT`,
+    launchStep("cd to worktree", `cd ${shellSingleQuote(arguments_.worktreeDir)}`),
+  ];
   if (arguments_.secretsFile !== undefined) {
-    lines.push(sourceSecretsLine(arguments_.secretsFile));
+    lines.push(launchStep("source build secrets", sourceSecretsLine(arguments_.secretsFile)));
   }
-  lines.push(setupWithStatusReporting(SETUP_COMMAND));
+  lines.push(launchStep("run host setup", setupWithStatusReporting(SETUP_COMMAND)));
   if (arguments_.secretsFile !== undefined) {
-    lines.push(unsetSecretsLine());
+    lines.push(launchStep("unset build secrets", unsetSecretsLine()));
   }
   lines.push(
-    `_p=$(cat ${shellSingleQuote(arguments_.promptFile)})`,
-    `rm -rf ${shellSingleQuote(promptDir)}`,
-    `exec ${agentCmd} "$_p"`,
+    launchStep(
+      "stage prompt",
+      `_p=$(cat ${shellSingleQuote(arguments_.promptFile)}) && rm -rf ${shellSingleQuote(promptDir)}`,
+    ),
+  );
+  // Close pipe-pane's capture child from inside the pane, so the agent's
+  // TUI output (ANSI repaints, spinners, etc.) doesn't flood the log
+  // file. `$TMUX_PANE` is set by tmux in the shell's env. `|| true` keeps
+  // the launch from failing if tmux is somehow unavailable.
+  lines.push(
+    launchStep("agent starting", `(tmux pipe-pane -t "$TMUX_PANE" || true) && ${agentCmd} "$_p"`),
   );
   return lines.join(" && ");
 }

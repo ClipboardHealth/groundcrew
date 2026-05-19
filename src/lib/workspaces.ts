@@ -14,6 +14,7 @@ import { tmuxAdapter } from "./tmuxAdapter.ts";
 import {
   type Adapter,
   isSignalAborted,
+  type OpenResult,
   type OpenSpec,
   type WorkspaceAccessHint,
   type WorkspaceCloseResult,
@@ -23,6 +24,7 @@ import {
 } from "./workspaceAdapter.ts";
 
 export type {
+  OpenResult,
   OpenSpec,
   Workspace,
   WorkspaceAccessHint,
@@ -160,9 +162,9 @@ async function interruptWorkspace(
 }
 
 export const workspaces = {
-  async open(config: ResolvedConfig, spec: OpenSpec, signal?: AbortSignal): Promise<void> {
+  async open(config: ResolvedConfig, spec: OpenSpec, signal?: AbortSignal): Promise<OpenResult> {
     const adapter = await adapterFor(config, signal);
-    await adapter.open(spec, signal);
+    return await adapter.open(config, spec, signal);
   },
   probe: probeWorkspaces,
   async close(

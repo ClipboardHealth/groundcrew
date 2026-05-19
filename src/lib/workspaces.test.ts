@@ -1,11 +1,25 @@
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readlinkSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { deleteEnvironmentVariable, setEnvironmentVariable } from "../testHelpers/env.ts";
 import { probeError } from "../testHelpers/workspaceProbe.ts";
 import type { RunCommandOptions } from "./commandRunner.ts";
 import type { ResolvedConfig, WorkspaceKindSetting } from "./config.ts";
 import type * as hostModule from "./host.ts";
 import { detectHostCapabilities, type HostCapabilities } from "./host.ts";
-import { log } from "./util.ts";
+import { log, writeError } from "./util.ts";
 import type * as utilModule from "./util.ts";
+import { AGENT_LOG_PIPE_COMMAND, prepareAgentLog, resolveAgentLogTarget } from "./tmuxAdapter.ts";
 import {
   resolveWorkspaceKind,
   type WorkspaceCloseResult,
@@ -37,6 +51,7 @@ vi.mock(import("./util.ts"), async (importOriginal) => {
   return {
     ...actual,
     log: vi.fn<typeof actual.log>(),
+    writeError: vi.fn<typeof actual.writeError>(),
   };
 });
 vi.mock(import("./host.ts"), async (importOriginal) => {
@@ -63,7 +78,24 @@ function makeHost(overrides: Partial<HostCapabilities> = {}): HostCapabilities {
   };
 }
 
-function makeConfig(workspaceKind: WorkspaceKindSetting = "auto"): ResolvedConfig {
+// Module-scope so makeConfig's default agentLogDir can fall through to it.
+// Only the tmux open describe block assigns it; other describes leave it
+// undefined and makeConfig falls back to `false` (capture disabled). Option B
+// from the followup task — Option A would have required updating ~47 call
+// sites to pass an explicit second arg, well past the documented threshold.
+let agentLogSandbox: string | undefined;
+
+function requireAgentLogSandbox(): string {
+  if (agentLogSandbox === undefined) {
+    throw new Error("agentLogSandbox is unset — this test must run inside the tmux open describe.");
+  }
+  return agentLogSandbox;
+}
+
+function makeConfig(
+  workspaceKind: WorkspaceKindSetting = "auto",
+  agentLogDirOverride?: string | false,
+): ResolvedConfig {
   return {
     sources: [],
     git: { remote: "origin", defaultBranch: "main" },
@@ -85,7 +117,10 @@ function makeConfig(workspaceKind: WorkspaceKindSetting = "auto"): ResolvedConfi
     prompts: { initial: "x" },
     workspaceKind,
     local: { runner: "auto" },
-    logging: { file: "/tmp/groundcrew-test.log" },
+    logging: {
+      file: "/tmp/groundcrew-test.log",
+      agentLogDir: agentLogDirOverride ?? agentLogSandbox ?? false,
+    },
   };
 }
 
@@ -239,7 +274,7 @@ describe("workspaces.open (cmux)", () => {
         command: "x",
         status: { text: "claude" },
       }),
-    ).resolves.toBeUndefined();
+    ).resolves.toStrictEqual({});
 
     expect(runMock).not.toHaveBeenCalledWith("cmux", expect.arrayContaining(["close-workspace"]));
     expect(logMock).toHaveBeenCalledWith(expect.stringContaining("cmux set-status failed"));
@@ -262,7 +297,7 @@ describe("workspaces.open (cmux)", () => {
         command: "x",
         status: { text: "claude" },
       }),
-    ).resolves.toBeUndefined();
+    ).resolves.toStrictEqual({});
 
     expect(runMock).not.toHaveBeenCalledWith("cmux", expect.arrayContaining(["close-workspace"]));
     expect(logMock).not.toHaveBeenCalledWith(expect.stringContaining("set-status"));
@@ -475,10 +510,23 @@ describe("workspaces.open (tmux)", () => {
     commonBeforeEach();
     detectHostMock.mockResolvedValue(makeHost({ hasCmux: false, hasTmux: true }));
     deleteEnvironmentVariable("GROUNDCREW_KEEP_DEAD_WINDOWS");
+    agentLogSandbox = mkdtempSync(join(tmpdir(), "groundcrew-agents-it-"));
   });
-  afterEach(commonAfterEach);
+  afterEach(() => {
+    commonAfterEach();
+    // Restore real timers in afterEach so a failed assertion mid-test can't
+    // leak vi.useFakeTimers() state into the next test.
+    vi.useRealTimers();
+    if (agentLogSandbox !== undefined) {
+      rmSync(agentLogSandbox, { recursive: true, force: true });
+      agentLogSandbox = undefined;
+    }
+  });
 
-  it("ensures the groundcrew session exists, then opens a window with atomic option chain", async () => {
+  it("ensures the groundcrew session exists, then opens a window with atomic option chain (including pipe-pane)", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-17T15:02:34.000Z"));
+
     await workspaces.open(makeConfig("tmux"), {
       name: "TEAM-1",
       cwd: "/work/repo-a-TEAM-1",
@@ -508,10 +556,18 @@ describe("workspaces.open (tmux)", () => {
       "groundcrew:TEAM-1",
       "allow-rename",
       "off",
+      ";",
+      "pipe-pane",
+      "-o",
+      "-t",
+      "groundcrew:TEAM-1",
+      `${AGENT_LOG_PIPE_COMMAND} >> '${requireAgentLogSandbox()}/TEAM-1-20260517-150234.log'`,
     ]);
   });
 
   it("sets remain-on-exit on instead of off when GROUNDCREW_KEEP_DEAD_WINDOWS is set", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-17T15:02:34.000Z"));
     setEnvironmentVariable("GROUNDCREW_KEEP_DEAD_WINDOWS", "1");
 
     await workspaces.open(makeConfig("tmux"), {
@@ -542,6 +598,12 @@ describe("workspaces.open (tmux)", () => {
       "groundcrew:TEAM-1",
       "allow-rename",
       "off",
+      ";",
+      "pipe-pane",
+      "-o",
+      "-t",
+      "groundcrew:TEAM-1",
+      `${AGENT_LOG_PIPE_COMMAND} >> '${requireAgentLogSandbox()}/TEAM-1-20260517-150234.log'`,
     ]);
   });
 
@@ -645,6 +707,120 @@ describe("workspaces.open (tmux)", () => {
     });
 
     expect(runMock).not.toHaveBeenCalledWith("tmux", expect.arrayContaining(["set-status"]));
+  });
+
+  it("creates the agents directory and writes a header line before invoking tmux", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-17T15:02:34.000Z"));
+
+    await workspaces.open(makeConfig("tmux"), {
+      name: "TEAM-1",
+      cwd: "/work/repo-a-TEAM-1",
+      command: "exec claude --prompt /tmp/p",
+    });
+
+    const logPath = join(requireAgentLogSandbox(), "TEAM-1-20260517-150234.log");
+    expect(existsSync(logPath)).toBe(true);
+    const header = readFileSync(logPath, "utf8");
+    expect(header).toMatch(
+      /^\[groundcrew\] TEAM-1 launch at \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z backend=tmux command=exec claude --prompt \/tmp\/p\n$/,
+    );
+  });
+
+  it("creates and refreshes the <TICKET>.log symlink", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-17T15:02:34.000Z"));
+
+    await workspaces.open(makeConfig("tmux"), {
+      name: "TEAM-1",
+      cwd: "/work/repo-a-TEAM-1",
+      command: "exec claude",
+    });
+
+    const symlinkPath = join(requireAgentLogSandbox(), "TEAM-1.log");
+    expect(lstatSync(symlinkPath).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(symlinkPath)).toBe("TEAM-1-20260517-150234.log");
+  });
+
+  it("overwrites the symlink atomically when re-launching the same ticket", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-17T15:02:34.000Z"));
+    await workspaces.open(makeConfig("tmux"), {
+      name: "TEAM-1",
+      cwd: "/work/repo-a-TEAM-1",
+      command: "exec claude one",
+    });
+
+    vi.setSystemTime(new Date("2026-05-17T15:03:00.000Z"));
+    await workspaces.open(makeConfig("tmux"), {
+      name: "TEAM-1",
+      cwd: "/work/repo-a-TEAM-1",
+      command: "exec claude two",
+    });
+
+    const sandbox = requireAgentLogSandbox();
+    const firstLogPath = join(sandbox, "TEAM-1-20260517-150234.log");
+    const secondLogPath = join(sandbox, "TEAM-1-20260517-150300.log");
+    const symlinkPath = join(sandbox, "TEAM-1.log");
+    expect(existsSync(firstLogPath)).toBe(true);
+    expect(existsSync(secondLogPath)).toBe(true);
+    expect(readlinkSync(symlinkPath)).toBe("TEAM-1-20260517-150300.log");
+  });
+
+  it("omits pipe-pane when logging.agentLogDir is false", async () => {
+    await workspaces.open(makeConfig("tmux", false), {
+      name: "TEAM-1",
+      cwd: "/work/repo-a-TEAM-1",
+      command: "exec claude",
+    });
+
+    expect(runMock).not.toHaveBeenCalledWith("tmux", expect.arrayContaining(["pipe-pane"]));
+  });
+
+  it("uses logging.agentLogDir override when set to a custom path", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-17T15:02:34.000Z"));
+    const customDir = mkdtempSync(join(tmpdir(), "groundcrew-agents-custom-"));
+    try {
+      await workspaces.open(makeConfig("tmux", customDir), {
+        name: "TEAM-1",
+        cwd: "/work/repo-a-TEAM-1",
+        command: "exec claude",
+      });
+
+      const logPath = join(customDir, "TEAM-1-20260517-150234.log");
+      expect(existsSync(logPath)).toBe(true);
+      expect(runMock).toHaveBeenCalledWith(
+        "tmux",
+        expect.arrayContaining([
+          "pipe-pane",
+          "-o",
+          "-t",
+          "groundcrew:TEAM-1",
+          `${AGENT_LOG_PIPE_COMMAND} >> '${logPath}'`,
+        ]),
+      );
+    } finally {
+      // afterEach restores real timers; only the custom dir cleanup is local.
+      rmSync(customDir, { recursive: true, force: true });
+    }
+  });
+
+  it("proceeds without pipe-pane and warns once when mkdir fails", async () => {
+    // Plant a regular file where the parent directory should be — mkdirSync
+    // recursively will throw because the path component exists and is not a dir.
+    const blockingFile = join(requireAgentLogSandbox(), "blocker");
+    writeFileSync(blockingFile, "not a directory");
+    const nestedAgentDir = join(blockingFile, "agents");
+
+    await workspaces.open(makeConfig("tmux", nestedAgentDir), {
+      name: "TEAM-1",
+      cwd: "/work/repo-a-TEAM-1",
+      command: "exec claude",
+    });
+
+    expect(runMock).not.toHaveBeenCalledWith("tmux", expect.arrayContaining(["pipe-pane"]));
+    expect(vi.mocked(writeError)).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -993,5 +1169,134 @@ describe(resolveWorkspaceKind, () => {
         host: makeHost({ hasCmux: false, hasTmux: false }),
       });
     }).toThrow(/neither cmux nor tmux is on PATH/);
+  });
+});
+
+describe(resolveAgentLogTarget, () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("returns disabled when agentLogDir is false", () => {
+    const config = makeConfig("auto", false);
+    expect(resolveAgentLogTarget(config, "TEAM-1")).toStrictEqual({ kind: "disabled" });
+  });
+
+  it("returns active with timestamped logPath and symlink path", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-17T15:02:34.000Z"));
+    const config = makeConfig("auto", "/tmp/groundcrew-agents-test");
+
+    const target = resolveAgentLogTarget(config, "TEAM-1");
+
+    expect(target).toStrictEqual({
+      kind: "active",
+      logPath: "/tmp/groundcrew-agents-test/TEAM-1-20260517-150234.log",
+      latestSymlink: "/tmp/groundcrew-agents-test/TEAM-1.log",
+    });
+  });
+});
+
+describe(prepareAgentLog, () => {
+  let sandbox: string;
+
+  beforeEach(() => {
+    sandbox = mkdtempSync(join(tmpdir(), "groundcrew-prepareAgentLog-"));
+    vi.mocked(writeError).mockClear();
+  });
+
+  afterEach(() => {
+    rmSync(sandbox, { recursive: true, force: true });
+    vi.mocked(writeError).mockClear();
+  });
+
+  it("returns disabled unchanged when input is disabled", () => {
+    expect(prepareAgentLog({ kind: "disabled" }, "exec claude")).toStrictEqual({
+      kind: "disabled",
+    });
+  });
+
+  it("creates the dir, writes a header line, and creates the symlink for an active target", () => {
+    const logDir = join(sandbox, "agents");
+    const logPath = join(logDir, "TEAM-1-20260517-150234.log");
+    const latestSymlink = join(logDir, "TEAM-1.log");
+
+    const result = prepareAgentLog(
+      { kind: "active", logPath, latestSymlink },
+      "exec claude --prompt /tmp/p",
+    );
+
+    expect(result).toStrictEqual({ kind: "active", logPath, displayPath: latestSymlink });
+    expect(existsSync(logPath)).toBe(true);
+    const header = readFileSync(logPath, "utf8");
+    expect(header).toMatch(
+      /^\[groundcrew\] TEAM-1 launch at \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z backend=tmux command=exec claude --prompt \/tmp\/p\n$/,
+    );
+    expect(lstatSync(latestSymlink).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(latestSymlink)).toBe("TEAM-1-20260517-150234.log");
+  });
+
+  it("truncates the command summary to 120 chars in the header", () => {
+    const logDir = join(sandbox, "agents");
+    const logPath = join(logDir, "TEAM-1-20260517-150234.log");
+    const latestSymlink = join(logDir, "TEAM-1.log");
+    const longCommand = "x".repeat(500);
+
+    prepareAgentLog({ kind: "active", logPath, latestSymlink }, longCommand);
+
+    const header = readFileSync(logPath, "utf8");
+    const match = /command=(.*)\n$/.exec(header);
+    expect(match).not.toBeNull();
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- expect above asserts match exists
+    expect(match![1]).toHaveLength(120);
+  });
+
+  it("refreshes the symlink atomically when called twice", () => {
+    const logDir = join(sandbox, "agents");
+    const firstLogPath = join(logDir, "TEAM-1-20260517-150234.log");
+    const secondLogPath = join(logDir, "TEAM-1-20260517-150300.log");
+    const latestSymlink = join(logDir, "TEAM-1.log");
+
+    prepareAgentLog({ kind: "active", logPath: firstLogPath, latestSymlink }, "exec claude one");
+    prepareAgentLog({ kind: "active", logPath: secondLogPath, latestSymlink }, "exec claude two");
+
+    expect(existsSync(firstLogPath)).toBe(true);
+    expect(existsSync(secondLogPath)).toBe(true);
+    expect(readlinkSync(latestSymlink)).toBe("TEAM-1-20260517-150300.log");
+  });
+
+  it("warns but keeps capture active when the symlink refresh fails", () => {
+    const logDir = join(sandbox, "agents");
+    const logPath = join(logDir, "TEAM-1-20260517-150234.log");
+    const latestSymlink = join(logDir, "TEAM-1.log");
+    // Pre-create latestSymlink as a non-empty directory; renameSync over a
+    // non-empty directory fails with ENOTEMPTY, hitting the symlink catch.
+    mkdirSync(logDir, { recursive: true });
+    mkdirSync(latestSymlink);
+    writeFileSync(join(latestSymlink, "blocker"), "x");
+
+    const result = prepareAgentLog({ kind: "active", logPath, latestSymlink }, "exec claude");
+
+    // Symlink refresh failed → advertise the timestamped logPath instead of
+    // a broken symlink so the user gets a path that actually resolves.
+    expect(result).toStrictEqual({ kind: "active", logPath, displayPath: logPath });
+    expect(existsSync(logPath)).toBe(true);
+    expect(vi.mocked(writeError)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(writeError).mock.calls[0]?.[0]).toMatch(/symlink/);
+  });
+
+  it("returns disabled and warns when mkdir fails", () => {
+    // Plant a regular file where the parent directory should be — mkdirSync
+    // recursively will throw because the path component exists and is not a dir.
+    const blockingFile = join(sandbox, "agents");
+    writeFileSync(blockingFile, "not a directory");
+    const logPath = join(blockingFile, "TEAM-1-20260517-150234.log");
+    const latestSymlink = join(blockingFile, "TEAM-1.log");
+
+    const result = prepareAgentLog({ kind: "active", logPath, latestSymlink }, "exec claude");
+
+    expect(result).toStrictEqual({ kind: "disabled" });
+    expect(vi.mocked(writeError)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(writeError).mock.calls[0]?.[0]).toMatch(/agent log/);
   });
 });
