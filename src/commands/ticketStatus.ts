@@ -1,7 +1,11 @@
 // src/commands/ticketStatus.ts
 
+import { existsSync } from "node:fs";
+
 import { fetchRawLinearIssue, type RawLinearIssue } from "../lib/boardSource.ts";
+import { runCommandAsync } from "../lib/commandRunner.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
+import { which } from "../lib/host.ts";
 import { getLinearClient, lazyLinearClient, readTicketArgument, writeOutput } from "../lib/util.ts";
 import { workspaces, type WorkspaceProbe } from "../lib/workspaces.ts";
 import { worktrees, type WorktreeDirtiness, type WorktreeEntry } from "../lib/worktrees.ts";
@@ -735,28 +739,148 @@ export async function runTicketStatus(parsed: StatusArguments): Promise<boolean>
   return result.verdict.kind === "pr-open" || result.verdict.kind === "pr-merged";
 }
 
-// ───── production probes (stubbed; Task 10 fills these in) ─────
+// ───── production probes ─────
 
-async function probeLocalBranchImpl(_input: {
+async function probeLocalBranchImpl(input: {
   repoDir: string;
   branch: string;
   defaultBranch: string;
 }): Promise<LocalBranchProbe> {
-  return { kind: "unknown", reason: "production probe not yet implemented" };
+  if (!existsSync(input.repoDir)) {
+    return { kind: "unknown", reason: `repo dir not found: ${input.repoDir}` };
+  }
+
+  // Does the branch exist locally? `rev-parse --verify -q` exits 0 if so.
+  try {
+    await runCommandAsync("git", [
+      "-C",
+      input.repoDir,
+      "rev-parse",
+      "--verify",
+      "-q",
+      input.branch,
+    ]);
+  } catch {
+    return { kind: "absent" };
+  }
+
+  // ahead/behind vs origin/<defaultBranch>. Output format: "<ahead>\t<behind>".
+  try {
+    const output = await runCommandAsync("git", [
+      "-C",
+      input.repoDir,
+      "rev-list",
+      "--left-right",
+      "--count",
+      `${input.branch}...origin/${input.defaultBranch}`,
+    ]);
+    const [aheadString, behindString] = output.trim().split(/\s+/);
+    const ahead = Number.parseInt(aheadString ?? "0", 10);
+    const behind = Number.parseInt(behindString ?? "0", 10);
+    return { kind: "present", ahead, behind, defaultBranch: input.defaultBranch };
+  } catch {
+    // origin/<defaultBranch> missing (no fetch yet) or other git error — the
+    // branch IS present, we just cannot compute counts. Report 0/0.
+    return { kind: "present", ahead: 0, behind: 0, defaultBranch: input.defaultBranch };
+  }
 }
 
-async function probeRemoteBranchImpl(_input: {
+async function probeRemoteBranchImpl(input: {
   repoDir: string;
   branch: string;
   doFetch: boolean;
 }): Promise<RemoteBranchProbe> {
-  return { kind: "unknown", reason: "production probe not yet implemented" };
+  if (!existsSync(input.repoDir)) {
+    return { kind: "unknown", reason: `repo dir not found: ${input.repoDir}` };
+  }
+
+  if (input.doFetch) {
+    try {
+      await runCommandAsync("git", [
+        "-C",
+        input.repoDir,
+        "fetch",
+        "--quiet",
+        "origin",
+        input.branch,
+      ]);
+    } catch {
+      // Best-effort fetch. ls-remote below is the authoritative check.
+    }
+  }
+
+  // ls-remote --exit-code exits 0 if the ref exists, 2 otherwise.
+  try {
+    await runCommandAsync("git", [
+      "-C",
+      input.repoDir,
+      "ls-remote",
+      "--exit-code",
+      "origin",
+      `refs/heads/${input.branch}`,
+    ]);
+    return { kind: "present" };
+  } catch {
+    return { kind: "absent" };
+  }
 }
 
-async function probePullRequestImpl(_input: {
+async function probePullRequestImpl(input: {
   repoDir: string;
   branch: string;
 }): Promise<PullRequestProbe> {
-  return { kind: "unknown", reason: "production probe not yet implemented" };
+  const ghPath = await which("gh");
+  if (ghPath === undefined) {
+    return { kind: "gh-missing" };
+  }
+
+  let output: string;
+  try {
+    output = await runCommandAsync(
+      "gh",
+      [
+        "pr",
+        "list",
+        "--head",
+        input.branch,
+        "--state",
+        "all",
+        "--json",
+        "number,url,state,mergedAt",
+      ],
+      { cwd: input.repoDir },
+    );
+  } catch (error) {
+    return {
+      kind: "unknown",
+      reason: error instanceof Error ? error.message : String(error),
+    };
+  }
+
+  try {
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- gh's --json schema is fixed by our request fields (number,url,state,mergedAt)
+    const parsed = JSON.parse(output) as {
+      number: number;
+      url: string;
+      state: string;
+      mergedAt: string | null;
+    }[];
+    const [first] = parsed;
+    if (first === undefined) {
+      return { kind: "absent" };
+    }
+    if (first.mergedAt !== null && first.mergedAt !== undefined) {
+      return { kind: "merged", number: first.number, url: first.url };
+    }
+    if (first.state === "OPEN") {
+      return { kind: "open", number: first.number, url: first.url };
+    }
+    return { kind: "absent" };
+  } catch (error) {
+    return {
+      kind: "unknown",
+      reason: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 /* v8 ignore stop @preserve */
