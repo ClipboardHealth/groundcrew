@@ -53,6 +53,7 @@ function makeConfig(
         done: "Done",
         terminal: ["Done"],
       },
+      teamIds: [],
     },
     git: { remote: "origin", defaultBranch: "main" },
     workspace: {
