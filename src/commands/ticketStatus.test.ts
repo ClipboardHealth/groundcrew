@@ -390,6 +390,7 @@ describe("ticketStatus — Linear section", () => {
 
     expect(firstLine?.status).toBe("fail");
     expect(firstLine?.detail).toBe("plain string failure");
+    expect(actual.verdict.kind).toBe("lost");
   });
 });
 
@@ -686,5 +687,121 @@ describe("ticketStatus — Remote branch section", () => {
     await ticketStatus(deps);
 
     expect(probe).toHaveBeenCalledWith(expect.objectContaining({ doFetch: false }));
+  });
+});
+
+describe("ticketStatus — Pull request section", () => {
+  const worktreeEntry = {
+    repository: "herds-social/herds",
+    ticket: "HRD-1",
+    branchName: "paul-hrd-1",
+    dir: "/work/herds-social/herds-HRD-1",
+    kind: "host" as const,
+  };
+
+  it("records ok with number and url for an open PR, and the verdict is pr-open", async () => {
+    const deps = makeDeps({
+      findWorktree: vi
+        .fn<TicketStatusDependencies["findWorktree"]>()
+        .mockReturnValue(worktreeEntry),
+      probePullRequest: vi
+        .fn<TicketStatusDependencies["probePullRequest"]>()
+        .mockResolvedValue({ kind: "open", number: 42, url: "https://github.com/x/y/pull/42" }),
+    });
+
+    const actual = await ticketStatus(deps);
+
+    expect(actual.pullRequest).toStrictEqual([
+      {
+        name: "Open PR for this branch",
+        status: "ok",
+        detail: "#42 https://github.com/x/y/pull/42",
+      },
+    ]);
+    expect(actual.verdict).toMatchObject({ kind: "pr-open", number: 42 });
+  });
+
+  it("records ok with number and url for a merged PR", async () => {
+    const deps = makeDeps({
+      findWorktree: vi
+        .fn<TicketStatusDependencies["findWorktree"]>()
+        .mockReturnValue(worktreeEntry),
+      probePullRequest: vi
+        .fn<TicketStatusDependencies["probePullRequest"]>()
+        .mockResolvedValue({ kind: "merged", number: 99, url: "https://github.com/x/y/pull/99" }),
+    });
+
+    const actual = await ticketStatus(deps);
+
+    expect(actual.pullRequest).toStrictEqual([
+      {
+        name: "Open PR for this branch",
+        status: "ok",
+        detail: "#99 https://github.com/x/y/pull/99",
+      },
+    ]);
+  });
+
+  it("records fail when no PR is found", async () => {
+    const deps = makeDeps({
+      findWorktree: vi
+        .fn<TicketStatusDependencies["findWorktree"]>()
+        .mockReturnValue(worktreeEntry),
+      probePullRequest: vi
+        .fn<TicketStatusDependencies["probePullRequest"]>()
+        .mockResolvedValue({ kind: "absent" }),
+    });
+
+    const actual = await ticketStatus(deps);
+
+    expect(actual.pullRequest).toStrictEqual([
+      { name: "Open PR for this branch", status: "fail", detail: "none found" },
+    ]);
+  });
+
+  it("records skipped when gh is missing", async () => {
+    const deps = makeDeps({
+      findWorktree: vi
+        .fn<TicketStatusDependencies["findWorktree"]>()
+        .mockReturnValue(worktreeEntry),
+      probePullRequest: vi
+        .fn<TicketStatusDependencies["probePullRequest"]>()
+        .mockResolvedValue({ kind: "gh-missing" }),
+    });
+
+    const actual = await ticketStatus(deps);
+
+    expect(actual.pullRequest).toStrictEqual([
+      { name: "Open PR for this branch", status: "skipped", detail: "gh CLI not on PATH" },
+    ]);
+  });
+
+  it("records skipped with the unknown reason text", async () => {
+    const deps = makeDeps({
+      findWorktree: vi
+        .fn<TicketStatusDependencies["findWorktree"]>()
+        .mockReturnValue(worktreeEntry),
+      probePullRequest: vi
+        .fn<TicketStatusDependencies["probePullRequest"]>()
+        .mockResolvedValue({ kind: "unknown", reason: "rate limited" }),
+    });
+
+    const actual = await ticketStatus(deps);
+
+    const [firstLine] = actual.pullRequest;
+    expect(firstLine?.status).toBe("skipped");
+    expect(firstLine?.detail).toBe("rate limited");
+  });
+
+  it("skips the section when no worktree resolves the repo dir", async () => {
+    const deps = makeDeps({
+      // oxlint-disable-next-line unicorn/no-useless-undefined -- findWorktree returns `WorktreeEntry | undefined`; passing nothing is a TS error
+      findWorktree: vi.fn<TicketStatusDependencies["findWorktree"]>().mockReturnValue(undefined),
+    });
+
+    const actual = await ticketStatus(deps);
+
+    expect(actual.pullRequest).toStrictEqual([]);
+    expect(actual.skipReasons.pullRequest).toBe("repo dir unresolved");
   });
 });

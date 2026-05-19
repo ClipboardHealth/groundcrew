@@ -6,6 +6,15 @@ import type { WorkspaceProbe } from "../lib/workspaces.ts";
 import type { WorktreeDirtiness, WorktreeEntry } from "../lib/worktrees.ts";
 import type { TicketCheck } from "./ticketCheck.ts";
 
+/**
+ * Placeholder state name passed to `decideVerdict` when the Linear section is
+ * skipped via `--no-linear`. Synthesizing a `non-terminal` kind keeps the
+ * verdict logic from falsely concluding `lost` simply because Linear status
+ * was not consulted. The actual stateName value is not user-facing — verdicts
+ * read `linear.kind` only, never `linear.stateName`.
+ */
+const LINEAR_SKIPPED_STATE_NAME = "(linear skipped)";
+
 // ───────── verdict types ─────────
 
 export type StatusVerdict =
@@ -473,13 +482,62 @@ async function probeRemoteBranchSection(
   };
 }
 
+interface PullRequestSectionOutput {
+  checks: TicketCheck[];
+  skipReason: string;
+  probe: PullRequestProbe;
+}
+
+async function probePullRequestSection(
+  deps: TicketStatusDependencies,
+  entry: WorktreeEntry | undefined,
+): Promise<PullRequestSectionOutput> {
+  if (entry === undefined) {
+    return { checks: [], skipReason: "repo dir unresolved", probe: { kind: "absent" } };
+  }
+  const repoDir = repoDirFromEntry(entry, deps);
+  const probe = await deps.probePullRequest({ repoDir, branch: entry.branchName });
+  if (probe.kind === "open" || probe.kind === "merged") {
+    return {
+      checks: [
+        {
+          name: "Open PR for this branch",
+          status: "ok",
+          detail: `#${probe.number} ${probe.url}`,
+        },
+      ],
+      skipReason: "",
+      probe,
+    };
+  }
+  if (probe.kind === "absent") {
+    return {
+      checks: [{ name: "Open PR for this branch", status: "fail", detail: "none found" }],
+      skipReason: "",
+      probe,
+    };
+  }
+  if (probe.kind === "gh-missing") {
+    return {
+      checks: [
+        { name: "Open PR for this branch", status: "skipped", detail: "gh CLI not on PATH" },
+      ],
+      skipReason: "",
+      probe,
+    };
+  }
+  // probe.kind === "unknown"
+  return {
+    checks: [{ name: "Open PR for this branch", status: "skipped", detail: probe.reason }],
+    skipReason: "",
+    probe,
+  };
+}
+
 /**
  * Pure-with-async orchestrator that gathers per-section checks and a single
  * recovery verdict for a ticket. All I/O happens via injected probes — the
  * function itself does no filesystem, network, or stdout work.
- *
- * Tasks 5-8 fill in the worktree, workspace, local-branch, remote-branch,
- * and PR sections; this task wires only the Linear section.
  */
 export async function ticketStatus(deps: TicketStatusDependencies): Promise<TicketStatusResult> {
   const ticket = deps.ticket.toUpperCase();
@@ -492,21 +550,27 @@ export async function ticketStatus(deps: TicketStatusDependencies): Promise<Tick
   const workspaceResult = await probeWorkspaceSection(deps, ticket);
   const localResult = await probeLocalBranchSection(deps, worktreeResult.entry);
   const remoteResult = await probeRemoteBranchSection(deps, worktreeResult.entry);
+  const prResult = await probePullRequestSection(deps, worktreeResult.entry);
   skipReasons.localBranch = localResult.skipReason;
   skipReasons.remoteBranch = remoteResult.skipReason;
+  skipReasons.pullRequest = prResult.skipReason;
 
-  // Other sections are stubbed for this task — Tasks 5-8 fill them in. The
-  // provisional `skipped → non-terminal (linear skipped)` mapping below is
-  // revisited in Task 8 when all sections are wired.
+  // Mapping `skipped → non-terminal (LINEAR_SKIPPED_STATE_NAME)` is intentional:
+  // when `--no-linear` suppresses the Linear probe we do not want the verdict
+  // logic to falsely conclude `lost` simply because Linear status was not
+  // consulted. `decideVerdict` reads `linear.kind` only — the placeholder
+  // stateName is never surfaced to the user.
+  const linearForVerdict: LinearStatusProbe =
+    linearResult.status.kind === "skipped"
+      ? { kind: "non-terminal", stateName: LINEAR_SKIPPED_STATE_NAME }
+      : linearResult.status;
+
   const verdict = decideVerdict({
-    linear:
-      linearResult.status.kind === "skipped"
-        ? { kind: "non-terminal", stateName: "(linear skipped)" }
-        : linearResult.status,
+    linear: linearForVerdict,
     worktree: worktreeResult.status,
     localBranch: localResult.probe,
     remoteBranch: remoteResult.probe,
-    pullRequest: { kind: "absent" },
+    pullRequest: prResult.probe,
     branch: worktreeResult.entry?.branchName ?? ticket.toLowerCase(),
     worktreeDir: worktreeResult.entry?.dir,
     workspaceName: workspaceResult.workspaceName,
@@ -520,7 +584,7 @@ export async function ticketStatus(deps: TicketStatusDependencies): Promise<Tick
     workspace: workspaceResult.checks,
     localBranch: localResult.checks,
     remoteBranch: remoteResult.checks,
-    pullRequest: [],
+    pullRequest: prResult.checks,
     skipReasons,
     verdict,
   };
