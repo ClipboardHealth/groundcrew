@@ -485,7 +485,11 @@ function normalizeSandbox(value: unknown, path: string): SandboxDefinition {
   }
   const { agent, template, kits, setupCommand } = value;
   requireString(agent, `${path}.agent`);
-  const sandbox: SandboxDefinition = { agent };
+  const trimmedAgent = agent.trim();
+  if (trimmedAgent.length === 0) {
+    fail(`${path}.agent must be a non-empty string (got ${JSON.stringify(agent)})`);
+  }
+  const sandbox: SandboxDefinition = { agent: trimmedAgent };
   const normalizedTemplate = normalizeOptionalString(template, `${path}.template`);
   if (normalizedTemplate !== undefined) {
     sandbox.template = normalizedTemplate;

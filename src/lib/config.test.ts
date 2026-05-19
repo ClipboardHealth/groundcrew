@@ -416,6 +416,45 @@ describe("loadConfig", () => {
     );
   });
 
+  it("rejects a per-model sandbox config with a whitespace-only agent", async () => {
+    const path = writeConfigFile(
+      temporary,
+      [
+        "export const config = {",
+        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        '  models: { definitions: { claude: { sandbox: { agent: "   " } } } },',
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(
+      /models\.definitions\.claude\.sandbox\.agent must be a non-empty string/,
+    );
+  });
+
+  it("trims surrounding whitespace from a per-model sandbox agent", async () => {
+    const path = writeConfigFile(
+      temporary,
+      [
+        "export const config = {",
+        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        '  models: { definitions: { claude: { sandbox: { agent: "  claude  " } } } },',
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    const config = await loadConfig();
+    expect(config.models.definitions["claude"]?.sandbox).toStrictEqual({ agent: "claude" });
+  });
+
   it("rejects a non-object local block", async () => {
     const path = writeConfigFile(
       temporary,
