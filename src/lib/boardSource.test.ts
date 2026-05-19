@@ -3,6 +3,7 @@ import type { LinearClient } from "@linear/sdk";
 import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCapture.ts";
 import {
   createBoardSource,
+  fetchBlockersForTicket,
   fetchRawLinearIssue,
   fetchResolvedIssue,
   isTerminalStatus,
@@ -855,5 +856,106 @@ describe(resolveModelFor, () => {
       requestedModel: "codex",
       fallbackModel: "claude",
     });
+  });
+});
+
+describe(fetchBlockersForTicket, () => {
+  it("returns blockers whose type is 'blocks'", async () => {
+    const client = makeClient({ pages: [[]] });
+    client.client.rawRequest.mockResolvedValueOnce({
+      data: {
+        issue: {
+          inverseRelations: {
+            nodes: [
+              {
+                type: "blocks",
+                issue: { identifier: "HRD-10", title: "Blocker A", state: { name: "In Progress" } },
+              },
+              {
+                type: "blocked-by",
+                issue: {
+                  identifier: "HRD-11",
+                  title: "Not a blocker",
+                  state: { name: "In Progress" },
+                },
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    const result = await fetchBlockersForTicket({
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests use the LinearClient surface consumed by boardSource
+      client: client as unknown as LinearClient,
+      ticket: "HRD-1",
+      uuid: "uuid-1",
+    });
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toStrictEqual({ id: "hrd-10", title: "Blocker A", status: "In Progress" });
+  });
+
+  it("returns an empty array when the issue is null", async () => {
+    const client = makeClient({ pages: [[]] });
+    client.client.rawRequest.mockResolvedValueOnce({
+      data: { issue: null },
+    });
+
+    const result = await fetchBlockersForTicket({
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests use the LinearClient surface consumed by boardSource
+      client: client as unknown as LinearClient,
+      ticket: "HRD-1",
+      uuid: "uuid-missing",
+    });
+
+    expect(result).toStrictEqual([]);
+  });
+
+  it("returns an empty array when there are no blocking relations", async () => {
+    const client = makeClient({ pages: [[]] });
+    client.client.rawRequest.mockResolvedValueOnce({
+      data: {
+        issue: {
+          inverseRelations: { nodes: [] },
+        },
+      },
+    });
+
+    const result = await fetchBlockersForTicket({
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests use the LinearClient surface consumed by boardSource
+      client: client as unknown as LinearClient,
+      ticket: "HRD-2",
+      uuid: "uuid-2",
+    });
+
+    expect(result).toStrictEqual([]);
+  });
+
+  it("coerces a null issue state to undefined status", async () => {
+    const client = makeClient({ pages: [[]] });
+    client.client.rawRequest.mockResolvedValueOnce({
+      data: {
+        issue: {
+          inverseRelations: {
+            nodes: [
+              {
+                type: "blocks",
+                issue: { identifier: "HRD-20", title: "No state", state: null },
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    const result = await fetchBlockersForTicket({
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests use the LinearClient surface consumed by boardSource
+      client: client as unknown as LinearClient,
+      ticket: "HRD-3",
+      uuid: "uuid-3",
+    });
+
+    expect(result[0]?.status).toBeUndefined();
   });
 });

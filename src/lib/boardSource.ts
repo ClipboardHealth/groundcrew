@@ -313,6 +313,43 @@ export interface RawLinearIssue {
   stateName: string;
 }
 
+export async function fetchBlockersForTicket(arguments_: {
+  client: LinearClient;
+  ticket: string;
+  uuid: string;
+}): Promise<readonly Blocker[]> {
+  const { client, uuid } = arguments_;
+  const response: { data?: unknown } = await client.client.rawRequest(
+    `query IssueBlockers($id: String!) {
+      issue(id: $id) {
+        inverseRelations(first: 50, includeArchived: false) {
+          nodes {
+            type
+            issue {
+              identifier
+              title
+              state { name }
+            }
+          }
+        }
+      }
+    }`,
+    { id: uuid },
+  );
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- shape is fixed by our GraphQL query above
+  const { issue } = response.data as {
+    issue: {
+      inverseRelations: {
+        nodes: IssueRelationNode[];
+      };
+    } | null;
+  };
+  if (issue === null) {
+    return [];
+  }
+  return blockersFromRelations(issue.inverseRelations.nodes);
+}
+
 export async function fetchRawLinearIssue(arguments_: {
   client: LinearClient;
   ticket: string;
