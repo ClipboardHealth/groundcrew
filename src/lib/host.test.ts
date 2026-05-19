@@ -37,12 +37,13 @@ describe(detectHostCapabilities, () => {
     vi.clearAllMocks();
   });
 
-  it("reports safehouse, cmux, and tmux as present when all are on PATH", async () => {
-    mockWhich(["safehouse", "cmux", "tmux"]);
+  it("reports safehouse, sbx, cmux, and tmux as present when all are on PATH", async () => {
+    mockWhich(["safehouse", "sbx", "cmux", "tmux"]);
 
     const actual = await detectHostCapabilities();
 
     expect(actual.hasSafehouse).toBe(true);
+    expect(actual.hasSbx).toBe(true);
     expect(actual.hasCmux).toBe(true);
     expect(actual.hasTmux).toBe(true);
   });
@@ -53,8 +54,26 @@ describe(detectHostCapabilities, () => {
     const actual = await detectHostCapabilities();
 
     expect(actual.hasSafehouse).toBe(false);
+    expect(actual.hasSbx).toBe(false);
     expect(actual.hasCmux).toBe(false);
     expect(actual.hasTmux).toBe(false);
+  });
+
+  it("derives isMacOS, isLinux, and isSdxSupported from process.platform", async () => {
+    mockWhich([]);
+
+    const actual = await detectHostCapabilities();
+
+    const sdxPlatforms = new Set(["darwin", "linux"]);
+    expect({
+      isMacOS: actual.isMacOS,
+      isLinux: actual.isLinux,
+      isSdxSupported: actual.isSdxSupported,
+    }).toStrictEqual({
+      isMacOS: platform === "darwin",
+      isLinux: platform === "linux",
+      isSdxSupported: sdxPlatforms.has(platform),
+    });
   });
 
   it("reports a binary missing when which returns whitespace only", async () => {

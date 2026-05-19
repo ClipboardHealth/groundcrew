@@ -5,8 +5,14 @@
 
 import { existsSync, statSync } from "node:fs";
 
-import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
+import {
+  type LocalRunner,
+  type LocalRunnerSetting,
+  loadConfig,
+  type ResolvedConfig,
+} from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities, which } from "../lib/host.ts";
+import { resolveLocalRunner } from "../lib/localRunner.ts";
 import { errorMessage, resolveLinearApiKey, writeOutput } from "../lib/util.ts";
 import { resolveWorkspaceKind, type WorkspaceResolution } from "../lib/workspaces.ts";
 
@@ -157,8 +163,13 @@ export async function doctor(): Promise<boolean> {
     writeOutput(`[--] host: ${errorMessage(error)}`);
     return false;
   }
-  const localCapability = localCapabilityCheck(host);
-  reportLocalCapability(localCapability);
+  const resolvedRunner = resolveLocalRunner(config.local.runner, host);
+  const localCapability = localCapabilityCheck(host, resolvedRunner);
+  reportLocalCapability({
+    check: localCapability,
+    setting: config.local.runner,
+    resolved: resolvedRunner,
+  });
 
   const workspaceOutcome = resolveWorkspaceOutcome(config, host);
   reportWorkspaceKind(config, workspaceOutcome);
@@ -200,23 +211,48 @@ export async function doctor(): Promise<boolean> {
   return true;
 }
 
-function localCapabilityCheck(host: HostCapabilities): Check {
-  const supportsLocalRunner = host.isSafehouseSupported && host.hasSafehouse;
+function localCapabilityCheck(host: HostCapabilities, resolved: LocalRunner): Check {
+  if (resolved === "safehouse") {
+    const ok = host.isSafehouseSupported && host.hasSafehouse;
+    return {
+      name: "local runner (safehouse)",
+      ok,
+      required: false,
+      hint: ok
+        ? "ready"
+        : "safehouse runner requires macOS with `safehouse` on PATH (install from https://agent-safehouse.dev/)",
+    };
+  }
+  if (resolved === "sdx") {
+    const ok = host.isSdxSupported && host.hasSbx;
+    return {
+      name: "local runner (sdx)",
+      ok,
+      required: false,
+      hint: ok
+        ? "ready"
+        : "sdx runner requires `sbx` (Docker Sandboxes) on PATH (install from https://docs.docker.com/sandboxes/)",
+    };
+  }
+  // resolved === "none"
   return {
-    name: "local runner (macOS + Safehouse)",
-    ok: supportsLocalRunner,
+    name: "local runner (none)",
+    ok: true,
     required: false,
-    hint: supportsLocalRunner
-      ? "ready"
-      : "groundcrew requires macOS with Safehouse on PATH (install from https://agent-safehouse.dev/)",
+    hint: "WARNING: local.runner='none' — agent runs unsandboxed on the host. Only use this when you understand the implications.",
   };
 }
 
-function reportLocalCapability(check: Check): void {
+function reportLocalCapability(arguments_: {
+  check: Check;
+  setting: LocalRunnerSetting;
+  resolved: LocalRunner;
+}): void {
   writeOutput();
   writeOutput("Local runner");
   writeOutput("------------");
-  writeOutput(format(check));
+  writeOutput(`requested: ${arguments_.setting} → resolved: ${arguments_.resolved}`);
+  writeOutput(format(arguments_.check));
 }
 
 type WorkspaceOutcome =

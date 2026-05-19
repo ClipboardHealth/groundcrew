@@ -4,7 +4,7 @@ import { ensureClearance } from "@clipboard-health/clearance";
 
 import type { RunCommandOptions } from "../lib/commandRunner.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
-import { detectHostCapabilities } from "../lib/host.ts";
+import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
 import type * as utilModule from "../lib/util.ts";
 import { getLinearClient, log } from "../lib/util.ts";
 import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
@@ -140,6 +140,20 @@ function buildResolveIssueResponse(overrides: {
   };
 }
 
+function host(overrides: Partial<HostCapabilities> = {}): HostCapabilities {
+  return {
+    hasSafehouse: true,
+    hasSbx: false,
+    hasCmux: true,
+    hasTmux: false,
+    isMacOS: true,
+    isLinux: false,
+    isSafehouseSupported: true,
+    isSdxSupported: true,
+    ...overrides,
+  };
+}
+
 function hostEntry(): WorktreeEntry {
   return {
     repository: "repo-a",
@@ -179,6 +193,7 @@ function makeConfig(overrides: Partial<ResolvedConfig["models"]> = {}): Resolved
       initial: "Begin {{ticket}} ({{title}}) in {{worktree}}\n{{description}}",
     },
     workspaceKind: "auto",
+    local: { runner: "auto" },
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }
@@ -246,13 +261,7 @@ describe(setupWorkspace, () => {
     existsMock.mockReturnValue(true);
     mockLinearClient();
     issueResolver.mockResolvedValue(buildMockedIssue({ title: "Test Title", description: "Body" }));
-    detectHostMock.mockResolvedValue({
-      hasSafehouse: true,
-      hasCmux: true,
-      hasTmux: false,
-      isMacOS: true,
-      isSafehouseSupported: true,
-    });
+    detectHostMock.mockResolvedValue(host());
     createMock.mockImplementation(async () => hostEntry());
     ensureClearanceMock.mockResolvedValue({
       logPath: "/tmp/clearance/clearance.log",
@@ -357,13 +366,7 @@ describe(setupWorkspace, () => {
   });
 
   it("wraps the agent command with Safehouse and runs the host setup script for local runs", async () => {
-    detectHostMock.mockResolvedValue({
-      hasSafehouse: true,
-      hasCmux: true,
-      hasTmux: false,
-      isMacOS: true,
-      isSafehouseSupported: true,
-    });
+    detectHostMock.mockResolvedValue(host());
     const config = makeConfig({
       definitions: {
         claude: {
@@ -394,14 +397,43 @@ describe(setupWorkspace, () => {
     expect(launchScript).toContain('"$setup_status" -ne 0');
   });
 
-  it("does not create a worktree when the safehouse clearance cannot start", async () => {
-    detectHostMock.mockResolvedValue({
-      hasSafehouse: true,
-      hasCmux: true,
-      hasTmux: false,
-      isMacOS: true,
-      isSafehouseSupported: true,
+  it("wraps the agent in an sbx exec call and skips ensureClearance when runner='sdx'", async () => {
+    detectHostMock.mockResolvedValue(
+      host({
+        hasSafehouse: false,
+        hasSbx: true,
+        hasCmux: false,
+        hasTmux: true,
+        isMacOS: false,
+        isLinux: true,
+        isSafehouseSupported: false,
+      }),
+    );
+    const config = makeConfig({
+      definitions: {
+        claude: {
+          cmd: "claude --permission-mode auto",
+          color: "#fff",
+          sandbox: { agent: "claude" },
+        },
+        codex: { cmd: "codex", color: "#000" },
+      },
     });
+    mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
+
+    await setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" });
+
+    expect(ensureClearanceMock).not.toHaveBeenCalled();
+    const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
+    expect(launchScript).toMatch(
+      /exec sbx exec -it (?:-e [A-Z_]+ )*-w '\/work\/repo-a-team-1' 'groundcrew-repo-a-claude' sh -lc/,
+    );
+    expect(launchScript).toContain("exec claude --permission-mode auto");
+    expect(launchScript).not.toContain("safehouse-clearance");
+  });
+
+  it("does not create a worktree when the safehouse clearance cannot start", async () => {
+    detectHostMock.mockResolvedValue(host());
     ensureClearanceMock.mockRejectedValue(new Error("proxy unavailable"));
     const config = makeConfig();
 
@@ -413,13 +445,7 @@ describe(setupWorkspace, () => {
   });
 
   it("does not double-wrap when the cmd already starts with safehouse", async () => {
-    detectHostMock.mockResolvedValue({
-      hasSafehouse: true,
-      hasCmux: true,
-      hasTmux: false,
-      isMacOS: true,
-      isSafehouseSupported: true,
-    });
+    detectHostMock.mockResolvedValue(host());
     const config = makeConfig({
       definitions: {
         claude: {
@@ -531,32 +557,79 @@ describe(setupWorkspace, () => {
     });
   });
 
-  it("fails before creating a worktree when local runs are requested off macOS", async () => {
-    detectHostMock.mockResolvedValue({
-      hasSafehouse: false,
-      hasCmux: false,
-      hasTmux: true,
-      isMacOS: false,
-      isSafehouseSupported: false,
+  it("fails before creating a worktree when safehouse is requested off macOS", async () => {
+    detectHostMock.mockResolvedValue(
+      host({
+        hasSafehouse: false,
+        hasCmux: false,
+        hasTmux: true,
+        isMacOS: false,
+        isLinux: true,
+        isSafehouseSupported: false,
+      }),
+    );
+    const config = makeConfig();
+    config.local = { runner: "safehouse" };
+
+    await expect(
+      setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" }),
+    ).rejects.toThrow(/Local groundcrew runs with the safehouse runner require macOS/);
+
+    expect(createMock).not.toHaveBeenCalled();
+    expect(ensureClearanceMock).not.toHaveBeenCalled();
+  });
+
+  it("fails before creating a worktree when sdx is selected but sbx is missing", async () => {
+    detectHostMock.mockResolvedValue(
+      host({
+        hasSafehouse: false,
+        hasSbx: false,
+        hasCmux: false,
+        hasTmux: true,
+        isMacOS: false,
+        isLinux: true,
+        isSafehouseSupported: false,
+      }),
+    );
+    const config = makeConfig({
+      definitions: {
+        claude: { cmd: "claude --auto", color: "#fff", sandbox: { agent: "claude" } },
+        codex: { cmd: "codex", color: "#000" },
+      },
     });
+
+    await expect(
+      setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" }),
+    ).rejects.toThrow(/sdx runner require `sbx`/);
+
+    expect(createMock).not.toHaveBeenCalled();
+    expect(ensureClearanceMock).not.toHaveBeenCalled();
+  });
+
+  it("fails before creating a worktree when sdx is selected but the model has no sandbox config", async () => {
+    detectHostMock.mockResolvedValue(
+      host({
+        hasSafehouse: false,
+        hasSbx: true,
+        hasCmux: false,
+        hasTmux: true,
+        isMacOS: false,
+        isLinux: true,
+        isSafehouseSupported: false,
+      }),
+    );
     const config = makeConfig();
 
     await expect(
       setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" }),
-    ).rejects.toThrow(/groundcrew runs require macOS with Safehouse/);
+    ).rejects.toThrow(/sdx runner require a sandbox config on model 'claude'/);
 
     expect(createMock).not.toHaveBeenCalled();
     expect(ensureClearanceMock).not.toHaveBeenCalled();
   });
 
   it("fails before creating a worktree when safehouse is missing on macOS", async () => {
-    detectHostMock.mockResolvedValue({
-      hasSafehouse: false,
-      hasCmux: true,
-      hasTmux: false,
-      isMacOS: true,
-      isSafehouseSupported: true,
-    });
+    detectHostMock.mockResolvedValue(host({ hasSafehouse: false }));
     const config = makeConfig();
 
     await expect(
@@ -813,13 +886,7 @@ describe(setupWorkspaceCli, () => {
     existsMock.mockReturnValue(true);
     mockLinearClient();
     rawRequestMock.mockResolvedValue(buildResolveIssueResponse({}));
-    detectHostMock.mockResolvedValue({
-      hasSafehouse: true,
-      hasCmux: true,
-      hasTmux: false,
-      isMacOS: true,
-      isSafehouseSupported: true,
-    });
+    detectHostMock.mockResolvedValue(host());
     createMock.mockImplementation(async () => hostEntry());
     mkdtempMock.mockReturnValue("/tmp/groundcrew-team-1-x");
     runCommandMock.mockReturnValue(JSON.stringify({ ref: "workspace:1" }));

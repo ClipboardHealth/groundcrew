@@ -44,8 +44,17 @@ export const config: Config = {
   //       cmd: "cursor-agent",
   //       color: "#929292",
   //     },
+  //     // To run a model under the sdx (Docker Sandboxes) runner, bind it to
+  //     // an sbx agent. Required when `local.runner` resolves to `sdx`.
+  //     // claude: { sandbox: { agent: "claude" } },
   //   },
   // },
+  //
+  // // Local isolation backend. Defaults to `"auto"` — macOS → safehouse,
+  // // Linux → sdx (Docker Sandboxes). `"none"` is an explicit unsandboxed
+  // // escape hatch and is never picked implicitly. Switch to `"sdx"` on
+  // // macOS when you need an agent to use Docker safely.
+  // local: { runner: "auto" },
   //
   // prompts: {
   //   initial: [

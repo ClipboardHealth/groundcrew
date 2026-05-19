@@ -10,6 +10,7 @@ function arguments_(
     definition: { cmd: "claude", color: "#fff" } satisfies ModelDefinition,
     promptFile: "/tmp/prompt-team-1/prompt.txt",
     worktreeDir: "/work/repo-a-team-1",
+    runner: "safehouse",
     ...overrides,
   };
 }
@@ -124,6 +125,93 @@ describe(buildLaunchCommand, () => {
       expect(out).toContain(". '/tmp/prompt-team-1/secrets.env'");
       expect(out).toContain("unset NPM_TOKEN BUF_TOKEN");
       expect(out).toMatch(/safehouse-clearance' claude "\$_p"$/);
+    });
+  });
+
+  describe("runner='none'", () => {
+    it("execs the agent directly without the safehouse wrapper", () => {
+      const out = buildLaunchCommand(arguments_({ runner: "none" }));
+
+      expect(out).not.toContain("safehouse-clearance");
+      expect(out).toMatch(/exec claude "\$_p"$/);
+    });
+  });
+
+  describe("runner='sdx'", () => {
+    function sdxArguments(
+      overrides: Partial<Parameters<typeof buildLaunchCommand>[0]> = {},
+    ): Parameters<typeof buildLaunchCommand>[0] {
+      return arguments_({
+        definition: {
+          cmd: "claude",
+          color: "#fff",
+          sandbox: { agent: "claude" },
+        },
+        runner: "sdx",
+        sandboxName: "groundcrew-repo-a-claude",
+        ...overrides,
+      });
+    }
+
+    it("wraps the agent in `sbx exec -it -w <worktree> <sandbox> sh -lc <setup; exec agent>`", () => {
+      const out = buildLaunchCommand(sdxArguments());
+
+      expect(out).toContain(
+        "exec sbx exec -it -w '/work/repo-a-team-1' 'groundcrew-repo-a-claude' sh -lc",
+      );
+      expect(out).toContain("exec claude");
+      expect(out).toMatch(/sh "\$_p"$/);
+    });
+
+    it("uses the per-model sandbox setupCommand override when configured", () => {
+      const out = buildLaunchCommand(
+        sdxArguments({
+          definition: {
+            cmd: "claude",
+            color: "#fff",
+            sandbox: { agent: "claude", setupCommand: "echo custom-setup" },
+          },
+        }),
+      );
+
+      expect(out).toContain("echo custom-setup");
+    });
+
+    it("substitutes {{sandbox}} in the agent command with the sandbox name", () => {
+      const out = buildLaunchCommand(
+        sdxArguments({
+          definition: {
+            cmd: "claude --sandbox {{sandbox}} --worktree {{worktree}}",
+            color: "#fff",
+            sandbox: { agent: "claude" },
+          },
+        }),
+      );
+
+      // The inner agent command is single-quoted for `sh -lc`, so embedded
+      // sandbox / worktree quotes are escaped via the `'\''` close-escape-reopen
+      // dance — `groundcrew-repo-a-claude` still lands as `--sandbox`'s value.
+      expect(out).toContain(String.raw`--sandbox '\''groundcrew-repo-a-claude'\''`);
+      expect(out).toContain(String.raw`--worktree '\''/work/repo-a-team-1'\''`);
+      expect(out).not.toContain("{{sandbox}}");
+      expect(out).not.toContain("{{worktree}}");
+    });
+
+    it("forwards build-time secret names into the sandbox via `-e KEY` passthrough flags", () => {
+      const out = buildLaunchCommand(
+        sdxArguments({ secretsFile: "/tmp/prompt-team-1/secrets.env" }),
+      );
+
+      expect(out).toContain(". '/tmp/prompt-team-1/secrets.env'");
+      expect(out).toContain("-e NPM_TOKEN -e BUF_TOKEN");
+      expect(out).toContain("unset NPM_TOKEN BUF_TOKEN");
+    });
+
+    it("omits -e KEY flags when no secretsFile is staged", () => {
+      const out = buildLaunchCommand(sdxArguments());
+
+      expect(out).not.toContain("-e NPM_TOKEN");
+      expect(out).not.toContain("-e BUF_TOKEN");
     });
   });
 });

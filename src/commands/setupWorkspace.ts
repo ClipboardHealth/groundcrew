@@ -6,10 +6,11 @@ import { ensureClearance } from "@clipboard-health/clearance";
 
 import { fetchResolvedIssue } from "../lib/boardSource.ts";
 import { BUILD_SECRET_NAMES, loadConfig, type ResolvedConfig } from "../lib/config.ts";
+import { sandboxNameFor } from "../lib/dockerSandbox.ts";
 import { detectHostCapabilities } from "../lib/host.ts";
 import { buildLaunchCommand, shellSingleQuote } from "../lib/launchCommand.ts";
 import { createLinearIssueStatusUpdater } from "../lib/linearIssueStatus.ts";
-import { assertLocalRunnerRequirements } from "../lib/localRunner.ts";
+import { assertLocalRunnerRequirements, resolveLocalRunner } from "../lib/localRunner.ts";
 import { errorMessage, getLinearClient, log, readEnvironmentVariable } from "../lib/util.ts";
 import { workspaces } from "../lib/workspaces.ts";
 import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
@@ -122,8 +123,18 @@ export async function setupWorkspace(
     throw new Error(`Unknown model: ${model}`);
   }
 
-  assertLocalRunnerRequirements(await detectHostCapabilities(signal));
-  await ensureClearance({ logger: log });
+  const host = await detectHostCapabilities(signal);
+  const runner = resolveLocalRunner(config.local.runner, host);
+  assertLocalRunnerRequirements(host, runner);
+  if (runner === "safehouse") {
+    await ensureClearance({ logger: log });
+  }
+  if (runner === "sdx" && definition.sandbox === undefined) {
+    throw new Error(
+      `Local groundcrew runs with the sdx runner require a sandbox config on model '${model}'. ` +
+        "Add `sandbox: { agent: '<sbx-agent-name>' }` to the model in your config.ts.",
+    );
+  }
 
   const spec = { repository, ticket };
   const created =
@@ -155,11 +166,14 @@ export async function setupWorkspace(
 
     const secretsFile = stageBuildSecrets(promptDir);
 
+    const sandboxName = runner === "sdx" ? sandboxNameFor({ repository, model }) : undefined;
     const launchCommand = buildLaunchCommand({
       definition,
       promptFile: stagedPrompt.file,
       worktreeDir: launchDir,
       secretsFile,
+      runner,
+      sandboxName,
     });
     const launchCmd = stageWorkspaceLaunchCommand(promptDir, launchCommand);
 
