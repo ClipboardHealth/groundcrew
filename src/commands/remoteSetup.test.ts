@@ -281,6 +281,39 @@ function mockSpriteListWithInteractiveClaudeAuthListener(): () => number {
   return () => callbackPortProbeCalls;
 }
 
+function mockSpriteListWithMissingClaudeAuthAndInteractiveMcpAuth(): () => number {
+  let callbackPortProbeCalls = 0;
+  let finishClaudeSession: (() => void) | undefined;
+  runCommandMock.mockImplementation(async (command, arguments_, commandOptions) => {
+    if (command === "sprite" && arguments_[0] === "list") {
+      return "NAME STATUS\ncrew-claude-1 running";
+    }
+    if (hasRemoteCommand([command, arguments_], ["claude", "auth", "status"])) {
+      throw new Error("claude missing");
+    }
+    if (hasRemoteCommand([command, arguments_], ["claude", "mcp", "get"])) {
+      throw new Error("missing mcp server");
+    }
+    if (hasRemoteCommand([command, arguments_], ["claude", "--permission-mode", "auto"])) {
+      return await new Promise<string>((resolve) => {
+        finishClaudeSession = () => {
+          resolve("");
+        };
+      });
+    }
+    if (isClaudeCallbackPortProbeCall([command, arguments_])) {
+      callbackPortProbeCalls += 1;
+      return 'LISTEN 0 512 [fdf::1]:43147 [::]:* users:(("claude",pid=204,fd=17))';
+    }
+    if (command === "sprite" && arguments_[0] === "proxy") {
+      queueMicrotask(() => finishClaudeSession?.());
+      return await waitForProxyAbort(commandOptions);
+    }
+    return "";
+  });
+  return () => callbackPortProbeCalls;
+}
+
 function mockSpriteListWithInteractiveClaudeFailure(): void {
   runCommandMock.mockImplementation(async (command, arguments_) => {
     if (command === "sprite" && arguments_[0] === "list") {
@@ -579,6 +612,20 @@ describe(remoteCli, () => {
       ["proxy", "-s", "crew-claude-1", "43147"],
       expect.objectContaining({ stdio: "inherit", timeoutMs: 0 }),
     );
+  });
+
+  it("uses one interactive Claude session for Claude and selected MCP auth", async () => {
+    const callbackPortProbeCalls = mockSpriteListWithMissingClaudeAuthAndInteractiveMcpAuth();
+
+    await remoteCli(["setup", "crew-claude-1", "--claude", "--mcp", "linear", "--mcp-auth"]);
+
+    expectRemoteCommand(["claude", "--permission-mode", "auto"]);
+    expect(callbackPortProbeCalls()).toBe(1);
+    expect(
+      runCommandMock.mock.calls.some((call) =>
+        hasRemoteCommand(call, ["claude", "auth", "login", CLAUDE_SUBSCRIPTION_LOGIN_FLAG]),
+      ),
+    ).toBe(false);
   });
 
   it("surfaces interactive Claude failures during MCP auth", async () => {

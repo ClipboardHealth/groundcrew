@@ -1037,7 +1037,7 @@ async function authenticateMcpServers(arguments_: {
   options: RemoteSetupOptions;
 }): Promise<void> {
   const { provider, config, options } = arguments_;
-  if (options.mcpServers.length === 0 || !options.shouldAuthenticateMcp) {
+  if (!shouldAuthenticateMcpInteractively(options)) {
     return;
   }
 
@@ -1064,6 +1064,10 @@ async function authenticateMcpServers(arguments_: {
     config,
     remoteArguments: ["claude", "--permission-mode", "auto"],
   });
+}
+
+function shouldAuthenticateMcpInteractively(options: RemoteSetupOptions): boolean {
+  return options.shouldAuthenticateMcp && options.mcpServers.length > 0;
 }
 
 async function checkpoint(arguments_: {
@@ -1286,8 +1290,13 @@ export async function setupRemoteRunner(options: RemoteSetupOptions): Promise<vo
   if (options.shouldAuthenticateGithub) {
     await authenticateGithub(provider, config);
   }
-  if (options.shouldAuthenticateClaude) {
+  const shouldUseInteractiveClaudeForMcpAuth = shouldAuthenticateMcpInteractively(options);
+  if (options.shouldAuthenticateClaude && !shouldUseInteractiveClaudeForMcpAuth) {
     await authenticateClaude(provider, config);
+  } else if (options.shouldAuthenticateClaude && shouldUseInteractiveClaudeForMcpAuth) {
+    log(
+      "Skipping separate Claude subscription auth; interactive MCP auth will handle Claude login if needed.",
+    );
   }
   if (options.shouldAuthenticateCodex) {
     await authenticateCodex({
