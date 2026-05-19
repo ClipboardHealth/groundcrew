@@ -19,18 +19,14 @@ import {
   pickBestModel,
   type ModelUsageExhaustion,
 } from "./eligibility.ts";
+import { renderTicketCheckResult, type Section, type TicketCheck } from "./ticketCheck.ts";
+
+export type { TicketCheck } from "./ticketCheck.ts";
 
 export type TicketDoctorVerdict =
   | { kind: "would-dispatch" }
   | { kind: "ineligible"; reason: string }
   | { kind: "unresolvable"; reason: string };
-
-export interface TicketCheck {
-  name: string;
-  status: "ok" | "fail" | "skipped";
-  detail?: string;
-  failureSummary?: string;
-}
 
 export interface TicketDoctorResult {
   ticket: string;
@@ -314,18 +310,6 @@ function usageExhaustionCheck(exhaustion: ModelUsageExhaustion): TicketCheck {
   };
 }
 
-const STATUS_TAG: Record<TicketCheck["status"], string> = {
-  ok: "[ok]",
-  fail: "[--]",
-  skipped: "[? ]",
-};
-
-function formatCheck(check: TicketCheck): string {
-  const tag = STATUS_TAG[check.status];
-  const detail = check.detail === undefined ? "" : ` (${check.detail})`;
-  return `  ${tag} ${check.name}${detail}`;
-}
-
 function formatVerdict(verdict: TicketDoctorVerdict): string {
   switch (verdict.kind) {
     case "would-dispatch": {
@@ -344,36 +328,29 @@ function formatVerdict(verdict: TicketDoctorVerdict): string {
   }
 }
 
-function eligibilityLines(result: TicketDoctorResult): string[] {
-  if (result.eligibility.length === 0) {
-    const skipMessage =
-      result.verdict.kind === "unresolvable"
-        ? "  (skipped — ticket unresolved)"
-        : "  (skipped — resolution checks failed)";
-    return [skipMessage];
-  }
-  return result.eligibility.map(formatCheck);
-}
-
 export function renderTicketDoctorResult(result: TicketDoctorResult): string[] {
-  const titlePart = result.title === undefined ? "" : ` (${result.title})`;
-  const header = `groundcrew doctor --ticket ${result.ticket}${titlePart}`;
-  const bar = "─".repeat(header.length);
-
-  const verdictLine = formatVerdict(result.verdict);
-
-  return [
-    header,
-    bar,
-    "",
-    "Resolution",
-    ...result.resolution.map(formatCheck),
-    "",
-    "Eligibility",
-    ...eligibilityLines(result),
-    "",
-    verdictLine,
+  const sections: Section[] = [
+    { name: "Resolution", checks: result.resolution },
+    {
+      name: "Eligibility",
+      checks: result.eligibility,
+      ...(result.eligibility.length === 0
+        ? {
+            skipReason:
+              result.verdict.kind === "unresolvable"
+                ? "ticket unresolved"
+                : "resolution checks failed",
+          }
+        : {}),
+    },
   ];
+  return renderTicketCheckResult({
+    command: "doctor",
+    ticket: result.ticket,
+    ...(result.title === undefined ? {} : { title: result.title }),
+    sections,
+    verdict: formatVerdict(result.verdict),
+  });
 }
 
 export async function ticketDoctor(
