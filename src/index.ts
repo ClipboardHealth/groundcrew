@@ -15,3 +15,10 @@ export {
   type RepositoryResolution,
 } from "./lib/boardSource.ts";
 export { getUsageByModel, type UsageByModel } from "./lib/usage.ts";
+export {
+  ticketDoctor,
+  type TicketCheck,
+  type TicketDoctorDependencies,
+  type TicketDoctorResult,
+  type TicketDoctorVerdict,
+} from "./commands/ticketDoctor.ts";
