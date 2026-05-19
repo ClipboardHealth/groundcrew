@@ -81,9 +81,11 @@ export const config: Config = {
   //     // else is cleared (`--clearenv`). HOME/USER/PATH/TERM/LANG/LC_ALL
   //     // are passed through by default.
   //     envPass: ["HOME", "USER", "PATH", "TERM", "LANG", "LC_ALL"],
-  //     // "host" keeps the host's network namespace (default — agent CLIs
-  //     // hit api.anthropic.com / api.openai.com). "none" joins an empty
-  //     // net namespace.
+  //     // "host" keeps the host's network namespace and routes the agent's
+  //     // HTTP traffic through the local `clearance` proxy (same hostname
+  //     // allowlist as the macOS Safehouse setup — see `clearance-allow-hosts`).
+  //     // "none" joins an empty net namespace; clearance is then unreachable
+  //     // and the agent has no network access.
   //     network: "host",
   //   },
   // },

@@ -246,7 +246,7 @@ function bubblewrapCheck(host: HostCapabilities): Check {
     ok: host.hasBwrap,
     required: false,
     hint: host.hasBwrap
-      ? "ready"
+      ? "ready — HTTP egress is routed through the clearance proxy (same allowlist as macOS Safehouse)"
       : "install Bubblewrap: `sudo apt install bubblewrap` (Debian/Ubuntu) or `sudo dnf install bubblewrap` (Fedora/RHEL)",
   };
 }

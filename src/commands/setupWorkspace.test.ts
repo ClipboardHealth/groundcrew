@@ -596,7 +596,7 @@ describe(setupWorkspace, () => {
     expect(createMock).not.toHaveBeenCalled();
   });
 
-  it("wraps the agent with bwrap and skips Safehouse on Linux when runner='bubblewrap'", async () => {
+  it("wraps the agent with bwrap, routes egress through clearance, and skips the safehouse-clearance wrapper on Linux", async () => {
     detectHostMock.mockResolvedValue({
       hasSafehouse: false,
       hasBwrap: true,
@@ -622,15 +622,29 @@ describe(setupWorkspace, () => {
         },
       },
     };
+    ensureClearanceMock.mockResolvedValue({
+      logPath: "/tmp/clearance/clearance.log",
+      pidPath: "/tmp/clearance/clearance.pid",
+      port: 19_999,
+      status: "already-running",
+    });
     mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
 
     await setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" });
 
-    expect(ensureClearanceMock).not.toHaveBeenCalled();
+    // Clearance is started for bubblewrap so the proxy is reachable from inside bwrap.
+    expect(ensureClearanceMock).toHaveBeenCalledTimes(1);
     const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
     expect(launchScript).toContain("'bwrap'");
     expect(launchScript).toContain("'--unshare-pid'");
     expect(launchScript).toContain("'--bind' '/work/repo-a-team-1' '/work/repo-a-team-1'");
+    // HTTP egress is forced through the clearance proxy (matches the
+    // macOS Safehouse setup) — both upper- and lower-case proxy names.
+    expect(launchScript).toContain("'--setenv' 'HTTP_PROXY' 'http://127.0.0.1:19999'");
+    expect(launchScript).toContain("'--setenv' 'HTTPS_PROXY' 'http://127.0.0.1:19999'");
+    expect(launchScript).toContain("'--setenv' 'ALL_PROXY' 'http://127.0.0.1:19999'");
+    expect(launchScript).toContain("'--setenv' 'NO_PROXY' 'localhost,127.0.0.1,::1'");
+    // The macOS-only safehouse-clearance wrapper is not used on Linux.
     expect(launchScript).not.toContain("safehouse-clearance");
     expect(launchScript).toMatch(/-- claude --auto "\$_p"/u);
   });

@@ -123,7 +123,32 @@ interface BubblewrapWrapInput {
   homeDir?: string;
   /** Override `bwrap` binary path. Defaults to `bwrap` on PATH. */
   bwrapBinary?: string;
+  /**
+   * URL of the clearance HTTP proxy reachable from inside the sandbox.
+   * When set, `HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY` and a matching
+   * `NO_PROXY` (for loopback) are injected into the sandbox env so the
+   * agent's HTTP traffic is gated against the clearance allow-host list.
+   * Mirrors the macOS Safehouse setup. Skipped when `policy.network` is
+   * `"none"` — clearance lives on host loopback and is unreachable
+   * without the host network namespace. Defaults to
+   * `http://127.0.0.1:19999`, clearance's default bind.
+   */
+  clearanceProxyUrl?: string;
 }
+
+/**
+ * Default clearance proxy URL. Matches `clearance.env` shipped by
+ * `@clipboard-health/clearance`, so the macOS Safehouse setup and the
+ * Linux Bubblewrap setup gate egress against the same hostname allowlist
+ * with no per-host config.
+ */
+const DEFAULT_CLEARANCE_PROXY_URL = "http://127.0.0.1:19999";
+
+/**
+ * Loopback addresses the agent should reach directly without going
+ * through clearance. Matches the `NO_PROXY` value in `clearance.env`.
+ */
+const CLEARANCE_NO_PROXY = "localhost,127.0.0.1,::1";
 
 /**
  * Compile a `BubblewrapPolicy` into the `bwrap` argv that wraps the
@@ -163,6 +188,23 @@ export function buildBubblewrapArgs(input: BubblewrapWrapInput): string[] {
       continue;
     }
     args.push("--setenv", name, value);
+  }
+
+  // Force the agent's HTTP traffic through the clearance proxy so the
+  // hostname allowlist gates egress the same way macOS Safehouse does.
+  // Skipped when the sandbox joins an empty net namespace — clearance
+  // lives on host loopback and would be unreachable.
+  if (input.policy.network !== "none") {
+    const proxyUrl = input.clearanceProxyUrl ?? DEFAULT_CLEARANCE_PROXY_URL;
+    for (const name of ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"]) {
+      args.push("--setenv", name, proxyUrl);
+    }
+    // Lowercase aliases — many CLIs honor only one of the two cases.
+    for (const name of ["http_proxy", "https_proxy", "all_proxy"]) {
+      args.push("--setenv", name, proxyUrl);
+    }
+    args.push("--setenv", "NO_PROXY", CLEARANCE_NO_PROXY);
+    args.push("--setenv", "no_proxy", CLEARANCE_NO_PROXY);
   }
 
   // Worktree is the working tree the agent operates on — always RW.

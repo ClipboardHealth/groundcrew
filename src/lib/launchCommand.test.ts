@@ -161,7 +161,7 @@ describe(buildLaunchCommand, () => {
       expect(out).toMatch(/exec claude --auto "\$_p"$/u);
     });
 
-    it("runner='bubblewrap' prefixes the agent with a bwrap invocation", () => {
+    it("runner='bubblewrap' prefixes the agent with a bwrap invocation and routes HTTP through clearance", () => {
       const out = buildLaunchCommand(
         arguments_({
           runner: "bubblewrap",
@@ -173,6 +173,7 @@ describe(buildLaunchCommand, () => {
       expect(out).toContain("'bwrap'");
       expect(out).toContain("'--unshare-pid'");
       expect(out).toContain("'--bind' '/work/repo-a-team-1' '/work/repo-a-team-1'");
+      expect(out).toContain("'--setenv' 'HTTP_PROXY' 'http://127.0.0.1:19999'");
       expect(out).not.toContain("safehouse-clearance");
       expect(out).toMatch(/-- claude --auto "\$_p"$/u);
     });

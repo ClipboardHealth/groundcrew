@@ -150,10 +150,11 @@ export async function setupWorkspace(
   const host = await detectHostCapabilities(signal);
   const resolvedRunner = resolveLocalRunner(config.local.runner, host);
   assertLocalRunnerRequirements(host, resolvedRunner);
-  // Clearance is the macOS Safehouse proxy bootstrap; other backends do
-  // not need it. Skipping it on bubblewrap/none keeps `@clipboard-health/clearance`
-  // from being a hard runtime dependency on Linux.
-  if (resolvedRunner === "safehouse") {
+  // Both safehouse (macOS) and bubblewrap (Linux) route HTTP egress
+  // through the clearance proxy so the hostname allowlist is the single
+  // source of truth across platforms. `none` deliberately opts out —
+  // ensureClearance shouldn't run for an explicitly unsandboxed launch.
+  if (resolvedRunner === "safehouse" || resolvedRunner === "bubblewrap") {
     await ensureClearance({ logger: log });
   }
 

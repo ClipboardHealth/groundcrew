@@ -169,6 +169,50 @@ describe(buildBubblewrapArgs, () => {
     }
   });
 
+  it("injects HTTP_PROXY/HTTPS_PROXY/ALL_PROXY/NO_PROXY pointing at clearance when network is 'host'", () => {
+    const args = buildBubblewrapArgs({
+      policy: policy({ network: "host" }),
+      worktreeDir: "/work/repo-a-team-1",
+      homeDir: "/home/test",
+    });
+
+    const setenv = collectSetenvPairs(args);
+    const byName = new Map(setenv.map((entry) => [entry.name, entry.value]));
+    expect(byName.get("HTTP_PROXY")).toBe("http://127.0.0.1:19999");
+    expect(byName.get("HTTPS_PROXY")).toBe("http://127.0.0.1:19999");
+    expect(byName.get("ALL_PROXY")).toBe("http://127.0.0.1:19999");
+    expect(byName.get("http_proxy")).toBe("http://127.0.0.1:19999");
+    expect(byName.get("https_proxy")).toBe("http://127.0.0.1:19999");
+    expect(byName.get("all_proxy")).toBe("http://127.0.0.1:19999");
+    expect(byName.get("NO_PROXY")).toBe("localhost,127.0.0.1,::1");
+    expect(byName.get("no_proxy")).toBe("localhost,127.0.0.1,::1");
+  });
+
+  it("honors a custom clearanceProxyUrl override", () => {
+    const args = buildBubblewrapArgs({
+      policy: policy({ network: "host" }),
+      worktreeDir: "/work/repo-a-team-1",
+      homeDir: "/home/test",
+      clearanceProxyUrl: "http://127.0.0.1:29999",
+    });
+
+    const byName = new Map(collectSetenvPairs(args).map((entry) => [entry.name, entry.value]));
+    expect(byName.get("HTTP_PROXY")).toBe("http://127.0.0.1:29999");
+  });
+
+  it("does not inject proxy env vars when network='none' (clearance unreachable)", () => {
+    const args = buildBubblewrapArgs({
+      policy: policy({ network: "none" }),
+      worktreeDir: "/work/repo-a-team-1",
+      homeDir: "/home/test",
+    });
+
+    const names = collectSetenvPairs(args).map((entry) => entry.name);
+    expect(names).not.toContain("HTTP_PROXY");
+    expect(names).not.toContain("HTTPS_PROXY");
+    expect(names).not.toContain("NO_PROXY");
+  });
+
   it("adds --unshare-net only when network='none'", () => {
     const withHost = buildBubblewrapArgs({
       policy: policy({ network: "host" }),
