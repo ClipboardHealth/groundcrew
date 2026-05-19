@@ -16,7 +16,7 @@ import {
   remoteRepositorySlug,
   type RemoteRunnerProvider,
 } from "../lib/spriteRemoteRunnerProvider.ts";
-import { log, readEnvironmentVariable, writeOutput } from "../lib/util.ts";
+import { errorMessage, log, readEnvironmentVariable, writeOutput } from "../lib/util.ts";
 
 const KNOWN_MCP_SERVER_URLS: Record<string, string> = {
   linear: "https://mcp.linear.app/mcp",
@@ -93,7 +93,6 @@ export interface RemoteInterruptOptions {
 
 const DEFAULT_CHECKPOINT_COMMENT =
   "groundcrew remote runner baseline: selected agent auth, git identity, and MCP config";
-const CLAUDE_SUBSCRIPTION_LOGIN_FLAG = ["--claude", "ai"].join("");
 const DEFAULT_GIT_REMOTE = "origin";
 const BOOTSTRAP_SECRET_FLAGS_CONFLICT_MESSAGE =
   "--secret and --no-secrets are mutually exclusive. Use --secret to forward selected build secrets or --no-secrets to disable secret forwarding.";
@@ -577,7 +576,7 @@ async function authenticateClaude(
   const login = provider
     .runTtyCommand({
       config,
-      remoteArguments: ["claude", "auth", "login", CLAUDE_SUBSCRIPTION_LOGIN_FLAG],
+      remoteArguments: ["claude", "auth", "login"],
       options: { signal: controller.signal },
     })
     .then(
@@ -611,7 +610,7 @@ async function authenticateClaude(
     }
   } finally {
     if (proxy !== undefined) {
-      await proxy.close();
+      await closePortProxyBestEffort(proxy);
     }
     if (!isLoginComplete) {
       controller.abort();
@@ -781,7 +780,15 @@ async function watchClaudeCallbackPorts(arguments_: {
 async function closeClaudeCallbackProxies(proxies: Map<number, PortProxy>): Promise<void> {
   for (const proxy of proxies.values()) {
     // oxlint-disable-next-line no-await-in-loop -- close proxy subprocesses deterministically before returning.
+    await closePortProxyBestEffort(proxy);
+  }
+}
+
+async function closePortProxyBestEffort(proxy: PortProxy): Promise<void> {
+  try {
     await proxy.close();
+  } catch (error) {
+    log(`Port proxy close failed; continuing cleanup: ${errorMessage(error)}`);
   }
 }
 

@@ -22,7 +22,6 @@ type ConnectMock = (options: { host: string; port: number }) => FakeSocket;
 const runCommandMock = vi.hoisted(() => vi.fn<RunCommandAsyncMock>());
 const loadConfigMock = vi.hoisted(() => vi.fn<() => Promise<Readonly<ResolvedConfig>>>());
 const connectMock = vi.hoisted(() => vi.fn<ConnectMock>());
-const CLAUDE_SUBSCRIPTION_LOGIN_FLAG = ["--claude", "ai"].join("");
 
 vi.mock("node:net", () => ({ connect: connectMock }));
 
@@ -120,6 +119,16 @@ async function waitForProxyAbort(options: RunCommandOptions | undefined): Promis
   return await new Promise<string>((_resolve, reject) => {
     options?.signal?.addEventListener("abort", () => {
       reject(Object.assign(new Error("aborted"), { signal: "SIGINT" }));
+    });
+  });
+}
+
+async function waitForProxyAbortWithCloseError(
+  options: RunCommandOptions | undefined,
+): Promise<string> {
+  return await new Promise<string>((_resolve, reject) => {
+    options?.signal?.addEventListener("abort", () => {
+      reject(new Error("proxy close failed"));
     });
   });
 }
@@ -245,6 +254,36 @@ function mockSpriteListWithClaudeAuthListener(): () => number {
     if (command === "sprite" && arguments_[0] === "proxy") {
       queueMicrotask(() => finishClaudeLogin?.());
       return await waitForProxyAbort(commandOptions);
+    }
+    return "";
+  });
+  return () => callbackPortProbeCalls;
+}
+
+function mockSpriteListWithClaudeAuthListenerAndProxyCloseFailure(): () => number {
+  let callbackPortProbeCalls = 0;
+  let finishClaudeLogin: (() => void) | undefined;
+  runCommandMock.mockImplementation(async (command, arguments_, commandOptions) => {
+    if (command === "sprite" && arguments_[0] === "list") {
+      return "NAME STATUS\ncrew-claude-1 running";
+    }
+    if (hasRemoteCommand([command, arguments_], ["claude", "auth", "status"])) {
+      throw new Error("claude missing");
+    }
+    if (isInteractiveClaudeLoginCall([command, arguments_])) {
+      return await new Promise<string>((resolve) => {
+        finishClaudeLogin = () => {
+          resolve("");
+        };
+      });
+    }
+    if (isClaudeCallbackPortProbeCall([command, arguments_])) {
+      callbackPortProbeCalls += 1;
+      return 'LISTEN 0 512 [fdf::1]:36043 [::]:* users:(("claude",pid=203,fd=17))';
+    }
+    if (command === "sprite" && arguments_[0] === "proxy") {
+      queueMicrotask(() => finishClaudeLogin?.());
+      return await waitForProxyAbortWithCloseError(commandOptions);
     }
     return "";
   });
@@ -419,12 +458,53 @@ function mockSpriteListWithInteractiveClaudeRepeatedAuthListener(): () => number
   return () => callbackPortProbeCalls;
 }
 
+function mockSpriteListWithInteractiveClaudeProxyCloseFailure(): () => string[] {
+  const closedPorts: string[] = [];
+  let finishClaudeSession: (() => void) | undefined;
+  runCommandMock.mockImplementation(async (command, arguments_, commandOptions) => {
+    if (command === "sprite" && arguments_[0] === "list") {
+      return "NAME STATUS\ncrew-claude-1 running";
+    }
+    if (hasRemoteCommand([command, arguments_], ["claude", "mcp", "get"])) {
+      throw new Error("missing mcp server");
+    }
+    if (hasRemoteCommand([command, arguments_], ["claude", "--permission-mode", "auto"])) {
+      return await new Promise<string>((resolve) => {
+        finishClaudeSession = () => {
+          resolve("");
+        };
+      });
+    }
+    if (isClaudeCallbackPortProbeCall([command, arguments_])) {
+      return [
+        'LISTEN 0 512 [fdf::1]:43147 [::]:* users:(("claude",pid=204,fd=17))',
+        'LISTEN 0 512 [fdf::1]:43148 [::]:* users:(("claude",pid=205,fd=17))',
+      ].join("\n");
+    }
+    if (command === "sprite" && arguments_[0] === "proxy") {
+      const port = String(arguments_[3]);
+      if (port === "43148") {
+        queueMicrotask(() => finishClaudeSession?.());
+      }
+      return await new Promise<string>((_resolve, reject) => {
+        commandOptions?.signal?.addEventListener("abort", () => {
+          closedPorts.push(port);
+          if (port === "43147") {
+            reject(new Error("proxy close failed"));
+            return;
+          }
+          reject(Object.assign(new Error("aborted"), { signal: "SIGINT" }));
+        });
+      });
+    }
+    return "";
+  });
+  return () => closedPorts;
+}
+
 function isInteractiveClaudeLoginCall(call: readonly unknown[]): boolean {
   const [, arguments_] = call;
-  return (
-    Array.isArray(arguments_) &&
-    hasRemoteCommand(call, ["claude", "auth", "login", CLAUDE_SUBSCRIPTION_LOGIN_FLAG])
-  );
+  return Array.isArray(arguments_) && hasRemoteCommand(call, ["claude", "auth", "login"]);
 }
 
 function isClaudeCallbackPortProbeCall(call: readonly unknown[]): boolean {
@@ -620,9 +700,7 @@ describe(remoteCli, () => {
     expectRemoteCommand(["claude", "--permission-mode", "auto"]);
     expect(callbackPortProbeCalls()).toBe(1);
     expect(
-      runCommandMock.mock.calls.some((call) =>
-        hasRemoteCommand(call, ["claude", "auth", "login", CLAUDE_SUBSCRIPTION_LOGIN_FLAG]),
-      ),
+      runCommandMock.mock.calls.some((call) => hasRemoteCommand(call, ["claude", "auth", "login"])),
     ).toBe(false);
   });
 
@@ -669,6 +747,14 @@ describe(remoteCli, () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("continues closing Claude callback proxies after one close fails", async () => {
+    const closedPorts = mockSpriteListWithInteractiveClaudeProxyCloseFailure();
+
+    await remoteCli(["setup", "crew-claude-1", "--mcp", "linear"]);
+
+    expect(closedPorts()).toStrictEqual(["43147", "43148"]);
   });
 
   it("rejects unknown MCP aliases", async () => {
@@ -1019,17 +1105,7 @@ describe(setupRemoteRunner, () => {
     );
     expect(runCommandMock).toHaveBeenCalledWith(
       "sprite",
-      [
-        "exec",
-        "--tty",
-        "-s",
-        "crew-claude-1",
-        "--",
-        "claude",
-        "auth",
-        "login",
-        CLAUDE_SUBSCRIPTION_LOGIN_FLAG,
-      ],
+      ["exec", "--tty", "-s", "crew-claude-1", "--", "claude", "auth", "login"],
       expect.objectContaining({ stdio: "inherit", timeoutMs: 0 }),
     );
     expect(runCommandMock).toHaveBeenCalledWith(
@@ -1044,13 +1120,21 @@ describe(setupRemoteRunner, () => {
 
     await setupClaudeOnlyRemoteRunner();
 
-    expectRemoteCommand(["claude", "auth", "login", CLAUDE_SUBSCRIPTION_LOGIN_FLAG]);
+    expectRemoteCommand(["claude", "auth", "login"]);
     expect(callbackPortProbeCalls()).toBe(1);
     expect(runCommandMock).toHaveBeenCalledWith(
       "sprite",
       ["proxy", "-s", "crew-claude-1", "36043"],
       expect.objectContaining({ stdio: "inherit", timeoutMs: 0 }),
     );
+  });
+
+  it("does not fail Claude subscription auth when proxy close fails", async () => {
+    const callbackPortProbeCalls = mockSpriteListWithClaudeAuthListenerAndProxyCloseFailure();
+
+    await setupClaudeOnlyRemoteRunner();
+
+    expect(callbackPortProbeCalls()).toBe(1);
   });
 
   it("surfaces Claude subscription auth failures", async () => {
