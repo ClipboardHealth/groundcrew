@@ -1,5 +1,11 @@
 // src/commands/ticketStatus.ts
 
+import type { RawLinearIssue } from "../lib/boardSource.ts";
+import type { ResolvedConfig } from "../lib/config.ts";
+import type { WorkspaceProbe } from "../lib/workspaces.ts";
+import type { WorktreeDirtiness, WorktreeEntry } from "../lib/worktrees.ts";
+import type { TicketCheck } from "./ticketCheck.ts";
+
 // ───────── verdict types ─────────
 
 export type StatusVerdict =
@@ -187,4 +193,148 @@ export function decideVerdict(input: DecideVerdictInput): StatusVerdict {
     return { kind: "lost", reason: `unrecognized state combination; inspect output above` };
   }
   return verdict;
+}
+
+// ───────── orchestrator dependencies ─────────
+
+export interface TicketStatusDependencies {
+  config: ResolvedConfig;
+  ticket: string;
+  /**
+   * Injected to keep `ticketStatus` pure and easy to unit-test. `undefined`
+   * means the caller passed `--no-linear` — the Linear section is skipped.
+   */
+  fetchRawIssue: ((input: { ticket: string }) => Promise<RawLinearIssue>) | undefined;
+  findWorktree: (ticket: string) => WorktreeEntry | undefined;
+  probeWorkspaces: () => Promise<WorkspaceProbe>;
+  probeWorkingTree: (input: { worktreeDir: string }) => Promise<WorktreeDirtiness>;
+  probeLocalBranch: (input: {
+    repoDir: string;
+    branch: string;
+    defaultBranch: string;
+  }) => Promise<LocalBranchProbe>;
+  probeRemoteBranch: (input: {
+    repoDir: string;
+    branch: string;
+    doFetch: boolean;
+  }) => Promise<RemoteBranchProbe>;
+  probePullRequest: (input: { repoDir: string; branch: string }) => Promise<PullRequestProbe>;
+  doFetch: boolean;
+}
+
+export interface TicketStatusResult {
+  ticket: string;
+  title?: string;
+  linear: TicketCheck[];
+  worktree: TicketCheck[];
+  workspace: TicketCheck[];
+  localBranch: TicketCheck[];
+  remoteBranch: TicketCheck[];
+  pullRequest: TicketCheck[];
+  skipReasons: {
+    linear: string;
+    worktree: string;
+    workspace: string;
+    localBranch: string;
+    remoteBranch: string;
+    pullRequest: string;
+  };
+  verdict: StatusVerdict;
+}
+
+function emptySkipReasons(): TicketStatusResult["skipReasons"] {
+  return {
+    linear: "",
+    worktree: "",
+    workspace: "",
+    localBranch: "",
+    remoteBranch: "",
+    pullRequest: "",
+  };
+}
+
+interface LinearProbeOutput {
+  checks: TicketCheck[];
+  skipReason: string;
+  status: LinearStatusProbe;
+  title?: string;
+}
+
+async function probeLinear(
+  deps: TicketStatusDependencies,
+  ticket: string,
+): Promise<LinearProbeOutput> {
+  if (deps.fetchRawIssue === undefined) {
+    return { checks: [], skipReason: "--no-linear", status: { kind: "skipped" } };
+  }
+  try {
+    const raw = await deps.fetchRawIssue({ ticket });
+    const isTerminal = deps.config.linear.statuses.terminal.includes(raw.stateName);
+    const stateCheck: TicketCheck = isTerminal
+      ? { name: `Status is terminal (${raw.stateName})`, status: "ok" }
+      : { name: `Status is non-terminal (${raw.stateName})`, status: "ok" };
+    const checks: TicketCheck[] = [
+      { name: "Ticket exists in Linear", status: "ok", detail: `"${raw.title}"` },
+      stateCheck,
+    ];
+    return {
+      checks,
+      skipReason: "",
+      status: { kind: isTerminal ? "terminal" : "non-terminal", stateName: raw.stateName },
+      title: raw.title,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      checks: [{ name: "Ticket exists in Linear", status: "fail", detail: message }],
+      skipReason: "",
+      status: { kind: "unresolvable", reason: message },
+    };
+  }
+}
+
+/**
+ * Pure-with-async orchestrator that gathers per-section checks and a single
+ * recovery verdict for a ticket. All I/O happens via injected probes — the
+ * function itself does no filesystem, network, or stdout work.
+ *
+ * Tasks 5-8 fill in the worktree, workspace, local-branch, remote-branch,
+ * and PR sections; this task wires only the Linear section.
+ */
+export async function ticketStatus(deps: TicketStatusDependencies): Promise<TicketStatusResult> {
+  const ticket = deps.ticket.toUpperCase();
+  const skipReasons = emptySkipReasons();
+
+  const linearResult = await probeLinear(deps, ticket);
+  skipReasons.linear = linearResult.skipReason;
+
+  // Other sections are stubbed for this task — Tasks 5-8 fill them in. The
+  // provisional `skipped → non-terminal (linear skipped)` mapping below is
+  // revisited in Task 8 when all sections are wired.
+  const verdict = decideVerdict({
+    linear:
+      linearResult.status.kind === "skipped"
+        ? { kind: "non-terminal", stateName: "(linear skipped)" }
+        : linearResult.status,
+    worktree: { kind: "absent" },
+    localBranch: { kind: "absent" },
+    remoteBranch: { kind: "absent" },
+    pullRequest: { kind: "absent" },
+    branch: ticket.toLowerCase(),
+    worktreeDir: undefined,
+    workspaceName: undefined,
+  });
+
+  return {
+    ticket,
+    ...(linearResult.title === undefined ? {} : { title: linearResult.title }),
+    linear: linearResult.checks,
+    worktree: [],
+    workspace: [],
+    localBranch: [],
+    remoteBranch: [],
+    pullRequest: [],
+    skipReasons,
+    verdict,
+  };
 }

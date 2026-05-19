@@ -1,11 +1,16 @@
+import type { RawLinearIssue } from "../lib/boardSource.ts";
+import type { ResolvedConfig } from "../lib/config.ts";
 import {
   decideVerdict,
+  ticketStatus,
   type DecideVerdictInput,
   type LinearStatusProbe,
   type LocalBranchProbe,
   type PullRequestProbe,
   type RemoteBranchProbe,
   type StatusVerdict,
+  type TicketStatusDependencies,
+  type TicketStatusResult,
   type WorktreeProbe,
 } from "./ticketStatus.ts";
 
@@ -238,5 +243,152 @@ describe("decideVerdict pure verdict logic", () => {
 
       expect(actual.kind).toBe("lost");
     });
+  });
+});
+
+function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
+  return {
+    linear: {
+      projectSlug: "ai-strategy-aaaaaaaaaaaa",
+      slugId: "aaaaaaaaaaaa",
+      statuses: {
+        todo: "Todo",
+        inProgress: "In Progress",
+        done: "Done",
+        terminal: ["Done"],
+      },
+      ...overrides.linear,
+    },
+    git: { remote: "origin", defaultBranch: "main", ...overrides.git },
+    workspace: {
+      projectDir: "/work",
+      knownRepositories: ["herds-social/herds"],
+      ...overrides.workspace,
+    },
+    orchestrator: {
+      maximumInProgress: 2,
+      pollIntervalMilliseconds: 1000,
+      sessionLimitPercentage: 85,
+      ...overrides.orchestrator,
+    },
+    models: {
+      default: "claude",
+      definitions: { claude: { cmd: "claude", color: "#fff" } },
+      ...overrides.models,
+    },
+    prompts: { initial: "x", ...overrides.prompts },
+    workspaceKind: overrides.workspaceKind ?? "auto",
+    local: { runner: "auto", ...overrides.local },
+    logging: { file: "/tmp/groundcrew-test.log", ...overrides.logging },
+  };
+}
+
+function makeRaw(overrides: Partial<RawLinearIssue> = {}): RawLinearIssue {
+  return {
+    uuid: "uuid-1",
+    title: "Stub title",
+    description: "see herds-social/herds",
+    teamId: "team-1",
+    labels: [],
+    stateName: "Done",
+    blockers: [],
+    hasMoreBlockers: false,
+    ...overrides,
+  };
+}
+
+function makeDeps(overrides: Partial<TicketStatusDependencies> = {}): TicketStatusDependencies {
+  return {
+    config: makeConfig(),
+    ticket: "HRD-1",
+    fetchRawIssue: vi
+      .fn<NonNullable<TicketStatusDependencies["fetchRawIssue"]>>()
+      .mockResolvedValue(makeRaw()),
+    // oxlint-disable-next-line unicorn/no-useless-undefined -- findWorktree returns `WorktreeEntry | undefined`; passing nothing is a TS error
+    findWorktree: vi.fn<TicketStatusDependencies["findWorktree"]>().mockReturnValue(undefined),
+    probeWorkspaces: vi
+      .fn<TicketStatusDependencies["probeWorkspaces"]>()
+      .mockResolvedValue({ kind: "ok", names: new Set() }),
+    probeWorkingTree: vi
+      .fn<TicketStatusDependencies["probeWorkingTree"]>()
+      .mockResolvedValue({ kind: "clean" }),
+    probeLocalBranch: vi
+      .fn<TicketStatusDependencies["probeLocalBranch"]>()
+      .mockResolvedValue({ kind: "absent" }),
+    probeRemoteBranch: vi
+      .fn<TicketStatusDependencies["probeRemoteBranch"]>()
+      .mockResolvedValue({ kind: "absent" }),
+    probePullRequest: vi
+      .fn<TicketStatusDependencies["probePullRequest"]>()
+      .mockResolvedValue({ kind: "absent" }),
+    doFetch: true,
+    ...overrides,
+  };
+}
+
+describe("ticketStatus — Linear section", () => {
+  it("records the ticket title and a terminal-state check when Linear returns Done", async () => {
+    const deps = makeDeps();
+
+    const actual: TicketStatusResult = await ticketStatus(deps);
+
+    expect(actual.title).toBe("Stub title");
+    expect(actual.linear).toStrictEqual([
+      { name: "Ticket exists in Linear", status: "ok", detail: '"Stub title"' },
+      { name: "Status is terminal (Done)", status: "ok" },
+    ]);
+  });
+
+  it("records a non-terminal state without marking the section failed", async () => {
+    const deps = makeDeps({
+      fetchRawIssue: vi
+        .fn<NonNullable<TicketStatusDependencies["fetchRawIssue"]>>()
+        .mockResolvedValue(makeRaw({ stateName: "In Progress" })),
+    });
+
+    const actual = await ticketStatus(deps);
+
+    expect(actual.linear).toContainEqual({
+      name: "Status is non-terminal (In Progress)",
+      status: "ok",
+    });
+  });
+
+  it("returns a lost verdict when fetchRawIssue throws", async () => {
+    const deps = makeDeps({
+      fetchRawIssue: vi
+        .fn<NonNullable<TicketStatusDependencies["fetchRawIssue"]>>()
+        .mockRejectedValue(new Error("Ticket HRD-1 not found")),
+    });
+
+    const actual = await ticketStatus(deps);
+    const [firstLine] = actual.linear;
+
+    expect(actual.verdict.kind).toBe("lost");
+    expect(firstLine?.status).toBe("fail");
+    expect(firstLine?.detail).toMatch(/not found/);
+  });
+
+  it("skips the Linear section when fetchRawIssue is undefined (--no-linear)", async () => {
+    const deps = makeDeps({ fetchRawIssue: undefined });
+
+    const actual = await ticketStatus(deps);
+
+    expect(actual.linear).toStrictEqual([]);
+    expect(actual.skipReasons.linear).toBe("--no-linear");
+  });
+
+  it("stringifies non-Error rejection values in the failure detail", async () => {
+    const deps = makeDeps({
+      fetchRawIssue: vi
+        .fn<NonNullable<TicketStatusDependencies["fetchRawIssue"]>>()
+        .mockRejectedValue("plain string failure"),
+    });
+
+    const actual = await ticketStatus(deps);
+    const [firstLine] = actual.linear;
+
+    expect(firstLine?.status).toBe("fail");
+    expect(firstLine?.detail).toBe("plain string failure");
   });
 });
