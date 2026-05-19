@@ -49,17 +49,19 @@ This installs the `crew` binary. `@clipboard-health/clearance` is pulled in tran
 
    `crew` resolves the config path as: `GROUNDCREW_CONFIG` if set → `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/config.ts` if it exists → a `config.ts` sitting next to `crew`'s own source files (only useful from a local checkout; see [Hacking on groundcrew](#hacking-on-groundcrew)). Set `GROUNDCREW_CONFIG` only when you want to override the XDG location.
 
-4. **Provide a Linear API key.** `crew` expects `LINEAR_API_KEY` in its environment. Any mechanism works — shell export, [direnv](https://direnv.net/), a `.env` file you `source`, or piping through `op run` if you store the credential in 1Password:
+4. **Provide a Linear API key.** `crew` reads the key from `GROUNDCREW_LINEAR_API_KEY` first, then falls back to `LINEAR_API_KEY`. Prefer `GROUNDCREW_LINEAR_API_KEY` so the value does not clash with other tools that consume `LINEAR_API_KEY`. Any mechanism works — shell export, [direnv](https://direnv.net/), a `.env` file you `source`, or piping through `op run` if you store the credential in 1Password:
 
    ```bash
    # Direct
-   export LINEAR_API_KEY="lin_api_..."
+   export GROUNDCREW_LINEAR_API_KEY="lin_api_..."
    crew doctor
 
    # Via 1Password CLI (`op`), if you keep the key in a vault
-   echo "LINEAR_API_KEY='op://<vault>/LINEAR_API_KEY/credential'" > .env.1password
+   echo "GROUNDCREW_LINEAR_API_KEY='op://<vault>/LINEAR_API_KEY/credential'" > .env.1password
    op run --env-file .env.1password -- crew doctor
    ```
+
+   `LINEAR_API_KEY` continues to work for existing setups; if both variables are set, `GROUNDCREW_LINEAR_API_KEY` wins.
 
 5. **Prepare the runner and agent auth.** Groundcrew supports one runner: a `cmux` or `tmux` workspace on macOS, with Safehouse on `PATH`, `clearance`, and locally authenticated agent CLIs.
 
@@ -185,7 +187,7 @@ For developers working on the package itself, clone this repo, run `npm install`
 cd ~/dev/c/groundcrew
 node --run crew -- doctor
 
-# With 1Password for LINEAR_API_KEY:
+# With 1Password for GROUNDCREW_LINEAR_API_KEY:
 node --run crew:op -- run --watch
 ```
 

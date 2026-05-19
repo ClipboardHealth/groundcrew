@@ -122,10 +122,12 @@ function mockMissingPath(missingPath: string): void {
 
 describe(doctor, () => {
   let consoleLog: ConsoleCapture;
-  const originalEnvironment = readEnvironmentVariable("LINEAR_API_KEY");
+  const originalGroundcrewKey = readEnvironmentVariable("GROUNDCREW_LINEAR_API_KEY");
+  const originalLinearKey = readEnvironmentVariable("LINEAR_API_KEY");
 
   beforeEach(() => {
     consoleLog = captureConsoleLog();
+    deleteEnvironmentVariable("GROUNDCREW_LINEAR_API_KEY");
     setEnvironmentVariable("LINEAR_API_KEY", "lin_api_test");
     existsMock.mockReturnValue(true);
     statMock.mockReturnValue(statsWithDirectoryValue(true));
@@ -144,10 +146,15 @@ describe(doctor, () => {
 
   afterEach(() => {
     consoleLog.restore();
-    if (originalEnvironment === undefined) {
+    if (originalGroundcrewKey === undefined) {
+      deleteEnvironmentVariable("GROUNDCREW_LINEAR_API_KEY");
+    } else {
+      setEnvironmentVariable("GROUNDCREW_LINEAR_API_KEY", originalGroundcrewKey);
+    }
+    if (originalLinearKey === undefined) {
       deleteEnvironmentVariable("LINEAR_API_KEY");
     } else {
-      setEnvironmentVariable("LINEAR_API_KEY", originalEnvironment);
+      setEnvironmentVariable("LINEAR_API_KEY", originalLinearKey);
     }
     vi.resetAllMocks();
   });
@@ -180,15 +187,43 @@ describe(doctor, () => {
     expect(consoleLog.output()).toContain("All required checks passed");
   });
 
-  it("returns false and reports a missing LINEAR_API_KEY", async () => {
+  it("returns false and reports both env var names when neither key is set", async () => {
     deleteEnvironmentVariable("LINEAR_API_KEY");
     loadConfigMock.mockResolvedValue(makeConfig());
 
     const actual = await doctor();
 
     expect(actual).toBe(false);
-    expect(consoleLog.output()).toContain("$LINEAR_API_KEY");
-    expect(consoleLog.output()).toContain("export the variable");
+    const output = consoleLog.output();
+    expect(output).toContain("linear api key");
+    expect(output).toContain("$GROUNDCREW_LINEAR_API_KEY");
+    expect(output).toContain("$LINEAR_API_KEY");
+  });
+
+  it("reports the resolved env var when only GROUNDCREW_LINEAR_API_KEY is set", async () => {
+    deleteEnvironmentVariable("LINEAR_API_KEY");
+    setEnvironmentVariable("GROUNDCREW_LINEAR_API_KEY", "lin_api_groundcrew");
+    loadConfigMock.mockResolvedValue(makeConfig());
+
+    const actual = await doctor();
+
+    expect(actual).toBe(true);
+    const output = consoleLog.output();
+    expect(output).toContain("linear api key");
+    expect(output).toContain("$GROUNDCREW_LINEAR_API_KEY");
+  });
+
+  it("prefers GROUNDCREW_LINEAR_API_KEY in doctor output when both env vars are set", async () => {
+    setEnvironmentVariable("GROUNDCREW_LINEAR_API_KEY", "lin_api_groundcrew");
+    setEnvironmentVariable("LINEAR_API_KEY", "lin_api_legacy");
+    loadConfigMock.mockResolvedValue(makeConfig());
+
+    const actual = await doctor();
+
+    expect(actual).toBe(true);
+    const output = consoleLog.output();
+    expect(output).toContain("$GROUNDCREW_LINEAR_API_KEY");
+    expect(output).not.toMatch(/set via \$LINEAR_API_KEY/);
   });
 
   it("returns false when a required CLI tool is missing", async () => {

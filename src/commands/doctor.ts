@@ -7,7 +7,7 @@ import { existsSync, statSync } from "node:fs";
 
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities, which } from "../lib/host.ts";
-import { errorMessage, readEnvironmentVariable, writeOutput } from "../lib/util.ts";
+import { errorMessage, resolveLinearApiKey, writeOutput } from "../lib/util.ts";
 import { resolveWorkspaceKind, type WorkspaceResolution } from "../lib/workspaces.ts";
 
 // Tokenization stops after this many non-flag tokens. Two is enough to
@@ -35,14 +35,21 @@ async function checkCmd(cmd: string, required: boolean, hint?: string): Promise<
   return result;
 }
 
-function checkEnvironment(name: string): Check {
-  const value = readEnvironmentVariable(name);
-  const set = value !== undefined && value.length > 0;
+function checkLinearApiKey(): Check {
+  const resolved = resolveLinearApiKey();
+  if (resolved !== undefined) {
+    return {
+      name: "linear api key",
+      ok: true,
+      required: true,
+      hint: `set via $${resolved.source}`,
+    };
+  }
   return {
-    name: `$${name}`,
-    ok: set,
+    name: "linear api key",
+    ok: false,
     required: true,
-    hint: set ? "set" : "export the variable in your shell",
+    hint: "export $GROUNDCREW_LINEAR_API_KEY or $LINEAR_API_KEY",
   };
 }
 
@@ -157,7 +164,7 @@ export async function doctor(): Promise<boolean> {
   reportWorkspaceKind(config, workspaceOutcome);
 
   const checks: Check[] = [
-    checkEnvironment("LINEAR_API_KEY"),
+    checkLinearApiKey(),
     await checkCmd("git", true, "https://git-scm.com/"),
     ...(await workspaceChecks(workspaceOutcome)),
     checkDir(config.workspace.projectDir, "workspace.projectDir"),

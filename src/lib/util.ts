@@ -101,12 +101,33 @@ export function readEnvironmentVariable(name: string): string | undefined {
   return process.env[name];
 }
 
-export function getLinearClient(): LinearClient {
-  const apiKey = readEnvironmentVariable("LINEAR_API_KEY");
-  if (apiKey === undefined || apiKey.length === 0) {
-    throw new Error("LINEAR_API_KEY not set. Add it to your environment.");
+const LINEAR_API_KEY_SOURCES = ["GROUNDCREW_LINEAR_API_KEY", "LINEAR_API_KEY"] as const;
+
+export type LinearApiKeySource = (typeof LINEAR_API_KEY_SOURCES)[number];
+
+export interface ResolvedLinearApiKey {
+  value: string;
+  source: LinearApiKeySource;
+}
+
+export function resolveLinearApiKey(): ResolvedLinearApiKey | undefined {
+  for (const source of LINEAR_API_KEY_SOURCES) {
+    const value = readEnvironmentVariable(source);
+    if (value !== undefined && value.length > 0) {
+      return { value, source };
+    }
   }
-  return new LinearClient({ apiKey });
+  return undefined;
+}
+
+export function getLinearClient(): LinearClient {
+  const resolved = resolveLinearApiKey();
+  if (resolved === undefined) {
+    throw new Error(
+      "Linear API key not set. Set GROUNDCREW_LINEAR_API_KEY or LINEAR_API_KEY in your environment.",
+    );
+  }
+  return new LinearClient({ apiKey: resolved.value });
 }
 
 export function errorMessage(error: unknown): string {

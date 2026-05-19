@@ -142,7 +142,7 @@ async function verifyProject(client: LinearClient, config: ResolvedConfig): Prom
   const [project] = projects.nodes;
   if (!project) {
     throw new Error(
-      `No Linear project found with slugId "${config.linear.slugId}" (linear.projectSlug = "${config.linear.projectSlug}"). Confirm the slug matches the trailing segment of your project's URL and that LINEAR_API_KEY can access this workspace.`,
+      `No Linear project found with slugId "${config.linear.slugId}" (linear.projectSlug = "${config.linear.projectSlug}"). Confirm the slug matches the trailing segment of your project's URL and that your Linear API key can access this workspace.`,
     );
   }
   log(`Resolved Linear project: ${project.name} (slugId ${project.slugId})`);
