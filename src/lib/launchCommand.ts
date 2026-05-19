@@ -1,16 +1,8 @@
-import { Buffer } from "node:buffer";
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 
-import {
-  BUILD_SECRET_NAMES,
-  DEFAULT_HOST_SETUP_COMMAND,
-  DEFAULT_REMOTE_SETUP_COMMAND,
-  type ModelDefinition,
-  type RemoteRunnerConfig,
-} from "./config.ts";
+import { BUILD_SECRET_NAMES, DEFAULT_HOST_SETUP_COMMAND, type ModelDefinition } from "./config.ts";
 import { shellSingleQuote } from "./shell.ts";
-import type { RemoteRunnerProvider } from "./spriteRemoteRunnerProvider.ts";
 
 export { shellSingleQuote } from "./shell.ts";
 
@@ -65,8 +57,8 @@ function sourceSecretsLine(secretsFile: string): string {
   return `if [ -f ${shellSingleQuote(secretsFile)} ]; then set -a && . ${shellSingleQuote(secretsFile)} && set +a; fi`;
 }
 
-function unsetSecretsLine(secretNames: readonly string[] = BUILD_SECRET_NAMES): string {
-  return `unset ${secretNames.join(" ")}`;
+function unsetSecretsLine(): string {
+  return `unset ${BUILD_SECRET_NAMES.join(" ")}`;
 }
 
 interface LaunchCommandArguments {
@@ -80,18 +72,6 @@ interface LaunchCommandArguments {
    * never inherits them.
    */
   secretsFile?: string | undefined;
-}
-
-interface RemoteLaunchCommandArguments {
-  definition: ModelDefinition;
-  provider: RemoteRunnerProvider;
-  remoteConfig: RemoteRunnerConfig;
-  promptFile: string;
-  remotePromptFile: string;
-  worktreeDir: string;
-  secretNames: readonly string[];
-  secretsFile?: string | undefined;
-  remoteSecretsFile?: string | undefined;
 }
 
 /**
@@ -129,55 +109,4 @@ export function buildLaunchCommand(arguments_: LaunchCommandArguments): string {
     `exec ${wrapped} "$_p"`,
   );
   return lines.join(" && ");
-}
-
-export function buildRemoteLaunchCommand(arguments_: RemoteLaunchCommandArguments): string {
-  const promptDir = dirname(arguments_.promptFile);
-  const agentCmd = renderAgentCommand({
-    agentCmd: arguments_.definition.cmd,
-    worktreeDir: arguments_.worktreeDir,
-  });
-  const uploadedFiles = [
-    { localPath: arguments_.promptFile, remotePath: arguments_.remotePromptFile },
-  ];
-  if (arguments_.secretsFile !== undefined && arguments_.remoteSecretsFile !== undefined) {
-    uploadedFiles.push({
-      localPath: arguments_.secretsFile,
-      remotePath: arguments_.remoteSecretsFile,
-    });
-  }
-
-  const remoteCleanupFiles = [arguments_.remotePromptFile];
-  if (arguments_.remoteSecretsFile !== undefined) {
-    remoteCleanupFiles.push(arguments_.remoteSecretsFile);
-  }
-  const remoteCleanupLine = `rm -f ${remoteCleanupFiles.map(shellSingleQuote).join(" ")}`;
-  const remoteLines = [`cleanup_remote() { ${remoteCleanupLine}; }`, "trap cleanup_remote EXIT"];
-  if (arguments_.remoteSecretsFile !== undefined) {
-    remoteLines.push(sourceSecretsLine(arguments_.remoteSecretsFile));
-  }
-  remoteLines.push(setupWithStatusReporting(DEFAULT_REMOTE_SETUP_COMMAND));
-  if (arguments_.remoteSecretsFile !== undefined) {
-    remoteLines.push(unsetSecretsLine(arguments_.secretNames));
-  }
-  remoteLines.push(
-    `_p=$(cat ${shellSingleQuote(arguments_.remotePromptFile)})`,
-    "cleanup_remote",
-    "trap - EXIT",
-    `exec ${agentCmd} "$_p"`,
-  );
-
-  const encodedRemoteCommand = Buffer.from(remoteLines.join(" && "), "utf8").toString("base64");
-  const remoteLauncher = `eval "$(printf %s ${shellSingleQuote(encodedRemoteCommand)} | base64 -d)"`;
-
-  return [
-    `cleanup() { rm -rf ${shellSingleQuote(promptDir)}; }`,
-    "trap cleanup EXIT",
-    arguments_.provider.buildTtyCommand({
-      config: arguments_.remoteConfig,
-      files: uploadedFiles,
-      workingDirectory: arguments_.worktreeDir,
-      remoteArguments: ["bash", "-lc", remoteLauncher],
-    }),
-  ].join("; ");
 }

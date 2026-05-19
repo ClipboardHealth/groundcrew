@@ -6,6 +6,8 @@
     "package-lock.json",
     "dist/**",
     "dist",
+    "out-tsc/**",
+    "out-tsc",
     "test-output/**",
     "test-output"
   ],

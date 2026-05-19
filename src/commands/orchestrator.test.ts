@@ -109,15 +109,6 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
     prompts: { initial: "x", ...overrides.prompts },
     workspaceKind: overrides.workspaceKind ?? "auto",
     logging: { file: "/tmp/groundcrew-test.log", ...overrides.logging },
-    remote: {
-      provider: "sprite",
-      runnerName: "crew-claude-1",
-      owner: "ClipboardHealth",
-      repoRoot: "/home/sprite/dev",
-      worktreeRoot: "/home/sprite/groundcrew/worktrees",
-      secretNames: ["NPM_TOKEN", "BUF_TOKEN"],
-      ...overrides.remote,
-    },
   };
 }
 
@@ -254,19 +245,6 @@ function hostEntryFor(repository: string, ticket: string): WorktreeEntry {
     branchName: `rocky-${ticket.toLowerCase()}`,
     dir: `/work/${repository}-${ticket}`,
     kind: "host",
-  };
-}
-
-function spriteEntryFor(repository: string, ticket: string): WorktreeEntry {
-  return {
-    repository,
-    ticket,
-    branchName: `rocky-${ticket.toLowerCase()}`,
-    dir: `/home/sprite/groundcrew/worktrees/${repository}-${ticket}`,
-    kind: "remote",
-    remoteProvider: "sprite",
-    remoteRunnerName: "crew-claude-1",
-    remoteRepoDir: `/home/sprite/dev/${repository}`,
   };
 }
 
@@ -1151,27 +1129,6 @@ describe(orchestrate, () => {
     expect(out).toContain("Run `crew cleanup");
   });
 
-  it("treats a remote-kind worktree as existing for eligibility", async () => {
-    listMock.mockReturnValue([spriteEntryFor("repo-a", "team-1")]);
-    workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set<string>() });
-    const client = makeClient({
-      pages: [
-        [
-          issue({
-            identifier: "TEAM-1",
-            state: { id: "state-todo", name: "Todo" },
-          }),
-        ],
-      ],
-    });
-    mockLinearClient(client);
-
-    await orchestrate({ watch: false, dryRun: false });
-
-    expect(setupMock).not.toHaveBeenCalled();
-    expect(consoleLog.output()).toContain("Run `crew cleanup");
-  });
-
   it("skips a ticket when the workspace list is unavailable", async () => {
     listMock.mockReturnValue([hostEntryFor("repo-a", "team-1")]);
     workspacesProbeMock.mockResolvedValue({ kind: "unavailable" });
@@ -1357,51 +1314,6 @@ describe(orchestrate, () => {
     await orchestrate({ watch: false, dryRun: false });
 
     expect(teardownMock).toHaveBeenCalledWith(expect.anything(), [entry]);
-  });
-
-  it("hands a remote-kind worktree to teardown", async () => {
-    const sprite = spriteEntryFor("repo-a", "team-1");
-    listMock.mockReturnValue([sprite]);
-    teardownMock.mockResolvedValue(emptyTeardownResult({ removed: [sprite] }));
-    const client = makeClient({
-      pages: [
-        [
-          issue({
-            identifier: "TEAM-1",
-            id: "uuid-1",
-            state: { id: "state-done", name: "Done" },
-          }),
-        ],
-      ],
-    });
-    mockLinearClient(client);
-
-    await orchestrate({ watch: false, dryRun: false });
-
-    expect(teardownMock).toHaveBeenCalledWith(expect.anything(), [sprite]);
-  });
-
-  it("hands both host and remote worktrees to teardown for one terminal ticket", async () => {
-    const host = hostEntryFor("repo-a", "team-1");
-    const sprite = spriteEntryFor("repo-a", "team-1");
-    listMock.mockReturnValue([host, sprite]);
-    teardownMock.mockResolvedValue(emptyTeardownResult({ removed: [host, sprite] }));
-    const client = makeClient({
-      pages: [
-        [
-          issue({
-            identifier: "TEAM-1",
-            id: "uuid-1",
-            state: { id: "state-done", name: "Done" },
-          }),
-        ],
-      ],
-    });
-    mockLinearClient(client);
-
-    await orchestrate({ watch: false, dryRun: false });
-
-    expect(teardownMock).toHaveBeenCalledWith(expect.anything(), [host, sprite]);
   });
 
   it("logs Cleanup failed when teardown reports a worktree_remove failure", async () => {

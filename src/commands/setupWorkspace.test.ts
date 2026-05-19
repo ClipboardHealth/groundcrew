@@ -150,19 +150,6 @@ function hostEntry(): WorktreeEntry {
   };
 }
 
-function spriteEntry(): WorktreeEntry {
-  return {
-    repository: "repo-a",
-    ticket: "team-1",
-    branchName: "rocky-team-1",
-    dir: "/home/sprite/groundcrew/worktrees/repo-a-team-1",
-    kind: "remote",
-    remoteProvider: "sprite",
-    remoteRunnerName: "crew-claude-1",
-    remoteRepoDir: "/home/sprite/dev/repo-a",
-  };
-}
-
 function makeConfig(overrides: Partial<ResolvedConfig["models"]> = {}): ResolvedConfig {
   return {
     linear: {
@@ -193,14 +180,6 @@ function makeConfig(overrides: Partial<ResolvedConfig["models"]> = {}): Resolved
     },
     workspaceKind: "auto",
     logging: { file: "/tmp/groundcrew-test.log" },
-    remote: {
-      provider: "sprite",
-      runnerName: "crew-claude-1",
-      owner: "ClipboardHealth",
-      repoRoot: "/home/sprite/dev",
-      worktreeRoot: "/home/sprite/groundcrew/worktrees",
-      secretNames: ["NPM_TOKEN", "BUF_TOKEN"],
-    },
   };
 }
 
@@ -244,12 +223,6 @@ function lastRunArgumentFromCallWithArgument(argument: string): string {
   return typeof lastArgument === "string" ? lastArgument : "";
 }
 
-function decodedSpriteRemoteCommand(command: string): string {
-  const matches = [...command.matchAll(/[A-Za-z0-9+/]{40,}={0,2}/g)];
-  expect(matches).toHaveLength(1);
-  return Buffer.from(matches[0]?.[0] ?? "", "base64").toString("utf8");
-}
-
 function writtenFileContent(path: string): string {
   const call = writeFileMock.mock.calls.find(([candidate]) => String(candidate) === path);
   const content = call?.[1];
@@ -280,12 +253,7 @@ describe(setupWorkspace, () => {
       isMacOS: true,
       isSafehouseSupported: true,
     });
-    createMock.mockImplementation(async (_config, spec) => {
-      if (spec.runner === "remote") {
-        return spriteEntry();
-      }
-      return hostEntry();
-    });
+    createMock.mockImplementation(async () => hostEntry());
     ensureClearanceMock.mockResolvedValue({
       logPath: "/tmp/clearance/clearance.log",
       pidPath: "/tmp/clearance/clearance.pid",
@@ -311,7 +279,7 @@ describe(setupWorkspace, () => {
 
     expect(createMock).toHaveBeenCalledWith(
       config,
-      expect.objectContaining({ repository: "repo-a", ticket: "team-1", model: "claude" }),
+      expect.objectContaining({ repository: "repo-a", ticket: "team-1" }),
     );
     expect(writeFileMock).toHaveBeenCalledWith(
       "/tmp/groundcrew-team-1-x/prompt.txt",
@@ -325,73 +293,6 @@ describe(setupWorkspace, () => {
       "cmux",
       expect.arrayContaining(["set-status", "model", "claude", "--workspace", "workspace:42"]),
     );
-  });
-
-  it("launches the remote runner from a local cwd and skips local Safehouse setup", async () => {
-    detectHostMock.mockResolvedValue({
-      hasSafehouse: false,
-      hasCmux: true,
-      hasTmux: false,
-      isMacOS: true,
-      isSafehouseSupported: true,
-    });
-    const config = makeConfig();
-    mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
-
-    await setupWorkspace(config, {
-      ticket: "team-1",
-      repository: "repo-a",
-      model: "claude",
-      runner: "remote",
-    });
-
-    expect(ensureClearanceMock).not.toHaveBeenCalled();
-    expect(createMock).toHaveBeenCalledWith(
-      config,
-      expect.objectContaining({
-        repository: "repo-a",
-        ticket: "team-1",
-        model: "claude",
-        runner: "remote",
-      }),
-    );
-    expect(runCommandMock).toHaveBeenCalledWith(
-      "cmux",
-      expect.arrayContaining(["new-workspace", "--cwd", "/work/repo-a"]),
-    );
-    expect(runCommandMock).toHaveBeenCalledWith(
-      "cmux",
-      expect.arrayContaining(["set-status", "model", "claude:remote"]),
-    );
-    const command = lastRunArgumentFromCallWithArgument("new-workspace");
-    const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
-    const remoteCommand = decodedSpriteRemoteCommand(launchScript);
-    expect(command).toBe("bash '/tmp/groundcrew-team-1-x/launch.sh'");
-    expect(command).not.toContain("sprite exec");
-    expect(launchScript).toContain("sprite exec --tty -s 'crew-claude-1'");
-    expect(launchScript).toContain("--dir '/home/sprite/groundcrew/worktrees/repo-a-team-1'");
-    expect(remoteCommand).toContain('exec claude --auto "$_p"');
-  });
-
-  it("keeps the remote cmux command short by staging the full launcher in a local script", async () => {
-    const config = makeConfig();
-    mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
-
-    await setupWorkspace(config, {
-      ticket: "team-1",
-      repository: "repo-a",
-      model: "claude",
-      runner: "remote",
-    });
-
-    const command = lastRunArgumentFromCallWithArgument("new-workspace");
-    const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
-
-    expect(command).toBe("bash '/tmp/groundcrew-team-1-x/launch.sh'");
-    expect(command).not.toContain("cleanup()");
-    expect(command).not.toContain("sprite exec");
-    expect(launchScript).toContain("cleanup()");
-    expect(launchScript).toContain("sprite exec --tty");
   });
 
   it("keeps the local cmux command short by staging the full launcher in a local script", async () => {
@@ -414,74 +315,6 @@ describe(setupWorkspace, () => {
     expect(launchScript).toContain("_p=$(cat '/tmp/groundcrew-team-1-x/prompt.txt')");
   });
 
-  it("uses configured remote build-secret names without exposing values in the final command", async () => {
-    setEnvironmentVariable("NPM_TOKEN", "npm_test_token");
-    setEnvironmentVariable("BUF_TOKEN", "buf_test_token");
-    const config = makeConfig();
-    mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
-
-    try {
-      await setupWorkspace(config, {
-        ticket: "team-1",
-        repository: "repo-a",
-        model: "claude",
-        runner: "remote",
-      });
-
-      expect(writeFileMock).toHaveBeenCalledWith(
-        "/tmp/groundcrew-team-1-x/secrets.env",
-        "NPM_TOKEN='npm_test_token'\nBUF_TOKEN='buf_test_token'\n",
-        { mode: 0o600 },
-      );
-      const command = lastRunArgumentFromCallWithArgument("new-workspace");
-      const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
-      const remoteCommand = decodedSpriteRemoteCommand(launchScript);
-      expect(command).toBe("bash '/tmp/groundcrew-team-1-x/launch.sh'");
-      expect(launchScript).toContain("--file '/tmp/groundcrew-team-1-x/secrets.env:");
-      expect(remoteCommand).toContain("unset NPM_TOKEN BUF_TOKEN");
-      expect(command).not.toContain("npm_test_token");
-      expect(command).not.toContain("buf_test_token");
-      expect(launchScript).not.toContain("npm_test_token");
-      expect(launchScript).not.toContain("buf_test_token");
-    } finally {
-      deleteEnvironmentVariable("NPM_TOKEN");
-      deleteEnvironmentVariable("BUF_TOKEN");
-    }
-  });
-
-  it("passes an AbortSignal into remote worktree creation and workspace launch", async () => {
-    const config = makeConfig();
-    const { signal } = new AbortController();
-    mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
-
-    await setupWorkspace(
-      config,
-      {
-        ticket: "team-1",
-        repository: "repo-a",
-        model: "claude",
-        runner: "remote",
-      },
-      { signal },
-    );
-
-    expect(createMock).toHaveBeenCalledWith(
-      config,
-      expect.objectContaining({
-        repository: "repo-a",
-        ticket: "team-1",
-        model: "claude",
-        runner: "remote",
-      }),
-      signal,
-    );
-    expect(runCommandMock).toHaveBeenCalledWith(
-      "cmux",
-      expect.arrayContaining(["new-workspace", "--cwd", "/work/repo-a"]),
-      { signal },
-    );
-  });
-
   it("passes an AbortSignal into worktree creation and workspace launch", async () => {
     const config = makeConfig();
     const { signal } = new AbortController();
@@ -495,7 +328,7 @@ describe(setupWorkspace, () => {
 
     expect(createMock).toHaveBeenCalledWith(
       config,
-      expect.objectContaining({ repository: "repo-a", ticket: "team-1", model: "claude" }),
+      expect.objectContaining({ repository: "repo-a", ticket: "team-1" }),
       signal,
     );
     expect(runCommandMock).toHaveBeenCalledWith(
@@ -710,7 +543,7 @@ describe(setupWorkspace, () => {
 
     await expect(
       setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" }),
-    ).rejects.toThrow(/Local groundcrew runs require macOS with Safehouse/);
+    ).rejects.toThrow(/groundcrew runs require macOS with Safehouse/);
 
     expect(createMock).not.toHaveBeenCalled();
     expect(ensureClearanceMock).not.toHaveBeenCalled();
@@ -775,32 +608,6 @@ describe(setupWorkspace, () => {
           kind: "host",
           dir: "/work/repo-a-team-1",
           branchName: "rocky-team-1",
-        }),
-      ],
-      { force: true },
-    );
-    expect(rmMock).toHaveBeenCalledWith("/tmp/groundcrew-team-1-x", expect.anything());
-  });
-
-  it("rolls back the remote worktree when workspace launch fails", async () => {
-    const config = makeConfig();
-    mockCmuxFailure();
-
-    await expect(
-      setupWorkspace(config, {
-        ticket: "team-1",
-        repository: "repo-a",
-        model: "claude",
-        runner: "remote",
-      }),
-    ).rejects.toThrow(/cmux down/);
-
-    expect(teardownMock).toHaveBeenCalledWith(
-      config,
-      [
-        expect.objectContaining({
-          kind: "remote",
-          dir: "/home/sprite/groundcrew/worktrees/repo-a-team-1",
         }),
       ],
       { force: true },
@@ -1013,9 +820,7 @@ describe(setupWorkspaceCli, () => {
       isMacOS: true,
       isSafehouseSupported: true,
     });
-    createMock.mockImplementation(async (_config, spec) =>
-      spec.runner === "remote" ? spriteEntry() : hostEntry(),
-    );
+    createMock.mockImplementation(async () => hostEntry());
     mkdtempMock.mockReturnValue("/tmp/groundcrew-team-1-x");
     runCommandMock.mockReturnValue(JSON.stringify({ ref: "workspace:1" }));
     loadConfigMock.mockResolvedValue(makeConfig());
@@ -1030,7 +835,7 @@ describe(setupWorkspaceCli, () => {
 
     expect(createMock).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ repository: "repo-a", model: "claude", ticket: "team-1" }),
+      expect.objectContaining({ repository: "repo-a", ticket: "team-1" }),
     );
     expect(runCommandMock).toHaveBeenCalledWith(
       "cmux",
@@ -1111,24 +916,9 @@ describe(setupWorkspaceCli, () => {
 
     await setupWorkspaceCli("team-1");
 
-    expect(createMock).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ model: "codex" }),
-    );
-  });
-
-  it("honors agent-remote in crew run --ticket", async () => {
-    rawRequestMock.mockResolvedValue(
-      buildResolveIssueResponse({
-        labels: [{ name: "agent-codex" }, { name: "agent-remote" }],
-      }),
-    );
-
-    await setupWorkspaceCli("team-1");
-
-    expect(createMock).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ model: "codex", runner: "remote" }),
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "cmux",
+      expect.arrayContaining(["set-status", "model", "codex"]),
     );
   });
 
@@ -1139,9 +929,9 @@ describe(setupWorkspaceCli, () => {
 
     await setupWorkspaceCli("team-1");
 
-    expect(createMock).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ model: "claude" }),
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "cmux",
+      expect.arrayContaining(["set-status", "model", "claude"]),
     );
   });
 
@@ -1152,9 +942,9 @@ describe(setupWorkspaceCli, () => {
 
     await setupWorkspaceCli("team-1");
 
-    expect(createMock).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ model: "claude" }),
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "cmux",
+      expect.arrayContaining(["set-status", "model", "claude"]),
     );
   });
 
@@ -1218,6 +1008,6 @@ describe(setupWorkspaceCli, () => {
     expect(createMock).not.toHaveBeenCalled();
     expect(runCommandMock).not.toHaveBeenCalled();
     const logged = logMock.mock.calls.map(([message]) => message).join("\n");
-    expect(logged).toContain("[dry-run] Would launch team-1 in repo-a (codex, local)");
+    expect(logged).toContain("[dry-run] Would launch team-1 in repo-a (codex)");
   });
 });

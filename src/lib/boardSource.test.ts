@@ -59,15 +59,6 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
     prompts: { initial: "x", ...overrides.prompts },
     workspaceKind: overrides.workspaceKind ?? "auto",
     logging: { file: "/tmp/groundcrew-test.log", ...overrides.logging },
-    remote: {
-      provider: "sprite",
-      runnerName: "crew-claude-1",
-      owner: "ClipboardHealth",
-      repoRoot: "/home/sprite/dev",
-      worktreeRoot: "/home/sprite/groundcrew/worktrees",
-      secretNames: ["NPM_TOKEN", "BUF_TOKEN"],
-      ...overrides.remote,
-    },
   };
 }
 
@@ -393,7 +384,6 @@ describe(createBoardSource, () => {
       const state = await source.fetch();
       const [first] = state.issues;
       expect(first?.model).toBe("codex");
-      expect(first?.runner).toBe("local");
     });
 
     it("falls back to models.default with a warning when an agent-<model> label refers to a disabled shipped default", async () => {
@@ -423,7 +413,6 @@ describe(createBoardSource, () => {
       const [first] = state.issues;
 
       expect(first?.model).toBe("claude");
-      expect(first?.runner).toBe("local");
       expect(consoleLog.output()).toMatch(
         /staff-1: agent-codex label refers to a disabled model; falling back to models\.default \(claude\)/,
       );
@@ -447,18 +436,6 @@ describe(createBoardSource, () => {
       expect(consoleLog.output()).not.toMatch(/falling back to models\.default/);
     });
 
-    it("defaults the local runner for labeled tickets without agent-remote", async () => {
-      const { source } = makeBoardSource(
-        makeClient({
-          pages: [[issueNode({ labels: { nodes: [{ name: "agent-claude" }] } })]],
-        }),
-      );
-
-      const state = await source.fetch();
-
-      expect(state.issues[0]?.runner).toBe("local");
-    });
-
     it("preserves agent-any as the model name (resolution happens later)", async () => {
       const { source } = makeBoardSource(
         makeClient({
@@ -468,57 +445,6 @@ describe(createBoardSource, () => {
       const state = await source.fetch();
       const [first] = state.issues;
       expect(first?.model).toBe("any");
-    });
-
-    it("treats agent-remote alone as a remote runner with the default model", async () => {
-      const { source } = makeBoardSource(
-        makeClient({
-          pages: [[issueNode({ labels: { nodes: [{ name: "agent-remote" }] } })]],
-        }),
-      );
-
-      const state = await source.fetch();
-
-      expect(state.issues[0]?.model).toBe("claude");
-      expect(state.issues[0]?.runner).toBe("remote");
-    });
-
-    it("treats agent-remote as a modifier alongside a concrete model", async () => {
-      const { source } = makeBoardSource(
-        makeClient({
-          pages: [
-            [
-              issueNode({
-                labels: { nodes: [{ name: "agent-remote" }, { name: "agent-codex" }] },
-              }),
-            ],
-          ],
-        }),
-      );
-
-      const state = await source.fetch();
-
-      expect(state.issues[0]?.model).toBe("codex");
-      expect(state.issues[0]?.runner).toBe("remote");
-    });
-
-    it("preserves agent-any when combined with agent-remote", async () => {
-      const { source } = makeBoardSource(
-        makeClient({
-          pages: [
-            [
-              issueNode({
-                labels: { nodes: [{ name: "agent-remote" }, { name: "agent-any" }] },
-              }),
-            ],
-          ],
-        }),
-      );
-
-      const state = await source.fetch();
-
-      expect(state.issues[0]?.model).toBe("any");
-      expect(state.issues[0]?.runner).toBe("remote");
     });
 
     it("falls back to the default model when an agent-* label names a prototype property", async () => {
@@ -583,7 +509,6 @@ describe(createBoardSource, () => {
       const [first] = state.issues;
       expect(first?.model).toBeUndefined();
       expect(first?.repository).toBeUndefined();
-      expect(first?.runner).toBeUndefined();
     });
 
     it("falls back to defaults when state, team, and assignee are missing", async () => {
@@ -676,36 +601,6 @@ describe(createBoardSource, () => {
 });
 
 describe(fetchResolvedIssue, () => {
-  it("preserves the remote runner for crew run --ticket", async () => {
-    const client = makeClient({ pages: [[]] });
-    client.client.rawRequest.mockResolvedValueOnce({
-      data: {
-        issue: {
-          id: "uuid-1",
-          title: "Title",
-          description: "Touches repo-a.",
-          team: { id: "team-default" },
-          labels: { nodes: [{ name: "agent-remote" }, { name: "agent-codex" }] },
-        },
-      },
-    });
-
-    const actual = await fetchResolvedIssue({
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests use the LinearClient surface consumed by boardSource
-      client: client as unknown as LinearClient,
-      config: makeConfig(),
-      ticket: "team-1",
-    });
-
-    expect(actual).toMatchObject({
-      uuid: "uuid-1",
-      repository: "repo-a",
-      model: "codex",
-      runner: "remote",
-      teamId: "team-default",
-    });
-  });
-
   it("returns an empty team id when Linear omits the issue team", async () => {
     const client = makeClient({ pages: [[]] });
     client.client.rawRequest.mockResolvedValueOnce({

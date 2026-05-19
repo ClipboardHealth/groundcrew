@@ -3,12 +3,9 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { BUILD_SECRET_NAMES } from "./buildSecrets.ts";
-import { SPRITE_REMOTE_PROVIDER_DEFAULTS } from "./spriteRemoteRunnerProvider.ts";
 import { log, readEnvironmentVariable, setLogFile } from "./util.ts";
 
 export { BUILD_SECRET_NAMES } from "./buildSecrets.ts";
-export { DEFAULT_REMOTE_SETUP_COMMAND } from "./remoteSetupCommand.ts";
 
 /**
  * Reserved model name. A ticket labeled `agent-any` resolves at runtime
@@ -17,20 +14,6 @@ export { DEFAULT_REMOTE_SETUP_COMMAND } from "./remoteSetupCommand.ts";
  * so the reserved name lives in one place.
  */
 export const AGENT_ANY_MODEL = "any";
-
-export type WorkspaceRunner = "local" | "remote";
-
-export const WORKSPACE_RUNNERS: readonly WorkspaceRunner[] = ["local", "remote"] as const;
-
-export const REMOTE_RUNNER_PROVIDER_NAMES = ["sprite"] as const;
-
-export type RemoteRunnerProviderName = (typeof REMOTE_RUNNER_PROVIDER_NAMES)[number];
-
-export function isRemoteRunnerProviderName(value: unknown): value is RemoteRunnerProviderName {
-  return (
-    typeof value === "string" && (REMOTE_RUNNER_PROVIDER_NAMES as readonly string[]).includes(value)
-  );
-}
 
 /**
  * Which terminal session manager hosts the agent process:
@@ -49,28 +32,18 @@ export const WORKSPACE_KIND_SETTINGS: readonly WorkspaceKindSetting[] = [
 
 export interface ModelDefinition {
   /**
-   * Shell command launched for the model. For local runs this is wrapped
-   * with Safehouse/clearance; for remote runs it executes inside the remote
-   * runner workspace. The rendered prompt is appended as a single quoted
+   * Shell command launched for the model. Wrapped with Safehouse/clearance
+   * for execution. The rendered prompt is appended as a single quoted
    * positional argument. `{{worktree}}` is replaced before launch.
    *
    * Keep this agent-native (e.g., `claude --permission-mode bypassPermissions`).
-   * Groundcrew adds the Safehouse wrapper for local runs.
+   * Groundcrew adds the Safehouse wrapper.
    */
   cmd: string;
   color: string;
   usage?: {
     codexbar: { provider: string; source?: string };
   };
-}
-
-export interface RemoteRunnerConfig {
-  provider: RemoteRunnerProviderName;
-  runnerName: string;
-  owner: string;
-  repoRoot: string;
-  worktreeRoot: string;
-  secretNames: string[];
 }
 
 /**
@@ -87,8 +60,7 @@ type UserModelDefinition = EnabledUserModelDefinition | DisabledUserModelDefinit
 
 /**
  * Setup command run inside sibling worktrees on the host. The host is
- * assumed to already have the right Node and npm versions, so this skips
- * the `n`/global-npm bootstrap that the remote setup command does.
+ * assumed to already have the right Node and npm versions.
  */
 export const DEFAULT_HOST_SETUP_COMMAND =
   "if [ -x .claude/setup.sh ]; then ./.claude/setup.sh --deps-only; elif [ -f .claude/setup.sh ] && command -v bash >/dev/null 2>&1; then bash .claude/setup.sh --deps-only; else npm clean-install; fi";
@@ -149,7 +121,6 @@ export interface Config {
    * to fail loudly when the chosen backend is missing.
    */
   workspaceKind?: WorkspaceKindSetting;
-  remote?: Partial<RemoteRunnerConfig>;
   logging?: {
     /**
      * Append-mode log file destination. `log()` and `logEvent()` tee here
@@ -202,7 +173,6 @@ export interface ResolvedConfig {
    * `auto` resolves to cmux when installed, else tmux.
    */
   workspaceKind: WorkspaceKindSetting;
-  remote: RemoteRunnerConfig;
   logging: {
     file: string;
   };
@@ -246,11 +216,6 @@ const DEFAULT_PROMPT_INITIAL = [
   "",
   "{{description}}",
 ].join("\n");
-
-const DEFAULT_REMOTE: ResolvedConfig["remote"] = {
-  ...SPRITE_REMOTE_PROVIDER_DEFAULTS,
-  secretNames: [...BUILD_SECRET_NAMES],
-};
 
 const ALLOWED_PROMPT_PLACEHOLDERS = new Set([
   "{{ticket}}",
@@ -403,52 +368,6 @@ function normalizeStatuses(
     inProgress,
     done,
     terminal: uniqueStrings([...terminal, done]),
-  };
-}
-
-function normalizeSecretNames(value: unknown, path: string): string[] | undefined {
-  const names = normalizeOptionalStringArray(value, path);
-  if (names === undefined) {
-    return undefined;
-  }
-  names.forEach((name, index) => {
-    if (!/^[A-Z_][A-Z0-9_]*$/.test(name)) {
-      fail(`${path}[${index}] must be a valid environment variable name`);
-    }
-  });
-  return names;
-}
-
-function normalizeRemoteProvider(value: unknown): RemoteRunnerProviderName | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (!isRemoteRunnerProviderName(value)) {
-    fail(`remote.provider must be "sprite" (got ${JSON.stringify(value)})`);
-  }
-  return value;
-}
-
-function normalizeRemoteRunnerConfig(user: Config["remote"] | undefined): ResolvedConfig["remote"] {
-  if (isPlainObject(user) && Object.hasOwn(user, "sprite")) {
-    fail(
-      "remote.sprite is no longer supported: use remote.provider, remote.runnerName, remote.owner, remote.repoRoot, remote.worktreeRoot, and remote.secretNames",
-    );
-  }
-  const provider = normalizeRemoteProvider(user?.provider) ?? DEFAULT_REMOTE.provider;
-  return {
-    provider,
-    runnerName:
-      normalizeOptionalString(user?.runnerName, "remote.runnerName") ?? DEFAULT_REMOTE.runnerName,
-    owner: normalizeOptionalString(user?.owner, "remote.owner") ?? DEFAULT_REMOTE.owner,
-    repoRoot: normalizeOptionalString(user?.repoRoot, "remote.repoRoot") ?? DEFAULT_REMOTE.repoRoot,
-    worktreeRoot:
-      normalizeOptionalString(user?.worktreeRoot, "remote.worktreeRoot") ??
-      DEFAULT_REMOTE.worktreeRoot,
-    secretNames: [
-      ...(normalizeSecretNames(user?.secretNames, "remote.secretNames") ??
-        DEFAULT_REMOTE.secretNames),
-    ],
   };
 }
 
@@ -635,7 +554,6 @@ function applyDefaults(user: Config): ResolvedConfig {
       initial: user.prompts?.initial ?? DEFAULT_PROMPT_INITIAL,
     },
     workspaceKind: normalizeWorkspaceKind(user.workspaceKind, "workspaceKind") ?? "auto",
-    remote: normalizeRemoteRunnerConfig(user.remote),
     logging: {
       file: expandHome(
         normalizeOptionalString(user.logging?.file, "logging.file") ?? defaultLogFile(),
@@ -729,22 +647,6 @@ function validate(config: ResolvedConfig): void {
 
   requireString(config.prompts.initial, "prompts.initial");
   validatePromptPlaceholders(config.prompts.initial);
-
-  /* v8 ignore next 3 @preserve -- normalizeRemoteProvider rejects this before validate() runs */
-  if (config.remote.provider !== "sprite") {
-    fail(`remote.provider must be "sprite" (got ${JSON.stringify(config.remote.provider)})`);
-  }
-  requireString(config.remote.runnerName, "remote.runnerName");
-  requireString(config.remote.owner, "remote.owner");
-  requireString(config.remote.repoRoot, "remote.repoRoot");
-  requireString(config.remote.worktreeRoot, "remote.worktreeRoot");
-  config.remote.secretNames.forEach((name, index) => {
-    requireString(name, `remote.secretNames[${index}]`);
-    /* v8 ignore next 3 @preserve -- normalizeSecretNames already enforces this before validate() runs */
-    if (!/^[A-Z_][A-Z0-9_]*$/.test(name)) {
-      fail(`remote.secretNames[${index}] must be a valid environment variable name`);
-    }
-  });
 
   requireString(config.logging.file, "logging.file");
 }

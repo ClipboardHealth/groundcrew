@@ -59,15 +59,6 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
     prompts: { initial: "x", ...overrides.prompts },
     workspaceKind: overrides.workspaceKind ?? "auto",
     logging: { file: "/tmp/groundcrew-test.log", ...overrides.logging },
-    remote: {
-      provider: "sprite",
-      runnerName: "crew-claude-1",
-      owner: "ClipboardHealth",
-      repoRoot: "/home/sprite/dev",
-      worktreeRoot: "/home/sprite/groundcrew/worktrees",
-      secretNames: ["NPM_TOKEN", "BUF_TOKEN"],
-      ...overrides.remote,
-    },
   };
 }
 
@@ -82,7 +73,6 @@ function todoIssue(overrides: Partial<Issue> = {}): Issue {
     updatedAt: "2025-01-01T00:00:00.000Z",
     repository: "repo-a",
     model: "claude",
-    runner: "local",
     teamId: "team-1",
     blockers: [],
     hasMoreBlockers: false,
@@ -168,7 +158,6 @@ describe(createDispatcher, () => {
           ticket: "team-1",
           repository: "repo-a",
           model: "claude",
-          runner: "local",
         }),
       );
       expect(client.updateIssue).toHaveBeenCalledWith("uuid-1", { stateId: "state-in-progress" });
@@ -465,27 +454,7 @@ describe(createDispatcher, () => {
 
       expect(setupMock).not.toHaveBeenCalled();
       expect(consoleLog.output()).toContain("[dry-run] Would start team-1");
-      expect(consoleLog.output()).toContain("(claude, local)");
-    });
-
-    it("passes the remote runner through to setupWorkspace and event logs", async () => {
-      const client = makeClient();
-      const dispatcher = createDispatcher({ config: makeConfig(), client: asLinearClient(client) });
-
-      await dispatcher.runOnce({
-        state: boardOf([todoIssue({ runner: "remote" })]),
-        worktreeEntries: [],
-        usage: async () => ({}),
-        dryRun: false,
-      });
-
-      expect(setupMock).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.objectContaining({ ticket: "team-1", runner: "remote" }),
-      );
-      expect(consoleLog.output()).toContain(
-        "event=dispatch outcome=started ticket=team-1 model=claude repository=repo-a runner=remote",
-      );
+      expect(consoleLog.output()).toContain("(claude)");
     });
 
     it("rethrows workspace probe failures after attaching a usage rejection handler", async () => {

@@ -45,15 +45,6 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
     },
     prompts: { initial: "x", ...overrides.prompts },
     workspaceKind: overrides.workspaceKind ?? "auto",
-    remote: {
-      provider: "sprite",
-      runnerName: "crew-claude-1",
-      owner: "ClipboardHealth",
-      repoRoot: "/home/sprite/dev",
-      worktreeRoot: "/home/sprite/groundcrew/worktrees",
-      secretNames: ["NPM_TOKEN", "BUF_TOKEN"],
-      ...overrides.remote,
-    },
     logging: { file: "/tmp/groundcrew-test.log", ...overrides.logging },
   };
 }
@@ -69,7 +60,6 @@ function doneIssue(id: string, overrides: Partial<Issue> = {}): Issue {
     updatedAt: "2025-01-01T00:00:00.000Z",
     repository: "repo-a",
     model: "claude",
-    runner: "local",
     teamId: "team-1",
     blockers: [],
     hasMoreBlockers: false,
@@ -92,19 +82,6 @@ function hostEntryFor(repository: string, ticket: string): WorktreeEntry {
     branchName: `rocky-${ticket.toLowerCase()}`,
     dir: `/work/${repository}-${ticket}`,
     kind: "host",
-  };
-}
-
-function spriteEntryFor(repository: string, ticket: string): WorktreeEntry {
-  return {
-    repository,
-    ticket,
-    branchName: `rocky-${ticket.toLowerCase()}`,
-    dir: `/home/sprite/groundcrew/worktrees/${repository}-${ticket}`,
-    kind: "remote",
-    remoteProvider: "sprite",
-    remoteRunnerName: "crew-claude-1",
-    remoteRepoDir: `/home/sprite/dev/${repository}`,
   };
 }
 
@@ -288,33 +265,6 @@ describe(createCleaner, () => {
     expect(out).toContain("[dry-run]");
     expect(out).toContain("worktree(s) due for cleanup");
     expect(out).toContain("event=cleanup outcome=skipped reason=dry_run");
-  });
-
-  it("passes both local and remote worktrees to teardown when both exist for one terminal ticket", async () => {
-    const host = hostEntryFor("repo-a", "team-1");
-    const sprite = spriteEntryFor("repo-a", "team-1");
-    const cleaner = createCleaner({ config: makeConfig() });
-
-    await cleaner.runOnce({
-      state: boardOf([doneIssue("team-1")]),
-      worktreeEntries: [host, sprite],
-      dryRun: false,
-    });
-
-    expect(teardownMock).toHaveBeenCalledWith(expect.anything(), [host, sprite]);
-  });
-
-  it("passes a remote-kind worktree directly to teardown", async () => {
-    const sprite = spriteEntryFor("repo-a", "team-1");
-    const cleaner = createCleaner({ config: makeConfig() });
-
-    await cleaner.runOnce({
-      state: boardOf([doneIssue("team-1")]),
-      worktreeEntries: [sprite],
-      dryRun: false,
-    });
-
-    expect(teardownMock).toHaveBeenCalledWith(expect.anything(), [sprite]);
   });
 
   it("passes the shutdown signal into teardown", async () => {

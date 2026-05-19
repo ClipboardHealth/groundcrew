@@ -39,15 +39,6 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
     },
     prompts: { initial: "x", ...overrides.prompts },
     workspaceKind: overrides.workspaceKind ?? "auto",
-    remote: {
-      provider: "sprite",
-      runnerName: "crew-claude-1",
-      owner: "ClipboardHealth",
-      repoRoot: "/home/sprite/dev",
-      worktreeRoot: "/home/sprite/groundcrew/worktrees",
-      secretNames: ["NPM_TOKEN", "BUF_TOKEN"],
-      ...overrides.remote,
-    },
     logging: { file: "/tmp/groundcrew-test.log", ...overrides.logging },
   };
 }
@@ -63,7 +54,6 @@ function todoIssue(overrides: Partial<GroundcrewIssue> = {}): GroundcrewIssue {
     updatedAt: "2025-01-01T00:00:00.000Z",
     repository: "repo-a",
     model: "claude",
-    runner: "local",
     teamId: "team-1",
     blockers: [],
     hasMoreBlockers: false,

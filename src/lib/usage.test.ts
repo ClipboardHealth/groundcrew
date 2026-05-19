@@ -82,14 +82,6 @@ function makeConfig(
     prompts: { initial: "x" },
     workspaceKind: "auto",
     logging: { file: "/tmp/groundcrew-test.log" },
-    remote: {
-      provider: "sprite",
-      runnerName: "crew-claude-1",
-      owner: "ClipboardHealth",
-      repoRoot: "/home/sprite/dev",
-      worktreeRoot: "/home/sprite/groundcrew/worktrees",
-      secretNames: ["NPM_TOKEN", "BUF_TOKEN"],
-    },
   };
 }
 

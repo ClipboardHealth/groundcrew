@@ -94,7 +94,6 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
       ticket: verdict.issue.id,
       blockers: verdict.blockers,
       model: verdict.model,
-      runner: verdict.issue.runner,
     });
   }
 
@@ -111,7 +110,7 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     if (dryRun) {
       log(
         /* v8 ignore next @preserve -- classifyTodo forces recovery=false in dry-run, so the resume branch can't fire here */
-        `[dry-run] Would ${recovery ? "resume" : "start"} ${issue.id} in ${issue.repository} (${issue.model}, ${issue.runner})`,
+        `[dry-run] Would ${recovery ? "resume" : "start"} ${issue.id} in ${issue.repository} (${issue.model})`,
       );
       logEvent("dispatch", {
         outcome: "skipped",
@@ -119,7 +118,6 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
         ticket: issue.id,
         model: issue.model,
         repository: issue.repository,
-        runner: issue.runner,
       });
       return;
     }
@@ -132,7 +130,6 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
           repository: issue.repository,
           ticket: issue.id,
           model: issue.model,
-          runner: issue.runner,
         };
         await (signal === undefined
           ? setupWorkspace(config, setupOptions)
@@ -144,7 +141,6 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
         ticket: issue.id,
         model: issue.model,
         repository: issue.repository,
-        runner: issue.runner,
       });
     } catch (error) {
       log(`Failed to start ${issue.id}: ${errorMessage(error)}`);
@@ -153,7 +149,6 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
         ticket: issue.id,
         model: issue.model,
         repository: issue.repository,
-        runner: issue.runner,
         error: errorMessage(error),
       });
     }
@@ -251,7 +246,7 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     );
     logEvent("dispatch", {
       outcome: "starting",
-      tickets: starts.map(({ issue }) => `${issue.id}:${issue.model}:${issue.runner}`),
+      tickets: starts.map(({ issue }) => `${issue.id}:${issue.model}`),
     });
 
     for (const start of starts) {

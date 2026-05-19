@@ -5,7 +5,6 @@ import { run } from "./cli.ts";
 import { cleanupWorkspaceCli } from "./commands/cleanupWorkspace.ts";
 import { doctor } from "./commands/doctor.ts";
 import { orchestrate } from "./commands/orchestrator.ts";
-import { remoteCli } from "./commands/remoteSetup.ts";
 import { setupReposCli } from "./commands/setupRepos.ts";
 import { setupWorkspaceCli } from "./commands/setupWorkspace.ts";
 import {
@@ -29,16 +28,12 @@ vi.mock(import("./commands/setupWorkspace.ts"), () => ({
 vi.mock(import("./commands/setupRepos.ts"), () => ({
   setupReposCli: vi.fn<typeof setupReposCli>(),
 }));
-vi.mock(import("./commands/remoteSetup.ts"), () => ({
-  remoteCli: vi.fn<typeof remoteCli>(),
-}));
 
 const orchestrateMock = vi.mocked(orchestrate);
 const doctorMock = vi.mocked(doctor);
 const setupMock = vi.mocked(setupWorkspaceCli);
 const setupReposMock = vi.mocked(setupReposCli);
 const cleanupMock = vi.mocked(cleanupWorkspaceCli);
-const remoteMock = vi.mocked(remoteCli);
 const requireFromTest = createRequire(import.meta.url);
 const PACKAGE_VERSION = readPackageVersion();
 const README_TEXT = readFileSync(new URL("../README.md", import.meta.url), "utf8");
@@ -73,7 +68,6 @@ describe(run, () => {
     setupMock.mockResolvedValue();
     setupReposMock.mockResolvedValue();
     cleanupMock.mockResolvedValue();
-    remoteMock.mockResolvedValue();
   });
 
   afterEach(() => {
@@ -282,12 +276,6 @@ describe(run, () => {
     expect(setupReposMock).not.toHaveBeenCalled();
     expect(consoleError.output()).toContain("Usage: crew setup repos");
     expect(process.exitCode).toBe(1);
-  });
-
-  it("dispatches remote to remoteCli with the remaining argv", async () => {
-    await run(["remote", "setup", "crew-claude-1", "--mcp", "linear"]);
-
-    expect(remoteMock).toHaveBeenCalledWith(["setup", "crew-claude-1", "--mcp", "linear"]);
   });
 
   it("prints the error message and sets exit code 1 when a subcommand throws", async () => {

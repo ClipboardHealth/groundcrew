@@ -103,8 +103,6 @@ function commandTokensToCheck(cmd: string): string[] {
 function gatherToolTokens(config: ResolvedConfig): string[] {
   const all = new Set<string>();
   for (const definition of Object.values(config.models.definitions)) {
-    // Local runs execute the agent command on the host; remote runs need the
-    // same command in the remote runner, but doctor cannot know ticket labels in advance.
     for (const token of commandTokensToCheck(definition.cmd)) {
       all.add(token);
     }
@@ -170,13 +168,7 @@ export async function doctor(): Promise<boolean> {
   for (const token of toolTokens) {
     const required = localCapability.ok;
     // oxlint-disable-next-line no-await-in-loop -- doctor reports tools in deterministic order
-    const check = await checkCmd(
-      token,
-      required,
-      required
-        ? undefined
-        : "required for local runs; remote runs need this inside the remote runner",
-    );
+    const check = await checkCmd(token, required, required ? undefined : "required for local runs");
     checks.push(check);
   }
 
@@ -202,21 +194,13 @@ export async function doctor(): Promise<boolean> {
 }
 
 function localCapabilityCheck(host: HostCapabilities): Check {
-  if (!host.isMacOS) {
-    return {
-      name: "local runner (macOS + Safehouse)",
-      ok: false,
-      required: false,
-      hint: "required for local runs; on Linux/WSL use agent-remote with the remote runner",
-    };
-  }
   return {
     name: "local runner (macOS + Safehouse)",
     ok: host.hasSafehouse,
     required: false,
     hint: host.hasSafehouse
       ? "ready"
-      : "required for local runs; install Safehouse from https://agent-safehouse.dev/ and ensure `safehouse` is on PATH",
+      : "groundcrew requires macOS with Safehouse on PATH (install from https://agent-safehouse.dev/)",
   };
 }
 

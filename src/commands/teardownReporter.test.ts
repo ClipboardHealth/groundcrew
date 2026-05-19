@@ -13,19 +13,6 @@ function hostEntry(ticket: string): WorktreeEntry {
   };
 }
 
-function spriteEntry(ticket: string): WorktreeEntry {
-  return {
-    repository: "repo-a",
-    ticket,
-    branchName: `rocky-${ticket}`,
-    dir: `/home/sprite/groundcrew/worktrees/repo-a-${ticket}`,
-    kind: "remote",
-    remoteProvider: "sprite",
-    remoteRunnerName: "crew-claude-1",
-    remoteRepoDir: "/home/sprite/dev/repo-a",
-  };
-}
-
 describe(logTeardown, () => {
   let consoleLog: ConsoleCapture;
 
@@ -68,13 +55,13 @@ describe(logTeardown, () => {
   });
 
   it("logs `Cleanup complete` and `Worktree: <dir> (removed)` for each removed entry", () => {
-    logTeardown(emptyTeardownResult({ removed: [hostEntry("team-1"), spriteEntry("team-2")] }));
+    logTeardown(emptyTeardownResult({ removed: [hostEntry("team-1"), hostEntry("team-2")] }));
 
     const out = consoleLog.output();
     expect(out).toContain("Cleanup complete for team-1 (host)");
     expect(out).toContain("/work/repo-a-team-1 (removed)");
-    expect(out).toContain("Cleanup complete for team-2 (remote)");
-    expect(out).toContain("/home/sprite/groundcrew/worktrees/repo-a-team-2 (removed)");
+    expect(out).toContain("Cleanup complete for team-2 (host)");
+    expect(out).toContain("/work/repo-a-team-2 (removed)");
   });
 
   it("logs workspace_close failures with the standard wording", () => {
@@ -149,7 +136,7 @@ describe(recordTeardownEvents, () => {
 
   it("emits cleaned events for each removed entry with repository and kind", () => {
     recordTeardownEvents(
-      emptyTeardownResult({ removed: [hostEntry("team-1"), spriteEntry("team-2")] }),
+      emptyTeardownResult({ removed: [hostEntry("team-1"), hostEntry("team-2")] }),
     );
 
     const out = consoleLog.output();
@@ -157,7 +144,7 @@ describe(recordTeardownEvents, () => {
       "event=cleanup outcome=cleaned ticket=team-1 repository=repo-a kind=host",
     );
     expect(out).toContain(
-      "event=cleanup outcome=cleaned ticket=team-2 repository=repo-a kind=remote",
+      "event=cleanup outcome=cleaned ticket=team-2 repository=repo-a kind=host",
     );
   });
 

@@ -6,12 +6,7 @@
 
 import type { LinearClient } from "@linear/sdk";
 
-import {
-  AGENT_ANY_MODEL,
-  isShippedDefaultDisabled,
-  type ResolvedConfig,
-  type WorkspaceRunner,
-} from "./config.ts";
+import { AGENT_ANY_MODEL, isShippedDefaultDisabled, type ResolvedConfig } from "./config.ts";
 import { log } from "./util.ts";
 
 const AGENT_LABEL_PREFIX = "agent-";
@@ -35,8 +30,6 @@ export interface Issue {
   repository: string | undefined;
   /** `undefined` when the ticket has no `agent-*` label — i.e. not groundcrew's concern. */
   model: string | undefined;
-  /** `undefined` when the ticket has no `agent-*` label — i.e. not groundcrew's concern. */
-  runner: WorkspaceRunner | undefined;
   teamId: string;
   blockers: Blocker[];
   hasMoreBlockers: boolean;
@@ -50,11 +43,10 @@ export interface Issue {
 export type GroundcrewIssue = Issue & {
   model: string;
   repository: string;
-  runner: WorkspaceRunner;
 };
 
 export function isGroundcrewIssue(issue: Issue): issue is GroundcrewIssue {
-  return issue.model !== undefined && issue.repository !== undefined && issue.runner !== undefined;
+  return issue.model !== undefined && issue.repository !== undefined;
 }
 
 export interface BoardState {
@@ -268,7 +260,6 @@ async function fetchBoard(client: LinearClient, config: ResolvedConfig): Promise
         updatedAt: node.updatedAt,
         repository,
         model: parsedAgentLabels?.model,
-        runner: parsedAgentLabels?.runner,
         teamId: node.team?.id ?? "",
         blockers: blockersFromRelations(node.inverseRelations?.nodes ?? []),
         hasMoreBlockers: node.inverseRelations?.pageInfo.hasNextPage ?? false,
@@ -299,7 +290,6 @@ interface ResolvedIssue {
   description: string;
   repository: string;
   model: string;
-  runner: WorkspaceRunner;
   teamId: string;
 }
 
@@ -357,14 +347,12 @@ export async function fetchResolvedIssue(arguments_: {
   warnIfDisabledFallback(ticket, parsed, config);
   const model =
     parsed === undefined || parsed.model === AGENT_ANY_MODEL ? config.models.default : parsed.model;
-  const runner = parsed?.runner ?? "local";
   return {
     uuid: issue.id,
     title: issue.title,
     description,
     repository,
     model,
-    runner,
     teamId: issue.team?.id ?? "",
   };
 }
@@ -408,7 +396,6 @@ function parseRepository(arguments_: ParseRepositoryArguments): string {
  */
 interface ParsedAgentLabels {
   model: string;
-  runner: WorkspaceRunner;
   disabledFallback?: string;
 }
 
@@ -420,27 +407,23 @@ function parseAgentLabels(
   if (agentLabels.length === 0) {
     return undefined;
   }
-  const runner = agentLabels.some((label) => label.name === "agent-remote") ? "remote" : "local";
   let disabledFallback: string | undefined;
   for (const label of agentLabels) {
-    if (label.name === "agent-remote") {
-      continue;
-    }
     const name = label.name.slice(AGENT_LABEL_PREFIX.length);
     if (name === AGENT_ANY_MODEL) {
-      return { model: AGENT_ANY_MODEL, runner };
+      return { model: AGENT_ANY_MODEL };
     }
     // Own-property check, not `in`: a label like `agent-toString` or
     // `agent-__proto__` would otherwise resolve through the prototype chain
     // instead of falling back to `models.default`.
     if (Object.hasOwn(config.models.definitions, name)) {
-      return { model: name, runner };
+      return { model: name };
     }
     if (disabledFallback === undefined && isShippedDefaultDisabled(config, name)) {
       disabledFallback = name;
     }
   }
-  const fallback: ParsedAgentLabels = { model: config.models.default, runner };
+  const fallback: ParsedAgentLabels = { model: config.models.default };
   if (disabledFallback !== undefined) {
     fallback.disabledFallback = disabledFallback;
   }

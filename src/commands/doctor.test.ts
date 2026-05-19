@@ -78,14 +78,6 @@ function makeConfig(overrides: Partial<ResolvedConfig["models"]> = {}): Resolved
     prompts: { initial: "x" },
     workspaceKind: "auto",
     logging: { file: "/tmp/groundcrew-test.log" },
-    remote: {
-      provider: "sprite",
-      runnerName: "crew-claude-1",
-      owner: "ClipboardHealth",
-      repoRoot: "/home/sprite/dev",
-      worktreeRoot: "/home/sprite/groundcrew/worktrees",
-      secretNames: ["NPM_TOKEN", "BUF_TOKEN"],
-    },
   };
 }
 
@@ -303,11 +295,11 @@ describe(doctor, () => {
 
     expect(actual).toBe(true);
     expect(consoleLog.output()).toContain("local runner (macOS + Safehouse)");
-    expect(consoleLog.output()).toContain("install Safehouse");
+    expect(consoleLog.output()).toContain("groundcrew requires macOS with Safehouse");
     expect(consoleLog.output().match(/local runner \(macOS \+ Safehouse\)/g)).toHaveLength(1);
   });
 
-  it("downgrades local model command checks when only the remote runner can run on the host", async () => {
+  it("downgrades model command checks to optional when the local runner is unavailable", async () => {
     detectHostMock.mockResolvedValue({
       hasSafehouse: false,
       hasCmux: false,
@@ -328,7 +320,7 @@ describe(doctor, () => {
 
     expect(actual).toBe(true);
     expect(consoleLog.output()).toContain("[? ] missing-cli");
-    expect(consoleLog.output()).toContain("remote runs need this inside the remote runner");
+    expect(consoleLog.output()).toContain("required for local runs");
   });
 
   it("adds an optional codexbar check when any model has usage configured", async () => {
@@ -404,7 +396,7 @@ describe(doctor, () => {
     expect(checked).toContain("alpha");
   });
 
-  it("reports non-macOS local-runner guidance while accepting cmux workspaces", async () => {
+  it("reports the local-runner check as a warning while accepting cmux workspaces", async () => {
     detectHostMock.mockResolvedValue({
       hasSafehouse: false,
       hasCmux: true,
@@ -419,7 +411,7 @@ describe(doctor, () => {
     expect(actual).toBe(true);
     const lines = consoleLog.output();
     expect(lines).toContain("Local runner");
-    expect(lines).toContain("use agent-remote with the remote runner");
+    expect(lines).toContain("groundcrew requires macOS with Safehouse");
     expect(lines).toMatch(/requested=auto, resolved=cmux/);
     expect(checkedCommands()).toContain("cmux");
     expect(checkedCommands()).not.toContain("tmux");

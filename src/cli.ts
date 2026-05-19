@@ -3,7 +3,6 @@ import { createRequire } from "node:module";
 import { cleanupWorkspaceCli } from "./commands/cleanupWorkspace.ts";
 import { doctor } from "./commands/doctor.ts";
 import { orchestrate } from "./commands/orchestrator.ts";
-import { remoteCli } from "./commands/remoteSetup.ts";
 import { setupReposCli } from "./commands/setupRepos.ts";
 import { setupWorkspaceCli } from "./commands/setupWorkspace.ts";
 import { errorMessage, writeError, writeOutput } from "./lib/util.ts";
@@ -95,17 +94,6 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
     summary: "Project-level setup commands (currently: repos)",
     usage: "repos [--dry-run] [<repo>...]",
     invoke: setupCli,
-  },
-  remote: {
-    summary: "Create, authenticate, bootstrap, and inspect a remote runner",
-    usage:
-      "setup <runner-name> [--claude] [--codex] [--datadog] [--github] [--mcp <alias|name=url>] [--checkpoint]\n" +
-      "           → crew remote bootstrap <runner-name> <repo> [--branch <branch>]\n" +
-      "           → crew remote sessions [<runner-name>]\n" +
-      "           → crew remote attach <session-id-or-command> [--runner <runner-name>]\n" +
-      "           → crew remote ps [<runner-name>]\n" +
-      "           → crew remote interrupt <process-group-id> [--runner <runner-name>]",
-    invoke: remoteCli,
   },
 };
 

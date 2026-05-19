@@ -5,24 +5,14 @@ import { join } from "node:path";
 import { ensureClearance } from "@clipboard-health/clearance";
 
 import { fetchResolvedIssue } from "../lib/boardSource.ts";
-import {
-  BUILD_SECRET_NAMES,
-  loadConfig,
-  type ResolvedConfig,
-  type WorkspaceRunner,
-} from "../lib/config.ts";
+import { BUILD_SECRET_NAMES, loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { detectHostCapabilities } from "../lib/host.ts";
-import {
-  buildLaunchCommand,
-  buildRemoteLaunchCommand,
-  shellSingleQuote,
-} from "../lib/launchCommand.ts";
+import { buildLaunchCommand, shellSingleQuote } from "../lib/launchCommand.ts";
 import { createLinearIssueStatusUpdater } from "../lib/linearIssueStatus.ts";
 import { assertLocalRunnerRequirements } from "../lib/localRunner.ts";
-import { getRemoteRunnerProvider } from "../lib/spriteRemoteRunnerProvider.ts";
 import { errorMessage, getLinearClient, log, readEnvironmentVariable } from "../lib/util.ts";
 import { workspaces } from "../lib/workspaces.ts";
-import { repoDirFor, type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
+import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 
 interface TicketDetails {
   title: string;
@@ -47,7 +37,6 @@ export interface SetupWorkspaceOptions {
   ticket: string;
   repository: string;
   model: string;
-  runner?: WorkspaceRunner;
   /** When provided, skip the Linear lookup for prompt-template fields. */
   details?: TicketDetails;
 }
@@ -74,12 +63,9 @@ function renderPrompt(
  * dir is `rm -rf`'d by the launch command (and rollback path), so cleanup
  * is already handled.
  */
-function stageBuildSecrets(
-  promptDir: string,
-  secretNames: readonly string[] = BUILD_SECRET_NAMES,
-): string | undefined {
+function stageBuildSecrets(promptDir: string): string | undefined {
   const lines: string[] = [];
-  for (const name of secretNames) {
+  for (const name of BUILD_SECRET_NAMES) {
     const value = readEnvironmentVariable(name);
     if (value === undefined || value.length === 0) {
       continue;
@@ -130,26 +116,16 @@ export async function setupWorkspace(
   runOptions: SetupWorkspaceRunOptions = {},
 ): Promise<void> {
   const { ticket, repository, model } = options;
-  const runner = options.runner ?? "local";
   const { signal } = runOptions;
   const definition = config.models.definitions[model];
   if (!definition) {
     throw new Error(`Unknown model: ${model}`);
   }
 
-  if (runner === "remote") {
-    await setupRemoteWorkspace({
-      config,
-      options: { ...options, runner },
-      ...(signal === undefined ? {} : { signal }),
-    });
-    return;
-  }
-
   assertLocalRunnerRequirements(await detectHostCapabilities(signal));
   await ensureClearance({ logger: log });
 
-  const spec = { repository, ticket, model, runner };
+  const spec = { repository, ticket };
   const created =
     signal === undefined
       ? await worktrees.create(config, spec)
@@ -208,80 +184,6 @@ export async function setupWorkspace(
   }
 }
 
-async function resolveTicketDetails(options: SetupWorkspaceOptions): Promise<TicketDetails> {
-  if (options.details !== undefined) {
-    return options.details;
-  }
-  log(`Fetching ${options.ticket} from Linear...`);
-  return await fetchTicket(options.ticket);
-}
-
-async function setupRemoteWorkspace(arguments_: {
-  config: ResolvedConfig;
-  options: SetupWorkspaceOptions & { runner: "remote" };
-  signal?: AbortSignal;
-}): Promise<void> {
-  const { config, options, signal } = arguments_;
-  const { ticket, repository, model } = options;
-  const definition = config.models.definitions[model];
-  /* v8 ignore next 3 @preserve -- setupWorkspace validates the model before routing here */
-  if (definition === undefined) {
-    throw new Error(`Unknown model: ${model}`);
-  }
-
-  log(`Workspace runner: remote (${config.remote.provider}:${config.remote.runnerName})`);
-  const spec = { repository, ticket, model, runner: "remote" as const };
-  const created =
-    signal === undefined
-      ? await worktrees.create(config, spec)
-      : await worktrees.create(config, spec, signal);
-  const { branchName, dir: remoteWorktreeDir } = created;
-  const worktreeName = `${repository}-${ticket}`;
-
-  let promptDir: string | undefined;
-  try {
-    const ticketDetails = await resolveTicketDetails(options);
-    const stagedPrompt = stagePrompt({ config, ticket, ticketDetails, worktreeName });
-    promptDir = stagedPrompt.directory;
-
-    const secretsFile = stageBuildSecrets(promptDir, config.remote.secretNames);
-    const remotePromptFile = `/tmp/groundcrew-${ticket}-prompt.txt`;
-    const remoteSecretsFile =
-      secretsFile === undefined ? undefined : `/tmp/groundcrew-${ticket}-secrets.env`;
-    const remoteLaunchCommand = buildRemoteLaunchCommand({
-      definition,
-      provider: getRemoteRunnerProvider(config.remote.provider),
-      remoteConfig: config.remote,
-      promptFile: stagedPrompt.file,
-      remotePromptFile,
-      worktreeDir: remoteWorktreeDir,
-      secretNames: config.remote.secretNames,
-      ...(secretsFile === undefined ? {} : { secretsFile, remoteSecretsFile }),
-    });
-    const launchCmd = stageWorkspaceLaunchCommand(promptDir, remoteLaunchCommand);
-
-    log("Opening workspace...");
-    await workspaces.open(
-      config,
-      {
-        name: ticket,
-        cwd: repoDirFor(config, repository),
-        command: launchCmd,
-        status: { text: `${model}:remote`, color: definition.color, icon: "sparkle" },
-      },
-      signal,
-    );
-
-    log(`Workspace "${ticket}" launched (${model}, remote)`);
-    log(`  Worktree: ${remoteWorktreeDir}`);
-    log(`  Branch:   ${branchName}`);
-    log(`  Remote:   ${config.remote.provider}:${config.remote.runnerName}`);
-  } catch (error) {
-    await rollbackWorktree({ config, entry: created, promptDir });
-    throw error;
-  }
-}
-
 async function rollbackWorktree(arguments_: {
   config: ResolvedConfig;
   entry: WorktreeEntry;
@@ -332,20 +234,15 @@ export async function setupWorkspaceCli(
   const config = await loadConfig();
   const client = getLinearClient();
   const resolved = await fetchResolvedIssue({ client, config, ticket });
-  log(
-    `Resolved ${ticket}: repository=${resolved.repository}, model=${resolved.model}, runner=${resolved.runner}`,
-  );
+  log(`Resolved ${ticket}: repository=${resolved.repository}, model=${resolved.model}`);
   if (options.dryRun === true) {
-    log(
-      `[dry-run] Would launch ${ticket} in ${resolved.repository} (${resolved.model}, ${resolved.runner})`,
-    );
+    log(`[dry-run] Would launch ${ticket} in ${resolved.repository} (${resolved.model})`);
     return;
   }
   await setupWorkspace(config, {
     ticket: ticket.toLowerCase(),
     repository: resolved.repository,
     model: resolved.model,
-    runner: resolved.runner,
     details: { title: resolved.title, description: resolved.description },
   });
   await createLinearIssueStatusUpdater({ config, client }).markInProgress({
