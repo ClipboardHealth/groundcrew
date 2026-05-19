@@ -37,7 +37,6 @@ export interface RemoteSetupOptions {
   shouldCopyLocalCodexAuth?: boolean;
   shouldSetupDatadog?: boolean;
   shouldAuthenticateGithub: boolean;
-  shouldAuthenticateMcp: boolean;
   shouldCheckpoint: boolean;
   checkpointComment: string;
   gitName?: string;
@@ -134,7 +133,6 @@ function usage(): string {
     "  --github                    Authenticate gh for GitHub PRs",
     "  --mcp <alias|name=url>      Add one MCP server; repeat for multiple",
     "                              Known aliases: linear, slack, notion",
-    "  --no-mcp-auth               Add selected MCP servers without opening Claude for MCP auth",
     "  --git-name <name>           Set git user.name inside the remote runner",
     "  --git-email <email>         Set git user.email inside the remote runner",
     "  --checkpoint                Create a provider checkpoint after setup",
@@ -248,7 +246,6 @@ function parseArguments(argv: readonly string[]): RemoteSetupOptions {
   let shouldCopyLocalCodexAuth = false;
   let shouldSetupDatadog = false;
   let shouldAuthenticateGithub = false;
-  let shouldAuthenticateMcp = true;
   let shouldCheckpoint = false;
   let checkpointComment = DEFAULT_CHECKPOINT_COMMENT;
   let gitName: string | undefined;
@@ -282,10 +279,6 @@ function parseArguments(argv: readonly string[]): RemoteSetupOptions {
       const value = requireValue(argv, index, "--mcp");
       mcpServers.push(parseMcpServer(value));
       index += 1;
-      continue;
-    }
-    if (argument === "--no-mcp-auth") {
-      shouldAuthenticateMcp = false;
       continue;
     }
     if (argument === "--git-name") {
@@ -323,7 +316,6 @@ function parseArguments(argv: readonly string[]): RemoteSetupOptions {
     shouldCopyLocalCodexAuth,
     shouldSetupDatadog,
     shouldAuthenticateGithub,
-    shouldAuthenticateMcp,
     shouldCheckpoint,
     checkpointComment,
     mcpServers,
@@ -1062,7 +1054,7 @@ async function authenticateMcpServers(arguments_: {
 }
 
 function shouldAuthenticateMcpInteractively(options: RemoteSetupOptions): boolean {
-  return options.shouldAuthenticateMcp && options.mcpServers.length > 0;
+  return options.mcpServers.length > 0;
 }
 
 async function checkpoint(arguments_: {

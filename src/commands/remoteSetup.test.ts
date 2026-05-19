@@ -533,7 +533,6 @@ async function setupClaudeOnlyRemoteRunner(): Promise<void> {
     shouldAuthenticateClaude: true,
     shouldAuthenticateCodex: false,
     shouldAuthenticateGithub: false,
-    shouldAuthenticateMcp: false,
     shouldCheckpoint: false,
     checkpointComment: "",
     mcpServers: [],
@@ -672,17 +671,6 @@ describe(remoteCli, () => {
     }
   });
 
-  it("supports --no-mcp-auth for adding MCP servers without interactive auth", async () => {
-    await remoteCli(["setup", "crew-claude-1", "--mcp", "linear", "--no-mcp-auth"]);
-
-    expectRemoteCommand(["claude", "mcp", "add", "linear", "https://mcp.linear.app/mcp"]);
-    expect(
-      runCommandMock.mock.calls.some((call) =>
-        hasRemoteCommand(call, ["claude", "--permission-mode", "auto"]),
-      ),
-    ).toBe(false);
-  });
-
   it("rejects unknown MCP aliases", async () => {
     await expect(remoteCli(["setup", "crew-claude-1", "--mcp", "unknown"])).rejects.toThrow(
       /Unknown MCP alias/,
@@ -704,6 +692,9 @@ describe(remoteCli, () => {
       /Unknown remote setup argument/,
     );
     await expect(remoteCli(["setup", "crew-claude-1", "--skip-mcp-auth"])).rejects.toThrow(
+      /Unknown remote setup argument/,
+    );
+    await expect(remoteCli(["setup", "crew-claude-1", "--no-mcp-auth"])).rejects.toThrow(
       /Unknown remote setup argument/,
     );
     await expect(remoteCli(["setup", "crew-claude-1", "--pup"])).rejects.toThrow(
@@ -893,7 +884,7 @@ describe(remoteCli, () => {
   it("skips adding MCP servers that already exist", async () => {
     mockSpriteListWithExistingMcp("NAME STATUS\ncrew-claude-1 running");
 
-    await remoteCli(["setup", "crew-claude-1", "--mcp", "linear", "--no-mcp-auth"]);
+    await remoteCli(["setup", "crew-claude-1", "--mcp", "linear"]);
 
     expect(
       runCommandMock.mock.calls.some((call) =>
@@ -1001,7 +992,6 @@ describe(setupRemoteRunner, () => {
       shouldAuthenticateClaude: true,
       shouldAuthenticateCodex: false,
       shouldAuthenticateGithub: true,
-      shouldAuthenticateMcp: true,
       shouldCheckpoint: true,
       checkpointComment: "baseline",
       gitName: "Rocky Warren",
@@ -1122,7 +1112,6 @@ describe(setupRemoteRunner, () => {
         shouldAuthenticateClaude: false,
         shouldAuthenticateCodex: false,
         shouldAuthenticateGithub: false,
-        shouldAuthenticateMcp: false,
         shouldCheckpoint: false,
         checkpointComment: "",
         mcpServers: [],
@@ -1139,7 +1128,6 @@ describe(setupRemoteRunner, () => {
       shouldAuthenticateClaude: false,
       shouldAuthenticateCodex: true,
       shouldAuthenticateGithub: false,
-      shouldAuthenticateMcp: false,
       shouldCheckpoint: false,
       checkpointComment: "",
       mcpServers: [],
@@ -1162,7 +1150,6 @@ describe(setupRemoteRunner, () => {
       shouldAuthenticateClaude: false,
       shouldAuthenticateCodex: true,
       shouldAuthenticateGithub: false,
-      shouldAuthenticateMcp: false,
       shouldCheckpoint: false,
       checkpointComment: "",
       mcpServers: [],
@@ -1335,7 +1322,6 @@ describe(setupRemoteRunner, () => {
         shouldAuthenticateCodex: true,
         shouldCopyLocalCodexAuth: false,
         shouldAuthenticateGithub: false,
-        shouldAuthenticateMcp: false,
         shouldCheckpoint: false,
         checkpointComment: "",
         mcpServers: [],
