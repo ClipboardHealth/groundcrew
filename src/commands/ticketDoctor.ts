@@ -256,13 +256,31 @@ async function runEligibilityChecks(arguments_: EligibilityCheckArguments): Prom
 const STATUS_TAG: Record<TicketCheck["status"], string> = {
   ok: "[ok]",
   fail: "[--]",
-  skipped: "[--]",
+  skipped: "[? ]",
 };
 
 function formatCheck(check: TicketCheck): string {
   const tag = STATUS_TAG[check.status];
   const detail = check.detail === undefined ? "" : ` (${check.detail})`;
   return `  ${tag} ${check.name}${detail}`;
+}
+
+function formatVerdict(verdict: TicketDoctorVerdict): string {
+  switch (verdict.kind) {
+    case "would-dispatch": {
+      return "→ would be dispatched on next tick";
+    }
+    case "unresolvable": {
+      return `→ unresolvable: ${verdict.reason}`;
+    }
+    case "ineligible": {
+      return `→ ineligible: ${verdict.reason}`;
+    }
+    /* v8 ignore next 3 @preserve -- exhaustive over TicketDoctorVerdict.kind */
+    default: {
+      return `→ ${(verdict satisfies never as TicketDoctorVerdict).kind}`;
+    }
+  }
 }
 
 function eligibilityLines(result: TicketDoctorResult): string[] {
@@ -281,10 +299,7 @@ export function renderTicketDoctorResult(result: TicketDoctorResult): string[] {
   const header = `groundcrew ticket doctor — ${result.ticket}${titlePart}`;
   const bar = "─".repeat(header.length);
 
-  const verdictLine =
-    result.verdict.kind === "would-dispatch"
-      ? "→ would be dispatched on next tick"
-      : `→ ineligible: ${result.verdict.reason}`;
+  const verdictLine = formatVerdict(result.verdict);
 
   return [
     header,

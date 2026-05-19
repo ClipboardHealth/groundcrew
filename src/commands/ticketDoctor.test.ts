@@ -716,7 +716,37 @@ describe("ticket doctor renderer", () => {
     const lines = renderTicketDoctorResult(result);
 
     expect(lines.some((l) => l.includes("(skipped — ticket unresolved)"))).toBe(true);
-    expect(lines.some((l) => l.includes("→ ineligible:"))).toBe(true);
+    expect(
+      lines.some((l) => l.includes("→ unresolvable: Ticket HRD-404 not found in Linear")),
+    ).toBe(true);
+  });
+
+  it("skipped resolution check renders with [? ] tag, distinct from [--]", () => {
+    const result: TicketDoctorResult = {
+      ticket: "HRD-3",
+      title: "Cascade",
+      resolution: [
+        { name: "Ticket exists in Linear", status: "ok", detail: '"Cascade"' },
+        { name: "Status is Todo", status: "ok" },
+        {
+          name: "Has agent-* label",
+          status: "fail",
+          detail: "no agent-* label on this ticket",
+          failureSummary: "ticket has no agent-* label",
+        },
+        { name: "Model resolves from agent-* label", status: "skipped" },
+      ],
+      eligibility: [],
+      verdict: { kind: "ineligible", reason: "ticket has no agent-* label" },
+    };
+
+    const lines = renderTicketDoctorResult(result);
+
+    const labelLine = lines.find((l) => l.includes("Has agent-* label"));
+    const modelLine = lines.find((l) => l.includes("Model resolves from agent-* label"));
+    expect(labelLine).toMatch(/\[--\]/);
+    expect(modelLine).toMatch(/\[\? \]/);
+    expect(modelLine).not.toMatch(/\[--\]/);
   });
 });
 
