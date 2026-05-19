@@ -247,26 +247,34 @@ async function removeWorktree(
     try {
       await runCommandAsync("git", removeArguments, longRunningCommandOptions(options.signal));
     } catch (error) {
-      // git's `fatal: ... use --force to delete it` line goes to inherited
-      // stderr, so the captured error is just "Exit status: 128". Probe the
-      // worktree ourselves so the failure message explains the condition
-      // (modified/untracked files) and points at `crew cleanup --force`.
+      // git's `fatal: ...` diagnostic goes to inherited stderr, so the
+      // captured error is just "Exit status: 128". Probe the worktree
+      // ourselves so the failure message names the condition — dirty
+      // (modified/untracked files, fixable with `crew cleanup --force`) or
+      // orphan (directory exists on disk but is not registered with the
+      // parent repo, requires manual inspection + `rm -rf`).
       if (options.force || options.signal?.aborted === true) {
         throw error;
       }
       const dirtiness = await probeWorktreeDirtiness(entry.dir, options.signal);
-      if (dirtiness.kind !== "dirty") {
-        throw error;
+      if (dirtiness.kind === "dirty") {
+        throw new Error(
+          describeDirtyWorktree({
+            ticket: entry.ticket,
+            dir: entry.dir,
+            modified: dirtiness.modified,
+            untracked: dirtiness.untracked,
+          }),
+          { cause: error },
+        );
       }
-      throw new Error(
-        describeDirtyWorktree({
-          ticket: entry.ticket,
-          dir: entry.dir,
-          modified: dirtiness.modified,
-          untracked: dirtiness.untracked,
-        }),
-        { cause: error },
-      );
+      if (dirtiness.kind === "unknown") {
+        const registration = await probeWorktreeRegistration(entry.dir, options.signal);
+        if (registration === "orphan") {
+          throw new Error(describeOrphanWorktree({ dir: entry.dir }), { cause: error });
+        }
+      }
+      throw error;
     }
   } else {
     log(`Worktree directory ${entry.dir} not found, pruning stale refs...`);
@@ -338,6 +346,30 @@ function describeDirtyWorktree(arguments_: {
   const summary = parts.join(" and ");
   const pronoun = modified + untracked === 1 ? "it" : "them";
   return `worktree has ${summary}. Run \`crew cleanup --force ${ticket}\` to discard ${pronoun}, or commit/stash in ${dir} first.`;
+}
+
+type WorktreeRegistration = "registered" | "orphan" | "unknown";
+
+async function probeWorktreeRegistration(
+  worktreeDir: string,
+  signal: AbortSignal | undefined,
+): Promise<WorktreeRegistration> {
+  let output: string;
+  try {
+    output = await runCommandAsync(
+      "git",
+      ["-C", worktreeDir, "rev-parse", "--is-inside-work-tree"],
+      signalProperty(signal),
+    );
+  } catch {
+    return "unknown";
+  }
+  return output === "true" ? "registered" : "orphan";
+}
+
+function describeOrphanWorktree(arguments_: { dir: string }): string {
+  const { dir } = arguments_;
+  return `directory exists but is not a registered git worktree. If ${dir} has nothing of value, \`rm -rf\` ${dir} manually; otherwise inspect it before deleting.`;
 }
 
 function list(config: ResolvedConfig): WorktreeEntry[] {

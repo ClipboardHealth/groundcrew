@@ -573,19 +573,63 @@ describe(remove, () => {
     await expect(callRemove()).rejects.not.toThrow(/modified/);
   });
 
-  it("rethrows the original error when the dirtiness probe itself fails", async () => {
+  it("wraps the error with an orphan explanation when the directory is not a registered worktree", async () => {
     mkdirSync(join(projectDir, "repo-a"));
     mkdirSync(join(projectDir, "repo-a-team-1"));
     const config = makeConfig({ projectDir });
 
     runCommandMock.mockImplementation((_command, arguments_) => {
-      // oxlint-disable-next-line vitest/no-conditional-in-test -- both the remove and the follow-up status probe fail; no dirtiness info available.
+      // oxlint-disable-next-line vitest/no-conditional-in-test -- discriminator selects the worktree-remove call to fail; status fails because the dir has no .git; rev-parse reports it is not a working tree.
+      if (hasArguments(arguments_, "worktree", "remove")) {
+        throw new Error("Command failed: git worktree remove\nExit status: 128");
+      }
+      // oxlint-disable-next-line vitest/no-conditional-in-test -- as above
+      if (hasArguments(arguments_, "status", "--porcelain")) {
+        throw new Error("not a git repository");
+      }
+      // oxlint-disable-next-line vitest/no-conditional-in-test -- as above
+      if (hasArguments(arguments_, "rev-parse", "--is-inside-work-tree")) {
+        return "false";
+      }
+      return "";
+    });
+
+    const callRemove = async (): Promise<void> => {
+      await remove(config, {
+        repository: "repo-a",
+        ticket: "team-1",
+        branchName: "rocky-team-1",
+        dir: join(projectDir, "repo-a-team-1"),
+        kind: "host",
+      });
+    };
+
+    await expect(callRemove()).rejects.toThrow(
+      /directory exists but is not a registered git worktree/,
+    );
+    await expect(callRemove()).rejects.toThrow(
+      new RegExp(`\`rm -rf\` ${join(projectDir, "repo-a-team-1").replaceAll("/", String.raw`\/`)}`),
+    );
+    await expect(callRemove()).rejects.toThrow(/inspect it before deleting/);
+  });
+
+  it("rethrows the original error when the registration probe itself fails", async () => {
+    mkdirSync(join(projectDir, "repo-a"));
+    mkdirSync(join(projectDir, "repo-a-team-1"));
+    const config = makeConfig({ projectDir });
+
+    runCommandMock.mockImplementation((_command, arguments_) => {
+      // oxlint-disable-next-line vitest/no-conditional-in-test -- both the dirtiness and registration probes fail; we cannot prove the orphan condition, so rethrow.
       if (hasArguments(arguments_, "worktree", "remove")) {
         throw new Error("original remove failure");
       }
       // oxlint-disable-next-line vitest/no-conditional-in-test -- as above
       if (hasArguments(arguments_, "status", "--porcelain")) {
         throw new Error("status probe blew up");
+      }
+      // oxlint-disable-next-line vitest/no-conditional-in-test -- as above
+      if (hasArguments(arguments_, "rev-parse", "--is-inside-work-tree")) {
+        throw new Error("rev-parse blew up");
       }
       return "";
     });
@@ -599,6 +643,38 @@ describe(remove, () => {
         kind: "host",
       }),
     ).rejects.toThrow("original remove failure");
+  });
+
+  it("rethrows the original error when the registration probe confirms the directory is a worktree", async () => {
+    mkdirSync(join(projectDir, "repo-a"));
+    mkdirSync(join(projectDir, "repo-a-team-1"));
+    const config = makeConfig({ projectDir });
+
+    runCommandMock.mockImplementation((_command, arguments_) => {
+      // oxlint-disable-next-line vitest/no-conditional-in-test -- dirtiness probe is unavailable but rev-parse reports a real working tree; the orphan explanation would be wrong, so rethrow.
+      if (hasArguments(arguments_, "worktree", "remove")) {
+        throw new Error("registered but still failed");
+      }
+      // oxlint-disable-next-line vitest/no-conditional-in-test -- as above
+      if (hasArguments(arguments_, "status", "--porcelain")) {
+        throw new Error("status probe blew up");
+      }
+      // oxlint-disable-next-line vitest/no-conditional-in-test -- as above
+      if (hasArguments(arguments_, "rev-parse", "--is-inside-work-tree")) {
+        return "true";
+      }
+      return "";
+    });
+
+    await expect(
+      remove(config, {
+        repository: "repo-a",
+        ticket: "team-1",
+        branchName: "rocky-team-1",
+        dir: join(projectDir, "repo-a-team-1"),
+        kind: "host",
+      }),
+    ).rejects.toThrow("registered but still failed");
   });
 
   it("rethrows the original error when removal fails but the worktree is clean", async () => {
@@ -625,7 +701,7 @@ describe(remove, () => {
     ).rejects.toThrow("git worktree remove failed for some other reason");
   });
 
-  it("skips the dirtiness probe and rethrows when --force is already set", async () => {
+  it("skips both probes and rethrows when --force is already set", async () => {
     mkdirSync(join(projectDir, "repo-a"));
     mkdirSync(join(projectDir, "repo-a-team-1"));
     const config = makeConfig({ projectDir });
@@ -655,7 +731,11 @@ describe(remove, () => {
     const statusCalls = runCommandMock.mock.calls.filter(([, arguments_]) =>
       hasArguments(arguments_, "status", "--porcelain"),
     );
+    const revParseCalls = runCommandMock.mock.calls.filter(([, arguments_]) =>
+      hasArguments(arguments_, "rev-parse", "--is-inside-work-tree"),
+    );
     expect(statusCalls).toHaveLength(0);
+    expect(revParseCalls).toHaveLength(0);
   });
 
   it("rethrows branch deletion failures after the shutdown signal fires", async () => {
