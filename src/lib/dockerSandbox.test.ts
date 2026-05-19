@@ -20,22 +20,16 @@ vi.mock(import("./commandRunner.ts"), async (importOriginal) => {
 });
 
 describe(sandboxNameFor, () => {
-  it("composes `groundcrew-<repo>-<model>` in lowercase", () => {
-    expect(sandboxNameFor({ repository: "Repo-A", model: "Claude" })).toBe(
-      "groundcrew-repo-a-claude",
-    );
+  it("composes `groundcrew-<agent>` in lowercase", () => {
+    expect(sandboxNameFor({ agent: "Claude" })).toBe("groundcrew-claude");
   });
 
   it("normalises unsafe characters to single dashes", () => {
-    expect(sandboxNameFor({ repository: "repo/A_b", model: "claude!" })).toBe(
-      "groundcrew-repo-a-b-claude",
-    );
+    expect(sandboxNameFor({ agent: "my/agent_v2!" })).toBe("groundcrew-my-agent-v2");
   });
 
   it("collapses runs of dashes and strips leading/trailing dashes", () => {
-    expect(sandboxNameFor({ repository: "--repo--", model: "claude--" })).toBe(
-      "groundcrew-repo-claude",
-    );
+    expect(sandboxNameFor({ agent: "--cursor--" })).toBe("groundcrew-cursor");
   });
 });
 
@@ -45,15 +39,15 @@ describe(sandboxExists, () => {
   });
 
   it("returns true when the first column of an sbx ls row matches the name", async () => {
-    runCommandMock.mockReturnValue("NAME STATUS\ngroundcrew-repo-a-claude running\n");
+    runCommandMock.mockReturnValue("NAME STATUS\ngroundcrew-claude running\n");
 
-    await expect(sandboxExists("groundcrew-repo-a-claude")).resolves.toBe(true);
+    await expect(sandboxExists("groundcrew-claude")).resolves.toBe(true);
   });
 
   it("returns false when no row's first column matches", async () => {
     runCommandMock.mockReturnValue("NAME STATUS\nother-sandbox running\n");
 
-    await expect(sandboxExists("groundcrew-repo-a-claude")).resolves.toBe(false);
+    await expect(sandboxExists("groundcrew-claude")).resolves.toBe(false);
   });
 
   it("passes the AbortSignal to runCommandAsync", async () => {
@@ -83,10 +77,10 @@ describe(ensureSandbox, () => {
   }
 
   it("does nothing when the sandbox already exists", async () => {
-    mockExisting(["groundcrew-repo-a-claude"]);
+    mockExisting(["groundcrew-claude"]);
 
     await ensureSandbox({
-      sandboxName: "groundcrew-repo-a-claude",
+      sandboxName: "groundcrew-claude",
       sandbox: { agent: "claude" },
       mountPath: "/home/user/dev",
     });
@@ -100,14 +94,14 @@ describe(ensureSandbox, () => {
     mockExisting([]);
 
     await ensureSandbox({
-      sandboxName: "groundcrew-repo-a-claude",
+      sandboxName: "groundcrew-claude",
       sandbox: { agent: "claude" },
       mountPath: "/home/user/dev",
     });
 
     expect(runCommandMock).toHaveBeenCalledWith(
       "sbx",
-      ["create", "--name", "groundcrew-repo-a-claude", "claude", "/home/user/dev"],
+      ["create", "--name", "groundcrew-claude", "claude", "/home/user/dev"],
       expect.any(Object),
     );
   });
@@ -116,7 +110,7 @@ describe(ensureSandbox, () => {
     mockExisting([]);
 
     await ensureSandbox({
-      sandboxName: "groundcrew-repo-a-claude",
+      sandboxName: "groundcrew-claude",
       sandbox: { agent: "claude", template: "node-22" },
       mountPath: "/home/user/dev",
     });
@@ -126,7 +120,7 @@ describe(ensureSandbox, () => {
       [
         "create",
         "--name",
-        "groundcrew-repo-a-claude",
+        "groundcrew-claude",
         "--template",
         "node-22",
         "claude",
@@ -140,7 +134,7 @@ describe(ensureSandbox, () => {
     mockExisting([]);
 
     await ensureSandbox({
-      sandboxName: "groundcrew-repo-a-claude",
+      sandboxName: "groundcrew-claude",
       sandbox: { agent: "claude", kits: ["npm-cache", "tools"] },
       mountPath: "/home/user/dev",
     });
@@ -150,7 +144,7 @@ describe(ensureSandbox, () => {
       [
         "create",
         "--name",
-        "groundcrew-repo-a-claude",
+        "groundcrew-claude",
         "--kit",
         "npm-cache",
         "--kit",
@@ -168,7 +162,7 @@ describe(ensureSandbox, () => {
 
     await ensureSandbox(
       {
-        sandboxName: "groundcrew-repo-a-claude",
+        sandboxName: "groundcrew-claude",
         sandbox: { agent: "claude" },
         mountPath: "/home/user/dev",
       },
@@ -181,11 +175,11 @@ describe(ensureSandbox, () => {
   });
 
   it("treats a concurrent create as success when sbx create fails but the sandbox now exists", async () => {
-    const counters = mockConcurrentCreate("groundcrew-repo-a-claude");
+    const counters = mockConcurrentCreate("groundcrew-claude");
 
     await expect(
       ensureSandbox({
-        sandboxName: "groundcrew-repo-a-claude",
+        sandboxName: "groundcrew-claude",
         sandbox: { agent: "claude" },
         mountPath: "/home/user/dev",
       }),
@@ -199,7 +193,7 @@ describe(ensureSandbox, () => {
 
     await expect(
       ensureSandbox({
-        sandboxName: "groundcrew-repo-a-claude",
+        sandboxName: "groundcrew-claude",
         sandbox: { agent: "claude" },
         mountPath: "/home/user/dev",
       }),

@@ -174,7 +174,10 @@ export async function setupWorkspace(
 
     const secretsFile = stageBuildSecrets(promptDir);
 
-    const sandboxName = runner === "sdx" ? sandboxNameFor({ repository, model }) : undefined;
+    const sandboxName =
+      runner === "sdx" && definition.sandbox !== undefined
+        ? sandboxNameFor({ agent: definition.sandbox.agent })
+        : undefined;
     if (runner === "sdx" && sandboxName !== undefined && definition.sandbox !== undefined) {
       await ensureSandbox(
         {

@@ -148,7 +148,7 @@ describe(buildLaunchCommand, () => {
           sandbox: { agent: "claude" },
         },
         runner: "sdx",
-        sandboxName: "groundcrew-repo-a-claude",
+        sandboxName: "groundcrew-claude",
         ...overrides,
       });
     }
@@ -157,7 +157,7 @@ describe(buildLaunchCommand, () => {
       const out = buildLaunchCommand(sdxArguments());
 
       expect(out).toContain(
-        "exec sbx exec -it -w '/work/repo-a-team-1' 'groundcrew-repo-a-claude' sh -lc",
+        "exec sbx exec -it -w '/work/repo-a-team-1' 'groundcrew-claude' sh -lc",
       );
       expect(out).toContain("exec claude");
       expect(out).toMatch(/sh "\$_p"$/);
@@ -190,8 +190,8 @@ describe(buildLaunchCommand, () => {
 
       // The inner agent command is single-quoted for `sh -lc`, so embedded
       // sandbox / worktree quotes are escaped via the `'\''` close-escape-reopen
-      // dance — `groundcrew-repo-a-claude` still lands as `--sandbox`'s value.
-      expect(out).toContain(String.raw`--sandbox '\''groundcrew-repo-a-claude'\''`);
+      // dance — `groundcrew-claude` still lands as `--sandbox`'s value.
+      expect(out).toContain(String.raw`--sandbox '\''groundcrew-claude'\''`);
       expect(out).toContain(String.raw`--worktree '\''/work/repo-a-team-1'\''`);
       expect(out).not.toContain("{{sandbox}}");
       expect(out).not.toContain("{{worktree}}");
