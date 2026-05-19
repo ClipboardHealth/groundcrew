@@ -88,11 +88,6 @@ export interface Config {
       done?: string;
       terminal?: string[];
     };
-    /**
-     * Linear team IDs that groundcrew is authorized to dispatch tickets for.
-     * Defaults to `[]` (no restriction) when omitted.
-     */
-    teamIds?: string[];
   };
   git?: {
     remote?: string;
@@ -152,13 +147,6 @@ export interface ResolvedConfig {
       done: string;
       terminal: string[];
     };
-    /**
-     * Linear team IDs that groundcrew is authorized to dispatch tickets for.
-     * A ticket whose `teamId` is not in this list is rejected at resolution
-     * time (before eligibility checks) so the orchestrator never touches
-     * tickets from other teams on a shared workspace.
-     */
-    teamIds: string[];
   };
   git: {
     remote: string;
@@ -556,7 +544,6 @@ function applyDefaults(user: Config): ResolvedConfig {
       projectSlug: user.linear.projectSlug,
       slugId,
       statuses: normalizeStatuses(user.linear.statuses),
-      teamIds: normalizeOptionalStringArray(user.linear.teamIds, "linear.teamIds") ?? [],
     },
     git: { ...DEFAULT_GIT, ...user.git },
     workspace: {

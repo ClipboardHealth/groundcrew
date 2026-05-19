@@ -41,7 +41,6 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
       projectSlug: "ai-strategy-aaaaaaaaaaaa",
       slugId: "aaaaaaaaaaaa",
       statuses: { todo: "Todo", inProgress: "In Progress", done: "Done", terminal: ["Done"] },
-      teamIds: [],
       ...overrides.linear,
     },
     git: { remote: "origin", defaultBranch: "main", ...overrides.git },
@@ -372,7 +371,6 @@ describe(createBoardSource, () => {
             done: "Done",
             terminal: ["Done", "Won't Do"],
           },
-          teamIds: [],
         },
       });
       const { source, rawRequest } = makeBoardSource(makeClient({ pages: [[]] }), config);
@@ -675,7 +673,6 @@ describe(isTerminalStatus, () => {
         projectSlug: "x-aaaaaaaaaaaa",
         slugId: "aaaaaaaaaaaa",
         statuses: { todo: "Todo", inProgress: "In Progress", done: "Done", terminal: ["Done"] },
-        teamIds: [],
       },
     });
     expect(isTerminalStatus("Done", config)).toBe(true);
@@ -692,7 +689,6 @@ describe(isTerminalStatus, () => {
           done: "Done",
           terminal: ["Done", "Released"],
         },
-        teamIds: [],
       },
     });
     expect(isTerminalStatus("Released", config)).toBe(true);

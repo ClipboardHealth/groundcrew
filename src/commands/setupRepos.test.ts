@@ -46,7 +46,6 @@ function makeConfig(overrides: {
       projectSlug: "x-aaaaaaaaaaaa",
       slugId: "aaaaaaaaaaaa",
       statuses: { todo: "Todo", inProgress: "In Progress", done: "Done", terminal: ["Done"] },
-      teamIds: [],
     },
     git: { remote: "origin", defaultBranch: "main" },
     workspace: {

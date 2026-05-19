@@ -24,7 +24,6 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
       projectSlug: "ai-strategy-aaaaaaaaaaaa",
       slugId: "aaaaaaaaaaaa",
       statuses: { todo: "Todo", inProgress: "In Progress", done: "Done", terminal: ["Done"] },
-      teamIds: [],
       ...overrides.linear,
     },
     git: { remote: "origin", defaultBranch: "main", ...overrides.git },
@@ -150,7 +149,6 @@ describe(createCleaner, () => {
             done: "Done",
             terminal: ["Done", "Released"],
           },
-          teamIds: [],
         },
       }),
     });

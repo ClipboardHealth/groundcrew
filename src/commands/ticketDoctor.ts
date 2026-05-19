@@ -55,18 +55,6 @@ export async function ticketDoctor(
 
   resolution.push({ name: "Ticket exists in Linear", status: "ok", detail: `"${raw.title}"` });
 
-  // Team check
-  const teamOk = config.linear.teamIds.includes(raw.teamId);
-  if (teamOk) {
-    resolution.push({ name: "In configured Linear project", status: "ok" });
-  } else {
-    resolution.push({
-      name: "In configured Linear project",
-      status: "fail",
-      detail: `ticket team ${raw.teamId} not in linear.teamIds`,
-    });
-  }
-
   // Status check
   const todoState = config.linear.statuses.todo;
   const statusOk = raw.stateName === todoState;
