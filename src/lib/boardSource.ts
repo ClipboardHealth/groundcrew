@@ -277,7 +277,11 @@ function escapeRegex(value: string): string {
 // must beat `api` when both are configured. `\b` treats `-` as a word
 // boundary, so without this ordering `api` would win on `api-admin`.
 function buildRepositoryRegex(config: ResolvedConfig): RegExp {
-  const alternation = config.workspace.knownRepositories
+  const candidates = config.workspace.knownRepositories.flatMap((repo) => {
+    const slashIndex = repo.indexOf("/");
+    return slashIndex === -1 ? [repo] : [repo, repo.slice(slashIndex + 1)];
+  });
+  const alternation = candidates
     .toSorted((a, b) => b.length - a.length)
     .map(escapeRegex)
     .join("|");
@@ -372,14 +376,28 @@ function parseRepository(arguments_: ParseRepositoryArguments): string {
       repositories: config.workspace.knownRepositories,
     });
   }
-  const repository = repositoryRegex.exec(description)?.[1];
-  if (repository === undefined) {
+  const matched = repositoryRegex.exec(description)?.[1];
+  if (matched === undefined) {
     throw new RepositoryResolutionError({
       ticket,
       repositories: config.workspace.knownRepositories,
     });
   }
-  return repository;
+  if (matched.includes("/")) {
+    return matched;
+  }
+  // Bare repo name matched — resolve to full owner/repo. Reject if ambiguous.
+  const candidates = config.workspace.knownRepositories.filter(
+    (r) => r === matched || r.endsWith(`/${matched}`),
+  );
+  const [resolved] = candidates;
+  if (candidates.length !== 1 || resolved === undefined) {
+    throw new RepositoryResolutionError({
+      ticket,
+      repositories: config.workspace.knownRepositories,
+    });
+  }
+  return resolved;
 }
 
 /**
