@@ -1000,6 +1000,10 @@ describe(createDispatcher, () => {
       });
 
       expect(consoleLog.output()).toContain("Failed to update Linear for team-1");
+      // markTodo runs first: when it throws, the agent-retried label must
+      // NOT be applied — otherwise the next tick sees the label and locks
+      // the ticket into retry_exhausted without a real retry.
+      expect(client.issueAddLabel).not.toHaveBeenCalled();
     });
 
     it("reuses an existing team label instead of creating a new one", async () => {

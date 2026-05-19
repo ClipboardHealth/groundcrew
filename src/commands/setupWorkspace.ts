@@ -231,7 +231,17 @@ export async function setupWorkspace(
     log(`  Branch:   ${branchName}`);
     await logWorkspaceAccessHint({ config, ticket, signal });
   } catch (error) {
-    await rollbackWorktree({ config, entry: created, promptDir });
+    // On the reuseWorktree path the worktree pre-existed, so a force
+    // teardown here would discard a stranded user's uncommitted work
+    // along with the failed reopen attempt. Leave the worktree intact;
+    // the strand classifier will pick it up again on the next tick.
+    if (options.reuseWorktree === true) {
+      if (promptDir !== undefined) {
+        rmSync(promptDir, { recursive: true, force: true });
+      }
+    } else {
+      await rollbackWorktree({ config, entry: created, promptDir });
+    }
     throw error;
   }
 }

@@ -155,8 +155,13 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
 
   async function demoteStranded(issue: GroundcrewIssue): Promise<void> {
     try {
-      await issueStatusUpdater.addLabels(issue, [AGENT_RETRIED_LABEL]);
+      // markTodo first: if the state transition fails, leave the ticket
+      // un-labelled so the next tick re-detects it as a fresh strand and
+      // tries again. Reversing the order would mark `agent-retried` on a
+      // ticket that never actually got its retry, locking it into
+      // retry_exhausted on the next iteration.
       await issueStatusUpdater.markTodo(issue);
+      await issueStatusUpdater.addLabels(issue, [AGENT_RETRIED_LABEL]);
       log(`Demoted stranded ${issue.id} to Todo (one retry remaining)`);
       logEvent("orchestrator", {
         outcome: "demote_stranded",

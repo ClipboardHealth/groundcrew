@@ -913,6 +913,23 @@ describe(setupWorkspace, () => {
     ).rejects.toThrow(/Unknown model: ghost/);
   });
 
+  it("skips the worktree rollback on reopen failure but still cleans the prompt dir", async () => {
+    const config = makeConfig();
+    mockCmuxNewWorkspaceOutput("garbage that has no ref");
+
+    await expect(
+      setupWorkspace(config, {
+        ticket: "team-1",
+        repository: "repo-a",
+        model: "claude",
+        reuseWorktree: true,
+      }),
+    ).rejects.toThrow(/Unexpected cmux output/);
+
+    expect(teardownMock).not.toHaveBeenCalled();
+    expect(rmMock).toHaveBeenCalledWith("/tmp/groundcrew-team-1-x", expect.anything());
+  });
+
   it("rolls back the worktree, branch, and cmux workspace when cmux launch fails", async () => {
     const config = makeConfig();
     mockCmuxNewWorkspaceOutput("garbage that has no ref");
@@ -981,6 +998,22 @@ describe(setupWorkspace, () => {
       [expect.objectContaining({ ticket: "team-1" })],
       { force: true },
     );
+  });
+
+  it("leaves the worktree and prompt dir alone on a reopen failure that happens before mkdtemp", async () => {
+    issueResolver.mockRejectedValue(new Error("linear unreachable"));
+
+    await expect(
+      setupWorkspace(makeConfig(), {
+        ticket: "team-1",
+        repository: "repo-a",
+        model: "claude",
+        reuseWorktree: true,
+      }),
+    ).rejects.toThrow(/linear unreachable/);
+
+    expect(teardownMock).not.toHaveBeenCalled();
+    expect(rmMock).not.toHaveBeenCalled();
   });
 
   it("uses the JSON id field when ref is missing", async () => {
