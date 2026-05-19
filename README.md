@@ -164,11 +164,20 @@ Rules:
 
 When groundcrew launches a worktree it looks for `.groundcrew/setup.sh` in the repo root. If present, it's invoked with `--deps-only` before the agent starts — executable preferred, otherwise via `bash .groundcrew/setup.sh --deps-only`. The same lookup runs inside the sdx sandbox (overridable per-model via `models.definitions.<name>.sandbox.setupCommand`).
 
-If no `.groundcrew/setup.sh` exists, groundcrew falls back to the legacy `.claude/setup.sh` at the same path with the same `--deps-only` contract — so repos that haven't migrated keep working. When neither file exists, groundcrew logs `[groundcrew] host setup: not configured (add .groundcrew/setup.sh to opt in)` (or `sandbox setup: …` for the sdx path) to stderr and continues — no implicit `npm install`, `uv sync`, or anything else.
+If no `.groundcrew/setup.sh` exists, groundcrew falls back to the legacy `.claude/setup.sh` at the same path with the same contract — so repos that haven't migrated keep working. When neither file exists, groundcrew logs `[groundcrew] host setup: not configured (add .groundcrew/setup.sh to opt in)` (or `sandbox setup: …` for the sdx path) to stderr and continues — no implicit `npm install`, `uv sync`, or anything else.
 
-The `--deps-only` flag is groundcrew's contract with the script: when set, the script should install just the dependencies needed for the agent to run, and skip any interactive bootstrap. Same script handles both modes — branch on `$1`.
+### The `--deps-only` contract
 
-Example `.groundcrew/setup.sh` for a Python repo using uv:
+The flag tells the script "you're being called by an automated system before an agent launches — skip anything interactive or one-time-only." The same script handles both modes; branch on `$1`. The name is historical and Node-flavored, but the semantic is language-neutral:
+
+- **With `--deps-only`**: do the cheap recurring work this worktree needs (lockfile install, generate types, etc.). No prompts, no global installs, no `nvm` / `pyenv` bootstrap that the host should already have.
+- **Without the flag**: full interactive bootstrap. Use this path when an engineer runs the script by hand for first-time onboarding, or when wiring it into another tool's SessionStart hook.
+
+Setup failures are advisory — groundcrew logs the non-zero exit and still launches the agent so a flaky network or stale lockfile doesn't block the session.
+
+### Examples
+
+**Python (uv):**
 
 ```bash
 #!/usr/bin/env bash
@@ -177,11 +186,33 @@ if [ "${1:-}" = "--deps-only" ]; then
   uv sync --dev
 else
   uv sync --dev
-  # ... any extra interactive bootstrap ...
+  # ... extra one-time bootstrap (e.g., pre-commit install, db seed) ...
 fi
 ```
 
-Setup failures are advisory — groundcrew logs the non-zero exit and still launches the agent so a flaky network or stale lockfile doesn't block the session.
+**Node (npm):**
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "${1:-}" = "--deps-only" ]; then
+  npm clean-install
+else
+  npm clean-install
+  # ... extra one-time bootstrap (e.g., husky install, codegen, link local packages) ...
+fi
+```
+
+**Docs-only or polyglot repo with no install step:**
+
+```bash
+#!/usr/bin/env bash
+exit 0
+```
+
+The bare `exit 0` suppresses the `[groundcrew] … setup: not configured` hint for documentation repos, polyglot monorepos where setup happens per-package, or anywhere the per-worktree work is genuinely zero.
+
+For a more comprehensive real-world example (nvm bootstrap, hash-based skip-on-no-changes caching, portable SHA-256 detection), see [this repo's own `.claude/setup.sh`](./.claude/setup.sh) — kept at the legacy path because it doubles as a Claude Code SessionStart hook.
 
 ## Manual commands
 
