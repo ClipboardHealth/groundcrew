@@ -273,7 +273,7 @@ describe("loadConfig", () => {
     const { loadConfig } = await loadFreshConfig();
 
     await expect(loadConfig()).rejects.toThrow(
-      /models.isolation is no longer supported: local isolation is always Safehouse; remove this key/,
+      /models.isolation is no longer supported: set `local\.runner`/,
     );
   });
 
@@ -293,7 +293,7 @@ describe("loadConfig", () => {
     const { loadConfig } = await loadFreshConfig();
 
     await expect(loadConfig()).rejects.toThrow(
-      /remote is no longer supported: groundcrew is macOS \+ Safehouse only/,
+      /remote is no longer supported: groundcrew runs locally via safehouse\/sdx\/none/,
     );
   });
 
@@ -353,7 +353,31 @@ describe("loadConfig", () => {
     );
   });
 
-  it("rejects legacy per-model sandbox config", async () => {
+  it("accepts a per-model sandbox config and surfaces it on the resolved definition", async () => {
+    const path = writeConfigFile(
+      temporary,
+      [
+        "export const config = {",
+        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        "  models: { definitions: { claude: { sandbox: { agent: 'claude', template: 'node-22', kits: ['npm-cache'], setupCommand: 'echo seed' } } } },",
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    const config = await loadConfig();
+    expect(config.models.definitions["claude"]?.sandbox).toStrictEqual({
+      agent: "claude",
+      template: "node-22",
+      kits: ["npm-cache"],
+      setupCommand: "echo seed",
+    });
+  });
+
+  it("accepts a per-model sandbox config with only the agent field", async () => {
     const path = writeConfigFile(
       temporary,
       [
@@ -368,9 +392,162 @@ describe("loadConfig", () => {
 
     const { loadConfig } = await loadFreshConfig();
 
-    await expect(loadConfig()).rejects.toThrow(
-      /models.definitions.claude.sandbox is no longer supported: Docker Sandboxes are no longer supported/,
+    const config = await loadConfig();
+    expect(config.models.definitions["claude"]?.sandbox).toStrictEqual({ agent: "claude" });
+  });
+
+  it("rejects a per-model sandbox config that omits agent", async () => {
+    const path = writeConfigFile(
+      temporary,
+      [
+        "export const config = {",
+        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        "  models: { definitions: { claude: { sandbox: {} } } },",
+        "};",
+      ].join("\n"),
     );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(
+      /models\.definitions\.claude\.sandbox\.agent must be a non-empty string/,
+    );
+  });
+
+  it("rejects a per-model sandbox config with a whitespace-only agent", async () => {
+    const path = writeConfigFile(
+      temporary,
+      [
+        "export const config = {",
+        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        '  models: { definitions: { claude: { sandbox: { agent: "   " } } } },',
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(
+      /models\.definitions\.claude\.sandbox\.agent must be a non-empty string/,
+    );
+  });
+
+  it("trims surrounding whitespace from a per-model sandbox agent", async () => {
+    const path = writeConfigFile(
+      temporary,
+      [
+        "export const config = {",
+        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        '  models: { definitions: { claude: { sandbox: { agent: "  claude  " } } } },',
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    const config = await loadConfig();
+    expect(config.models.definitions["claude"]?.sandbox).toStrictEqual({ agent: "claude" });
+  });
+
+  it("rejects a non-object local block", async () => {
+    const path = writeConfigFile(
+      temporary,
+      [
+        "export const config = {",
+        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        "  local: 'auto',",
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(/local must be an object/);
+  });
+
+  it("rejects a non-object per-model sandbox block", async () => {
+    const path = writeConfigFile(
+      temporary,
+      [
+        "export const config = {",
+        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        "  models: { definitions: { claude: { sandbox: 'claude' } } },",
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(
+      /models\.definitions\.claude\.sandbox must be an object/,
+    );
+  });
+
+  it("rejects an invalid local.runner value", async () => {
+    const path = writeConfigFile(
+      temporary,
+      [
+        "export const config = {",
+        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        "  local: { runner: 'bubblewrap' },",
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(
+      /local\.runner must be one of auto, safehouse, sdx, none/,
+    );
+  });
+
+  it("defaults local.runner to 'auto' when omitted", async () => {
+    const path = writeConfigFile(
+      temporary,
+      [
+        "export const config = {",
+        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    const config = await loadConfig();
+    expect(config.local.runner).toBe("auto");
+  });
+
+  it("preserves an explicit local.runner value", async () => {
+    const path = writeConfigFile(
+      temporary,
+      [
+        "export const config = {",
+        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        "  local: { runner: 'sdx' },",
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    const config = await loadConfig();
+    expect(config.local.runner).toBe("sdx");
   });
 
   it("rejects `disabled: false` on a model definition", async () => {

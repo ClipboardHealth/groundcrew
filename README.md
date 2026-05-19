@@ -15,7 +15,12 @@ This installs the `crew` binary. `@clipboard-health/clearance` is pulled in tran
 
 ## Quickstart
 
-1. **Install prereqs.** Node 24, `git`, `cmux` _or_ `tmux`, and the agent CLIs themselves (`claude`, `codex`, `cursor-agent`, ...). Groundcrew is **macOS-only** and requires [Safehouse](https://agent-safehouse.dev/) on `PATH`. Optional: `codexbar` for session-usage gating. The `workspaceKind` config key picks the workspace backend (`auto` resolves to cmux when installed, else tmux).
+1. **Install prereqs.** Node 24, `git`, `cmux` _or_ `tmux`, and the agent CLIs themselves (`claude`, `codex`, `cursor-agent`, ...). Pick a local isolation backend below depending on platform and what the agent needs to do. Optional: `codexbar` for session-usage gating. The `workspaceKind` config key picks the workspace backend (`auto` resolves to cmux when installed, else tmux).
+   - **`safehouse`** (macOS default) — [Safehouse](https://agent-safehouse.dev/) on `PATH`. The fastest local backend; cannot safely give the agent Docker.
+   - **`sdx`** (Linux default, macOS opt-in) — [Docker Sandboxes](https://docs.docker.com/sandboxes/) (`sbx`) on `PATH`. Required when a ticket needs the agent to use Docker (`docker build`, `docker run`, integration tests). Each model that should run under sdx needs a `sandbox: { agent: "<sbx-agent>" }` block in `config.ts` so groundcrew knows which sbx agent to address.
+   - **`none`** — explicit unsandboxed escape hatch. Never picked implicitly; `crew doctor` warns when it is configured.
+
+   Groundcrew resolves `local.runner` per platform: macOS → `safehouse`, Linux/WSL → `sdx`. Set `local.runner` to `"safehouse" | "sdx" | "none"` to override; leave at `"auto"` for the platform default.
 
 2. **Create a Linear project to scope your work.** Any team works — make a project inside it and drop tickets in. The orchestrator polls by project, not by team, so you don't need a dedicated team.
 
@@ -49,23 +54,25 @@ This installs the `crew` binary. `@clipboard-health/clearance` is pulled in tran
 
    `crew` resolves the config path as: `GROUNDCREW_CONFIG` if set → `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/config.ts` if it exists → a `config.ts` sitting next to `crew`'s own source files (only useful from a local checkout; see [Hacking on groundcrew](#hacking-on-groundcrew)). Set `GROUNDCREW_CONFIG` only when you want to override the XDG location.
 
-4. **Provide a Linear API key.** `crew` expects `LINEAR_API_KEY` in its environment. Any mechanism works — shell export, [direnv](https://direnv.net/), a `.env` file you `source`, or piping through `op run` if you store the credential in 1Password:
+4. **Provide a Linear API key.** `crew` reads the key from `GROUNDCREW_LINEAR_API_KEY` first, then falls back to `LINEAR_API_KEY`. Prefer `GROUNDCREW_LINEAR_API_KEY` so the value does not clash with other tools that consume `LINEAR_API_KEY`. Any mechanism works — shell export, [direnv](https://direnv.net/), a `.env` file you `source`, or piping through `op run` if you store the credential in 1Password:
 
    ```bash
    # Direct
-   export LINEAR_API_KEY="lin_api_..."
+   export GROUNDCREW_LINEAR_API_KEY="lin_api_..."
    crew doctor
 
    # Via 1Password CLI (`op`), if you keep the key in a vault
-   echo "LINEAR_API_KEY='op://<vault>/LINEAR_API_KEY/credential'" > .env.1password
+   echo "GROUNDCREW_LINEAR_API_KEY='op://<vault>/LINEAR_API_KEY/credential'" > .env.1password
    op run --env-file .env.1password -- crew doctor
    ```
 
-5. **Prepare the runner and agent auth.** Groundcrew supports one runner: a `cmux` or `tmux` workspace on macOS, with Safehouse on `PATH`, `clearance`, and locally authenticated agent CLIs.
+   `LINEAR_API_KEY` continues to work for existing setups; if both variables are set, `GROUNDCREW_LINEAR_API_KEY` wins.
 
-   Setup fails before creating a worktree when the host is not macOS or `safehouse` is missing. `models.isolation`, per-model `isolation`, and per-model `sandbox` are legacy keys and now fail config validation.
+5. **Prepare the runner and agent auth.** Groundcrew uses a `cmux` or `tmux` workspace hosting the resolved local backend (`safehouse`, `sdx`, or `none`) plus locally authenticated agent CLIs. Setup fails fast when the resolved backend's binary or platform requirement is missing — `safehouse` requires macOS + `safehouse` on PATH; `sdx` requires macOS or Linux + `sbx` on PATH. `models.isolation` and per-model `isolation` are legacy keys and fail config validation. Per-model `sandbox` blocks are accepted again and used by the `sdx` runner.
 
-6. **Set the clearance allowlist for local macOS runs.** Groundcrew starts `clearance` from `@clipboard-health/clearance` on `http://127.0.0.1:19999` (skipping the launch if something is already listening) and runs the agent through the bundled `safehouse-clearance` wrapper. Clearance refuses to start without an allowlist — see [its README](https://github.com/ClipboardHealth/core-utils/tree/main/packages/clearance) for the proxy's env vars, log paths, and DNS rules. The shortest path is to set the env before `crew run`:
+   For sdx, sandboxes are created automatically on first launch. Groundcrew names them deterministically as `groundcrew-<repository>-<model>`, probes `sbx ls`, and runs `sbx create [--template ...] [--kit ...] <agent> <projectDir>` when missing — `projectDir` is the mount so every per-ticket worktree (created as a sibling of the bare clone) is visible inside the sandbox. First-time agent auth happens inside the sandbox the first time the agent runs via `sbx exec`. To bootstrap manually instead, run `sbx create --name groundcrew-<repo>-<model> <agent> <projectDir>` once.
+
+6. **Set the clearance allowlist for local Safehouse runs.** Only applies when `local.runner` resolves to `safehouse`. Groundcrew starts `clearance` from `@clipboard-health/clearance` on `http://127.0.0.1:19999` (skipping the launch if something is already listening) and runs the agent through the bundled `safehouse-clearance` wrapper. Clearance refuses to start without an allowlist — see [its README](https://github.com/ClipboardHealth/core-utils/tree/main/packages/clearance) for the proxy's env vars, log paths, and DNS rules. The shortest path is to set the env before `crew run`:
 
    ```bash
    CLEARANCE_ALLOW_HOSTS="api.openai.com,auth.openai.com,api.anthropic.com,mcp.linear.app,api.linear.app" \
@@ -111,12 +118,14 @@ Required fields are marked **required**; everything else has a default and can b
 | `orchestrator.sessionLimitPercentage`   | `85`                | Number in `(0, 100]`. A model whose codexbar session window exceeds this percentage is skipped that tick.                                                                                                                                                                                 |
 | `models.default`                        | `"claude"`          | Tiebreak for `agent-any` resolution and fallback for explicit but unknown `agent-*` labels. Also used by `crew run --ticket <TICKET>` for unlabeled tickets. `crew run` without `--ticket` ignores unlabeled tickets and does not apply this default. Must exist in `models.definitions`. |
 | `models.definitions`                    | `{ claude, codex }` | Agent definitions. Additive merge with shipped defaults.                                                                                                                                                                                                                                  |
-| `models.definitions.<name>.cmd`         | —                   | Shell command launched for the model. Runs in the worktree through Safehouse/clearance. `{{worktree}}` is replaced before launch and legacy `{{sandbox}}` expands to an empty string.                                                                                                     |
+| `models.definitions.<name>.cmd`         | —                   | Shell command launched for the model. Runs in the worktree through the resolved `local.runner`. `{{worktree}}` is replaced before launch; `{{sandbox}}` expands to the sbx sandbox name under the sdx runner and an empty string otherwise.                                               |
 | `models.definitions.<name>.color`       | —                   | Color for the workspace status pill (cmux only; tmux silently drops it).                                                                                                                                                                                                                  |
 | `models.definitions.<name>.usage`       | optional            | If set, codexbar usage is fetched for this model and gated by `sessionLimitPercentage`. Omit to never gate. When `usage.codexbar.source` is omitted, groundcrew uses `auto` on macOS and `cli` elsewhere.                                                                                 |
+| `models.definitions.<name>.sandbox`     | optional            | Docker Sandboxes binding for the model. Required at launch when `local.runner` resolves to `sdx`. Fields: `agent` (required sbx agent name), `template`, `kits`, `setupCommand` (override for the inside-sandbox setup script).                                                           |
 | `models.definitions.<name>.disabled`    | optional            | When set to exactly `true`, drops the named shipped default (`claude` or `codex`). Doctor skips probing it; `agent-<name>` labels fall back to `models.default` with a warning. See "Disabling a shipped default" below.                                                                  |
 | `prompts.initial`                       | (template)          | First message sent to the agent. Placeholders: `{{ticket}}`, `{{worktree}}`, `{{title}}`, `{{description}}`.                                                                                                                                                                              |
 | `workspaceKind`                         | `"auto"`            | Terminal session manager. `"auto"` picks `cmux` when on PATH, else `tmux`. Set to `"cmux"` or `"tmux"` to fail loudly when the chosen backend is missing. tmux windows live in a dedicated `groundcrew` session.                                                                          |
+| `local.runner`                          | `"auto"`            | Local isolation backend. `"auto"` resolves to `safehouse` on macOS and `sdx` on Linux/WSL. Explicit values: `"safehouse"`, `"sdx"`, `"none"`. `"none"` is never picked implicitly — doctor warns when it is configured.                                                                   |
 | `logging.file`                          | XDG state path      | Append-mode log file destination. `log()` / `logEvent()` tee here in addition to stdout, so a vanished workspace doesn't take the evidence with it. Defaults to `${XDG_STATE_HOME:-$HOME/.local/state}/groundcrew/groundcrew.log`.                                                        |
 
 The branch prefix (`<prefix>-<TICKET>`) is derived from your OS username (`os.userInfo().username`), not configured. Agent selection looks for a top-level Linear label named `agent-<model>` (e.g. `agent-claude`, `agent-codex`). **`crew run` without `--ticket` only fetches tickets with an `agent-*` label** — the GraphQL query filters them server-side, so unlabeled tickets are never returned by Linear's API and do not appear in the rendered board. Use `crew run --ticket <TICKET>` to provision an unlabeled ticket on demand (manual setup falls back to `models.default`). The reserved label `agent-any` routes the ticket to the configured model with the most available session capacity (lowest codexbar session-used percent), skipping any model already over `sessionLimitPercentage`. With no usage data, `agent-any` resolves to `models.default`. The name `any` cannot be used in `models.definitions`. Todo tickets blocked by Linear issues that are not in `linear.statuses.terminal` are skipped until their blockers reach a terminal status.
@@ -219,16 +228,16 @@ Eligibility
 ## Gotchas
 
 - **Ticket labelled but not on the board?** Run `crew doctor --ticket <ticket>` — it lists every check the dispatcher runs and flags the failing one.
-- **Execution is macOS plus Safehouse only.** There is no `models.isolation` strategy and no direct local execution mode. Linux/WSL is not supported.
+- **Local execution picks one of safehouse/sdx/none.** `local.runner: "auto"` resolves to `safehouse` on macOS and `sdx` (Docker Sandboxes) on Linux/WSL. Override with `local.runner: "safehouse" | "sdx" | "none"`. There is no per-model `isolation` knob anymore — the runner is global. `sdx` requires a per-model `sandbox: { agent }` block so groundcrew can map the model to an sbx agent.
 - **Safehouse-already-wrapped commands are not re-wrapped.** If a `models.definitions.<name>.cmd` already starts with `safehouse`, groundcrew assumes that command owns its Safehouse flags and does not add the `safehouse-clearance` wrapper a second time. Changing the proxy's allowlist after it's running requires killing the PID in `${XDG_CACHE_HOME:-$HOME/.cache}/clearance/clearance.pid` so the next launch picks up the new env.
-- **Legacy Docker Sandboxes state is unmanaged.** Groundcrew no longer discovers or cleans `.sbx` worktrees or persistent Docker Sandboxes containers. If you have old state, inspect and remove it manually with `sbx`.
+- **Sandbox lifecycle is create-only.** Groundcrew auto-creates the sandbox for a `<repository, model>` pair when missing, but never deletes one — sandboxes persist across tickets and across `crew cleanup`. Auth state lives inside the sandbox, so deleting it forces a re-login. Inspect or remove them manually with `sbx ls` / `sbx rm`.
 - **Dead tmux windows vanish by default.** When a wrapped agent command fails (e.g. `safehouse-clearance` not found, `npm install` crash), the tmux window closes immediately and the error scrolls into the void. Set `GROUNDCREW_KEEP_DEAD_WINDOWS=1` (any non-empty value works) in the env you launch `crew` from to flip the per-window `remain-on-exit` to `on`; the window stays open with the error visible. Close it manually with `tmux kill-window -t groundcrew:<ticket>` after diagnosis. tmux backend only.
 - **Status names matter.** If your team uses `Started` instead of `In Progress`, set `linear.statuses.inProgress = "Started"`.
 - **Leaf-only.** Parent issues with children are ignored — sub-issues are the work items.
 - **Tickets stay in the in-progress status until something else moves them.** Groundcrew sets a ticket to `inProgress` when it provisions a workspace and never advances it. The next transition (typically "in review" when a PR opens) is left to your team's Linear automation rules.
 - **Project must be on a single Linear team in practice.** Cross-team projects work — the orchestrator caches the in-progress state ID per team — but every team in the project must use the same status name for `linear.statuses.inProgress`.
 - **Claude launches in bypass-permissions mode by default.** Groundcrew creates isolated per-ticket worktrees for unattended runs, so the shipped `claude` command is `claude --permission-mode bypassPermissions` to avoid workspace-trust and tool-permission prompts blocking automation. Override `models.definitions.claude.cmd` if you want a stricter mode.
-- **Doctor's command introspection is shallow.** Doctor reports whether the host can run local tickets with macOS plus Safehouse, then tokenizes model `cmd` and checks the first two non-flag tokens against PATH (so `safehouse claude --foo` checks both `safehouse` and `claude`). Boolean flags without values, env-var assignments (`FOO=1`), shell pipelines, and subshells are not parsed — verify those manually. In particular, `npx -y claude` and `env FOO=1 claude` only check the wrapper, not the wrapped CLI.
+- **Doctor's command introspection is shallow.** Doctor reports the resolved local runner (safehouse / sdx / none) and whether its prerequisites are met, then tokenizes model `cmd` and checks the first two non-flag tokens against PATH (so `safehouse claude --foo` checks both `safehouse` and `claude`). Boolean flags without values, env-var assignments (`FOO=1`), shell pipelines, and subshells are not parsed — verify those manually. In particular, `npx -y claude` and `env FOO=1 claude` only check the wrapper, not the wrapped CLI. When `local.runner` is `"none"`, doctor surfaces a single WARNING line so the unsandboxed launch is visible at a glance.
 - **Doctor checks every enabled model, including shipped defaults you didn't disable.** `models.definitions` includes both shipped defaults (`claude`, `codex`) by default via additive merge. If you only intend to label tickets `agent-claude` and don't have `codex` installed, set `models.definitions.codex: { disabled: true }` (see "Disabling a shipped default" under "Config reference"). Without that, doctor exits non-zero on a missing `codex` binary even though `crew run` would never route to it.
 - **Switch to tmux if cmux is misbehaving.** Set `workspaceKind: "tmux"` to force the tmux backend when cmux's CLI/socket bridge is flaky (symptoms: `cmux --json list-workspaces` returning `Failed to write to socket (Broken pipe)` or `Socket not found at ...cmux.sock` on every tick). tmux is more reliable — just a unix socket, no GUI app — at the cost of losing cmux's status pills, notifications, and vertical-tab sidebar.
 - **Agent CLI must accept a positional prompt.** The handoff is `<your cmd> "<prompt>"`. `claude`, `codex`, and `cursor-agent` all support this.
@@ -242,7 +251,7 @@ For developers working on the package itself, clone this repo, run `npm install`
 cd ~/dev/c/groundcrew
 node --run crew -- doctor
 
-# With 1Password for LINEAR_API_KEY:
+# With 1Password for GROUNDCREW_LINEAR_API_KEY:
 node --run crew:op -- run --watch
 ```
 

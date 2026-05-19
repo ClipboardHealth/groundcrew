@@ -54,6 +54,7 @@ const config: ResolvedConfig = {
   },
   prompts: { initial: "x" },
   workspaceKind: "auto",
+  local: { runner: "auto" },
   logging: { file: "/tmp/groundcrew-test.log" },
 };
 

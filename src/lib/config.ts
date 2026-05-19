@@ -30,6 +30,48 @@ export const WORKSPACE_KIND_SETTINGS: readonly WorkspaceKindSetting[] = [
   "tmux",
 ] as const;
 
+/**
+ * Concrete local isolation backend selected for a launch. `safehouse` is
+ * macOS-only (clearance HTTP-egress + sandbox profile); `sdx` is Docker
+ * Sandboxes (`sbx` CLI) — works on Linux and macOS and is the only known
+ * option that lets the agent use Docker safely without exposing the host
+ * socket; `none` is an explicit unsandboxed escape hatch.
+ */
+export type LocalRunner = "safehouse" | "sdx" | "none";
+
+/**
+ * User-facing local runner setting. `auto` resolves at launch time:
+ * macOS picks `safehouse`, Linux picks `sdx`. `none` is never picked
+ * implicitly.
+ */
+export type LocalRunnerSetting = LocalRunner | "auto";
+
+export const LOCAL_RUNNER_SETTINGS: readonly LocalRunnerSetting[] = [
+  "auto",
+  "safehouse",
+  "sdx",
+  "none",
+] as const;
+
+/**
+ * Per-model Docker Sandboxes (sdx) binding. Required at launch when
+ * `local.runner` resolves to `sdx` so groundcrew knows which sbx agent
+ * to address and how to seed the sandbox.
+ */
+export interface SandboxDefinition {
+  /** sbx agent name (e.g. "claude", "codex"). */
+  agent: string;
+  /** Optional `sbx run --template` value. */
+  template?: string;
+  /** Optional `sbx run --kit` values (each passed as a separate flag). */
+  kits?: string[];
+  /**
+   * Setup command run **inside** the sandbox before the agent exec.
+   * Defaults to `DEFAULT_SANDBOX_SETUP_COMMAND` when omitted.
+   */
+  setupCommand?: string;
+}
+
 export interface ModelDefinition {
   /**
    * Shell command launched for the model. Wrapped with Safehouse/clearance
@@ -44,6 +86,12 @@ export interface ModelDefinition {
   usage?: {
     codexbar: { provider: string; source?: string };
   };
+  /**
+   * Docker Sandboxes binding. Required when `local.runner` resolves to
+   * `sdx` — pure additive: omitted models can still run under `safehouse`
+   * or `none` without surprise.
+   */
+  sandbox?: SandboxDefinition;
 }
 
 /**
@@ -63,6 +111,16 @@ type UserModelDefinition = EnabledUserModelDefinition | DisabledUserModelDefinit
  * assumed to already have the right Node and npm versions.
  */
 export const DEFAULT_HOST_SETUP_COMMAND =
+  "if [ -x .claude/setup.sh ]; then ./.claude/setup.sh --deps-only; elif [ -f .claude/setup.sh ] && command -v bash >/dev/null 2>&1; then bash .claude/setup.sh --deps-only; else npm clean-install; fi";
+
+/**
+ * Setup command run inside an sdx (Docker Sandboxes) sandbox before the
+ * agent process exec. Independent of the host setup — sandboxes typically
+ * lack Node tooling on first start, so we keep the recipe scoped to the
+ * common case of an npm-managed repo while still letting per-model
+ * `sandbox.setupCommand` override it for languages outside that path.
+ */
+export const DEFAULT_SANDBOX_SETUP_COMMAND =
   "if [ -x .claude/setup.sh ]; then ./.claude/setup.sh --deps-only; elif [ -f .claude/setup.sh ] && command -v bash >/dev/null 2>&1; then bash .claude/setup.sh --deps-only; else npm clean-install; fi";
 
 /**
@@ -121,6 +179,14 @@ export interface Config {
    * to fail loudly when the chosen backend is missing.
    */
   workspaceKind?: WorkspaceKindSetting;
+  /**
+   * Local isolation backend selector. Defaults to `"auto"` (macOS →
+   * safehouse, Linux → sdx). `"none"` is an explicit unsandboxed escape
+   * hatch — never selected implicitly.
+   */
+  local?: {
+    runner?: LocalRunnerSetting;
+  };
   logging?: {
     /**
      * Append-mode log file destination. `log()` and `logEvent()` tee here
@@ -173,6 +239,14 @@ export interface ResolvedConfig {
    * `auto` resolves to cmux when installed, else tmux.
    */
   workspaceKind: WorkspaceKindSetting;
+  /**
+   * Local isolation selection. The user-facing `auto` is preserved here
+   * so `localRunner.resolve()` can pick the platform default later — the
+   * resolver is the only place that knows the host capabilities.
+   */
+  local: {
+    runner: LocalRunnerSetting;
+  };
   logging: {
     file: string;
   };
@@ -389,6 +463,48 @@ function normalizeWorkspaceKind(value: unknown, path: string): WorkspaceKindSett
   return value;
 }
 
+function isLocalRunnerSetting(value: unknown): value is LocalRunnerSetting {
+  return typeof value === "string" && (LOCAL_RUNNER_SETTINGS as readonly string[]).includes(value);
+}
+
+function normalizeLocalRunner(value: unknown, path: string): LocalRunnerSetting | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isLocalRunnerSetting(value)) {
+    fail(
+      `${path} must be one of ${LOCAL_RUNNER_SETTINGS.join(", ")} (got ${JSON.stringify(value)})`,
+    );
+  }
+  return value;
+}
+
+function normalizeSandbox(value: unknown, path: string): SandboxDefinition {
+  if (!isPlainObject(value)) {
+    fail(`${path} must be an object`);
+  }
+  const { agent, template, kits, setupCommand } = value;
+  requireString(agent, `${path}.agent`);
+  const trimmedAgent = agent.trim();
+  if (trimmedAgent.length === 0) {
+    fail(`${path}.agent must be a non-empty string (got ${JSON.stringify(agent)})`);
+  }
+  const sandbox: SandboxDefinition = { agent: trimmedAgent };
+  const normalizedTemplate = normalizeOptionalString(template, `${path}.template`);
+  if (normalizedTemplate !== undefined) {
+    sandbox.template = normalizedTemplate;
+  }
+  const normalizedKits = normalizeOptionalStringArray(kits, `${path}.kits`);
+  if (normalizedKits !== undefined) {
+    sandbox.kits = normalizedKits;
+  }
+  const normalizedSetup = normalizeOptionalString(setupCommand, `${path}.setupCommand`);
+  if (normalizedSetup !== undefined) {
+    sandbox.setupCommand = normalizedSetup;
+  }
+  return sandbox;
+}
+
 function failIfLegacyModelKeys(
   name: string,
   override: unknown,
@@ -401,18 +517,13 @@ function failIfLegacyModelKeys(
       `models.definitions.${name}.isolation is no longer supported: per-model isolation is no longer supported`,
     );
   }
-  if (Object.hasOwn(override, "sandbox")) {
-    fail(
-      `models.definitions.${name}.sandbox is no longer supported: Docker Sandboxes are no longer supported`,
-    );
-  }
   if (Object.hasOwn(override, "disabled")) {
     if (override["disabled"] !== true) {
       fail(
         `models.definitions.${name}.disabled must be exactly \`true\` when set (got ${JSON.stringify(override["disabled"])})`,
       );
     }
-    const conflicting = (["cmd", "color", "usage"] as const).filter((key) =>
+    const conflicting = (["cmd", "color", "usage", "sandbox"] as const).filter((key) =>
       Object.hasOwn(override, key),
     );
     if (conflicting.length > 0) {
@@ -482,7 +593,10 @@ function mergeDefinitions(
     if (override.usage !== undefined) {
       candidate.usage = override.usage;
     }
-    const { cmd, color, usage } = candidate;
+    if (override.sandbox !== undefined) {
+      candidate.sandbox = normalizeSandbox(override.sandbox, `models.definitions.${name}.sandbox`);
+    }
+    const { cmd, color, usage, sandbox } = candidate;
     if (typeof cmd !== "string" || cmd.length === 0) {
       fail(`models.definitions.${name}.cmd must be a non-empty string`);
     }
@@ -492,6 +606,9 @@ function mergeDefinitions(
     const definition: ModelDefinition = { cmd, color };
     if (usage !== undefined) {
       definition.usage = usage;
+    }
+    if (sandbox !== undefined) {
+      definition.sandbox = sandbox;
     }
     merged[name] = definition;
   }
@@ -524,13 +641,17 @@ function applyDefaults(user: Config): ResolvedConfig {
   requireObject(user.workspace, "workspace");
   if (isPlainObject(user.models) && Object.hasOwn(user.models, "isolation")) {
     fail(
-      "models.isolation is no longer supported: local isolation is always Safehouse; remove this key",
+      "models.isolation is no longer supported: set `local.runner` ('safehouse' | 'sdx' | 'none' | 'auto') instead",
     );
   }
   if (Object.hasOwn(user, "remote")) {
     fail(
-      "remote is no longer supported: groundcrew is macOS + Safehouse only; remove the remote block from your config",
+      "remote is no longer supported: groundcrew runs locally via safehouse/sdx/none; remove the remote block from your config",
     );
+  }
+  const userLocal = (user as { local?: { runner?: unknown } }).local;
+  if (userLocal !== undefined && !isPlainObject(userLocal)) {
+    fail("local must be an object");
   }
 
   const slugId = extractSlugId(user.linear.projectSlug);
@@ -559,6 +680,9 @@ function applyDefaults(user: Config): ResolvedConfig {
       initial: user.prompts?.initial ?? DEFAULT_PROMPT_INITIAL,
     },
     workspaceKind: normalizeWorkspaceKind(user.workspaceKind, "workspaceKind") ?? "auto",
+    local: {
+      runner: normalizeLocalRunner(userLocal?.runner, "local.runner") ?? "auto",
+    },
     logging: {
       file: expandHome(
         normalizeOptionalString(user.logging?.file, "logging.file") ?? defaultLogFile(),
@@ -634,6 +758,16 @@ function validate(config: ResolvedConfig): void {
       }
       requireString(codexbar.provider, `${usagePath}.codexbar.provider`);
     }
+    if (definition.sandbox !== undefined) {
+      requireString(definition.sandbox.agent, `models.definitions.${name}.sandbox.agent`);
+    }
+  }
+
+  /* v8 ignore next 5 @preserve -- normalizeLocalRunner rejects invalid strings before validate() runs; this is a belt-and-suspenders guard */
+  if (!(LOCAL_RUNNER_SETTINGS as readonly string[]).includes(config.local.runner)) {
+    fail(
+      `local.runner must be one of ${LOCAL_RUNNER_SETTINGS.join(", ")} (got ${JSON.stringify(config.local.runner)})`,
+    );
   }
 
   // Disabled-default check must run before the generic "not a key" check so

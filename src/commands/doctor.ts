@@ -5,9 +5,15 @@
 
 import { existsSync, statSync } from "node:fs";
 
-import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
+import {
+  type LocalRunner,
+  type LocalRunnerSetting,
+  loadConfig,
+  type ResolvedConfig,
+} from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities, which } from "../lib/host.ts";
-import { errorMessage, readEnvironmentVariable, writeOutput } from "../lib/util.ts";
+import { resolveLocalRunner } from "../lib/localRunner.ts";
+import { errorMessage, resolveLinearApiKey, writeOutput } from "../lib/util.ts";
 import { resolveWorkspaceKind, type WorkspaceResolution } from "../lib/workspaces.ts";
 import { runTicketDoctor } from "./ticketDoctor.ts";
 
@@ -40,14 +46,21 @@ async function checkCmd(cmd: string, required: boolean, hint?: string): Promise<
   return result;
 }
 
-function checkEnvironment(name: string): Check {
-  const value = readEnvironmentVariable(name);
-  const set = value !== undefined && value.length > 0;
+function checkLinearApiKey(): Check {
+  const resolved = resolveLinearApiKey();
+  if (resolved !== undefined) {
+    return {
+      name: "linear api key",
+      ok: true,
+      required: true,
+      hint: `set via $${resolved.source}`,
+    };
+  }
   return {
-    name: `$${name}`,
-    ok: set,
+    name: "linear api key",
+    ok: false,
     required: true,
-    hint: set ? "set" : "export the variable in your shell",
+    hint: "export $GROUNDCREW_LINEAR_API_KEY or $LINEAR_API_KEY",
   };
 }
 
@@ -175,14 +188,19 @@ async function doctorHost(): Promise<boolean> {
     writeOutput(`[--] host: ${errorMessage(error)}`);
     return false;
   }
-  const localCapability = localCapabilityCheck(host);
-  reportLocalCapability(localCapability);
+  const resolvedRunner = resolveLocalRunner(config.local.runner, host);
+  const localCapability = localCapabilityCheck(host, resolvedRunner);
+  reportLocalCapability({
+    check: localCapability,
+    setting: config.local.runner,
+    resolved: resolvedRunner,
+  });
 
   const workspaceOutcome = resolveWorkspaceOutcome(config, host);
   reportWorkspaceKind(config, workspaceOutcome);
 
   const checks: Check[] = [
-    checkEnvironment("LINEAR_API_KEY"),
+    checkLinearApiKey(),
     await checkCmd("git", true, "https://git-scm.com/"),
     ...(await workspaceChecks(workspaceOutcome)),
     checkDir(config.workspace.projectDir, "workspace.projectDir"),
@@ -218,23 +236,48 @@ async function doctorHost(): Promise<boolean> {
   return true;
 }
 
-function localCapabilityCheck(host: HostCapabilities): Check {
-  const supportsLocalRunner = host.isSafehouseSupported && host.hasSafehouse;
+function localCapabilityCheck(host: HostCapabilities, resolved: LocalRunner): Check {
+  if (resolved === "safehouse") {
+    const ok = host.isSafehouseSupported && host.hasSafehouse;
+    return {
+      name: "local runner (safehouse)",
+      ok,
+      required: false,
+      hint: ok
+        ? "ready"
+        : "safehouse runner requires macOS with `safehouse` on PATH (install from https://agent-safehouse.dev/)",
+    };
+  }
+  if (resolved === "sdx") {
+    const ok = host.isSdxSupported && host.hasSbx;
+    return {
+      name: "local runner (sdx)",
+      ok,
+      required: false,
+      hint: ok
+        ? "ready"
+        : "sdx runner requires `sbx` (Docker Sandboxes) on PATH (install from https://docs.docker.com/sandboxes/)",
+    };
+  }
+  // resolved === "none"
   return {
-    name: "local runner (macOS + Safehouse)",
-    ok: supportsLocalRunner,
+    name: "local runner (none)",
+    ok: true,
     required: false,
-    hint: supportsLocalRunner
-      ? "ready"
-      : "groundcrew requires macOS with Safehouse on PATH (install from https://agent-safehouse.dev/)",
+    hint: "WARNING: local.runner='none' — agent runs unsandboxed on the host. Only use this when you understand the implications.",
   };
 }
 
-function reportLocalCapability(check: Check): void {
+function reportLocalCapability(arguments_: {
+  check: Check;
+  setting: LocalRunnerSetting;
+  resolved: LocalRunner;
+}): void {
   writeOutput();
   writeOutput("Local runner");
   writeOutput("------------");
-  writeOutput(format(check));
+  writeOutput(`requested: ${arguments_.setting} → resolved: ${arguments_.resolved}`);
+  writeOutput(format(arguments_.check));
 }
 
 type WorkspaceOutcome =

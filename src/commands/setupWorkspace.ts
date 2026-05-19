@@ -1,18 +1,19 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import { ensureClearance } from "@clipboard-health/clearance";
 
 import { fetchResolvedIssue } from "../lib/boardSource.ts";
 import { BUILD_SECRET_NAMES, loadConfig, type ResolvedConfig } from "../lib/config.ts";
+import { ensureSandbox, sandboxNameFor } from "../lib/dockerSandbox.ts";
 import { detectHostCapabilities } from "../lib/host.ts";
 import { buildLaunchCommand, shellSingleQuote } from "../lib/launchCommand.ts";
 import { createLinearIssueStatusUpdater } from "../lib/linearIssueStatus.ts";
-import { assertLocalRunnerRequirements } from "../lib/localRunner.ts";
+import { assertLocalRunnerRequirements, resolveLocalRunner } from "../lib/localRunner.ts";
 import { errorMessage, getLinearClient, log, readEnvironmentVariable } from "../lib/util.ts";
-import { workspaces } from "../lib/workspaces.ts";
-import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
+import { type WorkspaceAccessHint, workspaces } from "../lib/workspaces.ts";
+import { isWorktreeAlreadyExistsError, type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 
 interface TicketDetails {
   title: string;
@@ -122,14 +123,32 @@ export async function setupWorkspace(
     throw new Error(`Unknown model: ${model}`);
   }
 
-  assertLocalRunnerRequirements(await detectHostCapabilities(signal));
-  await ensureClearance({ logger: log });
+  const host = await detectHostCapabilities(signal);
+  const runner = resolveLocalRunner(config.local.runner, host);
+  assertLocalRunnerRequirements(host, runner);
+  if (runner === "safehouse") {
+    await ensureClearance({ logger: log });
+  }
+  if (runner === "sdx" && definition.sandbox === undefined) {
+    throw new Error(
+      `Local groundcrew runs with the sdx runner require a sandbox config on model '${model}'. ` +
+        "Add `sandbox: { agent: '<sbx-agent-name>' }` to the model in your config.ts.",
+    );
+  }
 
   const spec = { repository, ticket };
-  const created =
-    signal === undefined
-      ? await worktrees.create(config, spec)
-      : await worktrees.create(config, spec, signal);
+  let created: WorktreeEntry;
+  try {
+    created =
+      signal === undefined
+        ? await worktrees.create(config, spec)
+        : await worktrees.create(config, spec, signal);
+  } catch (error) {
+    if (isWorktreeAlreadyExistsError(error)) {
+      await logAccessHintForExistingWorkspace({ config, ticket, signal });
+    }
+    throw error;
+  }
   const { branchName, dir: launchDir } = created;
   const worktreeName = `${repository}-${ticket}`;
 
@@ -155,11 +174,24 @@ export async function setupWorkspace(
 
     const secretsFile = stageBuildSecrets(promptDir);
 
+    const sandboxName = runner === "sdx" ? sandboxNameFor({ repository, model }) : undefined;
+    if (runner === "sdx" && sandboxName !== undefined && definition.sandbox !== undefined) {
+      await ensureSandbox(
+        {
+          sandboxName,
+          sandbox: definition.sandbox,
+          mountPath: resolve(config.workspace.projectDir),
+        },
+        signal,
+      );
+    }
     const launchCommand = buildLaunchCommand({
       definition,
       promptFile: stagedPrompt.file,
       worktreeDir: launchDir,
       secretsFile,
+      runner,
+      sandboxName,
     });
     const launchCmd = stageWorkspaceLaunchCommand(promptDir, launchCommand);
 
@@ -178,10 +210,56 @@ export async function setupWorkspace(
     log(`Workspace "${ticket}" launched (${model})`);
     log(`  Worktree: ${launchDir}`);
     log(`  Branch:   ${branchName}`);
+    await logWorkspaceAccessHint({ config, ticket, signal });
   } catch (error) {
     await rollbackWorktree({ config, entry: created, promptDir });
     throw error;
   }
+}
+
+/**
+ * Probe the workspace backend and, if a workspace for `ticket` is still
+ * live, log the access hint. Used on the pre-launch error path (e.g. the
+ * worktree already exists from a prior run) so the user can find the
+ * still-running session instead of being told only that the worktree is
+ * in the way. Silent when the probe is unavailable or the workspace is
+ * gone — we don't want to point at a window that doesn't exist.
+ */
+async function logAccessHintForExistingWorkspace(arguments_: {
+  config: ResolvedConfig;
+  ticket: string;
+  signal: AbortSignal | undefined;
+}): Promise<void> {
+  const { config, ticket, signal } = arguments_;
+  const accessHint = await workspaces.accessHint(config, ticket, signal);
+  if (accessHint === undefined) {
+    return;
+  }
+  const probe = await workspaces.probe(config, signal);
+  if (probe.kind !== "ok" || !probe.names.has(ticket)) {
+    return;
+  }
+  logAccessHint(accessHint);
+}
+
+async function logWorkspaceAccessHint(arguments_: {
+  config: ResolvedConfig;
+  ticket: string;
+  signal: AbortSignal | undefined;
+}): Promise<void> {
+  const accessHint = await workspaces.accessHint(
+    arguments_.config,
+    arguments_.ticket,
+    arguments_.signal,
+  );
+  if (accessHint === undefined) {
+    return;
+  }
+  logAccessHint(accessHint);
+}
+
+function logAccessHint(accessHint: WorkspaceAccessHint): void {
+  log(`  Attach:   ${accessHint.command}`);
 }
 
 async function rollbackWorktree(arguments_: {

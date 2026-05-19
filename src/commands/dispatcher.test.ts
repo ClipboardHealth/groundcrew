@@ -21,6 +21,7 @@ vi.mock(import("../lib/workspaces.ts"), async (importOriginal) => {
       open: vi.fn<typeof actual.workspaces.open>(),
       probe: vi.fn<typeof actual.workspaces.probe>(),
       close: vi.fn<typeof actual.workspaces.close>(),
+      accessHint: vi.fn<typeof actual.workspaces.accessHint>(),
     },
   };
 });
@@ -58,6 +59,7 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
     },
     prompts: { initial: "x", ...overrides.prompts },
     workspaceKind: overrides.workspaceKind ?? "auto",
+    local: { runner: "auto" },
     logging: { file: "/tmp/groundcrew-test.log", ...overrides.logging },
   };
 }

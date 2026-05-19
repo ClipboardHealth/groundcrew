@@ -1,0 +1,76 @@
+import { runCommandAsync } from "./commandRunner.ts";
+import type { SandboxDefinition } from "./config.ts";
+
+/**
+ * Derive a deterministic sbx sandbox name from the repository + model
+ * tuple so `crew sandbox auth <repo>` and the subsequent `crew local`
+ * launch agree on which sandbox to target. Lowercased and reduced to the
+ * sbx-safe charset (`a-z0-9.+-`) so unusual repo names still round-trip
+ * cleanly. Keep the prefix stable — doctor and teardown use it to
+ * identify groundcrew-owned sandboxes.
+ */
+export function sandboxNameFor(arguments_: { repository: string; model: string }): string {
+  const raw = `groundcrew-${arguments_.repository}-${arguments_.model}`.toLowerCase();
+  return raw
+    .replaceAll(/[^a-z0-9.+-]+/g, "-")
+    .replaceAll(/-+/g, "-")
+    .replaceAll(/^-|-$/g, "");
+}
+
+/**
+ * Probe `sbx ls` to see whether a sandbox with `sandboxName` already
+ * exists. Used by `crew sandbox auth` to switch between create vs reuse
+ * branches without surfacing the raw sbx error on first run.
+ */
+export async function sandboxExists(sandboxName: string, signal?: AbortSignal): Promise<boolean> {
+  const out =
+    signal === undefined
+      ? await runCommandAsync("sbx", ["ls"])
+      : await runCommandAsync("sbx", ["ls"], { signal });
+  return out.split("\n").some((line) => line.trim().split(/\s+/)[0] === sandboxName);
+}
+
+interface EnsureSandboxArguments {
+  sandboxName: string;
+  sandbox: SandboxDefinition;
+  /**
+   * Host path bound into the sandbox at the same path. Pass the workspace
+   * `projectDir` so all per-ticket worktrees (siblings of the bare repo
+   * clone) are visible to `sbx exec -w <worktreeDir>` after creation.
+   */
+  mountPath: string;
+}
+
+/**
+ * Idempotent guard: ensure a Docker Sandboxes container exists for the
+ * given repository + model. Probes `sbx ls`; if `sandboxName` is missing,
+ * calls `sbx create --name <name> [--template <t>] [--kit <k>]... <agent>
+ * <mountPath>` to provision it. First-time agent auth still happens inside
+ * the sandbox the first time `sbx exec` runs the agent — `create` only
+ * provisions the container, it does not attach.
+ */
+export async function ensureSandbox(
+  arguments_: EnsureSandboxArguments,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (await sandboxExists(arguments_.sandboxName, signal)) {
+    return;
+  }
+  const createArguments: string[] = ["create", "--name", arguments_.sandboxName];
+  if (arguments_.sandbox.template !== undefined) {
+    createArguments.push("--template", arguments_.sandbox.template);
+  }
+  for (const kit of arguments_.sandbox.kits ?? []) {
+    createArguments.push("--kit", kit);
+  }
+  createArguments.push(arguments_.sandbox.agent, arguments_.mountPath);
+  const options = signal === undefined ? {} : { signal };
+  try {
+    await runCommandAsync("sbx", createArguments, options);
+  } catch (error) {
+    if (await sandboxExists(arguments_.sandboxName, signal)) {
+      return;
+    }
+    throw error;
+  }
+}

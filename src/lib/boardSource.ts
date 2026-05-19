@@ -142,7 +142,7 @@ async function verifyProject(client: LinearClient, config: ResolvedConfig): Prom
   const [project] = projects.nodes;
   if (!project) {
     throw new Error(
-      `No Linear project found with slugId "${config.linear.slugId}" (linear.projectSlug = "${config.linear.projectSlug}"). Confirm the slug matches the trailing segment of your project's URL and that LINEAR_API_KEY can access this workspace.`,
+      `No Linear project found with slugId "${config.linear.slugId}" (linear.projectSlug = "${config.linear.projectSlug}"). Confirm the slug matches the trailing segment of your project's URL and that your Linear API key can access this workspace.`,
     );
   }
   log(`Resolved Linear project: ${project.name} (slugId ${project.slugId})`);
@@ -285,7 +285,11 @@ function escapeRegex(value: string): string {
 // must beat `api` when both are configured. `\b` treats `-` as a word
 // boundary, so without this ordering `api` would win on `api-admin`.
 function buildRepositoryRegex(config: ResolvedConfig): RegExp {
-  const alternation = config.workspace.knownRepositories
+  const candidates = config.workspace.knownRepositories.flatMap((repo) => {
+    const slashIndex = repo.indexOf("/");
+    return slashIndex === -1 ? [repo] : [repo, repo.slice(slashIndex + 1)];
+  });
+  const alternation = candidates
     .toSorted((a, b) => b.length - a.length)
     .map(escapeRegex)
     .join("|");
@@ -565,14 +569,31 @@ function parseRepository(arguments_: ParseRepositoryArguments): string {
       repositories: config.workspace.knownRepositories,
     });
   }
-  const repository = repositoryRegex.exec(description)?.[1];
-  if (repository === undefined) {
+  const matched = repositoryRegex.exec(description)?.[1];
+  if (matched === undefined) {
     throw new RepositoryResolutionError({
       ticket,
       repositories: config.workspace.knownRepositories,
     });
   }
-  return repository;
+  // Resolve the match to a known repo. The regex may capture a bare repo name
+  // (no org prefix) when only that appears in the description; the filter
+  // handles both full "owner/repo" and bare "repo" matches. Reject if
+  // ambiguous (same bare name under multiple orgs).
+  const candidates = config.workspace.knownRepositories.filter(
+    (r) => r === matched || r.endsWith(`/${matched}`),
+  );
+  if (candidates.length !== 1) {
+    throw new RepositoryResolutionError({
+      ticket,
+      repositories: config.workspace.knownRepositories,
+    });
+  }
+  /* v8 ignore next 3 @preserve -- candidates.length===1 guarantees [0] is defined */
+  if (candidates[0] === undefined) {
+    throw new Error("unreachable");
+  }
+  return candidates[0];
 }
 
 /**

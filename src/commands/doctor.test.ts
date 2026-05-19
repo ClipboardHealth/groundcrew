@@ -4,7 +4,7 @@ import type { LinearClient } from "@linear/sdk";
 
 import type { RunCommandOptions } from "../lib/commandRunner.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
-import { detectHostCapabilities } from "../lib/host.ts";
+import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
 import type { UsageByModel } from "../lib/usage.ts";
 import { getLinearClient, readEnvironmentVariable } from "../lib/util.ts";
 import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCapture.ts";
@@ -115,7 +115,22 @@ function makeConfig(overrides: Partial<ResolvedConfig["models"]> = {}): Resolved
     },
     prompts: { initial: "x" },
     workspaceKind: "auto",
+    local: { runner: "auto" },
     logging: { file: "/tmp/groundcrew-test.log" },
+  };
+}
+
+function host(overrides: Partial<HostCapabilities> = {}): HostCapabilities {
+  return {
+    hasSafehouse: true,
+    hasSbx: false,
+    hasCmux: true,
+    hasTmux: false,
+    isMacOS: true,
+    isLinux: false,
+    isSafehouseSupported: true,
+    isSdxSupported: true,
+    ...overrides,
   };
 }
 
@@ -216,20 +231,16 @@ function makeLinearClient(
 
 describe(doctor, () => {
   let consoleLog: ConsoleCapture;
-  const originalEnvironment = readEnvironmentVariable("LINEAR_API_KEY");
+  const originalGroundcrewKey = readEnvironmentVariable("GROUNDCREW_LINEAR_API_KEY");
+  const originalLinearKey = readEnvironmentVariable("LINEAR_API_KEY");
 
   beforeEach(() => {
     consoleLog = captureConsoleLog();
+    deleteEnvironmentVariable("GROUNDCREW_LINEAR_API_KEY");
     setEnvironmentVariable("LINEAR_API_KEY", "lin_api_test");
     existsMock.mockReturnValue(true);
     statMock.mockReturnValue(statsWithDirectoryValue(true));
-    detectHostMock.mockResolvedValue({
-      hasSafehouse: true,
-      hasCmux: true,
-      hasTmux: false,
-      isMacOS: true,
-      isSafehouseSupported: true,
-    });
+    detectHostMock.mockResolvedValue(host());
     runCommandMock.mockImplementation((_cmd, arguments_) => {
       const target = firstArgument(arguments_);
       return `/usr/bin/${target}\n`;
@@ -240,10 +251,15 @@ describe(doctor, () => {
 
   afterEach(() => {
     consoleLog.restore();
-    if (originalEnvironment === undefined) {
+    if (originalGroundcrewKey === undefined) {
+      deleteEnvironmentVariable("GROUNDCREW_LINEAR_API_KEY");
+    } else {
+      setEnvironmentVariable("GROUNDCREW_LINEAR_API_KEY", originalGroundcrewKey);
+    }
+    if (originalLinearKey === undefined) {
       deleteEnvironmentVariable("LINEAR_API_KEY");
     } else {
-      setEnvironmentVariable("LINEAR_API_KEY", originalEnvironment);
+      setEnvironmentVariable("LINEAR_API_KEY", originalLinearKey);
     }
     vi.resetAllMocks();
   });
@@ -535,15 +551,43 @@ describe(doctor, () => {
     expect(consoleLog.output()).toContain("All required checks passed");
   });
 
-  it("returns false and reports a missing LINEAR_API_KEY", async () => {
+  it("returns false and reports both env var names when neither key is set", async () => {
     deleteEnvironmentVariable("LINEAR_API_KEY");
     loadConfigMock.mockResolvedValue(makeConfig());
 
     const actual = await doctor();
 
     expect(actual).toBe(false);
-    expect(consoleLog.output()).toContain("$LINEAR_API_KEY");
-    expect(consoleLog.output()).toContain("export the variable");
+    const output = consoleLog.output();
+    expect(output).toContain("linear api key");
+    expect(output).toContain("$GROUNDCREW_LINEAR_API_KEY");
+    expect(output).toContain("$LINEAR_API_KEY");
+  });
+
+  it("reports the resolved env var when only GROUNDCREW_LINEAR_API_KEY is set", async () => {
+    deleteEnvironmentVariable("LINEAR_API_KEY");
+    setEnvironmentVariable("GROUNDCREW_LINEAR_API_KEY", "lin_api_groundcrew");
+    loadConfigMock.mockResolvedValue(makeConfig());
+
+    const actual = await doctor();
+
+    expect(actual).toBe(true);
+    const output = consoleLog.output();
+    expect(output).toContain("linear api key");
+    expect(output).toContain("$GROUNDCREW_LINEAR_API_KEY");
+  });
+
+  it("prefers GROUNDCREW_LINEAR_API_KEY in doctor output when both env vars are set", async () => {
+    setEnvironmentVariable("GROUNDCREW_LINEAR_API_KEY", "lin_api_groundcrew");
+    setEnvironmentVariable("LINEAR_API_KEY", "lin_api_legacy");
+    loadConfigMock.mockResolvedValue(makeConfig());
+
+    const actual = await doctor();
+
+    expect(actual).toBe(true);
+    const output = consoleLog.output();
+    expect(output).toContain("$GROUNDCREW_LINEAR_API_KEY");
+    expect(output).not.toMatch(/set via \$LINEAR_API_KEY/);
   });
 
   it("returns false when a required CLI tool is missing", async () => {
@@ -637,31 +681,96 @@ describe(doctor, () => {
   });
 
   it("reports missing Safehouse as a local runner warning", async () => {
-    detectHostMock.mockResolvedValue({
-      hasSafehouse: false,
-      hasCmux: true,
-      hasTmux: false,
-      isMacOS: true,
-      isSafehouseSupported: true,
-    });
+    detectHostMock.mockResolvedValue(host({ hasSafehouse: false }));
     loadConfigMock.mockResolvedValue(makeConfig());
 
     const actual = await doctor();
 
     expect(actual).toBe(true);
-    expect(consoleLog.output()).toContain("local runner (macOS + Safehouse)");
-    expect(consoleLog.output()).toContain("groundcrew requires macOS with Safehouse");
-    expect(consoleLog.output().match(/local runner \(macOS \+ Safehouse\)/g)).toHaveLength(1);
+    expect(consoleLog.output()).toContain("local runner (safehouse)");
+    expect(consoleLog.output()).toContain(
+      "safehouse runner requires macOS with `safehouse` on PATH",
+    );
+    expect(consoleLog.output().match(/local runner \(safehouse\)/g)).toHaveLength(1);
+  });
+
+  it("reports the sdx runner as ready when auto picks sdx on Linux and sbx is on PATH", async () => {
+    detectHostMock.mockResolvedValue(
+      host({
+        hasSafehouse: false,
+        hasSbx: true,
+        hasCmux: false,
+        hasTmux: true,
+        isMacOS: false,
+        isLinux: true,
+        isSafehouseSupported: false,
+      }),
+    );
+    loadConfigMock.mockResolvedValue(makeConfig());
+
+    const actual = await doctor();
+
+    expect(actual).toBe(true);
+    expect(consoleLog.output()).toContain("requested: auto → resolved: sdx");
+    expect(consoleLog.output()).toContain("local runner (sdx)");
+    expect(consoleLog.output()).not.toContain("sdx runner requires `sbx`");
+  });
+
+  it("reports the sdx runner as missing when sbx is not on PATH", async () => {
+    detectHostMock.mockResolvedValue(
+      host({
+        hasSafehouse: false,
+        hasSbx: false,
+        hasCmux: false,
+        hasTmux: true,
+        isMacOS: false,
+        isLinux: true,
+        isSafehouseSupported: false,
+      }),
+    );
+    loadConfigMock.mockResolvedValue(makeConfig());
+
+    const actual = await doctor();
+
+    expect(actual).toBe(true);
+    expect(consoleLog.output()).toContain("local runner (sdx)");
+    expect(consoleLog.output()).toContain("sdx runner requires `sbx`");
+  });
+
+  it("surfaces a WARNING when local.runner is configured to 'none'", async () => {
+    detectHostMock.mockResolvedValue(host());
+    loadConfigMock.mockResolvedValue({ ...makeConfig(), local: { runner: "none" } });
+
+    const actual = await doctor();
+
+    expect(actual).toBe(true);
+    expect(consoleLog.output()).toContain("requested: none → resolved: none");
+    expect(consoleLog.output()).toContain("local runner (none)");
+    expect(consoleLog.output()).toContain("WARNING: local.runner='none'");
+  });
+
+  it("honours an explicit local.runner='sdx' even on macOS, reflecting the requested vs resolved line", async () => {
+    detectHostMock.mockResolvedValue(host({ hasSbx: true }));
+    loadConfigMock.mockResolvedValue({ ...makeConfig(), local: { runner: "sdx" } });
+
+    const actual = await doctor();
+
+    expect(actual).toBe(true);
+    expect(consoleLog.output()).toContain("requested: sdx → resolved: sdx");
+    expect(consoleLog.output()).toContain("local runner (sdx)");
   });
 
   it("downgrades model command checks to optional when the local runner is unavailable", async () => {
-    detectHostMock.mockResolvedValue({
-      hasSafehouse: false,
-      hasCmux: false,
-      hasTmux: true,
-      isMacOS: false,
-      isSafehouseSupported: false,
-    });
+    detectHostMock.mockResolvedValue(
+      host({
+        hasSafehouse: false,
+        hasCmux: false,
+        hasTmux: true,
+        isMacOS: false,
+        isLinux: true,
+        isSafehouseSupported: false,
+      }),
+    );
     loadConfigMock.mockResolvedValue(
       makeConfig({
         definitions: {
@@ -752,13 +861,9 @@ describe(doctor, () => {
   });
 
   it("reports the local-runner check as a warning while accepting cmux workspaces", async () => {
-    detectHostMock.mockResolvedValue({
-      hasSafehouse: false,
-      hasCmux: true,
-      hasTmux: false,
-      isMacOS: false,
-      isSafehouseSupported: false,
-    });
+    detectHostMock.mockResolvedValue(
+      host({ hasSafehouse: false, isMacOS: false, isLinux: true, isSafehouseSupported: false }),
+    );
     loadConfigMock.mockResolvedValue(makeConfig());
 
     const actual = await doctor();
@@ -766,7 +871,7 @@ describe(doctor, () => {
     expect(actual).toBe(true);
     const lines = consoleLog.output();
     expect(lines).toContain("Local runner");
-    expect(lines).toContain("groundcrew requires macOS with Safehouse");
+    expect(lines).toContain("sdx runner requires `sbx`");
     expect(lines).toMatch(/requested=auto, resolved=cmux/);
     expect(checkedCommands()).toContain("cmux");
     expect(checkedCommands()).not.toContain("tmux");
@@ -774,13 +879,7 @@ describe(doctor, () => {
   });
 
   it("checks tmux instead of cmux when workspaceKind resolves to tmux", async () => {
-    detectHostMock.mockResolvedValue({
-      hasSafehouse: true,
-      hasCmux: false,
-      hasTmux: true,
-      isMacOS: true,
-      isSafehouseSupported: true,
-    });
+    detectHostMock.mockResolvedValue(host({ hasCmux: false, hasTmux: true }));
     loadConfigMock.mockResolvedValue({
       ...makeConfig(),
       workspaceKind: "tmux",
@@ -796,13 +895,7 @@ describe(doctor, () => {
   });
 
   it("reports a workspaceKind failure when the chosen backend's binary is missing", async () => {
-    detectHostMock.mockResolvedValue({
-      hasSafehouse: true,
-      hasCmux: false,
-      hasTmux: false,
-      isMacOS: true,
-      isSafehouseSupported: true,
-    });
+    detectHostMock.mockResolvedValue(host({ hasCmux: false }));
     loadConfigMock.mockResolvedValue({ ...makeConfig(), workspaceKind: "cmux" });
 
     const actual = await doctor();
