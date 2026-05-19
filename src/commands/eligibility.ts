@@ -13,6 +13,11 @@ import type { UsageByModel } from "../lib/usage.ts";
 import type { WorkspaceProbe } from "../lib/workspaces.ts";
 import type { WorktreeEntry } from "../lib/worktrees.ts";
 
+const PERCENT_FRACTION_DIVISOR = 100;
+const DAYS_PER_WEEK = 7;
+const MINUTES_PER_DAY = 24 * 60;
+const MINUTES_PER_WEEK = DAYS_PER_WEEK * MINUTES_PER_DAY;
+
 type SkipReason =
   | "blocked"
   | "blockers_paginated"
@@ -48,6 +53,22 @@ export interface SkipVerdict {
 }
 
 type Verdict = StartVerdict | SkipVerdict;
+
+export type ModelUsageExhaustion =
+  | {
+      kind: "session";
+      model: string;
+      usedPercentage: number;
+      limitPercentage: number;
+      resetMinutes: number | null;
+    }
+  | {
+      kind: "weekly";
+      model: string;
+      usedPercentage: number;
+      allowedPercentage: number;
+      resetMinutes: number;
+    };
 
 export interface ClassifyArguments {
   config: ResolvedConfig;
@@ -135,6 +156,57 @@ export function pickBestModel(
     }
     return best;
   }).name;
+}
+
+function weeklyPacedBudgetPercentage(weekEndDuration: number): number {
+  const elapsedMinutes = Math.min(
+    MINUTES_PER_WEEK,
+    Math.max(0, MINUTES_PER_WEEK - weekEndDuration),
+  );
+  const elapsedDayCount = Math.ceil(elapsedMinutes / MINUTES_PER_DAY);
+  const budgetDayCount = Math.min(DAYS_PER_WEEK, Math.max(1, elapsedDayCount));
+
+  return (budgetDayCount / DAYS_PER_WEEK) * PERCENT_FRACTION_DIVISOR;
+}
+
+export function classifyUsageExhaustion(
+  config: ResolvedConfig,
+  usage: UsageByModel,
+): ModelUsageExhaustion[] {
+  const exhausted: ModelUsageExhaustion[] = [];
+  const sessionLimit = config.orchestrator.sessionLimitPercentage;
+  for (const [model, snapshot] of Object.entries(usage)) {
+    if (snapshot.session !== null && snapshot.session * PERCENT_FRACTION_DIVISOR > sessionLimit) {
+      exhausted.push({
+        kind: "session",
+        model,
+        usedPercentage: snapshot.session * PERCENT_FRACTION_DIVISOR,
+        limitPercentage: sessionLimit,
+        resetMinutes: snapshot.sessionEndDuration,
+      });
+    }
+    // Weekly gate paces total weekly usage against day buckets from the
+    // weekly reset. Day 1's budget is available immediately after rollover,
+    // then each later day opens another 1/7 of the weekly budget.
+    if (
+      snapshot.weekly !== null &&
+      Number.isFinite(snapshot.weekly) &&
+      snapshot.weekEndDuration !== null
+    ) {
+      const usedPercentage = snapshot.weekly * PERCENT_FRACTION_DIVISOR;
+      const allowedPercentage = weeklyPacedBudgetPercentage(snapshot.weekEndDuration);
+      if (usedPercentage > allowedPercentage) {
+        exhausted.push({
+          kind: "weekly",
+          model,
+          usedPercentage,
+          allowedPercentage,
+          resetMinutes: snapshot.weekEndDuration,
+        });
+      }
+    }
+  }
+  return exhausted;
 }
 
 interface RecoveryArguments {

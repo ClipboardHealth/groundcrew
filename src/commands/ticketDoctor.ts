@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import {
-  createBoardSource,
   fetchBlockersForTicket,
+  fetchInProgressIssueCount,
   fetchRawLinearIssue,
   resolveModelFor,
   resolveRepositoryFor,
@@ -10,10 +10,15 @@ import {
   type GroundcrewIssue,
   type RawLinearIssue,
 } from "../lib/boardSource.ts";
-import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
+import { AGENT_ANY_MODEL, loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { getUsageByModel, type UsageByModel } from "../lib/usage.ts";
 import { getLinearClient, writeOutput } from "../lib/util.ts";
-import { classifyBlockers } from "./eligibility.ts";
+import {
+  classifyBlockers,
+  classifyUsageExhaustion,
+  pickBestModel,
+  type ModelUsageExhaustion,
+} from "./eligibility.ts";
 
 export type TicketDoctorVerdict =
   | { kind: "would-dispatch" }
@@ -72,12 +77,12 @@ function buildModelChecks(raw: RawLinearIssue, config: ResolvedConfig): ModelRes
       checks.push({
         name: "Has agent-* label",
         status: "ok",
-        detail: "agent-any (model picked at dispatch time)",
+        detail: "agent-any",
       });
       checks.push({
         name: "Model resolves from agent-* label",
         status: "ok",
-        detail: `would resolve to "${config.models.default}" if no other model has more headroom`,
+        detail: `model picked at dispatch time; defaults to "${config.models.default}" when usage ties`,
       });
       break;
     }
@@ -102,9 +107,8 @@ function buildModelChecks(raw: RawLinearIssue, config: ResolvedConfig): ModelRes
       });
       checks.push({
         name: "Model resolves from agent-* label",
-        status: "fail",
-        detail: `requested model "${modelResolution.requestedModel}" is disabled — would fall back to "${modelResolution.fallbackModel}"`,
-        failureSummary: `agent-${modelResolution.requestedModel} maps to disabled model`,
+        status: "ok",
+        detail: `agent-${modelResolution.requestedModel} disabled; falling back to model "${modelResolution.fallbackModel}"`,
       });
       break;
     }
@@ -113,8 +117,14 @@ function buildModelChecks(raw: RawLinearIssue, config: ResolvedConfig): ModelRes
       break;
     }
   }
-  const resolvedModel =
-    modelResolution.kind === "matched" ? modelResolution.model : config.models.default;
+  let resolvedModel = config.models.default;
+  if (modelResolution.kind === "matched") {
+    resolvedModel = modelResolution.model;
+  } else if (modelResolution.kind === "agent-any") {
+    resolvedModel = AGENT_ANY_MODEL;
+  } else if (modelResolution.kind === "disabled-fallback") {
+    resolvedModel = modelResolution.fallbackModel;
+  }
   return { resolvedModel, checks };
 }
 
@@ -160,7 +170,7 @@ function buildRepoChecks(
       name: "Description mentions known repo",
       status: "fail",
       detail: `no entry from workspace.knownRepositories (${config.workspace.knownRepositories.join(", ")}) appears in description`,
-      failureSummary: "no known repo mentioned in description",
+      failureSummary: "description does not mention a known repo",
     });
     checks.push({
       name: "Resolved repo is cloned locally",
@@ -201,12 +211,21 @@ async function runEligibilityChecks(arguments_: EligibilityCheckArguments): Prom
     repository: resolvedRepository,
     model: resolvedModel,
     blockers: [...blockers],
-    hasMoreBlockers: false,
+    hasMoreBlockers: raw.hasMoreBlockers,
   };
 
   const blockerClassification = classifyBlockers(config, [groundcrewIssue]);
   const [firstSkip] = blockerClassification.skips;
   if (firstSkip !== undefined) {
+    if (firstSkip.eventReason === "blockers_paginated") {
+      eligibility.push({
+        name: "No active blockers",
+        status: "fail",
+        detail: "blockers exceeded the v1 relation page size",
+        failureSummary: "blockers exceeded the v1 relation page size",
+      });
+      return false;
+    }
     // firstSkip.blockers is always set for "blocked" and "blockers_paginated" skip reasons.
     /* v8 ignore next @preserve */
     const blockerIds = firstSkip.blockers ?? [];
@@ -221,21 +240,31 @@ async function runEligibilityChecks(arguments_: EligibilityCheckArguments): Prom
   eligibility.push({ name: "No active blockers", status: "ok" });
 
   const usage = await dependencies.fetchUsage();
-  const sessionFraction = usage[resolvedModel]?.session ?? 0;
-  const limitPercentage = config.orchestrator.sessionLimitPercentage;
-  // Mirror the dispatcher rule: exhausted when `session * 100 > sessionLimitPercentage`.
-  // "ok" is the negation: session * 100 <= sessionLimitPercentage.
-  const usageOk = sessionFraction * 100 <= limitPercentage;
-  const sessionPercent = (sessionFraction * 100).toFixed(0);
-  const usageCheck: TicketCheck = {
-    name: `Model "${resolvedModel}" usage under sessionLimitPercentage`,
-    status: usageOk ? "ok" : "fail",
-    detail: `${sessionPercent}% (limit ${limitPercentage}%)`,
-  };
-  if (!usageOk) {
-    usageCheck.failureSummary = `${resolvedModel} session usage ${sessionPercent}% over ${limitPercentage}% limit`;
+  const usageExhaustion = classifyUsageExhaustion(config, usage);
+  const exhausted = new Set(usageExhaustion.map((exhaustion) => exhaustion.model));
+  let model = resolvedModel;
+  let resolvedFromAny = "";
+  if (model === AGENT_ANY_MODEL) {
+    const picked = pickBestModel(config, usage, exhausted);
+    if (picked === undefined) {
+      eligibility.push({
+        name: "Model usage under sessionLimitPercentage",
+        status: "fail",
+        detail: "agent-any but no model has available capacity",
+        failureSummary: "agent-any has no model with available capacity",
+      });
+      return false;
+    }
+    model = picked;
+    resolvedFromAny = `; agent-any resolved to model "${picked}"`;
   }
-  eligibility.push(usageCheck);
+
+  const exhaustedUsage = usageExhaustion.find((exhaustion) => exhaustion.model === model);
+  eligibility.push(
+    exhaustedUsage === undefined
+      ? modelUsageOkCheck({ config, model, usage, resolvedFromAny })
+      : usageExhaustionCheck(exhaustedUsage),
+  );
 
   const inProgress = await dependencies.countInProgress();
   const cap = config.orchestrator.maximumInProgress;
@@ -246,11 +275,43 @@ async function runEligibilityChecks(arguments_: EligibilityCheckArguments): Prom
     detail: `${inProgress}/${cap} used`,
   };
   if (!capOk) {
-    capCheck.failureSummary = `in-progress cap hit (${inProgress}/${cap})`;
+    capCheck.failureSummary = `in-progress cap is full (${inProgress}/${cap} used)`;
   }
   eligibility.push(capCheck);
 
   return eligibility.every((check) => check.status === "ok");
+}
+
+function modelUsageOkCheck(arguments_: {
+  config: ResolvedConfig;
+  model: string;
+  usage: UsageByModel;
+  resolvedFromAny: string;
+}): TicketCheck {
+  const { config, model, usage, resolvedFromAny } = arguments_;
+  const sessionPercent = ((usage[model]?.session ?? 0) * 100).toFixed(0);
+  return {
+    name: `Model "${model}" usage under sessionLimitPercentage`,
+    status: "ok",
+    detail: `${sessionPercent}% (limit ${config.orchestrator.sessionLimitPercentage}%)${resolvedFromAny}`,
+  };
+}
+
+function usageExhaustionCheck(exhaustion: ModelUsageExhaustion): TicketCheck {
+  if (exhaustion.kind === "session") {
+    return {
+      name: `Model "${exhaustion.model}" usage under sessionLimitPercentage`,
+      status: "fail",
+      detail: `${exhaustion.usedPercentage.toFixed(0)}% (limit ${exhaustion.limitPercentage}%)`,
+      failureSummary: `${exhaustion.model} session usage ${exhaustion.usedPercentage.toFixed(0)}% over ${exhaustion.limitPercentage}% limit`,
+    };
+  }
+  return {
+    name: `Model "${exhaustion.model}" weekly usage within paced budget`,
+    status: "fail",
+    detail: `${exhaustion.usedPercentage.toFixed(1)}% (paced budget ${exhaustion.allowedPercentage.toFixed(1)}%, resets in ${exhaustion.resetMinutes}m)`,
+    failureSummary: `${exhaustion.model} weekly usage ${exhaustion.usedPercentage.toFixed(1)}% over ${exhaustion.allowedPercentage.toFixed(1)}% paced budget`,
+  };
 }
 
 const STATUS_TAG: Record<TicketCheck["status"], string> = {
@@ -296,7 +357,7 @@ function eligibilityLines(result: TicketDoctorResult): string[] {
 
 export function renderTicketDoctorResult(result: TicketDoctorResult): string[] {
   const titlePart = result.title === undefined ? "" : ` (${result.title})`;
-  const header = `groundcrew ticket doctor — ${result.ticket}${titlePart}`;
+  const header = `groundcrew doctor --ticket ${result.ticket}${titlePart}`;
   const bar = "─".repeat(header.length);
 
   const verdictLine = formatVerdict(result.verdict);
@@ -412,36 +473,42 @@ export async function ticketDoctor(
 export async function ticketDoctorCli(argv: string[]): Promise<void> {
   const [ticket, ...extraArgs] = argv;
   if (ticket === undefined || ticket.length === 0 || ticket.startsWith("-")) {
-    throw new Error("Usage: crew ticket doctor <ticket>");
+    throw new Error("Usage: crew doctor --ticket <ticket>");
   }
   /* v8 ignore else @preserve */
   if (extraArgs.length > 0) {
-    throw new Error(`crew ticket doctor: unexpected arguments: ${extraArgs.join(" ")}`);
+    throw new Error(`crew doctor --ticket: unexpected arguments: ${extraArgs.join(" ")}`);
   }
   /* v8 ignore start @preserve */
+  const ok = await runTicketDoctor(ticket);
+  if (!ok) {
+    process.exitCode = 1;
+  }
+  /* v8 ignore stop @preserve */
+}
+
+export async function runTicketDoctor(ticket: string): Promise<boolean> {
   const config = await loadConfig();
-  const client = getLinearClient();
-  const boardSource = createBoardSource({ config, client });
+  let client: ReturnType<typeof getLinearClient> | undefined;
+  const linearClient = (): ReturnType<typeof getLinearClient> => {
+    client ??= getLinearClient();
+    return client;
+  };
 
   const result = await ticketDoctor({
     config,
     ticket,
-    fetchRawIssue: async ({ ticket: t }) => await fetchRawLinearIssue({ client, ticket: t }),
+    fetchRawIssue: async ({ ticket: t }) =>
+      await fetchRawLinearIssue({ client: linearClient(), ticket: t }),
     fetchBlockersFor: async ({ ticket: t, uuid }) =>
-      await fetchBlockersForTicket({ client, ticket: t, uuid }),
+      await fetchBlockersForTicket({ client: linearClient(), ticket: t, uuid }),
     fetchUsage: async () => await getUsageByModel(config),
-    countInProgress: async () => {
-      const board = await boardSource.fetch();
-      return board.issues.filter((issue) => issue.status === config.linear.statuses.inProgress)
-        .length;
-    },
+    countInProgress: async () =>
+      await fetchInProgressIssueCount({ client: linearClient(), config }),
   });
 
   for (const line of renderTicketDoctorResult(result)) {
     writeOutput(line);
   }
-  if (result.verdict.kind !== "would-dispatch") {
-    process.exitCode = 1;
-  }
-  /* v8 ignore stop @preserve */
+  return result.verdict.kind === "would-dispatch";
 }

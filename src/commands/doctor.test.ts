@@ -1,9 +1,12 @@
 import { existsSync, statSync } from "node:fs";
 
+import type { LinearClient } from "@linear/sdk";
+
 import type { RunCommandOptions } from "../lib/commandRunner.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { detectHostCapabilities } from "../lib/host.ts";
-import { readEnvironmentVariable } from "../lib/util.ts";
+import type { UsageByModel } from "../lib/usage.ts";
+import { getLinearClient, readEnvironmentVariable } from "../lib/util.ts";
 import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCapture.ts";
 import { deleteEnvironmentVariable, setEnvironmentVariable } from "../testHelpers/env.ts";
 import { doctor } from "./doctor.ts";
@@ -35,6 +38,10 @@ type RunCommandMock = (
 ) => string;
 
 const runCommandMock = vi.hoisted(() => vi.fn<RunCommandMock>());
+const getLinearClientMock = vi.hoisted(() => vi.fn<() => LinearClient>());
+const getUsageByModelMock = vi.hoisted(() =>
+  vi.fn<(config: ResolvedConfig, signal?: AbortSignal) => Promise<UsageByModel>>(),
+);
 
 vi.mock(import("../lib/commandRunner.ts"), async (importOriginal) => {
   const actual = await importOriginal();
@@ -45,11 +52,42 @@ vi.mock(import("../lib/commandRunner.ts"), async (importOriginal) => {
     runCommandAsync: runCommandMock as unknown as typeof actual.runCommandAsync,
   };
 });
+vi.mock(import("../lib/usage.ts"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, getUsageByModel: getUsageByModelMock };
+});
+vi.mock(import("../lib/util.ts"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, getLinearClient: getLinearClientMock };
+});
 
 const existsMock = vi.mocked(existsSync);
 const statMock = vi.mocked(statSync);
 const loadConfigMock = vi.mocked(loadConfig);
 const detectHostMock = vi.mocked(detectHostCapabilities);
+const getLinearClientMocked = vi.mocked(getLinearClient);
+
+interface RawIssueStub {
+  id: string;
+  title: string;
+  description: string | null;
+  team: { id: string } | null;
+  state: { name: string } | null;
+  labels: { nodes: { name: string }[] };
+  inverseRelations: {
+    nodes: {
+      type: string;
+      issue?: {
+        identifier: string;
+        title: string;
+        state?: { name: string } | null;
+      } | null;
+    }[];
+    pageInfo: { hasNextPage: boolean };
+  };
+}
+
+type LinearRawRequest = (query: string) => Promise<unknown>;
 
 function makeConfig(overrides: Partial<ResolvedConfig["models"]> = {}): ResolvedConfig {
   return {
@@ -120,6 +158,62 @@ function mockMissingPath(missingPath: string): void {
   existsMock.mockImplementation((path) => path !== missingPath);
 }
 
+function rawIssue(overrides: Partial<RawIssueStub> = {}): RawIssueStub {
+  return {
+    id: "uuid-1",
+    title: "Fix the thing",
+    description: "Touches repo-a.",
+    team: { id: "team-default" },
+    state: { name: "Todo" },
+    labels: { nodes: [{ name: "agent-claude" }] },
+    inverseRelations: { nodes: [], pageInfo: { hasNextPage: false } },
+    ...overrides,
+  };
+}
+
+function activeNodes(count: number): { id: string }[] {
+  return Array.from({ length: count }, (_value, index) => ({ id: `active-${index}` }));
+}
+
+function makeLinearClient(
+  options: {
+    issue?: RawIssueStub | null;
+    activePages?: number[];
+  } = {},
+): LinearClient {
+  const { issue = rawIssue(), activePages = [0] } = options;
+  let activePageIndex = 0;
+  const rawRequest = vi.fn<LinearRawRequest>(async (query) => {
+    if (query.includes("ResolveIssue")) {
+      return { data: { issue } };
+    }
+    if (query.includes("IssueBlockers")) {
+      return {
+        data: {
+          issue: issue === null ? null : { inverseRelations: issue.inverseRelations },
+        },
+      };
+    }
+    if (query.includes("InProgressIssues")) {
+      const index = activePageIndex;
+      activePageIndex += 1;
+      const count = activePages[index] ?? 0;
+      const hasNextPage = index < activePages.length - 1;
+      return {
+        data: {
+          issues: {
+            nodes: activeNodes(count),
+            pageInfo: { hasNextPage, endCursor: hasNextPage ? `cursor-${index}` : "" },
+          },
+        },
+      };
+    }
+    return { data: {} };
+  });
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests provide only the LinearClient surface consumed by doctor diagnostics.
+  return { client: { rawRequest } } as unknown as LinearClient;
+}
+
 describe(doctor, () => {
   let consoleLog: ConsoleCapture;
   const originalEnvironment = readEnvironmentVariable("LINEAR_API_KEY");
@@ -140,6 +234,8 @@ describe(doctor, () => {
       const target = firstArgument(arguments_);
       return `/usr/bin/${target}\n`;
     });
+    getLinearClientMocked.mockReturnValue(makeLinearClient());
+    getUsageByModelMock.mockResolvedValue({});
   });
 
   afterEach(() => {
@@ -150,6 +246,265 @@ describe(doctor, () => {
       setEnvironmentVariable("LINEAR_API_KEY", originalEnvironment);
     }
     vi.resetAllMocks();
+  });
+
+  it("returns true for a dispatch-ready ticket diagnostic", async () => {
+    loadConfigMock.mockResolvedValue(makeConfig());
+
+    const actual = await doctor({ ticket: "team-1" });
+
+    expect(actual).toBe(true);
+    const output = consoleLog.output();
+    expect(output).toContain("groundcrew doctor --ticket TEAM-1");
+    expect(output).toContain("[ok] Ticket exists in Linear");
+    expect(output).toContain("[ok] Status is Todo");
+    expect(output).toContain("[ok] In-progress cap not hit");
+    expect(output).toContain("would be dispatched on next tick");
+  });
+
+  it("returns false when config loading fails for a ticket diagnostic", async () => {
+    loadConfigMock.mockRejectedValue(new Error("bad config"));
+
+    const actual = await doctor({ ticket: "team-1" });
+
+    expect(actual).toBe(false);
+    expect(consoleLog.output()).toContain("config: bad config");
+  });
+
+  it("returns false when the ticket is not found", async () => {
+    loadConfigMock.mockResolvedValue(makeConfig());
+    getLinearClientMocked.mockReturnValue(makeLinearClient({ issue: null }));
+
+    const actual = await doctor({ ticket: "team-999" });
+
+    expect(actual).toBe(false);
+    expect(consoleLog.output()).toContain("unresolvable: Ticket TEAM-999 not found in Linear");
+  });
+
+  it("returns false when the ticket is not in the Todo status", async () => {
+    loadConfigMock.mockResolvedValue(makeConfig());
+    getLinearClientMocked.mockReturnValue(
+      makeLinearClient({ issue: rawIssue({ state: { name: "In Review" } }) }),
+    );
+
+    const actual = await doctor({ ticket: "team-1" });
+
+    expect(actual).toBe(false);
+    expect(consoleLog.output()).toContain("status is In Review (need Todo)");
+  });
+
+  it("returns false when the ticket has no agent label", async () => {
+    loadConfigMock.mockResolvedValue(makeConfig());
+    getLinearClientMocked.mockReturnValue(
+      makeLinearClient({ issue: rawIssue({ labels: { nodes: [] } }) }),
+    );
+
+    const actual = await doctor({ ticket: "team-1" });
+
+    expect(actual).toBe(false);
+    expect(consoleLog.output()).toContain("ticket has no agent-* label");
+  });
+
+  it("returns false when the description does not mention a known repo", async () => {
+    loadConfigMock.mockResolvedValue(makeConfig());
+    getLinearClientMocked.mockReturnValue(
+      makeLinearClient({ issue: rawIssue({ description: "no repo here" }) }),
+    );
+
+    const actual = await doctor({ ticket: "team-1" });
+
+    expect(actual).toBe(false);
+    expect(consoleLog.output()).toContain("description does not mention a known repo");
+  });
+
+  it("returns false when the resolved repo is not cloned locally", async () => {
+    loadConfigMock.mockResolvedValue(makeConfig());
+    mockMissingPath("/work/repo-a");
+
+    const actual = await doctor({ ticket: "team-1" });
+
+    expect(actual).toBe(false);
+    expect(consoleLog.output()).toContain("resolved repo repo-a is not cloned locally");
+  });
+
+  it("returns false when the ticket has active blockers", async () => {
+    loadConfigMock.mockResolvedValue(makeConfig());
+    getLinearClientMocked.mockReturnValue(
+      makeLinearClient({
+        issue: rawIssue({
+          inverseRelations: {
+            nodes: [
+              {
+                type: "blocks",
+                issue: {
+                  identifier: "TEAM-0",
+                  title: "Blocker",
+                  state: { name: "In Progress" },
+                },
+              },
+            ],
+            pageInfo: { hasNextPage: false },
+          },
+        }),
+      }),
+    );
+
+    const actual = await doctor({ ticket: "team-1" });
+
+    expect(actual).toBe(false);
+    expect(consoleLog.output()).toContain("blocked by team-0:In Progress");
+  });
+
+  it("treats blockers with missing status as active", async () => {
+    loadConfigMock.mockResolvedValue(makeConfig());
+    getLinearClientMocked.mockReturnValue(
+      makeLinearClient({
+        issue: rawIssue({
+          inverseRelations: {
+            nodes: [
+              {
+                type: "blocks",
+                issue: {
+                  identifier: "TEAM-0",
+                  title: "Blocker",
+                  state: null,
+                },
+              },
+            ],
+            pageInfo: { hasNextPage: false },
+          },
+        }),
+      }),
+    );
+
+    const actual = await doctor({ ticket: "team-1" });
+
+    expect(actual).toBe(false);
+    expect(consoleLog.output()).toContain("blocked by team-0:missing");
+  });
+
+  it("returns false when blocker relations are paginated", async () => {
+    loadConfigMock.mockResolvedValue(makeConfig());
+    getLinearClientMocked.mockReturnValue(
+      makeLinearClient({
+        issue: rawIssue({
+          inverseRelations: {
+            nodes: [],
+            pageInfo: { hasNextPage: true },
+          },
+        }),
+      }),
+    );
+
+    const actual = await doctor({ ticket: "team-1" });
+
+    expect(actual).toBe(false);
+    expect(consoleLog.output()).toContain("blockers exceeded the v1 relation page size");
+  });
+
+  it("returns false when the resolved model is over its usage limit", async () => {
+    loadConfigMock.mockResolvedValue(makeConfig());
+    getUsageByModelMock.mockResolvedValue({
+      claude: {
+        session: 0.94,
+        sessionEndDuration: null,
+        weekly: null,
+        weekEndDuration: null,
+      },
+    });
+
+    const actual = await doctor({ ticket: "team-1" });
+
+    expect(actual).toBe(false);
+    expect(consoleLog.output()).toContain("claude session usage 94% over 85% limit");
+  });
+
+  it("returns false when the resolved model exceeds the weekly paced budget", async () => {
+    loadConfigMock.mockResolvedValue(makeConfig());
+    getUsageByModelMock.mockResolvedValue({
+      claude: {
+        session: 0.1,
+        sessionEndDuration: 30,
+        weekly: 0.2,
+        weekEndDuration: 6 * 24 * 60,
+      },
+    });
+
+    const actual = await doctor({ ticket: "team-1" });
+
+    expect(actual).toBe(false);
+    expect(consoleLog.output()).toContain("claude weekly usage 20.0% over 14.3% paced budget");
+  });
+
+  it("treats null model session usage as available capacity", async () => {
+    loadConfigMock.mockResolvedValue(makeConfig());
+    getUsageByModelMock.mockResolvedValue({
+      claude: {
+        session: null,
+        sessionEndDuration: null,
+        weekly: null,
+        weekEndDuration: null,
+      },
+    });
+
+    const actual = await doctor({ ticket: "team-1" });
+
+    expect(actual).toBe(true);
+    expect(consoleLog.output()).toContain('Model "claude" usage under sessionLimitPercentage');
+  });
+
+  it("returns false when the in-progress cap is hit", async () => {
+    loadConfigMock.mockResolvedValue(makeConfig());
+    getLinearClientMocked.mockReturnValue(makeLinearClient({ activePages: [4] }));
+
+    const actual = await doctor({ ticket: "team-1" });
+
+    expect(actual).toBe(false);
+    expect(consoleLog.output()).toContain("in-progress cap is full (4/4 used)");
+  });
+
+  it("resolves agent-any before checking usage", async () => {
+    loadConfigMock.mockResolvedValue(makeConfig());
+    getLinearClientMocked.mockReturnValue(
+      makeLinearClient({ issue: rawIssue({ labels: { nodes: [{ name: "agent-any" }] } }) }),
+    );
+
+    const actual = await doctor({ ticket: "team-1" });
+
+    expect(actual).toBe(true);
+    expect(consoleLog.output()).toContain('agent-any resolved to model "claude"');
+  });
+
+  it("returns false when agent-any has no model with available capacity", async () => {
+    loadConfigMock.mockResolvedValue(makeConfig());
+    getLinearClientMocked.mockReturnValue(
+      makeLinearClient({ issue: rawIssue({ labels: { nodes: [{ name: "agent-any" }] } }) }),
+    );
+    getUsageByModelMock.mockResolvedValue({
+      claude: {
+        session: 0.94,
+        sessionEndDuration: null,
+        weekly: null,
+        weekEndDuration: null,
+      },
+    });
+
+    const actual = await doctor({ ticket: "team-1" });
+
+    expect(actual).toBe(false);
+    expect(consoleLog.output()).toContain("agent-any has no model with available capacity");
+  });
+
+  it("reports disabled shipped-default fallback labels", async () => {
+    loadConfigMock.mockResolvedValue(makeConfig());
+    getLinearClientMocked.mockReturnValue(
+      makeLinearClient({ issue: rawIssue({ labels: { nodes: [{ name: "agent-codex" }] } }) }),
+    );
+
+    const actual = await doctor({ ticket: "team-1" });
+
+    expect(actual).toBe(true);
+    expect(consoleLog.output()).toContain('agent-codex disabled; falling back to model "claude"');
   });
 
   it("returns false when config loading fails", async () => {

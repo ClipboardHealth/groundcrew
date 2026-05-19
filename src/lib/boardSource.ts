@@ -311,6 +311,8 @@ export interface RawLinearIssue {
   labels: { name: string }[];
   /** Linear workflow state name, e.g. "Todo", "In Review". May be "" if state was null. */
   stateName: string;
+  blockers: Blocker[];
+  hasMoreBlockers: boolean;
 }
 
 export async function fetchBlockersForTicket(arguments_: {
@@ -366,6 +368,17 @@ export async function fetchRawLinearIssue(arguments_: {
         labels(first: ${ISSUE_LABEL_PAGE_SIZE}) {
           nodes { name }
         }
+        inverseRelations(first: 50, includeArchived: false) {
+          nodes {
+            type
+            issue {
+              identifier
+              title
+              state { name }
+            }
+          }
+          pageInfo { hasNextPage }
+        }
       }
     }`,
     { id: ticket.toUpperCase() },
@@ -379,6 +392,10 @@ export async function fetchRawLinearIssue(arguments_: {
       team?: { id: string } | null;
       state?: { name: string } | null;
       labels: { nodes: { name: string }[] };
+      inverseRelations?: {
+        nodes: IssueRelationNode[];
+        pageInfo: { hasNextPage: boolean };
+      };
     } | null;
   };
   if (issue === null) {
@@ -391,7 +408,56 @@ export async function fetchRawLinearIssue(arguments_: {
     teamId: issue.team?.id ?? "",
     labels: issue.labels.nodes,
     stateName: issue.state?.name ?? "",
+    blockers: blockersFromRelations(issue.inverseRelations?.nodes ?? []),
+    hasMoreBlockers: issue.inverseRelations?.pageInfo.hasNextPage ?? false,
   };
+}
+
+interface InProgressIssuesPage {
+  nodes: { id: string }[];
+  pageInfo: { hasNextPage: boolean; endCursor: string };
+}
+
+export async function fetchInProgressIssueCount(arguments_: {
+  client: LinearClient;
+  config: ResolvedConfig;
+}): Promise<number> {
+  const { client, config } = arguments_;
+  let after: string | null = null;
+  let count = 0;
+  for (;;) {
+    // oxlint-disable-next-line no-await-in-loop -- pagination cursor depends on the previous response
+    const response: { data?: unknown } = await client.client.rawRequest(
+      `query InProgressIssues($slugId: String!, $stateName: String!, $agentLabelPrefix: String!, $after: String) {
+        issues(
+          filter: {
+            project: { slugId: { eq: $slugId } }
+            state: { name: { eq: $stateName } }
+            labels: { some: { name: { startsWith: $agentLabelPrefix } } }
+          }
+          first: ${ISSUES_PAGE_SIZE}
+          after: $after
+          includeArchived: false
+        ) {
+          nodes { id }
+          pageInfo { hasNextPage endCursor }
+        }
+      }`,
+      {
+        slugId: config.linear.slugId,
+        stateName: config.linear.statuses.inProgress,
+        agentLabelPrefix: AGENT_LABEL_PREFIX,
+        after,
+      },
+    );
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- shape is fixed by our GraphQL query above
+    const { issues: page } = response.data as { issues: InProgressIssuesPage };
+    count += page.nodes.length;
+    if (!page.pageInfo.hasNextPage) {
+      return count;
+    }
+    after = page.pageInfo.endCursor;
+  }
 }
 
 export type RepositoryResolution = { kind: "ok"; repository: string } | { kind: "missing" };

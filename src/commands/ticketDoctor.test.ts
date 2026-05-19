@@ -50,6 +50,8 @@ function makeStubRawIssue(overrides: Partial<RawLinearIssue> = {}): RawLinearIss
     teamId: "team-1",
     labels: [],
     stateName: "Todo",
+    blockers: [],
+    hasMoreBlockers: false,
     ...overrides,
   };
 }
@@ -178,7 +180,7 @@ describe("ticketDoctor resolution checks", () => {
     expect(modelCheck?.detail).toMatch(/claude/);
   });
 
-  it("flags disabled-fallback model resolution as fail with both names in detail", async () => {
+  it("reports disabled-fallback model resolution with both names in detail", async () => {
     const dependencies = makeStubDependencies({
       fetchRawIssue: vi.fn<TicketDoctorDependencies["fetchRawIssue"]>().mockResolvedValue(
         makeStubRawIssue({
@@ -201,7 +203,7 @@ describe("ticketDoctor resolution checks", () => {
     const modelCheck = result.resolution.find(
       (check) => check.name === "Model resolves from agent-* label",
     );
-    expect(modelCheck?.status).toBe("fail");
+    expect(modelCheck?.status).toBe("ok");
     expect(modelCheck?.detail).toMatch(/codex/);
     expect(modelCheck?.detail).toMatch(/claude/);
   });
@@ -284,6 +286,8 @@ describe("ticketDoctor — env checks", () => {
           teamId: "team-1",
           labels: [{ name: "agent-claude" }],
           stateName: "Todo",
+          blockers: [],
+          hasMoreBlockers: false,
         }),
       });
       const result = await ticketDoctor(dependencies);
@@ -316,6 +320,8 @@ describe("ticketDoctor — env checks", () => {
           teamId: "team-1",
           labels: [{ name: "agent-claude" }],
           stateName: "Todo",
+          blockers: [],
+          hasMoreBlockers: false,
         }),
       });
       const result = await ticketDoctor(dependencies);
@@ -341,6 +347,8 @@ describe("ticketDoctor — env checks", () => {
         teamId: "team-1",
         labels: [{ name: "agent-claude" }],
         stateName: "Todo",
+        blockers: [],
+        hasMoreBlockers: false,
       }),
     });
     const result = await ticketDoctor(dependencies);
@@ -380,6 +388,8 @@ describe("ticketDoctor — eligibility phase", () => {
         teamId: "team-1",
         labels: [{ name: "agent-claude" }],
         stateName: "Todo",
+        blockers: [],
+        hasMoreBlockers: false,
       }),
       fetchBlockersFor: vi.fn<TicketDoctorDependencies["fetchBlockersFor"]>().mockResolvedValue([]),
       // session: 0.23 = 23%, limit: 85% → under limit → ok
@@ -534,7 +544,7 @@ describe("ticketDoctor — eligibility phase", () => {
       expect(check?.status).toBe("fail");
       expect(result.verdict).toMatchObject({
         kind: "ineligible",
-        reason: "in-progress cap hit (2/2)",
+        reason: "in-progress cap is full (2/2 used)",
       });
     } finally {
       rmSync(projectDir, { recursive: true, force: true });
@@ -571,6 +581,8 @@ describe("ticketDoctor — eligibility phase", () => {
           teamId: "team-1",
           labels: [{ name: "agent-any" }],
           stateName: "Todo",
+          blockers: [],
+          hasMoreBlockers: false,
         }),
         fetchUsage,
       });
@@ -666,7 +678,7 @@ describe("ticket doctor renderer", () => {
         { name: "Resolved repo is cloned locally", status: "skipped" },
       ],
       eligibility: [],
-      verdict: { kind: "ineligible", reason: "no known repo mentioned in description" },
+      verdict: { kind: "ineligible", reason: "description does not mention a known repo" },
     };
 
     const lines = renderTicketDoctorResult(result);
@@ -677,7 +689,7 @@ describe("ticket doctor renderer", () => {
     expect(failLine).toMatch(/no entry/);
 
     expect(
-      lines.some((l) => l.includes("→ ineligible: no known repo mentioned in description")),
+      lines.some((l) => l.includes("→ ineligible: description does not mention a known repo")),
     ).toBe(true);
   });
 
@@ -752,16 +764,18 @@ describe("ticket doctor renderer", () => {
 
 describe("ticketDoctorCli argument validation", () => {
   it("throws a usage error when no ticket is provided", async () => {
-    await expect(ticketDoctorCli([])).rejects.toThrow(/Usage: crew ticket doctor <ticket>/);
+    await expect(ticketDoctorCli([])).rejects.toThrow(/Usage: crew doctor --ticket <ticket>/);
   });
 
   it("throws a usage error when the argument looks like a flag", async () => {
-    await expect(ticketDoctorCli(["--help"])).rejects.toThrow(/Usage: crew ticket doctor <ticket>/);
+    await expect(ticketDoctorCli(["--help"])).rejects.toThrow(
+      /Usage: crew doctor --ticket <ticket>/,
+    );
   });
 
   it("throws on extra arguments beyond the ticket id", async () => {
     await expect(ticketDoctorCli(["HRD-1", "extra"])).rejects.toThrow(
-      /crew ticket doctor: unexpected arguments: extra/,
+      /crew doctor --ticket: unexpected arguments: extra/,
     );
   });
 });

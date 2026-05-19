@@ -19,15 +19,12 @@ import type { WorktreeEntry } from "../lib/worktrees.ts";
 import {
   classifyBlockers,
   classifyEligibility,
+  classifyUsageExhaustion,
+  type ModelUsageExhaustion,
   type SkipVerdict,
   type StartVerdict,
 } from "./eligibility.ts";
 import { setupWorkspace } from "./setupWorkspace.ts";
-
-const PERCENT_FRACTION_DIVISOR = 100;
-const DAYS_PER_WEEK = 7;
-const MINUTES_PER_DAY = 24 * 60;
-const MINUTES_PER_WEEK = DAYS_PER_WEEK * MINUTES_PER_DAY;
 
 interface DispatcherDeps {
   config: ResolvedConfig;
@@ -51,37 +48,9 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
 
   function buildExhaustedSet(usage: UsageByModel): Set<string> {
     const exhausted = new Set<string>();
-    const sessionLimit = config.orchestrator.sessionLimitPercentage;
-    for (const [model, snapshot] of Object.entries(usage)) {
-      if (snapshot.session !== null && snapshot.session * PERCENT_FRACTION_DIVISOR > sessionLimit) {
-        exhausted.add(model);
-        const pct = (snapshot.session * PERCENT_FRACTION_DIVISOR).toFixed(0);
-        const mins = snapshot.sessionEndDuration ?? "?";
-        log(
-          `${model} session at ${pct}% (> ${sessionLimit}%), resets in ${mins}m — skipping its tickets`,
-        );
-      }
-      // Weekly gate paces total weekly usage against day buckets from the
-      // weekly reset. Day 1's budget is available immediately after rollover,
-      // then each later day opens another 1/7 of the weekly budget. Skipped when:
-      //   - weekly is null (no codexbar secondary window this tick)
-      //   - weekly is non-finite (EXHAUSTED_USAGE — session gate above
-      //     already pins it to Infinity)
-      //   - weekEndDuration is null (can't compute where we are in week)
-      if (
-        snapshot.weekly !== null &&
-        Number.isFinite(snapshot.weekly) &&
-        snapshot.weekEndDuration !== null
-      ) {
-        const usedPct = snapshot.weekly * PERCENT_FRACTION_DIVISOR;
-        const allowedPct = weeklyPacedBudgetPercentage(snapshot.weekEndDuration);
-        if (usedPct > allowedPct) {
-          exhausted.add(model);
-          log(
-            `${model} weekly at ${usedPct.toFixed(1)}% (> ${allowedPct.toFixed(1)}% paced budget), resets in ${snapshot.weekEndDuration}m — skipping its tickets`,
-          );
-        }
-      }
+    for (const exhaustion of classifyUsageExhaustion(config, usage)) {
+      exhausted.add(exhaustion.model);
+      log(formatUsageExhaustion(exhaustion));
     }
     return exhausted;
   }
@@ -258,13 +227,10 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
   return { runOnce };
 }
 
-function weeklyPacedBudgetPercentage(weekEndDuration: number): number {
-  const elapsedMinutes = Math.min(
-    MINUTES_PER_WEEK,
-    Math.max(0, MINUTES_PER_WEEK - weekEndDuration),
-  );
-  const elapsedDayCount = Math.ceil(elapsedMinutes / MINUTES_PER_DAY);
-  const budgetDayCount = Math.min(DAYS_PER_WEEK, Math.max(1, elapsedDayCount));
-
-  return (budgetDayCount / DAYS_PER_WEEK) * PERCENT_FRACTION_DIVISOR;
+function formatUsageExhaustion(exhaustion: ModelUsageExhaustion): string {
+  if (exhaustion.kind === "session") {
+    const mins = exhaustion.resetMinutes ?? "?";
+    return `${exhaustion.model} session at ${exhaustion.usedPercentage.toFixed(0)}% (> ${exhaustion.limitPercentage}%), resets in ${mins}m — skipping its tickets`;
+  }
+  return `${exhaustion.model} weekly at ${exhaustion.usedPercentage.toFixed(1)}% (> ${exhaustion.allowedPercentage.toFixed(1)}% paced budget), resets in ${exhaustion.resetMinutes}m — skipping its tickets`;
 }

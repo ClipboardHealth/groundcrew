@@ -6,6 +6,7 @@ import {
   type ClassifyArguments,
   classifyBlockers,
   classifyEligibility,
+  classifyUsageExhaustion,
   pickBestModel,
 } from "./eligibility.ts";
 
@@ -305,5 +306,47 @@ describe(pickBestModel, () => {
       codex: { session: 0.3, sessionEndDuration: 30, weekly: null, weekEndDuration: null },
     };
     expect(pickBestModel(makeConfig(), usage, new Set())).toBe("codex");
+  });
+});
+
+describe(classifyUsageExhaustion, () => {
+  const MINUTES_PER_DAY = 24 * 60;
+  const MINUTES_PER_WEEK = 7 * MINUTES_PER_DAY;
+
+  it("reports session exhaustion", () => {
+    expect(
+      classifyUsageExhaustion(makeConfig(), {
+        claude: { session: 0.95, sessionEndDuration: 30, weekly: null, weekEndDuration: null },
+      }),
+    ).toStrictEqual([
+      {
+        kind: "session",
+        model: "claude",
+        usedPercentage: 95,
+        limitPercentage: 85,
+        resetMinutes: 30,
+      },
+    ]);
+  });
+
+  it("reports weekly paced-budget exhaustion", () => {
+    expect(
+      classifyUsageExhaustion(makeConfig(), {
+        claude: {
+          session: 0.1,
+          sessionEndDuration: 30,
+          weekly: 0.2,
+          weekEndDuration: MINUTES_PER_WEEK - MINUTES_PER_DAY,
+        },
+      }),
+    ).toStrictEqual([
+      {
+        kind: "weekly",
+        model: "claude",
+        usedPercentage: 20,
+        allowedPercentage: (1 / 7) * 100,
+        resetMinutes: MINUTES_PER_WEEK - MINUTES_PER_DAY,
+      },
+    ]);
   });
 });

@@ -5,7 +5,6 @@ import { doctor } from "./commands/doctor.ts";
 import { orchestrate } from "./commands/orchestrator.ts";
 import { setupReposCli } from "./commands/setupRepos.ts";
 import { setupWorkspaceCli } from "./commands/setupWorkspace.ts";
-import { ticketCli } from "./commands/ticket.ts";
 import { errorMessage, writeError, writeOutput } from "./lib/util.ts";
 
 interface PackageMetadata {
@@ -14,7 +13,7 @@ interface PackageMetadata {
 
 interface Subcommand {
   summary: string;
-  usage?: string;
+  usage: string;
   invoke: (argv: string[]) => Promise<void>;
 }
 
@@ -71,6 +70,27 @@ async function runCli(argv: string[]): Promise<void> {
   await setupWorkspaceCli(ticket, { dryRun });
 }
 
+async function doctorCli(argv: string[]): Promise<void> {
+  let ticket: string | undefined;
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
+    if (argument === "--ticket") {
+      const value = argv[index + 1];
+      if (value === undefined || value.length === 0 || value.startsWith("-")) {
+        throw new Error("crew doctor --ticket: ticket id is required");
+      }
+      ticket = value;
+      index += 1;
+      continue;
+    }
+    throw new Error(`crew doctor: unknown argument: ${argument}`);
+  }
+
+  const ok = ticket === undefined ? await doctor() : await doctor({ ticket });
+  process.exitCode = ok ? process.exitCode : 1;
+}
+
 const SUBCOMMANDS: Record<string, Subcommand> = {
   run: {
     summary: "Run the orchestrator (one-shot by default), or provision one ticket with --ticket",
@@ -78,13 +98,9 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
     invoke: runCli,
   },
   doctor: {
-    summary: "Verify prereqs against the resolved config",
-    invoke: async () => {
-      const ok = await doctor();
-      if (!ok) {
-        process.exitCode = 1;
-      }
-    },
+    summary: "Verify prereqs, or diagnose one ticket with --ticket",
+    usage: "[--ticket <ticket>]",
+    invoke: doctorCli,
   },
   cleanup: {
     summary: "Tear down a worktree",
@@ -95,11 +111,6 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
     summary: "Project-level setup commands (currently: repos)",
     usage: "repos [--dry-run] [<repo>...]",
     invoke: setupCli,
-  },
-  ticket: {
-    summary: "Per-ticket commands (currently: doctor)",
-    usage: "doctor <ticket>",
-    invoke: ticketCli,
   },
 };
 
@@ -113,9 +124,7 @@ function printHelp(): void {
   writeOutput("Commands:");
   for (const [name, command] of Object.entries(SUBCOMMANDS)) {
     writeOutput(`  ${name.padEnd(width)}  ${command.summary}`);
-    if (command.usage !== undefined) {
-      writeOutput(`  ${" ".repeat(width)}  → crew ${name} ${command.usage}`);
-    }
+    writeOutput(`  ${" ".repeat(width)}  → crew ${name} ${command.usage}`);
   }
   writeOutput("\nSee README.md for full configuration and behavior.");
 }

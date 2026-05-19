@@ -4,6 +4,7 @@ import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCa
 import {
   createBoardSource,
   fetchBlockersForTicket,
+  fetchInProgressIssueCount,
   fetchRawLinearIssue,
   fetchResolvedIssue,
   isTerminalStatus,
@@ -108,9 +109,14 @@ interface ClientStub {
   client: { rawRequest: ReturnType<typeof vi.fn<RawRequest>> };
 }
 
-function makeClient(options: { projectFound?: boolean; pages?: IssueNodeStub[][] }): ClientStub {
-  const { projectFound = true, pages = [[]] } = options;
+function makeClient(options: {
+  projectFound?: boolean;
+  pages?: IssueNodeStub[][];
+  activePages?: number[];
+}): ClientStub {
+  const { projectFound = true, pages = [[]], activePages = [0] } = options;
   let boardCallIndex = 0;
+  let activeCallIndex = 0;
   const rawRequest = vi.fn<RawRequest>(async (query: string) => {
     if (query.includes("VerifyProject")) {
       return {
@@ -131,6 +137,22 @@ function makeClient(options: { projectFound?: boolean; pages?: IssueNodeStub[][]
           issues: {
             nodes: page,
             pageInfo: { hasNextPage: hasNext, endCursor: hasNext ? `cursor-${index}` : "" },
+          },
+        },
+      };
+    }
+    if (query.includes("InProgressIssues")) {
+      const index = activeCallIndex;
+      activeCallIndex += 1;
+      const count = activePages[index] ?? 0;
+      const hasNext = index < activePages.length - 1;
+      return {
+        data: {
+          issues: {
+            nodes: Array.from({ length: count }, (_value, nodeIndex) => ({
+              id: `active-${index}-${nodeIndex}`,
+            })),
+            pageInfo: { hasNextPage: hasNext, endCursor: hasNext ? `active-cursor-${index}` : "" },
           },
         },
       };
@@ -730,6 +752,8 @@ describe(fetchRawLinearIssue, () => {
     expect(result.teamId).toBe("team-hrd");
     expect(result.stateName).toBe("In Review");
     expect(result.labels).toStrictEqual([{ name: "agent-claude" }, { name: "feature" }]);
+    expect(result.blockers).toStrictEqual([]);
+    expect(result.hasMoreBlockers).toBe(false);
   });
 
   it("coerces a null description to an empty string", async () => {
@@ -769,6 +793,34 @@ describe(fetchRawLinearIssue, () => {
         ticket: "hrd-1",
       }),
     ).rejects.toThrow(/HRD-1 not found in Linear/);
+  });
+});
+
+describe(fetchInProgressIssueCount, () => {
+  it("counts matching in-progress tickets", async () => {
+    const config = makeConfig();
+    const client = makeClient({ pages: [[]], activePages: [2] });
+
+    const result = await fetchInProgressIssueCount({
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests use the LinearClient surface consumed by boardSource
+      client: client as unknown as LinearClient,
+      config,
+    });
+
+    expect(result).toBe(2);
+  });
+
+  it("paginates across in-progress tickets", async () => {
+    const config = makeConfig();
+    const client = makeClient({ pages: [[]], activePages: [2, 3] });
+
+    const result = await fetchInProgressIssueCount({
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests use the LinearClient surface consumed by boardSource
+      client: client as unknown as LinearClient,
+      config,
+    });
+
+    expect(result).toBe(5);
   });
 });
 

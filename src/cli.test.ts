@@ -86,6 +86,7 @@ describe(run, () => {
     expect(helpOutput).toContain("-v, --version");
     expect(helpOutput).toContain("run");
     expect(helpOutput).not.toContain("sandbox");
+    expect(helpOutput).not.toContain("crew ticket");
     expect(process.exitCode).toBe(1);
   });
 
@@ -234,6 +235,39 @@ describe(run, () => {
 
     expect(doctorMock).toHaveBeenCalledWith();
     expect(process.exitCode).toBeUndefined();
+  });
+
+  it("dispatches `doctor --ticket <id>` to ticket diagnostics", async () => {
+    doctorMock.mockResolvedValue(true);
+
+    await run(["doctor", "--ticket", "team-220"]);
+
+    expect(doctorMock).toHaveBeenCalledWith({ ticket: "team-220" });
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it("sets exit code to 1 when `doctor --ticket` fails", async () => {
+    doctorMock.mockResolvedValue(false);
+
+    await run(["doctor", "--ticket", "team-220"]);
+
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("rejects `doctor --ticket` with no value", async () => {
+    await run(["doctor", "--ticket"]);
+
+    expect(consoleError.output()).toContain("ticket id is required");
+    expect(process.exitCode).toBe(1);
+    expect(doctorMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects unknown args under `doctor`", async () => {
+    await run(["doctor", "--bogus"]);
+
+    expect(consoleError.output()).toContain("unknown argument: --bogus");
+    expect(process.exitCode).toBe(1);
+    expect(doctorMock).not.toHaveBeenCalled();
   });
 
   it("sets exit code to 1 when doctor fails", async () => {
