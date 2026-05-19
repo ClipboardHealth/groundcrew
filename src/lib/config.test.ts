@@ -7,7 +7,7 @@ import {
   setEnvironmentVariable,
   snapshotEnvironmentVariables,
 } from "../testHelpers/env.ts";
-import type { Config, ResolvedConfig } from "./config.ts";
+import { type Config, resolveLocalRunner, type ResolvedConfig } from "./config.ts";
 
 const PACKAGE_ROOT = resolve(import.meta.dirname, "..", "..");
 const PACKAGE_CONFIG_PATH = join(PACKAGE_ROOT, "config.ts");
@@ -129,6 +129,78 @@ describe("loadConfig", () => {
       worktreeRoot: "/home/sprite/groundcrew/worktrees",
       secretNames: ["NPM_TOKEN", "BUF_TOKEN"],
     });
+    expect(actual.local.runner).toBe("auto");
+    expect(actual.local.linux.network).toBe("host");
+    expect(actual.local.linux.envPass).toContain("HOME");
+    expect(actual.local.linux.allowedReadPaths).toContain("~/.gitconfig");
+    expect(actual.local.linux.allowedWritePaths).toContain("~/.claude");
+  });
+
+  it("accepts a custom local.runner override", async () => {
+    const path = writeConfigFile(
+      temporary,
+      configSource({
+        linear: { ...VALID_LINEAR },
+        workspace: VALID_WORKSPACE(temporary),
+        local: { runner: "bubblewrap" },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+
+    expect(actual.local.runner).toBe("bubblewrap");
+  });
+
+  it("rejects unknown local.runner values", async () => {
+    const path = writeConfigFile(
+      temporary,
+      configSource({
+        linear: { ...VALID_LINEAR },
+        workspace: VALID_WORKSPACE(temporary),
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- intentionally bad value to exercise validation
+        local: { runner: "firejail" as unknown as "none" },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(/local\.runner must be one of/u);
+  });
+
+  it("rejects unknown local.linux.network values", async () => {
+    const path = writeConfigFile(
+      temporary,
+      configSource({
+        linear: { ...VALID_LINEAR },
+        workspace: VALID_WORKSPACE(temporary),
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- intentionally bad value to exercise validation
+        local: { linux: { network: "bridged" as unknown as "host" } },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(/local\.linux\.network must be one of/u);
+  });
+
+  it("rejects invalid env names in local.linux.envPass", async () => {
+    const path = writeConfigFile(
+      temporary,
+      configSource({
+        linear: { ...VALID_LINEAR },
+        workspace: VALID_WORKSPACE(temporary),
+        local: { linux: { envPass: ["lowercase"] } },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(/local\.linux\.envPass\[0\]/u);
   });
 
   it("accepts remote runner config overrides", async () => {
@@ -1146,5 +1218,27 @@ config.orchestrator = { sessionLimitPercentage: Number.NaN };\n`,
     const { loadConfig } = await loadFreshConfig();
 
     await expect(loadConfig()).rejects.toThrow(/codexbar must be an object/);
+  });
+});
+
+describe(resolveLocalRunner, () => {
+  it("returns the explicit setting verbatim when not 'auto'", () => {
+    expect(resolveLocalRunner("safehouse", { isMacOS: true, isLinux: false })).toBe("safehouse");
+    expect(resolveLocalRunner("bubblewrap", { isMacOS: false, isLinux: true })).toBe("bubblewrap");
+    expect(resolveLocalRunner("none", { isMacOS: false, isLinux: false })).toBe("none");
+  });
+
+  it("'auto' picks safehouse on macOS", () => {
+    expect(resolveLocalRunner("auto", { isMacOS: true, isLinux: false })).toBe("safehouse");
+  });
+
+  it("'auto' picks bubblewrap on Linux", () => {
+    expect(resolveLocalRunner("auto", { isMacOS: false, isLinux: true })).toBe("bubblewrap");
+  });
+
+  it("'auto' never picks 'none' implicitly — throws on unsupported platforms", () => {
+    expect(() => resolveLocalRunner("auto", { isMacOS: false, isLinux: false })).toThrow(
+      /Set local\.runner to 'safehouse', 'bubblewrap', or 'none' explicitly/u,
+    );
   });
 });

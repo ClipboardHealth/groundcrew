@@ -63,6 +63,10 @@ function makeConfig(overrides: {
     },
     prompts: { initial: "x" },
     workspaceKind: "auto",
+    local: {
+      runner: "auto",
+      linux: { allowedReadPaths: [], allowedWritePaths: [], envPass: ["HOME"], network: "host" },
+    },
     logging: { file: "/tmp/groundcrew-test.log" },
     remote: {
       provider: "sprite",

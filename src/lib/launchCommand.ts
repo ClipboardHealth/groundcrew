@@ -2,10 +2,13 @@ import { Buffer } from "node:buffer";
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 
+import { buildBubblewrapPrefix } from "./bubblewrap.ts";
 import {
   BUILD_SECRET_NAMES,
+  type BubblewrapPolicy,
   DEFAULT_HOST_SETUP_COMMAND,
   DEFAULT_REMOTE_SETUP_COMMAND,
+  type LocalRunner,
   type ModelDefinition,
   type RemoteRunnerConfig,
 } from "./config.ts";
@@ -80,6 +83,18 @@ interface LaunchCommandArguments {
    * never inherits them.
    */
   secretsFile?: string | undefined;
+  /**
+   * Concrete local isolation backend chosen for this launch. Resolved
+   * from `config.local.runner` via `resolveLocalRunner` before this
+   * function is called — `auto` is never seen here.
+   */
+  runner: LocalRunner;
+  /**
+   * Linux Bubblewrap policy. Required when `runner === "bubblewrap"`;
+   * ignored otherwise. Kept on `ResolvedConfig.local.linux` even for
+   * other runners, so switching backends does not require config edits.
+   */
+  bubblewrapPolicy?: BubblewrapPolicy | undefined;
 }
 
 interface RemoteLaunchCommandArguments {
@@ -109,12 +124,14 @@ export function buildLaunchCommand(arguments_: LaunchCommandArguments): string {
     worktreeDir: arguments_.worktreeDir,
   });
 
-  // Skip the wrap if `cmd` already starts with `safehouse` so legacy
-  // configs don't double-wrap.
-  const cmdStartsWithSafehouse = /^safehouse(\s|$)/.test(arguments_.definition.cmd);
-  const wrapped = cmdStartsWithSafehouse
-    ? agentCmd
-    : [shellSingleQuote(SAFEHOUSE_CLEARANCE_WRAPPER_PATH), agentCmd].join(" ");
+  const wrapped = wrapAgentForRunner({
+    runner: arguments_.runner,
+    rawCmd: arguments_.definition.cmd,
+    agentCmd,
+    worktreeDir: arguments_.worktreeDir,
+    bubblewrapPolicy: arguments_.bubblewrapPolicy,
+  });
+
   const lines: string[] = [`cd ${shellSingleQuote(arguments_.worktreeDir)}`];
   if (arguments_.secretsFile !== undefined) {
     lines.push(sourceSecretsLine(arguments_.secretsFile));
@@ -129,6 +146,47 @@ export function buildLaunchCommand(arguments_: LaunchCommandArguments): string {
     `exec ${wrapped} "$_p"`,
   );
   return lines.join(" && ");
+}
+
+interface WrapForRunnerArguments {
+  runner: LocalRunner;
+  /** Original `definition.cmd` before placeholder substitution — used to detect legacy `safehouse …` strings. */
+  rawCmd: string;
+  /** Rendered agent command with `{{worktree}}`/`{{sandbox}}` already substituted. */
+  agentCmd: string;
+  worktreeDir: string;
+  bubblewrapPolicy: BubblewrapPolicy | undefined;
+}
+
+/**
+ * Compose the runner-specific wrapper around the rendered agent command.
+ * Lives outside `buildLaunchCommand` so each backend reads as a single
+ * branch and the dispatch is easy to extend (e.g. a future Landlock
+ * runner). Returns a shell fragment that ends just before the prompt
+ * positional `"$_p"` is appended.
+ */
+function wrapAgentForRunner(arguments_: WrapForRunnerArguments): string {
+  const { runner, rawCmd, agentCmd, worktreeDir, bubblewrapPolicy } = arguments_;
+  if (runner === "none") {
+    return agentCmd;
+  }
+  if (runner === "bubblewrap") {
+    /* v8 ignore next 5 @preserve -- setupWorkspace passes the policy when picking bubblewrap; missing policy is a programmer error */
+    if (bubblewrapPolicy === undefined) {
+      throw new Error(
+        "buildLaunchCommand: runner='bubblewrap' requires bubblewrapPolicy (pass ResolvedConfig.local.linux).",
+      );
+    }
+    const prefix = buildBubblewrapPrefix({ policy: bubblewrapPolicy, worktreeDir });
+    return `${prefix} -- ${agentCmd}`;
+  }
+  // Skip the wrap if `cmd` already starts with `safehouse` so legacy
+  // configs don't double-wrap.
+  const cmdStartsWithSafehouse = /^safehouse(\s|$)/.test(rawCmd);
+  if (cmdStartsWithSafehouse) {
+    return agentCmd;
+  }
+  return [shellSingleQuote(SAFEHOUSE_CLEARANCE_WRAPPER_PATH), agentCmd].join(" ");
 }
 
 export function buildRemoteLaunchCommand(arguments_: RemoteLaunchCommandArguments): string {

@@ -64,6 +64,30 @@ export const config: Config = {
   // // session and lose status-pill painting (cmux-only feature).
   // workspaceKind: "auto",
   //
+  // // Local isolation backend. "auto" picks safehouse on macOS and
+  // // bubblewrap on Linux. "none" is an explicit unsafe escape hatch and
+  // // is never selected implicitly.
+  // local: {
+  //   runner: "auto",
+  //   // Linux-only Bubblewrap policy. Ignored on macOS but kept on the
+  //   // resolved config so switching runner does not require config edits.
+  //   linux: {
+  //     // Extra read-only bind mounts. `~/` expands against $HOME.
+  //     allowedReadPaths: ["~/.gitconfig", "~/.config/git"],
+  //     // Extra read-write bind mounts. The worktree is always RW and
+  //     // does not need to be listed here.
+  //     allowedWritePaths: ["~/.claude", "~/.codex", "~/.config/gh"],
+  //     // Environment variables forwarded into the sandbox. Everything
+  //     // else is cleared (`--clearenv`). HOME/USER/PATH/TERM/LANG/LC_ALL
+  //     // are passed through by default.
+  //     envPass: ["HOME", "USER", "PATH", "TERM", "LANG", "LC_ALL"],
+  //     // "host" keeps the host's network namespace (default — agent CLIs
+  //     // hit api.anthropic.com / api.openai.com). "none" joins an empty
+  //     // net namespace.
+  //     network: "host",
+  //   },
+  // },
+  //
   // remote: {
   //   // Provider implementation. Sprite is currently the only provider.
   //   provider: "sprite",

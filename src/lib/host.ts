@@ -11,6 +11,8 @@ import { runCommandAsync } from "./commandRunner.ts";
 export interface HostCapabilities {
   /** True when the `safehouse` binary is on PATH. */
   hasSafehouse: boolean;
+  /** True when the `bwrap` (Bubblewrap) binary is on PATH. */
+  hasBwrap: boolean;
   /** True when the `cmux` binary is on PATH. */
   hasCmux: boolean;
   /** True when the `tmux` binary is on PATH. */
@@ -18,9 +20,14 @@ export interface HostCapabilities {
   /** True when the host platform is macOS. Safehouse is macOS-only. */
   isMacOS: boolean;
   /**
+   * True when the host platform is Linux. Bubblewrap is the default
+   * Linux local runner; WSL reports as `linux` here too.
+   */
+  isLinux: boolean;
+  /**
    * True when the host platform is one Safehouse supports. Safehouse is
    * macOS-only at time of writing; local setup uses this to reject Linux
-   * or WSL before creating a worktree.
+   * or WSL before creating a worktree when the safehouse runner is chosen.
    */
   isSafehouseSupported: boolean;
 }
@@ -48,16 +55,20 @@ export async function which(cmd: string, signal?: AbortSignal): Promise<string |
 
 export async function detectHostCapabilities(signal?: AbortSignal): Promise<HostCapabilities> {
   const isMacOS = platform === "darwin";
-  const [safehouse, cmux, tmux] = await Promise.all([
+  const isLinux = platform === "linux";
+  const [safehouse, bwrap, cmux, tmux] = await Promise.all([
     which("safehouse", signal),
+    which("bwrap", signal),
     which("cmux", signal),
     which("tmux", signal),
   ]);
   return {
     hasSafehouse: safehouse !== undefined,
+    hasBwrap: bwrap !== undefined,
     hasCmux: cmux !== undefined,
     hasTmux: tmux !== undefined,
     isMacOS,
+    isLinux,
     isSafehouseSupported: isMacOS,
   };
 }

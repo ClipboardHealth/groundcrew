@@ -5,7 +5,12 @@
 
 import { existsSync, statSync } from "node:fs";
 
-import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
+import {
+  type LocalRunner,
+  loadConfig,
+  resolveLocalRunner,
+  type ResolvedConfig,
+} from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities, which } from "../lib/host.ts";
 import { errorMessage, readEnvironmentVariable, writeOutput } from "../lib/util.ts";
 import { resolveWorkspaceKind, type WorkspaceResolution } from "../lib/workspaces.ts";
@@ -152,8 +157,15 @@ export async function doctor(): Promise<boolean> {
     writeOutput(`[--] host: ${errorMessage(error)}`);
     return false;
   }
-  const localCapability = localCapabilityCheck(host);
-  reportLocalCapability(localCapability);
+  let resolvedRunner: LocalRunner;
+  try {
+    resolvedRunner = resolveLocalRunner(config.local.runner, host);
+  } catch (error) {
+    writeOutput(`[--] local.runner: ${errorMessage(error)}`);
+    return false;
+  }
+  const localCapability = localCapabilityCheck(host, resolvedRunner);
+  reportLocalCapability(localCapability, resolvedRunner);
 
   const workspaceOutcome = resolveWorkspaceOutcome(config, host);
   reportWorkspaceKind(config, workspaceOutcome);
@@ -201,29 +213,68 @@ export async function doctor(): Promise<boolean> {
   return true;
 }
 
-function localCapabilityCheck(host: HostCapabilities): Check {
+function safehouseCheck(host: HostCapabilities): Check {
   if (!host.isMacOS) {
     return {
-      name: "local runner (macOS + Safehouse)",
+      name: "local runner (safehouse, macOS)",
       ok: false,
       required: false,
-      hint: "required for local runs; on Linux/WSL use agent-remote with the remote runner",
+      hint: "required only when local.runner='safehouse'; on Linux use bubblewrap (default) or label tickets agent-remote",
     };
   }
   return {
-    name: "local runner (macOS + Safehouse)",
+    name: "local runner (safehouse, macOS)",
     ok: host.hasSafehouse,
     required: false,
     hint: host.hasSafehouse
       ? "ready"
-      : "required for local runs; install Safehouse from https://agent-safehouse.dev/ and ensure `safehouse` is on PATH",
+      : "install Safehouse from https://agent-safehouse.dev/ and ensure `safehouse` is on PATH",
   };
 }
 
-function reportLocalCapability(check: Check): void {
+function bubblewrapCheck(host: HostCapabilities): Check {
+  if (!host.isLinux) {
+    return {
+      name: "local runner (bubblewrap, Linux)",
+      ok: false,
+      required: false,
+      hint: "required only when local.runner='bubblewrap'; on macOS use safehouse (default)",
+    };
+  }
+  return {
+    name: "local runner (bubblewrap, Linux)",
+    ok: host.hasBwrap,
+    required: false,
+    hint: host.hasBwrap
+      ? "ready"
+      : "install Bubblewrap: `sudo apt install bubblewrap` (Debian/Ubuntu) or `sudo dnf install bubblewrap` (Fedora/RHEL)",
+  };
+}
+
+function noneRunnerCheck(): Check {
+  return {
+    name: "local runner (none, unsandboxed)",
+    ok: true,
+    required: false,
+    hint: "WARNING: local.runner='none' — agent runs without sandboxing. Use only when you understand the implications.",
+  };
+}
+
+function localCapabilityCheck(host: HostCapabilities, resolvedRunner: LocalRunner): Check {
+  if (resolvedRunner === "safehouse") {
+    return safehouseCheck(host);
+  }
+  if (resolvedRunner === "bubblewrap") {
+    return bubblewrapCheck(host);
+  }
+  return noneRunnerCheck();
+}
+
+function reportLocalCapability(check: Check, resolvedRunner: LocalRunner): void {
   writeOutput();
   writeOutput("Local runner");
   writeOutput("------------");
+  writeOutput(`resolved=${resolvedRunner}`);
   writeOutput(format(check));
 }
 

@@ -17,6 +17,7 @@ function arguments_(
     definition: { cmd: "claude", color: "#fff" } satisfies ModelDefinition,
     promptFile: "/tmp/prompt-team-1/prompt.txt",
     worktreeDir: "/work/repo-a-team-1",
+    runner: "safehouse",
     ...overrides,
   };
 }
@@ -137,6 +138,63 @@ describe(buildLaunchCommand, () => {
 
     expect(out).toContain("setup_status=$?");
     expect(out).toContain("groundcrew setup command exited with status $setup_status");
+  });
+
+  describe("runner dispatch", () => {
+    const bubblewrapPolicy = {
+      allowedReadPaths: [],
+      allowedWritePaths: [],
+      envPass: ["HOME"],
+      network: "host" as const,
+    };
+
+    it("runner='none' skips both safehouse-clearance and bwrap", () => {
+      const out = buildLaunchCommand(
+        arguments_({
+          runner: "none",
+          definition: { cmd: "claude --auto", color: "#fff" },
+        }),
+      );
+
+      expect(out).not.toContain("safehouse-clearance");
+      expect(out).not.toContain("bwrap");
+      expect(out).toMatch(/exec claude --auto "\$_p"$/u);
+    });
+
+    it("runner='bubblewrap' prefixes the agent with a bwrap invocation", () => {
+      const out = buildLaunchCommand(
+        arguments_({
+          runner: "bubblewrap",
+          bubblewrapPolicy,
+          definition: { cmd: "claude --auto", color: "#fff" },
+        }),
+      );
+
+      expect(out).toContain("'bwrap'");
+      expect(out).toContain("'--unshare-pid'");
+      expect(out).toContain("'--bind' '/work/repo-a-team-1' '/work/repo-a-team-1'");
+      expect(out).not.toContain("safehouse-clearance");
+      expect(out).toMatch(/-- claude --auto "\$_p"$/u);
+    });
+
+    it("runner='bubblewrap' without a policy is a programmer error", () => {
+      expect(() =>
+        buildLaunchCommand(
+          arguments_({
+            runner: "bubblewrap",
+            // bubblewrapPolicy intentionally omitted
+            definition: { cmd: "claude", color: "#fff" },
+          }),
+        ),
+      ).toThrow(/bubblewrapPolicy/u);
+    });
+
+    it("runner='safehouse' still wraps with safehouse-clearance", () => {
+      const out = buildLaunchCommand(arguments_({ runner: "safehouse" }));
+
+      expect(out).toContain("safehouse-clearance");
+      expect(out).not.toContain("bwrap");
+    });
   });
 
   describe("secretsFile (build-time secret shuttling)", () => {

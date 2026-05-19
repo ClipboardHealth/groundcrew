@@ -45,6 +45,10 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
     },
     prompts: { initial: "x", ...overrides.prompts },
     workspaceKind: overrides.workspaceKind ?? "auto",
+    local: {
+      runner: "auto",
+      linux: { allowedReadPaths: [], allowedWritePaths: [], envPass: ["HOME"], network: "host" },
+    },
     remote: {
       provider: "sprite",
       runnerName: "crew-claude-1",

@@ -44,9 +44,11 @@ const detectHostMock = vi.mocked(detectHostCapabilities);
 function makeHost(overrides: Partial<HostCapabilities> = {}): HostCapabilities {
   return {
     hasSafehouse: false,
+    hasBwrap: false,
     hasCmux: true,
     hasTmux: false,
     isMacOS: true,
+    isLinux: false,
     isSafehouseSupported: true,
     ...overrides,
   };
@@ -77,6 +79,15 @@ function makeConfig(workspaceKind: WorkspaceKindSetting = "auto"): ResolvedConfi
     },
     prompts: { initial: "x" },
     workspaceKind,
+    local: {
+      runner: "auto",
+      linux: {
+        allowedReadPaths: [],
+        allowedWritePaths: [],
+        envPass: ["HOME", "PATH"],
+        network: "host",
+      },
+    },
     logging: { file: "/tmp/groundcrew-test.log" },
     remote: {
       provider: "sprite",

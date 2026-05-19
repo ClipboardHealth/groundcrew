@@ -192,6 +192,15 @@ function makeConfig(overrides: Partial<ResolvedConfig["models"]> = {}): Resolved
       initial: "Begin {{ticket}} ({{title}}) in {{worktree}}\n{{description}}",
     },
     workspaceKind: "auto",
+    local: {
+      runner: "auto",
+      linux: {
+        allowedReadPaths: ["~/.gitconfig"],
+        allowedWritePaths: ["~/.claude"],
+        envPass: ["HOME", "PATH"],
+        network: "host",
+      },
+    },
     logging: { file: "/tmp/groundcrew-test.log" },
     remote: {
       provider: "sprite",
@@ -275,9 +284,11 @@ describe(setupWorkspace, () => {
     issueResolver.mockResolvedValue(buildMockedIssue({ title: "Test Title", description: "Body" }));
     detectHostMock.mockResolvedValue({
       hasSafehouse: true,
+      hasBwrap: false,
       hasCmux: true,
       hasTmux: false,
       isMacOS: true,
+      isLinux: false,
       isSafehouseSupported: true,
     });
     createMock.mockImplementation(async (_config, spec) => {
@@ -330,9 +341,11 @@ describe(setupWorkspace, () => {
   it("launches the remote runner from a local cwd and skips local Safehouse setup", async () => {
     detectHostMock.mockResolvedValue({
       hasSafehouse: false,
+      hasBwrap: false,
       hasCmux: true,
       hasTmux: false,
       isMacOS: true,
+      isLinux: false,
       isSafehouseSupported: true,
     });
     const config = makeConfig();
@@ -526,9 +539,11 @@ describe(setupWorkspace, () => {
   it("wraps the agent command with Safehouse and runs the host setup script for local runs", async () => {
     detectHostMock.mockResolvedValue({
       hasSafehouse: true,
+      hasBwrap: false,
       hasCmux: true,
       hasTmux: false,
       isMacOS: true,
+      isLinux: false,
       isSafehouseSupported: true,
     });
     const config = makeConfig({
@@ -564,9 +579,11 @@ describe(setupWorkspace, () => {
   it("does not create a worktree when the safehouse clearance cannot start", async () => {
     detectHostMock.mockResolvedValue({
       hasSafehouse: true,
+      hasBwrap: false,
       hasCmux: true,
       hasTmux: false,
       isMacOS: true,
+      isLinux: false,
       isSafehouseSupported: true,
     });
     ensureClearanceMock.mockRejectedValue(new Error("proxy unavailable"));
@@ -579,12 +596,53 @@ describe(setupWorkspace, () => {
     expect(createMock).not.toHaveBeenCalled();
   });
 
+  it("wraps the agent with bwrap and skips Safehouse on Linux when runner='bubblewrap'", async () => {
+    detectHostMock.mockResolvedValue({
+      hasSafehouse: false,
+      hasBwrap: true,
+      hasCmux: true,
+      hasTmux: false,
+      isMacOS: false,
+      isLinux: true,
+      isSafehouseSupported: false,
+    });
+    const config: ResolvedConfig = {
+      ...makeConfig({
+        definitions: {
+          claude: { cmd: "claude --auto", color: "#fff" },
+        },
+      }),
+      local: {
+        runner: "bubblewrap",
+        linux: {
+          allowedReadPaths: ["~/.gitconfig"],
+          allowedWritePaths: ["~/.claude"],
+          envPass: ["HOME", "PATH"],
+          network: "host",
+        },
+      },
+    };
+    mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
+
+    await setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" });
+
+    expect(ensureClearanceMock).not.toHaveBeenCalled();
+    const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
+    expect(launchScript).toContain("'bwrap'");
+    expect(launchScript).toContain("'--unshare-pid'");
+    expect(launchScript).toContain("'--bind' '/work/repo-a-team-1' '/work/repo-a-team-1'");
+    expect(launchScript).not.toContain("safehouse-clearance");
+    expect(launchScript).toMatch(/-- claude --auto "\$_p"/u);
+  });
+
   it("does not double-wrap when the cmd already starts with safehouse", async () => {
     detectHostMock.mockResolvedValue({
       hasSafehouse: true,
+      hasBwrap: false,
       hasCmux: true,
       hasTmux: false,
       isMacOS: true,
+      isLinux: false,
       isSafehouseSupported: true,
     });
     const config = makeConfig({
@@ -698,19 +756,52 @@ describe(setupWorkspace, () => {
     });
   });
 
-  it("fails before creating a worktree when local runs are requested off macOS", async () => {
+  it("fails before creating a worktree when local.runner='safehouse' is set off macOS", async () => {
     detectHostMock.mockResolvedValue({
       hasSafehouse: false,
+      hasBwrap: true,
       hasCmux: false,
       hasTmux: true,
       isMacOS: false,
+      isLinux: true,
+      isSafehouseSupported: false,
+    });
+    const config: ResolvedConfig = {
+      ...makeConfig(),
+      local: {
+        runner: "safehouse",
+        linux: {
+          allowedReadPaths: [],
+          allowedWritePaths: [],
+          envPass: ["HOME"],
+          network: "host",
+        },
+      },
+    };
+
+    await expect(
+      setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" }),
+    ).rejects.toThrow(/safehouse runner require macOS/);
+
+    expect(createMock).not.toHaveBeenCalled();
+    expect(ensureClearanceMock).not.toHaveBeenCalled();
+  });
+
+  it("fails before creating a worktree when bwrap is missing on Linux", async () => {
+    detectHostMock.mockResolvedValue({
+      hasSafehouse: false,
+      hasBwrap: false,
+      hasCmux: false,
+      hasTmux: true,
+      isMacOS: false,
+      isLinux: true,
       isSafehouseSupported: false,
     });
     const config = makeConfig();
 
     await expect(
       setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" }),
-    ).rejects.toThrow(/Local groundcrew runs require macOS with Safehouse/);
+    ).rejects.toThrow(/`bwrap` \(Bubblewrap\) on PATH/);
 
     expect(createMock).not.toHaveBeenCalled();
     expect(ensureClearanceMock).not.toHaveBeenCalled();
@@ -719,9 +810,11 @@ describe(setupWorkspace, () => {
   it("fails before creating a worktree when safehouse is missing on macOS", async () => {
     detectHostMock.mockResolvedValue({
       hasSafehouse: false,
+      hasBwrap: false,
       hasCmux: true,
       hasTmux: false,
       isMacOS: true,
+      isLinux: false,
       isSafehouseSupported: true,
     });
     const config = makeConfig();
@@ -1008,9 +1101,11 @@ describe(setupWorkspaceCli, () => {
     rawRequestMock.mockResolvedValue(buildResolveIssueResponse({}));
     detectHostMock.mockResolvedValue({
       hasSafehouse: true,
+      hasBwrap: false,
       hasCmux: true,
       hasTmux: false,
       isMacOS: true,
+      isLinux: false,
       isSafehouseSupported: true,
     });
     createMock.mockImplementation(async (_config, spec) =>

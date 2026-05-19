@@ -37,12 +37,13 @@ describe(detectHostCapabilities, () => {
     vi.clearAllMocks();
   });
 
-  it("reports safehouse, cmux, and tmux as present when all are on PATH", async () => {
-    mockWhich(["safehouse", "cmux", "tmux"]);
+  it("reports safehouse, bwrap, cmux, and tmux as present when all are on PATH", async () => {
+    mockWhich(["safehouse", "bwrap", "cmux", "tmux"]);
 
     const actual = await detectHostCapabilities();
 
     expect(actual.hasSafehouse).toBe(true);
+    expect(actual.hasBwrap).toBe(true);
     expect(actual.hasCmux).toBe(true);
     expect(actual.hasTmux).toBe(true);
   });
@@ -53,6 +54,7 @@ describe(detectHostCapabilities, () => {
     const actual = await detectHostCapabilities();
 
     expect(actual.hasSafehouse).toBe(false);
+    expect(actual.hasBwrap).toBe(false);
     expect(actual.hasCmux).toBe(false);
     expect(actual.hasTmux).toBe(false);
   });
@@ -71,6 +73,14 @@ describe(detectHostCapabilities, () => {
     const actual = await detectHostCapabilities();
 
     expect(actual.isSafehouseSupported).toBe(platform === "darwin");
+  });
+
+  it("flags isLinux based on the current platform", async () => {
+    mockWhich([]);
+
+    const actual = await detectHostCapabilities();
+
+    expect(actual.isLinux).toBe(platform === "linux");
   });
 
   it("passes an AbortSignal into which probes", async () => {

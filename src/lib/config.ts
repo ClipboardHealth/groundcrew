@@ -22,6 +22,62 @@ export type WorkspaceRunner = "local" | "remote";
 
 export const WORKSPACE_RUNNERS: readonly WorkspaceRunner[] = ["local", "remote"] as const;
 
+/**
+ * Local isolation backend used when wrapping the agent process on the host.
+ *
+ * - `safehouse`: macOS Safehouse/clearance wrapper (default on macOS).
+ * - `bubblewrap`: Linux `bwrap` user-namespace sandbox with a deny-first
+ *   filesystem view (default on Linux).
+ * - `none`: no sandboxing. Never selected implicitly — only when the user
+ *   sets it explicitly as an unsafe escape hatch.
+ */
+export type LocalRunner = "safehouse" | "bubblewrap" | "none";
+
+export const LOCAL_RUNNERS: readonly LocalRunner[] = ["safehouse", "bubblewrap", "none"] as const;
+
+/**
+ * `auto` resolves to `safehouse` on macOS and `bubblewrap` on Linux at the
+ * point of use (via `resolveLocalRunner`). `none` must be set explicitly —
+ * `auto` never picks it.
+ */
+export type LocalRunnerSetting = "auto" | LocalRunner;
+
+export const LOCAL_RUNNER_SETTINGS: readonly LocalRunnerSetting[] = [
+  "auto",
+  ...LOCAL_RUNNERS,
+] as const;
+
+export type BubblewrapNetwork = "host" | "none";
+
+export const BUBBLEWRAP_NETWORK_VALUES: readonly BubblewrapNetwork[] = ["host", "none"] as const;
+
+export interface BubblewrapPolicy {
+  /**
+   * Extra paths bind-mounted read-only into the sandbox. Tildes are
+   * expanded against `$HOME`. Missing paths are bound with `--ro-bind-try`
+   * so a typo or platform difference doesn't fail the launch.
+   */
+  allowedReadPaths: string[];
+  /**
+   * Extra paths bind-mounted read-write into the sandbox. Tildes are
+   * expanded. Missing paths are bound with `--bind-try`. The worktree is
+   * always read-write — it does not need to be listed here.
+   */
+  allowedWritePaths: string[];
+  /**
+   * Environment variables forwarded into the sandbox. Everything else is
+   * dropped via `--clearenv`. `HOME`, `USER`, `PATH`, `TERM`, `LANG`, and
+   * `LC_ALL` are passed by default; extend the list to forward more.
+   */
+  envPass: string[];
+  /**
+   * `host` keeps the host network namespace (default — agents need to
+   * reach `claude.ai`, `api.openai.com`, etc.). `none` joins a fresh net
+   * namespace with no interfaces.
+   */
+  network: BubblewrapNetwork;
+}
+
 export const REMOTE_RUNNER_PROVIDER_NAMES = ["sprite"] as const;
 
 export type RemoteRunnerProviderName = (typeof REMOTE_RUNNER_PROVIDER_NAMES)[number];
@@ -149,6 +205,20 @@ export interface Config {
    * to fail loudly when the chosen backend is missing.
    */
   workspaceKind?: WorkspaceKindSetting;
+  /**
+   * Local isolation backend used when wrapping the agent process. Defaults
+   * to `"auto"`, which resolves to `safehouse` on macOS and `bubblewrap`
+   * on Linux. Set `none` only as an explicit unsafe escape hatch.
+   */
+  local?: {
+    runner?: LocalRunnerSetting;
+    linux?: {
+      allowedReadPaths?: string[];
+      allowedWritePaths?: string[];
+      envPass?: string[];
+      network?: BubblewrapNetwork;
+    };
+  };
   remote?: Partial<RemoteRunnerConfig>;
   logging?: {
     /**
@@ -202,6 +272,17 @@ export interface ResolvedConfig {
    * `auto` resolves to cmux when installed, else tmux.
    */
   workspaceKind: WorkspaceKindSetting;
+  /**
+   * Local isolation backend. `auto` stays `auto` here — call
+   * `resolveLocalRunner(local.runner, host)` to pick the concrete backend
+   * for the current host. The Linux block ships with safe defaults even
+   * when the resolved runner is not bubblewrap, so switching runner
+   * doesn't require config changes.
+   */
+  local: {
+    runner: LocalRunnerSetting;
+    linux: BubblewrapPolicy;
+  };
   remote: RemoteRunnerConfig;
   logging: {
     file: string;
@@ -250,6 +331,26 @@ const DEFAULT_PROMPT_INITIAL = [
 const DEFAULT_REMOTE: ResolvedConfig["remote"] = {
   ...SPRITE_REMOTE_PROVIDER_DEFAULTS,
   secretNames: [...BUILD_SECRET_NAMES],
+};
+
+/**
+ * Shipped Bubblewrap policy defaults. Conservative on filesystem access:
+ * the worktree (always RW, mounted by the policy compiler) and a small
+ * set of model-specific config dirs. `HOME`/`USER`/`PATH`/`TERM`/`LANG`/
+ * `LC_ALL` are forwarded so coding agents can find their auth files and
+ * render output. Network defaults to `host` because agent CLIs hit
+ * `api.anthropic.com` / `api.openai.com`.
+ */
+const DEFAULT_BUBBLEWRAP_POLICY: BubblewrapPolicy = {
+  allowedReadPaths: ["~/.gitconfig", "~/.config/git"],
+  allowedWritePaths: ["~/.claude", "~/.codex", "~/.config/gh"],
+  envPass: ["HOME", "USER", "PATH", "TERM", "LANG", "LC_ALL"],
+  network: "host",
+};
+
+const DEFAULT_LOCAL: ResolvedConfig["local"] = {
+  runner: "auto",
+  linux: { ...DEFAULT_BUBBLEWRAP_POLICY },
 };
 
 const ALLOWED_PROMPT_PLACEHOLDERS = new Set([
@@ -452,6 +553,84 @@ function normalizeRemoteRunnerConfig(user: Config["remote"] | undefined): Resolv
   };
 }
 
+function isLocalRunnerSetting(value: unknown): value is LocalRunnerSetting {
+  return typeof value === "string" && (LOCAL_RUNNER_SETTINGS as readonly string[]).includes(value);
+}
+
+function isBubblewrapNetwork(value: unknown): value is BubblewrapNetwork {
+  return (
+    typeof value === "string" && (BUBBLEWRAP_NETWORK_VALUES as readonly string[]).includes(value)
+  );
+}
+
+function normalizeLocalRunnerSetting(value: unknown, path: string): LocalRunnerSetting | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isLocalRunnerSetting(value)) {
+    fail(
+      `${path} must be one of ${LOCAL_RUNNER_SETTINGS.join(", ")} (got ${JSON.stringify(value)})`,
+    );
+  }
+  return value;
+}
+
+function normalizeBubblewrapNetwork(value: unknown, path: string): BubblewrapNetwork | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isBubblewrapNetwork(value)) {
+    fail(
+      `${path} must be one of ${BUBBLEWRAP_NETWORK_VALUES.join(", ")} (got ${JSON.stringify(value)})`,
+    );
+  }
+  return value;
+}
+
+function normalizeEnvNames(value: unknown, path: string): string[] | undefined {
+  const names = normalizeOptionalStringArray(value, path);
+  if (names === undefined) {
+    return undefined;
+  }
+  names.forEach((name, index) => {
+    if (!/^[A-Z_][A-Z0-9_]*$/.test(name)) {
+      fail(`${path}[${index}] must be a valid environment variable name`);
+    }
+  });
+  return names;
+}
+
+function normalizeLocalConfig(user: Config["local"]): ResolvedConfig["local"] {
+  if (user !== undefined && !isPlainObject(user)) {
+    fail("local must be an object");
+  }
+  const runner = normalizeLocalRunnerSetting(user?.runner, "local.runner") ?? DEFAULT_LOCAL.runner;
+
+  const linuxUser = user?.linux;
+  if (linuxUser !== undefined && !isPlainObject(linuxUser)) {
+    fail("local.linux must be an object");
+  }
+  const allowedReadPaths = normalizeOptionalStringArray(
+    linuxUser?.allowedReadPaths,
+    "local.linux.allowedReadPaths",
+  ) ?? [...DEFAULT_BUBBLEWRAP_POLICY.allowedReadPaths];
+  const allowedWritePaths = normalizeOptionalStringArray(
+    linuxUser?.allowedWritePaths,
+    "local.linux.allowedWritePaths",
+  ) ?? [...DEFAULT_BUBBLEWRAP_POLICY.allowedWritePaths];
+  const envPass = normalizeEnvNames(linuxUser?.envPass, "local.linux.envPass") ?? [
+    ...DEFAULT_BUBBLEWRAP_POLICY.envPass,
+  ];
+  const network =
+    normalizeBubblewrapNetwork(linuxUser?.network, "local.linux.network") ??
+    DEFAULT_BUBBLEWRAP_POLICY.network;
+
+  return {
+    runner,
+    linux: { allowedReadPaths, allowedWritePaths, envPass, network },
+  };
+}
+
 function isWorkspaceKindSetting(value: unknown): value is WorkspaceKindSetting {
   return (
     typeof value === "string" && (WORKSPACE_KIND_SETTINGS as readonly string[]).includes(value)
@@ -635,6 +814,7 @@ function applyDefaults(user: Config): ResolvedConfig {
       initial: user.prompts?.initial ?? DEFAULT_PROMPT_INITIAL,
     },
     workspaceKind: normalizeWorkspaceKind(user.workspaceKind, "workspaceKind") ?? "auto",
+    local: normalizeLocalConfig(user.local),
     remote: normalizeRemoteRunnerConfig(user.remote),
     logging: {
       file: expandHome(
@@ -747,6 +927,50 @@ function validate(config: ResolvedConfig): void {
   });
 
   requireString(config.logging.file, "logging.file");
+
+  /* v8 ignore next 5 @preserve -- normalizeLocalConfig rejects this before validate() runs */
+  if (!(LOCAL_RUNNER_SETTINGS as readonly string[]).includes(config.local.runner)) {
+    fail(
+      `local.runner must be one of ${LOCAL_RUNNER_SETTINGS.join(", ")} (got ${JSON.stringify(config.local.runner)})`,
+    );
+  }
+  config.local.linux.allowedReadPaths.forEach((entry, index) => {
+    requireString(entry, `local.linux.allowedReadPaths[${index}]`);
+  });
+  config.local.linux.allowedWritePaths.forEach((entry, index) => {
+    requireString(entry, `local.linux.allowedWritePaths[${index}]`);
+  });
+  config.local.linux.envPass.forEach((name, index) => {
+    requireString(name, `local.linux.envPass[${index}]`);
+    /* v8 ignore next 3 @preserve -- normalizeEnvNames already enforces this before validate() runs */
+    if (!/^[A-Z_][A-Z0-9_]*$/.test(name)) {
+      fail(`local.linux.envPass[${index}] must be a valid environment variable name`);
+    }
+  });
+}
+
+/**
+ * Pick the concrete local runner for the current host. `auto` becomes
+ * `safehouse` on macOS and `bubblewrap` on Linux. Any other platform
+ * with `auto` is rejected — `none` is never selected implicitly. Throws
+ * with a guidance message instead of silently falling back.
+ */
+export function resolveLocalRunner(
+  setting: LocalRunnerSetting,
+  host: { isMacOS: boolean; isLinux: boolean },
+): LocalRunner {
+  if (setting !== "auto") {
+    return setting;
+  }
+  if (host.isMacOS) {
+    return "safehouse";
+  }
+  if (host.isLinux) {
+    return "bubblewrap";
+  }
+  return fail(
+    "local.runner='auto' could not pick a backend: host is neither macOS nor Linux. Set local.runner to 'safehouse', 'bubblewrap', or 'none' explicitly.",
+  );
 }
 
 let cached: Readonly<ResolvedConfig> | undefined;

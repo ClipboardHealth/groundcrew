@@ -77,6 +77,15 @@ function makeConfig(overrides: Partial<ResolvedConfig["models"]> = {}): Resolved
     },
     prompts: { initial: "x" },
     workspaceKind: "auto",
+    local: {
+      runner: "auto",
+      linux: {
+        allowedReadPaths: ["~/.gitconfig"],
+        allowedWritePaths: ["~/.claude"],
+        envPass: ["HOME", "PATH"],
+        network: "host",
+      },
+    },
     logging: { file: "/tmp/groundcrew-test.log" },
     remote: {
       provider: "sprite",
@@ -139,9 +148,11 @@ describe(doctor, () => {
     statMock.mockReturnValue(statsWithDirectoryValue(true));
     detectHostMock.mockResolvedValue({
       hasSafehouse: true,
+      hasBwrap: false,
       hasCmux: true,
       hasTmux: false,
       isMacOS: true,
+      isLinux: false,
       isSafehouseSupported: true,
     });
     runCommandMock.mockImplementation((_cmd, arguments_) => {
@@ -292,9 +303,11 @@ describe(doctor, () => {
   it("reports missing Safehouse as a local runner warning", async () => {
     detectHostMock.mockResolvedValue({
       hasSafehouse: false,
+      hasBwrap: false,
       hasCmux: true,
       hasTmux: false,
       isMacOS: true,
+      isLinux: false,
       isSafehouseSupported: true,
     });
     loadConfigMock.mockResolvedValue(makeConfig());
@@ -302,17 +315,19 @@ describe(doctor, () => {
     const actual = await doctor();
 
     expect(actual).toBe(true);
-    expect(consoleLog.output()).toContain("local runner (macOS + Safehouse)");
+    expect(consoleLog.output()).toContain("local runner (safehouse, macOS)");
     expect(consoleLog.output()).toContain("install Safehouse");
-    expect(consoleLog.output().match(/local runner \(macOS \+ Safehouse\)/g)).toHaveLength(1);
+    expect(consoleLog.output()).toContain("resolved=safehouse");
   });
 
   it("downgrades local model command checks when only the remote runner can run on the host", async () => {
     detectHostMock.mockResolvedValue({
       hasSafehouse: false,
+      hasBwrap: false,
       hasCmux: false,
       hasTmux: true,
       isMacOS: false,
+      isLinux: true,
       isSafehouseSupported: false,
     });
     loadConfigMock.mockResolvedValue(
@@ -404,12 +419,14 @@ describe(doctor, () => {
     expect(checked).toContain("alpha");
   });
 
-  it("reports non-macOS local-runner guidance while accepting cmux workspaces", async () => {
+  it("reports bubblewrap as the default Linux local runner", async () => {
     detectHostMock.mockResolvedValue({
       hasSafehouse: false,
+      hasBwrap: true,
       hasCmux: true,
       hasTmux: false,
       isMacOS: false,
+      isLinux: true,
       isSafehouseSupported: false,
     });
     loadConfigMock.mockResolvedValue(makeConfig());
@@ -419,19 +436,74 @@ describe(doctor, () => {
     expect(actual).toBe(true);
     const lines = consoleLog.output();
     expect(lines).toContain("Local runner");
-    expect(lines).toContain("use agent-remote with the remote runner");
+    expect(lines).toContain("resolved=bubblewrap");
+    expect(lines).toContain("local runner (bubblewrap, Linux)");
+    expect(lines).not.toContain("install Bubblewrap");
     expect(lines).toMatch(/requested=auto, resolved=cmux/);
     expect(checkedCommands()).toContain("cmux");
     expect(checkedCommands()).not.toContain("tmux");
-    expect(lines).not.toContain("sbx diagnose");
+  });
+
+  it("hints to install Bubblewrap when bwrap is missing on Linux", async () => {
+    detectHostMock.mockResolvedValue({
+      hasSafehouse: false,
+      hasBwrap: false,
+      hasCmux: true,
+      hasTmux: false,
+      isMacOS: false,
+      isLinux: true,
+      isSafehouseSupported: false,
+    });
+    loadConfigMock.mockResolvedValue(makeConfig());
+
+    const actual = await doctor();
+
+    expect(actual).toBe(true);
+    const lines = consoleLog.output();
+    expect(lines).toContain("install Bubblewrap");
+    expect(lines).toContain("resolved=bubblewrap");
+  });
+
+  it("warns loudly when local.runner='none' is configured", async () => {
+    detectHostMock.mockResolvedValue({
+      hasSafehouse: false,
+      hasBwrap: false,
+      hasCmux: true,
+      hasTmux: false,
+      isMacOS: false,
+      isLinux: true,
+      isSafehouseSupported: false,
+    });
+    loadConfigMock.mockResolvedValue({
+      ...makeConfig(),
+      local: {
+        runner: "none",
+        linux: {
+          allowedReadPaths: [],
+          allowedWritePaths: [],
+          envPass: ["HOME"],
+          network: "host",
+        },
+      },
+    });
+
+    const actual = await doctor();
+
+    expect(actual).toBe(true);
+    const lines = consoleLog.output();
+    expect(lines).toContain("resolved=none");
+    expect(lines).toContain("WARNING");
+    expect(lines).toContain("unsandboxed");
   });
 
   it("checks tmux instead of cmux when workspaceKind resolves to tmux", async () => {
     detectHostMock.mockResolvedValue({
       hasSafehouse: true,
+      hasBwrap: false,
       hasCmux: false,
       hasTmux: true,
       isMacOS: true,
+      isLinux: false,
       isSafehouseSupported: true,
     });
     loadConfigMock.mockResolvedValue({
@@ -451,9 +523,11 @@ describe(doctor, () => {
   it("reports a workspaceKind failure when the chosen backend's binary is missing", async () => {
     detectHostMock.mockResolvedValue({
       hasSafehouse: true,
+      hasBwrap: false,
       hasCmux: false,
       hasTmux: false,
       isMacOS: true,
+      isLinux: false,
       isSafehouseSupported: true,
     });
     loadConfigMock.mockResolvedValue({ ...makeConfig(), workspaceKind: "cmux" });

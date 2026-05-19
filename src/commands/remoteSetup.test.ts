@@ -74,6 +74,10 @@ function makeConfig(runnerName = "crew-default"): ResolvedConfig {
     },
     prompts: { initial: "{{ticket}} {{worktree}} {{title}} {{description}}" },
     workspaceKind: "tmux",
+    local: {
+      runner: "auto",
+      linux: { allowedReadPaths: [], allowedWritePaths: [], envPass: ["HOME"], network: "host" },
+    },
     remote: {
       provider: "sprite",
       runnerName,

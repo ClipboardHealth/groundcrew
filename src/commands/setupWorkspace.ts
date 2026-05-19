@@ -8,6 +8,7 @@ import { fetchResolvedIssue } from "../lib/boardSource.ts";
 import {
   BUILD_SECRET_NAMES,
   loadConfig,
+  resolveLocalRunner,
   type ResolvedConfig,
   type WorkspaceRunner,
 } from "../lib/config.ts";
@@ -146,8 +147,15 @@ export async function setupWorkspace(
     return;
   }
 
-  assertLocalRunnerRequirements(await detectHostCapabilities(signal));
-  await ensureClearance({ logger: log });
+  const host = await detectHostCapabilities(signal);
+  const resolvedRunner = resolveLocalRunner(config.local.runner, host);
+  assertLocalRunnerRequirements(host, resolvedRunner);
+  // Clearance is the macOS Safehouse proxy bootstrap; other backends do
+  // not need it. Skipping it on bubblewrap/none keeps `@clipboard-health/clearance`
+  // from being a hard runtime dependency on Linux.
+  if (resolvedRunner === "safehouse") {
+    await ensureClearance({ logger: log });
+  }
 
   const spec = { repository, ticket, model, runner };
   const created =
@@ -184,6 +192,8 @@ export async function setupWorkspace(
       promptFile: stagedPrompt.file,
       worktreeDir: launchDir,
       secretsFile,
+      runner: resolvedRunner,
+      bubblewrapPolicy: resolvedRunner === "bubblewrap" ? config.local.linux : undefined,
     });
     const launchCmd = stageWorkspaceLaunchCommand(promptDir, launchCommand);
 
