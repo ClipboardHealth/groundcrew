@@ -245,6 +245,54 @@ describe(createBoardSource, () => {
       expect(first?.repository).toBe("api-admin");
     });
 
+    it("resolves bare repo name to full owner/repo when org is omitted from description", async () => {
+      const { source } = makeBoardSource(
+        makeClient({
+          pages: [
+            [
+              issueNode({
+                description: "Affects security-alerts-agent somehow.",
+                labels: { nodes: [{ name: "agent-claude" }] },
+              }),
+            ],
+          ],
+        }),
+        makeConfig({
+          workspace: {
+            projectDir: "/work",
+            knownRepositories: ["ClipboardHealth/security-alerts-agent"],
+          },
+        }),
+      );
+      const state = await source.fetch();
+      const [first] = state.issues;
+      expect(first?.repository).toBe("ClipboardHealth/security-alerts-agent");
+    });
+
+    it("rejects when a bare repo name is ambiguous across multiple orgs", async () => {
+      const { source } = makeBoardSource(
+        makeClient({
+          pages: [
+            [
+              issueNode({
+                description: "Touches shared-repo.",
+                labels: { nodes: [{ name: "agent-claude" }] },
+              }),
+            ],
+          ],
+        }),
+        makeConfig({
+          workspace: {
+            projectDir: "/work",
+            knownRepositories: ["OrgA/shared-repo", "OrgB/shared-repo"],
+          },
+        }),
+      );
+      await expect(source.fetch()).rejects.toThrow(
+        /No known repository found in ticket TEAM-1 description/,
+      );
+    });
+
     it("longer repository names beat shorter ones (api-admin vs api)", async () => {
       // Without the descending-length sort, `api` would match first.
       const { source } = makeBoardSource(
