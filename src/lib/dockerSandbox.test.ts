@@ -1,5 +1,5 @@
 import type { RunCommandOptions } from "./commandRunner.ts";
-import { sandboxExists, sandboxNameFor } from "./dockerSandbox.ts";
+import { ensureSandbox, sandboxExists, sandboxNameFor } from "./dockerSandbox.ts";
 
 type RunCommandMock = (
   command: string,
@@ -63,5 +63,120 @@ describe(sandboxExists, () => {
     await sandboxExists("foo", controller.signal);
 
     expect(runCommandMock).toHaveBeenCalledWith("sbx", ["ls"], { signal: controller.signal });
+  });
+});
+
+describe(ensureSandbox, () => {
+  beforeEach(() => {
+    runCommandMock.mockReset();
+  });
+
+  function mockExisting(names: readonly string[]): void {
+    const header = "NAME STATUS";
+    const rows = names.map((name) => `${name} running`).join("\n");
+    runCommandMock.mockImplementation((command, arguments_) => {
+      if (command === "sbx" && arguments_[0] === "ls") {
+        return `${header}\n${rows}\n`;
+      }
+      return "";
+    });
+  }
+
+  it("does nothing when the sandbox already exists", async () => {
+    mockExisting(["groundcrew-repo-a-claude"]);
+
+    await ensureSandbox({
+      sandboxName: "groundcrew-repo-a-claude",
+      sandbox: { agent: "claude" },
+      mountPath: "/home/user/dev",
+    });
+
+    expect(runCommandMock).toHaveBeenCalledTimes(1);
+    expect(runCommandMock.mock.calls[0]?.[0]).toBe("sbx");
+    expect(runCommandMock.mock.calls[0]?.[1]).toStrictEqual(["ls"]);
+  });
+
+  it("creates the sandbox when missing, passing the agent and mount path", async () => {
+    mockExisting([]);
+
+    await ensureSandbox({
+      sandboxName: "groundcrew-repo-a-claude",
+      sandbox: { agent: "claude" },
+      mountPath: "/home/user/dev",
+    });
+
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "sbx",
+      ["create", "--name", "groundcrew-repo-a-claude", "claude", "/home/user/dev"],
+      expect.any(Object),
+    );
+  });
+
+  it("adds --template when the sandbox config sets one", async () => {
+    mockExisting([]);
+
+    await ensureSandbox({
+      sandboxName: "groundcrew-repo-a-claude",
+      sandbox: { agent: "claude", template: "node-22" },
+      mountPath: "/home/user/dev",
+    });
+
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "sbx",
+      [
+        "create",
+        "--name",
+        "groundcrew-repo-a-claude",
+        "--template",
+        "node-22",
+        "claude",
+        "/home/user/dev",
+      ],
+      expect.any(Object),
+    );
+  });
+
+  it("adds one --kit flag per configured kit", async () => {
+    mockExisting([]);
+
+    await ensureSandbox({
+      sandboxName: "groundcrew-repo-a-claude",
+      sandbox: { agent: "claude", kits: ["npm-cache", "tools"] },
+      mountPath: "/home/user/dev",
+    });
+
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "sbx",
+      [
+        "create",
+        "--name",
+        "groundcrew-repo-a-claude",
+        "--kit",
+        "npm-cache",
+        "--kit",
+        "tools",
+        "claude",
+        "/home/user/dev",
+      ],
+      expect.any(Object),
+    );
+  });
+
+  it("passes the AbortSignal through to both probe and create", async () => {
+    const controller = new AbortController();
+    mockExisting([]);
+
+    await ensureSandbox(
+      {
+        sandboxName: "groundcrew-repo-a-claude",
+        sandbox: { agent: "claude" },
+        mountPath: "/home/user/dev",
+      },
+      controller.signal,
+    );
+
+    const { calls } = runCommandMock.mock;
+    expect(calls[0]?.[2]).toMatchObject({ signal: controller.signal });
+    expect(calls[1]?.[2]).toMatchObject({ signal: controller.signal });
   });
 });

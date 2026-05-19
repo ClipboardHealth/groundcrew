@@ -8,6 +8,7 @@
 import { runCommandAsync } from "./commandRunner.ts";
 import type { ResolvedConfig, WorkspaceKindSetting } from "./config.ts";
 import { detectHostCapabilities, type HostCapabilities } from "./host.ts";
+import { shellSingleQuote } from "./shell.ts";
 import { errorMessage, log, readEnvironmentVariable } from "./util.ts";
 
 export type WorkspaceKind = "cmux" | "tmux";
@@ -71,7 +72,8 @@ function isSignalAborted(signal?: AbortSignal): boolean {
 
 interface CmuxRawWorkspace {
   title: string;
-  ref: string;
+  /** Stable UUID handle. v2 RPC requires this for workspace.close / etc. */
+  id: string;
 }
 
 function parseCmuxList(output: string): CmuxRawWorkspace[] {
@@ -85,22 +87,23 @@ function parseCmuxList(output: string): CmuxRawWorkspace[] {
     if (typeof ws.title !== "string" || ws.title.length === 0) {
       continue;
     }
-    items.push({ title: ws.title, ref: pickCmuxRef({ ...ws, title: ws.title }) });
+    items.push({ title: ws.title, id: pickCmuxId({ ...ws, title: ws.title }) });
   }
   return items;
 }
 
 /**
- * Pick the most-specific identifier cmux returned for this workspace.
- * Caller has already verified `title` is non-empty, so the title fallback
- * is always defined.
+ * The stable workspace handle cmux v2 expects in JSON-RPC params. Prefer
+ * the UUID; fall back to the legacy `workspace:N` short ref or the title
+ * when older cmux builds don't surface it. v2 `workspace.close` only
+ * accepts UUIDs, so production paths must always end up here with `id`.
  */
-function pickCmuxRef(ws: { title: string; ref?: string; id?: string }): string {
-  if (typeof ws.ref === "string" && ws.ref.length > 0) {
-    return ws.ref;
-  }
+function pickCmuxId(ws: { title: string; ref?: string; id?: string }): string {
   if (typeof ws.id === "string" && ws.id.length > 0) {
     return ws.id;
+  }
+  if (typeof ws.ref === "string" && ws.ref.length > 0) {
+    return ws.ref;
   }
   return ws.title;
 }
@@ -117,13 +120,22 @@ async function listCmuxRaw(signal?: AbortSignal): Promise<CmuxRawWorkspace[] | u
   }
 }
 
-function extractCmuxOpenRef(output: string): string | undefined {
+function extractCmuxOpenId(output: string): string | undefined {
   try {
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- cmux --json prints a workspace ref/id object
-    const parsed = JSON.parse(output) as { ref?: string; id?: string };
-    const candidate = parsed.ref ?? parsed.id ?? "";
-    if (candidate.length > 0) {
-      return candidate;
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- cmux --json prints a workspace_id/ref object
+    const parsed = JSON.parse(output) as {
+      workspace_id?: string;
+      workspace_ref?: string;
+      id?: string;
+      ref?: string;
+    };
+    const uuid = parsed.workspace_id ?? parsed.id ?? "";
+    if (uuid.length > 0) {
+      return uuid;
+    }
+    const ref = parsed.workspace_ref ?? parsed.ref ?? "";
+    if (ref.length > 0) {
+      return ref;
     }
   } catch {
     /* not JSON; fall through to regex */
@@ -132,8 +144,106 @@ function extractCmuxOpenRef(output: string): string | undefined {
   return match ? match[0] : undefined;
 }
 
+interface CmuxCurrentRemote {
+  destination: string;
+  port?: number;
+  identity_file?: string;
+  ssh_options?: string[];
+}
+
+/**
+ * Inspect `cmux current-workspace`. When groundcrew is itself launched
+ * inside a cmux SSH workspace, `workspace.create` lands the new workspace
+ * on the local (macOS) cmux app rather than the remote where the agent's
+ * worktree lives. We can't replicate cmux's full SSH bootstrap
+ * (relay_port, daemon, etc.) from the remote side, so we instead wrap the
+ * agent launch command in a plain `ssh` to the same destination. Returns
+ * `undefined` when there is nothing to inherit, leaving callers free to
+ * launch locally as usual.
+ */
+async function probeCurrentCmuxRemote(
+  signal?: AbortSignal,
+): Promise<CmuxCurrentRemote | undefined> {
+  if (readEnvironmentVariable("CMUX_WORKSPACE_ID") === undefined) {
+    return undefined;
+  }
+  let output: string;
+  try {
+    output = await runWorkspaceCommand("cmux", ["--json", "current-workspace"], signal);
+  } catch (error) {
+    if (isSignalAborted(signal)) {
+      throw error;
+    }
+    log(`cmux current-workspace failed: ${errorMessage(error)}`);
+    return undefined;
+  }
+  try {
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- cmux --json current-workspace shape per v2 API
+    const parsed = JSON.parse(output) as {
+      workspace?: {
+        remote?: {
+          connected?: boolean;
+          transport?: string;
+          destination?: string | null;
+          port?: number | null;
+          identity_file?: string | null;
+          ssh_options?: string[] | null;
+        };
+      };
+    };
+    const remote = parsed.workspace?.remote;
+    if (
+      remote === undefined ||
+      remote.connected !== true ||
+      remote.transport !== "ssh" ||
+      typeof remote.destination !== "string" ||
+      remote.destination.length === 0
+    ) {
+      return undefined;
+    }
+    const inherited: CmuxCurrentRemote = { destination: remote.destination };
+    if (typeof remote.port === "number") {
+      inherited.port = remote.port;
+    }
+    if (typeof remote.identity_file === "string" && remote.identity_file.length > 0) {
+      inherited.identity_file = remote.identity_file;
+    }
+    if (Array.isArray(remote.ssh_options) && remote.ssh_options.length > 0) {
+      inherited.ssh_options = remote.ssh_options;
+    }
+    return inherited;
+  } catch (error) {
+    log(`cmux current-workspace returned malformed output: ${errorMessage(error)}`);
+    return undefined;
+  }
+}
+
+/**
+ * Compose an `ssh -t <destination> -- <cd && cmd>` invocation that lands
+ * a new cmux workspace's terminal on the same SSH remote where
+ * groundcrew is running. Path-bearing fields (`cwd`, the launch script
+ * inside `command`) stay valid because the remote shell evaluates them.
+ * The outermost return value is a single shell string suitable for
+ * `cmux new-workspace --command`.
+ */
+function buildSshWrappedCommand(spec: OpenSpec, remote: CmuxCurrentRemote): string {
+  const remoteShell = `cd ${shellSingleQuote(spec.cwd)} && ${spec.command}`;
+  const sshTokens: string[] = ["ssh", "-t"];
+  if (remote.port !== undefined) {
+    sshTokens.push("-p", String(remote.port));
+  }
+  if (remote.identity_file !== undefined) {
+    sshTokens.push("-i", shellSingleQuote(remote.identity_file));
+  }
+  for (const option of remote.ssh_options ?? []) {
+    sshTokens.push("-o", shellSingleQuote(option));
+  }
+  sshTokens.push(shellSingleQuote(remote.destination), "--", shellSingleQuote(remoteShell));
+  return sshTokens.join(" ");
+}
+
 async function applyCmuxStatus(
-  ref: string,
+  workspaceId: string,
   status: WorkspaceStatus,
   signal?: AbortSignal,
 ): Promise<void> {
@@ -144,32 +254,29 @@ async function applyCmuxStatus(
   if (status.color !== undefined) {
     arguments_.push("--color", status.color);
   }
-  arguments_.push("--workspace", ref);
+  arguments_.push("--workspace", workspaceId);
   await runWorkspaceCommand("cmux", arguments_, signal);
 }
 
-async function closeCmuxWorkspace(refOrName: string, signal?: AbortSignal): Promise<void> {
-  await runWorkspaceCommand("cmux", ["close-workspace", "--workspace", refOrName], signal);
+async function closeCmuxWorkspace(workspaceId: string, signal?: AbortSignal): Promise<void> {
+  await runWorkspaceCommand("cmux", ["close-workspace", "--workspace", workspaceId], signal);
 }
 
 const cmuxAdapter: Adapter = {
   async open(spec, signal) {
-    const output = await runWorkspaceCommand(
-      "cmux",
-      [
-        "--json",
-        "new-workspace",
-        "--name",
-        spec.name,
-        "--cwd",
-        spec.cwd,
-        "--command",
-        spec.command,
-      ],
-      signal,
-    );
-    const ref = extractCmuxOpenRef(output);
-    if (ref === undefined) {
+    const inheritedRemote = await probeCurrentCmuxRemote(signal);
+    const newWorkspaceArguments = ["--json", "new-workspace", "--name", spec.name];
+    if (inheritedRemote === undefined) {
+      newWorkspaceArguments.push("--working-directory", spec.cwd, "--command", spec.command);
+    } else {
+      // Skip --working-directory: the path is on the SSH remote and would
+      // fall back to $HOME (macOS) when cmux tries to chdir locally. The
+      // wrapped ssh command does its own `cd` on the remote side.
+      newWorkspaceArguments.push("--command", buildSshWrappedCommand(spec, inheritedRemote));
+    }
+    const output = await runWorkspaceCommand("cmux", newWorkspaceArguments, signal);
+    const workspaceId = extractCmuxOpenId(output);
+    if (workspaceId === undefined) {
       log(
         `cmux new-workspace returned unrecognized output for ${spec.name}; if a workspace was created, run \`cmux close-workspace\` manually.`,
       );
@@ -177,14 +284,12 @@ const cmuxAdapter: Adapter = {
     }
     if (spec.status !== undefined) {
       try {
-        await applyCmuxStatus(ref, spec.status, signal);
+        await applyCmuxStatus(workspaceId, spec.status, signal);
       } catch (error) {
-        try {
-          await closeCmuxWorkspace(ref, signal);
-        } catch (closeError) {
-          log(`cmux close-workspace failed for ${spec.name}: ${errorMessage(closeError)}`);
-        }
-        throw error;
+        // v2 cmux builds may not implement `set-status`; status pills are
+        // a nice-to-have, not load-bearing. Log and keep the workspace
+        // rather than tearing down a successful launch.
+        log(`cmux set-status failed for ${spec.name} (continuing): ${errorMessage(error)}`);
       }
     }
   },
@@ -203,7 +308,7 @@ const cmuxAdapter: Adapter = {
       return;
     }
     try {
-      await closeCmuxWorkspace(match.ref, signal);
+      await closeCmuxWorkspace(match.id, signal);
     } catch (error) {
       if (isSignalAborted(signal)) {
         throw error;

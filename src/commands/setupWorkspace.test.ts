@@ -232,6 +232,50 @@ function mockCmuxFailure(): void {
   });
 }
 
+interface SdxRunMockOptions {
+  existingSandboxes?: readonly string[];
+  sbxCreateThrows?: Error;
+}
+
+function mockSdxRun(options: SdxRunMockOptions = {}): void {
+  const lsOutput = [
+    "NAME STATUS",
+    ...(options.existingSandboxes ?? []).map((n) => `${n} running`),
+    "",
+  ].join("\n");
+  runCommandMock.mockImplementation((cmd, arguments_) => {
+    if (isCmuxNewWorkspace(cmd, arguments_)) {
+      return JSON.stringify({ ref: "workspace:42" });
+    }
+    if (cmd === "sbx" && arguments_[0] === "ls") {
+      return lsOutput;
+    }
+    if (cmd === "sbx" && arguments_[0] === "create" && options.sbxCreateThrows !== undefined) {
+      throw options.sbxCreateThrows;
+    }
+    return "";
+  });
+}
+
+function findSbxCreateCall(): readonly string[] | undefined {
+  const call = runCommandMock.mock.calls.find(
+    ([cmd, arguments_]) => cmd === "sbx" && arguments_[0] === "create",
+  );
+  return call?.[1];
+}
+
+function sdxHost(): HostCapabilities {
+  return host({
+    hasSafehouse: false,
+    hasSbx: true,
+    hasCmux: false,
+    hasTmux: true,
+    isMacOS: false,
+    isLinux: true,
+    isSafehouseSupported: false,
+  });
+}
+
 function lastRunArgumentFromCallWithArgument(argument: string): string {
   const call = runCommandMock.mock.calls.find((candidate) => candidate[1].includes(argument));
   const lastArgument = call?.[1].at(-1);
@@ -272,6 +316,11 @@ describe(setupWorkspace, () => {
     mkdtempMock.mockReturnValue("/tmp/groundcrew-team-1-x");
     runCommandMock.mockReturnValue("");
     teardownMock.mockResolvedValue(emptyTeardownResult());
+    // Tests assume a local (non-SSH) cmux. CMUX_WORKSPACE_ID is set in any
+    // shell launched inside cmux (including the one running the test
+    // suite); leaving it would make every open() probe current-workspace
+    // first and shift the mock call order.
+    deleteEnvironmentVariable("CMUX_WORKSPACE_ID");
   });
 
   afterEach(() => {
@@ -430,6 +479,91 @@ describe(setupWorkspace, () => {
     );
     expect(launchScript).toContain("exec claude --permission-mode auto");
     expect(launchScript).not.toContain("safehouse-clearance");
+  });
+
+  it("auto-creates the sandbox via `sbx create` when it does not exist", async () => {
+    detectHostMock.mockResolvedValue(sdxHost());
+    const config = makeConfig({
+      definitions: {
+        claude: { cmd: "claude --auto", color: "#fff", sandbox: { agent: "claude" } },
+        codex: { cmd: "codex", color: "#000" },
+      },
+    });
+    mockSdxRun();
+
+    await setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" });
+
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "sbx",
+      ["create", "--name", "groundcrew-repo-a-claude", "claude", "/work"],
+      expect.any(Object),
+    );
+  });
+
+  it("skips `sbx create` when the sandbox already exists", async () => {
+    detectHostMock.mockResolvedValue(sdxHost());
+    const config = makeConfig({
+      definitions: {
+        claude: { cmd: "claude --auto", color: "#fff", sandbox: { agent: "claude" } },
+        codex: { cmd: "codex", color: "#000" },
+      },
+    });
+    mockSdxRun({ existingSandboxes: ["groundcrew-repo-a-claude"] });
+
+    await setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" });
+
+    expect(findSbxCreateCall()).toBeUndefined();
+  });
+
+  it("forwards sandbox template and kits to `sbx create`", async () => {
+    detectHostMock.mockResolvedValue(sdxHost());
+    const config = makeConfig({
+      definitions: {
+        claude: {
+          cmd: "claude --auto",
+          color: "#fff",
+          sandbox: { agent: "claude", template: "node-22", kits: ["npm-cache", "tools"] },
+        },
+        codex: { cmd: "codex", color: "#000" },
+      },
+    });
+    mockSdxRun();
+
+    await setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" });
+
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "sbx",
+      [
+        "create",
+        "--name",
+        "groundcrew-repo-a-claude",
+        "--template",
+        "node-22",
+        "--kit",
+        "npm-cache",
+        "--kit",
+        "tools",
+        "claude",
+        "/work",
+      ],
+      expect.any(Object),
+    );
+  });
+
+  it("rolls back the worktree when sandbox creation fails", async () => {
+    detectHostMock.mockResolvedValue(sdxHost());
+    const config = makeConfig({
+      definitions: {
+        claude: { cmd: "claude --auto", color: "#fff", sandbox: { agent: "claude" } },
+        codex: { cmd: "codex", color: "#000" },
+      },
+    });
+    mockSdxRun({ sbxCreateThrows: new Error("sbx create failed") });
+
+    await expect(
+      setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" }),
+    ).rejects.toThrow("sbx create failed");
+    expect(teardownMock).toHaveBeenCalledWith(config, expect.any(Array), { force: true });
   });
 
   it("does not create a worktree when the safehouse clearance cannot start", async () => {
@@ -749,29 +883,25 @@ describe(setupWorkspace, () => {
     );
   });
 
-  it("rolls back even when cmux close-workspace fails", async () => {
+  it("treats cmux set-status failure as non-fatal (status painting is best-effort)", async () => {
     const config = makeConfig();
-    // 1. new-workspace returns ref. 2. set-status throws → adapter
-    // attempts close-workspace internally. 3. close-workspace throws
-    // too → adapter swallows the close error and rethrows the original.
+    // new-workspace returns ref, set-status throws — the workspace stays
+    // up, no worktree rollback, and setupWorkspace resolves cleanly.
     runCommandMock
       .mockReturnValueOnce(JSON.stringify({ ref: "workspace:42" }))
       .mockImplementationOnce(() => {
         throw new Error("set-status failed");
-      })
-      .mockImplementationOnce(() => {
-        throw new Error("close failed");
       });
 
     await expect(
       setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" }),
-    ).rejects.toThrow(/set-status failed/);
+    ).resolves.toBeUndefined();
 
-    expect(runCommandMock).toHaveBeenCalledWith("cmux", [
-      "close-workspace",
-      "--workspace",
-      "workspace:42",
-    ]);
+    expect(runCommandMock).not.toHaveBeenCalledWith(
+      "cmux",
+      expect.arrayContaining(["close-workspace"]),
+    );
+    expect(teardownMock).not.toHaveBeenCalled();
   });
 
   it("ignores rmSync failures during rollback", async () => {

@@ -1,12 +1,12 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import { ensureClearance } from "@clipboard-health/clearance";
 
 import { fetchResolvedIssue } from "../lib/boardSource.ts";
 import { BUILD_SECRET_NAMES, loadConfig, type ResolvedConfig } from "../lib/config.ts";
-import { sandboxNameFor } from "../lib/dockerSandbox.ts";
+import { ensureSandbox, sandboxNameFor } from "../lib/dockerSandbox.ts";
 import { detectHostCapabilities } from "../lib/host.ts";
 import { buildLaunchCommand, shellSingleQuote } from "../lib/launchCommand.ts";
 import { createLinearIssueStatusUpdater } from "../lib/linearIssueStatus.ts";
@@ -167,6 +167,16 @@ export async function setupWorkspace(
     const secretsFile = stageBuildSecrets(promptDir);
 
     const sandboxName = runner === "sdx" ? sandboxNameFor({ repository, model }) : undefined;
+    if (runner === "sdx" && sandboxName !== undefined && definition.sandbox !== undefined) {
+      await ensureSandbox(
+        {
+          sandboxName,
+          sandbox: definition.sandbox,
+          mountPath: resolve(config.workspace.projectDir),
+        },
+        signal,
+      );
+    }
     const launchCommand = buildLaunchCommand({
       definition,
       promptFile: stagedPrompt.file,
