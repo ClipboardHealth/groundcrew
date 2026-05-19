@@ -160,6 +160,16 @@ function verdictAllAbsent(input: DecideVerdictInput): StatusVerdict | undefined 
   return undefined;
 }
 
+/**
+ * Maps a probe-result bundle to a single verdict + recovery next-step.
+ *
+ * The recovery matrix in the design doc labels most rows "terminal" in the
+ * Linear column, but that label is descriptive of the common case — the
+ * recovery action does not actually depend on Linear state for Rows 1/2/5/6/8.
+ * Only Row 7 (in-flight) gates on `linear.kind === "non-terminal"`. This means
+ * an in-progress ticket whose local artifacts are stranded still gets a useful
+ * recovery suggestion rather than a generic "lost" verdict.
+ */
 export function decideVerdict(input: DecideVerdictInput): StatusVerdict {
   // Verdict precedence: PR-open / PR-merged win, then in-flight, then recoverable
   // rows, then lost. Each helper returns undefined when its row does not match.
