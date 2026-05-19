@@ -45,6 +45,7 @@
     "nvmrc",
     "oxfmtrc",
     "oxlint",
+    "pasteable",
     "pcpu",
     "pgid",
     "pipefail",
