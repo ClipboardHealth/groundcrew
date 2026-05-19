@@ -5,6 +5,7 @@ import { doctor } from "./commands/doctor.ts";
 import { orchestrate } from "./commands/orchestrator.ts";
 import { setupReposCli } from "./commands/setupRepos.ts";
 import { setupWorkspaceCli } from "./commands/setupWorkspace.ts";
+import { ticketCli } from "./commands/ticket.ts";
 import { errorMessage, writeError, writeOutput } from "./lib/util.ts";
 
 interface PackageMetadata {
@@ -94,6 +95,11 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
     summary: "Project-level setup commands (currently: repos)",
     usage: "repos [--dry-run] [<repo>...]",
     invoke: setupCli,
+  },
+  ticket: {
+    summary: "Per-ticket commands (currently: doctor)",
+    usage: "doctor <ticket>",
+    invoke: ticketCli,
   },
 };
 
