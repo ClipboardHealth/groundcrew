@@ -383,21 +383,24 @@ function parseRepository(arguments_: ParseRepositoryArguments): string {
       repositories: config.workspace.knownRepositories,
     });
   }
-  if (matched.includes("/")) {
-    return matched;
-  }
-  // Bare repo name matched — resolve to full owner/repo. Reject if ambiguous.
+  // Resolve the match to a known repo. The regex may capture a bare repo name
+  // (no org prefix) when only that appears in the description; the filter
+  // handles both full "owner/repo" and bare "repo" matches. Reject if
+  // ambiguous (same bare name under multiple orgs).
   const candidates = config.workspace.knownRepositories.filter(
     (r) => r === matched || r.endsWith(`/${matched}`),
   );
-  const [resolved] = candidates;
-  if (candidates.length !== 1 || resolved === undefined) {
+  if (candidates.length !== 1) {
     throw new RepositoryResolutionError({
       ticket,
       repositories: config.workspace.knownRepositories,
     });
   }
-  return resolved;
+  /* v8 ignore next 3 @preserve -- candidates.length===1 guarantees [0] is defined */
+  if (candidates[0] === undefined) {
+    throw new Error("unreachable");
+  }
+  return candidates[0];
 }
 
 /**
