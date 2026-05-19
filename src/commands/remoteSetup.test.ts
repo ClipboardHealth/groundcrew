@@ -576,7 +576,9 @@ describe(remoteCli, () => {
     vi.clearAllMocks();
   });
 
-  it("adds only the selected MCP servers without opening Claude for their auth by default", async () => {
+  it("adds selected MCP servers and opens Claude for their auth by default", async () => {
+    const callbackPortProbeCalls = mockSpriteListWithInteractiveClaudeAuthListener();
+
     await remoteCli([
       "setup",
       "crew-claude-1",
@@ -593,17 +595,14 @@ describe(remoteCli, () => {
         hasRemoteCommand(call, ["slack", "https://mcp.slack.com/mcp"]),
       ),
     ).toBe(false);
-    expect(
-      runCommandMock.mock.calls.some((call) =>
-        hasRemoteCommand(call, ["claude", "--permission-mode", "auto"]),
-      ),
-    ).toBe(false);
+    expectRemoteCommand(["claude", "--permission-mode", "auto"]);
+    expect(callbackPortProbeCalls()).toBe(1);
   });
 
   it("proxies Claude OAuth callback ports while interactive MCP auth is open", async () => {
     const callbackPortProbeCalls = mockSpriteListWithInteractiveClaudeAuthListener();
 
-    await remoteCli(["setup", "crew-claude-1", "--mcp", "linear", "--mcp-auth"]);
+    await remoteCli(["setup", "crew-claude-1", "--mcp", "linear"]);
 
     expectRemoteCommand(["claude", "mcp", "add", "linear", "https://mcp.linear.app/mcp"]);
     expect(callbackPortProbeCalls()).toBe(1);
@@ -617,7 +616,7 @@ describe(remoteCli, () => {
   it("uses one interactive Claude session for Claude and selected MCP auth", async () => {
     const callbackPortProbeCalls = mockSpriteListWithMissingClaudeAuthAndInteractiveMcpAuth();
 
-    await remoteCli(["setup", "crew-claude-1", "--claude", "--mcp", "linear", "--mcp-auth"]);
+    await remoteCli(["setup", "crew-claude-1", "--claude", "--mcp", "linear"]);
 
     expectRemoteCommand(["claude", "--permission-mode", "auto"]);
     expect(callbackPortProbeCalls()).toBe(1);
@@ -631,17 +630,17 @@ describe(remoteCli, () => {
   it("surfaces interactive Claude failures during MCP auth", async () => {
     mockSpriteListWithInteractiveClaudeFailure();
 
-    await expect(
-      remoteCli(["setup", "crew-claude-1", "--mcp", "linear", "--mcp-auth"]),
-    ).rejects.toThrow(/interactive claude failed/);
+    await expect(remoteCli(["setup", "crew-claude-1", "--mcp", "linear"])).rejects.toThrow(
+      /interactive claude failed/,
+    );
   });
 
   it("aborts interactive Claude when MCP auth callback port detection fails", async () => {
     const didAbortClaudeSession = mockSpriteListWithInteractiveClaudeCallbackPortDetectionFailure();
 
-    await expect(
-      remoteCli(["setup", "crew-claude-1", "--mcp", "linear", "--mcp-auth"]),
-    ).rejects.toThrow(/ss failed/);
+    await expect(remoteCli(["setup", "crew-claude-1", "--mcp", "linear"])).rejects.toThrow(
+      /ss failed/,
+    );
     expect(didAbortClaudeSession()).toBe(true);
   });
 
@@ -673,8 +672,30 @@ describe(remoteCli, () => {
     }
   });
 
-  it("keeps skip MCP auth as a no-op compatibility flag", async () => {
+  it("skips interactive MCP auth when requested", async () => {
     await remoteCli(["setup", "crew-claude-1", "--mcp", "linear", "--skip-mcp-auth"]);
+
+    expectRemoteCommand(["claude", "mcp", "add", "linear", "https://mcp.linear.app/mcp"]);
+    expect(
+      runCommandMock.mock.calls.some((call) =>
+        hasRemoteCommand(call, ["claude", "--permission-mode", "auto"]),
+      ),
+    ).toBe(false);
+  });
+
+  it("supports --no-mcp-auth for adding MCP servers without interactive auth", async () => {
+    await remoteCli(["setup", "crew-claude-1", "--mcp", "linear", "--no-mcp-auth"]);
+
+    expectRemoteCommand(["claude", "mcp", "add", "linear", "https://mcp.linear.app/mcp"]);
+    expect(
+      runCommandMock.mock.calls.some((call) =>
+        hasRemoteCommand(call, ["claude", "--permission-mode", "auto"]),
+      ),
+    ).toBe(false);
+  });
+
+  it("keeps --mcp-auth as a deprecated no-op", async () => {
+    await remoteCli(["setup", "crew-claude-1", "--mcp", "linear", "--no-mcp-auth", "--mcp-auth"]);
 
     expectRemoteCommand(["claude", "mcp", "add", "linear", "https://mcp.linear.app/mcp"]);
     expect(
