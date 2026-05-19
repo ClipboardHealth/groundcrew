@@ -75,6 +75,7 @@ vi.mock(import("../lib/worktrees.ts"), async (importOriginal) => {
     worktrees: {
       ...actual.worktrees,
       create: vi.fn<typeof actual.worktrees.create>(),
+      ensure: vi.fn<typeof actual.worktrees.ensure>(),
       teardown: vi.fn<typeof actual.worktrees.teardown>(),
     },
   };
@@ -89,7 +90,7 @@ const detectHostMock = vi.mocked(detectHostCapabilities);
 const ensureClearanceMock = vi.mocked(ensureClearance);
 const linearClientMock = vi.mocked(getLinearClient);
 const logMock = vi.mocked(log);
-const createMock = vi.mocked(worktrees.create);
+const ensureMock = vi.mocked(worktrees.ensure);
 const teardownMock = vi.mocked(worktrees.teardown);
 
 interface MockedLabel {
@@ -306,7 +307,7 @@ describe(setupWorkspace, () => {
     mockLinearClient();
     issueResolver.mockResolvedValue(buildMockedIssue({ title: "Test Title", description: "Body" }));
     detectHostMock.mockResolvedValue(host());
-    createMock.mockImplementation(async () => hostEntry());
+    ensureMock.mockImplementation(async () => hostEntry());
     ensureClearanceMock.mockResolvedValue({
       logPath: "/tmp/clearance/clearance.log",
       pidPath: "/tmp/clearance/clearance.pid",
@@ -335,7 +336,7 @@ describe(setupWorkspace, () => {
 
     await setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" });
 
-    expect(createMock).toHaveBeenCalledWith(
+    expect(ensureMock).toHaveBeenCalledWith(
       config,
       expect.objectContaining({ repository: "repo-a", ticket: "team-1" }),
     );
@@ -384,7 +385,7 @@ describe(setupWorkspace, () => {
       { signal },
     );
 
-    expect(createMock).toHaveBeenCalledWith(
+    expect(ensureMock).toHaveBeenCalledWith(
       config,
       expect.objectContaining({ repository: "repo-a", ticket: "team-1" }),
       signal,
@@ -430,7 +431,7 @@ describe(setupWorkspace, () => {
 
     expect(ensureClearanceMock).toHaveBeenCalledTimes(1);
     expect(firstInvocationOrder(ensureClearanceMock)).toBeLessThan(
-      firstInvocationOrder(createMock),
+      firstInvocationOrder(ensureMock),
     );
     const command = lastRunArgumentFromCallWithArgument("new-workspace");
     const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
@@ -575,7 +576,7 @@ describe(setupWorkspace, () => {
       setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" }),
     ).rejects.toThrow("proxy unavailable");
 
-    expect(createMock).not.toHaveBeenCalled();
+    expect(ensureMock).not.toHaveBeenCalled();
   });
 
   it("does not double-wrap when the cmd already starts with safehouse", async () => {
@@ -709,7 +710,7 @@ describe(setupWorkspace, () => {
       setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" }),
     ).rejects.toThrow(/Local groundcrew runs with the safehouse runner require macOS/);
 
-    expect(createMock).not.toHaveBeenCalled();
+    expect(ensureMock).not.toHaveBeenCalled();
     expect(ensureClearanceMock).not.toHaveBeenCalled();
   });
 
@@ -736,7 +737,7 @@ describe(setupWorkspace, () => {
       setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" }),
     ).rejects.toThrow(/sdx runner require `sbx`/);
 
-    expect(createMock).not.toHaveBeenCalled();
+    expect(ensureMock).not.toHaveBeenCalled();
     expect(ensureClearanceMock).not.toHaveBeenCalled();
   });
 
@@ -758,7 +759,7 @@ describe(setupWorkspace, () => {
       setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" }),
     ).rejects.toThrow(/sdx runner require a sandbox config on model 'claude'/);
 
-    expect(createMock).not.toHaveBeenCalled();
+    expect(ensureMock).not.toHaveBeenCalled();
     expect(ensureClearanceMock).not.toHaveBeenCalled();
   });
 
@@ -770,12 +771,12 @@ describe(setupWorkspace, () => {
       setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" }),
     ).rejects.toThrow(/require `safehouse` on PATH/);
 
-    expect(createMock).not.toHaveBeenCalled();
+    expect(ensureMock).not.toHaveBeenCalled();
     expect(ensureClearanceMock).not.toHaveBeenCalled();
   });
 
   it("propagates worktree-creation errors without launching cmux", async () => {
-    createMock.mockImplementation(() => {
+    ensureMock.mockImplementation(() => {
       throw new Error("Worktree already exists: /work/repo-a-team-1");
     });
 
@@ -1017,7 +1018,7 @@ describe(setupWorkspaceCli, () => {
     mockLinearClient();
     rawRequestMock.mockResolvedValue(buildResolveIssueResponse({}));
     detectHostMock.mockResolvedValue(host());
-    createMock.mockImplementation(async () => hostEntry());
+    ensureMock.mockImplementation(async () => hostEntry());
     mkdtempMock.mockReturnValue("/tmp/groundcrew-team-1-x");
     runCommandMock.mockReturnValue(JSON.stringify({ ref: "workspace:1" }));
     loadConfigMock.mockResolvedValue(makeConfig());
@@ -1030,7 +1031,7 @@ describe(setupWorkspaceCli, () => {
   it("uses the repository hint and default model when the ticket has no agent label", async () => {
     await setupWorkspaceCli("team-1");
 
-    expect(createMock).toHaveBeenCalledWith(
+    expect(ensureMock).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ repository: "repo-a", ticket: "team-1" }),
     );
@@ -1059,7 +1060,7 @@ describe(setupWorkspaceCli, () => {
   it("does not mark the ticket In Progress in dry-run mode", async () => {
     await setupWorkspaceCli("team-1", { dryRun: true });
 
-    expect(createMock).not.toHaveBeenCalled();
+    expect(ensureMock).not.toHaveBeenCalled();
     expect(teamMock).not.toHaveBeenCalled();
     expect(updateIssueMock).not.toHaveBeenCalled();
   });
@@ -1074,7 +1075,7 @@ describe(setupWorkspaceCli, () => {
   });
 
   it("does not mark the ticket In Progress when workspace setup fails", async () => {
-    createMock.mockRejectedValue(new Error("worktree failed"));
+    ensureMock.mockRejectedValue(new Error("worktree failed"));
 
     await expect(setupWorkspaceCli("team-1")).rejects.toThrow(/worktree failed/);
     expect(teamMock).not.toHaveBeenCalled();
@@ -1087,7 +1088,7 @@ describe(setupWorkspaceCli, () => {
     await expect(setupWorkspaceCli("team-1")).rejects.toThrow(
       /No known repository found in ticket TEAM-1 description/,
     );
-    expect(createMock).not.toHaveBeenCalled();
+    expect(ensureMock).not.toHaveBeenCalled();
   });
 
   it("infers the repository from the Linear description", async () => {
@@ -1100,7 +1101,7 @@ describe(setupWorkspaceCli, () => {
 
     await setupWorkspaceCli("team-1");
 
-    expect(createMock).toHaveBeenCalledWith(
+    expect(ensureMock).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ repository: "repo-b" }),
     );
@@ -1148,7 +1149,7 @@ describe(setupWorkspaceCli, () => {
   it("lowercases an uppercase ticket arg before provisioning", async () => {
     await setupWorkspaceCli("STAFF-508");
 
-    expect(createMock).toHaveBeenCalledWith(
+    expect(ensureMock).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ ticket: "staff-508" }),
     );
@@ -1173,7 +1174,7 @@ describe(setupWorkspaceCli, () => {
     await expect(setupWorkspaceCli("team-1")).rejects.toThrow(
       /No known repository found in ticket TEAM-1 description/,
     );
-    expect(createMock).not.toHaveBeenCalled();
+    expect(ensureMock).not.toHaveBeenCalled();
   });
 
   it("throws a clear error when Linear has no issue with that id", async () => {
@@ -1182,7 +1183,7 @@ describe(setupWorkspaceCli, () => {
     await expect(setupWorkspaceCli("ghost-999")).rejects.toThrow(
       /Ticket GHOST-999 not found in Linear/,
     );
-    expect(createMock).not.toHaveBeenCalled();
+    expect(ensureMock).not.toHaveBeenCalled();
   });
 
   it("does not re-fetch from Linear once fetchResolvedIssue has the details", async () => {
@@ -1202,7 +1203,7 @@ describe(setupWorkspaceCli, () => {
 
     await setupWorkspaceCli("team-1", { dryRun: true });
 
-    expect(createMock).not.toHaveBeenCalled();
+    expect(ensureMock).not.toHaveBeenCalled();
     expect(runCommandMock).not.toHaveBeenCalled();
     const logged = logMock.mock.calls.map(([message]) => message).join("\n");
     expect(logged).toContain("[dry-run] Would launch team-1 in repo-a (codex)");

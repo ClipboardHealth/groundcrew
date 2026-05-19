@@ -260,15 +260,37 @@ async function create(
   spec: WorktreeSpec,
   signal?: AbortSignal,
 ): Promise<WorktreeEntry> {
-  const existing = findByTicket(config, spec.ticket).filter(
-    (entry) => entry.repository === spec.repository,
-  );
-  if (existing.length > 0) {
-    const [first] = existing;
-    /* v8 ignore next @preserve -- length>0 guarantees [0] is defined */
-    throw new Error(`Worktree already exists: ${first?.dir}`);
+  const existing = findExistingForSpec(config, spec);
+  if (existing !== undefined) {
+    throw new Error(`Worktree already exists: ${existing.dir}`);
   }
   return await createWorktree(config, spec, signal);
+}
+
+/**
+ * Idempotent variant of `create`. Returns the existing worktree entry when
+ * `(repository, ticket)` already has one on disk; otherwise creates a fresh
+ * worktree. Used by the stranded-ticket recovery path so a reopen does not
+ * trip the "already exists" guard while still rejecting accidental double
+ * provisioning through `create`.
+ */
+async function ensure(
+  config: ResolvedConfig,
+  spec: WorktreeSpec,
+  signal?: AbortSignal,
+): Promise<WorktreeEntry> {
+  const existing = findExistingForSpec(config, spec);
+  if (existing !== undefined) {
+    return existing;
+  }
+  return await createWorktree(config, spec, signal);
+}
+
+function findExistingForSpec(
+  config: ResolvedConfig,
+  spec: WorktreeSpec,
+): WorktreeEntry | undefined {
+  return findByTicket(config, spec.ticket).find((entry) => entry.repository === spec.repository);
 }
 
 async function remove(
@@ -361,6 +383,7 @@ async function teardown(
 
 export const worktrees = {
   create,
+  ensure,
   list,
   findByTicket,
   remove,

@@ -139,8 +139,8 @@ export async function setupWorkspace(
   const spec = { repository, ticket };
   const created =
     signal === undefined
-      ? await worktrees.create(config, spec)
-      : await worktrees.create(config, spec, signal);
+      ? await worktrees.ensure(config, spec)
+      : await worktrees.ensure(config, spec, signal);
   const { branchName, dir: launchDir } = created;
   const worktreeName = `${repository}-${ticket}`;
 
@@ -273,5 +273,6 @@ export async function setupWorkspaceCli(
     id: ticket.toLowerCase(),
     uuid: resolved.uuid,
     teamId: resolved.teamId,
+    labels: [],
   });
 }

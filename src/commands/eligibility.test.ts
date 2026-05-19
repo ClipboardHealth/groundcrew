@@ -6,6 +6,7 @@ import {
   type ClassifyArguments,
   classifyBlockers,
   classifyEligibility,
+  classifyInProgressStrands,
   pickBestModel,
 } from "./eligibility.ts";
 
@@ -58,6 +59,7 @@ function todoIssue(overrides: Partial<GroundcrewIssue> = {}): GroundcrewIssue {
     teamId: "team-1",
     blockers: [],
     hasMoreBlockers: false,
+    labels: ["agent-claude"],
     ...overrides,
   };
 }
@@ -126,6 +128,15 @@ describe(classifyBlockers, () => {
 
     expect(unblocked).toHaveLength(1);
     expect(skips).toHaveLength(0);
+  });
+
+  it("emits a `max_retries_exhausted` skip when the ticket carries the agent-max-retries label", () => {
+    const { unblocked, skips } = classifyBlockers(makeConfig(), [
+      todoIssue({ labels: ["agent-claude", "agent-max-retries"] }),
+    ]);
+
+    expect(unblocked).toHaveLength(0);
+    expect(skips[0]).toMatchObject({ kind: "skip", eventReason: "max_retries_exhausted" });
   });
 
   it("partitions a mixed batch into unblocked and skip lists", () => {
@@ -227,7 +238,7 @@ describe(classifyEligibility, () => {
       expect(verdicts[0]).toMatchObject({ kind: "start", recovery: true });
     });
 
-    it("emits `workspace_missing` when the worktree exists but no live workspace matches", () => {
+    it("starts with reopen=true when the worktree exists but no live workspace matches", () => {
       const verdicts = classifyEligibility(
         defaultArguments({
           worktreeEntries: [hostEntryFor("repo-a", "team-1")],
@@ -235,7 +246,11 @@ describe(classifyEligibility, () => {
         }),
       );
 
-      expect(verdicts[0]).toMatchObject({ kind: "skip", eventReason: "workspace_missing" });
+      expect(verdicts[0]).toMatchObject({
+        kind: "start",
+        recovery: false,
+        reopen: true,
+      });
     });
 
     it("emits `workspace_list_unavailable` when the workspace adapter probe failed", () => {
@@ -306,5 +321,83 @@ describe(pickBestModel, () => {
       codex: { session: 0.3, sessionEndDuration: 30, weekly: null, weekEndDuration: null },
     };
     expect(pickBestModel(makeConfig(), usage, new Set())).toBe("codex");
+  });
+});
+
+describe(classifyInProgressStrands, () => {
+  it("emits a `demote` action for a stranded ticket with no retry label", () => {
+    const actions = classifyInProgressStrands({
+      inProgress: [todoIssue({ id: "team-1", status: "In Progress" })],
+      worktreeEntries: [hostEntryFor("repo-a", "team-1")],
+      workspaceProbe: { kind: "ok", names: new Set<string>() },
+    });
+
+    expect(actions).toHaveLength(1);
+    expect(actions[0]?.kind).toBe("demote");
+    expect(actions[0]?.issue.id).toBe("team-1");
+  });
+
+  it("emits a `retry_exhausted` action when the stranded ticket already has agent-retried", () => {
+    const actions = classifyInProgressStrands({
+      inProgress: [
+        todoIssue({
+          id: "team-1",
+          status: "In Progress",
+          labels: ["agent-claude", "agent-retried"],
+        }),
+      ],
+      worktreeEntries: [hostEntryFor("repo-a", "team-1")],
+      workspaceProbe: { kind: "ok", names: new Set<string>() },
+    });
+
+    expect(actions).toHaveLength(1);
+    expect(actions[0]?.kind).toBe("retry_exhausted");
+    expect(actions[0]?.issue.id).toBe("team-1");
+  });
+
+  it("returns no actions when the live workspace is still present", () => {
+    const actions = classifyInProgressStrands({
+      inProgress: [todoIssue({ id: "team-1", status: "In Progress" })],
+      worktreeEntries: [hostEntryFor("repo-a", "team-1")],
+      workspaceProbe: { kind: "ok", names: new Set(["team-1"]) },
+    });
+
+    expect(actions).toStrictEqual([]);
+  });
+
+  it("returns no actions when there is no worktree on disk", () => {
+    const actions = classifyInProgressStrands({
+      inProgress: [todoIssue({ id: "team-1", status: "In Progress" })],
+      worktreeEntries: [],
+      workspaceProbe: { kind: "ok", names: new Set<string>() },
+    });
+
+    expect(actions).toStrictEqual([]);
+  });
+
+  it("returns no actions when the workspace probe is unavailable", () => {
+    const actions = classifyInProgressStrands({
+      inProgress: [todoIssue({ id: "team-1", status: "In Progress" })],
+      worktreeEntries: [hostEntryFor("repo-a", "team-1")],
+      workspaceProbe: { kind: "unavailable" },
+    });
+
+    expect(actions).toStrictEqual([]);
+  });
+
+  it("skips tickets already carrying agent-max-retries (no further state churn)", () => {
+    const actions = classifyInProgressStrands({
+      inProgress: [
+        todoIssue({
+          id: "team-1",
+          status: "In Progress",
+          labels: ["agent-claude", "agent-retried", "agent-max-retries"],
+        }),
+      ],
+      worktreeEntries: [hostEntryFor("repo-a", "team-1")],
+      workspaceProbe: { kind: "ok", names: new Set<string>() },
+    });
+
+    expect(actions).toStrictEqual([]);
   });
 });

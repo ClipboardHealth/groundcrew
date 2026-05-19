@@ -77,6 +77,7 @@ function todoIssue(overrides: Partial<Issue> = {}): Issue {
     teamId: "team-1",
     blockers: [],
     hasMoreBlockers: false,
+    labels: ["agent-claude"],
     ...overrides,
   };
 }
@@ -102,23 +103,38 @@ function hostEntryFor(repository: string, ticket: string): WorktreeEntry {
 interface ClientStub {
   team: ReturnType<typeof vi.fn>;
   updateIssue: ReturnType<typeof vi.fn>;
+  createIssueLabel: ReturnType<typeof vi.fn>;
+  issueAddLabel: ReturnType<typeof vi.fn>;
 }
 
 function makeClient(options: { omitInProgressState?: boolean } = {}): ClientStub {
   const { omitInProgressState = false } = options;
+  const stateNodes = omitInProgressState
+    ? [
+        { id: "state-other", name: "Other" },
+        { id: "state-todo", name: "Todo" },
+      ]
+    : [
+        { id: "state-in-progress", name: "In Progress" },
+        { id: "state-todo", name: "Todo" },
+      ];
+  const teamLabelsNodes: { id: string; name: string }[] = [];
   return {
-    team: vi
-      .fn<() => Promise<{ states: () => Promise<{ nodes: { id: string; name: string }[] }> }>>()
-      .mockResolvedValue({
-        states: vi
-          .fn<() => Promise<{ nodes: { id: string; name: string }[] }>>()
-          .mockResolvedValue({
-            nodes: omitInProgressState
-              ? [{ id: "state-other", name: "Other" }]
-              : [{ id: "state-in-progress", name: "In Progress" }],
-          }),
-      }),
+    team: vi.fn<() => Promise<unknown>>().mockResolvedValue({
+      states: vi
+        .fn<() => Promise<{ nodes: { id: string; name: string }[] }>>()
+        .mockResolvedValue({ nodes: stateNodes }),
+      labels: vi
+        .fn<() => Promise<{ nodes: { id: string; name: string }[] }>>()
+        .mockResolvedValue({ nodes: teamLabelsNodes }),
+    }),
     updateIssue: vi.fn<() => Promise<Record<string, never>>>().mockResolvedValue({}),
+    createIssueLabel: vi
+      .fn<(input: { name: string; teamId: string }) => Promise<unknown>>()
+      .mockImplementation(async (input) => ({
+        issueLabel: Promise.resolve({ id: `label-${input.name}` }),
+      })),
+    issueAddLabel: vi.fn<() => Promise<Record<string, never>>>().mockResolvedValue({}),
   };
 }
 
@@ -409,7 +425,7 @@ describe(createDispatcher, () => {
       expect(consoleLog.output()).toContain("resuming with markInProgress");
     });
 
-    it("skips when worktree exists but no live workspace matches", async () => {
+    it("reopens (re-runs setupWorkspace) when worktree exists but no live workspace matches", async () => {
       workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set<string>() });
       const client = makeClient();
       const dispatcher = createDispatcher({ config: makeConfig(), client: asLinearClient(client) });
@@ -421,9 +437,8 @@ describe(createDispatcher, () => {
         dryRun: false,
       });
 
-      expect(setupMock).not.toHaveBeenCalled();
-      expect(client.updateIssue).not.toHaveBeenCalled();
-      expect(consoleLog.output()).toContain("Run `crew cleanup");
+      expect(setupMock).toHaveBeenCalledTimes(1);
+      expect(client.updateIssue).toHaveBeenCalledTimes(1);
     });
 
     it("retries next iteration when the workspace list is unavailable", async () => {
@@ -841,6 +856,260 @@ describe(createDispatcher, () => {
       });
 
       expect(consoleLog.output()).toContain("Failed to start team-1: boom");
+    });
+  });
+
+  describe("stranded ticket recovery", () => {
+    it("demotes a stranded In-Progress ticket and tags it agent-retried", async () => {
+      workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set<string>() });
+      const client = makeClient();
+      const dispatcher = createDispatcher({
+        config: makeConfig({
+          orchestrator: {
+            maximumInProgress: 1,
+            pollIntervalMilliseconds: 1000,
+            sessionLimitPercentage: 85,
+          },
+        }),
+        client: asLinearClient(client),
+      });
+
+      await dispatcher.runOnce({
+        state: boardOf([activeIssue({ id: "team-1" })]),
+        worktreeEntries: [hostEntryFor("repo-a", "team-1")],
+        usage: async () => ({}),
+        dryRun: false,
+      });
+
+      expect(client.issueAddLabel).toHaveBeenCalledWith("uuid-1", "label-agent-retried");
+      expect(client.updateIssue).toHaveBeenCalledWith("uuid-1", { stateId: "state-todo" });
+      expect(consoleLog.output()).toContain("Demoted stranded team-1 to Todo");
+    });
+
+    it("marks an already-retried stranded ticket as retry-exhausted", async () => {
+      workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set<string>() });
+      const client = makeClient();
+      const dispatcher = createDispatcher({
+        config: makeConfig({
+          orchestrator: {
+            maximumInProgress: 1,
+            pollIntervalMilliseconds: 1000,
+            sessionLimitPercentage: 85,
+          },
+        }),
+        client: asLinearClient(client),
+      });
+
+      await dispatcher.runOnce({
+        state: boardOf([activeIssue({ id: "team-1", labels: ["agent-claude", "agent-retried"] })]),
+        worktreeEntries: [hostEntryFor("repo-a", "team-1")],
+        usage: async () => ({}),
+        dryRun: false,
+      });
+
+      expect(client.issueAddLabel).toHaveBeenCalledWith("uuid-1", "label-agent-error");
+      expect(client.issueAddLabel).toHaveBeenCalledWith("uuid-1", "label-agent-max-retries");
+      expect(client.updateIssue).not.toHaveBeenCalled();
+      expect(consoleLog.output()).toContain("Marked team-1 as retry-exhausted");
+    });
+
+    it("frees the slot immediately when a stranded ticket is demoted", async () => {
+      workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set<string>() });
+      const client = makeClient();
+      const dispatcher = createDispatcher({
+        config: makeConfig({
+          orchestrator: {
+            maximumInProgress: 1,
+            pollIntervalMilliseconds: 1000,
+            sessionLimitPercentage: 85,
+          },
+        }),
+        client: asLinearClient(client),
+      });
+
+      await dispatcher.runOnce({
+        state: boardOf([
+          activeIssue({ id: "team-1" }),
+          todoIssue({ id: "team-2", uuid: "uuid-2" }),
+        ]),
+        worktreeEntries: [hostEntryFor("repo-a", "team-1")],
+        usage: async () => ({}),
+        dryRun: false,
+      });
+
+      expect(setupMock).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ ticket: "team-2" }),
+      );
+    });
+
+    it("does not strand-detect when the workspace probe is unavailable", async () => {
+      workspacesProbeMock.mockResolvedValue({ kind: "unavailable" });
+      const client = makeClient();
+      const dispatcher = createDispatcher({
+        config: makeConfig({
+          orchestrator: {
+            maximumInProgress: 1,
+            pollIntervalMilliseconds: 1000,
+            sessionLimitPercentage: 85,
+          },
+        }),
+        client: asLinearClient(client),
+      });
+
+      await dispatcher.runOnce({
+        state: boardOf([activeIssue({ id: "team-1" })]),
+        worktreeEntries: [hostEntryFor("repo-a", "team-1")],
+        usage: async () => ({}),
+        dryRun: false,
+      });
+
+      expect(client.issueAddLabel).not.toHaveBeenCalled();
+      expect(client.updateIssue).not.toHaveBeenCalled();
+    });
+
+    it("logs a Linear failure when demote's markTodo throws (Todo state missing)", async () => {
+      workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set<string>() });
+      const client = makeClient({ omitInProgressState: true });
+      // omitInProgressState only ships an "Other" state; force Todo absent too
+      client.team.mockResolvedValue({
+        states: vi
+          .fn<() => Promise<{ nodes: { id: string; name: string }[] }>>()
+          .mockResolvedValue({ nodes: [{ id: "state-other", name: "Other" }] }),
+        labels: vi
+          .fn<() => Promise<{ nodes: { id: string; name: string }[] }>>()
+          .mockResolvedValue({ nodes: [] }),
+      });
+      const dispatcher = createDispatcher({
+        config: makeConfig({
+          orchestrator: {
+            maximumInProgress: 1,
+            pollIntervalMilliseconds: 1000,
+            sessionLimitPercentage: 85,
+          },
+        }),
+        client: asLinearClient(client),
+      });
+
+      await dispatcher.runOnce({
+        state: boardOf([activeIssue({ id: "team-1" })]),
+        worktreeEntries: [hostEntryFor("repo-a", "team-1")],
+        usage: async () => ({}),
+        dryRun: false,
+      });
+
+      expect(consoleLog.output()).toContain("Failed to update Linear for team-1");
+    });
+
+    it("reuses an existing team label instead of creating a new one", async () => {
+      workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set<string>() });
+      const client = makeClient();
+      client.team.mockResolvedValue({
+        states: vi
+          .fn<() => Promise<{ nodes: { id: string; name: string }[] }>>()
+          .mockResolvedValue({
+            nodes: [
+              { id: "state-in-progress", name: "In Progress" },
+              { id: "state-todo", name: "Todo" },
+            ],
+          }),
+        labels: vi
+          .fn<() => Promise<{ nodes: { id: string; name: string }[] }>>()
+          .mockResolvedValue({
+            nodes: [{ id: "preexisting-agent-retried", name: "agent-retried" }],
+          }),
+      });
+      const dispatcher = createDispatcher({
+        config: makeConfig({
+          orchestrator: {
+            maximumInProgress: 1,
+            pollIntervalMilliseconds: 1000,
+            sessionLimitPercentage: 85,
+          },
+        }),
+        client: asLinearClient(client),
+      });
+
+      await dispatcher.runOnce({
+        state: boardOf([activeIssue({ id: "team-1" })]),
+        worktreeEntries: [hostEntryFor("repo-a", "team-1")],
+        usage: async () => ({}),
+        dryRun: false,
+      });
+
+      expect(client.createIssueLabel).not.toHaveBeenCalled();
+      expect(client.issueAddLabel).toHaveBeenCalledWith("uuid-1", "preexisting-agent-retried");
+    });
+
+    it("skips label add when Linear returns no id from createIssueLabel", async () => {
+      workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set<string>() });
+      const client = makeClient();
+      client.createIssueLabel.mockResolvedValueOnce({ issueLabel: Promise.resolve(null) });
+      const dispatcher = createDispatcher({
+        config: makeConfig({
+          orchestrator: {
+            maximumInProgress: 1,
+            pollIntervalMilliseconds: 1000,
+            sessionLimitPercentage: 85,
+          },
+        }),
+        client: asLinearClient(client),
+      });
+
+      await dispatcher.runOnce({
+        state: boardOf([activeIssue({ id: "team-1" })]),
+        worktreeEntries: [hostEntryFor("repo-a", "team-1")],
+        usage: async () => ({}),
+        dryRun: false,
+      });
+
+      expect(client.issueAddLabel).not.toHaveBeenCalled();
+      expect(consoleLog.output()).toContain(
+        'Could not create label "agent-retried" for team team-1; skipping',
+      );
+    });
+
+    it("logs a Linear failure when retry-exhausted addLabels throws", async () => {
+      workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set<string>() });
+      const client = makeClient();
+      client.issueAddLabel.mockRejectedValueOnce(new Error("linear down"));
+      const dispatcher = createDispatcher({
+        config: makeConfig({
+          orchestrator: {
+            maximumInProgress: 1,
+            pollIntervalMilliseconds: 1000,
+            sessionLimitPercentage: 85,
+          },
+        }),
+        client: asLinearClient(client),
+      });
+
+      await dispatcher.runOnce({
+        state: boardOf([activeIssue({ id: "team-1", labels: ["agent-claude", "agent-retried"] })]),
+        worktreeEntries: [hostEntryFor("repo-a", "team-1")],
+        usage: async () => ({}),
+        dryRun: false,
+      });
+
+      expect(consoleLog.output()).toContain("Failed to update Linear for team-1");
+    });
+
+    it("marks ticket retry-exhausted when reopen path's setupWorkspace throws", async () => {
+      workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set<string>() });
+      setupMock.mockRejectedValueOnce(new Error("setup boom"));
+      const client = makeClient();
+      const dispatcher = createDispatcher({ config: makeConfig(), client: asLinearClient(client) });
+
+      await dispatcher.runOnce({
+        state: boardOf([todoIssue()]),
+        worktreeEntries: [hostEntryFor("repo-a", "team-1")],
+        usage: async () => ({}),
+        dryRun: false,
+      });
+
+      expect(client.issueAddLabel).toHaveBeenCalledWith("uuid-1", "label-agent-error");
+      expect(client.issueAddLabel).toHaveBeenCalledWith("uuid-1", "label-agent-max-retries");
+      expect(consoleLog.output()).toContain("Failed to start team-1: setup boom");
     });
   });
 });
