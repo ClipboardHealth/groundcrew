@@ -9,7 +9,7 @@ import type { ResolvedConfig } from "./config.ts";
 import { workspaces } from "./workspaces.ts";
 import { type WorktreeEntry, worktrees } from "./worktrees.ts";
 
-const { create, findByTicket, list, remove, teardown } = worktrees;
+const { create, ensure, findByTicket, list, remove, teardown } = worktrees;
 
 type NodeOsMock = Omit<typeof nodeOs, "userInfo"> & {
   userInfo: ReturnType<typeof vi.fn<typeof userInfo>>;
@@ -358,6 +358,53 @@ describe(create, () => {
         ticket: "team-1",
       }),
     ).rejects.toThrow(/Could not determine OS username/);
+  });
+});
+
+describe(ensure, () => {
+  setupTempProjectDir();
+
+  it("returns the existing host entry when a worktree already exists for the same repo + ticket", async () => {
+    mkdirSync(join(projectDir, "repo-a"));
+    mkdirSync(join(projectDir, "repo-a-team-1"));
+    const config = makeConfig({ projectDir });
+
+    const actual = await ensure(config, {
+      repository: "repo-a",
+      ticket: "team-1",
+    });
+
+    expect(actual.repository).toBe("repo-a");
+    expect(actual.ticket).toBe("team-1");
+    expect(actual.dir).toBe(join(projectDir, "repo-a-team-1"));
+    expect(runCommandMock).not.toHaveBeenCalled();
+  });
+
+  it("creates a worktree when none exists for the repo + ticket", async () => {
+    mkdirSync(join(projectDir, "repo-a"));
+    const config = makeConfig({ projectDir });
+
+    const actual = await ensure(config, {
+      repository: "repo-a",
+      ticket: "team-1",
+    });
+
+    expect(actual.kind).toBe("host");
+    expect(actual.dir).toBe(join(projectDir, "repo-a-team-1"));
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "git",
+      [
+        "-C",
+        join(projectDir, "repo-a"),
+        "worktree",
+        "add",
+        "-b",
+        "rocky-team-1",
+        join(projectDir, "repo-a-team-1"),
+        "origin/main",
+      ],
+      { stdio: "inherit", timeoutMs: 0 },
+    );
   });
 });
 

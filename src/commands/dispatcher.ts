@@ -9,7 +9,14 @@
 
 import type { LinearClient } from "@linear/sdk";
 
-import { type BoardState, type GroundcrewIssue, isGroundcrewIssue } from "../lib/boardSource.ts";
+import {
+  AGENT_ERROR_LABEL,
+  AGENT_MAX_RETRIES_LABEL,
+  AGENT_RETRIED_LABEL,
+  type BoardState,
+  type GroundcrewIssue,
+  isGroundcrewIssue,
+} from "../lib/boardSource.ts";
 import type { ResolvedConfig } from "../lib/config.ts";
 import { createLinearIssueStatusUpdater } from "../lib/linearIssueStatus.ts";
 import type { UsageByModel } from "../lib/usage.ts";
@@ -19,10 +26,12 @@ import type { WorktreeEntry } from "../lib/worktrees.ts";
 import {
   classifyBlockers,
   classifyEligibility,
+  classifyInProgressStrands,
   classifyUsageExhaustion,
   type ModelUsageExhaustion,
   type SkipVerdict,
   type StartVerdict,
+  type StrandAction,
 } from "./eligibility.ts";
 import { setupWorkspace } from "./setupWorkspace.ts";
 
@@ -71,7 +80,7 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     dryRun: boolean,
     signal?: AbortSignal,
   ): Promise<void> {
-    const { issue, recovery } = start;
+    const { issue, recovery, reopen } = start;
     if (start.resolvedFromAny) {
       log(`Resolved agent-any for ${issue.id} → ${issue.model}`);
     }
@@ -95,10 +104,16 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
       if (recovery) {
         log(`Worktree and workspace already exist for ${issue.id}; resuming with markInProgress`);
       } else {
+        if (reopen) {
+          log(
+            `Reopening workspace for stranded ${issue.id}; setupWorkspace will reuse the existing worktree`,
+          );
+        }
         const setupOptions = {
           repository: issue.repository,
           ticket: issue.id,
           model: issue.model,
+          reuseWorktree: reopen,
         };
         await (signal === undefined
           ? setupWorkspace(config, setupOptions)
@@ -106,21 +121,83 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
       }
       await issueStatusUpdater.markInProgress(issue);
       logEvent("dispatch", {
-        outcome: recovery ? "resumed" : "started",
+        outcome: dispatchOutcome(recovery, reopen),
         ticket: issue.id,
         model: issue.model,
         repository: issue.repository,
       });
     } catch (error) {
-      log(`Failed to start ${issue.id}: ${errorMessage(error)}`);
+      const message = errorMessage(error);
+      log(`Failed to start ${issue.id}: ${message}`);
       logEvent("dispatch", {
         outcome: "failed",
         ticket: issue.id,
         model: issue.model,
         repository: issue.repository,
-        error: errorMessage(error),
+        error: message,
       });
+      // A failure on the reopen path uses the ticket's one retry — escalate
+      // to retry-exhausted so the orchestrator stops re-attempting it.
+      if (reopen) {
+        await markRetryExhausted(issue, "reopen_failed");
+      }
     }
+  }
+
+  async function applyStrandActions(actions: readonly StrandAction[]): Promise<void> {
+    for (const action of actions) {
+      // oxlint-disable-next-line no-await-in-loop -- Linear mutations are serial per ticket to avoid label-cache races
+      await (action.kind === "demote"
+        ? demoteStranded(action.issue)
+        : markRetryExhausted(action.issue, "stranded_after_retry"));
+    }
+  }
+
+  async function demoteStranded(issue: GroundcrewIssue): Promise<void> {
+    try {
+      await issueStatusUpdater.addLabels(issue, [AGENT_RETRIED_LABEL]);
+      await issueStatusUpdater.markTodo(issue);
+      log(`Demoted stranded ${issue.id} to Todo (one retry remaining)`);
+      logEvent("orchestrator", {
+        outcome: "demote_stranded",
+        ticket: issue.id,
+        model: issue.model,
+        repository: issue.repository,
+      });
+    } catch (error) {
+      logDemoteFailure(issue, error);
+    }
+  }
+
+  async function markRetryExhausted(
+    issue: GroundcrewIssue,
+    reason: "stranded_after_retry" | "reopen_failed",
+  ): Promise<void> {
+    try {
+      await issueStatusUpdater.addLabels(issue, [AGENT_ERROR_LABEL, AGENT_MAX_RETRIES_LABEL]);
+      log(`Marked ${issue.id} as retry-exhausted (${reason})`);
+      logEvent("orchestrator", {
+        outcome: "demote_skipped_max_retries",
+        ticket: issue.id,
+        model: issue.model,
+        repository: issue.repository,
+        reason,
+      });
+    } catch (error) {
+      logDemoteFailure(issue, error);
+    }
+  }
+
+  function logDemoteFailure(issue: GroundcrewIssue, error: unknown): void {
+    const message = errorMessage(error);
+    log(`Failed to update Linear for ${issue.id}: ${message}`);
+    logEvent("orchestrator", {
+      outcome: "demote_failed",
+      ticket: issue.id,
+      model: issue.model,
+      repository: issue.repository,
+      error: message,
+    });
   }
 
   async function runOnce(arguments_: {
@@ -131,18 +208,59 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     signal?: AbortSignal;
   }): Promise<void> {
     const { state, worktreeEntries, usage, dryRun, signal } = arguments_;
-    issueStatusUpdater.resetMissingInProgressCache();
+    issueStatusUpdater.resetMissingStateCache();
 
-    const activeCount = state.issues.filter(
-      (issue) => issue.status === config.linear.statuses.inProgress,
-    ).length;
-    const slots = config.orchestrator.maximumInProgress - activeCount;
+    const inProgress: readonly GroundcrewIssue[] = state.issues.filter(
+      (issue): issue is GroundcrewIssue =>
+        issue.status === config.linear.statuses.inProgress && isGroundcrewIssue(issue),
+    );
     // Narrow Todo to tickets that opted in via an `agent-*` label.
     // Unlabeled tickets are not groundcrew's concern even when in Todo.
     const todo: readonly GroundcrewIssue[] = state.issues.filter(
       (issue): issue is GroundcrewIssue =>
         issue.status === config.linear.statuses.todo && isGroundcrewIssue(issue),
     );
+
+    // Strand recovery looks for In-Progress tickets whose worktree is on
+    // disk but whose workspace has vanished. Skip the workspace probe (and
+    // its shell-out) when there are no In-Progress candidates with a
+    // matching worktree — there's nothing for it to find.
+    const inProgressHasWorktree = inProgress.some((issue) =>
+      worktreeEntries.some(
+        (entry) => entry.repository === issue.repository && entry.ticket === issue.id,
+      ),
+    );
+
+    const { unblocked, skips: blockerSkips } = classifyBlockers(config, todo);
+    for (const skip of blockerSkips) {
+      logSkip(skip);
+    }
+
+    const needsWorkspaceProbe = !dryRun && (inProgressHasWorktree || unblocked.length > 0);
+    const workspaceProbe: WorkspaceProbe = needsWorkspaceProbe
+      ? await workspaces.probe(config, signal)
+      : { kind: "ok", names: new Set<string>() };
+
+    const strandActions = dryRun
+      ? []
+      : classifyInProgressStrands({
+          inProgress,
+          worktreeEntries,
+          workspaceProbe,
+        });
+    await applyStrandActions(strandActions);
+    const demotedTickets = new Set(
+      strandActions.filter((action) => action.kind === "demote").map((action) => action.issue.id),
+    );
+
+    // Demoted tickets still appear In-Progress in the stale `state` snapshot,
+    // but conceptually their slots are free this tick — subtract them so
+    // eligibility can dispatch into the headroom on the same iteration.
+    const activeCount = state.issues.filter(
+      (issue) =>
+        issue.status === config.linear.statuses.inProgress && !demotedTickets.has(issue.id),
+    ).length;
+    const slots = config.orchestrator.maximumInProgress - activeCount;
 
     if (slots <= 0) {
       log(
@@ -156,35 +274,14 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
       return;
     }
 
-    // Run the blocker pre-pass first so an all-blocked board short-circuits
-    // before the codexbar HTTP call and the cmux/tmux shell-out fire.
-    const { unblocked, skips: blockerSkips } = classifyBlockers(config, todo);
-    for (const skip of blockerSkips) {
-      logSkip(skip);
-    }
     if (unblocked.length === 0) {
       log(`No eligible ${config.linear.statuses.todo} tickets after blocker filtering`);
       return;
     }
 
-    // usage() is an HTTP call; workspaces.probe shells tmux/cmux. Kick off
-    // usage first so the workspace probe can overlap with the in-flight request.
-    const usagePromise = usage(signal);
-    // Snapshot live workspace names once per iteration so eligibility can
-    // distinguish "worktree exists AND its agent is still running" (resume)
-    // from "worktree exists but the workspace is gone" (ambiguous — don't
-    // auto-recover). Done before slot-counting so a skipped stale ticket
-    // doesn't consume an eligible slot and starve later Todo tickets.
-    let workspaceProbe: WorkspaceProbe;
-    try {
-      workspaceProbe = dryRun
-        ? { kind: "ok", names: new Set<string>() }
-        : await workspaces.probe(config, signal);
-    } catch (error) {
-      usagePromise.catch(() => "ignored");
-      throw error;
-    }
-    const fetchedUsage = await usagePromise;
+    // usage() is an HTTP call. Resolve it only after we know there is
+    // unblocked Todo work that might consume the result.
+    const fetchedUsage = await usage(signal);
     const exhausted = buildExhaustedSet(fetchedUsage);
 
     const verdicts = classifyEligibility({
@@ -233,4 +330,14 @@ function formatUsageExhaustion(exhaustion: ModelUsageExhaustion): string {
     return `${exhaustion.model} session at ${exhaustion.usedPercentage.toFixed(0)}% (> ${exhaustion.limitPercentage}%), resets in ${mins}m — skipping its tickets`;
   }
   return `${exhaustion.model} weekly at ${exhaustion.usedPercentage.toFixed(1)}% (> ${exhaustion.allowedPercentage.toFixed(1)}% paced budget), resets in ${exhaustion.resetMinutes}m — skipping its tickets`;
+}
+
+function dispatchOutcome(recovery: boolean, reopen: boolean): "resumed" | "reopened" | "started" {
+  if (recovery) {
+    return "resumed";
+  }
+  if (reopen) {
+    return "reopened";
+  }
+  return "started";
 }

@@ -212,6 +212,7 @@ async function runEligibilityChecks(arguments_: EligibilityCheckArguments): Prom
     model: resolvedModel,
     blockers: [...blockers],
     hasMoreBlockers: raw.hasMoreBlockers,
+    labels: raw.labels.map((label) => label.name),
   };
 
   const blockerClassification = classifyBlockers(config, [groundcrewIssue]);

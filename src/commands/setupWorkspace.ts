@@ -40,6 +40,14 @@ export interface SetupWorkspaceOptions {
   model: string;
   /** When provided, skip the Linear lookup for prompt-template fields. */
   details?: TicketDetails;
+  /**
+   * Reuse an existing worktree for `(repository, ticket)` if one is already
+   * on disk. Set by the orchestrator's strand-recovery path so a reopen
+   * doesn't trip the duplicate-worktree guard; defaults to `false` for
+   * `crew setup-workspace` and the fresh-dispatch flow, which still want
+   * the access-hint on collision.
+   */
+  reuseWorktree?: boolean;
 }
 
 export interface SetupWorkspaceRunOptions {
@@ -138,16 +146,27 @@ export async function setupWorkspace(
 
   const spec = { repository, ticket };
   let created: WorktreeEntry;
-  try {
+  if (options.reuseWorktree === true) {
+    // Orchestrator strand-recovery path: the demoted ticket's worktree
+    // is still on disk and we deliberately want to reuse it. `ensure` is
+    // the idempotent helper that returns the existing entry without
+    // tripping the duplicate-worktree guard.
     created =
       signal === undefined
-        ? await worktrees.create(config, spec)
-        : await worktrees.create(config, spec, signal);
-  } catch (error) {
-    if (isWorktreeAlreadyExistsError(error)) {
-      await logAccessHintForExistingWorkspace({ config, ticket, signal });
+        ? await worktrees.ensure(config, spec)
+        : await worktrees.ensure(config, spec, signal);
+  } else {
+    try {
+      created =
+        signal === undefined
+          ? await worktrees.create(config, spec)
+          : await worktrees.create(config, spec, signal);
+    } catch (error) {
+      if (isWorktreeAlreadyExistsError(error)) {
+        await logAccessHintForExistingWorkspace({ config, ticket, signal });
+      }
+      throw error;
     }
-    throw error;
   }
   const { branchName, dir: launchDir } = created;
   const worktreeName = `${repository}-${ticket}`;
@@ -327,5 +346,6 @@ export async function setupWorkspaceCli(
     id: ticket.toLowerCase(),
     uuid: resolved.uuid,
     teamId: resolved.teamId,
+    labels: [],
   });
 }

@@ -10,6 +10,26 @@ import { AGENT_ANY_MODEL, isShippedDefaultDisabled, type ResolvedConfig } from "
 import { log } from "./util.ts";
 
 const AGENT_LABEL_PREFIX = "agent-";
+/**
+ * Set on a ticket the first time the orchestrator demotes it from In
+ * Progress back to Todo after a stranded-workspace detection. Presence
+ * marks the ticket as having spent its one auto-retry; another strand
+ * promotes it to the retry-exhausted path instead of looping.
+ */
+export const AGENT_RETRIED_LABEL = "agent-retried";
+/**
+ * Informational marker — set whenever a retry attempt fails (stranded a
+ * second time, or `setupWorkspace` throws during a reopen). Paired with
+ * `AGENT_MAX_RETRIES_LABEL` on the failing ticket so a human can spot the
+ * outcome from Linear search.
+ */
+export const AGENT_ERROR_LABEL = "agent-error";
+/**
+ * Blocking label — eligibility filters tickets carrying this label out of
+ * the Todo queue so an exhausted retry does not silently re-enter the
+ * dispatch loop. Removing the label by hand re-enables groundcrew picks.
+ */
+export const AGENT_MAX_RETRIES_LABEL = "agent-max-retries";
 const ISSUES_PAGE_SIZE = 250;
 
 export interface Blocker {
@@ -33,6 +53,12 @@ export interface Issue {
   teamId: string;
   blockers: Blocker[];
   hasMoreBlockers: boolean;
+  /**
+   * Raw label names from Linear (e.g. `agent-claude`, `agent-retried`).
+   * Eligibility uses this to filter on operational labels like
+   * `agent-max-retries` without re-fetching the issue.
+   */
+  labels: string[];
 }
 
 /**
@@ -271,6 +297,7 @@ async function fetchBoard(client: LinearClient, config: ResolvedConfig): Promise
         teamId: node.team?.id ?? "",
         blockers: blockersFromRelations(node.inverseRelations?.nodes ?? []),
         hasMoreBlockers: node.inverseRelations?.pageInfo.hasNextPage ?? false,
+        labels: node.labels.nodes.map((label) => label.name),
       };
     });
 

@@ -64,6 +64,7 @@ function doneIssue(id: string, overrides: Partial<Issue> = {}): Issue {
     teamId: "team-1",
     blockers: [],
     hasMoreBlockers: false,
+    labels: ["agent-claude"],
     ...overrides,
   };
 }

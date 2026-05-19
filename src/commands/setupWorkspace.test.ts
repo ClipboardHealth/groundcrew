@@ -75,6 +75,7 @@ vi.mock(import("../lib/worktrees.ts"), async (importOriginal) => {
     worktrees: {
       ...actual.worktrees,
       create: vi.fn<typeof actual.worktrees.create>(),
+      ensure: vi.fn<typeof actual.worktrees.ensure>(),
       teardown: vi.fn<typeof actual.worktrees.teardown>(),
     },
   };
@@ -90,6 +91,7 @@ const ensureClearanceMock = vi.mocked(ensureClearance);
 const linearClientMock = vi.mocked(getLinearClient);
 const logMock = vi.mocked(log);
 const createMock = vi.mocked(worktrees.create);
+const ensureMock = vi.mocked(worktrees.ensure);
 const teardownMock = vi.mocked(worktrees.teardown);
 
 interface MockedLabel {
@@ -320,6 +322,7 @@ describe(setupWorkspace, () => {
     issueResolver.mockResolvedValue(buildMockedIssue({ title: "Test Title", description: "Body" }));
     detectHostMock.mockResolvedValue(host());
     createMock.mockImplementation(async () => hostEntry());
+    ensureMock.mockImplementation(async () => hostEntry());
     ensureClearanceMock.mockResolvedValue({
       logPath: "/tmp/clearance/clearance.log",
       pidPath: "/tmp/clearance/clearance.pid",
@@ -340,6 +343,42 @@ describe(setupWorkspace, () => {
     // resetAllMocks (not clearAllMocks) so module-scoped mock implementations
     // set inside one test don't leak into the next.
     vi.resetAllMocks();
+  });
+
+  it("reuses an existing worktree via worktrees.ensure when reuseWorktree=true", async () => {
+    const config = makeConfig();
+    mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
+
+    await setupWorkspace(config, {
+      ticket: "team-1",
+      repository: "repo-a",
+      model: "claude",
+      reuseWorktree: true,
+    });
+
+    expect(ensureMock).toHaveBeenCalledWith(
+      config,
+      expect.objectContaining({ repository: "repo-a", ticket: "team-1" }),
+    );
+    expect(createMock).not.toHaveBeenCalled();
+  });
+
+  it("propagates AbortSignal into worktrees.ensure on the reuseWorktree path", async () => {
+    const config = makeConfig();
+    const { signal } = new AbortController();
+    mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
+
+    await setupWorkspace(
+      config,
+      { ticket: "team-1", repository: "repo-a", model: "claude", reuseWorktree: true },
+      { signal },
+    );
+
+    expect(ensureMock).toHaveBeenCalledWith(
+      config,
+      expect.objectContaining({ ticket: "team-1" }),
+      signal,
+    );
   });
 
   it("provisions the worktree, writes the prompt, and launches cmux", async () => {

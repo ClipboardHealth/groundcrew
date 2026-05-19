@@ -1108,7 +1108,7 @@ describe(orchestrate, () => {
     expect(client.updateIssue).toHaveBeenCalledWith("uuid-1", { stateId: "state-in-progress" });
   });
 
-  it("skips a ticket whose worktree exists but workspace is missing", async () => {
+  it("reopens a stranded ticket whose worktree exists but workspace is missing", async () => {
     listMock.mockReturnValue([hostEntryFor("repo-a", "team-1")]);
     workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set<string>() });
     const client = makeClient({
@@ -1125,10 +1125,9 @@ describe(orchestrate, () => {
 
     await orchestrate({ watch: false, dryRun: false });
 
-    expect(setupMock).not.toHaveBeenCalled();
-    expect(client.updateIssue).not.toHaveBeenCalled();
+    expect(setupMock).toHaveBeenCalledTimes(1);
     const out = consoleLog.output();
-    expect(out).toContain("Run `crew cleanup");
+    expect(out).toContain("Reopening workspace for stranded team-1");
   });
 
   it("skips a ticket when the workspace list is unavailable", async () => {
@@ -1155,7 +1154,7 @@ describe(orchestrate, () => {
 
   it("logs that no eligible tickets remain after filtering", async () => {
     listMock.mockReturnValue([hostEntryFor("repo-a", "team-1")]);
-    workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set<string>() });
+    workspacesProbeMock.mockResolvedValue({ kind: "unavailable" });
     const client = makeClient({
       pages: [
         [

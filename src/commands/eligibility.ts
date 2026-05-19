@@ -7,7 +7,13 @@
  * effects.
  */
 
-import { type Blocker, type GroundcrewIssue, isTerminalStatus } from "../lib/boardSource.ts";
+import {
+  AGENT_MAX_RETRIES_LABEL,
+  AGENT_RETRIED_LABEL,
+  type Blocker,
+  type GroundcrewIssue,
+  isTerminalStatus,
+} from "../lib/boardSource.ts";
 import { AGENT_ANY_MODEL, type ResolvedConfig } from "../lib/config.ts";
 import type { UsageByModel } from "../lib/usage.ts";
 import type { WorkspaceProbe } from "../lib/workspaces.ts";
@@ -24,12 +30,18 @@ type SkipReason =
   | "agent_any_capacity"
   | "model_exhausted"
   | "workspace_list_unavailable"
-  | "workspace_missing";
+  | "max_retries_exhausted";
 
 export interface StartVerdict {
   kind: "start";
   issue: GroundcrewIssue;
   recovery: boolean;
+  /**
+   * Worktree on disk but no live workspace — caller must run setupWorkspace
+   * (idempotent via `worktrees.ensure`) and treat any failure as a retry
+   * exhaustion.
+   */
+  reopen: boolean;
   /** Set when the verdict resolved an `agent-any` label to a concrete model. */
   resolvedFromAny: boolean;
 }
@@ -94,6 +106,68 @@ interface BlockerClassification {
   skips: SkipVerdict[];
 }
 
+export type StrandAction =
+  | {
+      /**
+       * First strand for this ticket: demote it back to Todo and mark
+       * `agent-retried` so the next strand promotes to `retry_exhausted`.
+       */
+      kind: "demote";
+      issue: GroundcrewIssue;
+    }
+  | {
+      /**
+       * Second strand: ticket already carries `agent-retried`. Stamp
+       * `agent-error` + `agent-max-retries` and leave the slot occupied
+       * so an operator can triage.
+       */
+      kind: "retry_exhausted";
+      issue: GroundcrewIssue;
+    };
+
+interface StrandClassifyArguments {
+  inProgress: readonly GroundcrewIssue[];
+  worktreeEntries: readonly WorktreeEntry[];
+  workspaceProbe: WorkspaceProbe;
+}
+
+/**
+ * Detect In-Progress tickets whose worktree is still on disk but whose
+ * cmux/tmux workspace has vanished. Each detection becomes a `demote` (first
+ * strand) or `retry_exhausted` (second strand) action. Skipped when the
+ * workspace probe is `unavailable` so a flaky adapter doesn't auto-demote
+ * a healthy ticket.
+ *
+ * Pure — caller applies the returned side effects (Linear writes).
+ */
+export function classifyInProgressStrands(arguments_: StrandClassifyArguments): StrandAction[] {
+  const { inProgress, worktreeEntries, workspaceProbe } = arguments_;
+  if (workspaceProbe.kind === "unavailable") {
+    return [];
+  }
+  const actions: StrandAction[] = [];
+  for (const issue of inProgress) {
+    const hasWorktree = worktreeEntries.some(
+      (entry) => entry.repository === issue.repository && entry.ticket === issue.id,
+    );
+    if (!hasWorktree) {
+      continue;
+    }
+    if (workspaceProbe.names.has(issue.id)) {
+      continue;
+    }
+    if (issue.labels.includes(AGENT_MAX_RETRIES_LABEL)) {
+      continue;
+    }
+    if (issue.labels.includes(AGENT_RETRIED_LABEL)) {
+      actions.push({ kind: "retry_exhausted", issue });
+      continue;
+    }
+    actions.push({ kind: "demote", issue });
+  }
+  return actions;
+}
+
 function blockerSummary(blocker: Blocker): string {
   return `${blocker.id}:${blocker.status ?? "missing"}`;
 }
@@ -102,6 +176,14 @@ function blockerVerdictFor(
   issue: GroundcrewIssue,
   config: ResolvedConfig,
 ): SkipVerdict | undefined {
+  if (issue.labels.includes(AGENT_MAX_RETRIES_LABEL)) {
+    return {
+      kind: "skip",
+      issue,
+      message: `Skipping ${issue.id}: ${AGENT_MAX_RETRIES_LABEL} label set — remove the label to re-enable dispatch`,
+      eventReason: "max_retries_exhausted",
+    };
+  }
   if (issue.hasMoreBlockers) {
     const blockers = issue.blockers.map(blockerSummary);
     return {
@@ -216,21 +298,24 @@ interface RecoveryArguments {
   dryRun: boolean;
 }
 
-// Stale worktrees with no matching live workspace are filtered out here so
-// they don't permanently block later tickets in the Todo queue.
+// "Worktree exists but workspace gone" → reopen path so the orchestrator
+// can rebuild the cmux/tmux window from the surviving worktree. The
+// strand classifier on the In-Progress slice handles the demote that
+// gets us here; an `unavailable` probe still skips so a transient adapter
+// hiccup never promotes a healthy ticket to a reopen.
 function classifyRecovery(
   arguments_: RecoveryArguments,
-): { kind: "go"; recovery: boolean } | SkipVerdict {
+): { kind: "go"; recovery: boolean; reopen: boolean } | SkipVerdict {
   const { issue, worktreeEntries, workspaceProbe, dryRun } = arguments_;
   if (dryRun) {
-    return { kind: "go", recovery: false };
+    return { kind: "go", recovery: false, reopen: false };
   }
 
   const exists = worktreeEntries.some(
     (entry) => entry.repository === issue.repository && entry.ticket === issue.id,
   );
   if (!exists) {
-    return { kind: "go", recovery: false };
+    return { kind: "go", recovery: false, reopen: false };
   }
   if (workspaceProbe.kind === "unavailable") {
     return {
@@ -241,14 +326,9 @@ function classifyRecovery(
     };
   }
   if (!workspaceProbe.names.has(issue.id)) {
-    return {
-      kind: "skip",
-      issue,
-      message: `Skipping ${issue.id}: worktree exists but no live workspace. Run \`crew cleanup ${issue.id}\` to allow re-provisioning.`,
-      eventReason: "workspace_missing",
-    };
+    return { kind: "go", recovery: false, reopen: true };
   }
-  return { kind: "go", recovery: true };
+  return { kind: "go", recovery: true, reopen: false };
 }
 
 /**
@@ -338,6 +418,7 @@ export function classifyEligibility(arguments_: ClassifyArguments): Verdict[] {
       kind: "start",
       issue: resolved,
       recovery: recovery.recovery,
+      reopen: recovery.reopen,
       resolvedFromAny,
     });
     started += 1;
