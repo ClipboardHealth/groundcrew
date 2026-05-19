@@ -392,3 +392,83 @@ describe("ticketStatus — Linear section", () => {
     expect(firstLine?.detail).toBe("plain string failure");
   });
 });
+
+describe("ticketStatus — Worktree section", () => {
+  const worktreeEntry = {
+    repository: "herds-social/herds",
+    ticket: "HRD-1",
+    branchName: "paul-HRD-1",
+    dir: "/work/herds-social/herds-HRD-1",
+    kind: "host" as const,
+  };
+
+  it("records an ok host-worktree row and a clean working-tree row when both true", async () => {
+    const deps = makeDeps({
+      findWorktree: vi
+        .fn<TicketStatusDependencies["findWorktree"]>()
+        .mockReturnValue(worktreeEntry),
+      probeWorkingTree: vi
+        .fn<TicketStatusDependencies["probeWorkingTree"]>()
+        .mockResolvedValue({ kind: "clean" }),
+    });
+
+    const actual = await ticketStatus(deps);
+
+    expect(actual.worktree).toStrictEqual([
+      { name: "Host worktree exists", status: "ok", detail: worktreeEntry.dir },
+      { name: "Working tree clean", status: "ok" },
+      { name: "Branch checked out", status: "ok", detail: worktreeEntry.branchName },
+    ]);
+  });
+
+  it("records a dirty working-tree row with modified/untracked counts", async () => {
+    const deps = makeDeps({
+      findWorktree: vi
+        .fn<TicketStatusDependencies["findWorktree"]>()
+        .mockReturnValue(worktreeEntry),
+      probeWorkingTree: vi
+        .fn<TicketStatusDependencies["probeWorkingTree"]>()
+        .mockResolvedValue({ kind: "dirty", modified: 2, untracked: 1 }),
+    });
+
+    const actual = await ticketStatus(deps);
+
+    expect(actual.worktree).toContainEqual({
+      name: "Working tree clean",
+      status: "fail",
+      detail: "2 modified, 1 untracked",
+    });
+  });
+
+  it("records absent host worktree as a fail row with a one-line detail", async () => {
+    const deps = makeDeps({
+      // oxlint-disable-next-line unicorn/no-useless-undefined -- findWorktree returns `WorktreeEntry | undefined`; passing nothing is a TS error
+      findWorktree: vi.fn<TicketStatusDependencies["findWorktree"]>().mockReturnValue(undefined),
+    });
+
+    const actual = await ticketStatus(deps);
+
+    expect(actual.worktree).toStrictEqual([
+      { name: "Host worktree exists", status: "fail", detail: "no worktree found for this ticket" },
+    ]);
+  });
+
+  it("records a skipped working-tree row when git status returns unknown", async () => {
+    const deps = makeDeps({
+      findWorktree: vi
+        .fn<TicketStatusDependencies["findWorktree"]>()
+        .mockReturnValue(worktreeEntry),
+      probeWorkingTree: vi
+        .fn<TicketStatusDependencies["probeWorkingTree"]>()
+        .mockResolvedValue({ kind: "unknown" }),
+    });
+
+    const actual = await ticketStatus(deps);
+
+    expect(actual.worktree).toStrictEqual([
+      { name: "Host worktree exists", status: "ok", detail: worktreeEntry.dir },
+      { name: "Working tree clean", status: "skipped", detail: "could not inspect" },
+      { name: "Branch checked out", status: "ok", detail: worktreeEntry.branchName },
+    ]);
+  });
+});

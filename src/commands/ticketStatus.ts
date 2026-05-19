@@ -293,6 +293,56 @@ async function probeLinear(
   }
 }
 
+interface WorktreeSectionOutput {
+  checks: TicketCheck[];
+  status: WorktreeProbe;
+  entry: WorktreeEntry | undefined;
+}
+
+async function probeWorktreeSection(
+  deps: TicketStatusDependencies,
+  ticket: string,
+): Promise<WorktreeSectionOutput> {
+  const entry = deps.findWorktree(ticket);
+  if (entry === undefined) {
+    return {
+      checks: [
+        {
+          name: "Host worktree exists",
+          status: "fail",
+          detail: "no worktree found for this ticket",
+        },
+      ],
+      status: { kind: "absent" },
+      entry: undefined,
+    };
+  }
+  const dirtiness = await deps.probeWorkingTree({ worktreeDir: entry.dir });
+  const checks: TicketCheck[] = [{ name: "Host worktree exists", status: "ok", detail: entry.dir }];
+  let status: WorktreeProbe;
+  if (dirtiness.kind === "clean") {
+    checks.push({ name: "Working tree clean", status: "ok" });
+    status = { kind: "present-clean" };
+  } else if (dirtiness.kind === "dirty") {
+    checks.push({
+      name: "Working tree clean",
+      status: "fail",
+      detail: `${dirtiness.modified} modified, ${dirtiness.untracked} untracked`,
+    });
+    status = {
+      kind: "present-dirty",
+      modified: dirtiness.modified,
+      untracked: dirtiness.untracked,
+    };
+  } else {
+    // dirtiness.kind === "unknown" — the third and final variant of WorktreeDirtiness.
+    checks.push({ name: "Working tree clean", status: "skipped", detail: "could not inspect" });
+    status = { kind: "present-unknown-dirtiness", reason: "git status failed" };
+  }
+  checks.push({ name: "Branch checked out", status: "ok", detail: entry.branchName });
+  return { checks, status, entry };
+}
+
 /**
  * Pure-with-async orchestrator that gathers per-section checks and a single
  * recovery verdict for a ticket. All I/O happens via injected probes — the
@@ -308,6 +358,8 @@ export async function ticketStatus(deps: TicketStatusDependencies): Promise<Tick
   const linearResult = await probeLinear(deps, ticket);
   skipReasons.linear = linearResult.skipReason;
 
+  const worktreeResult = await probeWorktreeSection(deps, ticket);
+
   // Other sections are stubbed for this task — Tasks 5-8 fill them in. The
   // provisional `skipped → non-terminal (linear skipped)` mapping below is
   // revisited in Task 8 when all sections are wired.
@@ -316,12 +368,12 @@ export async function ticketStatus(deps: TicketStatusDependencies): Promise<Tick
       linearResult.status.kind === "skipped"
         ? { kind: "non-terminal", stateName: "(linear skipped)" }
         : linearResult.status,
-    worktree: { kind: "absent" },
+    worktree: worktreeResult.status,
     localBranch: { kind: "absent" },
     remoteBranch: { kind: "absent" },
     pullRequest: { kind: "absent" },
     branch: ticket.toLowerCase(),
-    worktreeDir: undefined,
+    worktreeDir: worktreeResult.entry?.dir,
     workspaceName: undefined,
   });
 
@@ -329,7 +381,7 @@ export async function ticketStatus(deps: TicketStatusDependencies): Promise<Tick
     ticket,
     ...(linearResult.title === undefined ? {} : { title: linearResult.title }),
     linear: linearResult.checks,
-    worktree: [],
+    worktree: worktreeResult.checks,
     workspace: [],
     localBranch: [],
     remoteBranch: [],
