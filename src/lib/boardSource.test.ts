@@ -143,6 +143,7 @@ function makeClient(options: { projectFound?: boolean; pages?: IssueNodeStub[][]
             description: "Touches repo-a.",
             team: { id: "team-default" },
             labels: { nodes: [] },
+            state: { name: "Todo" },
           },
         },
       };
