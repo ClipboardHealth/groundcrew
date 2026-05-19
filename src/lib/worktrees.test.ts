@@ -40,12 +40,16 @@ vi.mock(import("./workspaces.ts"), async (importOriginal) => {
       open: vi.fn<typeof actual.workspaces.open>(),
       probe: vi.fn<typeof actual.workspaces.probe>(),
       close: vi.fn<typeof actual.workspaces.close>(),
+      accessHint: vi.fn<typeof actual.workspaces.accessHint>(),
     },
   };
 });
 vi.mock("node:os", async (importOriginal): Promise<NodeOsMock> => {
   const actual = await importOriginal<typeof nodeOs>();
-  return { ...actual, userInfo: vi.fn<typeof actual.userInfo>(actual.userInfo) };
+  return {
+    ...actual,
+    userInfo: vi.fn<typeof actual.userInfo>(actual.userInfo),
+  };
 });
 
 const userInfoMock = vi.mocked(userInfo);
@@ -57,12 +61,19 @@ function makeConfig(overrides: {
   models?: ResolvedConfig["models"]["definitions"];
 }): ResolvedConfig {
   const knownRepositories = overrides.knownRepositories ?? ["repo-a"];
-  const models = overrides.models ?? { claude: { cmd: "claude", color: "#fff" } };
+  const models = overrides.models ?? {
+    claude: { cmd: "claude", color: "#fff" },
+  };
   return {
     linear: {
       projectSlug: "x-aaaaaaaaaaaa",
       slugId: "aaaaaaaaaaaa",
-      statuses: { todo: "Todo", inProgress: "In Progress", done: "Done", terminal: ["Done"] },
+      statuses: {
+        todo: "Todo",
+        inProgress: "In Progress",
+        done: "Done",
+        terminal: ["Done"],
+      },
     },
     git: overrides.git ?? { remote: "origin", defaultBranch: "main" },
     workspace: {
@@ -84,6 +95,10 @@ function makeConfig(overrides: {
 
 function makeUserInfo(username: string): ReturnType<typeof userInfo> {
   return { username, uid: 0, gid: 0, shell: null, homedir: "/tmp" };
+}
+
+function hasArguments(arguments_: readonly string[], ...needles: readonly string[]): boolean {
+  return needles.every((needle) => arguments_.includes(needle));
 }
 
 let projectDir: string;
@@ -113,7 +128,9 @@ describe(list, () => {
   });
 
   it("returns an empty list when the project directory cannot be read", () => {
-    const config = makeConfig({ projectDir: join(projectDir, "does-not-exist") });
+    const config = makeConfig({
+      projectDir: join(projectDir, "does-not-exist"),
+    });
 
     expect(list(config)).toStrictEqual([]);
   });
@@ -158,7 +175,10 @@ describe(list, () => {
     // not the project root, to find it.
     mkdirSync(join(projectDir, "owner", "repo"), { recursive: true });
     mkdirSync(join(projectDir, "owner", "repo-team-1"));
-    const config = makeConfig({ projectDir, knownRepositories: ["owner/repo"] });
+    const config = makeConfig({
+      projectDir,
+      knownRepositories: ["owner/repo"],
+    });
 
     expect(list(config)).toStrictEqual([
       {
@@ -216,7 +236,10 @@ describe(findByTicket, () => {
   it("returns every host entry matching the ticket regardless of repo", () => {
     mkdirSync(join(projectDir, "repo-a-team-1"));
     mkdirSync(join(projectDir, "repo-b-team-1"));
-    const config = makeConfig({ projectDir, knownRepositories: ["repo-a", "repo-b"] });
+    const config = makeConfig({
+      projectDir,
+      knownRepositories: ["repo-a", "repo-b"],
+    });
 
     const actual = findByTicket(config, "team-1");
 
@@ -450,6 +473,191 @@ describe(remove, () => {
     await expect(callRemove()).resolves.toBeUndefined();
   });
 
+  it("wraps the error with a dirtiness explanation and --force hint when the worktree has modifications", async () => {
+    mkdirSync(join(projectDir, "repo-a"));
+    mkdirSync(join(projectDir, "repo-a-team-1"));
+    const config = makeConfig({ projectDir });
+
+    runCommandMock.mockImplementation((_command, arguments_) => {
+      // oxlint-disable-next-line vitest/no-conditional-in-test -- discriminator selects the worktree-remove call to fail; status --porcelain reports a dirty tree.
+      if (hasArguments(arguments_, "worktree", "remove")) {
+        throw new Error("Command failed: git worktree remove\nExit status: 128");
+      }
+      // oxlint-disable-next-line vitest/no-conditional-in-test -- as above
+      if (hasArguments(arguments_, "status", "--porcelain")) {
+        return " M src/foo.ts\nM  src/bar.ts\n?? src/new.ts\n?? src/other.ts\n";
+      }
+      return "";
+    });
+
+    const callRemove = async (): Promise<void> => {
+      await remove(config, {
+        repository: "repo-a",
+        ticket: "team-1",
+        branchName: "rocky-team-1",
+        dir: join(projectDir, "repo-a-team-1"),
+        kind: "host",
+      });
+    };
+
+    await expect(callRemove()).rejects.toThrow(/2 modified files and 2 untracked files/);
+    await expect(callRemove()).rejects.toThrow(/crew cleanup --force team-1/);
+    await expect(callRemove()).rejects.toThrow(
+      new RegExp(
+        `commit/stash in ${join(projectDir, "repo-a-team-1").replaceAll("/", String.raw`\/`)}`,
+      ),
+    );
+  });
+
+  it("uses singular wording when exactly one modified file is dirty", async () => {
+    mkdirSync(join(projectDir, "repo-a"));
+    mkdirSync(join(projectDir, "repo-a-team-1"));
+    const config = makeConfig({ projectDir });
+
+    runCommandMock.mockImplementation((_command, arguments_) => {
+      // oxlint-disable-next-line vitest/no-conditional-in-test -- single modified file produces singular "modified file"/"it" wording.
+      if (hasArguments(arguments_, "worktree", "remove")) {
+        throw new Error("remove failed");
+      }
+      // oxlint-disable-next-line vitest/no-conditional-in-test -- as above
+      if (hasArguments(arguments_, "status", "--porcelain")) {
+        return " M src/foo.ts\n";
+      }
+      return "";
+    });
+
+    const callRemove = async (): Promise<void> => {
+      await remove(config, {
+        repository: "repo-a",
+        ticket: "team-1",
+        branchName: "rocky-team-1",
+        dir: join(projectDir, "repo-a-team-1"),
+        kind: "host",
+      });
+    };
+
+    await expect(callRemove()).rejects.toThrow(/worktree has 1 modified file\./);
+    await expect(callRemove()).rejects.toThrow(/to discard it/);
+    await expect(callRemove()).rejects.not.toThrow(/untracked/);
+  });
+
+  it("uses singular wording when exactly one untracked file is dirty", async () => {
+    mkdirSync(join(projectDir, "repo-a"));
+    mkdirSync(join(projectDir, "repo-a-team-1"));
+    const config = makeConfig({ projectDir });
+
+    runCommandMock.mockImplementation((_command, arguments_) => {
+      // oxlint-disable-next-line vitest/no-conditional-in-test -- single untracked file produces singular "untracked file"/"it" wording.
+      if (hasArguments(arguments_, "worktree", "remove")) {
+        throw new Error("remove failed");
+      }
+      // oxlint-disable-next-line vitest/no-conditional-in-test -- as above
+      if (hasArguments(arguments_, "status", "--porcelain")) {
+        return "?? src/new.ts\n";
+      }
+      return "";
+    });
+
+    const callRemove = async (): Promise<void> => {
+      await remove(config, {
+        repository: "repo-a",
+        ticket: "team-1",
+        branchName: "rocky-team-1",
+        dir: join(projectDir, "repo-a-team-1"),
+        kind: "host",
+      });
+    };
+
+    await expect(callRemove()).rejects.toThrow(/worktree has 1 untracked file\./);
+    await expect(callRemove()).rejects.toThrow(/to discard it/);
+    await expect(callRemove()).rejects.not.toThrow(/modified/);
+  });
+
+  it("rethrows the original error when the dirtiness probe itself fails", async () => {
+    mkdirSync(join(projectDir, "repo-a"));
+    mkdirSync(join(projectDir, "repo-a-team-1"));
+    const config = makeConfig({ projectDir });
+
+    runCommandMock.mockImplementation((_command, arguments_) => {
+      // oxlint-disable-next-line vitest/no-conditional-in-test -- both the remove and the follow-up status probe fail; no dirtiness info available.
+      if (hasArguments(arguments_, "worktree", "remove")) {
+        throw new Error("original remove failure");
+      }
+      // oxlint-disable-next-line vitest/no-conditional-in-test -- as above
+      if (hasArguments(arguments_, "status", "--porcelain")) {
+        throw new Error("status probe blew up");
+      }
+      return "";
+    });
+
+    await expect(
+      remove(config, {
+        repository: "repo-a",
+        ticket: "team-1",
+        branchName: "rocky-team-1",
+        dir: join(projectDir, "repo-a-team-1"),
+        kind: "host",
+      }),
+    ).rejects.toThrow("original remove failure");
+  });
+
+  it("rethrows the original error when removal fails but the worktree is clean", async () => {
+    mkdirSync(join(projectDir, "repo-a"));
+    mkdirSync(join(projectDir, "repo-a-team-1"));
+    const config = makeConfig({ projectDir });
+
+    runCommandMock.mockImplementation((_command, arguments_) => {
+      // oxlint-disable-next-line vitest/no-conditional-in-test -- discriminator selects the worktree-remove call to fail; status --porcelain returns clean.
+      if (hasArguments(arguments_, "worktree", "remove")) {
+        throw new Error("git worktree remove failed for some other reason");
+      }
+      return "";
+    });
+
+    await expect(
+      remove(config, {
+        repository: "repo-a",
+        ticket: "team-1",
+        branchName: "rocky-team-1",
+        dir: join(projectDir, "repo-a-team-1"),
+        kind: "host",
+      }),
+    ).rejects.toThrow("git worktree remove failed for some other reason");
+  });
+
+  it("skips the dirtiness probe and rethrows when --force is already set", async () => {
+    mkdirSync(join(projectDir, "repo-a"));
+    mkdirSync(join(projectDir, "repo-a-team-1"));
+    const config = makeConfig({ projectDir });
+
+    runCommandMock.mockImplementation((_command, arguments_) => {
+      // oxlint-disable-next-line vitest/no-conditional-in-test -- discriminator fails the worktree-remove call even with --force.
+      if (hasArguments(arguments_, "worktree", "remove")) {
+        throw new Error("forced remove still failed");
+      }
+      return "";
+    });
+
+    await expect(
+      remove(
+        config,
+        {
+          repository: "repo-a",
+          ticket: "team-1",
+          branchName: "rocky-team-1",
+          dir: join(projectDir, "repo-a-team-1"),
+          kind: "host",
+        },
+        { force: true },
+      ),
+    ).rejects.toThrow("forced remove still failed");
+
+    const statusCalls = runCommandMock.mock.calls.filter(([, arguments_]) =>
+      hasArguments(arguments_, "status", "--porcelain"),
+    );
+    expect(statusCalls).toHaveLength(0);
+  });
+
   it("rethrows branch deletion failures after the shutdown signal fires", async () => {
     mkdirSync(join(projectDir, "repo-a"));
     mkdirSync(join(projectDir, "repo-a-team-1"));
@@ -513,7 +721,10 @@ describe(teardown, () => {
   });
 
   it("closes the matching workspace before removing the worktree", async () => {
-    workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-1"]) });
+    workspacesProbeMock.mockResolvedValue({
+      kind: "ok",
+      names: new Set(["team-1"]),
+    });
     const config = makeConfig({ projectDir });
     const entry = hostEntry("team-1");
 
@@ -526,8 +737,14 @@ describe(teardown, () => {
   });
 
   it("dedupes the workspace close across duplicate host entries for one ticket", async () => {
-    workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-1"]) });
-    const config = makeConfig({ projectDir, knownRepositories: ["repo-a", "repo-b"] });
+    workspacesProbeMock.mockResolvedValue({
+      kind: "ok",
+      names: new Set(["team-1"]),
+    });
+    const config = makeConfig({
+      projectDir,
+      knownRepositories: ["repo-a", "repo-b"],
+    });
     mkdirSync(join(projectDir, "repo-b-team-1"), { recursive: true });
     mkdirSync(join(projectDir, "repo-b"), { recursive: true });
     const entries = [
@@ -549,7 +766,10 @@ describe(teardown, () => {
   });
 
   it("skips workspace close when the ticket is not in the live name set", async () => {
-    workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set<string>() });
+    workspacesProbeMock.mockResolvedValue({
+      kind: "ok",
+      names: new Set<string>(),
+    });
     const config = makeConfig({ projectDir });
 
     const result = await teardown(config, [hostEntry("team-1")]);
@@ -595,7 +815,10 @@ describe(teardown, () => {
 
   it("only best-effort closes a ticket once when duplicate entries exist and probe is unavailable", async () => {
     workspacesProbeMock.mockResolvedValue({ kind: "unavailable" });
-    const config = makeConfig({ projectDir, knownRepositories: ["repo-a", "repo-b"] });
+    const config = makeConfig({
+      projectDir,
+      knownRepositories: ["repo-a", "repo-b"],
+    });
     mkdirSync(join(projectDir, "repo-b-team-1"), { recursive: true });
     mkdirSync(join(projectDir, "repo-b"), { recursive: true });
     const entries = [
@@ -618,7 +841,10 @@ describe(teardown, () => {
   });
 
   it("records workspace_close failures and continues to remove the worktree", async () => {
-    workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-1"]) });
+    workspacesProbeMock.mockResolvedValue({
+      kind: "ok",
+      names: new Set(["team-1"]),
+    });
     workspacesCloseMock.mockImplementation(() => {
       throw new Error("close down");
     });
@@ -636,7 +862,10 @@ describe(teardown, () => {
   it("rethrows workspace_close failures after the shutdown signal fires", async () => {
     const controller = new AbortController();
     controller.abort();
-    workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-1"]) });
+    workspacesProbeMock.mockResolvedValue({
+      kind: "ok",
+      names: new Set(["team-1"]),
+    });
     workspacesCloseMock.mockRejectedValue(new Error("close interrupted"));
     const config = makeConfig({ projectDir });
 
@@ -646,7 +875,10 @@ describe(teardown, () => {
   });
 
   it("records worktree_remove failures and continues to the next entry", async () => {
-    workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set<string>() });
+    workspacesProbeMock.mockResolvedValue({
+      kind: "ok",
+      names: new Set<string>(),
+    });
     // The first runCommand fired by teardown is the `worktree remove` for
     // entry 1; subsequent calls (entry 1 branch -D, entry 2 remove + -D)
     // fall back to the beforeEach mockReturnValue.
@@ -666,7 +898,10 @@ describe(teardown, () => {
   it("rethrows worktree_remove failures after the shutdown signal fires", async () => {
     const controller = new AbortController();
     controller.abort();
-    workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set<string>() });
+    workspacesProbeMock.mockResolvedValue({
+      kind: "ok",
+      names: new Set<string>(),
+    });
     runCommandMock.mockImplementationOnce(() => {
       throw new Error("remove interrupted");
     });
@@ -678,7 +913,10 @@ describe(teardown, () => {
   });
 
   it("passes force through to the underlying remove", async () => {
-    workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set<string>() });
+    workspacesProbeMock.mockResolvedValue({
+      kind: "ok",
+      names: new Set<string>(),
+    });
     const config = makeConfig({ projectDir });
 
     await teardown(config, [hostEntry("team-1")], { force: true });

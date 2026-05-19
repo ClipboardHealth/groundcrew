@@ -12,8 +12,8 @@ import { buildLaunchCommand, shellSingleQuote } from "../lib/launchCommand.ts";
 import { createLinearIssueStatusUpdater } from "../lib/linearIssueStatus.ts";
 import { assertLocalRunnerRequirements, resolveLocalRunner } from "../lib/localRunner.ts";
 import { errorMessage, getLinearClient, log, readEnvironmentVariable } from "../lib/util.ts";
-import { workspaces } from "../lib/workspaces.ts";
-import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
+import { type WorkspaceAccessHint, workspaces } from "../lib/workspaces.ts";
+import { isWorktreeAlreadyExistsError, type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 
 interface TicketDetails {
   title: string;
@@ -137,10 +137,18 @@ export async function setupWorkspace(
   }
 
   const spec = { repository, ticket };
-  const created =
-    signal === undefined
-      ? await worktrees.create(config, spec)
-      : await worktrees.create(config, spec, signal);
+  let created: WorktreeEntry;
+  try {
+    created =
+      signal === undefined
+        ? await worktrees.create(config, spec)
+        : await worktrees.create(config, spec, signal);
+  } catch (error) {
+    if (isWorktreeAlreadyExistsError(error)) {
+      await logAccessHintForExistingWorkspace({ config, ticket, signal });
+    }
+    throw error;
+  }
   const { branchName, dir: launchDir } = created;
   const worktreeName = `${repository}-${ticket}`;
 
@@ -202,10 +210,56 @@ export async function setupWorkspace(
     log(`Workspace "${ticket}" launched (${model})`);
     log(`  Worktree: ${launchDir}`);
     log(`  Branch:   ${branchName}`);
+    await logWorkspaceAccessHint({ config, ticket, signal });
   } catch (error) {
     await rollbackWorktree({ config, entry: created, promptDir });
     throw error;
   }
+}
+
+/**
+ * Probe the workspace backend and, if a workspace for `ticket` is still
+ * live, log the access hint. Used on the pre-launch error path (e.g. the
+ * worktree already exists from a prior run) so the user can find the
+ * still-running session instead of being told only that the worktree is
+ * in the way. Silent when the probe is unavailable or the workspace is
+ * gone — we don't want to point at a window that doesn't exist.
+ */
+async function logAccessHintForExistingWorkspace(arguments_: {
+  config: ResolvedConfig;
+  ticket: string;
+  signal: AbortSignal | undefined;
+}): Promise<void> {
+  const { config, ticket, signal } = arguments_;
+  const accessHint = await workspaces.accessHint(config, ticket, signal);
+  if (accessHint === undefined) {
+    return;
+  }
+  const probe = await workspaces.probe(config, signal);
+  if (probe.kind !== "ok" || !probe.names.has(ticket)) {
+    return;
+  }
+  logAccessHint(accessHint);
+}
+
+async function logWorkspaceAccessHint(arguments_: {
+  config: ResolvedConfig;
+  ticket: string;
+  signal: AbortSignal | undefined;
+}): Promise<void> {
+  const accessHint = await workspaces.accessHint(
+    arguments_.config,
+    arguments_.ticket,
+    arguments_.signal,
+  );
+  if (accessHint === undefined) {
+    return;
+  }
+  logAccessHint(accessHint);
+}
+
+function logAccessHint(accessHint: WorkspaceAccessHint): void {
+  log(`  Attach:   ${accessHint.command}`);
 }
 
 async function rollbackWorktree(arguments_: {

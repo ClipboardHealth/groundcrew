@@ -920,6 +920,30 @@ describe("workspaces.close (tmux)", () => {
   });
 });
 
+describe("workspaces.accessHint (cmux)", () => {
+  beforeEach(commonBeforeEach);
+  afterEach(commonAfterEach);
+
+  it("returns undefined (cmux has no concise external hint; workspace surfaces in the cmux UI)", async () => {
+    await expect(workspaces.accessHint(makeConfig(), "TEAM-1")).resolves.toBeUndefined();
+  });
+});
+
+describe("workspaces.accessHint (tmux)", () => {
+  beforeEach(() => {
+    commonBeforeEach();
+    detectHostMock.mockResolvedValue(makeHost({ hasCmux: false, hasTmux: true }));
+  });
+  afterEach(commonAfterEach);
+
+  it("returns an access hint for the ticket window inside the groundcrew tmux session", async () => {
+    await expect(workspaces.accessHint(makeConfig("tmux"), "TEAM-1")).resolves.toStrictEqual({
+      kind: "attachCommand",
+      command: "tmux attach -t groundcrew:TEAM-1",
+    });
+  });
+});
+
 describe(resolveWorkspaceKind, () => {
   beforeEach(commonBeforeEach);
   afterEach(commonAfterEach);
