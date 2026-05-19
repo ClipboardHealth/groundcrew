@@ -6,6 +6,7 @@ import type { ResolvedConfig } from "../lib/config.ts";
 import {
   renderTicketDoctorResult,
   ticketDoctor,
+  ticketDoctorCli,
   type TicketDoctorDependencies,
   type TicketDoctorResult,
 } from "./ticketDoctor.ts";
@@ -713,5 +714,21 @@ describe("ticket doctor renderer", () => {
 
     expect(lines.some((l) => l.includes("(skipped — ticket unresolved)"))).toBe(true);
     expect(lines.some((l) => l.includes("→ ineligible:"))).toBe(true);
+  });
+});
+
+describe("ticketDoctorCli argument validation", () => {
+  it("throws a usage error when no ticket is provided", async () => {
+    await expect(ticketDoctorCli([])).rejects.toThrow(/Usage: crew ticket doctor <ticket>/);
+  });
+
+  it("throws a usage error when the argument looks like a flag", async () => {
+    await expect(ticketDoctorCli(["--help"])).rejects.toThrow(/Usage: crew ticket doctor <ticket>/);
+  });
+
+  it("throws on extra arguments beyond the ticket id", async () => {
+    await expect(ticketDoctorCli(["HRD-1", "extra"])).rejects.toThrow(
+      /crew ticket doctor: unexpected arguments: extra/,
+    );
   });
 });

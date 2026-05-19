@@ -1,14 +1,18 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import {
+  createBoardSource,
+  fetchBlockersForTicket,
+  fetchRawLinearIssue,
   resolveModelFor,
   resolveRepositoryFor,
   type Blocker,
   type GroundcrewIssue,
   type RawLinearIssue,
 } from "../lib/boardSource.ts";
-import type { ResolvedConfig } from "../lib/config.ts";
-import type { UsageByModel } from "../lib/usage.ts";
+import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
+import { getUsageByModel, type UsageByModel } from "../lib/usage.ts";
+import { getLinearClient, writeOutput } from "../lib/util.ts";
 import { classifyBlockers } from "./eligibility.ts";
 
 export type TicketDoctorVerdict =
@@ -367,4 +371,41 @@ export async function ticketDoctor(
     eligibility,
     verdict: { kind: "would-dispatch" },
   };
+}
+
+export async function ticketDoctorCli(argv: string[]): Promise<void> {
+  const [ticket, ...extraArgs] = argv;
+  if (ticket === undefined || ticket.length === 0 || ticket.startsWith("-")) {
+    throw new Error("Usage: crew ticket doctor <ticket>");
+  }
+  /* v8 ignore else @preserve */
+  if (extraArgs.length > 0) {
+    throw new Error(`crew ticket doctor: unexpected arguments: ${extraArgs.join(" ")}`);
+  }
+  /* v8 ignore start @preserve */
+  const config = await loadConfig();
+  const client = getLinearClient();
+  const boardSource = createBoardSource({ config, client });
+
+  const result = await ticketDoctor({
+    config,
+    ticket,
+    fetchRawIssue: async ({ ticket: t }) => await fetchRawLinearIssue({ client, ticket: t }),
+    fetchBlockersFor: async ({ ticket: t, uuid }) =>
+      await fetchBlockersForTicket({ client, ticket: t, uuid }),
+    fetchUsage: async () => await getUsageByModel(config),
+    countInProgress: async () => {
+      const board = await boardSource.fetch();
+      return board.issues.filter((issue) => issue.status === config.linear.statuses.inProgress)
+        .length;
+    },
+  });
+
+  for (const line of renderTicketDoctorResult(result)) {
+    writeOutput(line);
+  }
+  if (result.verdict.kind !== "would-dispatch") {
+    process.exitCode = 1;
+  }
+  /* v8 ignore stop @preserve */
 }
