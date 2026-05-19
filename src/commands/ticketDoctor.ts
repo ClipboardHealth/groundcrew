@@ -235,6 +235,53 @@ async function runEligibilityChecks(arguments_: EligibilityCheckArguments): Prom
   return eligibility.every((check) => check.status === "ok");
 }
 
+const STATUS_TAG: Record<TicketCheck["status"], string> = {
+  ok: "[ok]",
+  fail: "[--]",
+  skipped: "[--]",
+};
+
+function formatCheck(check: TicketCheck): string {
+  const tag = STATUS_TAG[check.status];
+  const detail = check.detail === undefined ? "" : ` (${check.detail})`;
+  return `  ${tag} ${check.name}${detail}`;
+}
+
+function eligibilityLines(result: TicketDoctorResult): string[] {
+  if (result.eligibility.length === 0) {
+    const skipMessage =
+      result.verdict.kind === "unresolvable"
+        ? "  (skipped — ticket unresolved)"
+        : "  (skipped — resolution checks failed)";
+    return [skipMessage];
+  }
+  return result.eligibility.map(formatCheck);
+}
+
+export function renderTicketDoctorResult(result: TicketDoctorResult): string[] {
+  const titlePart = result.title === undefined ? "" : ` (${result.title})`;
+  const header = `groundcrew ticket doctor — ${result.ticket}${titlePart}`;
+  const bar = "─".repeat(header.length);
+
+  const verdictLine =
+    result.verdict.kind === "would-dispatch"
+      ? "→ would be dispatched on next tick"
+      : `→ ineligible: ${result.verdict.reason}`;
+
+  return [
+    header,
+    bar,
+    "",
+    "Resolution",
+    ...result.resolution.map(formatCheck),
+    "",
+    "Eligibility",
+    ...eligibilityLines(result),
+    "",
+    verdictLine,
+  ];
+}
+
 export async function ticketDoctor(
   dependencies: TicketDoctorDependencies,
 ): Promise<TicketDoctorResult> {

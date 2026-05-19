@@ -3,7 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { RawLinearIssue } from "../lib/boardSource.ts";
 import type { ResolvedConfig } from "../lib/config.ts";
-import { ticketDoctor, type TicketDoctorDependencies } from "./ticketDoctor.ts";
+import {
+  renderTicketDoctorResult,
+  ticketDoctor,
+  type TicketDoctorDependencies,
+  type TicketDoctorResult,
+} from "./ticketDoctor.ts";
 
 function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
   return {
@@ -591,5 +596,122 @@ describe("ticketDoctor — eligibility phase", () => {
     expect(result.eligibility).toHaveLength(0);
     expect(fetchBlockersFor).not.toHaveBeenCalled();
     expect(result.verdict.kind).toBe("ineligible");
+  });
+});
+
+function makeWouldDispatchResult(): TicketDoctorResult {
+  return {
+    ticket: "HRD-446",
+    title: "Multi-event",
+    resolution: [
+      { name: "Ticket exists in Linear", status: "ok", detail: '"Multi-event"' },
+      { name: "Status is Todo", status: "ok" },
+      { name: "Has agent-* label", status: "ok", detail: "agent-claude" },
+      { name: "Model resolves from agent-* label", status: "ok", detail: 'model "claude"' },
+      {
+        name: "Description mentions known repo",
+        status: "ok",
+        detail: "herds-social/herds",
+      },
+      {
+        name: "Resolved repo is cloned locally",
+        status: "ok",
+        detail: "/work/herds-social/herds",
+      },
+    ],
+    eligibility: [
+      { name: "No active blockers", status: "ok" },
+      {
+        name: 'Model "claude" usage under sessionLimitPercentage',
+        status: "ok",
+        detail: "23% (limit 85%)",
+      },
+      { name: "In-progress cap not hit", status: "ok", detail: "1/4 used" },
+    ],
+    verdict: { kind: "would-dispatch" },
+  };
+}
+
+describe("ticket doctor renderer", () => {
+  it("green-path: contains [ok] lines, ticket id, and would-dispatch line", () => {
+    const result = makeWouldDispatchResult();
+    const lines = renderTicketDoctorResult(result);
+
+    expect(lines.some((l) => l.includes("HRD-446"))).toBe(true);
+    expect(lines.some((l) => l.includes("Multi-event"))).toBe(true);
+    expect(lines.filter((l) => l.includes("[ok]")).length).toBeGreaterThan(0);
+    expect(lines.some((l) => l.includes("would be dispatched on next tick"))).toBe(true);
+    expect(lines.some((l) => l.includes("Resolution"))).toBe(true);
+    expect(lines.some((l) => l.includes("Eligibility"))).toBe(true);
+  });
+
+  it("failed resolution check: renders [--] with detail and ineligible verdict line", () => {
+    const result: TicketDoctorResult = {
+      ticket: "HRD-1",
+      title: "My Ticket",
+      resolution: [
+        { name: "Ticket exists in Linear", status: "ok", detail: '"My Ticket"' },
+        { name: "Status is Todo", status: "ok" },
+        { name: "Has agent-* label", status: "ok", detail: "agent-claude" },
+        { name: "Model resolves from agent-* label", status: "ok", detail: 'model "claude"' },
+        {
+          name: "Description mentions known repo",
+          status: "fail",
+          detail: "no entry from workspace.knownRepositories (repo-a) appears in description",
+        },
+        { name: "Resolved repo is cloned locally", status: "skipped" },
+      ],
+      eligibility: [],
+      verdict: { kind: "ineligible", reason: "Description mentions known repo" },
+    };
+
+    const lines = renderTicketDoctorResult(result);
+
+    const failLine = lines.find((l) => l.includes("Description mentions known repo"));
+    expect(failLine).toBeDefined();
+    expect(failLine).toMatch(/\[--\]/);
+    expect(failLine).toMatch(/no entry/);
+
+    expect(lines.some((l) => l.includes("→ ineligible: Description mentions known repo"))).toBe(
+      true,
+    );
+  });
+
+  it("empty eligibility with ineligible verdict: prints resolution-checks-failed skip message", () => {
+    const result: TicketDoctorResult = {
+      ticket: "HRD-2",
+      title: "Bad Ticket",
+      resolution: [
+        { name: "Ticket exists in Linear", status: "ok", detail: '"Bad Ticket"' },
+        { name: "Status is Todo", status: "fail", detail: "current: Done" },
+      ],
+      eligibility: [],
+      verdict: { kind: "ineligible", reason: "Status is Todo" },
+    };
+
+    const lines = renderTicketDoctorResult(result);
+
+    expect(lines.some((l) => l.includes("(skipped — resolution checks failed)"))).toBe(true);
+    expect(lines.some((l) => l.includes("(skipped — ticket unresolved)"))).toBe(false);
+  });
+
+  it("unresolvable verdict: prints ticket-unresolved skip message in eligibility", () => {
+    const result: TicketDoctorResult = {
+      ticket: "HRD-404",
+      resolution: [
+        {
+          name: "Ticket exists in Linear",
+          status: "fail",
+          detail: "Ticket HRD-404 not found in Linear",
+        },
+      ],
+      eligibility: [],
+      verdict: { kind: "unresolvable", reason: "Ticket HRD-404 not found in Linear" },
+    };
+
+    const lines = renderTicketDoctorResult(result);
+
+    expect(lines.some((l) => l.includes("(skipped — ticket unresolved)"))).toBe(true);
+    expect(lines.some((l) => l.includes("→ ineligible:"))).toBe(true);
   });
 });
