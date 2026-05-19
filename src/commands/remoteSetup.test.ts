@@ -1094,6 +1094,10 @@ describe(bootstrapRemoteRepository, () => {
 
   it("requires explicitly selected secrets to exist locally", async () => {
     mockExistingSpriteForBootstrap();
+    // Force-unset so the assertion holds even when the test host happens
+    // to have NPM_TOKEN exported in its environment (npm publish workflow,
+    // a developer's shell, etc.).
+    vi.stubEnv("NPM_TOKEN", "");
 
     await expect(
       bootstrapRemoteRepository({
