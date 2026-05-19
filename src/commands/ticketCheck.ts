@@ -14,7 +14,7 @@ export interface Section {
 
 interface RenderInput {
   command: string;
-  ticket: string;
+  argument: string;
   title?: string;
   sections: Section[];
   verdict: string;
@@ -41,7 +41,7 @@ function sectionLines(section: Section): string[] {
 
 export function renderTicketCheckResult(input: RenderInput): string[] {
   const titlePart = input.title === undefined ? "" : ` (${input.title})`;
-  const header = `groundcrew ${input.command} --ticket ${input.ticket}${titlePart}`;
+  const header = `groundcrew ${input.command} ${input.argument}${titlePart}`;
   const bar = "─".repeat(header.length);
   const body = input.sections.flatMap((section) => ["", ...sectionLines(section)]);
   return [header, bar, ...body, "", input.verdict];

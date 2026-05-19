@@ -284,18 +284,18 @@ describe(run, () => {
     expect(process.exitCode).toBe(1);
   });
 
-  it("dispatches `status --ticket <id>` to ticketStatusCli with the remaining argv", async () => {
-    await run(["status", "--ticket", "HRD-442"]);
+  it("dispatches `status <ticket>` to ticketStatusCli with the remaining argv", async () => {
+    await run(["status", "HRD-442"]);
 
-    expect(ticketStatusMock).toHaveBeenCalledWith(["--ticket", "HRD-442"]);
+    expect(ticketStatusMock).toHaveBeenCalledWith(["HRD-442"]);
   });
 
   it("propagates errors thrown by ticketStatusCli (e.g. bad args)", async () => {
-    ticketStatusMock.mockRejectedValue(new Error("crew status: --ticket <ticket> is required"));
+    ticketStatusMock.mockRejectedValue(new Error("crew status: ticket id is required"));
 
     await run(["status"]);
 
-    expect(consoleError.output()).toContain("--ticket <ticket> is required");
+    expect(consoleError.output()).toContain("ticket id is required");
     expect(process.exitCode).toBe(1);
   });
 

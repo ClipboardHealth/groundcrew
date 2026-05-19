@@ -6,8 +6,8 @@ import { fetchRawLinearIssue, type RawLinearIssue } from "../lib/boardSource.ts"
 import { runCommandAsync } from "../lib/commandRunner.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { which } from "../lib/host.ts";
-import { getLinearClient, lazyLinearClient, readTicketArgument, writeOutput } from "../lib/util.ts";
-import { workspaces, type WorkspaceProbe } from "../lib/workspaces.ts";
+import { getLinearClient, lazyLinearClient, writeOutput } from "../lib/util.ts";
+import { workspaces, type WorkspaceAccessHint, type WorkspaceProbe } from "../lib/workspaces.ts";
 import { worktrees, type WorktreeDirtiness, type WorktreeEntry } from "../lib/worktrees.ts";
 import { renderTicketCheckResult, type Section, type TicketCheck } from "./ticketCheck.ts";
 
@@ -110,7 +110,7 @@ function verdictDirtyWorktree(input: DecideVerdictInput): StatusVerdict | undefi
   return {
     kind: "recoverable",
     reason: `dirty worktree (${input.worktree.modified} modified, ${input.worktree.untracked} untracked)`,
-    nextStep: `commit or stash in ${where}, then re-run \`crew status --ticket ${input.branch}\``,
+    nextStep: `commit or stash in ${where}, then re-run \`crew status ${input.branch}\``,
   };
 }
 
@@ -221,6 +221,13 @@ export interface TicketStatusDependencies {
   fetchRawIssue: ((input: { ticket: string }) => Promise<RawLinearIssue>) | undefined;
   findWorktree: (ticket: string) => WorktreeEntry | undefined;
   probeWorkspaces: () => Promise<WorkspaceProbe>;
+  /**
+   * Returns the user-facing attach hint for the workspace `name`, when the
+   * backend has one. The workspace section appends the hint's command to the
+   * "Workspace pane open" detail so the verdict line is immediately
+   * actionable.
+   */
+  workspaceAccessHint: (name: string) => Promise<WorkspaceAccessHint | undefined>;
   probeWorkingTree: (input: { worktreeDir: string }) => Promise<WorktreeDirtiness>;
   probeLocalBranch: (input: {
     repoDir: string;
@@ -376,8 +383,10 @@ async function probeWorkspaceSection(
     };
   }
   if (probe.names.has(ticket)) {
+    const hint = await deps.workspaceAccessHint(ticket);
+    const detail = hint === undefined ? ticket : `${ticket} — attach: \`${hint.command}\``;
     return {
-      checks: [{ name: "Workspace pane open", status: "ok", detail: ticket }],
+      checks: [{ name: "Workspace pane open", status: "ok", detail }],
       workspaceName: ticket,
     };
   }
@@ -615,13 +624,7 @@ export function parseStatusArguments(argv: string[]): StatusArguments {
   let ticket: string | undefined;
   let doLinear = true;
   let doFetch = true;
-  for (let index = 0; index < argv.length; index += 1) {
-    const argument = argv[index];
-    if (argument === "--ticket") {
-      ticket = readTicketArgument(argv, index, "status");
-      index += 1;
-      continue;
-    }
+  for (const argument of argv) {
     if (argument === "--no-linear") {
       doLinear = false;
       continue;
@@ -630,11 +633,16 @@ export function parseStatusArguments(argv: string[]): StatusArguments {
       doFetch = false;
       continue;
     }
-    /* v8 ignore next @preserve -- index < argv.length guarantees argument is defined; nullish guard satisfies the TS string|undefined index type */
-    throw new Error(`crew status: unknown argument: ${argument ?? "<empty>"}`);
+    if (argument.startsWith("-")) {
+      throw new Error(`crew status: unknown argument: ${argument}`);
+    }
+    if (ticket !== undefined) {
+      throw new Error(`crew status: unexpected argument: ${argument}`);
+    }
+    ticket = argument;
   }
   if (ticket === undefined) {
-    throw new Error("crew status: --ticket <ticket> is required");
+    throw new Error("crew status: ticket id is required");
   }
   return { ticket, doLinear, doFetch };
 }
@@ -704,7 +712,7 @@ export function renderTicketStatusResult(result: TicketStatusResult): string[] {
   ];
   return renderTicketCheckResult({
     command: "status",
-    ticket: result.ticket,
+    argument: result.ticket,
     ...(result.title === undefined ? {} : { title: result.title }),
     sections,
     verdict: formatVerdict(result.verdict),
@@ -734,6 +742,7 @@ export async function runTicketStatus(parsed: StatusArguments): Promise<boolean>
     fetchRawIssue,
     findWorktree: (ticket) => worktrees.findByTicket(config, ticket)[0],
     probeWorkspaces: async () => await workspaces.probe(config),
+    workspaceAccessHint: async (name) => await workspaces.accessHint(config, name),
     probeWorkingTree: async ({ worktreeDir }) => await worktrees.probeWorkingTree({ worktreeDir }),
     probeLocalBranch: probeLocalBranchImpl,
     probeRemoteBranch: probeRemoteBranchImpl,

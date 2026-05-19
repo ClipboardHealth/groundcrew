@@ -317,6 +317,10 @@ function makeDeps(overrides: Partial<TicketStatusDependencies> = {}): TicketStat
     probeWorkspaces: vi
       .fn<TicketStatusDependencies["probeWorkspaces"]>()
       .mockResolvedValue({ kind: "ok", names: new Set() }),
+    workspaceAccessHint: vi
+      .fn<TicketStatusDependencies["workspaceAccessHint"]>()
+      // oxlint-disable-next-line unicorn/no-useless-undefined -- workspaceAccessHint returns `WorkspaceAccessHint | undefined`; passing nothing is a TS error
+      .mockResolvedValue(undefined),
     probeWorkingTree: vi
       .fn<TicketStatusDependencies["probeWorkingTree"]>()
       .mockResolvedValue({ kind: "clean" }),
@@ -522,6 +526,45 @@ describe("ticketStatus — Workspace section", () => {
 
     expect(actual.workspace).toStrictEqual([
       { name: "Workspace pane open", status: "skipped", detail: "workspace probe unavailable" },
+    ]);
+  });
+
+  it("appends the attach command to the workspace detail when accessHint returns one", async () => {
+    const deps = makeDeps({
+      probeWorkspaces: vi
+        .fn<TicketStatusDependencies["probeWorkspaces"]>()
+        .mockResolvedValue({ kind: "ok", names: new Set(["hrd-1"]) }),
+      workspaceAccessHint: vi
+        .fn<TicketStatusDependencies["workspaceAccessHint"]>()
+        .mockResolvedValue({ kind: "attachCommand", command: "tmux attach -t hrd-1" }),
+    });
+
+    const actual = await ticketStatus(deps);
+
+    expect(actual.workspace).toStrictEqual([
+      {
+        name: "Workspace pane open",
+        status: "ok",
+        detail: "hrd-1 — attach: `tmux attach -t hrd-1`",
+      },
+    ]);
+  });
+
+  it("uses the bare pane name as detail when accessHint is unavailable", async () => {
+    const deps = makeDeps({
+      probeWorkspaces: vi
+        .fn<TicketStatusDependencies["probeWorkspaces"]>()
+        .mockResolvedValue({ kind: "ok", names: new Set(["hrd-1"]) }),
+      workspaceAccessHint: vi
+        .fn<TicketStatusDependencies["workspaceAccessHint"]>()
+        // oxlint-disable-next-line unicorn/no-useless-undefined -- workspaceAccessHint returns `WorkspaceAccessHint | undefined`; passing nothing is a TS error
+        .mockResolvedValue(undefined),
+    });
+
+    const actual = await ticketStatus(deps);
+
+    expect(actual.workspace).toStrictEqual([
+      { name: "Workspace pane open", status: "ok", detail: "hrd-1" },
     ]);
   });
 });
@@ -871,7 +914,7 @@ describe("ticketStatus — Pull request section", () => {
 
 describe("parseStatusArguments — CLI arg parsing", () => {
   it("returns the ticket and default flags", () => {
-    const actual = parseStatusArguments(["--ticket", "HRD-442"]);
+    const actual = parseStatusArguments(["HRD-442"]);
 
     expect(actual).toStrictEqual({
       ticket: "HRD-442",
@@ -881,7 +924,7 @@ describe("parseStatusArguments — CLI arg parsing", () => {
   });
 
   it("accepts --no-linear and --no-fetch", () => {
-    const actual = parseStatusArguments(["--ticket", "HRD-442", "--no-linear", "--no-fetch"]);
+    const actual = parseStatusArguments(["HRD-442", "--no-linear", "--no-fetch"]);
 
     expect(actual).toStrictEqual({
       ticket: "HRD-442",
@@ -890,16 +933,30 @@ describe("parseStatusArguments — CLI arg parsing", () => {
     });
   });
 
-  it("throws when --ticket is missing", () => {
-    expect(() => parseStatusArguments([])).toThrow(/--ticket/);
+  it("accepts flags before the positional ticket", () => {
+    const actual = parseStatusArguments(["--no-linear", "HRD-442", "--no-fetch"]);
+
+    expect(actual).toStrictEqual({
+      ticket: "HRD-442",
+      doLinear: false,
+      doFetch: false,
+    });
   });
 
-  it("throws when --ticket has no value", () => {
-    expect(() => parseStatusArguments(["--ticket"])).toThrow(/--ticket/);
+  it("throws when the ticket is missing", () => {
+    expect(() => parseStatusArguments([])).toThrow(/ticket id is required/);
+  });
+
+  it("throws when only flags are passed", () => {
+    expect(() => parseStatusArguments(["--no-linear"])).toThrow(/ticket id is required/);
   });
 
   it("throws on unknown flags", () => {
-    expect(() => parseStatusArguments(["--ticket", "HRD-1", "--bogus"])).toThrow(/--bogus/);
+    expect(() => parseStatusArguments(["HRD-1", "--bogus"])).toThrow(/--bogus/);
+  });
+
+  it("throws when a second positional argument is supplied", () => {
+    expect(() => parseStatusArguments(["HRD-1", "extra"])).toThrow(/unexpected argument: extra/);
   });
 });
 
@@ -984,7 +1041,7 @@ describe("renderTicketStatusResult — verdict + section formatting", () => {
     );
 
     const [header] = actual;
-    expect(header).toBe("groundcrew status --ticket HRD-1 (Add status command)");
+    expect(header).toBe("groundcrew status HRD-1 (Add status command)");
   });
 
   it("renders skip reasons for each section when set", () => {

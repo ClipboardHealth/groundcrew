@@ -101,7 +101,7 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
   },
   status: {
     summary: "Inspect a ticket's local artifacts and recovery state",
-    usage: "--ticket <ticket> [--no-linear] [--no-fetch]",
+    usage: "<ticket> [--no-linear] [--no-fetch]",
     invoke: statusCli,
   },
   cleanup: {

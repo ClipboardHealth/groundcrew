@@ -346,7 +346,7 @@ export function renderTicketDoctorResult(result: TicketDoctorResult): string[] {
   ];
   return renderTicketCheckResult({
     command: "doctor",
-    ticket: result.ticket,
+    argument: `--ticket ${result.ticket}`,
     ...(result.title === undefined ? {} : { title: result.title }),
     sections,
     verdict: formatVerdict(result.verdict),
