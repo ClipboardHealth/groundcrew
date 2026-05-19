@@ -630,106 +630,77 @@ const tmuxAdapter: Adapter = {
  * multiplexer with a client/server split: the server runs on the same
  * host as the PTYs, so unlike cmux there is no remote-front-end / local-
  * PTY mismatch to work around. Status painting flows through
- * `pane.report_agent` whose semantic `state` enum maps cleanly onto
+ * `pane report-agent` whose semantic `state` enum maps cleanly onto
  * `WorkspaceStatus.state`.
  *
- * Several flags below — notably `workspace create`'s stdout shape and
- * the `--json` switches on `workspace list` / `pane list` — are inferred
- * from the documented CLI surface at https://herdr.dev/docs/cli-reference/
- * and are guarded with parse-fallbacks. Once herdr ships a binary we can
- * pin against, the parse helpers below are the only places that need
- * tightening.
+ * Herdr's CLI emits a single JSON envelope per command by default —
+ * `{ "id": "cli:<op>", "result": { "type": "...", ... } }`. There is no
+ * `--json` flag (the CLI rejects it as unknown), and there is no
+ * non-JSON output mode worth supporting. Validated against herdr 0.5.12.
  */
 const HERDR_AGENT_LABEL = "groundcrew";
 const HERDR_REPORT_SOURCE = "groundcrew";
 
 interface HerdrRawWorkspace {
-  id: string;
+  workspaceId: string;
   label: string;
 }
 
+interface HerdrCreateResult {
+  workspaceId: string;
+  paneId: string;
+}
+
 function parseHerdrWorkspaceList(output: string): HerdrRawWorkspace[] {
-  const trimmed = output.trim();
-  if (trimmed.length === 0) {
-    return [];
-  }
-  // Documented: `herdr workspace list` exists. Format is not pinned in
-  // the public docs — assume `--json` emits either a top-level array or
-  // an object with a `workspaces` field, matching the cmux/session-list
-  // convention. Anything else falls through to an error so we don't
-  // silently mistake an unknown format for "no workspaces".
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- documented shape per inferred --json contract; mismatches surface as parse errors.
-  const parsed = JSON.parse(trimmed) as
-    | { workspaces?: { id?: string; label?: string }[] }
-    | { id?: string; label?: string }[];
-  const rows = Array.isArray(parsed) ? parsed : (parsed.workspaces ?? []);
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- shape validated against herdr 0.5.12; mismatches surface as parse errors.
+  const parsed = JSON.parse(output) as {
+    result?: { workspaces?: { workspace_id?: string; label?: string }[] };
+  };
+  const rows = parsed.result?.workspaces ?? [];
   const items: HerdrRawWorkspace[] = [];
   for (const ws of rows) {
-    if (typeof ws.id !== "string" || ws.id.length === 0) {
+    if (typeof ws.workspace_id !== "string" || ws.workspace_id.length === 0) {
       continue;
     }
     if (typeof ws.label !== "string" || ws.label.length === 0) {
-      log(`herdr workspace list returned workspace ${ws.id} without a label; skipping`);
+      log(`herdr workspace list returned workspace ${ws.workspace_id} without a label; skipping`);
       continue;
     }
-    items.push({ id: ws.id, label: ws.label });
-  }
-  return items;
-}
-
-interface HerdrRawPane {
-  id: string;
-}
-
-function parseHerdrPaneList(output: string): HerdrRawPane[] {
-  const trimmed = output.trim();
-  if (trimmed.length === 0) {
-    return [];
-  }
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- documented shape per inferred --json contract; mismatches surface as parse errors.
-  const parsed = JSON.parse(trimmed) as { panes?: { id?: string }[] } | { id?: string }[];
-  const rows = Array.isArray(parsed) ? parsed : (parsed.panes ?? []);
-  const items: HerdrRawPane[] = [];
-  for (const pane of rows) {
-    if (typeof pane.id === "string" && pane.id.length > 0) {
-      items.push({ id: pane.id });
-    }
+    items.push({ workspaceId: ws.workspace_id, label: ws.label });
   }
   return items;
 }
 
 /**
- * Pull the workspace id out of `herdr workspace create` stdout. The CLI
- * docs don't pin the format — we accept either a bare id on stdout
- * (typical CLI convention) or a JSON envelope `{id|workspace_id: "..."}`.
+ * Pull the workspace + default-pane handles out of `herdr workspace
+ * create` stdout. Herdr returns both in the same envelope, so callers
+ * don't need a follow-up `pane list` round-trip to find the root pane.
  */
-function extractHerdrWorkspaceId(output: string): string | undefined {
-  const trimmed = output.trim();
-  if (trimmed.length === 0) {
+function parseHerdrWorkspaceCreate(output: string): HerdrCreateResult | undefined {
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- shape validated against herdr 0.5.12; mismatches surface as parse errors.
+  const parsed = JSON.parse(output) as {
+    result?: {
+      workspace?: { workspace_id?: string };
+      root_pane?: { pane_id?: string };
+    };
+  };
+  const workspaceId = parsed.result?.workspace?.workspace_id;
+  const paneId = parsed.result?.root_pane?.pane_id;
+  if (
+    typeof workspaceId !== "string" ||
+    workspaceId.length === 0 ||
+    typeof paneId !== "string" ||
+    paneId.length === 0
+  ) {
     return undefined;
   }
-  try {
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- JSON envelope is one of the documented possibilities; non-JSON falls through.
-    const parsed = JSON.parse(trimmed) as { id?: string; workspace_id?: string };
-    const id = parsed.id ?? parsed.workspace_id;
-    if (typeof id === "string" && id.length > 0) {
-      return id;
-    }
-  } catch {
-    /* not JSON; fall through to last-line heuristic */
-  }
-  const lines = trimmed.split("\n").filter((line) => line.length > 0);
-  /* v8 ignore next 3 @preserve -- trimmed length>0 guarantees at least one non-empty line; default keeps the loop safe. */
-  if (lines.length === 0) {
-    return undefined;
-  }
-  return lines.at(-1);
+  return { workspaceId, paneId };
 }
 
 async function listHerdrRaw(signal?: AbortSignal): Promise<HerdrRawWorkspace[] | undefined> {
   try {
     return parseHerdrWorkspaceList(
-      await runWorkspaceCommand("herdr", ["workspace", "list", "--json"], signal),
+      await runWorkspaceCommand("herdr", ["workspace", "list"], signal),
     );
   } catch (error) {
     if (isSignalAborted(signal)) {
@@ -738,19 +709,6 @@ async function listHerdrRaw(signal?: AbortSignal): Promise<HerdrRawWorkspace[] |
     log(`herdr workspace list failed: ${errorMessage(error)}`);
     return undefined;
   }
-}
-
-async function pickHerdrDefaultPane(
-  workspaceId: string,
-  signal?: AbortSignal,
-): Promise<string | undefined> {
-  const output = await runWorkspaceCommand(
-    "herdr",
-    ["pane", "list", "--workspace", workspaceId, "--json"],
-    signal,
-  );
-  const panes = parseHerdrPaneList(output);
-  return panes[0]?.id;
 }
 
 async function applyHerdrStatus(
@@ -787,22 +745,16 @@ const herdrAdapter: Adapter = {
       ["workspace", "create", "--cwd", spec.cwd, "--label", spec.name, "--no-focus"],
       signal,
     );
-    const workspaceId = extractHerdrWorkspaceId(createOutput);
-    if (workspaceId === undefined) {
+    const created = parseHerdrWorkspaceCreate(createOutput);
+    if (created === undefined) {
       log(
         `herdr workspace create returned unrecognized output for ${spec.name}; if a workspace was created, run \`herdr workspace close <id>\` manually.`,
       );
       throw new Error(`Unexpected herdr output: ${createOutput}`);
     }
-    const paneId = await pickHerdrDefaultPane(workspaceId, signal);
-    if (paneId === undefined) {
-      throw new Error(
-        `herdr workspace ${workspaceId} (${spec.name}) was created but has no panes to run the agent command in.`,
-      );
-    }
-    await runWorkspaceCommand("herdr", ["pane", "run", paneId, spec.command], signal);
+    await runWorkspaceCommand("herdr", ["pane", "run", created.paneId, spec.command], signal);
     if (spec.status !== undefined) {
-      await applyHerdrStatus(paneId, spec.status, signal);
+      await applyHerdrStatus(created.paneId, spec.status, signal);
     }
   },
   async list(signal) {
@@ -819,7 +771,7 @@ const herdrAdapter: Adapter = {
     if (match === undefined) {
       return;
     }
-    await runWorkspaceCommand("herdr", ["workspace", "close", match.id], signal);
+    await runWorkspaceCommand("herdr", ["workspace", "close", match.workspaceId], signal);
   },
   accessHint(_name) {
     // Herdr has no `attach` subcommand; users open workspaces by running

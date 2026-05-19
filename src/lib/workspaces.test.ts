@@ -945,6 +945,32 @@ describe("workspaces.accessHint (tmux)", () => {
   });
 });
 
+function herdrCreateEnvelope(args: {
+  workspaceId: string;
+  paneId: string;
+  label?: string;
+}): string {
+  return JSON.stringify({
+    id: "cli:workspace:create",
+    result: {
+      type: "workspace_created",
+      workspace: { workspace_id: args.workspaceId, label: args.label ?? "stub" },
+      root_pane: { pane_id: args.paneId, workspace_id: args.workspaceId },
+      tab: { tab_id: `${args.workspaceId}:1` },
+    },
+  });
+}
+
+function herdrListEnvelope(entries: { workspaceId: string; label: string }[]): string {
+  return JSON.stringify({
+    id: "cli:workspace:list",
+    result: {
+      type: "workspace_list",
+      workspaces: entries.map((ws) => ({ workspace_id: ws.workspaceId, label: ws.label })),
+    },
+  });
+}
+
 describe("workspaces.open (herdr)", () => {
   beforeEach(() => {
     commonBeforeEach();
@@ -952,15 +978,10 @@ describe("workspaces.open (herdr)", () => {
   });
   afterEach(commonAfterEach);
 
-  function mockCreateThenPaneListThenRest(workspaceCreateOutput: string, paneId = "pane-1"): void {
+  it("creates the workspace, runs the command in the root pane, and reports agent state", async () => {
     runMock
-      .mockReturnValueOnce(workspaceCreateOutput)
-      .mockReturnValueOnce(JSON.stringify({ panes: [{ id: paneId }] }))
+      .mockReturnValueOnce(herdrCreateEnvelope({ workspaceId: "w-42", paneId: "w-42-1" }))
       .mockReturnValue("");
-  }
-
-  it("creates the workspace, picks the first pane, runs the command, and reports agent state", async () => {
-    mockCreateThenPaneListThenRest(JSON.stringify({ id: "ws-42" }));
 
     await workspaces.open(makeConfig("herdr"), {
       name: "TEAM-1",
@@ -978,18 +999,11 @@ describe("workspaces.open (herdr)", () => {
       "TEAM-1",
       "--no-focus",
     ]);
-    expect(runMock).toHaveBeenNthCalledWith(2, "herdr", [
-      "pane",
-      "list",
-      "--workspace",
-      "ws-42",
-      "--json",
-    ]);
-    expect(runMock).toHaveBeenNthCalledWith(3, "herdr", ["pane", "run", "pane-1", "exec claude"]);
-    expect(runMock).toHaveBeenNthCalledWith(4, "herdr", [
+    expect(runMock).toHaveBeenNthCalledWith(2, "herdr", ["pane", "run", "w-42-1", "exec claude"]);
+    expect(runMock).toHaveBeenNthCalledWith(3, "herdr", [
       "pane",
       "report-agent",
-      "pane-1",
+      "w-42-1",
       "--source",
       "groundcrew",
       "--agent",
@@ -1001,62 +1015,10 @@ describe("workspaces.open (herdr)", () => {
     ]);
   });
 
-  it("accepts the workspace_id JSON field as a stable alias for id", async () => {
-    mockCreateThenPaneListThenRest(JSON.stringify({ workspace_id: "ws-7" }));
-
-    await workspaces.open(makeConfig("herdr"), {
-      name: "TEAM-1",
-      cwd: "/work/repo-a-TEAM-1",
-      command: "exec claude",
-    });
-
-    expect(runMock).toHaveBeenNthCalledWith(2, "herdr", [
-      "pane",
-      "list",
-      "--workspace",
-      "ws-7",
-      "--json",
-    ]);
-  });
-
-  it("falls back to the last non-empty stdout line when workspace create emits a bare id", async () => {
-    mockCreateThenPaneListThenRest("created\nws-bare-9\n");
-
-    await workspaces.open(makeConfig("herdr"), {
-      name: "TEAM-1",
-      cwd: "/work/repo-a-TEAM-1",
-      command: "exec claude",
-    });
-
-    expect(runMock).toHaveBeenNthCalledWith(2, "herdr", [
-      "pane",
-      "list",
-      "--workspace",
-      "ws-bare-9",
-      "--json",
-    ]);
-  });
-
-  it("falls back to the last non-empty line when JSON has no id field", async () => {
-    mockCreateThenPaneListThenRest(`${JSON.stringify({ other: "x" })}\nws-fallback\n`);
-
-    await workspaces.open(makeConfig("herdr"), {
-      name: "TEAM-1",
-      cwd: "/work/repo-a-TEAM-1",
-      command: "exec claude",
-    });
-
-    expect(runMock).toHaveBeenNthCalledWith(2, "herdr", [
-      "pane",
-      "list",
-      "--workspace",
-      "ws-fallback",
-      "--json",
-    ]);
-  });
-
   it("defaults the agent state to working when WorkspaceStatus.state is omitted", async () => {
-    mockCreateThenPaneListThenRest(JSON.stringify({ id: "ws-1" }));
+    runMock
+      .mockReturnValueOnce(herdrCreateEnvelope({ workspaceId: "w-1", paneId: "w-1-1" }))
+      .mockReturnValue("");
 
     await workspaces.open(makeConfig("herdr"), {
       name: "TEAM-1",
@@ -1065,10 +1027,10 @@ describe("workspaces.open (herdr)", () => {
       status: { text: "claude" },
     });
 
-    expect(runMock).toHaveBeenNthCalledWith(4, "herdr", [
+    expect(runMock).toHaveBeenNthCalledWith(3, "herdr", [
       "pane",
       "report-agent",
-      "pane-1",
+      "w-1-1",
       "--source",
       "groundcrew",
       "--agent",
@@ -1081,7 +1043,9 @@ describe("workspaces.open (herdr)", () => {
   });
 
   it("skips report-agent when no status is provided", async () => {
-    mockCreateThenPaneListThenRest(JSON.stringify({ id: "ws-1" }));
+    runMock
+      .mockReturnValueOnce(herdrCreateEnvelope({ workspaceId: "w-1", paneId: "w-1-1" }))
+      .mockReturnValue("");
 
     await workspaces.open(makeConfig("herdr"), {
       name: "TEAM-1",
@@ -1089,11 +1053,16 @@ describe("workspaces.open (herdr)", () => {
       command: "exec claude",
     });
 
-    expect(runMock).toHaveBeenCalledTimes(3);
+    expect(runMock).toHaveBeenCalledTimes(2);
   });
 
-  it("throws when workspace create emits no recognizable id", async () => {
-    runMock.mockReturnValueOnce("");
+  it("throws when workspace create returns an envelope without a workspace_id", async () => {
+    runMock.mockReturnValueOnce(
+      JSON.stringify({
+        id: "cli:workspace:create",
+        result: { type: "workspace_created", root_pane: { pane_id: "w-1-1" } },
+      }),
+    );
 
     await expect(
       workspaces.open(makeConfig("herdr"), {
@@ -1104,10 +1073,13 @@ describe("workspaces.open (herdr)", () => {
     ).rejects.toThrow(/Unexpected herdr output/);
   });
 
-  it("throws when the new workspace has no panes to run the command in", async () => {
-    runMock
-      .mockReturnValueOnce(JSON.stringify({ id: "ws-empty" }))
-      .mockReturnValueOnce(JSON.stringify({ panes: [] }));
+  it("throws when workspace create returns an envelope without a root_pane", async () => {
+    runMock.mockReturnValueOnce(
+      JSON.stringify({
+        id: "cli:workspace:create",
+        result: { type: "workspace_created", workspace: { workspace_id: "w-1" } },
+      }),
+    );
 
     await expect(
       workspaces.open(makeConfig("herdr"), {
@@ -1115,33 +1087,11 @@ describe("workspaces.open (herdr)", () => {
         cwd: "/work/repo-a-TEAM-1",
         command: "exec claude",
       }),
-    ).rejects.toThrow(/no panes to run the agent command/);
+    ).rejects.toThrow(/Unexpected herdr output/);
   });
 
-  it("accepts a top-level array as the pane list response shape", async () => {
-    runMock
-      .mockReturnValueOnce(JSON.stringify({ id: "ws-1" }))
-      .mockReturnValueOnce(JSON.stringify([{ id: "pane-bare" }]))
-      .mockReturnValue("");
-
-    await workspaces.open(makeConfig("herdr"), {
-      name: "TEAM-1",
-      cwd: "/work/repo-a-TEAM-1",
-      command: "exec claude",
-    });
-
-    expect(runMock).toHaveBeenNthCalledWith(3, "herdr", [
-      "pane",
-      "run",
-      "pane-bare",
-      "exec claude",
-    ]);
-  });
-
-  it("treats a pane-list envelope object without a panes field as no panes", async () => {
-    runMock
-      .mockReturnValueOnce(JSON.stringify({ id: "ws-empty" }))
-      .mockReturnValueOnce(JSON.stringify({}));
+  it("throws when workspace create stdout is not parseable JSON", async () => {
+    runMock.mockReturnValueOnce("not json");
 
     await expect(
       workspaces.open(makeConfig("herdr"), {
@@ -1149,41 +1099,7 @@ describe("workspaces.open (herdr)", () => {
         cwd: "/work/repo-a-TEAM-1",
         command: "exec claude",
       }),
-    ).rejects.toThrow(/no panes to run the agent command/);
-  });
-
-  it("treats whitespace-only pane list output as no panes (same error path as an empty array)", async () => {
-    runMock.mockReturnValueOnce(JSON.stringify({ id: "ws-empty" })).mockReturnValueOnce("   \n");
-
-    await expect(
-      workspaces.open(makeConfig("herdr"), {
-        name: "TEAM-1",
-        cwd: "/work/repo-a-TEAM-1",
-        command: "exec claude",
-      }),
-    ).rejects.toThrow(/no panes to run the agent command/);
-  });
-
-  it("skips pane entries missing an id when picking the default pane", async () => {
-    runMock
-      .mockReturnValueOnce(JSON.stringify({ id: "ws-1" }))
-      .mockReturnValueOnce(
-        JSON.stringify({ panes: [{ id: "" }, { other: "x" }, { id: "pane-real" }] }),
-      )
-      .mockReturnValue("");
-
-    await workspaces.open(makeConfig("herdr"), {
-      name: "TEAM-1",
-      cwd: "/work/repo-a-TEAM-1",
-      command: "exec claude",
-    });
-
-    expect(runMock).toHaveBeenNthCalledWith(3, "herdr", [
-      "pane",
-      "run",
-      "pane-real",
-      "exec claude",
-    ]);
+    ).rejects.toThrow(SyntaxError);
   });
 });
 
@@ -1196,12 +1112,10 @@ describe("workspaces.probe (herdr)", () => {
 
   it("returns workspace labels as names when the list query succeeds", async () => {
     runMock.mockReturnValueOnce(
-      JSON.stringify({
-        workspaces: [
-          { id: "ws-1", label: "TEAM-1" },
-          { id: "ws-2", label: "TEAM-2" },
-        ],
-      }),
+      herdrListEnvelope([
+        { workspaceId: "w-1", label: "TEAM-1" },
+        { workspaceId: "w-2", label: "TEAM-2" },
+      ]),
     );
 
     await expect(workspaces.probe(makeConfig("herdr"))).resolves.toStrictEqual({
@@ -1210,17 +1124,8 @@ describe("workspaces.probe (herdr)", () => {
     });
   });
 
-  it("accepts a top-level array response shape", async () => {
-    runMock.mockReturnValueOnce(JSON.stringify([{ id: "ws-1", label: "TEAM-1" }]));
-
-    await expect(workspaces.probe(makeConfig("herdr"))).resolves.toStrictEqual({
-      kind: "ok",
-      names: new Set(["TEAM-1"]),
-    });
-  });
-
-  it("treats an empty stdout as no live workspaces", async () => {
-    runMock.mockReturnValueOnce("   \n");
+  it("treats an envelope without a workspaces field as an empty list", async () => {
+    runMock.mockReturnValueOnce(JSON.stringify({ id: "cli:workspace:list", result: {} }));
 
     await expect(workspaces.probe(makeConfig("herdr"))).resolves.toStrictEqual({
       kind: "ok",
@@ -1228,22 +1133,18 @@ describe("workspaces.probe (herdr)", () => {
     });
   });
 
-  it("treats an envelope object without a workspaces field as an empty list", async () => {
-    runMock.mockReturnValueOnce(JSON.stringify({}));
-
-    await expect(workspaces.probe(makeConfig("herdr"))).resolves.toStrictEqual({
-      kind: "ok",
-      names: new Set(),
-    });
-  });
-
-  it("skips entries missing an id and entries missing a label", async () => {
+  it("skips entries missing a workspace_id and entries missing a label", async () => {
     runMock.mockReturnValueOnce(
-      JSON.stringify([
-        { id: "", label: "ignored" },
-        { id: "ws-2", label: "" },
-        { id: "ws-3", label: "TEAM-3" },
-      ]),
+      JSON.stringify({
+        id: "cli:workspace:list",
+        result: {
+          workspaces: [
+            { workspace_id: "", label: "ignored" },
+            { workspace_id: "w-2", label: "" },
+            { workspace_id: "w-3", label: "TEAM-3" },
+          ],
+        },
+      }),
     );
 
     await expect(workspaces.probe(makeConfig("herdr"))).resolves.toStrictEqual({
@@ -1285,22 +1186,20 @@ describe("workspaces.close (herdr)", () => {
   it("closes the workspace whose label matches the ticket name", async () => {
     runMock
       .mockReturnValueOnce(
-        JSON.stringify({
-          workspaces: [
-            { id: "ws-1", label: "TEAM-1" },
-            { id: "ws-2", label: "TEAM-2" },
-          ],
-        }),
+        herdrListEnvelope([
+          { workspaceId: "w-1", label: "TEAM-1" },
+          { workspaceId: "w-2", label: "TEAM-2" },
+        ]),
       )
       .mockReturnValue("");
 
     await workspaces.close(makeConfig("herdr"), "TEAM-2");
 
-    expect(runMock).toHaveBeenLastCalledWith("herdr", ["workspace", "close", "ws-2"]);
+    expect(runMock).toHaveBeenLastCalledWith("herdr", ["workspace", "close", "w-2"]);
   });
 
   it("is a no-op when no workspace matches the requested name", async () => {
-    runMock.mockReturnValueOnce(JSON.stringify({ workspaces: [{ id: "ws-1", label: "OTHER" }] }));
+    runMock.mockReturnValueOnce(herdrListEnvelope([{ workspaceId: "w-1", label: "OTHER" }]));
 
     await workspaces.close(makeConfig("herdr"), "TEAM-1");
 
