@@ -939,6 +939,18 @@ describe("worktrees.branchNameForTicket", () => {
 
 describe("worktrees.probeWorkingTree", () => {
   beforeEach(async () => {
+    // Strip inherited GIT_* env vars so probe tests run against the temp repo,
+    // not whatever repo invoked vitest (e.g. via a `git push` pre-push hook
+    // that sets GIT_DIR, which would override `git -C <tempdir>`).
+    // vi.stubEnv with undefined removes the var; neutralizes an inherited
+    // GIT_DIR (e.g. from a pre-push hook) that would otherwise override the
+    // `git -C <tempdir>` flag inside probeWorktreeDirtiness.
+    // oxlint-disable-next-line unicorn/no-useless-undefined -- undefined is the unset signal here
+    vi.stubEnv("GIT_DIR", undefined);
+    // oxlint-disable-next-line unicorn/no-useless-undefined
+    vi.stubEnv("GIT_WORK_TREE", undefined);
+    // oxlint-disable-next-line unicorn/no-useless-undefined
+    vi.stubEnv("GIT_INDEX_FILE", undefined);
     // Restore the real runCommandAsync for these tests so the probe actually
     // shells out to git against a real temp repo.
     const actual = await vi.importActual<typeof commandRunnerModule>("./commandRunner.ts");
@@ -947,6 +959,7 @@ describe("worktrees.probeWorkingTree", () => {
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     runCommandMock.mockReset();
   });
 
