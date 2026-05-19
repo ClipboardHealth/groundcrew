@@ -527,6 +527,11 @@ function applyDefaults(user: Config): ResolvedConfig {
       "models.isolation is no longer supported: local isolation is always Safehouse; remove this key",
     );
   }
+  if (Object.hasOwn(user, "remote")) {
+    fail(
+      "remote is no longer supported: groundcrew is macOS + Safehouse only; remove the remote block from your config",
+    );
+  }
 
   const slugId = extractSlugId(user.linear.projectSlug);
   if (slugId === undefined) {

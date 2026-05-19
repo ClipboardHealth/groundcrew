@@ -16,8 +16,8 @@ Branch name is `<os-username>-<ticket-lowercased>`. One ticket can have at most 
 
 The host-side terminal session that runs an agent for one ticket. Two kinds, one concept:
 
-- **cmux workspace** — a pane/tab in [cmux](https://github.com/clayton-cole/cmux). macOS-only.
-- **tmux workspace** — a window inside a dedicated `groundcrew` tmux session. Linux/macOS.
+- **cmux workspace** — a pane/tab in [cmux](https://github.com/clayton-cole/cmux).
+- **tmux workspace** — a window inside a dedicated `groundcrew` tmux session.
 
 Every provisioned ticket gets one workspace, named with the ticket id (`TEAM-220`). Tracked by ticket — one workspace per ticket.
 

@@ -194,11 +194,12 @@ export async function doctor(): Promise<boolean> {
 }
 
 function localCapabilityCheck(host: HostCapabilities): Check {
+  const supportsLocalRunner = host.isSafehouseSupported && host.hasSafehouse;
   return {
     name: "local runner (macOS + Safehouse)",
-    ok: host.hasSafehouse,
+    ok: supportsLocalRunner,
     required: false,
-    hint: host.hasSafehouse
+    hint: supportsLocalRunner
       ? "ready"
       : "groundcrew requires macOS with Safehouse on PATH (install from https://agent-safehouse.dev/)",
   };

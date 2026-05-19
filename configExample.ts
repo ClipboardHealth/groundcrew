@@ -38,7 +38,7 @@ export const config: Config = {
   //   // Additive: defaults for `claude` and `codex` are merged in unless you
   //   // re-declare those keys here. Add a third agent (e.g. `cursor`) by
   //   // dropping it in this map and tagging tickets with `agent-cursor`.
-  //   // Groundcrew wraps all agent commands with Safehouse/clearance.
+  //   // Groundcrew runs agent commands through Safehouse/clearance unless already Safehouse-wrapped.
   //   definitions: {
   //     cursor: {
   //       cmd: "cursor-agent",

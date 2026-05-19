@@ -277,6 +277,26 @@ describe("loadConfig", () => {
     );
   });
 
+  it("rejects the legacy remote config block", async () => {
+    const path = writeConfigFile(
+      temporary,
+      [
+        "export const config = {",
+        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        "  remote: { provider: 'sprite' },",
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(
+      /remote is no longer supported: groundcrew is macOS \+ Safehouse only/,
+    );
+  });
+
   it("rejects non-object model definitions", async () => {
     const path = writeConfigFile(
       temporary,
