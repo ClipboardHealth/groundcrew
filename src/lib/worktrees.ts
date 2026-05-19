@@ -284,7 +284,7 @@ async function removeWorktree(
   });
 }
 
-type WorktreeDirtiness =
+export type WorktreeDirtiness =
   | { kind: "dirty"; modified: number; untracked: number }
   | { kind: "clean" }
   | { kind: "unknown" };
@@ -450,10 +450,19 @@ async function teardown(
   return result;
 }
 
+async function probeWorkingTree(input: {
+  worktreeDir: string;
+  signal?: AbortSignal;
+}): Promise<WorktreeDirtiness> {
+  return await probeWorktreeDirtiness(input.worktreeDir, input.signal);
+}
+
 export const worktrees = {
   create,
   list,
   findByTicket,
   remove,
   teardown,
+  branchNameForTicket,
+  probeWorkingTree,
 };

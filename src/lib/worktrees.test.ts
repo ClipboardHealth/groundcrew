@@ -4,7 +4,8 @@ import { tmpdir, userInfo } from "node:os";
 import { join, sep } from "node:path";
 
 import { probeError } from "../testHelpers/workspaceProbe.ts";
-import type { RunCommandOptions } from "./commandRunner.ts";
+import type * as commandRunnerModule from "./commandRunner.ts";
+import { runCommandAsync, type RunCommandOptions } from "./commandRunner.ts";
 import type { ResolvedConfig } from "./config.ts";
 import { workspaces } from "./workspaces.ts";
 import { type WorktreeEntry, worktrees } from "./worktrees.ts";
@@ -923,5 +924,52 @@ describe(teardown, () => {
 
     const allArguments = runCommandMock.mock.calls.flatMap(([, arguments_]) => arguments_);
     expect(allArguments).toContain("--force");
+  });
+});
+
+describe("worktrees.branchNameForTicket", () => {
+  it("returns the same branch name that create() uses", () => {
+    expect(worktrees.branchNameForTicket("HRD-442")).toMatch(/-HRD-442$/);
+  });
+
+  it("is case-preserving on the ticket portion", () => {
+    expect(worktrees.branchNameForTicket("hrd-442")).toMatch(/-hrd-442$/);
+  });
+});
+
+describe("worktrees.probeWorkingTree", () => {
+  beforeEach(async () => {
+    // Restore the real runCommandAsync for these tests so the probe actually
+    // shells out to git against a real temp repo.
+    const actual = await vi.importActual<typeof commandRunnerModule>("./commandRunner.ts");
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- bridging the shared sync/async mock recorder to the real async implementation; same pattern as the top-of-file vi.mock.
+    runCommandMock.mockImplementation(actual.runCommandAsync as unknown as RunCommandMock);
+  });
+
+  afterEach(() => {
+    runCommandMock.mockReset();
+  });
+
+  it("returns kind: 'clean' for a worktree with no changes", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "groundcrew-probe-"));
+    try {
+      await runCommandAsync("git", ["-C", tempDir, "init", "-q"]);
+      const probe = await worktrees.probeWorkingTree({ worktreeDir: tempDir });
+      expect(probe.kind).toBe("clean");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns kind: 'dirty' with counts for an untracked file", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "groundcrew-probe-"));
+    try {
+      await runCommandAsync("git", ["-C", tempDir, "init", "-q"]);
+      writeFileSync(join(tempDir, "new.txt"), "x");
+      const probe = await worktrees.probeWorkingTree({ worktreeDir: tempDir });
+      expect(probe).toMatchObject({ kind: "dirty", modified: 0, untracked: 1 });
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 });
