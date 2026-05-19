@@ -294,6 +294,10 @@ async function closeCmuxWorkspace(workspaceId: string, signal?: AbortSignal): Pr
   await runWorkspaceCommand("cmux", ["close-workspace", "--workspace", workspaceId], signal);
 }
 
+function isCmuxSetStatusUnsupported(error: unknown): boolean {
+  return errorMessage(error).includes('unknown command "set-status"');
+}
+
 const cmuxAdapter: Adapter = {
   async open(spec, signal) {
     const inheritedRemote = await probeCurrentCmuxRemote(signal);
@@ -318,10 +322,12 @@ const cmuxAdapter: Adapter = {
       try {
         await applyCmuxStatus(workspaceId, spec.status, signal);
       } catch (error) {
-        // v2 cmux builds may not implement `set-status`; status pills are
-        // a nice-to-have, not load-bearing. Log and keep the workspace
-        // rather than tearing down a successful launch.
-        log(`cmux set-status failed for ${spec.name} (continuing): ${errorMessage(error)}`);
+        // Status pills are best-effort. cmux v2+ dropped `set-status` entirely,
+        // so swallow that specific gap silently; surface anything else so a real
+        // regression doesn't hide behind the same swallow.
+        if (!isCmuxSetStatusUnsupported(error)) {
+          log(`cmux set-status failed for ${spec.name} (continuing): ${errorMessage(error)}`);
+        }
       }
     }
   },
