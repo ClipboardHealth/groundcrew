@@ -70,6 +70,20 @@ export interface SandboxDefinition {
    * Defaults to `DEFAULT_SANDBOX_SETUP_COMMAND` when omitted.
    */
   setupCommand?: string;
+  /**
+   * When `true`, forward the host's SSH agent into the sandbox so the
+   * agent CLI can `git push` over SSH (e.g. via 1Password's SSH agent).
+   * Opt-in: leave undefined or `false` to keep the sandbox isolated from
+   * the host's agent.
+   *
+   * Mechanics: at `sbx create` time we bind-mount the directory holding
+   * `$SSH_AUTH_SOCK` into the sandbox so the socket file is reachable
+   * from inside; at every `sbx exec` we pass `SSH_AUTH_SOCK` through with
+   * `-e SSH_AUTH_SOCK` so the env var matches whatever the host shell
+   * exports. When `SSH_AUTH_SOCK` is unset at run time we skip the
+   * forward and log a warning instead of failing.
+   */
+  forwardSshAgent?: boolean;
 }
 
 export interface ModelDefinition {
@@ -483,7 +497,7 @@ function normalizeSandbox(value: unknown, path: string): SandboxDefinition {
   if (!isPlainObject(value)) {
     fail(`${path} must be an object`);
   }
-  const { agent, template, kits, setupCommand } = value;
+  const { agent, template, kits, setupCommand, forwardSshAgent } = value;
   requireString(agent, `${path}.agent`);
   const trimmedAgent = agent.trim();
   if (trimmedAgent.length === 0) {
@@ -501,6 +515,14 @@ function normalizeSandbox(value: unknown, path: string): SandboxDefinition {
   const normalizedSetup = normalizeOptionalString(setupCommand, `${path}.setupCommand`);
   if (normalizedSetup !== undefined) {
     sandbox.setupCommand = normalizedSetup;
+  }
+  if (forwardSshAgent !== undefined) {
+    if (typeof forwardSshAgent !== "boolean") {
+      fail(`${path}.forwardSshAgent must be a boolean (got ${JSON.stringify(forwardSshAgent)})`);
+    }
+    if (forwardSshAgent) {
+      sandbox.forwardSshAgent = true;
+    }
   }
   return sandbox;
 }

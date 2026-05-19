@@ -162,6 +162,40 @@ describe(ensureSandbox, () => {
     );
   });
 
+  it("appends each additionalMountPath after the agent + primary mount", async () => {
+    mockExisting([]);
+
+    await ensureSandbox({
+      sandboxName: "groundcrew-repo-a-claude",
+      sandbox: { agent: "claude" },
+      mountPath: "/home/user/dev",
+      additionalMountPaths: ["/tmp/ssh-XXXX"],
+    });
+
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "sbx",
+      ["create", "--name", "groundcrew-repo-a-claude", "claude", "/home/user/dev", "/tmp/ssh-XXXX"],
+      expect.any(Object),
+    );
+  });
+
+  it("ignores an empty additionalMountPaths array", async () => {
+    mockExisting([]);
+
+    await ensureSandbox({
+      sandboxName: "groundcrew-repo-a-claude",
+      sandbox: { agent: "claude" },
+      mountPath: "/home/user/dev",
+      additionalMountPaths: [],
+    });
+
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "sbx",
+      ["create", "--name", "groundcrew-repo-a-claude", "claude", "/home/user/dev"],
+      expect.any(Object),
+    );
+  });
+
   it("passes the AbortSignal through to both probe and create", async () => {
     const controller = new AbortController();
     mockExisting([]);

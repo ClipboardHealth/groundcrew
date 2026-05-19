@@ -455,6 +455,67 @@ describe("loadConfig", () => {
     expect(config.models.definitions["claude"]?.sandbox).toStrictEqual({ agent: "claude" });
   });
 
+  it("accepts forwardSshAgent on a per-model sandbox config", async () => {
+    const path = writeConfigFile(
+      temporary,
+      [
+        "export const config = {",
+        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        "  models: { definitions: { claude: { sandbox: { agent: 'claude', forwardSshAgent: true } } } },",
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    const config = await loadConfig();
+    expect(config.models.definitions["claude"]?.sandbox).toStrictEqual({
+      agent: "claude",
+      forwardSshAgent: true,
+    });
+  });
+
+  it("omits forwardSshAgent on the resolved sandbox when set to false", async () => {
+    const path = writeConfigFile(
+      temporary,
+      [
+        "export const config = {",
+        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        "  models: { definitions: { claude: { sandbox: { agent: 'claude', forwardSshAgent: false } } } },",
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    const config = await loadConfig();
+    expect(config.models.definitions["claude"]?.sandbox).toStrictEqual({ agent: "claude" });
+  });
+
+  it("rejects a non-boolean forwardSshAgent", async () => {
+    const path = writeConfigFile(
+      temporary,
+      [
+        "export const config = {",
+        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        "  models: { definitions: { claude: { sandbox: { agent: 'claude', forwardSshAgent: 'yes' } } } },",
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(
+      /models\.definitions\.claude\.sandbox\.forwardSshAgent must be a boolean/,
+    );
+  });
+
   it("rejects a non-object local block", async () => {
     const path = writeConfigFile(
       temporary,

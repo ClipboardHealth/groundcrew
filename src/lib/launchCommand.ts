@@ -96,6 +96,15 @@ interface LaunchCommandArguments {
    * safehouse on one host and sdx on another without config edits.
    */
   sandboxName?: string | undefined;
+  /**
+   * When `true` and `runner === "sdx"`, pass `-e SSH_AUTH_SOCK` to
+   * `sbx exec` so the agent inherits the host's SSH agent. The caller is
+   * expected to verify both `sandbox.forwardSshAgent` and the presence
+   * of `SSH_AUTH_SOCK` in the host env; this flag drives the launch-time
+   * passthrough only — `ensureSandbox` is responsible for the matching
+   * bind-mount at create time.
+   */
+  forwardSshAgent?: boolean | undefined;
 }
 
 /**
@@ -192,12 +201,18 @@ function buildSdxLaunchCommand(arguments_: LaunchCommandArguments): string {
   const innerCommand = innerParts.join("; ");
   // Passthrough form (`-e KEY` without `=VALUE`): sbx reads each value
   // from its own env at invocation time — populated by sourceSecretsLine
-  // a few lines up. Avoids `-e KEY="$KEY"`, which would embed the value
-  // in argv and break on `"`, `$`, or backticks in the token.
+  // for build secrets, or inherited from the host shell for SSH_AUTH_SOCK.
+  // Avoids `-e KEY="$KEY"`, which would embed the value in argv and break
+  // on `"`, `$`, or backticks in the token.
+  const envNames: string[] = [];
+  if (arguments_.secretsFile !== undefined) {
+    envNames.push(...BUILD_SECRET_NAMES);
+  }
+  if (arguments_.forwardSshAgent === true) {
+    envNames.push("SSH_AUTH_SOCK");
+  }
   const sbxEnvironmentFlags =
-    arguments_.secretsFile === undefined
-      ? ""
-      : `${BUILD_SECRET_NAMES.map((name) => `-e ${name}`).join(" ")} `;
+    envNames.length === 0 ? "" : `${envNames.map((name) => `-e ${name}`).join(" ")} `;
   const lines: string[] = [];
   if (arguments_.secretsFile !== undefined) {
     lines.push(sourceSecretsLine(arguments_.secretsFile));

@@ -1,11 +1,18 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 import { ensureClearance } from "@clipboard-health/clearance";
 
 import { fetchResolvedIssue } from "../lib/boardSource.ts";
-import { BUILD_SECRET_NAMES, loadConfig, type ResolvedConfig } from "../lib/config.ts";
+import {
+  BUILD_SECRET_NAMES,
+  loadConfig,
+  type LocalRunner,
+  type ModelDefinition,
+  type ResolvedConfig,
+  type SandboxDefinition,
+} from "../lib/config.ts";
 import { ensureSandbox, sandboxNameFor } from "../lib/dockerSandbox.ts";
 import { detectHostCapabilities } from "../lib/host.ts";
 import { buildLaunchCommand, shellSingleQuote } from "../lib/launchCommand.ts";
@@ -87,6 +94,65 @@ function stageBuildSecrets(promptDir: string): string | undefined {
   const secretsFile = join(promptDir, "secrets.env");
   writeFileSync(secretsFile, `${lines.join("\n")}\n`, { mode: 0o600 });
   return secretsFile;
+}
+
+/**
+ * Resolve whether to forward the host's SSH agent into the sdx sandbox.
+ * Returns the bind-mount path (`dirname($SSH_AUTH_SOCK)`) when the model
+ * opts in via `sandbox.forwardSshAgent` and the host actually exports
+ * `SSH_AUTH_SOCK`; logs a warning and returns `undefined` when the opt-in
+ * is set but the env var is missing so the launch still proceeds without
+ * SSH access.
+ */
+function resolveSshAgentForward(sandbox: SandboxDefinition): { socketDir: string } | undefined {
+  if (sandbox.forwardSshAgent !== true) {
+    return undefined;
+  }
+  const sshAuthSock = readEnvironmentVariable("SSH_AUTH_SOCK");
+  if (sshAuthSock === undefined || sshAuthSock.length === 0) {
+    log(
+      "sandbox.forwardSshAgent is true but SSH_AUTH_SOCK is unset; skipping SSH agent forwarding for this run.",
+    );
+    return undefined;
+  }
+  return { socketDir: dirname(sshAuthSock) };
+}
+
+/**
+ * Provision the sdx sandbox (or no-op for other runners) and return the
+ * SSH-agent forward decision so the launch command can mirror it via
+ * `-e SSH_AUTH_SOCK`. Extracted from `setupWorkspace` so its complexity
+ * stays under the per-function lint budget — the gating, the
+ * `forwardSshAgent` resolution, and the bind-mount construction all live
+ * here in one place.
+ */
+async function maybeProvisionSdx(arguments_: {
+  config: ResolvedConfig;
+  runner: LocalRunner;
+  definition: ModelDefinition;
+  sandboxName: string | undefined;
+  signal: AbortSignal | undefined;
+}): Promise<{ socketDir: string } | undefined> {
+  if (
+    arguments_.runner !== "sdx" ||
+    arguments_.sandboxName === undefined ||
+    arguments_.definition.sandbox === undefined
+  ) {
+    return undefined;
+  }
+  const sshAgentForward = resolveSshAgentForward(arguments_.definition.sandbox);
+  const baseArgs = {
+    sandboxName: arguments_.sandboxName,
+    sandbox: arguments_.definition.sandbox,
+    mountPath: resolve(arguments_.config.workspace.projectDir),
+  };
+  await ensureSandbox(
+    sshAgentForward === undefined
+      ? baseArgs
+      : { ...baseArgs, additionalMountPaths: [sshAgentForward.socketDir] },
+    arguments_.signal,
+  );
+  return sshAgentForward;
 }
 
 function stageLaunchScript(promptDir: string, command: string): string {
@@ -194,16 +260,13 @@ export async function setupWorkspace(
     const secretsFile = stageBuildSecrets(promptDir);
 
     const sandboxName = runner === "sdx" ? sandboxNameFor({ repository, model }) : undefined;
-    if (runner === "sdx" && sandboxName !== undefined && definition.sandbox !== undefined) {
-      await ensureSandbox(
-        {
-          sandboxName,
-          sandbox: definition.sandbox,
-          mountPath: resolve(config.workspace.projectDir),
-        },
-        signal,
-      );
-    }
+    const sshAgentForward = await maybeProvisionSdx({
+      config,
+      runner,
+      definition,
+      sandboxName,
+      signal,
+    });
     const launchCommand = buildLaunchCommand({
       definition,
       promptFile: stagedPrompt.file,
@@ -211,6 +274,7 @@ export async function setupWorkspace(
       secretsFile,
       runner,
       sandboxName,
+      forwardSshAgent: sshAgentForward !== undefined,
     });
     const launchCmd = stageWorkspaceLaunchCommand(promptDir, launchCommand);
 

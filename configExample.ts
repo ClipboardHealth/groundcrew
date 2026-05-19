@@ -47,6 +47,9 @@ export const config: Config = {
   //     // To run a model under the sdx (Docker Sandboxes) runner, bind it to
   //     // an sbx agent. Required when `local.runner` resolves to `sdx`.
   //     // claude: { sandbox: { agent: "claude" } },
+  //     // Forward the host's SSH agent into the sandbox so the agent CLI can
+  //     // `git push` over SSH (opt-in; works with 1Password's SSH agent).
+  //     // claude: { sandbox: { agent: "claude", forwardSshAgent: true } },
   //   },
   // },
   //

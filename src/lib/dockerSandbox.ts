@@ -39,6 +39,14 @@ interface EnsureSandboxArguments {
    * clone) are visible to `sbx exec -w <worktreeDir>` after creation.
    */
   mountPath: string;
+  /**
+   * Extra host paths to bind-mount into the sandbox at the same path,
+   * passed as additional positional args to `sbx create`. Used to forward
+   * host resources like the SSH agent socket dir into the sandbox without
+   * widening the primary `mountPath`. Empty / undefined keeps the sandbox
+   * shape unchanged.
+   */
+  additionalMountPaths?: readonly string[];
 }
 
 /**
@@ -64,6 +72,9 @@ export async function ensureSandbox(
     createArguments.push("--kit", kit);
   }
   createArguments.push(arguments_.sandbox.agent, arguments_.mountPath);
+  for (const extra of arguments_.additionalMountPaths ?? []) {
+    createArguments.push(extra);
+  }
   const options = signal === undefined ? {} : { signal };
   try {
     await runCommandAsync("sbx", createArguments, options);

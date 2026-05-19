@@ -213,5 +213,29 @@ describe(buildLaunchCommand, () => {
       expect(out).not.toContain("-e NPM_TOKEN");
       expect(out).not.toContain("-e BUF_TOKEN");
     });
+
+    it("forwards SSH_AUTH_SOCK into the sandbox when forwardSshAgent is true", () => {
+      const out = buildLaunchCommand(sdxArguments({ forwardSshAgent: true }));
+
+      expect(out).toContain("-e SSH_AUTH_SOCK");
+    });
+
+    it("places -e SSH_AUTH_SOCK alongside other -e flags when secretsFile is staged", () => {
+      const out = buildLaunchCommand(
+        sdxArguments({
+          forwardSshAgent: true,
+          secretsFile: "/tmp/prompt-team-1/secrets.env",
+        }),
+      );
+
+      expect(out).toContain("-e NPM_TOKEN -e BUF_TOKEN");
+      expect(out).toContain("-e SSH_AUTH_SOCK");
+    });
+
+    it("omits -e SSH_AUTH_SOCK when forwardSshAgent is omitted", () => {
+      const out = buildLaunchCommand(sdxArguments());
+
+      expect(out).not.toContain("-e SSH_AUTH_SOCK");
+    });
   });
 });

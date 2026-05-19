@@ -743,6 +743,108 @@ describe(setupWorkspace, () => {
     });
   });
 
+  describe("SSH agent forwarding (sdx)", () => {
+    afterEach(() => {
+      deleteEnvironmentVariable("SSH_AUTH_SOCK");
+    });
+
+    function sdxConfigWithForwardSsh(): ResolvedConfig {
+      return makeConfig({
+        definitions: {
+          claude: {
+            cmd: "claude --auto",
+            color: "#fff",
+            sandbox: { agent: "claude", forwardSshAgent: true },
+          },
+          codex: { cmd: "codex", color: "#000" },
+        },
+      });
+    }
+
+    it("mounts the SSH_AUTH_SOCK parent directory into the sandbox at sbx create", async () => {
+      setEnvironmentVariable("SSH_AUTH_SOCK", "/tmp/ssh-XYZ/agent.42");
+      detectHostMock.mockResolvedValue(sdxHost());
+      mockSdxRun();
+
+      await setupWorkspace(sdxConfigWithForwardSsh(), {
+        ticket: "team-1",
+        repository: "repo-a",
+        model: "claude",
+      });
+
+      expect(findSbxCreateCall()).toStrictEqual([
+        "create",
+        "--name",
+        "groundcrew-repo-a-claude",
+        "claude",
+        "/work",
+        "/tmp/ssh-XYZ",
+      ]);
+    });
+
+    it("adds -e SSH_AUTH_SOCK to the sbx exec invocation", async () => {
+      setEnvironmentVariable("SSH_AUTH_SOCK", "/tmp/ssh-XYZ/agent.42");
+      detectHostMock.mockResolvedValue(sdxHost());
+      mockSdxRun();
+
+      await setupWorkspace(sdxConfigWithForwardSsh(), {
+        ticket: "team-1",
+        repository: "repo-a",
+        model: "claude",
+      });
+
+      const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
+      expect(launchScript).toContain("-e SSH_AUTH_SOCK");
+    });
+
+    it("skips the mount and -e SSH_AUTH_SOCK when SSH_AUTH_SOCK is unset, logging a warning", async () => {
+      deleteEnvironmentVariable("SSH_AUTH_SOCK");
+      detectHostMock.mockResolvedValue(sdxHost());
+      mockSdxRun();
+
+      await setupWorkspace(sdxConfigWithForwardSsh(), {
+        ticket: "team-1",
+        repository: "repo-a",
+        model: "claude",
+      });
+
+      expect(findSbxCreateCall()).toStrictEqual([
+        "create",
+        "--name",
+        "groundcrew-repo-a-claude",
+        "claude",
+        "/work",
+      ]);
+      const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
+      expect(launchScript).not.toContain("-e SSH_AUTH_SOCK");
+      expect(logMock).toHaveBeenCalledWith(expect.stringContaining("SSH_AUTH_SOCK"));
+    });
+
+    it("does not forward SSH agent when forwardSshAgent is not set on the sandbox config", async () => {
+      setEnvironmentVariable("SSH_AUTH_SOCK", "/tmp/ssh-XYZ/agent.42");
+      detectHostMock.mockResolvedValue(sdxHost());
+      const config = makeConfig({
+        definitions: {
+          claude: { cmd: "claude --auto", color: "#fff", sandbox: { agent: "claude" } },
+          codex: { cmd: "codex", color: "#000" },
+        },
+      });
+      mockSdxRun();
+
+      await setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" });
+
+      expect(findSbxCreateCall()).toStrictEqual([
+        "create",
+        "--name",
+        "groundcrew-repo-a-claude",
+        "claude",
+        "/work",
+      ]);
+      const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
+      expect(launchScript).not.toContain("-e SSH_AUTH_SOCK");
+    });
+  });
+
   it("logs the tmux access hint after launch so the user knows how to reach the workspace", async () => {
     mockTmuxHost();
     const config = makeConfig();
