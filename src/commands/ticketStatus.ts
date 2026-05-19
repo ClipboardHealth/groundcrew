@@ -343,6 +343,38 @@ async function probeWorktreeSection(
   return { checks, status, entry };
 }
 
+interface WorkspaceSectionOutput {
+  checks: TicketCheck[];
+  workspaceName: string | undefined;
+}
+
+async function probeWorkspaceSection(
+  deps: TicketStatusDependencies,
+  ticket: string,
+): Promise<WorkspaceSectionOutput> {
+  const probe = await deps.probeWorkspaces();
+  if (probe.kind === "unavailable") {
+    return {
+      checks: [
+        { name: "Workspace pane open", status: "skipped", detail: "workspace probe unavailable" },
+      ],
+      workspaceName: undefined,
+    };
+  }
+  if (probe.names.has(ticket)) {
+    return {
+      checks: [{ name: "Workspace pane open", status: "ok", detail: ticket }],
+      workspaceName: ticket,
+    };
+  }
+  return {
+    checks: [
+      { name: "Workspace pane open", status: "fail", detail: "no pane found for this ticket" },
+    ],
+    workspaceName: undefined,
+  };
+}
+
 /**
  * Pure-with-async orchestrator that gathers per-section checks and a single
  * recovery verdict for a ticket. All I/O happens via injected probes — the
@@ -359,6 +391,7 @@ export async function ticketStatus(deps: TicketStatusDependencies): Promise<Tick
   skipReasons.linear = linearResult.skipReason;
 
   const worktreeResult = await probeWorktreeSection(deps, ticket);
+  const workspaceResult = await probeWorkspaceSection(deps, ticket);
 
   // Other sections are stubbed for this task — Tasks 5-8 fill them in. The
   // provisional `skipped → non-terminal (linear skipped)` mapping below is
@@ -374,7 +407,7 @@ export async function ticketStatus(deps: TicketStatusDependencies): Promise<Tick
     pullRequest: { kind: "absent" },
     branch: ticket.toLowerCase(),
     worktreeDir: worktreeResult.entry?.dir,
-    workspaceName: undefined,
+    workspaceName: workspaceResult.workspaceName,
   });
 
   return {
@@ -382,7 +415,7 @@ export async function ticketStatus(deps: TicketStatusDependencies): Promise<Tick
     ...(linearResult.title === undefined ? {} : { title: linearResult.title }),
     linear: linearResult.checks,
     worktree: worktreeResult.checks,
-    workspace: [],
+    workspace: workspaceResult.checks,
     localBranch: [],
     remoteBranch: [],
     pullRequest: [],

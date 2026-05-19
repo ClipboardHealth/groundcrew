@@ -472,3 +472,47 @@ describe("ticketStatus — Worktree section", () => {
     ]);
   });
 });
+
+describe("ticketStatus — Workspace section", () => {
+  it("records an ok workspace row when the ticket id appears in the probe set", async () => {
+    const deps = makeDeps({
+      probeWorkspaces: vi
+        .fn<TicketStatusDependencies["probeWorkspaces"]>()
+        .mockResolvedValue({ kind: "ok", names: new Set(["HRD-1"]) }),
+    });
+
+    const actual = await ticketStatus(deps);
+
+    expect(actual.workspace).toStrictEqual([
+      { name: "Workspace pane open", status: "ok", detail: "HRD-1" },
+    ]);
+  });
+
+  it("records fail when the ticket id is not in the probe set", async () => {
+    const deps = makeDeps({
+      probeWorkspaces: vi
+        .fn<TicketStatusDependencies["probeWorkspaces"]>()
+        .mockResolvedValue({ kind: "ok", names: new Set(["HRD-9"]) }),
+    });
+
+    const actual = await ticketStatus(deps);
+
+    expect(actual.workspace).toStrictEqual([
+      { name: "Workspace pane open", status: "fail", detail: "no pane found for this ticket" },
+    ]);
+  });
+
+  it("records skipped when the probe is unavailable", async () => {
+    const deps = makeDeps({
+      probeWorkspaces: vi
+        .fn<TicketStatusDependencies["probeWorkspaces"]>()
+        .mockResolvedValue({ kind: "unavailable" }),
+    });
+
+    const actual = await ticketStatus(deps);
+
+    expect(actual.workspace).toStrictEqual([
+      { name: "Workspace pane open", status: "skipped", detail: "workspace probe unavailable" },
+    ]);
+  });
+});
