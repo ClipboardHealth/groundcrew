@@ -47,9 +47,10 @@
   "scripts": {
     "architecture:check": "depcruise src bin configExample.ts vitest.config.ts",
     "build": "tsgo --build --force tsconfig.lib.json",
+    "build:dev": "tsgo --build tsconfig.lib.json",
     "cpd": "jscpd .",
-    "crew": "node ./bin/run.js",
-    "crew:op": "op run --env-file \"${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/op.env\" -- node ./bin/run.js",
+    "crew": "node --run build:dev && node ./bin/run.js",
+    "crew:op": "node --run build:dev && op run --env-file \"${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/op.env\" -- node ./bin/run.js",
     "format": "oxfmt",
     "format:check": "oxfmt --check",
     "hook:pre-commit": "lint-staged",

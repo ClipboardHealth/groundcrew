@@ -444,6 +444,21 @@ function remoteProviderFor(config: ResolvedConfig, entry?: WorktreeEntry): Remot
   return getRemoteRunnerProvider(entry?.remoteProvider ?? config.remote.provider);
 }
 
+async function remoteRunnerExistsAfterCleanupFailure(arguments_: {
+  provider: RemoteRunnerProvider;
+  remoteConfig: ResolvedConfig["remote"];
+  cleanupError: unknown;
+}): Promise<boolean> {
+  try {
+    return await arguments_.provider.runnerExists(arguments_.remoteConfig);
+  } catch (error) {
+    log(
+      `Remote runner availability check failed after cleanup error: ${errorMessage(error)}; keeping local state for retry.`,
+    );
+    throw arguments_.cleanupError;
+  }
+}
+
 async function removeCreatedRemoteWorktreeBestEffort(arguments_: {
   config: ResolvedConfig;
   provider: RemoteRunnerProvider;
@@ -516,17 +531,36 @@ const remoteWorktreeAdapter: WorktreeAdapter = {
   },
   async remove(config, entry, options) {
     log(`Removing remote worktree ${entry.dir}${options.force ? " (--force)" : ""}...`);
+    const provider = remoteProviderFor(config, entry);
     const remoteConfig = {
       ...config.remote,
       provider: entry.remoteProvider ?? config.remote.provider,
       runnerName: entry.remoteRunnerName ?? config.remote.runnerName,
     };
-    await remoteProviderFor(config, entry).removeWorktree({
-      config: remoteConfig,
-      entry,
-      force: options.force,
-      ...signalProperty(options.signal),
-    });
+    try {
+      await provider.removeWorktree({
+        config: remoteConfig,
+        entry,
+        force: options.force,
+        ...signalProperty(options.signal),
+      });
+    } catch (error) {
+      if (options.signal?.aborted === true || !options.force) {
+        throw error;
+      }
+      if (
+        await remoteRunnerExistsAfterCleanupFailure({
+          provider,
+          remoteConfig,
+          cleanupError: error,
+        })
+      ) {
+        throw error;
+      }
+      log(
+        `Remote runner ${remoteConfig.runnerName} not found; deleting stale local remote worktree record.`,
+      );
+    }
     deleteRemoteEntry(config, entry);
   },
 };

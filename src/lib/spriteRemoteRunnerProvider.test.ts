@@ -491,11 +491,37 @@ describe("Sprite remote runner provider", () => {
         "crew-special",
         "--",
         "bash",
-        "-lc",
-        expect.stringContaining("git -C '/srv/repos/tools' worktree remove --force"),
+        "-c",
+        expect.stringContaining('git -C "$repo_dir" worktree remove --force "$worktree_dir"'),
       ],
       { stdio: "inherit", timeoutMs: 0 },
     );
+    const script = runCommandMock.mock.calls[0]?.[1].at(-1);
+    expect(script).toContain("repo_dir='/srv/repos/tools'");
+    expect(script).toContain("worktree_dir='/srv/worktrees/tools-GC-12'");
+    expect(script).toContain('if ! git -C "$repo_dir" rev-parse --git-dir >/dev/null 2>&1; then');
+    expect(script).toContain('rm -rf -- "$worktree_dir"');
+  });
+
+  it("does not delete remote worktree directories directly unless removal is forced", async () => {
+    const config = remoteConfig();
+    runCommandMock.mockResolvedValue("");
+
+    await spriteRemoteRunnerProvider.removeWorktree({
+      config,
+      entry: {
+        branchName: "feature/remote-runner",
+        dir: "/srv/worktrees/tools-GC-12",
+        remoteRepoDir: "/srv/repos/tools",
+        remoteRunnerName: "crew-special",
+      },
+      force: false,
+    });
+
+    const script = runCommandMock.mock.calls[0]?.[1].at(-1);
+    expect(script).toContain('echo "Remote repository missing: $repo_dir" >&2');
+    expect(script).not.toContain('rm -rf -- "$worktree_dir"');
+    expect(script).toContain('git -C "$repo_dir" worktree remove "$worktree_dir"');
   });
 
   it("rejects incomplete remote worktree entries before shelling out", async () => {

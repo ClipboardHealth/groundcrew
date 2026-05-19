@@ -249,22 +249,31 @@ function spriteRemoveWorktreeCommand(
   if (entry.remoteRepoDir === undefined) {
     throw new Error(`Remote worktree entry missing remoteRepoDir: ${entry.dir}`);
   }
-  const removeArguments = [
-    "git",
-    "-C",
-    shellSingleQuote(entry.remoteRepoDir),
-    "worktree",
-    "remove",
-  ];
-  if (force) {
-    removeArguments.push("--force");
-  }
-  removeArguments.push(shellSingleQuote(entry.dir));
+  const forceFlag = force ? " --force" : "";
+  const missingRepositoryLines = force
+    ? [
+        '  echo "Remote repository missing; removing stale remote worktree directory: $worktree_dir" >&2',
+        '  rm -rf -- "$worktree_dir"',
+        "  exit 0",
+      ]
+    : ['  echo "Remote repository missing: $repo_dir" >&2', "  exit 1"];
   return [
     "set -euo pipefail",
-    removeArguments.join(" "),
-    `git -C ${shellSingleQuote(entry.remoteRepoDir)} branch -D ${shellSingleQuote(entry.branchName)} || true`,
-    `git -C ${shellSingleQuote(entry.remoteRepoDir)} worktree prune`,
+    `repo_dir=${shellSingleQuote(entry.remoteRepoDir)}`,
+    `worktree_dir=${shellSingleQuote(entry.dir)}`,
+    `branch=${shellSingleQuote(entry.branchName)}`,
+    'if ! git -C "$repo_dir" rev-parse --git-dir >/dev/null 2>&1; then',
+    ...missingRepositoryLines,
+    "fi",
+    'if [ ! -e "$worktree_dir" ]; then',
+    '  echo "Remote worktree directory not found; pruning stale refs: $worktree_dir" >&2',
+    '  git -C "$repo_dir" worktree prune',
+    '  git -C "$repo_dir" branch -D "$branch" || true',
+    "  exit 0",
+    "fi",
+    `git -C "$repo_dir" worktree remove${forceFlag} "$worktree_dir"`,
+    'git -C "$repo_dir" branch -D "$branch" || true',
+    'git -C "$repo_dir" worktree prune',
   ].join("\n");
 }
 
@@ -498,7 +507,7 @@ export const spriteRemoteRunnerProvider: RemoteRunnerProvider = {
         entry.remoteRunnerName,
         "--",
         "bash",
-        "-lc",
+        "-c",
         spriteRemoveWorktreeCommand(entry, force),
       ],
       longRunningCommandOptions(signal),

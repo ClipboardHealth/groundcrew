@@ -1,7 +1,6 @@
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { setTimeout as sleep } from "node:timers/promises";
 
 import {
   DEFAULT_REMOTE_SETUP_COMMAND,
@@ -99,6 +98,8 @@ const CLAUDE_SUBSCRIPTION_LOGIN_FLAG = ["--claude", "ai"].join("");
 const DEFAULT_GIT_REMOTE = "origin";
 const BOOTSTRAP_SECRET_FLAGS_CONFLICT_MESSAGE =
   "--secret and --no-secrets are mutually exclusive. Use --secret to forward selected build secrets or --no-secrets to disable secret forwarding.";
+const CLAUDE_AUTH_CALLBACK_PORT_RETRY_ATTEMPTS = 80;
+const CLAUDE_AUTH_CALLBACK_PORT_RETRY_DELAY_MS = 250;
 const DATADOG_PUP_VERSION = "0.63.0";
 const DATADOG_OAUTH_CALLBACK_PORT = 8000;
 const DATADOG_AUTH_STATUS_RETRY_ATTEMPTS = 5;
@@ -106,6 +107,14 @@ const DATADOG_AUTH_STATUS_RETRY_DELAY_MS = 250;
 const REMOTE_SECRETS_FILE = "/tmp/groundcrew-build-secrets.env";
 const REMOTE_CODEX_AUTH_UPLOAD_FILE = "/tmp/groundcrew-codex-auth.json";
 const REMOTE_CODEX_AUTH_FILE = "/home/sprite/.codex/auth.json";
+
+type PortProxy = Awaited<ReturnType<RemoteRunnerProvider["startPortProxy"]>>;
+
+async function sleep(milliseconds: number): Promise<void> {
+  await new Promise<void>((_resolve) => {
+    setTimeout(_resolve, milliseconds);
+  });
+}
 
 function usage(): string {
   return [
@@ -123,9 +132,10 @@ function usage(): string {
     "  --copy-local-codex-auth     With --codex, copy local CODEX_HOME auth.json into the remote runner",
     "  --datadog                   Install pup, add dd-pup skills, and authenticate Datadog",
     "  --github                    Authenticate gh for GitHub PRs",
-    "  --mcp <alias|name=url>      Add/authenticate one MCP server; repeat for multiple",
+    "  --mcp <alias|name=url>      Add one MCP server; repeat for multiple",
     "                              Known aliases: linear, slack, notion",
-    "  --skip-mcp-auth             Add selected MCP servers but do not launch Claude /mcp",
+    "  --mcp-auth                  Launch Claude /mcp after adding selected MCP servers",
+    "  --skip-mcp-auth             Deprecated no-op; MCP auth is skipped unless --mcp-auth is set",
     "  --git-name <name>           Set git user.name inside the remote runner",
     "  --git-email <email>         Set git user.email inside the remote runner",
     "  --checkpoint                Create a provider checkpoint after setup",
@@ -239,7 +249,7 @@ function parseArguments(argv: readonly string[]): RemoteSetupOptions {
   let shouldCopyLocalCodexAuth = false;
   let shouldSetupDatadog = false;
   let shouldAuthenticateGithub = false;
-  let shouldAuthenticateMcp = true;
+  let shouldAuthenticateMcp = false;
   let shouldCheckpoint = false;
   let checkpointComment = DEFAULT_CHECKPOINT_COMMENT;
   let gitName: string | undefined;
@@ -277,6 +287,10 @@ function parseArguments(argv: readonly string[]): RemoteSetupOptions {
     }
     if (argument === "--skip-mcp-auth") {
       shouldAuthenticateMcp = false;
+      continue;
+    }
+    if (argument === "--mcp-auth") {
+      shouldAuthenticateMcp = true;
       continue;
     }
     if (argument === "--git-name") {
@@ -565,10 +579,223 @@ async function authenticateClaude(
     return;
   }
   log("Starting Claude subscription auth inside the remote runner");
-  await provider.runTtyCommand({
+  writeOutput();
+  writeOutput("Claude OAuth will run inside the remote runner.");
+  writeOutput("Groundcrew will forward the localhost callback port after Claude opens it.");
+  writeOutput();
+
+  const controller = new AbortController();
+  let isLoginComplete = false;
+  let loginError: Error | undefined;
+  const login = provider
+    .runTtyCommand({
+      config,
+      remoteArguments: ["claude", "auth", "login", CLAUDE_SUBSCRIPTION_LOGIN_FLAG],
+      options: { signal: controller.signal },
+    })
+    .then(
+      () => {
+        isLoginComplete = true;
+        return null;
+      },
+      (error: unknown) => {
+        isLoginComplete = true;
+        loginError = new Error(String(error), { cause: error });
+        return null;
+      },
+    );
+
+  let proxy: PortProxy | undefined;
+  try {
+    const callbackPort = await waitForClaudeCallbackPort({
+      provider,
+      config,
+      isLoginComplete: () => isLoginComplete,
+    });
+    if (callbackPort !== undefined) {
+      writeOutput(
+        `Groundcrew is forwarding local port ${callbackPort} to the remote Claude callback server.`,
+      );
+      proxy = await provider.startPortProxy(config, callbackPort);
+    }
+    await login;
+    if (loginError !== undefined) {
+      throw new Error(loginError.message, { cause: loginError });
+    }
+  } finally {
+    if (proxy !== undefined) {
+      await proxy.close();
+    }
+    if (!isLoginComplete) {
+      controller.abort();
+      await login;
+    }
+  }
+}
+
+async function waitForClaudeCallbackPort(arguments_: {
+  provider: RemoteRunnerProvider;
+  config: RemoteRunnerConfig;
+  isLoginComplete(): boolean;
+}): Promise<number | undefined> {
+  for (let attempt = 1; attempt <= CLAUDE_AUTH_CALLBACK_PORT_RETRY_ATTEMPTS; attempt += 1) {
+    if (arguments_.isLoginComplete()) {
+      return undefined;
+    }
+
+    // oxlint-disable-next-line no-await-in-loop -- bounded polling detects Claude's dynamic localhost callback port.
+    const callbackPort = await detectClaudeCallbackPort(arguments_.provider, arguments_.config);
+    if (callbackPort !== undefined) {
+      return callbackPort;
+    }
+
+    if (arguments_.isLoginComplete()) {
+      return undefined;
+    }
+
+    if (attempt < CLAUDE_AUTH_CALLBACK_PORT_RETRY_ATTEMPTS) {
+      // oxlint-disable-next-line no-await-in-loop -- retries are intentionally spaced while auth starts.
+      await sleep(CLAUDE_AUTH_CALLBACK_PORT_RETRY_DELAY_MS);
+    }
+  }
+
+  throw new Error(
+    "Timed out waiting for Claude to open its OAuth callback port inside the remote runner.",
+  );
+}
+
+async function detectClaudeCallbackPort(
+  provider: RemoteRunnerProvider,
+  config: RemoteRunnerConfig,
+): Promise<number | undefined> {
+  const output = await provider.runCommand({
     config,
-    remoteArguments: ["claude", "auth", "login", CLAUDE_SUBSCRIPTION_LOGIN_FLAG],
+    remoteArguments: ["bash", "-lc", claudeCallbackPortProbeCommand()],
   });
+  return parseClaudeCallbackPorts(String(output)).at(0);
+}
+
+async function detectClaudeCallbackPorts(
+  provider: RemoteRunnerProvider,
+  config: RemoteRunnerConfig,
+): Promise<number[]> {
+  const output = await provider.runCommand({
+    config,
+    remoteArguments: ["bash", "-lc", claudeCallbackPortProbeCommand()],
+  });
+  return parseClaudeCallbackPorts(String(output));
+}
+
+function claudeCallbackPortProbeCommand(): string {
+  return "ss --no-header --listening --tcp --processes --numeric 2>/dev/null | grep claude || true";
+}
+
+function parseClaudeCallbackPorts(output: string): number[] {
+  const ports: number[] = [];
+  for (const line of output.split("\n")) {
+    const localAddress = line.trim().split(/\s+/).at(3);
+    if (localAddress === undefined || !line.includes("claude")) {
+      continue;
+    }
+    const match = /:(\d+)$/.exec(localAddress);
+    if (match === null) {
+      continue;
+    }
+    const port = Number(match[1]);
+    if (Number.isInteger(port) && port > 0 && !ports.includes(port)) {
+      ports.push(port);
+    }
+  }
+  return ports;
+}
+
+async function runClaudeTtyCommandWithOptionalCallbackProxy(arguments_: {
+  provider: RemoteRunnerProvider;
+  config: RemoteRunnerConfig;
+  remoteArguments: readonly string[];
+}): Promise<void> {
+  const { provider, config, remoteArguments } = arguments_;
+  const controller = new AbortController();
+  const proxies = new Map<number, PortProxy>();
+  let isCommandComplete = false;
+  let commandError: Error | undefined;
+  let watcherError: Error | undefined;
+
+  const command = provider
+    .runTtyCommand({ config, remoteArguments, options: { signal: controller.signal } })
+    .then(
+      () => {
+        isCommandComplete = true;
+        return null;
+      },
+      (error: unknown) => {
+        isCommandComplete = true;
+        commandError = new Error(String(error), { cause: error });
+        return null;
+      },
+    );
+
+  const watcher = watchClaudeCallbackPorts({
+    provider,
+    config,
+    isCommandComplete: () => isCommandComplete,
+    proxies,
+  }).catch((error: unknown) => {
+    if (isCommandComplete) {
+      return;
+    }
+    watcherError = new Error(String(error), { cause: error });
+    controller.abort();
+  });
+
+  try {
+    await command;
+    await watcher;
+    if (watcherError !== undefined) {
+      throw new Error(watcherError.message, { cause: watcherError });
+    }
+    if (commandError !== undefined) {
+      throw new Error(commandError.message, { cause: commandError });
+    }
+  } finally {
+    isCommandComplete = true;
+    await watcher;
+    await closeClaudeCallbackProxies(proxies);
+  }
+}
+
+async function watchClaudeCallbackPorts(arguments_: {
+  provider: RemoteRunnerProvider;
+  config: RemoteRunnerConfig;
+  isCommandComplete(): boolean;
+  proxies: Map<number, PortProxy>;
+}): Promise<void> {
+  while (!arguments_.isCommandComplete()) {
+    // oxlint-disable-next-line no-await-in-loop -- interactive Claude can open localhost callbacks at any point during MCP auth.
+    const callbackPorts = await detectClaudeCallbackPorts(arguments_.provider, arguments_.config);
+    for (const callbackPort of callbackPorts) {
+      if (arguments_.proxies.has(callbackPort)) {
+        continue;
+      }
+      writeOutput(
+        `Groundcrew is forwarding local port ${callbackPort} to the remote Claude callback server.`,
+      );
+      // oxlint-disable-next-line no-await-in-loop -- proxies must bind distinct local ports one at a time.
+      const proxy = await arguments_.provider.startPortProxy(arguments_.config, callbackPort);
+      arguments_.proxies.set(callbackPort, proxy);
+    }
+    if (!arguments_.isCommandComplete()) {
+      // oxlint-disable-next-line no-await-in-loop -- polling stays active only while the user is in Claude.
+      await sleep(CLAUDE_AUTH_CALLBACK_PORT_RETRY_DELAY_MS);
+    }
+  }
+}
+
+async function closeClaudeCallbackProxies(proxies: Map<number, PortProxy>): Promise<void> {
+  for (const proxy of proxies.values()) {
+    // oxlint-disable-next-line no-await-in-loop -- close proxy subprocesses deterministically before returning.
+    await proxy.close();
+  }
 }
 
 function localCodexAuthFile(): string {
@@ -677,7 +904,7 @@ async function installDatadogPup(
   log(`Installing Datadog pup ${DATADOG_PUP_VERSION} inside the remote runner`);
   await provider.runCommand({
     config,
-    remoteArguments: ["bash", "-lc", datadogPupInstallCommand()],
+    remoteArguments: ["bash", "-c", datadogPupInstallCommand()],
   });
 }
 
@@ -822,6 +1049,9 @@ async function authenticateMcpServers(arguments_: {
     writeOutput(`  - ${server.name}`);
   }
   writeOutput(
+    "Groundcrew will forward Claude localhost callback ports while this session is open.",
+  );
+  writeOutput(
     "Inside Claude, run /mcp, select each listed server, choose Authenticate, then /exit.",
   );
   writeOutput(
@@ -829,7 +1059,8 @@ async function authenticateMcpServers(arguments_: {
   );
   writeOutput();
 
-  await provider.runTtyCommand({
+  await runClaudeTtyCommandWithOptionalCallbackProxy({
+    provider,
     config,
     remoteArguments: ["claude", "--permission-mode", "auto"],
   });

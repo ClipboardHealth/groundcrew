@@ -545,15 +545,22 @@ describe(create, () => {
     const spriteCalls = runCommandMock.mock.calls.filter(([command]) => command === "sprite");
     expect(spriteCalls).toHaveLength(2);
     const removeCommand = spriteCalls[1]?.[1].at(-1);
+    expect(spriteCalls[1]?.[1]).toStrictEqual(
+      expect.arrayContaining(["exec", "-s", "crew-claude-1", "--", "bash", "-c"]),
+    );
     expect(removeCommand).toStrictEqual(
-      expect.stringContaining(
-        "git -C '/home/sprite/dev/ClipboardHealth--repo-a' worktree remove --force '/home/sprite/groundcrew/worktrees/ClipboardHealth--repo-a-team-1'",
-      ),
+      expect.stringContaining("repo_dir='/home/sprite/dev/ClipboardHealth--repo-a'"),
     );
     expect(removeCommand).toStrictEqual(
       expect.stringContaining(
-        "git -C '/home/sprite/dev/ClipboardHealth--repo-a' branch -D 'rocky-team-1' || true",
+        "worktree_dir='/home/sprite/groundcrew/worktrees/ClipboardHealth--repo-a-team-1'",
       ),
+    );
+    expect(removeCommand).toStrictEqual(
+      expect.stringContaining('git -C "$repo_dir" worktree remove --force "$worktree_dir"'),
+    );
+    expect(removeCommand).toStrictEqual(
+      expect.stringContaining('git -C "$repo_dir" branch -D "$branch" || true'),
     );
   });
 
@@ -1060,39 +1067,76 @@ describe(teardown, () => {
 
     expect(runCommandMock).toHaveBeenCalledWith(
       "sprite",
-      expect.arrayContaining(["exec", "-s", "crew-claude-1", "--", "bash", "-lc"]),
+      expect.arrayContaining(["exec", "-s", "crew-claude-1", "--", "bash", "-c"]),
       { stdio: "inherit", timeoutMs: 0 },
     );
     const command = runCommandMock.mock.calls.find(([cmd]) => cmd === "sprite")?.[1].at(-1);
     expect(command).toStrictEqual(
-      expect.stringContaining(
-        "git -C '/home/sprite/dev/repo-a' worktree remove --force '/home/sprite/groundcrew/worktrees/repo-a-team-1'",
-      ),
+      expect.stringContaining('git -C "$repo_dir" worktree remove --force "$worktree_dir"'),
     );
     expect(command).toStrictEqual(
-      expect.stringContaining("git -C '/home/sprite/dev/repo-a' branch -D 'rocky-team-1' || true"),
+      expect.stringContaining('git -C "$repo_dir" branch -D "$branch" || true'),
     );
     expect(readRemoteStateEntries()).toStrictEqual([entry]);
   });
 
   it("keeps the remote state entry when remote removal fails", async () => {
     const config = makeConfig({ projectDir });
-    const entry: WorktreeEntry = {
-      repository: "repo-a",
-      ticket: "team-1",
-      branchName: "rocky-team-1",
-      dir: "/home/sprite/groundcrew/worktrees/repo-a-team-1",
-      kind: "remote",
-      remoteProvider: "sprite",
-      remoteRunnerName: "crew-claude-1",
-      remoteRepoDir: "/home/sprite/dev/repo-a",
-    };
+    const entry = spriteEntry("team-1");
     writeRemoteState([withRemoteStateNamespace(config, entry)]);
     runCommandMock.mockImplementation(() => {
       throw new Error("worktree busy");
     });
 
     await expect(remove(config, entry)).rejects.toThrow(/worktree busy/);
+
+    expect(readRemoteStateEntries()).toStrictEqual([withRemoteStateNamespace(config, entry)]);
+  });
+
+  it("deletes stale local remote state on force when the recorded runner no longer exists", async () => {
+    const config = makeConfig({ projectDir });
+    const entry = spriteEntry("team-1");
+    writeRemoteState([withRemoteStateNamespace(config, entry)]);
+    runCommandMock
+      .mockImplementationOnce(() => {
+        throw new Error("runner unavailable");
+      })
+      .mockReturnValueOnce("NAME STATUS\nother-runner running\n");
+
+    await remove(config, entry, { force: true });
+
+    expect(runCommandMock).toHaveBeenCalledWith("sprite", ["list", "--sprite", "crew-claude-1"]);
+    expect(readRemoteStateEntries()).toStrictEqual([]);
+  });
+
+  it("keeps stale remote state on force when the recorded runner still exists", async () => {
+    const config = makeConfig({ projectDir });
+    const entry = spriteEntry("team-1");
+    writeRemoteState([withRemoteStateNamespace(config, entry)]);
+    runCommandMock
+      .mockImplementationOnce(() => {
+        throw new Error("worktree busy");
+      })
+      .mockReturnValueOnce("NAME STATUS\ncrew-claude-1 running\n");
+
+    await expect(remove(config, entry, { force: true })).rejects.toThrow(/worktree busy/);
+
+    expect(readRemoteStateEntries()).toStrictEqual([withRemoteStateNamespace(config, entry)]);
+  });
+
+  it("keeps stale remote state when runner availability cannot be checked after cleanup failure", async () => {
+    const config = makeConfig({ projectDir });
+    const entry = spriteEntry("team-1");
+    writeRemoteState([withRemoteStateNamespace(config, entry)]);
+    runCommandMock
+      .mockImplementationOnce(() => {
+        throw new Error("worktree busy");
+      })
+      .mockImplementationOnce(() => {
+        throw new Error("sprite list failed");
+      });
+
+    await expect(remove(config, entry, { force: true })).rejects.toThrow(/worktree busy/);
 
     expect(readRemoteStateEntries()).toStrictEqual([withRemoteStateNamespace(config, entry)]);
   });

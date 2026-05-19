@@ -215,6 +215,298 @@ function mockSpriteListWithDatadogStatus(options: {
   return () => datadogStatusCalls;
 }
 
+function mockSpriteListWithClaudeAuthListener(): () => number {
+  let callbackPortProbeCalls = 0;
+  let finishClaudeLogin: (() => void) | undefined;
+  runCommandMock.mockImplementation(async (command, arguments_, commandOptions) => {
+    if (command === "sprite" && arguments_[0] === "list") {
+      return "NAME STATUS\ncrew-claude-1 running";
+    }
+    if (hasRemoteCommand([command, arguments_], ["claude", "auth", "status"])) {
+      throw new Error("claude missing");
+    }
+    if (isInteractiveClaudeLoginCall([command, arguments_])) {
+      return await new Promise<string>((resolve) => {
+        finishClaudeLogin = () => {
+          resolve("");
+        };
+      });
+    }
+    if (isClaudeCallbackPortProbeCall([command, arguments_])) {
+      callbackPortProbeCalls += 1;
+      return [
+        'LISTEN 0 512 127.0.0.1:47001 0.0.0.0:* users:(("node",pid=10,fd=17))',
+        "claude",
+        'LISTEN 0 512 127.0.0.1:abc 0.0.0.0:* users:(("claude",pid=10,fd=17))',
+        'LISTEN 0 512 127.0.0.1:0 0.0.0.0:* users:(("claude",pid=11,fd=17))',
+        'LISTEN 0 512 [fdf::1]:36043 [::]:* users:(("claude",pid=203,fd=17))',
+      ].join("\n");
+    }
+    if (command === "sprite" && arguments_[0] === "proxy") {
+      queueMicrotask(() => finishClaudeLogin?.());
+      return await waitForProxyAbort(commandOptions);
+    }
+    return "";
+  });
+  return () => callbackPortProbeCalls;
+}
+
+function mockSpriteListWithInteractiveClaudeAuthListener(): () => number {
+  let callbackPortProbeCalls = 0;
+  let finishClaudeSession: (() => void) | undefined;
+  runCommandMock.mockImplementation(async (command, arguments_, commandOptions) => {
+    if (command === "sprite" && arguments_[0] === "list") {
+      return "NAME STATUS\ncrew-claude-1 running";
+    }
+    if (hasRemoteCommand([command, arguments_], ["claude", "mcp", "get"])) {
+      throw new Error("missing mcp server");
+    }
+    if (hasRemoteCommand([command, arguments_], ["claude", "--permission-mode", "auto"])) {
+      return await new Promise<string>((resolve) => {
+        finishClaudeSession = () => {
+          resolve("");
+        };
+      });
+    }
+    if (isClaudeCallbackPortProbeCall([command, arguments_])) {
+      callbackPortProbeCalls += 1;
+      return 'LISTEN 0 512 [fdf::1]:43147 [::]:* users:(("claude",pid=204,fd=17))';
+    }
+    if (command === "sprite" && arguments_[0] === "proxy") {
+      queueMicrotask(() => finishClaudeSession?.());
+      return await waitForProxyAbort(commandOptions);
+    }
+    return "";
+  });
+  return () => callbackPortProbeCalls;
+}
+
+function mockSpriteListWithInteractiveClaudeFailure(): void {
+  runCommandMock.mockImplementation(async (command, arguments_) => {
+    if (command === "sprite" && arguments_[0] === "list") {
+      return "NAME STATUS\ncrew-claude-1 running";
+    }
+    if (hasRemoteCommand([command, arguments_], ["claude", "mcp", "get"])) {
+      throw new Error("missing mcp server");
+    }
+    if (hasRemoteCommand([command, arguments_], ["claude", "--permission-mode", "auto"])) {
+      throw new Error("interactive claude failed");
+    }
+    if (isClaudeCallbackPortProbeCall([command, arguments_])) {
+      return "";
+    }
+    return "";
+  });
+}
+
+function mockSpriteListWithInteractiveClaudeCallbackPortDetectionFailure(): () => boolean {
+  let didAbortClaudeSession = false;
+  runCommandMock.mockImplementation(async (command, arguments_, commandOptions) => {
+    if (command === "sprite" && arguments_[0] === "list") {
+      return "NAME STATUS\ncrew-claude-1 running";
+    }
+    if (hasRemoteCommand([command, arguments_], ["claude", "mcp", "get"])) {
+      throw new Error("missing mcp server");
+    }
+    if (hasRemoteCommand([command, arguments_], ["claude", "--permission-mode", "auto"])) {
+      return await new Promise<string>((_resolve, reject) => {
+        commandOptions?.signal?.addEventListener("abort", () => {
+          didAbortClaudeSession = true;
+          reject(new Error("aborted"));
+        });
+      });
+    }
+    if (isClaudeCallbackPortProbeCall([command, arguments_])) {
+      throw new Error("ss failed");
+    }
+    return "";
+  });
+  return () => didAbortClaudeSession;
+}
+
+function mockSpriteListWithInteractiveClaudeLateCallbackPortDetectionFailure(): () => boolean {
+  let didAbortClaudeSession = false;
+  let finishClaudeSession: (() => void) | undefined;
+  runCommandMock.mockImplementation(async (command, arguments_, commandOptions) => {
+    if (command === "sprite" && arguments_[0] === "list") {
+      return "NAME STATUS\ncrew-claude-1 running";
+    }
+    if (hasRemoteCommand([command, arguments_], ["claude", "mcp", "get"])) {
+      throw new Error("missing mcp server");
+    }
+    if (hasRemoteCommand([command, arguments_], ["claude", "--permission-mode", "auto"])) {
+      return await new Promise<string>((resolve) => {
+        finishClaudeSession = () => {
+          resolve("");
+        };
+        commandOptions?.signal?.addEventListener("abort", () => {
+          didAbortClaudeSession = true;
+        });
+      });
+    }
+    if (isClaudeCallbackPortProbeCall([command, arguments_])) {
+      finishClaudeSession?.();
+      await Promise.resolve();
+      throw new Error("late ss failed");
+    }
+    return "";
+  });
+  return () => didAbortClaudeSession;
+}
+
+function mockSpriteListWithInteractiveClaudeRepeatedAuthListener(): () => number {
+  let callbackPortProbeCalls = 0;
+  let finishClaudeSession: (() => void) | undefined;
+  runCommandMock.mockImplementation(async (command, arguments_, commandOptions) => {
+    if (command === "sprite" && arguments_[0] === "list") {
+      return "NAME STATUS\ncrew-claude-1 running";
+    }
+    if (hasRemoteCommand([command, arguments_], ["claude", "mcp", "get"])) {
+      throw new Error("missing mcp server");
+    }
+    if (hasRemoteCommand([command, arguments_], ["claude", "--permission-mode", "auto"])) {
+      return await new Promise<string>((resolve) => {
+        finishClaudeSession = () => {
+          resolve("");
+        };
+      });
+    }
+    if (isClaudeCallbackPortProbeCall([command, arguments_])) {
+      callbackPortProbeCalls += 1;
+      if (callbackPortProbeCalls === 2) {
+        finishClaudeSession?.();
+      }
+      return 'LISTEN 0 512 [fdf::1]:43147 [::]:* users:(("claude",pid=204,fd=17))';
+    }
+    if (command === "sprite" && arguments_[0] === "proxy") {
+      return await waitForProxyAbort(commandOptions);
+    }
+    return "";
+  });
+  return () => callbackPortProbeCalls;
+}
+
+function isInteractiveClaudeLoginCall(call: readonly unknown[]): boolean {
+  const [, arguments_] = call;
+  return (
+    Array.isArray(arguments_) &&
+    hasRemoteCommand(call, ["claude", "auth", "login", CLAUDE_SUBSCRIPTION_LOGIN_FLAG])
+  );
+}
+
+function isClaudeCallbackPortProbeCall(call: readonly unknown[]): boolean {
+  const [, arguments_] = call;
+  return Array.isArray(arguments_) && String(arguments_.at(-1)).includes("ss --no-header");
+}
+
+function mockSpriteListWithClaudeLoginFailure(): void {
+  runCommandMock.mockImplementation(async (command, arguments_) => {
+    if (command === "sprite" && arguments_[0] === "list") {
+      return "NAME STATUS\ncrew-claude-1 running";
+    }
+    if (hasRemoteCommand([command, arguments_], ["claude", "auth", "status"])) {
+      throw new Error("claude missing");
+    }
+    if (isInteractiveClaudeLoginCall([command, arguments_])) {
+      throw new Error("claude login failed");
+    }
+    return "";
+  });
+}
+
+function mockSpriteListWithClaudeCallbackPortDetectionFailure(): () => boolean {
+  let didAbortLogin = false;
+  runCommandMock.mockImplementation(async (command, arguments_, commandOptions) => {
+    if (command === "sprite" && arguments_[0] === "list") {
+      return "NAME STATUS\ncrew-claude-1 running";
+    }
+    if (hasRemoteCommand([command, arguments_], ["claude", "auth", "status"])) {
+      throw new Error("claude missing");
+    }
+    if (isInteractiveClaudeLoginCall([command, arguments_])) {
+      return await new Promise<string>((_resolve, reject) => {
+        commandOptions?.signal?.addEventListener("abort", () => {
+          didAbortLogin = true;
+          reject(new Error("aborted"));
+        });
+      });
+    }
+    if (isClaudeCallbackPortProbeCall([command, arguments_])) {
+      throw new Error("ss failed");
+    }
+    return "";
+  });
+  return () => didAbortLogin;
+}
+
+function mockSpriteListWithClaudeLoginCompleteBeforeCallback(): () => number {
+  let finishClaudeLogin: (() => void) | undefined;
+  let callbackPortProbeCalls = 0;
+  runCommandMock.mockImplementation(async (command, arguments_) => {
+    if (command === "sprite" && arguments_[0] === "list") {
+      return "NAME STATUS\ncrew-claude-1 running";
+    }
+    if (hasRemoteCommand([command, arguments_], ["claude", "auth", "status"])) {
+      throw new Error("claude missing");
+    }
+    if (isInteractiveClaudeLoginCall([command, arguments_])) {
+      return await new Promise<string>((resolve) => {
+        finishClaudeLogin = () => {
+          resolve("");
+        };
+      });
+    }
+    if (isClaudeCallbackPortProbeCall([command, arguments_])) {
+      callbackPortProbeCalls += 1;
+      setTimeout(() => {
+        finishClaudeLogin?.();
+      }, 10);
+      return "";
+    }
+    return "";
+  });
+  return () => callbackPortProbeCalls;
+}
+
+function mockSpriteListWithClaudeCallbackPortNeverOpens(): () => boolean {
+  let didAbortLogin = false;
+  runCommandMock.mockImplementation(async (command, arguments_, commandOptions) => {
+    if (command === "sprite" && arguments_[0] === "list") {
+      return "NAME STATUS\ncrew-claude-1 running";
+    }
+    if (hasRemoteCommand([command, arguments_], ["claude", "auth", "status"])) {
+      throw new Error("claude missing");
+    }
+    if (isInteractiveClaudeLoginCall([command, arguments_])) {
+      return await new Promise<string>((_resolve, reject) => {
+        commandOptions?.signal?.addEventListener("abort", () => {
+          didAbortLogin = true;
+          reject(new Error("aborted"));
+        });
+      });
+    }
+    if (isClaudeCallbackPortProbeCall([command, arguments_])) {
+      return "";
+    }
+    return "";
+  });
+  return () => didAbortLogin;
+}
+
+async function setupClaudeOnlyRemoteRunner(): Promise<void> {
+  await setupRemoteRunner({
+    runnerName: "crew-claude-1",
+    shouldCreate: false,
+    shouldAuthenticateClaude: true,
+    shouldAuthenticateCodex: false,
+    shouldAuthenticateGithub: false,
+    shouldAuthenticateMcp: false,
+    shouldCheckpoint: false,
+    checkpointComment: "",
+    mcpServers: [],
+  });
+}
+
 function isInteractiveCodexLoginCall(call: readonly unknown[]): boolean {
   const [, arguments_] = call;
   return (
@@ -251,7 +543,7 @@ describe(remoteCli, () => {
     vi.clearAllMocks();
   });
 
-  it("adds only the selected MCP servers and opens Claude for their auth", async () => {
+  it("adds only the selected MCP servers without opening Claude for their auth by default", async () => {
     await remoteCli([
       "setup",
       "crew-claude-1",
@@ -268,14 +560,73 @@ describe(remoteCli, () => {
         hasRemoteCommand(call, ["slack", "https://mcp.slack.com/mcp"]),
       ),
     ).toBe(false);
+    expect(
+      runCommandMock.mock.calls.some((call) =>
+        hasRemoteCommand(call, ["claude", "--permission-mode", "auto"]),
+      ),
+    ).toBe(false);
+  });
+
+  it("proxies Claude OAuth callback ports while interactive MCP auth is open", async () => {
+    const callbackPortProbeCalls = mockSpriteListWithInteractiveClaudeAuthListener();
+
+    await remoteCli(["setup", "crew-claude-1", "--mcp", "linear", "--mcp-auth"]);
+
+    expectRemoteCommand(["claude", "mcp", "add", "linear", "https://mcp.linear.app/mcp"]);
+    expect(callbackPortProbeCalls()).toBe(1);
     expect(runCommandMock).toHaveBeenCalledWith(
       "sprite",
-      ["exec", "--tty", "-s", "crew-claude-1", "--", "claude", "--permission-mode", "auto"],
-      { stdio: "inherit", timeoutMs: 0 },
+      ["proxy", "-s", "crew-claude-1", "43147"],
+      expect.objectContaining({ stdio: "inherit", timeoutMs: 0 }),
     );
   });
 
-  it("can add MCP servers without launching interactive MCP auth", async () => {
+  it("surfaces interactive Claude failures during MCP auth", async () => {
+    mockSpriteListWithInteractiveClaudeFailure();
+
+    await expect(
+      remoteCli(["setup", "crew-claude-1", "--mcp", "linear", "--mcp-auth"]),
+    ).rejects.toThrow(/interactive claude failed/);
+  });
+
+  it("aborts interactive Claude when MCP auth callback port detection fails", async () => {
+    const didAbortClaudeSession = mockSpriteListWithInteractiveClaudeCallbackPortDetectionFailure();
+
+    await expect(
+      remoteCli(["setup", "crew-claude-1", "--mcp", "linear", "--mcp-auth"]),
+    ).rejects.toThrow(/ss failed/);
+    expect(didAbortClaudeSession()).toBe(true);
+  });
+
+  it("ignores MCP auth callback probe failures after interactive Claude exits", async () => {
+    const didAbortClaudeSession =
+      mockSpriteListWithInteractiveClaudeLateCallbackPortDetectionFailure();
+
+    await remoteCli(["setup", "crew-claude-1", "--mcp", "linear", "--mcp-auth"]);
+
+    expect(didAbortClaudeSession()).toBe(false);
+  });
+
+  it("keeps one proxy per Claude callback port during interactive MCP auth", async () => {
+    vi.useFakeTimers();
+    const callbackPortProbeCalls = mockSpriteListWithInteractiveClaudeRepeatedAuthListener();
+
+    try {
+      const result = remoteCli(["setup", "crew-claude-1", "--mcp", "linear", "--mcp-auth"]);
+
+      await vi.advanceTimersByTimeAsync(300);
+      await result;
+
+      expect(callbackPortProbeCalls()).toBe(2);
+      expect(
+        runCommandMock.mock.calls.filter((call) => hasRemoteCommand(call, ["proxy", "43147"])),
+      ).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps skip MCP auth as a no-op compatibility flag", async () => {
     await remoteCli(["setup", "crew-claude-1", "--mcp", "linear", "--skip-mcp-auth"]);
 
     expectRemoteCommand(["claude", "mcp", "add", "linear", "https://mcp.linear.app/mcp"]);
@@ -637,13 +988,76 @@ describe(setupRemoteRunner, () => {
         "login",
         CLAUDE_SUBSCRIPTION_LOGIN_FLAG,
       ],
-      { stdio: "inherit", timeoutMs: 0 },
+      expect.objectContaining({ stdio: "inherit", timeoutMs: 0 }),
     );
     expect(runCommandMock).toHaveBeenCalledWith(
       "sprite",
       ["checkpoint", "create", "-s", "crew-claude-1", "--comment", "baseline"],
       { stdio: "inherit", timeoutMs: 0 },
     );
+  });
+
+  it("proxies Claude OAuth callback port while subscription auth is waiting", async () => {
+    const callbackPortProbeCalls = mockSpriteListWithClaudeAuthListener();
+
+    await setupClaudeOnlyRemoteRunner();
+
+    expectRemoteCommand(["claude", "auth", "login", CLAUDE_SUBSCRIPTION_LOGIN_FLAG]);
+    expect(callbackPortProbeCalls()).toBe(1);
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "sprite",
+      ["proxy", "-s", "crew-claude-1", "36043"],
+      expect.objectContaining({ stdio: "inherit", timeoutMs: 0 }),
+    );
+  });
+
+  it("surfaces Claude subscription auth failures", async () => {
+    mockSpriteListWithClaudeLoginFailure();
+
+    await expect(setupClaudeOnlyRemoteRunner()).rejects.toThrow(/claude login failed/);
+  });
+
+  it("aborts Claude subscription auth when callback port detection fails", async () => {
+    const didAbortLogin = mockSpriteListWithClaudeCallbackPortDetectionFailure();
+
+    await expect(setupClaudeOnlyRemoteRunner()).rejects.toThrow(/ss failed/);
+    expect(didAbortLogin()).toBe(true);
+  });
+
+  it("stops polling when Claude subscription auth finishes before callback detection", async () => {
+    vi.useFakeTimers();
+    const callbackPortProbeCalls = mockSpriteListWithClaudeLoginCompleteBeforeCallback();
+
+    try {
+      const result = setupClaudeOnlyRemoteRunner();
+
+      await vi.advanceTimersByTimeAsync(300);
+      await result;
+
+      expect(callbackPortProbeCalls()).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("times out and aborts Claude subscription auth when the callback port never opens", async () => {
+    vi.useFakeTimers();
+    const didAbortLogin = mockSpriteListWithClaudeCallbackPortNeverOpens();
+
+    try {
+      const result = setupClaudeOnlyRemoteRunner().then(
+        () => null,
+        (error: unknown) => error,
+      );
+
+      await vi.advanceTimersByTimeAsync(25_000);
+
+      const actual = await result;
+      expect(String(actual)).toMatch(/Timed out waiting for Claude/);
+      expect(didAbortLogin()).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("rejects missing remote runners when creation is disabled", async () => {
@@ -714,6 +1128,8 @@ describe(setupRemoteRunner, () => {
       String(call[1].at(-1)).includes("version='0.63.0'"),
     );
     const installScript = String(installCall?.[1]?.at(-1));
+    expect(installCall?.[1]).toStrictEqual(expect.arrayContaining(["bash", "-c"]));
+    expect(installCall?.[1]).not.toStrictEqual(expect.arrayContaining(["-lc"]));
     expect(installScript).toStrictEqual(expect.stringContaining("version='0.63.0'"));
     expect(installScript).toStrictEqual(expect.stringContaining("sha256sum -c"));
     expect(installScript).toStrictEqual(expect.stringContaining('install_dir="$(mktemp -d)"'));
