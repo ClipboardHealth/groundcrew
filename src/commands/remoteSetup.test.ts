@@ -648,7 +648,7 @@ describe(remoteCli, () => {
     const didAbortClaudeSession =
       mockSpriteListWithInteractiveClaudeLateCallbackPortDetectionFailure();
 
-    await remoteCli(["setup", "crew-claude-1", "--mcp", "linear", "--mcp-auth"]);
+    await remoteCli(["setup", "crew-claude-1", "--mcp", "linear"]);
 
     expect(didAbortClaudeSession()).toBe(false);
   });
@@ -658,7 +658,7 @@ describe(remoteCli, () => {
     const callbackPortProbeCalls = mockSpriteListWithInteractiveClaudeRepeatedAuthListener();
 
     try {
-      const result = remoteCli(["setup", "crew-claude-1", "--mcp", "linear", "--mcp-auth"]);
+      const result = remoteCli(["setup", "crew-claude-1", "--mcp", "linear"]);
 
       await vi.advanceTimersByTimeAsync(300);
       await result;
@@ -672,30 +672,8 @@ describe(remoteCli, () => {
     }
   });
 
-  it("skips interactive MCP auth when requested", async () => {
-    await remoteCli(["setup", "crew-claude-1", "--mcp", "linear", "--skip-mcp-auth"]);
-
-    expectRemoteCommand(["claude", "mcp", "add", "linear", "https://mcp.linear.app/mcp"]);
-    expect(
-      runCommandMock.mock.calls.some((call) =>
-        hasRemoteCommand(call, ["claude", "--permission-mode", "auto"]),
-      ),
-    ).toBe(false);
-  });
-
   it("supports --no-mcp-auth for adding MCP servers without interactive auth", async () => {
     await remoteCli(["setup", "crew-claude-1", "--mcp", "linear", "--no-mcp-auth"]);
-
-    expectRemoteCommand(["claude", "mcp", "add", "linear", "https://mcp.linear.app/mcp"]);
-    expect(
-      runCommandMock.mock.calls.some((call) =>
-        hasRemoteCommand(call, ["claude", "--permission-mode", "auto"]),
-      ),
-    ).toBe(false);
-  });
-
-  it("keeps --mcp-auth as a deprecated no-op", async () => {
-    await remoteCli(["setup", "crew-claude-1", "--mcp", "linear", "--no-mcp-auth", "--mcp-auth"]);
 
     expectRemoteCommand(["claude", "mcp", "add", "linear", "https://mcp.linear.app/mcp"]);
     expect(
@@ -720,6 +698,12 @@ describe(remoteCli, () => {
       remoteCli(["setup", "crew-claude-1", "--mcp", "bad$name=https://example.com/mcp"]),
     ).rejects.toThrow(/Invalid MCP server name/);
     await expect(remoteCli(["setup", "crew-claude-1", "--bogus"])).rejects.toThrow(
+      /Unknown remote setup argument/,
+    );
+    await expect(remoteCli(["setup", "crew-claude-1", "--mcp-auth"])).rejects.toThrow(
+      /Unknown remote setup argument/,
+    );
+    await expect(remoteCli(["setup", "crew-claude-1", "--skip-mcp-auth"])).rejects.toThrow(
       /Unknown remote setup argument/,
     );
     await expect(remoteCli(["setup", "crew-claude-1", "--pup"])).rejects.toThrow(
@@ -909,7 +893,7 @@ describe(remoteCli, () => {
   it("skips adding MCP servers that already exist", async () => {
     mockSpriteListWithExistingMcp("NAME STATUS\ncrew-claude-1 running");
 
-    await remoteCli(["setup", "crew-claude-1", "--mcp", "linear", "--skip-mcp-auth"]);
+    await remoteCli(["setup", "crew-claude-1", "--mcp", "linear", "--no-mcp-auth"]);
 
     expect(
       runCommandMock.mock.calls.some((call) =>

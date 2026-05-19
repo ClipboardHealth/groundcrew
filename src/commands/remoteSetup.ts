@@ -135,8 +135,6 @@ function usage(): string {
     "  --mcp <alias|name=url>      Add one MCP server; repeat for multiple",
     "                              Known aliases: linear, slack, notion",
     "  --no-mcp-auth               Add selected MCP servers without opening Claude for MCP auth",
-    "  --skip-mcp-auth             Alias for --no-mcp-auth",
-    "  --mcp-auth                  Deprecated no-op; MCP auth runs by default when --mcp is set",
     "  --git-name <name>           Set git user.name inside the remote runner",
     "  --git-email <email>         Set git user.email inside the remote runner",
     "  --checkpoint                Create a provider checkpoint after setup",
@@ -286,11 +284,8 @@ function parseArguments(argv: readonly string[]): RemoteSetupOptions {
       index += 1;
       continue;
     }
-    if (argument === "--no-mcp-auth" || argument === "--skip-mcp-auth") {
+    if (argument === "--no-mcp-auth") {
       shouldAuthenticateMcp = false;
-      continue;
-    }
-    if (argument === "--mcp-auth") {
       continue;
     }
     if (argument === "--git-name") {
