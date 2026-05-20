@@ -120,9 +120,9 @@ Set them in the shell you run `crew` from. Anything not in this list is ignored 
 
 1. If any recognized var is set and non-empty, groundcrew writes `secrets.env` (mode `0600`) into the ticket's temp prompt dir as `KEY='value'` lines — see `stageBuildSecrets` in [`src/commands/setupWorkspace.ts`](./src/commands/setupWorkspace.ts).
 2. The launch script sources `secrets.env` with `set -a` so the values are exported into the setup phase only (and under `sdx`, forwarded into the sandbox via `-e KEY` flags).
-3. After setup completes, the script `unset`s every name in `BUILD_SECRET_NAMES` before `exec`'ing the agent. See `sourceSecretsLine` / `unsetSecretsLine` in [`src/lib/launchCommand.ts`](./src/lib/launchCommand.ts).
+3. After setup completes, the script `unset`s every name in `BUILD_SECRET_NAMES` and then `rm -rf`s the entire prompt dir (including `secrets.env`) before `exec`'ing the agent. See `sourceSecretsLine` / `unsetSecretsLine` and the `rm -rf` / `exec` lines in [`src/lib/launchCommand.ts`](./src/lib/launchCommand.ts). The rollback path on setup failure ([`src/commands/setupWorkspace.ts`](./src/commands/setupWorkspace.ts)) wipes the prompt dir too.
 
-**Caveat.** `secrets.env` itself stays on disk inside the prompt dir for the agent's lifetime — the launch command `rm -rf`s the temp dir on exit, but a sufficiently-motivated agent process could read the file while it's running, even though the values are no longer in its environment. If that's in your threat model, don't set these vars when invoking `crew`.
+Net effect: by the time the agent process exists, the values are gone from the environment and the file is gone from disk.
 
 ## Runners
 
