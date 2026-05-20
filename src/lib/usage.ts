@@ -72,7 +72,7 @@ function defaultCodexbarSource(provider: string): string {
     return "cli";
   }
   // codexbar's CLI `auto` for claude prefers web over OAuth, so users with a
-  // personal claude.ai login get gated on that account instead of the work
+  // personal claude.ai login may get gated on that account instead of the work
   // OAuth `claude` actually runs as. Pin to `oauth` to match the menu bar app.
   if (provider === "claude") {
     return "oauth";
