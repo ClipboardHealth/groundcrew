@@ -123,6 +123,31 @@ describe("loadConfig", () => {
     expect(actual.prompts.initial).toContain("{{ticket}}");
   });
 
+  it("ships a model-agnostic unattended default prompt", async () => {
+    const path = writeConfigFile(
+      temporary,
+      configSource({
+        linear: { ...VALID_LINEAR },
+        workspace: VALID_WORKSPACE(temporary),
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+
+    expect(actual.prompts.initial).toContain("There is no human watching this session");
+    expect(actual.prompts.initial).toMatch(/documented verification/i);
+    expect(actual.prompts.initial).toMatch(/draft pull request/i);
+    expect(actual.prompts.initial).toContain("tmux attach -t groundcrew:{{ticket}}");
+    expect(actual.prompts.initial).toMatch(/terminal status/i);
+    expect(actual.prompts.initial).not.toContain("superpowers");
+    expect(actual.prompts.initial).not.toContain("babysit-pr");
+    expect(actual.prompts.initial).not.toContain("CodeRabbit");
+    expect(actual.prompts.initial).not.toContain("Generated with Claude Code");
+    expect(actual.prompts.initial).not.toContain("Co-Authored-By: Claude");
+  });
+
   it("accepts custom terminal statuses and dedupes them with done", async () => {
     const path = writeConfigFile(
       temporary,

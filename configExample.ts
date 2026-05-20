@@ -1,4 +1,5 @@
 import type { Config } from "./src/lib/config.js";
+// import { readFileSync } from "node:fs";
 
 export const config: Config = {
   linear: {
@@ -57,13 +58,10 @@ export const config: Config = {
   // local: { runner: "auto" },
   //
   // prompts: {
-  //   initial: [
-  //     "Begin work on {{ticket}} ({{title}}) in the {{worktree}} wt subdirectory.",
-  //     "",
-  //     "Ticket description:",
-  //     "",
-  //     "{{description}}",
-  //   ].join("\n"),
+  //   // Keep personal workflow instructions next to this config, for example
+  //   // `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/initial-prompt.md`.
+  //   // If you uncomment this, also uncomment the readFileSync import above.
+  //   initial: readFileSync(new URL("./initial-prompt.md", import.meta.url), "utf8"),
   // },
   //
   // // Terminal session manager. "auto" picks cmux when on PATH, else tmux.
