@@ -120,7 +120,7 @@ describe("workspaces.open (cmux)", () => {
       "new-workspace",
       "--name",
       "TEAM-1",
-      "--working-directory",
+      "--cwd",
       "/work/repo-a-TEAM-1",
       "--command",
       "exec claude",
@@ -282,7 +282,7 @@ describe("workspaces.open (cmux)", () => {
     ]);
   });
 
-  it("does not wrap or pass --working-directory when no SSH remote is detected", async () => {
+  it("does not wrap or pass --cwd when no SSH remote is detected", async () => {
     runMock.mockReturnValueOnce(JSON.stringify({ workspace_id: "new-ws-id" })).mockReturnValue("");
 
     await workspaces.open(makeConfig(), {
@@ -296,7 +296,7 @@ describe("workspaces.open (cmux)", () => {
       "new-workspace",
       "--name",
       "TEAM-1",
-      "--working-directory",
+      "--cwd",
       "/work/repo-a-TEAM-1",
       "--command",
       "exec claude",
@@ -384,7 +384,7 @@ describe("workspaces.open (cmux)", () => {
       "new-workspace",
       "--name",
       "TEAM-1",
-      "--working-directory",
+      "--cwd",
       "/srv/x",
       "--command",
       "exec claude",

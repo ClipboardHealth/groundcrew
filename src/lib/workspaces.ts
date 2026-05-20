@@ -303,11 +303,11 @@ const cmuxAdapter: Adapter = {
     const inheritedRemote = await probeCurrentCmuxRemote(signal);
     const newWorkspaceArguments = ["--json", "new-workspace", "--name", spec.name];
     if (inheritedRemote === undefined) {
-      newWorkspaceArguments.push("--working-directory", spec.cwd, "--command", spec.command);
+      newWorkspaceArguments.push("--cwd", spec.cwd, "--command", spec.command);
     } else {
-      // Skip --working-directory: the path is on the SSH remote and would
-      // fall back to $HOME (macOS) when cmux tries to chdir locally. The
-      // wrapped ssh command does its own `cd` on the remote side.
+      // Skip --cwd: the path is on the SSH remote and would fall back to
+      // $HOME (macOS) when cmux tries to chdir locally. The wrapped ssh
+      // command does its own `cd` on the remote side.
       newWorkspaceArguments.push("--command", buildSshWrappedCommand(spec, inheritedRemote));
     }
     const output = await runWorkspaceCommand("cmux", newWorkspaceArguments, signal);
