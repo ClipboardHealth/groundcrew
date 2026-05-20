@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  Dispatch your Linear backlog to AI coding agents — one git worktree per ticket, sandboxed by default.
+  Dispatch your Linear backlog to AI coding agents. One git worktree per ticket, sandboxed by default.
 </p>
 
 <p align="center">
