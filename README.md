@@ -173,7 +173,7 @@ Agent selection uses Linear labels: `agent-claude`, `agent-codex`, `agent-<name>
 
 ### Prompt customization
 
-Groundcrew ships one model-agnostic unattended prompt by default. It tells the agent to make reasonable assumptions, follow repository instructions, run documented verification, review its diff, open a draft PR when GitHub/`gh` is available, include a workspace continuation hint when known, and avoid moving the Linear ticket to a terminal status.
+Groundcrew ships one model-agnostic unattended prompt by default. It tells the agent to make reasonable assumptions, follow repository instructions, run documented verification, review its diff, open a PR when GitHub/`gh` is available, and include a workspace continuation hint when known.
 
 For a personal workflow, keep the prompt next to your local config and load it with `readFileSync`:
 

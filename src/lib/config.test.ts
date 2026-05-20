@@ -138,9 +138,11 @@ describe("loadConfig", () => {
 
     expect(actual.prompts.initial).toContain("There is no human watching this session");
     expect(actual.prompts.initial).toMatch(/documented verification/i);
-    expect(actual.prompts.initial).toMatch(/draft pull request/i);
+    expect(actual.prompts.initial).toMatch(/open a pull request/i);
     expect(actual.prompts.initial).toContain("tmux attach -t groundcrew:{{ticket}}");
-    expect(actual.prompts.initial).toMatch(/terminal status/i);
+    expect(actual.prompts.initial).not.toContain("draft");
+    expect(actual.prompts.initial).not.toMatch(/terminal status/i);
+    expect(actual.prompts.initial).not.toContain("Do not wait for review feedback");
     expect(actual.prompts.initial).not.toContain("superpowers");
     expect(actual.prompts.initial).not.toContain("babysit-pr");
     expect(actual.prompts.initial).not.toContain("CodeRabbit");
