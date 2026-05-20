@@ -956,10 +956,9 @@ describe(doctor, () => {
     const actual = await doctor();
 
     expect(actual).toBe(false);
-    const output = consoleLog.output();
-    expect(output).toContain('[--] linear.statuses.todo "Todo" on team GAIA');
-    expect(output).toContain("Backlog, In Progress, Done");
-    expect(output).toContain("Remap linear.statuses.todo");
+    expect(consoleLog.output()).toContain(
+      '[--] linear.statuses.todo "Todo" on team GAIA  — team GAIA (Gaia) has no "Todo" status — available: Backlog, In Progress, Done. Remap linear.statuses.todo in your groundcrew config.',
+    );
   });
 
   it("passes when linear.statuses.todo exists on every project team", async () => {
@@ -977,8 +976,34 @@ describe(doctor, () => {
 
     expect(actual).toBe(true);
     const output = consoleLog.output();
-    expect(output).toContain('[ok] linear.statuses.todo "Todo" on team ALPHA');
-    expect(output).toContain('[ok] linear.statuses.todo "Todo" on team BETA');
+    expect(output).toContain('[ok] linear.statuses.todo "Todo" on team ALPHA  — present');
+    expect(output).toContain('[ok] linear.statuses.todo "Todo" on team BETA  — present');
+  });
+
+  it("passes when the user remaps linear.statuses.todo to a status the team has", async () => {
+    // Mirrors the Team Gaia case: team has no "Todo" status, but the user
+    // pointed `linear.statuses.todo` at "Backlog" instead. Doctor should
+    // recognize the remap and not flag the team.
+    const config = makeConfig();
+    loadConfigMock.mockResolvedValue({
+      ...config,
+      linear: {
+        ...config.linear,
+        statuses: { ...config.linear.statuses, todo: "Backlog" },
+      },
+    });
+    getLinearClientMocked.mockReturnValue(
+      makeLinearClient({
+        projectTeams: [{ key: "GAIA", name: "Gaia", statuses: ["Backlog", "In Progress", "Done"] }],
+      }),
+    );
+
+    const actual = await doctor();
+
+    expect(actual).toBe(true);
+    expect(consoleLog.output()).toContain(
+      '[ok] linear.statuses.todo "Backlog" on team GAIA  — present',
+    );
   });
 
   it("fails when the project has no teams", async () => {
