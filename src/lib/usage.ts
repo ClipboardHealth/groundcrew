@@ -67,8 +67,16 @@ const PERCENT_FRACTION_DIVISOR = 100;
 
 const CODEXBAR_TIMEOUT_MS = 30_000;
 
-function defaultCodexbarSource(): string {
-  return process.platform === "darwin" ? "auto" : "cli";
+function defaultCodexbarSource(provider: string): string {
+  if (process.platform !== "darwin") {
+    return "cli";
+  }
+  // codexbar's CLI `auto` for Codex/Claude probes browser sessions before OAuth,
+  // while the menu bar app prefers OAuth. Match the app so gates follow the CLI account.
+  if (provider === "codex" || provider === "claude") {
+    return "oauth";
+  }
+  return "auto";
 }
 
 async function codexbarUsage(definition: ModelDefinition, signal?: AbortSignal): Promise<Usage> {
@@ -78,7 +86,7 @@ async function codexbarUsage(definition: ModelDefinition, signal?: AbortSignal):
   }
   const { provider } = definition.usage.codexbar;
   const configuredSource = definition.usage.codexbar.source;
-  const source = configuredSource ?? defaultCodexbarSource();
+  const source = configuredSource ?? defaultCodexbarSource(provider);
   const arguments_: string[] = [
     "usage",
     "--provider",
