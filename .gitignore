@@ -15,10 +15,18 @@ tmp/
 *.1password.env
 .claude/*.local.*
 .claude/worktrees
+.crewrc
+.crewrc.json
+.crewrc.ts
 .DS_Store
 .env
 .nx/polygraph
 CLAUDE.local.md
+/config.ts
+/crew.config.js
+/crew.config.json
+/crew.config.mjs
+/crew.config.ts
 tsconfig.tsbuildinfo
 vitest.config.*.timestamp*
 

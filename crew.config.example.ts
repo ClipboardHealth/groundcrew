@@ -1,7 +1,7 @@
 import type { Config } from "./src/lib/config.js";
 // import { readFileSync } from "node:fs";
 
-export const config: Config = {
+export default {
   linear: {
     // Project URL slug to scope polling. Copy the trailing segment of
     // your Linear project URL —
@@ -9,7 +9,7 @@ export const config: Config = {
     // — verbatim, for example "ai-strategy-5152195762f3". The 12-char hex
     // tail is the canonical ID groundcrew uses, so the orchestrator stays
     // resilient across project renames and across same-name projects in
-    // different teams. The leading name segment keeps `config.ts`
+    // different teams. The leading name segment keeps the file
     // self-documenting at a glance.
     projectSlug: "your-project-name-0123456789ab",
     // statuses: { todo: "Todo", inProgress: "In Progress", done: "Done", terminal: ["Done"] },
@@ -76,4 +76,4 @@ export const config: Config = {
   //   // evidence with it. Default: `${XDG_STATE_HOME:-~/.local/state}/groundcrew/groundcrew.log`.
   //   file: "~/Library/Logs/groundcrew/groundcrew.log",
   // },
-};
+} satisfies Config;

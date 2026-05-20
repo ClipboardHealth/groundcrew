@@ -3,6 +3,8 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { cosmiconfig, type CosmiconfigResult, type Loader } from "cosmiconfig";
+
 import { log, readEnvironmentVariable, setLogFile } from "./util.ts";
 
 export { BUILD_SECRET_NAMES } from "./buildSecrets.ts";
@@ -298,11 +300,6 @@ const ALLOWED_PROMPT_PLACEHOLDERS = new Set([
 ]);
 const PROMPT_PLACEHOLDER_RE = /{{[^{}]*}}/g;
 
-// import.meta.dirname is `<package>/src/lib`; the user's `config.ts` lives
-// at the package root (gitignored), two levels up. Last-resort fallback
-// when neither GROUNDCREW_CONFIG nor the XDG path resolves to a file.
-const PACKAGE_CONFIG_PATH = resolve(import.meta.dirname, "..", "..", "config.ts");
-
 const PERCENT_MIN_EXCLUSIVE = 0;
 const PERCENT_MAX = 100;
 
@@ -324,18 +321,6 @@ function xdgStatePath(...segments: string[]): string {
 
 function defaultLogFile(): string {
   return xdgStatePath("groundcrew", "groundcrew.log");
-}
-
-function resolveConfigPath(): string {
-  const override = readEnvironmentVariable("GROUNDCREW_CONFIG");
-  if (override !== undefined && override.length > 0) {
-    return resolve(override);
-  }
-  const xdgPath = xdgConfigPath("groundcrew", "config.ts");
-  if (existsSync(xdgPath)) {
-    return xdgPath;
-  }
-  return PACKAGE_CONFIG_PATH;
 }
 
 function expandHome(p: string): string {
@@ -789,6 +774,114 @@ function validate(config: ResolvedConfig): void {
   requireString(config.logging.file, "logging.file");
 }
 
+const COSMICONFIG_MODULE_NAME = "crew";
+
+const SEARCH_PLACES: readonly string[] = [
+  "crew.config.ts",
+  "crew.config.mjs",
+  "crew.config.js",
+  "crew.config.json",
+  ".crewrc",
+  ".crewrc.json",
+  ".crewrc.ts",
+  ".config/crew.config.ts",
+  ".config/crew.config.json",
+  ".config/crewrc",
+  ".config/crewrc.json",
+];
+
+// `config.ts` is the legacy single-name convention from the bespoke loader;
+// kept for one release so existing users don't have to rename.
+const XDG_FALLBACK_NAMES: readonly string[] = [
+  "crew.config.ts",
+  "crew.config.mjs",
+  "crew.config.js",
+  "crew.config.json",
+  "config.ts",
+];
+
+// cosmiconfig's built-in `.ts` loader requires the `typescript` package;
+// we already rely on Node 24's native TS-stripping for `bin/run.js`, so
+// doing the same here keeps the dependency footprint tiny.
+const loadExecutableModule: Loader = async (filepath) => {
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- runtime fields are validated by applyDefaults/validate below
+  const module_ = (await import(pathToFileURL(filepath).href)) as {
+    default?: unknown;
+    config?: unknown;
+  };
+  if (module_.default !== undefined) {
+    return module_.default;
+  }
+  if (module_.config !== undefined) {
+    log(
+      `Config at ${filepath} uses the legacy \`export const config\` shape. Switch to \`export default\` — the legacy form will be removed in the next major.`,
+    );
+    return module_.config;
+  }
+  return null;
+};
+
+// One explorer per process. `loadConfig` caches its resolved result via
+// the `cached` singleton below, so cosmiconfig's internal cache state
+// is harmless across the at-most-two calls (search + maybe load).
+const explorer = cosmiconfig(COSMICONFIG_MODULE_NAME, {
+  searchPlaces: [...SEARCH_PLACES],
+  searchStrategy: "project",
+  loaders: {
+    ".ts": loadExecutableModule,
+    ".mjs": loadExecutableModule,
+    ".js": loadExecutableModule,
+  },
+});
+
+type DiscoveredConfig = NonNullable<CosmiconfigResult>;
+
+async function loadAt(filepath: string): Promise<DiscoveredConfig> {
+  const result = await explorer.load(filepath);
+  if (result === null) {
+    fail(
+      `${filepath} must export a config object (e.g. \`export default { ... } satisfies Config\`)`,
+    );
+  }
+  return result;
+}
+
+function findXdgConfigFile(): string | undefined {
+  return XDG_FALLBACK_NAMES.map((name) => xdgConfigPath("groundcrew", name)).find((path) =>
+    existsSync(path),
+  );
+}
+
+async function discoverUserConfig(): Promise<DiscoveredConfig> {
+  const override = readEnvironmentVariable("GROUNDCREW_CONFIG");
+  if (override !== undefined && override.length > 0) {
+    const overridePath = resolve(override);
+    if (!existsSync(overridePath)) {
+      fail(`GROUNDCREW_CONFIG=${overridePath} not found`);
+    }
+    return await loadAt(overridePath);
+  }
+
+  const project = await explorer.search(process.cwd());
+  if (project !== null && project.isEmpty !== true) {
+    return project;
+  }
+
+  const xdgPath = findXdgConfigFile();
+  if (xdgPath !== undefined) {
+    return await loadAt(xdgPath);
+  }
+
+  // Throw directly so oxlint's `consistent-return` rule sees a
+  // terminating statement; it doesn't track `fail()`'s `never` return.
+  throw new Error(
+    `groundcrew config: no crew config found. Create crew.config.ts in your project root, or ${xdgConfigPath(
+      "groundcrew",
+      "crew.config.ts",
+    )}, or set GROUNDCREW_CONFIG.`,
+  );
+}
+
 let cached: Readonly<ResolvedConfig> | undefined;
 
 export async function loadConfig(): Promise<Readonly<ResolvedConfig>> {
@@ -796,24 +889,18 @@ export async function loadConfig(): Promise<Readonly<ResolvedConfig>> {
     return cached;
   }
 
-  const path = resolveConfigPath();
-  if (!existsSync(path)) {
+  const result = await discoverUserConfig();
+  const { filepath, isEmpty } = result;
+  const userConfig: unknown = result.config;
+  if (isEmpty === true || !isPlainObject(userConfig)) {
     fail(
-      `${path} not found. Copy configExample.ts to ${xdgConfigPath("groundcrew", "config.ts")} (or set GROUNDCREW_CONFIG to a different path) and edit it.`,
+      `${filepath} must export a config object (e.g. \`export default { ... } satisfies Config\`)`,
     );
   }
-  log(`Loaded config from ${path}`);
+  log(`Loaded config from ${filepath}`);
 
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- user config is TS-typed against Config; runtime fields are validated below
-  const module_ = (await import(pathToFileURL(path).href)) as { config?: Config };
-  const { config: userConfig } = module_;
-  if (!userConfig) {
-    fail(
-      `${path} must export a named "config" object (e.g. \`export const config: Config = { ... }\`)`,
-    );
-  }
-
-  const resolved = applyDefaults(userConfig);
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- runtime fields are validated by applyDefaults/validate
+  const resolved = applyDefaults(userConfig as unknown as Config);
 
   validate(resolved);
 

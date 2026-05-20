@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 
 import {
   deleteEnvironmentVariable,
@@ -8,9 +8,6 @@ import {
   snapshotEnvironmentVariables,
 } from "../testHelpers/env.ts";
 import type { Config, ResolvedConfig } from "./config.ts";
-
-const PACKAGE_ROOT = resolve(import.meta.dirname, "..", "..");
-const PACKAGE_CONFIG_PATH = join(PACKAGE_ROOT, "config.ts");
 
 interface ConfigModule {
   loadConfig: () => Promise<Readonly<ResolvedConfig>>;
@@ -37,22 +34,7 @@ function writeConfigFile(dir: string, body: string): string {
 }
 
 function configSource(config: Config): string {
-  return `export const config = ${JSON.stringify(config, undefined, 2)};\n`;
-}
-
-function readPackageConfig(): string | undefined {
-  if (!existsSync(PACKAGE_CONFIG_PATH)) {
-    return undefined;
-  }
-  return readFileSync(PACKAGE_CONFIG_PATH, "utf8");
-}
-
-function restorePackageConfig(original: string | undefined): void {
-  if (original === undefined) {
-    rmSync(PACKAGE_CONFIG_PATH, { force: true });
-    return;
-  }
-  writeFileSync(PACKAGE_CONFIG_PATH, original);
+  return `export default ${JSON.stringify(config, undefined, 2)};\n`;
 }
 
 describe("loadConfig", () => {
@@ -70,6 +52,10 @@ describe("loadConfig", () => {
     // actual config.ts during test runs.
     setEnvironmentVariable("XDG_CONFIG_HOME", join(temporary, "xdg-config"));
     setEnvironmentVariable("XDG_STATE_HOME", join(temporary, "xdg-state"));
+    // Project-walk starts from cwd and traverses to the filesystem root,
+    // so an unmocked cwd could discover a real `crew.config.ts` somewhere
+    // up the tree. Pin cwd to the empty temp dir to scope discovery.
+    vi.spyOn(process, "cwd").mockReturnValue(temporary);
   });
 
   afterEach(() => {
@@ -224,7 +210,7 @@ describe("loadConfig", () => {
     const path = writeConfigFile(
       temporary,
       [
-        "export const config = {",
+        "export default {",
         `  linear: { ...${JSON.stringify(VALID_LINEAR)}, statuses: { terminal: 'Done' } },`,
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
         "};",
@@ -288,7 +274,7 @@ describe("loadConfig", () => {
     const path = writeConfigFile(
       temporary,
       [
-        "export const config = {",
+        "export default {",
         `  linear: ${JSON.stringify(VALID_LINEAR)},`,
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
         "  models: { isolation: 'docker' },",
@@ -308,7 +294,7 @@ describe("loadConfig", () => {
     const path = writeConfigFile(
       temporary,
       [
-        "export const config = {",
+        "export default {",
         `  linear: ${JSON.stringify(VALID_LINEAR)},`,
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
         "  remote: { provider: 'sprite' },",
@@ -328,7 +314,7 @@ describe("loadConfig", () => {
     const path = writeConfigFile(
       temporary,
       [
-        "export const config = {",
+        "export default {",
         `  linear: ${JSON.stringify(VALID_LINEAR)},`,
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
         "  models: { definitions: [] },",
@@ -346,7 +332,7 @@ describe("loadConfig", () => {
     const path = writeConfigFile(
       temporary,
       [
-        "export const config = {",
+        "export default {",
         `  linear: ${JSON.stringify(VALID_LINEAR)},`,
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
         "  models: { definitions: { claude: null } },",
@@ -364,7 +350,7 @@ describe("loadConfig", () => {
     const path = writeConfigFile(
       temporary,
       [
-        "export const config = {",
+        "export default {",
         `  linear: ${JSON.stringify(VALID_LINEAR)},`,
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
         "  models: { definitions: { claude: { isolation: 'safehouse' } } },",
@@ -384,7 +370,7 @@ describe("loadConfig", () => {
     const path = writeConfigFile(
       temporary,
       [
-        "export const config = {",
+        "export default {",
         `  linear: ${JSON.stringify(VALID_LINEAR)},`,
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
         "  models: { definitions: { claude: { sandbox: { agent: 'claude', template: 'node-22', kits: ['npm-cache'], setupCommand: 'echo seed' } } } },",
@@ -408,7 +394,7 @@ describe("loadConfig", () => {
     const path = writeConfigFile(
       temporary,
       [
-        "export const config = {",
+        "export default {",
         `  linear: ${JSON.stringify(VALID_LINEAR)},`,
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
         "  models: { definitions: { claude: { sandbox: { agent: 'claude' } } } },",
@@ -427,7 +413,7 @@ describe("loadConfig", () => {
     const path = writeConfigFile(
       temporary,
       [
-        "export const config = {",
+        "export default {",
         `  linear: ${JSON.stringify(VALID_LINEAR)},`,
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
         "  models: { definitions: { claude: { sandbox: {} } } },",
@@ -447,7 +433,7 @@ describe("loadConfig", () => {
     const path = writeConfigFile(
       temporary,
       [
-        "export const config = {",
+        "export default {",
         `  linear: ${JSON.stringify(VALID_LINEAR)},`,
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
         '  models: { definitions: { claude: { sandbox: { agent: "   " } } } },',
@@ -467,7 +453,7 @@ describe("loadConfig", () => {
     const path = writeConfigFile(
       temporary,
       [
-        "export const config = {",
+        "export default {",
         `  linear: ${JSON.stringify(VALID_LINEAR)},`,
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
         '  models: { definitions: { claude: { sandbox: { agent: "  claude  " } } } },',
@@ -486,7 +472,7 @@ describe("loadConfig", () => {
     const path = writeConfigFile(
       temporary,
       [
-        "export const config = {",
+        "export default {",
         `  linear: ${JSON.stringify(VALID_LINEAR)},`,
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
         "  local: 'auto',",
@@ -504,7 +490,7 @@ describe("loadConfig", () => {
     const path = writeConfigFile(
       temporary,
       [
-        "export const config = {",
+        "export default {",
         `  linear: ${JSON.stringify(VALID_LINEAR)},`,
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
         "  models: { definitions: { claude: { sandbox: 'claude' } } },",
@@ -524,7 +510,7 @@ describe("loadConfig", () => {
     const path = writeConfigFile(
       temporary,
       [
-        "export const config = {",
+        "export default {",
         `  linear: ${JSON.stringify(VALID_LINEAR)},`,
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
         "  local: { runner: 'bubblewrap' },",
@@ -544,7 +530,7 @@ describe("loadConfig", () => {
     const path = writeConfigFile(
       temporary,
       [
-        "export const config = {",
+        "export default {",
         `  linear: ${JSON.stringify(VALID_LINEAR)},`,
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
         "};",
@@ -562,7 +548,7 @@ describe("loadConfig", () => {
     const path = writeConfigFile(
       temporary,
       [
-        "export const config = {",
+        "export default {",
         `  linear: ${JSON.stringify(VALID_LINEAR)},`,
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
         "  local: { runner: 'sdx' },",
@@ -581,7 +567,7 @@ describe("loadConfig", () => {
     const path = writeConfigFile(
       temporary,
       [
-        "export const config = {",
+        "export default {",
         `  linear: ${JSON.stringify(VALID_LINEAR)},`,
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
         "  models: { definitions: { codex: { disabled: false } } },",
@@ -601,7 +587,7 @@ describe("loadConfig", () => {
     const path = writeConfigFile(
       temporary,
       [
-        "export const config = {",
+        "export default {",
         `  linear: ${JSON.stringify(VALID_LINEAR)},`,
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
         '  models: { definitions: { codex: { disabled: "true" } } },',
@@ -621,7 +607,7 @@ describe("loadConfig", () => {
     const path = writeConfigFile(
       temporary,
       [
-        "export const config = {",
+        "export default {",
         `  linear: ${JSON.stringify(VALID_LINEAR)},`,
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
         "  models: { definitions: { codex: { disabled: true, cmd: 'override' } } },",
@@ -641,7 +627,7 @@ describe("loadConfig", () => {
     const path = writeConfigFile(
       temporary,
       [
-        "export const config = {",
+        "export default {",
         `  linear: ${JSON.stringify(VALID_LINEAR)},`,
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
         "  models: { definitions: { codex: { disabled: true } } },",
@@ -662,7 +648,7 @@ describe("loadConfig", () => {
     const path = writeConfigFile(
       temporary,
       [
-        "export const config = {",
+        "export default {",
         `  linear: ${JSON.stringify(VALID_LINEAR)},`,
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
         // cspell:disable-next-line
@@ -684,7 +670,7 @@ describe("loadConfig", () => {
     const path = writeConfigFile(
       temporary,
       [
-        "export const config = {",
+        "export default {",
         `  linear: ${JSON.stringify(VALID_LINEAR)},`,
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
         "  models: { default: 'codex', definitions: { codex: { disabled: true } } },",
@@ -941,7 +927,27 @@ describe("loadConfig", () => {
     await expect(loadConfig()).rejects.toThrow(/logging.file/);
   });
 
-  it("falls back to the XDG config path when GROUNDCREW_CONFIG is unset", async () => {
+  it("falls back to the XDG crew.config.ts when GROUNDCREW_CONFIG is unset", async () => {
+    const xdgConfigHome = join(temporary, "xdg-config");
+    setEnvironmentVariable("XDG_CONFIG_HOME", xdgConfigHome);
+    const xdgConfigPath = join(xdgConfigHome, "groundcrew", "crew.config.ts");
+    mkdirSync(dirname(xdgConfigPath), { recursive: true });
+    writeFileSync(
+      xdgConfigPath,
+      configSource({
+        linear: { ...VALID_LINEAR },
+        workspace: VALID_WORKSPACE(temporary),
+      }),
+    );
+    deleteEnvironmentVariable("GROUNDCREW_CONFIG");
+
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+
+    expect(actual.linear.slugId).toBe("5152195762f3");
+  });
+
+  it("keeps reading legacy XDG ~/.config/groundcrew/config.ts during the back-compat window", async () => {
     const xdgConfigHome = join(temporary, "xdg-config");
     setEnvironmentVariable("XDG_CONFIG_HOME", xdgConfigHome);
     const xdgConfigPath = join(xdgConfigHome, "groundcrew", "config.ts");
@@ -969,19 +975,19 @@ describe("loadConfig", () => {
     await expect(loadConfig()).rejects.toThrow(/not found/);
   });
 
-  it("fails when the config file does not export a named config", async () => {
+  it("fails when the config file has no default or `config` export", async () => {
     const path = join(temporary, "no-export.ts");
     writeFileSync(path, "export const other = {};\n");
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
 
     const { loadConfig } = await loadFreshConfig();
 
-    await expect(loadConfig()).rejects.toThrow(/named "config" object/);
+    await expect(loadConfig()).rejects.toThrow(/must export a config object/);
   });
 
   it("fails when linear is not an object", async () => {
     const path = join(temporary, "bad.ts");
-    writeFileSync(path, `export const config = { linear: 5, workspace: {} };\n`);
+    writeFileSync(path, `export default { linear: 5, workspace: {} };\n`);
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
 
     const { loadConfig } = await loadFreshConfig();
@@ -1021,7 +1027,7 @@ describe("loadConfig", () => {
 
   it("fails when workspace is not an object", async () => {
     const path = join(temporary, "bad-workspace.ts");
-    writeFileSync(path, `export const config = { linear: { projectSlug: "x-aaaaaaaaaaaa" } };\n`);
+    writeFileSync(path, `export default { linear: { projectSlug: "x-aaaaaaaaaaaa" } };\n`);
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
 
     const { loadConfig } = await loadFreshConfig();
@@ -1082,8 +1088,7 @@ describe("loadConfig", () => {
   it("fails when sessionLimitPercentage is NaN", async () => {
     const path = writeConfigFile(
       temporary,
-      `import type { Config } from "${join(PACKAGE_ROOT, "src/lib/config.js")}";
-export const config: Config = ${JSON.stringify(
+      `const config = ${JSON.stringify(
         {
           linear: { ...VALID_LINEAR },
           workspace: VALID_WORKSPACE(temporary),
@@ -1091,7 +1096,8 @@ export const config: Config = ${JSON.stringify(
         undefined,
         2,
       )};
-config.orchestrator = { sessionLimitPercentage: Number.NaN };\n`,
+config.orchestrator = { sessionLimitPercentage: Number.NaN };
+export default config;\n`,
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
 
@@ -1204,36 +1210,11 @@ config.orchestrator = { sessionLimitPercentage: Number.NaN };\n`,
     await expect(loadConfig()).rejects.toThrow(/codexbar.provider/);
   });
 
-  it("falls back to the package config when GROUNDCREW_CONFIG is not set", async () => {
-    // The package's config.ts is gitignored (per-developer), so CI doesn't
-    // have one. Stage a temp config.ts at the package root for the test, then
-    // restore whatever was there (or remove the file) afterwards.
-    const original = readPackageConfig();
-    writeFileSync(
-      PACKAGE_CONFIG_PATH,
-      `export const config = {
-  linear: { projectSlug: "ai-strategy-5152195762f3" },
-  workspace: { projectDir: "${temporary}", knownRepositories: ["repo-a"] },
-};
-`,
-    );
-    deleteEnvironmentVariable("GROUNDCREW_CONFIG");
-
-    try {
-      const { loadConfig } = await loadFreshConfig();
-      const actual = await loadConfig();
-
-      expect(actual.linear.slugId).toBe("5152195762f3");
-    } finally {
-      restorePackageConfig(original);
-    }
-  });
-
   it("fails when usage is not an object", async () => {
     const path = join(temporary, "bad-usage.ts");
     writeFileSync(
       path,
-      `export const config = {
+      `export default {
   linear: { projectSlug: "ai-strategy-5152195762f3" },
   workspace: { projectDir: "${temporary}", knownRepositories: ["repo-a"] },
   models: { definitions: { cursor: { cmd: "cursor", color: "#fff", usage: 5 } } },
@@ -1251,7 +1232,7 @@ config.orchestrator = { sessionLimitPercentage: Number.NaN };\n`,
     const path = join(temporary, "bad-codexbar.ts");
     writeFileSync(
       path,
-      `export const config = {
+      `export default {
   linear: { projectSlug: "ai-strategy-5152195762f3" },
   workspace: { projectDir: "${temporary}", knownRepositories: ["repo-a"] },
   models: { definitions: { cursor: { cmd: "cursor", color: "#fff", usage: { codexbar: 5 } } } },
@@ -1263,5 +1244,132 @@ config.orchestrator = { sessionLimitPercentage: Number.NaN };\n`,
     const { loadConfig } = await loadFreshConfig();
 
     await expect(loadConfig()).rejects.toThrow(/codexbar must be an object/);
+  });
+
+  it("discovers crew.config.ts via cosmiconfig project-walk from a nested cwd", async () => {
+    // Stand up a fake project rooted at `temporary` with a deeper nested cwd.
+    // cosmiconfig's "project" search strategy walks up until it finds a
+    // package.json, so we plant one at the project root to scope the walk
+    // and keep it from escaping into the real filesystem.
+    writeFileSync(join(temporary, "package.json"), `{ "name": "fixture" }\n`);
+    writeFileSync(
+      join(temporary, "crew.config.ts"),
+      configSource({
+        linear: { ...VALID_LINEAR },
+        workspace: VALID_WORKSPACE(temporary),
+      }),
+    );
+    const nested = join(temporary, "src", "deep");
+    mkdirSync(nested, { recursive: true });
+
+    const originalCwd = process.cwd();
+    vi.spyOn(process, "cwd").mockReturnValue(nested);
+    deleteEnvironmentVariable("GROUNDCREW_CONFIG");
+
+    try {
+      const { loadConfig } = await loadFreshConfig();
+      const actual = await loadConfig();
+
+      expect(actual.linear.slugId).toBe("5152195762f3");
+    } finally {
+      vi.spyOn(process, "cwd").mockReturnValue(originalCwd);
+    }
+  });
+
+  it("loads a JSON config via cosmiconfig", async () => {
+    const jsonPath = join(temporary, ".crewrc.json");
+    writeFileSync(
+      jsonPath,
+      JSON.stringify({
+        linear: { ...VALID_LINEAR },
+        workspace: VALID_WORKSPACE(temporary),
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", jsonPath);
+
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+
+    expect(actual.linear.slugId).toBe("5152195762f3");
+  });
+
+  it("accepts the legacy `export const config = {...}` shape for back-compat", async () => {
+    const path = join(temporary, "legacy.ts");
+    writeFileSync(
+      path,
+      `export const config = ${JSON.stringify({
+        linear: { ...VALID_LINEAR },
+        workspace: VALID_WORKSPACE(temporary),
+      })};\n`,
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+
+    expect(actual.linear.slugId).toBe("5152195762f3");
+  });
+
+  it("env-var override wins over both project-walk and XDG fallback", async () => {
+    // Plant decoys at every fallback location so the env override is the
+    // only path that picks the right slug.
+    const xdgConfigHome = join(temporary, "xdg-config");
+    setEnvironmentVariable("XDG_CONFIG_HOME", xdgConfigHome);
+    const xdgConfigPath = join(xdgConfigHome, "groundcrew", "crew.config.ts");
+    mkdirSync(dirname(xdgConfigPath), { recursive: true });
+    writeFileSync(
+      xdgConfigPath,
+      configSource({
+        linear: { projectSlug: "xdg-decoy-aaaaaaaaaaaa" },
+        workspace: VALID_WORKSPACE(temporary),
+      }),
+    );
+    writeFileSync(join(temporary, "package.json"), `{ "name": "fixture" }\n`);
+    writeFileSync(
+      join(temporary, "crew.config.ts"),
+      configSource({
+        linear: { projectSlug: "project-decoy-bbbbbbbbbbbb" },
+        workspace: VALID_WORKSPACE(temporary),
+      }),
+    );
+
+    const overridePath = writeConfigFile(
+      temporary,
+      configSource({
+        linear: { ...VALID_LINEAR },
+        workspace: VALID_WORKSPACE(temporary),
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", overridePath);
+
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+
+    expect(actual.linear.slugId).toBe("5152195762f3");
+  });
+
+  it("fails when the default export is not an object (e.g. a primitive)", async () => {
+    const path = join(temporary, "primitive.ts");
+    writeFileSync(path, "export default 5;\n");
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(/must export a config object/);
+  });
+
+  it("fails with a discovery error when no config exists anywhere", async () => {
+    // No env var, no project config (cwd is the empty temp dir), no XDG file.
+    deleteEnvironmentVariable("GROUNDCREW_CONFIG");
+    const originalCwd = process.cwd();
+    vi.spyOn(process, "cwd").mockReturnValue(temporary);
+
+    try {
+      const { loadConfig } = await loadFreshConfig();
+
+      await expect(loadConfig()).rejects.toThrow(/no crew config found/);
+    } finally {
+      vi.spyOn(process, "cwd").mockReturnValue(originalCwd);
+    }
   });
 });

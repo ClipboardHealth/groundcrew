@@ -42,7 +42,7 @@ Eligibility
 - **Linear-native.** Polls a project, respects `agent-*` labels, honors blockers.
 - **One worktree per ticket.** Agents work in parallel without stepping on each other.
 - **Local-first sandboxing.** Safehouse on macOS, Docker Sandboxes on Linux, or an explicit `none` escape hatch.
-- **Multi-agent.** Ships with `claude` and `codex`; bring your own CLI by dropping a definition into `config.ts`.
+- **Multi-agent.** Ships with `claude` and `codex`; bring your own CLI by dropping a definition into `crew.config.ts`.
 
 ## Install
 
@@ -64,10 +64,12 @@ Installs the `crew` binary. `@clipboard-health/clearance` is pulled in transitiv
 
    ```bash
    mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew"
-   cp "$(npm root -g)/@clipboard-health/groundcrew/configExample.ts" \
-      "${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/config.ts"
-   $EDITOR "${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/config.ts"
+   cp "$(npm root -g)/@clipboard-health/groundcrew/crew.config.example.ts" \
+      "${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/crew.config.ts"
+   $EDITOR "${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/crew.config.ts"
    ```
+
+   Or drop `crew.config.ts` at the root of any repo you run `crew` from — `crew` discovers it via cosmiconfig project-walk. JSON and `.mjs` work too (`crew.config.json`, `.crewrc`, `.crewrc.json`).
 
    Set `linear.projectSlug` (paste the trailing slug of your Linear project URL, e.g. `ai-strategy-5152195762f3`), `workspace.projectDir`, and `workspace.knownRepositories`. Defaults cover everything else.
 
@@ -134,7 +136,7 @@ Net effect: by the time the agent process exists, the values are gone from the e
 | `sdx`       | Linux / WSL | [Docker Sandboxes](https://docs.docker.com/sandboxes/) (`sbx`) — required when the agent needs `docker`. |
 | `none`      | —           | Unsandboxed escape hatch. Never picked implicitly; doctor warns when configured.                         |
 
-For `sdx`: each model that runs under it needs a `sandbox: { agent: "<sbx-agent>" }` block in `config.ts`. Groundcrew names sandboxes `groundcrew-<agent>` (e.g. `groundcrew-claude`) and reuses one sandbox per agent across repos and tickets. First-time agent auth happens inside the sandbox the first time it launches. To bootstrap manually instead, run `sbx create --name groundcrew-<agent> <agent> <projectDir>` once.
+For `sdx`: each model that runs under it needs a `sandbox: { agent: "<sbx-agent>" }` block in `crew.config.ts`. Groundcrew names sandboxes `groundcrew-<agent>` (e.g. `groundcrew-claude`) and reuses one sandbox per agent across repos and tickets. First-time agent auth happens inside the sandbox the first time it launches. To bootstrap manually instead, run `sbx create --name groundcrew-<agent> <agent> <projectDir>` once.
 
 <details>
 <summary>Safehouse clearance allowlist</summary>
@@ -167,7 +169,7 @@ Three keys are required; everything else has a default.
 | `workspace.projectDir`        | Parent dir for cloned repos and sibling ticket worktrees.                  |
 | `workspace.knownRepositories` | Repos searched for in ticket descriptions to infer where work belongs.     |
 
-`crew` resolves config as: `GROUNDCREW_CONFIG` if set → `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/config.ts` if it exists → a `config.ts` next to `crew`'s own source (only useful from a local checkout). The branch prefix (`<prefix>-<TICKET>`) is derived from `os.userInfo().username` — not configurable.
+`crew` resolves config as: `GROUNDCREW_CONFIG` if set → project-walk from cwd (cosmiconfig: `crew.config.{ts,mjs,js,json}`, `.crewrc{,.json,.ts}`, `.config/crew.config.*`) → `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/crew.config.ts` (also accepts legacy `config.ts` for one release). The branch prefix (`<prefix>-<TICKET>`) is derived from `os.userInfo().username` — not configurable.
 
 Agent selection uses Linear labels: `agent-claude`, `agent-codex`, `agent-<name>`. `crew run` without `--ticket` only fetches tickets carrying an `agent-*` label — the GraphQL query filters server-side, so unlabeled tickets are never returned by Linear and do not appear on the board. Use `crew run --ticket <TICKET>` to provision an unlabeled ticket on demand (falls back to `models.default`). `agent-any` routes to the model with the most available session capacity. Todo tickets blocked by non-terminal blockers are skipped until their blockers reach a terminal status.
 
@@ -180,7 +182,7 @@ For a personal workflow, keep the prompt next to your local config and load it w
 ```ts
 import { readFileSync } from "node:fs";
 
-export const config = {
+export default {
   // ...
   prompts: {
     initial: readFileSync(new URL("./initial-prompt.md", import.meta.url), "utf8"),
@@ -195,7 +197,7 @@ This keeps package defaults portable while letting your private config reference
 
 | Key                                     | Default             | What it does                                                                                                                                                                                                                                                                              |
 | --------------------------------------- | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `linear.projectSlug`                    | **required**        | Linear project URL slug (e.g. `ai-strategy-5152195762f3`). The trailing 12-char hex `slugId` is what's matched against Linear's API; the leading name keeps `config.ts` self-documenting and the lookup survives project renames.                                                         |
+| `linear.projectSlug`                    | **required**        | Linear project URL slug (e.g. `ai-strategy-5152195762f3`). The trailing 12-char hex `slugId` is what's matched against Linear's API; the leading name keeps `crew.config.ts` self-documenting and the lookup survives project renames.                                                    |
 | `linear.statuses.todo`                  | `"Todo"`            | Status name picked up for new work.                                                                                                                                                                                                                                                       |
 | `linear.statuses.inProgress`            | `"In Progress"`     | Status set after a workspace is provisioned; counts toward `maximumInProgress`.                                                                                                                                                                                                           |
 | `linear.statuses.done`                  | `"Done"`            | Status that triggers worktree cleanup.                                                                                                                                                                                                                                                    |
@@ -214,7 +216,7 @@ This keeps package defaults portable while letting your private config reference
 | `models.definitions.<name>.usage`       | optional            | If set, codexbar usage is fetched for this model and gated by `sessionLimitPercentage`. Omit to never gate. When `usage.codexbar.source` is omitted, groundcrew uses `oauth` for Codex/Claude on macOS, `auto` for other macOS providers, and `cli` elsewhere.                            |
 | `models.definitions.<name>.sandbox`     | optional            | Docker Sandboxes binding for the model. Required at launch when `local.runner` resolves to `sdx`. Fields: `agent` (required sbx agent name), `template`, `kits`, `setupCommand` (override for the inside-sandbox setup script).                                                           |
 | `models.definitions.<name>.disabled`    | optional            | When set to exactly `true`, drops the named shipped default (`claude` or `codex`). Doctor skips probing it; `agent-<name>` labels fall back to `models.default` with a warning.                                                                                                           |
-| `prompts.initial`                       | unattended template | First message sent to the agent. Placeholders: `{{ticket}}`, `{{worktree}}`, `{{title}}`, `{{description}}`. Override this from `config.ts` for team-specific statuses, tools, plugins, or review loops.                                                                                  |
+| `prompts.initial`                       | unattended template | First message sent to the agent. Placeholders: `{{ticket}}`, `{{worktree}}`, `{{title}}`, `{{description}}`. Override this from `crew.config.ts` for team-specific statuses, tools, plugins, or review loops.                                                                             |
 | `workspaceKind`                         | `"auto"`            | Terminal session manager. `"auto"` picks `cmux` when on PATH, else `tmux`. Set to `"cmux"` or `"tmux"` to fail loudly when the chosen backend is missing.                                                                                                                                 |
 | `local.runner`                          | `"auto"`            | Local isolation backend. `"auto"` → `safehouse` on macOS, `sdx` on Linux/WSL. Explicit: `"safehouse"`, `"sdx"`, `"none"`. `"none"` is never picked implicitly.                                                                                                                            |
 | `logging.file`                          | XDG state path      | Append-mode log file. `log()` / `logEvent()` tee here in addition to stdout. Defaults to `${XDG_STATE_HOME:-$HOME/.local/state}/groundcrew/groundcrew.log`.                                                                                                                               |
@@ -227,8 +229,8 @@ This keeps package defaults portable while letting your private config reference
 Groundcrew ships `claude` and `codex` as default model definitions, additively merged into every resolved config. To stop probing one:
 
 ```ts
-// config.ts
-export const config = {
+// crew.config.ts
+export default {
   // …
   models: {
     default: "claude",
@@ -491,7 +493,7 @@ node --run crew -- doctor
 node --run crew:op -- run --watch
 ```
 
-Both forms read `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/config.ts` by default; set `GROUNDCREW_CONFIG` to point elsewhere. The `crew:op` wrapper additionally reads `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/op.env` (1Password env-file with `op://` references resolved at launch).
+Both forms discover config via cosmiconfig — project-walk from cwd for `crew.config.ts` and friends, then `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/crew.config.ts` (legacy `config.ts` is still accepted for one release). Set `GROUNDCREW_CONFIG` to point elsewhere. The `crew:op` wrapper additionally reads `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/op.env` (1Password env-file with `op://` references resolved at launch).
 
 Logs land in `${XDG_STATE_HOME:-$HOME/.local/state}/groundcrew/groundcrew.log` by default (override via `logging.file`). The "Loaded config from …" line at startup tells you which config won.
 
