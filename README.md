@@ -212,7 +212,7 @@ exit 0
 
 The bare `exit 0` suppresses the `[groundcrew] … setup: not configured` hint for documentation repos, polyglot monorepos where setup happens per-package, or anywhere the per-worktree work is genuinely zero.
 
-For a more comprehensive real-world example (nvm bootstrap, hash-based skip-on-no-changes caching, portable SHA-256 detection), see [this repo's own `.claude/setup.sh`](./.claude/setup.sh) — kept at the legacy path because it doubles as a Claude Code SessionStart hook.
+For a more comprehensive real-world example (nvm bootstrap, hash-based skip-on-no-changes caching, portable SHA-256 detection), see [this repo's own `.groundcrew/setup.sh`](./.groundcrew/setup.sh) — symlinked at `.claude/setup.sh` so it also doubles as a Claude Code SessionStart hook.
 
 ### Generating it with an agent
 
