@@ -71,13 +71,9 @@ function defaultCodexbarSource(provider: string): string {
   if (process.platform !== "darwin") {
     return "cli";
   }
-  // codexbar's CLI `auto` for the claude provider tries web before OAuth,
-  // while the codexbar menu bar app's `auto` prefers OAuth. When a user has
-  // both a personal claude.ai browser login and a work Claude Code OAuth
-  // session, `auto` from the CLI scrapes the personal account — disconnecting
-  // groundcrew's gate from the work account that `claude` actually runs as.
-  // Pin the claude provider to `oauth` on macOS so the dispatcher reads the
-  // same account the menu bar widget shows.
+  // codexbar's CLI `auto` for claude prefers web over OAuth, so users with a
+  // personal claude.ai login get gated on that account instead of the work
+  // OAuth `claude` actually runs as. Pin to `oauth` to match the menu bar app.
   if (provider === "claude") {
     return "oauth";
   }
