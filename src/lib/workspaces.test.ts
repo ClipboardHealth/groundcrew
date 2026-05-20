@@ -282,7 +282,7 @@ describe("workspaces.open (cmux)", () => {
     ]);
   });
 
-  it("does not wrap or pass --cwd when no SSH remote is detected", async () => {
+  it("does not wrap with ssh and passes --cwd when no SSH remote is detected", async () => {
     runMock.mockReturnValueOnce(JSON.stringify({ workspace_id: "new-ws-id" })).mockReturnValue("");
 
     await workspaces.open(makeConfig(), {
