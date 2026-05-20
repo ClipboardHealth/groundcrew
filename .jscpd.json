@@ -13,7 +13,8 @@
     "**/bin/runCli.js",
     "**/*.test.ts",
     "**/*.spec.ts",
-    "**/examples/**"
+    "**/examples/**",
+    "static/groundcrew-wordmark-*.svg"
   ],
   "absolute": false,
   "gitignore": true

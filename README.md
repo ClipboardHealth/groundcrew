@@ -232,31 +232,7 @@ crew cleanup <TICKET>              # tear down every worktree carrying this tick
 
 ### `crew doctor --ticket <ticket>`
 
-Diagnose why a ticket would or wouldn't be dispatched on the next tick. Runs the same resolution and eligibility chain as the dispatcher. Exits 0 if the ticket would dispatch, 1 otherwise.
-
-Would dispatch:
-
-```text
-groundcrew doctor --ticket HRD-446 (Add retry logic to the sync job)
-────────────────────────────────────────────────────────────────────
-
-Resolution
-  [ok] Ticket exists in Linear ("Add retry logic to the sync job")
-  [ok] Status is Todo
-  [ok] Has agent-* label (agent-claude)
-  [ok] Model resolves from agent-* label (model "claude")
-  [ok] Description mentions known repo (owner/repo)
-  [ok] Resolved repo is cloned locally (/dev/workspaces/owner/repo)
-
-Eligibility
-  [ok] No active blockers
-  [ok] Model "claude" usage under sessionLimitPercentage (12% (limit 85%))
-  [ok] In-progress cap not hit (2/4 used)
-
-→ would be dispatched on next tick
-```
-
-Would not:
+Diagnose why a ticket would or wouldn't be dispatched on the next tick. Runs the same resolution and eligibility chain as the dispatcher. Exits 0 if the ticket would dispatch, 1 otherwise. The hero above shows a passing run; here's a failing one:
 
 ```text
 groundcrew doctor --ticket HRD-447 (Refactor auth middleware)
