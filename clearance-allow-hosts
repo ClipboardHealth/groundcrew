@@ -59,9 +59,10 @@ raw.githubusercontent.com
 release-assets.githubusercontent.com
 results-receiver.actions.githubusercontent.com
 
-# npm registry
+# npm registry + package website
 api.npmjs.org
 registry.npmjs.org
+www.npmjs.com
 
 # Developer tooling
 buf.build
