@@ -33,6 +33,7 @@ datadoghq.com
 # GitHub + GHA artifact storage (Azure blobs)
 api.github.com
 cafe.github.com
+codeload.github.com
 github.com
 productionresultssa0.blob.core.windows.net
 productionresultssa1.blob.core.windows.net
