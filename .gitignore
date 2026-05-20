@@ -22,6 +22,10 @@ tmp/
 .env
 .nx/polygraph
 CLAUDE.local.md
+/.config/crew.config.json
+/.config/crew.config.ts
+/.config/crewrc
+/.config/crewrc.json
 /config.ts
 /crew.config.js
 /crew.config.json

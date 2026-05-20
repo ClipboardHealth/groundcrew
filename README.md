@@ -69,7 +69,7 @@ Installs the `crew` binary. `@clipboard-health/clearance` is pulled in transitiv
    $EDITOR "${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/crew.config.ts"
    ```
 
-   Or drop `crew.config.ts` at the root of any repo you run `crew` from — `crew` discovers it via cosmiconfig project-walk. JSON and `.mjs` work too (`crew.config.json`, `.crewrc`, `.crewrc.json`).
+   Or drop `crew.config.ts` at the root of any repo you run `crew` from — `crew` discovers it via cosmiconfig project-walk. Any of `crew.config.{ts,mjs,js,json}`, `.crewrc{,.json,.ts}`, `.config/crew.config.{ts,json}`, or `.config/crewrc{,.json}` work.
 
    Set `linear.projectSlug` (paste the trailing slug of your Linear project URL, e.g. `ai-strategy-5152195762f3`), `workspace.projectDir`, and `workspace.knownRepositories`. Defaults cover everything else.
 
@@ -169,7 +169,7 @@ Three keys are required; everything else has a default.
 | `workspace.projectDir`        | Parent dir for cloned repos and sibling ticket worktrees.                  |
 | `workspace.knownRepositories` | Repos searched for in ticket descriptions to infer where work belongs.     |
 
-`crew` resolves config as: `GROUNDCREW_CONFIG` if set → project-walk from cwd (cosmiconfig: `crew.config.{ts,mjs,js,json}`, `.crewrc{,.json,.ts}`, `.config/crew.config.*`) → `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/crew.config.ts` (also accepts legacy `config.ts` for one release). The branch prefix (`<prefix>-<TICKET>`) is derived from `os.userInfo().username` — not configurable.
+`crew` resolves config as: `GROUNDCREW_CONFIG` if set → project-walk from cwd (cosmiconfig: `crew.config.{ts,mjs,js,json}`, `.crewrc{,.json,.ts}`, `.config/crew.config.{ts,json}`, `.config/crewrc{,.json}`) → `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/crew.config.ts` (also accepts legacy `config.ts` for one release). The branch prefix (`<prefix>-<TICKET>`) is derived from `os.userInfo().username` — not configurable.
 
 Agent selection uses Linear labels: `agent-claude`, `agent-codex`, `agent-<name>`. `crew run` without `--ticket` only fetches tickets carrying an `agent-*` label — the GraphQL query filters server-side, so unlabeled tickets are never returned by Linear and do not appear on the board. Use `crew run --ticket <TICKET>` to provision an unlabeled ticket on demand (falls back to `models.default`). `agent-any` routes to the model with the most available session capacity. Todo tickets blocked by non-terminal blockers are skipped until their blockers reach a terminal status.
 
