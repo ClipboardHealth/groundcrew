@@ -5,6 +5,7 @@
 
 import { existsSync, statSync } from "node:fs";
 
+import { fetchProjectTeamStatuses } from "../lib/boardSource.ts";
 import {
   type LocalRunner,
   type LocalRunnerSetting,
@@ -13,7 +14,7 @@ import {
 } from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities, which } from "../lib/host.ts";
 import { resolveLocalRunner } from "../lib/localRunner.ts";
-import { errorMessage, resolveLinearApiKey, writeOutput } from "../lib/util.ts";
+import { errorMessage, getLinearClient, resolveLinearApiKey, writeOutput } from "../lib/util.ts";
 import { resolveWorkspaceKind, type WorkspaceResolution } from "../lib/workspaces.ts";
 import { runTicketDoctor } from "./ticketDoctor.ts";
 
@@ -219,6 +220,8 @@ async function doctorHost(): Promise<boolean> {
     checks.push(await checkCmd("codexbar", false, "optional — only used for usage gating"));
   }
 
+  checks.push(...(await checkLinearTodoStatus(config)));
+
   for (const check of checks) {
     if (check === localCapability) {
       continue;
@@ -303,6 +306,57 @@ function reportWorkspaceKind(config: ResolvedConfig, outcome: WorkspaceOutcome):
   } else {
     writeOutput(`[--] requested=${outcome.requested} — ${outcome.reason}`);
   }
+}
+
+/**
+ * Verify the configured `linear.statuses.todo` actually exists as a workflow
+ * state on every team the project is attached to. The dispatch loop filters
+ * Linear server-side by this status name; when it doesn't exist on a team,
+ * `crew run --watch` silently produces "no eligible tickets" and never
+ * dispatches. Surfacing the mismatch here gives the user a remap hint
+ * instead of a silent no-op.
+ */
+async function checkLinearTodoStatus(config: ResolvedConfig): Promise<Check[]> {
+  // Already flagged by `checkLinearApiKey` — don't double-warn or attempt
+  // a query that's guaranteed to fail.
+  if (resolveLinearApiKey() === undefined) {
+    return [];
+  }
+  let teams: Awaited<ReturnType<typeof fetchProjectTeamStatuses>>;
+  try {
+    teams = await fetchProjectTeamStatuses({ client: getLinearClient(), config });
+  } catch (error) {
+    return [
+      {
+        name: "linear.statuses.todo team check",
+        ok: false,
+        required: false,
+        hint: `could not fetch project teams from Linear: ${errorMessage(error)}`,
+      },
+    ];
+  }
+  if (teams.length === 0) {
+    return [
+      {
+        name: "linear.statuses.todo team check",
+        ok: false,
+        required: true,
+        hint: `no teams found on project "${config.linear.projectSlug}" — verify linear.projectSlug and API key access`,
+      },
+    ];
+  }
+  const { todo } = config.linear.statuses;
+  return teams.map((team) => {
+    const ok = team.statuses.includes(todo);
+    return {
+      name: `linear.statuses.todo "${todo}" on team ${team.key}`,
+      ok,
+      required: true,
+      hint: ok
+        ? "present"
+        : `team ${team.key} (${team.name}) has no "${todo}" status — available: ${team.statuses.join(", ")}. Remap linear.statuses.todo in your groundcrew config.`,
+    };
+  });
 }
 
 async function workspaceChecks(outcome: WorkspaceOutcome): Promise<Check[]> {

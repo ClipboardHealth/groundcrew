@@ -126,6 +126,66 @@ interface IssueRelationNode {
   } | null;
 }
 
+interface ProjectTeamStatuses {
+  key: string;
+  name: string;
+  statuses: string[];
+}
+
+/**
+ * Fetch every team attached to the configured Linear project, along with
+ * each team's workflow-state names. `doctor` uses this to detect when the
+ * configured `linear.statuses.todo` doesn't exist on a project team — the
+ * silent cause of "no eligible Backlog tickets" during `crew run --watch`.
+ */
+export async function fetchProjectTeamStatuses(arguments_: {
+  client: LinearClient;
+  config: ResolvedConfig;
+}): Promise<ProjectTeamStatuses[]> {
+  const { client, config } = arguments_;
+  const response: { data?: unknown } = await client.client.rawRequest(
+    `query ProjectTeamStatuses($slugId: String!) {
+      projects(filter: { slugId: { eq: $slugId } }, first: 1) {
+        nodes {
+          teams(first: 50) {
+            nodes {
+              key
+              name
+              states(first: 100) {
+                nodes { name }
+              }
+            }
+          }
+        }
+      }
+    }`,
+    { slugId: config.linear.slugId },
+  );
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- shape is fixed by our GraphQL query above
+  const { projects } = response.data as {
+    projects: {
+      nodes: {
+        teams: {
+          nodes: {
+            key: string;
+            name: string;
+            states: { nodes: { name: string }[] };
+          }[];
+        };
+      }[];
+    };
+  };
+  const [project] = projects.nodes;
+  if (!project) {
+    return [];
+  }
+  return project.teams.nodes.map((team) => ({
+    key: team.key,
+    name: team.name,
+    statuses: team.states.nodes.map((state) => state.name),
+  }));
+}
+
 async function verifyProject(client: LinearClient, config: ResolvedConfig): Promise<void> {
   const response: { data?: unknown } = await client.client.rawRequest(
     `query VerifyProject($slugId: String!) {

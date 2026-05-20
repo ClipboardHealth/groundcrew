@@ -190,13 +190,24 @@ function activeNodes(count: number): { id: string }[] {
   return Array.from({ length: count }, (_value, index) => ({ id: `active-${index}` }));
 }
 
+interface TeamStub {
+  key: string;
+  name: string;
+  statuses: string[];
+}
+
+const DEFAULT_PROJECT_TEAMS: TeamStub[] = [
+  { key: "TEAM", name: "Team Default", statuses: ["Todo", "In Progress", "Done"] },
+];
+
 function makeLinearClient(
   options: {
     issue?: RawIssueStub | null;
     activePages?: number[];
+    projectTeams?: TeamStub[] | "no-project" | null;
   } = {},
 ): LinearClient {
-  const { issue = rawIssue(), activePages = [0] } = options;
+  const { issue = rawIssue(), activePages = [0], projectTeams = DEFAULT_PROJECT_TEAMS } = options;
   let activePageIndex = 0;
   let blockerPageIndex = 0;
   const rawRequest = vi.fn<LinearRawRequest>(async (query) => {
@@ -220,6 +231,31 @@ function makeLinearClient(
                 endCursor: hasNextPage ? issue.inverseRelations.pageInfo.endCursor : "",
               },
             },
+          },
+        },
+      };
+    }
+    if (query.includes("ProjectTeamStatuses")) {
+      if (projectTeams === null) {
+        throw new Error("linear unreachable");
+      }
+      if (projectTeams === "no-project") {
+        return { data: { projects: { nodes: [] } } };
+      }
+      return {
+        data: {
+          projects: {
+            nodes: [
+              {
+                teams: {
+                  nodes: projectTeams.map((team) => ({
+                    key: team.key,
+                    name: team.name,
+                    states: { nodes: team.statuses.map((name) => ({ name })) },
+                  })),
+                },
+              },
+            ],
           },
         },
       };
@@ -907,6 +943,81 @@ describe(doctor, () => {
     expect(lines).toMatch(/requested=tmux, resolved=tmux/);
     expect(checkedCommands()).toContain("tmux");
     expect(checkedCommands()).not.toContain("cmux");
+  });
+
+  it("fails when linear.statuses.todo is missing on a project team", async () => {
+    loadConfigMock.mockResolvedValue(makeConfig());
+    getLinearClientMocked.mockReturnValue(
+      makeLinearClient({
+        projectTeams: [{ key: "GAIA", name: "Gaia", statuses: ["Backlog", "In Progress", "Done"] }],
+      }),
+    );
+
+    const actual = await doctor();
+
+    expect(actual).toBe(false);
+    const output = consoleLog.output();
+    expect(output).toContain('[--] linear.statuses.todo "Todo" on team GAIA');
+    expect(output).toContain("Backlog, In Progress, Done");
+    expect(output).toContain("Remap linear.statuses.todo");
+  });
+
+  it("passes when linear.statuses.todo exists on every project team", async () => {
+    loadConfigMock.mockResolvedValue(makeConfig());
+    getLinearClientMocked.mockReturnValue(
+      makeLinearClient({
+        projectTeams: [
+          { key: "ALPHA", name: "Alpha", statuses: ["Todo", "Done"] },
+          { key: "BETA", name: "Beta", statuses: ["Todo", "In Progress", "Done"] },
+        ],
+      }),
+    );
+
+    const actual = await doctor();
+
+    expect(actual).toBe(true);
+    const output = consoleLog.output();
+    expect(output).toContain('[ok] linear.statuses.todo "Todo" on team ALPHA');
+    expect(output).toContain('[ok] linear.statuses.todo "Todo" on team BETA');
+  });
+
+  it("fails when the project has no teams", async () => {
+    loadConfigMock.mockResolvedValue(makeConfig());
+    getLinearClientMocked.mockReturnValue(makeLinearClient({ projectTeams: [] }));
+
+    const actual = await doctor();
+
+    expect(actual).toBe(false);
+    expect(consoleLog.output()).toContain("no teams found on project");
+  });
+
+  it("fails when no project is found for the configured slugId", async () => {
+    loadConfigMock.mockResolvedValue(makeConfig());
+    getLinearClientMocked.mockReturnValue(makeLinearClient({ projectTeams: "no-project" }));
+
+    const actual = await doctor();
+
+    expect(actual).toBe(false);
+    expect(consoleLog.output()).toContain("no teams found on project");
+  });
+
+  it("warns but does not fail when the Linear team-status query throws", async () => {
+    loadConfigMock.mockResolvedValue(makeConfig());
+    getLinearClientMocked.mockReturnValue(makeLinearClient({ projectTeams: null }));
+
+    const actual = await doctor();
+
+    expect(actual).toBe(true);
+    expect(consoleLog.output()).toContain("could not fetch project teams from Linear");
+  });
+
+  it("skips the team-status check when no Linear API key is set", async () => {
+    deleteEnvironmentVariable("LINEAR_API_KEY");
+    loadConfigMock.mockResolvedValue(makeConfig());
+
+    await doctor();
+
+    expect(consoleLog.output()).not.toContain("linear.statuses.todo");
   });
 
   it("reports a workspaceKind failure when the chosen backend's binary is missing", async () => {
