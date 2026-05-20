@@ -3,15 +3,15 @@
   "release": {
     "changelog": {
       "automaticFromRef": true,
+      "git": {
+        "commit": false,
+        "tag": false
+      },
       "projectChangelogs": {
         "createRelease": "github",
         "file": false
       },
       "workspaceChangelogs": false
-    },
-    "git": {
-      "commit": true,
-      "commitMessage": "chore(release): publish {projectName} {version} [skip actions]"
     },
     "projects": ["groundcrew"],
     "projectsRelationship": "independent",
@@ -19,7 +19,12 @@
       "conventionalCommits": true,
       "fallbackCurrentVersionResolver": "disk",
       "updateDependents": "auto",
-      "preserveLocalDependencyProtocols": false
+      "preserveLocalDependencyProtocols": false,
+      "git": {
+        "commit": true,
+        "commitMessage": "chore(release): publish {projectName} {version} [skip actions]",
+        "tag": true
+      }
     }
   },
   "analytics": false

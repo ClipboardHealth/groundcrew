@@ -661,7 +661,7 @@ describe(orchestrate, () => {
     expect(out).toContain("Total: 2");
   });
 
-  it("caps each status section at 20 most recent and prints a truncation hint", async () => {
+  it("caps each status section at 10 most recent and prints a truncation hint", async () => {
     const doneIssues = Array.from({ length: 25 }, (_unused, index) =>
       issue({
         identifier: `TEAM-${String(index + 1).padStart(3, "0")}`,
@@ -678,18 +678,18 @@ describe(orchestrate, () => {
     await orchestrate({ watch: false, dryRun: false });
 
     const out = consoleLog.output();
-    expect(out).toContain("showing 20 most recent of 25; 5 older hidden");
+    expect(out).toContain("showing 10 most recent of 25; 15 older hidden");
 
-    // Exactly 20 visible rows. With 25 ascending-updatedAt items, sort desc
-    // and slice 20 keeps indices 24..5 (team-025..team-006); 5 oldest hidden.
+    // Exactly 10 visible rows. With 25 ascending-updatedAt items, sort desc
+    // and slice 10 keeps indices 24..15 (team-025..team-016); 15 oldest hidden.
     const visibleRows = [...out.matchAll(/team-\d{3}\b/g)].map((match) => match[0]);
-    expect(visibleRows).toHaveLength(20);
+    expect(visibleRows).toHaveLength(10);
 
-    // Newest (team-025) and the boundary (team-006, 20th-newest) are visible.
+    // Newest (team-025) and the boundary (team-016, 10th-newest) are visible.
     expect(visibleRows).toContain("team-025");
-    expect(visibleRows).toContain("team-006");
-    // team-005 is the first one truncated; oldest (team-001) is also hidden.
-    expect(visibleRows).not.toContain("team-005");
+    expect(visibleRows).toContain("team-016");
+    // team-015 is the first one truncated; oldest (team-001) is also hidden.
+    expect(visibleRows).not.toContain("team-015");
     expect(visibleRows).not.toContain("team-001");
   });
 

@@ -491,7 +491,7 @@ describe(setupWorkspace, () => {
     expect(ensureClearanceMock).not.toHaveBeenCalled();
     const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
     expect(launchScript).toMatch(
-      /exec sbx exec -it (?:-e [A-Z_]+ )*-w '\/work\/repo-a-team-1' 'groundcrew-repo-a-claude' sh -lc/,
+      /exec sbx exec -it (?:-e [A-Z_]+ )*-w '\/work\/repo-a-team-1' 'groundcrew-claude' sh -lc/,
     );
     expect(launchScript).toContain("exec claude --permission-mode auto");
     expect(launchScript).not.toContain("safehouse-clearance");
@@ -511,7 +511,7 @@ describe(setupWorkspace, () => {
 
     expect(runCommandMock).toHaveBeenCalledWith(
       "sbx",
-      ["create", "--name", "groundcrew-repo-a-claude", "claude", "/work"],
+      ["create", "--name", "groundcrew-claude", "claude", "/work"],
       expect.any(Object),
     );
   });
@@ -524,7 +524,7 @@ describe(setupWorkspace, () => {
         codex: { cmd: "codex", color: "#000" },
       },
     });
-    mockSdxRun({ existingSandboxes: ["groundcrew-repo-a-claude"] });
+    mockSdxRun({ existingSandboxes: ["groundcrew-claude"] });
 
     await setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" });
 
@@ -552,7 +552,7 @@ describe(setupWorkspace, () => {
       [
         "create",
         "--name",
-        "groundcrew-repo-a-claude",
+        "groundcrew-claude",
         "--template",
         "node-22",
         "--kit",

@@ -3,7 +3,17 @@
   "config": {
     "MD013": false,
     "MD033": {
-      "allowed_elements": ["h1", "p", "img"],
+      "allowed_elements": [
+        "a",
+        "code",
+        "details",
+        "h1",
+        "img",
+        "p",
+        "picture",
+        "source",
+        "summary",
+      ],
     },
     "MD041": false,
   },

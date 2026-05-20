@@ -2,15 +2,15 @@ import { runCommandAsync } from "./commandRunner.ts";
 import type { SandboxDefinition } from "./config.ts";
 
 /**
- * Derive a deterministic sbx sandbox name from the repository + model
- * tuple so `crew sandbox auth <repo>` and the subsequent `crew local`
- * launch agree on which sandbox to target. Lowercased and reduced to the
- * sbx-safe charset (`a-z0-9.+-`) so unusual repo names still round-trip
- * cleanly. Keep the prefix stable — doctor and teardown use it to
+ * Derive a deterministic sbx sandbox name from the sbx agent so every
+ * groundcrew model that targets the same agent reuses one sandbox across
+ * repositories and tickets. Lowercased and reduced to the sbx-safe
+ * charset (`a-z0-9.+-`) so unusual agent names still round-trip cleanly.
+ * Keep the `groundcrew-` prefix stable — doctor and teardown use it to
  * identify groundcrew-owned sandboxes.
  */
-export function sandboxNameFor(arguments_: { repository: string; model: string }): string {
-  const raw = `groundcrew-${arguments_.repository}-${arguments_.model}`.toLowerCase();
+export function sandboxNameFor(arguments_: { agent: string }): string {
+  const raw = `groundcrew-${arguments_.agent}`.toLowerCase();
   return raw
     .replaceAll(/[^a-z0-9.+-]+/g, "-")
     .replaceAll(/-+/g, "-")

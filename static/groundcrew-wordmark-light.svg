@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 620 120" width="620" height="120" role="img" aria-label="groundcrew">
+  <style>
+    .wordmark {
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, "Liberation Mono", "DejaVu Sans Mono", monospace;
+      font-size: 92px;
+      font-weight: 700;
+      letter-spacing: -0.04em;
+    }
+  </style>
+  <text class="wordmark" x="20" y="92" textLength="540" lengthAdjust="spacingAndGlyphs" fill="#18181b">groundcrew</text>
+  <rect x="572" y="24" width="30" height="72" fill="#77d94e">
+    <animate attributeName="opacity" values="1;0" dur="1.2s" calcMode="discrete" keyTimes="0;0.5" repeatCount="indefinite"/>
+  </rect>
+</svg>

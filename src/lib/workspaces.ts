@@ -294,16 +294,20 @@ async function closeCmuxWorkspace(workspaceId: string, signal?: AbortSignal): Pr
   await runWorkspaceCommand("cmux", ["close-workspace", "--workspace", workspaceId], signal);
 }
 
+function isCmuxSetStatusUnsupported(error: unknown): boolean {
+  return errorMessage(error).includes('unknown command "set-status"');
+}
+
 const cmuxAdapter: Adapter = {
   async open(spec, signal) {
     const inheritedRemote = await probeCurrentCmuxRemote(signal);
     const newWorkspaceArguments = ["--json", "new-workspace", "--name", spec.name];
     if (inheritedRemote === undefined) {
-      newWorkspaceArguments.push("--working-directory", spec.cwd, "--command", spec.command);
+      newWorkspaceArguments.push("--cwd", spec.cwd, "--command", spec.command);
     } else {
-      // Skip --working-directory: the path is on the SSH remote and would
-      // fall back to $HOME (macOS) when cmux tries to chdir locally. The
-      // wrapped ssh command does its own `cd` on the remote side.
+      // Skip --cwd: the path is on the SSH remote and would fall back to
+      // $HOME (macOS) when cmux tries to chdir locally. The wrapped ssh
+      // command does its own `cd` on the remote side.
       newWorkspaceArguments.push("--command", buildSshWrappedCommand(spec, inheritedRemote));
     }
     const output = await runWorkspaceCommand("cmux", newWorkspaceArguments, signal);
@@ -318,10 +322,12 @@ const cmuxAdapter: Adapter = {
       try {
         await applyCmuxStatus(workspaceId, spec.status, signal);
       } catch (error) {
-        // v2 cmux builds may not implement `set-status`; status pills are
-        // a nice-to-have, not load-bearing. Log and keep the workspace
-        // rather than tearing down a successful launch.
-        log(`cmux set-status failed for ${spec.name} (continuing): ${errorMessage(error)}`);
+        // Status pills are best-effort. cmux v2+ dropped `set-status` entirely,
+        // so swallow that specific gap silently; surface anything else so a real
+        // regression doesn't hide behind the same swallow.
+        if (!isCmuxSetStatusUnsupported(error)) {
+          log(`cmux set-status failed for ${spec.name} (continuing): ${errorMessage(error)}`);
+        }
       }
     }
   },

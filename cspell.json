@@ -23,6 +23,7 @@
     "cmux",
     "codegen",
     "codexbar",
+    "Consolas",
     "commandrunner",
     "datadoghq",
     "depcruise",
@@ -38,6 +39,7 @@
     "launchcommand",
     "lockfiles",
     "maxtimeout",
+    "Menlo",
     "Metabase",
     "mintimeout",
     "mktemp",
@@ -78,6 +80,7 @@
     "unstub",
     "venv",
     "vitest",
+    "wordmark",
     "worktree",
     "worktrees"
   ]

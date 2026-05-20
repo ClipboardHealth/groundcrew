@@ -4,8 +4,11 @@ import type { RunCommandOptions } from "./commandRunner.ts";
 import type { ResolvedConfig, WorkspaceKindSetting } from "./config.ts";
 import type * as hostModule from "./host.ts";
 import { detectHostCapabilities, type HostCapabilities } from "./host.ts";
+import { log } from "./util.ts";
 import type * as utilModule from "./util.ts";
 import { resolveWorkspaceKind, workspaces } from "./workspaces.ts";
+
+const logMock = vi.mocked(log);
 
 type RunCommandMock = (
   command: string,
@@ -117,7 +120,7 @@ describe("workspaces.open (cmux)", () => {
       "new-workspace",
       "--name",
       "TEAM-1",
-      "--working-directory",
+      "--cwd",
       "/work/repo-a-TEAM-1",
       "--command",
       "exec claude",
@@ -279,7 +282,7 @@ describe("workspaces.open (cmux)", () => {
     ]);
   });
 
-  it("does not wrap or pass --working-directory when no SSH remote is detected", async () => {
+  it("does not wrap with ssh and passes --cwd when no SSH remote is detected", async () => {
     runMock.mockReturnValueOnce(JSON.stringify({ workspace_id: "new-ws-id" })).mockReturnValue("");
 
     await workspaces.open(makeConfig(), {
@@ -293,7 +296,7 @@ describe("workspaces.open (cmux)", () => {
       "new-workspace",
       "--name",
       "TEAM-1",
-      "--working-directory",
+      "--cwd",
       "/work/repo-a-TEAM-1",
       "--command",
       "exec claude",
@@ -381,7 +384,7 @@ describe("workspaces.open (cmux)", () => {
       "new-workspace",
       "--name",
       "TEAM-1",
-      "--working-directory",
+      "--cwd",
       "/srv/x",
       "--command",
       "exec claude",
@@ -406,6 +409,30 @@ describe("workspaces.open (cmux)", () => {
     ).resolves.toBeUndefined();
 
     expect(runMock).not.toHaveBeenCalledWith("cmux", expect.arrayContaining(["close-workspace"]));
+    expect(logMock).toHaveBeenCalledWith(expect.stringContaining("cmux set-status failed"));
+  });
+
+  it("silently swallows set-status when the cmux build reports `unknown command`", async () => {
+    runMock
+      .mockReturnValueOnce(JSON.stringify({ ref: "workspace:42" }))
+      .mockImplementationOnce(() => {
+        throw new Error(
+          'Command failed: cmux set-status model claude\nExit status: 2\nStderr:\ncmux: unknown command "set-status"\nCause: Command exited unsuccessfully',
+        );
+      })
+      .mockReturnValue("");
+
+    await expect(
+      workspaces.open(makeConfig(), {
+        name: "TEAM-1",
+        cwd: "/cwd",
+        command: "x",
+        status: { text: "claude" },
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(runMock).not.toHaveBeenCalledWith("cmux", expect.arrayContaining(["close-workspace"]));
+    expect(logMock).not.toHaveBeenCalledWith(expect.stringContaining("set-status"));
   });
 
   it("caches the resolved adapter per config so detectHostCapabilities is not re-run", async () => {

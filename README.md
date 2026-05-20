@@ -1,9 +1,48 @@
-<h1 align="center">groundcrew</h1>
 <p align="center">
-  <img alt="Groundcrew logo." height="250px" src="./static/groundcrew.svg">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./static/groundcrew-wordmark-dark.svg">
+    <img alt="groundcrew" src="./static/groundcrew-wordmark-light.svg" height="96">
+  </picture>
 </p>
 
-Watch a Linear project and farm out ready tickets to coding-agent CLIs running in workspaces backed by git worktrees. Workspaces are [`cmux`](https://github.com/clayton-cole/cmux) panes or `tmux` windows.
+<p align="center">
+  Dispatch your Linear backlog to AI coding agents. One git worktree per ticket, sandboxed by default.
+</p>
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/@clipboard-health/groundcrew"><img alt="npm" src="https://img.shields.io/npm/v/@clipboard-health/groundcrew?style=flat-square&label=npm&color=77d94e&labelColor=18181b"></a>
+  <a href="https://www.npmjs.com/package/@clipboard-health/groundcrew"><img alt="downloads" src="https://img.shields.io/npm/dw/@clipboard-health/groundcrew?style=flat-square&label=downloads&color=18181b&labelColor=18181b"></a>
+  <a href="https://github.com/ClipboardHealth/groundcrew/actions/workflows/ci.yml"><img alt="ci" src="https://img.shields.io/github/actions/workflow/status/ClipboardHealth/groundcrew/ci.yml?style=flat-square&label=ci&color=77d94e&labelColor=18181b"></a>
+  <a href="./LICENSE"><img alt="license" src="https://img.shields.io/npm/l/@clipboard-health/groundcrew?style=flat-square&label=license&color=18181b&labelColor=18181b"></a>
+</p>
+
+```text
+$ crew doctor --ticket HRD-446
+groundcrew doctor --ticket HRD-446 (Add retry logic to the sync job)
+────────────────────────────────────────────────────────────────────
+
+Resolution
+  [ok] Ticket exists in Linear ("Add retry logic to the sync job")
+  [ok] Status is Todo
+  [ok] Has agent-* label (agent-claude)
+  [ok] Model resolves from agent-* label (model "claude")
+  [ok] Description mentions known repo (owner/repo)
+  [ok] Resolved repo is cloned locally (/dev/workspaces/owner/repo)
+
+Eligibility
+  [ok] No active blockers
+  [ok] Model "claude" usage under sessionLimitPercentage (12% (limit 85%))
+  [ok] In-progress cap not hit (2/4 used)
+
+→ would be dispatched on next tick
+```
+
+## Why
+
+- **Linear-native.** Polls a project, respects `agent-*` labels, honors blockers.
+- **One worktree per ticket.** Agents work in parallel without stepping on each other.
+- **Local-first sandboxing.** Safehouse on macOS, Docker Sandboxes on Linux, or an explicit `none` escape hatch.
+- **Multi-agent.** Ships with `claude` and `codex`; bring your own CLI by dropping a definition into `config.ts`.
 
 ## Install
 
@@ -11,20 +50,17 @@ Watch a Linear project and farm out ready tickets to coding-agent CLIs running i
 npm install -g @clipboard-health/groundcrew
 ```
 
-This installs the `crew` binary. `@clipboard-health/clearance` is pulled in transitively and provides the `clearance` / `clearance-ensure` bins used by local Safehouse execution.
+Installs the `crew` binary. `@clipboard-health/clearance` is pulled in transitively and provides the `clearance` / `clearance-ensure` bins used by Safehouse runs.
 
 ## Quickstart
 
-1. **Install prereqs.** Node 24, `git`, `cmux` _or_ `tmux`, and the agent CLIs themselves (`claude`, `codex`, `cursor-agent`, ...). Pick a local isolation backend below depending on platform and what the agent needs to do. Optional: `codexbar` for session-usage gating. The `workspaceKind` config key picks the workspace backend (`auto` resolves to cmux when installed, else tmux).
-   - **`safehouse`** (macOS default) — [Safehouse](https://agent-safehouse.dev/) on `PATH`. The fastest local backend; cannot safely give the agent Docker.
-   - **`sdx`** (Linux default, macOS opt-in) — [Docker Sandboxes](https://docs.docker.com/sandboxes/) (`sbx`) on `PATH`. Required when a ticket needs the agent to use Docker (`docker build`, `docker run`, integration tests). Each model that should run under sdx needs a `sandbox: { agent: "<sbx-agent>" }` block in `config.ts` so groundcrew knows which sbx agent to address.
-   - **`none`** — explicit unsandboxed escape hatch. Never picked implicitly; `crew doctor` warns when it is configured.
+1. **Install prereqs.** Node 24, `git`, `cmux` _or_ `tmux`, and the agent CLIs themselves (`claude`, `codex`, `cursor-agent`, …). Optional: `codexbar` for session-usage gating.
 
-   Groundcrew resolves `local.runner` per platform: macOS → `safehouse`, Linux/WSL → `sdx`. Set `local.runner` to `"safehouse" | "sdx" | "none"` to override; leave at `"auto"` for the platform default.
+2. **Pick an isolation runner.** See [Runners](#runners) — `auto` resolves to `safehouse` on macOS and `sdx` on Linux/WSL.
 
-2. **Create a Linear project to scope your work.** Any team works — make a project inside it and drop tickets in. The orchestrator polls by project, not by team, so you don't need a dedicated team.
+3. **Create a Linear project to scope your work.** Any team works — make a project inside it and drop tickets in. The orchestrator polls by project, not by team.
 
-3. **Create your config.** Copy the shipped example into the XDG config path and edit it:
+4. **Configure.** Copy the shipped example into XDG config and edit:
 
    ```bash
    mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew"
@@ -33,74 +69,91 @@ This installs the `crew` binary. `@clipboard-health/clearance` is pulled in tran
    $EDITOR "${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/config.ts"
    ```
 
-   At minimum set `linear.projectSlug` (paste the trailing segment of your Linear project URL, e.g. `ai-strategy-5152195762f3`), `workspace.projectDir`, and `workspace.knownRepositories`. Everything else has a default.
+   Set `linear.projectSlug` (paste the trailing slug of your Linear project URL, e.g. `ai-strategy-5152195762f3`), `workspace.projectDir`, and `workspace.knownRepositories`. Defaults cover everything else.
 
-   Create `workspace.projectDir` if it does not exist, and clone each repo in `workspace.knownRepositories` into `<projectDir>/<repo>` before the first `crew run`. Groundcrew creates per-ticket worktrees from these clones; it does not auto-clone. Use the literal `knownRepositories` string as the path under `projectDir` — `"owner/repo"` lives at `<projectDir>/owner/repo`, bare `"repo"` lives at `<projectDir>/repo`.
-
-   ```bash
-   mkdir -p ~/dev/groundcrew-workspaces
-   gh repo clone owner/repo ~/dev/groundcrew-workspaces/owner/repo
-   ```
-
-   Or let `crew` clone every missing `owner/repo` entry for you using your `gh` login:
+   Then clone each repo before the first `crew run` — groundcrew creates per-ticket worktrees from these clones, it does not auto-clone:
 
    ```bash
-   crew setup repos              # clone all missing entries
-   crew setup repos --dry-run    # preview what would be cloned
+   crew setup repos              # clone all missing entries via gh
+   crew setup repos --dry-run    # preview
    crew setup repos owner/repo   # restrict to one entry
    ```
 
-   `crew setup repos` is idempotent — already-cloned repos are reported `[exists]` and untouched. Bare-name entries (no `owner/`) are skipped with an instruction to clone manually, since groundcrew can't safely guess the org. The command fails fast with an install hint when `gh` is not on `PATH`.
+   `crew setup repos` is idempotent; already-cloned repos report `[exists]`. Bare-name entries (no `owner/`) are skipped — clone them manually into `<projectDir>/<name>`.
 
-   `crew` resolves the config path as: `GROUNDCREW_CONFIG` if set → `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/config.ts` if it exists → a `config.ts` sitting next to `crew`'s own source files (only useful from a local checkout; see [Hacking on groundcrew](#hacking-on-groundcrew)). Set `GROUNDCREW_CONFIG` only when you want to override the XDG location.
-
-4. **Provide a Linear API key.** `crew` reads the key from `GROUNDCREW_LINEAR_API_KEY` first, then falls back to `LINEAR_API_KEY`. Prefer `GROUNDCREW_LINEAR_API_KEY` so the value does not clash with other tools that consume `LINEAR_API_KEY`. Any mechanism works — shell export, [direnv](https://direnv.net/), a `.env` file you `source`, or piping through `op run` if you store the credential in 1Password:
+5. **Export a Linear API key.** `crew` reads `GROUNDCREW_LINEAR_API_KEY` first, then falls back to `LINEAR_API_KEY`.
 
    ```bash
-   # Direct
    export GROUNDCREW_LINEAR_API_KEY="lin_api_..."
-   crew doctor
+   ```
 
-   # Via 1Password CLI (`op`), if you keep the key in a vault
+   <details>
+   <summary>Using 1Password (<code>op</code>) for the key</summary>
+
+   ```bash
    echo "GROUNDCREW_LINEAR_API_KEY='op://<vault>/LINEAR_API_KEY/credential'" > .env.1password
    op run --env-file .env.1password -- crew doctor
    ```
 
-   `LINEAR_API_KEY` continues to work for existing setups; if both variables are set, `GROUNDCREW_LINEAR_API_KEY` wins.
+   </details>
 
-5. **Prepare the runner and agent auth.** Groundcrew uses a `cmux` or `tmux` workspace hosting the resolved local backend (`safehouse`, `sdx`, or `none`) plus locally authenticated agent CLIs. Setup fails fast when the resolved backend's binary or platform requirement is missing — `safehouse` requires macOS + `safehouse` on PATH; `sdx` requires macOS or Linux + `sbx` on PATH. `models.isolation` and per-model `isolation` are legacy keys and fail config validation. Per-model `sandbox` blocks are accepted again and used by the `sdx` runner.
-
-   For sdx, sandboxes are created automatically on first launch. Groundcrew names them deterministically as `groundcrew-<repository>-<model>`, probes `sbx ls`, and runs `sbx create [--template ...] [--kit ...] <agent> <projectDir>` when missing — `projectDir` is the mount so every per-ticket worktree (created as a sibling of the bare clone) is visible inside the sandbox. First-time agent auth happens inside the sandbox the first time the agent runs via `sbx exec`. To bootstrap manually instead, run `sbx create --name groundcrew-<repo>-<model> <agent> <projectDir>` once.
-
-6. **Set the clearance allowlist for local Safehouse runs.** Only applies when `local.runner` resolves to `safehouse`. Groundcrew starts `clearance` from `@clipboard-health/clearance` on `http://127.0.0.1:19999` (skipping the launch if something is already listening) and runs the agent through the bundled `safehouse-clearance` wrapper. Clearance refuses to start without an allowlist — see [its README](https://github.com/ClipboardHealth/core-utils/tree/main/packages/clearance) for the proxy's env vars, log paths, and DNS rules. The shortest path is to set the env before `crew run`:
+6. **Run.**
 
    ```bash
-   CLEARANCE_ALLOW_HOSTS="api.openai.com,auth.openai.com,api.anthropic.com,mcp.linear.app,api.linear.app" \
-   crew run --watch
+   crew doctor                    # check setup
+   crew run --dry-run             # preview without provisioning
+   crew run --watch               # poll forever
    ```
 
-   Groundcrew also ships a starter allowlist file covering model APIs, Linear, Notion, Slack, Datadog, GitHub, npm, and common dev tooling at `$(npm root -g)/@clipboard-health/groundcrew/clearance-allow-hosts`. Point clearance at it (and optionally a personal file) via `CLEARANCE_ALLOW_HOSTS_FILES`:
+## Runners
 
-   ```bash
-   CLEARANCE_ALLOW_HOSTS_FILES="$(npm root -g)/@clipboard-health/groundcrew/clearance-allow-hosts:$HOME/.config/clearance/personal-allow-hosts" \
-   crew run --watch
-   ```
+`local.runner` picks the local isolation backend. `auto` resolves per platform.
 
-   Watch `${XDG_CACHE_HOME:-$HOME/.cache}/clearance/clearance.log` for `DENY` lines and add only the domains your agents actually need.
+| Runner      | Default on  | Backend                                                                                                  |
+| ----------- | ----------- | -------------------------------------------------------------------------------------------------------- |
+| `safehouse` | macOS       | [Safehouse](https://agent-safehouse.dev/) — fastest local; cannot safely give the agent Docker.          |
+| `sdx`       | Linux / WSL | [Docker Sandboxes](https://docs.docker.com/sandboxes/) (`sbx`) — required when the agent needs `docker`. |
+| `none`      | —           | Unsandboxed escape hatch. Never picked implicitly; doctor warns when configured.                         |
 
-7. **Run.** Doctor first, then a dry run, then the real thing:
+For `sdx`: each model that runs under it needs a `sandbox: { agent: "<sbx-agent>" }` block in `config.ts`. Groundcrew names sandboxes `groundcrew-<agent>` (e.g. `groundcrew-claude`) and reuses one sandbox per agent across repos and tickets. First-time agent auth happens inside the sandbox the first time it launches. To bootstrap manually instead, run `sbx create --name groundcrew-<agent> <agent> <projectDir>` once.
 
-   ```bash
-   crew doctor
-   crew doctor --ticket TEAM-123
-   crew run --dry-run
-   crew run            # one-shot
-   crew run --watch    # poll forever
-   ```
+<details>
+<summary>Safehouse clearance allowlist</summary>
 
-## Config reference
+Only applies when `local.runner` resolves to `safehouse`. Groundcrew starts `clearance` on `http://127.0.0.1:19999` and runs the agent through the bundled `safehouse-clearance` wrapper. Clearance refuses to start without an allowlist — see [its README](https://github.com/ClipboardHealth/core-utils/tree/main/packages/clearance) for proxy env vars, log paths, and DNS rules. Shortest path:
 
-Required fields are marked **required**; everything else has a default and can be omitted from `config.ts`.
+```bash
+CLEARANCE_ALLOW_HOSTS="api.openai.com,auth.openai.com,api.anthropic.com,mcp.linear.app,api.linear.app" \
+crew run --watch
+```
+
+Groundcrew ships a starter file covering model APIs, Linear, Notion, Slack, Datadog, GitHub, npm, and common dev tooling at `$(npm root -g)/@clipboard-health/groundcrew/clearance-allow-hosts`. Point clearance at it (and optionally a personal file) via `CLEARANCE_ALLOW_HOSTS_FILES`:
+
+```bash
+CLEARANCE_ALLOW_HOSTS_FILES="$(npm root -g)/@clipboard-health/groundcrew/clearance-allow-hosts:$HOME/.config/clearance/personal-allow-hosts" \
+crew run --watch
+```
+
+Watch `${XDG_CACHE_HOME:-$HOME/.cache}/clearance/clearance.log` for `DENY` lines and add only the domains your agents actually need.
+
+</details>
+
+## Configuration
+
+Three keys are required; everything else has a default.
+
+| Key                           | What                                                                       |
+| ----------------------------- | -------------------------------------------------------------------------- |
+| `linear.projectSlug`          | Trailing slug of the Linear project URL (e.g. `ai-strategy-5152195762f3`). |
+| `workspace.projectDir`        | Parent dir for cloned repos and sibling ticket worktrees.                  |
+| `workspace.knownRepositories` | Repos searched for in ticket descriptions to infer where work belongs.     |
+
+`crew` resolves config as: `GROUNDCREW_CONFIG` if set → `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/config.ts` if it exists → a `config.ts` next to `crew`'s own source (only useful from a local checkout). The branch prefix (`<prefix>-<TICKET>`) is derived from `os.userInfo().username` — not configurable.
+
+Agent selection uses Linear labels: `agent-claude`, `agent-codex`, `agent-<name>`. `crew run` without `--ticket` only fetches tickets carrying an `agent-*` label — the GraphQL query filters server-side, so unlabeled tickets are never returned by Linear and do not appear on the board. Use `crew run --ticket <TICKET>` to provision an unlabeled ticket on demand (falls back to `models.default`). `agent-any` routes to the model with the most available session capacity. Todo tickets blocked by non-terminal blockers are skipped until their blockers reach a terminal status.
+
+<details>
+<summary>Full reference table</summary>
 
 | Key                                     | Default             | What it does                                                                                                                                                                                                                                                                              |
 | --------------------------------------- | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -122,17 +175,18 @@ Required fields are marked **required**; everything else has a default and can b
 | `models.definitions.<name>.color`       | —                   | Color for the workspace status pill (cmux only; tmux silently drops it).                                                                                                                                                                                                                  |
 | `models.definitions.<name>.usage`       | optional            | If set, codexbar usage is fetched for this model and gated by `sessionLimitPercentage`. Omit to never gate. When `usage.codexbar.source` is omitted, groundcrew uses `auto` on macOS and `cli` elsewhere.                                                                                 |
 | `models.definitions.<name>.sandbox`     | optional            | Docker Sandboxes binding for the model. Required at launch when `local.runner` resolves to `sdx`. Fields: `agent` (required sbx agent name), `template`, `kits`, `setupCommand` (override for the inside-sandbox setup script).                                                           |
-| `models.definitions.<name>.disabled`    | optional            | When set to exactly `true`, drops the named shipped default (`claude` or `codex`). Doctor skips probing it; `agent-<name>` labels fall back to `models.default` with a warning. See "Disabling a shipped default" below.                                                                  |
+| `models.definitions.<name>.disabled`    | optional            | When set to exactly `true`, drops the named shipped default (`claude` or `codex`). Doctor skips probing it; `agent-<name>` labels fall back to `models.default` with a warning.                                                                                                           |
 | `prompts.initial`                       | (template)          | First message sent to the agent. Placeholders: `{{ticket}}`, `{{worktree}}`, `{{title}}`, `{{description}}`.                                                                                                                                                                              |
-| `workspaceKind`                         | `"auto"`            | Terminal session manager. `"auto"` picks `cmux` when on PATH, else `tmux`. Set to `"cmux"` or `"tmux"` to fail loudly when the chosen backend is missing. tmux windows live in a dedicated `groundcrew` session.                                                                          |
-| `local.runner`                          | `"auto"`            | Local isolation backend. `"auto"` resolves to `safehouse` on macOS and `sdx` on Linux/WSL. Explicit values: `"safehouse"`, `"sdx"`, `"none"`. `"none"` is never picked implicitly — doctor warns when it is configured.                                                                   |
-| `logging.file`                          | XDG state path      | Append-mode log file destination. `log()` / `logEvent()` tee here in addition to stdout, so a vanished workspace doesn't take the evidence with it. Defaults to `${XDG_STATE_HOME:-$HOME/.local/state}/groundcrew/groundcrew.log`.                                                        |
+| `workspaceKind`                         | `"auto"`            | Terminal session manager. `"auto"` picks `cmux` when on PATH, else `tmux`. Set to `"cmux"` or `"tmux"` to fail loudly when the chosen backend is missing.                                                                                                                                 |
+| `local.runner`                          | `"auto"`            | Local isolation backend. `"auto"` → `safehouse` on macOS, `sdx` on Linux/WSL. Explicit: `"safehouse"`, `"sdx"`, `"none"`. `"none"` is never picked implicitly.                                                                                                                            |
+| `logging.file`                          | XDG state path      | Append-mode log file. `log()` / `logEvent()` tee here in addition to stdout. Defaults to `${XDG_STATE_HOME:-$HOME/.local/state}/groundcrew/groundcrew.log`.                                                                                                                               |
 
-The branch prefix (`<prefix>-<TICKET>`) is derived from your OS username (`os.userInfo().username`), not configured. Agent selection looks for a top-level Linear label named `agent-<model>` (e.g. `agent-claude`, `agent-codex`). **`crew run` without `--ticket` only fetches tickets with an `agent-*` label** — the GraphQL query filters them server-side, so unlabeled tickets are never returned by Linear's API and do not appear in the rendered board. Use `crew run --ticket <TICKET>` to provision an unlabeled ticket on demand (manual setup falls back to `models.default`). The reserved label `agent-any` routes the ticket to the configured model with the most available session capacity (lowest codexbar session-used percent), skipping any model already over `sessionLimitPercentage`. With no usage data, `agent-any` resolves to `models.default`. The name `any` cannot be used in `models.definitions`. Todo tickets blocked by Linear issues that are not in `linear.statuses.terminal` are skipped until their blockers reach a terminal status.
+</details>
 
-### Disabling a shipped default
+<details>
+<summary>Disabling a shipped default</summary>
 
-Groundcrew ships `claude` and `codex` as default model definitions, additively merged into every resolved config. If you only ever route work through one of them, set `disabled: true` on the other so doctor stops probing for the unused CLI:
+Groundcrew ships `claude` and `codex` as default model definitions, additively merged into every resolved config. To stop probing one:
 
 ```ts
 // config.ts
@@ -151,14 +205,16 @@ Effects:
 
 - `crew doctor` does not probe the disabled model's CLI. `crew doctor || exit 1` becomes viable as a CI gate when you only have one agent installed.
 - `agent-any` only resolves to enabled models.
-- An `agent-<disabled>` label on a ticket (e.g. `agent-codex` after disabling codex) falls back to `models.default` with a warning in the log, so the ticket still runs and you can see the mismatch.
+- An `agent-<disabled>` label on a ticket falls back to `models.default` with a warning in the log.
 
 Rules:
 
-- `disabled` only accepts shipped-default keys (`claude`, `codex`). A typo on the key fails loudly at config load instead of silently disabling nothing.
+- `disabled` only accepts shipped-default keys (`claude`, `codex`). A typo fails loudly at config load.
 - `disabled` must be exactly the boolean `true`.
-- It cannot be combined with `cmd`, `color`, or `usage` in the same entry — disable a model or override its fields, not both.
+- It cannot be combined with `cmd`, `color`, or `usage` in the same entry.
 - `models.default` must point at an enabled model.
+
+</details>
 
 ## Per-repo setup hook
 
@@ -211,52 +267,23 @@ For a more comprehensive real-world example (nvm bootstrap, hash-based skip-on-n
 
 To have a coding agent (Claude Code, Cursor, etc.) scaffold `.groundcrew/setup.sh` for a repo you're onboarding, see [docs/setup-hook-agent-prompt.md](./docs/setup-hook-agent-prompt.md) — it encodes the contract above as a copy-pasteable prompt.
 
-## Manual commands
+## Commands
 
 ```bash
-crew doctor --ticket <TICKET>
-crew run --ticket <TICKET>
+crew doctor                        # full setup check
+crew doctor --ticket <TICKET>      # diagnose one ticket
+crew run                           # one-shot dispatch
+crew run --watch                   # poll forever
+crew run --ticket <TICKET>         # provision one ticket and exit
 crew setup repos [--dry-run] [<repo>...]
-crew cleanup <TICKET>
+crew cleanup <TICKET>              # tear down every worktree carrying this ticket
 ```
 
-`crew doctor --ticket <TICKET>` diagnoses one Linear ticket without provisioning it. It checks the same resolution inputs that decide whether the orchestrator can see the ticket — Todo status, `agent-*` label, model resolution, repository mention, local clone — then checks blockers, model session usage, and available in-progress capacity.
-
-`crew run --ticket <TICKET>` provisions a single ticket the same way the orchestrator would: the repo is parsed from the ticket's Linear description and the model comes from the ticket's `agent-*` label (manual setup falls back to `models.default` for unlabeled tickets). If the description does not mention a repo from `workspace.knownRepositories`, setup fails before provisioning. `--watch` and `--ticket` are mutually exclusive — `--watch` drives the orchestrator loop; `--ticket` provisions one ticket and exits. `crew cleanup <TICKET>` resolves to every tracked worktree carrying that ticket id (across repos) and tears them all down. To inspect codexbar session windows directly, run `codexbar usage`; the orchestrator already gates on this internally via `orchestrator.sessionLimitPercentage`.
+`--watch` and `--ticket` are mutually exclusive. To inspect codexbar session windows directly, run `codexbar usage`.
 
 ### `crew doctor --ticket <ticket>`
 
-Diagnose why a ticket would or wouldn't be dispatched on the next orchestrator tick. Runs the same resolution and eligibility chain as the dispatcher, but for a single ticket, and prints a tree of pass/fail checks.
-
-```bash
-crew doctor --ticket HRD-446
-```
-
-Exits 0 if the ticket would dispatch, 1 otherwise. Useful when you've labelled a ticket with `agent-claude` and it doesn't show up on the board.
-
-Example output for a ticket that would dispatch:
-
-```text
-groundcrew doctor --ticket HRD-446 (Add retry logic to the sync job)
-────────────────────────────────────────────────────────────────────
-
-Resolution
-  [ok] Ticket exists in Linear ("Add retry logic to the sync job")
-  [ok] Status is Todo
-  [ok] Has agent-* label (agent-claude)
-  [ok] Model resolves from agent-* label (model "claude")
-  [ok] Description mentions known repo (owner/repo)
-  [ok] Resolved repo is cloned locally (/dev/workspaces/owner/repo)
-
-Eligibility
-  [ok] No active blockers
-  [ok] Model "claude" usage under sessionLimitPercentage (12% (limit 85%))
-  [ok] In-progress cap not hit (2/4 used)
-
-→ would be dispatched on next tick
-```
-
-Example output for a ticket that's not in the Todo status:
+Diagnose why a ticket would or wouldn't be dispatched on the next tick. Runs the same resolution and eligibility chain as the dispatcher. Exits 0 if the ticket would dispatch, 1 otherwise. The hero above shows a passing run; here's a failing one:
 
 ```text
 groundcrew doctor --ticket HRD-447 (Refactor auth middleware)
@@ -276,27 +303,111 @@ Eligibility
 → ineligible: status is In Progress (need Todo)
 ```
 
-## Gotchas
+## Troubleshooting
 
-- **Ticket labeled but not on the board?** Run `crew doctor --ticket <ticket>` — it lists every check the dispatcher runs and flags the failing one.
-- **Local execution picks one of safehouse/sdx/none.** `local.runner: "auto"` resolves to `safehouse` on macOS and `sdx` (Docker Sandboxes) on Linux/WSL. Override with `local.runner: "safehouse" | "sdx" | "none"`. There is no per-model `isolation` knob anymore — the runner is global. `sdx` requires a per-model `sandbox: { agent }` block so groundcrew can map the model to an sbx agent.
-- **Safehouse-already-wrapped commands are not re-wrapped.** If a `models.definitions.<name>.cmd` already starts with `safehouse`, groundcrew assumes that command owns its Safehouse flags and does not add the `safehouse-clearance` wrapper a second time. Changing the proxy's allowlist after it's running requires killing the PID in `${XDG_CACHE_HOME:-$HOME/.cache}/clearance/clearance.pid` so the next launch picks up the new env.
-- **Sandbox lifecycle is create-only.** Groundcrew auto-creates the sandbox for a `<repository, model>` pair when missing, but never deletes one — sandboxes persist across tickets and across `crew cleanup`. Auth state lives inside the sandbox, so deleting it forces a re-login. Inspect or remove them manually with `sbx ls` / `sbx rm`.
-- **Dead tmux windows vanish by default.** When a wrapped agent command fails (e.g. `safehouse-clearance` not found, `npm install` crash), the tmux window closes immediately and the error scrolls into the void. Set `GROUNDCREW_KEEP_DEAD_WINDOWS=1` (any non-empty value works) in the env you launch `crew` from to flip the per-window `remain-on-exit` to `on`; the window stays open with the error visible. Close it manually with `tmux kill-window -t groundcrew:<ticket>` after diagnosis. tmux backend only.
-- **Status names matter.** If your team uses `Started` instead of `In Progress`, set `linear.statuses.inProgress = "Started"`.
-- **Leaf-only.** Parent issues with children are ignored — sub-issues are the work items.
-- **Tickets stay in the in-progress status until something else moves them.** Groundcrew sets a ticket to `inProgress` when it provisions a workspace and never advances it. The next transition (typically "in review" when a PR opens) is left to your team's Linear automation rules.
-- **Project must be on a single Linear team in practice.** Cross-team projects work — the orchestrator caches the in-progress state ID per team — but every team in the project must use the same status name for `linear.statuses.inProgress`.
-- **Claude launches in bypass-permissions mode by default.** Groundcrew creates isolated per-ticket worktrees for unattended runs, so the shipped `claude` command is `claude --permission-mode bypassPermissions` to avoid workspace-trust and tool-permission prompts blocking automation. Override `models.definitions.claude.cmd` if you want a stricter mode.
-- **Doctor's command introspection is shallow.** Doctor reports the resolved local runner (safehouse / sdx / none) and whether its prerequisites are met, then tokenizes model `cmd` and checks the first two non-flag tokens against PATH (so `safehouse claude --foo` checks both `safehouse` and `claude`). Boolean flags without values, env-var assignments (`FOO=1`), shell pipelines, and subshells are not parsed — verify those manually. In particular, `npx -y claude` and `env FOO=1 claude` only check the wrapper, not the wrapped CLI. When `local.runner` is `"none"`, doctor surfaces a single WARNING line so the unsandboxed launch is visible at a glance.
-- **Doctor checks every enabled model, including shipped defaults you didn't disable.** `models.definitions` includes both shipped defaults (`claude`, `codex`) by default via additive merge. If you only intend to label tickets `agent-claude` and don't have `codex` installed, set `models.definitions.codex: { disabled: true }` (see "Disabling a shipped default" under "Config reference"). Without that, doctor exits non-zero on a missing `codex` binary even though `crew run` would never route to it.
-- **Switch to tmux if cmux is misbehaving.** Set `workspaceKind: "tmux"` to force the tmux backend when cmux's CLI/socket bridge is flaky (symptoms: `cmux --json list-workspaces` returning `Failed to write to socket (Broken pipe)` or `Socket not found at ...cmux.sock` on every tick). tmux is more reliable — just a unix socket, no GUI app — at the cost of losing cmux's status pills, notifications, and vertical-tab sidebar.
-- **Agent CLI must accept a positional prompt.** The handoff is `<your cmd> "<prompt>"`. `claude`, `codex`, and `cursor-agent` all support this.
-- **`crew setup repos` only auto-clones `owner/repo` entries.** Bare-name entries in `workspace.knownRepositories` (e.g. `"api"` rather than `"clipboardhealth/api"`) are skipped with a hint to clone manually — the command refuses to guess the owner. After a partial setup, the exit code is non-zero so CI gates notice; rerun is idempotent once you clone the bare ones into `<projectDir>/<name>` yourself. Adding a new repo to `knownRepositories` later? Just rerun `crew setup repos`; already-present entries report `[exists]` and are untouched.
+First stop for "labeled but not on the board": `crew doctor --ticket <ticket>` lists every check the dispatcher runs and flags the failing one.
 
-## Hacking on groundcrew
+<details>
+<summary>Local execution picks one of safehouse / sdx / none</summary>
 
-For developers working on the package itself, clone this repo, run `npm install`, and the repo's `crew` / `crew:op` scripts execute groundcrew straight from TypeScript source — no build step. Package dependencies, including `@clipboard-health/clearance`, resolve through normal npm package exports.
+`local.runner: "auto"` resolves to `safehouse` on macOS and `sdx` (Docker Sandboxes) on Linux/WSL. Override with `local.runner: "safehouse" | "sdx" | "none"`. There is no per-model `isolation` knob — the runner is global. `sdx` requires a per-model `sandbox: { agent }` block so groundcrew can map the model to an sbx agent.
+
+</details>
+
+<details>
+<summary>Safehouse-already-wrapped commands are not re-wrapped</summary>
+
+If a `models.definitions.<name>.cmd` already starts with `safehouse`, groundcrew assumes that command owns its Safehouse flags and does not add the `safehouse-clearance` wrapper a second time. Changing the proxy's allowlist after it's running requires killing the PID in `${XDG_CACHE_HOME:-$HOME/.cache}/clearance/clearance.pid` so the next launch picks up the new env.
+
+</details>
+
+<details>
+<summary>Sandbox lifecycle is create-only</summary>
+
+Groundcrew auto-creates the sandbox for an sbx agent (`groundcrew-<agent>`) when missing, but never deletes one — sandboxes persist across tickets and across `crew cleanup`. Auth state lives inside the sandbox, so deleting it forces a re-login. Inspect or remove them manually with `sbx ls` / `sbx rm`.
+
+</details>
+
+<details>
+<summary>Dead tmux windows vanish by default</summary>
+
+When a wrapped agent command fails (e.g. `safehouse-clearance` not found, `npm install` crash), the tmux window closes immediately and the error scrolls into the void. Set `GROUNDCREW_KEEP_DEAD_WINDOWS=1` in the env you launch `crew` from to flip the per-window `remain-on-exit` to `on`; the window stays open with the error visible. Close it manually with `tmux kill-window -t groundcrew:<ticket>` after diagnosis. tmux backend only.
+
+</details>
+
+<details>
+<summary>Status names matter</summary>
+
+If your team uses `Started` instead of `In Progress`, set `linear.statuses.inProgress = "Started"`.
+
+</details>
+
+<details>
+<summary>Leaf-only</summary>
+
+Parent issues with children are ignored — sub-issues are the work items.
+
+</details>
+
+<details>
+<summary>Tickets stay in-progress until something else moves them</summary>
+
+Groundcrew sets a ticket to `inProgress` when it provisions a workspace and never advances it. The next transition (typically "in review" when a PR opens) is left to your Linear automation rules.
+
+</details>
+
+<details>
+<summary>Project must be on a single Linear team in practice</summary>
+
+Cross-team projects work — the orchestrator caches the in-progress state ID per team — but every team in the project must use the same status name for `linear.statuses.inProgress`.
+
+</details>
+
+<details>
+<summary>Claude launches in bypass-permissions mode by default</summary>
+
+Groundcrew creates isolated per-ticket worktrees for unattended runs, so the shipped `claude` command is `claude --permission-mode bypassPermissions` to avoid workspace-trust and tool-permission prompts blocking automation. Override `models.definitions.claude.cmd` for a stricter mode.
+
+</details>
+
+<details>
+<summary>Doctor's command introspection is shallow</summary>
+
+Doctor reports the resolved local runner (safehouse / sdx / none) and whether its prerequisites are met, then tokenizes model `cmd` and checks the first two non-flag tokens against PATH. Boolean flags without values, env-var assignments (`FOO=1`), shell pipelines, and subshells are not parsed — verify those manually. When `local.runner` is `"none"`, doctor surfaces a single WARNING line.
+
+</details>
+
+<details>
+<summary>Doctor checks every enabled model</summary>
+
+`models.definitions` includes both shipped defaults (`claude`, `codex`) by default via additive merge. If you only intend to label tickets `agent-claude` and don't have `codex` installed, set `models.definitions.codex: { disabled: true }` (see "Disabling a shipped default" above). Without that, doctor exits non-zero on a missing `codex` binary even though `crew run` would never route to it.
+
+</details>
+
+<details>
+<summary>Switch to tmux if cmux is misbehaving</summary>
+
+Set `workspaceKind: "tmux"` to force the tmux backend when cmux's CLI/socket bridge is flaky (symptoms: `cmux --json list-workspaces` returning `Failed to write to socket (Broken pipe)` or `Socket not found at ...cmux.sock` on every tick). tmux is more reliable — just a unix socket, no GUI app — at the cost of losing cmux's status pills, notifications, and sidebar.
+
+</details>
+
+<details>
+<summary>Agent CLI must accept a positional prompt</summary>
+
+The handoff is `<your cmd> "<prompt>"`. `claude`, `codex`, and `cursor-agent` all support this.
+
+</details>
+
+<details>
+<summary><code>crew setup repos</code> only auto-clones <code>owner/repo</code> entries</summary>
+
+Bare-name entries in `workspace.knownRepositories` (e.g. `"api"` rather than `"clipboardhealth/api"`) are skipped with a hint to clone manually — the command refuses to guess the owner. After a partial setup, the exit code is non-zero so CI gates notice; rerun is idempotent once you clone the bare ones into `<projectDir>/<name>` yourself.
+
+</details>
+
+## Development
+
+Clone the repo and the `crew` / `crew:op` scripts execute straight from TypeScript source — no build step needed.
 
 ```bash
 cd ~/dev/c/groundcrew
@@ -306,8 +417,12 @@ node --run crew -- doctor
 node --run crew:op -- run --watch
 ```
 
-Both forms read `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/config.ts` by default; set `GROUNDCREW_CONFIG` to point elsewhere. The `crew:op` wrapper additionally reads `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/op.env` (1Password env-file with `op://` references resolved at launch) — symlink it there if you keep yours elsewhere; the path is not configurable.
+Both forms read `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/config.ts` by default; set `GROUNDCREW_CONFIG` to point elsewhere. The `crew:op` wrapper additionally reads `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/op.env` (1Password env-file with `op://` references resolved at launch).
 
-Logs land in `${XDG_STATE_HOME:-$HOME/.local/state}/groundcrew/groundcrew.log` by default (override via `logging.file` in your config). The "Loaded config from …" line at startup tells you which config won.
+Logs land in `${XDG_STATE_HOME:-$HOME/.local/state}/groundcrew/groundcrew.log` by default (override via `logging.file`). The "Loaded config from …" line at startup tells you which config won.
 
-Source edits in `src/**` are picked up on the next invocation. Requires Node ≥ 24.3 (the version with native `.ts` type stripping enabled by default).
+Source edits in `src/**` are picked up on the next invocation. Requires Node ≥ 24.3 (native `.ts` type stripping).
+
+## License
+
+[MIT](./LICENSE)
