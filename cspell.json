@@ -21,6 +21,7 @@
     "clawpatch",
     "cmux",
     "codexbar",
+    "Consolas",
     "commandrunner",
     "datadoghq",
     "depcruise",
@@ -35,6 +36,7 @@
     "hostrule",
     "launchcommand",
     "maxtimeout",
+    "Menlo",
     "Metabase",
     "mintimeout",
     "mktemp",
@@ -67,6 +69,7 @@
     "tsgolint",
     "unstub",
     "vitest",
+    "wordmark",
     "worktree",
     "worktrees"
   ]
