@@ -112,7 +112,7 @@ describe(getUsageByModel, () => {
     vi.clearAllMocks();
   });
 
-  it("defaults CodexBar usage to auto on macOS", async () => {
+  it("defaults CodexBar usage to auto on macOS for non-claude providers", async () => {
     stubPlatform("darwin");
 
     await getUsageByModel(makeConfig());
@@ -120,6 +120,37 @@ describe(getUsageByModel, () => {
     expect(runCommandMock).toHaveBeenCalledWith(
       "codexbar",
       ["usage", "--provider", "codex", "--source", "auto", "--format", "json"],
+      { timeoutMs: 30_000 },
+    );
+  });
+
+  it("defaults CodexBar usage to oauth on macOS for the claude provider", async () => {
+    stubPlatform("darwin");
+    runCommandMock.mockReturnValue(
+      JSON.stringify([
+        {
+          provider: "claude",
+          source: "oauth",
+          usage: { primary: { usedPercent: 10, resetsAt: "2099-01-01T00:00:00.000Z" } },
+        },
+      ]),
+    );
+
+    await getUsageByModel(
+      makeConfig({
+        definitions: {
+          claude: {
+            cmd: "claude --permission-mode bypassPermissions",
+            color: "#C15F3C",
+            usage: { codexbar: { provider: "claude" } },
+          },
+        },
+      }),
+    );
+
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "codexbar",
+      ["usage", "--provider", "claude", "--source", "oauth", "--format", "json"],
       { timeoutMs: 30_000 },
     );
   });

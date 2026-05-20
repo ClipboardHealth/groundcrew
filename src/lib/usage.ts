@@ -67,8 +67,21 @@ const PERCENT_FRACTION_DIVISOR = 100;
 
 const CODEXBAR_TIMEOUT_MS = 30_000;
 
-function defaultCodexbarSource(): string {
-  return process.platform === "darwin" ? "auto" : "cli";
+function defaultCodexbarSource(provider: string): string {
+  if (process.platform !== "darwin") {
+    return "cli";
+  }
+  // codexbar's CLI `auto` for the claude provider tries web before OAuth,
+  // while the codexbar menu bar app's `auto` prefers OAuth. When a user has
+  // both a personal claude.ai browser login and a work Claude Code OAuth
+  // session, `auto` from the CLI scrapes the personal account — disconnecting
+  // groundcrew's gate from the work account that `claude` actually runs as.
+  // Pin the claude provider to `oauth` on macOS so the dispatcher reads the
+  // same account the menu bar widget shows.
+  if (provider === "claude") {
+    return "oauth";
+  }
+  return "auto";
 }
 
 async function codexbarUsage(definition: ModelDefinition, signal?: AbortSignal): Promise<Usage> {
@@ -78,7 +91,7 @@ async function codexbarUsage(definition: ModelDefinition, signal?: AbortSignal):
   }
   const { provider } = definition.usage.codexbar;
   const configuredSource = definition.usage.codexbar.source;
-  const source = configuredSource ?? defaultCodexbarSource();
+  const source = configuredSource ?? defaultCodexbarSource(provider);
   const arguments_: string[] = [
     "usage",
     "--provider",
