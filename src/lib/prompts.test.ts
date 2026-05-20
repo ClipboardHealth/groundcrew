@@ -104,6 +104,36 @@ describe("shipped default prompts", () => {
     expect(CLAUDE_DEFAULT_PROMPT).toMatch(/do not append.*Generated with Claude Code/i);
   });
 
+  it.each(shippedPrompts)(
+    "%s closes the autonomy loophole with a No exceptions list",
+    (_name, prompt) => {
+      expect(prompt).toContain("No exceptions");
+    },
+  );
+
+  it.each(shippedPrompts)(
+    "%s contains the spirit-vs-letter principle on the autonomy rule",
+    (_name, prompt) => {
+      expect(prompt.toLowerCase()).toContain("violating the letter");
+    },
+  );
+
+  it.each(shippedPrompts)(
+    "%s addresses pre-existing, unrelated, and flaky test failures explicitly",
+    (_name, prompt) => {
+      expect(prompt).toContain("Pre-existing failures");
+      expect(prompt).toContain("flaky");
+    },
+  );
+
+  it.each(shippedPrompts)(
+    "%s closes the false-convergence loophole on the iteration loop",
+    (_name, prompt) => {
+      expect(prompt).toContain("no remaining substantive findings");
+      expect(prompt.toLowerCase()).toMatch(/same findings.*not.*convergence/);
+    },
+  );
+
   it("DEFAULT_PROMPTS_BY_MODEL maps the shipped agents to their prompts", () => {
     expect(DEFAULT_PROMPTS_BY_MODEL).toStrictEqual({
       claude: CLAUDE_DEFAULT_PROMPT,
