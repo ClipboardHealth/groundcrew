@@ -55,6 +55,7 @@ productionresultssa17.blob.core.windows.net
 productionresultssa18.blob.core.windows.net
 productionresultssa19.blob.core.windows.net
 raw.githubusercontent.com
+release-assets.githubusercontent.com
 results-receiver.actions.githubusercontent.com
 
 # npm registry
