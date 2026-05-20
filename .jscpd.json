@@ -11,6 +11,7 @@
     "**/tsconfig.lib.json",
     "**/package.json",
     "**/bin/runCli.js",
+    ".claude/setup.sh",
     "**/*.test.ts",
     "**/*.spec.ts",
     "**/examples/**",

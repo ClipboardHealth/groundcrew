@@ -67,7 +67,8 @@ export interface SandboxDefinition {
   kits?: string[];
   /**
    * Setup command run **inside** the sandbox before the agent exec.
-   * Defaults to `DEFAULT_SANDBOX_SETUP_COMMAND` when omitted.
+   * Defaults to the shared `.groundcrew/setup.sh --deps-only` convention
+   * (see `launchCommand.ts`) when omitted.
    */
   setupCommand?: string;
 }
@@ -105,23 +106,6 @@ interface DisabledUserModelDefinition {
   disabled: true;
 }
 type UserModelDefinition = EnabledUserModelDefinition | DisabledUserModelDefinition;
-
-/**
- * Setup command run inside sibling worktrees on the host. The host is
- * assumed to already have the right Node and npm versions.
- */
-export const DEFAULT_HOST_SETUP_COMMAND =
-  "if [ -x .claude/setup.sh ]; then ./.claude/setup.sh --deps-only; elif [ -f .claude/setup.sh ] && command -v bash >/dev/null 2>&1; then bash .claude/setup.sh --deps-only; else npm clean-install; fi";
-
-/**
- * Setup command run inside an sdx (Docker Sandboxes) sandbox before the
- * agent process exec. Independent of the host setup — sandboxes typically
- * lack Node tooling on first start, so we keep the recipe scoped to the
- * common case of an npm-managed repo while still letting per-model
- * `sandbox.setupCommand` override it for languages outside that path.
- */
-export const DEFAULT_SANDBOX_SETUP_COMMAND =
-  "if [ -x .claude/setup.sh ]; then ./.claude/setup.sh --deps-only; elif [ -f .claude/setup.sh ] && command -v bash >/dev/null 2>&1; then bash .claude/setup.sh --deps-only; else npm clean-install; fi";
 
 /**
  * Loose user-facing shape — what a `config.ts` file declares.

@@ -1,7 +1,11 @@
 import { statSync } from "node:fs";
 
 import type { ModelDefinition } from "./config.ts";
-import { buildLaunchCommand, resolveSafehouseClearancePath } from "./launchCommand.ts";
+import {
+  buildLaunchCommand,
+  resolveSafehouseClearancePath,
+  SETUP_COMMAND,
+} from "./launchCommand.ts";
 
 function arguments_(
   overrides: Partial<Parameters<typeof buildLaunchCommand>[0]> = {},
@@ -175,6 +179,14 @@ describe(buildLaunchCommand, () => {
       );
 
       expect(out).toContain("echo custom-setup");
+    });
+
+    it("defaults to the .groundcrew/setup.sh convention when no sandbox setupCommand override is set", () => {
+      const out = buildLaunchCommand(sdxArguments());
+
+      expect(out).toContain(SETUP_COMMAND);
+      expect(out).not.toContain(".claude/setup.sh");
+      expect(out).not.toContain("npm clean-install");
     });
 
     it("substitutes {{sandbox}} in the agent command with the sandbox name", () => {

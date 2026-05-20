@@ -216,6 +216,57 @@ Rules:
 
 </details>
 
+## Per-repo setup hook
+
+When groundcrew launches a worktree, if `.groundcrew/setup.sh` exists in the repo root it's invoked as `bash .groundcrew/setup.sh --deps-only` before the agent starts; otherwise nothing runs. The same convention applies inside the sdx sandbox (overridable per-model via `models.definitions.<name>.sandbox.setupCommand`). No implicit `npm install`, `uv sync`, or anything else — groundcrew is language-agnostic, so opt in by adding the script.
+
+### The `--deps-only` contract
+
+The flag tells the script "you're being called by an automated system before an agent launches — skip anything interactive or one-time-only." The same script handles both modes; branch on `$1`. The name is historical and Node-flavored, but the semantic is language-neutral:
+
+- **With `--deps-only`**: do the cheap recurring work this worktree needs (lockfile install, generate types, etc.). No prompts, no global installs, no `nvm` / `pyenv` bootstrap that the host should already have.
+- **Without the flag**: full interactive bootstrap. Use this path when an engineer runs the script by hand for first-time onboarding, or when wiring it into another tool's SessionStart hook.
+
+Setup failures are advisory — groundcrew logs the non-zero exit and still launches the agent so a flaky network or stale lockfile doesn't block the session.
+
+### Examples
+
+**Python (uv):**
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "${1:-}" = "--deps-only" ]; then
+  uv sync --dev
+else
+  uv sync --dev
+  # ... extra one-time bootstrap (e.g., pre-commit install, db seed) ...
+fi
+```
+
+**Node (npm):**
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "${1:-}" = "--deps-only" ]; then
+  npm clean-install
+else
+  npm clean-install
+  # ... extra one-time bootstrap (e.g., husky install, codegen, link local packages) ...
+fi
+```
+
+**Docs-only or polyglot repo with no install step:**
+
+Omit the script. With nothing at `.groundcrew/setup.sh`, groundcrew skips the hook silently — fine for documentation repos, polyglot monorepos where setup happens per-package, or anywhere the per-worktree work is genuinely zero.
+
+For a more comprehensive real-world example (nvm bootstrap, hash-based skip-on-no-changes caching, portable SHA-256 detection), see [this repo's own `.groundcrew/setup.sh`](./.groundcrew/setup.sh). It's also symlinked at `.claude/setup.sh` so the same script doubles as a Claude Code SessionStart hook for this repo — that symlink is local convenience, not part of groundcrew's contract.
+
+### Generating it with an agent
+
+To have a coding agent (Claude Code, Cursor, etc.) scaffold `.groundcrew/setup.sh` for a repo you're onboarding, see [docs/setup-hook-agent-prompt.md](./docs/setup-hook-agent-prompt.md) — it encodes the contract above as a copy-pasteable prompt.
+
 ## Commands
 
 ```bash
