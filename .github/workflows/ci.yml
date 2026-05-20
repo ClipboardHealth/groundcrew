@@ -60,18 +60,33 @@ jobs:
           git config user.name "GitHub Bot"
           git config user.email "open-source@clipboardhealth.com"
 
-      - env:
-          GH_TOKEN: ${{ steps.token.outputs.token }}
-          NX_PREFER_NODE_STRIP_TYPES: "true"
-        run: npx nx release --skip-publish
-
-      - run: node --run build
-
-      - env:
+      - name: Verify npm publish token
+        env:
           NPM_TOKEN: ${{ secrets.NPM_PUBLISH_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_PUBLISH_TOKEN }}
-          NX_PREFER_NODE_STRIP_TYPES: "true"
         run: |
           npm config set //registry.npmjs.org/:_authToken "${NODE_AUTH_TOKEN}"
           npm whoami --registry=https://registry.npmjs.org/
-          npx nx release publish
+
+      - name: Version package
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          NX_PREFER_NODE_STRIP_TYPES: "true"
+        run: npx nx release version
+
+      - run: node --run build
+
+      - name: Publish to npm
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_PUBLISH_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_PUBLISH_TOKEN }}
+          NX_PREFER_NODE_STRIP_TYPES: "true"
+        run: npx nx release publish
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          NX_PREFER_NODE_STRIP_TYPES: "true"
+        run: |
+          package_version="$(node -p "JSON.parse(require('fs').readFileSync('package.json', 'utf8')).version")"
+          npx nx release changelog "${package_version}"
