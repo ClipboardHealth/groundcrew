@@ -1,5 +1,20 @@
+// src/commands/ticketDoctor.ts
+//
+// `crew doctor --ticket <TICKET>` — single per-ticket diagnostic that covers
+// both the pre-dispatch question ("will this dispatch on the next tick?") and
+// the post-dispatch question ("what's already happened and what's left to
+// do?"). Verdict precedence runs strictly from post-dispatch states down:
+//
+//   pr-open > pr-merged > in-flight > recoverable
+//     > unresolvable > ineligible > would-dispatch
+//       > lost
+//
+// When a post-dispatch verdict fires, the Resolution and Eligibility sections
+// are skipped — they describe pre-dispatch state that no longer matters.
+
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+
 import {
   fetchBlockersForTicket,
   fetchInProgressIssueCount,
@@ -10,9 +25,13 @@ import {
   type GroundcrewIssue,
   type RawLinearIssue,
 } from "../lib/boardSource.ts";
+import { runCommandAsync } from "../lib/commandRunner.ts";
 import { AGENT_ANY_MODEL, loadConfig, type ResolvedConfig } from "../lib/config.ts";
+import { which } from "../lib/host.ts";
 import { getUsageByModel, type UsageByModel } from "../lib/usage.ts";
 import { getLinearClient, lazyLinearClient, writeOutput } from "../lib/util.ts";
+import { workspaces, type WorkspaceAccessHint, type WorkspaceProbe } from "../lib/workspaces.ts";
+import { worktrees, type WorktreeDirtiness, type WorktreeEntry } from "../lib/worktrees.ts";
 import {
   classifyBlockers,
   classifyUsageExhaustion,
@@ -21,34 +40,220 @@ import {
 } from "./eligibility.ts";
 import { renderTicketCheckResult, type Section, type TicketCheck } from "./ticketCheck.ts";
 
-export type { TicketCheck } from "./ticketCheck.ts";
+/**
+ * Placeholder Linear state name used when `--no-linear` suppresses the Linear
+ * probe. The verdict decision reads `linear.kind` only — this name is never
+ * surfaced to the user.
+ */
+const LINEAR_SKIPPED_STATE_NAME = "(linear skipped)";
+
+// ───────── verdict types ─────────
 
 export type TicketDoctorVerdict =
+  | { kind: "pr-open"; number: number; url: string }
+  | { kind: "pr-merged"; number: number; url: string }
+  | { kind: "in-flight"; reason: string }
+  | { kind: "recoverable"; reason: string; nextStep: string }
   | { kind: "would-dispatch" }
   | { kind: "ineligible"; reason: string }
+  | { kind: "unresolvable"; reason: string }
+  | { kind: "lost"; reason: string };
+
+export type LinearStatusProbe =
+  | { kind: "terminal"; stateName: string }
+  | { kind: "non-terminal"; stateName: string }
+  | { kind: "skipped" }
   | { kind: "unresolvable"; reason: string };
+
+export type WorktreeProbe =
+  | { kind: "present-clean" }
+  | { kind: "present-dirty"; modified: number; untracked: number }
+  | { kind: "present-unknown-dirtiness"; reason: string }
+  | { kind: "absent" };
+
+export type LocalBranchProbe =
+  | { kind: "present"; ahead: number; behind: number; defaultBranch?: string }
+  | { kind: "absent" }
+  | { kind: "unknown"; reason: string };
+
+export type RemoteBranchProbe =
+  | { kind: "present" }
+  | { kind: "absent" }
+  | { kind: "unknown"; reason: string };
+
+export type PullRequestProbe =
+  | { kind: "open"; number: number; url: string }
+  | { kind: "merged"; number: number; url: string }
+  | { kind: "absent" }
+  | { kind: "gh-missing" }
+  | { kind: "unknown"; reason: string };
+
+export interface DecideVerdictInput {
+  linear: LinearStatusProbe;
+  worktree: WorktreeProbe;
+  localBranch: LocalBranchProbe;
+  remoteBranch: RemoteBranchProbe;
+  pullRequest: PullRequestProbe;
+  branch: string;
+  worktreeDir: string | undefined;
+  workspaceName: string | undefined;
+}
+
+// ───────── post-dispatch verdict (PR / in-flight / recoverable) ─────────
+
+function verdictInFlight(input: DecideVerdictInput): TicketDoctorVerdict | undefined {
+  if (input.linear.kind !== "non-terminal") {
+    return undefined;
+  }
+  const worktreePresent =
+    input.worktree.kind === "present-clean" ||
+    input.worktree.kind === "present-dirty" ||
+    input.worktree.kind === "present-unknown-dirtiness";
+  if (!worktreePresent) {
+    return undefined;
+  }
+  /* v8 ignore next 3 @preserve -- callers always pass workspaceName or worktreeDir; defensive guard for the rare both-missing path */
+  const where =
+    input.workspaceName === undefined
+      ? `worktree at ${input.worktreeDir ?? "<unknown>"}`
+      : `workspace "${input.workspaceName}"`;
+  return { kind: "in-flight", reason: `ticket is mid-flight in ${where}` };
+}
+
+function verdictRecoverable(input: DecideVerdictInput): TicketDoctorVerdict | undefined {
+  if (input.worktree.kind === "present-dirty") {
+    /* v8 ignore next @preserve -- a present worktree always has a worktreeDir; nullish guard is defensive */
+    const where = input.worktreeDir ?? "<worktree>";
+    return {
+      kind: "recoverable",
+      reason: `dirty worktree (${input.worktree.modified} modified, ${input.worktree.untracked} untracked)`,
+      nextStep: `commit or stash in ${where}, then re-run \`crew doctor --ticket ${input.branch}\``,
+    };
+  }
+  const worktreeIsClean =
+    input.worktree.kind === "present-clean" || input.worktree.kind === "present-unknown-dirtiness";
+  if (
+    worktreeIsClean &&
+    input.localBranch.kind === "present" &&
+    input.remoteBranch.kind === "absent"
+  ) {
+    /* v8 ignore next @preserve -- a present worktree always has a worktreeDir; nullish guard is defensive */
+    const where = input.worktreeDir ?? "<worktree>";
+    return {
+      kind: "recoverable",
+      reason: `clean worktree with un-pushed local branch`,
+      nextStep: `cd ${where}; git push -u origin ${input.branch}; gh pr create`,
+    };
+  }
+  if (
+    input.worktree.kind === "absent" &&
+    input.remoteBranch.kind === "present" &&
+    input.pullRequest.kind === "absent"
+  ) {
+    return {
+      kind: "recoverable",
+      reason: `remote branch exists without a PR`,
+      nextStep: `gh pr create --head ${input.branch}`,
+    };
+  }
+  if (input.worktree.kind === "absent" && input.localBranch.kind === "present") {
+    return {
+      kind: "recoverable",
+      reason: `stranded local branch (no worktree)`,
+      nextStep: `push the branch or delete it: \`git branch -D ${input.branch}\``,
+    };
+  }
+  return undefined;
+}
+
+/**
+ * Returns a post-dispatch verdict if the probe bundle matches one of the
+ * "ticket has moved past dispatch" cases. Returns `undefined` otherwise,
+ * signalling that the caller should fall through to the pre-dispatch path.
+ *
+ * Precedence: PR > in-flight > recoverable. Inside `recoverable`, dirty
+ * worktree beats clean-with-un-pushed-local beats remote-only beats stranded
+ * local.
+ */
+export function decidePostDispatchVerdict(
+  input: DecideVerdictInput,
+): TicketDoctorVerdict | undefined {
+  if (input.pullRequest.kind === "open") {
+    return { kind: "pr-open", number: input.pullRequest.number, url: input.pullRequest.url };
+  }
+  if (input.pullRequest.kind === "merged") {
+    return { kind: "pr-merged", number: input.pullRequest.number, url: input.pullRequest.url };
+  }
+  return verdictInFlight(input) ?? verdictRecoverable(input);
+}
+
+// ───────── orchestrator dependencies ─────────
+
+export interface TicketDoctorDependencies {
+  config: ResolvedConfig;
+  ticket: string;
+  /**
+   * Injected to keep `ticketDoctor` pure and easy to unit-test. `undefined`
+   * means the caller passed `--no-linear` — the Linear-backed pre-dispatch
+   * checks (status, label, repo, eligibility) are all skipped.
+   */
+  fetchRawIssue: ((input: { ticket: string }) => Promise<RawLinearIssue>) | undefined;
+  fetchBlockersFor: (input: { ticket: string; uuid: string }) => Promise<readonly Blocker[]>;
+  fetchUsage: () => Promise<UsageByModel>;
+  countInProgress: () => Promise<number>;
+  findWorktree: (ticket: string) => WorktreeEntry | undefined;
+  probeWorkspaces: () => Promise<WorkspaceProbe>;
+  workspaceAccessHint: (name: string) => Promise<WorkspaceAccessHint | undefined>;
+  probeWorkingTree: (input: { worktreeDir: string }) => Promise<WorktreeDirtiness>;
+  probeLocalBranch: (input: {
+    repoDir: string;
+    branch: string;
+    defaultBranch: string;
+  }) => Promise<LocalBranchProbe>;
+  probeRemoteBranch: (input: {
+    repoDir: string;
+    branch: string;
+    doFetch: boolean;
+  }) => Promise<RemoteBranchProbe>;
+  probePullRequest: (input: { repoDir: string; branch: string }) => Promise<PullRequestProbe>;
+  doFetch: boolean;
+}
 
 export interface TicketDoctorResult {
   ticket: string;
   title?: string;
   resolution: TicketCheck[];
   eligibility: TicketCheck[];
+  worktree: TicketCheck[];
+  workspace: TicketCheck[];
+  localBranch: TicketCheck[];
+  remoteBranch: TicketCheck[];
+  pullRequest: TicketCheck[];
+  skipReasons: {
+    resolution: string;
+    eligibility: string;
+    worktree: string;
+    workspace: string;
+    localBranch: string;
+    remoteBranch: string;
+    pullRequest: string;
+  };
   verdict: TicketDoctorVerdict;
 }
 
-export interface TicketDoctorDependencies {
-  config: ResolvedConfig;
-  ticket: string;
-  /**
-   * Injected to keep `ticketDoctor` pure and easy to unit-test. Production
-   * callers pass a closure that delegates to `fetchRawLinearIssue` with a
-   * real `LinearClient`; tests pass a `vi.fn()` returning a fixture.
-   */
-  fetchRawIssue: (input: { ticket: string }) => Promise<RawLinearIssue>;
-  fetchBlockersFor: (input: { ticket: string; uuid: string }) => Promise<readonly Blocker[]>;
-  fetchUsage: () => Promise<UsageByModel>;
-  countInProgress: () => Promise<number>;
+function emptySkipReasons(): TicketDoctorResult["skipReasons"] {
+  return {
+    resolution: "",
+    eligibility: "",
+    worktree: "",
+    workspace: "",
+    localBranch: "",
+    remoteBranch: "",
+    pullRequest: "",
+  };
 }
+
+// ───────── pre-dispatch helpers (resolution + eligibility) ─────────
 
 interface ModelResolutionResult {
   resolvedModel: string;
@@ -173,8 +378,7 @@ function buildRepoChecks(
       status: "skipped",
     });
   }
-  // repositoryResolution.kind is "ok" only when the first check passed.
-  /* v8 ignore else @preserve */
+  /* v8 ignore else @preserve -- resolved repository is empty only on the fail branch above; the field is only consumed on the ok path */
   const resolvedRepository =
     repositoryResolution.kind === "ok" ? repositoryResolution.repository : "";
   return { resolvedRepository, checks };
@@ -222,8 +426,7 @@ async function runEligibilityChecks(arguments_: EligibilityCheckArguments): Prom
       });
       return false;
     }
-    // firstSkip.blockers is always set for "blocked" and "blockers_paginated" skip reasons.
-    /* v8 ignore next @preserve */
+    /* v8 ignore next @preserve -- firstSkip.blockers is always set for "blocked" and "blockers_paginated" skip reasons */
     const blockerIds = firstSkip.blockers ?? [];
     eligibility.push({
       name: "No active blockers",
@@ -310,109 +513,334 @@ function usageExhaustionCheck(exhaustion: ModelUsageExhaustion): TicketCheck {
   };
 }
 
-function formatVerdict(verdict: TicketDoctorVerdict): string {
-  switch (verdict.kind) {
-    case "would-dispatch": {
-      return "→ would be dispatched on next tick";
-    }
-    case "unresolvable": {
-      return `→ unresolvable: ${verdict.reason}`;
-    }
-    case "ineligible": {
-      return `→ ineligible: ${verdict.reason}`;
-    }
-    /* v8 ignore next 3 @preserve -- exhaustive over TicketDoctorVerdict.kind */
-    default: {
-      return `→ ${(verdict satisfies never as TicketDoctorVerdict).kind}`;
-    }
+interface LinearProbeOutput {
+  linearStatus: LinearStatusProbe;
+  resolution: TicketCheck[];
+  title?: string;
+  raw?: RawLinearIssue;
+}
+
+/**
+ * Fetches Linear and adds the "Ticket exists in Linear" + status checks to
+ * the resolution section. Returns the raw issue on success so the orchestrator
+ * can continue with label/repo/eligibility. On failure, returns enough
+ * context to render an `unresolvable` verdict.
+ */
+async function probeLinear(
+  deps: TicketDoctorDependencies,
+  upperTicket: string,
+): Promise<LinearProbeOutput> {
+  if (deps.fetchRawIssue === undefined) {
+    return { linearStatus: { kind: "skipped" }, resolution: [] };
   }
-}
-
-export function renderTicketDoctorResult(result: TicketDoctorResult): string[] {
-  const sections: Section[] = [
-    { name: "Resolution", checks: result.resolution },
-    {
-      name: "Eligibility",
-      checks: result.eligibility,
-      ...(result.eligibility.length === 0
-        ? {
-            skipReason:
-              result.verdict.kind === "unresolvable"
-                ? "ticket unresolved"
-                : "resolution checks failed",
-          }
-        : {}),
-    },
-  ];
-  return renderTicketCheckResult({
-    command: "doctor",
-    argument: `--ticket ${result.ticket}`,
-    ...(result.title === undefined ? {} : { title: result.title }),
-    sections,
-    verdict: formatVerdict(result.verdict),
-  });
-}
-
-export async function ticketDoctor(
-  dependencies: TicketDoctorDependencies,
-): Promise<TicketDoctorResult> {
-  const ticket = dependencies.ticket.toUpperCase();
-  const resolution: TicketCheck[] = [];
-  const eligibility: TicketCheck[] = [];
-  let raw: RawLinearIssue;
   try {
-    raw = await dependencies.fetchRawIssue({ ticket });
+    const raw = await deps.fetchRawIssue({ ticket: upperTicket });
+    const isTerminal = deps.config.linear.statuses.terminal.includes(raw.stateName);
+    const todoState = deps.config.linear.statuses.todo;
+    const resolution: TicketCheck[] = [
+      { name: "Ticket exists in Linear", status: "ok", detail: `"${raw.title}"` },
+    ];
+    if (raw.stateName === todoState) {
+      resolution.push({ name: "Status is Todo", status: "ok" });
+    } else {
+      resolution.push({
+        name: "Status is Todo",
+        status: "fail",
+        detail: `current: ${raw.stateName}`,
+        failureSummary: `status is ${raw.stateName} (need ${todoState})`,
+      });
+    }
+    return {
+      linearStatus: { kind: isTerminal ? "terminal" : "non-terminal", stateName: raw.stateName },
+      resolution,
+      title: raw.title,
+      raw,
+    };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    resolution.push({ name: "Ticket exists in Linear", status: "fail", detail: message });
     return {
-      ticket,
-      resolution,
-      eligibility,
-      verdict: { kind: "unresolvable", reason: message },
+      linearStatus: { kind: "unresolvable", reason: message },
+      resolution: [{ name: "Ticket exists in Linear", status: "fail", detail: message }],
     };
   }
+}
 
-  const { config } = dependencies;
+// ───────── post-dispatch helpers (worktree/workspace/branch/PR) ─────────
 
-  resolution.push({ name: "Ticket exists in Linear", status: "ok", detail: `"${raw.title}"` });
+interface WorktreeSectionOutput {
+  checks: TicketCheck[];
+  status: WorktreeProbe;
+  entry: WorktreeEntry | undefined;
+}
 
-  // Status check
-  const todoState = config.linear.statuses.todo;
-  if (raw.stateName === todoState) {
-    resolution.push({ name: "Status is Todo", status: "ok" });
-  } else {
-    resolution.push({
-      name: "Status is Todo",
+async function probeWorktreeSection(
+  deps: TicketDoctorDependencies,
+  ticket: string,
+): Promise<WorktreeSectionOutput> {
+  const entry = deps.findWorktree(ticket);
+  if (entry === undefined) {
+    return {
+      checks: [
+        {
+          name: "Host worktree exists",
+          status: "fail",
+          detail: "no worktree found for this ticket",
+        },
+      ],
+      status: { kind: "absent" },
+      entry: undefined,
+    };
+  }
+  const dirtiness = await deps.probeWorkingTree({ worktreeDir: entry.dir });
+  const checks: TicketCheck[] = [{ name: "Host worktree exists", status: "ok", detail: entry.dir }];
+  let status: WorktreeProbe;
+  if (dirtiness.kind === "clean") {
+    checks.push({ name: "Working tree clean", status: "ok" });
+    status = { kind: "present-clean" };
+  } else if (dirtiness.kind === "dirty") {
+    checks.push({
+      name: "Working tree clean",
       status: "fail",
-      detail: `current: ${raw.stateName}`,
-      failureSummary: `status is ${raw.stateName} (need ${todoState})`,
+      detail: `${dirtiness.modified} modified, ${dirtiness.untracked} untracked`,
     });
+    status = {
+      kind: "present-dirty",
+      modified: dirtiness.modified,
+      untracked: dirtiness.untracked,
+    };
+  } else {
+    // dirtiness.kind === "unknown"
+    checks.push({ name: "Working tree clean", status: "skipped", detail: "could not inspect" });
+    status = { kind: "present-unknown-dirtiness", reason: "git status failed" };
   }
+  checks.push({ name: "Branch checked out", status: "ok", detail: entry.branchName });
+  return { checks, status, entry };
+}
 
-  // Label + model checks
-  const { resolvedModel, checks: modelChecks } = buildModelChecks(raw, config);
-  resolution.push(...modelChecks);
+interface WorkspaceSectionOutput {
+  checks: TicketCheck[];
+  workspaceName: string | undefined;
+}
 
-  // Repo checks
-  const { resolvedRepository, checks: repoChecks } = buildRepoChecks(raw, config, ticket);
-  resolution.push(...repoChecks);
-
-  const firstResolutionFail = resolution.find((check) => check.status === "fail");
-  if (firstResolutionFail !== undefined) {
-    // failureSummary is always set for all resolution fail paths; .name fallback is defensive.
-    /* v8 ignore next @preserve */
-    const resolutionReason = firstResolutionFail.failureSummary ?? firstResolutionFail.name;
+async function probeWorkspaceSection(
+  deps: TicketDoctorDependencies,
+  ticket: string,
+): Promise<WorkspaceSectionOutput> {
+  const probe = await deps.probeWorkspaces();
+  if (probe.kind === "unavailable") {
     return {
-      ticket,
-      title: raw.title,
-      resolution,
-      eligibility,
-      verdict: { kind: "ineligible", reason: resolutionReason },
+      checks: [
+        { name: "Workspace pane open", status: "skipped", detail: "workspace probe unavailable" },
+      ],
+      workspaceName: undefined,
     };
   }
+  if (probe.names.has(ticket)) {
+    const hint = await deps.workspaceAccessHint(ticket);
+    const detail = hint === undefined ? ticket : `${ticket} — attach: \`${hint.command}\``;
+    return {
+      checks: [{ name: "Workspace pane open", status: "ok", detail }],
+      workspaceName: ticket,
+    };
+  }
+  return {
+    checks: [
+      { name: "Workspace pane open", status: "fail", detail: "no pane found for this ticket" },
+    ],
+    workspaceName: undefined,
+  };
+}
 
-  // All resolution checks passed (or were skipped). Run eligibility checks.
+function repoDirFromEntry(entry: WorktreeEntry, deps: TicketDoctorDependencies): string {
+  return `${deps.config.workspace.projectDir}/${entry.repository}`;
+}
+
+interface LocalBranchSectionOutput {
+  checks: TicketCheck[];
+  skipReason: string;
+  probe: LocalBranchProbe;
+  branch: string | undefined;
+}
+
+async function probeLocalBranchSection(
+  deps: TicketDoctorDependencies,
+  entry: WorktreeEntry | undefined,
+): Promise<LocalBranchSectionOutput> {
+  if (entry === undefined) {
+    return {
+      checks: [],
+      skipReason: "repo dir unresolved",
+      probe: { kind: "absent" },
+      branch: undefined,
+    };
+  }
+  const repoDir = repoDirFromEntry(entry, deps);
+  const probe = await deps.probeLocalBranch({
+    repoDir,
+    branch: entry.branchName,
+    defaultBranch: deps.config.git.defaultBranch,
+  });
+  if (probe.kind === "present") {
+    const defaultBranchName = probe.defaultBranch ?? deps.config.git.defaultBranch;
+    return {
+      checks: [
+        {
+          name: "Local branch exists",
+          status: "ok",
+          detail: `${entry.branchName}, ${probe.ahead} ahead / ${probe.behind} behind origin/${defaultBranchName}`,
+        },
+      ],
+      skipReason: "",
+      probe,
+      branch: entry.branchName,
+    };
+  }
+  if (probe.kind === "absent") {
+    return {
+      checks: [{ name: "Local branch exists", status: "fail", detail: "branch not in git" }],
+      skipReason: "",
+      probe,
+      branch: entry.branchName,
+    };
+  }
+  // probe.kind === "unknown"
+  return {
+    checks: [{ name: "Local branch exists", status: "skipped", detail: probe.reason }],
+    skipReason: "",
+    probe,
+    branch: entry.branchName,
+  };
+}
+
+interface RemoteBranchSectionOutput {
+  checks: TicketCheck[];
+  skipReason: string;
+  probe: RemoteBranchProbe;
+}
+
+async function probeRemoteBranchSection(
+  deps: TicketDoctorDependencies,
+  entry: WorktreeEntry | undefined,
+): Promise<RemoteBranchSectionOutput> {
+  if (entry === undefined) {
+    return { checks: [], skipReason: "repo dir unresolved", probe: { kind: "absent" } };
+  }
+  const repoDir = repoDirFromEntry(entry, deps);
+  const probe = await deps.probeRemoteBranch({
+    repoDir,
+    branch: entry.branchName,
+    doFetch: deps.doFetch,
+  });
+  if (probe.kind === "present") {
+    return { checks: [{ name: "Branch present on origin", status: "ok" }], skipReason: "", probe };
+  }
+  if (probe.kind === "absent") {
+    return {
+      checks: [{ name: "Branch present on origin", status: "fail", detail: "not pushed" }],
+      skipReason: "",
+      probe,
+    };
+  }
+  // probe.kind === "unknown"
+  return {
+    checks: [{ name: "Branch present on origin", status: "skipped", detail: probe.reason }],
+    skipReason: "",
+    probe,
+  };
+}
+
+interface PullRequestSectionOutput {
+  checks: TicketCheck[];
+  skipReason: string;
+  probe: PullRequestProbe;
+}
+
+async function probePullRequestSection(
+  deps: TicketDoctorDependencies,
+  entry: WorktreeEntry | undefined,
+): Promise<PullRequestSectionOutput> {
+  if (entry === undefined) {
+    return { checks: [], skipReason: "repo dir unresolved", probe: { kind: "absent" } };
+  }
+  const repoDir = repoDirFromEntry(entry, deps);
+  const probe = await deps.probePullRequest({ repoDir, branch: entry.branchName });
+  if (probe.kind === "open" || probe.kind === "merged") {
+    return {
+      checks: [
+        {
+          name: "Open PR for this branch",
+          status: "ok",
+          detail: `#${probe.number} ${probe.url}`,
+        },
+      ],
+      skipReason: "",
+      probe,
+    };
+  }
+  if (probe.kind === "absent") {
+    return {
+      checks: [{ name: "Open PR for this branch", status: "fail", detail: "none found" }],
+      skipReason: "",
+      probe,
+    };
+  }
+  if (probe.kind === "gh-missing") {
+    return {
+      checks: [
+        { name: "Open PR for this branch", status: "skipped", detail: "gh CLI not on PATH" },
+      ],
+      skipReason: "",
+      probe,
+    };
+  }
+  // probe.kind === "unknown"
+  return {
+    checks: [{ name: "Open PR for this branch", status: "skipped", detail: probe.reason }],
+    skipReason: "",
+    probe,
+  };
+}
+
+// ───────── orchestrator ─────────
+
+interface PreDispatchInput {
+  ticket: string;
+  raw: RawLinearIssue;
+  config: ResolvedConfig;
+  dependencies: TicketDoctorDependencies;
+  statusCheckFailed: boolean;
+  statusFailureSummary: string | undefined;
+}
+
+interface PreDispatchOutput {
+  resolutionExtra: TicketCheck[];
+  eligibility: TicketCheck[];
+  verdict: TicketDoctorVerdict;
+}
+
+async function runPreDispatch(input: PreDispatchInput): Promise<PreDispatchOutput> {
+  const { ticket, raw, config, dependencies } = input;
+  const resolutionExtra: TicketCheck[] = [];
+  const eligibility: TicketCheck[] = [];
+
+  const { resolvedModel, checks: modelChecks } = buildModelChecks(raw, config);
+  resolutionExtra.push(...modelChecks);
+
+  const { resolvedRepository, checks: repoChecks } = buildRepoChecks(raw, config, ticket);
+  resolutionExtra.push(...repoChecks);
+
+  if (input.statusCheckFailed) {
+    /* v8 ignore next @preserve -- statusFailureSummary is always set when statusCheckFailed is true; nullish fallback is defensive */
+    const reason = input.statusFailureSummary ?? "status not Todo";
+    return { resolutionExtra, eligibility, verdict: { kind: "ineligible", reason } };
+  }
+  const resolutionFail = resolutionExtra.find((check) => check.status === "fail");
+  if (resolutionFail !== undefined) {
+    /* v8 ignore next @preserve -- failureSummary is always set on resolution fail paths; .name fallback is defensive */
+    const reason = resolutionFail.failureSummary ?? resolutionFail.name;
+    return { resolutionExtra, eligibility, verdict: { kind: "ineligible", reason } };
+  }
+
   const allEligibilityOk = await runEligibilityChecks({
     ticket,
     raw,
@@ -424,64 +852,522 @@ export async function ticketDoctor(
   });
   if (!allEligibilityOk) {
     const firstEligibilityFail = eligibility.find((check) => check.status === "fail");
-    // firstEligibilityFail is always defined when allEligibilityOk is false; fallback is defensive.
-    /* v8 ignore next @preserve */
+    /* v8 ignore next 4 @preserve -- firstEligibilityFail is always defined when allEligibilityOk is false; fallback is defensive */
     const reason =
       firstEligibilityFail?.failureSummary ??
       firstEligibilityFail?.name ??
       "eligibility check failed";
-    return {
-      ticket,
-      title: raw.title,
-      resolution,
-      eligibility,
-      verdict: { kind: "ineligible", reason },
-    };
+    return { resolutionExtra, eligibility, verdict: { kind: "ineligible", reason } };
   }
-  return {
-    ticket,
-    title: raw.title,
+  return { resolutionExtra, eligibility, verdict: { kind: "would-dispatch" } };
+}
+
+/**
+ * Pure-with-async orchestrator that gathers all sections plus the verdict.
+ * All I/O happens via injected probes — the function itself does no
+ * filesystem, network, or stdout work.
+ */
+export async function ticketDoctor(
+  dependencies: TicketDoctorDependencies,
+): Promise<TicketDoctorResult> {
+  // Linear's GraphQL API treats ticket ids as uppercase. Local-state probes —
+  // worktree dirs, workspace pane names, branch-name fallbacks — are derived
+  // from the lowercase convention set by `setupWorkspaceCli`. Mixing cases is
+  // the root cause of "no worktree found" when the user types `--ticket
+  // HRD-442`.
+  const upperTicket = dependencies.ticket.toUpperCase();
+  const lowerTicket = dependencies.ticket.toLowerCase();
+  const skipReasons = emptySkipReasons();
+
+  const linearResult = await probeLinear(dependencies, upperTicket);
+  const resolution: TicketCheck[] = [...linearResult.resolution];
+
+  const worktreeResult = await probeWorktreeSection(dependencies, lowerTicket);
+  const workspaceResult = await probeWorkspaceSection(dependencies, lowerTicket);
+  const localResult = await probeLocalBranchSection(dependencies, worktreeResult.entry);
+  const remoteResult = await probeRemoteBranchSection(dependencies, worktreeResult.entry);
+  const prResult = await probePullRequestSection(dependencies, worktreeResult.entry);
+  skipReasons.localBranch = localResult.skipReason;
+  skipReasons.remoteBranch = remoteResult.skipReason;
+  skipReasons.pullRequest = prResult.skipReason;
+
+  // `--no-linear` synthesizes a non-terminal kind so the in-flight check can
+  // still fire from local state alone. The placeholder name is read only by
+  // `decidePostDispatchVerdict` and never surfaced to the user.
+  const linearForVerdict: LinearStatusProbe =
+    linearResult.linearStatus.kind === "skipped"
+      ? { kind: "non-terminal", stateName: LINEAR_SKIPPED_STATE_NAME }
+      : linearResult.linearStatus;
+
+  const postVerdict = decidePostDispatchVerdict({
+    linear: linearForVerdict,
+    worktree: worktreeResult.status,
+    localBranch: localResult.probe,
+    remoteBranch: remoteResult.probe,
+    pullRequest: prResult.probe,
+    branch: worktreeResult.entry?.branchName ?? lowerTicket,
+    worktreeDir: worktreeResult.entry?.dir,
+    workspaceName: workspaceResult.workspaceName,
+  });
+
+  if (postVerdict !== undefined) {
+    skipReasons.resolution = "post-dispatch — pre-dispatch checks are irrelevant";
+    skipReasons.eligibility = "post-dispatch — pre-dispatch checks are irrelevant";
+    return buildResult({
+      upperTicket,
+      title: linearResult.title,
+      resolution,
+      eligibility: [],
+      worktreeResult,
+      workspaceResult,
+      localResult,
+      remoteResult,
+      prResult,
+      skipReasons,
+      verdict: postVerdict,
+    });
+  }
+
+  // No post-dispatch verdict. Decide pre-dispatch path.
+  if (linearResult.linearStatus.kind === "skipped") {
+    // --no-linear with nothing locally actionable → lost. We cannot reach
+    // Linear, so the pre-dispatch resolution/eligibility checks are unavailable.
+    skipReasons.resolution = "--no-linear";
+    skipReasons.eligibility = "--no-linear";
+    return buildResult({
+      upperTicket,
+      title: linearResult.title,
+      resolution,
+      eligibility: [],
+      worktreeResult,
+      workspaceResult,
+      localResult,
+      remoteResult,
+      prResult,
+      skipReasons,
+      verdict: {
+        kind: "lost",
+        reason: `no local state and no PR — re-dispatch via \`crew run --ticket ${lowerTicket}\` or move the ticket back to Todo in Linear`,
+      },
+    });
+  }
+
+  if (linearResult.linearStatus.kind === "unresolvable") {
+    const { reason } = linearResult.linearStatus;
+    skipReasons.eligibility = "ticket unresolved";
+    return buildResult({
+      upperTicket,
+      title: linearResult.title,
+      resolution,
+      eligibility: [],
+      worktreeResult,
+      workspaceResult,
+      localResult,
+      remoteResult,
+      prResult,
+      skipReasons,
+      verdict: { kind: "unresolvable", reason },
+    });
+  }
+
+  // After the skipped/unresolvable branches above, linearStatus.kind is either
+  // "terminal" or "non-terminal", both of which carry the raw issue. TS can't
+  // see the invariant through the union, so we narrow with an explicit guard.
+  const { raw } = linearResult;
+  /* v8 ignore next 3 @preserve -- raw is defined whenever linearStatus.kind is terminal/non-terminal; the guard is for type narrowing only */
+  if (raw === undefined) {
+    throw new Error(
+      "ticketDoctor: invariant violated — raw Linear issue missing after status check",
+    );
+  }
+  // The "Status is Todo" check was already pushed by `probeLinear`; surface it
+  // as the verdict reason if it failed.
+  const statusCheck = resolution.find((check) => check.name === "Status is Todo");
+  const statusCheckFailed = statusCheck?.status === "fail";
+  const preDispatch = await runPreDispatch({
+    ticket: upperTicket,
+    raw,
+    config: dependencies.config,
+    dependencies,
+    statusCheckFailed,
+    statusFailureSummary: statusCheck?.failureSummary,
+  });
+  resolution.push(...preDispatch.resolutionExtra);
+  if (preDispatch.eligibility.length === 0 && preDispatch.verdict.kind === "ineligible") {
+    skipReasons.eligibility = "resolution checks failed";
+  }
+
+  return buildResult({
+    upperTicket,
+    title: linearResult.title,
     resolution,
-    eligibility,
-    verdict: { kind: "would-dispatch" },
+    eligibility: preDispatch.eligibility,
+    worktreeResult,
+    workspaceResult,
+    localResult,
+    remoteResult,
+    prResult,
+    skipReasons,
+    verdict: preDispatch.verdict,
+  });
+}
+
+interface BuildResultInput {
+  upperTicket: string;
+  title: string | undefined;
+  resolution: TicketCheck[];
+  eligibility: TicketCheck[];
+  worktreeResult: WorktreeSectionOutput;
+  workspaceResult: WorkspaceSectionOutput;
+  localResult: LocalBranchSectionOutput;
+  remoteResult: RemoteBranchSectionOutput;
+  prResult: PullRequestSectionOutput;
+  skipReasons: TicketDoctorResult["skipReasons"];
+  verdict: TicketDoctorVerdict;
+}
+
+function buildResult(input: BuildResultInput): TicketDoctorResult {
+  return {
+    ticket: input.upperTicket,
+    ...(input.title === undefined ? {} : { title: input.title }),
+    resolution: input.resolution,
+    eligibility: input.eligibility,
+    worktree: input.worktreeResult.checks,
+    workspace: input.workspaceResult.checks,
+    localBranch: input.localResult.checks,
+    remoteBranch: input.remoteResult.checks,
+    pullRequest: input.prResult.checks,
+    skipReasons: input.skipReasons,
+    verdict: input.verdict,
   };
 }
 
-export async function ticketDoctorCli(argv: string[]): Promise<void> {
-  const [ticket, ...extraArgs] = argv;
-  if (ticket === undefined || ticket.length === 0 || ticket.startsWith("-")) {
-    throw new Error("Usage: crew doctor --ticket <ticket>");
-  }
-  /* v8 ignore else @preserve */
-  if (extraArgs.length > 0) {
-    throw new Error(`crew doctor --ticket: unexpected arguments: ${extraArgs.join(" ")}`);
-  }
-  /* v8 ignore start @preserve */
-  const ok = await runTicketDoctor(ticket);
-  if (!ok) {
-    process.exitCode = 1;
-  }
-  /* v8 ignore stop @preserve */
+// ───────── CLI surface ─────────
+
+interface TicketDoctorArguments {
+  ticket: string;
+  doLinear: boolean;
+  doFetch: boolean;
 }
 
-export async function runTicketDoctor(ticket: string): Promise<boolean> {
+/**
+ * Parses optional `--no-linear` and `--no-fetch` flags that follow
+ * `crew doctor --ticket <id>`. The ticket id is consumed by `cli.ts` before
+ * this point.
+ */
+export function parseTicketDoctorFlags(argv: string[]): { doLinear: boolean; doFetch: boolean } {
+  let doLinear = true;
+  let doFetch = true;
+  for (const argument of argv) {
+    if (argument === "--no-linear") {
+      doLinear = false;
+      continue;
+    }
+    if (argument === "--no-fetch") {
+      doFetch = false;
+      continue;
+    }
+    throw new Error(`crew doctor --ticket: unknown argument: ${argument}`);
+  }
+  return { doLinear, doFetch };
+}
+
+function formatVerdict(verdict: TicketDoctorVerdict): string {
+  switch (verdict.kind) {
+    case "pr-open": {
+      return `→ pr-open: ${verdict.url} (#${verdict.number})`;
+    }
+    case "pr-merged": {
+      return `→ pr-merged: ${verdict.url} (#${verdict.number})`;
+    }
+    case "in-flight": {
+      return `→ in-flight: ${verdict.reason}`;
+    }
+    case "recoverable": {
+      return `→ recoverable: ${verdict.reason}; ${verdict.nextStep}`;
+    }
+    case "would-dispatch": {
+      return "→ would be dispatched on next tick";
+    }
+    case "ineligible": {
+      return `→ ineligible: ${verdict.reason}`;
+    }
+    case "unresolvable": {
+      return `→ unresolvable: ${verdict.reason}`;
+    }
+    case "lost": {
+      return `→ lost: ${verdict.reason}`;
+    }
+    /* v8 ignore next 3 @preserve -- exhaustive over TicketDoctorVerdict.kind */
+    default: {
+      return `→ ${(verdict satisfies never as TicketDoctorVerdict).kind}`;
+    }
+  }
+}
+
+export function renderTicketDoctorResult(result: TicketDoctorResult): string[] {
+  const sections: Section[] = [
+    {
+      name: "Resolution",
+      checks: result.resolution,
+      ...(result.skipReasons.resolution === ""
+        ? {}
+        : { skipReason: result.skipReasons.resolution }),
+    },
+    {
+      name: "Eligibility",
+      checks: result.eligibility,
+      ...(result.skipReasons.eligibility === ""
+        ? {}
+        : { skipReason: result.skipReasons.eligibility }),
+    },
+    {
+      name: "Worktree",
+      checks: result.worktree,
+      ...(result.skipReasons.worktree === "" ? {} : { skipReason: result.skipReasons.worktree }),
+    },
+    {
+      name: "Workspace",
+      checks: result.workspace,
+      ...(result.skipReasons.workspace === "" ? {} : { skipReason: result.skipReasons.workspace }),
+    },
+    {
+      name: "Local branch",
+      checks: result.localBranch,
+      ...(result.skipReasons.localBranch === ""
+        ? {}
+        : { skipReason: result.skipReasons.localBranch }),
+    },
+    {
+      name: "Remote branch",
+      checks: result.remoteBranch,
+      ...(result.skipReasons.remoteBranch === ""
+        ? {}
+        : { skipReason: result.skipReasons.remoteBranch }),
+    },
+    {
+      name: "Pull request",
+      checks: result.pullRequest,
+      ...(result.skipReasons.pullRequest === ""
+        ? {}
+        : { skipReason: result.skipReasons.pullRequest }),
+    },
+  ];
+  return renderTicketCheckResult({
+    command: "doctor --ticket",
+    argument: result.ticket,
+    ...(result.title === undefined ? {} : { title: result.title }),
+    sections,
+    verdict: formatVerdict(result.verdict),
+  });
+}
+
+/* v8 ignore start @preserve -- production wiring; covered by integration smoke tests */
+export async function runTicketDoctor(parsed: TicketDoctorArguments): Promise<boolean> {
   const config = await loadConfig();
   const linearClient = lazyLinearClient(getLinearClient);
+  const fetchRawIssue = parsed.doLinear
+    ? async ({ ticket }: { ticket: string }) =>
+        await fetchRawLinearIssue({ client: linearClient(), ticket })
+    : undefined;
 
   const result = await ticketDoctor({
     config,
-    ticket,
-    fetchRawIssue: async ({ ticket: t }) =>
-      await fetchRawLinearIssue({ client: linearClient(), ticket: t }),
-    fetchBlockersFor: async ({ ticket: t, uuid }) =>
-      await fetchBlockersForTicket({ client: linearClient(), ticket: t, uuid }),
+    ticket: parsed.ticket,
+    fetchRawIssue,
+    fetchBlockersFor: async ({ ticket, uuid }) =>
+      await fetchBlockersForTicket({ client: linearClient(), ticket, uuid }),
     fetchUsage: async () => await getUsageByModel(config),
     countInProgress: async () =>
       await fetchInProgressIssueCount({ client: linearClient(), config }),
+    findWorktree: (ticket) => worktrees.findByTicket(config, ticket)[0],
+    probeWorkspaces: async () => await workspaces.probe(config),
+    workspaceAccessHint: async (name) => await workspaces.accessHint(config, name),
+    probeWorkingTree: async ({ worktreeDir }) => await worktrees.probeWorkingTree({ worktreeDir }),
+    probeLocalBranch: probeLocalBranchImpl,
+    probeRemoteBranch: probeRemoteBranchImpl,
+    probePullRequest: probePullRequestImpl,
+    doFetch: parsed.doFetch,
   });
 
   for (const line of renderTicketDoctorResult(result)) {
     writeOutput(line);
   }
-  return result.verdict.kind === "would-dispatch";
+  return (
+    result.verdict.kind === "would-dispatch" ||
+    result.verdict.kind === "pr-open" ||
+    result.verdict.kind === "pr-merged"
+  );
 }
+
+// ───── production probes ─────
+
+/**
+ * Reads the numeric exit status that `normalizeCommandError` in
+ * `commandRunner.ts` includes in failed-command error messages as
+ * `Exit status: <N>`. Returns undefined when no such line is present.
+ */
+function parseExitStatus(error: unknown): number | undefined {
+  if (!(error instanceof Error)) {
+    return undefined;
+  }
+  const match = /Exit status: (\d+)/.exec(error.message);
+  if (match === null || match[1] === undefined) {
+    return undefined;
+  }
+  return Number.parseInt(match[1], 10);
+}
+
+async function probeLocalBranchImpl(input: {
+  repoDir: string;
+  branch: string;
+  defaultBranch: string;
+}): Promise<LocalBranchProbe> {
+  if (!existsSync(input.repoDir)) {
+    return { kind: "unknown", reason: `repo dir not found: ${input.repoDir}` };
+  }
+
+  try {
+    await runCommandAsync("git", [
+      "-C",
+      input.repoDir,
+      "rev-parse",
+      "--verify",
+      "-q",
+      input.branch,
+    ]);
+  } catch (error) {
+    if (parseExitStatus(error) === 1) {
+      return { kind: "absent" };
+    }
+    return {
+      kind: "unknown",
+      reason: error instanceof Error ? error.message : String(error),
+    };
+  }
+
+  try {
+    const output = await runCommandAsync("git", [
+      "-C",
+      input.repoDir,
+      "rev-list",
+      "--left-right",
+      "--count",
+      `${input.branch}...origin/${input.defaultBranch}`,
+    ]);
+    const [aheadString, behindString] = output.trim().split(/\s+/);
+    const ahead = Number.parseInt(aheadString ?? "0", 10);
+    const behind = Number.parseInt(behindString ?? "0", 10);
+    return { kind: "present", ahead, behind, defaultBranch: input.defaultBranch };
+  } catch {
+    return { kind: "present", ahead: 0, behind: 0, defaultBranch: input.defaultBranch };
+  }
+}
+
+async function probeRemoteBranchImpl(input: {
+  repoDir: string;
+  branch: string;
+  doFetch: boolean;
+}): Promise<RemoteBranchProbe> {
+  if (!existsSync(input.repoDir)) {
+    return { kind: "unknown", reason: `repo dir not found: ${input.repoDir}` };
+  }
+
+  if (input.doFetch) {
+    try {
+      await runCommandAsync("git", [
+        "-C",
+        input.repoDir,
+        "fetch",
+        "--quiet",
+        "origin",
+        input.branch,
+      ]);
+    } catch {
+      // Best-effort fetch; ls-remote below is the authoritative check.
+    }
+  }
+
+  try {
+    await runCommandAsync("git", [
+      "-C",
+      input.repoDir,
+      "ls-remote",
+      "--exit-code",
+      "origin",
+      `refs/heads/${input.branch}`,
+    ]);
+    return { kind: "present" };
+  } catch (error) {
+    if (parseExitStatus(error) === 2) {
+      return { kind: "absent" };
+    }
+    return {
+      kind: "unknown",
+      reason: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+async function probePullRequestImpl(input: {
+  repoDir: string;
+  branch: string;
+}): Promise<PullRequestProbe> {
+  const ghPath = await which("gh");
+  if (ghPath === undefined) {
+    return { kind: "gh-missing" };
+  }
+
+  let output: string;
+  try {
+    output = await runCommandAsync(
+      "gh",
+      [
+        "pr",
+        "list",
+        "--head",
+        input.branch,
+        "--state",
+        "all",
+        "--json",
+        "number,url,state,mergedAt",
+      ],
+      { cwd: input.repoDir },
+    );
+  } catch (error) {
+    return {
+      kind: "unknown",
+      reason: error instanceof Error ? error.message : String(error),
+    };
+  }
+
+  try {
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- gh's --json schema is fixed by our request fields (number,url,state,mergedAt)
+    const parsed = JSON.parse(output) as {
+      number: number;
+      url: string;
+      state: string;
+      mergedAt: string | null;
+    }[];
+    if (parsed.length === 0) {
+      return { kind: "absent" };
+    }
+    const open = parsed.find((pullRequest) => pullRequest.state === "OPEN");
+    if (open !== undefined) {
+      return { kind: "open", number: open.number, url: open.url };
+    }
+    const merged = parsed.find(
+      (pullRequest) => pullRequest.mergedAt !== null && pullRequest.mergedAt !== undefined,
+    );
+    if (merged !== undefined) {
+      return { kind: "merged", number: merged.number, url: merged.url };
+    }
+    return { kind: "absent" };
+  } catch (error) {
+    return {
+      kind: "unknown",
+      reason: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+/* v8 ignore stop @preserve */

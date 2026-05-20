@@ -7,7 +7,6 @@ import { doctor } from "./commands/doctor.ts";
 import { orchestrate } from "./commands/orchestrator.ts";
 import { setupReposCli } from "./commands/setupRepos.ts";
 import { setupWorkspaceCli } from "./commands/setupWorkspace.ts";
-import { ticketStatusCli } from "./commands/ticketStatus.ts";
 import {
   captureConsoleError,
   captureConsoleLog,
@@ -29,16 +28,12 @@ vi.mock(import("./commands/setupWorkspace.ts"), () => ({
 vi.mock(import("./commands/setupRepos.ts"), () => ({
   setupReposCli: vi.fn<typeof setupReposCli>(),
 }));
-vi.mock(import("./commands/ticketStatus.ts"), () => ({
-  ticketStatusCli: vi.fn<typeof ticketStatusCli>(),
-}));
 
 const orchestrateMock = vi.mocked(orchestrate);
 const doctorMock = vi.mocked(doctor);
 const setupMock = vi.mocked(setupWorkspaceCli);
 const setupReposMock = vi.mocked(setupReposCli);
 const cleanupMock = vi.mocked(cleanupWorkspaceCli);
-const ticketStatusMock = vi.mocked(ticketStatusCli);
 const requireFromTest = createRequire(import.meta.url);
 const PACKAGE_VERSION = readPackageVersion();
 const README_TEXT = readFileSync(new URL("../README.md", import.meta.url), "utf8");
@@ -73,7 +68,6 @@ describe(run, () => {
     setupMock.mockResolvedValue();
     setupReposMock.mockResolvedValue();
     cleanupMock.mockResolvedValue();
-    ticketStatusMock.mockResolvedValue();
   });
 
   afterEach(() => {
@@ -248,8 +242,30 @@ describe(run, () => {
 
     await run(["doctor", "--ticket", "team-220"]);
 
-    expect(doctorMock).toHaveBeenCalledWith({ ticket: "team-220" });
+    expect(doctorMock).toHaveBeenCalledWith({ ticket: "team-220", ticketArgv: [] });
     expect(process.exitCode).toBeUndefined();
+  });
+
+  it("forwards --no-linear and --no-fetch to the ticket diagnostic", async () => {
+    doctorMock.mockResolvedValue(true);
+
+    await run(["doctor", "--ticket", "team-220", "--no-linear", "--no-fetch"]);
+
+    expect(doctorMock).toHaveBeenCalledWith({
+      ticket: "team-220",
+      ticketArgv: ["--no-linear", "--no-fetch"],
+    });
+  });
+
+  it("accepts ticket-mode flags interleaved before --ticket", async () => {
+    doctorMock.mockResolvedValue(true);
+
+    await run(["doctor", "--no-fetch", "--ticket", "team-220"]);
+
+    expect(doctorMock).toHaveBeenCalledWith({
+      ticket: "team-220",
+      ticketArgv: ["--no-fetch"],
+    });
   });
 
   it("sets exit code to 1 when `doctor --ticket` fails", async () => {
@@ -276,26 +292,19 @@ describe(run, () => {
     expect(doctorMock).not.toHaveBeenCalled();
   });
 
+  it("rejects ticket-mode flags without --ticket (host doctor has no flags)", async () => {
+    await run(["doctor", "--no-linear"]);
+
+    expect(consoleError.output()).toContain("--no-linear requires --ticket");
+    expect(process.exitCode).toBe(1);
+    expect(doctorMock).not.toHaveBeenCalled();
+  });
+
   it("sets exit code to 1 when doctor fails", async () => {
     doctorMock.mockResolvedValue(false);
 
     await run(["doctor"]);
 
-    expect(process.exitCode).toBe(1);
-  });
-
-  it("dispatches `status <ticket>` to ticketStatusCli with the remaining argv", async () => {
-    await run(["status", "HRD-442"]);
-
-    expect(ticketStatusMock).toHaveBeenCalledWith(["HRD-442"]);
-  });
-
-  it("propagates errors thrown by ticketStatusCli (e.g. bad args)", async () => {
-    ticketStatusMock.mockRejectedValue(new Error("crew status: ticket id is required"));
-
-    await run(["status"]);
-
-    expect(consoleError.output()).toContain("ticket id is required");
     expect(process.exitCode).toBe(1);
   });
 

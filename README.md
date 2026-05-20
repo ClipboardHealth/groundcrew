@@ -163,28 +163,35 @@ Rules:
 ## Manual commands
 
 ```bash
-crew doctor --ticket <TICKET>
-crew status <TICKET>
+crew doctor --ticket <TICKET> [--no-linear] [--no-fetch]
 crew run --ticket <TICKET>
 crew setup repos [--dry-run] [<repo>...]
 crew cleanup <TICKET>
 ```
 
-`crew doctor --ticket <TICKET>` diagnoses one Linear ticket without provisioning it. It checks the same resolution inputs that decide whether the orchestrator can see the ticket — Todo status, `agent-*` label, model resolution, repository mention, local clone — then checks blockers, model session usage, and available in-progress capacity. `crew status <TICKET>` is its companion: doctor answers "will this ticket dispatch?", status answers "what's already happened and what's left to do?" by inspecting the worktree, workspace pane, branch, and PR for a ticket that's already been provisioned.
+`crew doctor --ticket <TICKET>` is the single per-ticket diagnostic. It runs the full lifecycle — pre-dispatch eligibility (Todo status, `agent-*` label, model resolution, repository mention, local clone, blockers, model session usage, in-progress capacity) **and** post-dispatch local-state probes (host worktree, workspace pane, local branch, remote branch, open PR) — then prints a single verdict and (when applicable) a copy-pasteable recovery step. Verdict precedence runs from post-dispatch outcomes down: `pr-open` > `pr-merged` > `in-flight` > `recoverable` > `unresolvable` > `ineligible` > `would-dispatch` > `lost`. When a post-dispatch verdict fires, the Resolution and Eligibility sections are skipped — they describe pre-dispatch state that no longer matters.
 
 `crew run --ticket <TICKET>` provisions a single ticket the same way the orchestrator would: the repo is parsed from the ticket's Linear description and the model comes from the ticket's `agent-*` label (manual setup falls back to `models.default` for unlabeled tickets). If the description does not mention a repo from `workspace.knownRepositories`, setup fails before provisioning. `--watch` and `--ticket` are mutually exclusive — `--watch` drives the orchestrator loop; `--ticket` provisions one ticket and exits. `crew cleanup <TICKET>` resolves to every tracked worktree carrying that ticket id (across repos) and tears them all down. To inspect codexbar session windows directly, run `codexbar usage`; the orchestrator already gates on this internally via `orchestrator.sessionLimitPercentage`.
 
 ### `crew doctor --ticket <ticket>`
 
-Diagnose why a ticket would or wouldn't be dispatched on the next orchestrator tick. Runs the same resolution and eligibility chain as the dispatcher, but for a single ticket, and prints a tree of pass/fail checks.
+Diagnose where a single ticket is in its lifecycle and what to do next. Useful when you've labelled a ticket with `agent-claude` and it doesn't show up on the board, when you want to know whether a worktree got stranded mid-dispatch, or when you need a one-liner to wire into a shell loop or CI gate.
 
 ```bash
 crew doctor --ticket HRD-446
+crew doctor --ticket HRD-446 --no-linear --no-fetch
 ```
 
-Exits 0 if the ticket would dispatch, 1 otherwise. Useful when you've labelled a ticket with `agent-claude` and it doesn't show up on the board.
+Exits 0 when the verdict is `would-dispatch`, `pr-open`, or `pr-merged`; any other verdict exits 1.
 
-Example output for a ticket that would dispatch:
+Flags:
+
+- `--no-linear` — skip the Linear GraphQL call. Useful offline or when `GROUNDCREW_LINEAR_API_KEY` is not set. Resolution and Eligibility sections are skipped; verdicts that need only local state (`in-flight`, `recoverable`, `pr-open`, `pr-merged`, `lost`) still fire.
+- `--no-fetch` — skip the upfront `git fetch origin <branch>` before checking remote presence. Faster, but the remote-branch row reflects the last fetch rather than the current origin state.
+
+The Workspace section appends an attach hint to the pane name when the workspace backend exposes one (e.g. `tmux attach -t <session>:<pane>` or `cmux attach <name>`), so the verdict line is immediately actionable.
+
+Example output for a ticket that would dispatch (pre-dispatch path):
 
 ```text
 groundcrew doctor --ticket HRD-446 (Add retry logic to the sync job)
@@ -203,56 +210,37 @@ Eligibility
   [ok] Model "claude" usage under sessionLimitPercentage (12% (limit 85%))
   [ok] In-progress cap not hit (2/4 used)
 
+Worktree
+  [--] Host worktree exists (no worktree found for this ticket)
+
+Workspace
+  [--] Workspace pane open (no pane found for this ticket)
+
+Local branch
+  (skipped — repo dir unresolved)
+
+Remote branch
+  (skipped — repo dir unresolved)
+
+Pull request
+  (skipped — repo dir unresolved)
+
 → would be dispatched on next tick
 ```
 
-Example output for a ticket that's not in the Todo status:
+Example output for a ticket with an open PR (post-dispatch path; pre-dispatch sections skipped):
 
 ```text
-groundcrew doctor --ticket HRD-447 (Refactor auth middleware)
-─────────────────────────────────────────────────────────────
+groundcrew doctor --ticket HRD-442 (Multi-event extractor: year inference can produce date_start > date_end)
+────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 Resolution
-  [ok] Ticket exists in Linear ("Refactor auth middleware")
-  [--] Status is Todo (current: In Progress)
-  [ok] Has agent-* label (agent-claude)
-  [ok] Model resolves from agent-* label (model "claude")
-  [ok] Description mentions known repo (owner/repo)
-  [ok] Resolved repo is cloned locally (/dev/workspaces/owner/repo)
+  [ok] Ticket exists in Linear ("Multi-event extractor: year inference can produce date_start > date_end")
+  [ok] Status is Todo
+  (skipped — post-dispatch — pre-dispatch checks are irrelevant)
 
 Eligibility
-  (skipped — resolution checks failed)
-
-→ ineligible: status is In Progress (need Todo)
-```
-
-### `crew status <ticket>`
-
-Inspect a ticket's local artifacts — Linear status, host worktree, workspace pane, local branch, remote branch, open PR — and print a verdict plus a copy-pasteable recovery step. Companion to `crew doctor --ticket` ("will this ticket dispatch?"): `crew status` answers "what's already happened and what's left to do?".
-
-```bash
-crew status HRD-442
-```
-
-Exits 0 only when the verdict is `pr-open` or `pr-merged`; any other verdict exits 1 so the command is wirable into shell loops and CI gates.
-
-Arguments and flags:
-
-- `<ticket>` (required, positional) — Linear ticket id; mixed case is fine.
-- `--no-linear` — skip the Linear GraphQL call. Useful offline or when `GROUNDCREW_LINEAR_API_KEY` is not set; verdicts that depend on Linear (`in-flight`) fall back conservatively.
-- `--no-fetch` — skip the upfront `git fetch origin <branch>` before checking remote presence. Faster, but the remote-branch row reflects the last fetch rather than the current origin state.
-
-The Workspace section appends an attach hint to the pane name when the workspace backend exposes one (e.g. `tmux attach -t <session>:<pane>` or `cmux attach <name>`), so the verdict line is immediately actionable.
-
-Example output for a ticket with an open PR and an attachable workspace pane:
-
-```text
-groundcrew status HRD-442 (Multi-event extractor: year inference can produce date_start > date_end)
-───────────────────────────────────────────────────────────────────────────────────────────────────
-
-Linear
-  [ok] Ticket exists in Linear ("Multi-event extractor: year inference can produce date_start > date_end")
-  [ok] Status is non-terminal (In Progress)
+  (skipped — post-dispatch — pre-dispatch checks are irrelevant)
 
 Worktree
   [ok] Host worktree exists (/Users/paul/dev/groundcrew-workspaces/herds-social/herds-hrd-442)
@@ -278,13 +266,16 @@ Pull request
 
 The verdict on the last line maps to a recovery action:
 
-| Verdict       | What to do                                                     |
-| ------------- | -------------------------------------------------------------- |
-| `pr-open`     | Nothing — the PR is the source of truth.                       |
-| `pr-merged`   | Done.                                                          |
-| `recoverable` | Run the printed `nextStep` exactly.                            |
-| `in-flight`   | The ticket is still being worked on; check the workspace pane. |
-| `lost`        | No trace exists. Re-dispatch via `crew run --ticket <ticket>`. |
+| Verdict          | What to do                                                                                    |
+| ---------------- | --------------------------------------------------------------------------------------------- |
+| `pr-open`        | Nothing — the PR is the source of truth.                                                      |
+| `pr-merged`      | Done.                                                                                         |
+| `in-flight`      | The ticket is still being worked on; the verdict line names the workspace pane to attach to.  |
+| `recoverable`    | Run the printed `nextStep` exactly.                                                           |
+| `would-dispatch` | Pre-dispatch checks pass; the orchestrator will pick the ticket up on its next tick.          |
+| `ineligible`     | A resolution or eligibility check failed; the reason after the colon names the failing check. |
+| `unresolvable`   | The Linear ticket couldn't be fetched; the reason after the colon names the error.            |
+| `lost`           | No trace exists. Re-dispatch via `crew run --ticket <ticket>`.                                |
 
 ## Gotchas
 

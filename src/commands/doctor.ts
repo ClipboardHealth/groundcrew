@@ -15,7 +15,7 @@ import { detectHostCapabilities, type HostCapabilities, which } from "../lib/hos
 import { resolveLocalRunner } from "../lib/localRunner.ts";
 import { errorMessage, resolveLinearApiKey, writeOutput } from "../lib/util.ts";
 import { resolveWorkspaceKind, type WorkspaceResolution } from "../lib/workspaces.ts";
-import { runTicketDoctor } from "./ticketDoctor.ts";
+import { parseTicketDoctorFlags, runTicketDoctor } from "./ticketDoctor.ts";
 
 // Tokenization stops after this many non-flag tokens. Two is enough to
 // catch wrapper + wrapped CLI commands like `safehouse claude --foo`.
@@ -30,6 +30,8 @@ interface Check {
 
 export interface DoctorOptions {
   ticket?: string;
+  /** Extra flags after `--ticket <id>`; currently `--no-linear` and `--no-fetch`. */
+  ticketArgv?: string[];
 }
 
 async function checkCmd(cmd: string, required: boolean, hint?: string): Promise<Check> {
@@ -150,14 +152,19 @@ function format(check: Check): string {
 
 export async function doctor(options: DoctorOptions = {}): Promise<boolean> {
   if (options.ticket !== undefined) {
-    return await doctorTicket(options.ticket);
+    return await doctorTicket(options.ticket, options.ticketArgv ?? []);
   }
   return await doctorHost();
 }
 
-async function doctorTicket(ticket: string): Promise<boolean> {
+async function doctorTicket(ticket: string, ticketArgv: string[]): Promise<boolean> {
   try {
-    return await runTicketDoctor(ticket);
+    const flags = parseTicketDoctorFlags(ticketArgv);
+    return await runTicketDoctor({
+      ticket,
+      doLinear: flags.doLinear,
+      doFetch: flags.doFetch,
+    });
   } catch (error) {
     const displayTicket = ticket.toUpperCase();
     const header = `groundcrew doctor --ticket ${displayTicket}`;

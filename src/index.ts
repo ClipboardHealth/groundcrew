@@ -17,9 +17,9 @@ export {
   type RepositoryResolution,
 } from "./lib/boardSource.ts";
 export { getUsageByModel, type UsageByModel } from "./lib/usage.ts";
+export type { TicketCheck } from "./commands/ticketCheck.ts";
 export {
   ticketDoctor,
-  type TicketCheck,
   type TicketDoctorDependencies,
   type TicketDoctorResult,
   type TicketDoctorVerdict,
