@@ -71,10 +71,9 @@ function defaultCodexbarSource(provider: string): string {
   if (process.platform !== "darwin") {
     return "cli";
   }
-  // codexbar's CLI `auto` for claude prefers web over OAuth, so users with a
-  // personal claude.ai login may get gated on that account instead of the work
-  // OAuth `claude` actually runs as. Pin to `oauth` to match the menu bar app.
-  if (provider === "claude") {
+  // codexbar's CLI `auto` for Codex/Claude probes browser sessions before OAuth,
+  // while the menu bar app prefers OAuth. Match the app so gates follow the CLI account.
+  if (provider === "codex" || provider === "claude") {
     return "oauth";
   }
   return "auto";

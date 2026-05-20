@@ -86,10 +86,22 @@ function makeConfig(
   };
 }
 
-function mockCodexbarResponse(source: string): string {
+function makeCursorConfig(): ResolvedConfig {
+  return makeConfig({
+    definitions: {
+      cursor: {
+        cmd: "cursor-agent",
+        color: "#fff",
+        usage: { codexbar: { provider: "cursor" } },
+      },
+    },
+  });
+}
+
+function mockCodexbarResponse(source: string, provider = "codex"): string {
   return JSON.stringify([
     {
-      provider: "codex",
+      provider,
       source,
       usage: {
         primary: { usedPercent: 25, resetsAt: "2099-01-01T00:00:00.000Z" },
@@ -112,14 +124,28 @@ describe(getUsageByModel, () => {
     vi.clearAllMocks();
   });
 
-  it("defaults CodexBar usage to auto on macOS for non-claude providers", async () => {
+  it("defaults CodexBar usage to auto on macOS for non-OAuth-backed providers", async () => {
     stubPlatform("darwin");
+    runCommandMock.mockReturnValue(mockCodexbarResponse("web", "cursor"));
+
+    await getUsageByModel(makeCursorConfig());
+
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "codexbar",
+      ["usage", "--provider", "cursor", "--source", "auto", "--format", "json"],
+      { timeoutMs: 30_000 },
+    );
+  });
+
+  it("defaults CodexBar usage to oauth on macOS for the codex provider", async () => {
+    stubPlatform("darwin");
+    runCommandMock.mockReturnValue(mockCodexbarResponse("oauth"));
 
     await getUsageByModel(makeConfig());
 
     expect(runCommandMock).toHaveBeenCalledWith(
       "codexbar",
-      ["usage", "--provider", "codex", "--source", "auto", "--format", "json"],
+      ["usage", "--provider", "codex", "--source", "oauth", "--format", "json"],
       { timeoutMs: 30_000 },
     );
   });
@@ -170,10 +196,11 @@ describe(getUsageByModel, () => {
 
   it("accepts CodexBar's resolved source label when auto chooses a concrete source", async () => {
     stubPlatform("darwin");
+    runCommandMock.mockReturnValue(mockCodexbarResponse("web", "cursor"));
 
-    const actual = await getUsageByModel(makeConfig());
+    const actual = await getUsageByModel(makeCursorConfig());
 
-    expect(actual["codex"]?.session).toBe(0.25);
+    expect(actual["cursor"]?.session).toBe(0.25);
   });
 
   it("uses an explicit source from the config without consulting the platform", async () => {
