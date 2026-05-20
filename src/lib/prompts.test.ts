@@ -92,6 +92,18 @@ describe("shipped default prompts", () => {
     expect(CODEX_DEFAULT_PROMPT).not.toContain("superpowers:");
   });
 
+  it.each(shippedPrompts)(
+    "%s tells the agent to include a tmux-attach hint in the PR description",
+    (_name, prompt) => {
+      expect(prompt).toContain("tmux attach -t groundcrew:{{ticket}}");
+    },
+  );
+
+  it("CLAUDE_DEFAULT_PROMPT instructs the agent to omit the Claude Code attribution footer", () => {
+    expect(CLAUDE_DEFAULT_PROMPT).toContain("Generated with Claude Code");
+    expect(CLAUDE_DEFAULT_PROMPT).toMatch(/do not append.*Generated with Claude Code/i);
+  });
+
   it("DEFAULT_PROMPTS_BY_MODEL maps the shipped agents to their prompts", () => {
     expect(DEFAULT_PROMPTS_BY_MODEL).toStrictEqual({
       claude: CLAUDE_DEFAULT_PROMPT,
