@@ -159,7 +159,7 @@ function normalize(usage: Usage): NormalizedUsage {
   };
 }
 
-function gatedModels(config: ResolvedConfig): string[] {
+export function gatedModels(config: ResolvedConfig): string[] {
   return Object.entries(config.models.definitions)
     .filter(([, definition]) => definition.usage !== undefined)
     .map(([name]) => name);

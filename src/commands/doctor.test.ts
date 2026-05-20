@@ -802,7 +802,7 @@ describe(doctor, () => {
     expect(consoleLog.output()).toContain("required for local runs");
   });
 
-  it("adds an optional codexbar check when any model has usage configured", async () => {
+  it("fails doctor when codexbar is missing and an enabled model has usage configured", async () => {
     loadConfigMock.mockResolvedValue(
       makeConfig({
         default: "claude",
@@ -819,10 +819,33 @@ describe(doctor, () => {
 
     const actual = await doctor();
 
-    // codexbar is not required; doctor still passes when only it is missing.
+    expect(actual).toBe(false);
+    expect(consoleLog.output()).toContain("[--] codexbar");
+    expect(consoleLog.output()).toContain("required for usage gating on `claude`");
+    expect(consoleLog.output()).toContain("install codexbar");
+    expect(consoleLog.output()).toContain("disable gating");
+  });
+
+  it("reports codexbar as ok when usage is configured and codexbar is on PATH", async () => {
+    loadConfigMock.mockResolvedValue(
+      makeConfig({
+        default: "claude",
+        definitions: {
+          claude: {
+            cmd: "claude",
+            color: "#fff",
+            usage: { codexbar: { provider: "claude", source: "oauth" } },
+          },
+        },
+      }),
+    );
+    // Make every `which` succeed (no target throws), so codexbar resolves.
+    mockWhichFailure("__never__", "unreachable");
+
+    const actual = await doctor();
+
     expect(actual).toBe(true);
-    expect(consoleLog.output()).toContain("[? ] codexbar");
-    expect(consoleLog.output()).toContain("optional");
+    expect(consoleLog.output()).toContain("[ok] codexbar");
   });
 
   it("omits the hint when both `which` and the caller produce nothing", async () => {

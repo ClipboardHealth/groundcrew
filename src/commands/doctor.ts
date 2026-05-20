@@ -13,6 +13,7 @@ import {
 } from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities, which } from "../lib/host.ts";
 import { resolveLocalRunner } from "../lib/localRunner.ts";
+import { gatedModels } from "../lib/usage.ts";
 import { errorMessage, resolveLinearApiKey, writeOutput } from "../lib/util.ts";
 import { resolveWorkspaceKind, type WorkspaceResolution } from "../lib/workspaces.ts";
 import { runTicketDoctor } from "./ticketDoctor.ts";
@@ -128,12 +129,6 @@ function gatherToolTokens(config: ResolvedConfig): string[] {
   return [...all];
 }
 
-function anyModelUsesUsage(config: ResolvedConfig): boolean {
-  return Object.values(config.models.definitions).some(
-    (definition) => definition.usage !== undefined,
-  );
-}
-
 function format(check: Check): string {
   let tag: string;
   if (check.ok) {
@@ -215,8 +210,20 @@ async function doctorHost(): Promise<boolean> {
     checks.push(check);
   }
 
-  if (anyModelUsesUsage(config)) {
-    checks.push(await checkCmd("codexbar", false, "optional — only used for usage gating"));
+  const usageGatedModels = gatedModels(config);
+  if (usageGatedModels.length > 0) {
+    const codexbarPath = await which("codexbar");
+    if (codexbarPath === undefined) {
+      const modelList = usageGatedModels.map((name) => `\`${name}\``).join(", ");
+      checks.push({
+        name: "codexbar",
+        ok: false,
+        required: true,
+        hint: `required for usage gating on ${modelList} — install codexbar, or set \`models.definitions.<name>.usage\` to disable gating`,
+      });
+    } else {
+      checks.push({ name: "codexbar", ok: true, required: true, hint: codexbarPath });
+    }
   }
 
   for (const check of checks) {
