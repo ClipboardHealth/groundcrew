@@ -6,12 +6,12 @@ To hand the job to a coding agent (Claude Code, Cursor, etc.) without re-explain
 
 ```text
 You're adding a per-worktree setup hook for this repository. Produce a single
-file at `.groundcrew/setup.sh`, make it executable, and smoke-test it.
+file at `.groundcrew/setup.sh` and smoke-test it.
 
 Context: groundcrew launches each agent in a fresh git worktree per ticket and
-invokes `./.groundcrew/setup.sh --deps-only` before the agent starts. The flag
-tells the script "you're being called by automation; skip anything interactive
-or one-time-only." The same hook also runs inside the sdx sandbox.
+invokes `bash .groundcrew/setup.sh --deps-only` before the agent starts. The
+flag tells the script "you're being called by automation; skip anything
+interactive or one-time-only." The same hook also runs inside the sdx sandbox.
 
 Script requirements:
 
@@ -44,8 +44,8 @@ Detect this repo's stack and install accordingly. Examples:
 - `Gemfile.lock` → `bundle install --jobs=4`
 - Multiple lockfiles → polyglot; install each under its own guard.
 - No install step (docs repo, polyglot monorepo with per-package setup) →
-  emit a minimal `set -euo pipefail; exit 0` script. The explicit zero exit
-  suppresses the "not configured" warning groundcrew otherwise logs.
+  do not create the script. Groundcrew skips the hook silently when the
+  file is absent.
 
 Put codegen-the-agent-doesn't-need, db seeds, husky install, pre-commit
 install, and local-package linking ONLY in the no-flag branch — never in
@@ -53,9 +53,8 @@ install, and local-package linking ONLY in the no-flag branch — never in
 
 Verify before reporting done:
 
-1. `test -x .groundcrew/setup.sh` (executable bit is set).
-2. `./.groundcrew/setup.sh --deps-only` exits 0 with no interactive prompts.
-3. The output has no runtime-bootstrap warnings (`nvm not found`, `Python not
+1. `bash .groundcrew/setup.sh --deps-only` exits 0 with no interactive prompts.
+2. The output has no runtime-bootstrap warnings (`nvm not found`, `Python not
    on PATH`, etc.) — if you see them, the script is doing too much; strip
    those branches.
 

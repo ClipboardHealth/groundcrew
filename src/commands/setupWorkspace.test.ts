@@ -5,6 +5,7 @@ import { ensureClearance } from "@clipboard-health/clearance";
 import type { RunCommandOptions } from "../lib/commandRunner.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
+import { SETUP_COMMAND } from "../lib/launchCommand.ts";
 import type * as utilModule from "../lib/util.ts";
 import { getLinearClient, log } from "../lib/util.ts";
 import { WorktreeAlreadyExistsError, type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
@@ -449,17 +450,8 @@ describe(setupWorkspace, () => {
     const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
     expect(command).toBe("bash '/tmp/groundcrew-team-1-x/launch.sh'");
     expect(launchScript).toContain("cd '/work/repo-a-team-1'");
-    expect(launchScript).toContain("./.groundcrew/setup.sh --deps-only");
-    expect(launchScript).toContain("bash .groundcrew/setup.sh --deps-only");
-    // Backwards compat: legacy .claude/setup.sh stays as a silent fallback after
-    // the new .groundcrew/setup.sh checks, so existing repos keep working.
-    expect(launchScript).toContain("./.claude/setup.sh --deps-only");
-    expect(launchScript.indexOf(".groundcrew/setup.sh")).toBeLessThan(
-      launchScript.indexOf(".claude/setup.sh"),
-    );
-    expect(launchScript).toContain(
-      "[groundcrew] host setup: not configured (add .groundcrew/setup.sh to opt in)",
-    );
+    expect(launchScript).toContain(SETUP_COMMAND);
+    expect(launchScript).not.toContain(".claude/setup.sh");
     expect(launchScript).not.toContain("npm clean-install");
     expect(launchScript).toContain("exec '/");
     expect(launchScript).toContain(

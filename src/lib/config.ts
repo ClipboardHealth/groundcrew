@@ -67,7 +67,8 @@ export interface SandboxDefinition {
   kits?: string[];
   /**
    * Setup command run **inside** the sandbox before the agent exec.
-   * Defaults to `DEFAULT_SANDBOX_SETUP_COMMAND` when omitted.
+   * Defaults to the shared `.groundcrew/setup.sh --deps-only` convention
+   * (see `launchCommand.ts`) when omitted.
    */
   setupCommand?: string;
 }
@@ -105,30 +106,6 @@ interface DisabledUserModelDefinition {
   disabled: true;
 }
 type UserModelDefinition = EnabledUserModelDefinition | DisabledUserModelDefinition;
-
-/**
- * Setup command run inside sibling worktrees on the host before the agent
- * launches. Looks for `.groundcrew/setup.sh` first, then falls back to the
- * legacy `.claude/setup.sh` for repos that haven't migrated yet (executable
- * preferred in either case; otherwise invoked via `bash`). With no setup
- * script present, the fallback is a no-op that prints a sentinel hint to
- * stderr so users see the hook ran. The host is assumed to already have
- * the right Node / Python / etc. tooling installed.
- */
-export const DEFAULT_HOST_SETUP_COMMAND =
-  "if [ -x .groundcrew/setup.sh ]; then ./.groundcrew/setup.sh --deps-only; elif [ -f .groundcrew/setup.sh ] && command -v bash >/dev/null 2>&1; then bash .groundcrew/setup.sh --deps-only; elif [ -x .claude/setup.sh ]; then ./.claude/setup.sh --deps-only; elif [ -f .claude/setup.sh ] && command -v bash >/dev/null 2>&1; then bash .claude/setup.sh --deps-only; else echo '[groundcrew] host setup: not configured (add .groundcrew/setup.sh to opt in)' >&2; fi";
-
-/**
- * Setup command run inside an sdx (Docker Sandboxes) sandbox before the
- * agent process exec. Same `.groundcrew/setup.sh --deps-only` contract as
- * the host command — including silent fallback to the legacy `.claude/setup.sh`
- * path — with the no-op hint labelled `sandbox setup` so log lines distinguish
- * the two. Override per-model with `sandbox.setupCommand` when the sandbox
- * needs a different bootstrap recipe (e.g., language runtime install) than
- * the host already has.
- */
-export const DEFAULT_SANDBOX_SETUP_COMMAND =
-  "if [ -x .groundcrew/setup.sh ]; then ./.groundcrew/setup.sh --deps-only; elif [ -f .groundcrew/setup.sh ] && command -v bash >/dev/null 2>&1; then bash .groundcrew/setup.sh --deps-only; elif [ -x .claude/setup.sh ]; then ./.claude/setup.sh --deps-only; elif [ -f .claude/setup.sh ] && command -v bash >/dev/null 2>&1; then bash .claude/setup.sh --deps-only; else echo '[groundcrew] sandbox setup: not configured (add .groundcrew/setup.sh to opt in)' >&2; fi";
 
 /**
  * Loose user-facing shape — what a `config.ts` file declares.

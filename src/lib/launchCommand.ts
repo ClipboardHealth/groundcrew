@@ -1,13 +1,7 @@
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 
-import {
-  BUILD_SECRET_NAMES,
-  DEFAULT_HOST_SETUP_COMMAND,
-  DEFAULT_SANDBOX_SETUP_COMMAND,
-  type LocalRunner,
-  type ModelDefinition,
-} from "./config.ts";
+import { BUILD_SECRET_NAMES, type LocalRunner, type ModelDefinition } from "./config.ts";
 import { shellSingleQuote } from "./shell.ts";
 
 export { shellSingleQuote } from "./shell.ts";
@@ -39,6 +33,12 @@ export function resolveSafehouseClearancePath(baseUrl: string = import.meta.url)
 }
 
 const SAFEHOUSE_CLEARANCE_WRAPPER_PATH = resolveSafehouseClearancePath();
+
+/**
+ * Per-repo setup hook: if `.groundcrew/setup.sh` exists, run it with
+ * `--deps-only`; otherwise no-op.
+ */
+export const SETUP_COMMAND = "[ -f .groundcrew/setup.sh ] && bash .groundcrew/setup.sh --deps-only";
 
 function renderAgentCommand(arguments_: {
   agentCmd: string;
@@ -131,7 +131,7 @@ function buildHostLaunchCommand(arguments_: LaunchCommandArguments): string {
   if (arguments_.secretsFile !== undefined) {
     lines.push(sourceSecretsLine(arguments_.secretsFile));
   }
-  lines.push(setupWithStatusReporting(DEFAULT_HOST_SETUP_COMMAND));
+  lines.push(setupWithStatusReporting(SETUP_COMMAND));
   if (arguments_.secretsFile !== undefined) {
     lines.push(unsetSecretsLine());
   }
@@ -183,7 +183,7 @@ function buildSdxLaunchCommand(arguments_: LaunchCommandArguments): string {
     worktreeDir: arguments_.worktreeDir,
     sandboxName: arguments_.sandboxName,
   });
-  const setupCommand = arguments_.definition.sandbox.setupCommand ?? DEFAULT_SANDBOX_SETUP_COMMAND;
+  const setupCommand = arguments_.definition.sandbox.setupCommand ?? SETUP_COMMAND;
   const innerParts = [setupWithStatusReporting(setupCommand)];
   if (arguments_.secretsFile !== undefined) {
     innerParts.push(unsetSecretsLine());

@@ -162,9 +162,7 @@ Rules:
 
 ## Per-repo setup hook
 
-When groundcrew launches a worktree it looks for `.groundcrew/setup.sh` in the repo root. If present, it's invoked with `--deps-only` before the agent starts — executable preferred, otherwise via `bash .groundcrew/setup.sh --deps-only`. The same lookup runs inside the sdx sandbox (overridable per-model via `models.definitions.<name>.sandbox.setupCommand`).
-
-If no `.groundcrew/setup.sh` exists, groundcrew falls back to the legacy `.claude/setup.sh` at the same path with the same contract — so repos that haven't migrated keep working. When neither file exists, groundcrew logs `[groundcrew] host setup: not configured (add .groundcrew/setup.sh to opt in)` (or `sandbox setup: …` for the sdx path) to stderr and continues — no implicit `npm install`, `uv sync`, or anything else.
+When groundcrew launches a worktree, if `.groundcrew/setup.sh` exists in the repo root it's invoked as `bash .groundcrew/setup.sh --deps-only` before the agent starts; otherwise nothing runs. The same convention applies inside the sdx sandbox (overridable per-model via `models.definitions.<name>.sandbox.setupCommand`). No implicit `npm install`, `uv sync`, or anything else — groundcrew is language-agnostic, so opt in by adding the script.
 
 ### The `--deps-only` contract
 
@@ -205,14 +203,9 @@ fi
 
 **Docs-only or polyglot repo with no install step:**
 
-```bash
-#!/usr/bin/env bash
-exit 0
-```
+Omit the script. With nothing at `.groundcrew/setup.sh`, groundcrew skips the hook silently — fine for documentation repos, polyglot monorepos where setup happens per-package, or anywhere the per-worktree work is genuinely zero.
 
-The bare `exit 0` suppresses the `[groundcrew] … setup: not configured` hint for documentation repos, polyglot monorepos where setup happens per-package, or anywhere the per-worktree work is genuinely zero.
-
-For a more comprehensive real-world example (nvm bootstrap, hash-based skip-on-no-changes caching, portable SHA-256 detection), see [this repo's own `.groundcrew/setup.sh`](./.groundcrew/setup.sh) — symlinked at `.claude/setup.sh` so it also doubles as a Claude Code SessionStart hook.
+For a more comprehensive real-world example (nvm bootstrap, hash-based skip-on-no-changes caching, portable SHA-256 detection), see [this repo's own `.groundcrew/setup.sh`](./.groundcrew/setup.sh). It's also symlinked at `.claude/setup.sh` so the same script doubles as a Claude Code SessionStart hook for this repo — that symlink is local convenience, not part of groundcrew's contract.
 
 ### Generating it with an agent
 
