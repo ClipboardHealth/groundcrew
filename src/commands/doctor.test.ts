@@ -820,10 +820,9 @@ describe(doctor, () => {
     const actual = await doctor();
 
     expect(actual).toBe(false);
-    expect(consoleLog.output()).toContain("[--] codexbar");
-    expect(consoleLog.output()).toContain("required for usage gating on `claude`");
-    expect(consoleLog.output()).toContain("install codexbar");
-    expect(consoleLog.output()).toContain("disable gating");
+    expect(consoleLog.output()).toContain(
+      "[--] codexbar  — required for usage gating on `claude` — install codexbar, or set `models.definitions.<name>.usage` to disable gating",
+    );
   });
 
   it("reports codexbar as ok when usage is configured and codexbar is on PATH", async () => {
