@@ -1,6 +1,7 @@
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 
+import { AGENT_RUNTIME_SECRET_NAMES } from "./agentSecrets.ts";
 import { BUILD_SECRET_NAMES, type LocalRunner, type ModelDefinition } from "./config.ts";
 import { shellSingleQuote } from "./shell.ts";
 
@@ -71,6 +72,27 @@ function unsetSecretsLine(): string {
   return `unset ${BUILD_SECRET_NAMES.join(" ")}`;
 }
 
+/**
+ * Append the shared tail: source the agent-runtime secrets file (if any),
+ * read the prompt into `$_p`, then wipe the prompt dir (including any
+ * staged env files — they've already been sourced into the shell env that
+ * `exec` will inherit). Callers append the runner-specific `exec` line
+ * after this.
+ */
+function appendAgentSecretsAndPromptTail(
+  lines: string[],
+  arguments_: { agentSecretsFile?: string | undefined; promptFile: string },
+  promptDir: string,
+): void {
+  if (arguments_.agentSecretsFile !== undefined) {
+    lines.push(sourceSecretsLine(arguments_.agentSecretsFile));
+  }
+  lines.push(
+    `_p=$(cat ${shellSingleQuote(arguments_.promptFile)})`,
+    `rm -rf ${shellSingleQuote(promptDir)}`,
+  );
+}
+
 interface LaunchCommandArguments {
   definition: ModelDefinition;
   promptFile: string;
@@ -83,6 +105,14 @@ interface LaunchCommandArguments {
    * agent process never inherits them.
    */
   secretsFile?: string | undefined;
+  /**
+   * Optional path to a `KEY='value'` env file containing agent-runtime
+   * secrets (see `AGENT_RUNTIME_SECRET_NAMES`). Sourced AFTER the
+   * build-secret unset so the values survive into the agent's `exec`; for
+   * the sdx runner the names are propagated into the sandbox via `sbx
+   * exec -e KEY`. Never unset before agent exec.
+   */
+  agentSecretsFile?: string | undefined;
   /**
    * Concrete local isolation backend chosen for this launch. Resolved
    * from `config.local.runner` via `resolveLocalRunner` before this
@@ -135,11 +165,8 @@ function buildHostLaunchCommand(arguments_: LaunchCommandArguments): string {
   if (arguments_.secretsFile !== undefined) {
     lines.push(unsetSecretsLine());
   }
-  lines.push(
-    `_p=$(cat ${shellSingleQuote(arguments_.promptFile)})`,
-    `rm -rf ${shellSingleQuote(promptDir)}`,
-    `exec ${wrapped} "$_p"`,
-  );
+  appendAgentSecretsAndPromptTail(lines, arguments_, promptDir);
+  lines.push(`exec ${wrapped} "$_p"`);
   return lines.join(" && ");
 }
 
@@ -194,17 +221,23 @@ function buildSdxLaunchCommand(arguments_: LaunchCommandArguments): string {
   // from its own env at invocation time — populated by sourceSecretsLine
   // a few lines up. Avoids `-e KEY="$KEY"`, which would embed the value
   // in argv and break on `"`, `$`, or backticks in the token.
+  const sbxEnvironmentNames: string[] = [];
+  if (arguments_.secretsFile !== undefined) {
+    sbxEnvironmentNames.push(...BUILD_SECRET_NAMES);
+  }
+  if (arguments_.agentSecretsFile !== undefined) {
+    sbxEnvironmentNames.push(...AGENT_RUNTIME_SECRET_NAMES);
+  }
   const sbxEnvironmentFlags =
-    arguments_.secretsFile === undefined
+    sbxEnvironmentNames.length === 0
       ? ""
-      : `${BUILD_SECRET_NAMES.map((name) => `-e ${name}`).join(" ")} `;
+      : `${sbxEnvironmentNames.map((name) => `-e ${name}`).join(" ")} `;
   const lines: string[] = [];
   if (arguments_.secretsFile !== undefined) {
     lines.push(sourceSecretsLine(arguments_.secretsFile));
   }
+  appendAgentSecretsAndPromptTail(lines, arguments_, promptDir);
   lines.push(
-    `_p=$(cat ${shellSingleQuote(arguments_.promptFile)})`,
-    `rm -rf ${shellSingleQuote(promptDir)}`,
     `exec sbx exec -it ${sbxEnvironmentFlags}-w ${shellSingleQuote(arguments_.worktreeDir)} ${shellSingleQuote(arguments_.sandboxName)} sh -lc ${shellSingleQuote(innerCommand)} sh "$_p"`,
   );
   return lines.join(" && ");

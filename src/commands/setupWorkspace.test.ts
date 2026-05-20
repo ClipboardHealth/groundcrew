@@ -707,6 +707,108 @@ describe(setupWorkspace, () => {
     });
   });
 
+  describe("agent-runtime secret shuttling (LINEAR_API_KEY)", () => {
+    afterEach(() => {
+      deleteEnvironmentVariable("LINEAR_API_KEY");
+      deleteEnvironmentVariable("GROUNDCREW_LINEAR_API_KEY");
+    });
+
+    it("stages agent.env (mode 0600) with LINEAR_API_KEY when the host has LINEAR_API_KEY set", async () => {
+      setEnvironmentVariable("LINEAR_API_KEY", "lin_test_abc");
+      deleteEnvironmentVariable("GROUNDCREW_LINEAR_API_KEY");
+      mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:1" }));
+
+      await setupWorkspace(makeConfig(), {
+        ticket: "team-1",
+        repository: "repo-a",
+        model: "claude",
+      });
+
+      expect(writeFileMock).toHaveBeenCalledWith(
+        "/tmp/groundcrew-team-1-x/agent.env",
+        "LINEAR_API_KEY='lin_test_abc'\n",
+        { mode: 0o600 },
+      );
+      const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
+      expect(launchScript).toContain(". '/tmp/groundcrew-team-1-x/agent.env'");
+      expect(launchScript).not.toMatch(/unset[^&|;]*LINEAR_API_KEY/);
+    });
+
+    it("canonicalizes GROUNDCREW_LINEAR_API_KEY to LINEAR_API_KEY in agent.env", async () => {
+      setEnvironmentVariable("GROUNDCREW_LINEAR_API_KEY", "lin_groundcrew_xyz");
+      deleteEnvironmentVariable("LINEAR_API_KEY");
+      mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:1" }));
+
+      await setupWorkspace(makeConfig(), {
+        ticket: "team-1",
+        repository: "repo-a",
+        model: "claude",
+      });
+
+      expect(writeFileMock).toHaveBeenCalledWith(
+        "/tmp/groundcrew-team-1-x/agent.env",
+        "LINEAR_API_KEY='lin_groundcrew_xyz'\n",
+        { mode: 0o600 },
+      );
+    });
+
+    it("prefers GROUNDCREW_LINEAR_API_KEY over LINEAR_API_KEY when both are set", async () => {
+      setEnvironmentVariable("GROUNDCREW_LINEAR_API_KEY", "lin_groundcrew_wins");
+      setEnvironmentVariable("LINEAR_API_KEY", "lin_plain_loses");
+      mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:1" }));
+
+      await setupWorkspace(makeConfig(), {
+        ticket: "team-1",
+        repository: "repo-a",
+        model: "claude",
+      });
+
+      expect(writeFileMock).toHaveBeenCalledWith(
+        "/tmp/groundcrew-team-1-x/agent.env",
+        "LINEAR_API_KEY='lin_groundcrew_wins'\n",
+        { mode: 0o600 },
+      );
+    });
+
+    it("escapes single quotes in the Linear API key so the file is sourceable", async () => {
+      setEnvironmentVariable("LINEAR_API_KEY", "lin_with'quote");
+      deleteEnvironmentVariable("GROUNDCREW_LINEAR_API_KEY");
+      mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:1" }));
+
+      await setupWorkspace(makeConfig(), {
+        ticket: "team-1",
+        repository: "repo-a",
+        model: "claude",
+      });
+
+      expect(writeFileMock).toHaveBeenCalledWith(
+        "/tmp/groundcrew-team-1-x/agent.env",
+        `${String.raw`LINEAR_API_KEY='lin_with'\''quote'`}\n`,
+        { mode: 0o600 },
+      );
+    });
+
+    it("skips agent.env entirely when no Linear API key is set on the host", async () => {
+      deleteEnvironmentVariable("LINEAR_API_KEY");
+      deleteEnvironmentVariable("GROUNDCREW_LINEAR_API_KEY");
+      mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:1" }));
+
+      await setupWorkspace(makeConfig(), {
+        ticket: "team-1",
+        repository: "repo-a",
+        model: "claude",
+      });
+
+      expect(writeFileMock).not.toHaveBeenCalledWith(
+        expect.stringContaining("agent.env"),
+        expect.anything(),
+        expect.anything(),
+      );
+      const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
+      expect(launchScript).not.toContain("agent.env");
+    });
+  });
+
   it("logs the tmux access hint after launch so the user knows how to reach the workspace", async () => {
     mockTmuxHost();
     const config = makeConfig();

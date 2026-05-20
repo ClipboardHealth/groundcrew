@@ -124,6 +124,18 @@ Set them in the shell you run `crew` from. Anything not in this list is ignored 
 
 Net effect: by the time the agent process exists, the values are gone from the environment and the file is gone from disk.
 
+### Agent-runtime secrets
+
+A separate, narrower allowlist gets forwarded **into** the agent's environment so it can talk back to the same upstreams the host does (groundcrew needs Linear to dispatch tickets; agents commonly need it to move their own ticket to "In Review" or post update comments). These values survive the build-secret scrub and are inherited by the agent process.
+
+**Recognized names.** Defined in [`AGENT_RUNTIME_SECRET_NAMES`](./src/lib/agentSecrets.ts):
+
+- `LINEAR_API_KEY` — sourced from `GROUNDCREW_LINEAR_API_KEY` (preferred) or `LINEAR_API_KEY` on the host and forwarded under the canonical name `LINEAR_API_KEY`, which is what the `@linear/sdk`, Linear MCP server, and `linear` CLI all look for.
+
+If the host has no Linear key set, agent.env is not staged — there's nothing to forward.
+
+**Flow.** Same shape as the build-secret flow, with two differences: agent.env is sourced **after** the build-secret `unset` (so the agent inherits it), and the names are **never** unset before exec. Under `sdx`, names are forwarded into the sandbox via `-e KEY` flags. See `stageAgentSecrets` in [`src/commands/setupWorkspace.ts`](./src/commands/setupWorkspace.ts) and the `agentSecretsFile` branches in [`src/lib/launchCommand.ts`](./src/lib/launchCommand.ts).
+
 ## Runners
 
 `local.runner` picks the local isolation backend. `auto` resolves per platform.

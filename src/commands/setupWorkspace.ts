@@ -11,7 +11,13 @@ import { detectHostCapabilities } from "../lib/host.ts";
 import { buildLaunchCommand, shellSingleQuote } from "../lib/launchCommand.ts";
 import { createLinearIssueStatusUpdater } from "../lib/linearIssueStatus.ts";
 import { assertLocalRunnerRequirements, resolveLocalRunner } from "../lib/localRunner.ts";
-import { errorMessage, getLinearClient, log, readEnvironmentVariable } from "../lib/util.ts";
+import {
+  errorMessage,
+  getLinearClient,
+  log,
+  readEnvironmentVariable,
+  resolveLinearApiKey,
+} from "../lib/util.ts";
 import { type WorkspaceAccessHint, workspaces } from "../lib/workspaces.ts";
 import { isWorktreeAlreadyExistsError, type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 
@@ -79,6 +85,29 @@ function stageBuildSecrets(promptDir: string): string | undefined {
   const secretsFile = join(promptDir, "secrets.env");
   writeFileSync(secretsFile, `${lines.join("\n")}\n`, { mode: 0o600 });
   return secretsFile;
+}
+
+/**
+ * Stage a `KEY='value'` env file for agent-runtime secrets so the launched
+ * agent inherits them across the build-secret unset. Today the only
+ * runtime secret is `LINEAR_API_KEY` — sourced from either
+ * `GROUNDCREW_LINEAR_API_KEY` (preferred) or `LINEAR_API_KEY` on the host
+ * and canonicalized to `LINEAR_API_KEY` for the agent (which is what the
+ * Linear SDK, MCP server, and `linear` CLI all look for). Returns
+ * `undefined` when the host has no key, leaving the launch command
+ * unchanged. The temp dir is `rm -rf`'d by the launch command (and
+ * rollback path), so cleanup is already handled.
+ */
+function stageAgentSecrets(promptDir: string): string | undefined {
+  const resolved = resolveLinearApiKey();
+  if (resolved === undefined) {
+    return undefined;
+  }
+  const agentSecretsFile = join(promptDir, "agent.env");
+  writeFileSync(agentSecretsFile, `LINEAR_API_KEY=${shellSingleQuote(resolved.value)}\n`, {
+    mode: 0o600,
+  });
+  return agentSecretsFile;
 }
 
 function stageLaunchScript(promptDir: string, command: string): string {
@@ -173,6 +202,7 @@ export async function setupWorkspace(
     promptDir = stagedPrompt.directory;
 
     const secretsFile = stageBuildSecrets(promptDir);
+    const agentSecretsFile = stageAgentSecrets(promptDir);
 
     const sandboxName =
       runner === "sdx" && definition.sandbox !== undefined
@@ -193,6 +223,7 @@ export async function setupWorkspace(
       promptFile: stagedPrompt.file,
       worktreeDir: launchDir,
       secretsFile,
+      agentSecretsFile,
       runner,
       sandboxName,
     });

@@ -132,6 +132,55 @@ describe(buildLaunchCommand, () => {
     });
   });
 
+  describe("agentSecretsFile (runtime secret shuttling)", () => {
+    it("omits agent.env references when agentSecretsFile is undefined", () => {
+      const out = buildLaunchCommand(arguments_());
+
+      expect(out).not.toContain("agent.env");
+    });
+
+    it("sources agentSecretsFile after the build-secret unset so the agent inherits the values", () => {
+      const out = buildLaunchCommand(
+        arguments_({
+          secretsFile: "/tmp/prompt-team-1/secrets.env",
+          agentSecretsFile: "/tmp/prompt-team-1/agent.env",
+        }),
+      );
+
+      const unsetIndex = out.indexOf("unset NPM_TOKEN BUF_TOKEN");
+      const agentSourceIndex = out.indexOf(". '/tmp/prompt-team-1/agent.env'");
+      const execIndex = out.indexOf("safehouse-clearance");
+      expect(unsetIndex).toBeGreaterThan(-1);
+      expect(agentSourceIndex).toBeGreaterThan(unsetIndex);
+      expect(execIndex).toBeGreaterThan(agentSourceIndex);
+      expect(out).toContain(
+        "if [ -f '/tmp/prompt-team-1/agent.env' ]; then set -a && . '/tmp/prompt-team-1/agent.env' && set +a; fi",
+      );
+    });
+
+    it("sources agentSecretsFile even when no build secrets file is staged", () => {
+      const out = buildLaunchCommand(
+        arguments_({ agentSecretsFile: "/tmp/prompt-team-1/agent.env" }),
+      );
+
+      expect(out).toContain(". '/tmp/prompt-team-1/agent.env'");
+      expect(out).not.toContain("unset NPM_TOKEN");
+      // Agent-runtime names must NOT be unset — they need to survive into exec.
+      expect(out).not.toContain("unset LINEAR_API_KEY");
+    });
+
+    it("does not unset agent-runtime secret names before exec", () => {
+      const out = buildLaunchCommand(
+        arguments_({
+          secretsFile: "/tmp/prompt-team-1/secrets.env",
+          agentSecretsFile: "/tmp/prompt-team-1/agent.env",
+        }),
+      );
+
+      expect(out).not.toMatch(/unset[^&|;]*LINEAR_API_KEY/);
+    });
+  });
+
   describe("runner='none'", () => {
     it("execs the agent directly without the safehouse wrapper", () => {
       const out = buildLaunchCommand(arguments_({ runner: "none" }));
@@ -224,6 +273,36 @@ describe(buildLaunchCommand, () => {
 
       expect(out).not.toContain("-e NPM_TOKEN");
       expect(out).not.toContain("-e BUF_TOKEN");
+    });
+
+    it("forwards agent-runtime secret names into the sandbox via `-e KEY` when agentSecretsFile is staged", () => {
+      const out = buildLaunchCommand(
+        sdxArguments({ agentSecretsFile: "/tmp/prompt-team-1/agent.env" }),
+      );
+
+      expect(out).toContain(". '/tmp/prompt-team-1/agent.env'");
+      expect(out).toContain("-e LINEAR_API_KEY");
+      // Agent runtime names must not be unset inside the sandbox.
+      expect(out).not.toContain("unset LINEAR_API_KEY");
+    });
+
+    it("omits -e LINEAR_API_KEY when no agentSecretsFile is staged", () => {
+      const out = buildLaunchCommand(sdxArguments());
+
+      expect(out).not.toContain("-e LINEAR_API_KEY");
+    });
+
+    it("forwards both build and agent secrets when both files are staged", () => {
+      const out = buildLaunchCommand(
+        sdxArguments({
+          secretsFile: "/tmp/prompt-team-1/secrets.env",
+          agentSecretsFile: "/tmp/prompt-team-1/agent.env",
+        }),
+      );
+
+      expect(out).toContain("-e NPM_TOKEN -e BUF_TOKEN -e LINEAR_API_KEY");
+      expect(out).toContain("unset NPM_TOKEN BUF_TOKEN");
+      expect(out).not.toContain("unset LINEAR_API_KEY");
     });
   });
 });
