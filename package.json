@@ -1,6 +1,6 @@
 {
   "name": "@clipboard-health/groundcrew",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "description": "Linear-driven orchestrator that launches AI coding agents in git worktrees, with workspace lifecycle and usage tracking.",
   "keywords": [
     "agent",
