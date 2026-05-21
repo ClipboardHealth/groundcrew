@@ -47,6 +47,16 @@ Lifecycle lives in `src/commands/cleaner.ts`. Callers ask `cleaner.runOnce({stat
 
 Cleanup decisions are recorded under `logEvent("cleanup", ...)`. Distinct from dispatch, which uses `logEvent("dispatch", ...)`.
 
+## Reporter
+
+The per-iteration scanner that posts a single Linear followup comment when a ticket reaches a terminal status. One per `orchestrate()` invocation; stateless across iterations. Mirrors `Dispatcher` and `Cleaner`.
+
+Lifecycle lives in `src/commands/reporter.ts`. Callers ask `reporter.runOnce({state, worktreeEntries, dryRun})` and never reach into the comment internals — the module dedupes against a sentinel marker, gathers `branch / commit count / PR URL / diff shortstat` from the worktree, and posts via `createLinearCommentsClient` (in `src/lib/linearComments.ts`, sibling to `linearIssueStatus.ts`). Per-ticket failures are caught and logged; one bad post does not block the rest of the tick.
+
+The orchestrator runs `dispatcher.runOnce → reporter.runOnce → cleaner.runOnce` per tick. The order is load-bearing: Reporter must run before Cleaner so the worktree still exists when it reads the ticket's git/gh state. Dedup uses an inline marker (`<!-- groundcrew:followup -->`) embedded in the comment body — Reporter scans existing comments via `client.comments` before posting and skips if it finds the marker. This survives restarts and local-state loss without a separate persistence file.
+
+Reporter decisions are recorded under `logEvent("reporter", ...)` with `outcome` in `posted | skipped | failed`. Distinct from dispatch (`event=dispatch`) and cleanup (`event=cleanup`).
+
 ## BoardSource
 
 The Linear adapter that turns the project's GraphQL state into a `BoardState` snapshot. One per `orchestrate()` invocation; stateless across calls.

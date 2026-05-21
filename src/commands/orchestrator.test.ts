@@ -65,6 +65,17 @@ vi.mock(import("./setupWorkspace.ts"), async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, setupWorkspace: vi.fn<typeof setupWorkspace>() };
 });
+vi.mock(import("../lib/commandRunner.ts"), async (importOriginal) => {
+  const actual = await importOriginal();
+  // Reporter shells out to git/gh; default to empty stdout so a Done ticket
+  // renders as "0 commits, no PR found, 0 files changed" instead of running
+  // real subprocesses in the orchestrator integration tests.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- shared mock recorder across runCommandAsync overloads.
+  const runner = vi
+    .fn<(command: string) => Promise<string>>()
+    .mockResolvedValue("") as unknown as typeof actual.runCommandAsync;
+  return { ...actual, runCommandAsync: runner };
+});
 
 type RawRequestMock = ReturnType<
   typeof vi.fn<(query: string, variables?: Record<string, unknown>) => Promise<unknown>>
@@ -177,6 +188,8 @@ interface ClientStub {
   client: { rawRequest: RawRequestMock };
   team: ReturnType<typeof vi.fn>;
   updateIssue: ReturnType<typeof vi.fn>;
+  comments: ReturnType<typeof vi.fn>;
+  createComment: ReturnType<typeof vi.fn>;
 }
 
 function makeClient(options: {
@@ -233,6 +246,12 @@ function makeClient(options: {
           }),
       }),
     updateIssue: vi.fn<() => Promise<Record<string, never>>>().mockResolvedValue({}),
+    // Reporter integration: "no prior followup" + "post succeeds" so Done
+    // tickets flow through Reporter cleanly during these orchestrator tests.
+    comments: vi
+      .fn<() => Promise<{ nodes: { body: string }[] }>>()
+      .mockResolvedValue({ nodes: [] }),
+    createComment: vi.fn<() => Promise<{ success: true }>>().mockResolvedValue({ success: true }),
   };
 }
 
@@ -1264,7 +1283,7 @@ describe(orchestrate, () => {
     expect(client.team).toHaveBeenCalledTimes(1);
   });
 
-  it("hands a Done worktree to teardown", async () => {
+  it("posts a Linear followup before tearing down a Done worktree", async () => {
     const entry = hostEntryFor("repo-a", "team-1");
     listMock.mockReturnValue([
       entry,
@@ -1287,6 +1306,12 @@ describe(orchestrate, () => {
     await orchestrate({ watch: false, dryRun: false });
 
     expect(teardownMock).toHaveBeenCalledWith(expect.anything(), [entry]);
+    expect(client.createComment).toHaveBeenCalledWith(
+      expect.objectContaining({ issueId: "uuid-1" }),
+    );
+    const post = client.createComment.mock.invocationCallOrder;
+    const td = teardownMock.mock.invocationCallOrder;
+    expect(Math.min(...post)).toBeLessThan(Math.min(...td));
   });
 
   it("cleans up worktrees for custom terminal statuses", async () => {

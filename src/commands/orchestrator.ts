@@ -24,6 +24,7 @@ import {
 import { worktrees } from "../lib/worktrees.ts";
 import { type Cleaner, createCleaner } from "./cleaner.ts";
 import { createDispatcher, type Dispatcher } from "./dispatcher.ts";
+import { createReporter, type Reporter } from "./reporter.ts";
 
 const RATE_LIMIT_DELAY_MS = 60_000;
 const RETRY_BASE_DELAY_MS = 1000;
@@ -218,6 +219,7 @@ export async function orchestrate(options: OrchestratorOptions): Promise<void> {
 
   const cleaner: Cleaner = createCleaner({ config });
   const dispatcher: Dispatcher = createDispatcher({ config, client });
+  const reporter: Reporter = createReporter({ config, client });
   let previous: BoardState | undefined;
 
   const tick = async (signal?: AbortSignal): Promise<void> => {
@@ -230,13 +232,16 @@ export async function orchestrate(options: OrchestratorOptions): Promise<void> {
       dryRun: options.dryRun,
       ...(signal === undefined ? {} : { signal }),
     };
-    await cleaner.runOnce(tickArguments);
     await dispatcher.runOnce({
       ...tickArguments,
       // Lazy: dispatcher only invokes this after its own early-returns, so
       // an idle board doesn't burn a codexbar shell-out per tick.
       usage: async (usageSignal) => await fetchUsageOrEmpty(config, usageSignal),
     });
+    // Reporter must run before Cleaner so the worktree still exists when
+    // we read its git/gh state for the followup comment.
+    await reporter.runOnce(tickArguments);
+    await cleaner.runOnce(tickArguments);
     previous = state;
   };
 
