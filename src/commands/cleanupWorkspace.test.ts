@@ -1,4 +1,5 @@
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
+import { removeRunState } from "../lib/runState.ts";
 import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCapture.ts";
 import { emptyTeardownResult } from "../testHelpers/teardownResult.ts";
@@ -19,10 +20,15 @@ vi.mock(import("../lib/worktrees.ts"), async (importOriginal) => {
     },
   };
 });
+vi.mock(import("../lib/runState.ts"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, removeRunState: vi.fn<typeof removeRunState>() };
+});
 
 const loadConfigMock = vi.mocked(loadConfig);
 const findByTicketMock = vi.mocked(worktrees.findByTicket);
 const teardownMock = vi.mocked(worktrees.teardown);
+const removeRunStateMock = vi.mocked(removeRunState);
 
 const hostEntry: WorktreeEntry = {
   repository: "repo-a",
@@ -78,6 +84,7 @@ describe(cleanupWorkspace, () => {
     await cleanupWorkspace(config, { ticket: "team-1" });
 
     expect(teardownMock).toHaveBeenCalledWith(config, [hostEntry], { force: false });
+    expect(removeRunStateMock).toHaveBeenCalledWith(config, "team-1");
   });
 
   it("passes --force through to teardown", async () => {
@@ -110,6 +117,18 @@ describe(cleanupWorkspace, () => {
     await cleanupWorkspace(config, { ticket: "team-1" });
 
     expect(consoleLog.output()).toContain("workspace list failed: cmux exploded");
+  });
+
+  it("logs and continues when marking removed run state fails", async () => {
+    findByTicketMock.mockReturnValue([hostEntry]);
+    teardownMock.mockResolvedValue(emptyTeardownResult({ removed: [hostEntry] }));
+    removeRunStateMock.mockImplementation(() => {
+      throw new Error("state write failed");
+    });
+
+    await cleanupWorkspace(config, { ticket: "team-1" });
+
+    expect(consoleLog.output()).toContain("Run state cleanup failed");
   });
 
   it("stays silent on workspaceProbe.unavailable when no underlying error is reported", async () => {

@@ -423,6 +423,26 @@ export interface TeardownResult {
   workspaceProbe: WorkspaceProbe;
 }
 
+async function closeWorkspaceForTeardown(
+  config: ResolvedConfig,
+  ticket: string,
+  signal: AbortSignal | undefined,
+): Promise<boolean> {
+  const closeResult = await workspaces.close(config, ticket, signal);
+  return closeResult.kind === "closed";
+}
+
+function shouldCloseWorkspaceForTeardown(
+  ticket: string,
+  workspaceProbe: WorkspaceProbe,
+  liveNames: ReadonlySet<string>,
+  closedTickets: ReadonlySet<string>,
+): boolean {
+  return (
+    !closedTickets.has(ticket) && (workspaceProbe.kind === "unavailable" || liveNames.has(ticket))
+  );
+}
+
 // A flaky cmux/tmux must not abort the batch — otherwise every on-disk
 // worktree gets stranded. The probe verdict is captured on the result and
 // removal proceeds with no live-workspace knowledge (so no close attempts).
@@ -451,14 +471,13 @@ async function teardown(
   };
 
   for (const entry of entries) {
-    if (
-      !closedTickets.has(entry.ticket) &&
-      (workspaceProbe.kind === "unavailable" || liveNames.has(entry.ticket))
-    ) {
+    if (shouldCloseWorkspaceForTeardown(entry.ticket, workspaceProbe, liveNames, closedTickets)) {
       try {
         // oxlint-disable-next-line no-await-in-loop -- teardown is intentionally sequential per ticket
-        await workspaces.close(config, entry.ticket, options?.signal);
-        result.closed.push(entry.ticket);
+        const closed = await closeWorkspaceForTeardown(config, entry.ticket, options?.signal);
+        if (closed) {
+          result.closed.push(entry.ticket);
+        }
       } catch (error) {
         if (options?.signal?.aborted === true) {
           throw error;

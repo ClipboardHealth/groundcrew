@@ -6,6 +6,7 @@
 
 import { type BoardState, isTerminalStatus } from "../lib/boardSource.ts";
 import type { ResolvedConfig } from "../lib/config.ts";
+import { recordCleanedUpRuns } from "../lib/runStateCleanup.ts";
 import { log, logEvent } from "../lib/util.ts";
 import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 import { logTeardown, recordTeardownEvents } from "./teardownReporter.ts";
@@ -71,6 +72,7 @@ export function createCleaner(deps: CleanerDeps): Cleaner {
       signal === undefined
         ? await worktrees.teardown(config, stale)
         : await worktrees.teardown(config, stale, { signal });
+    recordCleanedUpRuns(config, result.removed);
     logTeardown(result);
     recordTeardownEvents(result);
   }

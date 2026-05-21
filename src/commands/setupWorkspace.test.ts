@@ -6,6 +6,7 @@ import type { RunCommandOptions } from "../lib/commandRunner.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
 import { SETUP_COMMAND } from "../lib/launchCommand.ts";
+import { recordRunState } from "../lib/runState.ts";
 import type * as utilModule from "../lib/util.ts";
 import { getLinearClient, log } from "../lib/util.ts";
 import { WorktreeAlreadyExistsError, type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
@@ -61,6 +62,10 @@ vi.mock(import("../lib/commandRunner.ts"), async (importOriginal) => {
     runCommandAsync: runCommandMock as unknown as typeof actual.runCommandAsync,
   };
 });
+vi.mock(import("../lib/runState.ts"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, recordRunState: vi.fn<typeof recordRunState>() };
+});
 vi.mock(import("../lib/util.ts"), async (importOriginal) => {
   const actual = await importOriginal<typeof utilModule>();
   return {
@@ -90,8 +95,19 @@ const detectHostMock = vi.mocked(detectHostCapabilities);
 const ensureClearanceMock = vi.mocked(ensureClearance);
 const linearClientMock = vi.mocked(getLinearClient);
 const logMock = vi.mocked(log);
+const recordRunStateMock = vi.mocked(recordRunState);
 const createMock = vi.mocked(worktrees.create);
 const teardownMock = vi.mocked(worktrees.teardown);
+
+type RecordedRunState = Parameters<typeof recordRunState>[0]["state"];
+
+function lastRecordedRunState(): RecordedRunState {
+  const input = recordRunStateMock.mock.calls.at(-1)?.[0];
+  if (input === undefined) {
+    throw new Error("recordRunState was not called");
+  }
+  return input.state;
+}
 
 interface MockedLabel {
   name: string;
@@ -412,6 +428,15 @@ describe(setupWorkspace, () => {
       "cmux",
       expect.arrayContaining(["set-status", "model", "claude", "--workspace", "workspace:42"]),
     );
+    expect(lastRecordedRunState()).toMatchObject({
+      ticket: "team-1",
+      repository: "repo-a",
+      model: "claude",
+      worktreeDir: "/work/repo-a-team-1",
+      branchName: "rocky-team-1",
+      workspaceName: "team-1",
+      state: "running",
+    });
   });
 
   it("keeps the local cmux command short by staging the full launcher in a local script", async () => {
@@ -1064,6 +1089,35 @@ describe(setupWorkspace, () => {
     await expect(
       setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" }),
     ).rejects.toThrow(/cmux down/);
+  });
+
+  it("records failed launch state after rollback", async () => {
+    const config = makeConfig();
+    mockCmuxFailure();
+
+    await expect(
+      setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" }),
+    ).rejects.toThrow(/cmux down/);
+
+    expect(lastRecordedRunState()).toMatchObject({
+      ticket: "team-1",
+      repository: "repo-a",
+      model: "claude",
+      state: "failed-to-launch",
+    });
+    expect(lastRecordedRunState().detail).toContain("cmux down");
+  });
+
+  it("logs and continues when recording run state fails after launch", async () => {
+    const config = makeConfig();
+    mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
+    recordRunStateMock.mockImplementation(() => {
+      throw new Error("disk full");
+    });
+
+    await setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" });
+
+    expect(logMock).toHaveBeenCalledWith(expect.stringContaining("Run state update failed"));
   });
 
   it("ignores worktree remove failures reported by teardown during rollback", async () => {
