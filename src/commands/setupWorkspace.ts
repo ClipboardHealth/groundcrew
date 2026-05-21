@@ -4,6 +4,7 @@ import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { ensureAgentSandbox, openAgentWorkspace, prepareAgentLaunch } from "../lib/agentLaunch.ts";
 import { buildLaunchCommand } from "../lib/launchCommand.ts";
 import { createLinearIssueStatusUpdater } from "../lib/linearIssueStatus.ts";
+import { recordRunState } from "../lib/runState.ts";
 import {
   stageBuildSecrets,
   stagePromptFromTemplate,
@@ -142,6 +143,16 @@ export async function setupWorkspace(
       color: definition.color,
       ...(signal === undefined ? {} : { signal }),
     });
+    recordRunStateBestEffort({
+      config,
+      ticket,
+      repository,
+      model,
+      worktreeDir: launchDir,
+      branchName,
+      workspaceName: ticket,
+      state: "running",
+    });
 
     log(`Workspace "${ticket}" launched (${model})`);
     log(`  Worktree: ${launchDir}`);
@@ -149,6 +160,17 @@ export async function setupWorkspace(
     await logWorkspaceAccessHint({ config, ticket, signal });
   } catch (error) {
     await rollbackWorktree({ config, entry: created, promptDir });
+    recordRunStateBestEffort({
+      config,
+      ticket,
+      repository,
+      model,
+      worktreeDir: launchDir,
+      branchName,
+      workspaceName: ticket,
+      state: "failed-to-launch",
+      detail: errorMessage(error),
+    });
     throw error;
   }
 }
@@ -196,6 +218,36 @@ async function logWorkspaceAccessHint(arguments_: {
 
 function logAccessHint(accessHint: WorkspaceAccessHint): void {
   log(`  Attach:   ${accessHint.command}`);
+}
+
+function recordRunStateBestEffort(arguments_: {
+  config: ResolvedConfig;
+  ticket: string;
+  repository: string;
+  model: string;
+  worktreeDir: string;
+  branchName: string;
+  workspaceName: string;
+  state: "running" | "failed-to-launch";
+  detail?: string;
+}): void {
+  try {
+    recordRunState({
+      config: arguments_.config,
+      state: {
+        ticket: arguments_.ticket,
+        repository: arguments_.repository,
+        model: arguments_.model,
+        worktreeDir: arguments_.worktreeDir,
+        branchName: arguments_.branchName,
+        workspaceName: arguments_.workspaceName,
+        state: arguments_.state,
+        ...(arguments_.detail === undefined ? {} : { detail: arguments_.detail }),
+      },
+    });
+  } catch (error) {
+    log(`Run state update failed for ${arguments_.ticket}: ${errorMessage(error)}`);
+  }
 }
 
 async function rollbackWorktree(arguments_: {

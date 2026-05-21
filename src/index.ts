@@ -6,6 +6,16 @@ export { setupWorkspace, type SetupWorkspaceOptions } from "./commands/setupWork
 export type { Config, ModelDefinition, ResolvedConfig } from "./lib/config.ts";
 export { loadConfig } from "./lib/config.ts";
 export {
+  readRunState,
+  recordRunState,
+  removeRunState,
+  runStateDirectory,
+  runStatePath,
+  updateRunState,
+  type RunLifecycleState,
+  type RunState,
+} from "./lib/runState.ts";
+export {
   fetchBlockersForTicket,
   fetchInProgressIssueCount,
   fetchRawLinearIssue,
