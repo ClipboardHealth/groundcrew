@@ -193,8 +193,18 @@ function rawIssue(overrides: Partial<RawIssueStub> = {}): RawIssueStub {
   };
 }
 
-function activeNodes(count: number): { id: string }[] {
-  return Array.from({ length: count }, (_value, index) => ({ id: `active-${index}` }));
+interface ActiveNodeStub {
+  id: string;
+  project: { slugId: string };
+  state: { name: string };
+}
+
+function activeNodes(count: number): ActiveNodeStub[] {
+  return Array.from({ length: count }, (_value, index) => ({
+    id: `active-${index}`,
+    project: { slugId: "aaaaaaaaaaaa" },
+    state: { name: "In Progress" },
+  }));
 }
 
 function makeLinearClient(

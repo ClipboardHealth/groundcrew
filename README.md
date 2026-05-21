@@ -434,7 +434,7 @@ Groundcrew sets a ticket to `inProgress` when it provisions a workspace and neve
 </details>
 
 <details>
-<summary>Project must be on a single Linear team in practice</summary>
+<summary>Cross-team projects need a consistent `inProgress` name per project</summary>
 
 Cross-team projects work — the orchestrator caches the in-progress state ID per `(team, statusName)` pair — but every team in a given project must use the same status name for that project's `statuses.inProgress`. If you watch two projects that share a Linear team but configure different `inProgress` names, each project's lookup is independent.
 

@@ -1603,6 +1603,24 @@ export default config;\n`,
     await expect(loadConfig()).rejects.toThrow(
       /linear\.projectSlug \/ linear\.statuses are no longer supported/,
     );
+    // Migration hint should quote the actual slug from linear.projects[0],
+    // not the placeholder, since the user already typed a real slug.
+    await expect(loadConfig()).rejects.toThrow(
+      new RegExp(`projects: \\[\\{ projectSlug: "${VALID_PROJECT_SLUG}"`),
+    );
+  });
+
+  it("falls back to the placeholder slug when neither legacy projectSlug nor projects[0] resolves", async () => {
+    const path = join(temporary, "statuses-only.ts");
+    writeFileSync(
+      path,
+      `export default { linear: { statuses: { todo: "Todo" } }, workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))} };\n`,
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(/your-project-name-0123456789ab/);
   });
 
   it("fails with a discovery error when no config exists anywhere", async () => {

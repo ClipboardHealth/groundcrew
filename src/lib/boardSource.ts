@@ -585,7 +585,11 @@ export async function fetchRawLinearIssue(arguments_: {
 }
 
 interface InProgressIssuesPage {
-  nodes: { id: string }[];
+  nodes: {
+    id: string;
+    project?: { slugId: string } | null;
+    state?: { name: string } | null;
+  }[];
   pageInfo: { hasNextPage: boolean; endCursor: string };
 }
 
@@ -595,6 +599,9 @@ export async function fetchInProgressIssueCount(arguments_: {
 }): Promise<number> {
   const { client, config } = arguments_;
   const slugIds = config.linear.projects.map((project) => project.slugId);
+  // The union state filter is permissive: it can pull in an issue whose state
+  // name happens to match a different project's `inProgress`. Post-filter
+  // against each issue's OWN project to count only true in-progress tickets.
   const stateNames = [
     ...new Set(config.linear.projects.map((project) => project.statuses.inProgress)),
   ];
@@ -614,7 +621,11 @@ export async function fetchInProgressIssueCount(arguments_: {
           after: $after
           includeArchived: false
         ) {
-          nodes { id }
+          nodes {
+            id
+            project { slugId }
+            state { name }
+          }
           pageInfo { hasNextPage endCursor }
         }
       }`,
@@ -627,7 +638,21 @@ export async function fetchInProgressIssueCount(arguments_: {
     );
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- shape is fixed by our GraphQL query above
     const { issues: page } = response.data as { issues: InProgressIssuesPage };
-    count += page.nodes.length;
+    for (const node of page.nodes) {
+      const slugId = node.project?.slugId?.toLowerCase();
+      /* v8 ignore next 3 @preserve -- GraphQL slugId filter scopes results to configured projects */
+      if (slugId === undefined) {
+        continue;
+      }
+      const project = findProjectBySlugId(config, slugId);
+      /* v8 ignore next 3 @preserve -- GraphQL slugId filter scopes results to configured projects */
+      if (project === undefined) {
+        continue;
+      }
+      if (node.state?.name === project.statuses.inProgress) {
+        count += 1;
+      }
+    }
     if (!page.pageInfo.hasNextPage) {
       return count;
     }

@@ -168,6 +168,8 @@ function makeClient(options: {
           issues: {
             nodes: Array.from({ length: count }, (_value, nodeIndex) => ({
               id: `active-${index}-${nodeIndex}`,
+              project: { slugId: "aaaaaaaaaaaa" },
+              state: { name: "In Progress" },
             })),
             pageInfo: { hasNextPage: hasNext, endCursor: hasNext ? `active-cursor-${index}` : "" },
           },
@@ -1197,6 +1199,55 @@ describe(fetchInProgressIssueCount, () => {
     });
 
     expect(result).toBe(5);
+  });
+
+  it("drops issues whose state matches the union but not their own project's inProgress", async () => {
+    // Cross-project leakage scenario: project A treats "Doing" as inProgress;
+    // project B includes "Doing" as a non-inProgress state. The union filter
+    // would let B's "Doing" issue through, but it should not count toward
+    // the shared maximumInProgress budget.
+    const config = makeConfig({
+      linear: {
+        projects: [
+          {
+            projectSlug: "alpha-aaaaaaaaaaaa",
+            slugId: "aaaaaaaaaaaa",
+            statuses: { todo: "Todo", inProgress: "Doing", done: "Done", terminal: ["Done"] },
+          },
+          {
+            projectSlug: "beta-bbbbbbbbbbbb",
+            slugId: "bbbbbbbbbbbb",
+            statuses: {
+              todo: "Todo",
+              inProgress: "In Progress",
+              done: "Released",
+              terminal: ["Released"],
+            },
+          },
+        ],
+      },
+    });
+    const rawRequest =
+      vi.fn<(query: string, variables?: Record<string, unknown>) => Promise<unknown>>();
+    rawRequest.mockResolvedValue({
+      data: {
+        issues: {
+          nodes: [
+            { id: "alpha-1", project: { slugId: "aaaaaaaaaaaa" }, state: { name: "Doing" } },
+            // Cross-project leakage: beta issue in "Doing" state (not beta's inProgress).
+            { id: "beta-1", project: { slugId: "bbbbbbbbbbbb" }, state: { name: "Doing" } },
+            { id: "beta-2", project: { slugId: "bbbbbbbbbbbb" }, state: { name: "In Progress" } },
+          ],
+          pageInfo: { hasNextPage: false, endCursor: "" },
+        },
+      },
+    });
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests use the LinearClient surface consumed by boardSource
+    const client = { client: { rawRequest } } as unknown as LinearClient;
+
+    const result = await fetchInProgressIssueCount({ client, config });
+
+    expect(result).toBe(2);
   });
 });
 

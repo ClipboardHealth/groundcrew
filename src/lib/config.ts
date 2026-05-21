@@ -684,9 +684,19 @@ function failOnLegacyLinearShape(user: Record<string, unknown>): void {
   if (!Object.hasOwn(linear, "projectSlug") && !Object.hasOwn(linear, "statuses")) {
     return;
   }
-  const slug = linear["projectSlug"];
-  const slugLiteral =
-    typeof slug === "string" ? JSON.stringify(slug) : `"your-project-name-0123456789ab"`;
+  const legacySlug = linear["projectSlug"];
+  const { projects } = linear;
+  const firstProject: unknown = Array.isArray(projects) ? projects[0] : undefined;
+  const migratedSlug =
+    isPlainObject(firstProject) && typeof firstProject["projectSlug"] === "string"
+      ? firstProject["projectSlug"]
+      : undefined;
+  let slugLiteral = `"your-project-name-0123456789ab"`;
+  if (typeof legacySlug === "string") {
+    slugLiteral = JSON.stringify(legacySlug);
+  } else if (migratedSlug !== undefined) {
+    slugLiteral = JSON.stringify(migratedSlug);
+  }
   const statusesBlock = isPlainObject(linear["statuses"])
     ? `, statuses: ${JSON.stringify(linear["statuses"])}`
     : "";
