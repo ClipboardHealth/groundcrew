@@ -3,11 +3,14 @@
 // `crew doctor --ticket <TICKET>` — single per-ticket diagnostic that covers
 // both the pre-dispatch question ("will this dispatch on the next tick?") and
 // the post-dispatch question ("what's already happened and what's left to
-// do?"). Verdict precedence runs strictly from post-dispatch states down:
+// do?"). Verdict precedence starts with PR outcomes, then handles run-state
+// exceptions before ordinary local recovery:
 //
-//   pr-open > pr-merged > in-flight > recoverable
-//     > unresolvable > ineligible > would-dispatch
-//       > lost
+//   pr-open > pr-merged
+//     > failed-launch
+//     > interrupted (unless concrete recoverable git work exists)
+//     > in-flight > recoverable
+//     > unresolvable > ineligible > would-dispatch > lost
 //
 // When a post-dispatch verdict fires, the Resolution and Eligibility sections
 // are skipped — they describe pre-dispatch state that no longer matters.
@@ -28,6 +31,7 @@ import {
 import { runCommandAsync } from "../lib/commandRunner.ts";
 import { AGENT_ANY_MODEL, loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { which } from "../lib/host.ts";
+import { readRunState, type RunState } from "../lib/runState.ts";
 import { getUsageByModel, type UsageByModel } from "../lib/usage.ts";
 import { getLinearClient, lazyLinearClient, writeOutput } from "../lib/util.ts";
 import { workspaces, type WorkspaceAccessHint, type WorkspaceProbe } from "../lib/workspaces.ts";
@@ -52,6 +56,8 @@ const LINEAR_SKIPPED_STATE_NAME = "(linear skipped)";
 export type TicketDoctorVerdict =
   | { kind: "pr-open"; number: number; url: string }
   | { kind: "pr-merged"; number: number; url: string }
+  | { kind: "interrupted"; reason: string; nextStep: string }
+  | { kind: "failed-launch"; reason: string; nextStep: string }
   | { kind: "in-flight"; reason: string }
   | { kind: "recoverable"; reason: string; nextStep: string }
   | { kind: "would-dispatch" }
@@ -97,6 +103,7 @@ export interface DecideVerdictInput {
   branch: string;
   worktreeDir: string | undefined;
   workspaceName: string | undefined;
+  runState: RunState | undefined;
 }
 
 // ───────── post-dispatch verdict (PR / in-flight / recoverable) ─────────
@@ -171,9 +178,11 @@ function verdictRecoverable(input: DecideVerdictInput): TicketDoctorVerdict | un
  * "ticket has moved past dispatch" cases. Returns `undefined` otherwise,
  * signalling that the caller should fall through to the pre-dispatch path.
  *
- * Precedence: PR > in-flight > recoverable. Inside `recoverable`, dirty
- * worktree beats clean-with-un-pushed-local beats remote-only beats stranded
- * local.
+ * Precedence: PR verdicts always win. Failed launches report before ordinary
+ * local recovery. Interrupted runs report concrete recoverable git work first
+ * when it exists, then fall back to `interrupted`. Ordinary post-dispatch cases
+ * report in-flight before recoverable. Inside `recoverable`, dirty worktree
+ * beats clean-with-un-pushed-local beats remote-only beats stranded local.
  */
 export function decidePostDispatchVerdict(
   input: DecideVerdictInput,
@@ -184,7 +193,27 @@ export function decidePostDispatchVerdict(
   if (input.pullRequest.kind === "merged") {
     return { kind: "pr-merged", number: input.pullRequest.number, url: input.pullRequest.url };
   }
-  return verdictInFlight(input) ?? verdictRecoverable(input);
+  const recoverable = verdictRecoverable(input);
+  if (input.runState?.state === "interrupted") {
+    if (recoverable !== undefined) {
+      return recoverable;
+    }
+    const detail = input.runState.reason ?? input.runState.detail ?? "workspace stopped";
+    return {
+      kind: "interrupted",
+      reason: detail,
+      nextStep: `run \`crew resume ${input.runState.ticket}\` or inspect ${input.runState.worktreeDir}`,
+    };
+  }
+  if (input.runState?.state === "failed-to-launch") {
+    const detail = input.runState.detail ?? "workspace launch failed";
+    return {
+      kind: "failed-launch",
+      reason: detail,
+      nextStep: `fix the launch failure, then run \`crew resume ${input.runState.ticket}\` or \`crew cleanup ${input.runState.ticket}\``,
+    };
+  }
+  return verdictInFlight(input) ?? recoverable;
 }
 
 // ───────── orchestrator dependencies ─────────
@@ -216,6 +245,7 @@ export interface TicketDoctorDependencies {
     doFetch: boolean;
   }) => Promise<RemoteBranchProbe>;
   probePullRequest: (input: { repoDir: string; branch: string }) => Promise<PullRequestProbe>;
+  readRunState: (ticket: string) => RunState | undefined;
   doFetch: boolean;
 }
 
@@ -224,6 +254,7 @@ export interface TicketDoctorResult {
   title?: string;
   resolution: TicketCheck[];
   eligibility: TicketCheck[];
+  runState: TicketCheck[];
   worktree: TicketCheck[];
   workspace: TicketCheck[];
   localBranch: TicketCheck[];
@@ -233,6 +264,7 @@ export interface TicketDoctorResult {
     resolution: string;
     eligibility: string;
     worktree: string;
+    runState: string;
     workspace: string;
     localBranch: string;
     remoteBranch: string;
@@ -246,6 +278,7 @@ function emptySkipReasons(): TicketDoctorResult["skipReasons"] {
     resolution: "",
     eligibility: "",
     worktree: "",
+    runState: "",
     workspace: "",
     localBranch: "",
     remoteBranch: "",
@@ -573,6 +606,38 @@ interface WorktreeSectionOutput {
   entry: WorktreeEntry | undefined;
 }
 
+interface RunStateSectionOutput {
+  checks: TicketCheck[];
+  state: RunState | undefined;
+}
+
+function probeRunStateSection(
+  deps: TicketDoctorDependencies,
+  ticket: string,
+): RunStateSectionOutput {
+  const state = deps.readRunState(ticket);
+  if (state === undefined) {
+    return {
+      checks: [{ name: "Local run state", status: "skipped", detail: "none found" }],
+      state: undefined,
+    };
+  }
+  const checks: TicketCheck[] = [
+    { name: "Local run state", status: "ok", detail: state.state },
+    { name: "Recorded model", status: "ok", detail: state.model },
+    { name: "Recorded worktree", status: "ok", detail: state.worktreeDir },
+    { name: "Recorded branch", status: "ok", detail: state.branchName },
+    { name: "Resume count", status: "ok", detail: String(state.resumeCount) },
+  ];
+  if (state.reason !== undefined) {
+    checks.push({ name: "Last reason", status: "ok", detail: state.reason });
+  }
+  if (state.detail !== undefined) {
+    checks.push({ name: "Last detail", status: "ok", detail: state.detail });
+  }
+  return { checks, state };
+}
+
 async function probeWorktreeSection(
   deps: TicketDoctorDependencies,
   ticket: string,
@@ -882,6 +947,7 @@ export async function ticketDoctor(
   const linearResult = await probeLinear(dependencies, upperTicket);
   const resolution: TicketCheck[] = [...linearResult.resolution];
 
+  const runStateResult = probeRunStateSection(dependencies, lowerTicket);
   const worktreeResult = await probeWorktreeSection(dependencies, lowerTicket);
   const workspaceResult = await probeWorkspaceSection(dependencies, lowerTicket);
   const localResult = await probeLocalBranchSection(dependencies, worktreeResult.entry);
@@ -908,6 +974,7 @@ export async function ticketDoctor(
     branch: worktreeResult.entry?.branchName ?? lowerTicket,
     worktreeDir: worktreeResult.entry?.dir,
     workspaceName: workspaceResult.workspaceName,
+    runState: runStateResult.state,
   });
 
   if (postVerdict !== undefined) {
@@ -918,6 +985,7 @@ export async function ticketDoctor(
       title: linearResult.title,
       resolution,
       eligibility: [],
+      runStateResult,
       worktreeResult,
       workspaceResult,
       localResult,
@@ -939,6 +1007,7 @@ export async function ticketDoctor(
       title: linearResult.title,
       resolution,
       eligibility: [],
+      runStateResult,
       worktreeResult,
       workspaceResult,
       localResult,
@@ -960,6 +1029,7 @@ export async function ticketDoctor(
       title: linearResult.title,
       resolution,
       eligibility: [],
+      runStateResult,
       worktreeResult,
       workspaceResult,
       localResult,
@@ -1002,6 +1072,7 @@ export async function ticketDoctor(
     title: linearResult.title,
     resolution,
     eligibility: preDispatch.eligibility,
+    runStateResult,
     worktreeResult,
     workspaceResult,
     localResult,
@@ -1017,6 +1088,7 @@ interface BuildResultInput {
   title: string | undefined;
   resolution: TicketCheck[];
   eligibility: TicketCheck[];
+  runStateResult: RunStateSectionOutput;
   worktreeResult: WorktreeSectionOutput;
   workspaceResult: WorkspaceSectionOutput;
   localResult: LocalBranchSectionOutput;
@@ -1032,6 +1104,7 @@ function buildResult(input: BuildResultInput): TicketDoctorResult {
     ...(input.title === undefined ? {} : { title: input.title }),
     resolution: input.resolution,
     eligibility: input.eligibility,
+    runState: input.runStateResult.checks,
     worktree: input.worktreeResult.checks,
     workspace: input.workspaceResult.checks,
     localBranch: input.localResult.checks,
@@ -1080,6 +1153,12 @@ function formatVerdict(verdict: TicketDoctorVerdict): string {
     case "pr-merged": {
       return `→ pr-merged: ${verdict.url} (#${verdict.number})`;
     }
+    case "interrupted": {
+      return `→ interrupted: ${verdict.reason}; ${verdict.nextStep}`;
+    }
+    case "failed-launch": {
+      return `→ failed-launch: ${verdict.reason}; ${verdict.nextStep}`;
+    }
     case "in-flight": {
       return `→ in-flight: ${verdict.reason}`;
     }
@@ -1120,6 +1199,11 @@ export function renderTicketDoctorResult(result: TicketDoctorResult): string[] {
       ...(result.skipReasons.eligibility === ""
         ? {}
         : { skipReason: result.skipReasons.eligibility }),
+    },
+    {
+      name: "Run state",
+      checks: result.runState,
+      ...(result.skipReasons.runState === "" ? {} : { skipReason: result.skipReasons.runState }),
     },
     {
       name: "Worktree",
@@ -1187,6 +1271,7 @@ export async function runTicketDoctor(parsed: TicketDoctorArguments): Promise<bo
     probeLocalBranch: probeLocalBranchImpl,
     probeRemoteBranch: probeRemoteBranchImpl,
     probePullRequest: probePullRequestImpl,
+    readRunState: (ticket) => readRunState(config, ticket),
     doFetch: parsed.doFetch,
   });
 

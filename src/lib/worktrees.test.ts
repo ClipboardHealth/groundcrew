@@ -41,6 +41,7 @@ vi.mock(import("./workspaces.ts"), async (importOriginal) => {
       open: vi.fn<typeof actual.workspaces.open>(),
       probe: vi.fn<typeof actual.workspaces.probe>(),
       close: vi.fn<typeof actual.workspaces.close>(),
+      interrupt: vi.fn<typeof actual.workspaces.interrupt>(),
       accessHint: vi.fn<typeof actual.workspaces.accessHint>(),
     },
   };
@@ -775,6 +776,10 @@ describe(teardown, () => {
   // oxlint-disable-next-line typescript/unbound-method -- vi.mocked needs the function reference
   const workspacesCloseMock = vi.mocked(workspaces.close);
 
+  beforeEach(() => {
+    workspacesCloseMock.mockResolvedValue({ kind: "closed" });
+  });
+
   function hostEntry(ticket: string): WorktreeEntry {
     mkdirSync(join(projectDir, `repo-a-${ticket}`), { recursive: true });
     mkdirSync(join(projectDir, "repo-a"), { recursive: true });
@@ -815,6 +820,21 @@ describe(teardown, () => {
     expect(Number(workspacesCloseMock.mock.invocationCallOrder[0])).toBeLessThan(
       Number(runCommandMock.mock.invocationCallOrder[0]),
     );
+  });
+
+  it("does not report a closed workspace when close only confirms absence", async () => {
+    workspacesProbeMock.mockResolvedValue({
+      kind: "ok",
+      names: new Set(["team-1"]),
+    });
+    workspacesCloseMock.mockResolvedValue({ kind: "missing" });
+    const config = makeConfig({ projectDir });
+
+    const result = await teardown(config, [hostEntry("team-1")]);
+
+    expect(workspacesCloseMock).toHaveBeenCalledWith(config, "team-1", undefined);
+    expect(result.closed).toStrictEqual([]);
+    expect(result.removed).toHaveLength(1);
   });
 
   it("dedupes the workspace close across duplicate host entries for one ticket", async () => {

@@ -1,5 +1,6 @@
 import type { BoardState, Issue } from "../lib/boardSource.ts";
 import type { ResolvedConfig } from "../lib/config.ts";
+import { removeRunState } from "../lib/runState.ts";
 import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCapture.ts";
 import { emptyTeardownResult } from "../testHelpers/teardownResult.ts";
@@ -15,8 +16,13 @@ vi.mock(import("../lib/worktrees.ts"), async (importOriginal) => {
     },
   };
 });
+vi.mock(import("../lib/runState.ts"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, removeRunState: vi.fn<typeof removeRunState>() };
+});
 
 const teardownMock = vi.mocked(worktrees.teardown);
+const removeRunStateMock = vi.mocked(removeRunState);
 
 function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
   return {
@@ -111,6 +117,7 @@ describe(createCleaner, () => {
     });
 
     expect(teardownMock).toHaveBeenCalledWith(expect.anything(), [entry]);
+    expect(removeRunStateMock).toHaveBeenCalledWith(expect.anything(), "team-1");
     expect(consoleLog.output()).toContain("event=cleanup outcome=cleaned ticket=team-1");
   });
 

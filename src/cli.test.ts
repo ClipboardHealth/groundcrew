@@ -4,7 +4,9 @@ import { createRequire } from "node:module";
 import { run } from "./cli.ts";
 import { cleanupWorkspaceCli } from "./commands/cleanupWorkspace.ts";
 import { doctor } from "./commands/doctor.ts";
+import { interruptWorkspaceCli } from "./commands/interruptWorkspace.ts";
 import { orchestrate } from "./commands/orchestrator.ts";
+import { resumeWorkspaceCli } from "./commands/resumeWorkspace.ts";
 import { setupReposCli } from "./commands/setupRepos.ts";
 import { setupWorkspaceCli } from "./commands/setupWorkspace.ts";
 import {
@@ -19,8 +21,14 @@ vi.mock(import("./commands/cleanupWorkspace.ts"), () => ({
 vi.mock(import("./commands/doctor.ts"), () => ({
   doctor: vi.fn<typeof doctor>(),
 }));
+vi.mock(import("./commands/interruptWorkspace.ts"), () => ({
+  interruptWorkspaceCli: vi.fn<typeof interruptWorkspaceCli>(),
+}));
 vi.mock(import("./commands/orchestrator.ts"), () => ({
   orchestrate: vi.fn<typeof orchestrate>(),
+}));
+vi.mock(import("./commands/resumeWorkspace.ts"), () => ({
+  resumeWorkspaceCli: vi.fn<typeof resumeWorkspaceCli>(),
 }));
 vi.mock(import("./commands/setupWorkspace.ts"), () => ({
   setupWorkspaceCli: vi.fn<typeof setupWorkspaceCli>(),
@@ -31,6 +39,8 @@ vi.mock(import("./commands/setupRepos.ts"), () => ({
 
 const orchestrateMock = vi.mocked(orchestrate);
 const doctorMock = vi.mocked(doctor);
+const interruptMock = vi.mocked(interruptWorkspaceCli);
+const resumeMock = vi.mocked(resumeWorkspaceCli);
 const setupMock = vi.mocked(setupWorkspaceCli);
 const setupReposMock = vi.mocked(setupReposCli);
 const cleanupMock = vi.mocked(cleanupWorkspaceCli);
@@ -65,6 +75,8 @@ describe(run, () => {
     process.exitCode = undefined;
     orchestrateMock.mockResolvedValue();
     doctorMock.mockResolvedValue(true);
+    interruptMock.mockResolvedValue();
+    resumeMock.mockResolvedValue();
     setupMock.mockResolvedValue();
     setupReposMock.mockResolvedValue();
     cleanupMock.mockResolvedValue();
@@ -314,6 +326,17 @@ describe(run, () => {
     expect(cleanupMock).toHaveBeenCalledWith(["--force", "TEAM-1"]);
   });
 
+  it("dispatches interrupt to interruptWorkspaceCli with the remaining argv", async () => {
+    await run(["interrupt", "TEAM-1", "--reason", "wrong direction"]);
+
+    expect(interruptMock).toHaveBeenCalledWith(["TEAM-1", "--reason", "wrong direction"]);
+  });
+
+  it("dispatches resume to resumeWorkspaceCli with the remaining argv", async () => {
+    await run(["resume", "TEAM-1"]);
+
+    expect(resumeMock).toHaveBeenCalledWith(["TEAM-1"]);
+  });
   it("dispatches `setup repos` to setupReposCli with the remaining argv", async () => {
     await run(["setup", "repos", "--dry-run", "owner/repo"]);
 
