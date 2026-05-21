@@ -314,6 +314,58 @@ function firstInvocationOrder(recorder: InvocationOrderRecorder): number {
   return order;
 }
 
+function lastEnsureClearanceInput(): NonNullable<Parameters<typeof ensureClearance>[0]> {
+  const input = ensureClearanceMock.mock.calls.at(-1)?.[0];
+  if (input === undefined) {
+    throw new Error("expected ensureClearance input");
+  }
+  return input;
+}
+
+function lastEnsureClearanceSleep(): (ms: number) => Promise<void> {
+  const clearanceSleep = lastEnsureClearanceInput().sleep;
+  if (clearanceSleep === undefined) {
+    throw new Error("expected clearance sleep");
+  }
+  return clearanceSleep;
+}
+
+function createDeferred(): {
+  promise: Promise<boolean>;
+  resolve: () => void;
+} {
+  let resolvePromise: ((value: boolean) => void) | undefined;
+  const promise = new Promise<boolean>((resolve) => {
+    resolvePromise = resolve;
+  });
+  return {
+    promise,
+    resolve() {
+      if (resolvePromise === undefined) {
+        throw new Error("deferred promise resolver was not initialized");
+      }
+      resolvePromise(true);
+    },
+  };
+}
+
+function clearanceResult(): Awaited<ReturnType<typeof ensureClearance>> {
+  return {
+    logPath: "/tmp/clearance/clearance.log",
+    pidPath: "/tmp/clearance/clearance.pid",
+    port: 19_999,
+    status: "already-running",
+  };
+}
+
+async function waitForClearanceSleep(input: Parameters<typeof ensureClearance>[0]): Promise<void> {
+  const clearanceSleep = input?.sleep;
+  if (clearanceSleep === undefined) {
+    throw new Error("expected clearance sleep");
+  }
+  await clearanceSleep(1000);
+}
+
 describe(setupWorkspace, () => {
   beforeEach(() => {
     existsMock.mockReturnValue(true);
@@ -321,12 +373,7 @@ describe(setupWorkspace, () => {
     issueResolver.mockResolvedValue(buildMockedIssue({ title: "Test Title", description: "Body" }));
     detectHostMock.mockResolvedValue(host());
     createMock.mockImplementation(async () => hostEntry());
-    ensureClearanceMock.mockResolvedValue({
-      logPath: "/tmp/clearance/clearance.log",
-      pidPath: "/tmp/clearance/clearance.pid",
-      port: 19_999,
-      status: "already-running",
-    });
+    ensureClearanceMock.mockResolvedValue(clearanceResult());
     mkdtempMock.mockReturnValue("/tmp/groundcrew-team-1-x");
     runCommandMock.mockReturnValue("");
     teardownMock.mockResolvedValue(emptyTeardownResult());
@@ -398,6 +445,7 @@ describe(setupWorkspace, () => {
       { signal },
     );
 
+    expect(lastEnsureClearanceSleep()).toStrictEqual(expect.any(Function));
     expect(createMock).toHaveBeenCalledWith(
       config,
       expect.objectContaining({ repository: "repo-a", ticket: "team-1" }),
@@ -408,6 +456,29 @@ describe(setupWorkspace, () => {
       expect.arrayContaining(["new-workspace", "--name", "team-1"]),
       { signal },
     );
+  });
+
+  it("makes Safehouse clearance polling abortable", async () => {
+    const config = makeConfig();
+    const controller = new AbortController();
+    const sleepStarted = createDeferred();
+    mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
+    ensureClearanceMock.mockImplementationOnce(async (input) => {
+      sleepStarted.resolve();
+      await waitForClearanceSleep(input);
+      return clearanceResult();
+    });
+
+    const setupPromise = setupWorkspace(
+      config,
+      { ticket: "team-1", repository: "repo-a", model: "claude" },
+      { signal: controller.signal },
+    );
+
+    await sleepStarted.promise;
+    controller.abort(new Error("stop setup"));
+    await expect(setupPromise).rejects.toThrow("stop setup");
+    expect(createMock).not.toHaveBeenCalled();
   });
 
   it("uses provided ticket details without fetching from Linear", async () => {

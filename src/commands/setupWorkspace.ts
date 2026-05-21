@@ -1,28 +1,22 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-
-import { ensureClearance } from "@clipboard-health/clearance";
-
+import { rmSync } from "node:fs";
 import { fetchResolvedIssue } from "../lib/boardSource.ts";
-import { BUILD_SECRET_NAMES, loadConfig, type ResolvedConfig } from "../lib/config.ts";
-import { ensureSandbox, sandboxNameFor } from "../lib/dockerSandbox.ts";
-import { detectHostCapabilities } from "../lib/host.ts";
-import { buildLaunchCommand, shellSingleQuote } from "../lib/launchCommand.ts";
+import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
+import { ensureAgentSandbox, openAgentWorkspace, prepareAgentLaunch } from "../lib/agentLaunch.ts";
+import { buildLaunchCommand } from "../lib/launchCommand.ts";
 import { createLinearIssueStatusUpdater } from "../lib/linearIssueStatus.ts";
-import { assertLocalRunnerRequirements, resolveLocalRunner } from "../lib/localRunner.ts";
-import { errorMessage, getLinearClient, log, readEnvironmentVariable } from "../lib/util.ts";
+import {
+  stageBuildSecrets,
+  stagePromptFromTemplate,
+  stageWorkspaceLaunchCommand,
+  type StagedPrompt,
+} from "../lib/stagedLaunch.ts";
+import { errorMessage, getLinearClient, log } from "../lib/util.ts";
 import { type WorkspaceAccessHint, workspaces } from "../lib/workspaces.ts";
 import { isWorktreeAlreadyExistsError, type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 
 interface TicketDetails {
   title: string;
   description: string;
-}
-
-interface StagedPrompt {
-  directory: string;
-  file: string;
 }
 
 async function fetchTicket(ticket: string): Promise<TicketDetails> {
@@ -46,69 +40,23 @@ export interface SetupWorkspaceRunOptions {
   signal?: AbortSignal;
 }
 
-function renderPrompt(
-  template: string,
-  variables: { ticket: string; worktree: string; title: string; description: string },
-): string {
-  return template
-    .replaceAll("{{ticket}}", variables.ticket)
-    .replaceAll("{{worktree}}", variables.worktree)
-    .replaceAll("{{title}}", variables.title)
-    .replaceAll("{{description}}", variables.description);
-}
-
-/**
- * Stage a `KEY='value'` env file for any populated build-time secret so
- * the launch command can source it. Returns `undefined` when groundcrew
- * has nothing to forward, leaving the launch command unchanged. The temp
- * dir is `rm -rf`'d by the launch command (and rollback path), so cleanup
- * is already handled.
- */
-function stageBuildSecrets(promptDir: string): string | undefined {
-  const lines: string[] = [];
-  for (const name of BUILD_SECRET_NAMES) {
-    const value = readEnvironmentVariable(name);
-    if (value === undefined || value.length === 0) {
-      continue;
-    }
-    lines.push(`${name}=${shellSingleQuote(value)}`);
-  }
-  if (lines.length === 0) {
-    return undefined;
-  }
-  const secretsFile = join(promptDir, "secrets.env");
-  writeFileSync(secretsFile, `${lines.join("\n")}\n`, { mode: 0o600 });
-  return secretsFile;
-}
-
-function stageLaunchScript(promptDir: string, command: string): string {
-  const launcherFile = join(promptDir, "launch.sh");
-  writeFileSync(launcherFile, `#!/usr/bin/env bash\n${command}\n`, { mode: 0o700 });
-  return launcherFile;
-}
-
-function stageWorkspaceLaunchCommand(promptDir: string, command: string): string {
-  return `bash ${shellSingleQuote(stageLaunchScript(promptDir, command))}`;
-}
-
 function stagePrompt(input: {
   config: ResolvedConfig;
   ticket: string;
   ticketDetails: TicketDetails;
   worktreeName: string;
 }): StagedPrompt {
-  const promptDir = mkdtempSync(join(tmpdir(), `groundcrew-${input.ticket}-`));
-  const promptFile = join(promptDir, "prompt.txt");
-  writeFileSync(
-    promptFile,
-    renderPrompt(input.config.prompts.initial, {
+  return stagePromptFromTemplate({
+    config: input.config,
+    prefix: "groundcrew",
+    ticket: input.ticket,
+    variables: {
       ticket: input.ticket,
       worktree: input.worktreeName,
       title: input.ticketDetails.title,
       description: input.ticketDetails.description,
-    }),
-  );
-  return { directory: promptDir, file: promptFile };
+    },
+  });
 }
 
 export async function setupWorkspace(
@@ -122,19 +70,13 @@ export async function setupWorkspace(
   if (!definition) {
     throw new Error(`Unknown model: ${model}`);
   }
-
-  const host = await detectHostCapabilities(signal);
-  const runner = resolveLocalRunner(config.local.runner, host);
-  assertLocalRunnerRequirements(host, runner);
-  if (runner === "safehouse") {
-    await ensureClearance({ logger: log });
-  }
-  if (runner === "sdx" && definition.sandbox === undefined) {
-    throw new Error(
-      `Local groundcrew runs with the sdx runner require a sandbox config on model '${model}'. ` +
-        "Add `sandbox: { agent: '<sbx-agent-name>' }` to the model in your config.ts.",
-    );
-  }
+  const { runner, sandboxName } = await prepareAgentLaunch({
+    config,
+    model,
+    definition,
+    purpose: "runs",
+    ...(signal === undefined ? {} : { signal }),
+  });
 
   const spec = { repository, ticket };
   let created: WorktreeEntry;
@@ -173,21 +115,13 @@ export async function setupWorkspace(
     promptDir = stagedPrompt.directory;
 
     const secretsFile = stageBuildSecrets(promptDir);
+    await ensureAgentSandbox({
+      config,
+      definition,
+      sandboxName,
+      ...(signal === undefined ? {} : { signal }),
+    });
 
-    const sandboxName =
-      runner === "sdx" && definition.sandbox !== undefined
-        ? sandboxNameFor({ agent: definition.sandbox.agent })
-        : undefined;
-    if (runner === "sdx" && sandboxName !== undefined && definition.sandbox !== undefined) {
-      await ensureSandbox(
-        {
-          sandboxName,
-          sandbox: definition.sandbox,
-          mountPath: resolve(config.workspace.projectDir),
-        },
-        signal,
-      );
-    }
     const launchCommand = buildLaunchCommand({
       definition,
       promptFile: stagedPrompt.file,
@@ -199,16 +133,15 @@ export async function setupWorkspace(
     const launchCmd = stageWorkspaceLaunchCommand(promptDir, launchCommand);
 
     log("Opening workspace...");
-    await workspaces.open(
+    await openAgentWorkspace({
       config,
-      {
-        name: ticket,
-        cwd: launchDir,
-        command: launchCmd,
-        status: { text: model, color: definition.color, icon: "sparkle" },
-      },
-      signal,
-    );
+      name: ticket,
+      cwd: launchDir,
+      command: launchCmd,
+      model,
+      color: definition.color,
+      ...(signal === undefined ? {} : { signal }),
+    });
 
     log(`Workspace "${ticket}" launched (${model})`);
     log(`  Worktree: ${launchDir}`);
