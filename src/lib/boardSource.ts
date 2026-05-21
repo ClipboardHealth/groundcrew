@@ -6,7 +6,14 @@
 
 import type { LinearClient } from "@linear/sdk";
 
-import { AGENT_ANY_MODEL, isShippedDefaultDisabled, type ResolvedConfig } from "./config.ts";
+import {
+  AGENT_ANY_MODEL,
+  findProjectBySlugId,
+  isShippedDefaultDisabled,
+  type ResolvedConfig,
+  type ResolvedProjectConfig,
+  unionTerminalStatuses,
+} from "./config.ts";
 import { log } from "./util.ts";
 
 const AGENT_LABEL_PREFIX = "agent-";
@@ -16,6 +23,14 @@ export interface Blocker {
   id: string;
   title: string;
   status: string | undefined;
+  /**
+   * SlugId of the project the blocker lives in. `undefined` when Linear
+   * returned no project for the blocker (rare — issues can technically
+   * exist without a project). Drives `isTerminalStatusForBlocker`'s
+   * pick between the blocker's own project terminals and the global
+   * union fallback.
+   */
+  projectSlugId: string | undefined;
 }
 
 export interface Issue {
@@ -31,6 +46,8 @@ export interface Issue {
   /** `undefined` when the ticket has no `agent-*` label — i.e. not groundcrew's concern. */
   model: string | undefined;
   teamId: string;
+  /** SlugId of the Linear project the issue belongs to — always one of `linear.projects[*].slugId`. */
+  projectSlugId: string;
   blockers: Blocker[];
   hasMoreBlockers: boolean;
 }
@@ -64,10 +81,37 @@ export class RepositoryResolutionError extends Error {
   }
 }
 
+export class UnknownProjectError extends Error {
+  public readonly ticket: string;
+  public readonly projectSlugId: string | undefined;
+  public readonly configuredSlugIds: readonly string[];
+
+  public constructor(arguments_: {
+    ticket: string;
+    projectSlugId: string | undefined;
+    configuredSlugIds: readonly string[];
+  }) {
+    const { ticket, projectSlugId, configuredSlugIds } = arguments_;
+    const ticketProjectClause =
+      projectSlugId === undefined
+        ? "has no associated Linear project"
+        : `belongs to Linear project slugId "${projectSlugId}"`;
+    super(
+      `Ticket ${ticket} ${ticketProjectClause}, which is not in linear.projects (configured: ${configuredSlugIds.join(", ")}). Add the project to your crew config or pick a ticket from a configured project.`,
+    );
+    this.name = "UnknownProjectError";
+    this.ticket = ticket;
+    this.projectSlugId = projectSlugId;
+    this.configuredSlugIds = configuredSlugIds;
+  }
+}
+
 export interface BoardSource {
   /**
-   * Look up the configured project and fail loudly if it isn't there. Run
-   * once at startup so a misconfigured slug surfaces before the first tick.
+   * Look up the configured projects and warn loudly on any that aren't
+   * there. Throws only when zero projects resolve, so a typo in one of
+   * several entries doesn't abort the watch loop. Run once at startup
+   * so misconfigurations surface before the first tick.
    */
   verify(): Promise<void>;
   /** Fetch the current board snapshot. Paginates internally. */
@@ -83,7 +127,7 @@ export function createBoardSource(deps: BoardSourceDeps): BoardSource {
   const { config, client } = deps;
   return {
     async verify() {
-      await verifyProject(client, config);
+      await verifyProjects(client, config);
     },
     async fetch() {
       return await fetchBoard(client, config);
@@ -91,8 +135,39 @@ export function createBoardSource(deps: BoardSourceDeps): BoardSource {
   };
 }
 
-export function isTerminalStatus(status: string, config: ResolvedConfig): boolean {
-  return config.linear.statuses.terminal.includes(status);
+export function projectFor(issue: Issue, config: ResolvedConfig): ResolvedProjectConfig {
+  const resolved = findProjectBySlugId(config, issue.projectSlugId);
+  /* v8 ignore next 5 @preserve -- fetchBoard's slugId filter and issueStatusBelongsToOwnProject keep production issues from reaching here with an unknown slugId */
+  if (resolved === undefined) {
+    throw new Error(
+      `Issue ${issue.id} carries projectSlugId "${issue.projectSlugId}" which is not in linear.projects`,
+    );
+  }
+  return resolved;
+}
+
+export function isTerminalStatusForIssue(issue: Issue, config: ResolvedConfig): boolean {
+  return projectFor(issue, config).statuses.terminal.includes(issue.status);
+}
+
+/**
+ * Terminal check for a blocker. When the blocker lives in a configured
+ * project, we use that project's terminal list directly. Otherwise we
+ * fall back to the union of terminals across all configured projects —
+ * matches today's single-project "is this name in our terminal list?"
+ * behavior so off-config blockers don't regress.
+ */
+export function isTerminalStatusForBlocker(blocker: Blocker, config: ResolvedConfig): boolean {
+  if (blocker.status === undefined) {
+    return false;
+  }
+  if (blocker.projectSlugId !== undefined) {
+    const project = findProjectBySlugId(config, blocker.projectSlugId);
+    if (project !== undefined) {
+      return project.statuses.terminal.includes(blocker.status);
+    }
+  }
+  return unionTerminalStatuses(config).has(blocker.status);
 }
 
 interface IssueNode {
@@ -104,6 +179,7 @@ interface IssueNode {
   state?: { id: string; name: string };
   team?: { id: string; key: string };
   assignee?: { name: string } | null;
+  project?: { slugId: string } | null;
   children: { nodes: unknown[] };
   labels: { nodes: { name: string }[] };
   inverseRelations?: {
@@ -123,29 +199,42 @@ interface IssueRelationNode {
     identifier: string;
     title: string;
     state?: { name: string } | null;
+    project?: { slugId: string } | null;
   } | null;
 }
 
-async function verifyProject(client: LinearClient, config: ResolvedConfig): Promise<void> {
+async function verifyProjects(client: LinearClient, config: ResolvedConfig): Promise<void> {
+  const slugIds = config.linear.projects.map((project) => project.slugId);
   const response: { data?: unknown } = await client.client.rawRequest(
-    `query VerifyProject($slugId: String!) {
-      projects(filter: { slugId: { eq: $slugId } }, first: 1) {
+    `query VerifyProjects($slugIds: [String!]!) {
+      projects(filter: { slugId: { in: $slugIds } }, first: ${slugIds.length}) {
         nodes { id name slugId }
       }
     }`,
-    { slugId: config.linear.slugId },
+    { slugIds },
   );
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- shape is fixed by our GraphQL query above
   const { projects } = response.data as {
     projects: { nodes: { id: string; name: string; slugId: string }[] };
   };
-  const [project] = projects.nodes;
-  if (!project) {
+  const resolved = new Map(
+    projects.nodes.map((project) => [project.slugId.toLowerCase(), project]),
+  );
+  for (const project of config.linear.projects) {
+    const found = resolved.get(project.slugId);
+    if (found === undefined) {
+      log(
+        `WARNING: no Linear project found with slugId "${project.slugId}" (linear.projects entry "${project.projectSlug}"). Check for typos, archived projects, or missing API-key access. Continuing without this project.`,
+      );
+      continue;
+    }
+    log(`Resolved Linear project: ${found.name} (slugId ${found.slugId})`);
+  }
+  if (resolved.size === 0) {
     throw new Error(
-      `No Linear project found with slugId "${config.linear.slugId}" (linear.projectSlug = "${config.linear.projectSlug}"). Confirm the slug matches the trailing segment of your project's URL and that your Linear API key can access this workspace.`,
+      `No Linear projects resolved from linear.projects (${config.linear.projects.map((project) => `"${project.projectSlug}"`).join(", ")}). Confirm slugs match the trailing segment of each project's URL and that your Linear API key can access this workspace.`,
     );
   }
-  log(`Resolved Linear project: ${project.name} (slugId ${project.slugId})`);
 }
 
 async function fetchBoard(client: LinearClient, config: ResolvedConfig): Promise<BoardState> {
@@ -153,30 +242,35 @@ async function fetchBoard(client: LinearClient, config: ResolvedConfig): Promise
   let after: string | null = null;
   // Two server-side filters narrow the response to tickets the orchestrator
   // can actually act on:
-  //   1. State: only Todo (to dispatch), In-Progress (to count active
-  //      capacity), Done + extra terminal states (to drive cleanup). Backlog,
-  //      Triage, and custom columns are dropped server-side.
+  //   1. State: union of every configured project's
+  //      {todo, inProgress, done, terminal} state names. Backlog, Triage,
+  //      and custom columns are dropped server-side. Each issue is
+  //      post-filtered against ITS OWN project's statuses below so a
+  //      state name from project A doesn't leak into project B.
   //   2. Labels: at least one `agent-*` label — i.e. someone opted the ticket
   //      in to groundcrew. Without this, every human-owned ticket on a shared
   //      project would round-trip back just to be filtered out client-side.
   // The client-side `isGroundcrewIssue` guard in dispatcher.ts is now
   // belt-and-suspenders against query drift, not the load-bearing filter.
+  const slugIds = config.linear.projects.map((project) => project.slugId);
   const stateNames = [
-    ...new Set([
-      config.linear.statuses.todo,
-      config.linear.statuses.inProgress,
-      config.linear.statuses.done,
-      ...config.linear.statuses.terminal,
-    ]),
+    ...new Set(
+      config.linear.projects.flatMap((project) => [
+        project.statuses.todo,
+        project.statuses.inProgress,
+        project.statuses.done,
+        ...project.statuses.terminal,
+      ]),
+    ),
   ];
 
   for (;;) {
     // oxlint-disable-next-line no-await-in-loop -- pagination cursor depends on the previous response
     const response: { data?: unknown } = await client.client.rawRequest(
-      `query BoardIssues($slugId: String!, $stateNames: [String!]!, $agentLabelPrefix: String!, $after: String) {
+      `query BoardIssues($slugIds: [String!]!, $stateNames: [String!]!, $agentLabelPrefix: String!, $after: String) {
         issues(
           filter: {
-            project: { slugId: { eq: $slugId } }
+            project: { slugId: { in: $slugIds } }
             state: { name: { in: $stateNames } }
             labels: { some: { name: { startsWith: $agentLabelPrefix } } }
           }
@@ -193,6 +287,7 @@ async function fetchBoard(client: LinearClient, config: ResolvedConfig): Promise
             state { id name }
             team { id key }
             assignee { name }
+            project { slugId }
             children { nodes { id } }
             labels {
               nodes {
@@ -206,6 +301,7 @@ async function fetchBoard(client: LinearClient, config: ResolvedConfig): Promise
                   identifier
                   title
                   state { name }
+                  project { slugId }
                 }
               }
               pageInfo { hasNextPage }
@@ -215,7 +311,7 @@ async function fetchBoard(client: LinearClient, config: ResolvedConfig): Promise
         }
       }`,
       {
-        slugId: config.linear.slugId,
+        slugIds,
         stateNames,
         agentLabelPrefix: AGENT_LABEL_PREFIX,
         after,
@@ -238,43 +334,91 @@ async function fetchBoard(client: LinearClient, config: ResolvedConfig): Promise
   // would abort the whole `crew run` before the Todo filter ever runs.
   const issues: Issue[] = nodes
     .filter((node) => node.children.nodes.length === 0)
-    .map((node) => {
-      const modelResolution = resolveModelFor({ labels: node.labels.nodes, config });
-      warnIfDisabledFallback(node.identifier, modelResolution, config);
-      const repository =
-        modelResolution.kind === "no-label"
-          ? undefined
-          : parseRepository({
-              description: node.description ?? undefined,
-              config,
-              repositoryRegex,
-              ticket: node.identifier,
-            });
-      let model: string | undefined;
-      if (modelResolution.kind === "matched") {
-        ({ model } = modelResolution);
-      } else if (modelResolution.kind === "disabled-fallback") {
-        model = modelResolution.fallbackModel;
-      } else if (modelResolution.kind === "agent-any") {
-        model = AGENT_ANY_MODEL;
-      }
-      return {
-        id: node.identifier.toLowerCase(),
-        uuid: node.id,
-        title: node.title,
-        status: node.state?.name ?? "Unknown",
-        statusId: node.state?.id ?? "",
-        assignee: node.assignee?.name ?? "Unassigned",
-        updatedAt: node.updatedAt,
-        repository,
-        model,
-        teamId: node.team?.id ?? "",
-        blockers: blockersFromRelations(node.inverseRelations?.nodes ?? []),
-        hasMoreBlockers: node.inverseRelations?.pageInfo.hasNextPage ?? false,
-      };
-    });
+    .filter((node) => issueStatusBelongsToOwnProject(node, config))
+    .map((node) => issueFromNode(node, config, repositoryRegex));
 
   return { timestamp: new Date().toISOString(), issues };
+}
+
+function modelForResolution(resolution: ModelResolution): string | undefined {
+  if (resolution.kind === "matched") {
+    return resolution.model;
+  }
+  if (resolution.kind === "disabled-fallback") {
+    return resolution.fallbackModel;
+  }
+  if (resolution.kind === "agent-any") {
+    return AGENT_ANY_MODEL;
+  }
+  return undefined;
+}
+
+function issueFromNode(node: IssueNode, config: ResolvedConfig, repositoryRegex: RegExp): Issue {
+  const modelResolution = resolveModelFor({ labels: node.labels.nodes, config });
+  warnIfDisabledFallback(node.identifier, modelResolution, config);
+  const repository =
+    modelResolution.kind === "no-label"
+      ? undefined
+      : parseRepository({
+          description: node.description ?? undefined,
+          config,
+          repositoryRegex,
+          ticket: node.identifier,
+        });
+  // `issueStatusBelongsToOwnProject` drops nodes whose `state` or `project`
+  // is missing, so by the time we land here both are defined. The nullish
+  // coalescing on those fields is belt-and-suspenders for type narrowing.
+  return {
+    id: node.identifier.toLowerCase(),
+    uuid: node.id,
+    title: node.title,
+    /* v8 ignore next @preserve -- post-filter guarantees `state` is defined */
+    status: node.state?.name ?? "Unknown",
+    /* v8 ignore next @preserve -- post-filter guarantees `state` is defined */
+    statusId: node.state?.id ?? "",
+    assignee: node.assignee?.name ?? "Unassigned",
+    updatedAt: node.updatedAt,
+    repository,
+    model: modelForResolution(modelResolution),
+    teamId: node.team?.id ?? "",
+    /* v8 ignore next @preserve -- post-filter guarantees `project` is defined */
+    projectSlugId: node.project?.slugId?.toLowerCase() ?? "",
+    blockers: blockersFromRelations(node.inverseRelations?.nodes ?? []),
+    hasMoreBlockers: node.inverseRelations?.pageInfo.hasNextPage ?? false,
+  };
+}
+
+/**
+ * Drops issues whose status name isn't recognized by their own project's
+ * configured statuses. The union `stateNames` filter sent to Linear can
+ * pull in an issue from project A whose status name appears in project
+ * B's status list but not A's; this guard removes that cross-project
+ * leakage so each issue is judged only against its own project's rules.
+ */
+function issueStatusBelongsToOwnProject(node: IssueNode, config: ResolvedConfig): boolean {
+  const slugId = node.project?.slugId?.toLowerCase();
+  if (slugId === undefined) {
+    return false;
+  }
+  const project = findProjectBySlugId(config, slugId);
+  if (project === undefined) {
+    return false;
+  }
+  const status = node.state?.name;
+  /* v8 ignore next 3 @preserve -- GraphQL state filter only returns issues whose state name is in the configured union; an undefined status implies a degenerate Linear response */
+  if (status === undefined) {
+    return false;
+  }
+  return projectStateNames(project).has(status);
+}
+
+function projectStateNames(project: ResolvedProjectConfig): ReadonlySet<string> {
+  return new Set<string>([
+    project.statuses.todo,
+    project.statuses.inProgress,
+    project.statuses.done,
+    ...project.statuses.terminal,
+  ]);
 }
 
 function escapeRegex(value: string): string {
@@ -303,6 +447,7 @@ interface ResolvedIssue {
   repository: string;
   model: string;
   teamId: string;
+  projectSlugId: string;
 }
 
 const ISSUE_LABEL_PAGE_SIZE = 50;
@@ -313,6 +458,7 @@ export interface RawLinearIssue {
   title: string;
   description: string;
   teamId: string;
+  projectSlugId: string | undefined;
   labels: { name: string }[];
   /** Linear workflow state name, e.g. "Todo", "In Review". May be "" if state was null. */
   stateName: string;
@@ -341,6 +487,7 @@ export async function fetchBlockersForTicket(arguments_: {
                 identifier
                 title
                 state { name }
+                project { slugId }
               }
             }
             pageInfo { hasNextPage endCursor }
@@ -384,6 +531,7 @@ export async function fetchRawLinearIssue(arguments_: {
         title
         description
         team { id }
+        project { slugId }
         state { name }
         labels(first: ${ISSUE_LABEL_PAGE_SIZE}) {
           nodes { name }
@@ -395,6 +543,7 @@ export async function fetchRawLinearIssue(arguments_: {
               identifier
               title
               state { name }
+              project { slugId }
             }
           }
           pageInfo { hasNextPage }
@@ -410,6 +559,7 @@ export async function fetchRawLinearIssue(arguments_: {
       title: string;
       description?: string | null;
       team?: { id: string } | null;
+      project?: { slugId: string } | null;
       state?: { name: string } | null;
       labels: { nodes: { name: string }[] };
       inverseRelations?: {
@@ -426,6 +576,7 @@ export async function fetchRawLinearIssue(arguments_: {
     title: issue.title,
     description: issue.description ?? "",
     teamId: issue.team?.id ?? "",
+    projectSlugId: issue.project?.slugId?.toLowerCase(),
     labels: issue.labels.nodes,
     stateName: issue.state?.name ?? "",
     blockers: blockersFromRelations(issue.inverseRelations?.nodes ?? []),
@@ -443,16 +594,20 @@ export async function fetchInProgressIssueCount(arguments_: {
   config: ResolvedConfig;
 }): Promise<number> {
   const { client, config } = arguments_;
+  const slugIds = config.linear.projects.map((project) => project.slugId);
+  const stateNames = [
+    ...new Set(config.linear.projects.map((project) => project.statuses.inProgress)),
+  ];
   let after: string | null = null;
   let count = 0;
   for (;;) {
     // oxlint-disable-next-line no-await-in-loop -- pagination cursor depends on the previous response
     const response: { data?: unknown } = await client.client.rawRequest(
-      `query InProgressIssues($slugId: String!, $stateName: String!, $agentLabelPrefix: String!, $after: String) {
+      `query InProgressIssues($slugIds: [String!]!, $stateNames: [String!]!, $agentLabelPrefix: String!, $after: String) {
         issues(
           filter: {
-            project: { slugId: { eq: $slugId } }
-            state: { name: { eq: $stateName } }
+            project: { slugId: { in: $slugIds } }
+            state: { name: { in: $stateNames } }
             labels: { some: { name: { startsWith: $agentLabelPrefix } } }
           }
           first: ${ISSUES_PAGE_SIZE}
@@ -464,8 +619,8 @@ export async function fetchInProgressIssueCount(arguments_: {
         }
       }`,
       {
-        slugId: config.linear.slugId,
-        stateName: config.linear.statuses.inProgress,
+        slugIds,
+        stateNames,
         agentLabelPrefix: AGENT_LABEL_PREFIX,
         after,
       },
@@ -529,7 +684,10 @@ export function resolveModelFor(arguments_: {
 /**
  * `agent-any` collapses to `models.default` here — manual setup doesn't run
  * the usage-gated `any` resolver, so the caller gets a concrete model name
- * instead of a sentinel that downstream code can't interpret.
+ * instead of a sentinel that downstream code can't interpret. Throws
+ * `UnknownProjectError` when the ticket lives in a Linear project that
+ * isn't listed in `linear.projects`, so callers can surface the misconfiguration
+ * instead of silently using the wrong status names.
  */
 export async function fetchResolvedIssue(arguments_: {
   client: LinearClient;
@@ -537,15 +695,25 @@ export async function fetchResolvedIssue(arguments_: {
   ticket: string;
 }): Promise<ResolvedIssue> {
   const { client, config, ticket } = arguments_;
+  const upper = ticket.toUpperCase();
   const raw = await fetchRawLinearIssue({ client, ticket });
+  const project =
+    raw.projectSlugId === undefined ? undefined : findProjectBySlugId(config, raw.projectSlugId);
+  if (project === undefined) {
+    throw new UnknownProjectError({
+      ticket: upper,
+      projectSlugId: raw.projectSlugId,
+      configuredSlugIds: config.linear.projects.map((entry) => entry.slugId),
+    });
+  }
   const repositoryResolution = resolveRepositoryFor({
     description: raw.description,
     config,
-    ticket: ticket.toUpperCase(),
+    ticket: upper,
   });
   if (repositoryResolution.kind === "missing") {
     throw new RepositoryResolutionError({
-      ticket: ticket.toUpperCase(),
+      ticket: upper,
       repositories: config.workspace.knownRepositories,
     });
   }
@@ -567,6 +735,7 @@ export async function fetchResolvedIssue(arguments_: {
     repository: repositoryResolution.repository,
     model,
     teamId: raw.teamId,
+    projectSlugId: project.slugId,
   };
 }
 
@@ -680,5 +849,6 @@ function blockersFromRelations(relations: IssueRelationNode[]): Blocker[] {
       id: relation.issue?.identifier?.toLowerCase() ?? "unknown",
       title: relation.issue?.title ?? "",
       status: relation.issue?.state?.name,
+      projectSlugId: relation.issue?.project?.slugId?.toLowerCase(),
     }));
 }

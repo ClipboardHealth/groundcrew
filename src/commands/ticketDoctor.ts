@@ -26,7 +26,12 @@ import {
   type RawLinearIssue,
 } from "../lib/boardSource.ts";
 import { runCommandAsync } from "../lib/commandRunner.ts";
-import { AGENT_ANY_MODEL, loadConfig, type ResolvedConfig } from "../lib/config.ts";
+import {
+  AGENT_ANY_MODEL,
+  findProjectBySlugId,
+  loadConfig,
+  type ResolvedConfig,
+} from "../lib/config.ts";
 import { which } from "../lib/host.ts";
 import { getUsageByModel, type UsageByModel } from "../lib/usage.ts";
 import { getLinearClient, lazyLinearClient, writeOutput } from "../lib/util.ts";
@@ -408,6 +413,8 @@ async function runEligibilityChecks(arguments_: EligibilityCheckArguments): Prom
     assignee: "",
     updatedAt: "",
     teamId: raw.teamId,
+    /* v8 ignore next @preserve -- probeLinear gates off-config projects upstream so raw.projectSlugId is always defined here */
+    projectSlugId: raw.projectSlugId ?? "",
     repository: resolvedRepository,
     model: resolvedModel,
     blockers: [...blockers],
@@ -535,8 +542,33 @@ async function probeLinear(
   }
   try {
     const raw = await deps.fetchRawIssue({ ticket: upperTicket });
-    const isTerminal = deps.config.linear.statuses.terminal.includes(raw.stateName);
-    const todoState = deps.config.linear.statuses.todo;
+    const project =
+      raw.projectSlugId === undefined
+        ? undefined
+        : findProjectBySlugId(deps.config, raw.projectSlugId);
+    if (project === undefined) {
+      const configured = deps.config.linear.projects.map((entry) => entry.slugId).join(", ");
+      const detail =
+        raw.projectSlugId === undefined
+          ? `ticket has no associated Linear project; configure linear.projects (${configured})`
+          : `project slugId "${raw.projectSlugId}" is not in linear.projects (configured: ${configured})`;
+      return {
+        linearStatus: { kind: "unresolvable", reason: detail },
+        resolution: [
+          { name: "Ticket exists in Linear", status: "ok", detail: `"${raw.title}"` },
+          {
+            name: "Project is configured",
+            status: "fail",
+            detail,
+            failureSummary: detail,
+          },
+        ],
+        title: raw.title,
+        raw,
+      };
+    }
+    const isTerminal = project.statuses.terminal.includes(raw.stateName);
+    const todoState = project.statuses.todo;
     const resolution: TicketCheck[] = [
       { name: "Ticket exists in Linear", status: "ok", detail: `"${raw.title}"` },
     ];

@@ -18,9 +18,9 @@ async function loadFreshConfig(): Promise<ConfigModule> {
   return await import("./config.ts");
 }
 
-const VALID_LINEAR = {
-  projectSlug: "ai-strategy-5152195762f3",
-} as const;
+const VALID_PROJECT_SLUG = "ai-strategy-5152195762f3";
+
+const VALID_LINEAR: Config["linear"] = { projects: [{ projectSlug: VALID_PROJECT_SLUG }] };
 
 const VALID_WORKSPACE = (projectDir: string) => ({
   projectDir,
@@ -84,9 +84,10 @@ describe("loadConfig", () => {
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
 
-    expect(actual.linear.projectSlug).toBe(VALID_LINEAR.projectSlug);
-    expect(actual.linear.slugId).toBe("5152195762f3");
-    expect(actual.linear.statuses).toStrictEqual({
+    expect(actual.linear.projects).toHaveLength(1);
+    expect(actual.linear.projects[0]?.projectSlug).toBe(VALID_PROJECT_SLUG);
+    expect(actual.linear.projects[0]?.slugId).toBe("5152195762f3");
+    expect(actual.linear.projects[0]?.statuses).toStrictEqual({
       todo: "Todo",
       inProgress: "In Progress",
       done: "Done",
@@ -141,11 +142,15 @@ describe("loadConfig", () => {
       temporary,
       configSource({
         linear: {
-          ...VALID_LINEAR,
-          statuses: {
-            done: "Shipped",
-            terminal: ["Done", "Shipped", " Won't Do ", "Done"],
-          },
+          projects: [
+            {
+              projectSlug: VALID_PROJECT_SLUG,
+              statuses: {
+                done: "Shipped",
+                terminal: ["Done", "Shipped", " Won't Do ", "Done"],
+              },
+            },
+          ],
         },
         workspace: VALID_WORKSPACE(temporary),
       }),
@@ -155,7 +160,11 @@ describe("loadConfig", () => {
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
 
-    expect(actual.linear.statuses.terminal).toStrictEqual(["Done", "Shipped", "Won't Do"]);
+    expect(actual.linear.projects[0]?.statuses.terminal).toStrictEqual([
+      "Done",
+      "Shipped",
+      "Won't Do",
+    ]);
   });
 
   it("trims custom status names before using them", async () => {
@@ -163,12 +172,16 @@ describe("loadConfig", () => {
       temporary,
       configSource({
         linear: {
-          ...VALID_LINEAR,
-          statuses: {
-            todo: " Todo ",
-            inProgress: " Started ",
-            done: " Released ",
-          },
+          projects: [
+            {
+              projectSlug: VALID_PROJECT_SLUG,
+              statuses: {
+                todo: " Todo ",
+                inProgress: " Started ",
+                done: " Released ",
+              },
+            },
+          ],
         },
         workspace: VALID_WORKSPACE(temporary),
       }),
@@ -178,7 +191,7 @@ describe("loadConfig", () => {
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
 
-    expect(actual.linear.statuses).toStrictEqual({
+    expect(actual.linear.projects[0]?.statuses).toStrictEqual({
       todo: "Todo",
       inProgress: "Started",
       done: "Released",
@@ -191,10 +204,14 @@ describe("loadConfig", () => {
       temporary,
       configSource({
         linear: {
-          ...VALID_LINEAR,
-          statuses: {
-            terminal: ["Done", "  "],
-          },
+          projects: [
+            {
+              projectSlug: VALID_PROJECT_SLUG,
+              statuses: {
+                terminal: ["Done", "  "],
+              },
+            },
+          ],
         },
         workspace: VALID_WORKSPACE(temporary),
       }),
@@ -203,7 +220,7 @@ describe("loadConfig", () => {
 
     const { loadConfig } = await loadFreshConfig();
 
-    await expect(loadConfig()).rejects.toThrow(/linear.statuses.terminal\[1\]/);
+    await expect(loadConfig()).rejects.toThrow(/linear\.projects\[0\]\.statuses\.terminal\[1\]/);
   });
 
   it("fails when terminal statuses is not an array", async () => {
@@ -211,7 +228,7 @@ describe("loadConfig", () => {
       temporary,
       [
         "export default {",
-        `  linear: { ...${JSON.stringify(VALID_LINEAR)}, statuses: { terminal: 'Done' } },`,
+        `  linear: { projects: [{ projectSlug: "${VALID_PROJECT_SLUG}", statuses: { terminal: 'Done' } }] },`,
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
         "};",
       ].join("\n"),
@@ -220,7 +237,9 @@ describe("loadConfig", () => {
 
     const { loadConfig } = await loadFreshConfig();
 
-    await expect(loadConfig()).rejects.toThrow(/linear.statuses.terminal must be an array/);
+    await expect(loadConfig()).rejects.toThrow(
+      /linear\.projects\[0\]\.statuses\.terminal must be an array/,
+    );
   });
 
   it("caches the resolved config across calls", async () => {
@@ -1020,7 +1039,7 @@ describe("loadConfig", () => {
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
 
-    expect(actual.linear.slugId).toBe("5152195762f3");
+    expect(actual.linear.projects[0]?.slugId).toBe("5152195762f3");
   });
 
   it("keeps reading legacy XDG ~/.config/groundcrew/config.ts during the back-compat window", async () => {
@@ -1040,7 +1059,7 @@ describe("loadConfig", () => {
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
 
-    expect(actual.linear.slugId).toBe("5152195762f3");
+    expect(actual.linear.projects[0]?.slugId).toBe("5152195762f3");
   });
 
   it("fails when the config file does not exist", async () => {
@@ -1075,7 +1094,7 @@ describe("loadConfig", () => {
     const path = writeConfigFile(
       temporary,
       configSource({
-        linear: { projectSlug: "" },
+        linear: { projects: [{ projectSlug: "" }] },
         workspace: VALID_WORKSPACE(temporary),
       }),
     );
@@ -1083,14 +1102,16 @@ describe("loadConfig", () => {
 
     const { loadConfig } = await loadFreshConfig();
 
-    await expect(loadConfig()).rejects.toThrow(/linear.projectSlug must be a non-empty string/);
+    await expect(loadConfig()).rejects.toThrow(
+      /linear\.projects\[0\]\.projectSlug must be a non-empty string/,
+    );
   });
 
   it("fails when projectSlug is missing the 12-char hex tail", async () => {
     const path = writeConfigFile(
       temporary,
       configSource({
-        linear: { projectSlug: "no-hex-here" },
+        linear: { projects: [{ projectSlug: "no-hex-here" }] },
         workspace: VALID_WORKSPACE(temporary),
       }),
     );
@@ -1103,7 +1124,10 @@ describe("loadConfig", () => {
 
   it("fails when workspace is not an object", async () => {
     const path = join(temporary, "bad-workspace.ts");
-    writeFileSync(path, `export default { linear: { projectSlug: "x-aaaaaaaaaaaa" } };\n`);
+    writeFileSync(
+      path,
+      `export default { linear: { projects: [{ projectSlug: "x-aaaaaaaaaaaa" }] } };\n`,
+    );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
 
     const { loadConfig } = await loadFreshConfig();
@@ -1291,7 +1315,7 @@ export default config;\n`,
     writeFileSync(
       path,
       `export default {
-  linear: { projectSlug: "ai-strategy-5152195762f3" },
+  linear: { projects: [{ projectSlug: "ai-strategy-5152195762f3" }] },
   workspace: { projectDir: "${temporary}", knownRepositories: ["repo-a"] },
   models: { definitions: { cursor: { cmd: "cursor", color: "#fff", usage: 5 } } },
 };
@@ -1309,7 +1333,7 @@ export default config;\n`,
     writeFileSync(
       path,
       `export default {
-  linear: { projectSlug: "ai-strategy-5152195762f3" },
+  linear: { projects: [{ projectSlug: "ai-strategy-5152195762f3" }] },
   workspace: { projectDir: "${temporary}", knownRepositories: ["repo-a"] },
   models: { definitions: { cursor: { cmd: "cursor", color: "#fff", usage: { codexbar: 5 } } } },
 };
@@ -1346,7 +1370,7 @@ export default config;\n`,
       const { loadConfig } = await loadFreshConfig();
       const actual = await loadConfig();
 
-      expect(actual.linear.slugId).toBe("5152195762f3");
+      expect(actual.linear.projects[0]?.slugId).toBe("5152195762f3");
     } finally {
       vi.spyOn(process, "cwd").mockReturnValue(originalCwd);
     }
@@ -1366,7 +1390,7 @@ export default config;\n`,
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
 
-    expect(actual.linear.slugId).toBe("5152195762f3");
+    expect(actual.linear.projects[0]?.slugId).toBe("5152195762f3");
   });
 
   it("accepts the legacy `export const config = {...}` shape for back-compat", async () => {
@@ -1383,7 +1407,7 @@ export default config;\n`,
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
 
-    expect(actual.linear.slugId).toBe("5152195762f3");
+    expect(actual.linear.projects[0]?.slugId).toBe("5152195762f3");
   });
 
   it("env-var override wins over both project-walk and XDG fallback", async () => {
@@ -1396,7 +1420,7 @@ export default config;\n`,
     writeFileSync(
       xdgConfigPath,
       configSource({
-        linear: { projectSlug: "xdg-decoy-aaaaaaaaaaaa" },
+        linear: { projects: [{ projectSlug: "xdg-decoy-aaaaaaaaaaaa" }] },
         workspace: VALID_WORKSPACE(temporary),
       }),
     );
@@ -1404,7 +1428,7 @@ export default config;\n`,
     writeFileSync(
       join(temporary, "crew.config.ts"),
       configSource({
-        linear: { projectSlug: "project-decoy-bbbbbbbbbbbb" },
+        linear: { projects: [{ projectSlug: "project-decoy-bbbbbbbbbbbb" }] },
         workspace: VALID_WORKSPACE(temporary),
       }),
     );
@@ -1421,7 +1445,7 @@ export default config;\n`,
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
 
-    expect(actual.linear.slugId).toBe("5152195762f3");
+    expect(actual.linear.projects[0]?.slugId).toBe("5152195762f3");
   });
 
   it("fails when the default export is not an object (e.g. a primitive)", async () => {
@@ -1432,6 +1456,153 @@ export default config;\n`,
     const { loadConfig } = await loadFreshConfig();
 
     await expect(loadConfig()).rejects.toThrow(/must export a config object/);
+  });
+
+  it("accepts multiple projects with divergent statuses", async () => {
+    const path = writeConfigFile(
+      temporary,
+      configSource({
+        linear: {
+          projects: [
+            { projectSlug: "alpha-aaaaaaaaaaaa" },
+            {
+              projectSlug: "beta-bbbbbbbbbbbb",
+              statuses: { inProgress: "Doing", done: "Released", terminal: ["Released"] },
+            },
+          ],
+        },
+        workspace: VALID_WORKSPACE(temporary),
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+
+    expect(actual.linear.projects).toHaveLength(2);
+    expect(actual.linear.projects[0]?.slugId).toBe("aaaaaaaaaaaa");
+    expect(actual.linear.projects[0]?.statuses).toStrictEqual({
+      todo: "Todo",
+      inProgress: "In Progress",
+      done: "Done",
+      terminal: ["Done"],
+    });
+    expect(actual.linear.projects[1]?.slugId).toBe("bbbbbbbbbbbb");
+    expect(actual.linear.projects[1]?.statuses).toStrictEqual({
+      todo: "Todo",
+      inProgress: "Doing",
+      done: "Released",
+      terminal: ["Released"],
+    });
+  });
+
+  it("rejects duplicate slugIds across projects", async () => {
+    const path = writeConfigFile(
+      temporary,
+      configSource({
+        linear: {
+          projects: [
+            { projectSlug: "alpha-1234567890ab" },
+            { projectSlug: "another-1234567890ab" },
+          ],
+        },
+        workspace: VALID_WORKSPACE(temporary),
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(
+      /linear\.projects\[1\]\.projectSlug duplicates the slugId "1234567890ab"/,
+    );
+  });
+
+  it("rejects projects that isn't an array", async () => {
+    const path = join(temporary, "bad-projects.ts");
+    writeFileSync(
+      path,
+      `export default { linear: { projects: 5 }, workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))} };\n`,
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(/linear\.projects must be a non-empty array/);
+  });
+
+  it("rejects a non-object entry inside linear.projects", async () => {
+    const path = join(temporary, "non-object-project.ts");
+    writeFileSync(
+      path,
+      `export default { linear: { projects: [42] }, workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))} };\n`,
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(/linear\.projects\[0\] must be an object/);
+  });
+
+  it("rejects a non-object statuses block inside a project entry", async () => {
+    const path = join(temporary, "non-object-statuses.ts");
+    writeFileSync(
+      path,
+      `export default { linear: { projects: [{ projectSlug: "${VALID_PROJECT_SLUG}", statuses: 5 }] }, workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))} };\n`,
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(/linear\.projects\[0\]\.statuses must be an object/);
+  });
+
+  it("rejects an empty projects array", async () => {
+    const path = writeConfigFile(
+      temporary,
+      configSource({
+        linear: { projects: [] },
+        workspace: VALID_WORKSPACE(temporary),
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(/linear\.projects must be a non-empty array/);
+  });
+
+  it("rejects the legacy linear.projectSlug shape with a migration message", async () => {
+    const path = join(temporary, "legacy-shape.ts");
+    writeFileSync(
+      path,
+      `export default { linear: { projectSlug: "${VALID_PROJECT_SLUG}" }, workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))} };\n`,
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(
+      /linear\.projectSlug \/ linear\.statuses are no longer supported/,
+    );
+    await expect(loadConfig()).rejects.toThrow(
+      new RegExp(`projects: \\[\\{ projectSlug: "${VALID_PROJECT_SLUG}"`),
+    );
+  });
+
+  it("rejects the legacy linear.statuses shape with a migration message", async () => {
+    const path = join(temporary, "legacy-statuses.ts");
+    writeFileSync(
+      path,
+      `export default { linear: { projects: [{ projectSlug: "${VALID_PROJECT_SLUG}" }], statuses: { todo: "Todo" } }, workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))} };\n`,
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(
+      /linear\.projectSlug \/ linear\.statuses are no longer supported/,
+    );
   });
 
   it("fails with a discovery error when no config exists anywhere", async () => {

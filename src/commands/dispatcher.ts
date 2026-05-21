@@ -9,7 +9,12 @@
 
 import type { LinearClient } from "@linear/sdk";
 
-import { type BoardState, type GroundcrewIssue, isGroundcrewIssue } from "../lib/boardSource.ts";
+import {
+  type BoardState,
+  type GroundcrewIssue,
+  isGroundcrewIssue,
+  projectFor,
+} from "../lib/boardSource.ts";
 import type { ResolvedConfig } from "../lib/config.ts";
 import { createLinearIssueStatusUpdater } from "../lib/linearIssueStatus.ts";
 import type { UsageByModel } from "../lib/usage.ts";
@@ -134,14 +139,14 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     issueStatusUpdater.resetMissingInProgressCache();
 
     const activeCount = state.issues.filter(
-      (issue) => issue.status === config.linear.statuses.inProgress,
+      (issue) => issue.status === projectFor(issue, config).statuses.inProgress,
     ).length;
     const slots = config.orchestrator.maximumInProgress - activeCount;
     // Narrow Todo to tickets that opted in via an `agent-*` label.
     // Unlabeled tickets are not groundcrew's concern even when in Todo.
     const todo: readonly GroundcrewIssue[] = state.issues.filter(
       (issue): issue is GroundcrewIssue =>
-        issue.status === config.linear.statuses.todo && isGroundcrewIssue(issue),
+        issue.status === projectFor(issue, config).statuses.todo && isGroundcrewIssue(issue),
     );
 
     if (slots <= 0) {
@@ -152,7 +157,7 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     }
 
     if (todo.length === 0) {
-      log(`No ${config.linear.statuses.todo} tickets to pick up`);
+      log(`No Todo tickets to pick up`);
       return;
     }
 
@@ -163,7 +168,7 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
       logSkip(skip);
     }
     if (unblocked.length === 0) {
-      log(`No eligible ${config.linear.statuses.todo} tickets after blocker filtering`);
+      log(`No eligible Todo tickets after blocker filtering`);
       return;
     }
 
@@ -206,7 +211,7 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     }
 
     if (starts.length === 0) {
-      log(`No eligible ${config.linear.statuses.todo} tickets after eligibility filtering`);
+      log(`No eligible Todo tickets after eligibility filtering`);
       return;
     }
 

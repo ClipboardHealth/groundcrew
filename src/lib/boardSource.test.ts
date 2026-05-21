@@ -7,9 +7,13 @@ import {
   fetchInProgressIssueCount,
   fetchRawLinearIssue,
   fetchResolvedIssue,
-  isTerminalStatus,
+  isTerminalStatusForBlocker,
+  isTerminalStatusForIssue,
   resolveModelFor,
   resolveRepositoryFor,
+  UnknownProjectError,
+  type Blocker,
+  type Issue,
 } from "./boardSource.ts";
 import type { ResolvedConfig } from "./config.ts";
 
@@ -22,6 +26,7 @@ interface IssueNodeStub {
   state?: { id: string; name: string } | null;
   team?: { id: string; key: string } | null;
   assignee?: { name: string } | null;
+  project?: { slugId: string } | null;
   children?: { nodes: unknown[] };
   labels?: { nodes: { name: string }[] };
   inverseRelations?: {
@@ -31,6 +36,7 @@ interface IssueNodeStub {
         identifier: string;
         title: string;
         state?: { name: string } | null;
+        project?: { slugId: string } | null;
       } | null;
     }[];
     pageInfo: { hasNextPage: boolean };
@@ -40,9 +46,18 @@ interface IssueNodeStub {
 function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
   return {
     linear: {
-      projectSlug: "ai-strategy-aaaaaaaaaaaa",
-      slugId: "aaaaaaaaaaaa",
-      statuses: { todo: "Todo", inProgress: "In Progress", done: "Done", terminal: ["Done"] },
+      projects: [
+        {
+          projectSlug: "ai-strategy-aaaaaaaaaaaa",
+          slugId: "aaaaaaaaaaaa",
+          statuses: {
+            todo: "Todo",
+            inProgress: "In Progress",
+            done: "Done",
+            terminal: ["Done"],
+          },
+        },
+      ],
       ...overrides.linear,
     },
     git: { remote: "origin", defaultBranch: "main", ...overrides.git },
@@ -82,6 +97,7 @@ function issueNode(overrides: Partial<IssueNodeStub>): IssueNodeStub {
     state: overrides.state === undefined ? { id: "state-todo", name: "Todo" } : overrides.state,
     team: overrides.team === undefined ? { id: "team-default", key: "TEAM" } : overrides.team,
     assignee: overrides.assignee === undefined ? { name: "Alice" } : overrides.assignee,
+    project: "project" in overrides ? overrides.project : { slugId: "aaaaaaaaaaaa" },
     children: overrides.children ?? { nodes: [] },
     labels: overrides.labels ?? { nodes: [] },
     ...(overrides.inverseRelations === undefined
@@ -166,6 +182,7 @@ function makeClient(options: {
             title: "Title",
             description: "Touches repo-a.",
             team: { id: "team-default" },
+            project: { slugId: "aaaaaaaaaaaa" },
             labels: { nodes: [] },
             state: { name: "Todo" },
           },
@@ -202,9 +219,45 @@ describe(createBoardSource, () => {
   });
 
   describe("verify", () => {
-    it("rejects when no project matches the configured slugId", async () => {
+    it("rejects when no project resolves from linear.projects", async () => {
       const { source } = makeBoardSource(makeClient({ projectFound: false }));
-      await expect(source.verify()).rejects.toThrow(/No Linear project found/);
+      await expect(source.verify()).rejects.toThrow(/No Linear projects resolved/);
+    });
+
+    it("logs a warning and continues when at least one slug resolves", async () => {
+      const config = makeConfig({
+        linear: {
+          projects: [
+            {
+              projectSlug: "ai-strategy-aaaaaaaaaaaa",
+              slugId: "aaaaaaaaaaaa",
+              statuses: {
+                todo: "Todo",
+                inProgress: "In Progress",
+                done: "Done",
+                terminal: ["Done"],
+              },
+            },
+            {
+              projectSlug: "missing-cccccccccccc",
+              slugId: "cccccccccccc",
+              statuses: {
+                todo: "Todo",
+                inProgress: "In Progress",
+                done: "Done",
+                terminal: ["Done"],
+              },
+            },
+          ],
+        },
+      });
+      const { source } = makeBoardSource(makeClient({ projectFound: true }), config);
+      await source.verify();
+      const output = consoleLog.output();
+      expect(output).toContain("Resolved Linear project: AI Strategy");
+      expect(output).toMatch(
+        /WARNING: no Linear project found with slugId "cccccccccccc".*"missing-cccccccccccc"/,
+      );
     });
 
     it("logs the resolved project name on success", async () => {
@@ -248,6 +301,28 @@ describe(createBoardSource, () => {
       );
       const state = await source.fetch();
       expect(state.issues.map((index) => index.id)).toStrictEqual(["team-2"]);
+    });
+
+    it("drops issues whose project slugId isn't in linear.projects", async () => {
+      // The GraphQL slugId filter normally scopes results to configured
+      // projects; this guards against a degenerate Linear response that
+      // returns an off-config issue. Dropping it here keeps projectFor's
+      // throw a real bug signal instead of routine noise.
+      const { source } = makeBoardSource(
+        makeClient({
+          pages: [[issueNode({ identifier: "TEAM-9", project: { slugId: "off-config" } })]],
+        }),
+      );
+      const state = await source.fetch();
+      expect(state.issues).toHaveLength(0);
+    });
+
+    it("drops issues whose project field is missing entirely", async () => {
+      const { source } = makeBoardSource(
+        makeClient({ pages: [[issueNode({ identifier: "TEAM-10", project: null })]] }),
+      );
+      const state = await source.fetch();
+      expect(state.issues).toHaveLength(0);
     });
 
     it("lowercases Linear's uppercase identifier into Issue.id", async () => {
@@ -433,16 +508,20 @@ describe(createBoardSource, () => {
     it("dedupes overlapping terminal state names in the query variables", async () => {
       const config = makeConfig({
         linear: {
-          projectSlug: "ai-strategy-aaaaaaaaaaaa",
-          slugId: "aaaaaaaaaaaa",
-          // Done appears in both `done` and `terminal`; "Won't Do" is a custom
-          // terminal state. The query should carry each name exactly once.
-          statuses: {
-            todo: "Todo",
-            inProgress: "In Progress",
-            done: "Done",
-            terminal: ["Done", "Won't Do"],
-          },
+          projects: [
+            {
+              projectSlug: "ai-strategy-aaaaaaaaaaaa",
+              slugId: "aaaaaaaaaaaa",
+              // Done appears in both `done` and `terminal`; "Won't Do" is a custom
+              // terminal state. The query should carry each name exactly once.
+              statuses: {
+                todo: "Todo",
+                inProgress: "In Progress",
+                done: "Done",
+                terminal: ["Done", "Won't Do"],
+              },
+            },
+          ],
         },
       });
       const { source, rawRequest } = makeBoardSource(makeClient({ pages: [[]] }), config);
@@ -591,16 +670,14 @@ describe(createBoardSource, () => {
       expect(first?.repository).toBeUndefined();
     });
 
-    it("falls back to defaults when state, team, and assignee are missing", async () => {
+    it("falls back to defaults when team and assignee are missing", async () => {
       const { source } = makeBoardSource(
         makeClient({
-          pages: [[issueNode({ state: null, team: null, assignee: null })]],
+          pages: [[issueNode({ team: null, assignee: null })]],
         }),
       );
       const state = await source.fetch();
       const [first] = state.issues;
-      expect(first?.status).toBe("Unknown");
-      expect(first?.statusId).toBe("");
       expect(first?.teamId).toBe("");
       expect(first?.assignee).toBe("Unassigned");
     });
@@ -633,7 +710,7 @@ describe(createBoardSource, () => {
       const state = await source.fetch();
       const [first] = state.issues;
       expect(first?.blockers).toStrictEqual([
-        { id: "team-0", title: "Blocker", status: "In Progress" },
+        { id: "team-0", title: "Blocker", status: "In Progress", projectSlugId: undefined },
       ]);
       expect(first?.hasMoreBlockers).toBe(false);
     });
@@ -655,7 +732,9 @@ describe(createBoardSource, () => {
       );
       const state = await source.fetch();
       const [first] = state.issues;
-      expect(first?.blockers).toStrictEqual([{ id: "unknown", title: "", status: undefined }]);
+      expect(first?.blockers).toStrictEqual([
+        { id: "unknown", title: "", status: undefined, projectSlugId: undefined },
+      ]);
     });
 
     it("propagates hasMoreBlockers when the relation page is paginated", async () => {
@@ -690,6 +769,7 @@ describe(fetchResolvedIssue, () => {
           title: "Title",
           description: "Touches repo-a.",
           team: null,
+          project: { slugId: "aaaaaaaaaaaa" },
           labels: { nodes: [] },
         },
       },
@@ -722,6 +802,7 @@ describe(fetchResolvedIssue, () => {
           title: "Title",
           description: "Touches repo-a.",
           team: { id: "team-default" },
+          project: { slugId: "aaaaaaaaaaaa" },
           labels: { nodes: [{ name: "agent-codex" }] },
         },
       },
@@ -736,40 +817,286 @@ describe(fetchResolvedIssue, () => {
 
     expect(actual.model).toBe("claude");
   });
-});
 
-describe(isTerminalStatus, () => {
-  it("returns true for a configured terminal status", () => {
-    const config = makeConfig({
-      linear: {
-        projectSlug: "x-aaaaaaaaaaaa",
-        slugId: "aaaaaaaaaaaa",
-        statuses: { todo: "Todo", inProgress: "In Progress", done: "Done", terminal: ["Done"] },
-      },
-    });
-    expect(isTerminalStatus("Done", config)).toBe(true);
-  });
-
-  it("returns true for any status in the terminal list", () => {
-    const config = makeConfig({
-      linear: {
-        projectSlug: "x-aaaaaaaaaaaa",
-        slugId: "aaaaaaaaaaaa",
-        statuses: {
-          todo: "Todo",
-          inProgress: "In Progress",
-          done: "Done",
-          terminal: ["Done", "Released"],
+  it("throws UnknownProjectError when the ticket's Linear project is not configured", async () => {
+    const client = makeClient({ pages: [[]] });
+    client.client.rawRequest.mockResolvedValueOnce({
+      data: {
+        issue: {
+          id: "uuid-1",
+          title: "Title",
+          description: "Touches repo-a.",
+          team: { id: "team-default" },
+          project: { slugId: "off-config-cccccccccccc" },
+          labels: { nodes: [] },
         },
       },
     });
-    expect(isTerminalStatus("Released", config)).toBe(true);
+
+    await expect(
+      fetchResolvedIssue({
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests use the LinearClient surface consumed by boardSource
+        client: client as unknown as LinearClient,
+        config: makeConfig(),
+        ticket: "team-1",
+      }),
+    ).rejects.toThrow(UnknownProjectError);
+  });
+
+  it("throws UnknownProjectError when the ticket has no Linear project", async () => {
+    const client = makeClient({ pages: [[]] });
+    client.client.rawRequest.mockResolvedValueOnce({
+      data: {
+        issue: {
+          id: "uuid-1",
+          title: "Title",
+          description: "Touches repo-a.",
+          team: { id: "team-default" },
+          project: null,
+          labels: { nodes: [] },
+        },
+      },
+    });
+
+    await expect(
+      fetchResolvedIssue({
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests use the LinearClient surface consumed by boardSource
+        client: client as unknown as LinearClient,
+        config: makeConfig(),
+        ticket: "team-1",
+      }),
+    ).rejects.toThrow(/has no associated Linear project/);
+  });
+});
+
+function makeIssue(overrides: Partial<Issue> = {}): Issue {
+  return {
+    id: overrides.id ?? "team-1",
+    uuid: overrides.uuid ?? "uuid-1",
+    title: overrides.title ?? "Title",
+    status: overrides.status ?? "Done",
+    statusId: overrides.statusId ?? "state-done",
+    assignee: overrides.assignee ?? "Alice",
+    updatedAt: overrides.updatedAt ?? "2025-01-01T00:00:00.000Z",
+    repository: overrides.repository,
+    model: overrides.model,
+    teamId: overrides.teamId ?? "team-default",
+    projectSlugId: overrides.projectSlugId ?? "aaaaaaaaaaaa",
+    blockers: overrides.blockers ?? [],
+    hasMoreBlockers: overrides.hasMoreBlockers ?? false,
+  };
+}
+
+describe(isTerminalStatusForIssue, () => {
+  it("returns true when the issue's own project lists its status as terminal", () => {
+    const config = makeConfig();
+    expect(isTerminalStatusForIssue(makeIssue({ status: "Done" }), config)).toBe(true);
+  });
+
+  it("returns true for any status in the project's terminal list", () => {
+    const config = makeConfig({
+      linear: {
+        projects: [
+          {
+            projectSlug: "x-aaaaaaaaaaaa",
+            slugId: "aaaaaaaaaaaa",
+            statuses: {
+              todo: "Todo",
+              inProgress: "In Progress",
+              done: "Done",
+              terminal: ["Done", "Released"],
+            },
+          },
+        ],
+      },
+    });
+    expect(isTerminalStatusForIssue(makeIssue({ status: "Released" }), config)).toBe(true);
   });
 
   it("returns false for non-terminal statuses", () => {
     const config = makeConfig();
-    expect(isTerminalStatus("Todo", config)).toBe(false);
-    expect(isTerminalStatus("In Progress", config)).toBe(false);
+    expect(isTerminalStatusForIssue(makeIssue({ status: "Todo" }), config)).toBe(false);
+    expect(isTerminalStatusForIssue(makeIssue({ status: "In Progress" }), config)).toBe(false);
+  });
+
+  it("throws when the issue's slugId isn't in linear.projects", () => {
+    // fetchBoard's slugId filter and issueStatusBelongsToOwnProject keep
+    // production issues from reaching here with an unknown slugId. Direct
+    // calls (or a degenerate Linear response) surface the bug loudly instead
+    // of silently using the wrong project's terminals.
+    const config = makeConfig();
+    expect(() =>
+      isTerminalStatusForIssue(
+        makeIssue({ status: "Done", projectSlugId: "off-config-cccccccccccc" }),
+        config,
+      ),
+    ).toThrow(/projectSlugId "off-config-cccccccccccc" which is not in linear\.projects/);
+  });
+
+  it("uses each project's own terminal list when projects diverge", () => {
+    const config = makeConfig({
+      linear: {
+        projects: [
+          {
+            projectSlug: "alpha-aaaaaaaaaaaa",
+            slugId: "aaaaaaaaaaaa",
+            statuses: { todo: "Todo", inProgress: "In Progress", done: "Done", terminal: ["Done"] },
+          },
+          {
+            projectSlug: "beta-bbbbbbbbbbbb",
+            slugId: "bbbbbbbbbbbb",
+            statuses: {
+              todo: "Todo",
+              inProgress: "In Progress",
+              done: "Released",
+              terminal: ["Released"],
+            },
+          },
+        ],
+      },
+    });
+    // Project alpha doesn't treat "Released" as terminal.
+    expect(
+      isTerminalStatusForIssue(
+        makeIssue({ status: "Released", projectSlugId: "aaaaaaaaaaaa" }),
+        config,
+      ),
+    ).toBe(false);
+    // Project beta does.
+    expect(
+      isTerminalStatusForIssue(
+        makeIssue({ status: "Released", projectSlugId: "bbbbbbbbbbbb" }),
+        config,
+      ),
+    ).toBe(true);
+  });
+});
+
+function makeBlocker(overrides: Partial<Blocker> = {}): Blocker {
+  return {
+    id: overrides.id ?? "team-99",
+    title: overrides.title ?? "Blocker",
+    status: overrides.status,
+    projectSlugId: overrides.projectSlugId,
+  };
+}
+
+describe(isTerminalStatusForBlocker, () => {
+  it("returns false when the blocker has no status", () => {
+    const config = makeConfig();
+    expect(isTerminalStatusForBlocker(makeBlocker({ status: undefined }), config)).toBe(false);
+  });
+
+  it("uses the blocker's own project's terminals when in-config", () => {
+    const config = makeConfig({
+      linear: {
+        projects: [
+          {
+            projectSlug: "alpha-aaaaaaaaaaaa",
+            slugId: "aaaaaaaaaaaa",
+            statuses: { todo: "Todo", inProgress: "In Progress", done: "Done", terminal: ["Done"] },
+          },
+          {
+            projectSlug: "beta-bbbbbbbbbbbb",
+            slugId: "bbbbbbbbbbbb",
+            statuses: {
+              todo: "Todo",
+              inProgress: "In Progress",
+              done: "Released",
+              terminal: ["Released"],
+            },
+          },
+        ],
+      },
+    });
+    // "Released" is terminal in beta but not in alpha — beta wins for a beta blocker.
+    expect(
+      isTerminalStatusForBlocker(
+        makeBlocker({ status: "Released", projectSlugId: "bbbbbbbbbbbb" }),
+        config,
+      ),
+    ).toBe(true);
+    expect(
+      isTerminalStatusForBlocker(
+        makeBlocker({ status: "Released", projectSlugId: "aaaaaaaaaaaa" }),
+        config,
+      ),
+    ).toBe(false);
+  });
+
+  it("falls back to the union of terminals for blockers in unwatched projects", () => {
+    const config = makeConfig({
+      linear: {
+        projects: [
+          {
+            projectSlug: "alpha-aaaaaaaaaaaa",
+            slugId: "aaaaaaaaaaaa",
+            statuses: { todo: "Todo", inProgress: "In Progress", done: "Done", terminal: ["Done"] },
+          },
+          {
+            projectSlug: "beta-bbbbbbbbbbbb",
+            slugId: "bbbbbbbbbbbb",
+            statuses: {
+              todo: "Todo",
+              inProgress: "In Progress",
+              done: "Released",
+              terminal: ["Released"],
+            },
+          },
+        ],
+      },
+    });
+    // Off-config blocker: "Released" appears in the union (beta), so it counts as terminal.
+    expect(
+      isTerminalStatusForBlocker(
+        makeBlocker({ status: "Released", projectSlugId: "off-config-cccccccccccc" }),
+        config,
+      ),
+    ).toBe(true);
+    // "Pending" isn't terminal under any configured project.
+    expect(
+      isTerminalStatusForBlocker(
+        makeBlocker({ status: "Pending", projectSlugId: "off-config-cccccccccccc" }),
+        config,
+      ),
+    ).toBe(false);
+  });
+
+  it("treats blockers with no project as off-config (union fallback)", () => {
+    const config = makeConfig();
+    expect(
+      isTerminalStatusForBlocker(makeBlocker({ status: "Done", projectSlugId: undefined }), config),
+    ).toBe(true);
+    expect(
+      isTerminalStatusForBlocker(
+        makeBlocker({ status: "Pending", projectSlugId: undefined }),
+        config,
+      ),
+    ).toBe(false);
+  });
+});
+
+describe(UnknownProjectError, () => {
+  it("names the ticket, the project slugId, and the configured set", () => {
+    const error = new UnknownProjectError({
+      ticket: "TEAM-1",
+      projectSlugId: "off-config-cccccccccccc",
+      configuredSlugIds: ["aaaaaaaaaaaa", "bbbbbbbbbbbb"],
+    });
+    expect(error.message).toContain("TEAM-1");
+    expect(error.message).toContain("off-config-cccccccccccc");
+    expect(error.message).toContain("aaaaaaaaaaaa");
+    expect(error.message).toContain("bbbbbbbbbbbb");
+    expect(error.message).toMatch(/linear\.projects/);
+  });
+
+  it("handles tickets with no associated project", () => {
+    const error = new UnknownProjectError({
+      ticket: "TEAM-2",
+      projectSlugId: undefined,
+      configuredSlugIds: ["aaaaaaaaaaaa"],
+    });
+    expect(error.message).toContain("has no associated Linear project");
   });
 });
 
@@ -995,7 +1322,12 @@ describe(fetchBlockersForTicket, () => {
     });
 
     expect(result).toHaveLength(1);
-    expect(result[0]).toStrictEqual({ id: "hrd-10", title: "Blocker A", status: "In Progress" });
+    expect(result[0]).toStrictEqual({
+      id: "hrd-10",
+      title: "Blocker A",
+      status: "In Progress",
+      projectSlugId: undefined,
+    });
   });
 
   it("returns blockers from every relation page", async () => {
@@ -1044,8 +1376,8 @@ describe(fetchBlockersForTicket, () => {
     });
 
     expect(result).toStrictEqual([
-      { id: "hrd-10", title: "Blocker A", status: "In Progress" },
-      { id: "hrd-20", title: "Blocker B", status: "Todo" },
+      { id: "hrd-10", title: "Blocker A", status: "In Progress", projectSlugId: undefined },
+      { id: "hrd-20", title: "Blocker B", status: "Todo", projectSlugId: undefined },
     ]);
     expect(client.client.rawRequest).toHaveBeenNthCalledWith(1, expect.any(String), {
       after: null,

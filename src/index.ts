@@ -3,15 +3,25 @@ export { cleanupWorkspace, type CleanupWorkspaceOptions } from "./commands/clean
 export { doctor } from "./commands/doctor.ts";
 export { orchestrate, type OrchestratorOptions } from "./commands/orchestrator.ts";
 export { setupWorkspace, type SetupWorkspaceOptions } from "./commands/setupWorkspace.ts";
-export type { Config, ModelDefinition, ResolvedConfig } from "./lib/config.ts";
-export { loadConfig } from "./lib/config.ts";
+export type {
+  Config,
+  ModelDefinition,
+  ProjectConfig,
+  ResolvedConfig,
+  ResolvedProjectConfig,
+} from "./lib/config.ts";
+export { findProjectBySlugId, loadConfig, unionTerminalStatuses } from "./lib/config.ts";
 export {
   fetchBlockersForTicket,
   fetchInProgressIssueCount,
   fetchRawLinearIssue,
   fetchResolvedIssue,
+  isTerminalStatusForBlocker,
+  isTerminalStatusForIssue,
+  projectFor,
   resolveModelFor,
   resolveRepositoryFor,
+  UnknownProjectError,
   type ModelResolution,
   type RawLinearIssue,
   type RepositoryResolution,

@@ -34,9 +34,13 @@ const hostEntry: WorktreeEntry = {
 
 const config: ResolvedConfig = {
   linear: {
-    projectSlug: "x-aaaaaaaaaaaa",
-    slugId: "aaaaaaaaaaaa",
-    statuses: { todo: "Todo", inProgress: "In Progress", done: "Done", terminal: ["Done"] },
+    projects: [
+      {
+        projectSlug: "x-aaaaaaaaaaaa",
+        slugId: "aaaaaaaaaaaa",
+        statuses: { todo: "Todo", inProgress: "In Progress", done: "Done", terminal: ["Done"] },
+      },
+    ],
   },
   git: { remote: "origin", defaultBranch: "main" },
   workspace: {

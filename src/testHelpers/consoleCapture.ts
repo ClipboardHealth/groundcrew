@@ -32,17 +32,3 @@ export function captureConsoleLog(): ConsoleCapture {
 export function captureConsoleError(): ConsoleCapture {
   return captureConsoleWriter("error");
 }
-
-export function captureConsoleClear(): ConsoleCapture {
-  const spy = vi.spyOn(console, "clear").mockReturnValue();
-
-  return {
-    get calls() {
-      return spy.mock.calls;
-    },
-    output: () => spy.mock.calls.map((call) => call.join(" ")).join("\n"),
-    restore: () => {
-      spy.mockRestore();
-    },
-  };
-}

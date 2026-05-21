@@ -67,14 +67,18 @@ function makeConfig(overrides: {
   };
   return {
     linear: {
-      projectSlug: "x-aaaaaaaaaaaa",
-      slugId: "aaaaaaaaaaaa",
-      statuses: {
-        todo: "Todo",
-        inProgress: "In Progress",
-        done: "Done",
-        terminal: ["Done"],
-      },
+      projects: [
+        {
+          projectSlug: "x-aaaaaaaaaaaa",
+          slugId: "aaaaaaaaaaaa",
+          statuses: {
+            todo: "Todo",
+            inProgress: "In Progress",
+            done: "Done",
+            terminal: ["Done"],
+          },
+        },
+      ],
     },
     git: overrides.git ?? { remote: "origin", defaultBranch: "main" },
     workspace: {

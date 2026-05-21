@@ -7,7 +7,11 @@
  * effects.
  */
 
-import { type Blocker, type GroundcrewIssue, isTerminalStatus } from "../lib/boardSource.ts";
+import {
+  type Blocker,
+  type GroundcrewIssue,
+  isTerminalStatusForBlocker,
+} from "../lib/boardSource.ts";
 import { AGENT_ANY_MODEL, type ResolvedConfig } from "../lib/config.ts";
 import type { UsageByModel } from "../lib/usage.ts";
 import type { WorkspaceProbe } from "../lib/workspaces.ts";
@@ -114,7 +118,7 @@ function blockerVerdictFor(
   }
 
   const unresolved = issue.blockers.filter(
-    (blocker) => blocker.status === undefined || !isTerminalStatus(blocker.status, config),
+    (blocker) => !isTerminalStatusForBlocker(blocker, config),
   );
   if (unresolved.length === 0) {
     return undefined;

@@ -1,26 +1,19 @@
 /**
- * groundcrew orchestrator — polls a Linear project and spins up
- * workspace + git-worktree pairs for ready tickets.
+ * groundcrew orchestrator — polls Linear projects and spins up workspace +
+ * git-worktree pairs for ready tickets. Each tick fetches the board, runs
+ * the cleaner, and runs the dispatcher; logging from those modules is the
+ * orchestrator's user-facing output.
  */
 
 import {
   type BoardSource,
   type BoardState,
   createBoardSource,
-  type Issue,
-  isTerminalStatus,
   RepositoryResolutionError,
 } from "../lib/boardSource.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { getUsageByModel, type UsageByModel } from "../lib/usage.ts";
-import {
-  clearOutput,
-  errorMessage,
-  getLinearClient,
-  log,
-  sleep,
-  writeOutput,
-} from "../lib/util.ts";
+import { errorMessage, getLinearClient, log, sleep } from "../lib/util.ts";
 import { worktrees } from "../lib/worktrees.ts";
 import { type Cleaner, createCleaner } from "./cleaner.ts";
 import { createDispatcher, type Dispatcher } from "./dispatcher.ts";
@@ -28,27 +21,7 @@ import { createDispatcher, type Dispatcher } from "./dispatcher.ts";
 const RATE_LIMIT_DELAY_MS = 60_000;
 const RETRY_BASE_DELAY_MS = 1000;
 const RETRY_MAX_ATTEMPTS = 3;
-const STATUS_CARD_TITLE_WIDTH = 42;
-const STATUS_CARD_ID_WIDTH = 8;
-const STATUS_CARD_LIMIT = 10;
-const HEADER_BAR_WIDTH = 70;
-const SECTION_BAR_WIDTH = 50;
 const MS_PER_SECOND = 1000;
-
-const STATUS_ICON_DEFAULT = "  ";
-
-function statusIconFor(status: string, config: ResolvedConfig): string {
-  if (status === config.linear.statuses.inProgress) {
-    return ">>";
-  }
-  if (status === config.linear.statuses.todo) {
-    return "--";
-  }
-  if (isTerminalStatus(status, config)) {
-    return "ok";
-  }
-  return STATUS_ICON_DEFAULT;
-}
 
 async function withRetry<T>(
   function_: () => Promise<T>,
@@ -89,106 +62,6 @@ class WatchLoopShutdownError extends Error {
   }
 }
 
-function groupByStatus(issues: Issue[], knownOrder: string[]): Map<string, Issue[]> {
-  const groups = new Map<string, Issue[]>();
-  for (const status of knownOrder) {
-    groups.set(status, []);
-  }
-  for (const issue of issues) {
-    /* v8 ignore next @preserve -- knownOrder seeds an entry for each issue.status returned by buildStatusOrder */
-    const group = groups.get(issue.status) ?? [];
-    group.push(issue);
-    groups.set(issue.status, group);
-  }
-  return groups;
-}
-
-function buildStatusOrder(state: BoardState, config: ResolvedConfig): string[] {
-  const head = [
-    ...new Set([
-      config.linear.statuses.inProgress,
-      config.linear.statuses.todo,
-      config.linear.statuses.done,
-      ...config.linear.statuses.terminal,
-    ]),
-  ];
-  const seen = new Set(head);
-  const tail: string[] = [];
-  for (const issue of state.issues) {
-    if (!seen.has(issue.status)) {
-      seen.add(issue.status);
-      tail.push(issue.status);
-    }
-  }
-  return [...head, ...tail];
-}
-
-function render(state: BoardState, config: ResolvedConfig, previous?: BoardState): void {
-  const order = buildStatusOrder(state, config);
-  const grouped = groupByStatus(state.issues, order);
-  const previousGrouped = previous ? groupByStatus(previous.issues, order) : undefined;
-  const previousById = previous
-    ? new Map(previous.issues.map((issue) => [issue.id, issue]))
-    : undefined;
-
-  clearOutput();
-  writeOutput(
-    `groundcrew — ${config.linear.projectSlug} — ${new Date(state.timestamp).toLocaleTimeString()}`,
-  );
-  writeOutput(`Max in progress: ${config.orchestrator.maximumInProgress}`);
-  writeOutput("=".repeat(HEADER_BAR_WIDTH));
-  writeOutput();
-
-  for (const [status, issues] of grouped) {
-    if (issues.length === 0) {
-      continue;
-    }
-
-    const previousCount = previousGrouped?.get(status)?.length ?? issues.length;
-    const delta =
-      issues.length === previousCount
-        ? ""
-        : ` (${issues.length > previousCount ? "+" : ""}${issues.length - previousCount})`;
-
-    writeOutput(`${statusIconFor(status, config)} ${status} (${issues.length})${delta}`);
-    writeOutput("-".repeat(SECTION_BAR_WIDTH));
-
-    // Cap each status at the N most recent so a backlog of hundreds of Done
-    // tickets doesn't clog the terminal. Sort only when truncating so smaller
-    // statuses keep whatever order Linear returned.
-    const visible =
-      issues.length > STATUS_CARD_LIMIT
-        ? issues
-            .toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-            .slice(0, STATUS_CARD_LIMIT)
-        : issues;
-    for (const issue of visible) {
-      const previousIssue = previousById?.get(issue.id);
-      const changed =
-        previousIssue && previousIssue.status !== issue.status
-          ? ` [was: ${previousIssue.status}]`
-          : "";
-      writeOutput(
-        `   ${issue.id.padEnd(STATUS_CARD_ID_WIDTH)}  ${issue.title.slice(0, STATUS_CARD_TITLE_WIDTH).padEnd(STATUS_CARD_TITLE_WIDTH)}  ${issue.assignee}${changed}`,
-      );
-    }
-    if (issues.length > STATUS_CARD_LIMIT) {
-      writeOutput(
-        `   … showing ${STATUS_CARD_LIMIT} most recent of ${issues.length}; ${issues.length - STATUS_CARD_LIMIT} older hidden`,
-      );
-    }
-    writeOutput();
-  }
-
-  const total = state.issues.length;
-  const done = state.issues.filter((issue) => isTerminalStatus(issue.status, config)).length;
-  /* v8 ignore next @preserve -- grouped has all known statuses pre-seeded by groupByStatus */
-  const active = grouped.get(config.linear.statuses.inProgress)?.length ?? 0;
-  writeOutput(
-    `Total: ${total} | Active: ${active}/${config.orchestrator.maximumInProgress} | Done: ${done} | Remaining: ${total - done}`,
-  );
-}
-
 export interface OrchestratorOptions {
   watch: boolean;
   dryRun: boolean;
@@ -218,11 +91,9 @@ export async function orchestrate(options: OrchestratorOptions): Promise<void> {
 
   const cleaner: Cleaner = createCleaner({ config });
   const dispatcher: Dispatcher = createDispatcher({ config, client });
-  let previous: BoardState | undefined;
 
   const tick = async (signal?: AbortSignal): Promise<void> => {
-    const state = await withRetry(async () => await boardSource.fetch(), signal);
-    render(state, config, previous);
+    const state: BoardState = await withRetry(async () => await boardSource.fetch(), signal);
     const worktreeEntries = worktrees.list(config);
     const tickArguments = {
       state,
@@ -237,7 +108,6 @@ export async function orchestrate(options: OrchestratorOptions): Promise<void> {
       // an idle board doesn't burn a codexbar shell-out per tick.
       usage: async (usageSignal) => await fetchUsageOrEmpty(config, usageSignal),
     });
-    previous = state;
   };
 
   await (options.watch ? runWatchLoop(tick, config) : tick());

@@ -39,9 +39,13 @@ function narrowVerdict<K extends TicketDoctorVerdict["kind"]>(
 function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
   return {
     linear: {
-      projectSlug: "ai-strategy-aaaaaaaaaaaa",
-      slugId: "aaaaaaaaaaaa",
-      statuses: { todo: "Todo", inProgress: "In Progress", done: "Done", terminal: ["Done"] },
+      projects: [
+        {
+          projectSlug: "ai-strategy-aaaaaaaaaaaa",
+          slugId: "aaaaaaaaaaaa",
+          statuses: { todo: "Todo", inProgress: "In Progress", done: "Done", terminal: ["Done"] },
+        },
+      ],
       ...overrides.linear,
     },
     git: { remote: "origin", defaultBranch: "main", ...overrides.git },
@@ -74,6 +78,7 @@ function makeStubRawIssue(overrides: Partial<RawLinearIssue> = {}): RawLinearIss
     title: "Stub",
     description: "",
     teamId: "team-1",
+    projectSlugId: "aaaaaaaaaaaa",
     labels: [],
     stateName: "Todo",
     blockers: [],
@@ -369,6 +374,51 @@ describe("ticketDoctor resolution checks", () => {
     });
   });
 
+  it("reports unresolvable when the ticket lives in an off-config Linear project", async () => {
+    const dependencies = makeStubDependencies({
+      fetchRawIssue: vi
+        .fn<NonNullable<TicketDoctorDependencies["fetchRawIssue"]>>()
+        .mockResolvedValue(
+          makeStubRawIssue({
+            projectSlugId: "off-config-cccccccccccc",
+            labels: [{ name: "agent-claude" }],
+            stateName: "Todo",
+            description: "see herds-social/herds",
+          }),
+        ),
+      config: makeConfig({
+        workspace: { projectDir: "/work", knownRepositories: ["herds-social/herds"] },
+      }),
+    });
+    const result = await ticketDoctor(dependencies);
+    const projectCheck = result.resolution.find((check) => check.name === "Project is configured");
+    expect(projectCheck?.status).toBe("fail");
+    expect(projectCheck?.detail).toMatch(/off-config-cccccccccccc/);
+    expect(result.verdict).toMatchObject({ kind: "unresolvable" });
+  });
+
+  it("reports unresolvable when the ticket has no associated Linear project", async () => {
+    const dependencies = makeStubDependencies({
+      fetchRawIssue: vi
+        .fn<NonNullable<TicketDoctorDependencies["fetchRawIssue"]>>()
+        .mockResolvedValue(
+          makeStubRawIssue({
+            projectSlugId: undefined,
+            labels: [{ name: "agent-claude" }],
+            stateName: "Todo",
+            description: "see herds-social/herds",
+          }),
+        ),
+      config: makeConfig({
+        workspace: { projectDir: "/work", knownRepositories: ["herds-social/herds"] },
+      }),
+    });
+    const result = await ticketDoctor(dependencies);
+    const projectCheck = result.resolution.find((check) => check.name === "Project is configured");
+    expect(projectCheck?.detail).toMatch(/has no associated Linear project/);
+    expect(result.verdict).toMatchObject({ kind: "unresolvable" });
+  });
+
   it("records missing agent-* label as ineligible and skips the model check", async () => {
     const dependencies = makeStubDependencies({
       fetchRawIssue: vi
@@ -520,6 +570,7 @@ describe("ticketDoctor — env checks", () => {
             title: "X",
             description: "see herds-social/herds",
             teamId: "team-1",
+            projectSlugId: "aaaaaaaaaaaa",
             labels: [{ name: "agent-claude" }],
             stateName: "Todo",
             blockers: [],
@@ -553,6 +604,7 @@ describe("ticketDoctor — env checks", () => {
             title: "X",
             description: "see herds-social/herds",
             teamId: "team-1",
+            projectSlugId: "aaaaaaaaaaaa",
             labels: [{ name: "agent-claude" }],
             stateName: "Todo",
             blockers: [],
@@ -582,6 +634,7 @@ describe("ticketDoctor — env checks", () => {
           title: "X",
           description: "no known repo mentioned here",
           teamId: "team-1",
+          projectSlugId: "aaaaaaaaaaaa",
           labels: [{ name: "agent-claude" }],
           stateName: "Todo",
           blockers: [],
@@ -617,6 +670,7 @@ describe("ticketDoctor — eligibility phase", () => {
           title: "X",
           description: "see herds-social/herds",
           teamId: "team-1",
+          projectSlugId: "aaaaaaaaaaaa",
           labels: [{ name: "agent-claude" }],
           stateName: "Todo",
           blockers: [],
@@ -665,9 +719,14 @@ describe("ticketDoctor — eligibility phase", () => {
           },
           workspace: { projectDir, knownRepositories: ["herds-social/herds"] },
         }),
-        fetchBlockersFor: vi
-          .fn<TicketDoctorDependencies["fetchBlockersFor"]>()
-          .mockResolvedValue([{ id: "HRD-2", title: "Blocking ticket", status: "In Progress" }]),
+        fetchBlockersFor: vi.fn<TicketDoctorDependencies["fetchBlockersFor"]>().mockResolvedValue([
+          {
+            id: "HRD-2",
+            title: "Blocking ticket",
+            status: "In Progress",
+            projectSlugId: "aaaaaaaaaaaa",
+          },
+        ]),
       });
       const result = await ticketDoctor(dependencies);
       const check = result.eligibility.find((c) => c.name === "No active blockers");
@@ -759,6 +818,7 @@ describe("ticketDoctor — eligibility phase", () => {
             title: "X",
             description: "see herds-social/herds",
             teamId: "team-1",
+            projectSlugId: "aaaaaaaaaaaa",
             labels: [{ name: "agent-any" }],
             stateName: "Todo",
             blockers: [],

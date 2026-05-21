@@ -13,9 +13,13 @@ import {
 function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
   return {
     linear: {
-      projectSlug: "ai-strategy-aaaaaaaaaaaa",
-      slugId: "aaaaaaaaaaaa",
-      statuses: { todo: "Todo", inProgress: "In Progress", done: "Done", terminal: ["Done"] },
+      projects: [
+        {
+          projectSlug: "ai-strategy-aaaaaaaaaaaa",
+          slugId: "aaaaaaaaaaaa",
+          statuses: { todo: "Todo", inProgress: "In Progress", done: "Done", terminal: ["Done"] },
+        },
+      ],
       ...overrides.linear,
     },
     git: { remote: "origin", defaultBranch: "main", ...overrides.git },
@@ -57,6 +61,7 @@ function todoIssue(overrides: Partial<GroundcrewIssue> = {}): GroundcrewIssue {
     repository: "repo-a",
     model: "claude",
     teamId: "team-1",
+    projectSlugId: "aaaaaaaaaaaa",
     blockers: [],
     hasMoreBlockers: false,
     ...overrides,
@@ -90,7 +95,11 @@ function defaultArguments(overrides: Partial<ClassifyArguments> = {}): ClassifyA
 describe(classifyBlockers, () => {
   it("emits a `blocked` skip when a blocker is in a non-terminal state", () => {
     const { unblocked, skips } = classifyBlockers(makeConfig(), [
-      todoIssue({ blockers: [{ id: "team-0", title: "B", status: "In Progress" }] }),
+      todoIssue({
+        blockers: [
+          { id: "team-0", title: "B", status: "In Progress", projectSlugId: "aaaaaaaaaaaa" },
+        ],
+      }),
     ]);
 
     expect(unblocked).toHaveLength(0);
@@ -110,7 +119,9 @@ describe(classifyBlockers, () => {
 
   it("emits a `blocked` skip when the blocker state is missing", () => {
     const { skips } = classifyBlockers(makeConfig(), [
-      todoIssue({ blockers: [{ id: "team-0", title: "B", status: undefined }] }),
+      todoIssue({
+        blockers: [{ id: "team-0", title: "B", status: undefined, projectSlugId: "aaaaaaaaaaaa" }],
+      }),
     ]);
 
     expect(skips[0]).toMatchObject({
@@ -122,7 +133,9 @@ describe(classifyBlockers, () => {
 
   it("returns the issue as unblocked when its blocker is already terminal", () => {
     const { unblocked, skips } = classifyBlockers(makeConfig(), [
-      todoIssue({ blockers: [{ id: "team-0", title: "B", status: "Done" }] }),
+      todoIssue({
+        blockers: [{ id: "team-0", title: "B", status: "Done", projectSlugId: "aaaaaaaaaaaa" }],
+      }),
     ]);
 
     expect(unblocked).toHaveLength(1);
@@ -135,7 +148,9 @@ describe(classifyBlockers, () => {
       todoIssue({
         id: "team-2",
         uuid: "uuid-2",
-        blockers: [{ id: "team-0", title: "B", status: "In Progress" }],
+        blockers: [
+          { id: "team-0", title: "B", status: "In Progress", projectSlugId: "aaaaaaaaaaaa" },
+        ],
       }),
       todoIssue({ id: "team-3", uuid: "uuid-3" }),
     ]);

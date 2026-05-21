@@ -4,7 +4,7 @@
  * invocation; stateless across iterations. Mirrors `Dispatcher`.
  */
 
-import { type BoardState, isTerminalStatus } from "../lib/boardSource.ts";
+import { type BoardState, isTerminalStatusForIssue } from "../lib/boardSource.ts";
 import type { ResolvedConfig } from "../lib/config.ts";
 import { log, logEvent } from "../lib/util.ts";
 import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
@@ -34,11 +34,11 @@ export function createCleaner(deps: CleanerDeps): Cleaner {
   }): Promise<void> {
     const { state, worktreeEntries, dryRun, signal } = arguments_;
 
-    // Only act on tickets in this project — if the dir name happens to look
-    // like a Linear ticket from another project, leave it alone.
+    // Only act on tickets in configured projects — if the dir name happens to
+    // look like a Linear ticket from another project, leave it alone.
     const terminalTickets = new Set(
       state.issues
-        .filter((issue) => isTerminalStatus(issue.status, config))
+        .filter((issue) => isTerminalStatusForIssue(issue, config))
         .map((issue) => issue.id),
     );
     if (terminalTickets.size === 0) {

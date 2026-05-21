@@ -36,11 +36,6 @@ export function writeError(message: string): void {
   console.error(message);
 }
 
-export function clearOutput(): void {
-  // oxlint-disable-next-line no-console -- Centralized CLI screen clear.
-  console.clear();
-}
-
 // Module-scoped sink for tee-ing log()/logEvent() to disk. Unset by default
 // so tests don't write to the host filesystem; the CLI arms it after
 // loadConfig() resolves `logging.file`.

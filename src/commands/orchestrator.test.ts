@@ -7,11 +7,7 @@ import type * as utilModule from "../lib/util.ts";
 import { getLinearClient, sleep } from "../lib/util.ts";
 import { workspaces } from "../lib/workspaces.ts";
 import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
-import {
-  captureConsoleClear,
-  captureConsoleLog,
-  type ConsoleCapture,
-} from "../testHelpers/consoleCapture.ts";
+import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCapture.ts";
 import { emptyTeardownResult } from "../testHelpers/teardownResult.ts";
 import { orchestrate } from "./orchestrator.ts";
 import { setupWorkspace } from "./setupWorkspace.ts";
@@ -79,12 +75,22 @@ const usageMock = vi.mocked(getUsageByModel);
 const setupMock = vi.mocked(setupWorkspace);
 const workspacesProbeMock = vi.mocked(workspaces.probe);
 
+function firstProject(base: ResolvedConfig): ResolvedConfig["linear"]["projects"][number] {
+  const [project] = base.linear.projects;
+  // oxlint-disable-next-line typescript/no-non-null-assertion -- makeConfig always seeds the first project; failing destructuring would be a test-setup bug
+  return project!;
+}
+
 function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
   return {
     linear: {
-      projectSlug: "ai-strategy-aaaaaaaaaaaa",
-      slugId: "aaaaaaaaaaaa",
-      statuses: { todo: "Todo", inProgress: "In Progress", done: "Done", terminal: ["Done"] },
+      projects: [
+        {
+          projectSlug: "ai-strategy-aaaaaaaaaaaa",
+          slugId: "aaaaaaaaaaaa",
+          statuses: { todo: "Todo", inProgress: "In Progress", done: "Done", terminal: ["Done"] },
+        },
+      ],
       ...overrides.linear,
     },
     git: { remote: "origin", defaultBranch: "main", ...overrides.git },
@@ -123,6 +129,7 @@ interface IssueNodeStub {
   state?: { id: string; name: string } | null;
   team?: { id: string; key: string } | null;
   assignee?: { name: string } | null;
+  project?: { slugId: string } | null;
   children?: { nodes: unknown[] };
   labels?: { nodes: { name: string }[] };
   inverseRelations?: {
@@ -132,6 +139,7 @@ interface IssueNodeStub {
         identifier: string;
         title: string;
         state?: { name: string } | null;
+        project?: { slugId: string } | null;
       } | null;
     }[];
     pageInfo: { hasNextPage: boolean };
@@ -148,6 +156,7 @@ function issue(overrides: Partial<IssueNodeStub>): IssueNodeStub {
     state: overrides.state === undefined ? { id: "state-todo", name: "Todo" } : overrides.state,
     team: overrides.team === undefined ? { id: "team-default", key: "TEAM" } : overrides.team,
     assignee: overrides.assignee === undefined ? { name: "Alice" } : overrides.assignee,
+    project: overrides.project === undefined ? { slugId: "aaaaaaaaaaaa" } : overrides.project,
     children: overrides.children ?? { nodes: [] },
     // Default to a groundcrew-eligible label. Tests that exercise unlabeled
     // tickets explicitly override with `labels: { nodes: [] }`.
@@ -168,6 +177,7 @@ function blockingRelation(
       identifier,
       title: "Blocker",
       state: status === undefined ? null : { name: status },
+      project: { slugId: "aaaaaaaaaaaa" },
     },
   };
 }
@@ -271,18 +281,6 @@ function boardIssuesResponse(nodes: IssueNodeStub[]): unknown {
   };
 }
 
-function mockBoardSequence(client: ClientStub, pages: IssueNodeStub[][]): void {
-  let boardCallIndex = 0;
-  client.client.rawRequest.mockImplementation(async (query: string) => {
-    if (query.includes("VerifyProject")) {
-      return verifyProjectResponse();
-    }
-    const page = pages[boardCallIndex] ?? pages.at(-1) ?? [];
-    boardCallIndex += 1;
-    return boardIssuesResponse(page);
-  });
-}
-
 function mockBoardFailuresThenEmpty(client: ClientStub, failures: number, message: string): void {
   let boardCalls = 0;
   client.client.rawRequest.mockImplementation(async (query: string) => {
@@ -294,16 +292,6 @@ function mockBoardFailuresThenEmpty(client: ClientStub, failures: number, messag
       throw new Error(message);
     }
     return boardIssuesResponse([]);
-  });
-}
-
-function stopAfterSleepCalls(count: number): void {
-  let sleepCalls = 0;
-  sleepMock.mockImplementation(async () => {
-    sleepCalls += 1;
-    if (sleepCalls >= count) {
-      throw new Error("__stop__");
-    }
   });
 }
 
@@ -325,11 +313,9 @@ async function flushMicrotasks(count = 10): Promise<void> {
 }
 
 describe(orchestrate, () => {
-  let consoleClear: ConsoleCapture;
   let consoleLog: ConsoleCapture;
 
   beforeEach(() => {
-    consoleClear = captureConsoleClear();
     consoleLog = captureConsoleLog();
     loadConfigMock.mockResolvedValue(makeConfig());
     listMock.mockReturnValue([]);
@@ -342,28 +328,55 @@ describe(orchestrate, () => {
 
   afterEach(() => {
     vi.useRealTimers();
-    consoleClear.restore();
     consoleLog.restore();
     vi.clearAllMocks();
   });
 
-  it("rejects when the project cannot be found", async () => {
+  it("rejects when no configured projects resolve", async () => {
     const client = makeClient({ projectFound: false });
     mockLinearClient(client);
 
     await expect(orchestrate({ watch: false, dryRun: false })).rejects.toThrow(
-      /No Linear project found/,
+      /No Linear projects resolved from linear\.projects/,
     );
   });
 
-  it("renders an empty board when there are no issues", async () => {
+  it("logs a warning per missing slug but continues when at least one resolves", async () => {
+    const base = makeConfig();
+    const project = firstProject(base);
+    loadConfigMock.mockResolvedValue({
+      ...base,
+      linear: {
+        projects: [
+          project,
+          {
+            projectSlug: "missing-cccccccccccc",
+            slugId: "cccccccccccc",
+            statuses: project.statuses,
+          },
+        ],
+      },
+    });
     const client = makeClient({ pages: [[]] });
     mockLinearClient(client);
 
     await orchestrate({ watch: false, dryRun: false });
 
     const out = consoleLog.output();
-    expect(out).toContain("Total: 0");
+    expect(out).toMatch(
+      /WARNING: no Linear project found with slugId "cccccccccccc".*"missing-cccccccccccc"/,
+    );
+    expect(out).toContain("Resolved Linear project: AI Strategy");
+  });
+
+  it("emits the no-todo log line when the board is empty", async () => {
+    const client = makeClient({ pages: [[]] });
+    mockLinearClient(client);
+
+    await orchestrate({ watch: false, dryRun: false });
+
+    const out = consoleLog.output();
+    expect(out).toContain("No Todo tickets to pick up");
   });
 
   it("starts a Todo ticket and marks it In Progress", async () => {
@@ -646,7 +659,7 @@ describe(orchestrate, () => {
     );
   });
 
-  it("paginates issues across multiple pages", async () => {
+  it("paginates issues across multiple pages and dispatches each", async () => {
     const client = makeClient({
       pages: [
         [issue({ identifier: "TEAM-1", id: "uuid-1" })],
@@ -657,40 +670,11 @@ describe(orchestrate, () => {
 
     await orchestrate({ watch: false, dryRun: false });
 
-    const out = consoleLog.output();
-    expect(out).toContain("Total: 2");
-  });
-
-  it("caps each status section at 10 most recent and prints a truncation hint", async () => {
-    const doneIssues = Array.from({ length: 25 }, (_unused, index) =>
-      issue({
-        identifier: `TEAM-${String(index + 1).padStart(3, "0")}`,
-        id: `uuid-done-${index}`,
-        title: `Done item ${index + 1}`,
-        state: { id: "state-done", name: "Done" },
-        // ascending updatedAt: index 24 is the most recent.
-        updatedAt: `2025-01-${String(index + 1).padStart(2, "0")}T00:00:00.000Z`,
-      }),
+    const boardCalls = client.client.rawRequest.mock.calls.filter(([q]) =>
+      q.includes("BoardIssues"),
     );
-    const client = makeClient({ pages: [doneIssues] });
-    mockLinearClient(client);
-
-    await orchestrate({ watch: false, dryRun: false });
-
-    const out = consoleLog.output();
-    expect(out).toContain("showing 10 most recent of 25; 15 older hidden");
-
-    // Exactly 10 visible rows. With 25 ascending-updatedAt items, sort desc
-    // and slice 10 keeps indices 24..15 (team-025..team-016); 15 oldest hidden.
-    const visibleRows = [...out.matchAll(/team-\d{3}\b/g)].map((match) => match[0]);
-    expect(visibleRows).toHaveLength(10);
-
-    // Newest (team-025) and the boundary (team-016, 10th-newest) are visible.
-    expect(visibleRows).toContain("team-025");
-    expect(visibleRows).toContain("team-016");
-    // team-015 is the first one truncated; oldest (team-001) is also hidden.
-    expect(visibleRows).not.toContain("team-015");
-    expect(visibleRows).not.toContain("team-001");
+    expect(boardCalls).toHaveLength(2);
+    expect(setupMock).toHaveBeenCalledTimes(2);
   });
 
   it("filters out parent issues that have children", async () => {
@@ -710,31 +694,11 @@ describe(orchestrate, () => {
 
     await orchestrate({ watch: false, dryRun: false });
 
-    const out = consoleLog.output();
-    expect(out).toContain("Total: 1");
-  });
-
-  it("falls back to defaults when issue fields are missing", async () => {
-    const client = makeClient({
-      pages: [
-        [
-          issue({
-            identifier: "TEAM-6",
-            id: "uuid-6",
-            state: null,
-            assignee: null,
-            team: null,
-          }),
-        ],
-      ],
-    });
-    mockLinearClient(client);
-
-    await orchestrate({ watch: false, dryRun: false });
-
-    const out = consoleLog.output();
-    expect(out).toContain("Unknown");
-    expect(out).toContain("Unassigned");
+    expect(setupMock).toHaveBeenCalledTimes(1);
+    expect(setupMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ ticket: "team-2" }),
+    );
   });
 
   it("dry-run logs would-start without invoking setupWorkspace", async () => {
@@ -890,11 +854,16 @@ describe(orchestrate, () => {
 
   it("treats custom terminal statuses as unblocking blockers", async () => {
     const base = makeConfig();
+    const project = firstProject(base);
     loadConfigMock.mockResolvedValue({
       ...base,
       linear: {
-        ...base.linear,
-        statuses: { ...base.linear.statuses, terminal: ["Done", "Released"] },
+        projects: [
+          {
+            ...project,
+            statuses: { ...project.statuses, terminal: ["Done", "Released"] },
+          },
+        ],
       },
     });
     const client = makeClient({
@@ -1233,7 +1202,7 @@ describe(orchestrate, () => {
     await orchestrate({ watch: false, dryRun: false });
 
     const out = consoleLog.output();
-    expect(out).toContain("(team ?)");
+    expect(out).toContain("team ?");
   });
 
   it("caches the in-progress state ID across tickets in the same team", async () => {
@@ -1290,11 +1259,16 @@ describe(orchestrate, () => {
 
   it("cleans up worktrees for custom terminal statuses", async () => {
     const base = makeConfig();
+    const project = firstProject(base);
     loadConfigMock.mockResolvedValue({
       ...base,
       linear: {
-        ...base.linear,
-        statuses: { ...base.linear.statuses, terminal: ["Done", "Released"] },
+        projects: [
+          {
+            ...project,
+            statuses: { ...project.statuses, terminal: ["Done", "Released"] },
+          },
+        ],
       },
     });
     const entry = hostEntryFor("repo-a", "team-1");
@@ -1463,38 +1437,6 @@ describe(orchestrate, () => {
     expect(teardownMock).not.toHaveBeenCalled();
   });
 
-  it("renders a status delta when prior state is provided in watch mode", async () => {
-    const client = makeClient({});
-    const sharedTeam = { id: "team-shared", key: "TEAM" };
-    mockBoardSequence(client, [
-      [
-        issue({
-          identifier: "TEAM-1",
-          team: sharedTeam,
-          state: { id: "state-todo", name: "Todo" },
-        }),
-      ],
-      [
-        issue({
-          identifier: "TEAM-1",
-          team: sharedTeam,
-          state: { id: "state-active", name: "In Progress" },
-        }),
-      ],
-    ]);
-    mockLinearClient(client);
-
-    // Throw on the second sleep so the watch loop runs two ticks (each
-    // followed by one sleep), which is the minimum to populate the prev
-    // BoardState used for the delta.
-    stopAfterSleepCalls(2);
-
-    await expect(orchestrate({ watch: true, dryRun: false })).rejects.toThrow("__stop__");
-
-    const out = consoleLog.output();
-    expect(out).toContain("[was: Todo]");
-  });
-
   it("logs and keeps polling when a tick throws in watch mode", async () => {
     const client = makeClient({});
     mockBoardFailuresThenEmpty(client, 4, "network down");
@@ -1529,25 +1471,6 @@ describe(orchestrate, () => {
     );
 
     expect(sleepMock).not.toHaveBeenCalled();
-  });
-
-  it("renders a negative delta when ticket count drops between ticks", async () => {
-    const client = makeClient({});
-    mockBoardSequence(client, [
-      [
-        issue({ identifier: "TEAM-1", id: "uuid-1" }),
-        issue({ identifier: "TEAM-2", id: "uuid-2" }),
-      ],
-      [issue({ identifier: "TEAM-1", id: "uuid-1" })],
-    ]);
-    mockLinearClient(client);
-
-    stopAfterSleepCalls(2);
-
-    await expect(orchestrate({ watch: true, dryRun: false })).rejects.toThrow("__stop__");
-
-    const out = consoleLog.output();
-    expect(out).toMatch(/\(-1\)/);
   });
 
   it("ignores models whose session window is null", async () => {
