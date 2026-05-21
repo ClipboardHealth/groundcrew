@@ -6,6 +6,7 @@ export {
   type InterruptWorkspaceOptions,
 } from "./commands/interruptWorkspace.ts";
 export { orchestrate, type OrchestratorOptions } from "./commands/orchestrator.ts";
+export { resumeWorkspace, type ResumeWorkspaceOptions } from "./commands/resumeWorkspace.ts";
 export { setupWorkspace, type SetupWorkspaceOptions } from "./commands/setupWorkspace.ts";
 export type { Config, ModelDefinition, ResolvedConfig } from "./lib/config.ts";
 export { loadConfig } from "./lib/config.ts";
