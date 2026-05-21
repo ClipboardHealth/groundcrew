@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import type { RawLinearIssue } from "../lib/boardSource.ts";
 import type { ResolvedConfig } from "../lib/config.ts";
+import type { RunState } from "../lib/runState.ts";
 import type { WorkspaceAccessHint, WorkspaceProbe } from "../lib/workspaces.ts";
 import type { WorktreeDirtiness, WorktreeEntry } from "../lib/worktrees.ts";
 import {
@@ -114,6 +115,7 @@ function makeStubDependencies(
     probePullRequest: vi
       .fn<TicketDoctorDependencies["probePullRequest"]>()
       .mockResolvedValue({ kind: "absent" } satisfies PullRequestProbe),
+    readRunState: vi.fn<TicketDoctorDependencies["readRunState"]>(),
     doFetch: true,
     ...overrides,
   };
@@ -126,6 +128,22 @@ function makeWorktreeEntry(overrides: Partial<WorktreeEntry> = {}): WorktreeEntr
     branchName: "rocky-hrd-1",
     dir: "/work/repo-a-hrd-1",
     kind: "host",
+    ...overrides,
+  };
+}
+
+function makeRunState(overrides: Partial<RunState> = {}): RunState {
+  return {
+    ticket: "hrd-1",
+    repository: "repo-a",
+    model: "claude",
+    worktreeDir: "/work/repo-a-hrd-1",
+    branchName: "rocky-hrd-1",
+    workspaceName: "hrd-1",
+    state: "interrupted",
+    resumeCount: 0,
+    createdAt: "2026-05-21T00:00:00.000Z",
+    updatedAt: "2026-05-21T00:00:00.000Z",
     ...overrides,
   };
 }
@@ -144,6 +162,7 @@ function makeVerdictInput(overrides: Partial<DecideVerdictInput> = {}): DecideVe
     branch: "rocky-hrd-1",
     worktreeDir: undefined,
     workspaceName: undefined,
+    runState: undefined,
     ...overrides,
   };
 }
@@ -276,6 +295,76 @@ describe(decidePostDispatchVerdict, () => {
       }),
     );
     expect(verdict).toMatchObject({ kind: "pr-open" });
+  });
+
+  it("ranks pr-open above interrupted run state", () => {
+    const verdict = decidePostDispatchVerdict(
+      makeVerdictInput({
+        pullRequest: { kind: "open", number: 9, url: "u" },
+        runState: makeRunState({ state: "interrupted" }),
+      }),
+    );
+    expect(verdict).toMatchObject({ kind: "pr-open" });
+  });
+
+  it("returns interrupted when the local run state was stopped and no recovery action wins", () => {
+    const verdict = decidePostDispatchVerdict(
+      makeVerdictInput({
+        runState: makeRunState({ state: "interrupted", reason: "freeing terminal" }),
+      }),
+    );
+    const interrupted = narrowVerdict(verdict, "interrupted");
+    expect(interrupted.reason).toBe("freeing terminal");
+    expect(interrupted.nextStep).toContain("crew resume hrd-1");
+  });
+
+  it("uses interrupted run detail when no interrupt reason was recorded", () => {
+    const verdict = decidePostDispatchVerdict(
+      makeVerdictInput({
+        runState: makeRunState({ state: "interrupted", detail: "workspace missing" }),
+      }),
+    );
+    expect(verdict).toMatchObject({ kind: "interrupted", reason: "workspace missing" });
+  });
+
+  it("uses a generic interrupted reason when no detail was recorded", () => {
+    const verdict = decidePostDispatchVerdict(
+      makeVerdictInput({
+        runState: makeRunState({ state: "interrupted" }),
+      }),
+    );
+    expect(verdict).toMatchObject({ kind: "interrupted", reason: "workspace stopped" });
+  });
+
+  it("ranks recoverable work above interrupted run state", () => {
+    const verdict = decidePostDispatchVerdict(
+      makeVerdictInput({
+        worktree: { kind: "present-dirty", modified: 1, untracked: 0 },
+        worktreeDir: "/work/repo-a-hrd-1",
+        runState: makeRunState({ state: "interrupted" }),
+      }),
+    );
+    expect(verdict).toMatchObject({ kind: "recoverable" });
+  });
+
+  it("returns failed-launch when setup recorded a launch failure", () => {
+    const verdict = decidePostDispatchVerdict(
+      makeVerdictInput({
+        runState: makeRunState({ state: "failed-to-launch", detail: "cmux missing" }),
+      }),
+    );
+    const failedLaunch = narrowVerdict(verdict, "failed-launch");
+    expect(failedLaunch.reason).toBe("cmux missing");
+    expect(failedLaunch.nextStep).toContain("crew resume hrd-1");
+  });
+
+  it("uses a generic failed-launch reason when setup did not record details", () => {
+    const verdict = decidePostDispatchVerdict(
+      makeVerdictInput({
+        runState: makeRunState({ state: "failed-to-launch" }),
+      }),
+    );
+    expect(verdict).toMatchObject({ kind: "failed-launch", reason: "workspace launch failed" });
   });
 
   it("treats present-unknown-dirtiness as worktree-present for in-flight", () => {
@@ -918,6 +1007,64 @@ describe("ticketDoctor — Workspace section", () => {
   });
 });
 
+describe("ticketDoctor — Run state section", () => {
+  it("records skipped when no run state exists", async () => {
+    const result = await ticketDoctor(makeStubDependencies());
+    expect(result.runState).toStrictEqual([
+      { name: "Local run state", status: "skipped", detail: "none found" },
+    ]);
+  });
+
+  it("records persisted run metadata when present", async () => {
+    const dependencies = makeStubDependencies({
+      readRunState: vi
+        .fn<TicketDoctorDependencies["readRunState"]>()
+        .mockReturnValue(
+          makeRunState({ state: "interrupted", reason: "pause", detail: "workspace missing" }),
+        ),
+    });
+    const result = await ticketDoctor(dependencies);
+    expect(result.runState).toContainEqual({
+      name: "Local run state",
+      status: "ok",
+      detail: "interrupted",
+    });
+    expect(result.runState).toContainEqual({
+      name: "Last reason",
+      status: "ok",
+      detail: "pause",
+    });
+    expect(result.runState).toContainEqual({
+      name: "Last detail",
+      status: "ok",
+      detail: "workspace missing",
+    });
+  });
+
+  it("omits optional run metadata rows when the state has no reason or detail", async () => {
+    const dependencies = makeStubDependencies({
+      readRunState: vi
+        .fn<TicketDoctorDependencies["readRunState"]>()
+        .mockReturnValue(makeRunState({ state: "running" })),
+    });
+
+    const result = await ticketDoctor(dependencies);
+
+    expect(result.runState).not.toContainEqual(expect.objectContaining({ name: "Last reason" }));
+    expect(result.runState).not.toContainEqual(expect.objectContaining({ name: "Last detail" }));
+  });
+
+  it("uses interrupted run state for the verdict when no stronger local state exists", async () => {
+    const dependencies = makeStubDependencies({
+      readRunState: vi
+        .fn<TicketDoctorDependencies["readRunState"]>()
+        .mockReturnValue(makeRunState({ state: "interrupted", reason: "operator pause" })),
+    });
+    const result = await ticketDoctor(dependencies);
+    expect(result.verdict).toMatchObject({ kind: "interrupted", reason: "operator pause" });
+  });
+});
+
 describe("ticketDoctor — ticket case normalization", () => {
   it("passes the lowercase ticket to findWorktree even when the caller supplies HRD-1", async () => {
     const findWorktree = vi.fn<TicketDoctorDependencies["findWorktree"]>(
@@ -1263,6 +1410,7 @@ function emptyResult(overrides: Partial<TicketDoctorResult> = {}): TicketDoctorR
     ticket: "HRD-1",
     resolution: [],
     eligibility: [],
+    runState: [],
     worktree: [],
     workspace: [],
     localBranch: [],
@@ -1272,6 +1420,7 @@ function emptyResult(overrides: Partial<TicketDoctorResult> = {}): TicketDoctorR
       resolution: "",
       eligibility: "",
       worktree: "",
+      runState: "",
       workspace: "",
       localBranch: "",
       remoteBranch: "",
@@ -1365,6 +1514,28 @@ describe(renderTicketDoctorResult, () => {
     );
   });
 
+  it("formats interrupted verdicts with reason + next step", () => {
+    const lines = renderTicketDoctorResult(
+      emptyResult({
+        verdict: { kind: "interrupted", reason: "operator pause", nextStep: "crew resume hrd-1" },
+      }),
+    );
+    expect(lines.some((l) => l.includes("→ interrupted: operator pause; crew resume hrd-1"))).toBe(
+      true,
+    );
+  });
+
+  it("formats failed-launch verdicts with reason + next step", () => {
+    const lines = renderTicketDoctorResult(
+      emptyResult({
+        verdict: { kind: "failed-launch", reason: "cmux missing", nextStep: "crew resume hrd-1" },
+      }),
+    );
+    expect(lines.some((l) => l.includes("→ failed-launch: cmux missing; crew resume hrd-1"))).toBe(
+      true,
+    );
+  });
+
   it("formats ineligible verdicts with the reason", () => {
     const lines = renderTicketDoctorResult(
       emptyResult({
@@ -1396,6 +1567,7 @@ describe(renderTicketDoctorResult, () => {
           resolution: "",
           eligibility: "ticket unresolved",
           worktree: "",
+          runState: "",
           workspace: "",
           localBranch: "",
           remoteBranch: "",
@@ -1415,6 +1587,7 @@ describe(renderTicketDoctorResult, () => {
           resolution: "",
           eligibility: "",
           worktree: "",
+          runState: "",
           workspace: "",
           localBranch: "repo dir unresolved",
           remoteBranch: "",
@@ -1432,6 +1605,7 @@ describe(renderTicketDoctorResult, () => {
           resolution: "skip-r",
           eligibility: "skip-e",
           worktree: "skip-w",
+          runState: "skip-rs",
           workspace: "skip-ws",
           localBranch: "skip-lb",
           remoteBranch: "skip-rb",
@@ -1439,7 +1613,16 @@ describe(renderTicketDoctorResult, () => {
         },
       }),
     );
-    for (const tag of ["skip-r", "skip-e", "skip-w", "skip-ws", "skip-lb", "skip-rb", "skip-pr"]) {
+    for (const tag of [
+      "skip-r",
+      "skip-e",
+      "skip-w",
+      "skip-rs",
+      "skip-ws",
+      "skip-lb",
+      "skip-rb",
+      "skip-pr",
+    ]) {
       expect(lines.some((l) => l.includes(`(skipped — ${tag})`))).toBe(true);
     }
   });
