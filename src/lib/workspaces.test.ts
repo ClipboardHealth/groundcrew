@@ -6,7 +6,12 @@ import type * as hostModule from "./host.ts";
 import { detectHostCapabilities, type HostCapabilities } from "./host.ts";
 import { log } from "./util.ts";
 import type * as utilModule from "./util.ts";
-import { resolveWorkspaceKind, workspaces } from "./workspaces.ts";
+import {
+  resolveWorkspaceKind,
+  type WorkspaceCloseResult,
+  type WorkspaceInterruptResult,
+  workspaces,
+} from "./workspaces.ts";
 
 const logMock = vi.mocked(log);
 
@@ -100,6 +105,20 @@ function commonBeforeEach(): void {
 
 function commonAfterEach(): void {
   vi.resetAllMocks();
+}
+
+function workspaceInterruptError(result: WorkspaceInterruptResult): unknown {
+  if (!("error" in result)) {
+    throw new Error("Expected workspace interrupt result to include error details");
+  }
+  return result.error;
+}
+
+function workspaceCloseError(result: WorkspaceCloseResult): unknown {
+  if (result.kind !== "unavailable" || !("error" in result)) {
+    throw new Error("Expected workspace close result to include error details");
+  }
+  return result.error;
 }
 
 describe("workspaces.open (cmux)", () => {
@@ -529,7 +548,9 @@ describe("workspaces.close (cmux)", () => {
       JSON.stringify({ workspaces: [{ title: "TEAM-1", ref: "workspace:42" }] }),
     );
 
-    await workspaces.close(makeConfig(), "TEAM-1");
+    await expect(workspaces.close(makeConfig(), "TEAM-1")).resolves.toStrictEqual({
+      kind: "closed",
+    });
 
     expect(runMock).toHaveBeenCalledWith("cmux", [
       "close-workspace",
@@ -541,7 +562,9 @@ describe("workspaces.close (cmux)", () => {
   it("falls back to the workspace id when ref is omitted", async () => {
     runMock.mockReturnValue(JSON.stringify({ workspaces: [{ title: "TEAM-1", id: "abc123" }] }));
 
-    await workspaces.close(makeConfig(), "TEAM-1");
+    await expect(workspaces.close(makeConfig(), "TEAM-1")).resolves.toStrictEqual({
+      kind: "closed",
+    });
 
     expect(runMock).toHaveBeenCalledWith("cmux", ["close-workspace", "--workspace", "abc123"]);
   });
@@ -549,7 +572,9 @@ describe("workspaces.close (cmux)", () => {
   it("is a no-op when no workspace exists for the name", async () => {
     runMock.mockReturnValue(JSON.stringify({ workspaces: [] }));
 
-    await workspaces.close(makeConfig(), "TEAM-1");
+    await expect(workspaces.close(makeConfig(), "TEAM-1")).resolves.toStrictEqual({
+      kind: "missing",
+    });
 
     expect(runMock).not.toHaveBeenCalledWith("cmux", expect.arrayContaining(["close-workspace"]));
   });
@@ -559,7 +584,9 @@ describe("workspaces.close (cmux)", () => {
       throw new Error("cmux down");
     });
 
-    await expect(workspaces.close(makeConfig(), "TEAM-1")).resolves.toBeUndefined();
+    await expect(workspaces.close(makeConfig(), "TEAM-1")).resolves.toStrictEqual({
+      kind: "unavailable",
+    });
     expect(runMock).not.toHaveBeenCalledWith("cmux", expect.arrayContaining(["close-workspace"]));
   });
 
@@ -573,7 +600,9 @@ describe("workspaces.close (cmux)", () => {
       })
       .mockReturnValueOnce(JSON.stringify({ workspaces: [] }));
 
-    await expect(workspaces.close(makeConfig(), "TEAM-1")).resolves.toBeUndefined();
+    await expect(workspaces.close(makeConfig(), "TEAM-1")).resolves.toStrictEqual({
+      kind: "closed",
+    });
   });
 
   it("rethrows cmux close failures when the workspace is still present", async () => {
@@ -591,7 +620,7 @@ describe("workspaces.close (cmux)", () => {
     await expect(workspaces.close(makeConfig(), "TEAM-1")).rejects.toThrow("permission denied");
   });
 
-  it("rethrows cmux close failures when the follow-up list is unavailable", async () => {
+  it("returns unavailable when a failed close cannot be confirmed by a follow-up list", async () => {
     runMock
       .mockReturnValueOnce(
         JSON.stringify({ workspaces: [{ title: "TEAM-1", ref: "workspace:42" }] }),
@@ -603,7 +632,10 @@ describe("workspaces.close (cmux)", () => {
         throw new Error("cmux down");
       });
 
-    await expect(workspaces.close(makeConfig(), "TEAM-1")).rejects.toThrow("permission denied");
+    const result = await workspaces.close(makeConfig(), "TEAM-1");
+
+    expect(result.kind).toBe("unavailable");
+    expect(workspaceCloseError(result)).toBeInstanceOf(Error);
   });
 
   it("rethrows cmux close failures after the shutdown signal fires", async () => {
@@ -902,7 +934,9 @@ describe("workspaces.close (tmux)", () => {
   afterEach(commonAfterEach);
 
   it("calls kill-window directly without a pre-probe list", async () => {
-    await workspaces.close(makeConfig("tmux"), "TEAM-1");
+    await expect(workspaces.close(makeConfig("tmux"), "TEAM-1")).resolves.toStrictEqual({
+      kind: "closed",
+    });
 
     expect(runMock).toHaveBeenCalledWith("tmux", ["kill-window", "-t", "groundcrew:TEAM-1"]);
     expect(runMock).not.toHaveBeenCalledWith("tmux", expect.arrayContaining(["list-windows"]));
@@ -913,7 +947,9 @@ describe("workspaces.close (tmux)", () => {
       throw new Error("can't find window: TEAM-1");
     });
 
-    await expect(workspaces.close(makeConfig("tmux"), "TEAM-1")).resolves.toBeUndefined();
+    await expect(workspaces.close(makeConfig("tmux"), "TEAM-1")).resolves.toStrictEqual({
+      kind: "missing",
+    });
   });
 
   it("is a no-op when the session does not exist", async () => {
@@ -921,7 +957,9 @@ describe("workspaces.close (tmux)", () => {
       throw new Error("can't find session: groundcrew");
     });
 
-    await expect(workspaces.close(makeConfig("tmux"), "TEAM-1")).resolves.toBeUndefined();
+    await expect(workspaces.close(makeConfig("tmux"), "TEAM-1")).resolves.toStrictEqual({
+      kind: "missing",
+    });
   });
 
   it("rethrows tmux close failures after the shutdown signal fires", async () => {
@@ -944,6 +982,93 @@ describe("workspaces.close (tmux)", () => {
     await expect(workspaces.close(makeConfig("tmux"), "TEAM-1")).rejects.toThrow(
       /permission denied/,
     );
+  });
+});
+
+describe("workspaces.interrupt", () => {
+  beforeEach(commonBeforeEach);
+  afterEach(commonAfterEach);
+
+  it("returns missing without closing when the workspace is not live", async () => {
+    runMock.mockReturnValue(JSON.stringify({ workspaces: [] }));
+
+    await expect(workspaces.interrupt(makeConfig(), "TEAM-1")).resolves.toStrictEqual({
+      kind: "missing",
+    });
+
+    expect(runMock).not.toHaveBeenCalledWith("cmux", expect.arrayContaining(["close-workspace"]));
+  });
+
+  it("closes a live cmux workspace by id", async () => {
+    runMock.mockReturnValue(
+      JSON.stringify({ workspaces: [{ title: "TEAM-1", id: "workspace-id" }] }),
+    );
+
+    await expect(workspaces.interrupt(makeConfig(), "TEAM-1")).resolves.toStrictEqual({
+      kind: "interrupted",
+    });
+
+    expect(runMock).toHaveBeenCalledWith("cmux", [
+      "close-workspace",
+      "--workspace",
+      "workspace-id",
+    ]);
+  });
+
+  it("returns unavailable when the workspace backend cannot be probed", async () => {
+    runMock.mockImplementation(() => {
+      throw new Error("cmux down");
+    });
+
+    await expect(workspaces.interrupt(makeConfig(), "TEAM-1")).resolves.toStrictEqual({
+      kind: "unavailable",
+    });
+  });
+
+  it("returns unavailable with error details when adapter resolution fails", async () => {
+    detectHostMock.mockResolvedValue(makeHost({ hasCmux: false, hasTmux: false }));
+
+    const result = await workspaces.interrupt(makeConfig("auto"), "TEAM-1");
+
+    expect(result.kind).toBe("unavailable");
+    expect(workspaceInterruptError(result)).toBeInstanceOf(Error);
+  });
+
+  it("returns unavailable without error details when the adapter cannot list workspaces", async () => {
+    runMock.mockReturnValueOnce("not json");
+
+    await expect(workspaces.interrupt(makeConfig(), "TEAM-1")).resolves.toStrictEqual({
+      kind: "unavailable",
+    });
+  });
+
+  it("returns unavailable when cmux cannot confirm the close after the initial probe", async () => {
+    runMock
+      .mockReturnValueOnce(JSON.stringify({ workspaces: [{ title: "TEAM-1", id: "id-1" }] }))
+      .mockReturnValueOnce(JSON.stringify({ workspaces: [{ title: "TEAM-1", id: "id-1" }] }))
+      .mockImplementationOnce(() => {
+        throw new Error("permission denied");
+      })
+      .mockImplementationOnce(() => {
+        throw new Error("cmux down");
+      });
+
+    const result = await workspaces.interrupt(makeConfig(), "TEAM-1");
+
+    expect(result.kind).toBe("unavailable");
+    expect(workspaceInterruptError(result)).toBeInstanceOf(Error);
+  });
+
+  it("returns unavailable without error details when cmux cannot list during close", async () => {
+    runMock
+      .mockReturnValueOnce(JSON.stringify({ workspaces: [{ title: "TEAM-1", id: "id-1" }] }))
+      .mockImplementationOnce(() => {
+        throw new Error("cmux down");
+      });
+
+    await expect(workspaces.interrupt(makeConfig(), "TEAM-1")).resolves.toStrictEqual({
+      kind: "unavailable",
+    });
   });
 });
 

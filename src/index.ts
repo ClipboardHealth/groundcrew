@@ -1,7 +1,12 @@
 export { run } from "./cli.ts";
 export { cleanupWorkspace, type CleanupWorkspaceOptions } from "./commands/cleanupWorkspace.ts";
 export { doctor } from "./commands/doctor.ts";
+export {
+  interruptWorkspace,
+  type InterruptWorkspaceOptions,
+} from "./commands/interruptWorkspace.ts";
 export { orchestrate, type OrchestratorOptions } from "./commands/orchestrator.ts";
+export { resumeWorkspace, type ResumeWorkspaceOptions } from "./commands/resumeWorkspace.ts";
 export { setupWorkspace, type SetupWorkspaceOptions } from "./commands/setupWorkspace.ts";
 export type { Config, ModelDefinition, ResolvedConfig } from "./lib/config.ts";
 export { loadConfig } from "./lib/config.ts";

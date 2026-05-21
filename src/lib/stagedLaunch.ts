@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -26,7 +26,11 @@ function renderPromptTemplate(template: string, variables: PromptTemplateVariabl
     .replaceAll("{{description}}", variables.description);
 }
 
-function stagePromptText(input: { prefix: string; ticket: string; text: string }): StagedPrompt {
+export function stagePromptText(input: {
+  prefix: string;
+  ticket: string;
+  text: string;
+}): StagedPrompt {
   const promptDir = mkdtempSync(join(tmpdir(), `${input.prefix}-${input.ticket}-`));
   const promptFile = join(promptDir, "prompt.txt");
   writeFileSync(promptFile, input.text);
@@ -76,4 +80,8 @@ function stageLaunchScript(promptDir: string, command: string): string {
 
 export function stageWorkspaceLaunchCommand(promptDir: string, command: string): string {
   return `bash ${shellSingleQuote(stageLaunchScript(promptDir, command))}`;
+}
+
+export function removeStagedPrompt(directory: string): void {
+  rmSync(directory, { recursive: true, force: true });
 }
