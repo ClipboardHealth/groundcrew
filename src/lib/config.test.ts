@@ -270,6 +270,82 @@ describe("loadConfig", () => {
     });
   });
 
+  it("falls back to the inherited usage block when the override sets `usage: undefined`", async () => {
+    const path = writeConfigFile(
+      temporary,
+      configSource({
+        linear: { ...VALID_LINEAR },
+        workspace: VALID_WORKSPACE(temporary),
+        models: {
+          definitions: {
+            claude: { cmd: "my-claude", usage: undefined },
+          },
+        },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+
+    const { claude } = actual.models.definitions;
+    expect(claude?.cmd).toBe("my-claude");
+    expect(claude?.usage).toStrictEqual({ codexbar: { provider: "claude" } });
+  });
+
+  it("strips usage from a default model when override sets `usage: { disabled: true }`", async () => {
+    const path = writeConfigFile(
+      temporary,
+      configSource({
+        linear: { ...VALID_LINEAR },
+        workspace: VALID_WORKSPACE(temporary),
+        models: {
+          definitions: {
+            claude: { usage: { disabled: true } },
+          },
+        },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+
+    const { claude } = actual.models.definitions;
+    expect(claude).toBeDefined();
+    expect(claude?.usage).toBeUndefined();
+    // Other shipped fields stay intact.
+    expect(claude?.cmd).toBe("claude --permission-mode bypassPermissions");
+    // codex still gates by default — only claude was opted out.
+    expect(actual.models.definitions["codex"]?.usage).toStrictEqual({
+      codexbar: { provider: "codex" },
+    });
+  });
+
+  it("treats `usage: { disabled: true }` on a brand-new model as no gating", async () => {
+    const path = writeConfigFile(
+      temporary,
+      configSource({
+        linear: { ...VALID_LINEAR },
+        workspace: VALID_WORKSPACE(temporary),
+        models: {
+          definitions: {
+            plain: { cmd: "plain", color: "#fff", usage: { disabled: true } },
+          },
+        },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+
+    expect(actual.models.definitions["plain"]).toStrictEqual({
+      cmd: "plain",
+      color: "#fff",
+    });
+  });
+
   it("rejects legacy models.isolation config", async () => {
     const path = writeConfigFile(
       temporary,

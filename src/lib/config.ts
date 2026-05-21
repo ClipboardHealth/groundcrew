@@ -102,8 +102,16 @@ export interface ModelDefinition {
  * mirrors the runtime contract: an entry is either a pure overlay
  * (every concrete field optional, no `disabled` key) or a pure
  * disable directive (`{ disabled: true }` and nothing else).
+ *
+ * `usage` accepts an extra `{ disabled: true }` sentinel that strips the
+ * usage block from the merged definition — the only way to opt a shipped
+ * default out of codexbar gating without disabling the model entirely.
  */
-type EnabledUserModelDefinition = Partial<ModelDefinition> & { disabled?: never };
+type UserUsage = ModelDefinition["usage"] | { disabled: true };
+type EnabledUserModelDefinition = Partial<Omit<ModelDefinition, "usage">> & {
+  usage?: UserUsage;
+  disabled?: never;
+};
 interface DisabledUserModelDefinition {
   disabled: true;
 }
@@ -534,6 +542,10 @@ export function isShippedDefaultDisabled(
   );
 }
 
+function isUsageDisableSentinel(usage: UserUsage): usage is { disabled: true } {
+  return isPlainObject(usage) && "disabled" in usage && usage.disabled;
+}
+
 function mergeDefinitions(
   user: Record<string, UserModelDefinition> | undefined,
 ): Record<string, ModelDefinition> {
@@ -575,7 +587,11 @@ function mergeDefinitions(
       candidate.color = override.color;
     }
     if (override.usage !== undefined) {
-      candidate.usage = override.usage;
+      if (isUsageDisableSentinel(override.usage)) {
+        delete candidate.usage;
+      } else {
+        candidate.usage = override.usage;
+      }
     }
     if (override.sandbox !== undefined) {
       candidate.sandbox = normalizeSandbox(override.sandbox, `models.definitions.${name}.sandbox`);
