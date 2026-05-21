@@ -3,11 +3,14 @@
 // `crew doctor --ticket <TICKET>` — single per-ticket diagnostic that covers
 // both the pre-dispatch question ("will this dispatch on the next tick?") and
 // the post-dispatch question ("what's already happened and what's left to
-// do?"). Verdict precedence runs strictly from post-dispatch states down:
+// do?"). Verdict precedence starts with PR outcomes, then handles run-state
+// exceptions before ordinary local recovery:
 //
-//   pr-open > pr-merged > in-flight > recoverable
-//     > unresolvable > ineligible > would-dispatch
-//       > lost
+//   pr-open > pr-merged
+//     > failed-launch
+//     > interrupted (unless concrete recoverable git work exists)
+//     > in-flight > recoverable
+//     > unresolvable > ineligible > would-dispatch > lost
 //
 // When a post-dispatch verdict fires, the Resolution and Eligibility sections
 // are skipped — they describe pre-dispatch state that no longer matters.
@@ -175,9 +178,11 @@ function verdictRecoverable(input: DecideVerdictInput): TicketDoctorVerdict | un
  * "ticket has moved past dispatch" cases. Returns `undefined` otherwise,
  * signalling that the caller should fall through to the pre-dispatch path.
  *
- * Precedence: PR > in-flight > recoverable. Inside `recoverable`, dirty
- * worktree beats clean-with-un-pushed-local beats remote-only beats stranded
- * local.
+ * Precedence: PR verdicts always win. Failed launches report before ordinary
+ * local recovery. Interrupted runs report concrete recoverable git work first
+ * when it exists, then fall back to `interrupted`. Ordinary post-dispatch cases
+ * report in-flight before recoverable. Inside `recoverable`, dirty worktree
+ * beats clean-with-un-pushed-local beats remote-only beats stranded local.
  */
 export function decidePostDispatchVerdict(
   input: DecideVerdictInput,

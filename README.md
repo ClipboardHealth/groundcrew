@@ -316,14 +316,16 @@ crew run                                                 # one-shot dispatch
 crew run --watch                                         # poll forever
 crew run --ticket <TICKET>                               # provision one ticket and exit
 crew setup repos [--dry-run] [<repo>...]
+crew interrupt <TICKET> [--reason <text>]                # stop the live workspace, keep the worktree
+crew resume <TICKET>                                     # reopen an existing ticket worktree
 crew cleanup <TICKET>                                    # tear down every worktree carrying this ticket
 ```
 
-`crew doctor --ticket <TICKET>` covers the full per-ticket lifecycle: pre-dispatch eligibility (Todo status, `agent-*` label, model resolution, repository mention, local clone, blockers, model session usage, in-progress capacity) **and** post-dispatch local-state recovery (host worktree, workspace pane, local branch, remote branch, open PR). Verdict precedence runs from post-dispatch outcomes down: `pr-open` > `pr-merged` > `in-flight` > `recoverable` > `unresolvable` > `ineligible` > `would-dispatch` > `lost`. Exits 0 on `would-dispatch`, `pr-open`, or `pr-merged`; any other verdict exits 1. `--watch` and `--ticket` are mutually exclusive. To inspect codexbar session windows directly, run `codexbar usage`.
+`crew doctor --ticket <TICKET>` covers the full per-ticket lifecycle: pre-dispatch eligibility (Todo status, `agent-*` label, model resolution, repository mention, local clone, blockers, model session usage, in-progress capacity) **and** post-dispatch local-state recovery (recorded run state, host worktree, workspace pane, local branch, remote branch, open PR). Verdict precedence starts with PR outcomes (`pr-open` > `pr-merged`). Recorded failed launches report before ordinary local recovery, interrupted runs report concrete recoverable git work first when it exists and otherwise report `interrupted`, and ordinary post-dispatch cases report `in-flight` before `recoverable`. If none of those apply, doctor falls through to `unresolvable` > `ineligible` > `would-dispatch` > `lost`. Exits 0 on `would-dispatch`, `pr-open`, or `pr-merged`; any other verdict exits 1. `--watch` and `--ticket` are mutually exclusive. To inspect codexbar session windows directly, run `codexbar usage`.
 
 ### `crew doctor --ticket <ticket>`
 
-Diagnose where a ticket is in its lifecycle and what to do next. Runs the same resolution and eligibility chain as the dispatcher, plus probes the host worktree, workspace pane, local branch, remote branch, and PR; prints a single verdict with a copy-pasteable recovery step when one applies.
+Diagnose where a ticket is in its lifecycle and what to do next. Runs the same resolution and eligibility chain as the dispatcher, plus probes recorded run state, host worktree, workspace pane, local branch, remote branch, and PR; prints a single verdict with a copy-pasteable recovery step when one applies.
 
 Flags:
 
@@ -343,6 +345,13 @@ Resolution
 
 Eligibility
   (skipped — post-dispatch — pre-dispatch checks are irrelevant)
+
+Run state
+  [ok] Local run state (running)
+  [ok] Recorded model (claude)
+  [ok] Recorded worktree (/Users/paul/dev/groundcrew-workspaces/herds-social/herds-hrd-442)
+  [ok] Recorded branch (paul-hrd-442)
+  [ok] Resume count (0)
 
 Worktree
   [ok] Host worktree exists (/Users/paul/dev/groundcrew-workspaces/herds-social/herds-hrd-442)
@@ -374,10 +383,30 @@ The verdict on the last line maps to a recovery action:
 | `pr-merged`      | Done.                                                                                         |
 | `in-flight`      | The ticket is still being worked on; the verdict line names the workspace pane to attach to.  |
 | `recoverable`    | Run the printed `nextStep` exactly.                                                           |
+| `interrupted`    | Resume the preserved worktree with `crew resume <ticket>` or inspect it by hand.              |
+| `failed-launch`  | Fix the launch failure, then run `crew resume <ticket>` or `crew cleanup <ticket>`.           |
 | `would-dispatch` | Pre-dispatch checks pass; the orchestrator will pick the ticket up on its next tick.          |
 | `ineligible`     | A resolution or eligibility check failed; the reason after the colon names the failing check. |
 | `unresolvable`   | The Linear ticket couldn't be fetched; the reason after the colon names the error.            |
 | `lost`           | No trace exists. Re-dispatch via `crew run --ticket <ticket>`.                                |
+
+### `crew interrupt <ticket>`
+
+Stop a live workspace pane while preserving the ticket worktree and branch. This is the manual pause button for cases where you need terminal capacity back, want to stop an agent that is going in the wrong direction, or need to inspect the diff before letting another agent continue.
+
+```bash
+crew interrupt HRD-442 --reason "wrong implementation direction"
+crew doctor --ticket HRD-442
+crew resume HRD-442
+```
+
+The command closes the cmux/tmux workspace when it exists, records local run state under the groundcrew state directory, and never tears down the worktree. If the workspace was already gone but the worktree is still present, interrupt records that fact so doctor can point at the preserved branch instead of reporting a mystery ticket.
+
+### `crew resume <ticket>`
+
+Reopen an existing ticket worktree with a continuation prompt. Resume never creates a new worktree; if none exists, it fails and leaves re-dispatch to `crew run --ticket <ticket>`.
+
+The resume prompt tells the agent to inspect current git status and diff before editing, includes the previous interrupt reason when recorded, and reuses the recorded model, repository, branch, runner, sandbox, and workspace backend. When no run-state file exists but a worktree does, resume falls back to Linear resolution for the model and ticket context.
 
 ## Troubleshooting
 
