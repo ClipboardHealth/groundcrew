@@ -24,7 +24,7 @@
     "README.md",
     "bin",
     "clearance-allow-hosts",
-    "configExample.ts",
+    "crew.config.example.ts",
     "dist",
     "static"
   ],
@@ -45,7 +45,7 @@
     "access": "public"
   },
   "scripts": {
-    "architecture:check": "depcruise src bin configExample.ts vitest.config.ts",
+    "architecture:check": "depcruise src bin crew.config.example.ts vitest.config.ts",
     "build": "tsgo --build --force tsconfig.lib.json",
     "build:dev": "tsgo --build tsconfig.lib.json",
     "cpd": "jscpd .",
@@ -69,6 +69,7 @@
   "dependencies": {
     "@clipboard-health/clearance": "1.0.8",
     "@linear/sdk": "84.0.0",
+    "cosmiconfig": "9.0.1",
     "tslib": "2.8.1"
   },
   "devDependencies": {
