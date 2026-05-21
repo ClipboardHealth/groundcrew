@@ -2,6 +2,7 @@ import { createRequire } from "node:module";
 
 import { cleanupWorkspaceCli } from "./commands/cleanupWorkspace.ts";
 import { doctor } from "./commands/doctor.ts";
+import { interruptWorkspaceCli } from "./commands/interruptWorkspace.ts";
 import { orchestrate } from "./commands/orchestrator.ts";
 import { setupReposCli } from "./commands/setupRepos.ts";
 import { setupWorkspaceCli } from "./commands/setupWorkspace.ts";
@@ -114,6 +115,11 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
     summary: "Tear down a worktree",
     usage: "[--force] <ticket>",
     invoke: cleanupWorkspaceCli,
+  },
+  interrupt: {
+    summary: "Stop a live ticket workspace while preserving its worktree",
+    usage: "<ticket> [--reason <text>]",
+    invoke: interruptWorkspaceCli,
   },
   setup: {
     summary: "Project-level setup commands (currently: repos)",

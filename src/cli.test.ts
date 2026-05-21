@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { run } from "./cli.ts";
 import { cleanupWorkspaceCli } from "./commands/cleanupWorkspace.ts";
 import { doctor } from "./commands/doctor.ts";
+import { interruptWorkspaceCli } from "./commands/interruptWorkspace.ts";
 import { orchestrate } from "./commands/orchestrator.ts";
 import { setupReposCli } from "./commands/setupRepos.ts";
 import { setupWorkspaceCli } from "./commands/setupWorkspace.ts";
@@ -19,6 +20,9 @@ vi.mock(import("./commands/cleanupWorkspace.ts"), () => ({
 vi.mock(import("./commands/doctor.ts"), () => ({
   doctor: vi.fn<typeof doctor>(),
 }));
+vi.mock(import("./commands/interruptWorkspace.ts"), () => ({
+  interruptWorkspaceCli: vi.fn<typeof interruptWorkspaceCli>(),
+}));
 vi.mock(import("./commands/orchestrator.ts"), () => ({
   orchestrate: vi.fn<typeof orchestrate>(),
 }));
@@ -31,6 +35,7 @@ vi.mock(import("./commands/setupRepos.ts"), () => ({
 
 const orchestrateMock = vi.mocked(orchestrate);
 const doctorMock = vi.mocked(doctor);
+const interruptMock = vi.mocked(interruptWorkspaceCli);
 const setupMock = vi.mocked(setupWorkspaceCli);
 const setupReposMock = vi.mocked(setupReposCli);
 const cleanupMock = vi.mocked(cleanupWorkspaceCli);
@@ -65,6 +70,7 @@ describe(run, () => {
     process.exitCode = undefined;
     orchestrateMock.mockResolvedValue();
     doctorMock.mockResolvedValue(true);
+    interruptMock.mockResolvedValue();
     setupMock.mockResolvedValue();
     setupReposMock.mockResolvedValue();
     cleanupMock.mockResolvedValue();
@@ -312,6 +318,12 @@ describe(run, () => {
     await run(["cleanup", "--force", "TEAM-1"]);
 
     expect(cleanupMock).toHaveBeenCalledWith(["--force", "TEAM-1"]);
+  });
+
+  it("dispatches interrupt to interruptWorkspaceCli with the remaining argv", async () => {
+    await run(["interrupt", "TEAM-1", "--reason", "wrong direction"]);
+
+    expect(interruptMock).toHaveBeenCalledWith(["TEAM-1", "--reason", "wrong direction"]);
   });
 
   it("dispatches `setup repos` to setupReposCli with the remaining argv", async () => {

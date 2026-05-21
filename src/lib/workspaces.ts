@@ -48,6 +48,16 @@ export type WorkspaceProbe =
   | { kind: "ok"; names: Set<string> }
   | { kind: "unavailable"; error?: unknown };
 
+export type WorkspaceInterruptResult =
+  | { kind: "interrupted" }
+  | { kind: "missing" }
+  | { kind: "unavailable"; error?: unknown };
+
+export type WorkspaceCloseResult =
+  | { kind: "closed" }
+  | { kind: "missing" }
+  | { kind: "unavailable"; error?: unknown };
+
 interface Adapter {
   open(spec: OpenSpec, signal?: AbortSignal): Promise<void>;
   /**
@@ -57,8 +67,8 @@ interface Adapter {
    *   distinguish "no live workspaces" from "couldn't ask".
    */
   list(signal?: AbortSignal): Promise<Workspace[] | undefined>;
-  /** No-op when no workspace exists for `name`. */
-  close(name: string, signal?: AbortSignal): Promise<void>;
+  /** Closes the workspace or confirms it is not present. */
+  close(name: string, signal?: AbortSignal): Promise<WorkspaceCloseResult>;
   /**
    * User-facing way to reach the workspace, or `undefined` when the backend
    * has no concise external hint.
@@ -342,24 +352,26 @@ const cmuxAdapter: Adapter = {
       // would always fail. The list failure has already been logged by
       // `listCmuxRaw`; bail rather than guarantee a downstream error.
       log(`cmux close-workspace skipped for ${name}: list-workspaces failed, no usable id`);
-      return;
+      return { kind: "unavailable" };
     }
     const match = raw.find((ws) => ws.title === name);
     if (match === undefined) {
-      return;
+      return { kind: "missing" };
     }
     try {
       await closeCmuxWorkspace(match.id, signal);
+      return { kind: "closed" };
     } catch (error) {
       if (isSignalAborted(signal)) {
         throw error;
       }
       const remaining = await listCmuxRaw(signal);
-      if (remaining !== undefined) {
-        const isStillPresent = remaining.some((ws) => ws.title === name);
-        if (!isStillPresent) {
-          return;
-        }
+      if (remaining === undefined) {
+        return { kind: "unavailable", error };
+      }
+      const isStillPresent = remaining.some((ws) => ws.title === name);
+      if (!isStillPresent) {
+        return { kind: "closed" };
       }
       throw error;
     }
@@ -583,12 +595,13 @@ const tmuxAdapter: Adapter = {
   async close(name, signal) {
     try {
       await runWorkspaceCommand("tmux", ["kill-window", "-t", tmuxTarget(name)], signal);
+      return { kind: "closed" };
     } catch (error) {
       if (isSignalAborted(signal)) {
         throw error;
       }
       if (isTmuxNotFoundError(error)) {
-        return;
+        return { kind: "missing" };
       }
       throw error;
     }
@@ -637,16 +650,42 @@ async function probeWorkspaces(
   return { kind: "ok", names: new Set(raw.map((ws) => ws.name)) };
 }
 
+async function interruptWorkspace(
+  config: ResolvedConfig,
+  name: string,
+  signal?: AbortSignal,
+): Promise<WorkspaceInterruptResult> {
+  const probe = await probeWorkspaces(config, signal);
+  if (probe.kind === "unavailable") {
+    return { kind: "unavailable", ...(probe.error === undefined ? {} : { error: probe.error }) };
+  }
+  if (!probe.names.has(name)) {
+    return { kind: "missing" };
+  }
+  const result = await workspaces.close(config, name, signal);
+  if (result.kind === "unavailable") {
+    return result.error === undefined
+      ? { kind: "unavailable" }
+      : { kind: "unavailable", error: result.error };
+  }
+  return { kind: "interrupted" };
+}
+
 export const workspaces = {
   async open(config: ResolvedConfig, spec: OpenSpec, signal?: AbortSignal): Promise<void> {
     const adapter = await adapterFor(config, signal);
     await adapter.open(spec, signal);
   },
   probe: probeWorkspaces,
-  async close(config: ResolvedConfig, name: string, signal?: AbortSignal): Promise<void> {
+  async close(
+    config: ResolvedConfig,
+    name: string,
+    signal?: AbortSignal,
+  ): Promise<WorkspaceCloseResult> {
     const adapter = await adapterFor(config, signal);
-    await adapter.close(name, signal);
+    return await adapter.close(name, signal);
   },
+  interrupt: interruptWorkspace,
   async accessHint(
     config: ResolvedConfig,
     name: string,
