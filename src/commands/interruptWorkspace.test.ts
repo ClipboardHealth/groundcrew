@@ -59,9 +59,13 @@ function lastRecordedRunState(): RecordedRunState {
 function makeConfig(): ResolvedConfig {
   return {
     linear: {
-      projectSlug: "x-aaaaaaaaaaaa",
-      slugId: "aaaaaaaaaaaa",
-      statuses: { todo: "Todo", inProgress: "In Progress", done: "Done", terminal: ["Done"] },
+      projects: [
+        {
+          projectSlug: "x-aaaaaaaaaaaa",
+          slugId: "aaaaaaaaaaaa",
+          statuses: { todo: "Todo", inProgress: "In Progress", done: "Done", terminal: ["Done"] },
+        },
+      ],
     },
     git: { remote: "origin", defaultBranch: "main" },
     workspace: { projectDir: "/work", knownRepositories: ["repo-a"] },
