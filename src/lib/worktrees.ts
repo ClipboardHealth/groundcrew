@@ -14,6 +14,7 @@ import { resolve } from "node:path";
 
 import { runCommandAsync, type RunCommandOptions } from "./commandRunner.ts";
 import type { ResolvedConfig } from "./config.ts";
+import { resolveDefaultBranch } from "./defaultBranch.ts";
 import { errorMessage, log } from "./util.ts";
 import { type WorkspaceProbe, workspaces } from "./workspaces.ts";
 
@@ -145,11 +146,17 @@ async function createWorktree(
   signal?: AbortSignal,
 ): Promise<WorktreeEntry> {
   const base = basePaths(config, spec.repository, spec.ticket);
-  const baseRef = `${config.git.remote}/${config.git.defaultBranch}`;
+  const defaultBranch = await resolveDefaultBranch({
+    repoDir: base.repoDir,
+    remote: config.git.remote,
+    fallback: config.git.defaultBranch,
+    ...signalProperty(signal),
+  });
+  const baseRef = `${config.git.remote}/${defaultBranch}`;
   log(`Fetching ${baseRef} in ${spec.repository}...`);
   await runCommandAsync(
     "git",
-    ["-C", base.repoDir, "fetch", config.git.remote, config.git.defaultBranch],
+    ["-C", base.repoDir, "fetch", config.git.remote, defaultBranch],
     longRunningCommandOptions(signal),
   );
   log(

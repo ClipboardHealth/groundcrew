@@ -262,15 +262,27 @@ describe(findByTicket, () => {
 describe(create, () => {
   setupTempProjectDir();
 
-  it("fetches origin/main then runs git worktree add for the host strategy", async () => {
+  it("probes origin/HEAD, then fetches and worktree-adds the auto-detected default branch", async () => {
     mkdirSync(join(projectDir, "repo-a"));
     const config = makeConfig({ projectDir });
+    runCommandMock.mockImplementation((_command, arguments_) => {
+      // oxlint-disable-next-line vitest/no-conditional-in-test -- discriminator picks out the symbolic-ref probe so it returns origin/<branch>
+      if (hasArguments(arguments_, "symbolic-ref", "refs/remotes/origin/HEAD")) {
+        return "origin/main\n";
+      }
+      return "";
+    });
 
     const actual = await create(config, {
       repository: "repo-a",
       ticket: "team-1",
     });
 
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "git",
+      ["-C", join(projectDir, "repo-a"), "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+      {},
+    );
     expect(runCommandMock).toHaveBeenCalledWith(
       "git",
       ["-C", join(projectDir, "repo-a"), "fetch", "origin", "main"],
@@ -292,6 +304,90 @@ describe(create, () => {
     );
     expect(actual.kind).toBe("host");
     expect(actual.dir).toBe(join(projectDir, "repo-a-team-1"));
+  });
+
+  it("uses the per-repo default branch reported by origin/HEAD (e.g. master)", async () => {
+    mkdirSync(join(projectDir, "repo-a"));
+    const config = makeConfig({ projectDir });
+    runCommandMock.mockImplementation((_command, arguments_) => {
+      // oxlint-disable-next-line vitest/no-conditional-in-test -- discriminator picks out the symbolic-ref probe so it reports a master-backed repo
+      if (hasArguments(arguments_, "symbolic-ref", "refs/remotes/origin/HEAD")) {
+        return "origin/master\n";
+      }
+      return "";
+    });
+
+    await create(config, {
+      repository: "repo-a",
+      ticket: "team-1",
+    });
+
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "git",
+      ["-C", join(projectDir, "repo-a"), "fetch", "origin", "master"],
+      { stdio: "inherit", timeoutMs: 0 },
+    );
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "git",
+      [
+        "-C",
+        join(projectDir, "repo-a"),
+        "worktree",
+        "add",
+        "-b",
+        "rocky-team-1",
+        join(projectDir, "repo-a-team-1"),
+        "origin/master",
+      ],
+      { stdio: "inherit", timeoutMs: 0 },
+    );
+  });
+
+  it("falls back to config.git.defaultBranch when origin/HEAD is not set", async () => {
+    mkdirSync(join(projectDir, "repo-a"));
+    const config = makeConfig({
+      projectDir,
+      git: { remote: "origin", defaultBranch: "trunk" },
+    });
+    runCommandMock.mockImplementation((_command, arguments_) => {
+      // oxlint-disable-next-line vitest/no-conditional-in-test -- mirrors `git symbolic-ref` exit status 1 when refs/remotes/origin/HEAD is unset
+      if (hasArguments(arguments_, "symbolic-ref", "refs/remotes/origin/HEAD")) {
+        throw new Error(
+          "Command failed: git symbolic-ref --short refs/remotes/origin/HEAD\nExit status: 1",
+        );
+      }
+      return "";
+    });
+
+    await create(config, {
+      repository: "repo-a",
+      ticket: "team-1",
+    });
+
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "git",
+      ["-C", join(projectDir, "repo-a"), "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+      {},
+    );
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "git",
+      ["-C", join(projectDir, "repo-a"), "fetch", "origin", "trunk"],
+      { stdio: "inherit", timeoutMs: 0 },
+    );
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "git",
+      [
+        "-C",
+        join(projectDir, "repo-a"),
+        "worktree",
+        "add",
+        "-b",
+        "rocky-team-1",
+        join(projectDir, "repo-a-team-1"),
+        "origin/trunk",
+      ],
+      { stdio: "inherit", timeoutMs: 0 },
+    );
   });
 
   it("rejects when a host worktree already exists for the same ticket", async () => {
