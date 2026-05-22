@@ -5,6 +5,7 @@ import { doctor } from "./commands/doctor.ts";
 import { interruptWorkspaceCli } from "./commands/interruptWorkspace.ts";
 import { orchestrate } from "./commands/orchestrator.ts";
 import { resumeWorkspaceCli } from "./commands/resumeWorkspace.ts";
+import { sandboxCli } from "./commands/sandbox.ts";
 import { setupReposCli } from "./commands/setupRepos.ts";
 import { setupWorkspaceCli } from "./commands/setupWorkspace.ts";
 import { errorMessage, readTicketArgument, writeError, writeOutput } from "./lib/util.ts";
@@ -126,6 +127,11 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
     summary: "Reopen an existing ticket worktree with a continuation prompt",
     usage: "<ticket>",
     invoke: resumeWorkspaceCli,
+  },
+  sandbox: {
+    summary: "Manage Docker Sandboxes (sbx) for configured models",
+    usage: "<list|ensure|regenerate|auth|rm|template> [...args]",
+    invoke: sandboxCli,
   },
   setup: {
     summary: "Project-level setup commands (currently: repos)",
