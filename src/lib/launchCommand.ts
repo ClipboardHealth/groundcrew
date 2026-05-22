@@ -38,7 +38,8 @@ const SAFEHOUSE_CLEARANCE_WRAPPER_PATH = resolveSafehouseClearancePath();
  * Per-repo setup hook: if `.groundcrew/setup.sh` exists, run it with
  * `--deps-only`; otherwise no-op.
  */
-export const SETUP_COMMAND = "[ -f .groundcrew/setup.sh ] && bash .groundcrew/setup.sh --deps-only";
+export const SETUP_COMMAND =
+  "if [ -f .groundcrew/setup.sh ]; then bash .groundcrew/setup.sh --deps-only; fi";
 
 function renderAgentCommand(arguments_: {
   agentCmd: string;

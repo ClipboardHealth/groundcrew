@@ -1,4 +1,7 @@
-import { statSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import type { ModelDefinition } from "./config.ts";
 import {
@@ -38,6 +41,37 @@ describe(resolveSafehouseClearancePath, () => {
 });
 
 describe(buildLaunchCommand, () => {
+  describe(SETUP_COMMAND, () => {
+    function runSetupCommand(cwd: string): number | undefined {
+      return spawnSync("sh", ["-c", SETUP_COMMAND], { cwd }).status ?? undefined;
+    }
+
+    it("is a successful no-op when the repo setup hook is absent", () => {
+      const worktreeDir = mkdtempSync(join(tmpdir(), "groundcrew-no-setup-"));
+      try {
+        const actual = runSetupCommand(worktreeDir);
+
+        expect(actual).toBe(0);
+      } finally {
+        rmSync(worktreeDir, { recursive: true, force: true });
+      }
+    });
+
+    it("preserves the repo setup hook status when the hook exists", () => {
+      const worktreeDir = mkdtempSync(join(tmpdir(), "groundcrew-failing-setup-"));
+      try {
+        mkdirSync(join(worktreeDir, ".groundcrew"));
+        writeFileSync(join(worktreeDir, ".groundcrew", "setup.sh"), "exit 7\n");
+
+        const actual = runSetupCommand(worktreeDir);
+
+        expect(actual).toBe(7);
+      } finally {
+        rmSync(worktreeDir, { recursive: true, force: true });
+      }
+    });
+  });
+
   it("cd's into the worktree, runs setup, then execs the Safehouse-wrapped agent with the prompt", () => {
     const out = buildLaunchCommand(arguments_());
 
