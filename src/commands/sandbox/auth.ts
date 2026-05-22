@@ -68,13 +68,28 @@ async function probeAuthStatus(
   }
 }
 
-async function runAuthWithRecipe(
-  sandboxName: string,
-  agent: string,
-  modelName: string,
-  recipe: AgentAuthRecipe,
-): Promise<void> {
+async function runAuthWithRecipe(input: {
+  sandboxName: string;
+  agent: string;
+  modelName: string;
+  recipe: AgentAuthRecipe;
+  force: boolean;
+}): Promise<void> {
+  const { sandboxName, agent, modelName, recipe, force } = input;
+  writeOutput(`${sandboxName}: checking current authentication status...`);
+  const alreadyAuthenticated = await probeAuthStatus(sandboxName, agent, recipe);
+  if (alreadyAuthenticated && !force) {
+    writeOutput(
+      `${sandboxName}: already authenticated — skipping login. Re-run with --force to log in again.`,
+    );
+    return;
+  }
+  if (alreadyAuthenticated) {
+    writeOutput(`${sandboxName}: already authenticated, re-authenticating (--force).`);
+  }
+
   const binary = binaryFor(agent, recipe);
+  writeOutput("");
   writeOutput(`${sandboxName}: launching '${recipe.displayName}' login...`);
   writeOutput("Complete the login flow in the prompts/browser, then return here.");
   await runCommandAsync("sbx", ["exec", "-it", sandboxName, binary, ...recipe.loginArgs], {
@@ -103,8 +118,30 @@ async function runAuthManual(sandboxName: string, agent: string): Promise<void> 
   writeOutput(`${sandboxName}: exited — verify '${agent}' authentication manually.`);
 }
 
+interface AuthOptions {
+  modelName: string;
+  force: boolean;
+}
+
+function parseAuthArgs(argv: string[]): AuthOptions {
+  const positionals: string[] = [];
+  let force = false;
+  for (const argument of argv) {
+    if (argument === "--force") {
+      force = true;
+      continue;
+    }
+    if (argument.startsWith("-")) {
+      throw new Error(`crew sandbox auth: unknown option '${argument}'`);
+    }
+    positionals.push(argument);
+  }
+  const modelName = requireOnePositional(positionals, "Usage: crew sandbox auth [--force] <model>");
+  return { modelName, force };
+}
+
 export async function runAuth(config: ResolvedConfig, argv: string[]): Promise<void> {
-  const modelName = requireOnePositional(argv, "Usage: crew sandbox auth <model>");
+  const { modelName, force } = parseAuthArgs(argv);
   const model = resolveModel(config, modelName);
   writeOutput(`${model.sandboxName}: ensuring sandbox is up...`);
   await ensureOne(config, model);
@@ -115,5 +152,11 @@ export async function runAuth(config: ResolvedConfig, argv: string[]): Promise<v
     await runAuthManual(model.sandboxName, model.sandbox.agent);
     return;
   }
-  await runAuthWithRecipe(model.sandboxName, model.sandbox.agent, modelName, recipe);
+  await runAuthWithRecipe({
+    sandboxName: model.sandboxName,
+    agent: model.sandbox.agent,
+    modelName,
+    recipe,
+    force,
+  });
 }

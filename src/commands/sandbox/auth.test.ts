@@ -38,7 +38,15 @@ function isStatusExec(call: SbxCall): boolean {
   return call[0] === "sbx" && call[1][0] === "exec" && call[1][1] !== "-it";
 }
 
-function mockAuthFlow(opts: { statusOutput: string; statusThrows?: boolean }): void {
+interface MockAuthFlowOptions {
+  /** Status outputs in call order. Last one repeats if more calls happen. */
+  statusOutputs: readonly string[];
+  /** When true, every status probe throws. */
+  statusThrows?: boolean;
+}
+
+function mockAuthFlow(opts: MockAuthFlowOptions): void {
+  let statusCallIndex = 0;
   runCommandMock.mockImplementation(async (command, arguments_) => {
     if (command !== "sbx") {
       return "";
@@ -50,7 +58,9 @@ function mockAuthFlow(opts: { statusOutput: string; statusThrows?: boolean }): v
       if (opts.statusThrows === true) {
         throw new Error("sbx exec failed");
       }
-      return opts.statusOutput;
+      const output = opts.statusOutputs[statusCallIndex] ?? opts.statusOutputs.at(-1) ?? "";
+      statusCallIndex += 1;
+      return output;
     }
     return "";
   });
@@ -74,11 +84,47 @@ describe("crew sandbox auth", () => {
   });
 
   it("requires a model argument", async () => {
-    await expect(sandboxCli(["auth"])).rejects.toThrow(/Usage: crew sandbox auth <model>/);
+    await expect(sandboxCli(["auth"])).rejects.toThrow(/Usage: crew sandbox auth/);
+  });
+
+  it("rejects an unknown flag", async () => {
+    await expect(sandboxCli(["auth", "--bogus", "claude"])).rejects.toThrow(
+      /unknown option '--bogus'/,
+    );
+  });
+
+  it("skips the login flow when the pre-check shows already authenticated", async () => {
+    mockAuthFlow({ statusOutputs: ['{"loggedIn": true}'] });
+
+    await sandboxCli(["auth", "claude"]);
+
+    const loginCall = runCommandMock.mock.calls.find((call) => isLoginExec(call));
+    expect(loginCall).toBeUndefined();
+    expect(consoleLog.output()).toContain("already authenticated — skipping login");
+  });
+
+  it("re-runs the login flow when --force is set even if already authenticated", async () => {
+    mockAuthFlow({ statusOutputs: ['{"loggedIn": true}'] });
+
+    await sandboxCli(["auth", "claude", "--force"]);
+
+    const loginCall = runCommandMock.mock.calls.find((call) => isLoginExec(call));
+    expect(loginCall).toBeDefined();
+    expect(consoleLog.output()).toContain("re-authenticating (--force)");
+  });
+
+  it("accepts --force placed before the model name", async () => {
+    mockAuthFlow({ statusOutputs: ['{"loggedIn": true}'] });
+
+    await sandboxCli(["auth", "--force", "claude"]);
+
+    const loginCall = runCommandMock.mock.calls.find((call) => isLoginExec(call));
+    expect(loginCall).toBeDefined();
   });
 
   it("invokes 'claude auth login' interactively then runs 'claude auth status' to verify", async () => {
-    mockAuthFlow({ statusOutput: '{"loggedIn": true}' });
+    // Pre-probe missing → login runs → post-probe authenticated.
+    mockAuthFlow({ statusOutputs: ["", '{"loggedIn": true}'] });
 
     await sandboxCli(["auth", "claude"]);
 
@@ -103,16 +149,16 @@ describe("crew sandbox auth", () => {
     ]);
   });
 
-  it("reports authenticated when claude status shows loggedIn:true", async () => {
-    mockAuthFlow({ statusOutput: '{"loggedIn": true, "email": "x@y.com"}' });
+  it("reports authenticated after a successful login flow", async () => {
+    mockAuthFlow({ statusOutputs: ["", '{"loggedIn": true, "email": "x@y.com"}'] });
 
     await sandboxCli(["auth", "claude"]);
 
-    expect(consoleLog.output()).toContain("groundcrew-claude: authenticated");
+    expect(consoleLog.output()).toContain("groundcrew-claude: authenticated.");
   });
 
-  it("warns when claude status does not indicate logged in", async () => {
-    mockAuthFlow({ statusOutput: '{"loggedIn": false}' });
+  it("warns when post-login status still does not indicate logged in", async () => {
+    mockAuthFlow({ statusOutputs: ['{"loggedIn": false}'] });
 
     await sandboxCli(["auth", "claude"]);
 
@@ -122,7 +168,7 @@ describe("crew sandbox auth", () => {
   });
 
   it("treats a probe failure as not authenticated", async () => {
-    mockAuthFlow({ statusOutput: "", statusThrows: true });
+    mockAuthFlow({ statusOutputs: [""], statusThrows: true });
 
     await sandboxCli(["auth", "claude"]);
 
@@ -130,7 +176,8 @@ describe("crew sandbox auth", () => {
   });
 
   it("uses 'codex login --device-auth' and 'codex login status' for codex", async () => {
-    mockAuthFlow({ statusOutput: "Logged in using ChatGPT" });
+    // Pre-probe missing, post-probe authenticated.
+    mockAuthFlow({ statusOutputs: ["", "Logged in using ChatGPT"] });
 
     await sandboxCli(["auth", "codex"]);
 
@@ -156,7 +203,8 @@ describe("crew sandbox auth", () => {
   });
 
   it("uses the cursor-agent binary (not the sbx agent name) for cursor", async () => {
-    mockAuthFlow({ statusOutput: "Logged in as user@example.com" });
+    // Pre-probe missing, post-probe authenticated.
+    mockAuthFlow({ statusOutputs: ["", "Logged in as user@example.com"] });
 
     await sandboxCli(["auth", "cursor"]);
 
