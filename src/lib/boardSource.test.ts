@@ -516,6 +516,55 @@ describe(createBoardSource, () => {
       );
     });
 
+    it("does not warn or parse a repo for a labeled Done ticket whose description has no known repo", async () => {
+      // The dispatcher never reads `Issue.repository` on non-Todo tickets, so
+      // parsing a Done ticket's description only invites tick-spam warnings if
+      // its description was edited (or knownRepositories changed) after the
+      // ticket was originally dispatched. Cleaner still sees the ticket by id.
+      const { source } = makeBoardSource(
+        makeClient({
+          pages: [
+            [
+              issueNode({
+                description: "nothing parseable here",
+                state: { id: "state-done", name: "Done" },
+                labels: { nodes: [{ name: "agent-claude" }] },
+              }),
+            ],
+          ],
+        }),
+      );
+
+      const state = await source.fetch();
+      const [first] = state.issues;
+      expect(first?.id).toBe("team-1");
+      expect(first?.repository).toBeUndefined();
+      expect(first?.model).toBeUndefined();
+      expect(consoleLog.output()).not.toMatch(/no known repository/);
+    });
+
+    it("does not warn or parse a repo for a labeled In Progress ticket whose description has no known repo", async () => {
+      const { source } = makeBoardSource(
+        makeClient({
+          pages: [
+            [
+              issueNode({
+                description: "nothing parseable here",
+                state: { id: "state-ip", name: "In Progress" },
+                labels: { nodes: [{ name: "agent-claude" }] },
+              }),
+            ],
+          ],
+        }),
+      );
+
+      const state = await source.fetch();
+      const [first] = state.issues;
+      expect(first?.repository).toBeUndefined();
+      expect(first?.model).toBeUndefined();
+      expect(consoleLog.output()).not.toMatch(/no known repository/);
+    });
+
     it("does not reject when an unlabeled ticket has no parseable repo", async () => {
       // Regression guard: previously aborted the whole board load on any
       // human-owned ticket whose description happened not to mention one
