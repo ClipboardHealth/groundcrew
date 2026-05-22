@@ -218,7 +218,7 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     }
 
     if (starts.length === 0) {
-      log(`No eligible Todo tickets after eligibility filtering`);
+      log(`No eligible Todo tickets after eligibility filtering${idleSuffix}`);
       return;
     }
 
