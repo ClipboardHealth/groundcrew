@@ -41,6 +41,12 @@ export async function prepareAgentLaunch(input: {
       `Local groundcrew ${input.purpose} with the sdx runner require a sandbox config on model '${input.model}'.`,
     );
   }
+  if (runner === "sdx" && input.definition.preLaunch !== undefined) {
+    throw new Error(
+      `Local groundcrew ${input.purpose} with the sdx runner do not support preLaunch on model '${input.model}'. ` +
+        "Use local.runner 'safehouse' or 'none', or remove preLaunch from the model.",
+    );
+  }
 
   const sandboxName =
     runner === "sdx" && input.definition.sandbox !== undefined

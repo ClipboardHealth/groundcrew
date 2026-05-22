@@ -95,8 +95,9 @@ export interface ModelDefinition {
   /**
    * Optional shell snippet run in the launch shell **before** the agent is
    * exec'd and **outside** Safehouse/sdx. Use to mint short-lived credentials
-   * (e.g. `export INFISICAL_TOKEN=...`) that the wrapped `cmd` inherits via
+   * (e.g. `export SESSION_TOKEN=...`) that the wrapped `cmd` inherits via
    * the process environment. `{{worktree}}` is replaced before launch.
+   * Failures abort launch (unlike deps setup, which logs and continues).
    * Not supported for `local.runner` `sdx` in v1.
    */
   preLaunch?: string;

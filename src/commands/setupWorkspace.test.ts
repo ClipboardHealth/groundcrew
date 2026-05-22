@@ -864,6 +864,38 @@ describe(setupWorkspace, () => {
     expect(ensureClearanceMock).not.toHaveBeenCalled();
   });
 
+  it("fails before creating a worktree when sdx is selected and the model has preLaunch", async () => {
+    detectHostMock.mockResolvedValue(
+      host({
+        hasSafehouse: false,
+        hasSbx: true,
+        hasCmux: false,
+        hasTmux: true,
+        isMacOS: false,
+        isLinux: true,
+        isSafehouseSupported: false,
+      }),
+    );
+    const config = makeConfig({
+      definitions: {
+        claude: {
+          cmd: "claude --auto",
+          color: "#fff",
+          sandbox: { agent: "claude" },
+          preLaunch: "export FOO=bar",
+        },
+        codex: { cmd: "codex", color: "#000" },
+      },
+    });
+
+    await expect(
+      setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" }),
+    ).rejects.toThrow(/sdx runner do not support preLaunch on model 'claude'/);
+
+    expect(createMock).not.toHaveBeenCalled();
+    expect(ensureClearanceMock).not.toHaveBeenCalled();
+  });
+
   it("fails before creating a worktree when safehouse is missing on macOS", async () => {
     detectHostMock.mockResolvedValue(host({ hasSafehouse: false }));
     const config = makeConfig();
