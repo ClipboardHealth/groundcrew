@@ -2,14 +2,17 @@ import { runCommandAsync } from "../../lib/commandRunner.ts";
 import type { AuthRecipe, ResolvedConfig } from "../../lib/config.ts";
 import { writeOutput } from "../../lib/util.ts";
 import { ensureOne } from "./lifecycle.ts";
-import { resolveModel, type SandboxModel } from "./model.ts";
+import { requireOnePositional, resolveModel, type SandboxModel } from "./model.ts";
 import { pickTools, type ToolChoice } from "./picker.ts";
 
 /**
- * Built-in recipes for the bundled agents. Users register additional
- * tools (github, npm, gcloud, …) by adding entries under
- * `sandbox.authRecipes` in `crew.config.ts`; a user recipe under the
- * same key overrides the built-in one.
+ * Built-in recipes shipped with crew. Users register additional tools
+ * by adding entries under `sandbox.authRecipes` in `crew.config.ts`;
+ * a user recipe under the same key overrides the built-in.
+ *
+ * `kind: "agent"` recipes only appear in the picker when the current
+ * sandbox's agent matches the recipe key. `kind: "tool"` (the default
+ * for user recipes) is cross-cutting and always appears.
  */
 const BUILTIN_AUTH_RECIPES: Record<string, AuthRecipe> = {
   claude: {
@@ -46,10 +49,6 @@ const BUILTIN_AUTH_RECIPES: Record<string, AuthRecipe> = {
   },
 };
 
-function resolveRecipe(config: ResolvedConfig, toolKey: string): AuthRecipe | undefined {
-  return config.sandbox.authRecipes[toolKey] ?? BUILTIN_AUTH_RECIPES[toolKey];
-}
-
 function binaryFor(toolKey: string, recipe: AuthRecipe): string {
   return recipe.binary ?? toolKey;
 }
@@ -74,30 +73,14 @@ async function probeAuthStatus(
   }
 }
 
-async function runAuthWithRecipe(input: {
+async function loginAndVerify(input: {
   sandboxName: string;
   toolKey: string;
   recipe: AuthRecipe;
-  force: boolean;
-  retryHint: string;
+  modelName: string;
 }): Promise<void> {
-  const { sandboxName, toolKey, recipe, force, retryHint } = input;
-  writeOutput(`${sandboxName}: checking '${recipe.displayName}' authentication status...`);
-  const alreadyAuthenticated = await probeAuthStatus(sandboxName, toolKey, recipe);
-  if (alreadyAuthenticated && !force) {
-    writeOutput(
-      `${sandboxName}: '${recipe.displayName}' already authenticated — skipping login. Re-run with --force to log in again.`,
-    );
-    return;
-  }
-  if (alreadyAuthenticated) {
-    writeOutput(
-      `${sandboxName}: '${recipe.displayName}' already authenticated, re-authenticating (--force).`,
-    );
-  }
-
+  const { sandboxName, toolKey, recipe, modelName } = input;
   const binary = binaryFor(toolKey, recipe);
-  writeOutput("");
   writeOutput(`${sandboxName}: launching '${recipe.displayName}' login...`);
   writeOutput("Complete the login flow in the prompts/browser, then return here.");
   await runCommandAsync("sbx", ["exec", "-it", sandboxName, binary, ...recipe.loginArgs], {
@@ -105,51 +88,15 @@ async function runAuthWithRecipe(input: {
   });
 
   writeOutput("");
-  writeOutput(`${sandboxName}: checking '${recipe.displayName}' authentication status...`);
+  writeOutput(`${sandboxName}: verifying '${recipe.displayName}' authentication...`);
   const authenticated = await probeAuthStatus(sandboxName, toolKey, recipe);
   if (authenticated) {
     writeOutput(`${sandboxName}: '${recipe.displayName}' authenticated.`);
     return;
   }
   writeOutput(
-    `${sandboxName}: could not confirm '${recipe.displayName}' authentication — ${retryHint}`,
+    `${sandboxName}: could not confirm '${recipe.displayName}' authentication — re-run 'crew sandbox auth ${modelName}' to retry.`,
   );
-}
-
-async function runAuthManual(sandboxName: string, toolKey: string): Promise<void> {
-  writeOutput(
-    `No login recipe for '${toolKey}'. Authenticate manually inside the sandbox, then exit (Ctrl+D).`,
-  );
-  writeOutput(`${sandboxName}: launching '${toolKey}'...`);
-  await runCommandAsync("sbx", ["exec", "-it", sandboxName, toolKey], { stdio: "inherit" });
-  writeOutput("");
-  writeOutput(`${sandboxName}: exited — verify '${toolKey}' authentication manually.`);
-}
-
-interface AuthOptions {
-  modelName: string;
-  toolName: string | undefined;
-  force: boolean;
-}
-
-function parseAuthArgs(argv: string[]): AuthOptions {
-  const positionals: string[] = [];
-  let force = false;
-  for (const argument of argv) {
-    if (argument === "--force") {
-      force = true;
-      continue;
-    }
-    if (argument.startsWith("-")) {
-      throw new Error(`crew sandbox auth: unknown option '${argument}'`);
-    }
-    positionals.push(argument);
-  }
-  const [modelName, toolName, ...rest] = positionals;
-  if (modelName === undefined || rest.length > 0) {
-    throw new Error("Usage: crew sandbox auth [--force] <model> [<tool>]");
-  }
-  return { modelName, toolName, force };
 }
 
 interface RecipeEntry {
@@ -168,11 +115,20 @@ function availableRecipes(config: ResolvedConfig): RecipeEntry[] {
 }
 
 function shouldShowInPicker(entry: RecipeEntry, currentAgent: string): boolean {
-  // Tools (default) are always shown; agent recipes only show when
-  // they match the current sandbox's agent. So inside the codex
-  // sandbox you see codex + every tool, not claude/cursor.
+  // Tools (the default) appear in every sandbox. Agent recipes only
+  // appear when they match the current sandbox's agent, so opening
+  // 'crew sandbox auth codex' doesn't list Claude or Cursor.
   const kind = entry.recipe.kind ?? "tool";
   return kind === "tool" || entry.key === currentAgent;
+}
+
+export async function runAuth(config: ResolvedConfig, argv: string[]): Promise<void> {
+  const modelName = requireOnePositional(argv, "Usage: crew sandbox auth <model>");
+  const model = resolveModel(config, modelName);
+  writeOutput(`${model.sandboxName}: ensuring sandbox is up...`);
+  await ensureOne(config, model);
+  writeOutput("");
+  await runAuthInteractive(config, model, modelName);
 }
 
 async function runAuthInteractive(
@@ -214,41 +170,11 @@ async function runAuthInteractive(
     writeOutput("");
     writeOutput(`── ${recipe.displayName} ──`);
     // oxlint-disable-next-line no-await-in-loop -- each login is interactive; running them sequentially keeps the prompts coherent
-    await runAuthWithRecipe({
+    await loginAndVerify({
       sandboxName: model.sandboxName,
       toolKey: key,
       recipe,
-      // Picking an item in the checkbox is the engineer's explicit
-      // consent to auth it now, regardless of prior state.
-      force: true,
-      retryHint: `re-run 'crew sandbox auth ${modelName} ${key}' to retry.`,
+      modelName,
     });
   }
-}
-
-export async function runAuth(config: ResolvedConfig, argv: string[]): Promise<void> {
-  const { modelName, toolName, force } = parseAuthArgs(argv);
-  const model = resolveModel(config, modelName);
-  writeOutput(`${model.sandboxName}: ensuring sandbox is up...`);
-  await ensureOne(config, model);
-
-  if (toolName === undefined) {
-    writeOutput("");
-    await runAuthInteractive(config, model, modelName);
-    return;
-  }
-
-  const recipe = resolveRecipe(config, toolName);
-  writeOutput("");
-  if (recipe === undefined) {
-    await runAuthManual(model.sandboxName, toolName);
-    return;
-  }
-  await runAuthWithRecipe({
-    sandboxName: model.sandboxName,
-    toolKey: toolName,
-    recipe,
-    force,
-    retryHint: `re-run 'crew sandbox auth ${modelName} ${toolName}' to retry.`,
-  });
 }
