@@ -30,7 +30,9 @@ const AGENT_AUTH_RECIPES: Record<string, AgentAuthRecipe> = {
   },
   codex: {
     displayName: "Codex",
-    loginArgs: ["login"],
+    // `--device-auth` keeps the OAuth flow headless: codex prints a URL
+    // and a code instead of trying to open a browser inside the sandbox.
+    loginArgs: ["login", "--device-auth"],
     statusArgs: ["login", "status"],
     authenticatedPattern: /Logged in/i,
   },
