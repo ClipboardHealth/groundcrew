@@ -24,6 +24,7 @@ function makeConfig(stateRoot: string): ResolvedConfig {
         },
       ],
     },
+    sources: [],
     git: { remote: "origin", defaultBranch: "main" },
     workspace: {
       projectDir: "/work",

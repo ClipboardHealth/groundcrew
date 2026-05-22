@@ -70,7 +70,8 @@
     "@clipboard-health/clearance": "1.0.8",
     "@linear/sdk": "84.0.0",
     "cosmiconfig": "9.0.1",
-    "tslib": "2.8.1"
+    "tslib": "2.8.1",
+    "zod": "4.4.3"
   },
   "devDependencies": {
     "@clipboard-health/ai-rules": "2.18.4",

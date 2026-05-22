@@ -11,6 +11,8 @@ import {
   createBoardSource,
   RepositoryResolutionError,
 } from "../lib/boardSource.ts";
+import { type Board, createBoard } from "../lib/board.ts";
+import { buildSources } from "../lib/buildSources.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { getUsageByModel, type UsageByModel } from "../lib/usage.ts";
 import { errorMessage, getLinearClient, log, sleep } from "../lib/util.ts";
@@ -88,6 +90,14 @@ export async function orchestrate(options: OrchestratorOptions): Promise<void> {
 
   const boardSource: BoardSource = createBoardSource({ config, client });
   await boardSource.verify();
+
+  // Verify any pluggable sources declared in config.sources (shell adapters,
+  // future built-in adapters) at startup. The Linear path still runs through
+  // boardSource.fetch in the main loop; shell-source dispatch is a follow-up.
+  // An empty config.sources resolves to an empty Board and verify() is a no-op.
+  const extraSources = await buildSources(config.sources, { globalConfig: config });
+  const board: Board = createBoard(extraSources);
+  await board.verify();
 
   const cleaner: Cleaner = createCleaner({ config });
   const dispatcher: Dispatcher = createDispatcher({ config, client });

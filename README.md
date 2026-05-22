@@ -173,6 +173,53 @@ Three keys are required; everything else has a default.
 
 Agent selection uses Linear labels: `agent-claude`, `agent-codex`, `agent-<name>`. `crew run` without `--ticket` only fetches tickets carrying an `agent-*` label — the GraphQL query filters server-side, so unlabeled tickets are never returned by Linear and do not appear on the board. Use `crew run --ticket <TICKET>` to provision an unlabeled ticket on demand (falls back to `models.default`). `agent-any` routes to the model with the most available session capacity. Todo tickets blocked by non-terminal blockers are skipped until their blockers reach a terminal status.
 
+### Pluggable ticket sources
+
+`sources` declares extra ticket-system adapters. The current release verifies configured extra sources during `crew run` startup; the dispatch loop still reads Linear through `linear.projects` until the consumer refactor lands. This lets you validate shell/Jira/local-plan integrations without changing existing Linear behavior.
+
+The built-in `shell` adapter runs command templates and reads JSON from stdout:
+
+```ts
+export default {
+  // ...
+  sources: [
+    {
+      kind: "shell",
+      name: "jira",
+      commands: {
+        verify: "jira me",
+        fetch: "~/.config/groundcrew/jira-fetch.sh",
+        resolveOne: "~/.config/groundcrew/jira-resolve.sh ${id}",
+        markInProgress: "jira issue move ${id} 'In Progress'",
+      },
+      timeouts: { fetch: 60_000 },
+    },
+  ],
+};
+```
+
+`commands.fetch` must print a JSON array of issues. `commands.resolveOne`, when set, must print one issue, print nothing for "not found", or exit `3` for "not found". `commands.markInProgress`, when set, receives the issue's `sourceRef` as JSON on stdin. `${id}`, `${canonicalId}`, and `${name}` placeholders are shell-quoted before substitution.
+
+```json
+[
+  {
+    "id": "JIRA-123",
+    "title": "Add retry logic",
+    "description": "Ticket body",
+    "status": "todo",
+    "repository": "your-org/your-repo",
+    "model": "claude",
+    "assignee": "Alice",
+    "updatedAt": "2026-05-22T15:00:00Z",
+    "blockers": [{ "id": "JIRA-122", "title": "Schema migration", "status": "done" }],
+    "hasMoreBlockers": false,
+    "sourceRef": { "nativeId": "10042" }
+  }
+]
+```
+
+Allowed `status` values are `todo`, `in-progress`, `in-review`, `done`, and `other`. Use `null` for `repository` or `model` when a ticket should not be groundcrew-eligible. `hasMoreBlockers` is optional and defaults to `false`; `sourceRef` is opaque data that groundcrew passes back to your writeback command.
+
 ### Prompt customization
 
 Groundcrew ships one model-agnostic unattended prompt by default. It tells the agent to make reasonable assumptions, follow repository instructions, run documented verification, review its diff, open a PR when GitHub/`gh` is available, and include a workspace continuation hint when known.
@@ -203,6 +250,7 @@ This keeps package defaults portable while letting your private config reference
 | `linear.projects[].statuses.inProgress` | `"In Progress"`     | Status set after a workspace is provisioned; counts toward the shared `maximumInProgress`.                                                                                                                                                                                                                                                                              |
 | `linear.projects[].statuses.done`       | `"Done"`            | Status that triggers worktree cleanup for this project.                                                                                                                                                                                                                                                                                                                 |
 | `linear.projects[].statuses.terminal`   | `["Done"]`          | Additional status names treated as terminal for cleanup and blocker checks. The project's `done` status is always included.                                                                                                                                                                                                                                             |
+| `sources`                               | `[]`                | Additional pluggable ticket sources. Extra sources are verified at startup; Linear remains the dispatch read path until the consumer refactor. Built-in kinds: `shell`, `linear`.                                                                                                                                                                                       |
 | `git.remote`                            | `"origin"`          | Remote used for `fetch` and as the worktree base ref.                                                                                                                                                                                                                                                                                                                   |
 | `git.defaultBranch`                     | `"main"`            | Branch fetched from `git.remote` and used as the worktree base.                                                                                                                                                                                                                                                                                                         |
 | `workspace.projectDir`                  | **required**        | Parent dir for cloned repos and sibling ticket worktrees.                                                                                                                                                                                                                                                                                                               |

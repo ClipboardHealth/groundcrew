@@ -1623,6 +1623,130 @@ export default config;\n`,
     await expect(loadConfig()).rejects.toThrow(/your-project-name-0123456789ab/);
   });
 
+  it("defaults sources to an empty array when the field is omitted", async () => {
+    const path = writeConfigFile(
+      temporary,
+      configSource({
+        linear: { ...VALID_LINEAR },
+        workspace: VALID_WORKSPACE(temporary),
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+
+    expect(actual.sources).toStrictEqual([]);
+  });
+
+  it("preserves a valid sources array through resolution", async () => {
+    const path = writeConfigFile(
+      temporary,
+      configSource({
+        linear: { ...VALID_LINEAR },
+        sources: [
+          // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- minimal config for the structural-validation test
+          {
+            kind: "shell",
+            name: "jira",
+            commands: { fetch: "echo '[]'" },
+          } as Config["sources"] extends (infer T)[] ? T : never,
+        ],
+        workspace: VALID_WORKSPACE(temporary),
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+
+    expect(actual.sources).toHaveLength(1);
+    expect(actual.sources[0]?.kind).toBe("shell");
+  });
+
+  it("rejects sources when it isn't an array", async () => {
+    const path = join(temporary, "bad-sources.ts");
+    writeFileSync(
+      path,
+      `export default { linear: ${JSON.stringify(VALID_LINEAR)}, sources: "nope", workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))} };\n`,
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(/sources must be an array/);
+  });
+
+  it("rejects a source entry that isn't an object", async () => {
+    const path = join(temporary, "bad-source-entry.ts");
+    writeFileSync(
+      path,
+      `export default { linear: ${JSON.stringify(VALID_LINEAR)}, sources: ["not-an-object"], workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))} };\n`,
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(/sources\[0\] must be an object/);
+  });
+
+  it("rejects a source entry missing a string kind field", async () => {
+    const path = join(temporary, "no-kind.ts");
+    writeFileSync(
+      path,
+      `export default { linear: ${JSON.stringify(VALID_LINEAR)}, sources: [{ name: "x" }], workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))} };\n`,
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(/sources\[0\]\.kind/);
+  });
+
+  it("rejects duplicate source names", async () => {
+    const path = join(temporary, "dup-names.ts");
+    writeFileSync(
+      path,
+      `export default { linear: ${JSON.stringify(VALID_LINEAR)}, sources: [{ kind: "shell", name: "x", commands: { fetch: "echo []" } }, { kind: "shell", name: "x", commands: { fetch: "echo []" } }], workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))} };\n`,
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(/sources\[1\] would produce a source named "x"/);
+  });
+
+  it("rejects two unnamed sources of the same kind that would both default to the same name", async () => {
+    // Two `{ kind: "linear" }` entries with no `name` field both default to
+    // name="linear" at adapter-create time; without dedup on the effective
+    // name, createBoard would catch this late. Config-load catches it now.
+    const path = join(temporary, "dup-default-name.ts");
+    writeFileSync(
+      path,
+      `export default { linear: ${JSON.stringify(VALID_LINEAR)}, sources: [{ kind: "linear" }, { kind: "linear" }], workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))} };\n`,
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(
+      /sources\[1\] would produce a source named "linear".*default `kind`/,
+    );
+  });
+
+  it("rejects a source entry where name is set but not a string", async () => {
+    const path = join(temporary, "non-string-name.ts");
+    writeFileSync(
+      path,
+      `export default { linear: ${JSON.stringify(VALID_LINEAR)}, sources: [{ kind: "shell", name: 123 }], workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))} };\n`,
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(/sources\[0\]\.name/);
+  });
+
   it("fails with a discovery error when no config exists anywhere", async () => {
     // No env var, no project config (cwd is the empty temp dir), no XDG file.
     deleteEnvironmentVariable("GROUNDCREW_CONFIG");

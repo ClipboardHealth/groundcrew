@@ -1,3 +1,7 @@
+import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import type { LinearClient } from "@linear/sdk";
 
 import type * as configModule from "../lib/config.ts";
@@ -94,6 +98,7 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
       ],
       ...overrides.linear,
     },
+    sources: overrides.sources ?? [],
     git: { remote: "origin", defaultBranch: "main", ...overrides.git },
     workspace: {
       projectDir: "/work",
@@ -1750,5 +1755,38 @@ describe(orchestrate, () => {
     await expect(promise).resolves.toBeUndefined();
     exitSpy.mockRestore();
     vi.useRealTimers();
+  });
+
+  it("verifies pluggable sources at startup (shell adapter verify runs)", async () => {
+    // Real subprocess: write a small bash script and point a shell source at
+    // it. The script touches a marker file to confirm verify() invoked it;
+    // failure-path tests live in invoke.test.ts and factory.test.ts.
+    const dir = mkdtempSync(join(tmpdir(), "orchestrate-shell-verify-"));
+    try {
+      const verifyMarker = join(dir, "verify-ran");
+      const verifyScript = join(dir, "verify.sh");
+      writeFileSync(verifyScript, `#!/usr/bin/env bash\ntouch "${verifyMarker}"\n`);
+      chmodSync(verifyScript, 0o755);
+
+      loadConfigMock.mockResolvedValue(
+        makeConfig({
+          sources: [
+            {
+              kind: "shell",
+              name: "test-source",
+              commands: { verify: verifyScript, fetch: "echo '[]'" },
+            },
+          ],
+        }),
+      );
+      const client = makeClient({ pages: [[]] });
+      mockLinearClient(client);
+
+      await orchestrate({ watch: false, dryRun: false });
+
+      expect(existsSync(verifyMarker)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

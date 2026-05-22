@@ -14,6 +14,7 @@ import {
   type ResolvedProjectConfig,
   unionTerminalStatuses,
 } from "./config.ts";
+import { RepositoryResolutionError } from "./ticketSource.ts";
 import { log } from "./util.ts";
 
 const AGENT_LABEL_PREFIX = "agent-";
@@ -86,15 +87,11 @@ export interface BoardState {
   parentSkips: ParentSkip[];
 }
 
-export class RepositoryResolutionError extends Error {
-  public constructor(arguments_: { ticket: string; repositories: readonly string[] }) {
-    const { ticket, repositories } = arguments_;
-    super(
-      `No known repository found in ticket ${ticket} description. Add one of workspace.knownRepositories: ${repositories.join(", ")}`,
-    );
-    this.name = "RepositoryResolutionError";
-  }
-}
+// Canonical RepositoryResolutionError lives in ./ticketSource.ts (imported at
+// the top of this file). Re-exported here so existing consumers of
+// boardSource.ts keep compiling until a follow-up PR completes the consumer
+// refactor and deletes this file.
+export { RepositoryResolutionError };
 
 export class UnknownProjectError extends Error {
   public readonly ticket: string;

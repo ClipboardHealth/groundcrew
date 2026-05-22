@@ -14,6 +14,7 @@ export type {
   ProjectConfig,
   ResolvedConfig,
   ResolvedProjectConfig,
+  SourceConfig,
 } from "./lib/config.ts";
 export { findProjectBySlugId, loadConfig, unionTerminalStatuses } from "./lib/config.ts";
 export {
@@ -42,6 +43,27 @@ export {
   type RepositoryResolution,
 } from "./lib/boardSource.ts";
 export { getUsageByModel, type UsageByModel } from "./lib/usage.ts";
+export { type Board, createBoard } from "./lib/board.ts";
+export { buildSources, buildSourcesWith } from "./lib/buildSources.ts";
+export type { AdapterContext, AdapterDefinition } from "./lib/adapterDefinition.ts";
+export {
+  adapterRegistry,
+  type AdapterLoader,
+  buildRegistry,
+  buildSourceConfigSchema,
+  listAdapterDirectories,
+} from "./lib/adapters/registry.ts";
+export {
+  AmbiguousTicketError,
+  type Blocker as CanonicalBlocker,
+  type BoardState as CanonicalBoardState,
+  type CanonicalStatus,
+  type GroundcrewIssue as CanonicalGroundcrewIssue,
+  type Issue as CanonicalIssue,
+  isGroundcrewIssue as isCanonicalGroundcrewIssue,
+  type TicketSource,
+} from "./lib/ticketSource.ts";
+// RepositoryResolutionError is exported via boardSource.ts above (single canonical location).
 export type { TicketCheck } from "./commands/ticketCheck.ts";
 export {
   ticketDoctor,

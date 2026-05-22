@@ -48,6 +48,7 @@ const config: ResolvedConfig = {
       },
     ],
   },
+  sources: [],
   git: { remote: "origin", defaultBranch: "main" },
   workspace: {
     projectDir: "/work",

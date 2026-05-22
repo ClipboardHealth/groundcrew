@@ -81,6 +81,7 @@ function makeConfig(overrides: {
         },
       ],
     },
+    sources: [],
     git: overrides.git ?? { remote: "origin", defaultBranch: "main" },
     workspace: {
       projectDir: overrides.projectDir,
