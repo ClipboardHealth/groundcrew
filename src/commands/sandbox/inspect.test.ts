@@ -47,15 +47,17 @@ describe("crew sandbox list", () => {
   });
 
   describe("list", () => {
-    it("prints only groundcrew-prefixed sandboxes from sbx ls", async () => {
+    it("prints groundcrew-owned sandboxes with the prefix stripped, hiding unrelated ones", async () => {
       mockSbxLs(runCommandMock, ["groundcrew-claude", "groundcrew-codex", "other-sandbox"]);
 
       await sandboxCli(["list"]);
 
-      const output = consoleLog.output();
-      expect(output).toContain("groundcrew-claude");
-      expect(output).toContain("groundcrew-codex");
-      expect(output).not.toContain("other-sandbox");
+      const lines = consoleLog
+        .output()
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0);
+      expect(lines).toStrictEqual(["claude", "codex"]);
     });
 
     it("prints '(none)' when no groundcrew-owned sandbox is present", async () => {
