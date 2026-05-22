@@ -420,7 +420,7 @@ describe(createBoardSource, () => {
       expect(first?.repository).toBe("ClipboardHealth/security-alerts-agent");
     });
 
-    it("rejects when a bare repo name is ambiguous across multiple orgs", async () => {
+    it("warns and yields a non-eligible issue when a bare repo name is ambiguous across multiple orgs", async () => {
       const { source } = makeBoardSource(
         makeClient({
           pages: [
@@ -439,8 +439,12 @@ describe(createBoardSource, () => {
           },
         }),
       );
-      await expect(source.fetch()).rejects.toThrow(
-        /No known repository found in ticket TEAM-1 description/,
+      const state = await source.fetch();
+      const [first] = state.issues;
+      expect(first?.repository).toBeUndefined();
+      expect(first?.model).toBeUndefined();
+      expect(consoleLog.output()).toMatch(
+        /TEAM-1 has an agent-\* label but no known repository in its description/,
       );
     });
 
@@ -463,7 +467,10 @@ describe(createBoardSource, () => {
       expect(first?.repository).toBe("api-admin");
     });
 
-    it("rejects when a labeled ticket has no known repo in its description", async () => {
+    it("warns and yields a non-eligible issue when a labeled ticket has no known repo in its description", async () => {
+      // Regression guard: a single broken ticket used to abort the entire
+      // `crew run` loop. Now it's surfaced as a warning and treated as
+      // not-eligible so the rest of the board still ticks.
       const { source } = makeBoardSource(
         makeClient({
           pages: [
@@ -477,12 +484,16 @@ describe(createBoardSource, () => {
         }),
       );
 
-      await expect(source.fetch()).rejects.toThrow(
-        /No known repository found in ticket TEAM-1 description/,
+      const state = await source.fetch();
+      const [first] = state.issues;
+      expect(first?.repository).toBeUndefined();
+      expect(first?.model).toBeUndefined();
+      expect(consoleLog.output()).toMatch(
+        /TEAM-1 has an agent-\* label but no known repository in its description/,
       );
     });
 
-    it("rejects when a labeled ticket has a missing description", async () => {
+    it("warns and yields a non-eligible issue when a labeled ticket has a missing description", async () => {
       const { source } = makeBoardSource(
         makeClient({
           pages: [
@@ -496,9 +507,62 @@ describe(createBoardSource, () => {
         }),
       );
 
-      await expect(source.fetch()).rejects.toThrow(
-        /No known repository found in ticket TEAM-1 description/,
+      const state = await source.fetch();
+      const [first] = state.issues;
+      expect(first?.repository).toBeUndefined();
+      expect(first?.model).toBeUndefined();
+      expect(consoleLog.output()).toMatch(
+        /TEAM-1 has an agent-\* label but no known repository in its description/,
       );
+    });
+
+    it("does not warn or parse a repo for a labeled Done ticket whose description has no known repo", async () => {
+      // The dispatcher never reads `Issue.repository` on non-Todo tickets, so
+      // parsing a Done ticket's description only invites tick-spam warnings if
+      // its description was edited (or knownRepositories changed) after the
+      // ticket was originally dispatched. Cleaner still sees the ticket by id.
+      const { source } = makeBoardSource(
+        makeClient({
+          pages: [
+            [
+              issueNode({
+                description: "nothing parseable here",
+                state: { id: "state-done", name: "Done" },
+                labels: { nodes: [{ name: "agent-claude" }] },
+              }),
+            ],
+          ],
+        }),
+      );
+
+      const state = await source.fetch();
+      const [first] = state.issues;
+      expect(first?.id).toBe("team-1");
+      expect(first?.repository).toBeUndefined();
+      expect(first?.model).toBeUndefined();
+      expect(consoleLog.output()).not.toMatch(/no known repository/);
+    });
+
+    it("does not warn or parse a repo for a labeled In Progress ticket whose description has no known repo", async () => {
+      const { source } = makeBoardSource(
+        makeClient({
+          pages: [
+            [
+              issueNode({
+                description: "nothing parseable here",
+                state: { id: "state-ip", name: "In Progress" },
+                labels: { nodes: [{ name: "agent-claude" }] },
+              }),
+            ],
+          ],
+        }),
+      );
+
+      const state = await source.fetch();
+      const [first] = state.issues;
+      expect(first?.repository).toBeUndefined();
+      expect(first?.model).toBeUndefined();
+      expect(consoleLog.output()).not.toMatch(/no known repository/);
     });
 
     it("does not reject when an unlabeled ticket has no parseable repo", async () => {

@@ -5,12 +5,7 @@
  * orchestrator's user-facing output.
  */
 
-import {
-  type BoardSource,
-  type BoardState,
-  createBoardSource,
-  RepositoryResolutionError,
-} from "../lib/boardSource.ts";
+import { type BoardSource, type BoardState, createBoardSource } from "../lib/boardSource.ts";
 import { type Board, createBoard } from "../lib/board.ts";
 import { buildSources } from "../lib/buildSources.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
@@ -36,9 +31,6 @@ async function withRetry<T>(
       // oxlint-disable-next-line no-await-in-loop -- retry loop sequences attempts deliberately
       return await function_();
     } catch (error) {
-      if (error instanceof RepositoryResolutionError) {
-        throw error;
-      }
       if (attempt === maxRetries) {
         throw error;
       }
@@ -185,9 +177,6 @@ async function runWatchLoop(
       } catch (error) {
         if (error instanceof WatchLoopShutdownError) {
           break;
-        }
-        if (error instanceof RepositoryResolutionError) {
-          throw error;
         }
         const message = errorMessage(error);
         if (message.includes("Signal: SIGINT")) {

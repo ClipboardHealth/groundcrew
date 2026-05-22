@@ -42,9 +42,14 @@ export interface Issue {
   statusId: string;
   assignee: string;
   updatedAt: string;
-  /** `undefined` when the ticket has no `agent-*` label — i.e. not groundcrew's concern. */
+  /**
+   * `undefined` unless the ticket is in Todo with a parseable `agent-*` label
+   * and a known-repo reference in its description — i.e. the dispatcher would
+   * actually pick it up. Resolving on non-Todo statuses would just invite
+   * tick-spam warnings on already-finished work.
+   */
   repository: string | undefined;
-  /** `undefined` when the ticket has no `agent-*` label — i.e. not groundcrew's concern. */
+  /** `undefined` whenever `repository` is — the two are populated together. */
   model: string | undefined;
   teamId: string;
   /** SlugId of the Linear project the issue belongs to — always one of `linear.projects[*].slugId`. */
@@ -339,19 +344,17 @@ async function fetchBoard(client: LinearClient, config: ResolvedConfig): Promise
     after = page.pageInfo.endCursor;
   }
 
-  const repositoryRegex = buildRepositoryRegex(config);
-
   // Only parse `repository` for tickets that opted in via an `agent-*` label.
-  // Without this gate, a single human-owned ticket without a parseable repo
-  // would abort the whole `crew run` before the Todo filter ever runs.
+  // Unlabeled tickets are not groundcrew's concern even when they share a
+  // configured state name with one that is.
   const issues: Issue[] = nodes
     .filter((node) => node.children.nodes.length === 0)
     .filter((node) => issueStatusBelongsToOwnProject(node, config))
-    .map((node) => issueFromNode(node, config, repositoryRegex));
+    .map((node) => issueFromNode(node, config));
 
   const parentSkips: ParentSkip[] = nodes
     .filter((node) => node.children.nodes.length > 0)
-    .filter((node) => isTodoParentForOwnProject(node, config))
+    .filter((node) => isTodoStatusForOwnProject(node, config))
     .map((node) => ({
       id: node.identifier.toLowerCase(),
       title: node.title,
@@ -362,11 +365,15 @@ async function fetchBoard(client: LinearClient, config: ResolvedConfig): Promise
 }
 
 /**
- * Narrows parent tickets to those the dispatcher would otherwise pick up —
- * Todo status under their own project's configured status names. Done /
- * In Progress parents aren't surprising drops, so we don't log them.
+ * Checks whether the node sits in Todo under its own project's configured
+ * status names. Used to narrow parent skips (Done / In Progress parents
+ * aren't surprising drops, so we don't log them) and to gate the repository
+ * parse on the only status the dispatcher acts on — In Progress / Done
+ * tickets never read `Issue.repository` so parsing it for them just creates
+ * tick-spamming warnings when an operator already-finished ticket can't be
+ * re-parsed.
  */
-function isTodoParentForOwnProject(node: IssueNode, config: ResolvedConfig): boolean {
+function isTodoStatusForOwnProject(node: IssueNode, config: ResolvedConfig): boolean {
   const slugId = node.project?.slugId?.toLowerCase();
   /* v8 ignore next 3 @preserve -- GraphQL slugId filter scopes results to configured projects */
   if (slugId === undefined) {
@@ -380,31 +387,45 @@ function isTodoParentForOwnProject(node: IssueNode, config: ResolvedConfig): boo
   return node.state?.name === project.statuses.todo;
 }
 
-function modelForResolution(resolution: ModelResolution): string | undefined {
+function modelForResolution(resolution: Exclude<ModelResolution, { kind: "no-label" }>): string {
   if (resolution.kind === "matched") {
     return resolution.model;
   }
   if (resolution.kind === "disabled-fallback") {
     return resolution.fallbackModel;
   }
-  if (resolution.kind === "agent-any") {
-    return AGENT_ANY_MODEL;
-  }
-  return undefined;
+  return AGENT_ANY_MODEL;
 }
 
-function issueFromNode(node: IssueNode, config: ResolvedConfig, repositoryRegex: RegExp): Issue {
+function issueFromNode(node: IssueNode, config: ResolvedConfig): Issue {
   const modelResolution = resolveModelFor({ labels: node.labels.nodes, config });
   warnIfDisabledFallback(node.identifier, modelResolution, config);
-  const repository =
-    modelResolution.kind === "no-label"
-      ? undefined
-      : parseRepository({
-          description: node.description ?? undefined,
-          config,
-          repositoryRegex,
-          ticket: node.identifier,
-        });
+  let repository: string | undefined;
+  let model: string | undefined;
+  // Only the dispatcher reads `Issue.repository` / `Issue.model`, and only on
+  // tickets in the Todo column it's about to pick up. Resolving them for In
+  // Progress (already running) or Done (cleaner only needs the id) would just
+  // invite tick-spam warnings on already-finished tickets — e.g. when a
+  // description was edited or knownRepositories changed after dispatch. A
+  // ticket sitting in Todo with no parseable repo is still the operator's
+  // bug, so surface it loudly there and treat it as not-eligible so the rest
+  // of the board still ticks instead of the whole watch loop crashing on
+  // one bad ticket.
+  if (modelResolution.kind !== "no-label" && isTodoStatusForOwnProject(node, config)) {
+    const resolution = resolveRepositoryFor({
+      description: node.description ?? undefined,
+      config,
+      ticket: node.identifier,
+    });
+    if (resolution.kind === "ok") {
+      ({ repository } = resolution);
+      model = modelForResolution(modelResolution);
+    } else {
+      log(
+        `WARNING: ${node.identifier} has an ${AGENT_LABEL_PREFIX}* label but no known repository in its description; skipping dispatch. Add one of workspace.knownRepositories to the description, or remove the ${AGENT_LABEL_PREFIX}* label: ${config.workspace.knownRepositories.join(", ")}`,
+      );
+    }
+  }
   // `issueStatusBelongsToOwnProject` drops nodes whose `state` or `project`
   // is missing, so by the time we land here both are defined. The nullish
   // coalescing on those fields is belt-and-suspenders for type narrowing.
@@ -419,7 +440,7 @@ function issueFromNode(node: IssueNode, config: ResolvedConfig, repositoryRegex:
     assignee: node.assignee?.name ?? "Unassigned",
     updatedAt: node.updatedAt,
     repository,
-    model: modelForResolution(modelResolution),
+    model,
     teamId: node.team?.id ?? "",
     /* v8 ignore next @preserve -- post-filter guarantees `project` is defined */
     projectSlugId: node.project?.slugId?.toLowerCase() ?? "",
@@ -827,48 +848,6 @@ export async function fetchResolvedIssue(arguments_: {
     teamId: raw.teamId,
     projectSlugId: project.slugId,
   };
-}
-
-interface ParseRepositoryArguments {
-  description: string | undefined;
-  config: ResolvedConfig;
-  repositoryRegex: RegExp;
-  ticket: string;
-}
-
-function parseRepository(arguments_: ParseRepositoryArguments): string {
-  const { description, config, repositoryRegex, ticket } = arguments_;
-  if (description === undefined || description.length === 0) {
-    throw new RepositoryResolutionError({
-      ticket,
-      repositories: config.workspace.knownRepositories,
-    });
-  }
-  const matched = repositoryRegex.exec(description)?.[1];
-  if (matched === undefined) {
-    throw new RepositoryResolutionError({
-      ticket,
-      repositories: config.workspace.knownRepositories,
-    });
-  }
-  // Resolve the match to a known repo. The regex may capture a bare repo name
-  // (no org prefix) when only that appears in the description; the filter
-  // handles both full "owner/repo" and bare "repo" matches. Reject if
-  // ambiguous (same bare name under multiple orgs).
-  const candidates = config.workspace.knownRepositories.filter(
-    (r) => r === matched || r.endsWith(`/${matched}`),
-  );
-  if (candidates.length !== 1) {
-    throw new RepositoryResolutionError({
-      ticket,
-      repositories: config.workspace.knownRepositories,
-    });
-  }
-  /* v8 ignore next 3 @preserve -- candidates.length===1 guarantees [0] is defined */
-  if (candidates[0] === undefined) {
-    throw new Error("unreachable");
-  }
-  return candidates[0];
 }
 
 /**
