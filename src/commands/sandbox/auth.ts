@@ -2,7 +2,8 @@ import { runCommandAsync } from "../../lib/commandRunner.ts";
 import type { AuthRecipe, ResolvedConfig } from "../../lib/config.ts";
 import { writeOutput } from "../../lib/util.ts";
 import { ensureOne } from "./lifecycle.ts";
-import { resolveModel } from "./model.ts";
+import { resolveModel, type SandboxModel } from "./model.ts";
+import { pickTools, type ToolChoice } from "./picker.ts";
 
 /**
  * Built-in recipes for the bundled agents. Users register additional
@@ -140,28 +141,96 @@ function parseAuthArgs(argv: string[]): AuthOptions {
   return { modelName, toolName, force };
 }
 
+interface RecipeEntry {
+  key: string;
+  recipe: AuthRecipe;
+}
+
+function availableRecipes(config: ResolvedConfig): RecipeEntry[] {
+  const merged: Record<string, AuthRecipe> = {
+    ...BUILTIN_AUTH_RECIPES,
+    ...config.sandbox.authRecipes,
+  };
+  return Object.entries(merged)
+    .map(([key, recipe]) => ({ key, recipe }))
+    .toSorted((a, b) => a.key.localeCompare(b.key));
+}
+
+async function runAuthInteractive(
+  config: ResolvedConfig,
+  model: SandboxModel,
+  modelName: string,
+): Promise<void> {
+  // Built-in recipes ensure availableRecipes is always non-empty, so
+  // we skip an "empty" branch — the picker always has at least the
+  // three shipped agents to choose from.
+  const recipes = availableRecipes(config);
+
+  writeOutput(`${model.sandboxName}: probing authentication status for ${recipes.length} tools...`);
+  const statuses = await Promise.all(
+    recipes.map(async ({ key, recipe }) => ({
+      key,
+      recipe,
+      authenticated: await probeAuthStatus(model.sandboxName, key, recipe),
+    })),
+  );
+  const choices: ToolChoice[] = statuses.map(({ key, recipe, authenticated }) => ({
+    key,
+    label: `${recipe.displayName} (${key})`,
+    authenticated,
+  }));
+
+  writeOutput("");
+  const selectedKeys = await pickTools(choices);
+  if (selectedKeys.length === 0) {
+    writeOutput("Nothing selected. Exiting.");
+    return;
+  }
+  const selectedRecipes = new Map(statuses.map((entry) => [entry.key, entry.recipe]));
+  for (const key of selectedKeys) {
+    const recipe = selectedRecipes.get(key);
+    /* v8 ignore next 3 @preserve - defensive; selectedKeys come from the same map */
+    if (recipe === undefined) {
+      continue;
+    }
+    writeOutput("");
+    writeOutput(`── ${recipe.displayName} ──`);
+    // oxlint-disable-next-line no-await-in-loop -- each login is interactive; running them sequentially keeps the prompts coherent
+    await runAuthWithRecipe({
+      sandboxName: model.sandboxName,
+      toolKey: key,
+      recipe,
+      // Picking an item in the checkbox is the engineer's explicit
+      // consent to auth it now, regardless of prior state.
+      force: true,
+      retryHint: `re-run 'crew sandbox auth ${modelName} ${key}' to retry.`,
+    });
+  }
+}
+
 export async function runAuth(config: ResolvedConfig, argv: string[]): Promise<void> {
   const { modelName, toolName, force } = parseAuthArgs(argv);
   const model = resolveModel(config, modelName);
   writeOutput(`${model.sandboxName}: ensuring sandbox is up...`);
   await ensureOne(config, model);
 
-  const toolKey = toolName ?? model.sandbox.agent;
-  const recipe = resolveRecipe(config, toolKey);
-  writeOutput("");
-  if (recipe === undefined) {
-    await runAuthManual(model.sandboxName, toolKey);
+  if (toolName === undefined) {
+    writeOutput("");
+    await runAuthInteractive(config, model, modelName);
     return;
   }
-  const retryHint =
-    toolName === undefined
-      ? `re-run 'crew sandbox auth ${modelName}' to retry.`
-      : `re-run 'crew sandbox auth ${modelName} ${toolName}' to retry.`;
+
+  const recipe = resolveRecipe(config, toolName);
+  writeOutput("");
+  if (recipe === undefined) {
+    await runAuthManual(model.sandboxName, toolName);
+    return;
+  }
   await runAuthWithRecipe({
     sandboxName: model.sandboxName,
-    toolKey,
+    toolKey: toolName,
     recipe,
     force,
-    retryHint,
+    retryHint: `re-run 'crew sandbox auth ${modelName} ${toolName}' to retry.`,
   });
 }
