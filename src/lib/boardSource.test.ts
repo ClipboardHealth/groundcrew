@@ -420,7 +420,7 @@ describe(createBoardSource, () => {
       expect(first?.repository).toBe("ClipboardHealth/security-alerts-agent");
     });
 
-    it("rejects when a bare repo name is ambiguous across multiple orgs", async () => {
+    it("warns and yields a non-eligible issue when a bare repo name is ambiguous across multiple orgs", async () => {
       const { source } = makeBoardSource(
         makeClient({
           pages: [
@@ -439,8 +439,12 @@ describe(createBoardSource, () => {
           },
         }),
       );
-      await expect(source.fetch()).rejects.toThrow(
-        /No known repository found in ticket TEAM-1 description/,
+      const state = await source.fetch();
+      const [first] = state.issues;
+      expect(first?.repository).toBeUndefined();
+      expect(first?.model).toBeUndefined();
+      expect(consoleLog.output()).toMatch(
+        /TEAM-1 has an agent-\* label but no known repository in its description/,
       );
     });
 
@@ -463,7 +467,10 @@ describe(createBoardSource, () => {
       expect(first?.repository).toBe("api-admin");
     });
 
-    it("rejects when a labeled ticket has no known repo in its description", async () => {
+    it("warns and yields a non-eligible issue when a labeled ticket has no known repo in its description", async () => {
+      // Regression guard: a single broken ticket used to abort the entire
+      // `crew run` loop. Now it's surfaced as a warning and treated as
+      // not-eligible so the rest of the board still ticks.
       const { source } = makeBoardSource(
         makeClient({
           pages: [
@@ -477,12 +484,16 @@ describe(createBoardSource, () => {
         }),
       );
 
-      await expect(source.fetch()).rejects.toThrow(
-        /No known repository found in ticket TEAM-1 description/,
+      const state = await source.fetch();
+      const [first] = state.issues;
+      expect(first?.repository).toBeUndefined();
+      expect(first?.model).toBeUndefined();
+      expect(consoleLog.output()).toMatch(
+        /TEAM-1 has an agent-\* label but no known repository in its description/,
       );
     });
 
-    it("rejects when a labeled ticket has a missing description", async () => {
+    it("warns and yields a non-eligible issue when a labeled ticket has a missing description", async () => {
       const { source } = makeBoardSource(
         makeClient({
           pages: [
@@ -496,8 +507,12 @@ describe(createBoardSource, () => {
         }),
       );
 
-      await expect(source.fetch()).rejects.toThrow(
-        /No known repository found in ticket TEAM-1 description/,
+      const state = await source.fetch();
+      const [first] = state.issues;
+      expect(first?.repository).toBeUndefined();
+      expect(first?.model).toBeUndefined();
+      expect(consoleLog.output()).toMatch(
+        /TEAM-1 has an agent-\* label but no known repository in its description/,
       );
     });
 

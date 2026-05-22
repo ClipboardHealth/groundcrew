@@ -339,15 +339,13 @@ async function fetchBoard(client: LinearClient, config: ResolvedConfig): Promise
     after = page.pageInfo.endCursor;
   }
 
-  const repositoryRegex = buildRepositoryRegex(config);
-
   // Only parse `repository` for tickets that opted in via an `agent-*` label.
-  // Without this gate, a single human-owned ticket without a parseable repo
-  // would abort the whole `crew run` before the Todo filter ever runs.
+  // Unlabeled tickets are not groundcrew's concern even when they share a
+  // configured state name with one that is.
   const issues: Issue[] = nodes
     .filter((node) => node.children.nodes.length === 0)
     .filter((node) => issueStatusBelongsToOwnProject(node, config))
-    .map((node) => issueFromNode(node, config, repositoryRegex));
+    .map((node) => issueFromNode(node, config));
 
   const parentSkips: ParentSkip[] = nodes
     .filter((node) => node.children.nodes.length > 0)
@@ -393,18 +391,31 @@ function modelForResolution(resolution: ModelResolution): string | undefined {
   return undefined;
 }
 
-function issueFromNode(node: IssueNode, config: ResolvedConfig, repositoryRegex: RegExp): Issue {
+function issueFromNode(node: IssueNode, config: ResolvedConfig): Issue {
   const modelResolution = resolveModelFor({ labels: node.labels.nodes, config });
   warnIfDisabledFallback(node.identifier, modelResolution, config);
-  const repository =
-    modelResolution.kind === "no-label"
-      ? undefined
-      : parseRepository({
-          description: node.description ?? undefined,
-          config,
-          repositoryRegex,
-          ticket: node.identifier,
-        });
+  let repository: string | undefined;
+  let model = modelForResolution(modelResolution);
+  if (modelResolution.kind !== "no-label") {
+    const resolution = resolveRepositoryFor({
+      description: node.description ?? undefined,
+      config,
+      ticket: node.identifier,
+    });
+    if (resolution.kind === "ok") {
+      ({ repository } = resolution);
+    } else {
+      // A labeled ticket with no parseable repository is the operator's bug, not
+      // a fatal one — fixing the description (or removing the label) is the
+      // user action. Surface it loudly and treat the ticket as not-eligible so
+      // a single broken ticket doesn't kill the watch loop. Done tickets stay
+      // in the board state for the cleaner to act on their worktrees.
+      log(
+        `WARNING: ${node.identifier} has an ${AGENT_LABEL_PREFIX}* label but no known repository in its description; skipping dispatch. Add one of workspace.knownRepositories to the description, or remove the ${AGENT_LABEL_PREFIX}* label: ${config.workspace.knownRepositories.join(", ")}`,
+      );
+      model = undefined;
+    }
+  }
   // `issueStatusBelongsToOwnProject` drops nodes whose `state` or `project`
   // is missing, so by the time we land here both are defined. The nullish
   // coalescing on those fields is belt-and-suspenders for type narrowing.
@@ -419,7 +430,7 @@ function issueFromNode(node: IssueNode, config: ResolvedConfig, repositoryRegex:
     assignee: node.assignee?.name ?? "Unassigned",
     updatedAt: node.updatedAt,
     repository,
-    model: modelForResolution(modelResolution),
+    model,
     teamId: node.team?.id ?? "",
     /* v8 ignore next @preserve -- post-filter guarantees `project` is defined */
     projectSlugId: node.project?.slugId?.toLowerCase() ?? "",
@@ -827,48 +838,6 @@ export async function fetchResolvedIssue(arguments_: {
     teamId: raw.teamId,
     projectSlugId: project.slugId,
   };
-}
-
-interface ParseRepositoryArguments {
-  description: string | undefined;
-  config: ResolvedConfig;
-  repositoryRegex: RegExp;
-  ticket: string;
-}
-
-function parseRepository(arguments_: ParseRepositoryArguments): string {
-  const { description, config, repositoryRegex, ticket } = arguments_;
-  if (description === undefined || description.length === 0) {
-    throw new RepositoryResolutionError({
-      ticket,
-      repositories: config.workspace.knownRepositories,
-    });
-  }
-  const matched = repositoryRegex.exec(description)?.[1];
-  if (matched === undefined) {
-    throw new RepositoryResolutionError({
-      ticket,
-      repositories: config.workspace.knownRepositories,
-    });
-  }
-  // Resolve the match to a known repo. The regex may capture a bare repo name
-  // (no org prefix) when only that appears in the description; the filter
-  // handles both full "owner/repo" and bare "repo" matches. Reject if
-  // ambiguous (same bare name under multiple orgs).
-  const candidates = config.workspace.knownRepositories.filter(
-    (r) => r === matched || r.endsWith(`/${matched}`),
-  );
-  if (candidates.length !== 1) {
-    throw new RepositoryResolutionError({
-      ticket,
-      repositories: config.workspace.knownRepositories,
-    });
-  }
-  /* v8 ignore next 3 @preserve -- candidates.length===1 guarantees [0] is defined */
-  if (candidates[0] === undefined) {
-    throw new Error("unreachable");
-  }
-  return candidates[0];
 }
 
 /**

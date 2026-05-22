@@ -430,7 +430,7 @@ describe(orchestrate, () => {
     );
   });
 
-  it("fails fast when the description has no known repo", async () => {
+  it("warns and skips dispatch when the description has no known repo", async () => {
     const client = makeClient({
       pages: [
         [
@@ -445,14 +445,12 @@ describe(orchestrate, () => {
     });
     mockLinearClient(client);
 
-    await expect(orchestrate({ watch: false, dryRun: false })).rejects.toThrow(
-      /No known repository found in ticket TEAM-3 description/,
-    );
+    await orchestrate({ watch: false, dryRun: false });
 
     expect(setupMock).not.toHaveBeenCalled();
-    expect(
-      client.client.rawRequest.mock.calls.filter(([query]) => query.includes("BoardIssues")),
-    ).toHaveLength(1);
+    expect(consoleLog.output()).toMatch(
+      /TEAM-3 has an agent-\* label but no known repository in its description/,
+    );
   });
 
   it("resolves the model from an agent-* label", async () => {
@@ -1456,7 +1454,10 @@ describe(orchestrate, () => {
     expect(out).toContain("Error: network down");
   });
 
-  it("fails fast on repository resolution errors in watch mode", async () => {
+  it("keeps polling when a labeled ticket has no parseable repository in watch mode", async () => {
+    // A single broken ticket previously aborted the entire watch loop. Now
+    // the orchestrator warns and continues to the next tick so the rest of
+    // the board still gets serviced.
     const client = makeClient({
       pages: [
         [
@@ -1470,13 +1471,14 @@ describe(orchestrate, () => {
       ],
     });
     mockLinearClient(client);
-    sleepMock.mockRejectedValue(new Error("__stop__"));
+    stopAfterMoreThanSleepCalls(1);
 
-    await expect(orchestrate({ watch: true, dryRun: false })).rejects.toThrow(
-      /No known repository found in ticket TEAM-3 description/,
+    await expect(orchestrate({ watch: true, dryRun: false })).rejects.toThrow("__stop__");
+
+    expect(setupMock).not.toHaveBeenCalled();
+    expect(consoleLog.output()).toMatch(
+      /TEAM-3 has an agent-\* label but no known repository in its description/,
     );
-
-    expect(sleepMock).not.toHaveBeenCalled();
   });
 
   it("ignores models whose session window is null", async () => {
