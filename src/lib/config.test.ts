@@ -426,6 +426,88 @@ describe("loadConfig", () => {
     );
   });
 
+  it("merges preLaunch through overlay without dropping default cmd/color", async () => {
+    const path = writeConfigFile(
+      temporary,
+      [
+        "export const config = {",
+        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        '  models: { definitions: { claude: { preLaunch: "export FOO=bar" } } },',
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    const config = await loadConfig();
+    expect(config.models.definitions["claude"]?.preLaunch).toBe("export FOO=bar");
+    expect(config.models.definitions["claude"]?.cmd).toContain("claude");
+    expect(config.models.definitions["claude"]?.color).toBe("#C15F3C");
+  });
+
+  it("rejects an empty preLaunch string", async () => {
+    const path = writeConfigFile(
+      temporary,
+      [
+        "export const config = {",
+        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        '  models: { definitions: { claude: { preLaunch: "" } } },',
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(
+      /models\.definitions\.claude\.preLaunch must be a non-empty string/,
+    );
+  });
+
+  it("rejects a whitespace-only preLaunch string", async () => {
+    const path = writeConfigFile(
+      temporary,
+      [
+        "export const config = {",
+        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        '  models: { definitions: { claude: { preLaunch: "   \\n\\t " } } },',
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(
+      /models\.definitions\.claude\.preLaunch must contain non-whitespace characters/,
+    );
+  });
+
+  it("allows preLaunch on a brand-new model when cmd and color are supplied", async () => {
+    const path = writeConfigFile(
+      temporary,
+      [
+        "export const config = {",
+        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        "  models: {",
+        '    definitions: { cursor: { cmd: "cursor-agent", color: "#929292", preLaunch: "export FOO=bar" } },',
+        "  },",
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    const config = await loadConfig();
+    expect(config.models.definitions["cursor"]?.preLaunch).toBe("export FOO=bar");
+  });
+
   it("trims surrounding whitespace from a per-model sandbox agent", async () => {
     const path = writeConfigFile(
       temporary,

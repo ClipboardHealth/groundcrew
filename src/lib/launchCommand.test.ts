@@ -203,6 +203,104 @@ describe(buildLaunchCommand, () => {
     });
   });
 
+  describe("preLaunch", () => {
+    const baseline = buildLaunchCommand(arguments_());
+
+    it("omits preLaunch when undefined (byte-identical to baseline)", () => {
+      const out = buildLaunchCommand(arguments_());
+
+      expect(out).toBe(baseline);
+    });
+
+    it("splices preLaunch after secrets unset and before reading the prompt", () => {
+      const out = buildLaunchCommand(
+        arguments_({
+          definition: {
+            cmd: "claude",
+            color: "#fff",
+            preLaunch: "export FOO=bar",
+          },
+          secretsFile: "/tmp/prompt-team-1/secrets.env",
+        }),
+      );
+
+      const unsetIndex = out.indexOf("unset NPM_TOKEN BUF_TOKEN");
+      const preLaunchIndex = out.indexOf("export FOO=bar");
+      const readPromptIndex = out.indexOf("_p=$(cat '/tmp/prompt-team-1/prompt.txt')");
+      const execIndex = out.indexOf("safehouse-clearance");
+      expect(unsetIndex).toBeGreaterThan(-1);
+      expect(preLaunchIndex).toBeGreaterThan(unsetIndex);
+      expect(readPromptIndex).toBeGreaterThan(preLaunchIndex);
+      expect(execIndex).toBeGreaterThan(readPromptIndex);
+    });
+
+    it("runs preLaunch without double-wrapping when cmd already starts with safehouse", () => {
+      const out = buildLaunchCommand(
+        arguments_({
+          definition: {
+            cmd: "safehouse claude",
+            color: "#fff",
+            preLaunch: "export FOO=bar",
+          },
+        }),
+      );
+
+      expect(out).toContain("export FOO=bar");
+      expect(out).toMatch(/exec safehouse claude "\$_p"$/);
+      expect(out).not.toContain("safehouse safehouse");
+    });
+
+    it("runs preLaunch with runner='none' without the safehouse wrapper", () => {
+      const out = buildLaunchCommand(
+        arguments_({
+          runner: "none",
+          definition: {
+            cmd: "claude",
+            color: "#fff",
+            preLaunch: "export FOO=bar",
+          },
+        }),
+      );
+
+      expect(out).toContain("export FOO=bar");
+      expect(out).not.toContain("safehouse-clearance");
+      expect(out).toMatch(/exec claude "\$_p"$/);
+    });
+
+    it("substitutes {{worktree}} inside preLaunch", () => {
+      const out = buildLaunchCommand(
+        arguments_({
+          worktreeDir: "/work/repo-a-team-1",
+          definition: {
+            cmd: "claude",
+            color: "#fff",
+            preLaunch: "cd {{worktree}} && echo ok",
+          },
+        }),
+      );
+
+      expect(out).toContain("cd '/work/repo-a-team-1' && echo ok");
+      expect(out).not.toContain("{{worktree}}");
+    });
+
+    it("throws when preLaunch is set with runner='sdx'", () => {
+      expect(() =>
+        buildLaunchCommand(
+          arguments_({
+            runner: "sdx",
+            sandboxName: "groundcrew-repo-a-claude",
+            definition: {
+              cmd: "claude",
+              color: "#fff",
+              sandbox: { agent: "claude" },
+              preLaunch: "export FOO=bar",
+            },
+          }),
+        ),
+      ).toThrow(/preLaunch is not yet supported for runner='sdx'/);
+    });
+  });
+
   describe("runner='sdx'", () => {
     function sdxArguments(
       overrides: Partial<Parameters<typeof buildLaunchCommand>[0]> = {},

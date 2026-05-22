@@ -51,6 +51,10 @@ function renderAgentCommand(arguments_: {
     .replaceAll("{{sandbox}}", shellSingleQuote(arguments_.sandboxName));
 }
 
+function renderPreLaunch(preLaunch: string, worktreeDir: string): string {
+  return preLaunch.replaceAll("{{worktree}}", shellSingleQuote(worktreeDir));
+}
+
 function setupWithStatusReporting(setupCommand: string): string {
   return [
     setupCommand,
@@ -109,6 +113,11 @@ interface LaunchCommandArguments {
  */
 export function buildLaunchCommand(arguments_: LaunchCommandArguments): string {
   if (arguments_.runner === "sdx") {
+    if (arguments_.definition.preLaunch !== undefined) {
+      throw new Error(
+        "preLaunch is not yet supported for runner='sdx'. Set local.runner to 'safehouse' or 'none', or open an issue for sdx support.",
+      );
+    }
     return buildSdxLaunchCommand(arguments_);
   }
   if (shouldWrapWithSafehouse(arguments_)) {
@@ -150,6 +159,9 @@ function buildUnwrappedHostLaunchCommand(arguments_: LaunchCommandArguments): st
   lines.push(setupWithStatusReporting(SETUP_COMMAND));
   if (arguments_.secretsFile !== undefined) {
     lines.push(unsetSecretsLine());
+  }
+  if (arguments_.definition.preLaunch !== undefined) {
+    lines.push(renderPreLaunch(arguments_.definition.preLaunch, arguments_.worktreeDir));
   }
   lines.push(
     `_p=$(cat ${shellSingleQuote(arguments_.promptFile)})`,

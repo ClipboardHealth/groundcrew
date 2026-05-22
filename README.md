@@ -157,6 +157,7 @@ Resolution order: `GROUNDCREW_CONFIG` → cosmiconfig project-walk from cwd (any
 | `models.definitions.<name>.color`       | —                   | Color for the workspace status pill (cmux only; tmux silently drops it).                                                                                                                                                                                                                                                                                                |
 | `models.definitions.<name>.usage`       | optional            | If set, codexbar usage is fetched for this model and gated by `sessionLimitPercentage`. Falls back to default when unset, with gating enabled for known models. When `usage.codexbar.source` is omitted, groundcrew uses `oauth` for Codex/Claude on macOS, `auto` for other macOS providers, and `cli` elsewhere. Set to `{ disabled: true }` to disable usage gating. |
 | `models.definitions.<name>.sandbox`     | optional            | Docker Sandboxes binding for the model. Required at launch when `local.runner` resolves to `sdx`. Fields: `agent` (required sbx agent name) and `setupCommand` (override for the inside-sandbox setup script). Groundcrew assumes the `groundcrew-<agent>` sandbox already exists.                                                                                      |
+| `models.definitions.<name>.preLaunch`   | optional            | Host-only shell snippet run **before** the agent exec and **outside** Safehouse/sdx. Exports survive into the launch shell; under the default `safehouse` runner they're only forwarded to the agent when `cmd` lists them via `safehouse --env-pass=NAMES`. `{{worktree}}` is substituted. A non-zero exit aborts launch. Not supported when `local.runner` resolves to `sdx` (v1). |
 | `models.definitions.<name>.disabled`    | optional            | When set to exactly `true`, drops the named shipped default (`claude` or `codex`). Doctor skips probing it; `agent-<name>` labels fall back to `models.default` with a warning.                                                                                                                                                                                         |
 | `prompts.initial`                       | unattended template | First message sent to the agent. Placeholders: `{{ticket}}`, `{{worktree}}`, `{{title}}`, `{{description}}`. Override this from `crew.config.ts` for team-specific statuses, tools, plugins, or review loops.                                                                                                                                                           |
 | `workspaceKind`                         | `"auto"`            | Terminal session manager. `"auto"` picks `cmux` when on PATH, else `tmux`. Set to `"cmux"` or `"tmux"` to fail loudly when the chosen backend is missing.                                                                                                                                                                                                               |
@@ -164,6 +165,26 @@ Resolution order: `GROUNDCREW_CONFIG` → cosmiconfig project-walk from cwd (any
 | `logging.file`                          | XDG state path      | Append-mode log file. `log()` / `logEvent()` tee here in addition to stdout. Defaults to `${XDG_STATE_HOME:-$HOME/.local/state}/groundcrew/groundcrew.log`.                                                                                                                                                                                                             |
 
 </details>
+
+### Per-session credentials (`preLaunch`)
+
+Build secrets shuttle build-time values *into* setup. `preLaunch` does the opposite for the *agent* phase: it runs a host-shell snippet **outside** Safehouse/sdx, after build-secret cleanup and before the prompt is read, so exports are inherited by the wrapped `cmd`. Use this when the agent needs a short-lived credential that has to be minted from something the sandbox can't reach (e.g. an engineer CLI session in Keychain), and you don't want any of that source material in the agent's process.
+
+```typescript
+models: {
+  definitions: {
+    claude: {
+      preLaunch: [
+        "SESSION_TOKEN=$(your-mint-command)",
+        "export SESSION_TOKEN",
+      ].join("; "),
+      cmd: "your-agent-cli",
+    },
+  },
+},
+```
+
+`{{worktree}}` is substituted the same way as in `cmd`. A non-zero exit aborts launch — intentional for credential minting so the agent never starts without its bootstrap env. Not supported when `local.runner` resolves to `sdx` in v1 (sdx does not forward arbitrary host env into the sandbox); validated early in `setupWorkspace`.
 
 ## Runners
 

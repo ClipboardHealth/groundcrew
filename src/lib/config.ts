@@ -92,6 +92,14 @@ export interface ModelDefinition {
    * Groundcrew adds the Safehouse wrapper.
    */
   cmd: string;
+  /**
+   * Optional shell snippet run in the launch shell **before** the agent is
+   * exec'd and **outside** Safehouse/sdx. Use to mint short-lived credentials
+   * (e.g. `export INFISICAL_TOKEN=...`) that the wrapped `cmd` inherits via
+   * the process environment. `{{worktree}}` is replaced before launch.
+   * Not supported for `local.runner` `sdx` in v1.
+   */
+  preLaunch?: string;
   color: string;
   usage?: {
     codexbar: { provider: string; source?: string };
@@ -454,7 +462,7 @@ function failIfLegacyModelKeys(
         `models.definitions.${name}.disabled must be exactly \`true\` when set (got ${JSON.stringify(override["disabled"])})`,
       );
     }
-    const conflicting = (["cmd", "color", "usage", "sandbox"] as const).filter((key) =>
+    const conflicting = (["cmd", "color", "usage", "sandbox", "preLaunch"] as const).filter((key) =>
       Object.hasOwn(override, key),
     );
     if (conflicting.length > 0) {
@@ -535,7 +543,10 @@ function mergeDefinitions(
     if (override.sandbox !== undefined) {
       candidate.sandbox = normalizeSandbox(override.sandbox, `models.definitions.${name}.sandbox`);
     }
-    const { cmd, color, usage, sandbox } = candidate;
+    if (override.preLaunch !== undefined) {
+      candidate.preLaunch = override.preLaunch;
+    }
+    const { cmd, color, usage, sandbox, preLaunch } = candidate;
     if (typeof cmd !== "string" || cmd.length === 0) {
       fail(`models.definitions.${name}.cmd must be a non-empty string`);
     }
@@ -548,6 +559,9 @@ function mergeDefinitions(
     }
     if (sandbox !== undefined) {
       definition.sandbox = sandbox;
+    }
+    if (preLaunch !== undefined) {
+      definition.preLaunch = preLaunch;
     }
     merged[name] = definition;
   }
@@ -754,6 +768,14 @@ function validate(config: ResolvedConfig): void {
     }
     if (definition.sandbox !== undefined) {
       requireString(definition.sandbox.agent, `models.definitions.${name}.sandbox.agent`);
+    }
+    if (definition.preLaunch !== undefined) {
+      requireString(definition.preLaunch, `models.definitions.${name}.preLaunch`);
+      if (definition.preLaunch.trim().length === 0) {
+        fail(
+          `models.definitions.${name}.preLaunch must contain non-whitespace characters`,
+        );
+      }
     }
   }
 
