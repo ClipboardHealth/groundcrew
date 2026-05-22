@@ -1,0 +1,62 @@
+import {
+  AmbiguousTicketError,
+  isGroundcrewIssue,
+  type Issue,
+  RepositoryResolutionError,
+} from "./ticketSource.ts";
+
+function fakeIssue(overrides: Partial<Issue> = {}): Issue {
+  return {
+    id: "linear:eng-1",
+    source: "linear",
+    title: "x",
+    description: "",
+    status: "todo",
+    repository: undefined,
+    model: undefined,
+    assignee: "Unassigned",
+    updatedAt: "2026-01-01T00:00:00Z",
+    blockers: [],
+    hasMoreBlockers: false,
+    sourceRef: {},
+    ...overrides,
+  };
+}
+
+describe(isGroundcrewIssue, () => {
+  it("returns true when both model and repository are defined", () => {
+    expect(isGroundcrewIssue(fakeIssue({ model: "claude", repository: "org/repo" }))).toBe(true);
+  });
+  it("returns false when model is undefined", () => {
+    expect(isGroundcrewIssue(fakeIssue({ repository: "org/repo" }))).toBe(false);
+  });
+  it("returns false when repository is undefined", () => {
+    expect(isGroundcrewIssue(fakeIssue({ model: "claude" }))).toBe(false);
+  });
+});
+
+describe(RepositoryResolutionError, () => {
+  it("formats a message listing the known repositories", () => {
+    const error = new RepositoryResolutionError({
+      ticket: "ENG-1",
+      repositories: ["org/repo-a", "org/repo-b"],
+    });
+    expect(error.name).toBe("RepositoryResolutionError");
+    expect(error.message).toContain("ENG-1");
+    expect(error.message).toContain("org/repo-a");
+    expect(error.message).toContain("org/repo-b");
+  });
+});
+
+describe(AmbiguousTicketError, () => {
+  it("formats a message listing the canonical ids that matched", () => {
+    const error = new AmbiguousTicketError({
+      naturalId: "x",
+      matches: ["linear:x", "shell-jira:x"],
+    });
+    expect(error.name).toBe("AmbiguousTicketError");
+    expect(error.message).toContain('"x"');
+    expect(error.message).toContain("linear:x");
+    expect(error.message).toContain("shell-jira:x");
+  });
+});

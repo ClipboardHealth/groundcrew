@@ -22,6 +22,7 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
       ],
       ...overrides.linear,
     },
+    sources: [],
     git: { remote: "origin", defaultBranch: "main", ...overrides.git },
     workspace: {
       projectDir: "/work",

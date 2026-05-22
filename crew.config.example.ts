@@ -40,6 +40,26 @@ export default {
   // Everything below is optional — defaults shown for reference. Uncomment
   // and edit to override.
   //
+  // // Additional pluggable ticket sources beyond the implicit built-in
+  // // Linear adapter (configured via `linear.projects` above). The most
+  // // common use is `kind: "shell"`, which wires any external system via
+  // // command templates that emit/consume JSON. See the shell adapter's
+  // // ShellIssue schema for the JSON contract `fetch` / `resolveOne` must
+  // // emit.
+  // sources: [
+  //   {
+  //     kind: "shell",
+  //     name: "jira",
+  //     commands: {
+  //       verify: "jira me",
+  //       fetch: "~/.config/groundcrew/jira-fetch.sh",
+  //       resolveOne: "~/.config/groundcrew/jira-resolve.sh ${id}",
+  //       markInProgress: "jira issue move ${id} 'In Progress'",
+  //     },
+  //     timeouts: { fetch: 60_000 },
+  //   },
+  // ],
+  //
   // git: { remote: "origin", defaultBranch: "main" },
   //
   // orchestrator: {

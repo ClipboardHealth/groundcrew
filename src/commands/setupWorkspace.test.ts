@@ -195,6 +195,7 @@ function makeConfig(overrides: Partial<ResolvedConfig["models"]> = {}): Resolved
         },
       ],
     },
+    sources: [],
     git: { remote: "origin", defaultBranch: "main" },
     workspace: {
       projectDir: "/work",

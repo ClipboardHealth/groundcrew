@@ -58,6 +58,7 @@ function makeConfig(
         },
       ],
     },
+    sources: [],
     git: { remote: "origin", defaultBranch: "main" },
     workspace: {
       projectDir: "/work",

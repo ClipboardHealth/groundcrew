@@ -5,9 +5,19 @@ import { pathToFileURL } from "node:url";
 
 import { cosmiconfig, type CosmiconfigResult, type Loader } from "cosmiconfig";
 
+import type { LinearAdapterConfig } from "./adapters/linear/schema.ts";
+import type { ShellAdapterConfig } from "./adapters/shell/schema.ts";
 import { log, readEnvironmentVariable, setLogFile } from "./util.ts";
 
 export { BUILD_SECRET_NAMES } from "./buildSecrets.ts";
+
+/**
+ * Discriminated union of all built-in adapter config shapes. Used at
+ * config-load time as the static type for `Config.sources[]` and
+ * `ResolvedConfig.sources[]`. The runtime Zod validation lives in each
+ * adapter's `schema.ts` and runs at `buildSources` time, not here.
+ */
+export type SourceConfig = LinearAdapterConfig | ShellAdapterConfig;
 
 /**
  * Reserved model name. A ticket labeled `agent-any` resolves at runtime
@@ -156,6 +166,17 @@ export interface Config {
      */
     projects: ProjectConfig[];
   };
+  /**
+   * Additional pluggable ticket sources beyond the built-in Linear adapter
+   * (which is implicit; configured via `linear.projects` above). Each entry
+   * is a `SourceConfig` discriminated by `kind`. The most common use is a
+   * `kind: "shell"` adapter that wires an external system (Jira, plan-keeper,
+   * etc.) by pointing at command templates that emit/consume JSON.
+   *
+   * Per-source Zod validation runs at `buildSources` time — config.ts only
+   * verifies the structural shape (array of objects with a string `kind`).
+   */
+  sources?: SourceConfig[];
   git?: {
     remote?: string;
     defaultBranch?: string;
@@ -227,6 +248,13 @@ export interface ResolvedConfig {
   linear: {
     projects: ResolvedProjectConfig[];
   };
+  /**
+   * Resolved list of additional ticket sources beyond the built-in Linear
+   * adapter. Defaults to `[]` when the user omits `sources` in their config.
+   * Each entry's per-adapter validation is the responsibility of `buildSources`,
+   * not the config loader.
+   */
+  sources: SourceConfig[];
   git: {
     remote: string;
     defaultBranch: string;
@@ -710,6 +738,43 @@ function failOnLegacyLinearShape(user: Record<string, unknown>): void {
   );
 }
 
+function normalizeSources(raw: unknown): SourceConfig[] {
+  if (raw === undefined) {
+    return [];
+  }
+  if (!Array.isArray(raw)) {
+    fail("sources must be an array");
+  }
+  const names = new Map<string, number>();
+  for (const [index, entry] of raw.entries()) {
+    const path = `sources[${index}]`;
+    if (!isPlainObject(entry)) {
+      fail(`${path} must be an object`);
+    }
+    const { kind, name } = entry;
+    requireString(kind, `${path}.kind`);
+    // Per-adapter Zod validation runs in `buildSources`. Here we check name
+    // uniqueness — the Board composer relies on it for writeback routing.
+    // When `name` is omitted, the adapter's runtime default is `kind` (the
+    // built-in Linear and shell adapters both follow this convention), so we
+    // dedup on the effective runtime name to catch e.g. two `{kind: "linear"}`
+    // entries that would both produce a source named `"linear"`.
+    if (name !== undefined) {
+      requireString(name, `${path}.name`);
+    }
+    const effectiveName = name ?? kind;
+    const previous = names.get(effectiveName);
+    if (previous !== undefined) {
+      fail(
+        `${path} would produce a source named "${effectiveName}" (from ${name === undefined ? "default `kind` since `name` is omitted" : "`name`"}), duplicating sources[${previous}]. Configure distinct \`name\` fields.`,
+      );
+    }
+    names.set(effectiveName, index);
+  }
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- structural validation above guarantees array of {kind: string} entries; per-source Zod validation lives in buildSources
+  return raw as SourceConfig[];
+}
+
 function normalizeProjects(linear: Record<string, unknown>): ResolvedProjectConfig[] {
   const { projects } = linear;
   if (!Array.isArray(projects)) {
@@ -757,8 +822,10 @@ function applyDefaults(user: Config): ResolvedConfig {
 
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- runtime fields validated by normalizeProjects below
   const projects = normalizeProjects(user.linear as unknown as Record<string, unknown>);
+  const sources = normalizeSources((user as { sources?: unknown }).sources);
   return {
     linear: { projects },
+    sources,
     git: { ...DEFAULT_GIT, ...user.git },
     workspace: {
       projectDir: expandHome(user.workspace.projectDir),

@@ -74,6 +74,7 @@ function makeConfig(workspaceKind: WorkspaceKindSetting = "auto"): ResolvedConfi
         },
       ],
     },
+    sources: [],
     git: { remote: "origin", defaultBranch: "main" },
     workspace: {
       projectDir: "/work",

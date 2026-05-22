@@ -140,6 +140,7 @@ function makeConfig(): ResolvedConfig {
         },
       ],
     },
+    sources: [],
     git: { remote: "origin", defaultBranch: "main" },
     workspace: { projectDir: "/work", knownRepositories: ["repo-a"] },
     orchestrator: {
