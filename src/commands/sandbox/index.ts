@@ -1,6 +1,6 @@
 import { loadConfig } from "../../lib/config.ts";
 import { runAuth } from "./auth.ts";
-import { runList, runTemplate } from "./inspect.ts";
+import { runList } from "./inspect.ts";
 import { runEnsure, runRegenerate, runRemove } from "./lifecycle.ts";
 
 const USAGE = [
@@ -14,7 +14,6 @@ const USAGE = [
   "                            sandbox and run the login flow for each one you select;",
   "                            --all loops through every configured sandbox in turn",
   "  rm <model>                Remove the sandbox for a model",
-  "  template show             Print resolved agent/template/kits per configured sandbox model",
 ].join("\n");
 
 export async function sandboxCli(argv: string[]): Promise<void> {
@@ -42,10 +41,6 @@ export async function sandboxCli(argv: string[]): Promise<void> {
     }
     case "rm": {
       await runRemove(config, rest);
-      return;
-    }
-    case "template": {
-      await runTemplate(config, rest);
       return;
     }
     default: {
