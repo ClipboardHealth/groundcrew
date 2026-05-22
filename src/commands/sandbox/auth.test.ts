@@ -97,9 +97,9 @@ describe("crew sandbox auth", () => {
     expect(statusCall?.[1]).toStrictEqual([
       "exec",
       "groundcrew-claude",
-      "claude",
-      "auth",
-      "status",
+      "sh",
+      "-c",
+      "claude auth status 2>&1",
     ]);
   });
 
@@ -145,7 +145,13 @@ describe("crew sandbox auth", () => {
     ]);
 
     const statusCall = runCommandMock.mock.calls.find((call) => isStatusExec(call));
-    expect(statusCall?.[1]).toStrictEqual(["exec", "groundcrew-codex", "codex", "login", "status"]);
+    expect(statusCall?.[1]).toStrictEqual([
+      "exec",
+      "groundcrew-codex",
+      "sh",
+      "-c",
+      "codex login status 2>&1",
+    ]);
     expect(consoleLog.output()).toContain("authenticated");
   });
 
@@ -164,7 +170,13 @@ describe("crew sandbox auth", () => {
     ]);
 
     const statusCall = runCommandMock.mock.calls.find((call) => isStatusExec(call));
-    expect(statusCall?.[1]).toStrictEqual(["exec", "groundcrew-cursor", "cursor-agent", "status"]);
+    expect(statusCall?.[1]).toStrictEqual([
+      "exec",
+      "groundcrew-cursor",
+      "sh",
+      "-c",
+      "cursor-agent status 2>&1",
+    ]);
   });
 
   it("falls back to interactive launch + manual verification for unknown agents", async () => {

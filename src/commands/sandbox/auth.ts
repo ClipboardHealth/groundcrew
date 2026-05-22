@@ -54,13 +54,14 @@ async function probeAuthStatus(
   agent: string,
   recipe: AgentAuthRecipe,
 ): Promise<boolean> {
+  // Some agent CLIs print status to stderr instead of stdout (codex
+  // does this). Fold stderr into stdout via the in-sandbox shell so the
+  // pattern match sees the message regardless of which stream it
+  // landed on. The argv is composed from hard-coded recipe values, so
+  // there's no untrusted input flowing into the shell.
+  const innerCommand = `${[binaryFor(agent, recipe), ...recipe.statusArgs].join(" ")} 2>&1`;
   try {
-    const output = await runCommandAsync("sbx", [
-      "exec",
-      sandboxName,
-      binaryFor(agent, recipe),
-      ...recipe.statusArgs,
-    ]);
+    const output = await runCommandAsync("sbx", ["exec", sandboxName, "sh", "-c", innerCommand]);
     return recipe.authenticatedPattern.test(output);
   } catch {
     return false;
