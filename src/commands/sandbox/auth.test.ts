@@ -129,13 +129,20 @@ describe("crew sandbox auth", () => {
     expect(consoleLog.output()).toContain("could not confirm authentication");
   });
 
-  it("uses 'codex login' / 'codex login status' for codex", async () => {
+  it("uses 'codex login --device-auth' and 'codex login status' for codex", async () => {
     mockAuthFlow({ statusOutput: "Logged in using ChatGPT" });
 
     await sandboxCli(["auth", "codex"]);
 
     const loginCall = runCommandMock.mock.calls.find((call) => isLoginExec(call));
-    expect(loginCall?.[1]).toStrictEqual(["exec", "-it", "groundcrew-codex", "codex", "login"]);
+    expect(loginCall?.[1]).toStrictEqual([
+      "exec",
+      "-it",
+      "groundcrew-codex",
+      "codex",
+      "login",
+      "--device-auth",
+    ]);
 
     const statusCall = runCommandMock.mock.calls.find((call) => isStatusExec(call));
     expect(statusCall?.[1]).toStrictEqual(["exec", "groundcrew-codex", "codex", "login", "status"]);
