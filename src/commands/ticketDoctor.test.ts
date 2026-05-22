@@ -711,6 +711,42 @@ describe("ticketDoctor — env checks", () => {
     }
   });
 
+  it("records repo-dir as ok when the description uses a bare name but the org-nested clone exists", async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "td-"));
+    mkdirSync(join(projectDir, "herds-social", "herds_mobile_app"), { recursive: true });
+    try {
+      const dependencies = makeStubDependencies({
+        config: makeConfig({
+          workspace: {
+            knownRepositories: ["herds-social/herds_mobile_app"],
+            projectDir,
+          },
+        }),
+        fetchRawIssue: vi
+          .fn<NonNullable<TicketDoctorDependencies["fetchRawIssue"]>>()
+          .mockResolvedValue({
+            uuid: "u",
+            title: "X",
+            description: "work on herds_mobile_app",
+            teamId: "team-1",
+            projectSlugId: "aaaaaaaaaaaa",
+            labels: [{ name: "agent-claude" }],
+            stateName: "Todo",
+            blockers: [],
+            hasMoreBlockers: false,
+          }),
+      });
+      const result = await ticketDoctor(dependencies);
+      const repoDir = result.resolution.find(
+        (check) => check.name === "Resolved repo is cloned locally",
+      );
+      expect(repoDir?.status).toBe("ok");
+      expect(repoDir?.detail).toContain(join(projectDir, "herds-social", "herds_mobile_app"));
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
   it("skips the repo-dir check when the repo couldn't be resolved", async () => {
     const dependencies = makeStubDependencies({
       config: makeConfig({

@@ -671,11 +671,22 @@ export function resolveRepositoryFor(arguments_: {
   if (description === undefined || description.length === 0) {
     return { kind: "missing" };
   }
-  const repository = buildRepositoryRegex(config).exec(description)?.[1];
-  if (repository === undefined) {
+  const match = buildRepositoryRegex(config).exec(description)?.[1];
+  if (match === undefined) {
     return { kind: "missing" };
   }
-  return { kind: "ok", repository };
+  // `buildRepositoryRegex` matches both the full `owner/repo` entry and its bare
+  // suffix, so the captured value can be either form. Callers downstream (worktree
+  // setup, doctor's disk-path check) compose this with `workspace.projectDir` and
+  // expect the exact `knownRepositories` entry, so resolve back to that form here.
+  const canonical = config.workspace.knownRepositories.find(
+    (entry) => entry === match || entry.endsWith(`/${match}`),
+  );
+  /* v8 ignore next 3 @preserve -- regex candidates are derived from knownRepositories, so a match always canonicalizes */
+  if (canonical === undefined) {
+    return { kind: "missing" };
+  }
+  return { kind: "ok", repository: canonical };
 }
 
 export type ModelResolution =
