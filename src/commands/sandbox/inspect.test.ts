@@ -29,7 +29,7 @@ vi.mock(import("../../lib/config.ts"), async (importOriginal) => {
 
 const loadConfigMock = vi.mocked(loadConfig);
 
-describe("crew sandbox list / template", () => {
+describe("crew sandbox list", () => {
   let consoleLog: ConsoleCapture;
   let consoleError: ConsoleCapture;
 
@@ -67,32 +67,9 @@ describe("crew sandbox list / template", () => {
     });
   });
 
-  describe("template show", () => {
-    it("prints agent, template, kits, and resolved sandbox name per sandbox model", async () => {
-      await sandboxCli(["template", "show"]);
-
-      const output = consoleLog.output();
-      expect(output).toContain("claude");
-      expect(output).toContain("groundcrew-claude");
-      expect(output).toContain("node-22");
-      expect(output).toContain("npm-cache");
-      expect(output).toContain("codex");
-      expect(output).toContain("groundcrew-codex");
-      expect(output).not.toContain("unsandboxed");
-    });
-
-    it("rejects template without a sub-verb", async () => {
-      await expect(sandboxCli(["template"])).rejects.toThrow(/Usage: crew sandbox template show/);
-    });
-
-    it("reports '(no sandbox models configured)' when no model declares a sandbox", async () => {
-      const bareConfig = makeSandboxConfig();
-      bareConfig.models.definitions = { plain: { cmd: "agent --noop", color: "#abc" } };
-      loadConfigMock.mockResolvedValue(bareConfig);
-
-      await sandboxCli(["template", "show"]);
-
-      expect(consoleLog.output()).toContain("(no sandbox models configured)");
-    });
+  it("reports 'template' as an unknown sub-verb (the command was removed)", async () => {
+    await expect(sandboxCli(["template", "show"])).rejects.toThrow(
+      /Unknown sandbox sub-verb: template/,
+    );
   });
 });
