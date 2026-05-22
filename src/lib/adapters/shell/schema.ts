@@ -12,6 +12,7 @@
 import { z } from "zod";
 
 const canonicalStatusSchema = z.enum(["todo", "in-progress", "in-review", "done", "other"]);
+const timeoutSchema = z.number().int().positive();
 
 const shellBlockerSchema = z.object({
   id: z.string(),
@@ -51,10 +52,10 @@ export const shellAdapterConfigSchema = z.object({
   cwd: z.string().optional(),
   timeouts: z
     .object({
-      verify: z.number().optional(),
-      fetch: z.number().optional(),
-      resolveOne: z.number().optional(),
-      markInProgress: z.number().optional(),
+      verify: timeoutSchema.optional(),
+      fetch: timeoutSchema.optional(),
+      resolveOne: timeoutSchema.optional(),
+      markInProgress: timeoutSchema.optional(),
     })
     .optional(),
   env: z.record(z.string(), z.string()).optional(),

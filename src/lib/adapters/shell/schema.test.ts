@@ -128,4 +128,20 @@ describe("shell adapter config schema", () => {
     };
     expect(() => shellAdapterConfigSchema.parse(config)).not.toThrow();
   });
+
+  it.each([
+    ["verify", 0],
+    ["fetch", -1],
+    ["resolveOne", 1.5],
+    ["markInProgress", 0],
+  ] as const)("rejects invalid %s timeout override %s", (field, value) => {
+    const config = {
+      kind: "shell",
+      name: "jira",
+      commands: { fetch: "echo '[]'" },
+      timeouts: { [field]: value },
+    };
+
+    expect(() => shellAdapterConfigSchema.parse(config)).toThrow(/.+/);
+  });
 });
