@@ -3,8 +3,8 @@ import type { LinearClient } from "@linear/sdk";
 import type { AdapterContext } from "../../adapterDefinition.ts";
 import * as boardSource from "../../boardSource.ts";
 import type {
+  BoardSource,
   Blocker as LinearBlocker,
-  BoardState as LinearBoardState,
   Issue as LinearIssue,
 } from "../../boardSource.ts";
 import type { ResolvedConfig, ResolvedProjectConfig } from "../../config.ts";
@@ -258,7 +258,7 @@ describe(createLinearTicketSource, () => {
     const innerVerify = vi.fn<() => Promise<void>>().mockResolvedValue();
     vi.spyOn(boardSource, "createBoardSource").mockReturnValue({
       verify: innerVerify,
-      fetch: vi.fn<() => Promise<LinearBoardState>>(),
+      fetch: vi.fn<BoardSource["fetch"]>(),
     });
     const source = createLinearTicketSource({ kind: "linear" }, {
       globalConfig: makeConfig(),
@@ -268,7 +268,7 @@ describe(createLinearTicketSource, () => {
   });
 
   it("fetch() converts each LinearIssue into a canonical Issue", async () => {
-    const innerFetch = vi.fn<() => Promise<LinearBoardState>>().mockResolvedValue({
+    const innerFetch = vi.fn<BoardSource["fetch"]>().mockResolvedValue({
       timestamp: "2026-01-01T00:00:00Z",
       issues: [linearIssue({ id: "team-1" }), linearIssue({ id: "team-2", status: "In Progress" })],
       parentSkips: [],
