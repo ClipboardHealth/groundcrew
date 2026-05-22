@@ -72,6 +72,23 @@ export default {
   // // macOS when you need an agent to use Docker safely.
   // local: { runner: "auto" },
   //
+  // // Additional auth recipes for `crew sandbox auth <model> <tool>`. The
+  // // shipped recipes for claude/codex/cursor are merged with whatever you
+  // // declare here (your recipe wins on key collision). Add a tool by
+  // // describing the in-sandbox CLI's login + status commands and a regex
+  // // that matches its logged-in output.
+  // sandbox: {
+  //   authRecipes: {
+  //     github: {
+  //       displayName: "GitHub CLI",
+  //       binary: "gh",
+  //       loginArgs: ["auth", "login"],
+  //       statusArgs: ["auth", "status"],
+  //       authenticatedPattern: /Logged in to github\.com/i,
+  //     },
+  //   },
+  // },
+  //
   // prompts: {
   //   // Keep personal workflow instructions next to this config, for example
   //   // `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/initial-prompt.md`.

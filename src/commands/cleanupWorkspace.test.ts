@@ -65,6 +65,7 @@ const config: ResolvedConfig = {
   prompts: { initial: "x" },
   workspaceKind: "auto",
   local: { runner: "auto" },
+  sandbox: { authRecipes: {} },
   logging: { file: "/tmp/groundcrew-test.log" },
 };
 

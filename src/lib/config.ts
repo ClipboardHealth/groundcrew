@@ -75,6 +75,27 @@ export interface SandboxDefinition {
   setupCommand?: string;
 }
 
+/**
+ * Recipe used by `crew sandbox auth <model> [<tool>]` to drive an
+ * interactive login flow inside a sbx sandbox and then verify it.
+ *
+ * `binary` defaults to the recipe key (typically the agent or CLI name).
+ * `authenticatedPattern` matches against combined stdout+stderr from
+ * `statusArgs` — exit code alone isn't reliable because some CLIs
+ * report "not logged in" while still exiting 0.
+ *
+ * Ship-side recipes for `claude`, `codex`, and `cursor` live in
+ * `src/commands/sandbox/auth.ts`; users register additional tools
+ * (github, npm, gcloud, …) under `sandbox.authRecipes` in their config.
+ */
+export interface AuthRecipe {
+  displayName: string;
+  binary?: string;
+  loginArgs: readonly string[];
+  statusArgs: readonly string[];
+  authenticatedPattern: RegExp;
+}
+
 export interface ModelDefinition {
   /**
    * Shell command launched for the model. Wrapped with Safehouse/clearance
@@ -196,6 +217,16 @@ export interface Config {
   local?: {
     runner?: LocalRunnerSetting;
   };
+  /**
+   * Sandbox-wide settings. `authRecipes` lets users register additional
+   * tools (github, npm, gcloud, …) for `crew sandbox auth <model> <tool>`
+   * to authenticate inside the sandbox. Recipes registered here merge on
+   * top of the shipped agent recipes; a user recipe under the same key
+   * (e.g. "claude") overrides the shipped one.
+   */
+  sandbox?: {
+    authRecipes?: Record<string, AuthRecipe>;
+  };
   logging?: {
     /**
      * Append-mode log file destination. `log()` and `logEvent()` tee here
@@ -259,6 +290,13 @@ export interface ResolvedConfig {
    */
   local: {
     runner: LocalRunnerSetting;
+  };
+  /**
+   * Sandbox-wide settings. Always present after defaults; `authRecipes`
+   * is `{}` when the user provides none.
+   */
+  sandbox: {
+    authRecipes: Record<string, AuthRecipe>;
   };
   logging: {
     file: string;
@@ -775,6 +813,9 @@ function applyDefaults(user: Config): ResolvedConfig {
     workspaceKind: normalizeWorkspaceKind(user.workspaceKind, "workspaceKind") ?? "auto",
     local: {
       runner: normalizeLocalRunner(userLocal?.runner, "local.runner") ?? "auto",
+    },
+    sandbox: {
+      authRecipes: user.sandbox?.authRecipes ?? {},
     },
     logging: {
       file: expandHome(

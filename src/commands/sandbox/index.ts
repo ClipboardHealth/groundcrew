@@ -10,7 +10,9 @@ const USAGE = [
   "  list                      Show every groundcrew-owned sandbox known to sbx",
   "  ensure [<model>]          Provision the sandbox for one model, or all when omitted",
   "  regenerate <model>|--all  Tear down and recreate from current template/kits",
-  "  auth [--force] <model>    Run the agent's login flow inside the sandbox and verify",
+  "  auth [--force] <model> [<tool>]",
+  "                            Run the agent's login flow inside the sandbox and verify;",
+  "                            pass <tool> to authenticate a different recipe (github, npm, …)",
   "  rm <model>                Remove the sandbox for a model",
   "  template show             Print resolved agent/template/kits per configured sandbox model",
 ].join("\n");
