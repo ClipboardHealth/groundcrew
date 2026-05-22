@@ -7,7 +7,7 @@ import { doctor } from "./commands/doctor.ts";
 import { interruptWorkspaceCli } from "./commands/interruptWorkspace.ts";
 import { orchestrate } from "./commands/orchestrator.ts";
 import { resumeWorkspaceCli } from "./commands/resumeWorkspace.ts";
-import { sandboxCli } from "./commands/sandbox.ts";
+import { sandboxCli } from "./commands/sandbox/index.ts";
 import { setupReposCli } from "./commands/setupRepos.ts";
 import { setupWorkspaceCli } from "./commands/setupWorkspace.ts";
 import {
@@ -31,7 +31,7 @@ vi.mock(import("./commands/orchestrator.ts"), () => ({
 vi.mock(import("./commands/resumeWorkspace.ts"), () => ({
   resumeWorkspaceCli: vi.fn<typeof resumeWorkspaceCli>(),
 }));
-vi.mock(import("./commands/sandbox.ts"), () => ({
+vi.mock(import("./commands/sandbox/index.ts"), () => ({
   sandboxCli: vi.fn<typeof sandboxCli>(),
 }));
 vi.mock(import("./commands/setupWorkspace.ts"), () => ({

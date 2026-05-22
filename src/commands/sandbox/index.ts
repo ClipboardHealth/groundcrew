@@ -1,0 +1,53 @@
+import { loadConfig } from "../../lib/config.ts";
+import { runAuth } from "./auth.ts";
+import { runList, runTemplate } from "./inspect.ts";
+import { runEnsure, runRegenerate, runRemove } from "./lifecycle.ts";
+
+const USAGE = [
+  "Usage: crew sandbox <verb> [...args]",
+  "",
+  "Verbs:",
+  "  list                      Show every groundcrew-owned sandbox known to sbx",
+  "  ensure [<model>]          Provision the sandbox for one model, or all when omitted",
+  "  regenerate <model>|--all  Tear down and recreate from current template/kits",
+  "  auth <model>              Run the agent's login flow inside the sandbox and verify",
+  "  rm <model>                Remove the sandbox for a model",
+  "  template show             Print resolved agent/template/kits per configured sandbox model",
+].join("\n");
+
+export async function sandboxCli(argv: string[]): Promise<void> {
+  const [verb, ...rest] = argv;
+  if (verb === undefined) {
+    throw new Error(USAGE);
+  }
+  const config = await loadConfig();
+  switch (verb) {
+    case "list": {
+      await runList();
+      return;
+    }
+    case "ensure": {
+      await runEnsure(config, rest);
+      return;
+    }
+    case "regenerate": {
+      await runRegenerate(config, rest);
+      return;
+    }
+    case "auth": {
+      await runAuth(config, rest);
+      return;
+    }
+    case "rm": {
+      await runRemove(config, rest);
+      return;
+    }
+    case "template": {
+      await runTemplate(config, rest);
+      return;
+    }
+    default: {
+      throw new Error(`Unknown sandbox sub-verb: ${verb}\n${USAGE}`);
+    }
+  }
+}
