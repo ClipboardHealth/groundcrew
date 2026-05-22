@@ -36,6 +36,14 @@ const BUILTIN_AUTH_RECIPES: Record<string, AuthRecipe> = {
     authenticatedPattern: /Logged in/i,
     kind: "agent",
   },
+  github: {
+    displayName: "GitHub CLI",
+    binary: "gh",
+    loginArgs: ["auth", "login"],
+    statusArgs: ["auth", "status"],
+    authenticatedPattern: /Logged in to github\.com/i,
+    kind: "tool",
+  },
 };
 
 function resolveRecipe(config: ResolvedConfig, toolKey: string): AuthRecipe | undefined {

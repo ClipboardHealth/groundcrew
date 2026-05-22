@@ -337,6 +337,15 @@ describe("crew sandbox auth", () => {
       expect(choices?.map((c) => c.key).toSorted()).toStrictEqual(["codex", "github"]);
     });
 
+    it("ships GitHub CLI as a built-in tool recipe available in every sandbox", async () => {
+      mockClaudeLoggedInOnly();
+
+      await sandboxCli(["auth", "codex"]);
+
+      const choices = pickToolsMock.mock.calls[0]?.[0];
+      expect(choices?.map((c) => c.key).toSorted()).toStrictEqual(["codex", "github"]);
+    });
+
     it("annotates the current agent with its actual auth status", async () => {
       mockClaudeLoggedInOnly();
 

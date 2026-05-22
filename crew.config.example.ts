@@ -73,18 +73,20 @@ export default {
   // local: { runner: "auto" },
   //
   // // Additional auth recipes for `crew sandbox auth <model> <tool>`. The
-  // // shipped recipes for claude/codex/cursor are merged with whatever you
-  // // declare here (your recipe wins on key collision). Add a tool by
-  // // describing the in-sandbox CLI's login + status commands and a regex
-  // // that matches its logged-in output.
+  // // shipped recipes (claude/codex/cursor agents + github tool) are merged
+  // // with whatever you declare here; your recipe wins on key collision.
+  // // Describe each tool's in-sandbox login + status commands and a regex
+  // // that matches its logged-in output. Omit `kind` for cross-cutting
+  // // tools that should appear in every sandbox's picker; set
+  // // `kind: "agent"` to scope a recipe to a single sbx agent.
   // sandbox: {
   //   authRecipes: {
-  //     github: {
-  //       displayName: "GitHub CLI",
-  //       binary: "gh",
-  //       loginArgs: ["auth", "login"],
-  //       statusArgs: ["auth", "status"],
-  //       authenticatedPattern: /Logged in to github\.com/i,
+  //     gcloud: {
+  //       displayName: "gcloud",
+  //       binary: "gcloud",
+  //       loginArgs: ["auth", "login", "--no-launch-browser"],
+  //       statusArgs: ["auth", "list", "--filter=status:ACTIVE", "--format=value(account)"],
+  //       authenticatedPattern: /@/,
   //     },
   //   },
   // },
