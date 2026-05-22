@@ -131,6 +131,26 @@ describe("crew sandbox auth", () => {
     );
   });
 
+  it("rejects --all combined with a model name", async () => {
+    await expect(sandboxCli(["auth", "--all", "claude"])).rejects.toThrow(
+      /--all cannot be combined with a model name/,
+    );
+  });
+
+  it("rejects an unknown flag", async () => {
+    await expect(sandboxCli(["auth", "--bogus"])).rejects.toThrow(/unknown option '--bogus'/);
+  });
+
+  it("rejects --all when no model declares a sandbox", async () => {
+    const bareConfig = makeSandboxConfig();
+    bareConfig.models.definitions = { plain: { cmd: "agent --noop", color: "#abc" } };
+    loadConfigMock.mockResolvedValue(bareConfig);
+
+    await expect(sandboxCli(["auth", "--all"])).rejects.toThrow(
+      /no sandbox-bearing models configured/,
+    );
+  });
+
   it("shows the current agent + every tool, hiding agent recipes for other sandboxes", async () => {
     mockClaudeLoggedInOnly();
 
@@ -287,6 +307,19 @@ describe("crew sandbox auth", () => {
 
     const choices = pickToolsMock.mock.calls[0]?.[0];
     expect(choices?.map((c) => c.key)).toContain("npm");
+  });
+
+  it("--all opens the picker once per sandbox-bearing model in order", async () => {
+    pickToolsMock.mockResolvedValue([]);
+    mockSbxLs(runCommandMock, []);
+
+    await sandboxCli(["auth", "--all"]);
+
+    expect(pickToolsMock).toHaveBeenCalledTimes(3);
+    const output = consoleLog.output();
+    expect(output).toContain("claude (1/3)");
+    expect(output).toContain("codex (2/3)");
+    expect(output).toContain("cursor (3/3)");
   });
 
   it("user-config recipe overrides the built-in for the same key", async () => {

@@ -2,7 +2,7 @@ import { runCommandAsync } from "../../lib/commandRunner.ts";
 import type { AuthRecipe, ResolvedConfig } from "../../lib/config.ts";
 import { writeOutput } from "../../lib/util.ts";
 import { ensureOne } from "./lifecycle.ts";
-import { requireOnePositional, resolveModel, type SandboxModel } from "./model.ts";
+import { resolveModel, type SandboxModel, sandboxModels } from "./model.ts";
 import { pickTools, type ToolChoice } from "./picker.ts";
 
 /**
@@ -122,13 +122,61 @@ function shouldShowInPicker(entry: RecipeEntry, currentAgent: string): boolean {
   return kind === "tool" || entry.key === currentAgent;
 }
 
+interface AuthTarget {
+  modelName: string;
+  model: SandboxModel;
+}
+
+interface AuthOptions {
+  models: AuthTarget[];
+}
+
+const AUTH_USAGE = "Usage: crew sandbox auth <model> | --all";
+
+function parseAuthArgs(config: ResolvedConfig, argv: string[]): AuthOptions {
+  const positionals: string[] = [];
+  let all = false;
+  for (const argument of argv) {
+    if (argument === "--all") {
+      all = true;
+      continue;
+    }
+    if (argument.startsWith("-")) {
+      throw new Error(`crew sandbox auth: unknown option '${argument}'`);
+    }
+    positionals.push(argument);
+  }
+  if (all && positionals.length > 0) {
+    throw new Error("crew sandbox auth: --all cannot be combined with a model name");
+  }
+  if (all) {
+    const models = sandboxModels(config);
+    if (models.length === 0) {
+      throw new Error("crew sandbox auth --all: no sandbox-bearing models configured");
+    }
+    return { models: models.map((model) => ({ modelName: model.modelName, model })) };
+  }
+  const [modelName, ...extras] = positionals;
+  if (modelName === undefined || extras.length > 0) {
+    throw new Error(AUTH_USAGE);
+  }
+  return { models: [{ modelName, model: resolveModel(config, modelName) }] };
+}
+
 export async function runAuth(config: ResolvedConfig, argv: string[]): Promise<void> {
-  const modelName = requireOnePositional(argv, "Usage: crew sandbox auth <model>");
-  const model = resolveModel(config, modelName);
-  writeOutput(`${model.sandboxName}: ensuring sandbox is up...`);
-  await ensureOne(config, model);
-  writeOutput("");
-  await runAuthInteractive(config, model, modelName);
+  const { models } = parseAuthArgs(config, argv);
+  for (const [index, { modelName, model }] of models.entries()) {
+    if (models.length > 1) {
+      writeOutput("");
+      writeOutput(`════ ${modelName} (${index + 1}/${models.length}) ════`);
+    }
+    writeOutput(`${model.sandboxName}: ensuring sandbox is up...`);
+    // oxlint-disable-next-line no-await-in-loop -- each sandbox is interactive; running them sequentially keeps the prompts coherent
+    await ensureOne(config, model);
+    writeOutput("");
+    // oxlint-disable-next-line no-await-in-loop -- intentionally sequential, see above
+    await runAuthInteractive(config, model, modelName);
+  }
 }
 
 async function runAuthInteractive(
