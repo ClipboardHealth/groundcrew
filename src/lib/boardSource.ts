@@ -676,9 +676,9 @@ export function resolveRepositoryFor(arguments_: {
     return { kind: "missing" };
   }
   // `buildRepositoryRegex` matches both the full `owner/repo` entry and its bare
-  // suffix, so the captured value can be either form. Callers downstream (worktree
-  // setup, doctor's disk-path check) compose this with `workspace.projectDir` and
-  // expect the exact `knownRepositories` entry, so resolve back to that form here.
+  // suffix, so the captured value can be either form. Downstream code composes
+  // the resolved value with `workspace.projectDir` and needs the exact
+  // `knownRepositories` entry, so resolve back to that form here.
   const canonical = config.workspace.knownRepositories.find(
     (entry) => entry === match || entry.endsWith(`/${match}`),
   );
