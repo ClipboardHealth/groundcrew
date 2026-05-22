@@ -100,6 +100,14 @@ export interface AuthRecipe {
   statusArgs: readonly string[];
   authenticatedPattern: RegExp;
   kind?: "agent" | "tool";
+  /**
+   * Environment variables passed to `sbx exec` for both the login and
+   * status calls. Use this for CLIs whose default flow assumes a
+   * browser or other host-only feature — e.g. cursor-agent wants
+   * `NO_OPEN_BROWSER=1` to print a device code instead of trying to
+   * launch a browser inside the sandbox.
+   */
+  env?: Record<string, string>;
 }
 
 export interface ModelDefinition {

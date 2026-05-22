@@ -238,9 +238,9 @@ describe("crew sandbox auth", () => {
     ]);
   });
 
-  it("uses the cursor-agent binary for cursor when selected", async () => {
+  it("uses the cursor-agent binary and forwards NO_OPEN_BROWSER for cursor", async () => {
     pickToolsMock.mockResolvedValueOnce(["cursor"]);
-    mockAuthFlow({ statusOutputs: ["", "Logged in as user@example.com"] });
+    mockAuthFlow({ statusOutputs: ["", "✓ Logged in as user@example.com"] });
 
     await sandboxCli(["auth", "cursor"]);
 
@@ -248,10 +248,32 @@ describe("crew sandbox auth", () => {
     expect(loginCall?.[1]).toStrictEqual([
       "exec",
       "-it",
+      "-e",
+      "NO_OPEN_BROWSER=1",
       "groundcrew-cursor",
       "cursor-agent",
       "login",
     ]);
+
+    const statusCall = runCommandMock.mock.calls.find((call) => isStatusExec(call));
+    expect(statusCall?.[1]).toStrictEqual([
+      "exec",
+      "-e",
+      "NO_OPEN_BROWSER=1",
+      "groundcrew-cursor",
+      "sh",
+      "-c",
+      "cursor-agent status 2>&1",
+    ]);
+  });
+
+  it("does not flag cursor as authenticated when status prints 'Not logged in'", async () => {
+    pickToolsMock.mockResolvedValueOnce(["cursor"]);
+    mockAuthFlow({ statusOutputs: ["Not logged in", "Not logged in"] });
+
+    await sandboxCli(["auth", "cursor"]);
+
+    expect(consoleLog.output()).toContain("could not confirm 'Cursor' authentication");
   });
 
   it("runs the login flow for each selected tool sequentially", async () => {

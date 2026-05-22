@@ -28,7 +28,8 @@ const BUILTIN_AUTH_RECIPES: Record<string, AuthRecipe> = {
     // and a code instead of trying to open a browser inside the sandbox.
     loginArgs: ["login", "--device-auth"],
     statusArgs: ["login", "status"],
-    authenticatedPattern: /Logged in/i,
+    // Match "Logged in using …" but not a hypothetical "Not logged in".
+    authenticatedPattern: /(^|\W)Logged in using\b/i,
     kind: "agent",
   },
   cursor: {
@@ -36,8 +37,15 @@ const BUILTIN_AUTH_RECIPES: Record<string, AuthRecipe> = {
     binary: "cursor-agent",
     loginArgs: ["login"],
     statusArgs: ["status"],
-    authenticatedPattern: /Logged in/i,
+    // Authenticated output is "✓ Logged in as <email>"; the unauthenticated
+    // output is "Not logged in", which a loose /Logged in/i would falsely
+    // match.
+    authenticatedPattern: /Logged in as\b/i,
     kind: "agent",
+    // cursor-agent tries to open a browser by default and silently
+    // writes a partial auth file when xdg-open fails; this env var
+    // switches it to a device-code flow that works without a browser.
+    env: { NO_OPEN_BROWSER: "1" },
   },
   github: {
     displayName: "GitHub CLI",
@@ -53,6 +61,11 @@ function binaryFor(toolKey: string, recipe: AuthRecipe): string {
   return recipe.binary ?? toolKey;
 }
 
+function envFlags(recipe: AuthRecipe): string[] {
+  const entries = Object.entries(recipe.env ?? {});
+  return entries.flatMap(([key, value]) => ["-e", `${key}=${value}`]);
+}
+
 async function probeAuthStatus(
   sandboxName: string,
   toolKey: string,
@@ -66,7 +79,14 @@ async function probeAuthStatus(
   // shell.
   const innerCommand = `${[binaryFor(toolKey, recipe), ...recipe.statusArgs].join(" ")} 2>&1`;
   try {
-    const output = await runCommandAsync("sbx", ["exec", sandboxName, "sh", "-c", innerCommand]);
+    const output = await runCommandAsync("sbx", [
+      "exec",
+      ...envFlags(recipe),
+      sandboxName,
+      "sh",
+      "-c",
+      innerCommand,
+    ]);
     return recipe.authenticatedPattern.test(output);
   } catch {
     return false;
@@ -83,9 +103,11 @@ async function loginAndVerify(input: {
   const binary = binaryFor(toolKey, recipe);
   writeOutput(`${sandboxName}: launching '${recipe.displayName}' login...`);
   writeOutput("Complete the login flow in the prompts/browser, then return here.");
-  await runCommandAsync("sbx", ["exec", "-it", sandboxName, binary, ...recipe.loginArgs], {
-    stdio: "inherit",
-  });
+  await runCommandAsync(
+    "sbx",
+    ["exec", "-it", ...envFlags(recipe), sandboxName, binary, ...recipe.loginArgs],
+    { stdio: "inherit" },
+  );
 
   writeOutput("");
   writeOutput(`${sandboxName}: verifying '${recipe.displayName}' authentication...`);
