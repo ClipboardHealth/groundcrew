@@ -314,7 +314,7 @@ describe("crew sandbox auth", () => {
   });
 
   describe("interactive picker (no tool arg)", () => {
-    it("probes every registered recipe and surfaces auth status to the picker", async () => {
+    it("shows the current agent + every tool, hiding agent recipes for other sandboxes", async () => {
       const customConfig = makeSandboxConfig();
       customConfig.sandbox = {
         authRecipes: {
@@ -330,19 +330,21 @@ describe("crew sandbox auth", () => {
       loadConfigMock.mockResolvedValue(customConfig);
       mockClaudeLoggedInOnly();
 
+      await sandboxCli(["auth", "codex"]);
+
+      const choices = pickToolsMock.mock.calls[0]?.[0];
+      // codex (current agent) + github (tool). Hide claude + cursor.
+      expect(choices?.map((c) => c.key).toSorted()).toStrictEqual(["codex", "github"]);
+    });
+
+    it("annotates the current agent with its actual auth status", async () => {
+      mockClaudeLoggedInOnly();
+
       await sandboxCli(["auth", "claude"]);
 
       const choices = pickToolsMock.mock.calls[0]?.[0];
-      expect(choices?.map((c) => c.key).toSorted()).toStrictEqual([
-        "claude",
-        "codex",
-        "cursor",
-        "github",
-      ]);
       const claudeChoice = choices?.find((c) => c.key === "claude");
       expect(claudeChoice?.authenticated).toBe(true);
-      const githubChoice = choices?.find((c) => c.key === "github");
-      expect(githubChoice?.authenticated).toBe(false);
     });
 
     it("exits without authenticating when the engineer selects nothing", async () => {
@@ -357,16 +359,29 @@ describe("crew sandbox auth", () => {
     });
 
     it("runs the login flow for each selected tool with force semantics", async () => {
-      pickToolsMock.mockResolvedValueOnce(["claude", "codex"]);
+      const customConfig = makeSandboxConfig();
+      customConfig.sandbox = {
+        authRecipes: {
+          github: {
+            displayName: "GitHub CLI",
+            binary: "gh",
+            loginArgs: ["auth", "login"],
+            statusArgs: ["auth", "status"],
+            authenticatedPattern: /Logged in to github\.com/i,
+          },
+        },
+      };
+      loadConfigMock.mockResolvedValue(customConfig);
+      pickToolsMock.mockResolvedValueOnce(["claude", "github"]);
       mockAuthFlow({
-        statusOutputs: ['{"loggedIn": true}', "", '{"loggedIn": true}', "Logged in"],
+        statusOutputs: ["", "", '{"loggedIn": true}', "Logged in to github.com"],
       });
 
       await sandboxCli(["auth", "claude"]);
 
       const loginCalls = runCommandMock.mock.calls.filter((call) => isLoginExec(call));
       const loginBinaries = loginCalls.map((call) => call[1][3]);
-      expect(loginBinaries).toStrictEqual(["claude", "codex"]);
+      expect(loginBinaries).toStrictEqual(["claude", "gh"]);
     });
   });
 

@@ -94,10 +94,15 @@ export interface SandboxDefinition {
  * `authenticatedPattern` matches against combined stdout+stderr from
  * `statusArgs` — exit code alone isn't reliable because some CLIs
  * report "not logged in" while still exiting 0.
+ * `kind` controls visibility in the interactive picker: `"agent"`
+ * recipes are scoped to a specific sbx agent and only appear when you
+ * `auth` against that agent's sandbox; `"tool"` recipes (default)
+ * appear in every sandbox's picker because they're cross-cutting
+ * (github, npm, gcloud, …). Defaults to `"tool"` when omitted.
  *
  * Ship-side recipes for `claude`, `codex`, and `cursor` live in
  * `src/commands/sandbox/auth.ts`; users register additional tools
- * (github, npm, gcloud, …) under `sandbox.authRecipes` in their config.
+ * under `sandbox.authRecipes` in their config.
  */
 export interface AuthRecipe {
   displayName: string;
@@ -105,6 +110,7 @@ export interface AuthRecipe {
   loginArgs: readonly string[];
   statusArgs: readonly string[];
   authenticatedPattern: RegExp;
+  kind?: "agent" | "tool";
 }
 
 export interface ModelDefinition {

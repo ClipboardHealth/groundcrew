@@ -17,6 +17,7 @@ const BUILTIN_AUTH_RECIPES: Record<string, AuthRecipe> = {
     loginArgs: ["auth", "login"],
     statusArgs: ["auth", "status"],
     authenticatedPattern: /"loggedIn"\s*:\s*true/,
+    kind: "agent",
   },
   codex: {
     displayName: "Codex",
@@ -25,6 +26,7 @@ const BUILTIN_AUTH_RECIPES: Record<string, AuthRecipe> = {
     loginArgs: ["login", "--device-auth"],
     statusArgs: ["login", "status"],
     authenticatedPattern: /Logged in/i,
+    kind: "agent",
   },
   cursor: {
     displayName: "Cursor",
@@ -32,6 +34,7 @@ const BUILTIN_AUTH_RECIPES: Record<string, AuthRecipe> = {
     loginArgs: ["login"],
     statusArgs: ["status"],
     authenticatedPattern: /Logged in/i,
+    kind: "agent",
   },
 };
 
@@ -156,15 +159,22 @@ function availableRecipes(config: ResolvedConfig): RecipeEntry[] {
     .toSorted((a, b) => a.key.localeCompare(b.key));
 }
 
+function shouldShowInPicker(entry: RecipeEntry, currentAgent: string): boolean {
+  // Tools (default) are always shown; agent recipes only show when
+  // they match the current sandbox's agent. So inside the codex
+  // sandbox you see codex + every tool, not claude/cursor.
+  const kind = entry.recipe.kind ?? "tool";
+  return kind === "tool" || entry.key === currentAgent;
+}
+
 async function runAuthInteractive(
   config: ResolvedConfig,
   model: SandboxModel,
   modelName: string,
 ): Promise<void> {
-  // Built-in recipes ensure availableRecipes is always non-empty, so
-  // we skip an "empty" branch — the picker always has at least the
-  // three shipped agents to choose from.
-  const recipes = availableRecipes(config);
+  const recipes = availableRecipes(config).filter((entry) =>
+    shouldShowInPicker(entry, model.sandbox.agent),
+  );
 
   writeOutput(`${model.sandboxName}: probing authentication status for ${recipes.length} tools...`);
   const statuses = await Promise.all(
