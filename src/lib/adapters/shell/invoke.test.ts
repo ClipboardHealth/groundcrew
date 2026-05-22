@@ -1,10 +1,17 @@
 /* eslint-disable no-template-curly-in-string -- this file constructs `${id}`-style placeholders as literal strings for the shell adapter's substitution mechanism; they're NOT JS template literals */
 
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 
-import { applySubstitutions, invokeShellCommand, ShellAdapterTimeoutError } from "./invoke.ts";
+import {
+  applySubstitutions,
+  invokeShellCommand,
+  SHELL_COMMAND_MAX_BUFFER_BYTES,
+  ShellAdapterOutputLimitError,
+  ShellAdapterTimeoutError,
+} from "./invoke.ts";
 
 interface TempDir {
   path: string;
@@ -102,6 +109,37 @@ describe(invokeShellCommand, () => {
     await expect(
       invokeShellCommand({ command: script, timeoutMs: 200, sourceName: "test" }),
     ).rejects.toThrow(ShellAdapterTimeoutError);
+  });
+
+  it("kills child processes on timeout", async () => {
+    const marker = join(dir.path, "child-survived");
+    const script = dir.writeScript(
+      "spawn-child.sh",
+      [
+        `node -e "setTimeout(() => require('node:fs').writeFileSync(process.argv[1], 'alive'), 700)" "${marker}" &`,
+        "wait",
+      ].join("\n"),
+    );
+
+    await expect(
+      invokeShellCommand({ command: script, timeoutMs: 100, sourceName: "test" }),
+    ).rejects.toThrow(ShellAdapterTimeoutError);
+    await sleep(1000);
+
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  it("throws when combined stdout and stderr exceed the max buffer", async () => {
+    const script = dir.writeScript(
+      "too-much-output.sh",
+      `node -e "process.stdout.write('x'.repeat(Number(process.argv[1])))" ${
+        SHELL_COMMAND_MAX_BUFFER_BYTES + 1
+      }`,
+    );
+
+    await expect(
+      invokeShellCommand({ command: script, timeoutMs: 5000, sourceName: "test" }),
+    ).rejects.toThrow(ShellAdapterOutputLimitError);
   });
 
   it("pipes stdin to the subprocess", async () => {
