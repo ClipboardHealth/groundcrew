@@ -11,6 +11,13 @@ import {
   type SbxCall,
 } from "../../testHelpers/sandboxFixtures.ts";
 import { sandboxCli } from "./index.ts";
+import { pickTools } from "./picker.ts";
+
+vi.mock(import("./picker.ts"), () => ({
+  pickTools: vi.fn<typeof pickTools>(),
+}));
+
+const pickToolsMock = vi.mocked(pickTools);
 
 const runCommandMock = vi.hoisted(() => vi.fn<RunCommandMock>());
 
@@ -45,6 +52,26 @@ interface MockAuthFlowOptions {
   statusThrows?: boolean;
 }
 
+function mockClaudeLoggedInOnly(): void {
+  // Claude reports authenticated, every other status probe says "not logged in".
+  runCommandMock.mockImplementation(async (command, arguments_) => {
+    if (command !== "sbx") {
+      return "";
+    }
+    if (arguments_[0] === "ls") {
+      return "NAME\n";
+    }
+    if (arguments_[0] === "exec" && arguments_[1] !== "-it") {
+      const probeCommand = arguments_.at(-1) ?? "";
+      if (probeCommand.startsWith("claude")) {
+        return '{"loggedIn": true}';
+      }
+      return "not logged in";
+    }
+    return "";
+  });
+}
+
 function mockAuthFlow(opts: MockAuthFlowOptions): void {
   let statusCallIndex = 0;
   runCommandMock.mockImplementation(async (command, arguments_) => {
@@ -75,6 +102,7 @@ describe("crew sandbox auth", () => {
     consoleError = captureConsoleError();
     loadConfigMock.mockResolvedValue(makeSandboxConfig());
     mockSbxLs(runCommandMock, []);
+    pickToolsMock.mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -96,7 +124,7 @@ describe("crew sandbox auth", () => {
   it("skips the login flow when the pre-check shows already authenticated", async () => {
     mockAuthFlow({ statusOutputs: ['{"loggedIn": true}'] });
 
-    await sandboxCli(["auth", "claude"]);
+    await sandboxCli(["auth", "claude", "claude"]);
 
     const loginCall = runCommandMock.mock.calls.find((call) => isLoginExec(call));
     expect(loginCall).toBeUndefined();
@@ -106,7 +134,7 @@ describe("crew sandbox auth", () => {
   it("re-runs the login flow when --force is set even if already authenticated", async () => {
     mockAuthFlow({ statusOutputs: ['{"loggedIn": true}'] });
 
-    await sandboxCli(["auth", "claude", "--force"]);
+    await sandboxCli(["auth", "claude", "claude", "--force"]);
 
     const loginCall = runCommandMock.mock.calls.find((call) => isLoginExec(call));
     expect(loginCall).toBeDefined();
@@ -116,7 +144,7 @@ describe("crew sandbox auth", () => {
   it("accepts --force placed before the model name", async () => {
     mockAuthFlow({ statusOutputs: ['{"loggedIn": true}'] });
 
-    await sandboxCli(["auth", "--force", "claude"]);
+    await sandboxCli(["auth", "--force", "claude", "claude"]);
 
     const loginCall = runCommandMock.mock.calls.find((call) => isLoginExec(call));
     expect(loginCall).toBeDefined();
@@ -126,7 +154,7 @@ describe("crew sandbox auth", () => {
     // Pre-probe missing → login runs → post-probe authenticated.
     mockAuthFlow({ statusOutputs: ["", '{"loggedIn": true}'] });
 
-    await sandboxCli(["auth", "claude"]);
+    await sandboxCli(["auth", "claude", "claude"]);
 
     const loginCall = runCommandMock.mock.calls.find((call) => isLoginExec(call));
     expect(loginCall?.[1]).toStrictEqual([
@@ -152,7 +180,7 @@ describe("crew sandbox auth", () => {
   it("reports authenticated after a successful login flow", async () => {
     mockAuthFlow({ statusOutputs: ["", '{"loggedIn": true, "email": "x@y.com"}'] });
 
-    await sandboxCli(["auth", "claude"]);
+    await sandboxCli(["auth", "claude", "claude"]);
 
     expect(consoleLog.output()).toContain("groundcrew-claude: 'Claude' authenticated.");
   });
@@ -160,7 +188,7 @@ describe("crew sandbox auth", () => {
   it("warns when post-login status still does not indicate logged in", async () => {
     mockAuthFlow({ statusOutputs: ['{"loggedIn": false}'] });
 
-    await sandboxCli(["auth", "claude"]);
+    await sandboxCli(["auth", "claude", "claude"]);
 
     const output = consoleLog.output();
     expect(output).toContain("could not confirm 'Claude' authentication");
@@ -170,7 +198,7 @@ describe("crew sandbox auth", () => {
   it("treats a probe failure as not authenticated", async () => {
     mockAuthFlow({ statusOutputs: [""], statusThrows: true });
 
-    await sandboxCli(["auth", "claude"]);
+    await sandboxCli(["auth", "claude", "claude"]);
 
     expect(consoleLog.output()).toContain("could not confirm 'Claude' authentication");
   });
@@ -179,7 +207,7 @@ describe("crew sandbox auth", () => {
     // Pre-probe missing, post-probe authenticated.
     mockAuthFlow({ statusOutputs: ["", "Logged in using ChatGPT"] });
 
-    await sandboxCli(["auth", "codex"]);
+    await sandboxCli(["auth", "codex", "codex"]);
 
     const loginCall = runCommandMock.mock.calls.find((call) => isLoginExec(call));
     expect(loginCall?.[1]).toStrictEqual([
@@ -206,7 +234,7 @@ describe("crew sandbox auth", () => {
     // Pre-probe missing, post-probe authenticated.
     mockAuthFlow({ statusOutputs: ["", "Logged in as user@example.com"] });
 
-    await sandboxCli(["auth", "cursor"]);
+    await sandboxCli(["auth", "cursor", "cursor"]);
 
     const loginCall = runCommandMock.mock.calls.find((call) => isLoginExec(call));
     expect(loginCall?.[1]).toStrictEqual([
@@ -273,7 +301,7 @@ describe("crew sandbox auth", () => {
     loadConfigMock.mockResolvedValue(customConfig);
     mockAuthFlow({ statusOutputs: ["", "OK"] });
 
-    await sandboxCli(["auth", "claude"]);
+    await sandboxCli(["auth", "claude", "claude"]);
 
     const loginCall = runCommandMock.mock.calls.find((call) => isLoginExec(call));
     expect(loginCall?.[1]).toStrictEqual([
@@ -285,6 +313,63 @@ describe("crew sandbox auth", () => {
     ]);
   });
 
+  describe("interactive picker (no tool arg)", () => {
+    it("probes every registered recipe and surfaces auth status to the picker", async () => {
+      const customConfig = makeSandboxConfig();
+      customConfig.sandbox = {
+        authRecipes: {
+          github: {
+            displayName: "GitHub CLI",
+            binary: "gh",
+            loginArgs: ["auth", "login"],
+            statusArgs: ["auth", "status"],
+            authenticatedPattern: /Logged in to github\.com/i,
+          },
+        },
+      };
+      loadConfigMock.mockResolvedValue(customConfig);
+      mockClaudeLoggedInOnly();
+
+      await sandboxCli(["auth", "claude"]);
+
+      const choices = pickToolsMock.mock.calls[0]?.[0];
+      expect(choices?.map((c) => c.key).toSorted()).toStrictEqual([
+        "claude",
+        "codex",
+        "cursor",
+        "github",
+      ]);
+      const claudeChoice = choices?.find((c) => c.key === "claude");
+      expect(claudeChoice?.authenticated).toBe(true);
+      const githubChoice = choices?.find((c) => c.key === "github");
+      expect(githubChoice?.authenticated).toBe(false);
+    });
+
+    it("exits without authenticating when the engineer selects nothing", async () => {
+      pickToolsMock.mockResolvedValueOnce([]);
+      mockAuthFlow({ statusOutputs: [""] });
+
+      await sandboxCli(["auth", "claude"]);
+
+      expect(consoleLog.output()).toContain("Nothing selected");
+      const loginCall = runCommandMock.mock.calls.find((call) => isLoginExec(call));
+      expect(loginCall).toBeUndefined();
+    });
+
+    it("runs the login flow for each selected tool with force semantics", async () => {
+      pickToolsMock.mockResolvedValueOnce(["claude", "codex"]);
+      mockAuthFlow({
+        statusOutputs: ['{"loggedIn": true}', "", '{"loggedIn": true}', "Logged in"],
+      });
+
+      await sandboxCli(["auth", "claude"]);
+
+      const loginCalls = runCommandMock.mock.calls.filter((call) => isLoginExec(call));
+      const loginBinaries = loginCalls.map((call) => call[1][3]);
+      expect(loginBinaries).toStrictEqual(["claude", "codex"]);
+    });
+  });
+
   it("falls back to interactive launch + manual verification for unknown agents", async () => {
     const customConfig = makeSandboxConfig();
     customConfig.models.definitions = {
@@ -292,7 +377,7 @@ describe("crew sandbox auth", () => {
     };
     loadConfigMock.mockResolvedValue(customConfig);
 
-    await sandboxCli(["auth", "odd"]);
+    await sandboxCli(["auth", "odd", "odd"]);
 
     const output = consoleLog.output();
     expect(output).toContain("No login recipe for 'odd'");
