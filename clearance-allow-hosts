@@ -65,6 +65,7 @@ registry.npmjs.org
 www.npmjs.com
 
 # Developer tooling
+app.terraform.io
 buf.build
 cdn.playwright.dev
 formulae.brew.sh

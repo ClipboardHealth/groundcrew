@@ -92,6 +92,12 @@ export async function orchestrate(options: OrchestratorOptions): Promise<void> {
   const cleaner: Cleaner = createCleaner({ config });
   const dispatcher: Dispatcher = createDispatcher({ config, client });
 
+  // Folded into the dispatcher's idle log lines in watch mode so each idle
+  // tick prints one combined line instead of "<reason>" + "Next poll in Xs".
+  const idleSuffix = options.watch
+    ? `; next poll in ${config.orchestrator.pollIntervalMilliseconds / MS_PER_SECOND}s`
+    : undefined;
+
   const tick = async (signal?: AbortSignal): Promise<void> => {
     const state: BoardState = await withRetry(async () => await boardSource.fetch(), signal);
     const worktreeEntries = worktrees.list(config);
@@ -107,6 +113,7 @@ export async function orchestrate(options: OrchestratorOptions): Promise<void> {
       // Lazy: dispatcher only invokes this after its own early-returns, so
       // an idle board doesn't burn a codexbar shell-out per tick.
       usage: async (usageSignal) => await fetchUsageOrEmpty(config, usageSignal),
+      ...(idleSuffix === undefined ? {} : { idleSuffix }),
     });
   };
 
@@ -184,7 +191,6 @@ async function runWatchLoop(
       if (shutdown.signal.aborted) {
         break;
       }
-      log(`Next poll in ${config.orchestrator.pollIntervalMilliseconds / MS_PER_SECOND}s...`);
       // oxlint-disable-next-line no-await-in-loop -- watch loop is intentionally serial
       await sleep(config.orchestrator.pollIntervalMilliseconds, shutdown.signal);
     }

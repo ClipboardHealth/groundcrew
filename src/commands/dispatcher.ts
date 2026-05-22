@@ -44,6 +44,12 @@ export interface Dispatcher {
     usage: (signal?: AbortSignal) => Promise<UsageByModel>;
     dryRun: boolean;
     signal?: AbortSignal;
+    /**
+     * Appended to the dispatcher's idle-branch log lines so the watch loop
+     * can fold its `next poll in Xs` heartbeat into the same line instead of
+     * printing a second line per tick.
+     */
+    idleSuffix?: string;
   }): Promise<void>;
 }
 
@@ -134,8 +140,9 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     usage: (signal?: AbortSignal) => Promise<UsageByModel>;
     dryRun: boolean;
     signal?: AbortSignal;
+    idleSuffix?: string;
   }): Promise<void> {
-    const { state, worktreeEntries, usage, dryRun, signal } = arguments_;
+    const { state, worktreeEntries, usage, dryRun, signal, idleSuffix = "" } = arguments_;
     issueStatusUpdater.resetMissingInProgressCache();
 
     const activeCount = state.issues.filter(
@@ -151,13 +158,13 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
 
     if (slots <= 0) {
       log(
-        `At capacity (${activeCount}/${config.orchestrator.maximumInProgress}), no new work to start`,
+        `At capacity (${activeCount}/${config.orchestrator.maximumInProgress}), no new work to start${idleSuffix}`,
       );
       return;
     }
 
     if (todo.length === 0) {
-      log(`No Todo tickets to pick up`);
+      log(`No Todo tickets to pick up${idleSuffix}`);
       return;
     }
 
@@ -168,7 +175,7 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
       logSkip(skip);
     }
     if (unblocked.length === 0) {
-      log(`No eligible Todo tickets after blocker filtering`);
+      log(`No eligible Todo tickets after blocker filtering${idleSuffix}`);
       return;
     }
 
