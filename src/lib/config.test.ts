@@ -474,7 +474,7 @@ describe("loadConfig", () => {
         "export const config = {",
         `  linear: ${JSON.stringify(VALID_LINEAR)},`,
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        '  models: { definitions: { claude: { preLaunch: "   \\n\\t " } } },',
+        String.raw`  models: { definitions: { claude: { preLaunch: "   \n\t " } } },`,
         "};",
       ].join("\n"),
     );

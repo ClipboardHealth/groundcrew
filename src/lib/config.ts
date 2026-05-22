@@ -494,6 +494,38 @@ function isUsageDisableSentinel(usage: UserUsage): usage is { disabled: true } {
   return isPlainObject(usage) && "disabled" in usage && usage.disabled;
 }
 
+function buildOverrideCandidate(
+  name: string,
+  override: EnabledUserModelDefinition,
+  existing: ModelDefinition | undefined,
+): Partial<ModelDefinition> {
+  const base: Partial<ModelDefinition> =
+    existing === undefined ? {} : cloneModelDefinition(existing);
+  // Per-key spread so overriding `cmd` alone preserves the default
+  // `color` / `usage`. Brand-new entries must supply both required fields.
+  const candidate: Partial<ModelDefinition> = { ...base };
+  if (override.cmd !== undefined) {
+    candidate.cmd = override.cmd;
+  }
+  if (override.color !== undefined) {
+    candidate.color = override.color;
+  }
+  if (override.usage !== undefined) {
+    if (isUsageDisableSentinel(override.usage)) {
+      delete candidate.usage;
+    } else {
+      candidate.usage = override.usage;
+    }
+  }
+  if (override.sandbox !== undefined) {
+    candidate.sandbox = normalizeSandbox(override.sandbox, `models.definitions.${name}.sandbox`);
+  }
+  if (override.preLaunch !== undefined) {
+    candidate.preLaunch = override.preLaunch;
+  }
+  return candidate;
+}
+
 function mergeDefinitions(
   user: Record<string, UserModelDefinition> | undefined,
 ): Record<string, ModelDefinition> {
@@ -523,30 +555,7 @@ function mergeDefinitions(
       continue;
     }
 
-    const base: Partial<ModelDefinition> =
-      merged[name] === undefined ? {} : cloneModelDefinition(merged[name]);
-    // Per-key spread so overriding `cmd` alone preserves the default
-    // `color` / `usage`. Brand-new entries must supply both required fields.
-    const candidate: Partial<ModelDefinition> = { ...base };
-    if (override.cmd !== undefined) {
-      candidate.cmd = override.cmd;
-    }
-    if (override.color !== undefined) {
-      candidate.color = override.color;
-    }
-    if (override.usage !== undefined) {
-      if (isUsageDisableSentinel(override.usage)) {
-        delete candidate.usage;
-      } else {
-        candidate.usage = override.usage;
-      }
-    }
-    if (override.sandbox !== undefined) {
-      candidate.sandbox = normalizeSandbox(override.sandbox, `models.definitions.${name}.sandbox`);
-    }
-    if (override.preLaunch !== undefined) {
-      candidate.preLaunch = override.preLaunch;
-    }
+    const candidate = buildOverrideCandidate(name, override, merged[name]);
     const { cmd, color, usage, sandbox, preLaunch } = candidate;
     if (typeof cmd !== "string" || cmd.length === 0) {
       fail(`models.definitions.${name}.cmd must be a non-empty string`);
@@ -773,9 +782,7 @@ function validate(config: ResolvedConfig): void {
     if (definition.preLaunch !== undefined) {
       requireString(definition.preLaunch, `models.definitions.${name}.preLaunch`);
       if (definition.preLaunch.trim().length === 0) {
-        fail(
-          `models.definitions.${name}.preLaunch must contain non-whitespace characters`,
-        );
+        fail(`models.definitions.${name}.preLaunch must contain non-whitespace characters`);
       }
     }
   }
