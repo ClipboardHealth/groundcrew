@@ -45,6 +45,21 @@ function isStatusExec(call: SbxCall): boolean {
   return call[0] === "sbx" && call[1][0] === "exec" && call[1][1] !== "-it";
 }
 
+function isStatusProbe(arguments_: readonly string[]): boolean {
+  // Status probes shell out to `sh -c '<binary> <args> 2>&1'`; the 2>&1
+  // suffix differentiates them from other non-interactive exec calls
+  // (applyGitDefaults' `sh -c 'git config ...'` and the post-login
+  // `gh auth setup-git`).
+  const tail = arguments_.at(-1);
+  return typeof tail === "string" && tail.endsWith("2>&1");
+}
+
+function findSetupGitCall(calls: readonly SbxCall[]): SbxCall | undefined {
+  return calls.find(
+    (call) => call[0] === "sbx" && call[1][0] === "exec" && call[1].includes("setup-git"),
+  );
+}
+
 interface MockAuthFlowOptions {
   /** Status outputs in call order. Last one repeats if more calls happen. */
   statusOutputs: readonly string[];
@@ -62,6 +77,11 @@ function mockAuthFlow(opts: MockAuthFlowOptions): void {
       return "NAME\n";
     }
     if (arguments_[0] === "exec" && arguments_[1] !== "-it") {
+      if (!isStatusProbe(arguments_)) {
+        // Side-effect exec (applyGitDefaults / gh auth setup-git) — return
+        // empty so the call succeeds without consuming a status slot.
+        return "";
+      }
       if (opts.statusThrows === true) {
         throw new Error("sbx exec failed");
       }
@@ -71,6 +91,42 @@ function mockAuthFlow(opts: MockAuthFlowOptions): void {
     }
     return "";
   });
+}
+
+interface MockGithubLoginOptions {
+  /** Result of the `gh auth setup-git` call: "ok" or an error to throw. */
+  setupGit: "ok" | Error;
+}
+
+function mockGithubLoginWithSetupGit(opts: MockGithubLoginOptions): {
+  setupGitCalls: () => number;
+} {
+  let setupGitCalls = 0;
+  runCommandMock.mockImplementation(async (command, arguments_) => {
+    const isSbx = command === "sbx";
+    const isLs = isSbx && arguments_[0] === "ls";
+    const isExec = isSbx && arguments_[0] === "exec";
+    const isLogin = isExec && arguments_[1] === "-it";
+    const isSetupGit = isExec && arguments_.includes("setup-git");
+    if (isLs) {
+      return "NAME\n";
+    }
+    if (isLogin) {
+      return "";
+    }
+    if (isSetupGit) {
+      setupGitCalls += 1;
+      if (opts.setupGit instanceof Error) {
+        throw opts.setupGit;
+      }
+      return "";
+    }
+    if (isExec) {
+      return "Logged in to github.com";
+    }
+    return "";
+  });
+  return { setupGitCalls: () => setupGitCalls };
 }
 
 function mockClaudeLoggedInOnly(): void {
@@ -322,6 +378,7 @@ describe("crew sandbox auth", () => {
           // kind omitted on purpose — defaults to "tool"
         },
       },
+      gitDefaults: false,
     };
     loadConfigMock.mockResolvedValue(customConfig);
 
@@ -344,6 +401,96 @@ describe("crew sandbox auth", () => {
     expect(output).toContain("cursor (3/3)");
   });
 
+  it("runs 'gh auth setup-git' after a successful github login when gitDefaults is on", async () => {
+    const config = makeSandboxConfig();
+    config.sandbox.gitDefaults = true;
+    loadConfigMock.mockResolvedValue(config);
+    pickToolsMock.mockResolvedValueOnce(["github"]);
+    mockAuthFlow({ statusOutputs: ["", "Logged in to github.com"] });
+
+    await sandboxCli(["auth", "claude"]);
+
+    const setupGitCall = findSetupGitCall(runCommandMock.mock.calls);
+    expect(setupGitCall?.[1]).toStrictEqual([
+      "exec",
+      "groundcrew-claude",
+      "gh",
+      "auth",
+      "setup-git",
+    ]);
+  });
+
+  it("does not run 'gh auth setup-git' when github login verification fails", async () => {
+    const config = makeSandboxConfig();
+    config.sandbox.gitDefaults = true;
+    loadConfigMock.mockResolvedValue(config);
+    pickToolsMock.mockResolvedValueOnce(["github"]);
+    mockAuthFlow({ statusOutputs: ["", "Not logged in"] });
+
+    await sandboxCli(["auth", "claude"]);
+
+    expect(findSetupGitCall(runCommandMock.mock.calls)).toBeUndefined();
+  });
+
+  it("does not run 'gh auth setup-git' for non-github recipes", async () => {
+    const config = makeSandboxConfig();
+    config.sandbox.gitDefaults = true;
+    loadConfigMock.mockResolvedValue(config);
+    pickToolsMock.mockResolvedValueOnce(["claude"]);
+    mockAuthFlow({ statusOutputs: ["", '{"loggedIn": true}'] });
+
+    await sandboxCli(["auth", "claude"]);
+
+    expect(findSetupGitCall(runCommandMock.mock.calls)).toBeUndefined();
+  });
+
+  it("warns but does not abort when 'gh auth setup-git' fails", async () => {
+    const config = makeSandboxConfig();
+    config.sandbox.gitDefaults = true;
+    loadConfigMock.mockResolvedValue(config);
+    pickToolsMock.mockResolvedValueOnce(["github"]);
+    const { setupGitCalls } = mockGithubLoginWithSetupGit({
+      setupGit: new Error("setup-git boom"),
+    });
+
+    await expect(sandboxCli(["auth", "claude"])).resolves.toBeUndefined();
+
+    expect(setupGitCalls()).toBe(1);
+    expect(consoleLog.output()).toContain("'gh auth setup-git' failed:");
+    expect(consoleLog.output()).toContain("setup-git boom");
+  });
+
+  it("skips 'gh auth setup-git' when gitDefaults is off", async () => {
+    pickToolsMock.mockResolvedValueOnce(["github"]);
+    mockAuthFlow({ statusOutputs: ["", "Logged in to github.com"] });
+
+    await sandboxCli(["auth", "claude"]);
+
+    expect(findSetupGitCall(runCommandMock.mock.calls)).toBeUndefined();
+  });
+
+  it("skips 'gh auth setup-git' when a custom github recipe overrides the binary", async () => {
+    const config = makeSandboxConfig();
+    config.sandbox.gitDefaults = true;
+    config.sandbox.authRecipes = {
+      github: {
+        displayName: "GitHub (custom)",
+        binary: "gh-custom",
+        loginArgs: ["login"],
+        statusArgs: ["status"],
+        authenticatedPattern: /Logged in/,
+        kind: "tool",
+      },
+    };
+    loadConfigMock.mockResolvedValue(config);
+    pickToolsMock.mockResolvedValueOnce(["github"]);
+    mockAuthFlow({ statusOutputs: ["", "Logged in"] });
+
+    await sandboxCli(["auth", "claude"]);
+
+    expect(findSetupGitCall(runCommandMock.mock.calls)).toBeUndefined();
+  });
+
   it("user-config recipe overrides the built-in for the same key", async () => {
     const customConfig = makeSandboxConfig();
     customConfig.sandbox = {
@@ -357,6 +504,7 @@ describe("crew sandbox auth", () => {
           kind: "tool",
         },
       },
+      gitDefaults: false,
     };
     loadConfigMock.mockResolvedValue(customConfig);
     pickToolsMock.mockResolvedValueOnce(["github"]);

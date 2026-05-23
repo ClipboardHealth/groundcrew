@@ -93,7 +93,7 @@ function makeConfig(workspaceKind: WorkspaceKindSetting = "auto"): ResolvedConfi
     prompts: { initial: "x" },
     workspaceKind,
     local: { runner: "auto" },
-    sandbox: { authRecipes: {} },
+    sandbox: { authRecipes: {}, gitDefaults: false },
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }

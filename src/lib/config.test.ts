@@ -601,6 +601,59 @@ describe("loadConfig", () => {
     );
   });
 
+  it("defaults sandbox.gitDefaults to true when omitted", async () => {
+    const path = writeConfigFile(
+      temporary,
+      configSource({
+        linear: { ...VALID_LINEAR },
+        workspace: VALID_WORKSPACE(temporary),
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+
+    expect(actual.sandbox.gitDefaults).toBe(true);
+  });
+
+  it("threads an explicit sandbox.gitDefaults: false through to the resolved config", async () => {
+    const path = writeConfigFile(
+      temporary,
+      [
+        "export default {",
+        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        "  sandbox: { gitDefaults: false },",
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+
+    expect(actual.sandbox.gitDefaults).toBe(false);
+  });
+
+  it("rejects a non-boolean sandbox.gitDefaults", async () => {
+    const path = writeConfigFile(
+      temporary,
+      [
+        "export default {",
+        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        "  sandbox: { gitDefaults: 'yes' },",
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(/sandbox\.gitDefaults must be a boolean/);
+  });
+
   it("rejects an invalid local.runner value", async () => {
     const path = writeConfigFile(
       temporary,

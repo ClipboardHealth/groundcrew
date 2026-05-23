@@ -83,6 +83,7 @@ describe(ensureSandbox, () => {
       sandboxName: "groundcrew-claude",
       sandbox: { agent: "claude" },
       mountPath: "/home/user/dev",
+      gitDefaults: false,
     });
 
     expect(runCommandMock).toHaveBeenCalledTimes(1);
@@ -97,6 +98,7 @@ describe(ensureSandbox, () => {
       sandboxName: "groundcrew-claude",
       sandbox: { agent: "claude" },
       mountPath: "/home/user/dev",
+      gitDefaults: false,
     });
 
     expect(runCommandMock).toHaveBeenCalledWith(
@@ -113,6 +115,7 @@ describe(ensureSandbox, () => {
       sandboxName: "groundcrew-claude",
       sandbox: { agent: "claude", template: "node-22" },
       mountPath: "/home/user/dev",
+      gitDefaults: false,
     });
 
     expect(runCommandMock).toHaveBeenCalledWith(
@@ -137,6 +140,7 @@ describe(ensureSandbox, () => {
       sandboxName: "groundcrew-claude",
       sandbox: { agent: "claude", kits: ["npm-cache", "tools"] },
       mountPath: "/home/user/dev",
+      gitDefaults: false,
     });
 
     expect(runCommandMock).toHaveBeenCalledWith(
@@ -165,6 +169,7 @@ describe(ensureSandbox, () => {
         sandboxName: "groundcrew-claude",
         sandbox: { agent: "claude" },
         mountPath: "/home/user/dev",
+        gitDefaults: false,
       },
       controller.signal,
     );
@@ -182,6 +187,7 @@ describe(ensureSandbox, () => {
         sandboxName: "groundcrew-claude",
         sandbox: { agent: "claude" },
         mountPath: "/home/user/dev",
+        gitDefaults: false,
       }),
     ).resolves.toBeUndefined();
     expect(counters.createCalls).toBe(1);
@@ -196,10 +202,83 @@ describe(ensureSandbox, () => {
         sandboxName: "groundcrew-claude",
         sandbox: { agent: "claude" },
         mountPath: "/home/user/dev",
+        gitDefaults: false,
       }),
     ).rejects.toThrow(/sbx daemon unreachable/);
   });
+
+  it("applies git defaults inside an existing sandbox when gitDefaults is true", async () => {
+    mockExisting(["groundcrew-claude"]);
+
+    await ensureSandbox({
+      sandboxName: "groundcrew-claude",
+      sandbox: { agent: "claude" },
+      mountPath: "/home/user/dev",
+      gitDefaults: true,
+    });
+
+    const gitDefaultsCall = findGitDefaultsCall(runCommandMock.mock.calls);
+    expect(gitDefaultsCall).toBeDefined();
+    expect(gitDefaultsCall?.[1]?.[1]).toBe("groundcrew-claude");
+  });
+
+  it("applies git defaults after creating a missing sandbox", async () => {
+    mockExisting([]);
+
+    await ensureSandbox({
+      sandboxName: "groundcrew-claude",
+      sandbox: { agent: "claude" },
+      mountPath: "/home/user/dev",
+      gitDefaults: true,
+    });
+
+    const verbs = runCommandMock.mock.calls.map(([, arguments_]) => arguments_[0]);
+    expect(verbs).toStrictEqual(["ls", "create", "exec"]);
+  });
+
+  it("passes the AbortSignal through to applyGitDefaults", async () => {
+    const controller = new AbortController();
+    mockExisting(["groundcrew-claude"]);
+
+    await ensureSandbox(
+      {
+        sandboxName: "groundcrew-claude",
+        sandbox: { agent: "claude" },
+        mountPath: "/home/user/dev",
+        gitDefaults: true,
+      },
+      controller.signal,
+    );
+
+    const gitDefaultsCall = findGitDefaultsCall(runCommandMock.mock.calls);
+    expect(gitDefaultsCall?.[2]).toMatchObject({ signal: controller.signal });
+  });
+
+  it("skips git defaults when gitDefaults is false", async () => {
+    mockExisting(["groundcrew-claude"]);
+
+    await ensureSandbox({
+      sandboxName: "groundcrew-claude",
+      sandbox: { agent: "claude" },
+      mountPath: "/home/user/dev",
+      gitDefaults: false,
+    });
+
+    expect(findGitDefaultsCall(runCommandMock.mock.calls)).toBeUndefined();
+  });
 });
+
+function findGitDefaultsCall(
+  calls: readonly Parameters<RunCommandMock>[],
+): Parameters<RunCommandMock> | undefined {
+  return calls.find(([command, arguments_]) => {
+    if (command !== "sbx" || arguments_[0] !== "exec") {
+      return false;
+    }
+    const script = arguments_.at(4);
+    return typeof script === "string" && script.includes("commit.gpgsign false");
+  });
+}
 
 interface SbxCallCounters {
   readonly lsCalls: number;

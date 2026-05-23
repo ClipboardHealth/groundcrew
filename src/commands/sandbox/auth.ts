@@ -98,8 +98,9 @@ async function loginAndVerify(input: {
   toolKey: string;
   recipe: AuthRecipe;
   modelName: string;
+  gitDefaults: boolean;
 }): Promise<void> {
-  const { sandboxName, toolKey, recipe, modelName } = input;
+  const { sandboxName, toolKey, recipe, modelName, gitDefaults } = input;
   const binary = binaryFor(toolKey, recipe);
   writeOutput(`${sandboxName}: launching '${recipe.displayName}' login...`);
   writeOutput("Complete the login flow in the prompts/browser, then return here.");
@@ -114,11 +115,29 @@ async function loginAndVerify(input: {
   const authenticated = await probeAuthStatus(sandboxName, toolKey, recipe);
   if (authenticated) {
     writeOutput(`${sandboxName}: '${recipe.displayName}' authenticated.`);
+    if (gitDefaults && toolKey === "github" && binary === "gh") {
+      await runGhSetupGit(sandboxName);
+    }
     return;
   }
   writeOutput(
     `${sandboxName}: could not confirm '${recipe.displayName}' authentication — re-run 'crew sandbox auth ${modelName}' to retry.`,
   );
+}
+
+/**
+ * Register `gh` as git's credential helper inside the sandbox so HTTPS
+ * pushes succeed without prompting. Best-effort — a failure here doesn't
+ * undo the login itself, so we warn and move on.
+ */
+async function runGhSetupGit(sandboxName: string): Promise<void> {
+  writeOutput(`${sandboxName}: wiring 'gh' as git credential helper...`);
+  try {
+    await runCommandAsync("sbx", ["exec", sandboxName, "gh", "auth", "setup-git"]);
+    writeOutput(`${sandboxName}: 'gh auth setup-git' done.`);
+  } catch (error) {
+    writeOutput(`${sandboxName}: warning — 'gh auth setup-git' failed: ${String(error)}`);
+  }
 }
 
 interface RecipeEntry {
@@ -245,6 +264,7 @@ async function runAuthInteractive(
       toolKey: key,
       recipe,
       modelName,
+      gitDefaults: config.sandbox.gitDefaults,
     });
   }
 }

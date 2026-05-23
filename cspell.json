@@ -68,6 +68,7 @@
     "Safehouse",
     "bubblewrap",
     "dockersandbox",
+    "gpgsign",
     "normalises",
     "sandboxed",
     "sandboxing",

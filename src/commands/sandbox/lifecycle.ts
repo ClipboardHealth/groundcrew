@@ -11,6 +11,7 @@ export async function ensureOne(config: ResolvedConfig, model: SandboxModel): Pr
     sandboxName: model.sandboxName,
     sandbox: model.sandbox,
     mountPath: resolve(config.workspace.projectDir),
+    gitDefaults: config.sandbox.gitDefaults,
   });
 }
 
