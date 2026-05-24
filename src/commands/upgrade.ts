@@ -10,7 +10,13 @@ import {
   type NpmRunResult,
   runNpmInstallGlobal,
 } from "../lib/npmGlobal.ts";
-import { compareVersions, fetchLatestVersion, parseVersion } from "../lib/upgrade.ts";
+import {
+  compareVersions,
+  defaultUpgradeCheckCachePath,
+  fetchLatestVersion,
+  parseVersion,
+  writeUpgradeCheckCache,
+} from "../lib/upgrade.ts";
 import { readEnvironmentVariable, writeError, writeOutput } from "../lib/util.ts";
 
 const PACKAGE_NAME = "@clipboard-health/groundcrew";
@@ -35,6 +41,11 @@ export interface UpgradeCliOptions {
   }) => Promise<NpmRunResult>;
   registry?: string | undefined;
   fetchTimeoutMs: number;
+  /** Path of the upgrade-availability cache that the nudge reads. We prime
+   * it from `--check` and the default install path so the next non-upgrade
+   * subcommand can render the nudge without paying the network cost. */
+  cachePath: string;
+  now: () => number;
 }
 
 interface ParsedArgs {
@@ -172,8 +183,9 @@ async function runCheck(options: UpgradeCliOptions): Promise<void> {
 }
 
 async function fetchOrFail(options: UpgradeCliOptions): Promise<string | undefined> {
+  let latest: string;
   try {
-    return await options.fetcher(options.packageName, {
+    latest = await options.fetcher(options.packageName, {
       timeoutMs: options.fetchTimeoutMs,
       registry: options.registry,
     });
@@ -182,6 +194,8 @@ async function fetchOrFail(options: UpgradeCliOptions): Promise<string | undefin
     process.exitCode = 1;
     return undefined;
   }
+  writeUpgradeCheckCache(options.cachePath, { latest, fetchedAt: options.now() });
+  return latest;
 }
 
 function resolvePinnedVersion(
@@ -257,5 +271,7 @@ export async function createDefaultUpgradeCliOptions(
       }),
     fetchTimeoutMs: EXPLICIT_FETCH_TIMEOUT_MS,
     registry: readEnvironmentVariable("npm_config_registry"),
+    cachePath: defaultUpgradeCheckCachePath(),
+    now: Date.now,
   };
 }

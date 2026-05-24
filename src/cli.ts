@@ -23,7 +23,7 @@ import {
 
 const UPGRADE_PACKAGE_NAME = "@clipboard-health/groundcrew";
 const NUDGE_TTL_MS = 6 * 60 * 60 * 1000;
-const NUDGE_FETCH_TIMEOUT_MS = 300;
+const NUDGE_FETCH_TIMEOUT_MS = 1000;
 
 interface PackageMetadata {
   version: string;

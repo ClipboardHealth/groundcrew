@@ -95,6 +95,8 @@ function makeFakeUpgradeOptions(currentVersion: string): UpgradeCliOptions {
     fetcher: vi.fn<UpgradeCliOptions["fetcher"]>(),
     runInstall: vi.fn<UpgradeCliOptions["runInstall"]>(),
     fetchTimeoutMs: 5000,
+    cachePath: "/tmp/cli-test-upgrade-cache.json",
+    now: () => 1_700_000_000_000,
   };
 }
 
@@ -458,7 +460,7 @@ describe(run, () => {
         expect.objectContaining({
           packageName: "@clipboard-health/groundcrew",
           ttlMs: 6 * 60 * 60 * 1000,
-          fetchTimeoutMs: 300,
+          fetchTimeoutMs: 1000,
           registry: "https://npm.mirror.example",
           noUpgradeCheck: true,
         }),

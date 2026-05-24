@@ -1,3 +1,6 @@
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { runCommand, type RunCommandOptions } from "../lib/commandRunner.ts";
@@ -44,6 +47,9 @@ const PACKAGE_NAME = "@clipboard-health/groundcrew";
 type FetcherFn = UpgradeCliOptions["fetcher"];
 type RunInstallFn = UpgradeCliOptions["runInstall"];
 
+let testCacheDir: string;
+let testCachePath: string;
+
 function makeOptions(overrides: Partial<UpgradeCliOptions> = {}): UpgradeCliOptions {
   return {
     currentVersion: "3.1.8",
@@ -54,6 +60,8 @@ function makeOptions(overrides: Partial<UpgradeCliOptions> = {}): UpgradeCliOpti
     fetcher: vi.fn<FetcherFn>().mockResolvedValue("3.1.8"),
     runInstall: vi.fn<RunInstallFn>().mockResolvedValue({ exitCode: 0, sawEacces: false }),
     fetchTimeoutMs: 5000,
+    cachePath: testCachePath,
+    now: () => 1_700_000_000_000,
     ...overrides,
   };
 }
@@ -63,6 +71,8 @@ describe(upgradeCli, () => {
   let consoleErr: ReturnType<typeof captureConsoleError>;
 
   beforeEach(() => {
+    testCacheDir = mkdtempSync(join(tmpdir(), "groundcrew-upgrade-cli-"));
+    testCachePath = join(testCacheDir, "upgrade-check.json");
     consoleLog = captureConsoleLog();
     consoleErr = captureConsoleError();
     process.exitCode = undefined;
@@ -72,6 +82,7 @@ describe(upgradeCli, () => {
     consoleLog.restore();
     consoleErr.restore();
     process.exitCode = undefined;
+    rmSync(testCacheDir, { recursive: true, force: true });
   });
 
   it("prints help and exits 0 on --help", async () => {
@@ -255,6 +266,40 @@ describe(upgradeCli, () => {
       registry: "https://my.mirror.example",
     });
   });
+
+  it("primes the upgrade-check cache after a successful --check", async () => {
+    const fetcher = vi.fn<FetcherFn>().mockResolvedValue("3.2.0");
+    await upgradeCli(
+      ["--check"],
+      makeOptions({ currentVersion: "3.1.8", fetcher, now: () => 12_345 }),
+    );
+    expect(JSON.parse(readFileSync(testCachePath, "utf8"))).toStrictEqual({
+      latest: "3.2.0",
+      fetchedAt: 12_345,
+    });
+  });
+
+  it("primes the upgrade-check cache after a successful no-arg install fetch", async () => {
+    const fetcher = vi.fn<FetcherFn>().mockResolvedValue("3.2.0");
+    await upgradeCli([], makeOptions({ currentVersion: "3.1.8", fetcher, now: () => 99_999 }));
+    expect(JSON.parse(readFileSync(testCachePath, "utf8"))).toStrictEqual({
+      latest: "3.2.0",
+      fetchedAt: 99_999,
+    });
+  });
+
+  it("does not prime the cache when the registry fetch fails", async () => {
+    const fetcher = vi.fn<FetcherFn>().mockRejectedValue(new Error("network down"));
+    await upgradeCli(["--check"], makeOptions({ fetcher }));
+    expect(() => readFileSync(testCachePath, "utf8")).toThrow(/ENOENT/);
+  });
+
+  it("does not touch the cache when a pinned version skips the fetch", async () => {
+    const fetcher = vi.fn<FetcherFn>();
+    await upgradeCli(["3.2.0"], makeOptions({ currentVersion: "3.1.8", fetcher }));
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(() => readFileSync(testCachePath, "utf8")).toThrow(/ENOENT/);
+  });
 });
 
 describe(createDefaultUpgradeCliOptions, () => {
@@ -279,6 +324,8 @@ describe(createDefaultUpgradeCliOptions, () => {
     expect(options.npmBin).toBe("/usr/local/bin/npm");
     expect(options.registry).toBe("https://npm.mirror.example");
     expect(options.fetchTimeoutMs).toBe(5000);
+    expect(options.cachePath).toMatch(/groundcrew[/\\]upgrade-check\.json$/);
+    expect(options.now()).toBeGreaterThan(1_700_000_000_000);
     expect(whichMock).toHaveBeenCalledWith("npm");
     expect(runCommandMock).toHaveBeenCalledWith("/usr/local/bin/npm", ["root", "-g"]);
   });
