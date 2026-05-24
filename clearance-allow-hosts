@@ -29,6 +29,7 @@ slack.com
 api.datadoghq.com
 app.datadoghq.com
 datadoghq.com
+docs.datadoghq.com
 
 # GitHub + GHA artifact storage (Azure blobs)
 api.github.com
@@ -68,6 +69,7 @@ www.npmjs.com
 app.terraform.io
 buf.build
 cdn.playwright.dev
+fastdl.mongodb.org
 formulae.brew.sh
 hub.docker.com
 index.docker.io
