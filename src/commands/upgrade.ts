@@ -194,7 +194,11 @@ async function fetchOrFail(options: UpgradeCliOptions): Promise<string | undefin
     process.exitCode = 1;
     return undefined;
   }
-  writeUpgradeCheckCache(options.cachePath, { latest, fetchedAt: options.now() });
+  try {
+    writeUpgradeCheckCache(options.cachePath, { latest, fetchedAt: options.now() });
+  } catch {
+    // Cache priming is best-effort; do not fail the command on disk errors.
+  }
   return latest;
 }
 

@@ -186,7 +186,11 @@ export async function computeUpgradeNudge(
       timeoutMs: options.fetchTimeoutMs,
       registry: options.registry,
     });
-    writeUpgradeCheckCache(options.cachePath, { latest, fetchedAt: options.now() });
+    try {
+      writeUpgradeCheckCache(options.cachePath, { latest, fetchedAt: options.now() });
+    } catch {
+      // Best-effort cache priming; don't lose a freshly-fetched value on disk error.
+    }
     return composeNudgeMessage(options.currentVersion, latest);
   } catch {
     if (cacheResult.kind === "stale") {

@@ -226,7 +226,11 @@ export async function run(argv: string[]): Promise<void> {
   }
 
   if (subcommand !== "upgrade") {
-    await maybeRunUpgradeNudge(packageVersion());
+    try {
+      await maybeRunUpgradeNudge(packageVersion());
+    } catch {
+      // Passive nudge is never load-bearing; never block the user's command.
+    }
   }
 
   try {

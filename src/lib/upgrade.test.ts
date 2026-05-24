@@ -416,4 +416,17 @@ describe(computeUpgradeNudge, () => {
       fetchedAt: 1_000_000,
     });
   });
+
+  it("returns the fresh nudge even when cache write throws", async () => {
+    // Point cachePath under a regular file so mkdirSync inside writeUpgradeCheckCache throws.
+    const blocker = join(cacheDir, "blocker");
+    writeFileSync(blocker, "");
+    const unreachableCachePath = join(blocker, "cache.json");
+    const fetcher = vi.fn<FetcherFn>().mockResolvedValueOnce("3.2.0");
+    const result = await computeUpgradeNudge({
+      ...baseOptions({ currentVersion: "3.1.8", fetcher }),
+      cachePath: unreachableCachePath,
+    });
+    expect(result).toBe("[crew] 3.2.0 available — run `crew upgrade` (you have 3.1.8)");
+  });
 });

@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -299,6 +299,19 @@ describe(upgradeCli, () => {
     await upgradeCli(["3.2.0"], makeOptions({ currentVersion: "3.1.8", fetcher }));
     expect(fetcher).not.toHaveBeenCalled();
     expect(() => readFileSync(testCachePath, "utf8")).toThrow(/ENOENT/);
+  });
+
+  it("succeeds when cache priming fails (best-effort write)", async () => {
+    // Point cachePath under a regular file so mkdirSync inside writeUpgradeCheckCache throws.
+    const blocker = join(testCacheDir, "blocker");
+    writeFileSync(blocker, "");
+    const fetcher = vi.fn<FetcherFn>().mockResolvedValue("3.2.0");
+    await upgradeCli(
+      ["--check"],
+      makeOptions({ currentVersion: "3.1.8", fetcher, cachePath: join(blocker, "cache.json") }),
+    );
+    expect(consoleLog.output()).toMatch(/3\.2\.0 available/);
+    expect(process.exitCode).toBeUndefined();
   });
 });
 

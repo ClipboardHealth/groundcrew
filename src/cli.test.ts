@@ -475,4 +475,12 @@ describe(run, () => {
 
     expect(computeUpgradeNudgeMock).not.toHaveBeenCalled();
   });
+
+  it("still runs the requested subcommand when the nudge throws", async () => {
+    computeUpgradeNudgeMock.mockRejectedValueOnce(new Error("nudge boom"));
+    await run(["doctor"]);
+
+    expect(doctorMock).toHaveBeenCalledWith();
+    expect(process.exitCode).toBeUndefined();
+  });
 });
