@@ -176,6 +176,37 @@ Three keys are required; everything else has a default.
 
 Agent selection uses Linear labels: `agent-claude`, `agent-codex`, `agent-<name>`. `crew run` without `--ticket` only fetches tickets carrying an `agent-*` label — the GraphQL query filters server-side, so unlabeled tickets are never returned by Linear and do not appear on the board. Use `crew run --ticket <TICKET>` to provision an unlabeled ticket on demand (falls back to `models.default`). `agent-any` routes to the model with the most available session capacity. Todo tickets blocked by non-terminal blockers are skipped until their blockers reach a terminal status.
 
+### Linear view mode
+
+Instead of listing one or more Linear projects, you can point the Linear adapter at a Linear view (a saved filter in the Linear UI). View mode is enabled by adding a `linear` entry to `sources[]` with a `view.url`:
+
+```ts
+export default {
+  linear: { projects: [] },
+  sources: [
+    {
+      kind: "linear",
+      view: {
+        url: "https://linear.app/<workspace>/view/<name>-<12-hex>",
+      },
+    },
+  ],
+  workspace: {
+    projectDir: "/path/to/projects",
+    knownRepositories: ["org/repo-a", "org/repo-b"],
+  },
+};
+```
+
+In view mode:
+
+- `linear.projects[]` must be empty (or omitted).
+- Canonical status mapping uses Linear's workflow state **types** (`unstarted` → todo, `started` → in-progress, `completed` and `canceled` → done). No per-team status config is needed.
+- The same `agent-*` label opt-in applies — only tickets with at least one `agent-*` label are picked up.
+- `markInProgress` writes the lowest-position `started`-type state for the issue's team.
+
+Project mode (`linear.projects[]` populated) and view mode are mutually exclusive. Configure exactly one.
+
 ### Pluggable ticket sources
 
 `sources` declares extra ticket-system adapters. The current release verifies configured extra sources during `crew run` startup; the dispatch loop still reads Linear through `linear.projects` until the consumer refactor lands. This lets you validate shell/Jira/local-plan integrations without changing existing Linear behavior.

@@ -14,6 +14,12 @@ export const linearAdapterConfigSchema = z.object({
     .string()
     .regex(/^[a-z][a-z0-9-]*$/, "name must be kebab-case (lowercase letters, digits, hyphens)")
     .optional(),
+  view: z
+    .object({
+      url: z.url(),
+    })
+    .strict()
+    .optional(),
 });
 
 export type LinearAdapterConfig = z.infer<typeof linearAdapterConfigSchema>;

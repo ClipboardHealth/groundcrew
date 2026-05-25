@@ -24,7 +24,11 @@ import {
   type Issue as LinearIssue,
   isTerminalStatusForBlocker,
 } from "../../boardSource.ts";
-import { findProjectBySlugId, type ResolvedProjectConfig } from "../../config.ts";
+import {
+  extractViewSlugId,
+  findProjectBySlugId,
+  type ResolvedProjectConfig,
+} from "../../config.ts";
 import { createLinearIssueStatusUpdater } from "../../linearIssueStatus.ts";
 import type {
   Blocker as CanonicalBlocker,
@@ -33,15 +37,13 @@ import type {
   TicketSource,
 } from "../../ticketSource.ts";
 import { getLinearClient } from "../../util.ts";
+import {
+  buildLinearCanonicalIssue,
+  buildResolvedLinearCanonicalIssue,
+  type LinearSourceRef,
+} from "./canonical.ts";
 import type { LinearAdapterConfig } from "./schema.ts";
-
-interface LinearSourceRef {
-  uuid: string;
-  statusId: string;
-  teamId: string;
-  projectSlugId: string;
-  nativeStatus: string;
-}
+import { createLinearViewTicketSource } from "./viewSource.ts";
 
 export function canonicalStatusForProject(
   nativeStatus: string,
@@ -111,28 +113,12 @@ export function toCanonicalIssue(
       `Linear adapter: issue ${linearIssue.id} carries unknown projectSlugId "${linearIssue.projectSlugId}"`,
     );
   }
-  const sourceRef: LinearSourceRef = {
-    uuid: linearIssue.uuid,
-    statusId: linearIssue.statusId,
-    teamId: linearIssue.teamId,
-    projectSlugId: linearIssue.projectSlugId,
-    nativeStatus: linearIssue.status,
-  };
-  return {
-    id: `${sourceName}:${linearIssue.id}`,
-    source: sourceName,
-    title: linearIssue.title,
-    // Board snapshot doesn't carry description; resolveOne() populates it.
-    description: "",
+  return buildLinearCanonicalIssue({
+    linearIssue,
+    sourceName,
     status: canonicalStatusForProject(linearIssue.status, project),
-    repository: linearIssue.repository,
-    model: linearIssue.model,
-    assignee: linearIssue.assignee,
-    updatedAt: linearIssue.updatedAt,
     blockers: linearIssue.blockers.map((b) => toCanonicalBlocker(b, globalConfig, sourceName)),
-    hasMoreBlockers: linearIssue.hasMoreBlockers,
-    sourceRef,
-  };
+  });
 }
 
 export function createLinearTicketSource(
@@ -142,6 +128,18 @@ export function createLinearTicketSource(
   const sourceName = config.name ?? "linear";
   const { globalConfig } = context;
   const client = getLinearClient();
+
+  if (config.view !== undefined) {
+    const viewSlugId = extractViewSlugId(config.view.url);
+    return createLinearViewTicketSource({
+      client,
+      config: globalConfig,
+      viewUrl: config.view.url,
+      viewSlugId,
+      sourceName,
+    });
+  }
+
   const boardSource = createBoardSource({ config: globalConfig, client });
   const issueStatusUpdater = createLinearIssueStatusUpdater({ config: globalConfig, client });
 
@@ -177,27 +175,11 @@ export function createLinearTicketSource(
       // already been resolved through workflow state lookup). We surface
       // "other" until the consumer needs the canonical status, which is fine
       // because `crew setup` doesn't branch on it.
-      const sourceRef: LinearSourceRef = {
-        uuid: resolved.uuid,
-        statusId: "",
-        teamId: resolved.teamId,
-        projectSlugId: resolved.projectSlugId,
-        nativeStatus: "",
-      };
-      return {
-        id: `${sourceName}:${naturalId.toLowerCase()}`,
-        source: sourceName,
-        title: resolved.title,
-        description: resolved.description,
-        status: "other",
-        repository: resolved.repository,
-        model: resolved.model,
-        assignee: "Unassigned",
-        updatedAt: new Date().toISOString(),
-        blockers: [],
-        hasMoreBlockers: false,
-        sourceRef,
-      };
+      return buildResolvedLinearCanonicalIssue({
+        sourceName,
+        ticketIdentifier: naturalId,
+        resolved,
+      });
     },
     async markInProgress(issue: CanonicalIssue): Promise<void> {
       // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- by the Linear adapter's contract, every Issue it produces carries a LinearSourceRef in sourceRef

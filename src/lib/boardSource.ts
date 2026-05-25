@@ -17,8 +17,8 @@ import {
 import { RepositoryResolutionError } from "./ticketSource.ts";
 import { log } from "./util.ts";
 
-const AGENT_LABEL_PREFIX = "agent-";
-const ISSUES_PAGE_SIZE = 250;
+export const AGENT_LABEL_PREFIX = "agent-";
+export const ISSUES_PAGE_SIZE = 250;
 
 export interface Blocker {
   id: string;
@@ -210,7 +210,7 @@ interface IssuesPage {
   pageInfo: { hasNextPage: boolean; endCursor: string };
 }
 
-interface IssueRelationNode {
+export interface IssueRelationNode {
   type: string;
   issue?: {
     identifier: string;
@@ -387,7 +387,9 @@ function isTodoStatusForOwnProject(node: IssueNode, config: ResolvedConfig): boo
   return node.state?.name === project.statuses.todo;
 }
 
-function modelForResolution(resolution: Exclude<ModelResolution, { kind: "no-label" }>): string {
+export function modelForResolution(
+  resolution: Exclude<ModelResolution, { kind: "no-label" }>,
+): string {
   if (resolution.kind === "matched") {
     return resolution.model;
   }
@@ -397,11 +399,75 @@ function modelForResolution(resolution: Exclude<ModelResolution, { kind: "no-lab
   return AGENT_ANY_MODEL;
 }
 
+/**
+ * Build a canonical `Issue` from a Linear GraphQL node. Used by both
+ * project-mode (`issueFromNode`) and view-mode (`issueFromViewNode`)
+ * fetch paths so the shared return shape lives in one place.
+ */
+/**
+ * Resolve `{ repository, model }` for a Todo (or unstarted) Linear ticket
+ * that carries an `agent-*` label. Both project mode and view mode use
+ * this — only the `isTodo` predicate differs (project: own-project status
+ * match, view: state.type === "unstarted").
+ */
+export function resolveTodoAgentMetadata(arguments_: {
+  ticket: string;
+  description: string | undefined;
+  modelResolution: ModelResolution;
+  config: ResolvedConfig;
+  isTodo: boolean;
+}): { repository: string | undefined; model: string | undefined } {
+  const { ticket, description, modelResolution, config, isTodo } = arguments_;
+  let repository: string | undefined;
+  let model: string | undefined;
+  if (modelResolution.kind !== "no-label" && isTodo) {
+    const resolution = resolveRepositoryFor({ description, config, ticket });
+    if (resolution.kind === "ok") {
+      ({ repository } = resolution);
+      model = modelForResolution(modelResolution);
+    } else {
+      log(
+        `WARNING: ${ticket} has an ${AGENT_LABEL_PREFIX}* label but no known repository in its description; skipping dispatch. Add one of workspace.knownRepositories to the description, or remove the ${AGENT_LABEL_PREFIX}* label: ${config.workspace.knownRepositories.join(", ")}`,
+      );
+    }
+  }
+  return { repository, model };
+}
+
+export function buildLinearIssue(input: {
+  identifier: string;
+  uuid: string;
+  title: string;
+  status: string;
+  statusId: string;
+  assigneeName: string | undefined;
+  updatedAt: string;
+  repository: string | undefined;
+  model: string | undefined;
+  teamId: string;
+  projectSlugId: string;
+  inverseRelations: { nodes: IssueRelationNode[]; pageInfo: { hasNextPage: boolean } } | undefined;
+}): Issue {
+  return {
+    id: input.identifier.toLowerCase(),
+    uuid: input.uuid,
+    title: input.title,
+    status: input.status,
+    statusId: input.statusId,
+    assignee: input.assigneeName ?? "Unassigned",
+    updatedAt: input.updatedAt,
+    repository: input.repository,
+    model: input.model,
+    teamId: input.teamId,
+    projectSlugId: input.projectSlugId,
+    blockers: blockersFromRelations(input.inverseRelations?.nodes ?? []),
+    hasMoreBlockers: input.inverseRelations?.pageInfo.hasNextPage ?? false,
+  };
+}
+
 function issueFromNode(node: IssueNode, config: ResolvedConfig): Issue {
   const modelResolution = resolveModelFor({ labels: node.labels.nodes, config });
   warnIfDisabledFallback(node.identifier, modelResolution, config);
-  let repository: string | undefined;
-  let model: string | undefined;
   // Only the dispatcher reads `Issue.repository` / `Issue.model`, and only on
   // tickets in the Todo column it's about to pick up. Resolving them for In
   // Progress (already running) or Done (cleaner only needs the id) would just
@@ -411,42 +477,33 @@ function issueFromNode(node: IssueNode, config: ResolvedConfig): Issue {
   // bug, so surface it loudly there and treat it as not-eligible so the rest
   // of the board still ticks instead of the whole watch loop crashing on
   // one bad ticket.
-  if (modelResolution.kind !== "no-label" && isTodoStatusForOwnProject(node, config)) {
-    const resolution = resolveRepositoryFor({
-      description: node.description ?? undefined,
-      config,
-      ticket: node.identifier,
-    });
-    if (resolution.kind === "ok") {
-      ({ repository } = resolution);
-      model = modelForResolution(modelResolution);
-    } else {
-      log(
-        `WARNING: ${node.identifier} has an ${AGENT_LABEL_PREFIX}* label but no known repository in its description; skipping dispatch. Add one of workspace.knownRepositories to the description, or remove the ${AGENT_LABEL_PREFIX}* label: ${config.workspace.knownRepositories.join(", ")}`,
-      );
-    }
-  }
+  const { repository, model } = resolveTodoAgentMetadata({
+    ticket: node.identifier,
+    description: node.description ?? undefined,
+    modelResolution,
+    config,
+    isTodo: isTodoStatusForOwnProject(node, config),
+  });
   // `issueStatusBelongsToOwnProject` drops nodes whose `state` or `project`
   // is missing, so by the time we land here both are defined. The nullish
   // coalescing on those fields is belt-and-suspenders for type narrowing.
-  return {
-    id: node.identifier.toLowerCase(),
+  return buildLinearIssue({
+    identifier: node.identifier,
     uuid: node.id,
     title: node.title,
     /* v8 ignore next @preserve -- post-filter guarantees `state` is defined */
     status: node.state?.name ?? "Unknown",
     /* v8 ignore next @preserve -- post-filter guarantees `state` is defined */
     statusId: node.state?.id ?? "",
-    assignee: node.assignee?.name ?? "Unassigned",
+    assigneeName: node.assignee?.name,
     updatedAt: node.updatedAt,
     repository,
     model,
     teamId: node.team?.id ?? "",
     /* v8 ignore next @preserve -- post-filter guarantees `project` is defined */
     projectSlugId: node.project?.slugId?.toLowerCase() ?? "",
-    blockers: blockersFromRelations(node.inverseRelations?.nodes ?? []),
-    hasMoreBlockers: node.inverseRelations?.pageInfo.hasNextPage ?? false,
-  };
+    inverseRelations: node.inverseRelations,
+  });
 }
 
 /**
@@ -800,23 +857,33 @@ export function resolveModelFor(arguments_: {
  * isn't listed in `linear.projects`, so callers can surface the misconfiguration
  * instead of silently using the wrong status names.
  */
-export async function fetchResolvedIssue(arguments_: {
+export interface ResolvedAgentMetadata {
+  uuid: string;
+  title: string;
+  description: string;
+  repository: string;
+  model: string;
+  teamId: string;
+  projectSlugId: string | undefined;
+  labels: { name: string }[];
+  stateName: string;
+}
+
+/**
+ * Run the shared "resolve repository + model from a Linear ticket" flow
+ * used by both project mode (`fetchResolvedIssue`) and view mode
+ * (`resolveOneByIdentifier`). Throws `RepositoryResolutionError` when no
+ * knownRepositories match the description. Project-specific checks (e.g.
+ * `UnknownProjectError`) live in their respective callers.
+ */
+export async function resolveAgentMetadata(arguments_: {
   client: LinearClient;
   config: ResolvedConfig;
   ticket: string;
-}): Promise<ResolvedIssue> {
+}): Promise<ResolvedAgentMetadata> {
   const { client, config, ticket } = arguments_;
   const upper = ticket.toUpperCase();
   const raw = await fetchRawLinearIssue({ client, ticket });
-  const project =
-    raw.projectSlugId === undefined ? undefined : findProjectBySlugId(config, raw.projectSlugId);
-  if (project === undefined) {
-    throw new UnknownProjectError({
-      ticket: upper,
-      projectSlugId: raw.projectSlugId,
-      configuredSlugIds: config.linear.projects.map((entry) => entry.slugId),
-    });
-  }
   const repositoryResolution = resolveRepositoryFor({
     description: raw.description,
     config,
@@ -828,9 +895,6 @@ export async function fetchResolvedIssue(arguments_: {
       repositories: config.workspace.knownRepositories,
     });
   }
-  // Manual setup is an explicit per-ticket opt-in by the user, so an
-  // unlabeled ticket still resolves to `models.default` — different from
-  // the auto-pickup path, where unlabeled tickets are ignored.
   const modelResolution = resolveModelFor({ labels: raw.labels, config });
   warnIfDisabledFallback(ticket, modelResolution, config);
   let model = config.models.default;
@@ -846,6 +910,38 @@ export async function fetchResolvedIssue(arguments_: {
     repository: repositoryResolution.repository,
     model,
     teamId: raw.teamId,
+    projectSlugId: raw.projectSlugId,
+    labels: raw.labels,
+    stateName: raw.stateName,
+  };
+}
+
+export async function fetchResolvedIssue(arguments_: {
+  client: LinearClient;
+  config: ResolvedConfig;
+  ticket: string;
+}): Promise<ResolvedIssue> {
+  const { config, ticket } = arguments_;
+  const upper = ticket.toUpperCase();
+  const resolved = await resolveAgentMetadata(arguments_);
+  const project =
+    resolved.projectSlugId === undefined
+      ? undefined
+      : findProjectBySlugId(config, resolved.projectSlugId);
+  if (project === undefined) {
+    throw new UnknownProjectError({
+      ticket: upper,
+      projectSlugId: resolved.projectSlugId,
+      configuredSlugIds: config.linear.projects.map((entry) => entry.slugId),
+    });
+  }
+  return {
+    uuid: resolved.uuid,
+    title: resolved.title,
+    description: resolved.description,
+    repository: resolved.repository,
+    model: resolved.model,
+    teamId: resolved.teamId,
     projectSlugId: project.slugId,
   };
 }
@@ -898,7 +994,7 @@ function parseAgentLabels(
   return fallback;
 }
 
-function warnIfDisabledFallback(
+export function warnIfDisabledFallback(
   ticket: string,
   modelResolution: ModelResolution,
   config: ResolvedConfig,
@@ -911,7 +1007,7 @@ function warnIfDisabledFallback(
   );
 }
 
-function blockersFromRelations(relations: IssueRelationNode[]): Blocker[] {
+export function blockersFromRelations(relations: IssueRelationNode[]): Blocker[] {
   return relations
     .filter((relation) => relation.type === "blocks")
     .map((relation) => ({

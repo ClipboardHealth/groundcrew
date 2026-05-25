@@ -7,7 +7,23 @@ import {
   setEnvironmentVariable,
   snapshotEnvironmentVariables,
 } from "../testHelpers/env.ts";
-import type { Config, ResolvedConfig } from "./config.ts";
+import { extractViewSlugId, type Config, type ResolvedConfig } from "./config.ts";
+
+function linearViewSourceFixture(
+  url: string,
+  name?: string,
+): NonNullable<Config["sources"]>[number] {
+  const entry: Record<string, unknown> = { kind: "linear", view: { url } };
+  if (name !== undefined) {
+    entry["name"] = name;
+  }
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- shape-only fixture; full schema validation runs inside loadConfig
+  return entry as NonNullable<Config["sources"]>[number];
+}
+
+function redundantLinearSourceFixture(): NonNullable<Config["sources"]>[number] {
+  return { kind: "linear" } as NonNullable<Config["sources"]>[number];
+}
 
 interface ConfigModule {
   loadConfig: () => Promise<Readonly<ResolvedConfig>>;
@@ -1579,7 +1595,7 @@ export default config;\n`,
 
     const { loadConfig } = await loadFreshConfig();
 
-    await expect(loadConfig()).rejects.toThrow(/linear\.projects must be a non-empty array/);
+    await expect(loadConfig()).rejects.toThrow(/linear\.projects must be an array/);
   });
 
   it("rejects a non-object entry inside linear.projects", async () => {
@@ -1608,7 +1624,7 @@ export default config;\n`,
     await expect(loadConfig()).rejects.toThrow(/linear\.projects\[0\]\.statuses must be an object/);
   });
 
-  it("rejects an empty projects array", async () => {
+  it("rejects an empty projects array with no Linear source configured", async () => {
     const path = writeConfigFile(
       temporary,
       configSource({
@@ -1620,7 +1636,7 @@ export default config;\n`,
 
     const { loadConfig } = await loadFreshConfig();
 
-    await expect(loadConfig()).rejects.toThrow(/linear\.projects must be a non-empty array/);
+    await expect(loadConfig()).rejects.toThrow(/no Linear source configured/);
   });
 
   it("rejects the legacy linear.projectSlug shape with a migration message", async () => {
@@ -1701,7 +1717,7 @@ export default config;\n`,
             kind: "shell",
             name: "jira",
             commands: { fetch: "echo '[]'" },
-          } as Config["sources"] extends (infer T)[] ? T : never,
+          } as unknown as NonNullable<Config["sources"]>[number],
         ],
         workspace: VALID_WORKSPACE(temporary),
       }),
@@ -1798,6 +1814,79 @@ export default config;\n`,
     await expect(loadConfig()).rejects.toThrow(/sources\[0\]\.name/);
   });
 
+  it("accepts view mode (empty projects, one linear view source)", async () => {
+    const path = writeConfigFile(
+      temporary,
+      configSource({
+        linear: { projects: [] },
+        sources: [linearViewSourceFixture("https://linear.app/cbh/view/foo-61e51e3730dd")],
+        workspace: VALID_WORKSPACE(temporary),
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+
+    expect(actual.linear.projects).toStrictEqual([]);
+    expect(actual.sources).toHaveLength(1);
+  });
+
+  it("rejects both project AND view configured", async () => {
+    const path = writeConfigFile(
+      temporary,
+      configSource({
+        linear: { ...VALID_LINEAR },
+        sources: [linearViewSourceFixture("https://linear.app/cbh/view/foo-61e51e3730dd")],
+        workspace: VALID_WORKSPACE(temporary),
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(
+      /linear\.projects and a linear view source are both configured/,
+    );
+  });
+
+  it('rejects a redundant { kind: "linear" } source without view', async () => {
+    const path = writeConfigFile(
+      temporary,
+      configSource({
+        linear: { ...VALID_LINEAR },
+        sources: [redundantLinearSourceFixture()],
+        workspace: VALID_WORKSPACE(temporary),
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(
+      /Project-mode linear is configured implicitly via linear\.projects/,
+    );
+  });
+
+  it("rejects multiple linear source entries", async () => {
+    const path = writeConfigFile(
+      temporary,
+      configSource({
+        linear: { projects: [] },
+        sources: [
+          linearViewSourceFixture("https://linear.app/cbh/view/foo-61e51e3730dd"),
+          linearViewSourceFixture("https://linear.app/cbh/view/bar-aaaaaaaaaaaa", "second"),
+        ],
+        workspace: VALID_WORKSPACE(temporary),
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(/more than one \{ kind: "linear" \} entry/);
+  });
+
   it("fails with a discovery error when no config exists anywhere", async () => {
     // No env var, no project config (cwd is the empty temp dir), no XDG file.
     deleteEnvironmentVariable("GROUNDCREW_CONFIG");
@@ -1811,5 +1900,35 @@ export default config;\n`,
     } finally {
       vi.spyOn(process, "cwd").mockReturnValue(originalCwd);
     }
+  });
+});
+
+describe(extractViewSlugId, () => {
+  it("extracts the 12-char hex tail from a Linear view URL", () => {
+    expect(extractViewSlugId("https://linear.app/cbh/view/george-bezerra-tasks-61e51e3730dd")).toBe(
+      "61e51e3730dd",
+    );
+  });
+
+  it("strips a trailing query string before matching", () => {
+    expect(
+      extractViewSlugId(
+        "https://linear.app/cbh/view/foo-61e51e3730dd?layout=list&grouping=workflowState",
+      ),
+    ).toBe("61e51e3730dd");
+  });
+
+  it("strips a trailing slash before matching", () => {
+    expect(extractViewSlugId("https://linear.app/cbh/view/foo-61e51e3730dd/")).toBe("61e51e3730dd");
+  });
+
+  it("lowercases the captured hex", () => {
+    expect(extractViewSlugId("https://linear.app/cbh/view/foo-61E51E3730DD")).toBe("61e51e3730dd");
+  });
+
+  it("throws on a URL with no 12-char hex tail", () => {
+    expect(() => extractViewSlugId("https://linear.app/cbh/view/foo-too-short")).toThrow(
+      /does not end in a 12-character hex slug/,
+    );
   });
 });

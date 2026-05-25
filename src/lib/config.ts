@@ -737,6 +737,23 @@ function extractSlugId(slug: string): string | undefined {
   return SLUG_ID_RE.exec(slug)?.[1]?.toLowerCase();
 }
 
+export function extractViewSlugId(url: string): string {
+  /* v8 ignore next @preserve -- String.prototype.split always returns at least one element */
+  const withoutQuery = url.split("?")[0] ?? url;
+  const withoutTrailingSlash = withoutQuery.endsWith("/")
+    ? withoutQuery.slice(0, -1)
+    : withoutQuery;
+  /* v8 ignore next @preserve -- split() returns a non-empty array so pop() never returns undefined */
+  const segment = withoutTrailingSlash.split("/").pop() ?? "";
+  const match = SLUG_ID_RE.exec(segment)?.[1]?.toLowerCase();
+  if (match === undefined) {
+    throw new Error(
+      `linear view URL "${url}" does not end in a 12-character hex slug (e.g. "-61e51e3730dd")`,
+    );
+  }
+  return match;
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -850,10 +867,7 @@ function normalizeSources(raw: unknown): SourceConfig[] {
 function normalizeProjects(linear: Record<string, unknown>): ResolvedProjectConfig[] {
   const { projects } = linear;
   if (!Array.isArray(projects)) {
-    fail("linear.projects must be a non-empty array");
-  }
-  if (projects.length === 0) {
-    fail("linear.projects must be a non-empty array");
+    fail("linear.projects must be an array");
   }
   const resolved = projects.map((entry, index) => normalizeProject(entry, index));
   const seen = new Map<string, number>();
@@ -1000,10 +1014,7 @@ function validatePromptPlaceholders(template: string): void {
 }
 
 function validate(config: ResolvedConfig): void {
-  /* v8 ignore next 3 @preserve -- normalizeProjects already enforces non-empty; belt-and-suspenders */
-  if (config.linear.projects.length === 0) {
-    fail("linear.projects must be a non-empty array");
-  }
+  validateLinearSourcePresence(config);
   config.linear.projects.forEach((project, index) => {
     const path = `linear.projects[${index}]`;
     requireString(project.projectSlug, `${path}.projectSlug`);
@@ -1093,6 +1104,42 @@ function validate(config: ResolvedConfig): void {
   validatePromptPlaceholders(config.prompts.initial);
 
   requireString(config.logging.file, "logging.file");
+}
+
+function validateLinearSourcePresence(config: ResolvedConfig): void {
+  const linearSources = linearSourceEntries(config.sources);
+  if (linearSources.length > 1) {
+    fail(
+      `sources contains more than one { kind: "linear" } entry. Only one Linear adapter source is supported per config.`,
+    );
+  }
+  const [linearSource] = linearSources;
+  const viewSource = linearSource?.view === undefined ? undefined : linearSource;
+  const hasProjects = config.linear.projects.length > 0;
+
+  if (linearSource !== undefined && viewSource === undefined) {
+    fail(
+      `sources contains a { kind: "linear" } entry without view. Project-mode linear is configured implicitly via linear.projects[]; only add a sources entry when using view mode.`,
+    );
+  }
+  if (hasProjects && viewSource !== undefined) {
+    fail(
+      `linear.projects and a linear view source are both configured. Pick one: either keep linear.projects[] (project-based mode) or use sources: [{ kind: "linear", view: { url } }] (view-based mode), not both.`,
+    );
+  }
+  if (!hasProjects && viewSource === undefined) {
+    fail(
+      `no Linear source configured. Either set linear.projects[] (project mode) or add sources: [{ kind: "linear", view: { url } }] (view mode).`,
+    );
+  }
+}
+
+function linearSourceEntries(
+  sources: readonly SourceConfig[],
+): Extract<SourceConfig, { kind: "linear" }>[] {
+  return sources.filter(
+    (entry): entry is Extract<SourceConfig, { kind: "linear" }> => entry.kind === "linear",
+  );
 }
 
 const COSMICONFIG_MODULE_NAME = "crew";

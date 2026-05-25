@@ -5,10 +5,18 @@
  * orchestrator's user-facing output.
  */
 
+import type { LinearClient } from "@linear/sdk";
+
 import { type BoardSource, type BoardState, createBoardSource } from "../lib/boardSource.ts";
 import { type Board, createBoard } from "../lib/board.ts";
 import { buildSources } from "../lib/buildSources.ts";
-import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
+import { createLinearViewBoardSource } from "../lib/adapters/linear/viewSource.ts";
+import {
+  extractViewSlugId,
+  loadConfig,
+  type ResolvedConfig,
+  type SourceConfig,
+} from "../lib/config.ts";
 import { getUsageByModel, type UsageByModel } from "../lib/usage.ts";
 import { errorMessage, getLinearClient, log, sleep } from "../lib/util.ts";
 import { worktrees } from "../lib/worktrees.ts";
@@ -80,7 +88,7 @@ export async function orchestrate(options: OrchestratorOptions): Promise<void> {
   const config = await loadConfig();
   const client = getLinearClient();
 
-  const boardSource: BoardSource = createBoardSource({ config, client });
+  const boardSource: BoardSource = selectBoardSource(config, client);
   await boardSource.verify();
 
   // Verify any pluggable sources declared in config.sources (shell adapters,
@@ -200,4 +208,27 @@ async function runWatchLoop(
     process.off("SIGINT", handleSigint);
     process.off("SIGTERM", handleSigterm);
   }
+}
+
+export function selectBoardSource(config: ResolvedConfig, client: LinearClient): BoardSource {
+  if (config.linear.projects.length > 0) {
+    return createBoardSource({ config, client });
+  }
+  const viewSource = config.sources.find(
+    (entry): entry is Extract<SourceConfig, { kind: "linear" }> =>
+      entry.kind === "linear" && entry.view !== undefined,
+  );
+  /* v8 ignore next 6 @preserve -- config.validate guarantees view-mode is configured by this point */
+  if (viewSource?.view === undefined) {
+    throw new Error(
+      "internal: orchestrator reached view-mode branch without a configured linear view source — config.validate should have caught this",
+    );
+  }
+  const viewSlugId = extractViewSlugId(viewSource.view.url);
+  return createLinearViewBoardSource({
+    client,
+    config,
+    viewUrl: viewSource.view.url,
+    viewSlugId,
+  });
 }
