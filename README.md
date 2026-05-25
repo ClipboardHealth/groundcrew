@@ -362,7 +362,7 @@ To have a coding agent (Claude Code, Cursor, etc.) scaffold `.groundcrew/setup.s
 ## Commands
 
 ```bash
-crew init [--global | --local] [--force] [--dry-run] # create a crew.config.ts (cwd by default)
+crew init [--global | --local] [--force] [--dry-run]     # create a crew.config.ts
 crew doctor                                              # full setup check
 crew doctor --ticket <TICKET> [--no-linear] [--no-fetch] # full ticket lifecycle (dispatch + recovery)
 crew run                                                 # one-shot dispatch

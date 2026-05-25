@@ -1,4 +1,4 @@
-import type { Config } from "./src/lib/config.js";
+import type { Config } from "@clipboard-health/groundcrew";
 // import { readFileSync } from "node:fs";
 
 export default {
