@@ -1,21 +1,3 @@
-/**
- * Linear `TicketSource` factory. Wraps the existing boardSource.ts machinery
- * (createBoardSource, fetchResolvedIssue, createLinearIssueStatusUpdater) and
- * converts the legacy Linear-specific `Issue`/`Blocker` shapes into the
- * canonical `Issue`/`Blocker` shapes consumers (via `Board`) speak.
- *
- * Per-project canonical-status mapping lives here: each `Issue` is mapped
- * against its own project's `statuses` block (the multi-project semantics
- * shipped in PR #75). Off-config blockers fall back to the union of all
- * configured projects' status sets — preserving today's
- * `isTerminalStatusForBlocker` behavior.
- *
- * Description is not populated on `fetch()` Issues (boardSource's snapshot
- * doesn't include it); `resolveOne()` Issues carry the full description
- * because `fetchResolvedIssue` fetches it explicitly. Phase 6 can lift
- * description onto the board snapshot when it refactors setupWorkspace.
- */
-
 import type { AdapterContext } from "../../adapterDefinition.ts";
 import {
   type Blocker as LinearBlocker,
@@ -67,15 +49,9 @@ export function canonicalBlockerStatus(
   if (blocker.status === undefined) {
     return "other";
   }
-  // Terminal first — handles off-config blockers via the union fallback that
-  // isTerminalStatusForBlocker already implements.
   if (isTerminalStatusForBlocker(blocker, globalConfig)) {
     return "done";
   }
-  // Non-terminal: if the blocker's project is configured, use its statuses to
-  // distinguish todo vs in-progress. For off-config blockers we collapse to
-  // "other" — eligibility only cares whether the blocker is terminal, so the
-  // distinction is informational at most.
   if (blocker.projectSlugId !== undefined) {
     const project = findProjectBySlugId(globalConfig, blocker.projectSlugId);
     if (project !== undefined) {
@@ -151,10 +127,6 @@ export function createLinearTicketSource(
       );
     },
     async resolveOne(naturalId: string): Promise<CanonicalIssue | undefined> {
-      // fetchResolvedIssue throws on unknown project / missing repo; we let
-      // those propagate. Returning `undefined` is reserved for "ticket genuinely
-      // doesn't exist," which fetchResolvedIssue surfaces as an Error too —
-      // for now we let any error bubble up rather than swallow.
       const resolved = await fetchResolvedIssue({
         client,
         config: globalConfig,
@@ -167,10 +139,6 @@ export function createLinearTicketSource(
           `Linear adapter: resolved issue ${naturalId} carries unknown projectSlugId "${resolved.projectSlugId}"`,
         );
       }
-      // fetchResolvedIssue doesn't return the native status name (it's
-      // already been resolved through workflow state lookup). We surface
-      // "other" until the consumer needs the canonical status, which is fine
-      // because `crew setup` doesn't branch on it.
       return buildResolvedLinearCanonicalIssue({
         sourceName,
         ticketIdentifier: naturalId,

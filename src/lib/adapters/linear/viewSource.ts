@@ -3,7 +3,6 @@ import type { LinearClient } from "@linear/sdk";
 import {
   AGENT_LABEL_PREFIX,
   type Blocker as LinearBlocker,
-  type BoardSource,
   type BoardState as LinearBoardState,
   buildLinearIssue,
   ISSUES_PAGE_SIZE,
@@ -161,7 +160,6 @@ interface FetchViewBoardArguments {
 }
 
 export interface ViewBoardState extends LinearBoardState {
-  /** Linear workflow state TYPE keyed by canonical issue id (lower-case identifier). */
   stateTypeById: Map<string, string>;
 }
 
@@ -365,7 +363,6 @@ export function createLinearViewTicketSource(
       const uuid = await ensureViewUuid();
       const state = await fetchViewBoard({ client, config, viewUuid: uuid });
       return state.issues.map((issue) => {
-        // fetchViewBoard always sets stateTypeById for every issue it returns.
         const stateType = state.stateTypeById.get(issue.id);
         /* v8 ignore next 3 @preserve -- fetchViewBoard contract guarantees stateType is present */
         if (stateType === undefined) {
@@ -388,29 +385,6 @@ export function createLinearViewTicketSource(
       const stateId = await stateLookup.getStateId(ref.teamId);
       await client.updateIssue(ref.uuid, { stateId });
       log(`Marked ${issue.id} as in-progress (team ${ref.teamId}, state ${stateId})`);
-    },
-  };
-}
-
-interface CreateViewBoardSourceArguments {
-  client: LinearClient;
-  config: ResolvedConfig;
-  viewSlug: string;
-  viewSlugId: string;
-}
-
-export function createLinearViewBoardSource(
-  arguments_: CreateViewBoardSourceArguments,
-): BoardSource {
-  const { client, config, viewSlug, viewSlugId } = arguments_;
-  const ensureViewUuid = createViewUuidResolver({ client, viewSlugId, viewSlug });
-  return {
-    async verify(): Promise<void> {
-      await ensureViewUuid();
-    },
-    async fetch() {
-      const viewUuid = await ensureViewUuid();
-      return await fetchViewBoard({ client, config, viewUuid });
     },
   };
 }

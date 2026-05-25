@@ -80,6 +80,18 @@ const usageMock = vi.mocked(getUsageByModel);
 const setupMock = vi.mocked(setupWorkspace);
 const workspacesProbeMock = vi.mocked(workspaces.probe);
 
+function routedRawRequest(
+  responses: { match: string; data: unknown }[],
+): (query: string) => Promise<{ data: unknown }> {
+  return async (query) => {
+    const entry = responses.find((r) => query.includes(r.match));
+    if (entry === undefined) {
+      throw new Error(`unexpected query in test: ${query.slice(0, 80)}`);
+    }
+    return { data: entry.data };
+  };
+}
+
 function firstProject(base: ResolvedConfig): ResolvedConfig["linear"]["projects"][number] {
   const [project] = base.linear.projects;
   // oxlint-disable-next-line typescript/no-non-null-assertion -- makeConfig always seeds the first project; failing destructuring would be a test-setup bug
@@ -1795,7 +1807,7 @@ describe(orchestrate, () => {
 });
 
 describe("selectBoardSource", () => {
-  it("returns a view-mode BoardSource when linear.views is configured", async () => {
+  it("returns a view-mode BoardSource that verifies once and reuses the uuid for fetch", async () => {
     const { selectBoardSource } = await import("./orchestrator.ts");
     const config = makeConfig({
       linear: {
@@ -1803,11 +1815,31 @@ describe("selectBoardSource", () => {
         views: [{ viewSlug: "foo-61e51e3730dd", slugId: "61e51e3730dd" }],
       },
     });
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- only verify/fetch shape is exercised
-    const client = {} as LinearClient;
+    const rawRequest = vi.fn<(query: string) => Promise<{ data: unknown }>>(
+      routedRawRequest([
+        {
+          match: "customViews",
+          data: { customViews: { nodes: [{ id: "vu", name: "v", slugId: "61e51e3730dd" }] } },
+        },
+        {
+          match: "customView",
+          data: {
+            customView: {
+              id: "vu",
+              name: "v",
+              issues: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } },
+            },
+          },
+        },
+      ]),
+    );
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- minimal mock satisfies the surface used by selectBoardSource
+    const client = { client: { rawRequest } } as unknown as LinearClient;
     const source = selectBoardSource(config, client);
-    expect(source).toHaveProperty("verify");
-    expect(source).toHaveProperty("fetch");
+    await source.verify();
+    const state = await source.fetch();
+    expect(state.issues).toStrictEqual([]);
+    expect(rawRequest.mock.calls.filter(([q]) => q.includes("customViews"))).toHaveLength(1);
   });
 
   it("returns a project-mode BoardSource when linear.views is unset", async () => {

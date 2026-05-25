@@ -399,17 +399,6 @@ export function modelForResolution(
   return AGENT_ANY_MODEL;
 }
 
-/**
- * Build a canonical `Issue` from a Linear GraphQL node. Used by both
- * project-mode (`issueFromNode`) and view-mode (`issueFromViewNode`)
- * fetch paths so the shared return shape lives in one place.
- */
-/**
- * Resolve `{ repository, model }` for a Todo (or unstarted) Linear ticket
- * that carries an `agent-*` label. Both project mode and view mode use
- * this — only the `isTodo` predicate differs (project: own-project status
- * match, view: state.type === "unstarted").
- */
 export function resolveTodoAgentMetadata(arguments_: {
   ticket: string;
   description: string | undefined;
@@ -580,11 +569,6 @@ export interface RawLinearIssue {
   labels: { name: string }[];
   /** Linear workflow state name, e.g. "Todo", "In Review". May be "" if state was null. */
   stateName: string;
-  /**
-   * Linear workflow state type, e.g. "unstarted", "started", "completed", "canceled".
-   * "" when state was null. Optional in the type to keep project-mode test fixtures
-   * terse — only view-mode probes consult it.
-   */
   stateType?: string;
   blockers: Blocker[];
   hasMoreBlockers: boolean;
@@ -856,14 +840,6 @@ export function resolveModelFor(arguments_: {
   return { kind: "matched", model: parsed.model };
 }
 
-/**
- * `agent-any` collapses to `models.default` here — manual setup doesn't run
- * the usage-gated `any` resolver, so the caller gets a concrete model name
- * instead of a sentinel that downstream code can't interpret. Throws
- * `UnknownProjectError` when the ticket lives in a Linear project that
- * isn't listed in `linear.projects`, so callers can surface the misconfiguration
- * instead of silently using the wrong status names.
- */
 export interface ResolvedAgentMetadata {
   uuid: string;
   title: string;
@@ -876,13 +852,6 @@ export interface ResolvedAgentMetadata {
   stateName: string;
 }
 
-/**
- * Run the shared "resolve repository + model from a Linear ticket" flow
- * used by both project mode (`fetchResolvedIssue`) and view mode
- * (`resolveOneByIdentifier`). Throws `RepositoryResolutionError` when no
- * knownRepositories match the description. Project-specific checks (e.g.
- * `UnknownProjectError`) live in their respective callers.
- */
 export async function resolveAgentMetadata(arguments_: {
   client: LinearClient;
   config: ResolvedConfig;

@@ -1,10 +1,3 @@
-/**
- * Shared canonical-issue builders for the Linear adapter. Used by both
- * project-mode (`factory.ts`) and view-mode (`viewSource.ts`) so the
- * `TicketSource` shape stays in lockstep across modes — only the
- * canonical-status mapping and resolved-metadata source differ.
- */
-
 import type { Issue as LinearIssue } from "../../boardSource.ts";
 import type {
   Blocker as CanonicalBlocker,
@@ -20,11 +13,6 @@ export interface LinearSourceRef {
   nativeStatus: string;
 }
 
-/**
- * Build the canonical `Issue` returned from a Linear adapter `fetch()`.
- * Shared by project mode and view mode so they emit the same shape; only
- * the canonical-status mapping differs.
- */
 export function buildLinearCanonicalIssue(arguments_: {
   linearIssue: LinearIssue;
   sourceName: string;
@@ -43,7 +31,6 @@ export function buildLinearCanonicalIssue(arguments_: {
     id: `${sourceName}:${linearIssue.id}`,
     source: sourceName,
     title: linearIssue.title,
-    // Board snapshot doesn't carry description; resolveOne() populates it.
     description: "",
     status,
     repository: linearIssue.repository,
@@ -56,12 +43,6 @@ export function buildLinearCanonicalIssue(arguments_: {
   };
 }
 
-/**
- * Build the canonical `Issue` returned from a Linear adapter `resolveOne()`.
- * Shared by project mode and view mode. `description` is populated from
- * the resolved metadata; `status` defaults to `"other"` until the consumer
- * needs the canonical status (currently no caller branches on it).
- */
 export interface ResolvedLinearIssueShape {
   uuid: string;
   title: string;

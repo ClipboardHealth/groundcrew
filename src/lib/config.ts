@@ -190,13 +190,6 @@ export interface ProjectConfig {
   };
 }
 
-/**
- * One Linear custom view (saved filter). `viewSlug` is the URL path segment
- * Linear shows in its UI (e.g. `george-bezerra-tasks-61e51e3730dd`) — the
- * trailing 12-character hex is what the GraphQL `customView` lookup needs.
- * Canonical status mapping in view mode uses Linear workflow state **types**
- * rather than per-team status names.
- */
 export interface ViewConfig {
   viewSlug: string;
 }
@@ -220,12 +213,6 @@ export interface Config {
      * `views[]` — configure exactly one.
      */
     projects?: ProjectConfig[];
-    /**
-     * One or more Linear custom views (saved filters). View mode replaces
-     * per-team status configuration with Linear's workflow state types
-     * (`unstarted`/`started`/`completed`/`canceled`). Mutually exclusive
-     * with `projects[]`.
-     */
     views?: ViewConfig[];
   };
   /**
@@ -335,11 +322,6 @@ export interface ResolvedProjectConfig {
 export interface ResolvedConfig {
   linear: {
     projects: ResolvedProjectConfig[];
-    /**
-     * Resolved Linear custom views. Empty when project mode is used.
-     * Optional in the type to keep existing test fixtures terse —
-     * `applyDefaults` always sets it (defaulting to `[]`).
-     */
     views?: ResolvedViewConfig[];
   };
   /**
