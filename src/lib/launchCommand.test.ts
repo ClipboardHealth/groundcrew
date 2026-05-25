@@ -40,12 +40,12 @@ describe(resolveSafehouseClearancePath, () => {
   });
 });
 
+function runSetupCommand(cwd: string): number | undefined {
+  return spawnSync("sh", ["-c", SETUP_COMMAND], { cwd }).status ?? undefined;
+}
+
 describe(buildLaunchCommand, () => {
   describe(SETUP_COMMAND, () => {
-    function runSetupCommand(cwd: string): number | undefined {
-      return spawnSync("sh", ["-c", SETUP_COMMAND], { cwd }).status ?? undefined;
-    }
-
     it("is a successful no-op when the repo setup hook is absent", () => {
       const worktreeDir = mkdtempSync(join(tmpdir(), "groundcrew-no-setup-"));
       try {

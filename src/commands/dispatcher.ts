@@ -53,6 +53,17 @@ export interface Dispatcher {
   }): Promise<void>;
 }
 
+function logSkip(verdict: SkipVerdict): void {
+  log(verdict.message);
+  logEvent("dispatch", {
+    outcome: "skipped",
+    reason: verdict.eventReason,
+    ticket: verdict.issue.id,
+    blockers: verdict.blockers,
+    model: verdict.model,
+  });
+}
+
 export function createDispatcher(deps: DispatcherDeps): Dispatcher {
   const { config, client } = deps;
   const issueStatusUpdater = createLinearIssueStatusUpdater({ config, client });
@@ -64,17 +75,6 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
       log(formatUsageExhaustion(exhaustion));
     }
     return exhausted;
-  }
-
-  function logSkip(verdict: SkipVerdict): void {
-    log(verdict.message);
-    logEvent("dispatch", {
-      outcome: "skipped",
-      reason: verdict.eventReason,
-      ticket: verdict.issue.id,
-      blockers: verdict.blockers,
-      model: verdict.model,
-    });
   }
 
   async function startEligibleIssue(
