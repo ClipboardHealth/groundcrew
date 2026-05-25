@@ -355,11 +355,4 @@ describe(createLinearTicketSource, () => {
     } satisfies AdapterContext);
     expect(source.name).toBe("linear");
   });
-
-  it("returns a project-mode source when linear.views is unset", () => {
-    const source = createLinearTicketSource({ kind: "linear" }, {
-      globalConfig: makeConfig(),
-    } satisfies AdapterContext);
-    expect(source.name).toBe("linear");
-  });
 });

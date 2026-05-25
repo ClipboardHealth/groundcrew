@@ -3,6 +3,7 @@ import type { LinearClient } from "@linear/sdk";
 import {
   AGENT_LABEL_PREFIX,
   type Blocker as LinearBlocker,
+  type BoardSource,
   type BoardState as LinearBoardState,
   buildLinearIssue,
   ISSUES_PAGE_SIZE,
@@ -14,7 +15,7 @@ import {
   resolveTodoAgentMetadata,
   warnIfDisabledFallback,
 } from "../../boardSource.ts";
-import type { ResolvedConfig } from "../../config.ts";
+import type { ResolvedConfig, ResolvedViewConfig } from "../../config.ts";
 import type {
   Blocker as CanonicalBlocker,
   CanonicalStatus,
@@ -85,6 +86,28 @@ function createViewUuidResolver(arguments_: VerifyViewArguments): () => Promise<
     const resolved = await verifyView(arguments_);
     cached = resolved.id;
     return cached;
+  };
+}
+
+export function createViewBoardSource(arguments_: {
+  client: LinearClient;
+  config: ResolvedConfig;
+  view: ResolvedViewConfig;
+}): BoardSource {
+  const { client, config, view } = arguments_;
+  const ensureUuid = createViewUuidResolver({
+    client,
+    viewSlug: view.viewSlug,
+    viewSlugId: view.slugId,
+  });
+  return {
+    async verify(): Promise<void> {
+      await ensureUuid();
+    },
+    async fetch(): Promise<ViewBoardState> {
+      const viewUuid = await ensureUuid();
+      return await fetchViewBoard({ client, config, viewUuid });
+    },
   };
 }
 
@@ -286,52 +309,19 @@ function issueFromViewNode(node: ViewIssueNode, config: ResolvedConfig): LinearI
   });
 }
 
-interface ResolveOneArguments {
-  client: LinearClient;
-  identifier: string;
-  config: ResolvedConfig;
-}
-
-interface ResolvedViewIssue {
-  uuid: string;
-  title: string;
-  description: string;
-  repository: string;
-  model: string;
-  teamId: string;
-  projectSlugId: string;
-}
-
-export async function resolveOneByIdentifier(
-  arguments_: ResolveOneArguments,
-): Promise<ResolvedViewIssue> {
-  const { client, identifier, config } = arguments_;
-  const resolved = await resolveAgentMetadata({ client, config, ticket: identifier });
-  return {
-    uuid: resolved.uuid,
-    title: resolved.title,
-    description: resolved.description,
-    repository: resolved.repository,
-    model: resolved.model,
-    teamId: resolved.teamId,
-    projectSlugId: resolved.projectSlugId ?? "",
-  };
-}
-
 interface CreateViewTicketSourceArguments {
   client: LinearClient;
   config: ResolvedConfig;
-  viewSlug: string;
-  viewSlugId: string;
+  view: ResolvedViewConfig;
   sourceName: string;
 }
 
 export function createLinearViewTicketSource(
   arguments_: CreateViewTicketSourceArguments,
 ): TicketSource {
-  const { client, config, viewSlug, viewSlugId, sourceName } = arguments_;
+  const { client, config, view, sourceName } = arguments_;
   const stateLookup = createInProgressStateLookup({ client });
-  const ensureViewUuid = createViewUuidResolver({ client, viewSlugId, viewSlug });
+  const board = createViewBoardSource({ client, config, view });
 
   function toCanonicalBlocker(blocker: LinearBlocker): CanonicalBlocker {
     let status: CanonicalStatus = "other";
@@ -357,11 +347,11 @@ export function createLinearViewTicketSource(
   return {
     name: sourceName,
     async verify(): Promise<void> {
-      await ensureViewUuid();
+      await board.verify();
     },
     async fetch(): Promise<CanonicalIssue[]> {
-      const uuid = await ensureViewUuid();
-      const state = await fetchViewBoard({ client, config, viewUuid: uuid });
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- createViewBoardSource always returns a ViewBoardState; the BoardSource interface widens it
+      const state = (await board.fetch()) as ViewBoardState;
       return state.issues.map((issue) => {
         const stateType = state.stateTypeById.get(issue.id);
         /* v8 ignore next 3 @preserve -- fetchViewBoard contract guarantees stateType is present */
@@ -372,11 +362,11 @@ export function createLinearViewTicketSource(
       });
     },
     async resolveOne(naturalId: string): Promise<CanonicalIssue | undefined> {
-      const resolved = await resolveOneByIdentifier({ client, identifier: naturalId, config });
+      const resolved = await resolveAgentMetadata({ client, config, ticket: naturalId });
       return buildResolvedLinearCanonicalIssue({
         sourceName,
         ticketIdentifier: naturalId,
-        resolved,
+        resolved: { ...resolved, projectSlugId: resolved.projectSlugId ?? "" },
       });
     },
     async markInProgress(issue: CanonicalIssue): Promise<void> {

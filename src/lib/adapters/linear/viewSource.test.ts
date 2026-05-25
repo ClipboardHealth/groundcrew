@@ -5,8 +5,8 @@ import {
   canonicalStatusForStateType,
   createInProgressStateLookup,
   createLinearViewTicketSource,
+  createViewBoardSource,
   fetchViewBoard,
-  resolveOneByIdentifier,
   verifyView,
 } from "./viewSource.ts";
 
@@ -304,90 +304,37 @@ describe(fetchViewBoard, () => {
   });
 });
 
-function rawIssueResponse(project: { slugId: string } | null) {
-  return {
-    data: {
-      issue: {
-        id: "uuid-1",
-        title: "Resolve me",
-        description: "repo: org/repo-a",
-        team: { id: "team-1" },
-        project,
-        state: { name: "Todo" },
-        children: { nodes: [] },
-        labels: { nodes: [{ name: "agent-claude" }] },
-        inverseRelations: { nodes: [], pageInfo: { hasNextPage: false } },
+const VIEW = { viewSlug: "foo-61e51e3730dd", slugId: "61e51e3730dd" };
+
+function viewLookupResponses(nodes: unknown[]) {
+  return [
+    {
+      match: "customViews",
+      response: {
+        data: { customViews: { nodes: [{ id: "vu", name: "v", slugId: "61e51e3730dd" }] } },
       },
     },
-  };
+    { match: "customView", response: viewIssuesResponse(nodes) },
+  ];
 }
 
-describe(resolveOneByIdentifier, () => {
-  it("returns canonical metadata from resolveAgentMetadata", async () => {
+describe(createViewBoardSource, () => {
+  it("caches the resolved uuid across verify() and fetch()", async () => {
     const client = mockClient();
-    client.client.rawRequest = async () => rawIssueResponse({ slugId: "aaaaaaaaaaaa" });
-    const result = await resolveOneByIdentifier({
+    const rawRequest = vi.fn<RawRequestFn>(routedRawRequest(viewLookupResponses([])));
+    client.client.rawRequest = rawRequest;
+    const source = createViewBoardSource({
       client: asClient(client),
-      identifier: "eng-1",
       config: makeConfig(),
+      view: VIEW,
     });
-    expect(result).toMatchObject({
-      title: "Resolve me",
-      repository: "org/repo-a",
-      model: "claude",
-      teamId: "team-1",
-      projectSlugId: "aaaaaaaaaaaa",
-    });
-  });
-
-  it("returns projectSlugId='' when the resolved issue has no project", async () => {
-    const client = mockClient();
-    client.client.rawRequest = async () => rawIssueResponse(null);
-    const result = await resolveOneByIdentifier({
-      client: asClient(client),
-      identifier: "eng-1",
-      config: makeConfig(),
-    });
-    expect(result.projectSlugId).toBe("");
+    await source.verify();
+    await source.fetch();
+    expect(rawRequest.mock.calls.filter(([q]) => q.includes("customViews"))).toHaveLength(1);
   });
 });
 
 describe(createLinearViewTicketSource, () => {
-  function viewLookupResponses(nodes: unknown[]) {
-    return [
-      {
-        match: "customViews",
-        response: {
-          data: { customViews: { nodes: [{ id: "vu", name: "v", slugId: "61e51e3730dd" }] } },
-        },
-      },
-      { match: "customView", response: viewIssuesResponse(nodes) },
-    ];
-  }
-
-  it("verify() caches the resolved uuid for the subsequent fetch()", async () => {
-    const client = mockClient();
-    const rawRequest = vi.fn<RawRequestFn>(routedRawRequest(viewLookupResponses([])));
-    client.client.rawRequest = rawRequest;
-    const source = createLinearViewTicketSource({
-      client: asClient(client),
-      config: makeConfig(),
-      viewSlug: "foo-61e51e3730dd",
-      viewSlugId: "61e51e3730dd",
-      sourceName: "linear",
-    });
-    await source.verify();
-    await source.fetch();
-    const viewIssuesCalls = rawRequest.mock.calls.filter(([query]) =>
-      query.includes("ViewIssues"),
-    ).length;
-    const customViewsCalls = rawRequest.mock.calls.filter(([query]) =>
-      query.includes("customViews"),
-    ).length;
-    expect(viewIssuesCalls).toBe(1);
-    expect(customViewsCalls).toBe(1);
-  });
-
   it("fetch() maps each state.type to its canonical status and view-mode blockers", async () => {
     const nodes = [
       makeIssueNode({
@@ -444,10 +391,10 @@ describe(createLinearViewTicketSource, () => {
     const source = createLinearViewTicketSource({
       client: asClient(client),
       config: makeConfig(),
-      viewSlug: "foo-61e51e3730dd",
-      viewSlugId: "61e51e3730dd",
+      view: VIEW,
       sourceName: "linear",
     });
+    await source.verify();
     const issues = await source.fetch();
     expect(issues.map((i) => i.status)).toStrictEqual(["todo", "in-progress", "done", "done"]);
     expect(issues[0]?.blockers.map((b) => b.status)).toStrictEqual(["done", "done", "other"]);
@@ -458,7 +405,7 @@ describe(createLinearViewTicketSource, () => {
     ]);
   });
 
-  it("resolveOne returns a canonical issue from resolveOneByIdentifier", async () => {
+  it("resolveOne returns a canonical issue (projectSlugId='' when missing)", async () => {
     const client = mockClient();
     client.client.rawRequest = async () => ({
       data: {
@@ -467,7 +414,7 @@ describe(createLinearViewTicketSource, () => {
           title: "Resolve me",
           description: "repo: org/repo-a",
           team: { id: "team-r" },
-          project: { slugId: "aaaaaaaaaaaa" },
+          project: null,
           state: { name: "Todo" },
           children: { nodes: [] },
           labels: { nodes: [{ name: "agent-claude" }] },
@@ -478,8 +425,7 @@ describe(createLinearViewTicketSource, () => {
     const source = createLinearViewTicketSource({
       client: asClient(client),
       config: makeConfig(),
-      viewSlug: "foo-61e51e3730dd",
-      viewSlugId: "61e51e3730dd",
+      view: VIEW,
       sourceName: "linear",
     });
     const issue = await source.resolveOne("eng-1");
@@ -487,8 +433,7 @@ describe(createLinearViewTicketSource, () => {
       id: "linear:eng-1",
       title: "Resolve me",
       repository: "org/repo-a",
-      model: "claude",
-      status: "other",
+      sourceRef: { projectSlugId: "" },
     });
   });
 
@@ -513,8 +458,7 @@ describe(createLinearViewTicketSource, () => {
     const source = createLinearViewTicketSource({
       client: asClient(client),
       config: makeConfig(),
-      viewSlug: "foo-61e51e3730dd",
-      viewSlugId: "61e51e3730dd",
+      view: VIEW,
       sourceName: "linear",
     });
     await source.markInProgress({

@@ -106,8 +106,7 @@ export function createLinearTicketSource(
     return createLinearViewTicketSource({
       client,
       config: globalConfig,
-      viewSlug: view.viewSlug,
-      viewSlugId: view.slugId,
+      view,
       sourceName,
     });
   }

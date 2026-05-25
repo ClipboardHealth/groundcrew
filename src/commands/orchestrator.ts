@@ -10,7 +10,7 @@ import type { LinearClient } from "@linear/sdk";
 import { type BoardSource, type BoardState, createBoardSource } from "../lib/boardSource.ts";
 import { type Board, createBoard } from "../lib/board.ts";
 import { buildSources } from "../lib/buildSources.ts";
-import { fetchViewBoard, verifyView } from "../lib/adapters/linear/viewSource.ts";
+import { createViewBoardSource } from "../lib/adapters/linear/viewSource.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { getUsageByModel, type UsageByModel } from "../lib/usage.ts";
 import { errorMessage, getLinearClient, log, sleep } from "../lib/util.ts";
@@ -207,28 +207,7 @@ async function runWatchLoop(
 
 export function selectBoardSource(config: ResolvedConfig, client: LinearClient): BoardSource {
   const [view] = config.linear.views ?? [];
-  if (view === undefined) {
-    return createBoardSource({ config, client });
-  }
-  let cachedUuid: string | undefined;
-  const ensureUuid = async (): Promise<string> => {
-    if (cachedUuid === undefined) {
-      const resolved = await verifyView({
-        client,
-        viewSlugId: view.slugId,
-        viewSlug: view.viewSlug,
-      });
-      cachedUuid = resolved.id;
-    }
-    return cachedUuid;
-  };
-  return {
-    verify: async () => {
-      await ensureUuid();
-    },
-    fetch: async () => {
-      const viewUuid = await ensureUuid();
-      return await fetchViewBoard({ client, config, viewUuid });
-    },
-  };
+  return view === undefined
+    ? createBoardSource({ config, client })
+    : createViewBoardSource({ client, config, view });
 }

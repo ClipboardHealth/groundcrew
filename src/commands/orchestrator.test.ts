@@ -1841,13 +1841,4 @@ describe("selectBoardSource", () => {
     expect(state.issues).toStrictEqual([]);
     expect(rawRequest.mock.calls.filter(([q]) => q.includes("customViews"))).toHaveLength(1);
   });
-
-  it("returns a project-mode BoardSource when linear.views is unset", async () => {
-    const { selectBoardSource } = await import("./orchestrator.ts");
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- only verify/fetch shape is exercised
-    const client = {} as LinearClient;
-    const source = selectBoardSource(makeConfig(), client);
-    expect(source).toHaveProperty("verify");
-    expect(source).toHaveProperty("fetch");
-  });
 });
