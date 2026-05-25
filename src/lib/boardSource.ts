@@ -580,6 +580,12 @@ export interface RawLinearIssue {
   labels: { name: string }[];
   /** Linear workflow state name, e.g. "Todo", "In Review". May be "" if state was null. */
   stateName: string;
+  /**
+   * Linear workflow state type, e.g. "unstarted", "started", "completed", "canceled".
+   * "" when state was null. Optional in the type to keep project-mode test fixtures
+   * terse — only view-mode probes consult it.
+   */
+  stateType?: string;
   blockers: Blocker[];
   hasMoreBlockers: boolean;
   /**
@@ -657,7 +663,7 @@ export async function fetchRawLinearIssue(arguments_: {
         description
         team { id }
         project { slugId }
-        state { name }
+        state { name type }
         children { nodes { id } }
         labels(first: ${ISSUE_LABEL_PAGE_SIZE}) {
           nodes { name }
@@ -686,7 +692,7 @@ export async function fetchRawLinearIssue(arguments_: {
       description?: string | null;
       team?: { id: string } | null;
       project?: { slugId: string } | null;
-      state?: { name: string } | null;
+      state?: { name: string; type: string } | null;
       children?: { nodes: { id: string }[] } | null;
       labels: { nodes: { name: string }[] };
       inverseRelations?: {
@@ -706,6 +712,7 @@ export async function fetchRawLinearIssue(arguments_: {
     projectSlugId: issue.project?.slugId?.toLowerCase(),
     labels: issue.labels.nodes,
     stateName: issue.state?.name ?? "",
+    stateType: issue.state?.type ?? "",
     blockers: blockersFromRelations(issue.inverseRelations?.nodes ?? []),
     hasMoreBlockers: issue.inverseRelations?.pageInfo.hasNextPage ?? false,
     hasChildren: (issue.children?.nodes.length ?? 0) > 0,

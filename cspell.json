@@ -91,6 +91,7 @@
     "subshells",
     "teardownreporter",
     "tsgolint",
+    "unconfigured",
     "unstarted",
     "unstub",
     "venv",

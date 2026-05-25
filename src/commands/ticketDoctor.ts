@@ -584,6 +584,42 @@ interface LinearProbeOutput {
   raw?: RawLinearIssue;
 }
 
+type ClassifiedIssue =
+  | {
+      kind: "ok";
+      isTerminal: boolean;
+      todoMatches: boolean;
+      todoStateDescription: string;
+    }
+  | { kind: "unconfigured-project"; detail: string };
+
+function classifyRawIssue(config: ResolvedConfig, raw: RawLinearIssue): ClassifiedIssue {
+  if ((config.linear.views ?? []).length > 0) {
+    return {
+      kind: "ok",
+      isTerminal: raw.stateType === "completed" || raw.stateType === "canceled",
+      todoMatches: raw.stateType === "unstarted",
+      todoStateDescription: "unstarted",
+    };
+  }
+  const project =
+    raw.projectSlugId === undefined ? undefined : findProjectBySlugId(config, raw.projectSlugId);
+  if (project === undefined) {
+    const configured = config.linear.projects.map((entry) => entry.slugId).join(", ");
+    const detail =
+      raw.projectSlugId === undefined
+        ? `ticket has no associated Linear project; configure linear.projects (${configured})`
+        : `project slugId "${raw.projectSlugId}" is not in linear.projects (configured: ${configured})`;
+    return { kind: "unconfigured-project", detail };
+  }
+  return {
+    kind: "ok",
+    isTerminal: project.statuses.terminal.includes(raw.stateName),
+    todoMatches: raw.stateName === project.statuses.todo,
+    todoStateDescription: project.statuses.todo,
+  };
+}
+
 /**
  * Fetches Linear and adds the "Ticket exists in Linear" + status checks to
  * the resolution section. Returns the raw issue on success so the orchestrator
@@ -599,44 +635,35 @@ async function probeLinear(
   }
   try {
     const raw = await deps.fetchRawIssue({ ticket: upperTicket });
-    const project =
-      raw.projectSlugId === undefined
-        ? undefined
-        : findProjectBySlugId(deps.config, raw.projectSlugId);
-    if (project === undefined) {
-      const configured = deps.config.linear.projects.map((entry) => entry.slugId).join(", ");
-      const detail =
-        raw.projectSlugId === undefined
-          ? `ticket has no associated Linear project; configure linear.projects (${configured})`
-          : `project slugId "${raw.projectSlugId}" is not in linear.projects (configured: ${configured})`;
+    const classification = classifyRawIssue(deps.config, raw);
+    if (classification.kind === "unconfigured-project") {
       return {
-        linearStatus: { kind: "unresolvable", reason: detail },
+        linearStatus: { kind: "unresolvable", reason: classification.detail },
         resolution: [
           { name: "Ticket exists in Linear", status: "ok", detail: `"${raw.title}"` },
           {
             name: "Project is configured",
             status: "fail",
-            detail,
-            failureSummary: detail,
+            detail: classification.detail,
+            failureSummary: classification.detail,
           },
         ],
         title: raw.title,
         raw,
       };
     }
-    const isTerminal = project.statuses.terminal.includes(raw.stateName);
-    const todoState = project.statuses.todo;
+    const { isTerminal, todoMatches, todoStateDescription } = classification;
     const resolution: TicketCheck[] = [
       { name: "Ticket exists in Linear", status: "ok", detail: `"${raw.title}"` },
     ];
-    if (raw.stateName === todoState) {
+    if (todoMatches) {
       resolution.push({ name: "Status is Todo", status: "ok" });
     } else {
       resolution.push({
         name: "Status is Todo",
         status: "fail",
         detail: `current: ${raw.stateName}`,
-        failureSummary: `status is ${raw.stateName} (need ${todoState})`,
+        failureSummary: `status is ${raw.stateName} (need ${todoStateDescription})`,
       });
     }
     return {

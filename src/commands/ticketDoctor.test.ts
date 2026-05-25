@@ -441,6 +441,34 @@ describe("ticketDoctor pure function — Linear resolution", () => {
     const result = await ticketDoctor(dependencies);
     expect(result.title).toBe("Some title");
   });
+
+  it("in view mode classifies by stateType, ignoring projectSlugId", async () => {
+    const viewConfig = makeConfig({
+      linear: {
+        projects: [],
+        views: [{ viewSlug: "foo-61e51e3730dd", slugId: "61e51e3730dd" }],
+      },
+    });
+    const dependencies = makeStubDependencies({
+      config: viewConfig,
+      fetchRawIssue: vi
+        .fn<NonNullable<TicketDoctorDependencies["fetchRawIssue"]>>()
+        .mockResolvedValue(
+          makeStubRawIssue({
+            projectSlugId: "ffffffffffff",
+            stateName: "Triage",
+            stateType: "unstarted",
+            labels: [{ name: "agent-claude" }],
+            description: "https://github.com/org/repo",
+          }),
+        ),
+    });
+    const result = await ticketDoctor(dependencies);
+    expect(
+      result.resolution.find((check) => check.name === "Project is configured"),
+    ).toBeUndefined();
+    expect(result.resolution.find((check) => check.name === "Status is Todo")?.status).toBe("ok");
+  });
 });
 
 describe("ticketDoctor resolution checks", () => {
