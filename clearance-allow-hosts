@@ -12,6 +12,8 @@ ab.chatgpt.com
 api.anthropic.com
 api.openai.com
 chatgpt.com
+docs.anthropic.com
+docs.claude.com
 platform.claude.com
 
 # Hosted MCP servers + their auth/web hosts
@@ -73,6 +75,7 @@ fastdl.mongodb.org
 formulae.brew.sh
 hub.docker.com
 index.docker.io
+json.schemastore.org
 nx.dev
 sourcegraph.com
 vitest.dev
