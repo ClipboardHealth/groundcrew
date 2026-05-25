@@ -6,12 +6,17 @@ import { ensureSandbox, sandboxExists } from "../../lib/dockerSandbox.ts";
 import { writeOutput } from "../../lib/util.ts";
 import { requireOnePositional, resolveModel, type SandboxModel, sandboxModels } from "./model.ts";
 
-export async function ensureOne(config: ResolvedConfig, model: SandboxModel): Promise<void> {
+export async function ensureOne(
+  config: ResolvedConfig,
+  model: SandboxModel,
+  alreadyExists?: boolean,
+): Promise<void> {
   await ensureSandbox({
     sandboxName: model.sandboxName,
     sandbox: model.sandbox,
     mountPath: resolve(config.workspace.projectDir),
     gitDefaults: config.sandbox.gitDefaults,
+    ...(alreadyExists === undefined ? {} : { alreadyExists }),
   });
 }
 
@@ -37,7 +42,7 @@ export async function runEnsure(config: ResolvedConfig, argv: string[]): Promise
         : `${model.sandboxName}: creating (agent=${model.sandbox.agent}, template=${model.sandbox.template ?? "default"})`,
     );
     // oxlint-disable-next-line no-await-in-loop -- sbx create is intentionally sequential
-    await ensureOne(config, model);
+    await ensureOne(config, model, existed);
     if (!existed) {
       writeOutput(`${model.sandboxName}: created`);
     }
@@ -66,7 +71,7 @@ export async function runRegenerate(config: ResolvedConfig, argv: string[]): Pro
       `${model.sandboxName}: creating (agent=${model.sandbox.agent}, template=${model.sandbox.template ?? "default"})`,
     );
     // oxlint-disable-next-line no-await-in-loop -- sbx rm/create are intentionally sequential
-    await ensureOne(config, model);
+    await ensureOne(config, model, false);
     writeOutput(`${model.sandboxName}: regenerated`);
   }
 }

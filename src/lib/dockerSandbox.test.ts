@@ -266,6 +266,37 @@ describe(ensureSandbox, () => {
 
     expect(findGitDefaultsCall(runCommandMock.mock.calls)).toBeUndefined();
   });
+
+  it("skips the existence probe when alreadyExists is provided", async () => {
+    mockExisting(["groundcrew-claude"]);
+
+    await ensureSandbox({
+      sandboxName: "groundcrew-claude",
+      sandbox: { agent: "claude" },
+      mountPath: "/home/user/dev",
+      gitDefaults: false,
+      alreadyExists: true,
+    });
+
+    const verbs = runCommandMock.mock.calls.map(([, arguments_]) => arguments_[0]);
+    expect(verbs).not.toContain("ls");
+    expect(verbs).not.toContain("create");
+  });
+
+  it("creates without probing when alreadyExists is false", async () => {
+    mockExisting([]);
+
+    await ensureSandbox({
+      sandboxName: "groundcrew-claude",
+      sandbox: { agent: "claude" },
+      mountPath: "/home/user/dev",
+      gitDefaults: false,
+      alreadyExists: false,
+    });
+
+    const verbs = runCommandMock.mock.calls.map(([, arguments_]) => arguments_[0]);
+    expect(verbs).toStrictEqual(["create"]);
+  });
 });
 
 function findGitDefaultsCall(

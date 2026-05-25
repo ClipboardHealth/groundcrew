@@ -136,7 +136,7 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
   },
   sandbox: {
     summary: "Manage Docker Sandboxes (sbx) for configured models",
-    usage: "<list|ensure|regenerate|auth|rm|template> [...args]",
+    usage: "<list|ensure|regenerate|auth|rm> [...args]",
     invoke: sandboxCli,
   },
   setup: {

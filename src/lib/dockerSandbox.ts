@@ -46,6 +46,12 @@ interface EnsureSandboxArguments {
    * already there). See `sandboxGitDefaults.ts` for what gets set.
    */
   gitDefaults: boolean;
+  /**
+   * Result of an earlier `sandboxExists` probe by the caller, used to
+   * skip the initial `sbx ls` here. Leave undefined to let this function
+   * probe on its own.
+   */
+  alreadyExists?: boolean;
 }
 
 /**
@@ -58,11 +64,22 @@ interface EnsureSandboxArguments {
  * `sbx exec` runs the agent — `create` only provisions the container, it
  * does not attach.
  */
+async function resolveExistence(
+  arguments_: EnsureSandboxArguments,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  if (arguments_.alreadyExists === undefined) {
+    return await sandboxExists(arguments_.sandboxName, signal);
+  }
+  return arguments_.alreadyExists;
+}
+
 export async function ensureSandbox(
   arguments_: EnsureSandboxArguments,
   signal?: AbortSignal,
 ): Promise<void> {
-  if (!(await sandboxExists(arguments_.sandboxName, signal))) {
+  const existed = await resolveExistence(arguments_, signal);
+  if (!existed) {
     const createArguments: string[] = ["create", "--name", arguments_.sandboxName];
     if (arguments_.sandbox.template !== undefined) {
       createArguments.push("--template", arguments_.sandbox.template);

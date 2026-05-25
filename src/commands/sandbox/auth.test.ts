@@ -140,7 +140,7 @@ function mockClaudeLoggedInOnly(): void {
     }
     if (arguments_[0] === "exec" && arguments_[1] !== "-it") {
       const probeCommand = arguments_.at(-1) ?? "";
-      if (probeCommand.startsWith("claude")) {
+      if (probeCommand.startsWith("'claude'")) {
         return '{"loggedIn": true}';
       }
       return "not logged in";
@@ -272,7 +272,7 @@ describe("crew sandbox auth", () => {
       "groundcrew-claude",
       "sh",
       "-c",
-      "claude auth status 2>&1",
+      "'claude' 'auth' 'status' 2>&1",
     ]);
     expect(consoleLog.output()).toContain("'Claude' authenticated.");
   });
@@ -319,7 +319,7 @@ describe("crew sandbox auth", () => {
       "groundcrew-cursor",
       "sh",
       "-c",
-      "cursor-agent status 2>&1",
+      "'cursor-agent' 'status' 2>&1",
     ]);
   });
 

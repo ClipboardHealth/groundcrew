@@ -66,6 +66,13 @@ function envFlags(recipe: AuthRecipe): string[] {
   return entries.flatMap(([key, value]) => ["-e", `${key}=${value}`]);
 }
 
+// User-supplied recipes can carry arbitrary tokens; wrap each in single
+// quotes so spaces and shell metacharacters can't change how the in-sandbox
+// shell tokenizes the status command.
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
 async function probeAuthStatus(
   sandboxName: string,
   toolKey: string,
@@ -74,10 +81,10 @@ async function probeAuthStatus(
   // Some CLIs print status to stderr instead of stdout (codex does
   // this). Fold stderr into stdout via the in-sandbox shell so the
   // pattern match sees the message regardless of which stream it
-  // landed on. The argv is composed from hard-coded/config recipe
-  // values, so there's no untrusted runtime input flowing into the
-  // shell.
-  const innerCommand = `${[binaryFor(toolKey, recipe), ...recipe.statusArgs].join(" ")} 2>&1`;
+  // landed on.
+  const innerCommand = `${[binaryFor(toolKey, recipe), ...recipe.statusArgs]
+    .map(shellQuote)
+    .join(" ")} 2>&1`;
   try {
     const output = await runCommandAsync("sbx", [
       "exec",

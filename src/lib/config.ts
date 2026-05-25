@@ -87,8 +87,10 @@ export interface SandboxDefinition {
 }
 
 /**
- * Recipe used by `crew sandbox auth <model> [<tool>]` to drive an
- * interactive login flow inside a sbx sandbox and then verify it.
+ * Recipe used by `crew sandbox auth <model>` to drive an interactive
+ * login flow inside a sbx sandbox and then verify it. The flow is
+ * picker-driven — no positional `<tool>` argument; the picker lists
+ * every recipe visible to the current sandbox.
  *
  * `binary` defaults to the recipe key (typically the agent or CLI name).
  * `authenticatedPattern` matches against combined stdout+stderr from
@@ -255,10 +257,11 @@ export interface Config {
   };
   /**
    * Sandbox-wide settings. `authRecipes` lets users register additional
-   * tools (github, npm, gcloud, …) for `crew sandbox auth <model> <tool>`
-   * to authenticate inside the sandbox. Recipes registered here merge on
-   * top of the shipped agent recipes; a user recipe under the same key
-   * (e.g. "claude") overrides the shipped one.
+   * tools (github, npm, gcloud, …) for `crew sandbox auth <model>` to
+   * authenticate inside the sandbox. The auth flow is picker-driven —
+   * registered recipes show up in the picker alongside the shipped ones,
+   * and a user recipe under the same key (e.g. "claude") overrides the
+   * shipped one.
    */
   sandbox?: {
     authRecipes?: Record<string, AuthRecipe>;
@@ -744,6 +747,12 @@ function requireObject(value: unknown, path: string): void {
   }
 }
 
+function requireOptionalObject(value: unknown, path: string): void {
+  if (value !== undefined && !isPlainObject(value)) {
+    fail(`${path} must be an object`);
+  }
+}
+
 function normalizeProject(value: unknown, index: number): ResolvedProjectConfig {
   const path = `linear.projects[${index}]`;
   if (!isPlainObject(value)) {
@@ -860,6 +869,66 @@ function normalizeProjects(linear: Record<string, unknown>): ResolvedProjectConf
   return resolved;
 }
 
+function normalizeAuthRecipes(value: unknown, path: string): Record<string, AuthRecipe> {
+  if (value === undefined) {
+    return {};
+  }
+  if (!isPlainObject(value)) {
+    fail(`${path} must be an object`);
+  }
+  const recipes: Record<string, AuthRecipe> = {};
+  for (const [key, raw] of Object.entries(value)) {
+    const recipePath = `${path}.${key}`;
+    if (!isPlainObject(raw)) {
+      fail(`${recipePath} must be an object`);
+    }
+    const { displayName, binary, loginArgs, statusArgs, authenticatedPattern, kind, env } = raw;
+    requireString(displayName, `${recipePath}.displayName`);
+    const loginArray = normalizeOptionalStringArray(loginArgs, `${recipePath}.loginArgs`);
+    const statusArray = normalizeOptionalStringArray(statusArgs, `${recipePath}.statusArgs`);
+    if (loginArray === undefined) {
+      fail(`${recipePath}.loginArgs is required`);
+    }
+    if (statusArray === undefined) {
+      fail(`${recipePath}.statusArgs is required`);
+    }
+    if (!(authenticatedPattern instanceof RegExp)) {
+      fail(`${recipePath}.authenticatedPattern must be a RegExp`);
+    }
+    const recipe: AuthRecipe = {
+      displayName,
+      loginArgs: loginArray,
+      statusArgs: statusArray,
+      authenticatedPattern,
+    };
+    const binaryString = normalizeOptionalString(binary, `${recipePath}.binary`);
+    if (binaryString !== undefined) {
+      recipe.binary = binaryString;
+    }
+    if (kind !== undefined) {
+      if (kind !== "agent" && kind !== "tool") {
+        fail(`${recipePath}.kind must be "agent" or "tool"`);
+      }
+      recipe.kind = kind;
+    }
+    if (env !== undefined) {
+      if (!isPlainObject(env)) {
+        fail(`${recipePath}.env must be an object`);
+      }
+      const normalizedEnv: Record<string, string> = {};
+      for (const [envKey, envValue] of Object.entries(env)) {
+        if (typeof envValue !== "string") {
+          fail(`${recipePath}.env.${envKey} must be a string`);
+        }
+        normalizedEnv[envKey] = envValue;
+      }
+      recipe.env = normalizedEnv;
+    }
+    recipes[key] = recipe;
+  }
+  return recipes;
+}
+
 function applyDefaults(user: Config): ResolvedConfig {
   // Guard the top-level shape before reading nested fields, so a
   // malformed runtime config produces a `groundcrew config: ...` error
@@ -878,6 +947,7 @@ function applyDefaults(user: Config): ResolvedConfig {
       "remote is no longer supported: groundcrew runs locally via safehouse/sdx/none; remove the remote block from your config",
     );
   }
+  requireOptionalObject(user.sandbox, "sandbox");
   const userLocal = (user as { local?: { runner?: unknown } }).local;
   if (userLocal !== undefined && !isPlainObject(userLocal)) {
     fail("local must be an object");
@@ -907,7 +977,7 @@ function applyDefaults(user: Config): ResolvedConfig {
       runner: normalizeLocalRunner(userLocal?.runner, "local.runner") ?? "auto",
     },
     sandbox: {
-      authRecipes: user.sandbox?.authRecipes ?? {},
+      authRecipes: normalizeAuthRecipes(user.sandbox?.authRecipes, "sandbox.authRecipes"),
       gitDefaults:
         normalizeOptionalBoolean(user.sandbox?.gitDefaults, "sandbox.gitDefaults") ?? true,
     },
