@@ -60,16 +60,17 @@ Installs the `crew` binary. `@clipboard-health/clearance` is pulled in transitiv
 
 3. **Create a Linear project to scope your work.** Any team works — make a project inside it and drop tickets in. The orchestrator polls by project, not by team.
 
-4. **Configure.** Copy the shipped example into XDG config and edit:
+4. **Configure.** Create a `crew.config.ts` you can edit:
 
    ```bash
-   mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew"
-   cp "$(npm root -g)/@clipboard-health/groundcrew/crew.config.example.ts" \
-      "${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/crew.config.ts"
-   $EDITOR "${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/crew.config.ts"
+   crew init            # write ./crew.config.ts in the current folder
+   crew init --global   # write ${XDG_CONFIG_HOME:-~/.config}/groundcrew/crew.config.ts
+   $EDITOR crew.config.ts
    ```
 
-   Or drop `crew.config.ts` at the root of any repo you run `crew` from — `crew` discovers it via cosmiconfig project-walk. Any of `crew.config.{ts,mjs,js,json}`, `.crewrc{,.json,.ts}`, `.config/crew.config.{ts,json}`, or `.config/crewrc{,.json}` work.
+   `crew init` refuses to overwrite an existing config; pass `--force` to replace it, or `--dry-run` to preview the destination path.
+
+   `crew` discovers the config via cosmiconfig project-walk, so dropping it at the root of any repo you run `crew` from works too. Any of `crew.config.{ts,mjs,js,json}`, `.crewrc{,.json,.ts}`, `.config/crew.config.{ts,json}`, or `.config/crewrc{,.json}` are recognized.
 
    Set `linear.projects[].projectSlug` (paste the trailing slug of your Linear project URL, e.g. `ai-strategy-5152195762f3`), `workspace.projectDir`, and `workspace.knownRepositories`. Defaults cover everything else. To watch multiple projects from one `crew` instance, add more entries to `linear.projects`; they all share the same `orchestrator.maximumInProgress` budget.
 
@@ -359,6 +360,7 @@ To have a coding agent (Claude Code, Cursor, etc.) scaffold `.groundcrew/setup.s
 ## Commands
 
 ```bash
+crew init [--global | --local] [--force] [--dry-run] # create a crew.config.ts (cwd by default)
 crew doctor                                              # full setup check
 crew doctor --ticket <TICKET> [--no-linear] [--no-fetch] # full ticket lifecycle (dispatch + recovery)
 crew run                                                 # one-shot dispatch

@@ -8,6 +8,7 @@ import { cosmiconfig, type CosmiconfigResult, type Loader } from "cosmiconfig";
 import type { LinearAdapterConfig } from "./adapters/linear/schema.ts";
 import type { ShellAdapterConfig } from "./adapters/shell/schema.ts";
 import { log, readEnvironmentVariable, setLogFile } from "./util.ts";
+import { xdgConfigPath, xdgStatePath } from "./xdg.ts";
 
 export { BUILD_SECRET_NAMES } from "./buildSecrets.ts";
 
@@ -358,22 +359,6 @@ const PROMPT_PLACEHOLDER_RE = /{{[^{}]*}}/g;
 
 const PERCENT_MIN_EXCLUSIVE = 0;
 const PERCENT_MAX = 100;
-
-function xdgBase(envName: string, fallbackSegments: readonly string[]): string {
-  const override = readEnvironmentVariable(envName);
-  if (override !== undefined && override.length > 0) {
-    return override;
-  }
-  return resolve(homedir(), ...fallbackSegments);
-}
-
-function xdgConfigPath(...segments: string[]): string {
-  return resolve(xdgBase("XDG_CONFIG_HOME", [".config"]), ...segments);
-}
-
-function xdgStatePath(...segments: string[]): string {
-  return resolve(xdgBase("XDG_STATE_HOME", [".local", "state"]), ...segments);
-}
 
 function defaultLogFile(): string {
   return xdgStatePath("groundcrew", "groundcrew.log");

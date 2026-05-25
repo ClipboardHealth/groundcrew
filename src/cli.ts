@@ -2,6 +2,7 @@ import { createRequire } from "node:module";
 
 import { cleanupWorkspaceCli } from "./commands/cleanupWorkspace.ts";
 import { doctor } from "./commands/doctor.ts";
+import { initConfigCli } from "./commands/init.ts";
 import { interruptWorkspaceCli } from "./commands/interruptWorkspace.ts";
 import { orchestrate } from "./commands/orchestrator.ts";
 import { resumeWorkspaceCli } from "./commands/resumeWorkspace.ts";
@@ -101,6 +102,11 @@ async function doctorCli(argv: string[]): Promise<void> {
 }
 
 const SUBCOMMANDS: Record<string, Subcommand> = {
+  init: {
+    summary: "Create a crew.config.ts in the cwd (or --global into the XDG config dir)",
+    usage: "[--global | --local] [--force] [--dry-run]",
+    invoke: initConfigCli,
+  },
   run: {
     summary: "Run the orchestrator (one-shot by default), or provision one ticket with --ticket",
     usage: "[--watch] [--dry-run] [--ticket <ticket>]",
