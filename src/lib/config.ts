@@ -92,7 +92,7 @@ export interface ModelDefinition {
    * for execution. The rendered prompt is appended as a single quoted
    * positional argument. `{{worktree}}` is replaced before launch.
    *
-   * Keep this agent-native (e.g., `claude --permission-mode bypassPermissions`).
+   * Keep this agent-native (e.g., `claude --permission-mode auto`).
    * Groundcrew adds the Safehouse wrapper.
    */
   cmd: string;
@@ -314,7 +314,7 @@ const DEFAULT_ORCHESTRATOR: ResolvedConfig["orchestrator"] = {
 
 const DEFAULT_MODEL_DEFINITIONS: Record<string, ModelDefinition> = {
   claude: {
-    cmd: "claude --permission-mode bypassPermissions",
+    cmd: "claude --permission-mode auto",
     color: "#C15F3C",
     usage: { codexbar: { provider: "claude" } },
   },

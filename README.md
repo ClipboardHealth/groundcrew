@@ -522,9 +522,9 @@ Cross-team projects work — the orchestrator caches the in-progress state ID pe
 </details>
 
 <details>
-<summary>Claude launches in bypass-permissions mode by default</summary>
+<summary>Claude launches in auto mode by default</summary>
 
-Groundcrew creates isolated per-ticket worktrees for unattended runs, so the shipped `claude` command is `claude --permission-mode bypassPermissions` to avoid workspace-trust and tool-permission prompts blocking automation. Override `models.definitions.claude.cmd` for a stricter mode.
+Groundcrew creates isolated per-ticket worktrees for unattended runs, so the shipped `claude` command is `claude --permission-mode auto` to let Claude proceed without stopping for clarifying questions while keeping its built-in safety prompts intact. Override `models.definitions.claude.cmd` for `bypassPermissions` if you need to suppress tool-permission prompts entirely, or for a stricter mode.
 
 </details>
 

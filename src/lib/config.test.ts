@@ -101,9 +101,7 @@ describe("loadConfig", () => {
     });
     expect(actual.models.default).toBe("claude");
     expect(Object.keys(actual.models.definitions).toSorted()).toStrictEqual(["claude", "codex"]);
-    expect(actual.models.definitions["claude"]?.cmd).toBe(
-      "claude --permission-mode bypassPermissions",
-    );
+    expect(actual.models.definitions["claude"]?.cmd).toBe("claude --permission-mode auto");
     expect(actual.models.definitions["codex"]?.cmd).toBe(
       "codex --dangerously-bypass-approvals-and-sandbox",
     );
@@ -334,7 +332,7 @@ describe("loadConfig", () => {
     expect(claude).toBeDefined();
     expect(claude?.usage).toBeUndefined();
     // Other shipped fields stay intact.
-    expect(claude?.cmd).toBe("claude --permission-mode bypassPermissions");
+    expect(claude?.cmd).toBe("claude --permission-mode auto");
     // codex still gates by default — only claude was opted out.
     expect(actual.models.definitions["codex"]?.usage).toStrictEqual({
       codexbar: { provider: "codex" },
