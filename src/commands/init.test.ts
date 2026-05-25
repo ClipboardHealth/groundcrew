@@ -78,6 +78,15 @@ describe("crew init", () => {
       expect(result.destination).toContain(join(".config", "groundcrew", "crew.config.ts"));
     });
 
+    it("ignores a relative XDG_CONFIG_HOME per the XDG spec", () => {
+      setEnvironmentVariable("XDG_CONFIG_HOME", "relative/path");
+
+      const result = initConfig({ scope: "global", dryRun: true });
+
+      expect(result.destination).toContain(join(".config", "groundcrew", "crew.config.ts"));
+      expect(result.destination).not.toContain("relative/path");
+    });
+
     it("refuses to overwrite an existing destination without --force", () => {
       const destination = join(cwd, "crew.config.ts");
       writeFileSync(destination, "existing content");
@@ -182,6 +191,12 @@ describe("crew init", () => {
     it("rejects an unknown flag with a helpful usage line", async () => {
       await expect(initConfigCli(["--what"])).rejects.toThrow(
         /Unknown option: --what[\s\S]*Usage: crew init/,
+      );
+    });
+
+    it("rejects --global and --local passed together", async () => {
+      await expect(initConfigCli(["--global", "--local"])).rejects.toThrow(
+        /--global and --local are mutually exclusive/,
       );
     });
 

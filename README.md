@@ -63,9 +63,11 @@ Installs the `crew` binary. `@clipboard-health/clearance` is pulled in transitiv
 4. **Configure.** Create a `crew.config.ts` you can edit:
 
    ```bash
-   crew init            # write ./crew.config.ts in the current folder
-   crew init --global   # write ${XDG_CONFIG_HOME:-~/.config}/groundcrew/crew.config.ts
-   $EDITOR crew.config.ts
+   # Write into the current folder:
+   crew init && $EDITOR crew.config.ts
+
+   # ...or into the XDG config dir:
+   crew init --global && $EDITOR "${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/crew.config.ts"
    ```
 
    `crew init` refuses to overwrite an existing config; pass `--force` to replace it, or `--dry-run` to preview the destination path.

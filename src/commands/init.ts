@@ -77,17 +77,19 @@ export async function initConfigCli(argv: string[]): Promise<void> {
 }
 
 function parseArguments(argv: string[]): InitConfigOptions {
-  let scope: InitConfigScope = "local";
+  let scope: InitConfigScope | undefined;
   let force = false;
   let dryRun = false;
 
   for (const argument of argv) {
-    if (argument === "--global") {
-      scope = "global";
-      continue;
-    }
-    if (argument === "--local") {
-      scope = "local";
+    if (argument === "--global" || argument === "--local") {
+      const next: InitConfigScope = argument === "--global" ? "global" : "local";
+      if (scope !== undefined && scope !== next) {
+        throw new Error(
+          "crew init: --global and --local are mutually exclusive.\nUsage: crew init [--global | --local] [--force] [--dry-run]",
+        );
+      }
+      scope = next;
       continue;
     }
     if (argument === "--force") {
@@ -103,7 +105,7 @@ function parseArguments(argv: string[]): InitConfigOptions {
     );
   }
 
-  return { scope, force, dryRun };
+  return { scope: scope ?? "local", force, dryRun };
 }
 
 function destinationFor(args: { scope: InitConfigScope; cwd: string }): string {
