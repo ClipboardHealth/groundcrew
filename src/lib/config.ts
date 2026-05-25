@@ -191,6 +191,22 @@ export interface ProjectConfig {
 }
 
 /**
+ * One Linear custom view (saved filter). `viewSlug` is the URL path segment
+ * Linear shows in its UI (e.g. `george-bezerra-tasks-61e51e3730dd`) — the
+ * trailing 12-character hex is what the GraphQL `customView` lookup needs.
+ * Canonical status mapping in view mode uses Linear workflow state **types**
+ * rather than per-team status names.
+ */
+export interface ViewConfig {
+  viewSlug: string;
+}
+
+export interface ResolvedViewConfig {
+  viewSlug: string;
+  slugId: string;
+}
+
+/**
  * Loose user-facing shape — what a `config.ts` file declares.
  * Fields with defaults are optional; only `linear.projects` and the
  * `workspace.*` fields are required.
@@ -200,9 +216,17 @@ export interface Config {
     /**
      * One or more Linear projects to watch. A single `crew` process
      * dispatches across all configured projects under a shared
-     * `orchestrator.maximumInProgress` budget.
+     * `orchestrator.maximumInProgress` budget. Mutually exclusive with
+     * `views[]` — configure exactly one.
      */
-    projects: ProjectConfig[];
+    projects?: ProjectConfig[];
+    /**
+     * One or more Linear custom views (saved filters). View mode replaces
+     * per-team status configuration with Linear's workflow state types
+     * (`unstarted`/`started`/`completed`/`canceled`). Mutually exclusive
+     * with `projects[]`.
+     */
+    views?: ViewConfig[];
   };
   /**
    * Additional pluggable ticket sources beyond the built-in Linear adapter
@@ -311,6 +335,12 @@ export interface ResolvedProjectConfig {
 export interface ResolvedConfig {
   linear: {
     projects: ResolvedProjectConfig[];
+    /**
+     * Resolved Linear custom views. Empty when project mode is used.
+     * Optional in the type to keep existing test fixtures terse —
+     * `applyDefaults` always sets it (defaulting to `[]`).
+     */
+    views?: ResolvedViewConfig[];
   };
   /**
    * Resolved list of additional ticket sources beyond the built-in Linear
@@ -730,28 +760,11 @@ function mergeDefinitions(
   return merged;
 }
 
-// Linear project URL slugs end with a 12-char lowercase hex `slugId`.
+// Linear project / view URL slugs end with a 12-char lowercase hex `slugId`.
 const SLUG_ID_RE = /-([\da-f]{12})$/i;
 
 function extractSlugId(slug: string): string | undefined {
   return SLUG_ID_RE.exec(slug)?.[1]?.toLowerCase();
-}
-
-export function extractViewSlugId(url: string): string {
-  /* v8 ignore next @preserve -- String.prototype.split always returns at least one element */
-  const withoutQuery = url.split("?")[0] ?? url;
-  const withoutTrailingSlash = withoutQuery.endsWith("/")
-    ? withoutQuery.slice(0, -1)
-    : withoutQuery;
-  /* v8 ignore next @preserve -- split() returns a non-empty array so pop() never returns undefined */
-  const segment = withoutTrailingSlash.split("/").pop() ?? "";
-  const match = SLUG_ID_RE.exec(segment)?.[1]?.toLowerCase();
-  if (match === undefined) {
-    throw new Error(
-      `linear view URL "${url}" does not end in a 12-character hex slug (e.g. "-61e51e3730dd")`,
-    );
-  }
-  return match;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -866,6 +879,9 @@ function normalizeSources(raw: unknown): SourceConfig[] {
 
 function normalizeProjects(linear: Record<string, unknown>): ResolvedProjectConfig[] {
   const { projects } = linear;
+  if (projects === undefined) {
+    return [];
+  }
   if (!Array.isArray(projects)) {
     fail("linear.projects must be an array");
   }
@@ -881,6 +897,39 @@ function normalizeProjects(linear: Record<string, unknown>): ResolvedProjectConf
     seen.set(project.slugId, index);
   });
   return resolved;
+}
+
+function normalizeViews(linear: Record<string, unknown>): ResolvedViewConfig[] {
+  const { views } = linear;
+  if (views === undefined) {
+    return [];
+  }
+  if (!Array.isArray(views)) {
+    fail("linear.views must be an array");
+  }
+  const seen = new Map<string, number>();
+  return views.map((entry, index) => {
+    const path = `linear.views[${index}]`;
+    if (!isPlainObject(entry)) {
+      fail(`${path} must be an object (got ${JSON.stringify(entry)})`);
+    }
+    const { viewSlug } = entry;
+    requireString(viewSlug, `${path}.viewSlug`);
+    const slugId = extractSlugId(viewSlug);
+    if (slugId === undefined) {
+      fail(
+        `${path}.viewSlug must end with a 12-character hex slugId (got ${JSON.stringify(viewSlug)}). Copy the trailing path segment from your Linear view URL, e.g. "george-bezerra-tasks-61e51e3730dd" from "https://linear.app/<workspace>/view/george-bezerra-tasks-61e51e3730dd".`,
+      );
+    }
+    const previous = seen.get(slugId);
+    if (previous !== undefined) {
+      fail(
+        `${path}.viewSlug duplicates the slugId "${slugId}" already used by linear.views[${previous}]`,
+      );
+    }
+    seen.set(slugId, index);
+    return { viewSlug, slugId };
+  });
 }
 
 function normalizeAuthRecipes(value: unknown, path: string): Record<string, AuthRecipe> {
@@ -967,11 +1016,13 @@ function applyDefaults(user: Config): ResolvedConfig {
     fail("local must be an object");
   }
 
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- runtime fields validated by normalizeProjects below
-  const projects = normalizeProjects(user.linear as unknown as Record<string, unknown>);
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- runtime fields validated by normalizeProjects/normalizeViews below
+  const linearRaw = user.linear as unknown as Record<string, unknown>;
+  const projects = normalizeProjects(linearRaw);
+  const views = normalizeViews(linearRaw);
   const sources = normalizeSources((user as { sources?: unknown }).sources);
   return {
-    linear: { projects },
+    linear: { projects, views },
     sources,
     git: { ...DEFAULT_GIT, ...user.git },
     workspace: {
@@ -1014,7 +1065,7 @@ function validatePromptPlaceholders(template: string): void {
 }
 
 function validate(config: ResolvedConfig): void {
-  validateLinearSourcePresence(config);
+  validateLinearMode(config);
   config.linear.projects.forEach((project, index) => {
     const path = `linear.projects[${index}]`;
     requireString(project.projectSlug, `${path}.projectSlug`);
@@ -1106,40 +1157,18 @@ function validate(config: ResolvedConfig): void {
   requireString(config.logging.file, "logging.file");
 }
 
-function validateLinearSourcePresence(config: ResolvedConfig): void {
-  const linearSources = linearSourceEntries(config.sources);
-  if (linearSources.length > 1) {
-    fail(
-      `sources contains more than one { kind: "linear" } entry. Only one Linear adapter source is supported per config.`,
-    );
-  }
-  const [linearSource] = linearSources;
-  const viewSource = linearSource?.view === undefined ? undefined : linearSource;
+function validateLinearMode(config: ResolvedConfig): void {
   const hasProjects = config.linear.projects.length > 0;
-
-  if (linearSource !== undefined && viewSource === undefined) {
+  /* v8 ignore next @preserve -- applyDefaults always sets views; the ?? fallback is for test fixtures that construct ResolvedConfig directly */
+  const hasViews = (config.linear.views ?? []).length > 0;
+  if (hasProjects && hasViews) {
     fail(
-      `sources contains a { kind: "linear" } entry without view. Project-mode linear is configured implicitly via linear.projects[]; only add a sources entry when using view mode.`,
+      "linear.projects and linear.views are both configured. Pick exactly one: project-based mode or view-based mode.",
     );
   }
-  if (hasProjects && viewSource !== undefined) {
-    fail(
-      `linear.projects and a linear view source are both configured. Pick one: either keep linear.projects[] (project-based mode) or use sources: [{ kind: "linear", view: { url } }] (view-based mode), not both.`,
-    );
+  if (!hasProjects && !hasViews) {
+    fail("linear.projects or linear.views must contain at least one entry.");
   }
-  if (!hasProjects && viewSource === undefined) {
-    fail(
-      `no Linear source configured. Either set linear.projects[] (project mode) or add sources: [{ kind: "linear", view: { url } }] (view mode).`,
-    );
-  }
-}
-
-function linearSourceEntries(
-  sources: readonly SourceConfig[],
-): Extract<SourceConfig, { kind: "linear" }>[] {
-  return sources.filter(
-    (entry): entry is Extract<SourceConfig, { kind: "linear" }> => entry.kind === "linear",
-  );
 }
 
 const COSMICONFIG_MODULE_NAME = "crew";

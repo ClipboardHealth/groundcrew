@@ -24,11 +24,7 @@ import {
   type Issue as LinearIssue,
   isTerminalStatusForBlocker,
 } from "../../boardSource.ts";
-import {
-  extractViewSlugId,
-  findProjectBySlugId,
-  type ResolvedProjectConfig,
-} from "../../config.ts";
+import { findProjectBySlugId, type ResolvedProjectConfig } from "../../config.ts";
 import { createLinearIssueStatusUpdater } from "../../linearIssueStatus.ts";
 import type {
   Blocker as CanonicalBlocker,
@@ -129,13 +125,13 @@ export function createLinearTicketSource(
   const { globalConfig } = context;
   const client = getLinearClient();
 
-  if (config.view !== undefined) {
-    const viewSlugId = extractViewSlugId(config.view.url);
+  const [view] = globalConfig.linear.views ?? [];
+  if (view !== undefined) {
     return createLinearViewTicketSource({
       client,
       config: globalConfig,
-      viewUrl: config.view.url,
-      viewSlugId,
+      viewSlug: view.viewSlug,
+      viewSlugId: view.slugId,
       sourceName,
     });
   }

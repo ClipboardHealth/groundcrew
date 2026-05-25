@@ -150,7 +150,7 @@ describe(verifyView, () => {
     const resolved = await verifyView({
       client: asClient(client),
       viewSlugId: "61e51e3730dd",
-      viewUrl: "https://linear.app/cbh/view/foo-61e51e3730dd",
+      viewSlug: "foo-61e51e3730dd",
     });
     expect(resolved).toStrictEqual({ id: "uuid-1", name: "My View" });
   });
@@ -161,7 +161,7 @@ describe(verifyView, () => {
       verifyView({
         client: asClient(client),
         viewSlugId: "61e51e3730dd",
-        viewUrl: "https://linear.app/cbh/view/foo-61e51e3730dd",
+        viewSlug: "foo-61e51e3730dd",
       }),
     ).rejects.toThrow(/No Linear view found with slugId "61e51e3730dd"/);
   });
@@ -693,7 +693,7 @@ describe(createLinearViewTicketSource, () => {
     const source = createLinearViewTicketSource({
       client: asClient(client),
       config: makeConfig(),
-      viewUrl: "https://linear.app/cbh/view/foo-61e51e3730dd",
+      viewSlug: "foo-61e51e3730dd",
       viewSlugId: "61e51e3730dd",
       sourceName: "linear",
     });
@@ -729,7 +729,7 @@ describe(createLinearViewTicketSource, () => {
     const source = createLinearViewTicketSource({
       client: asClient(client),
       config: makeConfig(),
-      viewUrl: "https://linear.app/cbh/view/foo-61e51e3730dd",
+      viewSlug: "foo-61e51e3730dd",
       viewSlugId: "61e51e3730dd",
       sourceName: "linear",
     });
@@ -782,7 +782,7 @@ describe("createLinearViewTicketSource resolveOne + fetch state-type derivation"
       config: makeConfig({
         workspace: { projectDir: "/w", knownRepositories: ["org/repo-a"] },
       }),
-      viewUrl: "https://linear.app/cbh/view/foo-61e51e3730dd",
+      viewSlug: "foo-61e51e3730dd",
       viewSlugId: "61e51e3730dd",
       sourceName: "linear",
     });
@@ -837,7 +837,7 @@ describe("createLinearViewTicketSource resolveOne + fetch state-type derivation"
     const source = createLinearViewTicketSource({
       client: asClient(client),
       config: makeConfig(),
-      viewUrl: "https://linear.app/cbh/view/foo-61e51e3730dd",
+      viewSlug: "foo-61e51e3730dd",
       viewSlugId: "61e51e3730dd",
       sourceName: "linear",
     });
@@ -907,7 +907,7 @@ describe("createLinearViewTicketSource resolveOne + fetch state-type derivation"
     const source = createLinearViewTicketSource({
       client: asClient(client),
       config: makeConfig(),
-      viewUrl: "https://linear.app/cbh/view/foo-61e51e3730dd",
+      viewSlug: "foo-61e51e3730dd",
       viewSlugId: "61e51e3730dd",
       sourceName: "linear",
     });
@@ -952,7 +952,7 @@ describe(createLinearViewBoardSource, () => {
     const source = createLinearViewBoardSource({
       client: asClient(client),
       config: makeConfig(),
-      viewUrl: "https://linear.app/cbh/view/foo-61e51e3730dd",
+      viewSlug: "foo-61e51e3730dd",
       viewSlugId: "61e51e3730dd",
     });
     await source.verify();
@@ -993,7 +993,7 @@ describe(createLinearViewBoardSource, () => {
     const source = createLinearViewBoardSource({
       client: asClient(client),
       config: makeConfig(),
-      viewUrl: "https://linear.app/cbh/view/foo-61e51e3730dd",
+      viewSlug: "foo-61e51e3730dd",
       viewSlugId: "61e51e3730dd",
     });
     await source.fetch();

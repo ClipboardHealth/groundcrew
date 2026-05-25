@@ -11,12 +11,7 @@ import { type BoardSource, type BoardState, createBoardSource } from "../lib/boa
 import { type Board, createBoard } from "../lib/board.ts";
 import { buildSources } from "../lib/buildSources.ts";
 import { createLinearViewBoardSource } from "../lib/adapters/linear/viewSource.ts";
-import {
-  extractViewSlugId,
-  loadConfig,
-  type ResolvedConfig,
-  type SourceConfig,
-} from "../lib/config.ts";
+import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { getUsageByModel, type UsageByModel } from "../lib/usage.ts";
 import { errorMessage, getLinearClient, log, sleep } from "../lib/util.ts";
 import { worktrees } from "../lib/worktrees.ts";
@@ -211,24 +206,14 @@ async function runWatchLoop(
 }
 
 export function selectBoardSource(config: ResolvedConfig, client: LinearClient): BoardSource {
-  if (config.linear.projects.length > 0) {
-    return createBoardSource({ config, client });
+  const [view] = config.linear.views ?? [];
+  if (view !== undefined) {
+    return createLinearViewBoardSource({
+      client,
+      config,
+      viewSlug: view.viewSlug,
+      viewSlugId: view.slugId,
+    });
   }
-  const viewSource = config.sources.find(
-    (entry): entry is Extract<SourceConfig, { kind: "linear" }> =>
-      entry.kind === "linear" && entry.view !== undefined,
-  );
-  /* v8 ignore next 6 @preserve -- config.validate guarantees view-mode is configured by this point */
-  if (viewSource?.view === undefined) {
-    throw new Error(
-      "internal: orchestrator reached view-mode branch without a configured linear view source — config.validate should have caught this",
-    );
-  }
-  const viewSlugId = extractViewSlugId(viewSource.view.url);
-  return createLinearViewBoardSource({
-    client,
-    config,
-    viewUrl: viewSource.view.url,
-    viewSlugId,
-  });
+  return createBoardSource({ config, client });
 }

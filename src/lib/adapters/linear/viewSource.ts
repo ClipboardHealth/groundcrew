@@ -45,7 +45,7 @@ export function canonicalStatusForStateType(stateType: string): CanonicalStatus 
 interface VerifyViewArguments {
   client: LinearClient;
   viewSlugId: string;
-  viewUrl: string;
+  viewSlug: string;
 }
 
 interface ResolvedView {
@@ -54,7 +54,7 @@ interface ResolvedView {
 }
 
 export async function verifyView(arguments_: VerifyViewArguments): Promise<ResolvedView> {
-  const { client, viewSlugId, viewUrl } = arguments_;
+  const { client, viewSlugId, viewSlug } = arguments_;
   const response: { data?: unknown } = await client.client.rawRequest(
     `query VerifyView($slugId: String!) {
       customViews(filter: { slugId: { eq: $slugId } }, first: 1) {
@@ -70,7 +70,7 @@ export async function verifyView(arguments_: VerifyViewArguments): Promise<Resol
   const [match] = customViews.nodes;
   if (match === undefined) {
     throw new Error(
-      `No Linear view found with slugId "${viewSlugId}" (linear.view URL ${viewUrl}). Check the URL, archived status, or API-key access.`,
+      `No Linear view found with slugId "${viewSlugId}" (linear.views[].viewSlug "${viewSlug}"). Check the slug, archived status, or API-key access.`,
     );
   }
   log(`Resolved Linear view: ${match.name} (slugId ${match.slugId})`);
@@ -323,7 +323,7 @@ export async function resolveOneByIdentifier(
 interface CreateViewTicketSourceArguments {
   client: LinearClient;
   config: ResolvedConfig;
-  viewUrl: string;
+  viewSlug: string;
   viewSlugId: string;
   sourceName: string;
 }
@@ -331,9 +331,9 @@ interface CreateViewTicketSourceArguments {
 export function createLinearViewTicketSource(
   arguments_: CreateViewTicketSourceArguments,
 ): TicketSource {
-  const { client, config, viewUrl, viewSlugId, sourceName } = arguments_;
+  const { client, config, viewSlug, viewSlugId, sourceName } = arguments_;
   const stateLookup = createInProgressStateLookup({ client });
-  const ensureViewUuid = createViewUuidResolver({ client, viewSlugId, viewUrl });
+  const ensureViewUuid = createViewUuidResolver({ client, viewSlugId, viewSlug });
 
   function toCanonicalBlocker(blocker: LinearBlocker): CanonicalBlocker {
     let status: CanonicalStatus = "other";
@@ -395,15 +395,15 @@ export function createLinearViewTicketSource(
 interface CreateViewBoardSourceArguments {
   client: LinearClient;
   config: ResolvedConfig;
-  viewUrl: string;
+  viewSlug: string;
   viewSlugId: string;
 }
 
 export function createLinearViewBoardSource(
   arguments_: CreateViewBoardSourceArguments,
 ): BoardSource {
-  const { client, config, viewUrl, viewSlugId } = arguments_;
-  const ensureViewUuid = createViewUuidResolver({ client, viewSlugId, viewUrl });
+  const { client, config, viewSlug, viewSlugId } = arguments_;
+  const ensureViewUuid = createViewUuidResolver({ client, viewSlugId, viewSlug });
   return {
     async verify(): Promise<void> {
       await ensureViewUuid();

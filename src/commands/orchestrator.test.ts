@@ -1795,16 +1795,13 @@ describe(orchestrate, () => {
 });
 
 describe("selectBoardSource", () => {
-  it("returns a view-mode BoardSource when projects is empty and a linear view source is configured", async () => {
+  it("returns a view-mode BoardSource when linear.views is configured", async () => {
     const { selectBoardSource } = await import("./orchestrator.ts");
     const config = makeConfig({
-      linear: { projects: [] },
-      sources: [
-        {
-          kind: "linear",
-          view: { url: "https://linear.app/cbh/view/foo-61e51e3730dd" },
-        } as ResolvedConfig["sources"][number],
-      ],
+      linear: {
+        projects: [],
+        views: [{ viewSlug: "foo-61e51e3730dd", slugId: "61e51e3730dd" }],
+      },
     });
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- only verify/fetch shape is exercised
     const client = {} as LinearClient;
@@ -1813,7 +1810,7 @@ describe("selectBoardSource", () => {
     expect(source).toHaveProperty("fetch");
   });
 
-  it("returns a project-mode BoardSource when projects is non-empty", async () => {
+  it("returns a project-mode BoardSource when linear.views is unset", async () => {
     const { selectBoardSource } = await import("./orchestrator.ts");
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- only verify/fetch shape is exercised
     const client = {} as LinearClient;

@@ -344,18 +344,19 @@ describe(createLinearTicketSource, () => {
     });
   });
 
-  it("returns a view-mode source when config.view is set", () => {
-    const source = createLinearTicketSource(
-      {
-        kind: "linear",
-        view: { url: "https://linear.app/cbh/view/foo-61e51e3730dd" },
-      },
-      { globalConfig: makeConfig({ linear: { projects: [] } }) } satisfies AdapterContext,
-    );
+  it("returns a view-mode source when globalConfig.linear.views is set", () => {
+    const source = createLinearTicketSource({ kind: "linear" }, {
+      globalConfig: makeConfig({
+        linear: {
+          projects: [],
+          views: [{ viewSlug: "foo-61e51e3730dd", slugId: "61e51e3730dd" }],
+        },
+      }),
+    } satisfies AdapterContext);
     expect(source.name).toBe("linear");
   });
 
-  it("returns a project-mode source when config.view is unset", () => {
+  it("returns a project-mode source when linear.views is unset", () => {
     const source = createLinearTicketSource({ kind: "linear" }, {
       globalConfig: makeConfig(),
     } satisfies AdapterContext);

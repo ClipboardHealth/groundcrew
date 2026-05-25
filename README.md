@@ -178,19 +178,13 @@ Agent selection uses Linear labels: `agent-claude`, `agent-codex`, `agent-<name>
 
 ### Linear view mode
 
-Instead of listing one or more Linear projects, you can point the Linear adapter at a Linear view (a saved filter in the Linear UI). View mode is enabled by adding a `linear` entry to `sources[]` with a `view.url`:
+Instead of listing one or more Linear projects, you can point the Linear adapter at a Linear view (a saved filter in the Linear UI) using `linear.views[]` sibling to `linear.projects[]`:
 
 ```ts
 export default {
-  linear: { projects: [] },
-  sources: [
-    {
-      kind: "linear",
-      view: {
-        url: "https://linear.app/<workspace>/view/<name>-<12-hex>",
-      },
-    },
-  ],
+  linear: {
+    views: [{ viewSlug: "george-bezerra-tasks-61e51e3730dd" }],
+  },
   workspace: {
     projectDir: "/path/to/projects",
     knownRepositories: ["org/repo-a", "org/repo-b"],
@@ -198,14 +192,15 @@ export default {
 };
 ```
 
+`viewSlug` is the trailing path segment of your Linear view URL (e.g. `https://linear.app/<workspace>/view/<viewSlug>`).
+
 In view mode:
 
-- `linear.projects[]` must be empty (or omitted).
 - Canonical status mapping uses Linear's workflow state **types** (`unstarted` → todo, `started` → in-progress, `completed` and `canceled` → done). No per-team status config is needed.
 - The same `agent-*` label opt-in applies — only tickets with at least one `agent-*` label are picked up.
 - `markInProgress` writes the lowest-position `started`-type state for the issue's team.
 
-Project mode (`linear.projects[]` populated) and view mode are mutually exclusive. Configure exactly one.
+`linear.projects[]` and `linear.views[]` are mutually exclusive — configure exactly one.
 
 ### Pluggable ticket sources
 
