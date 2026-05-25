@@ -94,7 +94,7 @@
     "oxlint": "1.64.0",
     "oxlint-tsgolint": "0.22.1",
     "syncpack": "15.0.0",
-    "vite": "8.0.10",
+    "vite": "8.0.14",
     "vitest": "4.1.5"
   },
   "engines": {
