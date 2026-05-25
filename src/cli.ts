@@ -21,11 +21,11 @@ import {
   writeOutput,
 } from "./lib/util.ts";
 
-const UPGRADE_PACKAGE_NAME = "@clipboard-health/groundcrew";
 const NUDGE_TTL_MS = 6 * 60 * 60 * 1000;
 const NUDGE_FETCH_TIMEOUT_MS = 1000;
 
 interface PackageMetadata {
+  name: string;
   version: string;
 }
 
@@ -85,17 +85,22 @@ async function runCli(argv: string[]): Promise<void> {
 }
 
 async function upgradeCliInvoke(argv: string[]): Promise<void> {
-  const options = await createDefaultUpgradeCliOptions({
-    currentVersion: packageVersion(),
-    cliMetaUrl: import.meta.url,
-  });
-  await upgradeCli(argv, options);
+  const metadata = packageMetadata();
+  await upgradeCli(
+    argv,
+    async () =>
+      await createDefaultUpgradeCliOptions({
+        currentVersion: metadata.version,
+        packageName: metadata.name,
+        cliMetaUrl: import.meta.url,
+      }),
+  );
 }
 
-async function maybeRunUpgradeNudge(currentVersion: string): Promise<void> {
+async function maybeRunUpgradeNudge(metadata: PackageMetadata): Promise<void> {
   const message = await computeUpgradeNudge({
-    currentVersion,
-    packageName: UPGRADE_PACKAGE_NAME,
+    currentVersion: metadata.version,
+    packageName: metadata.name,
     cachePath: defaultUpgradeCheckCachePath(),
     ttlMs: NUDGE_TTL_MS,
     fetchTimeoutMs: NUDGE_FETCH_TIMEOUT_MS,
@@ -195,10 +200,14 @@ function printHelp(): void {
   writeOutput("\nSee README.md for full configuration and behavior.");
 }
 
+function packageMetadata(): PackageMetadata {
+  // oxlint-disable-next-line typescript-eslint/no-unsafe-assignment -- package.json is shipped with this package and is the metadata source of truth.
+  const metadata: PackageMetadata = requireFromCli("../package.json");
+  return metadata;
+}
+
 function packageVersion(): string {
-  // oxlint-disable-next-line typescript-eslint/no-unsafe-assignment -- package.json is shipped with this package and is the version source of truth.
-  const packageMetadata: PackageMetadata = requireFromCli("../package.json");
-  return packageMetadata.version;
+  return packageMetadata().version;
 }
 
 export async function run(argv: string[]): Promise<void> {
@@ -227,7 +236,7 @@ export async function run(argv: string[]): Promise<void> {
 
   if (subcommand !== "upgrade") {
     try {
-      await maybeRunUpgradeNudge(packageVersion());
+      await maybeRunUpgradeNudge(packageMetadata());
     } catch {
       // Passive nudge is never load-bearing; never block the user's command.
     }

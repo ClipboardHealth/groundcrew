@@ -13,27 +13,20 @@ import {
 import {
   compareVersions,
   defaultUpgradeCheckCachePath,
+  fetchAndPrimeUpgradeCheckCache,
   fetchLatestVersion,
   parseVersion,
-  writeUpgradeCheckCache,
+  type VersionFetcher,
 } from "../lib/upgrade.ts";
-import { readEnvironmentVariable, writeError, writeOutput } from "../lib/util.ts";
+import { errorMessage, readEnvironmentVariable, writeError, writeOutput } from "../lib/util.ts";
 
-const PACKAGE_NAME = "@clipboard-health/groundcrew";
 const EXPLICIT_FETCH_TIMEOUT_MS = 5000;
-
-interface FetchOptions {
-  timeoutMs: number;
-  registry?: string | undefined;
-}
 
 export interface UpgradeCliOptions {
   currentVersion: string;
   packageName: string;
-  installKind: InstallKind;
-  installPath: string;
-  npmBin: string | undefined;
-  fetcher: (packageName: string, options: FetchOptions) => Promise<string>;
+  resolveInstall: () => Promise<UpgradeInstallDetails>;
+  fetcher: VersionFetcher;
   runInstall: (options: {
     packageName: string;
     version: string;
@@ -48,11 +41,19 @@ export interface UpgradeCliOptions {
   now: () => number;
 }
 
-interface ParsedArgs {
-  kind: "help" | "check" | "install";
-  pinnedVersion?: string | undefined;
-  error?: string | undefined;
+export interface UpgradeInstallDetails {
+  installKind: InstallKind;
+  installPath: string;
+  npmBin: string | undefined;
 }
+
+type ParsedArgs =
+  | { kind: "help" }
+  | { kind: "check" }
+  | { kind: "install"; pinnedVersion?: string | undefined }
+  | { kind: "error"; message: string };
+
+export type UpgradeCliOptionsInput = UpgradeCliOptions | (() => Promise<UpgradeCliOptions>);
 
 function parseArgs(argv: string[]): ParsedArgs {
   let check = false;
@@ -66,15 +67,15 @@ function parseArgs(argv: string[]): ParsedArgs {
       continue;
     }
     if (arg.startsWith("-")) {
-      return { kind: "install", error: `crew upgrade: unknown argument: ${arg}` };
+      return { kind: "error", message: `crew upgrade: unknown argument: ${arg}` };
     }
     if (pinnedVersion !== undefined) {
-      return { kind: "install", error: "crew upgrade: too many positional arguments" };
+      return { kind: "error", message: "crew upgrade: too many positional arguments" };
     }
     pinnedVersion = arg;
   }
   if (check && pinnedVersion !== undefined) {
-    return { kind: "install", error: "crew upgrade: --check does not accept a version argument" };
+    return { kind: "error", message: "crew upgrade: --check does not accept a version argument" };
   }
   if (check) {
     return { kind: "check" };
@@ -85,7 +86,7 @@ function parseArgs(argv: string[]): ParsedArgs {
 function printHelp(): void {
   writeOutput("Usage: crew upgrade [<version>] [--check]");
   writeOutput("");
-  writeOutput("Install the latest version of crew (npm @clipboard-health/groundcrew).");
+  writeOutput("Install the latest version of crew.");
   writeOutput("");
   writeOutput("Arguments:");
   writeOutput("  <version>      Install an exact version (upgrade or downgrade)");
@@ -120,10 +121,20 @@ function refusalMessage(
   }
 }
 
-export async function upgradeCli(argv: string[], options: UpgradeCliOptions): Promise<void> {
+async function resolveOptions(options: UpgradeCliOptionsInput): Promise<UpgradeCliOptions> {
+  if (typeof options === "function") {
+    return await options();
+  }
+  return options;
+}
+
+export async function upgradeCli(
+  argv: string[],
+  optionsInput: UpgradeCliOptionsInput,
+): Promise<void> {
   const parsed = parseArgs(argv);
-  if (parsed.error !== undefined) {
-    writeError(parsed.error);
+  if (parsed.kind === "error") {
+    writeError(parsed.message);
     process.exitCode = 1;
     return;
   }
@@ -131,18 +142,7 @@ export async function upgradeCli(argv: string[], options: UpgradeCliOptions): Pr
     printHelp();
     return;
   }
-  if (options.installKind !== "global") {
-    writeError(refusalMessage(options.installKind, options.installPath, options.packageName));
-    process.exitCode = 1;
-    return;
-  }
-  const { npmBin } = options;
-  if (npmBin === undefined) {
-    writeError("crew upgrade: npm is required on PATH but was not found.");
-    process.exitCode = 1;
-    return;
-  }
-
+  const options = await resolveOptions(optionsInput);
   if (parsed.kind === "check") {
     await runCheck(options);
     return;
@@ -167,7 +167,26 @@ export async function upgradeCli(argv: string[], options: UpgradeCliOptions): Pr
     targetVersion = resolved;
   }
 
+  const npmBin = await resolveGlobalNpmBin(options);
+  if (npmBin === undefined) {
+    return;
+  }
   await runInstallAndReport(options, npmBin, targetVersion);
+}
+
+async function resolveGlobalNpmBin(options: UpgradeCliOptions): Promise<string | undefined> {
+  const install = await options.resolveInstall();
+  if (install.installKind !== "global") {
+    writeError(refusalMessage(install.installKind, install.installPath, options.packageName));
+    process.exitCode = 1;
+    return undefined;
+  }
+  if (install.npmBin === undefined) {
+    writeError("crew upgrade: npm is required on PATH but was not found.");
+    process.exitCode = 1;
+    return undefined;
+  }
+  return install.npmBin;
 }
 
 async function runCheck(options: UpgradeCliOptions): Promise<void> {
@@ -185,19 +204,18 @@ async function runCheck(options: UpgradeCliOptions): Promise<void> {
 async function fetchOrFail(options: UpgradeCliOptions): Promise<string | undefined> {
   let latest: string;
   try {
-    latest = await options.fetcher(options.packageName, {
-      timeoutMs: options.fetchTimeoutMs,
+    latest = await fetchAndPrimeUpgradeCheckCache({
+      packageName: options.packageName,
+      cachePath: options.cachePath,
+      fetchTimeoutMs: options.fetchTimeoutMs,
       registry: options.registry,
+      now: options.now,
+      fetcher: options.fetcher,
     });
   } catch (error) {
-    writeError(`crew upgrade: could not reach npm registry: ${String(error)}`);
+    writeError(`crew upgrade: could not reach npm registry: ${errorMessage(error)}`);
     process.exitCode = 1;
     return undefined;
-  }
-  try {
-    writeUpgradeCheckCache(options.cachePath, { latest, fetchedAt: options.now() });
-  } catch {
-    // Cache priming is best-effort; do not fail the command on disk errors.
   }
   return latest;
 }
@@ -209,15 +227,15 @@ function resolvePinnedVersion(
   try {
     parseVersion(pinnedVersion);
   } catch (error) {
-    writeError(`crew upgrade: ${String(error)}`);
+    writeError(`crew upgrade: ${errorMessage(error)}`);
     process.exitCode = 1;
     return undefined;
   }
-  const cmp = compareVersions(options.currentVersion, pinnedVersion);
-  if (cmp === 0) {
+  if (options.currentVersion === pinnedVersion) {
     writeOutput(`crew is already on ${pinnedVersion}`);
     return undefined;
   }
+  const cmp = compareVersions(options.currentVersion, pinnedVersion);
   if (cmp > 0) {
     writeOutput(`downgrading ${options.currentVersion} → ${pinnedVersion}`);
   }
@@ -247,26 +265,28 @@ async function runInstallAndReport(
 
 export interface CreateUpgradeOptionsArgs {
   currentVersion: string;
+  packageName: string;
   cliMetaUrl: string;
 }
 
 export async function createDefaultUpgradeCliOptions(
   args: CreateUpgradeOptionsArgs,
 ): Promise<UpgradeCliOptions> {
-  const installPath = detectInstallPath(args.cliMetaUrl);
-  const npmBin = await which("npm");
-  const npmRootGlobal = npmBin === undefined ? undefined : detectNpmRootGlobal(npmBin, runCommand);
-  const installKind = classifyInstall({
-    installPath,
-    npmRootGlobal,
-    isSymlink: detectIsSymlink,
-  });
   return {
     currentVersion: args.currentVersion,
-    packageName: PACKAGE_NAME,
-    installKind,
-    installPath,
-    npmBin,
+    packageName: args.packageName,
+    resolveInstall: async () => {
+      const installPath = detectInstallPath(args.cliMetaUrl);
+      const npmBin = await which("npm");
+      const npmRootGlobal =
+        npmBin === undefined ? undefined : detectNpmRootGlobal(npmBin, runCommand);
+      const installKind = classifyInstall({
+        installPath,
+        npmRootGlobal,
+        isSymlink: detectIsSymlink,
+      });
+      return { installKind, installPath, npmBin };
+    },
     fetcher: fetchLatestVersion,
     runInstall: async (options) =>
       await runNpmInstallGlobal({

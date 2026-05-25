@@ -8,7 +8,12 @@ import { which } from "../lib/host.ts";
 import { createDefaultNpmSpawner, type NpmSpawner, runNpmInstallGlobal } from "../lib/npmGlobal.ts";
 import { captureConsoleError, captureConsoleLog } from "../testHelpers/consoleCapture.ts";
 
-import { createDefaultUpgradeCliOptions, upgradeCli, type UpgradeCliOptions } from "./upgrade.ts";
+import {
+  createDefaultUpgradeCliOptions,
+  upgradeCli,
+  type UpgradeCliOptions,
+  type UpgradeInstallDetails,
+} from "./upgrade.ts";
 
 type RunCommandFn = (
   command: string,
@@ -46,23 +51,34 @@ const PACKAGE_NAME = "@clipboard-health/groundcrew";
 
 type FetcherFn = UpgradeCliOptions["fetcher"];
 type RunInstallFn = UpgradeCliOptions["runInstall"];
+type ResolveInstallFn = UpgradeCliOptions["resolveInstall"];
+type MakeOptionsOverrides = Partial<Omit<UpgradeCliOptions, "resolveInstall">> &
+  Partial<UpgradeInstallDetails> & {
+    resolveInstall?: ResolveInstallFn;
+  };
 
 let testCacheDir: string;
 let testCachePath: string;
 
-function makeOptions(overrides: Partial<UpgradeCliOptions> = {}): UpgradeCliOptions {
+function makeOptions(overrides: MakeOptionsOverrides = {}): UpgradeCliOptions {
+  const { installKind, installPath, npmBin, resolveInstall, ...optionOverrides } = overrides;
+  const resolvedInstall =
+    resolveInstall ??
+    vi.fn<ResolveInstallFn>().mockResolvedValue({
+      installKind: installKind ?? "global",
+      installPath: installPath ?? "/usr/local/lib/node_modules/@clipboard-health/groundcrew",
+      npmBin: Object.hasOwn(overrides, "npmBin") ? npmBin : "/usr/local/bin/npm",
+    });
   return {
     currentVersion: "3.1.8",
     packageName: PACKAGE_NAME,
-    installKind: "global",
-    installPath: "/usr/local/lib/node_modules/@clipboard-health/groundcrew",
-    npmBin: "/usr/local/bin/npm",
+    resolveInstall: resolvedInstall,
     fetcher: vi.fn<FetcherFn>().mockResolvedValue("3.1.8"),
     runInstall: vi.fn<RunInstallFn>().mockResolvedValue({ exitCode: 0, sawEacces: false }),
     fetchTimeoutMs: 5000,
     cachePath: testCachePath,
     now: () => 1_700_000_000_000,
-    ...overrides,
+    ...optionOverrides,
   };
 }
 
@@ -91,9 +107,34 @@ describe(upgradeCli, () => {
     expect(process.exitCode).toBeUndefined();
   });
 
+  it("does not resolve default options on --help", async () => {
+    const optionsFactory = vi.fn<() => Promise<UpgradeCliOptions>>();
+    await upgradeCli(["--help"], optionsFactory);
+    expect(optionsFactory).not.toHaveBeenCalled();
+  });
+
+  it("does not resolve default options for argument errors", async () => {
+    const optionsFactory = vi.fn<() => Promise<UpgradeCliOptions>>();
+    await upgradeCli(["--bogus"], optionsFactory);
+    expect(optionsFactory).not.toHaveBeenCalled();
+  });
+
+  it("resolves lazy options only after parsing succeeds", async () => {
+    const options = makeOptions({ currentVersion: "3.1.8" });
+    const optionsFactory = vi.fn<() => Promise<UpgradeCliOptions>>().mockResolvedValue(options);
+    await upgradeCli(["--check"], optionsFactory);
+    expect(optionsFactory).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not resolve install details for --check", async () => {
+    const resolveInstall = vi.fn<ResolveInstallFn>();
+    await upgradeCli(["--check"], makeOptions({ resolveInstall }));
+    expect(resolveInstall).not.toHaveBeenCalled();
+  });
+
   it("refuses when not globally installed", async () => {
     const runInstall = vi.fn<RunInstallFn>();
-    await upgradeCli([], makeOptions({ installKind: "project", runInstall }));
+    await upgradeCli(["3.2.0"], makeOptions({ installKind: "project", runInstall }));
     expect(consoleErr.output()).toMatch(/not installed globally/i);
     expect(consoleErr.output()).toContain(PACKAGE_NAME);
     expect(runInstall).not.toHaveBeenCalled();
@@ -101,25 +142,28 @@ describe(upgradeCli, () => {
   });
 
   it("refuses when installation is a dev symlink (npm link)", async () => {
-    await upgradeCli([], makeOptions({ installKind: "linked" }));
+    await upgradeCli(["3.2.0"], makeOptions({ installKind: "linked" }));
     expect(consoleErr.output()).toMatch(/npm link/i);
     expect(process.exitCode).toBe(1);
   });
 
   it("refuses when running from an npx temp install", async () => {
-    await upgradeCli([], makeOptions({ installKind: "npx" }));
+    await upgradeCli(["3.2.0"], makeOptions({ installKind: "npx" }));
     expect(consoleErr.output()).toMatch(/npx/i);
     expect(process.exitCode).toBe(1);
   });
 
   it("refuses when install kind cannot be determined", async () => {
-    await upgradeCli([], makeOptions({ installKind: "unknown", installPath: "/some/weird/place" }));
+    await upgradeCli(
+      ["3.2.0"],
+      makeOptions({ installKind: "unknown", installPath: "/some/weird/place" }),
+    );
     expect(consoleErr.output()).toContain("/some/weird/place");
     expect(process.exitCode).toBe(1);
   });
 
   it("refuses when npm is not on PATH", async () => {
-    await upgradeCli([], makeOptions({ npmBin: undefined }));
+    await upgradeCli(["3.2.0"], makeOptions({ npmBin: undefined }));
     expect(consoleErr.output()).toMatch(/npm/i);
     expect(process.exitCode).toBe(1);
   });
@@ -127,8 +171,13 @@ describe(upgradeCli, () => {
   it("prints 'up to date' and skips install when already on latest", async () => {
     const fetcher = vi.fn<FetcherFn>().mockResolvedValue("3.1.8");
     const runInstall = vi.fn<RunInstallFn>();
-    await upgradeCli([], makeOptions({ currentVersion: "3.1.8", fetcher, runInstall }));
+    const resolveInstall = vi.fn<ResolveInstallFn>();
+    await upgradeCli(
+      [],
+      makeOptions({ currentVersion: "3.1.8", fetcher, resolveInstall, runInstall }),
+    );
     expect(consoleLog.output()).toMatch(/up to date.*3\.1\.8/i);
+    expect(resolveInstall).not.toHaveBeenCalled();
     expect(runInstall).not.toHaveBeenCalled();
     expect(process.exitCode).toBeUndefined();
   });
@@ -197,10 +246,26 @@ describe(upgradeCli, () => {
   });
 
   it("skips install when pinned version equals current", async () => {
+    const resolveInstall = vi.fn<ResolveInstallFn>();
     const runInstall = vi.fn<RunInstallFn>();
-    await upgradeCli(["3.1.8"], makeOptions({ currentVersion: "3.1.8", runInstall }));
+    await upgradeCli(
+      ["3.1.8"],
+      makeOptions({ currentVersion: "3.1.8", resolveInstall, runInstall }),
+    );
     expect(consoleLog.output()).toMatch(/already on 3\.1\.8/i);
+    expect(resolveInstall).not.toHaveBeenCalled();
     expect(runInstall).not.toHaveBeenCalled();
+  });
+
+  it("installs a distinct prerelease pin with the same numeric version", async () => {
+    const runInstall = vi.fn<RunInstallFn>().mockResolvedValue({ exitCode: 0, sawEacces: false });
+    await upgradeCli(["3.2.0-beta.2"], makeOptions({ currentVersion: "3.2.0-beta.1", runInstall }));
+    expect(consoleLog.output()).toBe("");
+    expect(runInstall).toHaveBeenCalledWith({
+      packageName: PACKAGE_NAME,
+      version: "3.2.0-beta.2",
+      npmBin: "/usr/local/bin/npm",
+    });
   });
 
   it("rejects a malformed pinned version", async () => {
@@ -276,6 +341,7 @@ describe(upgradeCli, () => {
     expect(JSON.parse(readFileSync(testCachePath, "utf8"))).toStrictEqual({
       latest: "3.2.0",
       fetchedAt: 12_345,
+      registry: "https://registry.npmjs.org",
     });
   });
 
@@ -285,6 +351,25 @@ describe(upgradeCli, () => {
     expect(JSON.parse(readFileSync(testCachePath, "utf8"))).toStrictEqual({
       latest: "3.2.0",
       fetchedAt: 99_999,
+      registry: "https://registry.npmjs.org",
+    });
+  });
+
+  it("records the normalized configured registry when priming the cache", async () => {
+    const fetcher = vi.fn<FetcherFn>().mockResolvedValue("3.2.0");
+    await upgradeCli(
+      ["--check"],
+      makeOptions({
+        currentVersion: "3.1.8",
+        fetcher,
+        now: () => 12_345,
+        registry: "https://npm.mirror.example/",
+      }),
+    );
+    expect(JSON.parse(readFileSync(testCachePath, "utf8"))).toStrictEqual({
+      latest: "3.2.0",
+      fetchedAt: 12_345,
+      registry: "https://npm.mirror.example",
     });
   });
 
@@ -328,31 +413,37 @@ describe(createDefaultUpgradeCliOptions, () => {
 
     const options = await createDefaultUpgradeCliOptions({
       currentVersion: "3.1.8",
+      packageName: PACKAGE_NAME,
       cliMetaUrl: pathToFileURL("/opt/pkg/dist/cli.js").toString(),
     });
 
     expect(options.currentVersion).toBe("3.1.8");
     expect(options.packageName).toBe(PACKAGE_NAME);
-    expect(options.installPath).toBe("/opt/pkg");
-    expect(options.npmBin).toBe("/usr/local/bin/npm");
     expect(options.registry).toBe("https://npm.mirror.example");
     expect(options.fetchTimeoutMs).toBe(5000);
     expect(options.cachePath).toMatch(/groundcrew[/\\]upgrade-check\.json$/);
     expect(options.now()).toBeGreaterThan(1_700_000_000_000);
+    expect(whichMock).not.toHaveBeenCalled();
+
+    const install = await options.resolveInstall();
+    expect(install.installPath).toBe("/opt/pkg");
+    expect(install.npmBin).toBe("/usr/local/bin/npm");
+    expect(install.installKind).toBe("unknown");
     expect(whichMock).toHaveBeenCalledWith("npm");
     expect(runCommandMock).toHaveBeenCalledWith("/usr/local/bin/npm", ["root", "-g"]);
   });
 
-  it("returns npmBin=undefined and skips npm root -g when npm is missing", async () => {
+  it("resolves npmBin=undefined and skips npm root -g when npm is missing", async () => {
     // oxlint-disable-next-line unicorn/no-useless-undefined -- exercises the npmBin === undefined branch
     whichMock.mockResolvedValue(undefined);
 
     const options = await createDefaultUpgradeCliOptions({
       currentVersion: "3.1.8",
+      packageName: PACKAGE_NAME,
       cliMetaUrl: pathToFileURL("/opt/pkg/dist/cli.js").toString(),
     });
 
-    expect(options.npmBin).toBeUndefined();
+    await expect(options.resolveInstall()).resolves.toMatchObject({ npmBin: undefined });
     expect(runCommandMock).not.toHaveBeenCalled();
   });
 
@@ -365,6 +456,7 @@ describe(createDefaultUpgradeCliOptions, () => {
 
     const options = await createDefaultUpgradeCliOptions({
       currentVersion: "3.1.8",
+      packageName: PACKAGE_NAME,
       cliMetaUrl: pathToFileURL("/opt/pkg/dist/cli.js").toString(),
     });
     const result = await options.runInstall({

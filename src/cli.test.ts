@@ -13,6 +13,7 @@ import {
   createDefaultUpgradeCliOptions,
   upgradeCli,
   type UpgradeCliOptions,
+  type UpgradeCliOptionsInput,
 } from "./commands/upgrade.ts";
 import { computeUpgradeNudge } from "./lib/upgrade.ts";
 import {
@@ -89,15 +90,26 @@ function makeFakeUpgradeOptions(currentVersion: string): UpgradeCliOptions {
   return {
     currentVersion,
     packageName: "@clipboard-health/groundcrew",
-    installKind: "global",
-    installPath: "/install",
-    npmBin: "/usr/local/bin/npm",
+    resolveInstall: async () => ({
+      installKind: "global",
+      installPath: "/install",
+      npmBin: "/usr/local/bin/npm",
+    }),
     fetcher: vi.fn<UpgradeCliOptions["fetcher"]>(),
     runInstall: vi.fn<UpgradeCliOptions["runInstall"]>(),
     fetchTimeoutMs: 5000,
     cachePath: "/tmp/cli-test-upgrade-cache.json",
     now: () => 1_700_000_000_000,
   };
+}
+
+function expectUpgradeOptionsFactory(
+  optionsInput: UpgradeCliOptionsInput,
+): () => Promise<UpgradeCliOptions> {
+  if (typeof optionsInput !== "function") {
+    throw new TypeError("expected lazy upgrade options factory");
+  }
+  return optionsInput;
 }
 
 describe(run, () => {
@@ -413,16 +425,22 @@ describe(run, () => {
     expect(process.exitCode).toBe(1);
   });
 
-  it("dispatches `upgrade` to upgradeCli with the assembled options", async () => {
+  it("dispatches `upgrade` to upgradeCli with lazy default options", async () => {
     const assembled = makeFakeUpgradeOptions(PACKAGE_VERSION);
     createDefaultUpgradeCliOptionsMock.mockResolvedValue(assembled);
+    upgradeCliMock.mockImplementationOnce(async (_argv, optionsInput) => {
+      const optionsFactory = expectUpgradeOptionsFactory(optionsInput);
+      const options = await optionsFactory();
+      expect(options).toBe(assembled);
+    });
 
     await run(["upgrade", "3.2.0"]);
 
     const call = createDefaultUpgradeCliOptionsMock.mock.calls[0]?.[0];
     expect(call?.currentVersion).toBe(PACKAGE_VERSION);
+    expect(call?.packageName).toBe("@clipboard-health/groundcrew");
     expect(call?.cliMetaUrl).toMatch(/cli\.ts$/);
-    expect(upgradeCliMock).toHaveBeenCalledWith(["3.2.0"], assembled);
+    expect(upgradeCliMock).toHaveBeenCalledWith(["3.2.0"], expect.any(Function));
   });
 
   it("does not run the upgrade nudge when the subcommand is upgrade", async () => {
