@@ -21,26 +21,25 @@ export async function sandboxCli(argv: string[]): Promise<void> {
   if (verb === undefined) {
     throw new Error(USAGE);
   }
-  const config = await loadConfig();
   switch (verb) {
     case "list": {
       await runList();
       return;
     }
     case "ensure": {
-      await runEnsure(config, rest);
+      await runEnsure(await loadConfig(), rest);
       return;
     }
     case "regenerate": {
-      await runRegenerate(config, rest);
+      await runRegenerate(await loadConfig(), rest);
       return;
     }
     case "auth": {
-      await runAuth(config, rest);
+      await runAuth(await loadConfig(), rest);
       return;
     }
     case "rm": {
-      await runRemove(config, rest);
+      await runRemove(await loadConfig(), rest);
       return;
     }
     default: {

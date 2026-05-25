@@ -18,7 +18,7 @@ import { runCommandAsync } from "./commandRunner.ts";
 const GIT_DEFAULT_COMMANDS = [
   "git config --global commit.gpgsign false",
   "git config --global tag.gpgsign false",
-  'git config --global --unset-all url."https://github.com/".insteadOf 2>/dev/null || true',
+  '(git config --global --unset-all url."https://github.com/".insteadOf 2>/dev/null || true)',
   'git config --global --add url."https://github.com/".insteadOf "git@github.com:"',
   'git config --global --add url."https://github.com/".insteadOf "ssh://git@github.com/"',
 ].join(" && ");

@@ -94,6 +94,9 @@ async function probeAuthStatus(
       "-c",
       innerCommand,
     ]);
+    // Reset lastIndex so a /g or /y user recipe doesn't carry state
+    // across probes and return a false negative.
+    recipe.authenticatedPattern.lastIndex = 0;
     return recipe.authenticatedPattern.test(output);
   } catch {
     return false;
