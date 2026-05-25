@@ -63,6 +63,7 @@ export async function ensureAgentSandbox(input: {
         sandboxName: input.sandboxName,
         sandbox: input.definition.sandbox,
         mountPath: resolve(input.config.workspace.projectDir),
+        gitDefaults: input.config.sandbox.gitDefaults,
       },
       input.signal,
     );

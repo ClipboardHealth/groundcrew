@@ -122,7 +122,7 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
     prompts: { initial: "x", ...overrides.prompts },
     workspaceKind: overrides.workspaceKind ?? "auto",
     local: { runner: "auto", ...overrides.local },
-    sandbox: { authRecipes: {}, ...overrides.sandbox },
+    sandbox: { authRecipes: {}, gitDefaults: false, ...overrides.sandbox },
     logging: { file: "/tmp/groundcrew-test.log", ...overrides.logging },
   };
 }

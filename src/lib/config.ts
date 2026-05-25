@@ -262,6 +262,21 @@ export interface Config {
    */
   sandbox?: {
     authRecipes?: Record<string, AuthRecipe>;
+    /**
+     * When true (default), every `crew sandbox ensure` / `auth` run applies
+     * a small set of git defaults inside the sandbox so robot commits push
+     * over `gh`-managed HTTPS regardless of how the user cloned the repo:
+     *
+     *   - disable GPG signing for commits and tags
+     *   - rewrite `git@github.com:` and `ssh://git@github.com/` URLs to
+     *     `https://github.com/` so push uses gh's credential helper
+     *   - after a successful `github` auth recipe login, run
+     *     `gh auth setup-git` inside the sandbox
+     *
+     * Set `false` to skip both the git-config block and the post-login
+     * `gh auth setup-git` step.
+     */
+    gitDefaults?: boolean;
   };
   logging?: {
     /**
@@ -340,6 +355,7 @@ export interface ResolvedConfig {
    */
   sandbox: {
     authRecipes: Record<string, AuthRecipe>;
+    gitDefaults: boolean;
   };
   logging: {
     file: string;
@@ -469,6 +485,16 @@ function normalizeOptionalString(value: unknown, path: string): string | undefin
     fail(`${path} must be a non-empty string`);
   }
   return value.trim();
+}
+
+function normalizeOptionalBoolean(value: unknown, path: string): boolean | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "boolean") {
+    fail(`${path} must be a boolean`);
+  }
+  return value;
 }
 
 function normalizeOptionalStringArray(value: unknown, path: string): string[] | undefined {
@@ -882,6 +908,8 @@ function applyDefaults(user: Config): ResolvedConfig {
     },
     sandbox: {
       authRecipes: user.sandbox?.authRecipes ?? {},
+      gitDefaults:
+        normalizeOptionalBoolean(user.sandbox?.gitDefaults, "sandbox.gitDefaults") ?? true,
     },
     logging: {
       file: expandHome(

@@ -1,5 +1,6 @@
 import { runCommandAsync } from "./commandRunner.ts";
 import type { SandboxDefinition } from "./config.ts";
+import { applyGitDefaults } from "./sandboxGitDefaults.ts";
 
 /**
  * Derive a deterministic sbx sandbox name from the sbx agent so every
@@ -39,38 +40,47 @@ interface EnsureSandboxArguments {
    * clone) are visible to `sbx exec -w <worktreeDir>` after creation.
    */
   mountPath: string;
+  /**
+   * When true, apply the standard git defaults inside the sandbox after
+   * it exists (idempotent, runs whether the sandbox was just created or
+   * already there). See `sandboxGitDefaults.ts` for what gets set.
+   */
+  gitDefaults: boolean;
 }
 
 /**
  * Idempotent guard: ensure a Docker Sandboxes container exists for the
  * given repository + model. Probes `sbx ls`; if `sandboxName` is missing,
  * calls `sbx create --name <name> [--template <t>] [--kit <k>]... <agent>
- * <mountPath>` to provision it. First-time agent auth still happens inside
- * the sandbox the first time `sbx exec` runs the agent — `create` only
- * provisions the container, it does not attach.
+ * <mountPath>` to provision it. Once the container exists (newly created
+ * or pre-existing), applies the standard git defaults when enabled.
+ * First-time agent auth still happens inside the sandbox the first time
+ * `sbx exec` runs the agent — `create` only provisions the container, it
+ * does not attach.
  */
 export async function ensureSandbox(
   arguments_: EnsureSandboxArguments,
   signal?: AbortSignal,
 ): Promise<void> {
-  if (await sandboxExists(arguments_.sandboxName, signal)) {
-    return;
-  }
-  const createArguments: string[] = ["create", "--name", arguments_.sandboxName];
-  if (arguments_.sandbox.template !== undefined) {
-    createArguments.push("--template", arguments_.sandbox.template);
-  }
-  for (const kit of arguments_.sandbox.kits ?? []) {
-    createArguments.push("--kit", kit);
-  }
-  createArguments.push(arguments_.sandbox.agent, arguments_.mountPath);
-  const options = signal === undefined ? {} : { signal };
-  try {
-    await runCommandAsync("sbx", createArguments, options);
-  } catch (error) {
-    if (await sandboxExists(arguments_.sandboxName, signal)) {
-      return;
+  if (!(await sandboxExists(arguments_.sandboxName, signal))) {
+    const createArguments: string[] = ["create", "--name", arguments_.sandboxName];
+    if (arguments_.sandbox.template !== undefined) {
+      createArguments.push("--template", arguments_.sandbox.template);
     }
-    throw error;
+    for (const kit of arguments_.sandbox.kits ?? []) {
+      createArguments.push("--kit", kit);
+    }
+    createArguments.push(arguments_.sandbox.agent, arguments_.mountPath);
+    const options = signal === undefined ? {} : { signal };
+    try {
+      await runCommandAsync("sbx", createArguments, options);
+    } catch (error) {
+      if (!(await sandboxExists(arguments_.sandboxName, signal))) {
+        throw error;
+      }
+    }
+  }
+  if (arguments_.gitDefaults) {
+    await applyGitDefaults({ sandboxName: arguments_.sandboxName }, signal);
   }
 }
