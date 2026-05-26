@@ -1,19 +1,16 @@
 /**
  * Linear `TicketSource` factory. Wraps the existing boardSource.ts machinery
  * (createBoardSource, fetchResolvedIssue, createLinearIssueStatusUpdater) and
- * converts the legacy Linear-specific `Issue`/`Blocker` shapes into the
- * canonical `Issue`/`Blocker` shapes consumers (via `Board`) speak.
+ * converts the Linear-native `Issue`/`Blocker` shapes into the canonical
+ * `Issue`/`Blocker` shapes consumers (via `Board`) speak.
  *
- * Per-project canonical-status mapping lives here: each `Issue` is mapped
- * against its own project's `statuses` block (the multi-project semantics
- * shipped in PR #75). Off-config blockers fall back to the union of all
- * configured projects' status sets — preserving today's
- * `isTerminalStatusForBlocker` behavior.
+ * Status mapping is driven entirely by Linear's workflow `state.type`
+ * (`unstarted` → todo, `started` → in-progress, `completed`/`canceled` → done)
+ * so renamed columns are classified correctly without any per-team config.
  *
  * Description is not populated on `fetch()` Issues (boardSource's snapshot
  * doesn't include it); `resolveOne()` Issues carry the full description
- * because `fetchResolvedIssue` fetches it explicitly. Phase 6 can lift
- * description onto the board snapshot when it refactors setupWorkspace.
+ * because `fetchResolvedIssue` fetches it explicitly.
  */
 
 import type { AdapterContext } from "../../adapterDefinition.ts";
@@ -22,9 +19,7 @@ import {
   createBoardSource,
   fetchResolvedIssue,
   type Issue as LinearIssue,
-  isTerminalStatusForBlocker,
 } from "../../boardSource.ts";
-import { findProjectBySlugId, type ResolvedProjectConfig } from "../../config.ts";
 import { createLinearIssueStatusUpdater } from "../../linearIssueStatus.ts";
 import type {
   Blocker as CanonicalBlocker,
@@ -39,83 +34,35 @@ interface LinearSourceRef {
   uuid: string;
   statusId: string;
   teamId: string;
-  projectSlugId: string;
   nativeStatus: string;
 }
 
-export function canonicalStatusForProject(
-  nativeStatus: string,
-  project: ResolvedProjectConfig,
-): CanonicalStatus {
-  if (project.statuses.todo === nativeStatus) {
+export function canonicalStatusFromStateType(stateType: string | undefined): CanonicalStatus {
+  if (stateType === "unstarted") {
     return "todo";
   }
-  if (project.statuses.inProgress === nativeStatus) {
+  if (stateType === "started") {
     return "in-progress";
   }
-  if (project.statuses.done === nativeStatus) {
-    return "done";
-  }
-  if (project.statuses.terminal.includes(nativeStatus)) {
+  if (stateType === "completed" || stateType === "canceled") {
     return "done";
   }
   return "other";
 }
 
-export function canonicalBlockerStatus(
-  blocker: LinearBlocker,
-  globalConfig: AdapterContext["globalConfig"],
-): CanonicalStatus {
-  if (blocker.status === undefined) {
-    return "other";
-  }
-  // Terminal first — handles off-config blockers via the union fallback that
-  // isTerminalStatusForBlocker already implements.
-  if (isTerminalStatusForBlocker(blocker, globalConfig)) {
-    return "done";
-  }
-  // Non-terminal: if the blocker's project is configured, use its statuses to
-  // distinguish todo vs in-progress. For off-config blockers we collapse to
-  // "other" — eligibility only cares whether the blocker is terminal, so the
-  // distinction is informational at most.
-  if (blocker.projectSlugId !== undefined) {
-    const project = findProjectBySlugId(globalConfig, blocker.projectSlugId);
-    if (project !== undefined) {
-      return canonicalStatusForProject(blocker.status, project);
-    }
-  }
-  return "other";
-}
-
-function toCanonicalBlocker(
-  blocker: LinearBlocker,
-  globalConfig: AdapterContext["globalConfig"],
-  sourceName: string,
-): CanonicalBlocker {
+function toCanonicalBlocker(blocker: LinearBlocker, sourceName: string): CanonicalBlocker {
   return {
     id: `${sourceName}:${blocker.id}`,
     title: blocker.title,
-    status: canonicalBlockerStatus(blocker, globalConfig),
+    status: canonicalStatusFromStateType(blocker.stateType),
   };
 }
 
-export function toCanonicalIssue(
-  linearIssue: LinearIssue,
-  globalConfig: AdapterContext["globalConfig"],
-  sourceName: string,
-): CanonicalIssue {
-  const project = findProjectBySlugId(globalConfig, linearIssue.projectSlugId);
-  /* v8 ignore next 5 @preserve -- fetchBoard's slugId filter and issueStatusBelongsToOwnProject guarantee project is configured by the time we get here */
-  if (project === undefined) {
-    throw new Error(
-      `Linear adapter: issue ${linearIssue.id} carries unknown projectSlugId "${linearIssue.projectSlugId}"`,
-    );
-  }
+export function toCanonicalIssue(linearIssue: LinearIssue, sourceName: string): CanonicalIssue {
   const sourceRef: LinearSourceRef = {
     uuid: linearIssue.uuid,
     statusId: linearIssue.statusId,
     teamId: linearIssue.teamId,
-    projectSlugId: linearIssue.projectSlugId,
     nativeStatus: linearIssue.status,
   };
   return {
@@ -124,12 +71,12 @@ export function toCanonicalIssue(
     title: linearIssue.title,
     // Board snapshot doesn't carry description; resolveOne() populates it.
     description: "",
-    status: canonicalStatusForProject(linearIssue.status, project),
+    status: canonicalStatusFromStateType(linearIssue.stateType),
     repository: linearIssue.repository,
     model: linearIssue.model,
     assignee: linearIssue.assignee,
     updatedAt: linearIssue.updatedAt,
-    blockers: linearIssue.blockers.map((b) => toCanonicalBlocker(b, globalConfig, sourceName)),
+    blockers: linearIssue.blockers.map((b) => toCanonicalBlocker(b, sourceName)),
     hasMoreBlockers: linearIssue.hasMoreBlockers,
     sourceRef,
   };
@@ -143,7 +90,7 @@ export function createLinearTicketSource(
   const { globalConfig } = context;
   const client = getLinearClient();
   const boardSource = createBoardSource({ config: globalConfig, client });
-  const issueStatusUpdater = createLinearIssueStatusUpdater({ config: globalConfig, client });
+  const issueStatusUpdater = createLinearIssueStatusUpdater({ client });
 
   return {
     name: sourceName,
@@ -152,27 +99,18 @@ export function createLinearTicketSource(
     },
     async fetch(): Promise<CanonicalIssue[]> {
       const state = await boardSource.fetch();
-      return state.issues.map((linearIssue) =>
-        toCanonicalIssue(linearIssue, globalConfig, sourceName),
-      );
+      return state.issues.map((linearIssue) => toCanonicalIssue(linearIssue, sourceName));
     },
     async resolveOne(naturalId: string): Promise<CanonicalIssue | undefined> {
-      // fetchResolvedIssue throws on unknown project / missing repo; we let
-      // those propagate. Returning `undefined` is reserved for "ticket genuinely
-      // doesn't exist," which fetchResolvedIssue surfaces as an Error too —
-      // for now we let any error bubble up rather than swallow.
+      // fetchResolvedIssue throws on missing repo; we let those propagate.
+      // Returning `undefined` is reserved for "ticket genuinely doesn't
+      // exist," which fetchResolvedIssue surfaces as an Error too — for now
+      // we let any error bubble up rather than swallow.
       const resolved = await fetchResolvedIssue({
         client,
         config: globalConfig,
         ticket: naturalId,
       });
-      const project = findProjectBySlugId(globalConfig, resolved.projectSlugId);
-      /* v8 ignore next 5 @preserve -- fetchResolvedIssue already throws UnknownProjectError before reaching this guard */
-      if (project === undefined) {
-        throw new Error(
-          `Linear adapter: resolved issue ${naturalId} carries unknown projectSlugId "${resolved.projectSlugId}"`,
-        );
-      }
       // fetchResolvedIssue doesn't return the native status name (it's
       // already been resolved through workflow state lookup). We surface
       // "other" until the consumer needs the canonical status, which is fine
@@ -181,7 +119,6 @@ export function createLinearTicketSource(
         uuid: resolved.uuid,
         statusId: "",
         teamId: resolved.teamId,
-        projectSlugId: resolved.projectSlugId,
         nativeStatus: "",
       };
       return {
@@ -206,7 +143,6 @@ export function createLinearTicketSource(
         id: issue.id,
         uuid: ref.uuid,
         teamId: ref.teamId,
-        projectSlugId: ref.projectSlugId,
       });
     },
   };

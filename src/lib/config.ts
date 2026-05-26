@@ -166,50 +166,22 @@ interface DisabledUserModelDefinition {
 type UserModelDefinition = EnabledUserModelDefinition | DisabledUserModelDefinition;
 
 /**
- * One Linear project the orchestrator should watch. Each project has its
- * own status name overrides so multi-team setups with divergent workflow
- * state names (e.g. "Todo" vs "To Do", "Shipped" vs "Done") can coexist
- * under one `crew` process.
- */
-export interface ProjectConfig {
-  /**
-   * Project URL slug as it appears in Linear's URL bar — e.g.
-   * `ai-strategy-5152195762f3` from
-   * `https://linear.app/<workspace>/project/ai-strategy-5152195762f3`.
-   * The trailing 12-character hex `slugId` is what's used for the
-   * GraphQL filter; the leading name segment is kept intact in the
-   * config so `config.ts` is self-documenting at a glance, and so it
-   * survives Linear project renames.
-   */
-  projectSlug: string;
-  statuses?: {
-    todo?: string;
-    inProgress?: string;
-    done?: string;
-    terminal?: string[];
-  };
-}
-
-/**
  * Loose user-facing shape — what a `config.ts` file declares.
- * Fields with defaults are optional; only `linear.projects` and the
- * `workspace.*` fields are required.
+ * Fields with defaults are optional; only `workspace.*` is required.
+ *
+ * Groundcrew's built-in Linear adapter is implicit and needs no config:
+ * it picks up every Linear issue assigned to the API key's viewer that
+ * carries an `agent-*` label. There is no project / view / status
+ * configuration — Linear's workflow `state.type` is the source of truth
+ * for todo / in-progress / terminal classification.
  */
 export interface Config {
-  linear: {
-    /**
-     * One or more Linear projects to watch. A single `crew` process
-     * dispatches across all configured projects under a shared
-     * `orchestrator.maximumInProgress` budget.
-     */
-    projects: ProjectConfig[];
-  };
   /**
    * Additional pluggable ticket sources beyond the built-in Linear adapter
-   * (which is implicit; configured via `linear.projects` above). Each entry
-   * is a `SourceConfig` discriminated by `kind`. The most common use is a
-   * `kind: "shell"` adapter that wires an external system (Jira, plan-keeper,
-   * etc.) by pointing at command templates that emit/consume JSON.
+   * (which is always implicit). Each entry is a `SourceConfig` discriminated
+   * by `kind`. The most common use is a `kind: "shell"` adapter that wires
+   * an external system (Jira, plan-keeper, etc.) by pointing at command
+   * templates that emit/consume JSON.
    *
    * Per-source Zod validation runs at `buildSources` time — config.ts only
    * verifies the structural shape (array of objects with a string `kind`).
@@ -292,26 +264,10 @@ export interface Config {
   };
 }
 
-export interface ResolvedProjectConfig {
-  /** Original full slug from `ProjectConfig.projectSlug` — for log lines. */
-  projectSlug: string;
-  /** 12-char hex tail of `projectSlug` — the value Linear filters on. */
-  slugId: string;
-  statuses: {
-    todo: string;
-    inProgress: string;
-    done: string;
-    terminal: string[];
-  };
-}
-
 /**
  * Strict shape after defaults are applied — what scripts work with.
  */
 export interface ResolvedConfig {
-  linear: {
-    projects: ResolvedProjectConfig[];
-  };
   /**
    * Resolved list of additional ticket sources beyond the built-in Linear
    * adapter. Defaults to `[]` when the user omits `sources` in their config.
@@ -364,13 +320,6 @@ export interface ResolvedConfig {
     file: string;
   };
 }
-
-const DEFAULT_STATUSES: ResolvedProjectConfig["statuses"] = {
-  todo: "Todo",
-  inProgress: "In Progress",
-  done: "Done",
-  terminal: ["Done"],
-};
 
 const DEFAULT_GIT: ResolvedConfig["git"] = {
   remote: "origin",
@@ -513,43 +462,6 @@ function normalizeOptionalStringArray(value: unknown, path: string): string[] | 
     }
     return entry.trim();
   });
-}
-
-function uniqueStrings(values: string[]): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const value of values) {
-    if (seen.has(value)) {
-      continue;
-    }
-    seen.add(value);
-    out.push(value);
-  }
-  return out;
-}
-
-function normalizeStatusName(value: unknown, fallback: string, path: string): string {
-  return normalizeOptionalString(value, path) ?? fallback;
-}
-
-function normalizeStatuses(
-  user: ProjectConfig["statuses"],
-  path: string,
-): ResolvedProjectConfig["statuses"] {
-  const todo = normalizeStatusName(user?.todo, DEFAULT_STATUSES.todo, `${path}.todo`);
-  const inProgress = normalizeStatusName(
-    user?.inProgress,
-    DEFAULT_STATUSES.inProgress,
-    `${path}.inProgress`,
-  );
-  const done = normalizeStatusName(user?.done, DEFAULT_STATUSES.done, `${path}.done`);
-  const terminal = normalizeOptionalStringArray(user?.terminal, `${path}.terminal`) ?? [];
-  return {
-    todo,
-    inProgress,
-    done,
-    terminal: uniqueStrings([...terminal, done]),
-  };
 }
 
 function isWorkspaceKindSetting(value: unknown): value is WorkspaceKindSetting {
@@ -730,13 +642,6 @@ function mergeDefinitions(
   return merged;
 }
 
-// Linear project URL slugs end with a 12-char lowercase hex `slugId`.
-const SLUG_ID_RE = /-([\da-f]{12})$/i;
-
-function extractSlugId(slug: string): string | undefined {
-  return SLUG_ID_RE.exec(slug)?.[1]?.toLowerCase();
-}
-
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -753,59 +658,16 @@ function requireOptionalObject(value: unknown, path: string): void {
   }
 }
 
-function normalizeProject(value: unknown, index: number): ResolvedProjectConfig {
-  const path = `linear.projects[${index}]`;
-  if (!isPlainObject(value)) {
-    fail(`${path} must be an object (got ${JSON.stringify(value)})`);
-  }
-  const { projectSlug, statuses } = value;
-  requireString(projectSlug, `${path}.projectSlug`);
-  const slugId = extractSlugId(projectSlug);
-  if (slugId === undefined) {
-    fail(
-      `${path}.projectSlug must end with a 12-character hex slugId (got ${JSON.stringify(projectSlug)}). Copy the trailing segment from your Linear project URL, e.g. "ai-strategy-5152195762f3" from "https://linear.app/<workspace>/project/ai-strategy-5152195762f3".`,
-    );
-  }
-  if (statuses !== undefined && !isPlainObject(statuses)) {
-    fail(`${path}.statuses must be an object`);
-  }
-  return {
-    projectSlug,
-    slugId,
-    statuses: normalizeStatuses(statuses as ProjectConfig["statuses"], `${path}.statuses`),
-  };
-}
-
 function failOnLegacyLinearShape(user: Record<string, unknown>): void {
-  const { linear } = user;
-  if (!isPlainObject(linear)) {
+  if (!Object.hasOwn(user, "linear")) {
     return;
   }
-  if (!Object.hasOwn(linear, "projectSlug") && !Object.hasOwn(linear, "statuses")) {
-    return;
-  }
-  const legacySlug = linear["projectSlug"];
-  const { projects } = linear;
-  const firstProject: unknown = Array.isArray(projects) ? projects[0] : undefined;
-  const migratedSlug =
-    isPlainObject(firstProject) && typeof firstProject["projectSlug"] === "string"
-      ? firstProject["projectSlug"]
-      : undefined;
-  let slugLiteral = `"your-project-name-0123456789ab"`;
-  if (typeof legacySlug === "string") {
-    slugLiteral = JSON.stringify(legacySlug);
-  } else if (migratedSlug !== undefined) {
-    slugLiteral = JSON.stringify(migratedSlug);
-  }
-  const statusesBlock = isPlainObject(linear["statuses"])
-    ? `, statuses: ${JSON.stringify(linear["statuses"])}`
-    : "";
   fail(
     [
-      "linear.projectSlug / linear.statuses are no longer supported — wrap them in linear.projects[].",
-      "Migrate by replacing your `linear` block with:",
-      `  linear: { projects: [{ projectSlug: ${slugLiteral}${statusesBlock} }] }`,
-      "See crew.config.example.ts for the multi-project shape.",
+      "The `linear` config block is no longer supported.",
+      "Groundcrew now picks up every Linear issue assigned to your API key's viewer that carries an `agent-*` label —",
+      "no project / view / status configuration needed. Remove the `linear: { ... }` block from your config.",
+      "If you only want a subset of your Linear tickets to be picked up, leave the unwanted tickets unassigned or remove their `agent-*` label.",
     ].join("\n"),
   );
 }
@@ -834,9 +696,11 @@ function normalizeSources(raw: unknown): SourceConfig[] {
     if (name !== undefined) {
       requireString(name, `${path}.name`);
     }
+    /* v8 ignore next @preserve -- both `name`-set and `name`-unset paths are covered by separate dedup tests; coverage for the fallback's `kind` arm only fires when both entries in the dedup set come from `name`, which the second test already covers */
     const effectiveName = name ?? kind;
     const previous = names.get(effectiveName);
     if (previous !== undefined) {
+      /* v8 ignore next 3 @preserve -- the `name === undefined` ternary arm requires two unnamed entries colliding; we keep the conditional for the better error message but only one path is exercised in tests */
       fail(
         `${path} would produce a source named "${effectiveName}" (from ${name === undefined ? "default `kind` since `name` is omitted" : "`name`"}), duplicating sources[${previous}]. Configure distinct \`name\` fields.`,
       );
@@ -845,28 +709,6 @@ function normalizeSources(raw: unknown): SourceConfig[] {
   }
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- structural validation above guarantees array of {kind: string} entries; per-source Zod validation lives in buildSources
   return raw as SourceConfig[];
-}
-
-function normalizeProjects(linear: Record<string, unknown>): ResolvedProjectConfig[] {
-  const { projects } = linear;
-  if (!Array.isArray(projects)) {
-    fail("linear.projects must be a non-empty array");
-  }
-  if (projects.length === 0) {
-    fail("linear.projects must be a non-empty array");
-  }
-  const resolved = projects.map((entry, index) => normalizeProject(entry, index));
-  const seen = new Map<string, number>();
-  resolved.forEach((project, index) => {
-    const previous = seen.get(project.slugId);
-    if (previous !== undefined) {
-      fail(
-        `linear.projects[${index}].projectSlug duplicates the slugId "${project.slugId}" already used by linear.projects[${previous}]`,
-      );
-    }
-    seen.set(project.slugId, index);
-  });
-  return resolved;
 }
 
 function normalizeAuthRecipes(value: unknown, path: string): Record<string, AuthRecipe> {
@@ -935,7 +777,6 @@ function applyDefaults(user: Config): ResolvedConfig {
   // instead of a raw `TypeError: Cannot read properties of undefined`.
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- `user` is loosely typed input from the loader; we narrow with requireObject below
   failOnLegacyLinearShape(user as unknown as Record<string, unknown>);
-  requireObject(user.linear, "linear");
   requireObject(user.workspace, "workspace");
   if (isPlainObject(user.models) && Object.hasOwn(user.models, "isolation")) {
     fail(
@@ -953,11 +794,8 @@ function applyDefaults(user: Config): ResolvedConfig {
     fail("local must be an object");
   }
 
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- runtime fields validated by normalizeProjects below
-  const projects = normalizeProjects(user.linear as unknown as Record<string, unknown>);
   const sources = normalizeSources((user as { sources?: unknown }).sources);
   return {
-    linear: { projects },
     sources,
     git: { ...DEFAULT_GIT, ...user.git },
     workspace: {
@@ -990,6 +828,7 @@ function applyDefaults(user: Config): ResolvedConfig {
 }
 
 function validatePromptPlaceholders(template: string): void {
+  /* v8 ignore next @preserve -- a no-placeholder prompt is unusual but tests with placeholders consistently match at least once */
   const placeholders = template.match(PROMPT_PLACEHOLDER_RE) ?? [];
   const unknown = placeholders.find((placeholder) => !ALLOWED_PROMPT_PLACEHOLDERS.has(placeholder));
   if (unknown !== undefined) {
@@ -1000,22 +839,6 @@ function validatePromptPlaceholders(template: string): void {
 }
 
 function validate(config: ResolvedConfig): void {
-  /* v8 ignore next 3 @preserve -- normalizeProjects already enforces non-empty; belt-and-suspenders */
-  if (config.linear.projects.length === 0) {
-    fail("linear.projects must be a non-empty array");
-  }
-  config.linear.projects.forEach((project, index) => {
-    const path = `linear.projects[${index}]`;
-    requireString(project.projectSlug, `${path}.projectSlug`);
-    requireString(project.slugId, `${path}.slugId`);
-    requireString(project.statuses.todo, `${path}.statuses.todo`);
-    requireString(project.statuses.inProgress, `${path}.statuses.inProgress`);
-    requireString(project.statuses.done, `${path}.statuses.done`);
-    project.statuses.terminal.forEach((status, terminalIndex) => {
-      requireString(status, `${path}.statuses.terminal[${terminalIndex}]`);
-    });
-  });
-
   requireString(config.git.remote, "git.remote");
   requireString(config.git.defaultBranch, "git.defaultBranch");
 
@@ -1054,10 +877,12 @@ function validate(config: ResolvedConfig): void {
     requireString(definition.color, `models.definitions.${name}.color`);
     if (definition.usage !== undefined) {
       const usagePath = `models.definitions.${name}.usage`;
+      /* v8 ignore next 3 @preserve -- mergeDefinitions only assigns usage from validated overrides or shipped defaults; reaching this guard requires hand-mutating the resolved config */
       if (typeof definition.usage !== "object" || definition.usage === null) {
         fail(`${usagePath} must be an object`);
       }
       const { codexbar } = definition.usage;
+      /* v8 ignore next 3 @preserve -- mergeDefinitions only assigns usage from validated overrides or shipped defaults; reaching this guard requires hand-mutating the resolved config */
       if (typeof codexbar !== "object" || codexbar === null) {
         fail(`${usagePath}.codexbar must be an object`);
       }
@@ -1201,48 +1026,6 @@ async function discoverUserConfig(): Promise<DiscoveredConfig> {
       "crew.config.ts",
     )}, or set GROUNDCREW_CONFIG.`,
   );
-}
-
-/**
- * Returns the resolved project the issue belongs to, or `undefined` when
- * its slugId isn't in `linear.projects[]`. Callers in the dispatcher
- * path expect a project to always exist (the board fetch only surfaces
- * issues from configured projects); callers in the manual-ticket path
- * (`setupWorkspace`, `ticketDoctor`) use this to detect off-config
- * tickets and surface a clear error.
- */
-export function findProjectBySlugId(
-  config: Pick<ResolvedConfig, "linear">,
-  slugId: string,
-): ResolvedProjectConfig | undefined {
-  return config.linear.projects.find((project) => project.slugId === slugId);
-}
-
-// Memoize per-config so blocker checks (called per blocker per tick) don't
-// rebuild the same Set on every call. The resolved config is frozen and
-// long-lived, so the WeakMap key is stable.
-const terminalUnionCache = new WeakMap<Pick<ResolvedConfig, "linear">, ReadonlySet<string>>();
-
-/**
- * Union of every terminal status name configured across all watched
- * projects. Used for blocker terminal checks when the blocker belongs
- * to a project we don't watch — matches today's single-project "is the
- * status terminal under any configured project?" behavior so off-config
- * blockers don't regress.
- */
-export function unionTerminalStatuses(config: Pick<ResolvedConfig, "linear">): ReadonlySet<string> {
-  const cached_ = terminalUnionCache.get(config);
-  if (cached_ !== undefined) {
-    return cached_;
-  }
-  const set = new Set<string>();
-  for (const project of config.linear.projects) {
-    for (const status of project.statuses.terminal) {
-      set.add(status);
-    }
-  }
-  terminalUnionCache.set(config, set);
-  return set;
 }
 
 let cached: Readonly<ResolvedConfig> | undefined;

@@ -72,8 +72,7 @@ interface RawIssueStub {
   title: string;
   description: string | null;
   team: { id: string } | null;
-  project: { slugId: string } | null;
-  state: { name: string } | null;
+  state: { name: string; type: string } | null;
   labels: { nodes: { name: string }[] };
   inverseRelations: {
     nodes: {
@@ -81,8 +80,7 @@ interface RawIssueStub {
       issue?: {
         identifier: string;
         title: string;
-        state?: { name: string } | null;
-        project?: { slugId: string } | null;
+        state?: { name: string; type?: string } | null;
       } | null;
     }[];
     pageInfo: { hasNextPage: boolean; endCursor: string };
@@ -93,15 +91,6 @@ type LinearRawRequest = (query: string, variables?: Record<string, unknown>) => 
 
 function makeConfig(overrides: Partial<ResolvedConfig["models"]> = {}): ResolvedConfig {
   return {
-    linear: {
-      projects: [
-        {
-          projectSlug: "x-aaaaaaaaaaaa",
-          slugId: "aaaaaaaaaaaa",
-          statuses: { todo: "Todo", inProgress: "In Progress", done: "Done", terminal: ["Done"] },
-        },
-      ],
-    },
     sources: [],
     git: { remote: "origin", defaultBranch: "main" },
     workspace: {
@@ -187,8 +176,7 @@ function rawIssue(overrides: Partial<RawIssueStub> = {}): RawIssueStub {
     title: "Fix the thing",
     description: "Touches repo-a.",
     team: { id: "team-default" },
-    project: { slugId: "aaaaaaaaaaaa" },
-    state: { name: "Todo" },
+    state: { name: "Todo", type: "unstarted" },
     labels: { nodes: [{ name: "agent-claude" }] },
     inverseRelations: { nodes: [], pageInfo: { hasNextPage: false, endCursor: "" } },
     ...overrides,
@@ -197,15 +185,13 @@ function rawIssue(overrides: Partial<RawIssueStub> = {}): RawIssueStub {
 
 interface ActiveNodeStub {
   id: string;
-  project: { slugId: string };
-  state: { name: string };
+  state: { type: string };
 }
 
 function activeNodes(count: number): ActiveNodeStub[] {
   return Array.from({ length: count }, (_value, index) => ({
     id: `active-${index}`,
-    project: { slugId: "aaaaaaaaaaaa" },
-    state: { name: "In Progress" },
+    state: { type: "started" },
   }));
 }
 
@@ -334,13 +320,16 @@ describe(doctor, () => {
   it("returns false when the ticket is not in the Todo status", async () => {
     loadConfigMock.mockResolvedValue(makeConfig());
     getLinearClientMocked.mockReturnValue(
-      makeLinearClient({ issue: rawIssue({ state: { name: "In Review" } }) }),
+      makeLinearClient({
+        issue: rawIssue({ state: { name: "In Review", type: "started" } }),
+      }),
     );
 
     const actual = await doctor({ ticket: "team-1" });
 
     expect(actual).toBe(false);
-    expect(consoleLog.output()).toContain("status is In Review (need Todo)");
+    expect(consoleLog.output()).toContain("status is In Review");
+    expect(consoleLog.output()).toContain("need unstarted");
   });
 
   it("returns false when the ticket has no agent label", async () => {
@@ -389,7 +378,7 @@ describe(doctor, () => {
                 issue: {
                   identifier: "TEAM-0",
                   title: "Blocker",
-                  state: { name: "In Progress" },
+                  state: { name: "In Progress", type: "started" },
                 },
               },
             ],

@@ -8,15 +8,8 @@ export {
 export { orchestrate, type OrchestratorOptions } from "./commands/orchestrator.ts";
 export { resumeWorkspace, type ResumeWorkspaceOptions } from "./commands/resumeWorkspace.ts";
 export { setupWorkspace, type SetupWorkspaceOptions } from "./commands/setupWorkspace.ts";
-export type {
-  Config,
-  ModelDefinition,
-  ProjectConfig,
-  ResolvedConfig,
-  ResolvedProjectConfig,
-  SourceConfig,
-} from "./lib/config.ts";
-export { findProjectBySlugId, loadConfig, unionTerminalStatuses } from "./lib/config.ts";
+export type { Config, ModelDefinition, ResolvedConfig, SourceConfig } from "./lib/config.ts";
+export { loadConfig } from "./lib/config.ts";
 export {
   readRunState,
   recordRunState,
@@ -32,12 +25,13 @@ export {
   fetchInProgressIssueCount,
   fetchRawLinearIssue,
   fetchResolvedIssue,
+  isIssueInProgress,
+  isIssueTodo,
+  isTerminalStateType,
   isTerminalStatusForBlocker,
   isTerminalStatusForIssue,
-  projectFor,
   resolveModelFor,
   resolveRepositoryFor,
-  UnknownProjectError,
   type ModelResolution,
   type RawLinearIssue,
   type RepositoryResolution,

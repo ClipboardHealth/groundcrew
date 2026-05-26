@@ -30,12 +30,7 @@ import {
 } from "../lib/boardSource.ts";
 import { runCommandAsync } from "../lib/commandRunner.ts";
 import { resolveDefaultBranch } from "../lib/defaultBranch.ts";
-import {
-  AGENT_ANY_MODEL,
-  findProjectBySlugId,
-  loadConfig,
-  type ResolvedConfig,
-} from "../lib/config.ts";
+import { AGENT_ANY_MODEL, loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { which } from "../lib/host.ts";
 import { readRunState, type RunState } from "../lib/runState.ts";
 import { getUsageByModel, type UsageByModel } from "../lib/usage.ts";
@@ -470,15 +465,15 @@ async function runEligibilityChecks(arguments_: EligibilityCheckArguments): Prom
     assignee: "",
     updatedAt: "",
     teamId: raw.teamId,
-    /* v8 ignore next @preserve -- probeLinear gates off-config projects upstream so raw.projectSlugId is always defined here */
-    projectSlugId: raw.projectSlugId ?? "",
+    /* v8 ignore next @preserve -- fetchRawLinearIssue always populates stateType (defaults to "") so the ?? guard is belt-and-suspenders */
+    stateType: raw.stateType ?? "",
     repository: resolvedRepository,
     model: resolvedModel,
     blockers: [...blockers],
     hasMoreBlockers: raw.hasMoreBlockers,
   };
 
-  const blockerClassification = classifyBlockers(config, [groundcrewIssue]);
+  const blockerClassification = classifyBlockers([groundcrewIssue]);
   const [firstSkip] = blockerClassification.skips;
   if (firstSkip !== undefined) {
     if (firstSkip.eventReason === "blockers_paginated") {
@@ -599,44 +594,20 @@ async function probeLinear(
   }
   try {
     const raw = await deps.fetchRawIssue({ ticket: upperTicket });
-    const project =
-      raw.projectSlugId === undefined
-        ? undefined
-        : findProjectBySlugId(deps.config, raw.projectSlugId);
-    if (project === undefined) {
-      const configured = deps.config.linear.projects.map((entry) => entry.slugId).join(", ");
-      const detail =
-        raw.projectSlugId === undefined
-          ? `ticket has no associated Linear project; configure linear.projects (${configured})`
-          : `project slugId "${raw.projectSlugId}" is not in linear.projects (configured: ${configured})`;
-      return {
-        linearStatus: { kind: "unresolvable", reason: detail },
-        resolution: [
-          { name: "Ticket exists in Linear", status: "ok", detail: `"${raw.title}"` },
-          {
-            name: "Project is configured",
-            status: "fail",
-            detail,
-            failureSummary: detail,
-          },
-        ],
-        title: raw.title,
-        raw,
-      };
-    }
-    const isTerminal = project.statuses.terminal.includes(raw.stateName);
-    const todoState = project.statuses.todo;
+    /* v8 ignore next @preserve -- fetchRawLinearIssue always populates stateType (defaults to "") so the ?? guard is belt-and-suspenders */
+    const stateType = raw.stateType ?? "";
+    const isTerminal = stateType === "completed" || stateType === "canceled";
     const resolution: TicketCheck[] = [
       { name: "Ticket exists in Linear", status: "ok", detail: `"${raw.title}"` },
     ];
-    if (raw.stateName === todoState) {
+    if (stateType === "unstarted") {
       resolution.push({ name: "Status is Todo", status: "ok" });
     } else {
       resolution.push({
         name: "Status is Todo",
         status: "fail",
         detail: `current: ${raw.stateName}`,
-        failureSummary: `status is ${raw.stateName} (need ${todoState})`,
+        failureSummary: `status is ${raw.stateName} (state.type=${stateType}, need unstarted)`,
       });
     }
     return {
@@ -1329,8 +1300,7 @@ export async function runTicketDoctor(parsed: TicketDoctorArguments): Promise<bo
     fetchBlockersFor: async ({ ticket, uuid }) =>
       await fetchBlockersForTicket({ client: linearClient(), ticket, uuid }),
     fetchUsage: async () => await getUsageByModel(config),
-    countInProgress: async () =>
-      await fetchInProgressIssueCount({ client: linearClient(), config }),
+    countInProgress: async () => await fetchInProgressIssueCount({ client: linearClient() }),
     findWorktree: (ticket) => worktrees.findByTicket(config, ticket)[0],
     probeWorkspaces: async () => await workspaces.probe(config),
     workspaceAccessHint: async (name) => await workspaces.accessHint(config, name),

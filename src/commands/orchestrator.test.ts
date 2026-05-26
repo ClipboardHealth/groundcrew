@@ -80,24 +80,8 @@ const usageMock = vi.mocked(getUsageByModel);
 const setupMock = vi.mocked(setupWorkspace);
 const workspacesProbeMock = vi.mocked(workspaces.probe);
 
-function firstProject(base: ResolvedConfig): ResolvedConfig["linear"]["projects"][number] {
-  const [project] = base.linear.projects;
-  // oxlint-disable-next-line typescript/no-non-null-assertion -- makeConfig always seeds the first project; failing destructuring would be a test-setup bug
-  return project!;
-}
-
 function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
   return {
-    linear: {
-      projects: [
-        {
-          projectSlug: "ai-strategy-aaaaaaaaaaaa",
-          slugId: "aaaaaaaaaaaa",
-          statuses: { todo: "Todo", inProgress: "In Progress", done: "Done", terminal: ["Done"] },
-        },
-      ],
-      ...overrides.linear,
-    },
     sources: overrides.sources ?? [],
     git: { remote: "origin", defaultBranch: "main", ...overrides.git },
     workspace: {
@@ -133,10 +117,9 @@ interface IssueNodeStub {
   title: string;
   description?: string | undefined;
   updatedAt: string;
-  state?: { id: string; name: string } | null;
+  state?: { id: string; name: string; type: string } | null;
   team?: { id: string; key: string } | null;
   assignee?: { name: string } | null;
-  project?: { slugId: string } | null;
   children?: { nodes: unknown[] };
   labels?: { nodes: { name: string }[] };
   inverseRelations?: {
@@ -145,8 +128,7 @@ interface IssueNodeStub {
       issue?: {
         identifier: string;
         title: string;
-        state?: { name: string } | null;
-        project?: { slugId: string } | null;
+        state?: { name: string; type?: string } | null;
       } | null;
     }[];
     pageInfo: { hasNextPage: boolean };
@@ -160,10 +142,12 @@ function issue(overrides: Partial<IssueNodeStub>): IssueNodeStub {
     title: overrides.title ?? "Title",
     description: "description" in overrides ? overrides.description : "Touches repo-a.",
     updatedAt: overrides.updatedAt ?? "2025-01-01T00:00:00.000Z",
-    state: overrides.state === undefined ? { id: "state-todo", name: "Todo" } : overrides.state,
+    state:
+      overrides.state === undefined
+        ? { id: "state-todo", name: "Todo", type: "unstarted" }
+        : overrides.state,
     team: overrides.team === undefined ? { id: "team-default", key: "TEAM" } : overrides.team,
     assignee: overrides.assignee === undefined ? { name: "Alice" } : overrides.assignee,
-    project: overrides.project === undefined ? { slugId: "aaaaaaaaaaaa" } : overrides.project,
     children: overrides.children ?? { nodes: [] },
     // Default to a groundcrew-eligible label. Tests that exercise unlabeled
     // tickets explicitly override with `labels: { nodes: [] }`.
@@ -174,17 +158,30 @@ function issue(overrides: Partial<IssueNodeStub>): IssueNodeStub {
   };
 }
 
+function blockerState(
+  status: string | undefined,
+  stateType: string | undefined,
+): { name: string; type?: string } | null {
+  if (status === undefined) {
+    return null;
+  }
+  if (stateType === undefined) {
+    return { name: status };
+  }
+  return { name: status, type: stateType };
+}
+
 function blockingRelation(
   identifier: string,
   status?: string,
+  stateType?: string,
 ): NonNullable<IssueNodeStub["inverseRelations"]>["nodes"][number] {
   return {
     type: "blocks",
     issue: {
       identifier,
       title: "Blocker",
-      state: status === undefined ? null : { name: status },
-      project: { slugId: "aaaaaaaaaaaa" },
+      state: blockerState(status, stateType),
     },
   };
 }
@@ -196,21 +193,21 @@ interface ClientStub {
 }
 
 function makeClient(options: {
-  projectFound?: boolean;
+  viewerFound?: boolean;
   pages?: IssueNodeStub[][];
   omitInProgressState?: boolean;
 }): ClientStub {
-  const { projectFound = true, pages = [[]], omitInProgressState = false } = options;
+  const { viewerFound = true, pages = [[]], omitInProgressState = false } = options;
   const inProgressStateId = omitInProgressState ? undefined : "state-in-progress";
   const rawRequest =
     vi.fn<(query: string, variables?: Record<string, unknown>) => Promise<unknown>>();
   rawRequest.mockImplementation(async (query: string) => {
-    if (query.includes("VerifyProject")) {
+    if (query.includes("VerifyViewer")) {
       return {
         data: {
-          projects: {
-            nodes: projectFound ? [{ id: "p1", name: "AI Strategy", slugId: "aaaaaaaaaaaa" }] : [],
-          },
+          viewer: viewerFound
+            ? { id: "viewer-1", name: "Alice", email: "alice@example.com" }
+            : null,
         },
       };
     }
@@ -231,22 +228,25 @@ function makeClient(options: {
     return { data: {} };
   });
 
+  interface StateNode {
+    id: string;
+    name: string;
+    type: string;
+  }
   return {
     client: { rawRequest },
     team: vi
-      .fn<() => Promise<{ states: () => Promise<{ nodes: { id: string; name: string }[] }> }>>()
+      .fn<() => Promise<{ states: () => Promise<{ nodes: StateNode[] }> }>>()
       .mockResolvedValue({
-        states: vi
-          .fn<() => Promise<{ nodes: { id: string; name: string }[] }>>()
-          .mockResolvedValue({
-            nodes:
-              inProgressStateId === undefined
-                ? [{ id: "state-other", name: "Other" }]
-                : [
-                    { id: inProgressStateId, name: "In Progress" },
-                    { id: "state-todo", name: "Todo" },
-                  ],
-          }),
+        states: vi.fn<() => Promise<{ nodes: StateNode[] }>>().mockResolvedValue({
+          nodes:
+            inProgressStateId === undefined
+              ? [{ id: "state-other", name: "Other", type: "unstarted" }]
+              : [
+                  { id: inProgressStateId, name: "In Progress", type: "started" },
+                  { id: "state-todo", name: "Todo", type: "unstarted" },
+                ],
+        }),
       }),
     updateIssue: vi.fn<() => Promise<Record<string, never>>>().mockResolvedValue({}),
   };
@@ -267,12 +267,10 @@ function hostEntryFor(repository: string, ticket: string): WorktreeEntry {
   };
 }
 
-function verifyProjectResponse(): unknown {
+function verifyViewerResponse(): unknown {
   return {
     data: {
-      projects: {
-        nodes: [{ id: "p1", name: "AI", slugId: "aaaaaaaaaaaa" }],
-      },
+      viewer: { id: "viewer-1", name: "Alice", email: "alice@example.com" },
     },
   };
 }
@@ -291,8 +289,8 @@ function boardIssuesResponse(nodes: IssueNodeStub[]): unknown {
 function mockBoardFailuresThenEmpty(client: ClientStub, failures: number, message: string): void {
   let boardCalls = 0;
   client.client.rawRequest.mockImplementation(async (query: string) => {
-    if (query.includes("VerifyProject")) {
-      return verifyProjectResponse();
+    if (query.includes("VerifyViewer")) {
+      return verifyViewerResponse();
     }
     boardCalls += 1;
     if (boardCalls <= failures) {
@@ -339,41 +337,22 @@ describe(orchestrate, () => {
     vi.clearAllMocks();
   });
 
-  it("rejects when no configured projects resolve", async () => {
-    const client = makeClient({ projectFound: false });
+  it("rejects when the Linear API key resolves to no viewer", async () => {
+    const client = makeClient({ viewerFound: false });
     mockLinearClient(client);
 
     await expect(orchestrate({ watch: false, dryRun: false })).rejects.toThrow(
-      /No Linear projects resolved from linear\.projects/,
+      /did not return a viewer/,
     );
   });
 
-  it("logs a warning per missing slug but continues when at least one resolves", async () => {
-    const base = makeConfig();
-    const project = firstProject(base);
-    loadConfigMock.mockResolvedValue({
-      ...base,
-      linear: {
-        projects: [
-          project,
-          {
-            projectSlug: "missing-cccccccccccc",
-            slugId: "cccccccccccc",
-            statuses: project.statuses,
-          },
-        ],
-      },
-    });
+  it("logs the resolved viewer on successful verify", async () => {
     const client = makeClient({ pages: [[]] });
     mockLinearClient(client);
 
     await orchestrate({ watch: false, dryRun: false });
 
-    const out = consoleLog.output();
-    expect(out).toMatch(
-      /WARNING: no Linear project found with slugId "cccccccccccc".*"missing-cccccccccccc"/,
-    );
-    expect(out).toContain("Resolved Linear project: AI Strategy");
+    expect(consoleLog.output()).toContain("Resolved Linear viewer: Alice");
   });
 
   it("emits the no-todo log line when the board is empty", async () => {
@@ -392,7 +371,7 @@ describe(orchestrate, () => {
         [
           issue({
             identifier: "TEAM-1",
-            state: { id: "state-todo", name: "Todo" },
+            state: { id: "state-todo", name: "Todo", type: "unstarted" },
           }),
         ],
       ],
@@ -416,7 +395,7 @@ describe(orchestrate, () => {
             identifier: "TEAM-2",
             id: "uuid-2",
             description: "Some context. Affects api-admin somewhere.",
-            state: { id: "state-todo", name: "Todo" },
+            state: { id: "state-todo", name: "Todo", type: "unstarted" },
           }),
         ],
       ],
@@ -439,7 +418,7 @@ describe(orchestrate, () => {
             identifier: "TEAM-3",
             id: "uuid-3",
             description: "no repo here",
-            state: { id: "state-todo", name: "Todo" },
+            state: { id: "state-todo", name: "Todo", type: "unstarted" },
           }),
         ],
       ],
@@ -461,7 +440,7 @@ describe(orchestrate, () => {
           issue({
             identifier: "TEAM-4",
             id: "uuid-4",
-            state: { id: "state-todo", name: "Todo" },
+            state: { id: "state-todo", name: "Todo", type: "unstarted" },
             labels: { nodes: [{ name: "agent-codex" }] },
           }),
         ],
@@ -487,7 +466,7 @@ describe(orchestrate, () => {
         [
           issue({
             identifier: "TEAM-1",
-            state: { id: "state-todo", name: "Todo" },
+            state: { id: "state-todo", name: "Todo", type: "unstarted" },
             labels: { nodes: [{ name: "agent-any" }] },
           }),
         ],
@@ -512,7 +491,7 @@ describe(orchestrate, () => {
         [
           issue({
             identifier: "TEAM-1",
-            state: { id: "state-todo", name: "Todo" },
+            state: { id: "state-todo", name: "Todo", type: "unstarted" },
             labels: { nodes: [{ name: "agent-any" }] },
           }),
         ],
@@ -538,7 +517,7 @@ describe(orchestrate, () => {
         [
           issue({
             identifier: "TEAM-1",
-            state: { id: "state-todo", name: "Todo" },
+            state: { id: "state-todo", name: "Todo", type: "unstarted" },
             labels: { nodes: [{ name: "agent-any" }] },
           }),
         ],
@@ -574,7 +553,7 @@ describe(orchestrate, () => {
         [
           issue({
             identifier: "TEAM-1",
-            state: { id: "state-todo", name: "Todo" },
+            state: { id: "state-todo", name: "Todo", type: "unstarted" },
             labels: { nodes: [{ name: "agent-any" }] },
           }),
         ],
@@ -600,7 +579,7 @@ describe(orchestrate, () => {
         [
           issue({
             identifier: "TEAM-1",
-            state: { id: "state-todo", name: "Todo" },
+            state: { id: "state-todo", name: "Todo", type: "unstarted" },
             labels: { nodes: [{ name: "agent-any" }] },
           }),
         ],
@@ -626,7 +605,7 @@ describe(orchestrate, () => {
         [
           issue({
             identifier: "TEAM-1",
-            state: { id: "state-todo", name: "Todo" },
+            state: { id: "state-todo", name: "Todo", type: "unstarted" },
             labels: { nodes: [{ name: "agent-any" }] },
           }),
         ],
@@ -648,7 +627,7 @@ describe(orchestrate, () => {
           issue({
             identifier: "TEAM-5",
             id: "uuid-5",
-            state: { id: "state-todo", name: "Todo" },
+            state: { id: "state-todo", name: "Todo", type: "unstarted" },
             labels: { nodes: [{ name: "agent-ghost" }] },
           }),
         ],
@@ -712,7 +691,7 @@ describe(orchestrate, () => {
         [
           issue({
             identifier: "TEAM-1",
-            state: { id: "state-todo", name: "Todo" },
+            state: { id: "state-todo", name: "Todo", type: "unstarted" },
           }),
         ],
       ],
@@ -742,12 +721,12 @@ describe(orchestrate, () => {
           issue({
             identifier: "TEAM-a",
             id: "uuid-a",
-            state: { id: "state-active", name: "In Progress" },
+            state: { id: "state-active", name: "In Progress", type: "started" },
           }),
           issue({
             identifier: "TEAM-b",
             id: "uuid-b",
-            state: { id: "state-todo", name: "Todo" },
+            state: { id: "state-todo", name: "Todo", type: "unstarted" },
           }),
         ],
       ],
@@ -770,7 +749,7 @@ describe(orchestrate, () => {
         [
           issue({
             identifier: "TEAM-1",
-            state: { id: "state-active", name: "In Progress" },
+            state: { id: "state-active", name: "In Progress", type: "started" },
           }),
         ],
       ],
@@ -792,7 +771,7 @@ describe(orchestrate, () => {
         [
           issue({
             identifier: "TEAM-1",
-            state: { id: "state-todo", name: "Todo" },
+            state: { id: "state-todo", name: "Todo", type: "unstarted" },
           }),
         ],
       ],
@@ -812,7 +791,7 @@ describe(orchestrate, () => {
         [
           issue({
             identifier: "TEAM-1",
-            state: { id: "state-todo", name: "Todo" },
+            state: { id: "state-todo", name: "Todo", type: "unstarted" },
             labels: { nodes: [{ name: "agent-any" }] },
             inverseRelations: {
               nodes: [blockingRelation("TEAM-0", "In Progress")],
@@ -838,9 +817,9 @@ describe(orchestrate, () => {
         [
           issue({
             identifier: "TEAM-1",
-            state: { id: "state-todo", name: "Todo" },
+            state: { id: "state-todo", name: "Todo", type: "unstarted" },
             inverseRelations: {
-              nodes: [blockingRelation("TEAM-0", "Done")],
+              nodes: [blockingRelation("TEAM-0", "Done", "completed")],
               pageInfo: { hasNextPage: false },
             },
           }),
@@ -857,28 +836,14 @@ describe(orchestrate, () => {
     );
   });
 
-  it("treats custom terminal statuses as unblocking blockers", async () => {
-    const base = makeConfig();
-    const project = firstProject(base);
-    loadConfigMock.mockResolvedValue({
-      ...base,
-      linear: {
-        projects: [
-          {
-            ...project,
-            statuses: { ...project.statuses, terminal: ["Done", "Released"] },
-          },
-        ],
-      },
-    });
+  it("treats canceled blockers as terminal regardless of status name", async () => {
     const client = makeClient({
       pages: [
         [
           issue({
             identifier: "TEAM-1",
-            state: { id: "state-todo", name: "Todo" },
             inverseRelations: {
-              nodes: [blockingRelation("TEAM-0", "Released")],
+              nodes: [blockingRelation("TEAM-0", "Won't fix", "canceled")],
               pageInfo: { hasNextPage: false },
             },
           }),
@@ -901,7 +866,7 @@ describe(orchestrate, () => {
         [
           issue({
             identifier: "TEAM-1",
-            state: { id: "state-todo", name: "Todo" },
+            state: { id: "state-todo", name: "Todo", type: "unstarted" },
             inverseRelations: {
               nodes: [blockingRelation("TEAM-0")],
               pageInfo: { hasNextPage: false },
@@ -924,7 +889,7 @@ describe(orchestrate, () => {
         [
           issue({
             identifier: "TEAM-1",
-            state: { id: "state-todo", name: "Todo" },
+            state: { id: "state-todo", name: "Todo", type: "unstarted" },
             inverseRelations: {
               nodes: [
                 {
@@ -932,7 +897,7 @@ describe(orchestrate, () => {
                   issue: {
                     identifier: "TEAM-0",
                     title: "Related",
-                    state: { name: "In Progress" },
+                    state: { name: "In Progress", type: "started" },
                   },
                 },
                 { type: "blocks", issue: null },
@@ -957,7 +922,7 @@ describe(orchestrate, () => {
         [
           issue({
             identifier: "TEAM-1",
-            state: { id: "state-todo", name: "Todo" },
+            state: { id: "state-todo", name: "Todo", type: "unstarted" },
             inverseRelations: {
               nodes: [],
               pageInfo: { hasNextPage: true },
@@ -992,7 +957,7 @@ describe(orchestrate, () => {
           issue({
             identifier: "TEAM-1",
             id: "uuid-1",
-            state: { id: "state-todo", name: "Todo" },
+            state: { id: "state-todo", name: "Todo", type: "unstarted" },
             inverseRelations: {
               nodes: [blockingRelation("TEAM-0", "In Progress")],
               pageInfo: { hasNextPage: false },
@@ -1001,7 +966,7 @@ describe(orchestrate, () => {
           issue({
             identifier: "TEAM-2",
             id: "uuid-2",
-            state: { id: "state-todo", name: "Todo" },
+            state: { id: "state-todo", name: "Todo", type: "unstarted" },
           }),
         ],
       ],
@@ -1024,7 +989,7 @@ describe(orchestrate, () => {
         [
           issue({
             identifier: "TEAM-1",
-            state: { id: "state-todo", name: "Todo" },
+            state: { id: "state-todo", name: "Todo", type: "unstarted" },
           }),
         ],
       ],
@@ -1043,7 +1008,7 @@ describe(orchestrate, () => {
         [
           issue({
             identifier: "TEAM-1",
-            state: { id: "state-todo", name: "Todo" },
+            state: { id: "state-todo", name: "Todo", type: "unstarted" },
           }),
         ],
       ],
@@ -1069,7 +1034,7 @@ describe(orchestrate, () => {
         [
           issue({
             identifier: "TEAM-1",
-            state: { id: "state-todo", name: "Todo" },
+            state: { id: "state-todo", name: "Todo", type: "unstarted" },
           }),
         ],
       ],
@@ -1090,7 +1055,7 @@ describe(orchestrate, () => {
         [
           issue({
             identifier: "TEAM-1",
-            state: { id: "state-todo", name: "Todo" },
+            state: { id: "state-todo", name: "Todo", type: "unstarted" },
           }),
         ],
       ],
@@ -1113,7 +1078,7 @@ describe(orchestrate, () => {
         [
           issue({
             identifier: "TEAM-1",
-            state: { id: "state-todo", name: "Todo" },
+            state: { id: "state-todo", name: "Todo", type: "unstarted" },
           }),
         ],
       ],
@@ -1135,7 +1100,7 @@ describe(orchestrate, () => {
         [
           issue({
             identifier: "TEAM-1",
-            state: { id: "state-todo", name: "Todo" },
+            state: { id: "state-todo", name: "Todo", type: "unstarted" },
           }),
         ],
       ],
@@ -1155,7 +1120,7 @@ describe(orchestrate, () => {
         [
           issue({
             identifier: "TEAM-1",
-            state: { id: "state-todo", name: "Todo" },
+            state: { id: "state-todo", name: "Todo", type: "unstarted" },
           }),
         ],
       ],
@@ -1175,7 +1140,7 @@ describe(orchestrate, () => {
         [
           issue({
             identifier: "TEAM-1",
-            state: { id: "state-todo", name: "Todo" },
+            state: { id: "state-todo", name: "Todo", type: "unstarted" },
             team: teamWithoutInProgress,
           }),
         ],
@@ -1187,7 +1152,7 @@ describe(orchestrate, () => {
     await orchestrate({ watch: false, dryRun: false });
 
     const out = consoleLog.output();
-    expect(out).toContain('Could not find "In Progress" state');
+    expect(out).toContain('Could not find a workflow state with type "started"');
   });
 
   it("formats the missing-team error with `?` when the issue has no team", async () => {
@@ -1196,7 +1161,7 @@ describe(orchestrate, () => {
         [
           issue({
             identifier: "TEAM-1",
-            state: { id: "state-todo", name: "Todo" },
+            state: { id: "state-todo", name: "Todo", type: "unstarted" },
             team: null,
           }),
         ],
@@ -1219,13 +1184,13 @@ describe(orchestrate, () => {
             identifier: "TEAM-1",
             id: "uuid-1",
             team: sharedTeam,
-            state: { id: "state-todo", name: "Todo" },
+            state: { id: "state-todo", name: "Todo", type: "unstarted" },
           }),
           issue({
             identifier: "TEAM-2",
             id: "uuid-2",
             team: sharedTeam,
-            state: { id: "state-todo", name: "Todo" },
+            state: { id: "state-todo", name: "Todo", type: "unstarted" },
           }),
         ],
       ],
@@ -1250,7 +1215,7 @@ describe(orchestrate, () => {
           issue({
             identifier: "TEAM-1",
             id: "uuid-1",
-            state: { id: "state-done", name: "Done" },
+            state: { id: "state-done", name: "Done", type: "completed" },
           }),
         ],
       ],
@@ -1262,20 +1227,7 @@ describe(orchestrate, () => {
     expect(teardownMock).toHaveBeenCalledWith(expect.anything(), [entry]);
   });
 
-  it("cleans up worktrees for custom terminal statuses", async () => {
-    const base = makeConfig();
-    const project = firstProject(base);
-    loadConfigMock.mockResolvedValue({
-      ...base,
-      linear: {
-        projects: [
-          {
-            ...project,
-            statuses: { ...project.statuses, terminal: ["Done", "Released"] },
-          },
-        ],
-      },
-    });
+  it("cleans up worktrees for canceled tickets regardless of status name", async () => {
     const entry = hostEntryFor("repo-a", "team-1");
     listMock.mockReturnValue([entry]);
     teardownMock.mockResolvedValue(emptyTeardownResult({ removed: [entry] }));
@@ -1285,7 +1237,7 @@ describe(orchestrate, () => {
           issue({
             identifier: "TEAM-1",
             id: "uuid-1",
-            state: { id: "state-released", name: "Released" },
+            state: { id: "state-released", name: "Released", type: "canceled" },
           }),
         ],
       ],
@@ -1311,7 +1263,7 @@ describe(orchestrate, () => {
           issue({
             identifier: "TEAM-1",
             id: "uuid-1",
-            state: { id: "state-done", name: "Done" },
+            state: { id: "state-done", name: "Done", type: "completed" },
           }),
         ],
       ],
@@ -1335,7 +1287,7 @@ describe(orchestrate, () => {
           issue({
             identifier: "TEAM-1",
             id: "uuid-1",
-            state: { id: "state-done", name: "Done" },
+            state: { id: "state-done", name: "Done", type: "completed" },
           }),
         ],
       ],
@@ -1365,7 +1317,7 @@ describe(orchestrate, () => {
           issue({
             identifier: "TEAM-1",
             id: "uuid-1",
-            state: { id: "state-done", name: "Done" },
+            state: { id: "state-done", name: "Done", type: "completed" },
           }),
         ],
       ],
@@ -1387,7 +1339,7 @@ describe(orchestrate, () => {
           issue({
             identifier: "TEAM-1",
             id: "uuid-1",
-            state: { id: "state-done", name: "Done" },
+            state: { id: "state-done", name: "Done", type: "completed" },
           }),
         ],
       ],
@@ -1410,7 +1362,7 @@ describe(orchestrate, () => {
           issue({
             identifier: "TEAM-1",
             id: "uuid-1",
-            state: { id: "state-todo", name: "Todo" },
+            state: { id: "state-todo", name: "Todo", type: "unstarted" },
           }),
         ],
       ],
@@ -1430,7 +1382,7 @@ describe(orchestrate, () => {
           issue({
             identifier: "TEAM-1",
             id: "uuid-1",
-            state: { id: "state-done", name: "Done" },
+            state: { id: "state-done", name: "Done", type: "completed" },
           }),
         ],
       ],
@@ -1466,7 +1418,7 @@ describe(orchestrate, () => {
             identifier: "TEAM-3",
             id: "uuid-3",
             description: "no repo here",
-            state: { id: "state-todo", name: "Todo" },
+            state: { id: "state-todo", name: "Todo", type: "unstarted" },
           }),
         ],
       ],
@@ -1491,7 +1443,7 @@ describe(orchestrate, () => {
         [
           issue({
             identifier: "TEAM-1",
-            state: { id: "state-todo", name: "Todo" },
+            state: { id: "state-todo", name: "Todo", type: "unstarted" },
           }),
         ],
       ],
@@ -1512,7 +1464,7 @@ describe(orchestrate, () => {
         [
           issue({
             identifier: "TEAM-1",
-            state: { id: "state-todo", name: "Todo" },
+            state: { id: "state-todo", name: "Todo", type: "unstarted" },
           }),
         ],
       ],
@@ -1533,7 +1485,7 @@ describe(orchestrate, () => {
         [
           issue({
             identifier: "TEAM-1",
-            state: { id: "state-todo", name: "Todo" },
+            state: { id: "state-todo", name: "Todo", type: "unstarted" },
           }),
         ],
       ],
@@ -1731,7 +1683,14 @@ describe(orchestrate, () => {
   it("force-exits when the shutdown grace period expires", async () => {
     vi.useFakeTimers();
     const client = makeClient({
-      pages: [[issue({ identifier: "TEAM-1", state: { id: "state-todo", name: "Todo" } })]],
+      pages: [
+        [
+          issue({
+            identifier: "TEAM-1",
+            state: { id: "state-todo", name: "Todo", type: "unstarted" },
+          }),
+        ],
+      ],
     });
     mockLinearClient(client);
 

@@ -32,16 +32,6 @@ const workspacesProbeMock = vi.mocked(workspaces.probe);
 
 function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
   return {
-    linear: {
-      projects: [
-        {
-          projectSlug: "ai-strategy-aaaaaaaaaaaa",
-          slugId: "aaaaaaaaaaaa",
-          statuses: { todo: "Todo", inProgress: "In Progress", done: "Done", terminal: ["Done"] },
-        },
-      ],
-      ...overrides.linear,
-    },
     sources: [],
     git: { remote: "origin", defaultBranch: "main", ...overrides.git },
     workspace: {
@@ -78,12 +68,12 @@ function todoIssue(overrides: Partial<Issue> = {}): Issue {
     title: "Title",
     status: "Todo",
     statusId: "state-todo",
+    stateType: "unstarted",
     assignee: "Alice",
     updatedAt: "2025-01-01T00:00:00.000Z",
     repository: "repo-a",
     model: "claude",
     teamId: "team-1",
-    projectSlugId: "aaaaaaaaaaaa",
     blockers: [],
     hasMoreBlockers: false,
     ...overrides,
@@ -91,7 +81,12 @@ function todoIssue(overrides: Partial<Issue> = {}): Issue {
 }
 
 function activeIssue(overrides: Partial<Issue> = {}): Issue {
-  return todoIssue({ status: "In Progress", statusId: "state-active", ...overrides });
+  return todoIssue({
+    status: "In Progress",
+    statusId: "state-active",
+    stateType: "started",
+    ...overrides,
+  });
 }
 
 function boardOf(issues: Issue[]): BoardState {
@@ -115,17 +110,20 @@ interface ClientStub {
 
 function makeClient(options: { omitInProgressState?: boolean } = {}): ClientStub {
   const { omitInProgressState = false } = options;
+  interface StateNode {
+    id: string;
+    name: string;
+    type: string;
+  }
   return {
     team: vi
-      .fn<() => Promise<{ states: () => Promise<{ nodes: { id: string; name: string }[] }> }>>()
+      .fn<() => Promise<{ states: () => Promise<{ nodes: StateNode[] }> }>>()
       .mockResolvedValue({
-        states: vi
-          .fn<() => Promise<{ nodes: { id: string; name: string }[] }>>()
-          .mockResolvedValue({
-            nodes: omitInProgressState
-              ? [{ id: "state-other", name: "Other" }]
-              : [{ id: "state-in-progress", name: "In Progress" }],
-          }),
+        states: vi.fn<() => Promise<{ nodes: StateNode[] }>>().mockResolvedValue({
+          nodes: omitInProgressState
+            ? [{ id: "state-other", name: "Other", type: "unstarted" }]
+            : [{ id: "state-in-progress", name: "In Progress", type: "started" }],
+        }),
       }),
     updateIssue: vi.fn<() => Promise<Record<string, never>>>().mockResolvedValue({}),
   };
@@ -268,7 +266,7 @@ describe(createDispatcher, () => {
                 id: "team-0",
                 title: "Blocker",
                 status: "In Progress",
-                projectSlugId: "aaaaaaaaaaaa",
+                stateType: "started",
               },
             ],
           }),
@@ -291,9 +289,7 @@ describe(createDispatcher, () => {
       await dispatcher.runOnce({
         state: boardOf([
           todoIssue({
-            blockers: [
-              { id: "team-0", title: "Blocker", status: "Done", projectSlugId: "aaaaaaaaaaaa" },
-            ],
+            blockers: [{ id: "team-0", title: "Blocker", status: "Done", stateType: "completed" }],
           }),
         ]),
         worktreeEntries: [],
@@ -330,9 +326,7 @@ describe(createDispatcher, () => {
       await dispatcher.runOnce({
         state: boardOf([
           todoIssue({
-            blockers: [
-              { id: "team-0", title: "Blocker", status: undefined, projectSlugId: "aaaaaaaaaaaa" },
-            ],
+            blockers: [{ id: "team-0", title: "Blocker", status: undefined, stateType: undefined }],
           }),
         ]),
         worktreeEntries: [],
@@ -360,7 +354,7 @@ describe(createDispatcher, () => {
                 id: "team-0",
                 title: "Blocker",
                 status: "In Progress",
-                projectSlugId: "aaaaaaaaaaaa",
+                stateType: "started",
               },
             ],
           }),
@@ -372,7 +366,7 @@ describe(createDispatcher, () => {
                 id: "team-0",
                 title: "Blocker",
                 status: "In Progress",
-                projectSlugId: "aaaaaaaaaaaa",
+                stateType: "started",
               },
             ],
           }),
@@ -823,7 +817,7 @@ describe(createDispatcher, () => {
         dryRun: false,
       });
 
-      expect(consoleLog.output()).toContain('Could not find "In Progress" state');
+      expect(consoleLog.output()).toContain('Could not find a workflow state with type "started"');
     });
 
     it("dedupes a misconfigured-team lookup within an iteration", async () => {

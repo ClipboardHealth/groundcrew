@@ -13,7 +13,8 @@ import {
   type BoardState,
   type GroundcrewIssue,
   isGroundcrewIssue,
-  projectFor,
+  isIssueInProgress,
+  isIssueTodo,
 } from "../lib/boardSource.ts";
 import type { ResolvedConfig } from "../lib/config.ts";
 import { createLinearIssueStatusUpdater } from "../lib/linearIssueStatus.ts";
@@ -66,7 +67,7 @@ function logSkip(verdict: SkipVerdict): void {
 
 export function createDispatcher(deps: DispatcherDeps): Dispatcher {
   const { config, client } = deps;
-  const issueStatusUpdater = createLinearIssueStatusUpdater({ config, client });
+  const issueStatusUpdater = createLinearIssueStatusUpdater({ client });
 
   function buildExhaustedSet(usage: UsageByModel): Set<string> {
     const exhausted = new Set<string>();
@@ -160,15 +161,12 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
       });
     }
 
-    const activeCount = state.issues.filter(
-      (issue) => issue.status === projectFor(issue, config).statuses.inProgress,
-    ).length;
+    const activeCount = state.issues.filter((issue) => isIssueInProgress(issue)).length;
     const slots = config.orchestrator.maximumInProgress - activeCount;
     // Narrow Todo to tickets that opted in via an `agent-*` label.
     // Unlabeled tickets are not groundcrew's concern even when in Todo.
     const todo: readonly GroundcrewIssue[] = state.issues.filter(
-      (issue): issue is GroundcrewIssue =>
-        issue.status === projectFor(issue, config).statuses.todo && isGroundcrewIssue(issue),
+      (issue): issue is GroundcrewIssue => isIssueTodo(issue) && isGroundcrewIssue(issue),
     );
 
     if (slots <= 0) {
@@ -185,7 +183,7 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
 
     // Run the blocker pre-pass first so an all-blocked board short-circuits
     // before the codexbar HTTP call and the cmux/tmux shell-out fire.
-    const { unblocked, skips: blockerSkips } = classifyBlockers(config, todo);
+    const { unblocked, skips: blockerSkips } = classifyBlockers(todo);
     for (const skip of blockerSkips) {
       logSkip(skip);
     }

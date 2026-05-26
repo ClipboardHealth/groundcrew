@@ -13,15 +13,13 @@
  * to. Consumers branch on these values, never on a source's native names.
  *
  * - `todo` / `in-progress` / `done`: the only canonical states the built-in
- *   Linear adapter produces today (mapped per-project from
- *   `linear.projects[].statuses`).
+ *   Linear adapter produces today (mapped from Linear's workflow `state.type`).
  * - `in-review`: produced only by adapters whose schema declares an in-review
  *   mapping. The shell adapter's JSON contract accepts it; the built-in Linear
- *   adapter does not yet map any native state to it (adding `inReview` to
- *   `ProjectConfig.statuses` is a follow-up). Reserved here so consumers'
- *   branch logic doesn't change when that follow-up lands.
- * - `other`: anything an adapter sees but can't classify (unmapped Linear
- *   statuses like "Triage", off-config blockers without a known project).
+ *   adapter does not yet map any native state to it. Reserved here so
+ *   consumers' branch logic doesn't change when that follow-up lands.
+ * - `other`: anything an adapter sees but can't classify (Linear tickets in
+ *   `backlog`/`triage`, blockers with no resolvable state).
  */
 export type CanonicalStatus = "todo" | "in-progress" | "in-review" | "done" | "other";
 

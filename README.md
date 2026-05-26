@@ -74,7 +74,7 @@ Installs the `crew` binary. `@clipboard-health/clearance` is pulled in transitiv
 
    `crew` discovers the config via cosmiconfig project-walk, so dropping it at the root of any repo you run `crew` from works too. Any of `crew.config.{ts,mjs,js,json}`, `.crewrc{,.json,.ts}`, `.config/crew.config.{ts,json}`, or `.config/crewrc{,.json}` are recognized.
 
-   Set `linear.projects[].projectSlug` (paste the trailing slug of your Linear project URL, e.g. `ai-strategy-5152195762f3`), `workspace.projectDir`, and `workspace.knownRepositories`. Defaults cover everything else. To watch multiple projects from one `crew` instance, add more entries to `linear.projects`; they all share the same `orchestrator.maximumInProgress` budget.
+   Set `workspace.projectDir` and `workspace.knownRepositories`. Defaults cover everything else. There is no `linear` config block — groundcrew picks up every Linear issue assigned to your API key's viewer that carries an `agent-*` label, across every project and team you can see, governed by a single `orchestrator.maximumInProgress` budget.
 
    Then clone each repo before the first `crew run` — groundcrew creates per-ticket worktrees from these clones, it does not auto-clone:
 
@@ -164,21 +164,22 @@ Watch `${XDG_CACHE_HOME:-$HOME/.cache}/clearance/clearance.log` for `DENY` lines
 
 ## Configuration
 
-Three keys are required; everything else has a default.
+Two keys are required; everything else has a default.
 
-| Key                             | What                                                                                                      |
-| ------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `linear.projects[].projectSlug` | Trailing slug of each Linear project URL to watch (e.g. `ai-strategy-5152195762f3`). One or more entries. |
-| `workspace.projectDir`          | Parent dir for cloned repos and sibling ticket worktrees.                                                 |
-| `workspace.knownRepositories`   | Repos searched for in ticket descriptions to infer where work belongs.                                    |
+| Key                           | What                                                                   |
+| ----------------------------- | ---------------------------------------------------------------------- |
+| `workspace.projectDir`        | Parent dir for cloned repos and sibling ticket worktrees.              |
+| `workspace.knownRepositories` | Repos searched for in ticket descriptions to infer where work belongs. |
+
+There is **no** `linear` config block. Groundcrew's built-in Linear adapter picks up every Linear issue assigned to your API key's viewer that carries an `agent-*` label — across every project and team you can see. State classification is driven by Linear's workflow `state.type` (`unstarted` → todo, `started` → in progress, `completed`/`canceled` → terminal), so renamed status columns Just Work without any per-team configuration.
 
 `crew` resolves config as: `GROUNDCREW_CONFIG` if set → project-walk from cwd (cosmiconfig: `crew.config.{ts,mjs,js,json}`, `.crewrc{,.json,.ts}`, `.config/crew.config.{ts,json}`, `.config/crewrc{,.json}`) → `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/crew.config.ts` (also accepts legacy `config.ts` for one release). The branch prefix (`<prefix>-<TICKET>`) is derived from `os.userInfo().username` — not configurable.
 
-Agent selection uses Linear labels: `agent-claude`, `agent-codex`, `agent-<name>`. `crew run` without `--ticket` only fetches tickets carrying an `agent-*` label — the GraphQL query filters server-side, so unlabeled tickets are never returned by Linear and do not appear on the board. Use `crew run --ticket <TICKET>` to provision an unlabeled ticket on demand (falls back to `models.default`). `agent-any` routes to the model with the most available session capacity. Todo tickets blocked by non-terminal blockers are skipped until their blockers reach a terminal status.
+Agent selection uses Linear labels: `agent-claude`, `agent-codex`, `agent-<name>`. `crew run` without `--ticket` only fetches tickets carrying an `agent-*` label AND assigned to the API key's viewer — the GraphQL query filters server-side, so unlabeled or unassigned tickets are never returned by Linear and do not appear on the board. Use `crew run --ticket <TICKET>` to provision an unlabeled ticket on demand (falls back to `models.default`). `agent-any` routes to the model with the most available session capacity. Todo tickets blocked by non-terminal blockers are skipped until their blockers reach a terminal status.
 
 ### Pluggable ticket sources
 
-`sources` declares extra ticket-system adapters. The current release verifies configured extra sources during `crew run` startup; the dispatch loop still reads Linear through `linear.projects` until the consumer refactor lands. This lets you validate shell/Jira/local-plan integrations without changing existing Linear behavior.
+`sources` declares extra ticket-system adapters. The current release verifies configured extra sources during `crew run` startup; the dispatch loop still reads Linear directly through the built-in Linear adapter until the canonical consumer refactor lands. This lets you validate shell/Jira/local-plan integrations without changing existing Linear behavior.
 
 The built-in `shell` adapter runs command templates and reads JSON from stdout:
 
@@ -247,18 +248,12 @@ This keeps package defaults portable while letting your private config reference
 
 | Key                                     | Default             | What it does                                                                                                                                                                                                                                                                                                                                                            |
 | --------------------------------------- | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `linear.projects`                       | **required**        | Non-empty array of Linear projects to watch. One `crew` instance dispatches across every entry under a shared `maximumInProgress` budget.                                                                                                                                                                                                                               |
-| `linear.projects[].projectSlug`         | **required**        | Linear project URL slug (e.g. `ai-strategy-5152195762f3`). The trailing 12-char hex `slugId` is what's matched against Linear's API; the leading name keeps `crew.config.ts` self-documenting and the lookup survives project renames.                                                                                                                                  |
-| `linear.projects[].statuses.todo`       | `"Todo"`            | Status name picked up for new work in this project. Per-project so multi-team setups with divergent state names can coexist.                                                                                                                                                                                                                                            |
-| `linear.projects[].statuses.inProgress` | `"In Progress"`     | Status set after a workspace is provisioned; counts toward the shared `maximumInProgress`.                                                                                                                                                                                                                                                                              |
-| `linear.projects[].statuses.done`       | `"Done"`            | Status that triggers worktree cleanup for this project.                                                                                                                                                                                                                                                                                                                 |
-| `linear.projects[].statuses.terminal`   | `["Done"]`          | Additional status names treated as terminal for cleanup and blocker checks. The project's `done` status is always included.                                                                                                                                                                                                                                             |
-| `sources`                               | `[]`                | Additional pluggable ticket sources. Extra sources are verified at startup; Linear remains the dispatch read path until the consumer refactor. Built-in kinds: `shell`, `linear`.                                                                                                                                                                                       |
+| `sources`                               | `[]`                | Additional pluggable ticket sources. Extra sources are verified at startup; the built-in Linear adapter remains the dispatch read path until the canonical consumer refactor. Built-in kinds: `shell`, `linear`.                                                                                                                                                        |
 | `git.remote`                            | `"origin"`          | Remote used for `fetch` and as the worktree base ref.                                                                                                                                                                                                                                                                                                                   |
 | `git.defaultBranch`                     | `"main"`            | Branch fetched from `git.remote` and used as the worktree base.                                                                                                                                                                                                                                                                                                         |
 | `workspace.projectDir`                  | **required**        | Parent dir for cloned repos and sibling ticket worktrees.                                                                                                                                                                                                                                                                                                               |
 | `workspace.knownRepositories`           | **required**        | Repos searched for in ticket descriptions to infer where work belongs. A ticket labeled for groundcrew (`agent-*`) fails fast when no known repo appears; unlabeled tickets are ignored.                                                                                                                                                                                |
-| `orchestrator.maximumInProgress`        | `4`                 | Cap on in-progress tickets at once, shared across every project in `linear.projects`.                                                                                                                                                                                                                                                                                   |
+| `orchestrator.maximumInProgress`        | `4`                 | Cap on in-progress tickets at once for this `crew` instance.                                                                                                                                                                                                                                                                                                            |
 | `orchestrator.pollIntervalMilliseconds` | `120_000`           | Poll interval in `--watch` mode.                                                                                                                                                                                                                                                                                                                                        |
 | `orchestrator.sessionLimitPercentage`   | `85`                | Number in `(0, 100]`. A model whose codexbar session window exceeds this percentage is skipped that tick.                                                                                                                                                                                                                                                               |
 | `models.default`                        | `"claude"`          | Tiebreak for `agent-any` resolution and fallback for explicit but unknown `agent-*` labels. Also used by `crew run --ticket <TICKET>` for unlabeled tickets. `crew run` without `--ticket` ignores unlabeled tickets and does not apply this default. Must exist in `models.definitions`.                                                                               |
@@ -494,9 +489,9 @@ When a wrapped agent command fails (e.g. `safehouse-clearance` not found, `npm i
 </details>
 
 <details>
-<summary>Status names matter</summary>
+<summary>Status names don't matter</summary>
 
-If your team uses `Started` instead of `In Progress`, set `linear.projects[].statuses.inProgress = "Started"` on that project's entry. Status overrides are per-project so divergent team workflows coexist.
+Groundcrew classifies tickets by Linear's workflow `state.type` (`unstarted`, `started`, `completed`, `canceled`), not by status name. Teams that rename "Todo" to "To Do" or "Done" to "Shipped" need no configuration — the orchestrator still classifies correctly.
 
 </details>
 
@@ -510,14 +505,14 @@ Parent issues with children are ignored — sub-issues are the work items.
 <details>
 <summary>Tickets stay in-progress until something else moves them</summary>
 
-Groundcrew sets a ticket to `inProgress` when it provisions a workspace and never advances it. The next transition (typically "in review" when a PR opens) is left to your Linear automation rules.
+Groundcrew sets a ticket to `Started` (the first workflow state with `type === "started"` on that team) when it provisions a workspace and never advances it. The next transition (typically "In Review" when a PR opens) is left to your Linear automation rules.
 
 </details>
 
 <details>
-<summary>Cross-team projects need a consistent `inProgress` name per project</summary>
+<summary>Cross-team boards work out of the box</summary>
 
-Cross-team projects work — the orchestrator caches the in-progress state ID per `(team, statusName)` pair — but every team in a given project must use the same status name for that project's `statuses.inProgress`. If you watch two projects that share a Linear team but configure different `inProgress` names, each project's lookup is independent.
+Groundcrew picks up tickets across every team your API key's viewer can see. The "mark in progress" writeback looks up each ticket's own team workflow and uses that team's `started` state, so teams with different state names coexist without any per-team configuration.
 
 </details>
 

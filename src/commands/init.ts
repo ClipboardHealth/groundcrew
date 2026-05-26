@@ -68,10 +68,9 @@ export async function initConfigCli(argv: string[]): Promise<void> {
     writeOutput("");
     writeOutput("Next steps:");
     writeOutput(`  - Edit ${result.destination}`);
-    writeOutput(
-      "  - Set linear.projects[].projectSlug, workspace.projectDir, workspace.knownRepositories",
-    );
+    writeOutput("  - Set workspace.projectDir, workspace.knownRepositories");
     writeOutput("  - Export GROUNDCREW_LINEAR_API_KEY (or LINEAR_API_KEY)");
+    writeOutput("  - Assign Linear tickets to yourself and add an agent-* label to opt them in");
     writeOutput("  - Verify with `crew doctor`");
   }
 }

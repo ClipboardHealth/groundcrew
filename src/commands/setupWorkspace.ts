@@ -311,10 +311,9 @@ export async function setupWorkspaceCli(
     model: resolved.model,
     details: { title: resolved.title, description: resolved.description },
   });
-  await createLinearIssueStatusUpdater({ config, client }).markInProgress({
+  await createLinearIssueStatusUpdater({ client }).markInProgress({
     id: ticket.toLowerCase(),
     uuid: resolved.uuid,
     teamId: resolved.teamId,
-    projectSlugId: resolved.projectSlugId,
   });
 }

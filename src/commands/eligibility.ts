@@ -102,10 +102,7 @@ function blockerSummary(blocker: Blocker): string {
   return `${blocker.id}:${blocker.status ?? "missing"}`;
 }
 
-function blockerVerdictFor(
-  issue: GroundcrewIssue,
-  config: ResolvedConfig,
-): SkipVerdict | undefined {
+function blockerVerdictFor(issue: GroundcrewIssue): SkipVerdict | undefined {
   if (issue.hasMoreBlockers) {
     const blockers = issue.blockers.map(blockerSummary);
     return {
@@ -117,9 +114,7 @@ function blockerVerdictFor(
     };
   }
 
-  const unresolved = issue.blockers.filter(
-    (blocker) => !isTerminalStatusForBlocker(blocker, config),
-  );
+  const unresolved = issue.blockers.filter((blocker) => !isTerminalStatusForBlocker(blocker));
   if (unresolved.length === 0) {
     return undefined;
   }
@@ -261,14 +256,11 @@ function classifyRecovery(
  * workspace adapter, so a board where every Todo is blocked short-circuits
  * without paying for either.
  */
-export function classifyBlockers(
-  config: ResolvedConfig,
-  todo: readonly GroundcrewIssue[],
-): BlockerClassification {
+export function classifyBlockers(todo: readonly GroundcrewIssue[]): BlockerClassification {
   const unblocked: GroundcrewIssue[] = [];
   const skips: SkipVerdict[] = [];
   for (const issue of todo) {
-    const verdict = blockerVerdictFor(issue, config);
+    const verdict = blockerVerdictFor(issue);
     if (verdict === undefined) {
       unblocked.push(issue);
     } else {

@@ -26,16 +26,6 @@ const removeRunStateMock = vi.mocked(removeRunState);
 
 function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
   return {
-    linear: {
-      projects: [
-        {
-          projectSlug: "ai-strategy-aaaaaaaaaaaa",
-          slugId: "aaaaaaaaaaaa",
-          statuses: { todo: "Todo", inProgress: "In Progress", done: "Done", terminal: ["Done"] },
-        },
-      ],
-      ...overrides.linear,
-    },
     sources: [],
     git: { remote: "origin", defaultBranch: "main", ...overrides.git },
     workspace: {
@@ -69,12 +59,12 @@ function doneIssue(id: string, overrides: Partial<Issue> = {}): Issue {
     title: "Title",
     status: "Done",
     statusId: "state-done",
+    stateType: "completed",
     assignee: "Alice",
     updatedAt: "2025-01-01T00:00:00.000Z",
     repository: "repo-a",
     model: "claude",
     teamId: "team-1",
-    projectSlugId: "aaaaaaaaaaaa",
     blockers: [],
     hasMoreBlockers: false,
     ...overrides,
@@ -82,7 +72,12 @@ function doneIssue(id: string, overrides: Partial<Issue> = {}): Issue {
 }
 
 function todoIssue(id: string, overrides: Partial<Issue> = {}): Issue {
-  return doneIssue(id, { status: "Todo", statusId: "state-todo", ...overrides });
+  return doneIssue(id, {
+    status: "Todo",
+    statusId: "state-todo",
+    stateType: "unstarted",
+    ...overrides,
+  });
 }
 
 function boardOf(issues: Issue[]): BoardState {
@@ -128,7 +123,7 @@ describe(createCleaner, () => {
     expect(consoleLog.output()).toContain("event=cleanup outcome=cleaned ticket=team-1");
   });
 
-  it("ignores worktrees whose ticket is not in the project", async () => {
+  it("ignores worktrees whose ticket is not in the board snapshot", async () => {
     const cleaner = createCleaner({ config: makeConfig() });
 
     await cleaner.runOnce({
@@ -152,29 +147,18 @@ describe(createCleaner, () => {
     expect(teardownMock).not.toHaveBeenCalled();
   });
 
-  it("respects custom terminal statuses", async () => {
-    const cleaner = createCleaner({
-      config: makeConfig({
-        linear: {
-          projects: [
-            {
-              projectSlug: "x-aaaaaaaaaaaa",
-              slugId: "aaaaaaaaaaaa",
-              statuses: {
-                todo: "Todo",
-                inProgress: "In Progress",
-                done: "Done",
-                terminal: ["Done", "Released"],
-              },
-            },
-          ],
-        },
-      }),
-    });
+  it("treats canceled tickets as terminal regardless of status name", async () => {
+    const cleaner = createCleaner({ config: makeConfig() });
     const entry = hostEntryFor("repo-a", "team-1");
 
     await cleaner.runOnce({
-      state: boardOf([doneIssue("team-1", { status: "Released", statusId: "state-released" })]),
+      state: boardOf([
+        doneIssue("team-1", {
+          status: "Won't fix",
+          statusId: "state-wont-fix",
+          stateType: "canceled",
+        }),
+      ]),
       worktreeEntries: [entry],
       dryRun: false,
     });

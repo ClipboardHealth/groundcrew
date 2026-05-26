@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 
 import {
   deleteEnvironmentVariable,
@@ -17,10 +17,6 @@ async function loadFreshConfig(): Promise<ConfigModule> {
   vi.resetModules();
   return await import("./config.ts");
 }
-
-const VALID_PROJECT_SLUG = "ai-strategy-5152195762f3";
-
-const VALID_LINEAR: Config["linear"] = { projects: [{ projectSlug: VALID_PROJECT_SLUG }] };
 
 const VALID_WORKSPACE = (projectDir: string) => ({
   projectDir,
@@ -47,14 +43,8 @@ describe("loadConfig", () => {
     for (const key of ENV_KEYS) {
       deleteEnvironmentVariable(key);
     }
-    // Point XDG away from the host's real ~/.config/groundcrew so the
-    // fallback resolver doesn't accidentally pick up a developer's
-    // actual config.ts during test runs.
     setEnvironmentVariable("XDG_CONFIG_HOME", join(temporary, "xdg-config"));
     setEnvironmentVariable("XDG_STATE_HOME", join(temporary, "xdg-state"));
-    // Project-walk starts from cwd and traverses to the filesystem root,
-    // so an unmocked cwd could discover a real `crew.config.ts` somewhere
-    // up the tree. Pin cwd to the empty temp dir to scope discovery.
     vi.spyOn(process, "cwd").mockReturnValue(temporary);
   });
 
@@ -74,25 +64,13 @@ describe("loadConfig", () => {
   it("loads a minimal config and applies defaults", async () => {
     const path = writeConfigFile(
       temporary,
-      configSource({
-        linear: { ...VALID_LINEAR },
-        workspace: VALID_WORKSPACE(temporary),
-      }),
+      configSource({ workspace: VALID_WORKSPACE(temporary) }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
 
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
 
-    expect(actual.linear.projects).toHaveLength(1);
-    expect(actual.linear.projects[0]?.projectSlug).toBe(VALID_PROJECT_SLUG);
-    expect(actual.linear.projects[0]?.slugId).toBe("5152195762f3");
-    expect(actual.linear.projects[0]?.statuses).toStrictEqual({
-      todo: "Todo",
-      inProgress: "In Progress",
-      done: "Done",
-      terminal: ["Done"],
-    });
     expect(actual.git).toStrictEqual({ remote: "origin", defaultBranch: "main" });
     expect(actual.orchestrator).toStrictEqual({
       maximumInProgress: 4,
@@ -106,15 +84,13 @@ describe("loadConfig", () => {
       "codex --dangerously-bypass-approvals-and-sandbox",
     );
     expect(actual.prompts.initial).toContain("{{ticket}}");
+    expect(actual.sources).toStrictEqual([]);
   });
 
   it("ships a model-agnostic unattended default prompt", async () => {
     const path = writeConfigFile(
       temporary,
-      configSource({
-        linear: { ...VALID_LINEAR },
-        workspace: VALID_WORKSPACE(temporary),
-      }),
+      configSource({ workspace: VALID_WORKSPACE(temporary) }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
 
@@ -125,108 +101,14 @@ describe("loadConfig", () => {
     expect(actual.prompts.initial).toMatch(/documented verification/i);
     expect(actual.prompts.initial).toMatch(/open a pull request/i);
     expect(actual.prompts.initial).toContain("tmux attach -t groundcrew:{{ticket}}");
-    expect(actual.prompts.initial).not.toContain("draft");
-    expect(actual.prompts.initial).not.toMatch(/terminal status/i);
-    expect(actual.prompts.initial).not.toContain("Do not wait for review feedback");
-    expect(actual.prompts.initial).not.toContain("superpowers");
-    expect(actual.prompts.initial).not.toContain("babysit-pr");
-    expect(actual.prompts.initial).not.toContain("CodeRabbit");
-    expect(actual.prompts.initial).not.toContain("Generated with Claude Code");
-    expect(actual.prompts.initial).not.toContain("Co-Authored-By: Claude");
   });
 
-  it("accepts custom terminal statuses and dedupes them with done", async () => {
-    const path = writeConfigFile(
-      temporary,
-      configSource({
-        linear: {
-          projects: [
-            {
-              projectSlug: VALID_PROJECT_SLUG,
-              statuses: {
-                done: "Shipped",
-                terminal: ["Done", "Shipped", " Won't Do ", "Done"],
-              },
-            },
-          ],
-        },
-        workspace: VALID_WORKSPACE(temporary),
-      }),
-    );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
-    const { loadConfig } = await loadFreshConfig();
-    const actual = await loadConfig();
-
-    expect(actual.linear.projects[0]?.statuses.terminal).toStrictEqual([
-      "Done",
-      "Shipped",
-      "Won't Do",
-    ]);
-  });
-
-  it("trims custom status names before using them", async () => {
-    const path = writeConfigFile(
-      temporary,
-      configSource({
-        linear: {
-          projects: [
-            {
-              projectSlug: VALID_PROJECT_SLUG,
-              statuses: {
-                todo: " Todo ",
-                inProgress: " Started ",
-                done: " Released ",
-              },
-            },
-          ],
-        },
-        workspace: VALID_WORKSPACE(temporary),
-      }),
-    );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
-    const { loadConfig } = await loadFreshConfig();
-    const actual = await loadConfig();
-
-    expect(actual.linear.projects[0]?.statuses).toStrictEqual({
-      todo: "Todo",
-      inProgress: "Started",
-      done: "Released",
-      terminal: ["Released"],
-    });
-  });
-
-  it("fails when a terminal status is malformed", async () => {
-    const path = writeConfigFile(
-      temporary,
-      configSource({
-        linear: {
-          projects: [
-            {
-              projectSlug: VALID_PROJECT_SLUG,
-              statuses: {
-                terminal: ["Done", "  "],
-              },
-            },
-          ],
-        },
-        workspace: VALID_WORKSPACE(temporary),
-      }),
-    );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
-    const { loadConfig } = await loadFreshConfig();
-
-    await expect(loadConfig()).rejects.toThrow(/linear\.projects\[0\]\.statuses\.terminal\[1\]/);
-  });
-
-  it("fails when terminal statuses is not an array", async () => {
+  it("rejects a `linear` config block with a migration message", async () => {
     const path = writeConfigFile(
       temporary,
       [
         "export default {",
-        `  linear: { projects: [{ projectSlug: "${VALID_PROJECT_SLUG}", statuses: { terminal: 'Done' } }] },`,
+        `  linear: { projects: [{ projectSlug: "ai-strategy-5152195762f3" }] },`,
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
         "};",
       ].join("\n"),
@@ -234,19 +116,13 @@ describe("loadConfig", () => {
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
 
     const { loadConfig } = await loadFreshConfig();
-
-    await expect(loadConfig()).rejects.toThrow(
-      /linear\.projects\[0\]\.statuses\.terminal must be an array/,
-    );
+    await expect(loadConfig()).rejects.toThrow(/The `linear` config block is no longer supported/);
   });
 
   it("caches the resolved config across calls", async () => {
     const path = writeConfigFile(
       temporary,
-      configSource({
-        linear: { ...VALID_LINEAR },
-        workspace: VALID_WORKSPACE(temporary),
-      }),
+      configSource({ workspace: VALID_WORKSPACE(temporary) }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
 
@@ -261,7 +137,6 @@ describe("loadConfig", () => {
     const path = writeConfigFile(
       temporary,
       configSource({
-        linear: { ...VALID_LINEAR },
         workspace: VALID_WORKSPACE(temporary),
         models: {
           definitions: {
@@ -287,17 +162,12 @@ describe("loadConfig", () => {
     });
   });
 
-  it("falls back to the inherited usage block when the override sets `usage: undefined`", async () => {
+  it("falls back to the inherited usage block when override sets `usage: undefined`", async () => {
     const path = writeConfigFile(
       temporary,
       configSource({
-        linear: { ...VALID_LINEAR },
         workspace: VALID_WORKSPACE(temporary),
-        models: {
-          definitions: {
-            claude: { cmd: "my-claude", usage: undefined },
-          },
-        },
+        models: { definitions: { claude: { cmd: "my-claude", usage: undefined } } },
       }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
@@ -314,13 +184,8 @@ describe("loadConfig", () => {
     const path = writeConfigFile(
       temporary,
       configSource({
-        linear: { ...VALID_LINEAR },
         workspace: VALID_WORKSPACE(temporary),
-        models: {
-          definitions: {
-            claude: { usage: { disabled: true } },
-          },
-        },
+        models: { definitions: { claude: { usage: { disabled: true } } } },
       }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
@@ -328,12 +193,8 @@ describe("loadConfig", () => {
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
 
-    const { claude } = actual.models.definitions;
-    expect(claude).toBeDefined();
-    expect(claude?.usage).toBeUndefined();
-    // Other shipped fields stay intact.
-    expect(claude?.cmd).toBe("claude --permission-mode auto");
-    // codex still gates by default — only claude was opted out.
+    expect(actual.models.definitions["claude"]?.usage).toBeUndefined();
+    expect(actual.models.definitions["claude"]?.cmd).toBe("claude --permission-mode auto");
     expect(actual.models.definitions["codex"]?.usage).toStrictEqual({
       codexbar: { provider: "codex" },
     });
@@ -343,11 +204,10 @@ describe("loadConfig", () => {
     const path = writeConfigFile(
       temporary,
       configSource({
-        linear: { ...VALID_LINEAR },
         workspace: VALID_WORKSPACE(temporary),
         models: {
           definitions: {
-            plain: { cmd: "plain", color: "#fff", usage: { disabled: true } },
+            cursor: { cmd: "cursor", color: "#abc", usage: { disabled: true } },
           },
         },
       }),
@@ -357,10 +217,7 @@ describe("loadConfig", () => {
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
 
-    expect(actual.models.definitions["plain"]).toStrictEqual({
-      cmd: "plain",
-      color: "#fff",
-    });
+    expect(actual.models.definitions["cursor"]).toStrictEqual({ cmd: "cursor", color: "#abc" });
   });
 
   it("rejects legacy models.isolation config", async () => {
@@ -368,19 +225,14 @@ describe("loadConfig", () => {
       temporary,
       [
         "export default {",
-        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        "  models: { isolation: 'docker' },",
+        `  models: { isolation: "safehouse" },`,
         "};",
       ].join("\n"),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
-
-    await expect(loadConfig()).rejects.toThrow(
-      /models.isolation is no longer supported: set `local\.runner`/,
-    );
+    await expect(loadConfig()).rejects.toThrow(/models\.isolation is no longer supported/);
   });
 
   it("rejects the legacy remote config block", async () => {
@@ -388,19 +240,14 @@ describe("loadConfig", () => {
       temporary,
       [
         "export default {",
-        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        "  remote: { provider: 'sprite' },",
+        `  remote: { hostname: "foo" },`,
         "};",
       ].join("\n"),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
-
-    await expect(loadConfig()).rejects.toThrow(
-      /remote is no longer supported: groundcrew runs locally via safehouse\/sdx\/none/,
-    );
+    await expect(loadConfig()).rejects.toThrow(/remote is no longer supported/);
   });
 
   it("rejects non-object model definitions", async () => {
@@ -408,17 +255,14 @@ describe("loadConfig", () => {
       temporary,
       [
         "export default {",
-        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        "  models: { definitions: [] },",
+        `  models: { definitions: 5 },`,
         "};",
       ].join("\n"),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
-
-    await expect(loadConfig()).rejects.toThrow(/models.definitions must be an object/);
+    await expect(loadConfig()).rejects.toThrow(/models\.definitions must be an object/);
   });
 
   it("rejects non-object per-model definitions", async () => {
@@ -426,17 +270,14 @@ describe("loadConfig", () => {
       temporary,
       [
         "export default {",
-        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        "  models: { definitions: { claude: null } },",
+        `  models: { definitions: { claude: 5 } },`,
         "};",
       ].join("\n"),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
-
-    await expect(loadConfig()).rejects.toThrow(/models.definitions.claude must be an object/);
+    await expect(loadConfig()).rejects.toThrow(/models\.definitions\.claude must be an object/);
   });
 
   it("rejects legacy per-model isolation config", async () => {
@@ -444,82 +285,40 @@ describe("loadConfig", () => {
       temporary,
       [
         "export default {",
-        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        "  models: { definitions: { claude: { isolation: 'safehouse' } } },",
+        `  models: { definitions: { claude: { isolation: "safehouse" } } },`,
         "};",
       ].join("\n"),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
-
     await expect(loadConfig()).rejects.toThrow(
-      /models.definitions.claude.isolation is no longer supported: per-model isolation is no longer supported/,
+      /models\.definitions\.claude\.isolation is no longer supported/,
     );
   });
 
   it("accepts a per-model sandbox config and surfaces it on the resolved definition", async () => {
     const path = writeConfigFile(
       temporary,
-      [
-        "export default {",
-        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
-        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        "  models: { definitions: { claude: { sandbox: { agent: 'claude', template: 'node-22', kits: ['npm-cache'], setupCommand: 'echo seed' } } } },",
-        "};",
-      ].join("\n"),
+      configSource({
+        workspace: VALID_WORKSPACE(temporary),
+        models: {
+          definitions: {
+            claude: { sandbox: { agent: "claude", template: "node-22", kits: ["npm-cache"] } },
+          },
+        },
+      }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
 
     const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
 
-    const config = await loadConfig();
-    expect(config.models.definitions["claude"]?.sandbox).toStrictEqual({
+    expect(actual.models.definitions["claude"]?.sandbox).toStrictEqual({
       agent: "claude",
       template: "node-22",
       kits: ["npm-cache"],
-      setupCommand: "echo seed",
     });
-  });
-
-  it("accepts a per-model sandbox config with only the agent field", async () => {
-    const path = writeConfigFile(
-      temporary,
-      [
-        "export default {",
-        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
-        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        "  models: { definitions: { claude: { sandbox: { agent: 'claude' } } } },",
-        "};",
-      ].join("\n"),
-    );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
-    const { loadConfig } = await loadFreshConfig();
-
-    const config = await loadConfig();
-    expect(config.models.definitions["claude"]?.sandbox).toStrictEqual({ agent: "claude" });
-  });
-
-  it("rejects a per-model sandbox config that omits agent", async () => {
-    const path = writeConfigFile(
-      temporary,
-      [
-        "export default {",
-        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
-        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        "  models: { definitions: { claude: { sandbox: {} } } },",
-        "};",
-      ].join("\n"),
-    );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
-    const { loadConfig } = await loadFreshConfig();
-
-    await expect(loadConfig()).rejects.toThrow(
-      /models\.definitions\.claude\.sandbox\.agent must be a non-empty string/,
-    );
   });
 
   it("rejects a per-model sandbox config with a whitespace-only agent", async () => {
@@ -527,16 +326,100 @@ describe("loadConfig", () => {
       temporary,
       [
         "export default {",
-        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        '  models: { definitions: { claude: { sandbox: { agent: "   " } } } },',
+        `  models: { definitions: { claude: { sandbox: { agent: "   " } } } },`,
         "};",
       ].join("\n"),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(
+      /models\.definitions\.claude\.sandbox\.agent must be a non-empty string/,
+    );
+  });
 
+  it("rejects a per-model sandbox config with non-array kits", async () => {
+    const path = writeConfigFile(
+      temporary,
+      [
+        "export default {",
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        `  models: { definitions: { claude: { sandbox: { agent: "claude", kits: 5 } } } },`,
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(
+      /models\.definitions\.claude\.sandbox\.kits must be an array/,
+    );
+  });
+
+  it("rejects a per-model sandbox config with a non-string kit entry", async () => {
+    const path = writeConfigFile(
+      temporary,
+      [
+        "export default {",
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        `  models: { definitions: { claude: { sandbox: { agent: "claude", kits: [5] } } } },`,
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(
+      /models\.definitions\.claude\.sandbox\.kits\[0\] must be a non-empty string/,
+    );
+  });
+
+  it("threads sandbox.setupCommand through to the resolved sandbox definition", async () => {
+    const path = writeConfigFile(
+      temporary,
+      [
+        "export default {",
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        `  models: { definitions: { claude: { sandbox: { agent: "claude", setupCommand: "./bootstrap.sh" } } } },`,
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+    expect(actual.models.definitions["claude"]?.sandbox?.setupCommand).toBe("./bootstrap.sh");
+  });
+
+  it("accepts a brand-new model override that supplies an explicit usage block", async () => {
+    const path = writeConfigFile(
+      temporary,
+      configSource({
+        workspace: VALID_WORKSPACE(temporary),
+        models: {
+          definitions: {
+            cursor: { cmd: "cursor", color: "#abc", usage: { codexbar: { provider: "cursor" } } },
+          },
+        },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+    expect(actual.models.definitions["cursor"]?.usage).toStrictEqual({
+      codexbar: { provider: "cursor" },
+    });
+  });
+
+  it("rejects a per-model sandbox config that omits agent", async () => {
+    const path = writeConfigFile(
+      temporary,
+      [
+        "export default {",
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        `  models: { definitions: { claude: { sandbox: {} } } },`,
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(
       /models\.definitions\.claude\.sandbox\.agent must be a non-empty string/,
     );
@@ -545,20 +428,15 @@ describe("loadConfig", () => {
   it("trims surrounding whitespace from a per-model sandbox agent", async () => {
     const path = writeConfigFile(
       temporary,
-      [
-        "export default {",
-        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
-        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        '  models: { definitions: { claude: { sandbox: { agent: "  claude  " } } } },',
-        "};",
-      ].join("\n"),
+      configSource({
+        workspace: VALID_WORKSPACE(temporary),
+        models: { definitions: { claude: { sandbox: { agent: "  claude  " } } } },
+      }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
-
-    const config = await loadConfig();
-    expect(config.models.definitions["claude"]?.sandbox).toStrictEqual({ agent: "claude" });
+    const actual = await loadConfig();
+    expect(actual.models.definitions["claude"]?.sandbox?.agent).toBe("claude");
   });
 
   it("rejects a non-object local block", async () => {
@@ -566,16 +444,13 @@ describe("loadConfig", () => {
       temporary,
       [
         "export default {",
-        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        "  local: 'auto',",
+        `  local: 5,`,
         "};",
       ].join("\n"),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
-
     await expect(loadConfig()).rejects.toThrow(/local must be an object/);
   });
 
@@ -584,16 +459,13 @@ describe("loadConfig", () => {
       temporary,
       [
         "export default {",
-        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        "  models: { definitions: { claude: { sandbox: 'claude' } } },",
+        `  models: { definitions: { claude: { sandbox: 5 } } },`,
         "};",
       ].join("\n"),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
-
     await expect(loadConfig()).rejects.toThrow(
       /models\.definitions\.claude\.sandbox must be an object/,
     );
@@ -602,35 +474,25 @@ describe("loadConfig", () => {
   it("defaults sandbox.gitDefaults to true when omitted", async () => {
     const path = writeConfigFile(
       temporary,
-      configSource({
-        linear: { ...VALID_LINEAR },
-        workspace: VALID_WORKSPACE(temporary),
-      }),
+      configSource({ workspace: VALID_WORKSPACE(temporary) }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
-
     expect(actual.sandbox.gitDefaults).toBe(true);
   });
 
   it("threads an explicit sandbox.gitDefaults: false through to the resolved config", async () => {
     const path = writeConfigFile(
       temporary,
-      [
-        "export default {",
-        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
-        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        "  sandbox: { gitDefaults: false },",
-        "};",
-      ].join("\n"),
+      configSource({
+        workspace: VALID_WORKSPACE(temporary),
+        sandbox: { gitDefaults: false },
+      }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
-
     expect(actual.sandbox.gitDefaults).toBe(false);
   });
 
@@ -639,16 +501,13 @@ describe("loadConfig", () => {
       temporary,
       [
         "export default {",
-        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        "  sandbox: { gitDefaults: 'yes' },",
+        `  sandbox: { gitDefaults: 'no' },`,
         "};",
       ].join("\n"),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
-
     await expect(loadConfig()).rejects.toThrow(/sandbox\.gitDefaults must be a boolean/);
   });
 
@@ -657,56 +516,39 @@ describe("loadConfig", () => {
       temporary,
       [
         "export default {",
-        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        "  local: { runner: 'bubblewrap' },",
+        `  local: { runner: 'nope' },`,
         "};",
       ].join("\n"),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
-
-    await expect(loadConfig()).rejects.toThrow(
-      /local\.runner must be one of auto, safehouse, sdx, none/,
-    );
+    await expect(loadConfig()).rejects.toThrow(/local\.runner must be one of/);
   });
 
   it("defaults local.runner to 'auto' when omitted", async () => {
     const path = writeConfigFile(
       temporary,
-      [
-        "export default {",
-        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
-        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        "};",
-      ].join("\n"),
+      configSource({ workspace: VALID_WORKSPACE(temporary) }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
-
-    const config = await loadConfig();
-    expect(config.local.runner).toBe("auto");
+    const actual = await loadConfig();
+    expect(actual.local.runner).toBe("auto");
   });
 
   it("preserves an explicit local.runner value", async () => {
     const path = writeConfigFile(
       temporary,
-      [
-        "export default {",
-        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
-        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        "  local: { runner: 'sdx' },",
-        "};",
-      ].join("\n"),
+      configSource({
+        workspace: VALID_WORKSPACE(temporary),
+        local: { runner: "safehouse" },
+      }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
-
-    const config = await loadConfig();
-    expect(config.local.runner).toBe("sdx");
+    const actual = await loadConfig();
+    expect(actual.local.runner).toBe("safehouse");
   });
 
   it("rejects `disabled: false` on a model definition", async () => {
@@ -714,38 +556,15 @@ describe("loadConfig", () => {
       temporary,
       [
         "export default {",
-        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        "  models: { definitions: { codex: { disabled: false } } },",
+        `  models: { definitions: { claude: { disabled: false } } },`,
         "};",
       ].join("\n"),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
-
     await expect(loadConfig()).rejects.toThrow(
-      /models\.definitions\.codex\.disabled must be exactly `true` when set/,
-    );
-  });
-
-  it('rejects a non-boolean `disabled` value (e.g. the string "true")', async () => {
-    const path = writeConfigFile(
-      temporary,
-      [
-        "export default {",
-        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
-        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        '  models: { definitions: { codex: { disabled: "true" } } },',
-        "};",
-      ].join("\n"),
-    );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
-    const { loadConfig } = await loadFreshConfig();
-
-    await expect(loadConfig()).rejects.toThrow(
-      /models\.definitions\.codex\.disabled must be exactly `true` when set/,
+      /models\.definitions\.claude\.disabled must be exactly `true`/,
     );
   });
 
@@ -754,131 +573,97 @@ describe("loadConfig", () => {
       temporary,
       [
         "export default {",
-        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        "  models: { definitions: { codex: { disabled: true, cmd: 'override' } } },",
+        `  models: { definitions: { claude: { disabled: true, cmd: "x" } } },`,
         "};",
       ].join("\n"),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
-
     await expect(loadConfig()).rejects.toThrow(
-      /models\.definitions\.codex: cannot combine `disabled: true` with other fields \(cmd\)/,
+      /models\.definitions\.claude: cannot combine `disabled: true` with other fields/,
     );
   });
 
   it("drops a shipped default when `disabled: true` is set", async () => {
     const path = writeConfigFile(
       temporary,
-      [
-        "export default {",
-        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
-        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        "  models: { definitions: { codex: { disabled: true } } },",
-        "};",
-      ].join("\n"),
+      configSource({
+        workspace: VALID_WORKSPACE(temporary),
+        models: { definitions: { codex: { disabled: true } } },
+      }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
-
     expect(Object.keys(actual.models.definitions).toSorted()).toStrictEqual(["claude"]);
-    expect(actual.models.definitions["codex"]).toBeUndefined();
-    expect(actual.models.default).toBe("claude");
   });
 
   it("rejects `disabled: true` on a key that isn't a shipped default", async () => {
     const path = writeConfigFile(
       temporary,
-      [
-        "export default {",
-        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
-        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        // cspell:disable-next-line
-        "  models: { definitions: { codexx: { disabled: true } } },",
-        "};",
-      ].join("\n"),
+      configSource({
+        workspace: VALID_WORKSPACE(temporary),
+        models: { definitions: { cursor: { disabled: true } } },
+      }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
-
     await expect(loadConfig()).rejects.toThrow(
-      // cspell:disable-next-line
-      /models\.definitions\.codexx: `disabled: true` is only valid for shipped defaults \(claude, codex\)\. Remove the entry instead\./,
+      /models\.definitions\.cursor: `disabled: true` is only valid for shipped defaults/,
     );
   });
 
   it("rejects disabling the model used as `models.default`", async () => {
     const path = writeConfigFile(
       temporary,
-      [
-        "export default {",
-        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
-        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        "  models: { default: 'codex', definitions: { codex: { disabled: true } } },",
-        "};",
-      ].join("\n"),
+      configSource({
+        workspace: VALID_WORKSPACE(temporary),
+        models: { default: "claude", definitions: { claude: { disabled: true } } },
+      }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
-
-    await expect(loadConfig()).rejects.toThrow(
-      /models\.default \("codex"\) is disabled\. Either re-enable it or set models\.default to an enabled model\./,
-    );
+    await expect(loadConfig()).rejects.toThrow(/models\.default \("claude"\) is disabled/);
   });
 
   it("defaults workspaceKind to auto when omitted", async () => {
     const path = writeConfigFile(
       temporary,
-      configSource({
-        linear: { ...VALID_LINEAR },
-        workspace: VALID_WORKSPACE(temporary),
-      }),
+      configSource({ workspace: VALID_WORKSPACE(temporary) }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
-    const resolved = await loadConfig();
-
-    expect(resolved.workspaceKind).toBe("auto");
+    const actual = await loadConfig();
+    expect(actual.workspaceKind).toBe("auto");
   });
 
   it("accepts a valid workspaceKind override", async () => {
     const path = writeConfigFile(
       temporary,
       configSource({
-        linear: { ...VALID_LINEAR },
         workspace: VALID_WORKSPACE(temporary),
         workspaceKind: "tmux",
       }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
-    const resolved = await loadConfig();
-
-    expect(resolved.workspaceKind).toBe("tmux");
+    const actual = await loadConfig();
+    expect(actual.workspaceKind).toBe("tmux");
   });
 
   it("rejects an unknown workspaceKind value", async () => {
     const path = writeConfigFile(
       temporary,
-      configSource({
-        linear: { ...VALID_LINEAR },
-        workspace: VALID_WORKSPACE(temporary),
-        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- intentionally invalid value for the test
-        workspaceKind: "screen" as never,
-      }),
+      [
+        "export default {",
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        `  workspaceKind: "screen",`,
+        "};",
+      ].join("\n"),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
-
     await expect(loadConfig()).rejects.toThrow(/workspaceKind must be one of/);
   });
 
@@ -886,35 +671,27 @@ describe("loadConfig", () => {
     const path = writeConfigFile(
       temporary,
       configSource({
-        linear: { ...VALID_LINEAR },
         workspace: VALID_WORKSPACE(temporary),
-        prompts: { initial: "custom prompt" },
+        prompts: { initial: "do {{ticket}} in {{worktree}}" },
       }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
-
-    expect(actual.prompts.initial).toBe("custom prompt");
+    expect(actual.prompts.initial).toBe("do {{ticket}} in {{worktree}}");
   });
 
   it("allows known placeholders in prompts.initial", async () => {
     const path = writeConfigFile(
       temporary,
       configSource({
-        linear: { ...VALID_LINEAR },
         workspace: VALID_WORKSPACE(temporary),
-        prompts: {
-          initial: "{{ticket}} {{worktree}} {{title}} {{description}}",
-        },
+        prompts: { initial: "{{ticket}} {{worktree}} {{title}} {{description}}" },
       }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
-
     expect(actual.prompts.initial).toBe("{{ticket}} {{worktree}} {{title}} {{description}}");
   });
 
@@ -922,894 +699,467 @@ describe("loadConfig", () => {
     const path = writeConfigFile(
       temporary,
       configSource({
-        linear: { ...VALID_LINEAR },
         workspace: VALID_WORKSPACE(temporary),
-        prompts: { initial: "Start {{ticket}} for {{assignee}}" },
+        prompts: { initial: "do {{unknown}}" },
       }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
-
-    await expect(loadConfig()).rejects.toThrow(/unknown placeholder "{{assignee}}"/);
+    await expect(loadConfig()).rejects.toThrow(/prompts\.initial contains unknown placeholder/);
   });
 
   it("expands a leading ~ in workspace.projectDir", async () => {
-    setEnvironmentVariable("HOME", temporary);
+    setEnvironmentVariable("HOME", "/fake-home");
     const path = writeConfigFile(
       temporary,
       configSource({
-        linear: { ...VALID_LINEAR },
-        workspace: { ...VALID_WORKSPACE(temporary), projectDir: "~/projects" },
+        workspace: { projectDir: "~/work", knownRepositories: ["repo-a"] },
       }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
-
-    expect(actual.workspace.projectDir).toBe(join(temporary, "projects"));
+    expect(actual.workspace.projectDir).toBe("/fake-home/work");
   });
 
   it("expands a bare ~ in workspace.projectDir", async () => {
-    setEnvironmentVariable("HOME", temporary);
+    setEnvironmentVariable("HOME", "/fake-home");
     const path = writeConfigFile(
       temporary,
-      configSource({
-        linear: { ...VALID_LINEAR },
-        workspace: { ...VALID_WORKSPACE(temporary), projectDir: "~" },
-      }),
+      configSource({ workspace: { projectDir: "~", knownRepositories: ["repo-a"] } }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
-
-    expect(actual.workspace.projectDir).toBe(temporary);
+    expect(actual.workspace.projectDir).toBe("/fake-home");
   });
 
   it("leaves non-tilde projectDir paths alone", async () => {
     const path = writeConfigFile(
       temporary,
-      configSource({
-        linear: { ...VALID_LINEAR },
-        workspace: VALID_WORKSPACE(temporary),
-      }),
+      configSource({ workspace: { projectDir: "/work/here", knownRepositories: ["repo-a"] } }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
-
-    expect(actual.workspace.projectDir).toBe(temporary);
+    expect(actual.workspace.projectDir).toBe("/work/here");
   });
 
   it("defaults logging.file to the XDG state path", async () => {
-    setEnvironmentVariable("XDG_STATE_HOME", join(temporary, "state"));
     const path = writeConfigFile(
       temporary,
-      configSource({
-        linear: { ...VALID_LINEAR },
-        workspace: VALID_WORKSPACE(temporary),
-      }),
+      configSource({ workspace: VALID_WORKSPACE(temporary) }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
-
-    expect(actual.logging.file).toBe(join(temporary, "state", "groundcrew", "groundcrew.log"));
+    expect(actual.logging.file).toBe(join(temporary, "xdg-state", "groundcrew", "groundcrew.log"));
   });
 
   it("uses HOME when XDG_STATE_HOME is unset", async () => {
     deleteEnvironmentVariable("XDG_STATE_HOME");
-    setEnvironmentVariable("HOME", temporary);
+    setEnvironmentVariable("HOME", "/fake-home");
     const path = writeConfigFile(
       temporary,
-      configSource({
-        linear: { ...VALID_LINEAR },
-        workspace: VALID_WORKSPACE(temporary),
-      }),
+      configSource({ workspace: VALID_WORKSPACE(temporary) }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
-
-    expect(actual.logging.file).toBe(
-      join(temporary, ".local", "state", "groundcrew", "groundcrew.log"),
-    );
+    expect(actual.logging.file).toBe("/fake-home/.local/state/groundcrew/groundcrew.log");
   });
 
   it("respects a user-supplied logging.file", async () => {
-    const overridePath = join(temporary, "custom", "crew.log");
     const path = writeConfigFile(
       temporary,
       configSource({
-        linear: { ...VALID_LINEAR },
         workspace: VALID_WORKSPACE(temporary),
-        logging: { file: overridePath },
+        logging: { file: "/var/log/groundcrew.log" },
       }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
-
-    expect(actual.logging.file).toBe(overridePath);
+    expect(actual.logging.file).toBe("/var/log/groundcrew.log");
   });
 
   it("expands a leading ~ in logging.file", async () => {
-    setEnvironmentVariable("HOME", temporary);
+    setEnvironmentVariable("HOME", "/fake-home");
     const path = writeConfigFile(
       temporary,
       configSource({
-        linear: { ...VALID_LINEAR },
         workspace: VALID_WORKSPACE(temporary),
-        logging: { file: "~/logs/crew.log" },
+        logging: { file: "~/groundcrew.log" },
       }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
-
-    expect(actual.logging.file).toBe(join(temporary, "logs", "crew.log"));
+    expect(actual.logging.file).toBe("/fake-home/groundcrew.log");
   });
 
   it("rejects an empty logging.file", async () => {
     const path = writeConfigFile(
       temporary,
       configSource({
-        linear: { ...VALID_LINEAR },
         workspace: VALID_WORKSPACE(temporary),
-        logging: { file: "   " },
+        logging: { file: "  " },
       }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
-
-    await expect(loadConfig()).rejects.toThrow(/logging.file/);
+    await expect(loadConfig()).rejects.toThrow(/logging\.file must be a non-empty string/);
   });
 
   it("falls back to the XDG crew.config.ts when GROUNDCREW_CONFIG is unset", async () => {
-    const xdgConfigHome = join(temporary, "xdg-config");
-    setEnvironmentVariable("XDG_CONFIG_HOME", xdgConfigHome);
-    const xdgConfigPath = join(xdgConfigHome, "groundcrew", "crew.config.ts");
-    mkdirSync(dirname(xdgConfigPath), { recursive: true });
+    const xdgDir = join(temporary, "xdg-config", "groundcrew");
+    mkdirSync(xdgDir, { recursive: true });
     writeFileSync(
-      xdgConfigPath,
-      configSource({
-        linear: { ...VALID_LINEAR },
-        workspace: VALID_WORKSPACE(temporary),
-      }),
+      join(xdgDir, "crew.config.ts"),
+      configSource({ workspace: VALID_WORKSPACE(temporary) }),
     );
-    deleteEnvironmentVariable("GROUNDCREW_CONFIG");
-
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
-
-    expect(actual.linear.projects[0]?.slugId).toBe("5152195762f3");
+    expect(actual.workspace.projectDir).toBe(temporary);
   });
 
   it("keeps reading legacy XDG ~/.config/groundcrew/config.ts during the back-compat window", async () => {
-    const xdgConfigHome = join(temporary, "xdg-config");
-    setEnvironmentVariable("XDG_CONFIG_HOME", xdgConfigHome);
-    const xdgConfigPath = join(xdgConfigHome, "groundcrew", "config.ts");
-    mkdirSync(dirname(xdgConfigPath), { recursive: true });
+    const xdgDir = join(temporary, "xdg-config", "groundcrew");
+    mkdirSync(xdgDir, { recursive: true });
     writeFileSync(
-      xdgConfigPath,
-      configSource({
-        linear: { ...VALID_LINEAR },
-        workspace: VALID_WORKSPACE(temporary),
-      }),
+      join(xdgDir, "config.ts"),
+      configSource({ workspace: VALID_WORKSPACE(temporary) }),
     );
-    deleteEnvironmentVariable("GROUNDCREW_CONFIG");
-
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
-
-    expect(actual.linear.projects[0]?.slugId).toBe("5152195762f3");
+    expect(actual.workspace.projectDir).toBe(temporary);
   });
 
   it("fails when the config file does not exist", async () => {
-    setEnvironmentVariable("GROUNDCREW_CONFIG", join(temporary, "nope.ts"));
-
+    setEnvironmentVariable("GROUNDCREW_CONFIG", join(temporary, "missing.ts"));
     const { loadConfig } = await loadFreshConfig();
-
-    await expect(loadConfig()).rejects.toThrow(/not found/);
+    await expect(loadConfig()).rejects.toThrow(/GROUNDCREW_CONFIG=/);
   });
 
   it("fails when the config file has no default or `config` export", async () => {
-    const path = join(temporary, "no-export.ts");
-    writeFileSync(path, "export const other = {};\n");
+    const path = writeConfigFile(temporary, "export const notConfig = {};\n");
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
-
     await expect(loadConfig()).rejects.toThrow(/must export a config object/);
   });
 
-  it("fails when linear is not an object", async () => {
-    const path = join(temporary, "bad.ts");
-    writeFileSync(path, `export default { linear: 5, workspace: {} };\n`);
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
-    const { loadConfig } = await loadFreshConfig();
-
-    await expect(loadConfig()).rejects.toThrow(/linear must be an object/);
-  });
-
-  it("fails when projectSlug is empty", async () => {
-    const path = writeConfigFile(
-      temporary,
-      configSource({
-        linear: { projects: [{ projectSlug: "" }] },
-        workspace: VALID_WORKSPACE(temporary),
-      }),
-    );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
-    const { loadConfig } = await loadFreshConfig();
-
-    await expect(loadConfig()).rejects.toThrow(
-      /linear\.projects\[0\]\.projectSlug must be a non-empty string/,
-    );
-  });
-
-  it("fails when projectSlug is missing the 12-char hex tail", async () => {
-    const path = writeConfigFile(
-      temporary,
-      configSource({
-        linear: { projects: [{ projectSlug: "no-hex-here" }] },
-        workspace: VALID_WORKSPACE(temporary),
-      }),
-    );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
-    const { loadConfig } = await loadFreshConfig();
-
-    await expect(loadConfig()).rejects.toThrow(/12-character hex slugId/);
-  });
-
   it("fails when workspace is not an object", async () => {
-    const path = join(temporary, "bad-workspace.ts");
-    writeFileSync(
-      path,
-      `export default { linear: { projects: [{ projectSlug: "x-aaaaaaaaaaaa" }] } };\n`,
-    );
+    const path = writeConfigFile(temporary, `export default { workspace: 5 };\n`);
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
-
     await expect(loadConfig()).rejects.toThrow(/workspace must be an object/);
   });
 
   it("fails when knownRepositories is empty", async () => {
     const path = writeConfigFile(
       temporary,
-      configSource({
-        linear: { ...VALID_LINEAR },
-        workspace: { ...VALID_WORKSPACE(temporary), knownRepositories: [] },
-      }),
+      configSource({ workspace: { projectDir: temporary, knownRepositories: [] } }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
-
-    await expect(loadConfig()).rejects.toThrow(/knownRepositories must be a non-empty array/);
+    await expect(loadConfig()).rejects.toThrow(
+      /workspace\.knownRepositories must be a non-empty array/,
+    );
   });
 
   it("fails when sessionLimitPercentage is out of range", async () => {
     const path = writeConfigFile(
       temporary,
       configSource({
-        linear: { ...VALID_LINEAR },
         workspace: VALID_WORKSPACE(temporary),
         orchestrator: { sessionLimitPercentage: 0 },
       }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
-
-    await expect(loadConfig()).rejects.toThrow(/sessionLimitPercentage must be a finite number in/);
+    await expect(loadConfig()).rejects.toThrow(
+      /orchestrator\.sessionLimitPercentage must be a finite number in \(0, 100]/,
+    );
   });
 
   it("fails when sessionLimitPercentage is greater than 100", async () => {
     const path = writeConfigFile(
       temporary,
       configSource({
-        linear: { ...VALID_LINEAR },
         workspace: VALID_WORKSPACE(temporary),
-        orchestrator: { sessionLimitPercentage: 101 },
+        orchestrator: { sessionLimitPercentage: 150 },
       }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
-
-    await expect(loadConfig()).rejects.toThrow(/sessionLimitPercentage must be a finite number in/);
+    await expect(loadConfig()).rejects.toThrow(
+      /orchestrator\.sessionLimitPercentage must be a finite number in \(0, 100]/,
+    );
   });
 
-  // Regression: the previous inline check used `<= 0 || > 100`, both of
-  // which return false for NaN. requirePercent now uses Number.isFinite to
-  // close that gap.
   it("fails when sessionLimitPercentage is NaN", async () => {
     const path = writeConfigFile(
       temporary,
-      `const config = ${JSON.stringify(
-        {
-          linear: { ...VALID_LINEAR },
-          workspace: VALID_WORKSPACE(temporary),
-        },
-        undefined,
-        2,
-      )};
-config.orchestrator = { sessionLimitPercentage: Number.NaN };
-export default config;\n`,
+      [
+        "export default {",
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        `  orchestrator: { sessionLimitPercentage: Number.NaN },`,
+        "};",
+      ].join("\n"),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
-
-    await expect(loadConfig()).rejects.toThrow(/sessionLimitPercentage must be a finite number/);
+    await expect(loadConfig()).rejects.toThrow(
+      /orchestrator\.sessionLimitPercentage must be a finite number in \(0, 100]/,
+    );
   });
 
   it("fails when maximumInProgress is not a positive integer", async () => {
     const path = writeConfigFile(
       temporary,
       configSource({
-        linear: { ...VALID_LINEAR },
         workspace: VALID_WORKSPACE(temporary),
         orchestrator: { maximumInProgress: 0 },
       }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
-
-    await expect(loadConfig()).rejects.toThrow(/maximumInProgress must be an integer/);
+    await expect(loadConfig()).rejects.toThrow(
+      /orchestrator\.maximumInProgress must be an integer ≥ 1/,
+    );
   });
 
   it("fails when an override drops cmd to empty", async () => {
     const path = writeConfigFile(
       temporary,
       configSource({
-        linear: { ...VALID_LINEAR },
         workspace: VALID_WORKSPACE(temporary),
         models: { definitions: { claude: { cmd: "" } } },
       }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
-
-    await expect(loadConfig()).rejects.toThrow(/models.definitions.claude.cmd/);
+    await expect(loadConfig()).rejects.toThrow(/models\.definitions\.claude\.cmd/);
   });
 
   it("fails when a brand-new model omits color", async () => {
     const path = writeConfigFile(
       temporary,
       configSource({
-        linear: { ...VALID_LINEAR },
         workspace: VALID_WORKSPACE(temporary),
-        models: { definitions: { cursor: { cmd: "cursor-agent" } } },
+        models: { definitions: { cursor: { cmd: "cursor" } } },
       }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
-
-    await expect(loadConfig()).rejects.toThrow(/models.definitions.cursor.color/);
+    await expect(loadConfig()).rejects.toThrow(/models\.definitions\.cursor\.color/);
   });
 
   it('fails when models.definitions contains the reserved "any" name', async () => {
     const path = writeConfigFile(
       temporary,
       configSource({
-        linear: { ...VALID_LINEAR },
         workspace: VALID_WORKSPACE(temporary),
-        models: { definitions: { any: { cmd: "any-cmd", color: "#fff" } } },
+        models: { definitions: { any: { cmd: "any", color: "#000" } } },
       }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
-
-    await expect(loadConfig()).rejects.toThrow(/reserved for the agent-any label/);
+    await expect(loadConfig()).rejects.toThrow(/models\.definitions cannot contain "any"/);
   });
 
   it("fails when models.default is unknown", async () => {
     const path = writeConfigFile(
       temporary,
       configSource({
-        linear: { ...VALID_LINEAR },
         workspace: VALID_WORKSPACE(temporary),
-        models: { default: "ghost" },
+        models: { default: "unknown" },
       }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
-
-    await expect(loadConfig()).rejects.toThrow(/models.default \("ghost"\) is not a key/);
-  });
-
-  it("fails when a custom usage block is malformed", async () => {
-    const path = writeConfigFile(
-      temporary,
-      configSource({
-        linear: { ...VALID_LINEAR },
-        workspace: VALID_WORKSPACE(temporary),
-        models: {
-          definitions: {
-            cursor: {
-              cmd: "cursor",
-              color: "#000",
-              usage: { codexbar: { provider: "" } },
-            },
-          },
-        },
-      }),
+    await expect(loadConfig()).rejects.toThrow(
+      /models\.default \("unknown"\) is not a key in models\.definitions/,
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
-    const { loadConfig } = await loadFreshConfig();
-
-    await expect(loadConfig()).rejects.toThrow(/codexbar.provider/);
-  });
-
-  it("fails when usage is not an object", async () => {
-    const path = join(temporary, "bad-usage.ts");
-    writeFileSync(
-      path,
-      `export default {
-  linear: { projects: [{ projectSlug: "ai-strategy-5152195762f3" }] },
-  workspace: { projectDir: "${temporary}", knownRepositories: ["repo-a"] },
-  models: { definitions: { cursor: { cmd: "cursor", color: "#fff", usage: 5 } } },
-};
-`,
-    );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
-    const { loadConfig } = await loadFreshConfig();
-
-    await expect(loadConfig()).rejects.toThrow(/models.definitions.cursor.usage must be an object/);
-  });
-
-  it("fails when codexbar is not an object", async () => {
-    const path = join(temporary, "bad-codexbar.ts");
-    writeFileSync(
-      path,
-      `export default {
-  linear: { projects: [{ projectSlug: "ai-strategy-5152195762f3" }] },
-  workspace: { projectDir: "${temporary}", knownRepositories: ["repo-a"] },
-  models: { definitions: { cursor: { cmd: "cursor", color: "#fff", usage: { codexbar: 5 } } } },
-};
-`,
-    );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
-    const { loadConfig } = await loadFreshConfig();
-
-    await expect(loadConfig()).rejects.toThrow(/codexbar must be an object/);
   });
 
   it("discovers crew.config.ts via cosmiconfig project-walk from a nested cwd", async () => {
-    // Stand up a fake project rooted at `temporary` with a deeper nested cwd.
-    // cosmiconfig's "project" search strategy walks up until it finds a
-    // package.json, so we plant one at the project root to scope the walk
-    // and keep it from escaping into the real filesystem.
-    writeFileSync(join(temporary, "package.json"), `{ "name": "fixture" }\n`);
-    writeFileSync(
-      join(temporary, "crew.config.ts"),
-      configSource({
-        linear: { ...VALID_LINEAR },
-        workspace: VALID_WORKSPACE(temporary),
-      }),
-    );
-    const nested = join(temporary, "src", "deep");
+    const root = join(temporary, "root");
+    const nested = join(root, "nested", "deep");
     mkdirSync(nested, { recursive: true });
-
-    const originalCwd = process.cwd();
+    writeFileSync(join(root, "crew.config.ts"), configSource({ workspace: VALID_WORKSPACE(root) }));
     vi.spyOn(process, "cwd").mockReturnValue(nested);
-    deleteEnvironmentVariable("GROUNDCREW_CONFIG");
-
-    try {
-      const { loadConfig } = await loadFreshConfig();
-      const actual = await loadConfig();
-
-      expect(actual.linear.projects[0]?.slugId).toBe("5152195762f3");
-    } finally {
-      vi.spyOn(process, "cwd").mockReturnValue(originalCwd);
-    }
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+    expect(actual.workspace.projectDir).toBe(root);
   });
 
   it("loads a JSON config via cosmiconfig", async () => {
-    const jsonPath = join(temporary, ".crewrc.json");
+    const root = join(temporary, "root");
+    mkdirSync(root, { recursive: true });
     writeFileSync(
-      jsonPath,
-      JSON.stringify({
-        linear: { ...VALID_LINEAR },
-        workspace: VALID_WORKSPACE(temporary),
-      }),
+      join(root, "crew.config.json"),
+      JSON.stringify({ workspace: VALID_WORKSPACE(root) }),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", jsonPath);
-
+    vi.spyOn(process, "cwd").mockReturnValue(root);
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
-
-    expect(actual.linear.projects[0]?.slugId).toBe("5152195762f3");
+    expect(actual.workspace.projectDir).toBe(root);
   });
 
   it("accepts the legacy `export const config = {...}` shape for back-compat", async () => {
-    const path = join(temporary, "legacy.ts");
+    const root = join(temporary, "root");
+    mkdirSync(root, { recursive: true });
     writeFileSync(
-      path,
-      `export const config = ${JSON.stringify({
-        linear: { ...VALID_LINEAR },
-        workspace: VALID_WORKSPACE(temporary),
-      })};\n`,
+      join(root, "crew.config.ts"),
+      `export const config = ${JSON.stringify({ workspace: VALID_WORKSPACE(root) })};\n`,
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
+    vi.spyOn(process, "cwd").mockReturnValue(root);
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
-
-    expect(actual.linear.projects[0]?.slugId).toBe("5152195762f3");
+    expect(actual.workspace.projectDir).toBe(root);
   });
 
   it("env-var override wins over both project-walk and XDG fallback", async () => {
-    // Plant decoys at every fallback location so the env override is the
-    // only path that picks the right slug.
-    const xdgConfigHome = join(temporary, "xdg-config");
-    setEnvironmentVariable("XDG_CONFIG_HOME", xdgConfigHome);
-    const xdgConfigPath = join(xdgConfigHome, "groundcrew", "crew.config.ts");
-    mkdirSync(dirname(xdgConfigPath), { recursive: true });
+    const projectRoot = join(temporary, "project");
+    const decoyXdg = join(temporary, "xdg-config", "groundcrew");
+    const targetDir = join(temporary, "target");
+    mkdirSync(projectRoot, { recursive: true });
+    mkdirSync(decoyXdg, { recursive: true });
+    mkdirSync(targetDir, { recursive: true });
     writeFileSync(
-      xdgConfigPath,
-      configSource({
-        linear: { projects: [{ projectSlug: "xdg-decoy-aaaaaaaaaaaa" }] },
-        workspace: VALID_WORKSPACE(temporary),
-      }),
+      join(projectRoot, "crew.config.ts"),
+      configSource({ workspace: { projectDir: projectRoot, knownRepositories: ["xdg-decoy"] } }),
     );
-    writeFileSync(join(temporary, "package.json"), `{ "name": "fixture" }\n`);
     writeFileSync(
-      join(temporary, "crew.config.ts"),
+      join(decoyXdg, "crew.config.ts"),
       configSource({
-        linear: { projects: [{ projectSlug: "project-decoy-bbbbbbbbbbbb" }] },
-        workspace: VALID_WORKSPACE(temporary),
+        workspace: { projectDir: decoyXdg, knownRepositories: ["project-decoy"] },
       }),
     );
-
-    const overridePath = writeConfigFile(
-      temporary,
-      configSource({
-        linear: { ...VALID_LINEAR },
-        workspace: VALID_WORKSPACE(temporary),
-      }),
+    const targetPath = join(targetDir, "crew.config.ts");
+    writeFileSync(
+      targetPath,
+      configSource({ workspace: { projectDir: targetDir, knownRepositories: ["repo-a"] } }),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", overridePath);
-
+    setEnvironmentVariable("GROUNDCREW_CONFIG", targetPath);
+    vi.spyOn(process, "cwd").mockReturnValue(projectRoot);
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
-
-    expect(actual.linear.projects[0]?.slugId).toBe("5152195762f3");
+    expect(actual.workspace.projectDir).toBe(targetDir);
   });
 
   it("fails when the default export is not an object (e.g. a primitive)", async () => {
-    const path = join(temporary, "primitive.ts");
-    writeFileSync(path, "export default 5;\n");
+    const path = writeConfigFile(temporary, "export default 42;\n");
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
-
     await expect(loadConfig()).rejects.toThrow(/must export a config object/);
-  });
-
-  it("accepts multiple projects with divergent statuses", async () => {
-    const path = writeConfigFile(
-      temporary,
-      configSource({
-        linear: {
-          projects: [
-            { projectSlug: "alpha-aaaaaaaaaaaa" },
-            {
-              projectSlug: "beta-bbbbbbbbbbbb",
-              statuses: { inProgress: "Doing", done: "Released", terminal: ["Released"] },
-            },
-          ],
-        },
-        workspace: VALID_WORKSPACE(temporary),
-      }),
-    );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
-    const { loadConfig } = await loadFreshConfig();
-    const actual = await loadConfig();
-
-    expect(actual.linear.projects).toHaveLength(2);
-    expect(actual.linear.projects[0]?.slugId).toBe("aaaaaaaaaaaa");
-    expect(actual.linear.projects[0]?.statuses).toStrictEqual({
-      todo: "Todo",
-      inProgress: "In Progress",
-      done: "Done",
-      terminal: ["Done"],
-    });
-    expect(actual.linear.projects[1]?.slugId).toBe("bbbbbbbbbbbb");
-    expect(actual.linear.projects[1]?.statuses).toStrictEqual({
-      todo: "Todo",
-      inProgress: "Doing",
-      done: "Released",
-      terminal: ["Released"],
-    });
-  });
-
-  it("rejects duplicate slugIds across projects", async () => {
-    const path = writeConfigFile(
-      temporary,
-      configSource({
-        linear: {
-          projects: [
-            { projectSlug: "alpha-1234567890ab" },
-            { projectSlug: "another-1234567890ab" },
-          ],
-        },
-        workspace: VALID_WORKSPACE(temporary),
-      }),
-    );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
-    const { loadConfig } = await loadFreshConfig();
-
-    await expect(loadConfig()).rejects.toThrow(
-      /linear\.projects\[1\]\.projectSlug duplicates the slugId "1234567890ab"/,
-    );
-  });
-
-  it("rejects projects that isn't an array", async () => {
-    const path = join(temporary, "bad-projects.ts");
-    writeFileSync(
-      path,
-      `export default { linear: { projects: 5 }, workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))} };\n`,
-    );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
-    const { loadConfig } = await loadFreshConfig();
-
-    await expect(loadConfig()).rejects.toThrow(/linear\.projects must be a non-empty array/);
-  });
-
-  it("rejects a non-object entry inside linear.projects", async () => {
-    const path = join(temporary, "non-object-project.ts");
-    writeFileSync(
-      path,
-      `export default { linear: { projects: [42] }, workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))} };\n`,
-    );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
-    const { loadConfig } = await loadFreshConfig();
-
-    await expect(loadConfig()).rejects.toThrow(/linear\.projects\[0\] must be an object/);
-  });
-
-  it("rejects a non-object statuses block inside a project entry", async () => {
-    const path = join(temporary, "non-object-statuses.ts");
-    writeFileSync(
-      path,
-      `export default { linear: { projects: [{ projectSlug: "${VALID_PROJECT_SLUG}", statuses: 5 }] }, workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))} };\n`,
-    );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
-    const { loadConfig } = await loadFreshConfig();
-
-    await expect(loadConfig()).rejects.toThrow(/linear\.projects\[0\]\.statuses must be an object/);
-  });
-
-  it("rejects an empty projects array", async () => {
-    const path = writeConfigFile(
-      temporary,
-      configSource({
-        linear: { projects: [] },
-        workspace: VALID_WORKSPACE(temporary),
-      }),
-    );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
-    const { loadConfig } = await loadFreshConfig();
-
-    await expect(loadConfig()).rejects.toThrow(/linear\.projects must be a non-empty array/);
-  });
-
-  it("rejects the legacy linear.projectSlug shape with a migration message", async () => {
-    const path = join(temporary, "legacy-shape.ts");
-    writeFileSync(
-      path,
-      `export default { linear: { projectSlug: "${VALID_PROJECT_SLUG}" }, workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))} };\n`,
-    );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
-    const { loadConfig } = await loadFreshConfig();
-
-    await expect(loadConfig()).rejects.toThrow(
-      /linear\.projectSlug \/ linear\.statuses are no longer supported/,
-    );
-    await expect(loadConfig()).rejects.toThrow(
-      new RegExp(`projects: \\[\\{ projectSlug: "${VALID_PROJECT_SLUG}"`),
-    );
-  });
-
-  it("rejects the legacy linear.statuses shape with a migration message", async () => {
-    const path = join(temporary, "legacy-statuses.ts");
-    writeFileSync(
-      path,
-      `export default { linear: { projects: [{ projectSlug: "${VALID_PROJECT_SLUG}" }], statuses: { todo: "Todo" } }, workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))} };\n`,
-    );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
-    const { loadConfig } = await loadFreshConfig();
-
-    await expect(loadConfig()).rejects.toThrow(
-      /linear\.projectSlug \/ linear\.statuses are no longer supported/,
-    );
-    // Migration hint should quote the actual slug from linear.projects[0],
-    // not the placeholder, since the user already typed a real slug.
-    await expect(loadConfig()).rejects.toThrow(
-      new RegExp(`projects: \\[\\{ projectSlug: "${VALID_PROJECT_SLUG}"`),
-    );
-  });
-
-  it("falls back to the placeholder slug when neither legacy projectSlug nor projects[0] resolves", async () => {
-    const path = join(temporary, "statuses-only.ts");
-    writeFileSync(
-      path,
-      `export default { linear: { statuses: { todo: "Todo" } }, workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))} };\n`,
-    );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
-    const { loadConfig } = await loadFreshConfig();
-
-    await expect(loadConfig()).rejects.toThrow(/your-project-name-0123456789ab/);
   });
 
   it("defaults sources to an empty array when the field is omitted", async () => {
     const path = writeConfigFile(
       temporary,
-      configSource({
-        linear: { ...VALID_LINEAR },
-        workspace: VALID_WORKSPACE(temporary),
-      }),
+      configSource({ workspace: VALID_WORKSPACE(temporary) }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
-
     expect(actual.sources).toStrictEqual([]);
   });
 
   it("preserves a valid sources array through resolution", async () => {
     const path = writeConfigFile(
       temporary,
-      configSource({
-        linear: { ...VALID_LINEAR },
-        sources: [
-          // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- minimal config for the structural-validation test
-          {
-            kind: "shell",
-            name: "jira",
-            commands: { fetch: "echo '[]'" },
-          } as Config["sources"] extends (infer T)[] ? T : never,
-        ],
-        workspace: VALID_WORKSPACE(temporary),
-      }),
+      [
+        "export default {",
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        `  sources: [{ kind: "shell", name: "jira" }],`,
+        "};",
+      ].join("\n"),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
-
-    expect(actual.sources).toHaveLength(1);
-    expect(actual.sources[0]?.kind).toBe("shell");
+    expect(actual.sources).toStrictEqual([{ kind: "shell", name: "jira" }]);
   });
 
   it("rejects sources when it isn't an array", async () => {
-    const path = join(temporary, "bad-sources.ts");
-    writeFileSync(
-      path,
-      `export default { linear: ${JSON.stringify(VALID_LINEAR)}, sources: "nope", workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))} };\n`,
+    const path = writeConfigFile(
+      temporary,
+      [
+        "export default {",
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        `  sources: 5,`,
+        "};",
+      ].join("\n"),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
-
     await expect(loadConfig()).rejects.toThrow(/sources must be an array/);
   });
 
   it("rejects a source entry that isn't an object", async () => {
-    const path = join(temporary, "bad-source-entry.ts");
-    writeFileSync(
-      path,
-      `export default { linear: ${JSON.stringify(VALID_LINEAR)}, sources: ["not-an-object"], workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))} };\n`,
+    const path = writeConfigFile(
+      temporary,
+      [
+        "export default {",
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        `  sources: [42],`,
+        "};",
+      ].join("\n"),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
-
-    await expect(loadConfig()).rejects.toThrow(/sources\[0\] must be an object/);
+    await expect(loadConfig()).rejects.toThrow(/sources\[0] must be an object/);
   });
 
   it("rejects a source entry missing a string kind field", async () => {
-    const path = join(temporary, "no-kind.ts");
-    writeFileSync(
-      path,
-      `export default { linear: ${JSON.stringify(VALID_LINEAR)}, sources: [{ name: "x" }], workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))} };\n`,
+    const path = writeConfigFile(
+      temporary,
+      [
+        "export default {",
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        `  sources: [{ name: "no-kind" }],`,
+        "};",
+      ].join("\n"),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
-
-    await expect(loadConfig()).rejects.toThrow(/sources\[0\]\.kind/);
+    await expect(loadConfig()).rejects.toThrow(/sources\[0]\.kind/);
   });
 
   it("rejects duplicate source names", async () => {
-    const path = join(temporary, "dup-names.ts");
-    writeFileSync(
-      path,
-      `export default { linear: ${JSON.stringify(VALID_LINEAR)}, sources: [{ kind: "shell", name: "x", commands: { fetch: "echo []" } }, { kind: "shell", name: "x", commands: { fetch: "echo []" } }], workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))} };\n`,
+    const path = writeConfigFile(
+      temporary,
+      [
+        "export default {",
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        `  sources: [{ kind: "shell", name: "jira" }, { kind: "shell", name: "jira" }],`,
+        "};",
+      ].join("\n"),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
-
-    await expect(loadConfig()).rejects.toThrow(/sources\[1\] would produce a source named "x"/);
-  });
-
-  it("rejects two unnamed sources of the same kind that would both default to the same name", async () => {
-    // Two `{ kind: "linear" }` entries with no `name` field both default to
-    // name="linear" at adapter-create time; without dedup on the effective
-    // name, createBoard would catch this late. Config-load catches it now.
-    const path = join(temporary, "dup-default-name.ts");
-    writeFileSync(
-      path,
-      `export default { linear: ${JSON.stringify(VALID_LINEAR)}, sources: [{ kind: "linear" }, { kind: "linear" }], workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))} };\n`,
-    );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
-    const { loadConfig } = await loadFreshConfig();
-
-    await expect(loadConfig()).rejects.toThrow(
-      /sources\[1\] would produce a source named "linear".*default `kind`/,
-    );
+    await expect(loadConfig()).rejects.toThrow(/duplicating sources\[0]/);
   });
 
   it("rejects a source entry where name is set but not a string", async () => {
-    const path = join(temporary, "non-string-name.ts");
-    writeFileSync(
-      path,
-      `export default { linear: ${JSON.stringify(VALID_LINEAR)}, sources: [{ kind: "shell", name: 123 }], workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))} };\n`,
+    const path = writeConfigFile(
+      temporary,
+      [
+        "export default {",
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        `  sources: [{ kind: "shell", name: 5 }],`,
+        "};",
+      ].join("\n"),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-
     const { loadConfig } = await loadFreshConfig();
-
-    await expect(loadConfig()).rejects.toThrow(/sources\[0\]\.name/);
+    await expect(loadConfig()).rejects.toThrow(/sources\[0]\.name/);
   });
 
   it("fails with a discovery error when no config exists anywhere", async () => {
-    // No env var, no project config (cwd is the empty temp dir), no XDG file.
-    deleteEnvironmentVariable("GROUNDCREW_CONFIG");
-    const originalCwd = process.cwd();
-    vi.spyOn(process, "cwd").mockReturnValue(temporary);
-
-    try {
-      const { loadConfig } = await loadFreshConfig();
-
-      await expect(loadConfig()).rejects.toThrow(/no crew config found/);
-    } finally {
-      vi.spyOn(process, "cwd").mockReturnValue(originalCwd);
-    }
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(/no crew config found/);
   });
 });

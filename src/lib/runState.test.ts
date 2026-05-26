@@ -15,15 +15,6 @@ import {
 
 function makeConfig(stateRoot: string): ResolvedConfig {
   return {
-    linear: {
-      projects: [
-        {
-          projectSlug: "x-aaaaaaaaaaaa",
-          slugId: "aaaaaaaaaaaa",
-          statuses: { todo: "Todo", inProgress: "In Progress", done: "Done", terminal: ["Done"] },
-        },
-      ],
-    },
     sources: [],
     git: { remote: "origin", defaultBranch: "main" },
     workspace: {

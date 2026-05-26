@@ -12,16 +12,6 @@ import {
 
 function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
   return {
-    linear: {
-      projects: [
-        {
-          projectSlug: "ai-strategy-aaaaaaaaaaaa",
-          slugId: "aaaaaaaaaaaa",
-          statuses: { todo: "Todo", inProgress: "In Progress", done: "Done", terminal: ["Done"] },
-        },
-      ],
-      ...overrides.linear,
-    },
     sources: [],
     git: { remote: "origin", defaultBranch: "main", ...overrides.git },
     workspace: {
@@ -58,12 +48,12 @@ function todoIssue(overrides: Partial<GroundcrewIssue> = {}): GroundcrewIssue {
     title: "Title",
     status: "Todo",
     statusId: "state-todo",
+    stateType: "unstarted",
     assignee: "Alice",
     updatedAt: "2025-01-01T00:00:00.000Z",
     repository: "repo-a",
     model: "claude",
     teamId: "team-1",
-    projectSlugId: "aaaaaaaaaaaa",
     blockers: [],
     hasMoreBlockers: false,
     ...overrides,
@@ -96,11 +86,9 @@ function defaultArguments(overrides: Partial<ClassifyArguments> = {}): ClassifyA
 
 describe(classifyBlockers, () => {
   it("emits a `blocked` skip when a blocker is in a non-terminal state", () => {
-    const { unblocked, skips } = classifyBlockers(makeConfig(), [
+    const { unblocked, skips } = classifyBlockers([
       todoIssue({
-        blockers: [
-          { id: "team-0", title: "B", status: "In Progress", projectSlugId: "aaaaaaaaaaaa" },
-        ],
+        blockers: [{ id: "team-0", title: "B", status: "In Progress", stateType: "started" }],
       }),
     ]);
 
@@ -114,15 +102,15 @@ describe(classifyBlockers, () => {
   });
 
   it("emits a `blockers_paginated` skip when blocker pagination overflowed", () => {
-    const { skips } = classifyBlockers(makeConfig(), [todoIssue({ hasMoreBlockers: true })]);
+    const { skips } = classifyBlockers([todoIssue({ hasMoreBlockers: true })]);
 
     expect(skips[0]).toMatchObject({ kind: "skip", eventReason: "blockers_paginated" });
   });
 
   it("emits a `blocked` skip when the blocker state is missing", () => {
-    const { skips } = classifyBlockers(makeConfig(), [
+    const { skips } = classifyBlockers([
       todoIssue({
-        blockers: [{ id: "team-0", title: "B", status: undefined, projectSlugId: "aaaaaaaaaaaa" }],
+        blockers: [{ id: "team-0", title: "B", status: undefined, stateType: undefined }],
       }),
     ]);
 
@@ -134,9 +122,9 @@ describe(classifyBlockers, () => {
   });
 
   it("returns the issue as unblocked when its blocker is already terminal", () => {
-    const { unblocked, skips } = classifyBlockers(makeConfig(), [
+    const { unblocked, skips } = classifyBlockers([
       todoIssue({
-        blockers: [{ id: "team-0", title: "B", status: "Done", projectSlugId: "aaaaaaaaaaaa" }],
+        blockers: [{ id: "team-0", title: "B", status: "Done", stateType: "completed" }],
       }),
     ]);
 
@@ -145,14 +133,12 @@ describe(classifyBlockers, () => {
   });
 
   it("partitions a mixed batch into unblocked and skip lists", () => {
-    const { unblocked, skips } = classifyBlockers(makeConfig(), [
+    const { unblocked, skips } = classifyBlockers([
       todoIssue({ id: "team-1", uuid: "uuid-1" }),
       todoIssue({
         id: "team-2",
         uuid: "uuid-2",
-        blockers: [
-          { id: "team-0", title: "B", status: "In Progress", projectSlugId: "aaaaaaaaaaaa" },
-        ],
+        blockers: [{ id: "team-0", title: "B", status: "In Progress", stateType: "started" }],
       }),
       todoIssue({ id: "team-3", uuid: "uuid-3" }),
     ]);

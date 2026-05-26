@@ -119,11 +119,13 @@ interface MockedIssue {
 const issueResolver = vi.fn<(id: string) => Promise<MockedIssue>>();
 const rawRequestMock =
   vi.fn<(query: string, variables?: Record<string, unknown>) => Promise<unknown>>();
-const teamStatesMock = vi.fn<() => Promise<{ nodes: { id: string; name: string }[] }>>();
-const teamMock =
-  vi.fn<
-    (id: string) => Promise<{ states: () => Promise<{ nodes: { id: string; name: string }[] }> }>
-  >();
+const teamStatesMock =
+  vi.fn<() => Promise<{ nodes: { id: string; name: string; type: string }[] }>>();
+const teamMock = vi.fn<
+  (id: string) => Promise<{
+    states: () => Promise<{ nodes: { id: string; name: string; type: string }[] }>;
+  }>
+>();
 const updateIssueMock =
   vi.fn<(id: string, input: { stateId: string }) => Promise<Record<string, never>>>();
 
@@ -143,9 +145,8 @@ function buildResolveIssueResponse(overrides: {
   title?: string;
   description?: string | null | undefined;
   labels?: MockedLabel[];
-  projectSlugId?: string | null;
+  stateType?: string;
 }): unknown {
-  const projectSlugId = "projectSlugId" in overrides ? overrides.projectSlugId : "aaaaaaaaaaaa";
   return {
     data: {
       issue: {
@@ -154,7 +155,7 @@ function buildResolveIssueResponse(overrides: {
         description: "description" in overrides ? overrides.description : "Body for repo-a",
         labels: { nodes: overrides.labels ?? [] },
         team: { id: overrides.teamId ?? "team-1" },
-        project: projectSlugId === null ? null : { slugId: projectSlugId },
+        state: { name: "Todo", type: overrides.stateType ?? "unstarted" },
       },
     },
   };
@@ -186,15 +187,6 @@ function hostEntry(): WorktreeEntry {
 
 function makeConfig(overrides: Partial<ResolvedConfig["models"]> = {}): ResolvedConfig {
   return {
-    linear: {
-      projects: [
-        {
-          projectSlug: "x-aaaaaaaaaaaa",
-          slugId: "aaaaaaaaaaaa",
-          statuses: { todo: "Todo", inProgress: "In Progress", done: "Done", terminal: ["Done"] },
-        },
-      ],
-    },
     sources: [],
     git: { remote: "origin", defaultBranch: "main" },
     workspace: {
@@ -225,7 +217,9 @@ function makeConfig(overrides: Partial<ResolvedConfig["models"]> = {}): Resolved
 }
 
 function mockLinearClient(): void {
-  teamStatesMock.mockResolvedValue({ nodes: [{ id: "state-in-progress", name: "In Progress" }] });
+  teamStatesMock.mockResolvedValue({
+    nodes: [{ id: "state-in-progress", name: "In Progress", type: "started" }],
+  });
   teamMock.mockResolvedValue({ states: teamStatesMock });
   updateIssueMock.mockResolvedValue({});
   const linearClient = {
@@ -1278,10 +1272,12 @@ describe(setupWorkspaceCli, () => {
   });
 
   it("fails clearly when the configured In Progress status is missing", async () => {
-    teamStatesMock.mockResolvedValue({ nodes: [{ id: "state-other", name: "Other" }] });
+    teamStatesMock.mockResolvedValue({
+      nodes: [{ id: "state-other", name: "Other", type: "unstarted" }],
+    });
 
     await expect(setupWorkspaceCli("team-1")).rejects.toThrow(
-      /Could not find "In Progress" state for team-1/,
+      /Could not find a workflow state with type "started" for team-1/,
     );
     expect(updateIssueMock).not.toHaveBeenCalled();
   });

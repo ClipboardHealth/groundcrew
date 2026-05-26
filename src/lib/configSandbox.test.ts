@@ -7,7 +7,7 @@ import {
   setEnvironmentVariable,
   snapshotEnvironmentVariables,
 } from "../testHelpers/env.ts";
-import type { Config, ResolvedConfig } from "./config.ts";
+import type { ResolvedConfig } from "./config.ts";
 
 interface ConfigModule {
   loadConfig: () => Promise<Readonly<ResolvedConfig>>;
@@ -17,10 +17,6 @@ async function loadFreshConfig(): Promise<ConfigModule> {
   vi.resetModules();
   return await import("./config.ts");
 }
-
-const VALID_LINEAR: Config["linear"] = {
-  projects: [{ projectSlug: "ai-strategy-5152195762f3" }],
-};
 
 const VALID_WORKSPACE = (projectDir: string) => ({
   projectDir,
@@ -64,7 +60,6 @@ describe("loadConfig sandbox.authRecipes", () => {
   function configWith(sandboxBlock: string): string {
     return [
       "export default {",
-      `  linear: ${JSON.stringify(VALID_LINEAR)},`,
       `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
       `  sandbox: ${sandboxBlock},`,
       "};",

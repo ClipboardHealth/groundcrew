@@ -2,32 +2,15 @@ import type { Config } from "@clipboard-health/groundcrew";
 // import { readFileSync } from "node:fs";
 
 export default {
-  linear: {
-    // One or more Linear projects to watch. A single `crew` process
-    // dispatches across all configured projects under a shared
-    // `orchestrator.maximumInProgress` budget.
-    //
-    // Each entry's `projectSlug` is the trailing segment of your Linear
-    // project URL — copy it verbatim, e.g. "ai-strategy-5152195762f3"
-    // from "https://linear.app/<workspace>/project/ai-strategy-5152195762f3".
-    // The 12-char hex tail is the canonical ID groundcrew uses, so the
-    // orchestrator stays resilient across project renames and across
-    // same-name projects in different teams. The leading name segment
-    // keeps the file self-documenting at a glance.
-    //
-    // `statuses` is per-project so multi-team setups with divergent
-    // workflow state names (e.g. "Todo" vs "To Do", "Shipped" vs
-    // "Done") can coexist. Each field falls back to its default when
-    // omitted: { todo: "Todo", inProgress: "In Progress",
-    // done: "Done", terminal: ["Done"] }.
-    projects: [
-      { projectSlug: "your-project-name-0123456789ab" },
-      // {
-      //   projectSlug: "platform-aaaaaaaaaaaa",
-      //   statuses: { inProgress: "Doing", done: "Released", terminal: ["Released", "Won't Do"] },
-      // },
-    ],
-  },
+  // Groundcrew's built-in Linear adapter is implicit and needs no config:
+  // it picks up every Linear issue assigned to your API key's viewer that
+  // carries an `agent-*` label. There is no project / view / status
+  // block — Linear's workflow `state.type` (`unstarted` → todo,
+  // `started` → in progress, `completed`/`canceled` → terminal) is the
+  // single source of truth, so renamed columns Just Work.
+  //
+  // Opt a ticket in: assign it to yourself and add an `agent-<model>`
+  // label (e.g. `agent-claude`, `agent-any`).
   workspace: {
     // Parent directory under which groundcrew clones repositories and
     // creates per-ticket worktrees.
@@ -41,11 +24,10 @@ export default {
   // and edit to override.
   //
   // // Additional pluggable ticket sources beyond the implicit built-in
-  // // Linear adapter (configured via `linear.projects` above). The most
-  // // common use is `kind: "shell"`, which wires any external system via
-  // // command templates that emit/consume JSON. See the shell adapter's
-  // // ShellIssue schema for the JSON contract `fetch` / `resolveOne` must
-  // // emit.
+  // // Linear adapter. The most common use is `kind: "shell"`, which wires
+  // // any external system via command templates that emit/consume JSON.
+  // // See the shell adapter's ShellIssue schema for the JSON contract
+  // // `fetch` / `resolveOne` must emit.
   // sources: [
   //   {
   //     kind: "shell",
@@ -63,7 +45,6 @@ export default {
   // git: { remote: "origin", defaultBranch: "main" },
   //
   // orchestrator: {
-  //   // Shared across all watched projects in linear.projects.
   //   maximumInProgress: 4,
   //   pollIntervalMilliseconds: 120_000,
   //   sessionLimitPercentage: 85,

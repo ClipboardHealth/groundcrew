@@ -35,12 +35,8 @@ export function createCleaner(deps: CleanerDeps): Cleaner {
   }): Promise<void> {
     const { state, worktreeEntries, dryRun, signal } = arguments_;
 
-    // Only act on tickets in configured projects — if the dir name happens to
-    // look like a Linear ticket from another project, leave it alone.
     const terminalTickets = new Set(
-      state.issues
-        .filter((issue) => isTerminalStatusForIssue(issue, config))
-        .map((issue) => issue.id),
+      state.issues.filter((issue) => isTerminalStatusForIssue(issue)).map((issue) => issue.id),
     );
     if (terminalTickets.size === 0) {
       return;
