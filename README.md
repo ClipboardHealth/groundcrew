@@ -110,6 +110,8 @@ Installs the `crew` binary. `@clipboard-health/clearance` is pulled in transitiv
    crew run --watch               # poll forever
    ```
 
+7. **(Optional) Wire up companion tools.** Once `crew run` is producing PRs, [docs/companion-tools.md](./docs/companion-tools.md) walks through the curated stack that closes the agent loop end-to-end — Linear ↔ GitHub auto-linking, CodeRabbit review, `babysit-pr`, the `superpowers` plugin, `codexbar` usage gating, and an opinionated `prompts.initial` example.
+
 ## Secrets
 
 Groundcrew forwards a small allowlist of build-time secrets from your shell into the setup phase (so `npm install` can authenticate against private registries) and then strips them before the agent runs. The agent process never inherits these values in its environment.
@@ -235,12 +237,15 @@ import { readFileSync } from "node:fs";
 export default {
   // ...
   prompts: {
-    initial: readFileSync(new URL("./initial-prompt.md", import.meta.url), "utf8"),
+    initial: readFileSync(
+      new URL("./initial-prompt.md", import.meta.url),
+      "utf8",
+    ),
   },
 };
 ```
 
-This keeps package defaults portable while letting your private config reference team-specific statuses, tools, plugins, or review loops.
+This keeps package defaults portable while letting your private config reference team-specific statuses, tools, plugins, or review loops. For a worked example that wires in `babysit-pr`, CodeRabbit, `superpowers`, and a self-reviewing PR workflow, see [docs/companion-tools.md](./docs/companion-tools.md#sandbox-promptsinitial).
 
 <details>
 <summary>Full reference table</summary>
