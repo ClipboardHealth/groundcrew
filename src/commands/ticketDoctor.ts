@@ -22,6 +22,7 @@ import {
   fetchBlockersForTicket,
   fetchInProgressIssueCount,
   fetchRawLinearIssue,
+  isTerminalStateType,
   resolveModelFor,
   resolveRepositoryFor,
   type Blocker,
@@ -596,7 +597,7 @@ async function probeLinear(
     const raw = await deps.fetchRawIssue({ ticket: upperTicket });
     /* v8 ignore next @preserve -- fetchRawLinearIssue always populates stateType (defaults to "") so the ?? guard is belt-and-suspenders */
     const stateType = raw.stateType ?? "";
-    const isTerminal = stateType === "completed" || stateType === "canceled";
+    const isTerminal = isTerminalStateType(stateType);
     const resolution: TicketCheck[] = [
       { name: "Ticket exists in Linear", status: "ok", detail: `"${raw.title}"` },
     ];

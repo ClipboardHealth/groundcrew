@@ -5,8 +5,9 @@
  * `Issue`/`Blocker` shapes consumers (via `Board`) speak.
  *
  * Status mapping is driven entirely by Linear's workflow `state.type`
- * (`unstarted` → todo, `started` → in-progress, `completed`/`canceled` → done)
- * so renamed columns are classified correctly without any per-team config.
+ * (`unstarted` → todo, `started` → in-progress,
+ * `completed`/`canceled`/`duplicate` → done) so renamed columns are classified
+ * correctly without any per-team config.
  *
  * Description is not populated on `fetch()` Issues (boardSource's snapshot
  * doesn't include it); `resolveOne()` Issues carry the full description
@@ -19,6 +20,7 @@ import {
   createBoardSource,
   fetchResolvedIssue,
   type Issue as LinearIssue,
+  isTerminalStateType,
 } from "../../boardSource.ts";
 import { createLinearIssueStatusUpdater } from "../../linearIssueStatus.ts";
 import type {
@@ -44,7 +46,7 @@ export function canonicalStatusFromStateType(stateType: string | undefined): Can
   if (stateType === "started") {
     return "in-progress";
   }
-  if (stateType === "completed" || stateType === "canceled") {
+  if (isTerminalStateType(stateType)) {
     return "done";
   }
   return "other";

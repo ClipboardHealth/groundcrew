@@ -266,7 +266,7 @@ describe(createBoardSource, () => {
       expect(query).toContain("state: { type: { in: $stateTypes } }");
       expect(variables).toMatchObject({
         agentLabelPrefix: "agent-",
-        stateTypes: ["unstarted", "started", "completed", "canceled"],
+        stateTypes: ["unstarted", "started", "completed", "canceled", "duplicate"],
       });
     });
 
@@ -470,6 +470,7 @@ describe(isIssueTodo, () => {
     expect(isIssueTodo({ stateType: "unstarted" })).toBe(true);
     expect(isIssueTodo({ stateType: "started" })).toBe(false);
     expect(isIssueTodo({ stateType: "completed" })).toBe(false);
+    expect(isIssueTodo({ stateType: "duplicate" })).toBe(false);
   });
 });
 
@@ -478,13 +479,15 @@ describe(isIssueInProgress, () => {
     expect(isIssueInProgress({ stateType: "started" })).toBe(true);
     expect(isIssueInProgress({ stateType: "unstarted" })).toBe(false);
     expect(isIssueInProgress({ stateType: "completed" })).toBe(false);
+    expect(isIssueInProgress({ stateType: "duplicate" })).toBe(false);
   });
 });
 
 describe(isTerminalStatusForIssue, () => {
-  it("treats completed and canceled as terminal", () => {
+  it("treats completed, canceled, and duplicate as terminal", () => {
     expect(isTerminalStatusForIssue({ stateType: "completed" })).toBe(true);
     expect(isTerminalStatusForIssue({ stateType: "canceled" })).toBe(true);
+    expect(isTerminalStatusForIssue({ stateType: "duplicate" })).toBe(true);
   });
 
   it("treats unstarted/started as non-terminal", () => {
@@ -507,9 +510,10 @@ describe(isTerminalStatusForBlocker, () => {
     expect(isTerminalStatusForBlocker(blocker())).toBe(false);
   });
 
-  it("treats completed and canceled blockers as terminal", () => {
+  it("treats completed, canceled, and duplicate blockers as terminal", () => {
     expect(isTerminalStatusForBlocker(blocker({ stateType: "completed" }))).toBe(true);
     expect(isTerminalStatusForBlocker(blocker({ stateType: "canceled" }))).toBe(true);
+    expect(isTerminalStatusForBlocker(blocker({ stateType: "duplicate" }))).toBe(true);
   });
 
   it("treats unstarted/started blockers as non-terminal", () => {

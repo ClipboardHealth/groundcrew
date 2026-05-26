@@ -1525,6 +1525,33 @@ describe("ticketDoctor — verdict precedence (post-dispatch wins over pre-dispa
     expect(result.verdict).toMatchObject({ kind: "in-flight" });
   });
 
+  it("does not return in-flight when duplicate Linear status combines with a present worktree", async () => {
+    const entry = makeWorktreeEntry();
+    const dependencies = makeStubDependencies({
+      fetchRawIssue: vi
+        .fn<NonNullable<TicketDoctorDependencies["fetchRawIssue"]>>()
+        .mockResolvedValue(
+          makeStubRawIssue({
+            stateName: "Duplicate",
+            stateType: "duplicate",
+            labels: [{ name: "agent-claude" }],
+          }),
+        ),
+      findWorktree: vi.fn<TicketDoctorDependencies["findWorktree"]>().mockReturnValue(entry),
+      probeWorkingTree: vi
+        .fn<TicketDoctorDependencies["probeWorkingTree"]>()
+        .mockResolvedValue({ kind: "clean" }),
+      probeWorkspaces: vi
+        .fn<TicketDoctorDependencies["probeWorkspaces"]>()
+        .mockResolvedValue({ kind: "ok", names: new Set(["hrd-1"]) }),
+    });
+    const result = await ticketDoctor(dependencies);
+    expect(result.verdict).toMatchObject({
+      kind: "ineligible",
+      reason: "status is Duplicate (state.type=duplicate, need unstarted)",
+    });
+  });
+
   it("returns would-dispatch when everything is fresh: no worktree, no PR, eligible", async () => {
     const projectDir = mkdtempSync(join(tmpdir(), "td-wd-"));
     mkdirSync(join(projectDir, "herds-social", "herds"), { recursive: true });

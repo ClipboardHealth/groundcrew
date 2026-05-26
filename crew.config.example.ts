@@ -6,8 +6,8 @@ export default {
   // it picks up every Linear issue assigned to your API key's viewer that
   // carries an `agent-*` label. There is no project / view / status
   // block — Linear's workflow `state.type` (`unstarted` → todo,
-  // `started` → in progress, `completed`/`canceled` → terminal) is the
-  // single source of truth, so renamed columns Just Work.
+  // `started` → in progress, `completed`/`canceled`/`duplicate` →
+  // terminal) is the single source of truth, so renamed columns Just Work.
   //
   // Opt a ticket in: assign it to yourself and add an `agent-<model>`
   // label (e.g. `agent-claude`, `agent-any`).

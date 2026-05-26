@@ -39,7 +39,7 @@ Eligibility
 
 ## Why
 
-- **Linear-native.** Polls a project, respects `agent-*` labels, honors blockers.
+- **Linear-native.** Polls issues assigned to the API key's viewer with `agent-*` labels, honors blockers.
 - **One worktree per ticket.** Agents work in parallel without stepping on each other.
 - **Local-first sandboxing.** Safehouse on macOS, Docker Sandboxes on Linux, or an explicit `none` escape hatch.
 - **Multi-agent.** Ships with `claude` and `codex`; bring your own CLI by dropping a definition into `crew.config.ts`.
@@ -58,7 +58,7 @@ Installs the `crew` binary. `@clipboard-health/clearance` is pulled in transitiv
 
 2. **Pick an isolation runner.** See [Runners](#runners) — `auto` resolves to `safehouse` on macOS and `sdx` on Linux/WSL.
 
-3. **Create a Linear project to scope your work.** Any team works — make a project inside it and drop tickets in. The orchestrator polls by project, not by team.
+3. **Prepare tickets in Linear.** Assign tickets to yourself and add an `agent-*` label. Groundcrew picks them up across all visible teams and projects.
 
 4. **Configure.** Create a `crew.config.ts` you can edit:
 
@@ -171,7 +171,7 @@ Two keys are required; everything else has a default.
 | `workspace.projectDir`        | Parent dir for cloned repos and sibling ticket worktrees.              |
 | `workspace.knownRepositories` | Repos searched for in ticket descriptions to infer where work belongs. |
 
-There is **no** `linear` config block. Groundcrew's built-in Linear adapter picks up every Linear issue assigned to your API key's viewer that carries an `agent-*` label — across every project and team you can see. State classification is driven by Linear's workflow `state.type` (`unstarted` → todo, `started` → in progress, `completed`/`canceled` → terminal), so renamed status columns Just Work without any per-team configuration.
+There is **no** `linear` config block. Groundcrew's built-in Linear adapter picks up every Linear issue assigned to your API key's viewer that carries an `agent-*` label — across every project and team you can see. State classification is driven by Linear's workflow `state.type` (`unstarted` → todo, `started` → in progress, `completed`/`canceled`/`duplicate` → terminal), so renamed status columns Just Work without any per-team configuration.
 
 `crew` resolves config as: `GROUNDCREW_CONFIG` if set → project-walk from cwd (cosmiconfig: `crew.config.{ts,mjs,js,json}`, `.crewrc{,.json,.ts}`, `.config/crew.config.{ts,json}`, `.config/crewrc{,.json}`) → `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/crew.config.ts` (also accepts legacy `config.ts` for one release). The branch prefix (`<prefix>-<TICKET>`) is derived from `os.userInfo().username` — not configurable.
 
@@ -491,7 +491,7 @@ When a wrapped agent command fails (e.g. `safehouse-clearance` not found, `npm i
 <details>
 <summary>Status names don't matter</summary>
 
-Groundcrew classifies tickets by Linear's workflow `state.type` (`unstarted`, `started`, `completed`, `canceled`), not by status name. Teams that rename "Todo" to "To Do" or "Done" to "Shipped" need no configuration — the orchestrator still classifies correctly.
+Groundcrew classifies tickets by Linear's workflow `state.type` (`unstarted`, `started`, `completed`, `canceled`, `duplicate`), not by status name. Teams that rename "Todo" to "To Do" or "Done" to "Shipped" need no configuration — the orchestrator still classifies correctly.
 
 </details>
 

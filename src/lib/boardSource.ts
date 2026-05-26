@@ -6,9 +6,9 @@
  * There is no project / view / status configuration: the only filter is
  * "assigned to the API key's viewer AND carries an `agent-*` label."
  * State classification is driven by Linear's workflow `state.type`
- * (`unstarted` | `started` | `completed` | `canceled`) — never by status
- * name — so workspaces with renamed columns (Todo → To Do, Done → Shipped,
- * etc.) Just Work.
+ * (`unstarted` | `started` | `completed` | `canceled` | `duplicate`) —
+ * never by status name — so workspaces with renamed columns (Todo → To Do,
+ * Done → Shipped, etc.) Just Work.
  */
 
 import type { LinearClient } from "@linear/sdk";
@@ -22,7 +22,13 @@ export const ISSUES_PAGE_SIZE = 250;
 
 // `state.type` values surfaced by `fetch()`. `backlog` / `triage` are dropped
 // at the GraphQL filter; everything else is post-classified by these names.
-const ACTIONABLE_STATE_TYPES = ["unstarted", "started", "completed", "canceled"] as const;
+const ACTIONABLE_STATE_TYPES = [
+  "unstarted",
+  "started",
+  "completed",
+  "canceled",
+  "duplicate",
+] as const;
 
 export interface Blocker {
   id: string;
@@ -30,8 +36,8 @@ export interface Blocker {
   status: string | undefined;
   /**
    * Linear workflow `state.type` for the blocker (`unstarted` | `started` |
-   * `completed` | `canceled` | `backlog` | `triage`). All canonical
-   * classification — todo / in-progress / terminal — keys off this.
+   * `completed` | `canceled` | `duplicate` | `backlog` | `triage`). All
+   * canonical classification — todo / in-progress / terminal — keys off this.
    */
   stateType: string | undefined;
 }
@@ -152,7 +158,7 @@ export function isIssueTodo(issue: Pick<Issue, "stateType">): boolean {
 }
 
 export function isTerminalStateType(stateType: string | undefined): boolean {
-  return stateType === "completed" || stateType === "canceled";
+  return stateType === "completed" || stateType === "canceled" || stateType === "duplicate";
 }
 
 export function isTerminalStatusForIssue(issue: Pick<Issue, "stateType">): boolean {
@@ -210,8 +216,8 @@ async function fetchBoard(client: LinearClient, config: ResolvedConfig): Promise
   //      ticket in to groundcrew. Without this, every human-owned ticket
   //      would round-trip back just to be filtered out client-side.
   //   3. State type: scoped to actionable values (`unstarted`, `started`,
-  //      `completed`, `canceled`) so backlog/triage tickets never make it
-  //      into the page.
+  //      `completed`, `canceled`, `duplicate`) so backlog/triage tickets never
+  //      make it into the page.
   // The client-side `isGroundcrewIssue` guard in dispatcher.ts is
   // belt-and-suspenders against query drift, not the load-bearing filter.
   const stateTypes = [...ACTIONABLE_STATE_TYPES];

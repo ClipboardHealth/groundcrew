@@ -72,9 +72,10 @@ describe(canonicalStatusFromStateType, () => {
   it("maps started to canonical 'in-progress'", () => {
     expect(canonicalStatusFromStateType("started")).toBe("in-progress");
   });
-  it("maps completed/canceled to canonical 'done'", () => {
+  it("maps completed/canceled/duplicate to canonical 'done'", () => {
     expect(canonicalStatusFromStateType("completed")).toBe("done");
     expect(canonicalStatusFromStateType("canceled")).toBe("done");
+    expect(canonicalStatusFromStateType("duplicate")).toBe("done");
   });
   it("maps anything else to 'other'", () => {
     expect(canonicalStatusFromStateType("backlog")).toBe("other");

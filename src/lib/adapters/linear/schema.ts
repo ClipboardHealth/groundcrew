@@ -1,9 +1,7 @@
 /**
- * Zod schema for the Linear adapter's per-source config block. Minimal in MVP-2:
- * the global `linear.projects` field (validated in config.ts) is the source of
- * truth for which projects to watch and their per-project status names. A
- * future refactor can move `projects` into this block to enable multi-workspace
- * Linear (one adapter per API key), but that's V1.5+ scope.
+ * Zod schema for the Linear adapter's per-source config block. The built-in
+ * Linear adapter is implicit and derives scope from the API key's viewer plus
+ * `agent-*` labels, so the source config only needs an optional display name.
  */
 
 import { z } from "zod";
