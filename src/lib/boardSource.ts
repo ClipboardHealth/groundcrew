@@ -25,6 +25,13 @@ export interface Blocker {
   title: string;
   status: string | undefined;
   /**
+   * Linear workflow `state.type` for the blocker (`unstarted` | `started` |
+   * `completed` | `canceled` | `backlog` | `triage`). View mode reads this
+   * to canonicalize blocker status from state type instead of name, since
+   * view mode has no per-project terminal-status config.
+   */
+  stateType: string | undefined;
+  /**
    * SlugId of the project the blocker lives in. `undefined` when Linear
    * returned no project for the blocker (rare — issues can technically
    * exist without a project). Drives `isTerminalStatusForBlocker`'s
@@ -215,7 +222,7 @@ export interface IssueRelationNode {
   issue?: {
     identifier: string;
     title: string;
-    state?: { name: string } | null;
+    state?: { name: string; type?: string } | null;
     project?: { slugId: string } | null;
   } | null;
 }
@@ -317,7 +324,7 @@ async function fetchBoard(client: LinearClient, config: ResolvedConfig): Promise
                 issue {
                   identifier
                   title
-                  state { name }
+                  state { name type }
                   project { slugId }
                 }
               }
@@ -601,7 +608,7 @@ export async function fetchBlockersForTicket(arguments_: {
               issue {
                 identifier
                 title
-                state { name }
+                state { name type }
                 project { slugId }
               }
             }
@@ -658,7 +665,7 @@ export async function fetchRawLinearIssue(arguments_: {
             issue {
               identifier
               title
-              state { name }
+              state { name type }
               project { slugId }
             }
           }
@@ -990,6 +997,7 @@ export function blockersFromRelations(relations: IssueRelationNode[]): Blocker[]
       id: relation.issue?.identifier?.toLowerCase() ?? "unknown",
       title: relation.issue?.title ?? "",
       status: relation.issue?.state?.name,
+      stateType: relation.issue?.state?.type,
       projectSlugId: relation.issue?.project?.slugId?.toLowerCase(),
     }));
 }

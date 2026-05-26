@@ -820,7 +820,13 @@ describe(createBoardSource, () => {
       const state = await source.fetch();
       const [first] = state.issues;
       expect(first?.blockers).toStrictEqual([
-        { id: "team-0", title: "Blocker", status: "In Progress", projectSlugId: undefined },
+        {
+          id: "team-0",
+          title: "Blocker",
+          status: "In Progress",
+          stateType: undefined,
+          projectSlugId: undefined,
+        },
       ]);
       expect(first?.hasMoreBlockers).toBe(false);
     });
@@ -843,7 +849,13 @@ describe(createBoardSource, () => {
       const state = await source.fetch();
       const [first] = state.issues;
       expect(first?.blockers).toStrictEqual([
-        { id: "unknown", title: "", status: undefined, projectSlugId: undefined },
+        {
+          id: "unknown",
+          title: "",
+          status: undefined,
+          stateType: undefined,
+          projectSlugId: undefined,
+        },
       ]);
     });
 
@@ -1087,6 +1099,7 @@ function makeBlocker(overrides: Partial<Blocker> = {}): Blocker {
     id: overrides.id ?? "team-99",
     title: overrides.title ?? "Blocker",
     status: overrides.status,
+    stateType: overrides.stateType,
     projectSlugId: overrides.projectSlugId,
   };
 }
@@ -1518,6 +1531,7 @@ describe(fetchBlockersForTicket, () => {
       id: "hrd-10",
       title: "Blocker A",
       status: "In Progress",
+      stateType: undefined,
       projectSlugId: undefined,
     });
   });
@@ -1568,8 +1582,20 @@ describe(fetchBlockersForTicket, () => {
     });
 
     expect(result).toStrictEqual([
-      { id: "hrd-10", title: "Blocker A", status: "In Progress", projectSlugId: undefined },
-      { id: "hrd-20", title: "Blocker B", status: "Todo", projectSlugId: undefined },
+      {
+        id: "hrd-10",
+        title: "Blocker A",
+        status: "In Progress",
+        stateType: undefined,
+        projectSlugId: undefined,
+      },
+      {
+        id: "hrd-20",
+        title: "Blocker B",
+        status: "Todo",
+        stateType: undefined,
+        projectSlugId: undefined,
+      },
     ]);
     expect(client.client.rawRequest).toHaveBeenNthCalledWith(1, expect.any(String), {
       after: null,

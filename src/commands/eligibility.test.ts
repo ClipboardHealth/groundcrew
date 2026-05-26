@@ -99,7 +99,13 @@ describe(classifyBlockers, () => {
     const { unblocked, skips } = classifyBlockers(makeConfig(), [
       todoIssue({
         blockers: [
-          { id: "team-0", title: "B", status: "In Progress", projectSlugId: "aaaaaaaaaaaa" },
+          {
+            id: "team-0",
+            title: "B",
+            status: "In Progress",
+            stateType: undefined,
+            projectSlugId: "aaaaaaaaaaaa",
+          },
         ],
       }),
     ]);
@@ -122,7 +128,15 @@ describe(classifyBlockers, () => {
   it("emits a `blocked` skip when the blocker state is missing", () => {
     const { skips } = classifyBlockers(makeConfig(), [
       todoIssue({
-        blockers: [{ id: "team-0", title: "B", status: undefined, projectSlugId: "aaaaaaaaaaaa" }],
+        blockers: [
+          {
+            id: "team-0",
+            title: "B",
+            status: undefined,
+            stateType: undefined,
+            projectSlugId: "aaaaaaaaaaaa",
+          },
+        ],
       }),
     ]);
 
@@ -136,7 +150,15 @@ describe(classifyBlockers, () => {
   it("returns the issue as unblocked when its blocker is already terminal", () => {
     const { unblocked, skips } = classifyBlockers(makeConfig(), [
       todoIssue({
-        blockers: [{ id: "team-0", title: "B", status: "Done", projectSlugId: "aaaaaaaaaaaa" }],
+        blockers: [
+          {
+            id: "team-0",
+            title: "B",
+            status: "Done",
+            stateType: undefined,
+            projectSlugId: "aaaaaaaaaaaa",
+          },
+        ],
       }),
     ]);
 
@@ -151,7 +173,13 @@ describe(classifyBlockers, () => {
         id: "team-2",
         uuid: "uuid-2",
         blockers: [
-          { id: "team-0", title: "B", status: "In Progress", projectSlugId: "aaaaaaaaaaaa" },
+          {
+            id: "team-0",
+            title: "B",
+            status: "In Progress",
+            stateType: undefined,
+            projectSlugId: "aaaaaaaaaaaa",
+          },
         ],
       }),
       todoIssue({ id: "team-3", uuid: "uuid-3" }),

@@ -324,14 +324,11 @@ export function createLinearViewTicketSource(
   const board = createViewBoardSource({ client, config, view });
 
   function toCanonicalBlocker(blocker: LinearBlocker): CanonicalBlocker {
-    let status: CanonicalStatus = "other";
-    if (blocker.status === "completed" || blocker.status === "canceled") {
-      status = "done";
-    }
     return {
       id: `${sourceName}:${blocker.id}`,
       title: blocker.title,
-      status,
+      /* v8 ignore next @preserve -- view-mode's GraphQL query always selects state.type for blockers, so stateType is defined in real runs */
+      status: canonicalStatusForStateType(blocker.stateType ?? ""),
     };
   }
 

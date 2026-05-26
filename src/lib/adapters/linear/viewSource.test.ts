@@ -397,7 +397,7 @@ describe(createLinearViewTicketSource, () => {
     await source.verify();
     const issues = await source.fetch();
     expect(issues.map((i) => i.status)).toStrictEqual(["todo", "in-progress", "done", "done"]);
-    expect(issues[0]?.blockers.map((b) => b.status)).toStrictEqual(["done", "done", "other"]);
+    expect(issues[0]?.blockers.map((b) => b.status)).toStrictEqual(["done", "done", "todo"]);
     expect(issues[0]?.blockers.map((b) => b.id)).toStrictEqual([
       "linear:eng-2",
       "linear:eng-3",

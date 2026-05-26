@@ -112,6 +112,7 @@ describe(canonicalBlockerStatus, () => {
       id: "x-1",
       title: "x",
       status: undefined,
+      stateType: undefined,
       projectSlugId: "aaaaaaaaaaaa",
     };
     expect(canonicalBlockerStatus(blocker, makeConfig())).toBe("other");
@@ -121,6 +122,7 @@ describe(canonicalBlockerStatus, () => {
       id: "x-1",
       title: "x",
       status: "Done",
+      stateType: undefined,
       projectSlugId: "aaaaaaaaaaaa",
     };
     expect(canonicalBlockerStatus(blocker, makeConfig())).toBe("done");
@@ -139,6 +141,7 @@ describe(canonicalBlockerStatus, () => {
       id: "off-1",
       title: "off-config",
       status: "Cancelled",
+      stateType: undefined,
       projectSlugId: "ffffffffffff",
     };
     expect(canonicalBlockerStatus(blocker, config)).toBe("done");
@@ -148,6 +151,7 @@ describe(canonicalBlockerStatus, () => {
       id: "x-1",
       title: "x",
       status: "In Progress",
+      stateType: undefined,
       projectSlugId: "aaaaaaaaaaaa",
     };
     expect(canonicalBlockerStatus(blocker, makeConfig())).toBe("in-progress");
@@ -157,6 +161,7 @@ describe(canonicalBlockerStatus, () => {
       id: "off-1",
       title: "off-config",
       status: "Some Custom State",
+      stateType: undefined,
       projectSlugId: "ffffffffffff",
     };
     expect(canonicalBlockerStatus(blocker, makeConfig())).toBe("other");
@@ -166,6 +171,7 @@ describe(canonicalBlockerStatus, () => {
       id: "x-1",
       title: "x",
       status: "Random",
+      stateType: undefined,
       projectSlugId: undefined,
     };
     expect(canonicalBlockerStatus(blocker, makeConfig())).toBe("other");
@@ -213,8 +219,20 @@ describe(toCanonicalIssue, () => {
   it("source-prefixes blocker ids and canonicalizes their statuses", () => {
     const issue = linearIssue({
       blockers: [
-        { id: "team-2", title: "Block A", status: "Done", projectSlugId: "aaaaaaaaaaaa" },
-        { id: "team-3", title: "Block B", status: "Todo", projectSlugId: "aaaaaaaaaaaa" },
+        {
+          id: "team-2",
+          title: "Block A",
+          status: "Done",
+          stateType: undefined,
+          projectSlugId: "aaaaaaaaaaaa",
+        },
+        {
+          id: "team-3",
+          title: "Block B",
+          status: "Todo",
+          stateType: undefined,
+          projectSlugId: "aaaaaaaaaaaa",
+        },
       ],
     });
     const result = toCanonicalIssue(issue, makeConfig(), "linear");

@@ -268,6 +268,7 @@ describe(createDispatcher, () => {
                 id: "team-0",
                 title: "Blocker",
                 status: "In Progress",
+                stateType: undefined,
                 projectSlugId: "aaaaaaaaaaaa",
               },
             ],
@@ -292,7 +293,13 @@ describe(createDispatcher, () => {
         state: boardOf([
           todoIssue({
             blockers: [
-              { id: "team-0", title: "Blocker", status: "Done", projectSlugId: "aaaaaaaaaaaa" },
+              {
+                id: "team-0",
+                title: "Blocker",
+                status: "Done",
+                stateType: undefined,
+                projectSlugId: "aaaaaaaaaaaa",
+              },
             ],
           }),
         ]),
@@ -331,7 +338,13 @@ describe(createDispatcher, () => {
         state: boardOf([
           todoIssue({
             blockers: [
-              { id: "team-0", title: "Blocker", status: undefined, projectSlugId: "aaaaaaaaaaaa" },
+              {
+                id: "team-0",
+                title: "Blocker",
+                status: undefined,
+                stateType: undefined,
+                projectSlugId: "aaaaaaaaaaaa",
+              },
             ],
           }),
         ]),
@@ -360,6 +373,7 @@ describe(createDispatcher, () => {
                 id: "team-0",
                 title: "Blocker",
                 status: "In Progress",
+                stateType: undefined,
                 projectSlugId: "aaaaaaaaaaaa",
               },
             ],
@@ -372,6 +386,7 @@ describe(createDispatcher, () => {
                 id: "team-0",
                 title: "Blocker",
                 status: "In Progress",
+                stateType: undefined,
                 projectSlugId: "aaaaaaaaaaaa",
               },
             ],

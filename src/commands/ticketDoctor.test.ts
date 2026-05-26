@@ -930,6 +930,7 @@ describe("ticketDoctor — eligibility phase", () => {
             id: "HRD-2",
             title: "Blocking ticket",
             status: "In Progress",
+            stateType: undefined,
             projectSlugId: "aaaaaaaaaaaa",
           },
         ]),
