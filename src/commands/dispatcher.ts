@@ -13,7 +13,8 @@ import {
   type BoardState,
   type GroundcrewIssue,
   isGroundcrewIssue,
-  projectFor,
+  isIssueInProgress,
+  isIssueTodo,
 } from "../lib/boardSource.ts";
 import type { ResolvedConfig } from "../lib/config.ts";
 import { createLinearIssueStatusUpdater } from "../lib/linearIssueStatus.ts";
@@ -160,15 +161,12 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
       });
     }
 
-    const activeCount = state.issues.filter(
-      (issue) => issue.status === projectFor(issue, config).statuses.inProgress,
-    ).length;
+    const activeCount = state.issues.filter((issue) => isIssueInProgress(issue, config)).length;
     const slots = config.orchestrator.maximumInProgress - activeCount;
     // Narrow Todo to tickets that opted in via an `agent-*` label.
     // Unlabeled tickets are not groundcrew's concern even when in Todo.
     const todo: readonly GroundcrewIssue[] = state.issues.filter(
-      (issue): issue is GroundcrewIssue =>
-        issue.status === projectFor(issue, config).statuses.todo && isGroundcrewIssue(issue),
+      (issue): issue is GroundcrewIssue => isIssueTodo(issue, config) && isGroundcrewIssue(issue),
     );
 
     if (slots <= 0) {

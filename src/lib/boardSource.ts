@@ -220,7 +220,28 @@ export function projectFor(issue: Issue, config: ResolvedConfig): ResolvedProjec
   return resolved;
 }
 
+function isViewMode(config: ResolvedConfig): boolean {
+  return (config.linear.views ?? []).length > 0;
+}
+
+export function isIssueInProgress(issue: Issue, config: ResolvedConfig): boolean {
+  if (isViewMode(config)) {
+    return issue.stateType === "started";
+  }
+  return issue.status === projectFor(issue, config).statuses.inProgress;
+}
+
+export function isIssueTodo(issue: Issue, config: ResolvedConfig): boolean {
+  if (isViewMode(config)) {
+    return issue.stateType === "unstarted";
+  }
+  return issue.status === projectFor(issue, config).statuses.todo;
+}
+
 export function isTerminalStatusForIssue(issue: Issue, config: ResolvedConfig): boolean {
+  if (isViewMode(config)) {
+    return issue.stateType === "completed" || issue.stateType === "canceled";
+  }
   return projectFor(issue, config).statuses.terminal.includes(issue.status);
 }
 
@@ -1042,9 +1063,8 @@ export async function fetchResolvedIssue(arguments_: {
   const { client, config, ticket } = arguments_;
   const upper = ticket.toUpperCase();
   const raw = await fetchRawLinearIssue({ client, ticket });
-  const isViewMode = (config.linear.views ?? []).length > 0;
   let projectSlugId: string;
-  if (isViewMode) {
+  if (isViewMode(config)) {
     projectSlugId = raw.projectSlugId ?? "";
   } else {
     const project =

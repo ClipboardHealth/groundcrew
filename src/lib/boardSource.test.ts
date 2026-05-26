@@ -7,6 +7,8 @@ import {
   fetchInProgressIssueCount,
   fetchRawLinearIssue,
   fetchResolvedIssue,
+  isIssueInProgress,
+  isIssueTodo,
   isTerminalStatusForBlocker,
   isTerminalStatusForIssue,
   resolveModelFor,
@@ -1324,6 +1326,51 @@ describe(isTerminalStatusForIssue, () => {
         config,
       ),
     ).toBe(true);
+  });
+
+  it("in view mode classifies completed/canceled stateType as terminal", () => {
+    const config = makeConfig(VIEW_CONFIG_FIXTURE_OVERRIDES);
+    expect(
+      isTerminalStatusForIssue(makeIssue({ status: "Done", stateType: "completed" }), config),
+    ).toBe(true);
+    expect(
+      isTerminalStatusForIssue(makeIssue({ status: "Cancelled", stateType: "canceled" }), config),
+    ).toBe(true);
+    expect(
+      isTerminalStatusForIssue(makeIssue({ status: "Doing", stateType: "started" }), config),
+    ).toBe(false);
+  });
+});
+
+describe(isIssueInProgress, () => {
+  it("in project mode matches the project's inProgress status name", () => {
+    const config = makeConfig();
+    expect(isIssueInProgress(makeIssue({ status: "In Progress" }), config)).toBe(true);
+    expect(isIssueInProgress(makeIssue({ status: "Todo" }), config)).toBe(false);
+  });
+
+  it("in view mode matches stateType=started regardless of status name", () => {
+    const config = makeConfig(VIEW_CONFIG_FIXTURE_OVERRIDES);
+    expect(isIssueInProgress(makeIssue({ status: "Doing", stateType: "started" }), config)).toBe(
+      true,
+    );
+    expect(isIssueInProgress(makeIssue({ status: "Todo", stateType: "unstarted" }), config)).toBe(
+      false,
+    );
+  });
+});
+
+describe(isIssueTodo, () => {
+  it("in project mode matches the project's todo status name", () => {
+    const config = makeConfig();
+    expect(isIssueTodo(makeIssue({ status: "Todo" }), config)).toBe(true);
+    expect(isIssueTodo(makeIssue({ status: "In Progress" }), config)).toBe(false);
+  });
+
+  it("in view mode matches stateType=unstarted regardless of status name", () => {
+    const config = makeConfig(VIEW_CONFIG_FIXTURE_OVERRIDES);
+    expect(isIssueTodo(makeIssue({ status: "Inbox", stateType: "unstarted" }), config)).toBe(true);
+    expect(isIssueTodo(makeIssue({ status: "Doing", stateType: "started" }), config)).toBe(false);
   });
 });
 
