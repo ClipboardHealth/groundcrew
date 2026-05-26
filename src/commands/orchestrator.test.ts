@@ -798,7 +798,7 @@ describe(orchestrate, () => {
             state: { id: "state-todo", name: "Todo", type: "unstarted" },
             labels: { nodes: [{ name: "agent-any" }] },
             inverseRelations: {
-              nodes: [blockingRelation("TEAM-0", "In Progress")],
+              nodes: [blockingRelation("TEAM-0", "In Progress", "started")],
               pageInfo: { hasNextPage: false },
             },
           }),
@@ -812,8 +812,7 @@ describe(orchestrate, () => {
     expect(setupMock).not.toHaveBeenCalled();
     const out = consoleLog.output();
     expect(out).toContain("event=dispatch outcome=skipped reason=blocked ticket=team-1");
-    // After canonical migration: blocker id is source-prefixed; status mapped via project config.
-    // No quotes because "linear:team-0:in-progress" has no spaces (unlike the old "In Progress").
+    // After main's #110: state.type drives classification; "started" maps to "in-progress".
     expect(out).toContain("blockers=linear:team-0:in-progress");
   });
 

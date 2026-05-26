@@ -285,6 +285,9 @@ describe(resumeWorkspace, () => {
       repository: "repo-a",
       model: "claude",
       teamId: "team-1",
+      stateType: "unstarted",
+      status: "Todo",
+      statusId: "state-todo",
     });
 
     await resumeWorkspace(config, { ticket: "team-1" });

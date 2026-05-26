@@ -1,19 +1,20 @@
 import type { LinearClient } from "@linear/sdk";
 
 import { captureConsoleLog, type ConsoleCapture } from "../../../testHelpers/consoleCapture.ts";
-import { RepositoryResolutionError } from "../../ticketSource.ts";
 import type { ResolvedConfig } from "../../config.ts";
 import {
+  blockersFromRelations,
   createBoardSource,
   fetchBlockersForTicket,
   fetchInProgressIssueCount,
   fetchRawLinearIssue,
   fetchResolvedIssue,
-  isGroundcrewIssue,
+  isIssueInProgress,
+  isIssueTodo,
+  isTerminalStatusForBlocker,
   isTerminalStatusForIssue,
-  UnknownProjectError,
-  type Issue,
 } from "./fetch.ts";
+import { resolveModelFor, resolveRepositoryFor } from "./parsing.ts";
 
 interface IssueNodeStub {
   id: string;
@@ -21,10 +22,9 @@ interface IssueNodeStub {
   title: string;
   description?: string | undefined;
   updatedAt: string;
-  state?: { id: string; name: string } | null;
+  state?: { id: string; name: string; type: string } | null;
   team?: { id: string; key: string } | null;
   assignee?: { name: string } | null;
-  project?: { slugId: string } | null;
   children?: { nodes: unknown[] };
   labels?: { nodes: { name: string }[] };
   inverseRelations?: {
@@ -33,8 +33,7 @@ interface IssueNodeStub {
       issue?: {
         identifier: string;
         title: string;
-        state?: { name: string } | null;
-        project?: { slugId: string } | null;
+        state?: { name: string; type?: string } | null;
       } | null;
     }[];
     pageInfo: { hasNextPage: boolean };
@@ -43,21 +42,6 @@ interface IssueNodeStub {
 
 function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
   return {
-    linear: {
-      projects: [
-        {
-          projectSlug: "ai-strategy-aaaaaaaaaaaa",
-          slugId: "aaaaaaaaaaaa",
-          statuses: {
-            todo: "Todo",
-            inProgress: "In Progress",
-            done: "Done",
-            terminal: ["Done"],
-          },
-        },
-      ],
-      ...overrides.linear,
-    },
     sources: [],
     git: { remote: "origin", defaultBranch: "main", ...overrides.git },
     workspace: {
@@ -94,10 +78,12 @@ function issueNode(overrides: Partial<IssueNodeStub>): IssueNodeStub {
     title: overrides.title ?? "Title",
     description: "description" in overrides ? overrides.description : "Touches repo-a.",
     updatedAt: overrides.updatedAt ?? "2025-01-01T00:00:00.000Z",
-    state: overrides.state === undefined ? { id: "state-todo", name: "Todo" } : overrides.state,
+    state:
+      overrides.state === undefined
+        ? { id: "state-todo", name: "Todo", type: "unstarted" }
+        : overrides.state,
     team: overrides.team === undefined ? { id: "team-default", key: "TEAM" } : overrides.team,
     assignee: overrides.assignee === undefined ? { name: "Alice" } : overrides.assignee,
-    project: "project" in overrides ? overrides.project : { slugId: "aaaaaaaaaaaa" },
     children: overrides.children ?? { nodes: [] },
     labels: overrides.labels ?? { nodes: [] },
     ...(overrides.inverseRelations === undefined
@@ -106,16 +92,30 @@ function issueNode(overrides: Partial<IssueNodeStub>): IssueNodeStub {
   };
 }
 
+function blockerState(
+  status: string | undefined,
+  stateType: string | undefined,
+): { name: string; type?: string } | null {
+  if (status === undefined) {
+    return null;
+  }
+  if (stateType === undefined) {
+    return { name: status };
+  }
+  return { name: status, type: stateType };
+}
+
 function blockingRelation(
   identifier: string,
   status?: string,
+  stateType?: string,
 ): NonNullable<IssueNodeStub["inverseRelations"]>["nodes"][number] {
   return {
     type: "blocks",
     issue: {
       identifier,
       title: "Blocker",
-      state: status === undefined ? null : { name: status },
+      state: blockerState(status, stateType),
     },
   };
 }
@@ -126,21 +126,38 @@ interface ClientStub {
   client: { rawRequest: ReturnType<typeof vi.fn<RawRequest>> };
 }
 
-function makeClient(options: {
-  projectFound?: boolean;
+function expectCallMatching(
+  rawRequest: ReturnType<typeof vi.fn<RawRequest>>,
+  queryPrefix: string,
+): [string, Record<string, unknown>] {
+  const call = rawRequest.mock.calls.find(([query]) => query.includes(queryPrefix));
+  if (call === undefined) {
+    throw new Error(`No call matched ${queryPrefix}`);
+  }
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- helper narrows the queue tuple shape after the find() guard above
+  return call as [string, Record<string, unknown>];
+}
+
+interface ClientStubOptions {
+  /** Whether `VerifyViewer` returns a viewer or null. Defaults to true. */
+  viewerFound?: boolean;
+  /** Pages returned for `BoardIssues`. Defaults to one empty page. */
   pages?: IssueNodeStub[][];
+  /** Per-page counts for `InProgressIssues` paging. */
   activePages?: number[];
-}): ClientStub {
-  const { projectFound = true, pages = [[]], activePages = [0] } = options;
+}
+
+function makeClient(options: ClientStubOptions = {}): ClientStub {
+  const { viewerFound = true, pages = [[]], activePages = [0] } = options;
   let boardCallIndex = 0;
   let activeCallIndex = 0;
   const rawRequest = vi.fn<RawRequest>(async (query: string) => {
-    if (query.includes("VerifyProject")) {
+    if (query.includes("VerifyViewer")) {
       return {
         data: {
-          projects: {
-            nodes: projectFound ? [{ id: "p1", name: "AI Strategy", slugId: "aaaaaaaaaaaa" }] : [],
-          },
+          viewer: viewerFound
+            ? { id: "viewer-1", name: "Alice", email: "alice@example.com" }
+            : null,
         },
       };
     }
@@ -168,8 +185,7 @@ function makeClient(options: {
           issues: {
             nodes: Array.from({ length: count }, (_value, nodeIndex) => ({
               id: `active-${index}-${nodeIndex}`,
-              project: { slugId: "aaaaaaaaaaaa" },
-              state: { name: "In Progress" },
+              state: { type: "started" },
             })),
             pageInfo: { hasNextPage: hasNext, endCursor: hasNext ? `active-cursor-${index}` : "" },
           },
@@ -184,9 +200,8 @@ function makeClient(options: {
             title: "Title",
             description: "Touches repo-a.",
             team: { id: "team-default" },
-            project: { slugId: "aaaaaaaaaaaa" },
             labels: { nodes: [] },
-            state: { name: "Todo" },
+            state: { name: "Todo", type: "unstarted" },
           },
         },
       };
@@ -221,1187 +236,558 @@ describe(createBoardSource, () => {
   });
 
   describe("verify", () => {
-    it("rejects when no project resolves from linear.projects", async () => {
-      const { source } = makeBoardSource(makeClient({ projectFound: false }));
-      await expect(source.verify()).rejects.toThrow(/No Linear projects resolved/);
+    it("rejects when the API key does not resolve to a viewer", async () => {
+      const { source } = makeBoardSource(makeClient({ viewerFound: false }));
+      await expect(source.verify()).rejects.toThrow(/did not return a viewer/);
     });
 
-    it("logs a warning and continues when at least one slug resolves", async () => {
-      const config = makeConfig({
-        linear: {
-          projects: [
-            {
-              projectSlug: "ai-strategy-aaaaaaaaaaaa",
-              slugId: "aaaaaaaaaaaa",
-              statuses: {
-                todo: "Todo",
-                inProgress: "In Progress",
-                done: "Done",
-                terminal: ["Done"],
-              },
-            },
-            {
-              projectSlug: "missing-cccccccccccc",
-              slugId: "cccccccccccc",
-              statuses: {
-                todo: "Todo",
-                inProgress: "In Progress",
-                done: "Done",
-                terminal: ["Done"],
-              },
-            },
-          ],
-        },
-      });
-      const { source } = makeBoardSource(makeClient({ projectFound: true }), config);
+    it("logs the resolved viewer on success", async () => {
+      const { source } = makeBoardSource(makeClient({ viewerFound: true }));
       await source.verify();
-      const output = consoleLog.output();
-      expect(output).toContain("Resolved Linear project: AI Strategy");
-      expect(output).toMatch(
-        /WARNING: no Linear project found with slugId "cccccccccccc".*"missing-cccccccccccc"/,
-      );
-    });
-
-    it("logs the resolved project name on success", async () => {
-      const { source } = makeBoardSource(makeClient({ projectFound: true }));
-      await source.verify();
-      expect(consoleLog.output()).toContain("Resolved Linear project: AI Strategy");
+      expect(consoleLog.output()).toContain("Resolved Linear viewer: Alice");
     });
   });
 
   describe("fetch", () => {
-    it("returns an empty board when the project has no issues", async () => {
+    it("returns an empty board when the viewer has no issues", async () => {
       const { source } = makeBoardSource(makeClient({ pages: [[]] }));
       const state = await source.fetch();
       expect(state.issues).toStrictEqual([]);
       expectTypeOf(state.timestamp).toBeString();
     });
 
-    it("paginates across multiple pages", async () => {
-      const { source } = makeBoardSource(
-        makeClient({
-          pages: [
-            [issueNode({ identifier: "TEAM-1", id: "uuid-1" })],
-            [issueNode({ identifier: "TEAM-2", id: "uuid-2" })],
-          ],
-        }),
-      );
-      const state = await source.fetch();
-      expect(state.issues.map((index) => index.id)).toStrictEqual(["team-1", "team-2"]);
-    });
-
-    it("filters out parent issues that have children", async () => {
-      const { source } = makeBoardSource(
-        makeClient({
-          pages: [
-            [
-              issueNode({ identifier: "TEAM-1", id: "uuid-1", children: { nodes: [{ id: "c" }] } }),
-              issueNode({ identifier: "TEAM-2", id: "uuid-2" }),
-            ],
-          ],
-        }),
-      );
-      const state = await source.fetch();
-      expect(state.issues.map((index) => index.id)).toStrictEqual(["team-2"]);
-    });
-
-    it("drops issues whose project slugId isn't in linear.projects", async () => {
-      // The GraphQL slugId filter normally scopes results to configured
-      // projects; this guards against a degenerate Linear response that
-      // returns an off-config issue. Dropping it here keeps projectFor's
-      // throw a real bug signal instead of routine noise.
-      const { source } = makeBoardSource(
-        makeClient({
-          pages: [[issueNode({ identifier: "TEAM-9", project: { slugId: "off-config" } })]],
-        }),
-      );
-      const state = await source.fetch();
-      expect(state.issues).toHaveLength(0);
-    });
-
-    it("drops issues whose project field is missing entirely", async () => {
-      const { source } = makeBoardSource(
-        makeClient({ pages: [[issueNode({ identifier: "TEAM-10", project: null })]] }),
-      );
-      const state = await source.fetch();
-      expect(state.issues).toHaveLength(0);
-    });
-
-    it("lowercases Linear's uppercase identifier into Issue.id", async () => {
-      const { source } = makeBoardSource(
-        makeClient({ pages: [[issueNode({ identifier: "STAFF-508", id: "uuid-staff" })]] }),
-      );
-      const state = await source.fetch();
-      expect(state.issues[0]?.id).toBe("staff-508");
-    });
-
-    it("populates description from the GraphQL node onto the Issue snapshot", async () => {
-      const { source } = makeBoardSource(
-        makeClient({
-          pages: [[issueNode({ description: "Touches repo-a. Some body text." })]],
-        }),
-      );
-      const state = await source.fetch();
-      expect(state.issues[0]?.description).toBe("Touches repo-a. Some body text.");
-    });
-
-    it("coerces a missing description to an empty string on the Issue snapshot", async () => {
-      const { source } = makeBoardSource(
-        makeClient({ pages: [[issueNode({ description: undefined })]] }),
-      );
-      const state = await source.fetch();
-      expect(state.issues[0]?.description).toBe("");
-    });
-
-    it("infers the repository from a known repo name in the description", async () => {
-      const { source } = makeBoardSource(
-        makeClient({
-          pages: [
-            [
-              issueNode({
-                description: "Affects api-admin somewhere.",
-                labels: { nodes: [{ name: "agent-claude" }] },
-              }),
-            ],
-          ],
-        }),
-      );
-      const state = await source.fetch();
-      const [first] = state.issues;
-      expect(first?.repository).toBe("api-admin");
-    });
-
-    it("resolves bare repo name to full owner/repo when org is omitted from description", async () => {
-      const { source } = makeBoardSource(
-        makeClient({
-          pages: [
-            [
-              issueNode({
-                description: "Affects security-alerts-agent somehow.",
-                labels: { nodes: [{ name: "agent-claude" }] },
-              }),
-            ],
-          ],
-        }),
-        makeConfig({
-          workspace: {
-            projectDir: "/work",
-            knownRepositories: ["ClipboardHealth/security-alerts-agent"],
-          },
-        }),
-      );
-      const state = await source.fetch();
-      const [first] = state.issues;
-      expect(first?.repository).toBe("ClipboardHealth/security-alerts-agent");
-    });
-
-    it("warns and skips (repository: undefined) when a bare repo name is ambiguous across multiple orgs", async () => {
-      // PR #88: repo resolution failures during fetch() are WARN+skip (not
-      // throw) so one badly-labelled ticket doesn't crash the whole board load.
-      const logLines: string[] = [];
-      const consoleSpy = vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
-        logLines.push(args.join(" "));
-      });
-      try {
-        const { source } = makeBoardSource(
-          makeClient({
-            pages: [
-              [
-                issueNode({
-                  description: "Touches shared-repo.",
-                  labels: { nodes: [{ name: "agent-claude" }] },
-                }),
-              ],
-            ],
-          }),
-          makeConfig({
-            workspace: {
-              projectDir: "/work",
-              knownRepositories: ["OrgA/shared-repo", "OrgB/shared-repo"],
-            },
-          }),
-        );
-        const state = await source.fetch();
-        const [first] = state.issues;
-        expect(first?.repository).toBeUndefined();
-        expect(logLines.join("\n")).toMatch(/WARNING.*TEAM-1.*no known repository/i);
-      } finally {
-        consoleSpy.mockRestore();
-      }
-    });
-
-    it("longer repository names beat shorter ones (api-admin vs api)", async () => {
-      // Without the descending-length sort, `api` would match first.
-      const { source } = makeBoardSource(
-        makeClient({
-          pages: [
-            [
-              issueNode({
-                description: "ticket about api-admin only",
-                labels: { nodes: [{ name: "agent-claude" }] },
-              }),
-            ],
-          ],
-        }),
-      );
-      const state = await source.fetch();
-      const [first] = state.issues;
-      expect(first?.repository).toBe("api-admin");
-    });
-
-    it("warns and skips (repository: undefined) when a labeled Todo ticket has no known repo in its description", async () => {
-      // PR #88: repo resolution failures during fetch() are WARN+skip (not
-      // throw) so one badly-labelled ticket doesn't crash the whole board load.
-      const logLines: string[] = [];
-      const consoleSpy = vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
-        logLines.push(args.join(" "));
-      });
-      try {
-        const { source } = makeBoardSource(
-          makeClient({
-            pages: [
-              [
-                issueNode({
-                  description: "no repo here",
-                  labels: { nodes: [{ name: "agent-claude" }] },
-                }),
-              ],
-            ],
-          }),
-        );
-        const state = await source.fetch();
-        const [first] = state.issues;
-        expect(first?.repository).toBeUndefined();
-        expect(logLines.join("\n")).toMatch(/WARNING.*TEAM-1.*no known repository/i);
-      } finally {
-        consoleSpy.mockRestore();
-      }
-    });
-
-    it("warns and skips (repository: undefined) when a labeled Todo ticket has a missing description", async () => {
-      // PR #88: repo resolution failures during fetch() are WARN+skip (not
-      // throw) so one badly-labelled ticket doesn't crash the whole board load.
-      const logLines: string[] = [];
-      const consoleSpy = vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
-        logLines.push(args.join(" "));
-      });
-      try {
-        const { source } = makeBoardSource(
-          makeClient({
-            pages: [
-              [
-                issueNode({
-                  description: undefined,
-                  labels: { nodes: [{ name: "agent-claude" }] },
-                }),
-              ],
-            ],
-          }),
-        );
-        const state = await source.fetch();
-        const [first] = state.issues;
-        expect(first?.repository).toBeUndefined();
-        expect(logLines.join("\n")).toMatch(/WARNING.*TEAM-1.*no known repository/i);
-      } finally {
-        consoleSpy.mockRestore();
-      }
-    });
-
-    it("does not reject when an unlabeled ticket has no parseable repo", async () => {
-      // Regression guard: previously aborted the whole board load on any
-      // human-owned ticket whose description happened not to mention one
-      // of `workspace.knownRepositories`.
-      const { source } = makeBoardSource(
-        makeClient({ pages: [[issueNode({ description: "no repo here" })]] }),
-      );
-      const state = await source.fetch();
-      const [first] = state.issues;
-      expect(first?.repository).toBeUndefined();
-      expect(first?.model).toBeUndefined();
-    });
-
-    it("does not reject when an unlabeled ticket has a missing description", async () => {
-      const { source } = makeBoardSource(
-        makeClient({ pages: [[issueNode({ description: undefined })]] }),
-      );
-      const state = await source.fetch();
-      const [first] = state.issues;
-      expect(first?.repository).toBeUndefined();
-      expect(first?.model).toBeUndefined();
-    });
-
-    it("scopes the board query to the orchestrator's configured state names so off-board tickets are never returned", async () => {
+    it("filters by assignee=isMe AND agent-* label AND actionable state types", async () => {
       const { source, rawRequest } = makeBoardSource(makeClient({ pages: [[]] }));
-
       await source.fetch();
-
-      const boardCall = rawRequest.mock.calls.find(([query]) => query.includes("BoardIssues"));
-      expect(boardCall?.[0]).toMatch(/state:\s*\{\s*name:\s*\{\s*in:\s*\$stateNames\s*\}\s*\}/);
-      expect(boardCall?.[1]).toMatchObject({
-        stateNames: ["Todo", "In Progress", "Done"],
-      });
-    });
-
-    it("filters the board query to tickets with an agent-* label so unlabeled tickets never leave Linear", async () => {
-      const { source, rawRequest } = makeBoardSource(makeClient({ pages: [[]] }));
-
-      await source.fetch();
-
-      const boardCall = rawRequest.mock.calls.find(([query]) => query.includes("BoardIssues"));
-      expect(boardCall?.[0]).toMatch(
-        /labels:\s*\{\s*some:\s*\{\s*name:\s*\{\s*startsWith:\s*\$agentLabelPrefix\s*\}\s*\}\s*\}/,
-      );
-      expect(boardCall?.[1]).toMatchObject({
+      const [query, variables] = expectCallMatching(rawRequest, "BoardIssues");
+      expect(query).toContain("assignee: { isMe: { eq: true } }");
+      expect(query).toContain("labels: { some: { name: { startsWith: $agentLabelPrefix } } }");
+      expect(query).toContain("state: { type: { in: $stateTypes } }");
+      expect(variables).toMatchObject({
         agentLabelPrefix: "agent-",
+        stateTypes: ["unstarted", "started", "completed", "canceled", "duplicate"],
       });
     });
 
-    it("dedupes overlapping terminal state names in the query variables", async () => {
-      const config = makeConfig({
-        linear: {
-          projects: [
-            {
-              projectSlug: "ai-strategy-aaaaaaaaaaaa",
-              slugId: "aaaaaaaaaaaa",
-              // Done appears in both `done` and `terminal`; "Won't Do" is a custom
-              // terminal state. The query should carry each name exactly once.
-              statuses: {
-                todo: "Todo",
-                inProgress: "In Progress",
-                done: "Done",
-                terminal: ["Done", "Won't Do"],
-              },
-            },
-          ],
-        },
+    it("turns each issue node into an Issue carrying stateType", async () => {
+      const node = issueNode({
+        identifier: "TEAM-1",
+        state: { id: "state-todo", name: "Todo", type: "unstarted" },
+        labels: { nodes: [{ name: "agent-claude" }] },
       });
-      const { source, rawRequest } = makeBoardSource(makeClient({ pages: [[]] }), config);
-
-      await source.fetch();
-
-      const boardCall = rawRequest.mock.calls.find(([query]) => query.includes("BoardIssues"));
-      expect(boardCall?.[1]).toMatchObject({
-        stateNames: ["Todo", "In Progress", "Done", "Won't Do"],
-      });
-    });
-
-    it("resolves the model from an agent-* label", async () => {
-      const { source } = makeBoardSource(
-        makeClient({
-          pages: [[issueNode({ labels: { nodes: [{ name: "agent-codex" }] } })]],
-        }),
-      );
+      const { source } = makeBoardSource(makeClient({ pages: [[node]] }));
       const state = await source.fetch();
-      const [first] = state.issues;
-      expect(first?.model).toBe("codex");
+      expect(state.issues).toHaveLength(1);
+      const [issue] = state.issues;
+      expect(issue?.id).toBe("team-1");
+      expect(issue?.status).toBe("Todo");
+      expect(issue?.stateType).toBe("unstarted");
+      expect(issue?.repository).toBe("repo-a");
+      expect(issue?.model).toBe("claude");
     });
 
-    it("falls back to models.default with a warning when an agent-<model> label refers to a disabled shipped default", async () => {
-      const configWithCodexDisabled = makeConfig({
+    it("skips parent tickets with children and surfaces them as parentSkips when unstarted", async () => {
+      const parent = issueNode({
+        identifier: "TEAM-1",
+        children: { nodes: [{ id: "child-1" }] },
+        labels: { nodes: [{ name: "agent-claude" }] },
+      });
+      const { source } = makeBoardSource(makeClient({ pages: [[parent]] }));
+      const state = await source.fetch();
+      expect(state.issues).toStrictEqual([]);
+      expect(state.parentSkips).toHaveLength(1);
+      expect(state.parentSkips[0]).toMatchObject({ id: "team-1", childCount: 1 });
+    });
+
+    it("does not surface parent tickets in non-Todo states as parentSkips", async () => {
+      const parent = issueNode({
+        identifier: "TEAM-1",
+        state: { id: "state-active", name: "In Progress", type: "started" },
+        children: { nodes: [{ id: "child-1" }] },
+        labels: { nodes: [{ name: "agent-claude" }] },
+      });
+      const { source } = makeBoardSource(makeClient({ pages: [[parent]] }));
+      const state = await source.fetch();
+      expect(state.parentSkips).toStrictEqual([]);
+    });
+
+    it("paginates until the API reports no more pages", async () => {
+      const a = issueNode({ identifier: "TEAM-1", id: "uuid-1" });
+      const b = issueNode({ identifier: "TEAM-2", id: "uuid-2" });
+      const { source, rawRequest } = makeBoardSource(makeClient({ pages: [[a], [b]] }));
+      const state = await source.fetch();
+      expect(state.issues.map((i) => i.id)).toStrictEqual(["team-1", "team-2"]);
+      const boardCalls = rawRequest.mock.calls.filter(([query]) => query.includes("BoardIssues"));
+      expect(boardCalls).toHaveLength(2);
+    });
+
+    it("only resolves repository on Todo tickets with an agent-* label", async () => {
+      const todo = issueNode({
+        identifier: "TEAM-1",
+        labels: { nodes: [{ name: "agent-claude" }] },
+      });
+      const inProgress = issueNode({
+        identifier: "TEAM-2",
+        id: "uuid-2",
+        state: { id: "state-active", name: "In Progress", type: "started" },
+        labels: { nodes: [{ name: "agent-claude" }] },
+      });
+      const { source } = makeBoardSource(makeClient({ pages: [[todo, inProgress]] }));
+      const state = await source.fetch();
+      const [first, second] = state.issues;
+      expect(first?.repository).toBe("repo-a");
+      expect(first?.model).toBe("claude");
+      expect(second?.repository).toBeUndefined();
+      expect(second?.model).toBeUndefined();
+    });
+
+    it("falls back to models.default when a Todo's agent-* label refers to a disabled shipped default", async () => {
+      const config = makeConfig({
         models: {
           default: "claude",
-          definitions: {
-            claude: { cmd: "claude", color: "#fff" },
-          },
+          definitions: { claude: { cmd: "claude", color: "#fff" } },
+          // codex is a shipped default but absent here = disabled
         },
       });
-
-      const { source } = makeBoardSource(
-        makeClient({
-          pages: [
-            [issueNode({ identifier: "STAFF-1", labels: { nodes: [{ name: "agent-codex" }] } })],
-          ],
-        }),
-        configWithCodexDisabled,
-      );
+      const node = issueNode({
+        identifier: "TEAM-1",
+        labels: { nodes: [{ name: "agent-codex" }] },
+      });
+      const { source } = makeBoardSource(makeClient({ pages: [[node]] }), config);
       const state = await source.fetch();
-      const [first] = state.issues;
-
-      expect(first?.model).toBe("claude");
-      expect(consoleLog.output()).toMatch(
-        /staff-1: agent-codex label refers to a disabled model; falling back to models\.default \(claude\)/,
-      );
+      expect(state.issues[0]?.model).toBe("claude");
     });
 
-    it("falls back silently to models.default for an unknown (not disabled) agent label", async () => {
-      const { source } = makeBoardSource(
-        makeClient({
-          // cspell:disable-next-line
-          pages: [[issueNode({ labels: { nodes: [{ name: "agent-mystery" }] } })]],
-        }),
-      );
+    it("captures blockers from inverseRelations with stateType", async () => {
+      const node = issueNode({
+        identifier: "TEAM-1",
+        labels: { nodes: [{ name: "agent-claude" }] },
+        inverseRelations: {
+          nodes: [blockingRelation("TEAM-9", "Done", "completed")],
+          pageInfo: { hasNextPage: false },
+        },
+      });
+      const { source } = makeBoardSource(makeClient({ pages: [[node]] }));
       const state = await source.fetch();
-      const [first] = state.issues;
-
-      expect(first?.model).toBe("claude");
-      expect(consoleLog.output()).not.toMatch(/falling back to models\.default/);
-    });
-
-    it("preserves agent-any as the model name (resolution happens later)", async () => {
-      const { source } = makeBoardSource(
-        makeClient({
-          pages: [[issueNode({ labels: { nodes: [{ name: "agent-any" }] } })]],
-        }),
-      );
-      const state = await source.fetch();
-      const [first] = state.issues;
-      expect(first?.model).toBe("any");
-    });
-
-    it("falls back to the default model when an agent-* label names a prototype property", async () => {
-      const { source } = makeBoardSource(
-        makeClient({
-          pages: [
-            [
-              issueNode({
-                description: "Touches repo-a.",
-                labels: { nodes: [{ name: "agent-toString" }] },
-              }),
-            ],
-          ],
-        }),
-      );
-      const state = await source.fetch();
-      const [first] = state.issues;
-      expect(first?.model).toBe("claude");
-    });
-
-    it("falls back to the default model when the label names an unknown model", async () => {
-      const { source } = makeBoardSource(
-        makeClient({
-          pages: [[issueNode({ labels: { nodes: [{ name: "agent-ghost" }] } })]],
-        }),
-      );
-      const state = await source.fetch();
-      const [first] = state.issues;
-      expect(first?.model).toBe("claude");
-    });
-
-    it("uses the first recognized model when an unknown label appears first", async () => {
-      const { source } = makeBoardSource(
-        makeClient({
-          pages: [
-            [
-              issueNode({
-                labels: { nodes: [{ name: "agent-ghost" }, { name: "agent-codex" }] },
-              }),
-            ],
-          ],
-        }),
-      );
-
-      const state = await source.fetch();
-
-      expect(state.issues[0]?.model).toBe("codex");
-    });
-
-    it("sets model and repository to undefined for tickets without an agent-* label", async () => {
-      const { source } = makeBoardSource(
-        makeClient({
-          pages: [[issueNode({ labels: { nodes: [{ name: "feature" }] } })]],
-        }),
-      );
-      const state = await source.fetch();
-      const [first] = state.issues;
-      expect(first?.model).toBeUndefined();
-      expect(first?.repository).toBeUndefined();
-    });
-
-    it("falls back to defaults when team and assignee are missing", async () => {
-      const { source } = makeBoardSource(
-        makeClient({
-          pages: [[issueNode({ team: null, assignee: null })]],
-        }),
-      );
-      const state = await source.fetch();
-      const [first] = state.issues;
-      expect(first?.teamId).toBe("");
-      expect(first?.assignee).toBe("Unassigned");
-    });
-
-    it("builds blockers only from `blocks` relations and ignores other relation types", async () => {
-      const { source } = makeBoardSource(
-        makeClient({
-          pages: [
-            [
-              issueNode({
-                inverseRelations: {
-                  nodes: [
-                    blockingRelation("TEAM-0", "In Progress"),
-                    {
-                      type: "relates",
-                      issue: {
-                        identifier: "TEAM-9",
-                        title: "Related",
-                        state: { name: "Done" },
-                      },
-                    },
-                  ],
-                  pageInfo: { hasNextPage: false },
-                },
-              }),
-            ],
-          ],
-        }),
-      );
-      const state = await source.fetch();
-      const [first] = state.issues;
-      expect(first?.blockers).toStrictEqual([
-        { id: "team-0", title: "Blocker", status: "In Progress", projectSlugId: undefined },
+      const [issue] = state.issues;
+      expect(issue?.blockers).toStrictEqual([
+        { id: "team-9", title: "Blocker", status: "Done", stateType: "completed" },
       ]);
-      expect(first?.hasMoreBlockers).toBe(false);
-    });
-
-    it("represents missing blocker payloads as `unknown` with no status", async () => {
-      const { source } = makeBoardSource(
-        makeClient({
-          pages: [
-            [
-              issueNode({
-                inverseRelations: {
-                  nodes: [{ type: "blocks", issue: null }],
-                  pageInfo: { hasNextPage: false },
-                },
-              }),
-            ],
-          ],
-        }),
-      );
-      const state = await source.fetch();
-      const [first] = state.issues;
-      expect(first?.blockers).toStrictEqual([
-        { id: "unknown", title: "", status: undefined, projectSlugId: undefined },
-      ]);
-    });
-
-    it("propagates hasMoreBlockers when the relation page is paginated", async () => {
-      const { source } = makeBoardSource(
-        makeClient({
-          pages: [
-            [
-              issueNode({
-                inverseRelations: {
-                  nodes: [],
-                  pageInfo: { hasNextPage: true },
-                },
-              }),
-            ],
-          ],
-        }),
-      );
-      const state = await source.fetch();
-      const [first] = state.issues;
-      expect(first?.hasMoreBlockers).toBe(true);
     });
   });
 });
 
 describe(fetchResolvedIssue, () => {
-  it("returns an empty team id when Linear omits the issue team", async () => {
-    const client = makeClient({ pages: [[]] });
-    client.client.rawRequest.mockResolvedValueOnce({
-      data: {
-        issue: {
-          id: "uuid-1",
-          title: "Title",
-          description: "Touches repo-a.",
-          team: null,
-          project: { slugId: "aaaaaaaaaaaa" },
-          labels: { nodes: [] },
-        },
-      },
-    });
+  let consoleLog: ConsoleCapture;
+  beforeEach(() => {
+    consoleLog = captureConsoleLog();
+  });
+  afterEach(() => {
+    consoleLog.restore();
+    vi.clearAllMocks();
+  });
 
-    const actual = await fetchResolvedIssue({
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests use the LinearClient surface consumed by boardSource
+  it("returns the resolved repository and model from the issue description and labels", async () => {
+    const client = makeClient();
+    const resolved = await fetchResolvedIssue({
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests hit the LinearClient surface consumed by boardSource
       client: client as unknown as LinearClient,
       config: makeConfig(),
-      ticket: "team-1",
+      ticket: "TEAM-1",
     });
-
-    expect(actual.teamId).toBe("");
+    expect(resolved.repository).toBe("repo-a");
+    expect(resolved.model).toBe("claude");
+    expect(resolved.teamId).toBe("team-default");
   });
 
   it("falls back to models.default when the label refers to a disabled shipped default", async () => {
-    const configWithCodexDisabled = makeConfig({
+    const client = {
+      client: {
+        rawRequest: vi.fn<RawRequest>(async () => ({
+          data: {
+            issue: {
+              id: "uuid-1",
+              title: "Title",
+              description: "Touches repo-a.",
+              team: { id: "team-default" },
+              labels: { nodes: [{ name: "agent-codex" }] },
+              state: { name: "Todo", type: "unstarted" },
+            },
+          },
+        })),
+      },
+    };
+    const config = makeConfig({
       models: {
         default: "claude",
         definitions: {
           claude: { cmd: "claude", color: "#fff" },
+          // codex disabled — exists in shipped defaults but not in resolved definitions
         },
       },
     });
-    const client = makeClient({ pages: [[]] });
-    client.client.rawRequest.mockResolvedValueOnce({
-      data: {
-        issue: {
-          id: "uuid-1",
-          title: "Title",
-          description: "Touches repo-a.",
-          team: { id: "team-default" },
-          project: { slugId: "aaaaaaaaaaaa" },
-          labels: { nodes: [{ name: "agent-codex" }] },
-        },
-      },
-    });
-
-    const actual = await fetchResolvedIssue({
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests use the LinearClient surface consumed by boardSource
+    const resolved = await fetchResolvedIssue({
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests hit the LinearClient surface consumed by boardSource
       client: client as unknown as LinearClient,
-      config: configWithCodexDisabled,
-      ticket: "team-1",
+      config,
+      ticket: "TEAM-1",
     });
-
-    expect(actual.model).toBe("claude");
+    expect(resolved.model).toBe("claude");
+    expect(consoleLog.output()).toContain("agent-codex label refers to a disabled model");
   });
 
-  it("throws UnknownProjectError when the ticket's Linear project is not configured", async () => {
-    const client = makeClient({ pages: [[]] });
-    client.client.rawRequest.mockResolvedValueOnce({
-      data: {
-        issue: {
-          id: "uuid-1",
-          title: "Title",
-          description: "Touches repo-a.",
-          team: { id: "team-default" },
-          project: { slugId: "off-config-cccccccccccc" },
-          labels: { nodes: [] },
-        },
+  it("throws RepositoryResolutionError when the description has no known repository", async () => {
+    const client = {
+      client: {
+        rawRequest: vi.fn<RawRequest>(async () => ({
+          data: {
+            issue: {
+              id: "uuid-1",
+              title: "Title",
+              description: "No matching repository.",
+              team: { id: "team-default" },
+              labels: { nodes: [{ name: "agent-claude" }] },
+              state: { name: "Todo", type: "unstarted" },
+            },
+          },
+        })),
       },
-    });
-
+    };
     await expect(
       fetchResolvedIssue({
-        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests use the LinearClient surface consumed by boardSource
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests hit the LinearClient surface consumed by boardSource
         client: client as unknown as LinearClient,
         config: makeConfig(),
-        ticket: "team-1",
+        ticket: "TEAM-1",
       }),
-    ).rejects.toThrow(UnknownProjectError);
-  });
-
-  it("throws UnknownProjectError when the ticket has no Linear project", async () => {
-    const client = makeClient({ pages: [[]] });
-    client.client.rawRequest.mockResolvedValueOnce({
-      data: {
-        issue: {
-          id: "uuid-1",
-          title: "Title",
-          description: "Touches repo-a.",
-          team: { id: "team-default" },
-          project: null,
-          labels: { nodes: [] },
-        },
-      },
-    });
-
-    await expect(
-      fetchResolvedIssue({
-        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests use the LinearClient surface consumed by boardSource
-        client: client as unknown as LinearClient,
-        config: makeConfig(),
-        ticket: "team-1",
-      }),
-    ).rejects.toThrow(/has no associated Linear project/);
-  });
-
-  it("throws RepositoryResolutionError when the description contains no known repository", async () => {
-    const client = makeClient({ pages: [[]] });
-    client.client.rawRequest.mockResolvedValueOnce({
-      data: {
-        issue: {
-          id: "uuid-1",
-          title: "Title",
-          description: "No repository mention here.",
-          team: { id: "team-default" },
-          project: { slugId: "aaaaaaaaaaaa" },
-          labels: { nodes: [] },
-        },
-      },
-    });
-
-    await expect(
-      fetchResolvedIssue({
-        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests use the LinearClient surface consumed by boardSource
-        client: client as unknown as LinearClient,
-        config: makeConfig(),
-        ticket: "team-1",
-      }),
-    ).rejects.toThrow(RepositoryResolutionError);
-  });
-
-  it("uses the matched model when an agent-* label maps to a known model", async () => {
-    const client = makeClient({ pages: [[]] });
-    client.client.rawRequest.mockResolvedValueOnce({
-      data: {
-        issue: {
-          id: "uuid-1",
-          title: "Title",
-          description: "Touches repo-a.",
-          team: { id: "team-default" },
-          project: { slugId: "aaaaaaaaaaaa" },
-          labels: { nodes: [{ name: "agent-codex" }] },
-        },
-      },
-    });
-
-    const actual = await fetchResolvedIssue({
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests use the LinearClient surface consumed by boardSource
-      client: client as unknown as LinearClient,
-      config: makeConfig(),
-      ticket: "team-1",
-    });
-
-    expect(actual.model).toBe("codex");
+    ).rejects.toThrow(/No known repository/);
   });
 });
 
-function makeIssue(overrides: Partial<Issue> = {}): Issue {
-  return {
-    id: overrides.id ?? "team-1",
-    uuid: overrides.uuid ?? "uuid-1",
-    title: overrides.title ?? "Title",
-    description: overrides.description ?? "",
-    status: overrides.status ?? "Done",
-    statusId: overrides.statusId ?? "state-done",
-    assignee: overrides.assignee ?? "Alice",
-    updatedAt: overrides.updatedAt ?? "2025-01-01T00:00:00.000Z",
-    repository: overrides.repository,
-    model: overrides.model,
-    teamId: overrides.teamId ?? "team-default",
-    projectSlugId: overrides.projectSlugId ?? "aaaaaaaaaaaa",
-    blockers: overrides.blockers ?? [],
-    hasMoreBlockers: overrides.hasMoreBlockers ?? false,
-  };
-}
-
-describe(isGroundcrewIssue, () => {
-  it("returns true when both model and repository are defined", () => {
-    expect(isGroundcrewIssue(makeIssue({ model: "claude", repository: "repo-a" }))).toBe(true);
+describe(isIssueTodo, () => {
+  it("is true only for stateType=unstarted", () => {
+    expect(isIssueTodo({ stateType: "unstarted" })).toBe(true);
+    expect(isIssueTodo({ stateType: "started" })).toBe(false);
+    expect(isIssueTodo({ stateType: "completed" })).toBe(false);
+    expect(isIssueTodo({ stateType: "duplicate" })).toBe(false);
   });
+});
 
-  it("returns false when model is undefined", () => {
-    expect(isGroundcrewIssue(makeIssue({ repository: "repo-a" }))).toBe(false);
-  });
-
-  it("returns false when repository is undefined", () => {
-    expect(isGroundcrewIssue(makeIssue({ model: "claude" }))).toBe(false);
+describe(isIssueInProgress, () => {
+  it("is true only for stateType=started", () => {
+    expect(isIssueInProgress({ stateType: "started" })).toBe(true);
+    expect(isIssueInProgress({ stateType: "unstarted" })).toBe(false);
+    expect(isIssueInProgress({ stateType: "completed" })).toBe(false);
+    expect(isIssueInProgress({ stateType: "duplicate" })).toBe(false);
   });
 });
 
 describe(isTerminalStatusForIssue, () => {
-  it("returns true when the issue's own project lists its status as terminal", () => {
-    const config = makeConfig();
-    expect(isTerminalStatusForIssue(makeIssue({ status: "Done" }), config)).toBe(true);
+  it("treats completed, canceled, and duplicate as terminal", () => {
+    expect(isTerminalStatusForIssue({ stateType: "completed" })).toBe(true);
+    expect(isTerminalStatusForIssue({ stateType: "canceled" })).toBe(true);
+    expect(isTerminalStatusForIssue({ stateType: "duplicate" })).toBe(true);
   });
 
-  it("returns true for any status in the project's terminal list", () => {
-    const config = makeConfig({
-      linear: {
-        projects: [
-          {
-            projectSlug: "x-aaaaaaaaaaaa",
-            slugId: "aaaaaaaaaaaa",
-            statuses: {
-              todo: "Todo",
-              inProgress: "In Progress",
-              done: "Done",
-              terminal: ["Done", "Released"],
-            },
-          },
-        ],
-      },
-    });
-    expect(isTerminalStatusForIssue(makeIssue({ status: "Released" }), config)).toBe(true);
-  });
-
-  it("returns false for non-terminal statuses", () => {
-    const config = makeConfig();
-    expect(isTerminalStatusForIssue(makeIssue({ status: "Todo" }), config)).toBe(false);
-    expect(isTerminalStatusForIssue(makeIssue({ status: "In Progress" }), config)).toBe(false);
-  });
-
-  it("throws when the issue's slugId isn't in linear.projects", () => {
-    const config = makeConfig();
-    expect(() =>
-      isTerminalStatusForIssue(
-        makeIssue({ status: "Done", projectSlugId: "off-config-cccccccccccc" }),
-        config,
-      ),
-    ).toThrow(/projectSlugId "off-config-cccccccccccc" which is not in linear\.projects/);
-  });
-
-  it("uses each project's own terminal list when projects diverge", () => {
-    const config = makeConfig({
-      linear: {
-        projects: [
-          {
-            projectSlug: "alpha-aaaaaaaaaaaa",
-            slugId: "aaaaaaaaaaaa",
-            statuses: { todo: "Todo", inProgress: "In Progress", done: "Done", terminal: ["Done"] },
-          },
-          {
-            projectSlug: "beta-bbbbbbbbbbbb",
-            slugId: "bbbbbbbbbbbb",
-            statuses: {
-              todo: "Todo",
-              inProgress: "In Progress",
-              done: "Released",
-              terminal: ["Released"],
-            },
-          },
-        ],
-      },
-    });
-    // Project alpha doesn't treat "Released" as terminal.
-    expect(
-      isTerminalStatusForIssue(
-        makeIssue({ status: "Released", projectSlugId: "aaaaaaaaaaaa" }),
-        config,
-      ),
-    ).toBe(false);
-    // Project beta does.
-    expect(
-      isTerminalStatusForIssue(
-        makeIssue({ status: "Released", projectSlugId: "bbbbbbbbbbbb" }),
-        config,
-      ),
-    ).toBe(true);
+  it("treats unstarted/started as non-terminal", () => {
+    expect(isTerminalStatusForIssue({ stateType: "unstarted" })).toBe(false);
+    expect(isTerminalStatusForIssue({ stateType: "started" })).toBe(false);
   });
 });
 
-describe(UnknownProjectError, () => {
-  it("names the ticket, the project slugId, and the configured set", () => {
-    const error = new UnknownProjectError({
-      ticket: "TEAM-1",
-      projectSlugId: "off-config-cccccccccccc",
-      configuredSlugIds: ["aaaaaaaaaaaa", "bbbbbbbbbbbb"],
-    });
-    expect(error.message).toContain("TEAM-1");
-    expect(error.message).toContain("off-config-cccccccccccc");
-    expect(error.message).toContain("aaaaaaaaaaaa");
-    expect(error.message).toContain("bbbbbbbbbbbb");
-    expect(error.message).toMatch(/linear\.projects/);
+function blocker(overrides: { status?: string; stateType?: string } = {}) {
+  return {
+    id: "team-0",
+    title: "Blocker",
+    status: overrides.status,
+    stateType: overrides.stateType,
+  };
+}
+
+describe(isTerminalStatusForBlocker, () => {
+  it("is false when stateType is undefined", () => {
+    expect(isTerminalStatusForBlocker(blocker())).toBe(false);
   });
 
-  it("handles tickets with no associated project", () => {
-    const error = new UnknownProjectError({
-      ticket: "TEAM-2",
-      projectSlugId: undefined,
-      configuredSlugIds: ["aaaaaaaaaaaa"],
-    });
-    expect(error.message).toContain("has no associated Linear project");
+  it("treats completed, canceled, and duplicate blockers as terminal", () => {
+    expect(isTerminalStatusForBlocker(blocker({ stateType: "completed" }))).toBe(true);
+    expect(isTerminalStatusForBlocker(blocker({ stateType: "canceled" }))).toBe(true);
+    expect(isTerminalStatusForBlocker(blocker({ stateType: "duplicate" }))).toBe(true);
+  });
+
+  it("treats unstarted/started blockers as non-terminal", () => {
+    expect(isTerminalStatusForBlocker(blocker({ stateType: "unstarted" }))).toBe(false);
+    expect(isTerminalStatusForBlocker(blocker({ stateType: "started" }))).toBe(false);
   });
 });
 
 describe(fetchRawLinearIssue, () => {
   it("returns the raw fields when the ticket exists", async () => {
-    const client = makeClient({ pages: [[]] });
-    client.client.rawRequest.mockResolvedValueOnce({
-      data: {
-        issue: {
-          id: "uuid-42",
-          title: "Fix the thing",
-          description: "Touches herds-social/herds.",
-          team: { id: "team-hrd" },
-          state: { name: "In Review" },
-          labels: { nodes: [{ name: "agent-claude" }, { name: "feature" }] },
-        },
-      },
-    });
-
-    const result = await fetchRawLinearIssue({
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests use the LinearClient surface consumed by boardSource
+    const client = makeClient();
+    const raw = await fetchRawLinearIssue({
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests hit the LinearClient surface consumed by boardSource
       client: client as unknown as LinearClient,
-      ticket: "hrd-1",
+      ticket: "team-1",
     });
-
-    expect(result.uuid).toBe("uuid-42");
-    expect(result.title).toBe("Fix the thing");
-    expect(result.description).toBe("Touches herds-social/herds.");
-    expect(result.teamId).toBe("team-hrd");
-    expect(result.stateName).toBe("In Review");
-    expect(result.labels).toStrictEqual([{ name: "agent-claude" }, { name: "feature" }]);
-    expect(result.blockers).toStrictEqual([]);
-    expect(result.hasMoreBlockers).toBe(false);
+    expect(raw.title).toBe("Title");
+    expect(raw.stateName).toBe("Todo");
+    expect(raw.stateType).toBe("unstarted");
+    expect(raw.teamId).toBe("team-default");
+    expect(raw.hasChildren).toBe(false);
   });
 
   it("coerces a null description to an empty string", async () => {
-    const client = makeClient({ pages: [[]] });
-    client.client.rawRequest.mockResolvedValueOnce({
-      data: {
-        issue: {
-          id: "uuid-43",
-          title: "No description",
-          description: null,
-          team: { id: "team-hrd" },
-          state: { name: "Todo" },
-          labels: { nodes: [] },
-        },
+    const client = {
+      client: {
+        rawRequest: vi.fn<RawRequest>(async () => ({
+          data: {
+            issue: {
+              id: "uuid-1",
+              title: "Title",
+              description: null,
+              team: { id: "team-default" },
+              labels: { nodes: [] },
+              state: { name: "Todo", type: "unstarted" },
+            },
+          },
+        })),
       },
-    });
-
-    const result = await fetchRawLinearIssue({
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests use the LinearClient surface consumed by boardSource
+    };
+    const raw = await fetchRawLinearIssue({
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests hit the LinearClient surface consumed by boardSource
       client: client as unknown as LinearClient,
-      ticket: "hrd-2",
+      ticket: "team-1",
     });
-
-    expect(result.description).toBe("");
+    expect(raw.description).toBe("");
   });
 
   it("throws a not-found error when the issue is null", async () => {
-    const client = makeClient({ pages: [[]] });
-    client.client.rawRequest.mockResolvedValueOnce({
-      data: { issue: null },
-    });
-
+    const client = {
+      client: {
+        rawRequest: vi.fn<RawRequest>(async () => ({ data: { issue: null } })),
+      },
+    };
     await expect(
       fetchRawLinearIssue({
-        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests use the LinearClient surface consumed by boardSource
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests hit the LinearClient surface consumed by boardSource
         client: client as unknown as LinearClient,
-        ticket: "hrd-1",
+        ticket: "team-9999",
       }),
-    ).rejects.toThrow(/HRD-1 not found in Linear/);
+    ).rejects.toThrow(/TEAM-9999 not found in Linear/);
   });
 });
 
 describe(fetchInProgressIssueCount, () => {
-  it("counts matching in-progress tickets", async () => {
-    const config = makeConfig();
-    const client = makeClient({ pages: [[]], activePages: [2] });
-
-    const result = await fetchInProgressIssueCount({
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests use the LinearClient surface consumed by boardSource
+  it("counts matching in-progress tickets across all pages", async () => {
+    const client = makeClient({ activePages: [2, 3] });
+    const count = await fetchInProgressIssueCount({
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests hit the LinearClient surface consumed by boardSource
       client: client as unknown as LinearClient,
-      config,
     });
-
-    expect(result).toBe(2);
+    expect(count).toBe(5);
   });
 
-  it("paginates across in-progress tickets", async () => {
-    const config = makeConfig();
-    const client = makeClient({ pages: [[]], activePages: [2, 3] });
-
-    const result = await fetchInProgressIssueCount({
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests use the LinearClient surface consumed by boardSource
+  it("filters by assignee=isMe AND agent-* label AND state.type=started", async () => {
+    const client = makeClient({ activePages: [0] });
+    await fetchInProgressIssueCount({
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests hit the LinearClient surface consumed by boardSource
       client: client as unknown as LinearClient,
-      config,
     });
+    const [query, variables] = expectCallMatching(client.client.rawRequest, "InProgressIssues");
+    expect(query).toContain("assignee: { isMe: { eq: true } }");
+    expect(query).toContain('state: { type: { eq: "started" } }');
+    expect(query).toContain("labels: { some: { name: { startsWith: $agentLabelPrefix } } }");
+    expect(variables).toMatchObject({ agentLabelPrefix: "agent-" });
+  });
+});
 
-    expect(result).toBe(5);
+describe(resolveRepositoryFor, () => {
+  it("returns the repository when the description mentions a known one", () => {
+    const result = resolveRepositoryFor({
+      description: "Touches repo-a.",
+      config: makeConfig(),
+    });
+    expect(result).toStrictEqual({ kind: "ok", repository: "repo-a" });
   });
 
-  it("drops issues whose state matches the union but not their own project's inProgress", async () => {
+  it("canonicalizes a bare repo mention to the full owner/repo entry from config", () => {
     const config = makeConfig({
-      linear: {
-        projects: [
-          {
-            projectSlug: "alpha-aaaaaaaaaaaa",
-            slugId: "aaaaaaaaaaaa",
-            statuses: { todo: "Todo", inProgress: "Doing", done: "Done", terminal: ["Done"] },
-          },
-          {
-            projectSlug: "beta-bbbbbbbbbbbb",
-            slugId: "bbbbbbbbbbbb",
-            statuses: {
-              todo: "Todo",
-              inProgress: "In Progress",
-              done: "Released",
-              terminal: ["Released"],
-            },
-          },
-        ],
-      },
+      workspace: { projectDir: "/work", knownRepositories: ["acme/api"] },
     });
-    const rawRequest =
-      vi.fn<(query: string, variables?: Record<string, unknown>) => Promise<unknown>>();
-    rawRequest.mockResolvedValue({
-      data: {
-        issues: {
-          nodes: [
-            { id: "alpha-1", project: { slugId: "aaaaaaaaaaaa" }, state: { name: "Doing" } },
-            // Cross-project leakage: beta issue in "Doing" state (not beta's inProgress).
-            { id: "beta-1", project: { slugId: "bbbbbbbbbbbb" }, state: { name: "Doing" } },
-            { id: "beta-2", project: { slugId: "bbbbbbbbbbbb" }, state: { name: "In Progress" } },
-          ],
-          pageInfo: { hasNextPage: false, endCursor: "" },
+    expect(resolveRepositoryFor({ description: "api is sad", config })).toStrictEqual({
+      kind: "ok",
+      repository: "acme/api",
+    });
+  });
+
+  it("returns missing when a bare repo mention matches multiple configured repos", () => {
+    const config = makeConfig({
+      workspace: { projectDir: "/work", knownRepositories: ["acme/api", "beta/api"] },
+    });
+    expect(resolveRepositoryFor({ description: "api is sad", config })).toStrictEqual({
+      kind: "missing",
+    });
+  });
+
+  it("returns missing when no known repo is in the description", () => {
+    expect(
+      resolveRepositoryFor({
+        description: "no matching repo here",
+        config: makeConfig(),
+      }),
+    ).toStrictEqual({ kind: "missing" });
+  });
+
+  it("returns missing on empty description", () => {
+    expect(resolveRepositoryFor({ description: "", config: makeConfig() })).toStrictEqual({
+      kind: "missing",
+    });
+  });
+
+  it("returns missing on undefined description", () => {
+    expect(resolveRepositoryFor({ description: undefined, config: makeConfig() })).toStrictEqual({
+      kind: "missing",
+    });
+  });
+});
+
+describe(resolveModelFor, () => {
+  it("returns matched when label corresponds to a known model", () => {
+    expect(
+      resolveModelFor({ labels: [{ name: "agent-claude" }], config: makeConfig() }),
+    ).toStrictEqual({ kind: "matched", model: "claude" });
+  });
+
+  it("returns no-label when no agent-* label is present", () => {
+    expect(resolveModelFor({ labels: [{ name: "feature" }], config: makeConfig() })).toStrictEqual({
+      kind: "no-label",
+    });
+  });
+
+  it("returns no-label when the labels array is empty", () => {
+    expect(resolveModelFor({ labels: [], config: makeConfig() })).toStrictEqual({
+      kind: "no-label",
+    });
+  });
+
+  it("returns agent-any when the label is agent-any", () => {
+    expect(
+      resolveModelFor({ labels: [{ name: "agent-any" }], config: makeConfig() }),
+    ).toStrictEqual({ kind: "agent-any" });
+  });
+
+  it("returns disabled-fallback when the label matches a disabled shipped default", () => {
+    const config = makeConfig({
+      models: {
+        default: "claude",
+        definitions: {
+          claude: { cmd: "claude", color: "#fff" },
+          // codex is a shipped default but absent here = disabled
         },
       },
     });
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests use the LinearClient surface consumed by boardSource
-    const client = { client: { rawRequest } } as unknown as LinearClient;
-
-    const result = await fetchInProgressIssueCount({ client, config });
-
-    expect(result).toBe(2);
+    expect(resolveModelFor({ labels: [{ name: "agent-codex" }], config })).toStrictEqual({
+      kind: "disabled-fallback",
+      requestedModel: "codex",
+      fallbackModel: "claude",
+    });
   });
 });
 
 describe(fetchBlockersForTicket, () => {
-  it("returns blockers whose type is 'blocks'", async () => {
-    const client = makeClient({ pages: [[]] });
-    client.client.rawRequest.mockResolvedValueOnce({
-      data: {
-        issue: {
-          inverseRelations: {
-            nodes: [
-              {
-                type: "blocks",
-                issue: { identifier: "HRD-10", title: "Blocker A", state: { name: "In Progress" } },
-              },
-              {
-                type: "blocked-by",
-                issue: {
-                  identifier: "HRD-11",
-                  title: "Not a blocker",
-                  state: { name: "In Progress" },
+  function makeBlockerClient(pages: { nodes: unknown[]; hasNextPage: boolean }[]): ClientStub {
+    let callIndex = 0;
+    return {
+      client: {
+        rawRequest: vi.fn<RawRequest>(async () => {
+          const page = pages[callIndex] ?? { nodes: [], hasNextPage: false };
+          callIndex += 1;
+          return {
+            data: {
+              issue: {
+                inverseRelations: {
+                  nodes: page.nodes,
+                  pageInfo: { hasNextPage: page.hasNextPage, endCursor: "cursor" },
                 },
               },
-            ],
-            pageInfo: { hasNextPage: false, endCursor: "" },
-          },
-        },
+            },
+          };
+        }),
       },
-    });
+    };
+  }
 
-    const result = await fetchBlockersForTicket({
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests use the LinearClient surface consumed by boardSource
+  it("returns blockers whose type is 'blocks'", async () => {
+    const client = makeBlockerClient([
+      {
+        nodes: [
+          blockingRelation("TEAM-9", "Done", "completed"),
+          { type: "duplicates", issue: { identifier: "TEAM-10", title: "Other", state: null } },
+        ],
+        hasNextPage: false,
+      },
+    ]);
+    const blockers = await fetchBlockersForTicket({
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests hit the LinearClient surface consumed by boardSource
       client: client as unknown as LinearClient,
-      ticket: "HRD-1",
+      ticket: "TEAM-1",
       uuid: "uuid-1",
     });
-
-    expect(result).toHaveLength(1);
-    expect(result[0]).toStrictEqual({
-      id: "hrd-10",
-      title: "Blocker A",
-      status: "In Progress",
-      projectSlugId: undefined,
-    });
+    expect(blockers).toStrictEqual([
+      { id: "team-9", title: "Blocker", status: "Done", stateType: "completed" },
+    ]);
   });
 
   it("returns blockers from every relation page", async () => {
-    const client = makeClient({ pages: [[]] });
-    client.client.rawRequest
-      .mockResolvedValueOnce({
-        data: {
-          issue: {
-            inverseRelations: {
-              nodes: [
-                {
-                  type: "blocks",
-                  issue: {
-                    identifier: "HRD-10",
-                    title: "Blocker A",
-                    state: { name: "In Progress" },
-                  },
-                },
-              ],
-              pageInfo: { hasNextPage: true, endCursor: "blockers-cursor-1" },
-            },
-          },
-        },
-      })
-      .mockResolvedValueOnce({
-        data: {
-          issue: {
-            inverseRelations: {
-              nodes: [
-                {
-                  type: "blocks",
-                  issue: { identifier: "HRD-20", title: "Blocker B", state: { name: "Todo" } },
-                },
-              ],
-              pageInfo: { hasNextPage: false, endCursor: "" },
-            },
-          },
-        },
-      });
-
-    const result = await fetchBlockersForTicket({
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests use the LinearClient surface consumed by boardSource
+    const client = makeBlockerClient([
+      { nodes: [blockingRelation("TEAM-9", "Todo", "unstarted")], hasNextPage: true },
+      { nodes: [blockingRelation("TEAM-10", "Done", "completed")], hasNextPage: false },
+    ]);
+    const blockers = await fetchBlockersForTicket({
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests hit the LinearClient surface consumed by boardSource
       client: client as unknown as LinearClient,
-      ticket: "HRD-1",
+      ticket: "TEAM-1",
       uuid: "uuid-1",
     });
-
-    expect(result).toStrictEqual([
-      { id: "hrd-10", title: "Blocker A", status: "In Progress", projectSlugId: undefined },
-      { id: "hrd-20", title: "Blocker B", status: "Todo", projectSlugId: undefined },
-    ]);
-    expect(client.client.rawRequest).toHaveBeenNthCalledWith(1, expect.any(String), {
-      after: null,
-      id: "uuid-1",
-    });
-    expect(client.client.rawRequest).toHaveBeenNthCalledWith(2, expect.any(String), {
-      after: "blockers-cursor-1",
-      id: "uuid-1",
-    });
+    expect(blockers.map((b) => b.id)).toStrictEqual(["team-9", "team-10"]);
   });
 
   it("returns an empty array when the issue is null", async () => {
-    const client = makeClient({ pages: [[]] });
-    client.client.rawRequest.mockResolvedValueOnce({
-      data: { issue: null },
-    });
-
-    const result = await fetchBlockersForTicket({
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests use the LinearClient surface consumed by boardSource
+    const client = {
+      client: {
+        rawRequest: vi.fn<RawRequest>(async () => ({ data: { issue: null } })),
+      },
+    };
+    const blockers = await fetchBlockersForTicket({
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests hit the LinearClient surface consumed by boardSource
       client: client as unknown as LinearClient,
-      ticket: "HRD-1",
-      uuid: "uuid-missing",
+      ticket: "TEAM-1",
+      uuid: "uuid-1",
     });
+    expect(blockers).toStrictEqual([]);
+  });
+});
 
-    expect(result).toStrictEqual([]);
+describe(blockersFromRelations, () => {
+  it("coerces a null issue state to undefined status and stateType", () => {
+    const blockers = blockersFromRelations([
+      {
+        type: "blocks",
+        issue: { identifier: "TEAM-9", title: "Blocker", state: null },
+      },
+    ]);
+    expect(blockers).toStrictEqual([
+      { id: "team-9", title: "Blocker", status: undefined, stateType: undefined },
+    ]);
   });
 
-  it("returns an empty array when there are no blocking relations", async () => {
-    const client = makeClient({ pages: [[]] });
-    client.client.rawRequest.mockResolvedValueOnce({
-      data: {
-        issue: {
-          inverseRelations: { nodes: [], pageInfo: { hasNextPage: false, endCursor: "" } },
-        },
+  it("drops non-blocks relations", () => {
+    const blockers = blockersFromRelations([
+      {
+        type: "duplicates",
+        issue: { identifier: "TEAM-9", title: "Other", state: null },
       },
-    });
-
-    const result = await fetchBlockersForTicket({
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests use the LinearClient surface consumed by boardSource
-      client: client as unknown as LinearClient,
-      ticket: "HRD-2",
-      uuid: "uuid-2",
-    });
-
-    expect(result).toStrictEqual([]);
-  });
-
-  it("coerces a null issue state to undefined status", async () => {
-    const client = makeClient({ pages: [[]] });
-    client.client.rawRequest.mockResolvedValueOnce({
-      data: {
-        issue: {
-          inverseRelations: {
-            nodes: [
-              {
-                type: "blocks",
-                issue: { identifier: "HRD-20", title: "No state", state: null },
-              },
-            ],
-            pageInfo: { hasNextPage: false, endCursor: "" },
-          },
-        },
-      },
-    });
-
-    const result = await fetchBlockersForTicket({
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests use the LinearClient surface consumed by boardSource
-      client: client as unknown as LinearClient,
-      ticket: "HRD-3",
-      uuid: "uuid-3",
-    });
-
-    expect(result[0]?.status).toBeUndefined();
+    ]);
+    expect(blockers).toStrictEqual([]);
   });
 });

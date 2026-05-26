@@ -107,21 +107,11 @@ describe(buildSources, () => {
 // ─────────────────────────────────────────────────────────────────────────
 
 function makeMixedConfig(): ResolvedConfig {
-  // Minimal ResolvedConfig with Linear projects configured AND an explicit
-  // shell source. The Linear adapter's full type contract requires more
-  // fields; we cast through `unknown` since the adapters only inspect
-  // `globalConfig.linear.projects` and `globalConfig.workspace`.
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- test fixture; the linear adapter only reads linear.projects + workspace
+  // Minimal ResolvedConfig with an explicit shell source. The Linear adapter
+  // is synthesized implicitly by sourcesFromConfig under the post-#110 model
+  // (Linear is always-on, filtered server-side by viewer + agent-* label).
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- test fixture; the linear adapter only reads workspace.knownRepositories
   return {
-    linear: {
-      projects: [
-        {
-          projectSlug: "ai-strategy-aaaaaaaaaaaa",
-          slugId: "aaaaaaaaaaaa",
-          statuses: { todo: "Todo", inProgress: "In Progress", done: "Done", terminal: ["Done"] },
-        },
-      ],
-    },
     sources: [
       {
         kind: "shell",
@@ -185,10 +175,9 @@ describe(`${buildSources.name} — cross-source independence with no Linear API 
 });
 
 describe(sourcesFromConfig, () => {
-  it("prepends an implicit linear source when config.linear.projects has entries", () => {
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- sourcesFromConfig only reads linear.projects and sources; unused fields are irrelevant
+  it("prepends an implicit linear source by default", () => {
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- sourcesFromConfig only reads sources; unused fields are irrelevant
     const config = {
-      linear: { projects: [{ slugId: "eng" }] },
       sources: [{ kind: "shell", command: ["./fetch.sh"] }],
     } as unknown as ResolvedConfig;
 
@@ -197,54 +186,40 @@ describe(sourcesFromConfig, () => {
     expect(result).toStrictEqual([{ kind: "linear" }, { kind: "shell", command: ["./fetch.sh"] }]);
   });
 
-  it("omits the implicit linear source when config.linear.projects is empty", () => {
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- sourcesFromConfig only reads linear.projects and sources; unused fields are irrelevant
-    const config = {
-      linear: { projects: [] },
-      sources: [{ kind: "shell", command: ["./fetch.sh"] }],
-    } as unknown as ResolvedConfig;
-
-    const result = sourcesFromConfig(config);
-
-    expect(result).toStrictEqual([{ kind: "shell", command: ["./fetch.sh"] }]);
-  });
-
   it("returns just the implicit linear source when config.sources is empty", () => {
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- sourcesFromConfig only reads linear.projects and sources; unused fields are irrelevant
-    const config = {
-      linear: { projects: [{ slugId: "eng" }] },
-      sources: [],
-    } as unknown as ResolvedConfig;
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- sourcesFromConfig only reads sources; unused fields are irrelevant
+    const config = { sources: [] } as unknown as ResolvedConfig;
 
     const result = sourcesFromConfig(config);
 
     expect(result).toStrictEqual([{ kind: "linear" }]);
   });
 
-  it("throws when an explicit source with kind 'linear' collides with the implicit one", () => {
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- sourcesFromConfig only reads linear.projects and sources; unused fields are irrelevant
+  it("omits the implicit linear source when the user already declared one with kind 'linear'", () => {
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- sourcesFromConfig only reads sources; unused fields are irrelevant
     const config = {
-      linear: { projects: [{ slugId: "eng" }] },
-      sources: [{ kind: "linear" }],
+      sources: [{ kind: "linear", name: "linear" }],
     } as unknown as ResolvedConfig;
 
-    expect(() => sourcesFromConfig(config)).toThrow(/resolves to source name "linear"/);
+    expect(sourcesFromConfig(config)).toStrictEqual([{ kind: "linear", name: "linear" }]);
   });
 
-  it("throws when an explicit source with name 'linear' collides with the implicit one", () => {
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- sourcesFromConfig only reads linear.projects and sources; unused fields are irrelevant
+  it("omits the implicit linear source when the user declared one with name 'linear'", () => {
+    // A user-declared shell source with name "linear" would otherwise collide
+    // with the implicit Linear source; omit the implicit one.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- sourcesFromConfig only reads sources; unused fields are irrelevant
     const config = {
-      linear: { projects: [{ slugId: "eng" }] },
       sources: [{ kind: "shell", name: "linear", command: ["./fetch.sh"] }],
     } as unknown as ResolvedConfig;
 
-    expect(() => sourcesFromConfig(config)).toThrow(/resolves to source name "linear"/);
+    expect(sourcesFromConfig(config)).toStrictEqual([
+      { kind: "shell", name: "linear", command: ["./fetch.sh"] },
+    ]);
   });
 
-  it("does not throw when an explicit source has a distinct name even with linear.projects set", () => {
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- sourcesFromConfig only reads linear.projects and sources; unused fields are irrelevant
+  it("keeps the implicit linear source when explicit sources use distinct names", () => {
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- sourcesFromConfig only reads sources; unused fields are irrelevant
     const config = {
-      linear: { projects: [{ slugId: "eng" }] },
       sources: [{ kind: "shell", name: "jira", command: ["./fetch.sh"] }],
     } as unknown as ResolvedConfig;
 
@@ -252,17 +227,5 @@ describe(sourcesFromConfig, () => {
       { kind: "linear" },
       { kind: "shell", name: "jira", command: ["./fetch.sh"] },
     ]);
-  });
-
-  it("does not throw when an explicit source with kind 'linear' is declared but linear.projects is empty", () => {
-    // No implicit synthesis → no collision possible. (The user has chosen to
-    // wire Linear via the explicit sources path instead.)
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- sourcesFromConfig only reads linear.projects and sources; unused fields are irrelevant
-    const config = {
-      linear: { projects: [] },
-      sources: [{ kind: "linear" }],
-    } as unknown as ResolvedConfig;
-
-    expect(sourcesFromConfig(config)).toStrictEqual([{ kind: "linear" }]);
   });
 });

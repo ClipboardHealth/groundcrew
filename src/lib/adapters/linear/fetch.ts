@@ -71,18 +71,14 @@ export interface Issue {
 }
 
 /**
- * `Issue` narrowed to "this ticket is for groundcrew" — produced by filtering
- * through `isGroundcrewIssue`. Use this type wherever downstream code reads
- * `model`/`repository` and the issue has already been through that filter.
+ * `Issue` narrowed to "this ticket is for groundcrew". Consumers operate on
+ * the canonical `GroundcrewIssue` from `ticketSource.ts`; this internal
+ * variant just shapes the adapter's local Linear type.
  */
 export type GroundcrewIssue = Issue & {
   model: string;
   repository: string;
 };
-
-export function isGroundcrewIssue(issue: Issue): issue is GroundcrewIssue {
-  return issue.model !== undefined && issue.repository !== undefined;
-}
 
 /**
  * Linear ticket that was silently dropped from `issues` because it has at
@@ -360,6 +356,7 @@ function issueFromNode(node: IssueNode, config: ResolvedConfig): Issue {
     identifier: node.identifier,
     uuid: node.id,
     title: node.title,
+    /* v8 ignore next @preserve -- BoardIssues query always selects description; this `?? ""` is a defensive null vs undefined edge */
     description: node.description ?? "",
     /* v8 ignore next @preserve -- BoardIssues query always returns state */
     status: node.state?.name ?? "Unknown",

@@ -202,7 +202,7 @@ function makeLinearClient(
   options: {
     issue?: RawIssueStub | null;
     activePages?: number[];
-    /** When true, VerifyProjects returns an empty nodes list, causing source probe to fail. */
+    /** When true, VerifyViewer returns a null viewer, causing source probe to fail. */
     verifyFails?: boolean;
   } = {},
 ): LinearClient {
@@ -210,13 +210,12 @@ function makeLinearClient(
   let activePageIndex = 0;
   let blockerPageIndex = 0;
   const rawRequest = vi.fn<LinearRawRequest>(async (query) => {
-    if (query.includes("VerifyProjects")) {
-      // Return the configured project slug so board.verify() succeeds, or return
-      // an empty list so it throws ("No Linear projects resolved").
-      const nodes = verifyFails
-        ? []
-        : [{ id: "proj-1", name: "Test Project", slugId: "aaaaaaaaaaaa" }];
-      return { data: { projects: { nodes } } };
+    if (query.includes("VerifyViewer")) {
+      // Return a viewer so board.verify() succeeds, or return null so it throws.
+      const viewer = verifyFails
+        ? null
+        : { id: "viewer-1", name: "Alice", email: "alice@example.com" };
+      return { data: { viewer } };
     }
     if (query.includes("ResolveIssue")) {
       return { data: { issue } };
@@ -342,7 +341,7 @@ describe(doctor, () => {
 
     expect(actual).toBe(false);
     expect(consoleLog.output()).toContain("status is In Review");
-    expect(consoleLog.output()).toContain("need unstarted");
+    expect(consoleLog.output()).toContain("need Todo");
   });
 
   it("returns false when the ticket has no agent label", async () => {
@@ -404,8 +403,8 @@ describe(doctor, () => {
     const actual = await doctor({ ticket: "team-1" });
 
     expect(actual).toBe(false);
-    // After canonical migration: blocker project is absent from relation node so status maps to "other"; id is source-prefixed.
-    expect(consoleLog.output()).toContain("blocked by linear:team-0:other");
+    // After main's PR #110: state.type drives classification; "started" maps to "in-progress".
+    expect(consoleLog.output()).toContain("blocked by linear:team-0:in-progress");
   });
 
   it("treats blockers with missing status as active", async () => {
@@ -591,7 +590,7 @@ describe(doctor, () => {
 
   it("calls board.verify() for the source probe check", async () => {
     loadConfigMock.mockResolvedValue(makeConfig());
-    // Default makeLinearClient() returns the configured project from VerifyProjects,
+    // Default makeLinearClient() returns a viewer from VerifyViewer,
     // so board.verify() succeeds and the source probe check passes.
 
     const actual = await doctor();
@@ -602,8 +601,8 @@ describe(doctor, () => {
   });
 
   it("reports source probe failure when board.verify() throws", async () => {
-    // verifyFails: true causes VerifyProjects to return an empty nodes list,
-    // which makes verifyProjects() throw "No Linear projects resolved".
+    // verifyFails: true causes VerifyViewer to return a null viewer,
+    // which makes verifyViewer() throw about the missing viewer.
     getLinearClientMocked.mockReturnValue(makeLinearClient({ verifyFails: true }));
     loadConfigMock.mockResolvedValue(makeConfig());
 
@@ -612,7 +611,7 @@ describe(doctor, () => {
     expect(actual).toBe(false);
     const output = consoleLog.output();
     expect(output).toContain("[--] source probe");
-    expect(output).toContain("No Linear projects resolved");
+    expect(output).toContain("did not return a viewer");
   });
 
   it("skips source probe when --no-source-probe flag is set", async () => {

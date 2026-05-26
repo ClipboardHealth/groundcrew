@@ -51,6 +51,10 @@ export interface LinearSourceRef {
 }
 
 function canonicalStatusFromStateType(stateType: string | undefined): CanonicalStatus {
+  /* v8 ignore next 3 @preserve -- LinearIssue.stateType is non-optional; this guard is defensive for the resolveOne path */
+  if (stateType === undefined) {
+    return "other";
+  }
   switch (stateType) {
     case "unstarted": {
       return "todo";

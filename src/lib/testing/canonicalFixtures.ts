@@ -9,7 +9,7 @@ export function canonicalLinearIssue(overrides: Partial<Issue> & { naturalId: st
     uuid: refPartial.uuid ?? `uuid-${naturalId}`,
     statusId: refPartial.statusId ?? "statusId-default",
     teamId: refPartial.teamId ?? "team-default",
-    projectSlugId: refPartial.projectSlugId ?? "default-project",
+    stateType: refPartial.stateType ?? "unstarted",
     nativeStatus: refPartial.nativeStatus ?? "Todo",
   };
   return {

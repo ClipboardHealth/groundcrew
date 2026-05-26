@@ -47,16 +47,6 @@ function narrowVerdict<K extends TicketDoctorVerdict["kind"]>(
 
 function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
   return {
-    linear: {
-      projects: [
-        {
-          projectSlug: "ai-strategy-aaaaaaaaaaaa",
-          slugId: "aaaaaaaaaaaa",
-          statuses: { todo: "Todo", inProgress: "In Progress", done: "Done", terminal: ["Done"] },
-        },
-      ],
-      ...overrides.linear,
-    },
     sources: [],
     git: { remote: "origin", defaultBranch: "main", ...overrides.git },
     workspace: {
@@ -83,15 +73,47 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
   };
 }
 
+function stateTypeForStub(name: string | undefined): string {
+  switch (name) {
+    case "Todo": {
+      return "unstarted";
+    }
+    case "In Progress": {
+      return "started";
+    }
+    case "Done":
+    case "Shipped": {
+      return "completed";
+    }
+    case "Canceled":
+    case "Won't fix": {
+      return "canceled";
+    }
+    case "Duplicate": {
+      return "duplicate";
+    }
+    case undefined: {
+      return "";
+    }
+    default: {
+      // Unknown names (e.g. "In Review", "Backlog") aren't Todo; pin to
+      // "triage" so the doctor's Todo check fails as it should.
+      return "triage";
+    }
+  }
+}
+
 function makeStubRawIssue(overrides: Partial<RawLinearIssue> = {}): RawLinearIssue {
+  const stateName = overrides.stateName ?? "Todo";
   return {
     uuid: "uuid-1",
     title: "Stub",
     description: "",
     teamId: "team-1",
-    projectSlugId: "aaaaaaaaaaaa",
     labels: [],
-    stateName: "Todo",
+    stateName,
+    stateType: overrides.stateType ?? stateTypeForStub(stateName),
+    stateId: "state-stub",
     blockers: [],
     hasMoreBlockers: false,
     hasChildren: false,
@@ -490,6 +512,8 @@ describe("ticketDoctor resolution checks", () => {
           makeStubRawIssue({
             labels: [{ name: "agent-claude" }],
             stateName: "In Review",
+            stateType: "triage",
+            stateId: "state-review",
             description: "see herds-social/herds",
           }),
         ),
@@ -507,57 +531,22 @@ describe("ticketDoctor resolution checks", () => {
     });
   });
 
-  it("reports unresolvable when the ticket lives in an off-config Linear project", async () => {
-    const dependencies = makeStubDependencies({
-      enrichWithLinear: vi
-        .fn<NonNullable<TicketDoctorDependencies["enrichWithLinear"]>>()
-        .mockResolvedValue(
-          makeStubRawIssue({
-            projectSlugId: "off-config-cccccccccccc",
-            labels: [{ name: "agent-claude" }],
-            stateName: "Todo",
-            description: "see herds-social/herds",
-          }),
-        ),
-      config: makeConfig({
-        workspace: { projectDir: "/work", knownRepositories: ["herds-social/herds"] },
-      }),
-    });
-    const result = await ticketDoctor(dependencies);
-    const projectCheck = result.resolution.find((check) => check.name === "Project is configured");
-    expect(projectCheck?.status).toBe("fail");
-    expect(projectCheck?.detail).toMatch(/off-config-cccccccccccc/);
-    expect(result.verdict).toMatchObject({ kind: "unresolvable" });
-  });
-
-  it("reports unresolvable when the ticket has no associated Linear project", async () => {
-    const dependencies = makeStubDependencies({
-      enrichWithLinear: vi
-        .fn<NonNullable<TicketDoctorDependencies["enrichWithLinear"]>>()
-        .mockResolvedValue(
-          makeStubRawIssue({
-            projectSlugId: undefined,
-            labels: [{ name: "agent-claude" }],
-            stateName: "Todo",
-            description: "see herds-social/herds",
-          }),
-        ),
-      config: makeConfig({
-        workspace: { projectDir: "/work", knownRepositories: ["herds-social/herds"] },
-      }),
-    });
-    const result = await ticketDoctor(dependencies);
-    const projectCheck = result.resolution.find((check) => check.name === "Project is configured");
-    expect(projectCheck?.detail).toMatch(/has no associated Linear project/);
-    expect(result.verdict).toMatchObject({ kind: "unresolvable" });
-  });
+  // The "off-config Linear project" and "no Linear project" tests were dropped
+  // post-#110: linear.projects no longer exists, so doctor can't reject a
+  // ticket on project misconfig. State.type classification is universal.
 
   it("records missing agent-* label as ineligible and skips the model check", async () => {
     const dependencies = makeStubDependencies({
       enrichWithLinear: vi
         .fn<NonNullable<TicketDoctorDependencies["enrichWithLinear"]>>()
         .mockResolvedValue(
-          makeStubRawIssue({ labels: [], stateName: "Todo", description: "see repo-a" }),
+          makeStubRawIssue({
+            labels: [],
+            stateName: "Todo",
+            stateType: "unstarted",
+            stateId: "state-todo",
+            description: "see repo-a",
+          }),
         ),
     });
     const result = await ticketDoctor(dependencies);
@@ -578,6 +567,8 @@ describe("ticketDoctor resolution checks", () => {
           makeStubRawIssue({
             labels: [{ name: "agent-claude" }],
             stateName: "Todo",
+            stateType: "unstarted",
+            stateId: "state-todo",
             description: "see repo-a",
           }),
         ),
@@ -600,6 +591,8 @@ describe("ticketDoctor resolution checks", () => {
           makeStubRawIssue({
             labels: [{ name: "agent-codex" }],
             stateName: "Todo",
+            stateType: "unstarted",
+            stateId: "state-todo",
             description: "see repo-a",
           }),
         ),
@@ -635,6 +628,8 @@ describe("ticketDoctor resolution checks", () => {
           makeStubRawIssue({
             labels: [{ name: "agent-removed-model" }],
             stateName: "Todo",
+            stateType: "unstarted",
+            stateId: "state-todo",
             description: "see repo-a",
           }),
         ),
@@ -668,6 +663,8 @@ describe("ticketDoctor resolution checks", () => {
           makeStubRawIssue({
             labels: [{ name: "agent-claude" }],
             stateName: "Todo",
+            stateType: "unstarted",
+            stateId: "state-todo",
             description: "see herds-social/herds",
           }),
         ),
@@ -691,6 +688,8 @@ describe("ticketDoctor resolution checks", () => {
           makeStubRawIssue({
             labels: [{ name: "agent-claude" }],
             stateName: "Todo",
+            stateType: "unstarted",
+            stateId: "state-todo",
             description: "no relevant text",
           }),
         ),
@@ -711,6 +710,8 @@ describe("ticketDoctor resolution checks", () => {
           makeStubRawIssue({
             labels: [{ name: "agent-any" }],
             stateName: "Todo",
+            stateType: "unstarted",
+            stateId: "state-todo",
             description: "see repo-a",
           }),
         ),
@@ -737,6 +738,8 @@ describe("ticketDoctor resolution checks", () => {
           makeStubRawIssue({
             labels: [{ name: "agent-claude" }],
             stateName: "Todo",
+            stateType: "unstarted",
+            stateId: "state-todo",
             description: "see repo-a",
             hasChildren: true,
           }),
@@ -757,6 +760,8 @@ describe("ticketDoctor resolution checks", () => {
           makeStubRawIssue({
             labels: [{ name: "agent-claude" }],
             stateName: "Todo",
+            stateType: "unstarted",
+            stateId: "state-todo",
             description: "see repo-a",
             hasChildren: false,
           }),
@@ -783,9 +788,10 @@ describe("ticketDoctor — env checks", () => {
             title: "X",
             description: "see herds-social/herds",
             teamId: "team-1",
-            projectSlugId: "aaaaaaaaaaaa",
             labels: [{ name: "agent-claude" }],
             stateName: "Todo",
+            stateType: "unstarted",
+            stateId: "state-todo",
             blockers: [],
             hasMoreBlockers: false,
             hasChildren: false,
@@ -818,9 +824,10 @@ describe("ticketDoctor — env checks", () => {
             title: "X",
             description: "see herds-social/herds",
             teamId: "team-1",
-            projectSlugId: "aaaaaaaaaaaa",
             labels: [{ name: "agent-claude" }],
             stateName: "Todo",
+            stateType: "unstarted",
+            stateId: "state-todo",
             blockers: [],
             hasMoreBlockers: false,
             hasChildren: false,
@@ -855,9 +862,10 @@ describe("ticketDoctor — env checks", () => {
             title: "X",
             description: "work on herds_mobile_app",
             teamId: "team-1",
-            projectSlugId: "aaaaaaaaaaaa",
             labels: [{ name: "agent-claude" }],
             stateName: "Todo",
+            stateType: "unstarted",
+            stateId: "state-todo",
             blockers: [],
             hasMoreBlockers: false,
             hasChildren: false,
@@ -886,9 +894,10 @@ describe("ticketDoctor — env checks", () => {
           title: "X",
           description: "no known repo mentioned here",
           teamId: "team-1",
-          projectSlugId: "aaaaaaaaaaaa",
           labels: [{ name: "agent-claude" }],
           stateName: "Todo",
+          stateType: "unstarted",
+          stateId: "state-todo",
           blockers: [],
           hasMoreBlockers: false,
           hasChildren: false,
@@ -916,9 +925,10 @@ describe("ticketDoctor — env checks", () => {
           title: "X",
           description: "anything at all",
           teamId: "team-1",
-          projectSlugId: "aaaaaaaaaaaa",
           labels: [{ name: "agent-claude" }],
           stateName: "Todo",
+          stateType: "unstarted",
+          stateId: "state-todo",
           blockers: [],
           hasMoreBlockers: false,
           hasChildren: false,
@@ -955,6 +965,8 @@ describe("ticketDoctor — env checks", () => {
           makeStubRawIssue({
             labels: [{ name: "agent-claude" }],
             stateName: "Todo",
+            stateType: "unstarted",
+            stateId: "state-todo",
             description: "touches repo-a somewhere",
           }),
         ),
@@ -988,9 +1000,10 @@ describe("ticketDoctor — eligibility phase", () => {
           title: "X",
           description: "see herds-social/herds",
           teamId: "team-1",
-          projectSlugId: "aaaaaaaaaaaa",
           labels: [{ name: "agent-claude" }],
           stateName: "Todo",
+          stateType: "unstarted",
+          stateId: "state-todo",
           blockers: [],
           hasMoreBlockers: false,
           hasChildren: false,
@@ -1241,9 +1254,10 @@ describe("ticketDoctor — eligibility phase", () => {
             title: "X",
             description: "see herds-social/herds",
             teamId: "team-1",
-            projectSlugId: "aaaaaaaaaaaa",
             labels: [{ name: "agent-any" }],
             stateName: "Todo",
+            stateType: "unstarted",
+            stateId: "state-todo",
             blockers: [],
             hasMoreBlockers: false,
             hasChildren: false,
@@ -1769,7 +1783,14 @@ describe("ticketDoctor — verdict precedence (post-dispatch wins over pre-dispa
     const dependencies = makeStubDependencies({
       enrichWithLinear: vi
         .fn<NonNullable<TicketDoctorDependencies["enrichWithLinear"]>>()
-        .mockResolvedValue(makeStubRawIssue({ stateName: "In Review", labels: [] })),
+        .mockResolvedValue(
+          makeStubRawIssue({
+            stateName: "In Review",
+            stateType: "triage",
+            stateId: "state-review",
+            labels: [],
+          }),
+        ),
       findWorktree: vi
         .fn<TicketDoctorDependencies["findWorktree"]>()
         .mockReturnValue(makeWorktreeEntry()),
@@ -1820,6 +1841,8 @@ describe("ticketDoctor — verdict precedence (post-dispatch wins over pre-dispa
             makeStubRawIssue({
               labels: [{ name: "agent-claude" }],
               stateName: "Todo",
+              stateType: "unstarted",
+              stateId: "state-todo",
               description: "see herds-social/herds",
             }),
           ),

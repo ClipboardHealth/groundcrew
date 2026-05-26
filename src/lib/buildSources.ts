@@ -73,26 +73,18 @@ function effectiveSourceName(raw: unknown): string | undefined {
 
 /**
  * Build the runtime source list from a ResolvedConfig: synthesizes the
- * implicit linear source from `linear.projects` (when present) and appends
- * any user-declared `sources`. ResolvedConfig.sources stays exactly what
- * the user wrote — synthesis is a runtime concern.
- *
- * Throws when an explicit `sources[]` entry would resolve to runtime name
- * `"linear"`, which would collide with the implicit Linear source and
- * produce ambiguous canonical-id routing + duplicate writebacks.
- * (`createBoard` has a final-line duplicate-name guard, but catching the
- * collision here gives the user an actionable config-level error rather
- * than a runtime "duplicate source name" error from deep in the stack.)
+ * implicit Linear source (Linear is always active under the post-#110
+ * model — viewer + agent-* label filtering happens at the GraphQL layer)
+ * and appends any user-declared `sources`. The implicit source is omitted
+ * when the user already declared one with runtime name "linear" so they
+ * can override its `name` / construction without colliding.
  */
 export function sourcesFromConfig(config: ResolvedConfig): readonly unknown[] {
-  if (config.linear.projects.length === 0) {
+  const hasExplicitLinear = config.sources.some(
+    (source) => effectiveSourceName(source) === "linear",
+  );
+  if (hasExplicitLinear) {
     return [...config.sources];
-  }
-  const collision = config.sources.find((source) => effectiveSourceName(source) === "linear");
-  if (collision !== undefined) {
-    throw new Error(
-      `sourcesFromConfig: config.sources contains an entry that resolves to source name "linear", which conflicts with the implicit Linear source synthesized from config.linear.projects. Either give the explicit entry a distinct \`name\` or empty config.linear.projects.`,
-    );
   }
   return [{ kind: "linear" }, ...config.sources];
 }

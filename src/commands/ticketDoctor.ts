@@ -691,7 +691,7 @@ async function enrichLinearSection(
         name: "Status is Todo",
         status: "fail",
         detail: `current: ${raw.stateName}`,
-        failureSummary: `status is ${raw.stateName} (state.type=${stateType}, need unstarted)`,
+        failureSummary: `status is ${raw.stateName} (need Todo)`,
       });
     }
     return {
