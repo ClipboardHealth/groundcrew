@@ -311,7 +311,7 @@ describe(run, () => {
 
     await run(["doctor"]);
 
-    expect(doctorMock).toHaveBeenCalledWith();
+    expect(doctorMock).toHaveBeenCalledWith({ skipSourceProbe: false });
     expect(process.exitCode).toBeUndefined();
   });
 
@@ -320,7 +320,11 @@ describe(run, () => {
 
     await run(["doctor", "--ticket", "team-220"]);
 
-    expect(doctorMock).toHaveBeenCalledWith({ ticket: "team-220", ticketArgv: [] });
+    expect(doctorMock).toHaveBeenCalledWith({
+      ticket: "team-220",
+      ticketArgv: [],
+      skipSourceProbe: false,
+    });
     expect(process.exitCode).toBeUndefined();
   });
 
@@ -332,6 +336,7 @@ describe(run, () => {
     expect(doctorMock).toHaveBeenCalledWith({
       ticket: "team-220",
       ticketArgv: ["--no-linear", "--no-fetch"],
+      skipSourceProbe: true,
     });
   });
 
@@ -343,6 +348,7 @@ describe(run, () => {
     expect(doctorMock).toHaveBeenCalledWith({
       ticket: "team-220",
       ticketArgv: ["--no-fetch"],
+      skipSourceProbe: false,
     });
   });
 
@@ -370,12 +376,30 @@ describe(run, () => {
     expect(doctorMock).not.toHaveBeenCalled();
   });
 
-  it("rejects ticket-mode flags without --ticket (host doctor has no flags)", async () => {
-    await run(["doctor", "--no-linear"]);
+  it("rejects `doctor --no-fetch` without `--ticket`", async () => {
+    await run(["doctor", "--no-fetch"]);
 
-    expect(consoleError.output()).toContain("--no-linear requires --ticket");
+    expect(consoleError.output()).toContain("--no-fetch requires --ticket");
     expect(process.exitCode).toBe(1);
     expect(doctorMock).not.toHaveBeenCalled();
+  });
+
+  it("accepts --no-linear as host-mode alias for --no-source-probe", async () => {
+    doctorMock.mockResolvedValue(true);
+
+    await run(["doctor", "--no-linear"]);
+
+    expect(doctorMock).toHaveBeenCalledWith({ skipSourceProbe: true });
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it("accepts --no-source-probe in host doctor mode", async () => {
+    doctorMock.mockResolvedValue(true);
+
+    await run(["doctor", "--no-source-probe"]);
+
+    expect(doctorMock).toHaveBeenCalledWith({ skipSourceProbe: true });
+    expect(process.exitCode).toBeUndefined();
   });
 
   it("sets exit code to 1 when doctor fails", async () => {
@@ -472,7 +496,7 @@ describe(run, () => {
 
     expect(computeUpgradeNudgeMock).toHaveBeenCalledTimes(1);
     expect(consoleError.output()).toContain("[crew] 3.2.0 available");
-    expect(doctorMock).toHaveBeenCalledWith();
+    expect(doctorMock).toHaveBeenCalledWith({ skipSourceProbe: false });
   });
 
   it("skips the nudge message when no upgrade is available", async () => {
@@ -513,7 +537,7 @@ describe(run, () => {
     computeUpgradeNudgeMock.mockRejectedValueOnce(new Error("nudge boom"));
     await run(["doctor"]);
 
-    expect(doctorMock).toHaveBeenCalledWith();
+    expect(doctorMock).toHaveBeenCalledWith({ skipSourceProbe: false });
     expect(process.exitCode).toBeUndefined();
   });
 });

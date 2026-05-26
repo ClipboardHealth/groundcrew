@@ -1,62 +1,128 @@
 /**
- * Linear `TicketSource` factory. Wraps the existing boardSource.ts machinery
- * (createBoardSource, fetchResolvedIssue, createLinearIssueStatusUpdater) and
- * converts the Linear-native `Issue`/`Blocker` shapes into the canonical
- * `Issue`/`Blocker` shapes consumers (via `Board`) speak.
+ * Linear `TicketSource` factory. Assembles the adapter from sibling modules
+ * (createBoardSource + fetchResolvedIssue from ./fetch.ts;
+ * createLinearIssueStatusUpdater from ./writeback.ts; getLinearClient from
+ * ./client.ts) and converts Linear-specific shapes into the canonical
+ * Issue/Blocker types consumers (via Board) speak.
  *
- * Status mapping is driven entirely by Linear's workflow `state.type`
- * (`unstarted` → todo, `started` → in-progress,
- * `completed`/`canceled`/`duplicate` → done) so renamed columns are classified
- * correctly without any per-team config.
+ * State classification is driven by Linear's workflow `state.type` — never
+ * by status name — so workspaces with renamed columns Just Work without
+ * per-team config.
  *
- * Description is not populated on `fetch()` Issues (boardSource's snapshot
- * doesn't include it); `resolveOne()` Issues carry the full description
- * because `fetchResolvedIssue` fetches it explicitly.
+ * Description is populated on both `fetch()` Issues and `resolveOne()` Issues.
  */
 
 import type { AdapterContext } from "../../adapterDefinition.ts";
 import {
+  naturalIdFromCanonical,
+  toCanonicalId,
+  type Blocker as CanonicalBlocker,
+  type CanonicalStatus,
+  type Issue as CanonicalIssue,
+  type ParentSkip as CanonicalParentSkip,
+  type TicketSource,
+} from "../../ticketSource.ts";
+import type { LinearAdapterConfig } from "./schema.ts";
+import { getLinearClient, lazyLinearClient } from "./client.ts";
+import {
   type Blocker as LinearBlocker,
   createBoardSource,
+  fetchBlockersForTicket,
+  fetchInProgressIssueCount,
   fetchResolvedIssue,
-  type Issue as LinearIssue,
   isTerminalStateType,
-} from "../../boardSource.ts";
-import { createLinearIssueStatusUpdater } from "../../linearIssueStatus.ts";
-import type {
-  Blocker as CanonicalBlocker,
-  CanonicalStatus,
-  Issue as CanonicalIssue,
-  TicketSource,
-} from "../../ticketSource.ts";
-import { getLinearClient } from "../../util.ts";
-import type { LinearAdapterConfig } from "./schema.ts";
+  type Issue as LinearIssue,
+  type ParentSkip as LinearParentSkip,
+} from "./fetch.ts";
+import { createLinearIssueStatusUpdater } from "./writeback.ts";
 
-interface LinearSourceRef {
+/**
+ * Adapter-private payload threaded through `Issue.sourceRef`. Consumers
+ * MUST NOT inspect; only the Linear adapter reads it.
+ */
+export interface LinearSourceRef {
   uuid: string;
   statusId: string;
   teamId: string;
+  /** Linear workflow `state.type` for the issue at fetch time. */
+  stateType: string;
+  /** Human-readable native status name, e.g. "In Progress", "Shipped". Diagnostic display only. */
   nativeStatus: string;
 }
 
-export function canonicalStatusFromStateType(stateType: string | undefined): CanonicalStatus {
-  if (stateType === "unstarted") {
-    return "todo";
+function canonicalStatusFromStateType(stateType: string | undefined): CanonicalStatus {
+  switch (stateType) {
+    case "unstarted": {
+      return "todo";
+    }
+    case "started": {
+      return "in-progress";
+    }
+    case "completed":
+    case "canceled":
+    case "duplicate": {
+      return "done";
+    }
+    default: {
+      return "other";
+    }
   }
-  if (stateType === "started") {
-    return "in-progress";
+}
+
+function canonicalBlockerStatus(blocker: LinearBlocker): {
+  status: CanonicalStatus;
+  statusReason?: "missing" | "unmapped";
+  nativeStatus?: string;
+} {
+  if (blocker.stateType === undefined) {
+    return {
+      status: "other",
+      statusReason: "missing",
+      ...(blocker.status !== undefined && { nativeStatus: blocker.status }),
+    };
   }
-  if (isTerminalStateType(stateType)) {
-    return "done";
+  if (isTerminalStateType(blocker.stateType)) {
+    return {
+      status: "done",
+      ...(blocker.status !== undefined && { nativeStatus: blocker.status }),
+    };
   }
-  return "other";
+  if (blocker.stateType === "started") {
+    return {
+      status: "in-progress",
+      ...(blocker.status !== undefined && { nativeStatus: blocker.status }),
+    };
+  }
+  if (blocker.stateType === "unstarted") {
+    return {
+      status: "todo",
+      ...(blocker.status !== undefined && { nativeStatus: blocker.status }),
+    };
+  }
+  // backlog / triage / anything else falls through as "other"
+  return {
+    status: "other",
+    statusReason: "unmapped",
+    ...(blocker.status !== undefined && { nativeStatus: blocker.status }),
+  };
 }
 
 function toCanonicalBlocker(blocker: LinearBlocker, sourceName: string): CanonicalBlocker {
+  const { status, statusReason, nativeStatus } = canonicalBlockerStatus(blocker);
   return {
-    id: `${sourceName}:${blocker.id}`,
+    id: toCanonicalId(sourceName, blocker.id),
     title: blocker.title,
-    status: canonicalStatusFromStateType(blocker.stateType),
+    status,
+    ...(statusReason !== undefined && { statusReason }),
+    ...(nativeStatus !== undefined && { nativeStatus }),
+  };
+}
+
+function toCanonicalParentSkip(skip: LinearParentSkip, sourceName: string): CanonicalParentSkip {
+  return {
+    id: toCanonicalId(sourceName, skip.id),
+    title: skip.title,
+    childCount: skip.childCount,
   };
 }
 
@@ -65,14 +131,14 @@ export function toCanonicalIssue(linearIssue: LinearIssue, sourceName: string): 
     uuid: linearIssue.uuid,
     statusId: linearIssue.statusId,
     teamId: linearIssue.teamId,
+    stateType: linearIssue.stateType,
     nativeStatus: linearIssue.status,
   };
   return {
-    id: `${sourceName}:${linearIssue.id}`,
+    id: toCanonicalId(sourceName, linearIssue.id),
     source: sourceName,
     title: linearIssue.title,
-    // Board snapshot doesn't carry description; resolveOne() populates it.
-    description: "",
+    description: linearIssue.description,
     status: canonicalStatusFromStateType(linearIssue.stateType),
     repository: linearIssue.repository,
     model: linearIssue.model,
@@ -90,45 +156,63 @@ export function createLinearTicketSource(
 ): TicketSource {
   const sourceName = config.name ?? "linear";
   const { globalConfig } = context;
-  const client = getLinearClient();
-  const boardSource = createBoardSource({ config: globalConfig, client });
-  const issueStatusUpdater = createLinearIssueStatusUpdater({ client });
+  // Lazy: deferring `getLinearClient()` (and the sub-modules that depend on
+  // it) until first method use means `createLinearTicketSource` can be
+  // constructed without a Linear API key in env. Callers that only ever
+  // touch a sibling source — `crew doctor --ticket <shell-id>`,
+  // `crew run` with the multi-source Board's `Promise.allSettled` fan-out
+  // tolerating a Linear-side rejection — no longer crash at config-load
+  // time on a missing key.
+  const getClient = lazyLinearClient(getLinearClient);
+
+  let cachedBoardSource: ReturnType<typeof createBoardSource> | undefined;
+  function getBoardSource(): ReturnType<typeof createBoardSource> {
+    cachedBoardSource ??= createBoardSource({ config: globalConfig, client: getClient() });
+    return cachedBoardSource;
+  }
+
+  let cachedIssueStatusUpdater: ReturnType<typeof createLinearIssueStatusUpdater> | undefined;
+  function getIssueStatusUpdater(): ReturnType<typeof createLinearIssueStatusUpdater> {
+    cachedIssueStatusUpdater ??= createLinearIssueStatusUpdater({
+      client: getClient(),
+    });
+    return cachedIssueStatusUpdater;
+  }
+
+  let lastParentSkips: readonly CanonicalParentSkip[] = [];
 
   return {
     name: sourceName,
     async verify(): Promise<void> {
-      await boardSource.verify();
+      await getBoardSource().verify();
     },
     async fetch(): Promise<CanonicalIssue[]> {
-      const state = await boardSource.fetch();
+      const state = await getBoardSource().fetch();
+      lastParentSkips = state.parentSkips.map((skip) => toCanonicalParentSkip(skip, sourceName));
       return state.issues.map((linearIssue) => toCanonicalIssue(linearIssue, sourceName));
     },
+    async fetchParentSkips(): Promise<readonly CanonicalParentSkip[]> {
+      return lastParentSkips;
+    },
     async resolveOne(naturalId: string): Promise<CanonicalIssue | undefined> {
-      // fetchResolvedIssue throws on missing repo; we let those propagate.
-      // Returning `undefined` is reserved for "ticket genuinely doesn't
-      // exist," which fetchResolvedIssue surfaces as an Error too — for now
-      // we let any error bubble up rather than swallow.
       const resolved = await fetchResolvedIssue({
-        client,
+        client: getClient(),
         config: globalConfig,
         ticket: naturalId,
       });
-      // fetchResolvedIssue doesn't return the native status name (it's
-      // already been resolved through workflow state lookup). We surface
-      // "other" until the consumer needs the canonical status, which is fine
-      // because `crew setup` doesn't branch on it.
       const sourceRef: LinearSourceRef = {
         uuid: resolved.uuid,
-        statusId: "",
+        statusId: resolved.statusId,
         teamId: resolved.teamId,
-        nativeStatus: "",
+        stateType: resolved.stateType,
+        nativeStatus: resolved.status,
       };
       return {
-        id: `${sourceName}:${naturalId.toLowerCase()}`,
+        id: toCanonicalId(sourceName, naturalId),
         source: sourceName,
         title: resolved.title,
         description: resolved.description,
-        status: "other",
+        status: canonicalStatusFromStateType(resolved.stateType),
         repository: resolved.repository,
         model: resolved.model,
         assignee: "Unassigned",
@@ -141,11 +225,26 @@ export function createLinearTicketSource(
     async markInProgress(issue: CanonicalIssue): Promise<void> {
       // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- by the Linear adapter's contract, every Issue it produces carries a LinearSourceRef in sourceRef
       const ref = issue.sourceRef as LinearSourceRef;
-      await issueStatusUpdater.markInProgress({
+      await getIssueStatusUpdater().markInProgress({
         id: issue.id,
         uuid: ref.uuid,
         teamId: ref.teamId,
       });
+    },
+
+    async refreshBlockers(issue: CanonicalIssue): Promise<CanonicalBlocker[]> {
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- by the Linear adapter's contract, every Issue it produces carries a LinearSourceRef in sourceRef
+      const ref = issue.sourceRef as LinearSourceRef;
+      const legacyBlockers = await fetchBlockersForTicket({
+        client: getClient(),
+        ticket: naturalIdFromCanonical(issue.id),
+        uuid: ref.uuid,
+      });
+      return legacyBlockers.map((blocker) => toCanonicalBlocker(blocker, sourceName));
+    },
+
+    async countInProgress(): Promise<number> {
+      return await fetchInProgressIssueCount({ client: getClient() });
     },
   };
 }

@@ -18,24 +18,28 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
-import {
-  fetchBlockersForTicket,
-  fetchInProgressIssueCount,
-  fetchRawLinearIssue,
-  isTerminalStateType,
-  resolveModelFor,
-  resolveRepositoryFor,
-  type Blocker,
-  type GroundcrewIssue,
-  type RawLinearIssue,
-} from "../lib/boardSource.ts";
+import { fetchRawLinearIssue, type RawLinearIssue } from "../lib/adapters/linear/fetch.ts";
+import { resolveRepositoryFor } from "../lib/adapters/linear/parsing.ts";
+import type { Board } from "../lib/board.ts";
 import { runCommandAsync } from "../lib/commandRunner.ts";
 import { resolveDefaultBranch } from "../lib/defaultBranch.ts";
-import { AGENT_ANY_MODEL, loadConfig, type ResolvedConfig } from "../lib/config.ts";
+import {
+  AGENT_ANY_MODEL,
+  isShippedDefaultDisabled,
+  loadConfig,
+  type ResolvedConfig,
+} from "../lib/config.ts";
+import {
+  isGroundcrewIssue,
+  type Blocker as CanonicalBlocker,
+  type GroundcrewIssue as CanonicalGroundcrewIssue,
+  type Issue,
+} from "../lib/ticketSource.ts";
 import { which } from "../lib/host.ts";
 import { readRunState, type RunState } from "../lib/runState.ts";
 import { getUsageByModel, type UsageByModel } from "../lib/usage.ts";
-import { getLinearClient, lazyLinearClient, writeOutput } from "../lib/util.ts";
+import { getLinearClient, lazyLinearClient } from "../lib/adapters/linear/client.ts";
+import { writeOutput } from "../lib/util.ts";
 import { workspaces, type WorkspaceAccessHint, type WorkspaceProbe } from "../lib/workspaces.ts";
 import { worktrees, type WorktreeDirtiness, type WorktreeEntry } from "../lib/worktrees.ts";
 import {
@@ -45,13 +49,6 @@ import {
   type ModelUsageExhaustion,
 } from "./eligibility.ts";
 import { renderTicketCheckResult, type Section, type TicketCheck } from "./ticketCheck.ts";
-
-/**
- * Placeholder Linear state name used when `--no-linear` suppresses the Linear
- * probe. The verdict decision reads `linear.kind` only — this name is never
- * surfaced to the user.
- */
-const LINEAR_SKIPPED_STATE_NAME = "(linear skipped)";
 
 // ───────── verdict types ─────────
 
@@ -67,10 +64,10 @@ export type TicketDoctorVerdict =
   | { kind: "unresolvable"; reason: string }
   | { kind: "lost"; reason: string };
 
-export type LinearStatusProbe =
-  | { kind: "terminal"; stateName: string }
-  | { kind: "non-terminal"; stateName: string }
-  | { kind: "skipped" }
+export type LifecycleStatusProbe =
+  | { kind: "active"; nativeStatus: string }
+  | { kind: "terminal"; nativeStatus: string }
+  | { kind: "suppressed" }
   | { kind: "unresolvable"; reason: string };
 
 export type WorktreeProbe =
@@ -97,12 +94,13 @@ export type PullRequestProbe =
   | { kind: "unknown"; reason: string };
 
 export interface DecideVerdictInput {
-  linear: LinearStatusProbe;
+  lifecycle: LifecycleStatusProbe;
   worktree: WorktreeProbe;
   localBranch: LocalBranchProbe;
   remoteBranch: RemoteBranchProbe;
   pullRequest: PullRequestProbe;
   branch: string;
+  remote: string;
   worktreeDir: string | undefined;
   workspaceName: string | undefined;
   runState: RunState | undefined;
@@ -111,7 +109,10 @@ export interface DecideVerdictInput {
 // ───────── post-dispatch verdict (PR / in-flight / recoverable) ─────────
 
 function verdictInFlight(input: DecideVerdictInput): TicketDoctorVerdict | undefined {
-  if (input.linear.kind !== "non-terminal") {
+  // `suppressed` (--no-linear) is treated the same as `active` here: a present
+  // worktree is local evidence of work in progress regardless of whether we
+  // checked the upstream status.
+  if (input.lifecycle.kind !== "active" && input.lifecycle.kind !== "suppressed") {
     return undefined;
   }
   const worktreePresent =
@@ -151,7 +152,7 @@ function verdictRecoverable(input: DecideVerdictInput): TicketDoctorVerdict | un
     return {
       kind: "recoverable",
       reason: `clean worktree with un-pushed local branch`,
-      nextStep: `cd ${where}; git push -u origin ${input.branch}; gh pr create`,
+      nextStep: `cd ${where}; git push -u ${input.remote} ${input.branch}; gh pr create`,
     };
   }
   if (
@@ -224,14 +225,16 @@ export interface TicketDoctorDependencies {
   config: ResolvedConfig;
   ticket: string;
   /**
-   * Injected to keep `ticketDoctor` pure and easy to unit-test. `undefined`
-   * means the caller passed `--no-linear` — the Linear-backed pre-dispatch
-   * checks (status, label, repo, eligibility) are all skipped.
+   * Opt-in Linear enrichment. `undefined` means the caller passed
+   * `--no-linear` — the Linear-specific pre-dispatch checks (project slug,
+   * agent labels, raw GraphQL payload) are skipped. When `issue.source ===
+   * "linear"` this is called to enrich the resolution section with Linear-
+   * specific detail.
    */
-  fetchRawIssue: ((input: { ticket: string }) => Promise<RawLinearIssue>) | undefined;
-  fetchBlockersFor: (input: { ticket: string; uuid: string }) => Promise<readonly Blocker[]>;
+  enrichWithLinear: ((input: { ticket: string }) => Promise<RawLinearIssue>) | undefined;
+  /** Board used for per-ticket blocker refresh, in-progress count, and canonical issue lookup. */
+  board: Board;
   fetchUsage: () => Promise<UsageByModel>;
-  countInProgress: () => Promise<number>;
   findWorktree: (ticket: string) => WorktreeEntry | undefined;
   probeWorkspaces: () => Promise<WorkspaceProbe>;
   workspaceAccessHint: (name: string) => Promise<WorkspaceAccessHint | undefined>;
@@ -305,8 +308,61 @@ interface ModelResolutionResult {
   checks: TicketCheck[];
 }
 
+const AGENT_LABEL_PREFIX = "agent-";
+
+type ModelResolutionKind =
+  | { kind: "no-label" }
+  | { kind: "agent-any" }
+  | { kind: "matched"; model: string }
+  | { kind: "disabled-fallback"; requestedModel: string; fallbackModel: string };
+
+/**
+ * Resolve the agent model from raw issue labels. Mirrors boardSource's
+ * `resolveModelFor`/`parseAgentLabels` logic, including the fallback to
+ * `models.default` when agent labels are present but none matches a known
+ * model. The fallback path is what `parseAgentLabels` returns when no label
+ * matches and none triggers the disabled-shipped-default branch — keeping
+ * this inline resolver consistent with the adapter's behavior is what
+ * maintains the pre-dispatch check accuracy.
+ */
+function resolveModelFromLabels(
+  labels: { name: string }[],
+  config: ResolvedConfig,
+): ModelResolutionKind {
+  const agentLabels = labels.filter((label) => label.name.startsWith(AGENT_LABEL_PREFIX));
+  if (agentLabels.length === 0) {
+    return { kind: "no-label" };
+  }
+  let disabledFallback: string | undefined;
+  for (const label of agentLabels) {
+    const name = label.name.slice(AGENT_LABEL_PREFIX.length);
+    if (name === AGENT_ANY_MODEL) {
+      return { kind: "agent-any" };
+    }
+    if (Object.hasOwn(config.models.definitions, name)) {
+      return { kind: "matched", model: name };
+    }
+    if (disabledFallback === undefined && isShippedDefaultDisabled(config, name)) {
+      disabledFallback = name;
+    }
+  }
+  if (disabledFallback !== undefined) {
+    return {
+      kind: "disabled-fallback",
+      requestedModel: disabledFallback,
+      fallbackModel: config.models.default,
+    };
+  }
+  // Agent labels exist but none matched a known model and none is a disabled
+  // shipped default. Mirror boardSource's parseAgentLabels fallback: the
+  // adapter uses models.default in this case, so the doctor should reflect
+  // the same resolved model. (The previous behavior — returning "no-label"
+  // here — was a regression that caused a divergence from the adapter.)
+  return { kind: "matched", model: config.models.default };
+}
+
 function buildModelChecks(raw: RawLinearIssue, config: ResolvedConfig): ModelResolutionResult {
-  const modelResolution = resolveModelFor({ labels: raw.labels, config });
+  const modelResolution = resolveModelFromLabels(raw.labels, config);
   const checks: TicketCheck[] = [];
   switch (modelResolution.kind) {
     case "no-label": {
@@ -375,19 +431,30 @@ function buildModelChecks(raw: RawLinearIssue, config: ResolvedConfig): ModelRes
 }
 
 interface RepoResolutionResult {
-  resolvedRepository: string;
   checks: TicketCheck[];
 }
 
-function buildRepoChecks(
-  raw: RawLinearIssue,
-  config: ResolvedConfig,
-  ticket: string,
-): RepoResolutionResult {
+function buildChildrenCheck(raw: RawLinearIssue): TicketCheck {
+  if (raw.hasChildren) {
+    return {
+      name: "Has no sub-issues",
+      status: "fail",
+      detail:
+        "parent ticket with sub-issues — groundcrew works sub-issues, not parents; label a sub-issue or detach the children",
+      failureSummary: "parent ticket with sub-issues — groundcrew works sub-issues, not parents",
+    };
+  }
+  return { name: "Has no sub-issues", status: "ok" };
+}
+
+function buildRepoChecks(raw: RawLinearIssue, config: ResolvedConfig): RepoResolutionResult {
+  // Delegate to the Linear adapter's resolver so the doctor's diagnostic
+  // matches what dispatch would actually choose — including ambiguous
+  // bare-name matches, which surface as `missing` here (and as a thrown
+  // `RepositoryResolutionError` on the dispatch / single-ticket paths).
   const repositoryResolution = resolveRepositoryFor({
     description: raw.description,
     config,
-    ticket,
   });
   const checks: TicketCheck[] = [];
   if (repositoryResolution.kind === "ok") {
@@ -423,58 +490,65 @@ function buildRepoChecks(
       status: "skipped",
     });
   }
-  /* v8 ignore else @preserve -- resolved repository is empty only on the fail branch above; the field is only consumed on the ok path */
-  const resolvedRepository =
-    repositoryResolution.kind === "ok" ? repositoryResolution.repository : "";
-  return { resolvedRepository, checks };
-}
-
-function buildChildrenCheck(raw: RawLinearIssue): TicketCheck {
-  if (raw.hasChildren) {
-    return {
-      name: "Has no sub-issues",
-      status: "fail",
-      detail:
-        "parent ticket with sub-issues — groundcrew works sub-issues, not parents; label a sub-issue or detach the children",
-      failureSummary: "parent ticket with sub-issues — groundcrew works sub-issues, not parents",
-    };
-  }
-  return { name: "Has no sub-issues", status: "ok" };
+  return { checks };
 }
 
 interface EligibilityCheckArguments {
-  ticket: string;
-  raw: RawLinearIssue;
   config: ResolvedConfig;
-  resolvedRepository: string;
+  board: Board;
+  /** Canonical Issue from board.resolveOne; used as the routing key for refreshBlockers. */
+  canonicalIssue: CanonicalGroundcrewIssue;
+  /**
+   * v1 first-page-overflow sentinel from `fetchRawLinearIssue`. When the
+   * raw Linear ticket has too many blockers to inspect in the first page,
+   * we conservatively refuse to dispatch even after `refreshBlockers`
+   * paginates the full list — the snapshot inspection contract is what
+   * the safety gate is built on, and `board.refreshBlockers` returns only
+   * the (paginated) blockers themselves, not the snapshot sentinel.
+   */
+  rawHasMoreBlockers: boolean;
   resolvedModel: string;
-  dependencies: TicketDoctorDependencies;
+  fetchUsage: () => Promise<UsageByModel>;
   eligibility: TicketCheck[];
 }
 
-async function runEligibilityChecks(arguments_: EligibilityCheckArguments): Promise<boolean> {
-  const { ticket, raw, config, resolvedRepository, resolvedModel, dependencies, eligibility } =
-    arguments_;
+function blockerDetailMessage(blocker: CanonicalBlocker): string {
+  if (blocker.statusReason === "missing") {
+    return `blocker ${blocker.id} (${blocker.title}) — source returned no status (likely soft-deleted or permission-restricted; open the blocker in your ticket system to investigate)`;
+  }
+  if (blocker.statusReason === "unmapped") {
+    return `blocker ${blocker.id} (${blocker.title}) — source status "${blocker.nativeStatus}" isn't mapped (add it to linear.projects[*].statuses for Linear, or use a known CanonicalStatus value if your script controls it)`;
+  }
+  if (blocker.nativeStatus !== undefined) {
+    return `blocker ${blocker.id} (${blocker.title}) — in status "${blocker.nativeStatus}" (${blocker.status})`;
+  }
+  return `blocker ${blocker.id} (${blocker.title}) — in status "${blocker.status}"`;
+}
 
-  const blockers = await dependencies.fetchBlockersFor({ ticket, uuid: raw.uuid });
-  const groundcrewIssue: GroundcrewIssue = {
-    id: ticket,
-    uuid: raw.uuid,
-    title: raw.title,
-    status: raw.stateName,
-    statusId: "",
-    assignee: "",
-    updatedAt: "",
-    teamId: raw.teamId,
-    /* v8 ignore next @preserve -- fetchRawLinearIssue always populates stateType (defaults to "") so the ?? guard is belt-and-suspenders */
-    stateType: raw.stateType ?? "",
-    repository: resolvedRepository,
-    model: resolvedModel,
-    blockers: [...blockers],
-    hasMoreBlockers: raw.hasMoreBlockers,
+async function runEligibilityChecks(arguments_: EligibilityCheckArguments): Promise<boolean> {
+  const {
+    config,
+    board,
+    canonicalIssue,
+    rawHasMoreBlockers,
+    resolvedModel,
+    fetchUsage,
+    eligibility,
+  } = arguments_;
+
+  const freshBlockers = await board.refreshBlockers(canonicalIssue);
+
+  // Build a GroundcrewIssue (canonical) with the refreshed blockers for classifyBlockers.
+  // rawHasMoreBlockers comes from the raw Linear snapshot (first-page sentinel); it
+  // takes precedence over whatever refreshBlockers returned because we refuse to
+  // dispatch when the blocker count exceeds a single GraphQL page.
+  const issueForClassification: CanonicalGroundcrewIssue = {
+    ...canonicalIssue,
+    blockers: freshBlockers,
+    hasMoreBlockers: rawHasMoreBlockers,
   };
 
-  const blockerClassification = classifyBlockers([groundcrewIssue]);
+  const blockerClassification = classifyBlockers([issueForClassification]);
   const [firstSkip] = blockerClassification.skips;
   if (firstSkip !== undefined) {
     if (firstSkip.eventReason === "blockers_paginated") {
@@ -488,17 +562,23 @@ async function runEligibilityChecks(arguments_: EligibilityCheckArguments): Prom
     }
     /* v8 ignore next @preserve -- firstSkip.blockers is always set for "blocked" and "blockers_paginated" skip reasons */
     const blockerIds = firstSkip.blockers ?? [];
+    const activeBlockers = freshBlockers.filter((b) => b.status !== "done");
+    let detail = blockerIds.join(", ");
+    /* v8 ignore else @preserve -- activeBlockers is always non-empty when a "blocked" skip exists; the else path is an unreachable defensive fallback */
+    if (activeBlockers.length > 0) {
+      detail = activeBlockers.map(blockerDetailMessage).join("\n");
+    }
     eligibility.push({
       name: "No active blockers",
       status: "fail",
-      detail: blockerIds.join(", "),
+      detail,
       failureSummary: `blocked by ${blockerIds.join(", ")}`,
     });
     return false;
   }
   eligibility.push({ name: "No active blockers", status: "ok" });
 
-  const usage = await dependencies.fetchUsage();
+  const usage = await fetchUsage();
   const usageExhaustion = classifyUsageExhaustion(config, usage);
   const exhausted = new Set(usageExhaustion.map((exhaustion) => exhaustion.model));
   let model = resolvedModel;
@@ -525,7 +605,7 @@ async function runEligibilityChecks(arguments_: EligibilityCheckArguments): Prom
       : usageExhaustionCheck(exhaustedUsage),
   );
 
-  const inProgress = await dependencies.countInProgress();
+  const inProgress = await board.countInProgress();
   const cap = config.orchestrator.maximumInProgress;
   const capOk = inProgress < cap;
   const capCheck: TicketCheck = {
@@ -574,30 +654,33 @@ function usageExhaustionCheck(exhaustion: ModelUsageExhaustion): TicketCheck {
 }
 
 interface LinearProbeOutput {
-  linearStatus: LinearStatusProbe;
+  lifecycleStatus: LifecycleStatusProbe;
   resolution: TicketCheck[];
   title?: string;
   raw?: RawLinearIssue;
 }
 
 /**
- * Fetches Linear and adds the "Ticket exists in Linear" + status checks to
- * the resolution section. Returns the raw issue on success so the orchestrator
- * can continue with label/repo/eligibility. On failure, returns enough
- * context to render an `unresolvable` verdict.
+ * Linear-specific enrichment (opt-in). Fetches the raw Linear payload and
+ * adds the "Ticket exists in Linear" + status checks to the resolution
+ * section. Returns the raw issue on success so the orchestrator can continue
+ * with label/repo/eligibility. On failure, returns enough context to render
+ * an `unresolvable` verdict. Only called when `deps.enrichWithLinear` is
+ * defined — the orchestrator guards on this before calling.
  */
-async function probeLinear(
+async function enrichLinearSection(
   deps: TicketDoctorDependencies,
   upperTicket: string,
 ): Promise<LinearProbeOutput> {
-  if (deps.fetchRawIssue === undefined) {
-    return { linearStatus: { kind: "skipped" }, resolution: [] };
-  }
   try {
-    const raw = await deps.fetchRawIssue({ ticket: upperTicket });
-    /* v8 ignore next @preserve -- fetchRawLinearIssue always populates stateType (defaults to "") so the ?? guard is belt-and-suspenders */
+    // enrichWithLinear is always defined at this call site — the orchestrator
+    // guards with `dependencies.enrichWithLinear !== undefined` before calling.
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- orchestrator always calls enrichLinearSection when enrichWithLinear is defined
+    const raw = await deps.enrichWithLinear!({ ticket: upperTicket });
+    /* v8 ignore next @preserve -- fetchRawLinearIssue always populates stateType (defaults to "") */
     const stateType = raw.stateType ?? "";
-    const isTerminal = isTerminalStateType(stateType);
+    const isTerminal =
+      stateType === "completed" || stateType === "canceled" || stateType === "duplicate";
     const resolution: TicketCheck[] = [
       { name: "Ticket exists in Linear", status: "ok", detail: `"${raw.title}"` },
     ];
@@ -612,7 +695,9 @@ async function probeLinear(
       });
     }
     return {
-      linearStatus: { kind: isTerminal ? "terminal" : "non-terminal", stateName: raw.stateName },
+      lifecycleStatus: isTerminal
+        ? { kind: "terminal", nativeStatus: raw.stateName }
+        : { kind: "active", nativeStatus: raw.stateName },
       resolution,
       title: raw.title,
       raw,
@@ -620,7 +705,7 @@ async function probeLinear(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return {
-      linearStatus: { kind: "unresolvable", reason: message },
+      lifecycleStatus: { kind: "unresolvable", reason: message },
       resolution: [{ name: "Ticket exists in Linear", status: "fail", detail: message }],
     };
   }
@@ -898,6 +983,95 @@ async function probePullRequestSection(
   };
 }
 
+// ───────── canonical pre-dispatch resolution ─────────
+
+interface CanonicalResolutionOutput {
+  resolution: TicketCheck[];
+  title: string;
+}
+
+/**
+ * Builds resolution checks from the canonical Issue for any source. Used as
+ * the universal resolution path — every source runs through this. Returns
+ * checks for ticket existence, Todo status, repository membership in
+ * workspace.knownRepositories, and model presence in models.definitions.
+ */
+function buildResolutionFromCanonical(
+  canonicalIssue: Issue,
+  config: ResolvedConfig,
+): CanonicalResolutionOutput {
+  const resolution: TicketCheck[] = [
+    {
+      name: `Ticket exists in source ${canonicalIssue.source}`,
+      status: "ok",
+      detail: `"${canonicalIssue.title}"`,
+    },
+  ];
+
+  if (canonicalIssue.status === "todo") {
+    resolution.push({ name: "Status is Todo", status: "ok" });
+  } else {
+    resolution.push({
+      name: "Status is Todo",
+      status: "fail",
+      detail: `current: ${canonicalIssue.status}`,
+      failureSummary: `status is ${canonicalIssue.status} (need todo)`,
+    });
+  }
+
+  const { repository, model } = canonicalIssue;
+  /* v8 ignore else @preserve -- repository defined but absent from knownRepositories is a shell adapter misconfiguration; ok and absent-altogether paths are tested */
+  if (repository === undefined) {
+    resolution.push({
+      name: "Resolved repo is in workspace.knownRepositories",
+      status: "fail",
+      detail: "adapter returned no repository for this ticket",
+      failureSummary: "no resolved repository",
+    });
+  } else if (config.workspace.knownRepositories.includes(repository)) {
+    resolution.push({
+      name: "Resolved repo is in workspace.knownRepositories",
+      status: "ok",
+      detail: repository,
+    });
+  } else {
+    // Shell adapter returned a repository not present in workspace.knownRepositories.
+    resolution.push({
+      name: "Resolved repo is in workspace.knownRepositories",
+      status: "fail",
+      detail: `"${repository}" not found in workspace.knownRepositories (${config.workspace.knownRepositories.join(", ")})`,
+      failureSummary: `resolved repo "${repository}" is not in workspace.knownRepositories`,
+    });
+  }
+
+  /* v8 ignore else @preserve -- model defined but not in models.definitions is a shell adapter misconfiguration; the ok path and the undefined path are tested */
+  if (model === undefined) {
+    // Shell adapter returned a ticket with no model resolved.
+    resolution.push({
+      name: "Has resolved model",
+      status: "fail",
+      detail: "adapter returned no model for this ticket",
+      failureSummary: "no resolved model",
+    });
+  } else if (Object.hasOwn(config.models.definitions, model)) {
+    resolution.push({
+      name: "Has resolved model",
+      status: "ok",
+      detail: `model "${model}"`,
+    });
+  } else {
+    // Shell adapter returned a model not present in models.definitions.
+    resolution.push({
+      name: "Has resolved model",
+      status: "fail",
+      detail: `model "${model}" is not in models.definitions`,
+      failureSummary: `resolved model "${model}" is not in models.definitions`,
+    });
+  }
+
+  return { resolution, title: canonicalIssue.title };
+}
+
 // ───────── orchestrator ─────────
 
 interface PreDispatchInput {
@@ -930,7 +1104,7 @@ async function runPreDispatch(input: PreDispatchInput): Promise<PreDispatchOutpu
   // up either way.
   resolutionExtra.push(buildChildrenCheck(raw));
 
-  const { resolvedRepository, checks: repoChecks } = buildRepoChecks(raw, config, ticket);
+  const { checks: repoChecks } = buildRepoChecks(raw, config);
   resolutionExtra.push(...repoChecks);
 
   if (input.statusCheckFailed) {
@@ -945,13 +1119,45 @@ async function runPreDispatch(input: PreDispatchInput): Promise<PreDispatchOutpu
     return { resolutionExtra, eligibility, verdict: { kind: "ineligible", reason } };
   }
 
+  // Resolution passed — fetch canonical Issue via board.resolveOne for use in
+  // eligibility checks (refreshBlockers routes through the adapter's sourceRef).
+  const canonicalIssue = await dependencies.board.resolveOne(ticket.toLowerCase());
+  /* v8 ignore next 3 @preserve -- enrichLinearSection already verified the ticket exists; undefined here is a theoretical race condition */
+  if (canonicalIssue === undefined) {
+    return {
+      resolutionExtra,
+      eligibility,
+      verdict: {
+        kind: "unresolvable",
+        reason: `ticket ${ticket} not found via board after resolution checks passed`,
+      },
+    };
+  }
+
+  // Narrow from Issue to CanonicalGroundcrewIssue so the eligibility checker
+  // receives a type-safe value. Resolution checks above guarantee model and
+  // repository are both resolvable for this ticket; board.resolveOne always
+  // returns a fully-populated Issue when the ticket exists and project is
+  // configured, so this guard serves as a belt-and-suspenders type narrowing.
+  /* v8 ignore next 9 @preserve -- board.resolveOne always returns model+repository when resolution checks have passed; guard is for type narrowing only */
+  if (!isGroundcrewIssue(canonicalIssue)) {
+    return {
+      resolutionExtra,
+      eligibility,
+      verdict: {
+        kind: "unresolvable",
+        reason: `ticket ${ticket} passed resolution checks but canonical issue is missing model or repository`,
+      },
+    };
+  }
+
   const allEligibilityOk = await runEligibilityChecks({
-    ticket,
-    raw,
     config,
-    resolvedRepository,
+    board: dependencies.board,
+    canonicalIssue,
+    rawHasMoreBlockers: raw.hasMoreBlockers,
     resolvedModel,
-    dependencies,
+    fetchUsage: dependencies.fetchUsage,
     eligibility,
   });
   if (!allEligibilityOk) {
@@ -966,11 +1172,65 @@ async function runPreDispatch(input: PreDispatchInput): Promise<PreDispatchOutpu
   return { resolutionExtra, eligibility, verdict: { kind: "would-dispatch" } };
 }
 
+interface LocalSections {
+  runStateResult: RunStateSectionOutput;
+  worktreeResult: WorktreeSectionOutput;
+  workspaceResult: WorkspaceSectionOutput;
+  localResult: LocalBranchSectionOutput;
+  remoteResult: RemoteBranchSectionOutput;
+  prResult: PullRequestSectionOutput;
+}
+
 /**
- * Pure-with-async orchestrator that gathers all sections plus the verdict.
- * All I/O happens via injected probes — the function itself does no
- * filesystem, network, or stdout work.
+ * Gathers all source-agnostic local-state sections (run state, worktree,
+ * workspace, local branch, remote branch, pull request). Called universally
+ * before any source-specific enrichment.
  */
+async function probeLocalSections(
+  dependencies: TicketDoctorDependencies,
+  lowerTicket: string,
+): Promise<LocalSections> {
+  const runStateResult = probeRunStateSection(dependencies, lowerTicket);
+  const worktreeResult = await probeWorktreeSection(dependencies, lowerTicket);
+  const workspaceResult = await probeWorkspaceSection(dependencies, lowerTicket);
+  const localResult = await probeLocalBranchSection(dependencies, worktreeResult.entry);
+  const remoteResult = await probeRemoteBranchSection(dependencies, worktreeResult.entry);
+  const prResult = await probePullRequestSection(dependencies, worktreeResult.entry);
+  return { runStateResult, worktreeResult, workspaceResult, localResult, remoteResult, prResult };
+}
+
+function buildDecideInput(
+  local: LocalSections,
+  lifecycle: LifecycleStatusProbe,
+  lowerTicket: string,
+  remote: string,
+): Parameters<typeof decidePostDispatchVerdict>[0] {
+  return {
+    lifecycle,
+    worktree: local.worktreeResult.status,
+    localBranch: local.localResult.probe,
+    remoteBranch: local.remoteResult.probe,
+    pullRequest: local.prResult.probe,
+    branch: local.worktreeResult.entry?.branchName ?? lowerTicket,
+    remote,
+    worktreeDir: local.worktreeResult.entry?.dir,
+    workspaceName: local.workspaceResult.workspaceName,
+    runState: local.runStateResult.state,
+  };
+}
+
+/**
+ * Universal per-ticket doctor. `board.resolveOne` is the source-agnostic
+ * entry point; Linear's raw GraphQL payload is appended as an opt-in
+ * enrichment when `issue.source === "linear"` and the caller wired in
+ * `enrichWithLinear`.
+ *
+ * The cyclomatic complexity of this function is intentionally high — it
+ * implements a single universal orchestration flow that must be visible
+ * top-to-bottom. Splitting by source would re-introduce the "Linear vs other"
+ * framing the architecture explicitly rejects.
+ */
+// oxlint-disable-next-line complexity -- intentionally inlined; see JSDoc above.
 export async function ticketDoctor(
   dependencies: TicketDoctorDependencies,
 ): Promise<TicketDoctorResult> {
@@ -983,142 +1243,271 @@ export async function ticketDoctor(
   const lowerTicket = dependencies.ticket.toLowerCase();
   const skipReasons = emptySkipReasons();
 
-  const linearResult = await probeLinear(dependencies, upperTicket);
-  const resolution: TicketCheck[] = [...linearResult.resolution];
+  // 1. UNIVERSAL: source-agnostic resolution via board.
+  let issue: Issue | undefined;
+  try {
+    issue = await dependencies.board.resolveOne(lowerTicket);
+  } catch {
+    issue = undefined;
+  }
 
-  const runStateResult = probeRunStateSection(dependencies, lowerTicket);
-  const worktreeResult = await probeWorktreeSection(dependencies, lowerTicket);
-  const workspaceResult = await probeWorkspaceSection(dependencies, lowerTicket);
-  const localResult = await probeLocalBranchSection(dependencies, worktreeResult.entry);
-  const remoteResult = await probeRemoteBranchSection(dependencies, worktreeResult.entry);
-  const prResult = await probePullRequestSection(dependencies, worktreeResult.entry);
-  skipReasons.localBranch = localResult.skipReason;
-  skipReasons.remoteBranch = remoteResult.skipReason;
-  skipReasons.pullRequest = prResult.skipReason;
+  // 2. UNIVERSAL: local-state probes (run for every ticket, regardless of resolution)
+  const local = await probeLocalSections(dependencies, lowerTicket);
+  skipReasons.localBranch = local.localResult.skipReason;
+  skipReasons.remoteBranch = local.remoteResult.skipReason;
+  skipReasons.pullRequest = local.prResult.skipReason;
 
-  // `--no-linear` synthesizes a non-terminal kind so the in-flight check can
-  // still fire from local state alone. The placeholder name is read only by
-  // `decidePostDispatchVerdict` and never surfaced to the user.
-  const linearForVerdict: LinearStatusProbe =
-    linearResult.linearStatus.kind === "skipped"
-      ? { kind: "non-terminal", stateName: LINEAR_SKIPPED_STATE_NAME }
-      : linearResult.linearStatus;
+  // 3. Build resolution and lifecycleStatus based on source and enrichment availability.
+  //
+  //   a) Linear source (or unresolved) with enrichWithLinear wired:
+  //      enrichLinearSection fetches the raw GraphQL payload and provides both
+  //      the resolution checks and the lifecycleStatus. No canonical resolution
+  //      is built here because enrichLinearSection provides richer Linear-
+  //      specific checks (project slug, agent label, raw description).
+  //
+  //   b) Linear source under --no-linear (enrichWithLinear === undefined):
+  //      No resolution checks. Synthesize lifecycleStatus as suppressed so the
+  //      "lost" verdict path fires correctly.
+  //
+  //   c) Non-Linear source: build resolution from canonical Issue fields and
+  //      synthesize lifecycleStatus from canonical .status.
+  //
+  //   d) Ticket not found in any source and no enrichWithLinear: unresolvable.
 
-  const postVerdict = decidePostDispatchVerdict({
-    linear: linearForVerdict,
-    worktree: worktreeResult.status,
-    localBranch: localResult.probe,
-    remoteBranch: remoteResult.probe,
-    pullRequest: prResult.probe,
-    branch: worktreeResult.entry?.branchName ?? lowerTicket,
-    worktreeDir: worktreeResult.entry?.dir,
-    workspaceName: workspaceResult.workspaceName,
-    runState: runStateResult.state,
-  });
+  const resolution: TicketCheck[] = [];
+  let title: string | undefined;
+  let raw: RawLinearIssue | undefined;
+  // lifecycleStatus starts as a placeholder; every branch below must set it before
+  // reaching step 5 (post-dispatch verdict) or return early.
+  let lifecycleStatus: LifecycleStatusProbe = { kind: "active", nativeStatus: "(pending)" };
 
+  if (
+    (issue === undefined || issue.source === "linear") &&
+    dependencies.enrichWithLinear !== undefined
+  ) {
+    // 3a. Linear enrichment path — fetches the raw GraphQL payload for the
+    //     detailed project/label/repo diagnostic UX that only Linear can provide.
+    //     enrichWithLinear is defined so enrichLinearSection will be called.
+    const {
+      resolution: enrichedResolution,
+      raw: enrichedRaw,
+      lifecycleStatus: enrichedLifecycleStatus,
+      title: enrichedTitle,
+    } = await enrichLinearSection(dependencies, upperTicket);
+    resolution.push(...enrichedResolution);
+    raw = enrichedRaw;
+    lifecycleStatus = enrichedLifecycleStatus;
+    title = enrichedTitle;
+
+    // Post-dispatch verdict uses the enriched lifecycleStatus.
+    const postVerdict = decidePostDispatchVerdict(
+      buildDecideInput(local, lifecycleStatus, lowerTicket, dependencies.config.git.remote),
+    );
+    if (postVerdict !== undefined) {
+      skipReasons.resolution = "post-dispatch — pre-dispatch checks are irrelevant";
+      skipReasons.eligibility = "post-dispatch — pre-dispatch checks are irrelevant";
+      return buildResult({
+        upperTicket,
+        title,
+        resolution,
+        eligibility: [],
+        ...local,
+        skipReasons,
+        verdict: postVerdict,
+      });
+    }
+
+    // Linear unresolvable (enrichment returned unresolvable status — project
+    // slug mismatch, entity not found, etc.)
+    if (lifecycleStatus.kind === "unresolvable") {
+      skipReasons.eligibility = "ticket unresolved";
+      return buildResult({
+        upperTicket,
+        title,
+        resolution,
+        eligibility: [],
+        ...local,
+        skipReasons,
+        verdict: { kind: "unresolvable", reason: lifecycleStatus.reason },
+      });
+    }
+
+    // lifecycleStatus.kind is "terminal" or "active" — raw is always present.
+    /* v8 ignore next 3 @preserve -- raw is defined whenever lifecycleStatus.kind is terminal/active; the guard is for type narrowing only */
+    if (raw === undefined) {
+      throw new Error(
+        "ticketDoctor: invariant violated — raw Linear issue missing after status check",
+      );
+    }
+
+    // The "Status is Todo" check was already pushed by `enrichLinearSection`; surface it
+    // as the verdict reason if it failed.
+    const statusCheck = resolution.find((c) => c.name === "Status is Todo");
+    const preDispatch = await runPreDispatch({
+      ticket: upperTicket,
+      raw,
+      config: dependencies.config,
+      dependencies,
+      statusCheckFailed: statusCheck?.status === "fail",
+      statusFailureSummary: statusCheck?.failureSummary,
+    });
+    resolution.push(...preDispatch.resolutionExtra);
+    if (preDispatch.eligibility.length === 0 && preDispatch.verdict.kind === "ineligible") {
+      skipReasons.eligibility = "resolution checks failed";
+    }
+    return buildResult({
+      upperTicket,
+      title,
+      resolution,
+      eligibility: preDispatch.eligibility,
+      ...local,
+      skipReasons,
+      verdict: preDispatch.verdict,
+    });
+  }
+
+  if (issue === undefined) {
+    // 3d. Ticket not found in any source and no Linear enrichment.
+    skipReasons.eligibility = "ticket unresolved";
+    return buildResult({
+      upperTicket,
+      title: undefined,
+      resolution: [],
+      eligibility: [],
+      ...local,
+      skipReasons,
+      verdict: {
+        kind: "unresolvable",
+        reason: `ticket ${upperTicket} not found in any configured source`,
+      },
+    });
+  }
+
+  if (issue.source === "linear") {
+    // 3b. Linear source under --no-linear: enrichment suppressed by the caller.
+    //     Post-dispatch verdicts can still fire from local state. Without the
+    //     Linear API we cannot evaluate pre-dispatch eligibility, so the result
+    //     is "lost" if nothing local is found.
+    lifecycleStatus = { kind: "suppressed" };
+    const postVerdict = decidePostDispatchVerdict(
+      buildDecideInput(local, lifecycleStatus, lowerTicket, dependencies.config.git.remote),
+    );
+    if (postVerdict !== undefined) {
+      skipReasons.resolution = "post-dispatch — pre-dispatch checks are irrelevant";
+      skipReasons.eligibility = "post-dispatch — pre-dispatch checks are irrelevant";
+      return buildResult({
+        upperTicket,
+        title: undefined,
+        resolution: [],
+        eligibility: [],
+        ...local,
+        skipReasons,
+        verdict: postVerdict,
+      });
+    }
+    skipReasons.resolution = "--no-linear";
+    skipReasons.eligibility = "--no-linear";
+    return buildResult({
+      upperTicket,
+      title: undefined,
+      resolution: [],
+      eligibility: [],
+      ...local,
+      skipReasons,
+      verdict: {
+        kind: "lost",
+        reason: `no local state and no PR — re-dispatch via \`crew run --ticket ${lowerTicket}\` or move the ticket back to Todo in ${issue.source}`,
+      },
+    });
+  }
+
+  // 3c. Non-Linear source: build resolution from canonical Issue fields and
+  //     synthesize lifecycleStatus from canonical .status.
+  const { resolution: canonicalResolution, title: canonicalTitle } = buildResolutionFromCanonical(
+    issue,
+    dependencies.config,
+  );
+  resolution.push(...canonicalResolution);
+  title = canonicalTitle;
+  lifecycleStatus =
+    issue.status === "done"
+      ? { kind: "terminal", nativeStatus: issue.status }
+      : { kind: "active", nativeStatus: issue.status };
+
+  // 4. UNIVERSAL: post-dispatch verdict
+  const postVerdict = decidePostDispatchVerdict(
+    buildDecideInput(local, lifecycleStatus, lowerTicket, dependencies.config.git.remote),
+  );
   if (postVerdict !== undefined) {
     skipReasons.resolution = "post-dispatch — pre-dispatch checks are irrelevant";
     skipReasons.eligibility = "post-dispatch — pre-dispatch checks are irrelevant";
     return buildResult({
       upperTicket,
-      title: linearResult.title,
+      title,
       resolution,
       eligibility: [],
-      runStateResult,
-      worktreeResult,
-      workspaceResult,
-      localResult,
-      remoteResult,
-      prResult,
+      ...local,
       skipReasons,
       verdict: postVerdict,
     });
   }
 
-  // No post-dispatch verdict. Decide pre-dispatch path.
-  if (linearResult.linearStatus.kind === "skipped") {
-    // --no-linear with nothing locally actionable → lost. We cannot reach
-    // Linear, so the pre-dispatch resolution/eligibility checks are unavailable.
-    skipReasons.resolution = "--no-linear";
-    skipReasons.eligibility = "--no-linear";
+  // 5. Pre-dispatch eligibility from canonical Issue fields.
+  //    Resolution failure (non-todo status, missing repo/model) blocks eligibility.
+  const resolutionFail = resolution.find((c) => c.status === "fail");
+  if (resolutionFail !== undefined) {
+    skipReasons.eligibility = "resolution checks failed";
+    /* v8 ignore next @preserve -- failureSummary is always set on resolution fail paths; .name fallback is defensive */
     return buildResult({
       upperTicket,
-      title: linearResult.title,
+      title,
       resolution,
       eligibility: [],
-      runStateResult,
-      worktreeResult,
-      workspaceResult,
-      localResult,
-      remoteResult,
-      prResult,
+      ...local,
+      skipReasons,
+      verdict: { kind: "ineligible", reason: resolutionFail.failureSummary ?? resolutionFail.name },
+    });
+  }
+
+  // issue and groundcrew-eligibility are guaranteed at this point
+  /* v8 ignore next 3 @preserve -- resolution checks above narrow type */
+  if (!isGroundcrewIssue(issue)) {
+    throw new Error("ticketDoctor: invariant violated — eligibility runs on non-groundcrew issue");
+  }
+  const eligibility: TicketCheck[] = [];
+  const allOk = await runEligibilityChecks({
+    config: dependencies.config,
+    board: dependencies.board,
+    canonicalIssue: issue,
+    rawHasMoreBlockers: issue.hasMoreBlockers,
+    resolvedModel: issue.model,
+    fetchUsage: dependencies.fetchUsage,
+    eligibility,
+  });
+  if (!allOk) {
+    const fail = eligibility.find((c) => c.status === "fail");
+    /* v8 ignore next 4 @preserve -- fail is always defined when allOk is false; fallback is defensive */
+    return buildResult({
+      upperTicket,
+      title,
+      resolution,
+      eligibility,
+      ...local,
       skipReasons,
       verdict: {
-        kind: "lost",
-        reason: `no local state and no PR — re-dispatch via \`crew run --ticket ${lowerTicket}\` or move the ticket back to Todo in Linear`,
+        kind: "ineligible",
+        reason: fail?.failureSummary ?? fail?.name ?? "eligibility check failed",
       },
     });
   }
-
-  if (linearResult.linearStatus.kind === "unresolvable") {
-    const { reason } = linearResult.linearStatus;
-    skipReasons.eligibility = "ticket unresolved";
-    return buildResult({
-      upperTicket,
-      title: linearResult.title,
-      resolution,
-      eligibility: [],
-      runStateResult,
-      worktreeResult,
-      workspaceResult,
-      localResult,
-      remoteResult,
-      prResult,
-      skipReasons,
-      verdict: { kind: "unresolvable", reason },
-    });
-  }
-
-  // After the skipped/unresolvable branches above, linearStatus.kind is either
-  // "terminal" or "non-terminal", both of which carry the raw issue. TS can't
-  // see the invariant through the union, so we narrow with an explicit guard.
-  const { raw } = linearResult;
-  /* v8 ignore next 3 @preserve -- raw is defined whenever linearStatus.kind is terminal/non-terminal; the guard is for type narrowing only */
-  if (raw === undefined) {
-    throw new Error(
-      "ticketDoctor: invariant violated — raw Linear issue missing after status check",
-    );
-  }
-  // The "Status is Todo" check was already pushed by `probeLinear`; surface it
-  // as the verdict reason if it failed.
-  const statusCheck = resolution.find((check) => check.name === "Status is Todo");
-  const statusCheckFailed = statusCheck?.status === "fail";
-  const preDispatch = await runPreDispatch({
-    ticket: upperTicket,
-    raw,
-    config: dependencies.config,
-    dependencies,
-    statusCheckFailed,
-    statusFailureSummary: statusCheck?.failureSummary,
-  });
-  resolution.push(...preDispatch.resolutionExtra);
-  if (preDispatch.eligibility.length === 0 && preDispatch.verdict.kind === "ineligible") {
-    skipReasons.eligibility = "resolution checks failed";
-  }
-
   return buildResult({
     upperTicket,
-    title: linearResult.title,
+    title,
     resolution,
-    eligibility: preDispatch.eligibility,
-    runStateResult,
-    worktreeResult,
-    workspaceResult,
-    localResult,
-    remoteResult,
-    prResult,
+    eligibility,
+    ...local,
     skipReasons,
-    verdict: preDispatch.verdict,
+    verdict: { kind: "would-dispatch" },
   });
 }
 
@@ -1289,19 +1678,24 @@ export function renderTicketDoctorResult(result: TicketDoctorResult): string[] {
 export async function runTicketDoctor(parsed: TicketDoctorArguments): Promise<boolean> {
   const config = await loadConfig();
   const linearClient = lazyLinearClient(getLinearClient);
-  const fetchRawIssue = parsed.doLinear
+  const enrichWithLinear = parsed.doLinear
     ? async ({ ticket }: { ticket: string }) =>
         await fetchRawLinearIssue({ client: linearClient(), ticket })
     : undefined;
 
+  // Dynamic imports keep module-level side-effects (registry.ts's readdirSync)
+  // out of the test environment, where node:fs is partially mocked.
+  const { buildSources, sourcesFromConfig } = await import("../lib/buildSources.ts");
+  const { createBoard } = await import("../lib/board.ts");
+  const sources = await buildSources(sourcesFromConfig(config), { globalConfig: config });
+  const board = createBoard(sources);
+
   const result = await ticketDoctor({
     config,
     ticket: parsed.ticket,
-    fetchRawIssue,
-    fetchBlockersFor: async ({ ticket, uuid }) =>
-      await fetchBlockersForTicket({ client: linearClient(), ticket, uuid }),
+    enrichWithLinear,
+    board,
     fetchUsage: async () => await getUsageByModel(config),
-    countInProgress: async () => await fetchInProgressIssueCount({ client: linearClient() }),
     findWorktree: (ticket) => worktrees.findByTicket(config, ticket)[0],
     probeWorkspaces: async () => await workspaces.probe(config),
     workspaceAccessHint: async (name) => await workspaces.accessHint(config, name),

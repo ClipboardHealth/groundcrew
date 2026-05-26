@@ -1,4 +1,5 @@
-import { fetchResolvedIssue } from "../lib/boardSource.ts";
+import { fetchResolvedIssue } from "../lib/adapters/linear/fetch.ts";
+import { getLinearClient } from "../lib/adapters/linear/client.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { ensureAgentSandbox, openAgentWorkspace, prepareAgentLaunch } from "../lib/agentLaunch.ts";
 import { buildLaunchCommand } from "../lib/launchCommand.ts";
@@ -9,7 +10,7 @@ import {
   stagePromptText,
   stageWorkspaceLaunchCommand,
 } from "../lib/stagedLaunch.ts";
-import { errorMessage, getLinearClient, log } from "../lib/util.ts";
+import { errorMessage, log } from "../lib/util.ts";
 import { workspaces } from "../lib/workspaces.ts";
 import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 

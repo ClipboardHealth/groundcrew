@@ -1,6 +1,6 @@
 import type { LinearClient } from "@linear/sdk";
 
-import { log } from "./util.ts";
+import { log } from "../../util.ts";
 
 interface LinearIssueReference {
   id: string;
@@ -10,19 +10,24 @@ interface LinearIssueReference {
 
 interface LinearIssueStatusUpdater {
   markInProgress(issue: LinearIssueReference): Promise<void>;
-  resetMissingInProgressCache(): void;
 }
 
 export function createLinearIssueStatusUpdater(arguments_: {
   client: LinearClient;
 }): LinearIssueStatusUpdater {
   const { client } = arguments_;
-  // The first matching workflow state per team is cached by teamId so the
-  // status writeback doesn't re-query Linear on every dispatch. Teams that
-  // genuinely lack an `started` workflow state stay in the negative cache
-  // until the dispatcher resets it at the top of each tick.
+  // Positive cache only. Keyed by teamId because the workflow `state.type ===
+  // "started"` lookup yields a single stateId per team — independent of which
+  // project the ticket belongs to. State ids don't change for misconfig
+  // reasons, so caching successful resolutions is safe across the process.
+  //
+  // No negative cache: a missing "started" workflow state is a Linear-side
+  // config issue the operator can correct mid-session, and a negative cache
+  // would mask that recovery until process restart. Slot count caps
+  // markInProgress calls per tick at 1-5, so re-fetching team states on
+  // every failing attempt costs at most a handful of extra Linear API calls
+  // per tick.
   const inProgressStateByTeam = new Map<string, string>();
-  let teamsMissingInProgress = new Set<string>();
 
   async function getInProgressStateId(teamId: string): Promise<string | undefined> {
     if (teamId.length === 0) {
@@ -32,18 +37,13 @@ export function createLinearIssueStatusUpdater(arguments_: {
     if (cached !== undefined) {
       return cached;
     }
-    if (teamsMissingInProgress.has(teamId)) {
-      return undefined;
-    }
-
     const team = await client.team(teamId);
     const states = await team.states();
-    // Use the workflow state's *type* — Linear standardises on
-    // `started` for in-progress columns regardless of how the user renames
-    // them, so this works without any per-team status-name configuration.
+    // Use the workflow state's `type` — Linear standardises on `started` for
+    // in-progress columns regardless of how the user renames them, so this
+    // works without any per-team status-name configuration.
     const inProgress = states.nodes.find((state) => state.type === "started");
     if (inProgress?.id === undefined) {
-      teamsMissingInProgress.add(teamId);
       return undefined;
     }
     inProgressStateByTeam.set(teamId, inProgress.id);
@@ -61,9 +61,5 @@ export function createLinearIssueStatusUpdater(arguments_: {
     log(`Marked ${issue.id} as in progress`);
   }
 
-  function resetMissingInProgressCache(): void {
-    teamsMissingInProgress = new Set();
-  }
-
-  return { markInProgress, resetMissingInProgressCache };
+  return { markInProgress };
 }

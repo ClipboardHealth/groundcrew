@@ -1,9 +1,9 @@
 import { rmSync } from "node:fs";
-import { fetchResolvedIssue } from "../lib/boardSource.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { ensureAgentSandbox, openAgentWorkspace, prepareAgentLaunch } from "../lib/agentLaunch.ts";
+import { type Board, createBoard } from "../lib/board.ts";
+import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
 import { buildLaunchCommand } from "../lib/launchCommand.ts";
-import { createLinearIssueStatusUpdater } from "../lib/linearIssueStatus.ts";
 import { recordRunState } from "../lib/runState.ts";
 import {
   stageBuildSecrets,
@@ -11,30 +11,21 @@ import {
   stageWorkspaceLaunchCommand,
   type StagedPrompt,
 } from "../lib/stagedLaunch.ts";
-import { errorMessage, getLinearClient, log } from "../lib/util.ts";
+import { naturalIdFromCanonical } from "../lib/ticketSource.ts";
+import { errorMessage, log } from "../lib/util.ts";
 import { type WorkspaceAccessHint, workspaces } from "../lib/workspaces.ts";
 import { isWorktreeAlreadyExistsError, type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 
-interface TicketDetails {
+export interface TicketDetails {
   title: string;
   description: string;
-}
-
-async function fetchTicket(ticket: string): Promise<TicketDetails> {
-  const client = getLinearClient();
-  const issue = await client.issue(ticket.toUpperCase());
-  return {
-    title: issue.title,
-    description: issue.description ?? "",
-  };
 }
 
 export interface SetupWorkspaceOptions {
   ticket: string;
   repository: string;
   model: string;
-  /** When provided, skip the Linear lookup for prompt-template fields. */
-  details?: TicketDetails;
+  details: TicketDetails;
 }
 
 export interface SetupWorkspaceRunOptions {
@@ -104,13 +95,7 @@ export async function setupWorkspace(
   // the ticket strands forever.
   let promptDir: string | undefined;
   try {
-    let ticketDetails: TicketDetails;
-    if (options.details === undefined) {
-      log(`Fetching ${ticket} from Linear...`);
-      ticketDetails = await fetchTicket(ticket);
-    } else {
-      ticketDetails = options.details;
-    }
+    const ticketDetails = options.details;
 
     const stagedPrompt = stagePrompt({ config, ticket, ticketDetails, worktreeName });
     promptDir = stagedPrompt.directory;
@@ -298,22 +283,42 @@ export async function setupWorkspaceCli(
   options: { dryRun?: boolean } = {},
 ): Promise<void> {
   const config = await loadConfig();
-  const client = getLinearClient();
-  const resolved = await fetchResolvedIssue({ client, config, ticket });
+  let sources;
+  try {
+    sources = await buildSources(sourcesFromConfig(config), { globalConfig: config });
+  } catch (error) {
+    /* v8 ignore next @preserve -- catch re-throw always receives an Error; String(error) is an unreachable fallback */
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Could not initialize ticket sources for 'crew setup ${ticket}': ${message}`, {
+      cause: error,
+    });
+  }
+  const board: Board = createBoard(sources);
+
+  const resolved = await board.resolveOne(ticket);
+  if (resolved === undefined) {
+    throw new Error(`Ticket ${ticket} not found across configured sources.`);
+  }
+  if (resolved.repository === undefined || resolved.model === undefined) {
+    throw new Error(
+      `Ticket ${ticket} resolved but isn't groundcrew-eligible (missing agent-* label or repository/model).`,
+    );
+  }
+
   log(`Resolved ${ticket}: repository=${resolved.repository}, model=${resolved.model}`);
+
   if (options.dryRun === true) {
     log(`[dry-run] Would launch ${ticket} in ${resolved.repository} (${resolved.model})`);
     return;
   }
+
+  const naturalId = naturalIdFromCanonical(resolved.id);
+
   await setupWorkspace(config, {
-    ticket: ticket.toLowerCase(),
+    ticket: naturalId,
     repository: resolved.repository,
     model: resolved.model,
     details: { title: resolved.title, description: resolved.description },
   });
-  await createLinearIssueStatusUpdater({ client }).markInProgress({
-    id: ticket.toLowerCase(),
-    uuid: resolved.uuid,
-    teamId: resolved.teamId,
-  });
+  await board.markInProgress(resolved);
 }

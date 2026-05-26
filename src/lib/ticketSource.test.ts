@@ -2,7 +2,9 @@ import {
   AmbiguousTicketError,
   isGroundcrewIssue,
   type Issue,
+  naturalIdFromCanonical,
   RepositoryResolutionError,
+  toCanonicalId,
 } from "./ticketSource.ts";
 
 function fakeIssue(overrides: Partial<Issue> = {}): Issue {
@@ -58,5 +60,36 @@ describe(AmbiguousTicketError, () => {
     expect(error.message).toContain('"x"');
     expect(error.message).toContain("linear:x");
     expect(error.message).toContain("shell-jira:x");
+  });
+});
+
+describe(naturalIdFromCanonical, () => {
+  it("strips the source prefix from a canonical id", () => {
+    expect(naturalIdFromCanonical("linear:eng-220")).toBe("eng-220");
+  });
+
+  it("handles ids with multiple colons by only stripping the first segment", () => {
+    expect(naturalIdFromCanonical("shell-jira:HRD-1:extra")).toBe("HRD-1:extra");
+  });
+});
+
+describe(toCanonicalId, () => {
+  it("prefixes a lowercased natural id with the source name", () => {
+    expect(toCanonicalId("linear", "ENG-220")).toBe("linear:eng-220");
+  });
+
+  it("lowercases the natural id even when the source name has uppercase letters", () => {
+    // Source names are kebab-case in config but should be applied verbatim;
+    // only the natural id is lowercased.
+    expect(toCanonicalId("Shell-Jira", "HRD-1")).toBe("Shell-Jira:hrd-1");
+  });
+
+  it("is a no-op on already-lowercased natural ids", () => {
+    expect(toCanonicalId("linear", "eng-220")).toBe("linear:eng-220");
+  });
+
+  it("round-trips with naturalIdFromCanonical when the natural id is already lowercase", () => {
+    const canonical = toCanonicalId("shell-test", "test-1");
+    expect(naturalIdFromCanonical(canonical)).toBe("test-1");
   });
 });

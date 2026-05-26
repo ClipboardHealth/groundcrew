@@ -1,5 +1,6 @@
 import { createBoard } from "./board.ts";
-import type { Issue, TicketSource } from "./ticketSource.ts";
+import { canonicalBlocker, canonicalLinearIssue } from "./testing/canonicalFixtures.ts";
+import type { Blocker, Issue, ParentSkip, TicketSource } from "./ticketSource.ts";
 
 function fakeSource(name: string, overrides: Partial<TicketSource> = {}): TicketSource {
   return {
@@ -98,6 +99,30 @@ describe("Board.fetch", () => {
     const stamp = Date.parse(state.timestamp);
     expect(stamp).toBeGreaterThanOrEqual(before);
   });
+
+  it("calls fetchParentSkips() AFTER fetch() on each source so adapters that cache during fetch don't serve stale data", async () => {
+    // Mirrors the Linear adapter's pattern: fetch() populates a closure
+    // variable, fetchParentSkips() reads it. If the Board parallelized the
+    // two methods across all sources (instead of serializing per source),
+    // fetchParentSkips() would see the pre-fetch (empty) cache.
+    let cache: ParentSkip[] = [];
+    const board = createBoard([
+      fakeSource("a", {
+        fetch: vi.fn<() => Promise<Issue[]>>().mockImplementation(async () => {
+          await Promise.resolve();
+          cache = [{ id: "a:parent-1", title: "Parent A", childCount: 2 }];
+          return [];
+        }),
+        fetchParentSkips: vi
+          .fn<() => Promise<readonly ParentSkip[]>>()
+          .mockImplementation(async () => cache),
+      }),
+    ]);
+    const state = await board.fetch();
+    expect(state.parentSkips).toStrictEqual([
+      { id: "a:parent-1", title: "Parent A", childCount: 2 },
+    ]);
+  });
 });
 
 describe("Board.resolveOne", () => {
@@ -149,6 +174,54 @@ describe("Board.resolveOne", () => {
     const board = createBoard([fakeSource("a")]);
     await expect(board.resolveOne("nope:x")).rejects.toThrow(/unknown source.*nope/);
   });
+
+  // Regression: pre-fix, a single source rejection on resolveOne poisoned
+  // the whole Promise.all and masked a sibling source's successful match.
+  // The real-world trigger was `crew doctor --ticket TEST-1`, where the
+  // Linear adapter throws "Entity not found" while the shell adapter has
+  // the ticket — the user saw "unresolvable: Entity not found" instead of
+  // the shell-resolved issue.
+  it("treats a source rejection as 'not found here' when another source matches", async () => {
+    const aResolve = vi
+      .fn<(id: string) => Promise<Issue | undefined>>()
+      .mockRejectedValue(new Error("Entity not found: Issue"));
+    const bResolve = vi
+      .fn<(id: string) => Promise<Issue | undefined>>()
+      .mockResolvedValue(fakeIssue("b:x", "b"));
+    const board = createBoard([
+      fakeSource("a", { resolveOne: aResolve }),
+      fakeSource("b", { resolveOne: bResolve }),
+    ]);
+    const result = await board.resolveOne("x");
+    expect(result?.id).toBe("b:x");
+  });
+
+  it("surfaces a source rejection when no other source matched", async () => {
+    const aResolve = vi
+      .fn<(id: string) => Promise<Issue | undefined>>()
+      .mockRejectedValue(new Error("Linear API: timeout"));
+    const board = createBoard([
+      fakeSource("a", { resolveOne: aResolve }),
+      fakeSource("b"), // resolves undefined by default
+    ]);
+    await expect(board.resolveOne("x")).rejects.toThrow(/Linear API: timeout/);
+  });
+});
+
+describe("Board.sources", () => {
+  it("returns the source list in construction order", () => {
+    const linearSource = fakeSource("linear");
+    const shellSource = fakeSource("shell-jira");
+
+    const board = createBoard([linearSource, shellSource]);
+
+    expect(board.sources()).toStrictEqual([linearSource, shellSource]);
+  });
+
+  it("returns an empty array when constructed with no sources", () => {
+    const board = createBoard([]);
+    expect(board.sources()).toStrictEqual([]);
+  });
 });
 
 describe("Board.markInProgress", () => {
@@ -171,5 +244,73 @@ describe("Board.markInProgress", () => {
     await expect(board.markInProgress(fakeIssue("nope:1", "nope"))).rejects.toThrow(
       /unknown source.*nope/,
     );
+  });
+});
+
+describe("Board.refreshBlockers", () => {
+  it("dispatches to the source whose name matches issue.source", async () => {
+    const refreshBlockersSpy = vi
+      .fn<(issue: Issue) => Promise<Blocker[]>>()
+      .mockResolvedValue([canonicalBlocker({ naturalId: "eng-50", status: "done" })]);
+    const linearSource = fakeSource("linear", { refreshBlockers: refreshBlockersSpy });
+    const shellSource = fakeSource("shell-x");
+
+    const board = createBoard([linearSource, shellSource]);
+    const issue = canonicalLinearIssue({ naturalId: "eng-100", source: "linear" });
+
+    await board.refreshBlockers(issue);
+
+    expect(refreshBlockersSpy).toHaveBeenCalledWith(issue);
+  });
+
+  it("falls back to issue.blockers when the source omits refreshBlockers", async () => {
+    const fallbackBlocker = canonicalBlocker({ naturalId: "eng-50", status: "in-progress" });
+    const shellSource = fakeSource("shell-x");
+    // refreshBlockers intentionally omitted from fakeSource defaults
+
+    const board = createBoard([shellSource]);
+    const issue = canonicalLinearIssue({
+      naturalId: "x-1",
+      source: "shell-x",
+      blockers: [fallbackBlocker],
+    });
+
+    const result = await board.refreshBlockers(issue);
+
+    expect(result).toStrictEqual([fallbackBlocker]);
+  });
+
+  it("throws when issue.source is unknown", async () => {
+    const board = createBoard([]);
+    const issue = canonicalLinearIssue({ naturalId: "x-1", source: "ghost" });
+    await expect(board.refreshBlockers(issue)).rejects.toThrow(/unknown source "ghost"/);
+  });
+});
+
+describe("Board.countInProgress", () => {
+  it("sums countInProgress across sources that implement it; falls back to fetch for those that don't", async () => {
+    const linearSource = fakeSource("linear", {
+      countInProgress: vi.fn<() => Promise<number>>().mockResolvedValue(3),
+    });
+    const shellSource = fakeSource("shell-x", {
+      fetch: vi
+        .fn<() => Promise<Issue[]>>()
+        .mockResolvedValue([
+          canonicalLinearIssue({ naturalId: "x-1", source: "shell-x", status: "in-progress" }),
+          canonicalLinearIssue({ naturalId: "x-2", source: "shell-x", status: "todo" }),
+        ]),
+      // countInProgress omitted — falls back to counting from fetch
+    });
+
+    const board = createBoard([linearSource, shellSource]);
+
+    const total = await board.countInProgress();
+
+    expect(total).toBe(4); // 3 from linear + 1 in-progress from shell-x
+  });
+
+  it("returns 0 when no sources are configured", async () => {
+    const board = createBoard([]);
+    await expect(board.countInProgress()).resolves.toBe(0);
   });
 });

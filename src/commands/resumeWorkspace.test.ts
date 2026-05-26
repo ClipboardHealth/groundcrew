@@ -3,12 +3,11 @@ import type * as nodeFs from "node:fs";
 
 import { ensureClearance } from "@clipboard-health/clearance";
 
-import { fetchResolvedIssue } from "../lib/boardSource.ts";
+import { fetchResolvedIssue } from "../lib/adapters/linear/fetch.ts";
+import { getLinearClient } from "../lib/adapters/linear/client.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
 import { readRunState, recordRunState, type RunState } from "../lib/runState.ts";
-import type * as utilModule from "../lib/util.ts";
-import { getLinearClient } from "../lib/util.ts";
 import { workspaces } from "../lib/workspaces.ts";
 import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 import { resumeWorkspace, resumeWorkspaceCli } from "./resumeWorkspace.ts";
@@ -32,9 +31,13 @@ vi.mock(import("@clipboard-health/clearance"), async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, ensureClearance: vi.fn<typeof ensureClearance>() };
 });
-vi.mock(import("../lib/boardSource.ts"), async (importOriginal) => {
+vi.mock(import("../lib/adapters/linear/fetch.ts"), async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, fetchResolvedIssue: vi.fn<typeof fetchResolvedIssue>() };
+});
+vi.mock(import("../lib/adapters/linear/client.ts"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, getLinearClient: vi.fn<typeof getLinearClient>() };
 });
 vi.mock(import("../lib/config.ts"), async (importOriginal) => {
   const actual = await importOriginal();
@@ -51,10 +54,6 @@ vi.mock(import("../lib/runState.ts"), async (importOriginal) => {
     readRunState: vi.fn<typeof readRunState>(),
     recordRunState: vi.fn<typeof recordRunState>(),
   };
-});
-vi.mock(import("../lib/util.ts"), async (importOriginal) => {
-  const actual = await importOriginal<typeof utilModule>();
-  return { ...actual, getLinearClient: vi.fn<typeof getLinearClient>() };
 });
 vi.mock(import("../lib/workspaces.ts"), async (importOriginal) => {
   const actual = await importOriginal();

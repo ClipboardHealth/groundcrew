@@ -1,23 +1,26 @@
 /**
- * Linear adapter — turns the viewer's GraphQL state into a `BoardState`
- * snapshot. Owns the GraphQL queries and shape parsing so callers consume a
- * typed `BoardState` instead of raw nodes.
+ * Linear adapter — GraphQL fetch helpers for board/issue data.
  *
- * There is no project / view / status configuration: the only filter is
- * "assigned to the API key's viewer AND carries an `agent-*` label."
- * State classification is driven by Linear's workflow `state.type`
+ * There is no project / view / status configuration: the only server-side
+ * filter is "assigned to the API key's viewer AND carries an `agent-*`
+ * label." State classification is driven by Linear's workflow `state.type`
  * (`unstarted` | `started` | `completed` | `canceled` | `duplicate`) —
- * never by status name — so workspaces with renamed columns (Todo → To Do,
- * Done → Shipped, etc.) Just Work.
+ * never by status name — so workspaces with renamed columns (Todo -> To Do,
+ * Done -> Shipped, etc.) Just Work without per-team config.
  */
 
 import type { LinearClient } from "@linear/sdk";
 
-import { AGENT_ANY_MODEL, isShippedDefaultDisabled, type ResolvedConfig } from "./config.ts";
-import { RepositoryResolutionError } from "./ticketSource.ts";
-import { log } from "./util.ts";
+import type { ResolvedConfig } from "../../config.ts";
+import { RepositoryResolutionError } from "../../ticketSource.ts";
+import { log } from "../../util.ts";
+import {
+  AGENT_LABEL_PREFIX,
+  resolveModelFor,
+  resolveRepositoryFor,
+  type ModelResolution,
+} from "./parsing.ts";
 
-export const AGENT_LABEL_PREFIX = "agent-";
 export const ISSUES_PAGE_SIZE = 250;
 
 // `state.type` values surfaced by `fetch()`. `backlog` / `triage` are dropped
@@ -46,6 +49,7 @@ export interface Issue {
   id: string;
   uuid: string;
   title: string;
+  description: string;
   status: string;
   statusId: string;
   /** Linear workflow `state.type` — the source of truth for canonical classification. */
@@ -83,10 +87,6 @@ export function isGroundcrewIssue(issue: Issue): issue is GroundcrewIssue {
 /**
  * Linear ticket that was silently dropped from `issues` because it has at
  * least one sub-issue and groundcrew works sub-issues rather than parents.
- * The dispatcher logs each one per tick so operators see WHY a Todo ticket
- * isn't being picked up instead of just "No Todo tickets to pick up." Only
- * Todo+agent-labelled parents qualify — non-actionable parents (e.g. Done
- * epics) would be noise.
  */
 export interface ParentSkip {
   id: string;
@@ -100,19 +100,8 @@ export interface BoardState {
   parentSkips: ParentSkip[];
 }
 
-// Canonical RepositoryResolutionError lives in ./ticketSource.ts (imported at
-// the top of this file). Re-exported here so existing consumers of
-// boardSource.ts keep compiling until a follow-up PR completes the consumer
-// refactor and deletes this file.
-export { RepositoryResolutionError };
-
 export interface BoardSource {
-  /**
-   * Verify the Linear API key resolves to a viewer. Run once at startup so
-   * misconfiguration surfaces before the first tick.
-   */
   verify(): Promise<void>;
-  /** Fetch the current board snapshot. Paginates internally. */
   fetch(): Promise<BoardState>;
 }
 
@@ -208,18 +197,6 @@ export interface IssueRelationNode {
 async function fetchBoard(client: LinearClient, config: ResolvedConfig): Promise<BoardState> {
   const nodes: IssueNode[] = [];
   let after: string | null = null;
-  // Three server-side filters narrow the response to tickets the orchestrator
-  // can actually act on:
-  //   1. Assignee: the API key's own viewer. groundcrew is a single-user
-  //      orchestrator — every ticket it dispatches is "this user's work."
-  //   2. Label: at least one `agent-*` label — i.e. the user opted the
-  //      ticket in to groundcrew. Without this, every human-owned ticket
-  //      would round-trip back just to be filtered out client-side.
-  //   3. State type: scoped to actionable values (`unstarted`, `started`,
-  //      `completed`, `canceled`, `duplicate`) so backlog/triage tickets never
-  //      make it into the page.
-  // The client-side `isGroundcrewIssue` guard in dispatcher.ts is
-  // belt-and-suspenders against query drift, not the load-bearing filter.
   const stateTypes = [...ACTIONABLE_STATE_TYPES];
 
   for (;;) {
@@ -307,10 +284,10 @@ export function modelForResolution(
   if (resolution.kind === "disabled-fallback") {
     return resolution.fallbackModel;
   }
-  return AGENT_ANY_MODEL;
+  return "any";
 }
 
-export function resolveTodoAgentMetadata(arguments_: {
+function resolveTodoAgentMetadata(arguments_: {
   ticket: string;
   description: string | undefined;
   modelResolution: ModelResolution;
@@ -321,7 +298,7 @@ export function resolveTodoAgentMetadata(arguments_: {
   let repository: string | undefined;
   let model: string | undefined;
   if (modelResolution.kind !== "no-label" && isTodo) {
-    const resolution = resolveRepositoryFor({ description, config, ticket });
+    const resolution = resolveRepositoryFor({ description, config });
     if (resolution.kind === "ok") {
       ({ repository } = resolution);
       model = modelForResolution(modelResolution);
@@ -338,6 +315,7 @@ function buildLinearIssue(input: {
   identifier: string;
   uuid: string;
   title: string;
+  description: string;
   status: string;
   statusId: string;
   stateType: string;
@@ -352,6 +330,7 @@ function buildLinearIssue(input: {
     id: input.identifier.toLowerCase(),
     uuid: input.uuid,
     title: input.title,
+    description: input.description,
     status: input.status,
     statusId: input.statusId,
     stateType: input.stateType,
@@ -369,11 +348,6 @@ function buildLinearIssue(input: {
 function issueFromNode(node: IssueNode, config: ResolvedConfig): Issue {
   const modelResolution = resolveModelFor({ labels: node.labels.nodes, config });
   warnIfDisabledFallback(node.identifier, modelResolution, config);
-  // Only the dispatcher reads `Issue.repository` / `Issue.model`, and only on
-  // tickets in the Todo column it's about to pick up. Resolving them for In
-  // Progress (already running) or Done (cleaner only needs the id) would just
-  // invite tick-spam warnings on already-finished tickets — e.g. when a
-  // description was edited or knownRepositories changed after dispatch.
   const { repository, model } = resolveTodoAgentMetadata({
     ticket: node.identifier,
     /* v8 ignore next @preserve -- BoardIssues query selects description; the ?? guard normalises a null vs undefined edge */
@@ -386,6 +360,7 @@ function issueFromNode(node: IssueNode, config: ResolvedConfig): Issue {
     identifier: node.identifier,
     uuid: node.id,
     title: node.title,
+    description: node.description ?? "",
     /* v8 ignore next @preserve -- BoardIssues query always returns state */
     status: node.state?.name ?? "Unknown",
     /* v8 ignore next @preserve -- BoardIssues query always returns state */
@@ -401,25 +376,6 @@ function issueFromNode(node: IssueNode, config: ResolvedConfig): Issue {
   });
 }
 
-function escapeRegex(value: string): string {
-  return value.replaceAll(/[$()*+.?[\\\]^{|}]/g, String.raw`\$&`);
-}
-
-// Sort by descending length so longer names match first — `api-admin`
-// must beat `api` when both are configured. `\b` treats `-` as a word
-// boundary, so without this ordering `api` would win on `api-admin`.
-function buildRepositoryRegex(config: ResolvedConfig): RegExp {
-  const candidates = config.workspace.knownRepositories.flatMap((repo) => {
-    const slashIndex = repo.indexOf("/");
-    return slashIndex === -1 ? [repo] : [repo, repo.slice(slashIndex + 1)];
-  });
-  const alternation = candidates
-    .toSorted((a, b) => b.length - a.length)
-    .map(escapeRegex)
-    .join("|");
-  return new RegExp(String.raw`\b(${alternation})\b`);
-}
-
 interface ResolvedIssue {
   uuid: string;
   title: string;
@@ -427,6 +383,9 @@ interface ResolvedIssue {
   repository: string;
   model: string;
   teamId: string;
+  stateType: string;
+  status: string;
+  statusId: string;
 }
 
 const ISSUE_LABEL_PAGE_SIZE = 50;
@@ -440,7 +399,8 @@ export interface RawLinearIssue {
   labels: { name: string }[];
   /** Linear workflow state name, e.g. "Todo", "In Review". May be "" if state was null. */
   stateName: string;
-  stateType?: string;
+  stateType: string;
+  stateId: string;
   blockers: Blocker[];
   hasMoreBlockers: boolean;
   /**
@@ -516,7 +476,7 @@ export async function fetchRawLinearIssue(arguments_: {
         title
         description
         team { id }
-        state { name type }
+        state { id name type }
         children { nodes { id } }
         labels(first: ${ISSUE_LABEL_PAGE_SIZE}) {
           nodes { name }
@@ -543,7 +503,7 @@ export async function fetchRawLinearIssue(arguments_: {
       title: string;
       description?: string | null;
       team?: { id: string } | null;
-      state?: { name: string; type: string } | null;
+      state?: { id: string; name: string; type: string } | null;
       children?: { nodes: { id: string }[] } | null;
       labels: { nodes: { name: string }[] };
       inverseRelations?: {
@@ -566,6 +526,8 @@ export async function fetchRawLinearIssue(arguments_: {
     stateName: issue.state?.name ?? "",
     /* v8 ignore next @preserve -- ResolveIssue query selects state; null only if Linear genuinely returns a stateless ticket */
     stateType: issue.state?.type ?? "",
+    /* v8 ignore next @preserve -- ResolveIssue query selects state; null only if Linear genuinely returns a stateless ticket */
+    stateId: issue.state?.id ?? "",
     blockers: blockersFromRelations(issue.inverseRelations?.nodes ?? []),
     hasMoreBlockers: issue.inverseRelations?.pageInfo.hasNextPage ?? false,
     hasChildren: (issue.children?.nodes.length ?? 0) > 0,
@@ -627,72 +589,6 @@ export async function fetchInProgressIssueCount(arguments_: {
   }
 }
 
-export type RepositoryResolution = { kind: "ok"; repository: string } | { kind: "missing" };
-
-export function resolveRepositoryFor(arguments_: {
-  description: string | undefined;
-  config: ResolvedConfig;
-  ticket: string;
-}): RepositoryResolution {
-  const { description, config } = arguments_;
-  if (description === undefined || description.length === 0) {
-    return { kind: "missing" };
-  }
-  const match = buildRepositoryRegex(config).exec(description)?.[1];
-  if (match === undefined) {
-    return { kind: "missing" };
-  }
-  // `buildRepositoryRegex` matches both the full `owner/repo` entry and its bare
-  // suffix, so the captured value can be either form. Downstream code composes
-  // the resolved value with `workspace.projectDir` and needs the exact
-  // `knownRepositories` entry, so resolve back to that form here.
-  const candidates = config.workspace.knownRepositories.filter(
-    (entry) => entry === match || entry.endsWith(`/${match}`),
-  );
-  if (candidates.length !== 1) {
-    return { kind: "missing" };
-  }
-  const [canonical] = candidates;
-  /* v8 ignore next 3 @preserve -- candidates.length === 1 guarantees [0] is defined */
-  if (canonical === undefined) {
-    return { kind: "missing" };
-  }
-  return { kind: "ok", repository: canonical };
-}
-
-export type ModelResolution =
-  | { kind: "matched"; model: string }
-  | { kind: "no-label" }
-  | { kind: "agent-any" }
-  | { kind: "disabled-fallback"; requestedModel: string; fallbackModel: string };
-
-export function resolveModelFor(arguments_: {
-  labels: { name: string }[];
-  config: ResolvedConfig;
-}): ModelResolution {
-  const { labels, config } = arguments_;
-  const parsed = parseAgentLabels(labels, config);
-  if (parsed === undefined) {
-    return { kind: "no-label" };
-  }
-  if (parsed.model === AGENT_ANY_MODEL) {
-    return { kind: "agent-any" };
-  }
-  if (parsed.disabledFallback !== undefined) {
-    return {
-      kind: "disabled-fallback",
-      requestedModel: parsed.disabledFallback,
-      fallbackModel: parsed.model,
-    };
-  }
-  return { kind: "matched", model: parsed.model };
-}
-
-/**
- * `agent-any` collapses to `models.default` here — manual setup doesn't run
- * the usage-gated `any` resolver, so the caller gets a concrete model name
- * instead of a sentinel that downstream code can't interpret.
- */
 export async function fetchResolvedIssue(arguments_: {
   client: LinearClient;
   config: ResolvedConfig;
@@ -704,7 +600,6 @@ export async function fetchResolvedIssue(arguments_: {
   const repositoryResolution = resolveRepositoryFor({
     description: raw.description,
     config,
-    ticket: upper,
   });
   if (repositoryResolution.kind === "missing") {
     throw new RepositoryResolutionError({
@@ -727,55 +622,10 @@ export async function fetchResolvedIssue(arguments_: {
     repository: repositoryResolution.repository,
     model,
     teamId: raw.teamId,
+    stateType: raw.stateType,
+    status: raw.stateName,
+    statusId: raw.stateId,
   };
-}
-
-/**
- * Returns the resolved agent metadata for a ticket, or `undefined` when the
- * ticket has no `agent-*` label — those tickets are not groundcrew's concern
- * and downstream code skips them. An explicit `agent-<unknown>` label still
- * falls back to `models.default` because the user opted in by labeling.
- *
- * `disabledFallback` is set when the label matched a shipped default the user
- * explicitly disabled (e.g. `agent-codex` against `codex: { disabled: true }`).
- * Callers warn on this so the user can spot the config/labeling mismatch; we
- * still fall back rather than skip because skipping would block the ticket
- * indefinitely. Unknown labels stay silent — those are likelier to be typos.
- */
-interface ParsedAgentLabels {
-  model: string;
-  disabledFallback?: string;
-}
-
-function parseAgentLabels(
-  labels: { name: string }[],
-  config: ResolvedConfig,
-): ParsedAgentLabels | undefined {
-  const agentLabels = labels.filter((label) => label.name.startsWith(AGENT_LABEL_PREFIX));
-  if (agentLabels.length === 0) {
-    return undefined;
-  }
-  let disabledFallback: string | undefined;
-  for (const label of agentLabels) {
-    const name = label.name.slice(AGENT_LABEL_PREFIX.length);
-    if (name === AGENT_ANY_MODEL) {
-      return { model: AGENT_ANY_MODEL };
-    }
-    // Own-property check, not `in`: a label like `agent-toString` or
-    // `agent-__proto__` would otherwise resolve through the prototype chain
-    // instead of falling back to `models.default`.
-    if (Object.hasOwn(config.models.definitions, name)) {
-      return { model: name };
-    }
-    if (disabledFallback === undefined && isShippedDefaultDisabled(config, name)) {
-      disabledFallback = name;
-    }
-  }
-  const fallback: ParsedAgentLabels = { model: config.models.default };
-  if (disabledFallback !== undefined) {
-    fallback.disabledFallback = disabledFallback;
-  }
-  return fallback;
 }
 
 export function warnIfDisabledFallback(

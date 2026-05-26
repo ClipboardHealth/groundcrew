@@ -118,6 +118,8 @@ async function maybeRunUpgradeNudge(metadata: PackageMetadata): Promise<void> {
 
 async function doctorCli(argv: string[]): Promise<void> {
   let ticket: string | undefined;
+  let skipSourceProbe = false;
+  let sawNoFetch = false;
   const remainingArgs: string[] = [];
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -127,7 +129,13 @@ async function doctorCli(argv: string[]): Promise<void> {
       index += 1;
       continue;
     }
-    if (argument === "--no-linear" || argument === "--no-fetch") {
+    if (argument === "--no-source-probe" || argument === "--no-linear") {
+      skipSourceProbe = true;
+      remainingArgs.push("--no-linear");
+      continue;
+    }
+    if (argument === "--no-fetch") {
+      sawNoFetch = true;
       remainingArgs.push(argument);
       continue;
     }
@@ -135,16 +143,14 @@ async function doctorCli(argv: string[]): Promise<void> {
   }
 
   if (ticket === undefined) {
-    if (remainingArgs.length > 0) {
-      throw new Error(
-        `crew doctor: ${remainingArgs[0]} requires --ticket (host doctor mode has no flags)`,
-      );
+    if (sawNoFetch) {
+      throw new Error("crew doctor: --no-fetch requires --ticket");
     }
-    const ok = await doctor();
+    const ok = await doctor({ skipSourceProbe });
     process.exitCode = ok ? process.exitCode : 1;
     return;
   }
-  const ok = await doctor({ ticket, ticketArgv: remainingArgs });
+  const ok = await doctor({ ticket, ticketArgv: remainingArgs, skipSourceProbe });
   process.exitCode = ok ? process.exitCode : 1;
 }
 
@@ -162,7 +168,7 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
   doctor: {
     summary:
       "Verify prereqs, or diagnose one ticket with --ticket (full lifecycle: dispatch eligibility + local-state recovery)",
-    usage: "[--ticket <ticket> [--no-linear] [--no-fetch]]",
+    usage: "[--no-source-probe] [--ticket <ticket> [--no-linear] [--no-fetch]]",
     invoke: doctorCli,
   },
   cleanup: {

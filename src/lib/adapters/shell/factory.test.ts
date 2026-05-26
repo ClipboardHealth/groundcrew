@@ -53,9 +53,13 @@ function shellIssue(overrides: Partial<ShellIssue> = {}): ShellIssue {
 }
 
 describe(toCanonicalIssue, () => {
-  it("prefixes the canonical id with the source name", () => {
+  it("prefixes the canonical id with the source name and lowercases the natural part", () => {
+    // The natural id is lowercased via the shared toCanonicalId helper so the
+    // same ticket always produces the same canonical id regardless of which
+    // casing the source emitted — Board.resolveOne lowercases its input
+    // before comparing, so adapters MUST lowercase on the storage side too.
     const result = toCanonicalIssue(shellIssue({ id: "X-1" }), "jira");
-    expect(result.id).toBe("jira:X-1");
+    expect(result.id).toBe("jira:x-1");
     expect(result.source).toBe("jira");
   });
 
@@ -93,10 +97,53 @@ describe(toCanonicalIssue, () => {
       }),
       "jira",
     );
-    expect(result.blockers).toStrictEqual([
-      { id: "jira:B-1", title: "Block A", status: "done" },
-      { id: "jira:B-2", title: "Block B", status: "in-progress" },
-    ]);
+    expect(result.blockers[0]).toMatchObject({ id: "jira:b-1", title: "Block A", status: "done" });
+    expect(result.blockers[0]).not.toHaveProperty("statusReason");
+    expect(result.blockers[0]).not.toHaveProperty("nativeStatus");
+    expect(result.blockers[1]).toMatchObject({
+      id: "jira:b-2",
+      title: "Block B",
+      status: "in-progress",
+    });
+    expect(result.blockers[1]).not.toHaveProperty("statusReason");
+    expect(result.blockers[1]).not.toHaveProperty("nativeStatus");
+  });
+
+  it("passes through statusReason and nativeStatus from the shell blocker payload", () => {
+    const result = toCanonicalIssue(
+      shellIssue({
+        blockers: [
+          { id: "B-3", title: "Missing status", status: "other", statusReason: "missing" },
+          {
+            id: "B-4",
+            title: "Unmapped status",
+            status: "other",
+            statusReason: "unmapped",
+            nativeStatus: "Triage",
+          },
+          { id: "B-5", title: "Mapped with native", status: "done", nativeStatus: "Done" },
+        ],
+      }),
+      "jira",
+    );
+    expect(result.blockers[0]).toMatchObject({
+      id: "jira:b-3",
+      status: "other",
+      statusReason: "missing",
+    });
+    expect(result.blockers[0]).not.toHaveProperty("nativeStatus");
+    expect(result.blockers[1]).toMatchObject({
+      id: "jira:b-4",
+      status: "other",
+      statusReason: "unmapped",
+      nativeStatus: "Triage",
+    });
+    expect(result.blockers[2]).toMatchObject({
+      id: "jira:b-5",
+      status: "done",
+      nativeStatus: "Done",
+    });
+    expect(result.blockers[2]).not.toHaveProperty("statusReason");
   });
 
   it("round-trips sourceRef as opaque data", () => {
@@ -138,7 +185,7 @@ describe(createShellTicketSource, () => {
     );
     const issues = await source.fetch();
     expect(issues).toHaveLength(1);
-    expect(issues[0]?.id).toBe("test:X-1");
+    expect(issues[0]?.id).toBe("test:x-1");
     expect(issues[0]?.source).toBe("test");
   });
 
@@ -204,7 +251,25 @@ describe(createShellTicketSource, () => {
       fakeContext,
     );
     const issue = await source.resolveOne("X-1");
-    expect(issue?.id).toBe("test:X-1");
+    expect(issue?.id).toBe("test:x-1");
+  });
+
+  // Regression: a fetch.sh that emits an uppercase id must still be findable
+  // via resolveOne(lowercased natural id), because Board.resolveOne lowercases
+  // its input before delegating. Pre-fix this returned undefined because the
+  // adapter compared `i.id === "test:TEST-1"` against a lowercased lookup
+  // key `"test:test-1"`.
+  it("resolveOne() fallback finds an issue whose fetch payload emitted an uppercase id", async () => {
+    const script = dir.writeScript(
+      "fetch.sh",
+      `cat <<'JSON'\n${payload(shellIssue({ id: "TEST-1" }))}\nJSON`,
+    );
+    const source = createShellTicketSource(
+      { kind: "shell", name: "test", commands: { fetch: script } },
+      fakeContext,
+    );
+    const issue = await source.resolveOne("test-1");
+    expect(issue?.id).toBe("test:test-1");
   });
 
   it("resolveOne() fallback returns undefined when fetch has no matching id", async () => {
@@ -231,7 +296,7 @@ describe(createShellTicketSource, () => {
       fakeContext,
     );
     const issue = await source.resolveOne("X-1");
-    expect(issue?.id).toBe("test:X-1");
+    expect(issue?.id).toBe("test:x-1");
   });
 
   it("resolveOne() returns undefined on exit code 3", async () => {
@@ -268,7 +333,7 @@ describe(createShellTicketSource, () => {
       fakeContext,
     );
     const issue: CanonicalIssue = {
-      id: "test:X-1",
+      id: "test:x-1",
       source: "test",
       title: "",
       description: "",
@@ -297,7 +362,7 @@ describe(createShellTicketSource, () => {
     );
     const sourceRef = { path: "/tmp/p.md", extra: { nested: 42 } };
     const issue: CanonicalIssue = {
-      id: "test:X-1",
+      id: "test:x-1",
       source: "test",
       title: "",
       description: "",

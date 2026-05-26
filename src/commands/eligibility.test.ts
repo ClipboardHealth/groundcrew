@@ -1,5 +1,6 @@
-import type { GroundcrewIssue } from "../lib/boardSource.ts";
 import type { ResolvedConfig } from "../lib/config.ts";
+import { canonicalBlocker, canonicalLinearIssue } from "../lib/testing/canonicalFixtures.ts";
+import { isGroundcrewIssue, type GroundcrewIssue } from "../lib/ticketSource.ts";
 import type { UsageByModel } from "../lib/usage.ts";
 import type { WorktreeEntry } from "../lib/worktrees.ts";
 import {
@@ -8,10 +9,29 @@ import {
   classifyEligibility,
   classifyUsageExhaustion,
   pickBestModel,
+  type SkipVerdict,
 } from "./eligibility.ts";
+
+/** Assert an Issue is groundcrew-eligible (model + repository defined) and narrow the type. */
+function asGroundcrewIssue(issue: ReturnType<typeof canonicalLinearIssue>): GroundcrewIssue {
+  if (!isGroundcrewIssue(issue)) {
+    throw new Error("Expected a GroundcrewIssue (model and repository must be defined)");
+  }
+  return issue;
+}
 
 function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
   return {
+    linear: {
+      projects: [
+        {
+          projectSlug: "ai-strategy-aaaaaaaaaaaa",
+          slugId: "aaaaaaaaaaaa",
+          statuses: { todo: "Todo", inProgress: "In Progress", done: "Done", terminal: ["Done"] },
+        },
+      ],
+      ...overrides.linear,
+    },
     sources: [],
     git: { remote: "origin", defaultBranch: "main", ...overrides.git },
     workspace: {
@@ -42,22 +62,15 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
 }
 
 function todoIssue(overrides: Partial<GroundcrewIssue> = {}): GroundcrewIssue {
-  return {
-    id: "team-1",
-    uuid: "uuid-1",
-    title: "Title",
-    status: "Todo",
-    statusId: "state-todo",
-    stateType: "unstarted",
-    assignee: "Alice",
-    updatedAt: "2025-01-01T00:00:00.000Z",
-    repository: "repo-a",
-    model: "claude",
-    teamId: "team-1",
-    blockers: [],
-    hasMoreBlockers: false,
-    ...overrides,
-  };
+  return asGroundcrewIssue(
+    canonicalLinearIssue({
+      naturalId: "team-1",
+      status: "todo",
+      repository: "repo-a",
+      model: "claude",
+      ...overrides,
+    }),
+  );
 }
 
 function hostEntryFor(repository: string, ticket: string): WorktreeEntry {
@@ -88,7 +101,7 @@ describe(classifyBlockers, () => {
   it("emits a `blocked` skip when a blocker is in a non-terminal state", () => {
     const { unblocked, skips } = classifyBlockers([
       todoIssue({
-        blockers: [{ id: "team-0", title: "B", status: "In Progress", stateType: "started" }],
+        blockers: [canonicalBlocker({ naturalId: "team-0", status: "in-progress" })],
       }),
     ]);
 
@@ -97,7 +110,7 @@ describe(classifyBlockers, () => {
     expect(skips[0]).toMatchObject({
       kind: "skip",
       eventReason: "blocked",
-      blockers: ["team-0:In Progress"],
+      blockers: ["linear:team-0:in-progress"],
     });
   });
 
@@ -107,24 +120,24 @@ describe(classifyBlockers, () => {
     expect(skips[0]).toMatchObject({ kind: "skip", eventReason: "blockers_paginated" });
   });
 
-  it("emits a `blocked` skip when the blocker state is missing", () => {
+  it("emits a `blocked` skip when the blocker status is 'other' (unknown status)", () => {
     const { skips } = classifyBlockers([
       todoIssue({
-        blockers: [{ id: "team-0", title: "B", status: undefined, stateType: undefined }],
+        blockers: [canonicalBlocker({ naturalId: "team-0", status: "other" })],
       }),
     ]);
 
     expect(skips[0]).toMatchObject({
       kind: "skip",
       eventReason: "blocked",
-      blockers: ["team-0:missing"],
+      blockers: ["linear:team-0:other"],
     });
   });
 
-  it("returns the issue as unblocked when its blocker is already terminal", () => {
+  it("returns the issue as unblocked when its blocker status is 'done'", () => {
     const { unblocked, skips } = classifyBlockers([
       todoIssue({
-        blockers: [{ id: "team-0", title: "B", status: "Done", stateType: "completed" }],
+        blockers: [canonicalBlocker({ naturalId: "team-0", status: "done" })],
       }),
     ]);
 
@@ -134,17 +147,77 @@ describe(classifyBlockers, () => {
 
   it("partitions a mixed batch into unblocked and skip lists", () => {
     const { unblocked, skips } = classifyBlockers([
-      todoIssue({ id: "team-1", uuid: "uuid-1" }),
+      todoIssue({ id: "linear:team-1" }),
       todoIssue({
-        id: "team-2",
-        uuid: "uuid-2",
-        blockers: [{ id: "team-0", title: "B", status: "In Progress", stateType: "started" }],
+        id: "linear:team-2",
+        blockers: [canonicalBlocker({ naturalId: "team-0", status: "in-progress" })],
       }),
-      todoIssue({ id: "team-3", uuid: "uuid-3" }),
+      todoIssue({ id: "linear:team-3" }),
     ]);
 
-    expect(unblocked.map((issue) => issue.id)).toStrictEqual(["team-1", "team-3"]);
-    expect(skips.map((skip) => skip.issue.id)).toStrictEqual(["team-2"]);
+    expect(unblocked.map((issue) => issue.id)).toStrictEqual(["linear:team-1", "linear:team-3"]);
+    expect(skips.map((skip) => skip.issue.id)).toStrictEqual(["linear:team-2"]);
+  });
+
+  it("treats a 'done' blocker as cleared (canonical status)", () => {
+    const issue = asGroundcrewIssue(
+      canonicalLinearIssue({
+        naturalId: "eng-100",
+        blockers: [canonicalBlocker({ naturalId: "eng-90", status: "done" })],
+        repository: "repo-a",
+        model: "claude",
+      }),
+    );
+    const { unblocked, skips } = classifyBlockers([issue]);
+
+    expect(unblocked).toHaveLength(1);
+    expect(skips).toHaveLength(0);
+  });
+
+  it("treats an 'in-progress' blocker as blocking", () => {
+    const issue = asGroundcrewIssue(
+      canonicalLinearIssue({
+        naturalId: "eng-100",
+        blockers: [canonicalBlocker({ naturalId: "eng-90", status: "in-progress" })],
+        repository: "repo-a",
+        model: "claude",
+      }),
+    );
+    const { unblocked, skips } = classifyBlockers([issue]);
+
+    expect(unblocked).toHaveLength(0);
+    expect(skips).toHaveLength(1);
+  });
+
+  it("treats an 'other' (unknown-status) blocker as blocking", () => {
+    // Previously: status: undefined was blocking. Now: status: "other" represents the same.
+    const issue = asGroundcrewIssue(
+      canonicalLinearIssue({
+        naturalId: "eng-100",
+        blockers: [canonicalBlocker({ naturalId: "eng-90", status: "other" })],
+        repository: "repo-a",
+        model: "claude",
+      }),
+    );
+    const { unblocked, skips } = classifyBlockers([issue]);
+
+    expect(unblocked).toHaveLength(0);
+    expect(skips).toHaveLength(1);
+  });
+
+  it("treats a 'todo' blocker as blocking", () => {
+    const issue = asGroundcrewIssue(
+      canonicalLinearIssue({
+        naturalId: "eng-100",
+        blockers: [canonicalBlocker({ naturalId: "eng-90", status: "todo" })],
+        repository: "acme/web",
+        model: "claude",
+      }),
+    );
+    const { unblocked, skips } = classifyBlockers([issue]);
+
+    expect(unblocked).toHaveLength(0);
+    expect(skips).toHaveLength(1);
   });
 });
 
@@ -242,6 +315,21 @@ describe(classifyEligibility, () => {
       expect(verdicts[0]).toMatchObject({ kind: "skip", eventReason: "workspace_missing" });
     });
 
+    it("workspace_missing hint uses the natural id in the cleanup command", () => {
+      const verdicts = classifyEligibility(
+        defaultArguments({
+          worktreeEntries: [hostEntryFor("repo-a", "team-1")],
+          workspaceProbe: { kind: "ok", names: new Set<string>() },
+        }),
+      );
+
+      expect(verdicts[0]).toMatchObject({ kind: "skip", eventReason: "workspace_missing" });
+      // The suggested `crew cleanup` command must use the natural id so it is actually runnable.
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- verdict kind is asserted above
+      const { message } = verdicts[0] as SkipVerdict;
+      expect(message).toMatch(/crew cleanup team-1/);
+    });
+
     it("emits `workspace_list_unavailable` when the workspace adapter probe failed", () => {
       const verdicts = classifyEligibility(
         defaultArguments({
@@ -274,15 +362,12 @@ describe(classifyEligibility, () => {
       const verdicts = classifyEligibility(
         defaultArguments({
           slots: 1,
-          unblocked: [
-            todoIssue({ id: "team-1", uuid: "uuid-1" }),
-            todoIssue({ id: "team-2", uuid: "uuid-2" }),
-          ],
+          unblocked: [todoIssue({ id: "linear:team-1" }), todoIssue({ id: "linear:team-2" })],
         }),
       );
 
       expect(verdicts).toHaveLength(1);
-      expect(verdicts[0]).toMatchObject({ kind: "start", issue: { id: "team-1" } });
+      expect(verdicts[0]).toMatchObject({ kind: "start", issue: { id: "linear:team-1" } });
     });
   });
 });

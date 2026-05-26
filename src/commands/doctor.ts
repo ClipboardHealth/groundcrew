@@ -5,6 +5,8 @@
 
 import { existsSync, statSync } from "node:fs";
 
+import { type Board, createBoard } from "../lib/board.ts";
+import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
 import {
   type LocalRunner,
   type LocalRunnerSetting,
@@ -14,7 +16,7 @@ import {
 import { detectHostCapabilities, type HostCapabilities, which } from "../lib/host.ts";
 import { resolveLocalRunner } from "../lib/localRunner.ts";
 import { gatedModels } from "../lib/usage.ts";
-import { errorMessage, resolveLinearApiKey, writeOutput } from "../lib/util.ts";
+import { errorMessage, writeOutput } from "../lib/util.ts";
 import { resolveWorkspaceKind, type WorkspaceResolution } from "../lib/workspaces.ts";
 import { parseTicketDoctorFlags, runTicketDoctor } from "./ticketDoctor.ts";
 
@@ -33,6 +35,13 @@ export interface DoctorOptions {
   ticket?: string;
   /** Extra flags after `--ticket <id>`; currently `--no-linear` and `--no-fetch`. */
   ticketArgv?: string[];
+  /**
+   * When true, skip the source-probe check in host mode (no --ticket).
+   * Has no effect in ticket mode — ticket-mode flags are passed via
+   * ticketArgv to parseTicketDoctorFlags. The CLI maps both
+   * --no-source-probe and --no-linear to this field.
+   */
+  skipSourceProbe?: boolean;
 }
 
 async function checkCmd(cmd: string, required: boolean, hint?: string): Promise<Check> {
@@ -49,22 +58,20 @@ async function checkCmd(cmd: string, required: boolean, hint?: string): Promise<
   return result;
 }
 
-function checkLinearApiKey(): Check {
-  const resolved = resolveLinearApiKey();
-  if (resolved !== undefined) {
+async function checkSourceProbe(config: ResolvedConfig): Promise<Check> {
+  try {
+    const sources = await buildSources(sourcesFromConfig(config), { globalConfig: config });
+    const board: Board = createBoard(sources);
+    await board.verify();
     return {
-      name: "linear api key",
+      name: "source probe",
       ok: true,
       required: true,
-      hint: `set via $${resolved.source}`,
+      hint: `${sources.length} source(s) verified`,
     };
+  } catch (error) {
+    return { name: "source probe", ok: false, required: true, hint: errorMessage(error) };
   }
-  return {
-    name: "linear api key",
-    ok: false,
-    required: true,
-    hint: "export $GROUNDCREW_LINEAR_API_KEY or $LINEAR_API_KEY",
-  };
 }
 
 function checkDir(path: string, label: string): Check {
@@ -149,7 +156,7 @@ export async function doctor(options: DoctorOptions = {}): Promise<boolean> {
   if (options.ticket !== undefined) {
     return await doctorTicket(options.ticket, options.ticketArgv ?? []);
   }
-  return await doctorHost();
+  return await doctorHost(options.skipSourceProbe ?? false);
 }
 
 async function doctorTicket(ticket: string, ticketArgv: string[]): Promise<boolean> {
@@ -170,7 +177,7 @@ async function doctorTicket(ticket: string, ticketArgv: string[]): Promise<boole
   }
 }
 
-async function doctorHost(): Promise<boolean> {
+async function doctorHost(skipSourceProbe: boolean): Promise<boolean> {
   writeOutput("groundcrew doctor");
   writeOutput("=================");
 
@@ -201,8 +208,10 @@ async function doctorHost(): Promise<boolean> {
   const workspaceOutcome = resolveWorkspaceOutcome(config, host);
   reportWorkspaceKind(config, workspaceOutcome);
 
+  const sourceProbeCheck = skipSourceProbe ? undefined : await checkSourceProbe(config);
+
   const checks: Check[] = [
-    checkLinearApiKey(),
+    ...(sourceProbeCheck === undefined ? [] : [sourceProbeCheck]),
     await checkCmd("git", true, "https://git-scm.com/"),
     ...(await workspaceChecks(workspaceOutcome)),
     checkDir(config.workspace.projectDir, "workspace.projectDir"),

@@ -30,12 +30,14 @@ export {
   isTerminalStateType,
   isTerminalStatusForBlocker,
   isTerminalStatusForIssue,
+  type RawLinearIssue,
+} from "./lib/adapters/linear/fetch.ts";
+export {
   resolveModelFor,
   resolveRepositoryFor,
   type ModelResolution,
-  type RawLinearIssue,
   type RepositoryResolution,
-} from "./lib/boardSource.ts";
+} from "./lib/adapters/linear/parsing.ts";
 export { getUsageByModel, type UsageByModel } from "./lib/usage.ts";
 export { type Board, createBoard } from "./lib/board.ts";
 export { buildSources, buildSourcesWith } from "./lib/buildSources.ts";
@@ -55,9 +57,9 @@ export {
   type GroundcrewIssue as CanonicalGroundcrewIssue,
   type Issue as CanonicalIssue,
   isGroundcrewIssue as isCanonicalGroundcrewIssue,
+  type ParentSkip as CanonicalParentSkip,
   type TicketSource,
 } from "./lib/ticketSource.ts";
-// RepositoryResolutionError is exported via boardSource.ts above (single canonical location).
 export type { TicketCheck } from "./commands/ticketCheck.ts";
 export {
   ticketDoctor,

@@ -1,4 +1,5 @@
 import { existsSync, statSync } from "node:fs";
+import type * as nodeFs from "node:fs";
 
 import type { LinearClient } from "@linear/sdk";
 
@@ -6,7 +7,8 @@ import type { RunCommandOptions } from "../lib/commandRunner.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
 import type { UsageByModel } from "../lib/usage.ts";
-import { getLinearClient, readEnvironmentVariable } from "../lib/util.ts";
+import { getLinearClient } from "../lib/adapters/linear/client.ts";
+import { readEnvironmentVariable } from "../lib/util.ts";
 import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCapture.ts";
 import { deleteEnvironmentVariable, setEnvironmentVariable } from "../testHelpers/env.ts";
 import { doctor } from "./doctor.ts";
@@ -16,13 +18,14 @@ interface NodeFsMock {
   statSync: ReturnType<typeof vi.fn<typeof statSync>>;
 }
 
-vi.mock(
-  "node:fs",
-  (): NodeFsMock => ({
+vi.mock("node:fs", async (importOriginal): Promise<NodeFsMock> => {
+  const actual = await importOriginal<typeof nodeFs>();
+  return {
+    ...actual,
     existsSync: vi.fn<typeof existsSync>(),
     statSync: vi.fn<typeof statSync>(),
-  }),
-);
+  };
+});
 vi.mock(import("../lib/config.ts"), async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, loadConfig: vi.fn<typeof loadConfig>() };
@@ -56,7 +59,7 @@ vi.mock(import("../lib/usage.ts"), async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, getUsageByModel: getUsageByModelMock };
 });
-vi.mock(import("../lib/util.ts"), async (importOriginal) => {
+vi.mock(import("../lib/adapters/linear/client.ts"), async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, getLinearClient: getLinearClientMock };
 });
@@ -199,12 +202,22 @@ function makeLinearClient(
   options: {
     issue?: RawIssueStub | null;
     activePages?: number[];
+    /** When true, VerifyProjects returns an empty nodes list, causing source probe to fail. */
+    verifyFails?: boolean;
   } = {},
 ): LinearClient {
-  const { issue = rawIssue(), activePages = [0] } = options;
+  const { issue = rawIssue(), activePages = [0], verifyFails = false } = options;
   let activePageIndex = 0;
   let blockerPageIndex = 0;
   const rawRequest = vi.fn<LinearRawRequest>(async (query) => {
+    if (query.includes("VerifyProjects")) {
+      // Return the configured project slug so board.verify() succeeds, or return
+      // an empty list so it throws ("No Linear projects resolved").
+      const nodes = verifyFails
+        ? []
+        : [{ id: "proj-1", name: "Test Project", slugId: "aaaaaaaaaaaa" }];
+      return { data: { projects: { nodes } } };
+    }
     if (query.includes("ResolveIssue")) {
       return { data: { issue } };
     }
@@ -391,7 +404,8 @@ describe(doctor, () => {
     const actual = await doctor({ ticket: "team-1" });
 
     expect(actual).toBe(false);
-    expect(consoleLog.output()).toContain("blocked by team-0:In Progress");
+    // After canonical migration: blocker project is absent from relation node so status maps to "other"; id is source-prefixed.
+    expect(consoleLog.output()).toContain("blocked by linear:team-0:other");
   });
 
   it("treats blockers with missing status as active", async () => {
@@ -419,7 +433,8 @@ describe(doctor, () => {
     const actual = await doctor({ ticket: "team-1" });
 
     expect(actual).toBe(false);
-    expect(consoleLog.output()).toContain("blocked by team-0:missing");
+    // After canonical migration: undefined status maps to "other"; id is source-prefixed.
+    expect(consoleLog.output()).toContain("blocked by linear:team-0:other");
   });
 
   it("returns false when blocker relations are paginated", async () => {
@@ -574,43 +589,42 @@ describe(doctor, () => {
     expect(consoleLog.output()).toContain("All required checks passed");
   });
 
-  it("returns false and reports both env var names when neither key is set", async () => {
-    deleteEnvironmentVariable("LINEAR_API_KEY");
+  it("calls board.verify() for the source probe check", async () => {
+    loadConfigMock.mockResolvedValue(makeConfig());
+    // Default makeLinearClient() returns the configured project from VerifyProjects,
+    // so board.verify() succeeds and the source probe check passes.
+
+    const actual = await doctor();
+
+    expect(actual).toBe(true);
+    const output = consoleLog.output();
+    expect(output).toContain("[ok] source probe");
+  });
+
+  it("reports source probe failure when board.verify() throws", async () => {
+    // verifyFails: true causes VerifyProjects to return an empty nodes list,
+    // which makes verifyProjects() throw "No Linear projects resolved".
+    getLinearClientMocked.mockReturnValue(makeLinearClient({ verifyFails: true }));
     loadConfigMock.mockResolvedValue(makeConfig());
 
     const actual = await doctor();
 
     expect(actual).toBe(false);
     const output = consoleLog.output();
-    expect(output).toContain("linear api key");
-    expect(output).toContain("$GROUNDCREW_LINEAR_API_KEY");
-    expect(output).toContain("$LINEAR_API_KEY");
+    expect(output).toContain("[--] source probe");
+    expect(output).toContain("No Linear projects resolved");
   });
 
-  it("reports the resolved env var when only GROUNDCREW_LINEAR_API_KEY is set", async () => {
-    deleteEnvironmentVariable("LINEAR_API_KEY");
-    setEnvironmentVariable("GROUNDCREW_LINEAR_API_KEY", "lin_api_groundcrew");
+  it("skips source probe when --no-source-probe flag is set", async () => {
+    // Even with verifyFails, skipSourceProbe: true means the check is omitted
+    // entirely, so doctor should still pass (assuming other checks pass).
+    getLinearClientMocked.mockReturnValue(makeLinearClient({ verifyFails: true }));
     loadConfigMock.mockResolvedValue(makeConfig());
 
-    const actual = await doctor();
+    const actual = await doctor({ skipSourceProbe: true });
 
     expect(actual).toBe(true);
-    const output = consoleLog.output();
-    expect(output).toContain("linear api key");
-    expect(output).toContain("$GROUNDCREW_LINEAR_API_KEY");
-  });
-
-  it("prefers GROUNDCREW_LINEAR_API_KEY in doctor output when both env vars are set", async () => {
-    setEnvironmentVariable("GROUNDCREW_LINEAR_API_KEY", "lin_api_groundcrew");
-    setEnvironmentVariable("LINEAR_API_KEY", "lin_api_legacy");
-    loadConfigMock.mockResolvedValue(makeConfig());
-
-    const actual = await doctor();
-
-    expect(actual).toBe(true);
-    const output = consoleLog.output();
-    expect(output).toContain("$GROUNDCREW_LINEAR_API_KEY");
-    expect(output).not.toMatch(/set via \$LINEAR_API_KEY/);
+    expect(consoleLog.output()).not.toContain("source probe");
   });
 
   it("returns false when a required CLI tool is missing", async () => {

@@ -12,26 +12,22 @@
  * interpret); any other nonzero exit throws.
  */
 
-import { type ChildProcess, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 
 import { log } from "../../util.ts";
 
-export const SHELL_COMMAND_MAX_BUFFER_BYTES = 10 * 1024 * 1024;
-const TIMEOUT_SIGNAL: NodeJS.Signals = "SIGKILL";
+/**
+ * Hard cap on captured stdout/stderr per stream. Misbehaving scripts that
+ * `yes | head -c <huge>` would otherwise exhaust memory. 10 MB is enough for
+ * any realistic JSON ticket payload; tests can override via InvokeArgs.maxOutputBytes
+ * to exercise the truncation path with a smaller fixture.
+ */
+const DEFAULT_MAX_OUTPUT_BYTES = 10 * 1024 * 1024;
 
 export class ShellAdapterTimeoutError extends Error {
   public constructor(arguments_: { command: string; timeoutMs: number }) {
     super(`Shell command timed out after ${arguments_.timeoutMs}ms: ${arguments_.command}`);
     this.name = "ShellAdapterTimeoutError";
-  }
-}
-
-export class ShellAdapterOutputLimitError extends Error {
-  public constructor(arguments_: { command: string; maxBytes: number }) {
-    super(
-      `Shell command exceeded combined stdout/stderr maxBuffer of ${arguments_.maxBytes} bytes: ${arguments_.command}`,
-    );
-    this.name = "ShellAdapterOutputLimitError";
   }
 }
 
@@ -44,29 +40,20 @@ interface InvokeArgs {
   substitutions?: Record<string, string> | undefined;
   /** Source name for log prefixing. */
   sourceName: string;
+  /** Override the default per-stream stdout/stderr cap (10 MB). Used by tests. */
+  maxOutputBytes?: number;
 }
 
 interface InvokeResult {
   stdout: string;
   stderr: string;
   exitCode: number;
+  /** True if either stream hit the byte cap and the rest was discarded. */
+  truncated: boolean;
 }
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", String.raw`'\''`)}'`;
-}
-
-function killChildProcess(
-  child: ChildProcess,
-  signal: NodeJS.Signals,
-  shouldUseProcessGroup: boolean,
-): void {
-  /* v8 ignore next 4 @preserve -- fallback path is for Windows or a spawn failure before pid assignment */
-  if (!shouldUseProcessGroup || child.pid === undefined) {
-    child.kill(signal);
-    return;
-  }
-  process.kill(-child.pid, signal);
 }
 
 export function applySubstitutions(command: string, subs: Record<string, string>): string {
@@ -82,84 +69,55 @@ export async function invokeShellCommand(args: InvokeArgs): Promise<InvokeResult
     args.substitutions === undefined
       ? args.command
       : applySubstitutions(args.command, args.substitutions);
+  const maxBytes = args.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
   return await new Promise<InvokeResult>((resolve, reject) => {
-    const shouldUseProcessGroup = process.platform !== "win32";
     const child = spawn("sh", ["-c", command], {
       cwd: args.cwd,
-      detached: shouldUseProcessGroup,
       // oxlint-disable-next-line node/no-process-env -- subprocess inherits the parent's full env by design; user-supplied vars layer on top
       env: { ...process.env, ...args.env },
       stdio: ["pipe", "pipe", "pipe"],
     });
-    const stdoutChunks: Buffer[] = [];
-    const stderrChunks: Buffer[] = [];
-    let stdoutLength = 0;
-    let stderrLength = 0;
+    let stdout: Buffer = Buffer.alloc(0);
+    let stderr: Buffer = Buffer.alloc(0);
+    let truncated = false;
     let settled = false;
 
-    function cleanup(): void {
-      clearTimeout(timer);
-    }
-
-    function killChild(signal: NodeJS.Signals): void {
-      try {
-        killChildProcess(child, signal, shouldUseProcessGroup);
-      } catch {
-        // The child may have exited between timeout/output-limit handling and the kill request.
-      }
-    }
-
-    function failAndKill(error: Error): void {
-      /* v8 ignore next 3 @preserve -- timeout/output-limit races can call this after another terminal event; deterministic tests cover the first terminal path */
+    const timer = setTimeout(() => {
+      /* v8 ignore next 3 @preserve -- timer/close race: clearTimeout in the close handler should prevent this branch, but the guard is kept as defense-in-depth */
       if (settled) {
         return;
       }
       settled = true;
-      cleanup();
-      killChild(TIMEOUT_SIGNAL);
-      reject(error);
-    }
-
-    function appendOutput(input: {
-      chunks: Buffer[];
-      currentLength: number;
-      chunk: Buffer;
-    }): number {
-      /* v8 ignore next 3 @preserve -- streams may emit after timeout/output-limit settlement; this race guard is intentionally defensive */
-      if (settled) {
-        return input.currentLength;
-      }
-      const nextCombinedLength = stdoutLength + stderrLength + input.chunk.length;
-      if (nextCombinedLength > SHELL_COMMAND_MAX_BUFFER_BYTES) {
-        failAndKill(
-          new ShellAdapterOutputLimitError({
-            command,
-            maxBytes: SHELL_COMMAND_MAX_BUFFER_BYTES,
-          }),
-        );
-        return input.currentLength;
-      }
-      input.chunks.push(input.chunk);
-      return input.currentLength + input.chunk.length;
-    }
-
-    const timer = setTimeout(() => {
-      failAndKill(new ShellAdapterTimeoutError({ command, timeoutMs: args.timeoutMs }));
+      child.kill("SIGKILL");
+      reject(new ShellAdapterTimeoutError({ command, timeoutMs: args.timeoutMs }));
     }, args.timeoutMs);
 
+    // Buffer accumulators so the byte cap matches its name. A string-based
+    // comparison would measure UTF-16 code units against a byte budget,
+    // letting multibyte UTF-8 sneak past the cap and risking a mid-
+    // surrogate-pair slice on truncation.
+    const appendCapped = (current: Buffer, chunk: Buffer): Buffer => {
+      if (current.byteLength >= maxBytes) {
+        truncated = true;
+        return current;
+      }
+      const next = Buffer.concat([current, chunk]);
+      if (next.byteLength <= maxBytes) {
+        return next;
+      }
+      truncated = true;
+      const clipped = next.subarray(0, maxBytes);
+      return Buffer.concat([
+        clipped,
+        Buffer.from(`\n[truncated: stream exceeded ${maxBytes} bytes]`),
+      ]);
+    };
+
     child.stdout.on("data", (chunk: Buffer) => {
-      stdoutLength = appendOutput({
-        chunks: stdoutChunks,
-        currentLength: stdoutLength,
-        chunk,
-      });
+      stdout = appendCapped(stdout, chunk);
     });
     child.stderr.on("data", (chunk: Buffer) => {
-      stderrLength = appendOutput({
-        chunks: stderrChunks,
-        currentLength: stderrLength,
-        chunk,
-      });
+      stderr = appendCapped(stderr, chunk);
     });
 
     child.on("close", (code) => {
@@ -167,22 +125,22 @@ export async function invokeShellCommand(args: InvokeArgs): Promise<InvokeResult
         return;
       }
       settled = true;
-      cleanup();
-      const stdout = Buffer.concat(stdoutChunks, stdoutLength).toString("utf8");
-      const stderr = Buffer.concat(stderrChunks, stderrLength).toString("utf8");
-      if (stderr.length > 0) {
-        log(`[shell:${args.sourceName}] ${command}\n${stderr.trimEnd()}`);
+      clearTimeout(timer);
+      const stderrText = stderr.toString("utf8");
+      if (stderrText.length > 0) {
+        log(`[shell:${args.sourceName}] ${command}\n${stderrText.trimEnd()}`);
       }
-      /* v8 ignore next @preserve -- `code` is null only when the process was killed by signal; timeout/output-limit paths settle before 'close' */
+      /* v8 ignore next @preserve -- `code` is null only when the process was killed by signal; the timeout path SIGKILLs but settles via the timer rather than 'close' */
       const exitCode = code ?? 1;
+      const stdoutText = stdout.toString("utf8");
       if (exitCode === 0 || exitCode === 3) {
-        resolve({ stdout, stderr, exitCode });
+        resolve({ stdout: stdoutText, stderr: stderrText, exitCode, truncated });
         return;
       }
       reject(
         new Error(
           `Shell command for source "${args.sourceName}" failed with exit ${exitCode}: ${
-            stderr.trim().length > 0 ? stderr.trim() : command
+            stderrText.trim().length > 0 ? stderrText.trim() : command
           }`,
         ),
       );
@@ -194,7 +152,7 @@ export async function invokeShellCommand(args: InvokeArgs): Promise<InvokeResult
         return;
       }
       settled = true;
-      cleanup();
+      clearTimeout(timer);
       reject(error);
     });
 

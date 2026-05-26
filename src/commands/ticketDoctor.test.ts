@@ -2,8 +2,16 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { RawLinearIssue } from "../lib/boardSource.ts";
+import type { Board } from "../lib/board.ts";
+import type { RawLinearIssue } from "../lib/adapters/linear/fetch.ts";
 import type { ResolvedConfig } from "../lib/config.ts";
+import { makeBoard } from "../testHelpers/boardFixtures.ts";
+import {
+  canonicalBlocker,
+  canonicalLinearIssue,
+  canonicalShellIssue,
+} from "../lib/testing/canonicalFixtures.ts";
+import type { Blocker as CanonicalBlocker } from "../lib/ticketSource.ts";
 import type { RunState } from "../lib/runState.ts";
 import type { WorkspaceAccessHint, WorkspaceProbe } from "../lib/workspaces.ts";
 import type { WorktreeDirtiness, WorktreeEntry } from "../lib/worktrees.ts";
@@ -13,7 +21,7 @@ import {
   renderTicketDoctorResult,
   ticketDoctor,
   type DecideVerdictInput,
-  type LinearStatusProbe,
+  type LifecycleStatusProbe,
   type LocalBranchProbe,
   type PullRequestProbe,
   type RemoteBranchProbe,
@@ -39,6 +47,16 @@ function narrowVerdict<K extends TicketDoctorVerdict["kind"]>(
 
 function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
   return {
+    linear: {
+      projects: [
+        {
+          projectSlug: "ai-strategy-aaaaaaaaaaaa",
+          slugId: "aaaaaaaaaaaa",
+          statuses: { todo: "Todo", inProgress: "In Progress", done: "Done", terminal: ["Done"] },
+        },
+      ],
+      ...overrides.linear,
+    },
     sources: [],
     git: { remote: "origin", defaultBranch: "main", ...overrides.git },
     workspace: {
@@ -71,9 +89,9 @@ function makeStubRawIssue(overrides: Partial<RawLinearIssue> = {}): RawLinearIss
     title: "Stub",
     description: "",
     teamId: "team-1",
+    projectSlugId: "aaaaaaaaaaaa",
     labels: [],
     stateName: "Todo",
-    stateType: "unstarted",
     blockers: [],
     hasMoreBlockers: false,
     hasChildren: false,
@@ -84,15 +102,28 @@ function makeStubRawIssue(overrides: Partial<RawLinearIssue> = {}): RawLinearIss
 function makeStubDependencies(
   overrides: Partial<TicketDoctorDependencies> = {},
 ): TicketDoctorDependencies {
+  // Default board: resolveOne returns a canonical issue that passes eligibility.
+  // Tests that exercise the pre-dispatch path need resolveOne to succeed so
+  // the eligibility checks can run. Tests that exercise the post-dispatch path
+  // don't reach resolveOne.
+  const defaultBoard = makeBoard({
+    resolveOne: vi.fn<Board["resolveOne"]>().mockResolvedValue(
+      canonicalLinearIssue({
+        naturalId: "hrd-1",
+        status: "todo",
+        repository: "repo-a",
+        model: "claude",
+      }),
+    ),
+  });
   return {
     config: makeConfig(),
     ticket: "HRD-1",
-    fetchRawIssue: vi
-      .fn<NonNullable<TicketDoctorDependencies["fetchRawIssue"]>>()
+    enrichWithLinear: vi
+      .fn<NonNullable<TicketDoctorDependencies["enrichWithLinear"]>>()
       .mockResolvedValue(makeStubRawIssue()),
-    fetchBlockersFor: vi.fn<TicketDoctorDependencies["fetchBlockersFor"]>().mockResolvedValue([]),
+    board: defaultBoard,
     fetchUsage: vi.fn<TicketDoctorDependencies["fetchUsage"]>().mockResolvedValue({}),
-    countInProgress: vi.fn<TicketDoctorDependencies["countInProgress"]>().mockResolvedValue(0),
     // Default local-state stubs: nothing on disk. Pre-dispatch tests do not
     // care about the post-dispatch sections, so these defaults match the
     // freshly-labelled-ticket world.
@@ -155,12 +186,13 @@ function makeRunState(overrides: Partial<RunState> = {}): RunState {
 
 function makeVerdictInput(overrides: Partial<DecideVerdictInput> = {}): DecideVerdictInput {
   return {
-    linear: { kind: "terminal", stateName: "Done" } satisfies LinearStatusProbe,
+    lifecycle: { kind: "terminal", nativeStatus: "Done" } satisfies LifecycleStatusProbe,
     worktree: { kind: "absent" } satisfies WorktreeProbe,
     localBranch: { kind: "absent" } satisfies LocalBranchProbe,
     remoteBranch: { kind: "absent" } satisfies RemoteBranchProbe,
     pullRequest: { kind: "absent" } satisfies PullRequestProbe,
     branch: "rocky-hrd-1",
+    remote: "origin",
     worktreeDir: undefined,
     workspaceName: undefined,
     runState: undefined,
@@ -178,7 +210,7 @@ describe(decidePostDispatchVerdict, () => {
       makeVerdictInput({
         pullRequest: { kind: "open", number: 224, url: "https://github.com/x/y/pull/224" },
         worktree: { kind: "present-dirty", modified: 3, untracked: 1 },
-        linear: { kind: "non-terminal", stateName: "In Progress" },
+        lifecycle: { kind: "active", nativeStatus: "In Progress" },
       }),
     );
     expect(verdict).toStrictEqual({
@@ -197,10 +229,10 @@ describe(decidePostDispatchVerdict, () => {
     expect(verdict).toMatchObject({ kind: "pr-merged", number: 224 });
   });
 
-  it("returns in-flight when Linear is non-terminal and the worktree is present", () => {
+  it("returns in-flight when lifecycle is active and the worktree is present", () => {
     const verdict = decidePostDispatchVerdict(
       makeVerdictInput({
-        linear: { kind: "non-terminal", stateName: "In Progress" },
+        lifecycle: { kind: "active", nativeStatus: "In Progress" },
         worktree: { kind: "present-clean" },
         worktreeDir: "/work/repo-a-hrd-1",
         workspaceName: "hrd-1",
@@ -213,7 +245,7 @@ describe(decidePostDispatchVerdict, () => {
   it("returns in-flight with worktree path when no workspace name is set", () => {
     const verdict = decidePostDispatchVerdict(
       makeVerdictInput({
-        linear: { kind: "non-terminal", stateName: "In Progress" },
+        lifecycle: { kind: "active", nativeStatus: "In Progress" },
         worktree: { kind: "present-dirty", modified: 1, untracked: 0 },
         worktreeDir: "/work/repo-a-hrd-1",
         workspaceName: undefined,
@@ -226,7 +258,7 @@ describe(decidePostDispatchVerdict, () => {
   it("returns recoverable (dirty) when the worktree is dirty without an open PR", () => {
     const verdict = decidePostDispatchVerdict(
       makeVerdictInput({
-        linear: { kind: "terminal", stateName: "Done" },
+        lifecycle: { kind: "terminal", nativeStatus: "Done" },
         worktree: { kind: "present-dirty", modified: 2, untracked: 1 },
         worktreeDir: "/work/repo-a-hrd-1",
       }),
@@ -239,7 +271,7 @@ describe(decidePostDispatchVerdict, () => {
   it("returns recoverable (push) when the local branch is un-pushed", () => {
     const verdict = decidePostDispatchVerdict(
       makeVerdictInput({
-        linear: { kind: "terminal", stateName: "Done" },
+        lifecycle: { kind: "terminal", nativeStatus: "Done" },
         worktree: { kind: "present-clean" },
         localBranch: { kind: "present", ahead: 2, behind: 0 },
         remoteBranch: { kind: "absent" },
@@ -251,10 +283,26 @@ describe(decidePostDispatchVerdict, () => {
     expect(recoverable.nextStep).toContain("git push -u origin rocky-hrd-1");
   });
 
+  it("uses the configured remote (not hardcoded `origin`) in the recoverable push nextStep", () => {
+    const verdict = decidePostDispatchVerdict(
+      makeVerdictInput({
+        lifecycle: { kind: "terminal", nativeStatus: "Done" },
+        worktree: { kind: "present-clean" },
+        localBranch: { kind: "present", ahead: 2, behind: 0 },
+        remoteBranch: { kind: "absent" },
+        worktreeDir: "/work/repo-a-hrd-1",
+        remote: "upstream",
+      }),
+    );
+    const recoverable = narrowVerdict(verdict, "recoverable");
+    expect(recoverable.nextStep).toContain("git push -u upstream rocky-hrd-1");
+    expect(recoverable.nextStep).not.toContain("origin");
+  });
+
   it("returns recoverable (pr-create) when only the remote branch exists", () => {
     const verdict = decidePostDispatchVerdict(
       makeVerdictInput({
-        linear: { kind: "terminal", stateName: "Done" },
+        lifecycle: { kind: "terminal", nativeStatus: "Done" },
         worktree: { kind: "absent" },
         remoteBranch: { kind: "present" },
         pullRequest: { kind: "absent" },
@@ -278,7 +326,7 @@ describe(decidePostDispatchVerdict, () => {
   it("ranks in-flight above recoverable (dirty)", () => {
     const verdict = decidePostDispatchVerdict(
       makeVerdictInput({
-        linear: { kind: "non-terminal", stateName: "In Progress" },
+        lifecycle: { kind: "active", nativeStatus: "In Progress" },
         worktree: { kind: "present-dirty", modified: 1, untracked: 0 },
         worktreeDir: "/work/repo-a-hrd-1",
         workspaceName: "hrd-1",
@@ -290,7 +338,7 @@ describe(decidePostDispatchVerdict, () => {
   it("ranks pr-open above in-flight", () => {
     const verdict = decidePostDispatchVerdict(
       makeVerdictInput({
-        linear: { kind: "non-terminal", stateName: "In Progress" },
+        lifecycle: { kind: "active", nativeStatus: "In Progress" },
         worktree: { kind: "present-clean" },
         pullRequest: { kind: "open", number: 9, url: "u" },
       }),
@@ -371,7 +419,7 @@ describe(decidePostDispatchVerdict, () => {
   it("treats present-unknown-dirtiness as worktree-present for in-flight", () => {
     const verdict = decidePostDispatchVerdict(
       makeVerdictInput({
-        linear: { kind: "non-terminal", stateName: "In Progress" },
+        lifecycle: { kind: "active", nativeStatus: "In Progress" },
         worktree: { kind: "present-unknown-dirtiness", reason: "git status failed" },
       }),
     );
@@ -381,7 +429,7 @@ describe(decidePostDispatchVerdict, () => {
   it("falls through to recoverable when only stranded local branch matches", () => {
     const verdict = decidePostDispatchVerdict(
       makeVerdictInput({
-        linear: { kind: "non-terminal", stateName: "In Progress" },
+        lifecycle: { kind: "active", nativeStatus: "In Progress" },
         worktree: { kind: "absent" },
         localBranch: { kind: "present", ahead: 1, behind: 0 },
       }),
@@ -401,10 +449,10 @@ describe("ticketDoctor pure function — Linear resolution", () => {
     expect(result.ticket).toBe("HRD-1");
   });
 
-  it("returns unresolvable when fetchRawIssue throws an Error", async () => {
+  it("returns unresolvable when enrichWithLinear throws an Error", async () => {
     const dependencies = makeStubDependencies({
-      fetchRawIssue: vi
-        .fn<NonNullable<TicketDoctorDependencies["fetchRawIssue"]>>()
+      enrichWithLinear: vi
+        .fn<NonNullable<TicketDoctorDependencies["enrichWithLinear"]>>()
         .mockRejectedValue(new Error("Ticket HRD-1 not found in Linear")),
     });
     const result = await ticketDoctor(dependencies);
@@ -412,10 +460,10 @@ describe("ticketDoctor pure function — Linear resolution", () => {
     expect(unresolvable.reason).toMatch(/not found/);
   });
 
-  it("returns unresolvable when fetchRawIssue throws a non-Error value", async () => {
+  it("returns unresolvable when enrichWithLinear throws a non-Error value", async () => {
     const dependencies = makeStubDependencies({
-      fetchRawIssue: vi
-        .fn<NonNullable<TicketDoctorDependencies["fetchRawIssue"]>>()
+      enrichWithLinear: vi
+        .fn<NonNullable<TicketDoctorDependencies["enrichWithLinear"]>>()
         .mockRejectedValue("string error"),
     });
     const result = await ticketDoctor(dependencies);
@@ -424,8 +472,8 @@ describe("ticketDoctor pure function — Linear resolution", () => {
 
   it("records the resolved ticket title in the result", async () => {
     const dependencies = makeStubDependencies({
-      fetchRawIssue: vi
-        .fn<NonNullable<TicketDoctorDependencies["fetchRawIssue"]>>()
+      enrichWithLinear: vi
+        .fn<NonNullable<TicketDoctorDependencies["enrichWithLinear"]>>()
         .mockResolvedValue(makeStubRawIssue({ title: "Some title" })),
     });
     const result = await ticketDoctor(dependencies);
@@ -436,13 +484,12 @@ describe("ticketDoctor pure function — Linear resolution", () => {
 describe("ticketDoctor resolution checks", () => {
   it("records status-mismatch as ineligible with current state in detail", async () => {
     const dependencies = makeStubDependencies({
-      fetchRawIssue: vi
-        .fn<NonNullable<TicketDoctorDependencies["fetchRawIssue"]>>()
+      enrichWithLinear: vi
+        .fn<NonNullable<TicketDoctorDependencies["enrichWithLinear"]>>()
         .mockResolvedValue(
           makeStubRawIssue({
             labels: [{ name: "agent-claude" }],
             stateName: "In Review",
-            stateType: "started",
             description: "see herds-social/herds",
           }),
         ),
@@ -456,14 +503,59 @@ describe("ticketDoctor resolution checks", () => {
     expect(statusCheck?.detail).toMatch(/In Review/);
     expect(result.verdict).toMatchObject({
       kind: "ineligible",
-      reason: "status is In Review (state.type=started, need unstarted)",
+      reason: "status is In Review (need Todo)",
     });
+  });
+
+  it("reports unresolvable when the ticket lives in an off-config Linear project", async () => {
+    const dependencies = makeStubDependencies({
+      enrichWithLinear: vi
+        .fn<NonNullable<TicketDoctorDependencies["enrichWithLinear"]>>()
+        .mockResolvedValue(
+          makeStubRawIssue({
+            projectSlugId: "off-config-cccccccccccc",
+            labels: [{ name: "agent-claude" }],
+            stateName: "Todo",
+            description: "see herds-social/herds",
+          }),
+        ),
+      config: makeConfig({
+        workspace: { projectDir: "/work", knownRepositories: ["herds-social/herds"] },
+      }),
+    });
+    const result = await ticketDoctor(dependencies);
+    const projectCheck = result.resolution.find((check) => check.name === "Project is configured");
+    expect(projectCheck?.status).toBe("fail");
+    expect(projectCheck?.detail).toMatch(/off-config-cccccccccccc/);
+    expect(result.verdict).toMatchObject({ kind: "unresolvable" });
+  });
+
+  it("reports unresolvable when the ticket has no associated Linear project", async () => {
+    const dependencies = makeStubDependencies({
+      enrichWithLinear: vi
+        .fn<NonNullable<TicketDoctorDependencies["enrichWithLinear"]>>()
+        .mockResolvedValue(
+          makeStubRawIssue({
+            projectSlugId: undefined,
+            labels: [{ name: "agent-claude" }],
+            stateName: "Todo",
+            description: "see herds-social/herds",
+          }),
+        ),
+      config: makeConfig({
+        workspace: { projectDir: "/work", knownRepositories: ["herds-social/herds"] },
+      }),
+    });
+    const result = await ticketDoctor(dependencies);
+    const projectCheck = result.resolution.find((check) => check.name === "Project is configured");
+    expect(projectCheck?.detail).toMatch(/has no associated Linear project/);
+    expect(result.verdict).toMatchObject({ kind: "unresolvable" });
   });
 
   it("records missing agent-* label as ineligible and skips the model check", async () => {
     const dependencies = makeStubDependencies({
-      fetchRawIssue: vi
-        .fn<NonNullable<TicketDoctorDependencies["fetchRawIssue"]>>()
+      enrichWithLinear: vi
+        .fn<NonNullable<TicketDoctorDependencies["enrichWithLinear"]>>()
         .mockResolvedValue(
           makeStubRawIssue({ labels: [], stateName: "Todo", description: "see repo-a" }),
         ),
@@ -480,13 +572,12 @@ describe("ticketDoctor resolution checks", () => {
 
   it("records agent-* label and matched model as ok", async () => {
     const dependencies = makeStubDependencies({
-      fetchRawIssue: vi
-        .fn<NonNullable<TicketDoctorDependencies["fetchRawIssue"]>>()
+      enrichWithLinear: vi
+        .fn<NonNullable<TicketDoctorDependencies["enrichWithLinear"]>>()
         .mockResolvedValue(
           makeStubRawIssue({
             labels: [{ name: "agent-claude" }],
             stateName: "Todo",
-            stateType: "unstarted",
             description: "see repo-a",
           }),
         ),
@@ -503,13 +594,12 @@ describe("ticketDoctor resolution checks", () => {
 
   it("reports disabled-fallback model resolution with both names in detail", async () => {
     const dependencies = makeStubDependencies({
-      fetchRawIssue: vi
-        .fn<NonNullable<TicketDoctorDependencies["fetchRawIssue"]>>()
+      enrichWithLinear: vi
+        .fn<NonNullable<TicketDoctorDependencies["enrichWithLinear"]>>()
         .mockResolvedValue(
           makeStubRawIssue({
             labels: [{ name: "agent-codex" }],
             stateName: "Todo",
-            stateType: "unstarted",
             description: "see repo-a",
           }),
         ),
@@ -532,15 +622,52 @@ describe("ticketDoctor resolution checks", () => {
     expect(modelCheck?.detail).toMatch(/claude/);
   });
 
+  it("treats an agent-* label with an unknown model name as a match to models.default", async () => {
+    // When a label like "agent-removed-model" is present but "removed-model" is not in
+    // config.models.definitions and is not a shipped default, boardSource's
+    // parseAgentLabels falls back to models.default. resolveModelFromLabels must mirror
+    // this behavior — the previous implementation returned "no-label" on this path
+    // (line 336), causing a divergence from the adapter's resolved model.
+    const dependencies = makeStubDependencies({
+      enrichWithLinear: vi
+        .fn<NonNullable<TicketDoctorDependencies["enrichWithLinear"]>>()
+        .mockResolvedValue(
+          makeStubRawIssue({
+            labels: [{ name: "agent-removed-model" }],
+            stateName: "Todo",
+            description: "see repo-a",
+          }),
+        ),
+      config: makeConfig({
+        models: {
+          default: "claude",
+          definitions: {
+            claude: { cmd: "claude", color: "#fff" },
+            // "removed-model" intentionally absent from both definitions and
+            // DEFAULT_MODEL_DEFINITIONS → falls through to models.default.
+          },
+        },
+      }),
+    });
+    const result = await ticketDoctor(dependencies);
+    const labelCheck = result.resolution.find((check) => check.name === "Has agent-* label");
+    const modelCheck = result.resolution.find(
+      (check) => check.name === "Model resolves from agent-* label",
+    );
+    expect(labelCheck?.status).toBe("ok");
+    expect(labelCheck?.detail).toBe("agent-claude");
+    expect(modelCheck?.status).toBe("ok");
+    expect(modelCheck?.detail).toMatch(/claude/);
+  });
+
   it("records repo recognition as ok when description matches a known repo", async () => {
     const dependencies = makeStubDependencies({
-      fetchRawIssue: vi
-        .fn<NonNullable<TicketDoctorDependencies["fetchRawIssue"]>>()
+      enrichWithLinear: vi
+        .fn<NonNullable<TicketDoctorDependencies["enrichWithLinear"]>>()
         .mockResolvedValue(
           makeStubRawIssue({
             labels: [{ name: "agent-claude" }],
             stateName: "Todo",
-            stateType: "unstarted",
             description: "see herds-social/herds",
           }),
         ),
@@ -558,13 +685,12 @@ describe("ticketDoctor resolution checks", () => {
 
   it("records repo recognition as fail when description has no known repo", async () => {
     const dependencies = makeStubDependencies({
-      fetchRawIssue: vi
-        .fn<NonNullable<TicketDoctorDependencies["fetchRawIssue"]>>()
+      enrichWithLinear: vi
+        .fn<NonNullable<TicketDoctorDependencies["enrichWithLinear"]>>()
         .mockResolvedValue(
           makeStubRawIssue({
             labels: [{ name: "agent-claude" }],
             stateName: "Todo",
-            stateType: "unstarted",
             description: "no relevant text",
           }),
         ),
@@ -579,13 +705,12 @@ describe("ticketDoctor resolution checks", () => {
 
   it("records agent-any label as ok with would-resolve-to-default detail", async () => {
     const dependencies = makeStubDependencies({
-      fetchRawIssue: vi
-        .fn<NonNullable<TicketDoctorDependencies["fetchRawIssue"]>>()
+      enrichWithLinear: vi
+        .fn<NonNullable<TicketDoctorDependencies["enrichWithLinear"]>>()
         .mockResolvedValue(
           makeStubRawIssue({
             labels: [{ name: "agent-any" }],
             stateName: "Todo",
-            stateType: "unstarted",
             description: "see repo-a",
           }),
         ),
@@ -606,13 +731,12 @@ describe("ticketDoctor resolution checks", () => {
   // for a ticket the orchestrator will never touch.
   it("records 'Has no sub-issues' as fail when the ticket has children", async () => {
     const dependencies = makeStubDependencies({
-      fetchRawIssue: vi
-        .fn<NonNullable<TicketDoctorDependencies["fetchRawIssue"]>>()
+      enrichWithLinear: vi
+        .fn<NonNullable<TicketDoctorDependencies["enrichWithLinear"]>>()
         .mockResolvedValue(
           makeStubRawIssue({
             labels: [{ name: "agent-claude" }],
             stateName: "Todo",
-            stateType: "unstarted",
             description: "see repo-a",
             hasChildren: true,
           }),
@@ -627,13 +751,12 @@ describe("ticketDoctor resolution checks", () => {
 
   it("records 'Has no sub-issues' as ok when the ticket has no children", async () => {
     const dependencies = makeStubDependencies({
-      fetchRawIssue: vi
-        .fn<NonNullable<TicketDoctorDependencies["fetchRawIssue"]>>()
+      enrichWithLinear: vi
+        .fn<NonNullable<TicketDoctorDependencies["enrichWithLinear"]>>()
         .mockResolvedValue(
           makeStubRawIssue({
             labels: [{ name: "agent-claude" }],
             stateName: "Todo",
-            stateType: "unstarted",
             description: "see repo-a",
             hasChildren: false,
           }),
@@ -653,16 +776,16 @@ describe("ticketDoctor — env checks", () => {
         config: makeConfig({
           workspace: { knownRepositories: ["herds-social/herds"], projectDir },
         }),
-        fetchRawIssue: vi
-          .fn<NonNullable<TicketDoctorDependencies["fetchRawIssue"]>>()
+        enrichWithLinear: vi
+          .fn<NonNullable<TicketDoctorDependencies["enrichWithLinear"]>>()
           .mockResolvedValue({
             uuid: "u",
             title: "X",
             description: "see herds-social/herds",
             teamId: "team-1",
+            projectSlugId: "aaaaaaaaaaaa",
             labels: [{ name: "agent-claude" }],
             stateName: "Todo",
-            stateType: "unstarted",
             blockers: [],
             hasMoreBlockers: false,
             hasChildren: false,
@@ -688,16 +811,16 @@ describe("ticketDoctor — env checks", () => {
         config: makeConfig({
           workspace: { knownRepositories: ["herds-social/herds"], projectDir },
         }),
-        fetchRawIssue: vi
-          .fn<NonNullable<TicketDoctorDependencies["fetchRawIssue"]>>()
+        enrichWithLinear: vi
+          .fn<NonNullable<TicketDoctorDependencies["enrichWithLinear"]>>()
           .mockResolvedValue({
             uuid: "u",
             title: "X",
             description: "see herds-social/herds",
             teamId: "team-1",
+            projectSlugId: "aaaaaaaaaaaa",
             labels: [{ name: "agent-claude" }],
             stateName: "Todo",
-            stateType: "unstarted",
             blockers: [],
             hasMoreBlockers: false,
             hasChildren: false,
@@ -725,16 +848,16 @@ describe("ticketDoctor — env checks", () => {
             projectDir,
           },
         }),
-        fetchRawIssue: vi
-          .fn<NonNullable<TicketDoctorDependencies["fetchRawIssue"]>>()
+        enrichWithLinear: vi
+          .fn<NonNullable<TicketDoctorDependencies["enrichWithLinear"]>>()
           .mockResolvedValue({
             uuid: "u",
             title: "X",
             description: "work on herds_mobile_app",
             teamId: "team-1",
+            projectSlugId: "aaaaaaaaaaaa",
             labels: [{ name: "agent-claude" }],
             stateName: "Todo",
-            stateType: "unstarted",
             blockers: [],
             hasMoreBlockers: false,
             hasChildren: false,
@@ -756,16 +879,16 @@ describe("ticketDoctor — env checks", () => {
       config: makeConfig({
         workspace: { knownRepositories: ["herds-social/herds"], projectDir: "/tmp" },
       }),
-      fetchRawIssue: vi
-        .fn<NonNullable<TicketDoctorDependencies["fetchRawIssue"]>>()
+      enrichWithLinear: vi
+        .fn<NonNullable<TicketDoctorDependencies["enrichWithLinear"]>>()
         .mockResolvedValue({
           uuid: "u",
           title: "X",
           description: "no known repo mentioned here",
           teamId: "team-1",
+          projectSlugId: "aaaaaaaaaaaa",
           labels: [{ name: "agent-claude" }],
           stateName: "Todo",
-          stateType: "unstarted",
           blockers: [],
           hasMoreBlockers: false,
           hasChildren: false,
@@ -776,6 +899,71 @@ describe("ticketDoctor — env checks", () => {
       (check) => check.name === "Resolved repo is cloned locally",
     );
     expect(repoDir?.status).toBe("skipped");
+  });
+
+  it("treats an empty knownRepositories config as missing rather than matching an empty string", async () => {
+    // Regression: an empty knownRepositories list used to build the regex
+    // /\b()\b/, which matches the empty string at any word boundary and
+    // returned { kind: "ok", repository: "" } — a false positive.
+    const dependencies = makeStubDependencies({
+      config: makeConfig({
+        workspace: { knownRepositories: [], projectDir: "/tmp" },
+      }),
+      enrichWithLinear: vi
+        .fn<NonNullable<TicketDoctorDependencies["enrichWithLinear"]>>()
+        .mockResolvedValue({
+          uuid: "u",
+          title: "X",
+          description: "anything at all",
+          teamId: "team-1",
+          projectSlugId: "aaaaaaaaaaaa",
+          labels: [{ name: "agent-claude" }],
+          stateName: "Todo",
+          blockers: [],
+          hasMoreBlockers: false,
+          hasChildren: false,
+        }),
+    });
+    const result = await ticketDoctor(dependencies);
+    const mentionsRepo = result.resolution.find(
+      (check) => check.name === "Description mentions known repo",
+    );
+    expect(mentionsRepo?.status).toBe("fail");
+    const repoDir = result.resolution.find(
+      (check) => check.name === "Resolved repo is cloned locally",
+    );
+    expect(repoDir?.status).toBe("skipped");
+  });
+
+  it("treats an ambiguous bare-name match as missing so the diagnostic matches dispatch behavior", async () => {
+    // When knownRepositories contains multiple entries sharing a bare name
+    // (e.g. `org1/repo-a` + `org2/repo-a`) and the description mentions only
+    // the bare `repo-a`, the dispatch path throws RepositoryResolutionError
+    // because it can't pick one. The doctor must surface the same outcome —
+    // a green check here would mislead the operator into thinking dispatch
+    // will succeed when it won't.
+    const dependencies = makeStubDependencies({
+      config: makeConfig({
+        workspace: {
+          knownRepositories: ["org1/repo-a", "org2/repo-a"],
+          projectDir: "/work",
+        },
+      }),
+      enrichWithLinear: vi
+        .fn<NonNullable<TicketDoctorDependencies["enrichWithLinear"]>>()
+        .mockResolvedValue(
+          makeStubRawIssue({
+            labels: [{ name: "agent-claude" }],
+            stateName: "Todo",
+            description: "touches repo-a somewhere",
+          }),
+        ),
+    });
+    const result = await ticketDoctor(dependencies);
+    const mentionsRepo = result.resolution.find(
+      (check) => check.name === "Description mentions known repo",
+    );
+    expect(mentionsRepo?.status).toBe("fail");
   });
 });
 
@@ -793,16 +981,16 @@ describe("ticketDoctor — eligibility phase", () => {
         workspace: { projectDir: "/tmp", knownRepositories: ["herds-social/herds"] },
       }),
       ticket: "HRD-1",
-      fetchRawIssue: vi
-        .fn<NonNullable<TicketDoctorDependencies["fetchRawIssue"]>>()
+      enrichWithLinear: vi
+        .fn<NonNullable<TicketDoctorDependencies["enrichWithLinear"]>>()
         .mockResolvedValue({
           uuid: "uuid-1",
           title: "X",
           description: "see herds-social/herds",
           teamId: "team-1",
+          projectSlugId: "aaaaaaaaaaaa",
           labels: [{ name: "agent-claude" }],
           stateName: "Todo",
-          stateType: "unstarted",
           blockers: [],
           hasMoreBlockers: false,
           hasChildren: false,
@@ -837,7 +1025,7 @@ describe("ticketDoctor — eligibility phase", () => {
     }
   });
 
-  it("flags blocker check as fail when fetchBlockersFor returns a non-terminal blocker", async () => {
+  it("flags blocker check as fail when board.refreshBlockers returns a non-terminal blocker", async () => {
     const projectDir = mkdtempSync(join(tmpdir(), "td-el-"));
     mkdirSync(join(projectDir, "herds-social", "herds"), { recursive: true });
     try {
@@ -850,24 +1038,118 @@ describe("ticketDoctor — eligibility phase", () => {
           },
           workspace: { projectDir, knownRepositories: ["herds-social/herds"] },
         }),
-        fetchBlockersFor: vi.fn<TicketDoctorDependencies["fetchBlockersFor"]>().mockResolvedValue([
-          {
-            id: "HRD-2",
-            title: "Blocking ticket",
-            status: "In Progress",
-            stateType: "started",
-          },
-        ]),
+        board: makeBoard({
+          resolveOne: vi.fn<Board["resolveOne"]>().mockResolvedValue(
+            canonicalLinearIssue({
+              naturalId: "hrd-1",
+              status: "todo",
+              repository: "herds-social/herds",
+              model: "claude",
+            }),
+          ),
+          refreshBlockers: vi.fn<Board["refreshBlockers"]>().mockResolvedValue([
+            {
+              id: "linear:HRD-2",
+              title: "Blocking ticket",
+              status: "in-progress",
+              nativeStatus: "In Progress",
+            },
+          ]),
+        }),
       });
       const result = await ticketDoctor(dependencies);
       const check = result.eligibility.find((c) => c.name === "No active blockers");
       expect(check?.status).toBe("fail");
+      // detail uses the richer blocker diagnostic message (mapped status with nativeStatus)
+      expect(check?.detail).toContain("Blocking ticket");
+      expect(check?.detail).toContain("In Progress");
+      expect(check?.detail).toContain("in-progress");
       expect(result.verdict).toMatchObject({
         kind: "ineligible",
-        reason: "blocked by HRD-2:In Progress",
+        reason: "blocked by linear:HRD-2:in-progress",
       });
     } finally {
       rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  // Tiny helper for the blocker-diagnostic tests below — they only assert on
+  // the "No active blockers" eligibility detail, but the surrounding
+  // dependencies still need a real projectDir + repo dir to reach that section.
+  async function blockerDetailFor(
+    blocker: CanonicalBlocker,
+  ): Promise<{ detail: string | undefined; cleanup: () => void }> {
+    const projectDir = mkdtempSync(join(tmpdir(), "td-bd-"));
+    mkdirSync(join(projectDir, "herds-social", "herds"), { recursive: true });
+    const result = await ticketDoctor(
+      makeFullStub({
+        config: makeConfig({
+          workspace: { projectDir, knownRepositories: ["herds-social/herds"] },
+        }),
+        board: makeBoard({
+          resolveOne: vi.fn<Board["resolveOne"]>().mockResolvedValue(
+            canonicalLinearIssue({
+              naturalId: "hrd-1",
+              status: "todo",
+              repository: "herds-social/herds",
+              model: "claude",
+            }),
+          ),
+          refreshBlockers: vi
+            .fn<Board["refreshBlockers"]>()
+            .mockResolvedValue([blocker satisfies CanonicalBlocker]),
+        }),
+      }),
+    );
+    return {
+      detail: result.eligibility.find((c) => c.name === "No active blockers")?.detail,
+      cleanup: () => {
+        rmSync(projectDir, { recursive: true, force: true });
+      },
+    };
+  }
+
+  it("renders 'missing' statusReason in blocker detail when source returned no status", async () => {
+    const { detail, cleanup } = await blockerDetailFor({
+      id: "linear:HRD-3",
+      title: "Deleted blocker",
+      status: "other",
+      statusReason: "missing",
+    });
+    try {
+      expect(detail).toContain("source returned no status");
+      expect(detail).toContain("HRD-3");
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("renders 'unmapped' statusReason with nativeStatus name and config-update hint", async () => {
+    const { detail, cleanup } = await blockerDetailFor({
+      id: "linear:HRD-4",
+      title: "Triage blocker",
+      status: "other",
+      statusReason: "unmapped",
+      nativeStatus: "Triage",
+    });
+    try {
+      expect(detail).toContain("Triage");
+      expect(detail).toContain("isn't mapped");
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("renders the canonical status verbatim for a mapped blocker with no nativeStatus", async () => {
+    const { detail, cleanup } = await blockerDetailFor({
+      id: "linear:HRD-5",
+      title: "Plain blocker",
+      status: "in-progress",
+    });
+    try {
+      expect(detail).toContain('in status "in-progress"');
+    } finally {
+      cleanup();
     }
   });
 
@@ -915,7 +1197,17 @@ describe("ticketDoctor — eligibility phase", () => {
           },
           workspace: { projectDir, knownRepositories: ["herds-social/herds"] },
         }),
-        countInProgress: vi.fn<TicketDoctorDependencies["countInProgress"]>().mockResolvedValue(2),
+        board: makeBoard({
+          resolveOne: vi.fn<Board["resolveOne"]>().mockResolvedValue(
+            canonicalLinearIssue({
+              naturalId: "hrd-1",
+              status: "todo",
+              repository: "herds-social/herds",
+              model: "claude",
+            }),
+          ),
+          countInProgress: vi.fn<Board["countInProgress"]>().mockResolvedValue(2),
+        }),
       });
       const result = await ticketDoctor(dependencies);
       const check = result.eligibility.find((c) => c.name === "In-progress cap not hit");
@@ -942,16 +1234,16 @@ describe("ticketDoctor — eligibility phase", () => {
           },
           workspace: { projectDir, knownRepositories: ["herds-social/herds"] },
         }),
-        fetchRawIssue: vi
-          .fn<NonNullable<TicketDoctorDependencies["fetchRawIssue"]>>()
+        enrichWithLinear: vi
+          .fn<NonNullable<TicketDoctorDependencies["enrichWithLinear"]>>()
           .mockResolvedValue({
             uuid: "uuid-1",
             title: "X",
             description: "see herds-social/herds",
             teamId: "team-1",
+            projectSlugId: "aaaaaaaaaaaa",
             labels: [{ name: "agent-any" }],
             stateName: "Todo",
-            stateType: "unstarted",
             blockers: [],
             hasMoreBlockers: false,
             hasChildren: false,
@@ -971,29 +1263,20 @@ describe("ticketDoctor — eligibility phase", () => {
     }
   });
 
-  it("leaves eligibility empty and skips fetchBlockersFor when status is not Todo", async () => {
-    const fetchBlockersFor = vi
-      .fn<TicketDoctorDependencies["fetchBlockersFor"]>()
-      .mockResolvedValue([]);
+  it("leaves eligibility empty and skips board.refreshBlockers when status is not Todo", async () => {
+    const refreshBlockers = vi.fn<Board["refreshBlockers"]>().mockResolvedValue([]);
     const dependencies = makeStubDependencies({
-      fetchRawIssue: vi
-        .fn<NonNullable<TicketDoctorDependencies["fetchRawIssue"]>>()
-        .mockResolvedValue(
-          makeStubRawIssue({
-            stateName: "Done",
-            stateType: "completed",
-            labels: [],
-            description: "",
-          }),
-        ),
-      fetchBlockersFor,
+      enrichWithLinear: vi
+        .fn<NonNullable<TicketDoctorDependencies["enrichWithLinear"]>>()
+        .mockResolvedValue(makeStubRawIssue({ stateName: "Done", labels: [], description: "" })),
+      board: makeBoard({ refreshBlockers }),
     });
     const result = await ticketDoctor(dependencies);
     expect(result.eligibility).toHaveLength(0);
-    expect(fetchBlockersFor).not.toHaveBeenCalled();
+    expect(refreshBlockers).not.toHaveBeenCalled();
     expect(result.verdict).toMatchObject({
       kind: "ineligible",
-      reason: "status is Done (state.type=completed, need unstarted)",
+      reason: "status is Done (need Todo)",
     });
   });
 });
@@ -1484,11 +1767,9 @@ describe("ticketDoctor — Pull request section", () => {
 describe("ticketDoctor — verdict precedence (post-dispatch wins over pre-dispatch)", () => {
   it("returns pr-open and skips eligibility even when status is not Todo", async () => {
     const dependencies = makeStubDependencies({
-      fetchRawIssue: vi
-        .fn<NonNullable<TicketDoctorDependencies["fetchRawIssue"]>>()
-        .mockResolvedValue(
-          makeStubRawIssue({ stateName: "In Review", stateType: "started", labels: [] }),
-        ),
+      enrichWithLinear: vi
+        .fn<NonNullable<TicketDoctorDependencies["enrichWithLinear"]>>()
+        .mockResolvedValue(makeStubRawIssue({ stateName: "In Review", labels: [] })),
       findWorktree: vi
         .fn<TicketDoctorDependencies["findWorktree"]>()
         .mockReturnValue(makeWorktreeEntry()),
@@ -1505,11 +1786,11 @@ describe("ticketDoctor — verdict precedence (post-dispatch wins over pre-dispa
     expect(result.skipReasons.resolution).toContain("post-dispatch");
   });
 
-  it("returns in-flight when non-terminal Linear status combines with a present worktree", async () => {
+  it("returns in-flight when active Linear status combines with a present worktree", async () => {
     const entry = makeWorktreeEntry();
     const dependencies = makeStubDependencies({
-      fetchRawIssue: vi
-        .fn<NonNullable<TicketDoctorDependencies["fetchRawIssue"]>>()
+      enrichWithLinear: vi
+        .fn<NonNullable<TicketDoctorDependencies["enrichWithLinear"]>>()
         .mockResolvedValue(
           makeStubRawIssue({ stateName: "In Progress", labels: [{ name: "agent-claude" }] }),
         ),
@@ -1525,33 +1806,6 @@ describe("ticketDoctor — verdict precedence (post-dispatch wins over pre-dispa
     expect(result.verdict).toMatchObject({ kind: "in-flight" });
   });
 
-  it("does not return in-flight when duplicate Linear status combines with a present worktree", async () => {
-    const entry = makeWorktreeEntry();
-    const dependencies = makeStubDependencies({
-      fetchRawIssue: vi
-        .fn<NonNullable<TicketDoctorDependencies["fetchRawIssue"]>>()
-        .mockResolvedValue(
-          makeStubRawIssue({
-            stateName: "Duplicate",
-            stateType: "duplicate",
-            labels: [{ name: "agent-claude" }],
-          }),
-        ),
-      findWorktree: vi.fn<TicketDoctorDependencies["findWorktree"]>().mockReturnValue(entry),
-      probeWorkingTree: vi
-        .fn<TicketDoctorDependencies["probeWorkingTree"]>()
-        .mockResolvedValue({ kind: "clean" }),
-      probeWorkspaces: vi
-        .fn<TicketDoctorDependencies["probeWorkspaces"]>()
-        .mockResolvedValue({ kind: "ok", names: new Set(["hrd-1"]) }),
-    });
-    const result = await ticketDoctor(dependencies);
-    expect(result.verdict).toMatchObject({
-      kind: "ineligible",
-      reason: "status is Duplicate (state.type=duplicate, need unstarted)",
-    });
-  });
-
   it("returns would-dispatch when everything is fresh: no worktree, no PR, eligible", async () => {
     const projectDir = mkdtempSync(join(tmpdir(), "td-wd-"));
     mkdirSync(join(projectDir, "herds-social", "herds"), { recursive: true });
@@ -1560,13 +1814,12 @@ describe("ticketDoctor — verdict precedence (post-dispatch wins over pre-dispa
         config: makeConfig({
           workspace: { projectDir, knownRepositories: ["herds-social/herds"] },
         }),
-        fetchRawIssue: vi
-          .fn<NonNullable<TicketDoctorDependencies["fetchRawIssue"]>>()
+        enrichWithLinear: vi
+          .fn<NonNullable<TicketDoctorDependencies["enrichWithLinear"]>>()
           .mockResolvedValue(
             makeStubRawIssue({
               labels: [{ name: "agent-claude" }],
               stateName: "Todo",
-              stateType: "unstarted",
               description: "see herds-social/herds",
             }),
           ),
@@ -1582,7 +1835,7 @@ describe("ticketDoctor — verdict precedence (post-dispatch wins over pre-dispa
   });
 
   it("returns lost when --no-linear suppresses Linear and nothing local is actionable", async () => {
-    const dependencies = makeStubDependencies({ fetchRawIssue: undefined });
+    const dependencies = makeStubDependencies({ enrichWithLinear: undefined });
     const result = await ticketDoctor(dependencies);
     expect(result.verdict).toMatchObject({ kind: "lost" });
     expect(result.skipReasons.resolution).toBe("--no-linear");
@@ -1591,7 +1844,7 @@ describe("ticketDoctor — verdict precedence (post-dispatch wins over pre-dispa
 
   it("still produces in-flight from local state under --no-linear when a worktree is present", async () => {
     const dependencies = makeStubDependencies({
-      fetchRawIssue: undefined,
+      enrichWithLinear: undefined,
       findWorktree: vi
         .fn<TicketDoctorDependencies["findWorktree"]>()
         .mockReturnValue(makeWorktreeEntry()),
@@ -1746,17 +1999,10 @@ describe(renderTicketDoctorResult, () => {
           { name: "Ticket exists in Linear", status: "ok", detail: '"Bad Ticket"' },
           { name: "Status is Todo", status: "fail", detail: "current: Done" },
         ],
-        verdict: {
-          kind: "ineligible",
-          reason: "status is Done (state.type=completed, need unstarted)",
-        },
+        verdict: { kind: "ineligible", reason: "status is Done (need Todo)" },
       }),
     );
-    expect(
-      lines.some((l) =>
-        l.includes("→ ineligible: status is Done (state.type=completed, need unstarted)"),
-      ),
-    ).toBe(true);
+    expect(lines.some((l) => l.includes("→ ineligible: status is Done (need Todo)"))).toBe(true);
     expect(lines.find((l) => l.includes("Status is Todo"))).toMatch(/\[--\]/);
   });
 
@@ -1856,6 +2102,297 @@ describe(renderTicketDoctorResult, () => {
     );
     const modelLine = lines.find((l) => l.includes("Model resolves from agent-* label"));
     expect(modelLine).toMatch(/\[\? \]/);
+  });
+});
+
+function makeShellIssue(overrides: Partial<Parameters<typeof canonicalLinearIssue>[0]> = {}) {
+  return canonicalLinearIssue({
+    naturalId: "test-1",
+    source: "shell-test",
+    status: "todo",
+    repository: "repo-a",
+    model: "claude",
+    title: "Shell ticket",
+    ...overrides,
+  });
+}
+
+describe("ticketDoctor — non-Linear source path", () => {
+  it("produces would-dispatch for a shell-source ticket when Linear would throw", async () => {
+    const deps = makeStubDependencies({
+      ticket: "TEST-1",
+      board: makeBoard({
+        resolveOne: vi.fn<Board["resolveOne"]>().mockResolvedValue(makeShellIssue()),
+      }),
+      enrichWithLinear: vi
+        .fn<NonNullable<TicketDoctorDependencies["enrichWithLinear"]>>()
+        .mockRejectedValue(new Error("Entity not found")),
+    });
+    const result = await ticketDoctor(deps);
+    expect(result.verdict.kind).toBe("would-dispatch");
+    const existsCheck = result.resolution.find((c) => c.name.startsWith("Ticket exists in source"));
+    expect(existsCheck?.status).toBe("ok");
+    expect(existsCheck?.name).toContain("shell-test");
+  });
+
+  it("returns ineligible when shell-source ticket has non-todo status", async () => {
+    const deps = makeStubDependencies({
+      ticket: "TEST-1",
+      board: makeBoard({
+        resolveOne: vi
+          .fn<Board["resolveOne"]>()
+          .mockResolvedValue(makeShellIssue({ status: "in-progress" })),
+      }),
+    });
+    const result = await ticketDoctor(deps);
+    const ineligible = narrowVerdict(result.verdict, "ineligible");
+    expect(ineligible.reason).toContain("in-progress");
+  });
+
+  it("returns ineligible when shell-source ticket has done status (terminal canonical state)", async () => {
+    // Covers the `issue.status === "done"` branch in the canonical LifecycleStatusProbe
+    // synthesis — a done canonical issue produces a terminal probe.
+    const deps = makeStubDependencies({
+      ticket: "TEST-1",
+      board: makeBoard({
+        resolveOne: vi
+          .fn<Board["resolveOne"]>()
+          .mockResolvedValue(makeShellIssue({ status: "done" })),
+      }),
+    });
+    const result = await ticketDoctor(deps);
+    const ineligible = narrowVerdict(result.verdict, "ineligible");
+    expect(ineligible.reason).toContain("done");
+  });
+
+  it("returns ineligible when shell-source ticket has an active blocker", async () => {
+    const mockBoard = makeBoard({
+      resolveOne: vi.fn<Board["resolveOne"]>().mockResolvedValue(makeShellIssue()),
+      refreshBlockers: vi
+        .fn<Board["refreshBlockers"]>()
+        .mockResolvedValue([canonicalBlocker({ naturalId: "test-2", status: "in-progress" })]),
+    });
+    const deps = makeStubDependencies({ ticket: "TEST-1", board: mockBoard });
+    const result = await ticketDoctor(deps);
+    expect(result.verdict.kind).toBe("ineligible");
+  });
+
+  it("uses enrichLinearSection for a linear-source ticket (regression)", async () => {
+    const deps = makeStubDependencies({
+      board: makeBoard({
+        resolveOne: vi.fn<Board["resolveOne"]>().mockResolvedValue(
+          canonicalLinearIssue({
+            naturalId: "hrd-1",
+            status: "todo",
+            repository: "repo-a",
+            model: "claude",
+          }),
+        ),
+      }),
+    });
+    const result = await ticketDoctor(deps);
+    const linearCheck = result.resolution.find((c) => c.name === "Ticket exists in Linear");
+    expect(linearCheck?.status).toBe("ok");
+  });
+
+  it("returns unresolvable when ticket is found nowhere and Linear also fails", async () => {
+    // board.resolveOne returns undefined; Linear enrichment is tried as a fallback
+    // for the case where the board threw on RepositoryResolutionError, but if
+    // Linear also cannot resolve the ticket the verdict is unresolvable.
+    const deps = makeStubDependencies({
+      board: makeBoard(),
+      enrichWithLinear: vi
+        .fn<NonNullable<TicketDoctorDependencies["enrichWithLinear"]>>()
+        .mockRejectedValue(new Error("Entity not found: Issue")),
+    });
+    const result = await ticketDoctor(deps);
+    const unresolvable = narrowVerdict(result.verdict, "unresolvable");
+    expect(unresolvable.reason).toContain("Entity not found");
+  });
+
+  it("returns unresolvable when board returns undefined and --no-linear suppresses enrichment", async () => {
+    // board.resolveOne returns undefined (e.g. Linear adapter threw RepositoryResolutionError
+    // which was caught and swallowed) AND enrichWithLinear is undefined (--no-linear).
+    // No source can resolve the ticket → unresolvable.
+    const deps = makeStubDependencies({
+      board: makeBoard(),
+      enrichWithLinear: undefined,
+    });
+    const result = await ticketDoctor(deps);
+    expect(result.verdict.kind).toBe("unresolvable");
+  });
+
+  it("records resolution fail when shell-source ticket has no repository", async () => {
+    const deps = makeStubDependencies({
+      ticket: "TEST-1",
+      board: makeBoard({
+        resolveOne: vi
+          .fn<Board["resolveOne"]>()
+          .mockResolvedValue(makeShellIssue({ repository: undefined })),
+      }),
+    });
+    const result = await ticketDoctor(deps);
+    const repoCheck = result.resolution.find(
+      (c) => c.name === "Resolved repo is in workspace.knownRepositories",
+    );
+    expect(repoCheck?.status).toBe("fail");
+    expect(repoCheck?.detail).toContain("no repository");
+    expect(narrowVerdict(result.verdict, "ineligible").reason).toContain("no resolved repository");
+  });
+
+  it("records resolution fail when shell-source ticket has no model", async () => {
+    const deps = makeStubDependencies({
+      ticket: "TEST-1",
+      board: makeBoard({
+        resolveOne: vi
+          .fn<Board["resolveOne"]>()
+          .mockResolvedValue(makeShellIssue({ model: undefined })),
+      }),
+    });
+    const result = await ticketDoctor(deps);
+    const modelCheck = result.resolution.find((c) => c.name === "Has resolved model");
+    expect(modelCheck?.status).toBe("fail");
+    expect(modelCheck?.detail).toContain("no model");
+    expect(narrowVerdict(result.verdict, "ineligible").reason).toContain("no resolved model");
+  });
+
+  it("returns in-flight for shell-source ticket when worktree is present", async () => {
+    const deps = makeStubDependencies({
+      ticket: "TEST-1",
+      board: makeBoard({
+        resolveOne: vi.fn<Board["resolveOne"]>().mockResolvedValue(makeShellIssue()),
+      }),
+      findWorktree: vi
+        .fn<TicketDoctorDependencies["findWorktree"]>()
+        .mockReturnValue(makeWorktreeEntry()),
+      probeWorkingTree: vi
+        .fn<TicketDoctorDependencies["probeWorkingTree"]>()
+        .mockResolvedValue({ kind: "clean" }),
+    });
+    const result = await ticketDoctor(deps);
+    expect(result.verdict).toMatchObject({ kind: "in-flight" });
+    expect(result.skipReasons.resolution).toContain("post-dispatch");
+  });
+
+  it("runs canonical resolution when shell-source ticket has --no-linear suppression (no enrichWithLinear)", async () => {
+    const deps = makeStubDependencies({
+      ticket: "TEST-1",
+      board: makeBoard({
+        resolveOne: vi.fn<Board["resolveOne"]>().mockResolvedValue(
+          makeShellIssue({
+            source: "shell-test",
+            naturalId: "test-1",
+            status: "todo",
+            repository: "repo-a",
+            model: "claude",
+          }),
+        ),
+      }),
+      enrichWithLinear: undefined, // --no-linear suppression
+    });
+    const result = await ticketDoctor(deps);
+    expect(result.verdict.kind).toBe("would-dispatch");
+    const existsCheck = result.resolution.find((c) => c.name.startsWith("Ticket exists in source"));
+    expect(existsCheck?.status).toBe("ok");
+  });
+
+  it("non-Linear in-progress ticket synthesizes active lifecycleStatus → in-flight when worktree present", async () => {
+    const resolveOne = vi
+      .fn<Board["resolveOne"]>()
+      .mockResolvedValue(makeShellIssue({ status: "in-progress" }));
+    const findWorktree = vi
+      .fn<TicketDoctorDependencies["findWorktree"]>()
+      .mockReturnValue(makeWorktreeEntry());
+    const result = await ticketDoctor(
+      makeStubDependencies({ board: makeBoard({ resolveOne }), findWorktree }),
+    );
+    expect(result.verdict).toMatchObject({ kind: "in-flight" });
+  });
+  it("--no-linear Linear-source ticket produces lost verdict with source name in reason", async () => {
+    const result = await ticketDoctor(makeStubDependencies({ enrichWithLinear: undefined }));
+    const lost = narrowVerdict(result.verdict, "lost");
+    expect(lost.reason).toContain("linear");
+    expect(lost.reason).not.toContain("<source>");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Source-agnosticism contract — the universal canonical path must not
+// hardcode any single non-Linear source name (e.g., "shell-test") in its
+// rendered output, and must produce structurally identical results for
+// different non-Linear sources given equivalent canonical Issues. These
+// tests catch a regression class where someone reintroduces
+// `if (issue.source === "linear")` style branching in the canonical
+// renderer or wires a literal "Linear" string into a check that fires
+// for non-Linear sources.
+// ─────────────────────────────────────────────────────────────────────────
+
+const SOURCE_AGNOSTIC_SOURCES = ["shell-jira", "shell-clubhouse"] as const;
+
+function stripSourceName(checkNames: string[]): string[] {
+  return checkNames.map((name) => name.replace(/source \S+/, "source <SOURCE>"));
+}
+
+describe("ticketDoctor — source-agnostic canonical rendering", () => {
+  function shellDeps(
+    sourceName: (typeof SOURCE_AGNOSTIC_SOURCES)[number],
+    issueOverrides: Partial<Parameters<typeof canonicalShellIssue>[0]> = {},
+  ): TicketDoctorDependencies {
+    const issue = canonicalShellIssue({
+      naturalId: "x-1",
+      sourceName,
+      status: "todo",
+      repository: "repo-a",
+      model: "claude",
+      title: "X-1 title",
+      ...issueOverrides,
+    });
+    return makeStubDependencies({
+      ticket: "X-1",
+      board: makeBoard({
+        resolveOne: vi.fn<Board["resolveOne"]>().mockResolvedValue(issue),
+      }),
+      // Suppress Linear enrichment so we exercise the universal canonical path.
+      enrichWithLinear: undefined,
+    });
+  }
+
+  it.each(SOURCE_AGNOSTIC_SOURCES)(
+    "renders the universal canonical resolution checks for source %s",
+    async (sourceName) => {
+      const result = await ticketDoctor(shellDeps(sourceName));
+      expect(result.resolution.map((c) => c.name)).toStrictEqual([
+        `Ticket exists in source ${sourceName}`,
+        "Status is Todo",
+        "Resolved repo is in workspace.knownRepositories",
+        "Has resolved model",
+      ]);
+    },
+  );
+
+  it("produces structurally identical results across two different non-Linear sources", async () => {
+    const [a, b] = await Promise.all([
+      ticketDoctor(shellDeps("shell-jira")),
+      ticketDoctor(shellDeps("shell-clubhouse")),
+    ]);
+
+    // Verdict shape parity: both Todo + repo + model → would-dispatch.
+    expect(a.verdict.kind).toBe("would-dispatch");
+    expect(b.verdict.kind).toBe("would-dispatch");
+
+    // Check-name parity modulo the source-name segment.
+    expect(stripSourceName(a.resolution.map((c) => c.name))).toStrictEqual(
+      stripSourceName(b.resolution.map((c) => c.name)),
+    );
+  });
+
+  it("renders no 'Linear' substring for a non-Linear source ticket", async () => {
+    // Regression catcher: if anyone introduces a hardcoded "Linear" string into
+    // `buildResolutionFromCanonical` (e.g., copy-pasting from the Linear-
+    // enrichment branch), this fails for every non-Linear source.
+    const rendered = renderTicketDoctorResult(await ticketDoctor(shellDeps("shell-jira")));
+    const joined = rendered.join("\n");
+    expect(joined).not.toMatch(/\bLinear\b/i);
   });
 });
 
