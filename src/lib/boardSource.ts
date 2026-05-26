@@ -19,6 +19,12 @@ import { log } from "./util.ts";
 
 export const AGENT_LABEL_PREFIX = "agent-";
 export const ISSUES_PAGE_SIZE = 250;
+// View-mode queries route through `customView.issues`, which Linear plans more
+// expensively than the top-level `issues` connection — at page size 250 with
+// `inverseRelations(first: 50)` the per-page complexity blows past Linear's
+// 10000 budget. Trim both to keep view-mode under the cap.
+export const VIEW_ISSUES_PAGE_SIZE = 100;
+export const VIEW_INVERSE_RELATIONS_PAGE_SIZE = 10;
 
 export interface Blocker {
   id: string;
@@ -321,7 +327,7 @@ async function fetchViewBoard(
           name
           issues(
             filter: { labels: { some: { name: { startsWith: $agentLabelPrefix } } } }
-            first: ${ISSUES_PAGE_SIZE}
+            first: ${VIEW_ISSUES_PAGE_SIZE}
             after: $after
             includeArchived: false
           ) {
@@ -337,7 +343,7 @@ async function fetchViewBoard(
               project { slugId }
               children { nodes { id } }
               labels { nodes { name } }
-              inverseRelations(first: 50, includeArchived: false) {
+              inverseRelations(first: ${VIEW_INVERSE_RELATIONS_PAGE_SIZE}, includeArchived: false) {
                 nodes {
                   type
                   issue {
