@@ -1,8 +1,10 @@
+import { homedir } from "node:os";
 import { resolve } from "node:path";
 
 import { runCommandAsync } from "../../lib/commandRunner.ts";
 import type { ResolvedConfig } from "../../lib/config.ts";
 import { ensureSandbox, sandboxExists } from "../../lib/dockerSandbox.ts";
+import { injectClaudeConfig } from "../../lib/sandboxClaudeInjection.ts";
 import { writeOutput } from "../../lib/util.ts";
 import { requireOnePositional, resolveModel, type SandboxModel, sandboxModels } from "./model.ts";
 
@@ -16,8 +18,32 @@ export async function ensureOne(
     sandbox: model.sandbox,
     mountPath: resolve(config.workspace.projectDir),
     gitDefaults: config.sandbox.gitDefaults,
+    hostHome: homedir(),
     ...(alreadyExists === undefined ? {} : { alreadyExists }),
   });
+}
+
+function syncTargets(config: ResolvedConfig, argv: string[]): SandboxModel[] {
+  const target = requireOnePositional(argv, "Usage: crew sandbox sync <model>|--all");
+  if (target === "--all") {
+    return sandboxModels(config);
+  }
+  return [resolveModel(config, target)];
+}
+
+export async function runSync(config: ResolvedConfig, argv: string[]): Promise<void> {
+  const targets = syncTargets(config, argv);
+  const hostHome = homedir();
+  for (const model of targets) {
+    if (model.sandbox.agent !== "claude") {
+      writeOutput(`${model.sandboxName}: skipped (claude-only)`);
+      continue;
+    }
+    writeOutput(`${model.sandboxName}: syncing host ~/.claude...`);
+    // oxlint-disable-next-line no-await-in-loop -- sandboxes are synced one at a time.
+    await injectClaudeConfig({ sandboxName: model.sandboxName, hostHome });
+    writeOutput(`${model.sandboxName}: synced`);
+  }
 }
 
 async function removeOne(model: SandboxModel): Promise<void> {

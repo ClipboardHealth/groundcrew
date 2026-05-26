@@ -1,5 +1,6 @@
 import { runCommandAsync } from "./commandRunner.ts";
 import type { SandboxDefinition } from "./config.ts";
+import { injectClaudeConfig } from "./sandboxClaudeInjection.ts";
 import { applyGitDefaults } from "./sandboxGitDefaults.ts";
 
 /**
@@ -52,6 +53,13 @@ interface EnsureSandboxArguments {
    * probe on its own.
    */
   alreadyExists?: boolean;
+  /**
+   * Host directory containing the `.claude` subtree. Used by the
+   * claude-only injection step to mirror skills, agents, commands,
+   * memory, and `CLAUDE.md` into the sandbox. Defaults to `homedir()`.
+   * Override in tests to point at a fixture without a real `.claude`.
+   */
+  hostHome?: string;
 }
 
 /**
@@ -99,5 +107,11 @@ export async function ensureSandbox(
   }
   if (arguments_.gitDefaults) {
     await applyGitDefaults({ sandboxName: arguments_.sandboxName }, signal);
+  }
+  if (arguments_.sandbox.agent === "claude" && arguments_.hostHome !== undefined) {
+    await injectClaudeConfig(
+      { sandboxName: arguments_.sandboxName, hostHome: arguments_.hostHome },
+      signal,
+    );
   }
 }

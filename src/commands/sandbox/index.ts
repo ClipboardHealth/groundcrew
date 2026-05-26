@@ -1,7 +1,7 @@
 import { loadConfig } from "../../lib/config.ts";
 import { runAuth } from "./auth.ts";
 import { runList } from "./inspect.ts";
-import { runEnsure, runRegenerate, runRemove } from "./lifecycle.ts";
+import { runEnsure, runRegenerate, runRemove, runSync } from "./lifecycle.ts";
 
 const USAGE = [
   "Usage: crew sandbox <verb> [...args]",
@@ -10,6 +10,8 @@ const USAGE = [
   "  list                      Show every groundcrew-owned sandbox known to sbx",
   "  ensure [<model>]          Provision the sandbox for one model, or all when omitted",
   "  regenerate <model>|--all  Tear down and recreate from current template/kits",
+  "  sync <model>|--all        Mirror a curated subset of host ~/.claude (skills, agents,",
+  "                            commands, memory, CLAUDE.md) into the claude sandbox",
   "  auth <model>|--all        Open a checkbox picker of every tool available in <model>'s",
   "                            sandbox and run the login flow for each one you select;",
   "                            --all loops through every configured sandbox in turn",
@@ -32,6 +34,10 @@ export async function sandboxCli(argv: string[]): Promise<void> {
     }
     case "regenerate": {
       await runRegenerate(await loadConfig(), rest);
+      return;
+    }
+    case "sync": {
+      await runSync(await loadConfig(), rest);
       return;
     }
     case "auth": {

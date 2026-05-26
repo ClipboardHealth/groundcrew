@@ -42,7 +42,9 @@ function isLoginExec(call: SbxCall): boolean {
 }
 
 function isStatusExec(call: SbxCall): boolean {
-  return call[0] === "sbx" && call[1][0] === "exec" && call[1][1] !== "-it";
+  return (
+    call[0] === "sbx" && call[1][0] === "exec" && call[1][1] !== "-it" && isStatusProbe(call[1])
+  );
 }
 
 function isStatusProbe(arguments_: readonly string[]): boolean {

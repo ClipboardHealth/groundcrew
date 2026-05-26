@@ -175,6 +175,38 @@ describe("crew sandbox ensure / regenerate / rm", () => {
     });
   });
 
+  describe("sync", () => {
+    it("syncs a single claude sandbox by name", async () => {
+      await sandboxCli(["sync", "claude"]);
+
+      const cpCalls = sbxCallsForVerb(runCommandMock, "cp");
+      expect(cpCalls.length).toBeGreaterThan(0);
+      expect(cpCalls.every((arguments_) => arguments_[2]?.startsWith("groundcrew-claude:"))).toBe(
+        true,
+      );
+    });
+
+    it("skips non-claude sandboxes with a clear notice", async () => {
+      await sandboxCli(["sync", "codex"]);
+
+      expect(consoleLog.output()).toContain("groundcrew-codex: skipped (claude-only)");
+      expect(sbxCallsForVerb(runCommandMock, "cp")).toHaveLength(0);
+    });
+
+    it("walks every sandbox model with --all, syncing only claude", async () => {
+      await sandboxCli(["sync", "--all"]);
+
+      const output = consoleLog.output();
+      expect(output).toContain("groundcrew-claude: synced");
+      expect(output).toContain("groundcrew-codex: skipped (claude-only)");
+      expect(output).toContain("groundcrew-cursor: skipped (claude-only)");
+    });
+
+    it("rejects sync without a target", async () => {
+      await expect(sandboxCli(["sync"])).rejects.toThrow(/Usage: crew sandbox sync <model>/);
+    });
+  });
+
   describe("rm", () => {
     it("invokes sbx rm --force <name> for the resolved model", async () => {
       await sandboxCli(["rm", "claude"]);
