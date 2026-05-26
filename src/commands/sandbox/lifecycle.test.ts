@@ -1,4 +1,7 @@
+import { homedir } from "node:os";
+
 import { loadConfig } from "../../lib/config.ts";
+import { injectClaudeConfig } from "../../lib/sandboxClaudeInjection.ts";
 import {
   captureConsoleError,
   captureConsoleLog,
@@ -29,7 +32,13 @@ vi.mock(import("../../lib/config.ts"), async (importOriginal) => {
   return { ...actual, loadConfig: vi.fn<typeof loadConfig>() };
 });
 
+vi.mock(import("../../lib/sandboxClaudeInjection.ts"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, injectClaudeConfig: vi.fn<typeof actual.injectClaudeConfig>() };
+});
+
 const loadConfigMock = vi.mocked(loadConfig);
+const injectClaudeConfigMock = vi.mocked(injectClaudeConfig);
 
 describe("crew sandbox ensure / regenerate / rm", () => {
   let consoleLog: ConsoleCapture;
@@ -40,6 +49,7 @@ describe("crew sandbox ensure / regenerate / rm", () => {
     consoleError = captureConsoleError();
     loadConfigMock.mockResolvedValue(makeSandboxConfig());
     mockSbxLs(runCommandMock, []);
+    injectClaudeConfigMock.mockResolvedValue();
   });
 
   afterEach(() => {
@@ -176,21 +186,22 @@ describe("crew sandbox ensure / regenerate / rm", () => {
   });
 
   describe("sync", () => {
-    it("syncs a single claude sandbox by name", async () => {
+    it("invokes injectClaudeConfig for a claude sandbox by name", async () => {
       await sandboxCli(["sync", "claude"]);
 
-      const cpCalls = sbxCallsForVerb(runCommandMock, "cp");
-      expect(cpCalls.length).toBeGreaterThan(0);
-      expect(cpCalls.every((arguments_) => arguments_[2]?.startsWith("groundcrew-claude:"))).toBe(
-        true,
-      );
+      expect(injectClaudeConfigMock).toHaveBeenCalledTimes(1);
+      expect(injectClaudeConfigMock).toHaveBeenCalledWith({
+        sandboxName: "groundcrew-claude",
+        hostHome: homedir(),
+      });
+      expect(consoleLog.output()).toContain("groundcrew-claude: synced");
     });
 
     it("skips non-claude sandboxes with a clear notice", async () => {
       await sandboxCli(["sync", "codex"]);
 
       expect(consoleLog.output()).toContain("groundcrew-codex: skipped (claude-only)");
-      expect(sbxCallsForVerb(runCommandMock, "cp")).toHaveLength(0);
+      expect(injectClaudeConfigMock).not.toHaveBeenCalled();
     });
 
     it("walks every sandbox model with --all, syncing only claude", async () => {
@@ -200,6 +211,7 @@ describe("crew sandbox ensure / regenerate / rm", () => {
       expect(output).toContain("groundcrew-claude: synced");
       expect(output).toContain("groundcrew-codex: skipped (claude-only)");
       expect(output).toContain("groundcrew-cursor: skipped (claude-only)");
+      expect(injectClaudeConfigMock).toHaveBeenCalledTimes(1);
     });
 
     it("rejects sync without a target", async () => {
