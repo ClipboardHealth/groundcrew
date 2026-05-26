@@ -8,6 +8,7 @@ export {
 export { orchestrate, type OrchestratorOptions } from "./commands/orchestrator.ts";
 export { resumeWorkspace, type ResumeWorkspaceOptions } from "./commands/resumeWorkspace.ts";
 export { setupWorkspace, type SetupWorkspaceOptions } from "./commands/setupWorkspace.ts";
+export { status, type StatusOptions } from "./commands/status.ts";
 export type { Config, ModelDefinition, ResolvedConfig, SourceConfig } from "./lib/config.ts";
 export { loadConfig } from "./lib/config.ts";
 export {
@@ -58,10 +59,3 @@ export {
   type TicketSource,
 } from "./lib/ticketSource.ts";
 // RepositoryResolutionError is exported via boardSource.ts above (single canonical location).
-export type { TicketCheck } from "./commands/ticketCheck.ts";
-export {
-  ticketDoctor,
-  type TicketDoctorDependencies,
-  type TicketDoctorResult,
-  type TicketDoctorVerdict,
-} from "./commands/ticketDoctor.ts";

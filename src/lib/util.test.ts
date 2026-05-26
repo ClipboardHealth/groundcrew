@@ -9,12 +9,14 @@ import { deleteEnvironmentVariable, setEnvironmentVariable } from "../testHelper
 import {
   errorMessage,
   getLinearClient,
+  lazyLinearClient,
   log,
   logEvent,
   readEnvironmentVariable,
   resolveLinearApiKey,
   setLogFile,
   sleep,
+  withLogOutputSuppressed,
 } from "./util.ts";
 
 describe(sleep, () => {
@@ -90,6 +92,22 @@ describe(logEvent, () => {
     expect(consoleLog.output()).toBe(
       'event=dispatch outcome=skipped reason=blocked blockers="TEAM-1:In Progress"',
     );
+    consoleLog.restore();
+  });
+});
+
+describe(withLogOutputSuppressed, () => {
+  it("suppresses log output and restores logging afterwards", async () => {
+    const consoleLog = captureConsoleLog();
+
+    await withLogOutputSuppressed(async () => {
+      log("hidden");
+      logEvent("hidden-event", {});
+    });
+    log("visible");
+
+    expect(consoleLog.output()).toMatch(/visible/);
+    expect(consoleLog.output()).not.toMatch(/hidden/);
     consoleLog.restore();
   });
 });
@@ -278,6 +296,19 @@ describe("Linear API key resolution", () => {
       setEnvironmentVariable("LINEAR_API_KEY", "");
 
       expect(() => getLinearClient()).toThrow(/GROUNDCREW_LINEAR_API_KEY or LINEAR_API_KEY/);
+    });
+  });
+
+  describe(lazyLinearClient, () => {
+    it("defers and caches Linear client creation", () => {
+      const client = new LinearClient({ apiKey: "lin_api_test" });
+      const factory = vi.fn<() => LinearClient>(() => client);
+      const actual = lazyLinearClient(factory);
+
+      expect(factory).not.toHaveBeenCalled();
+      expect(actual()).toBe(client);
+      expect(actual()).toBe(client);
+      expect(factory).toHaveBeenCalledTimes(1);
     });
   });
 });

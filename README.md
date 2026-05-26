@@ -17,24 +17,31 @@
 </p>
 
 ```text
-$ crew doctor --ticket HRD-446
-groundcrew doctor --ticket HRD-446 (Add retry logic to the sync job)
-────────────────────────────────────────────────────────────────────
+$ crew status HRD-446
+groundcrew status HRD-446
+========================
+ticket: hrd-446
 
-Resolution
-  [ok] Ticket exists in Linear ("Add retry logic to the sync job")
-  [ok] Status is Todo
-  [ok] Has agent-* label (agent-claude)
-  [ok] Model resolves from agent-* label (model "claude")
-  [ok] Description mentions known repo (owner/repo)
-  [ok] Resolved repo is cloned locally (/dev/workspaces/owner/repo)
+Config snapshot
+---------------
+projectDir: /dev/workspaces
+repositories: owner/repo
+git: remote=origin; defaultBranch=main
+workspaceKind: auto
 
-Eligibility
-  [ok] No active blockers
-  [ok] Model "claude" usage under sessionLimitPercentage (12% (limit 85%))
-  [ok] In-progress cap not hit (2/4 used)
+Worktree state
+--------------
+- owner/repo host
+  branch: rocky-hrd-446
+  git: dirty (2 modified, 1 untracked)
 
-→ would be dispatched on next tick
+Workspace probe
+---------------
+live: yes
+
+Last Linear status
+------------------
+In Progress (state.type=started) — Add retry logic to the sync job
 ```
 
 ## Why
@@ -75,7 +82,7 @@ In Linear, assign tickets to yourself and add an `agent-*` label (`agent-claude`
 ```bash
 crew init [--global | --local] [--force] [--dry-run]     # create a crew.config.ts
 crew doctor                                              # check setup
-crew doctor --ticket <TICKET>                            # diagnose a specific ticket
+crew status [<TICKET>]                                   # inspect current state or one ticket
 crew run                                                 # one-shot dispatch
 crew run --watch                                         # poll forever
 crew run --ticket <TICKET>                               # dispatch one ticket
@@ -185,72 +192,44 @@ Groundcrew auto-creates sandboxes when missing but never deletes them — they p
 
 </details>
 
-## Diagnosing tickets
+## Inspecting status
 
-`crew doctor --ticket <TICKET>` runs the full per-ticket lifecycle: pre-dispatch eligibility (Todo status, `agent-*` label, model resolution, repo mention, local clone, blockers, session usage, capacity) **and** post-dispatch local recovery (run state, host worktree, workspace pane, branches, PR). Prints a single verdict with a copy-pasteable next step.
+`crew status <TICKET>` prints a read-only snapshot for one ticket: resolved config, matching worktrees, workspace probe result, recorded run state, recent log lines for that ticket, and the latest Linear status. It does not fetch, recover, tear down, resume, or mutate any local/remote state.
 
-Verdict precedence: PR outcomes (`pr-open` > `pr-merged`) → recorded failed launches → `interrupted` (concrete recoverable git work first) → `in-flight` → `recoverable` → `unresolvable` > `ineligible` > `would-dispatch` > `lost`. Exits 0 on `would-dispatch`, `pr-open`, or `pr-merged`; any other verdict exits 1. `--watch` and `--ticket` are mutually exclusive. Use `codexbar usage` to inspect session windows directly.
+`crew status` with no ticket prints the current inventory: known worktrees with workspace/run-state presence plus live workspaces reported by the configured backend.
 
-Flags:
+Use `crew cleanup <TICKET>` to tear down stale worktrees and `crew resume <TICKET>` to reopen preserved work. Status is intentionally informational only.
 
-- `--no-linear` — skip the Linear GraphQL call. Resolution and Eligibility sections are skipped; verdicts that need only local state (`in-flight`, `recoverable`, `pr-open`, `pr-merged`, `lost`) still fire.
-- `--no-fetch` — skip the upfront `git fetch origin <branch>` before checking remote presence.
+## Doctor
 
-| Verdict          | What to do                                                                                    |
-| ---------------- | --------------------------------------------------------------------------------------------- |
-| `pr-open`        | Nothing — the PR is the source of truth.                                                      |
-| `pr-merged`      | Done.                                                                                         |
-| `in-flight`      | The ticket is still being worked on; the verdict line names the workspace pane to attach to.  |
-| `recoverable`    | Run the printed `nextStep` exactly.                                                           |
-| `interrupted`    | Resume the preserved worktree with `crew resume <ticket>` or inspect it by hand.              |
-| `failed-launch`  | Fix the launch failure, then run `crew resume <ticket>` or `crew cleanup <ticket>`.           |
-| `would-dispatch` | Pre-dispatch checks pass; the orchestrator will pick the ticket up on its next tick.          |
-| `ineligible`     | A resolution or eligibility check failed; the reason after the colon names the failing check. |
-| `unresolvable`   | The Linear ticket couldn't be fetched; the reason after the colon names the error.            |
-| `lost`           | No trace exists. Re-dispatch via `crew run --ticket <ticket>`.                                |
+`crew doctor` checks host prerequisites only: config validity, Linear reachability, required binaries on PATH, workspace backend availability, workspace.projectDir, local runner capability, and enabled model commands.
 
 <details>
-<summary>Sample output (post-dispatch)</summary>
-
-The Workspace section appends an attach hint to the pane name when the workspace backend exposes one (e.g. `tmux attach -t <session>:<pane>` or `cmux attach <name>`), so the verdict line is immediately actionable.
+<summary>Sample ticket status output</summary>
 
 ```text
-groundcrew doctor --ticket HRD-442 (Multi-event extractor: year inference can produce date_start > date_end)
-────────────────────────────────────────────────────────────────────────────────────────────────────────────
-
-Resolution
-  [ok] Ticket exists in Linear ("Multi-event extractor: year inference can produce date_start > date_end")
-  [ok] Status is Todo
-  (skipped — post-dispatch — pre-dispatch checks are irrelevant)
-
-Eligibility
-  (skipped — post-dispatch — pre-dispatch checks are irrelevant)
+groundcrew status HRD-442
+=========================
+ticket: hrd-442
 
 Run state
-  [ok] Local run state (running)
-  [ok] Recorded model (claude)
-  [ok] Recorded worktree (/Users/paul/dev/groundcrew-workspaces/herds-social/herds-hrd-442)
-  [ok] Recorded branch (paul-hrd-442)
-  [ok] Resume count (0)
+---------
+running; model=claude; updated=2026-05-26T00:01:00.000Z; resumes=0
 
 Worktree
-  [ok] Host worktree exists (/Users/paul/dev/groundcrew-workspaces/herds-social/herds-hrd-442)
-  [--] Working tree clean (0 modified, 1 untracked)
-  [ok] Branch checked out (paul-hrd-442)
+--------
+- herds-social host
+  branch: paul-hrd-442
+  dir: /Users/paul/dev/groundcrew-workspaces/herds-social/herds-hrd-442
+  git: dirty (0 modified, 1 untracked)
 
 Workspace
-  [ok] Workspace pane open (hrd-442 — attach: `tmux attach -t groundcrew:hrd-442`)
+---------
+live: yes
 
-Local branch
-  [ok] Local branch exists (paul-hrd-442, 2 ahead / 0 behind origin/main)
-
-Remote branch
-  [ok] Branch present on origin
-
-Pull request
-  [ok] Open PR for this branch (#224 https://github.com/herds-social/herds/pull/224)
-
-→ pr-open: https://github.com/herds-social/herds/pull/224 (#224)
+Last Linear status
+------------------
+In Progress (state.type=started) — Multi-event extractor: year inference can produce date_start > date_end
 ```
 
 </details>
@@ -261,11 +240,11 @@ Stops a live workspace pane while preserving the ticket worktree and branch. The
 
 ```bash
 crew interrupt HRD-442 --reason "wrong implementation direction"
-crew doctor --ticket HRD-442
+crew status HRD-442
 crew resume HRD-442
 ```
 
-The command closes the cmux/tmux workspace if present, records local run state, and never tears down the worktree. If the workspace was already gone but the worktree is still present, interrupt records that fact so doctor can point at the preserved branch instead of reporting a mystery ticket.
+The command closes the cmux/tmux workspace if present, records local run state, and never tears down the worktree. If the workspace was already gone but the worktree is still present, interrupt records that fact so status can show the preserved branch.
 
 ### `crew resume <TICKET>`
 
@@ -452,7 +431,7 @@ op run --env-file .env.1password -- crew doctor
 
 ## Troubleshooting
 
-First stop for "labeled but not on the board": `crew doctor --ticket <ticket>` lists every check the dispatcher runs and flags the failing one.
+First stop for "what exists locally right now": `crew status <ticket>` shows the ticket's worktrees, workspace presence, run state, logs, and latest Linear status. Use `crew doctor` when you need to verify host setup.
 
 <details>
 <summary>Safehouse-already-wrapped commands are not re-wrapped</summary>

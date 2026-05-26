@@ -11,12 +11,12 @@ import {
   loadConfig,
   type ResolvedConfig,
 } from "../lib/config.ts";
+import { createBoardSource } from "../lib/boardSource.ts";
 import { detectHostCapabilities, type HostCapabilities, which } from "../lib/host.ts";
 import { resolveLocalRunner } from "../lib/localRunner.ts";
 import { gatedModels } from "../lib/usage.ts";
-import { errorMessage, resolveLinearApiKey, writeOutput } from "../lib/util.ts";
+import { errorMessage, getLinearClient, resolveLinearApiKey, writeOutput } from "../lib/util.ts";
 import { resolveWorkspaceKind, type WorkspaceResolution } from "../lib/workspaces.ts";
-import { parseTicketDoctorFlags, runTicketDoctor } from "./ticketDoctor.ts";
 
 // Tokenization stops after this many non-flag tokens. Two is enough to
 // catch wrapper + wrapped CLI commands like `safehouse claude --foo`.
@@ -27,12 +27,6 @@ interface Check {
   ok: boolean;
   required: boolean;
   hint?: string;
-}
-
-export interface DoctorOptions {
-  ticket?: string;
-  /** Extra flags after `--ticket <id>`; currently `--no-linear` and `--no-fetch`. */
-  ticketArgv?: string[];
 }
 
 async function checkCmd(cmd: string, required: boolean, hint?: string): Promise<Check> {
@@ -49,22 +43,32 @@ async function checkCmd(cmd: string, required: boolean, hint?: string): Promise<
   return result;
 }
 
-function checkLinearApiKey(): Check {
+async function checkLinearReachability(config: ResolvedConfig): Promise<Check> {
   const resolved = resolveLinearApiKey();
-  if (resolved !== undefined) {
+  if (resolved === undefined) {
     return {
-      name: "linear api key",
+      name: "linear reachability",
+      ok: false,
+      required: true,
+      hint: "export $GROUNDCREW_LINEAR_API_KEY or $LINEAR_API_KEY",
+    };
+  }
+  try {
+    await createBoardSource({ config, client: getLinearClient() }).verify();
+    return {
+      name: "linear reachability",
       ok: true,
       required: true,
       hint: `set via $${resolved.source}`,
     };
+  } catch (error) {
+    return {
+      name: "linear reachability",
+      ok: false,
+      required: true,
+      hint: errorMessage(error),
+    };
   }
-  return {
-    name: "linear api key",
-    ok: false,
-    required: true,
-    hint: "export $GROUNDCREW_LINEAR_API_KEY or $LINEAR_API_KEY",
-  };
 }
 
 function checkDir(path: string, label: string): Check {
@@ -145,32 +149,7 @@ function format(check: Check): string {
   return `${tag}${check.name}${hint}`;
 }
 
-export async function doctor(options: DoctorOptions = {}): Promise<boolean> {
-  if (options.ticket !== undefined) {
-    return await doctorTicket(options.ticket, options.ticketArgv ?? []);
-  }
-  return await doctorHost();
-}
-
-async function doctorTicket(ticket: string, ticketArgv: string[]): Promise<boolean> {
-  try {
-    const flags = parseTicketDoctorFlags(ticketArgv);
-    return await runTicketDoctor({
-      ticket,
-      doLinear: flags.doLinear,
-      doFetch: flags.doFetch,
-    });
-  } catch (error) {
-    const displayTicket = ticket.toUpperCase();
-    const header = `groundcrew doctor --ticket ${displayTicket}`;
-    writeOutput(header);
-    writeOutput("=".repeat(header.length));
-    writeOutput(`[--] config: ${errorMessage(error)}`);
-    return false;
-  }
-}
-
-async function doctorHost(): Promise<boolean> {
+export async function doctor(): Promise<boolean> {
   writeOutput("groundcrew doctor");
   writeOutput("=================");
 
@@ -202,7 +181,7 @@ async function doctorHost(): Promise<boolean> {
   reportWorkspaceKind(config, workspaceOutcome);
 
   const checks: Check[] = [
-    checkLinearApiKey(),
+    await checkLinearReachability(config),
     await checkCmd("git", true, "https://git-scm.com/"),
     ...(await workspaceChecks(workspaceOutcome)),
     checkDir(config.workspace.projectDir, "workspace.projectDir"),

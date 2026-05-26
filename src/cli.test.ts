@@ -10,6 +10,7 @@ import { resumeWorkspaceCli } from "./commands/resumeWorkspace.ts";
 import { sandboxCli } from "./commands/sandbox/index.ts";
 import { setupReposCli } from "./commands/setupRepos.ts";
 import { setupWorkspaceCli } from "./commands/setupWorkspace.ts";
+import { statusCli } from "./commands/status.ts";
 import {
   createDefaultUpgradeCliOptions,
   upgradeCli,
@@ -47,6 +48,9 @@ vi.mock(import("./commands/setupWorkspace.ts"), () => ({
 vi.mock(import("./commands/setupRepos.ts"), () => ({
   setupReposCli: vi.fn<typeof setupReposCli>(),
 }));
+vi.mock(import("./commands/status.ts"), () => ({
+  statusCli: vi.fn<typeof statusCli>(),
+}));
 vi.mock(import("./commands/upgrade.ts"), () => ({
   upgradeCli: vi.fn<typeof upgradeCli>(),
   createDefaultUpgradeCliOptions: vi.fn<typeof createDefaultUpgradeCliOptions>(),
@@ -67,6 +71,7 @@ const sandboxMock = vi.mocked(sandboxCli);
 const setupMock = vi.mocked(setupWorkspaceCli);
 const setupReposMock = vi.mocked(setupReposCli);
 const cleanupMock = vi.mocked(cleanupWorkspaceCli);
+const statusMock = vi.mocked(statusCli);
 const upgradeCliMock = vi.mocked(upgradeCli);
 const createDefaultUpgradeCliOptionsMock = vi.mocked(createDefaultUpgradeCliOptions);
 const computeUpgradeNudgeMock = vi.mocked(computeUpgradeNudge);
@@ -133,6 +138,7 @@ describe(run, () => {
     setupMock.mockResolvedValue();
     setupReposMock.mockResolvedValue();
     cleanupMock.mockResolvedValue();
+    statusMock.mockResolvedValue();
     upgradeCliMock.mockResolvedValue();
     createDefaultUpgradeCliOptionsMock.mockResolvedValue(makeFakeUpgradeOptions(PACKAGE_VERSION));
     // oxlint-disable-next-line unicorn/no-useless-undefined -- exercises the no-nudge branch
@@ -315,49 +321,24 @@ describe(run, () => {
     expect(process.exitCode).toBeUndefined();
   });
 
-  it("dispatches `doctor --ticket <id>` to ticket diagnostics", async () => {
-    doctorMock.mockResolvedValue(true);
+  it("dispatches status with a ticket", async () => {
+    await run(["status", "team-220"]);
 
-    await run(["doctor", "--ticket", "team-220"]);
-
-    expect(doctorMock).toHaveBeenCalledWith({ ticket: "team-220", ticketArgv: [] });
+    expect(statusMock).toHaveBeenCalledWith(["team-220"]);
     expect(process.exitCode).toBeUndefined();
   });
 
-  it("forwards --no-linear and --no-fetch to the ticket diagnostic", async () => {
-    doctorMock.mockResolvedValue(true);
+  it("dispatches status inventory mode with no ticket", async () => {
+    await run(["status"]);
 
-    await run(["doctor", "--ticket", "team-220", "--no-linear", "--no-fetch"]);
-
-    expect(doctorMock).toHaveBeenCalledWith({
-      ticket: "team-220",
-      ticketArgv: ["--no-linear", "--no-fetch"],
-    });
+    expect(statusMock).toHaveBeenCalledWith([]);
+    expect(process.exitCode).toBeUndefined();
   });
 
-  it("accepts ticket-mode flags interleaved before --ticket", async () => {
-    doctorMock.mockResolvedValue(true);
-
-    await run(["doctor", "--no-fetch", "--ticket", "team-220"]);
-
-    expect(doctorMock).toHaveBeenCalledWith({
-      ticket: "team-220",
-      ticketArgv: ["--no-fetch"],
-    });
-  });
-
-  it("sets exit code to 1 when `doctor --ticket` fails", async () => {
-    doctorMock.mockResolvedValue(false);
-
+  it("rejects legacy doctor ticket mode", async () => {
     await run(["doctor", "--ticket", "team-220"]);
 
-    expect(process.exitCode).toBe(1);
-  });
-
-  it("rejects `doctor --ticket` with no value", async () => {
-    await run(["doctor", "--ticket"]);
-
-    expect(consoleError.output()).toContain("ticket id is required");
+    expect(consoleError.output()).toContain("Usage: crew doctor");
     expect(process.exitCode).toBe(1);
     expect(doctorMock).not.toHaveBeenCalled();
   });
@@ -365,15 +346,15 @@ describe(run, () => {
   it("rejects unknown args under `doctor`", async () => {
     await run(["doctor", "--bogus"]);
 
-    expect(consoleError.output()).toContain("unknown argument: --bogus");
+    expect(consoleError.output()).toContain("Usage: crew doctor");
     expect(process.exitCode).toBe(1);
     expect(doctorMock).not.toHaveBeenCalled();
   });
 
-  it("rejects ticket-mode flags without --ticket (host doctor has no flags)", async () => {
+  it("rejects removed ticket-mode flags under `doctor`", async () => {
     await run(["doctor", "--no-linear"]);
 
-    expect(consoleError.output()).toContain("--no-linear requires --ticket");
+    expect(consoleError.output()).toContain("Usage: crew doctor");
     expect(process.exitCode).toBe(1);
     expect(doctorMock).not.toHaveBeenCalled();
   });

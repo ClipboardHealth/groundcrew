@@ -9,6 +9,7 @@ import { resumeWorkspaceCli } from "./commands/resumeWorkspace.ts";
 import { sandboxCli } from "./commands/sandbox/index.ts";
 import { setupReposCli } from "./commands/setupRepos.ts";
 import { setupWorkspaceCli } from "./commands/setupWorkspace.ts";
+import { statusCli } from "./commands/status.ts";
 import { createDefaultUpgradeCliOptions, upgradeCli } from "./commands/upgrade.ts";
 import {
   computeUpgradeNudge,
@@ -117,34 +118,10 @@ async function maybeRunUpgradeNudge(metadata: PackageMetadata): Promise<void> {
 }
 
 async function doctorCli(argv: string[]): Promise<void> {
-  let ticket: string | undefined;
-  const remainingArgs: string[] = [];
-
-  for (let index = 0; index < argv.length; index += 1) {
-    const argument = argv[index];
-    if (argument === "--ticket") {
-      ticket = readTicketArgument(argv, index, "doctor");
-      index += 1;
-      continue;
-    }
-    if (argument === "--no-linear" || argument === "--no-fetch") {
-      remainingArgs.push(argument);
-      continue;
-    }
-    throw new Error(`crew doctor: unknown argument: ${argument}`);
+  if (argv.length > 0) {
+    throw new Error("Usage: crew doctor");
   }
-
-  if (ticket === undefined) {
-    if (remainingArgs.length > 0) {
-      throw new Error(
-        `crew doctor: ${remainingArgs[0]} requires --ticket (host doctor mode has no flags)`,
-      );
-    }
-    const ok = await doctor();
-    process.exitCode = ok ? process.exitCode : 1;
-    return;
-  }
-  const ok = await doctor({ ticket, ticketArgv: remainingArgs });
+  const ok = await doctor();
   process.exitCode = ok ? process.exitCode : 1;
 }
 
@@ -160,10 +137,14 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
     invoke: runCli,
   },
   doctor: {
-    summary:
-      "Verify prereqs, or diagnose one ticket with --ticket (full lifecycle: dispatch eligibility + local-state recovery)",
-    usage: "[--ticket <ticket> [--no-linear] [--no-fetch]]",
+    summary: "Verify host prerequisites (PATH tools, config validity, Linear reachability)",
+    usage: "",
     invoke: doctorCli,
+  },
+  status: {
+    summary: "Print read-only groundcrew state, or one ticket's local/Linear status",
+    usage: "[<ticket>]",
+    invoke: statusCli,
   },
   cleanup: {
     summary: "Tear down a worktree",

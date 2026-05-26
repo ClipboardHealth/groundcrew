@@ -40,9 +40,19 @@ export function writeError(message: string): void {
 // so tests don't write to the host filesystem; the CLI arms it after
 // loadConfig() resolves `logging.file`.
 let logFilePath: string | undefined;
+let suppressedLogDepth = 0;
 
 export function setLogFile(path: string | undefined): void {
   logFilePath = path;
+}
+
+export async function withLogOutputSuppressed<T>(operation: () => Promise<T>): Promise<T> {
+  suppressedLogDepth += 1;
+  try {
+    return await operation();
+  } finally {
+    suppressedLogDepth -= 1;
+  }
 }
 
 function appendLogLine(line: string): void {
@@ -62,6 +72,9 @@ function appendLogLine(line: string): void {
 }
 
 export function log(message: string): void {
+  if (suppressedLogDepth > 0) {
+    return;
+  }
   const timestamp = new Date().toLocaleTimeString();
   const line = `[${timestamp}] ${message}`;
   writeOutput(line);
@@ -79,6 +92,9 @@ function formatLogEventFieldValue(value: Exclude<LogEventFieldValue, undefined>)
 }
 
 export function logEvent(event: string, fields: Record<string, LogEventFieldValue>): void {
+  if (suppressedLogDepth > 0) {
+    return;
+  }
   const parts = [`event=${formatLogEventFieldValue(event)}`];
   for (const [key, value] of Object.entries(fields)) {
     if (value === undefined) {
@@ -128,8 +144,8 @@ export function getLinearClient(): LinearClient {
 /**
  * Returns a zero-arg getter that lazily constructs (and caches) a Linear
  * client on first call. Used by CLI entry points that may not need the
- * client at all (e.g. `--no-linear`), so we avoid blowing up on a missing
- * API key when no Linear call is actually made. The factory is taken as a
+ * client at all, so we avoid blowing up on a missing API key when no Linear
+ * call is actually made. The factory is taken as a
  * parameter (rather than calling `getLinearClient` directly) so callers can
  * pass their own module-level import of `getLinearClient` — that binding
  * respects `vi.mock` intercepts, whereas an intra-module reference would

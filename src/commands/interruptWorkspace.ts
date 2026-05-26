@@ -137,7 +137,7 @@ export async function interruptWorkspace(
     },
   });
   log(`Interrupted ${ticket}; worktree preserved at ${source.worktreeDir}`);
-  log(`Next: crew doctor --ticket ${ticket}`);
+  log(`Next: crew status ${ticket}`);
 }
 
 export async function interruptWorkspaceCli(argv: string[]): Promise<void> {
