@@ -67,10 +67,17 @@ api.npmjs.org
 registry.npmjs.org
 www.npmjs.com
 
+# Google APIs
+developers.google.com
+drive.googleapis.com
+forms.googleapis.com
+www.googleapis.com
+
 # Developer tooling
 app.terraform.io
 buf.build
 cdn.playwright.dev
+cloud.nx.app
 fastdl.mongodb.org
 formulae.brew.sh
 hub.docker.com
