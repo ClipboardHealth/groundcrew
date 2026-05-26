@@ -69,6 +69,7 @@ function doneIssue(id: string, overrides: Partial<Issue> = {}): Issue {
     title: "Title",
     status: "Done",
     statusId: "state-done",
+    stateType: "completed",
     assignee: "Alice",
     updatedAt: "2025-01-01T00:00:00.000Z",
     repository: "repo-a",

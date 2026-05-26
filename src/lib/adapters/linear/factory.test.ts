@@ -12,7 +12,7 @@ import * as linearIssueStatus from "../../linearIssueStatus.ts";
 import * as util from "../../util.ts";
 import {
   canonicalBlockerStatus,
-  canonicalStatusForProject,
+  canonicalIssueStatus,
   createLinearTicketSource,
   toCanonicalIssue,
 } from "./factory.ts";
@@ -69,6 +69,7 @@ function linearIssue(overrides: Partial<LinearIssue> = {}): LinearIssue {
     title: overrides.title ?? "Title",
     status: overrides.status ?? "Todo",
     statusId: overrides.statusId ?? "state-todo",
+    stateType: overrides.stateType ?? "unstarted",
     assignee: overrides.assignee ?? "Alice",
     updatedAt: overrides.updatedAt ?? "2026-01-01T00:00:00Z",
     repository: overrides.repository,
@@ -80,29 +81,68 @@ function linearIssue(overrides: Partial<LinearIssue> = {}): LinearIssue {
   };
 }
 
-describe(canonicalStatusForProject, () => {
+describe(canonicalIssueStatus, () => {
   it("maps the project's `todo` name to canonical 'todo'", () => {
-    expect(canonicalStatusForProject("Todo", project())).toBe("todo");
+    expect(canonicalIssueStatus(linearIssue({ status: "Todo" }), makeConfig())).toBe("todo");
   });
   it("maps `inProgress` to canonical 'in-progress'", () => {
-    expect(canonicalStatusForProject("In Progress", project())).toBe("in-progress");
+    expect(canonicalIssueStatus(linearIssue({ status: "In Progress" }), makeConfig())).toBe(
+      "in-progress",
+    );
   });
   it("maps `done` to canonical 'done'", () => {
-    expect(canonicalStatusForProject("Done", project())).toBe("done");
+    expect(canonicalIssueStatus(linearIssue({ status: "Done" }), makeConfig())).toBe("done");
   });
   it("maps a status listed in the project's terminal array to 'done'", () => {
-    const p = project({
-      statuses: {
-        todo: "Todo",
-        inProgress: "In Progress",
-        done: "Done",
-        terminal: ["Done", "Cancelled"],
+    const config = makeConfig({
+      linear: {
+        projects: [
+          project({
+            statuses: {
+              todo: "Todo",
+              inProgress: "In Progress",
+              done: "Done",
+              terminal: ["Done", "Cancelled"],
+            },
+          }),
+        ],
       },
     });
-    expect(canonicalStatusForProject("Cancelled", p)).toBe("done");
+    expect(canonicalIssueStatus(linearIssue({ status: "Cancelled" }), config)).toBe("done");
   });
   it("returns 'other' for any status name not in the project's mapping", () => {
-    expect(canonicalStatusForProject("Triage", project())).toBe("other");
+    expect(canonicalIssueStatus(linearIssue({ status: "Triage" }), makeConfig())).toBe("other");
+  });
+  it("in view mode maps by stateType, not status name", () => {
+    const viewConfig = makeConfig({
+      linear: {
+        projects: [],
+        views: [{ viewSlug: "v-61e51e3730dd", slugId: "61e51e3730dd" }],
+      },
+    });
+    expect(
+      canonicalIssueStatus(linearIssue({ status: "Anything", stateType: "started" }), viewConfig),
+    ).toBe("in-progress");
+    expect(
+      canonicalIssueStatus(linearIssue({ status: "Anything", stateType: "completed" }), viewConfig),
+    ).toBe("done");
+    expect(
+      canonicalIssueStatus(linearIssue({ status: "Anything", stateType: "canceled" }), viewConfig),
+    ).toBe("done");
+    expect(
+      canonicalIssueStatus(linearIssue({ status: "Anything", stateType: "unstarted" }), viewConfig),
+    ).toBe("todo");
+  });
+  it("in view mode falls back to 'other' for unknown stateTypes (backlog/triage/...)", () => {
+    const viewConfig = makeConfig({
+      linear: {
+        projects: [],
+        views: [{ viewSlug: "v-61e51e3730dd", slugId: "61e51e3730dd" }],
+      },
+    });
+    expect(
+      canonicalIssueStatus(linearIssue({ status: "Backlog", stateType: "backlog" }), viewConfig),
+    ).toBe("other");
   });
 });
 
@@ -165,6 +205,36 @@ describe(canonicalBlockerStatus, () => {
       projectSlugId: "ffffffffffff",
     };
     expect(canonicalBlockerStatus(blocker, makeConfig())).toBe("other");
+  });
+  it("returns 'other' when the configured project's statuses don't match a non-terminal blocker status", () => {
+    const blocker: LinearBlocker = {
+      id: "x-1",
+      title: "x",
+      status: "Some Other Column",
+      stateType: undefined,
+      projectSlugId: "aaaaaaaaaaaa",
+    };
+    expect(canonicalBlockerStatus(blocker, makeConfig())).toBe("other");
+  });
+  it("in view mode maps blocker stateType to canonical status", () => {
+    const viewConfig = makeConfig({
+      linear: {
+        projects: [],
+        views: [{ viewSlug: "v-61e51e3730dd", slugId: "61e51e3730dd" }],
+      },
+    });
+    expect(
+      canonicalBlockerStatus(
+        {
+          id: "b",
+          title: "b",
+          status: undefined,
+          stateType: "completed",
+          projectSlugId: undefined,
+        },
+        viewConfig,
+      ),
+    ).toBe("done");
   });
   it("collapses to 'other' when the blocker has no projectSlugId at all", () => {
     const blocker: LinearBlocker = {

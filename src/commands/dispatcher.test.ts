@@ -78,6 +78,7 @@ function todoIssue(overrides: Partial<Issue> = {}): Issue {
     title: "Title",
     status: "Todo",
     statusId: "state-todo",
+    stateType: "unstarted",
     assignee: "Alice",
     updatedAt: "2025-01-01T00:00:00.000Z",
     repository: "repo-a",

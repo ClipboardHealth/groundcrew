@@ -5,12 +5,9 @@
  * orchestrator's user-facing output.
  */
 
-import type { LinearClient } from "@linear/sdk";
-
 import { type BoardSource, type BoardState, createBoardSource } from "../lib/boardSource.ts";
 import { type Board, createBoard } from "../lib/board.ts";
 import { buildSources } from "../lib/buildSources.ts";
-import { createViewBoardSource } from "../lib/adapters/linear/viewSource.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { getUsageByModel, type UsageByModel } from "../lib/usage.ts";
 import { errorMessage, getLinearClient, log, sleep } from "../lib/util.ts";
@@ -83,7 +80,7 @@ export async function orchestrate(options: OrchestratorOptions): Promise<void> {
   const config = await loadConfig();
   const client = getLinearClient();
 
-  const boardSource: BoardSource = selectBoardSource(config, client);
+  const boardSource: BoardSource = createBoardSource({ config, client });
   await boardSource.verify();
 
   // Verify any pluggable sources declared in config.sources (shell adapters,
@@ -203,11 +200,4 @@ async function runWatchLoop(
     process.off("SIGINT", handleSigint);
     process.off("SIGTERM", handleSigterm);
   }
-}
-
-export function selectBoardSource(config: ResolvedConfig, client: LinearClient): BoardSource {
-  const [view] = config.linear.views ?? [];
-  return view === undefined
-    ? createBoardSource({ config, client })
-    : createViewBoardSource({ client, config, view });
 }

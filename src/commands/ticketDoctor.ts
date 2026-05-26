@@ -467,6 +467,7 @@ async function runEligibilityChecks(arguments_: EligibilityCheckArguments): Prom
     title: raw.title,
     status: raw.stateName,
     statusId: "",
+    stateType: raw.stateType ?? "",
     assignee: "",
     updatedAt: "",
     teamId: raw.teamId,

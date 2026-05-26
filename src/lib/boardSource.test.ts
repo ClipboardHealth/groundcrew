@@ -11,7 +11,6 @@ import {
   isTerminalStatusForIssue,
   resolveModelFor,
   resolveRepositoryFor,
-  TicketNotInViewError,
   UnknownProjectError,
   type Blocker,
   type Issue,
@@ -127,6 +126,86 @@ type RawRequest = (query: string, variables?: Record<string, unknown>) => Promis
 
 interface ClientStub {
   client: { rawRequest: ReturnType<typeof vi.fn<RawRequest>> };
+}
+
+const VIEW_VERIFY_OK = {
+  data: { customView: { id: "vu", name: "v", slugId: "61e51e3730dd" } },
+};
+const VIEW_PAGE_END = { hasNextPage: false, endCursor: null };
+
+interface ViewNodeOptions {
+  identifier: string;
+  type?: string;
+  description?: string | null;
+  children?: number;
+  assignee?: { name: string } | null;
+  project?: { slugId: string } | null;
+  team?: { id: string; key: string } | null;
+}
+
+function viewNode(overrides: ViewNodeOptions) {
+  return {
+    id: `id-${overrides.identifier}`,
+    identifier: overrides.identifier,
+    title: "T",
+    description: overrides.description === undefined ? "Touches repo-a." : overrides.description,
+    updatedAt: "2026-01-01T00:00:00Z",
+    state: { id: "s", name: "S", type: overrides.type ?? "unstarted" },
+    team: overrides.team === undefined ? { id: "team-1", key: "ENG" } : overrides.team,
+    assignee: overrides.assignee === undefined ? { name: "Alice" } : overrides.assignee,
+    project: overrides.project === undefined ? { slugId: "p" } : overrides.project,
+    children: {
+      nodes: Array.from({ length: overrides.children ?? 0 }, (_v, i) => ({ id: `c${i}` })),
+    },
+    labels: { nodes: [{ name: "agent-claude" }] },
+    inverseRelations: { nodes: [], pageInfo: { hasNextPage: false } },
+  };
+}
+
+function viewIssuesResponse(
+  nodes: unknown[],
+  pageInfo: { hasNextPage: boolean; endCursor: string | null } = VIEW_PAGE_END,
+) {
+  return { data: { customView: { id: "vu", name: "v", issues: { nodes, pageInfo } } } };
+}
+
+function viewRouter(
+  router: { verify?: unknown; issues?: unknown } = {},
+): ReturnType<typeof vi.fn<RawRequest>> {
+  const verify = router.verify ?? VIEW_VERIFY_OK;
+  const issuesQueue = toIssuesQueue(router.issues);
+  return vi.fn<RawRequest>(async (query: string) => {
+    if (query.includes("VerifyView")) {
+      return verify;
+    }
+    return issuesQueue.shift() ?? viewIssuesResponse([]);
+  });
+}
+
+function toIssuesQueue(issues: unknown): unknown[] {
+  if (Array.isArray(issues)) {
+    // oxlint-disable-next-line typescript/no-unsafe-assignment -- issues is typed unknown; spread copies its elements without inspecting their shape
+    return [...issues];
+  }
+  if (issues === undefined) {
+    return [viewIssuesResponse([])];
+  }
+  return [issues];
+}
+
+const VIEW_CONFIG_FIXTURE_OVERRIDES = {
+  linear: {
+    projects: [],
+    views: [{ viewSlug: "v-61e51e3730dd", slugId: "61e51e3730dd" }],
+  },
+} satisfies Partial<ResolvedConfig>;
+
+function viewBoardSource(rawRequest: ReturnType<typeof vi.fn<RawRequest>>) {
+  return createBoardSource({
+    config: makeConfig(VIEW_CONFIG_FIXTURE_OVERRIDES),
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- view-mode tests narrow LinearClient through the rawRequest surface used by boardSource
+    client: { client: { rawRequest } } as unknown as LinearClient,
+  });
 }
 
 function makeClient(options: {
@@ -880,6 +959,83 @@ describe(createBoardSource, () => {
       expect(first?.hasMoreBlockers).toBe(true);
     });
   });
+
+  describe("view mode", () => {
+    it("verifies once and propagates stateType onto each Issue", async () => {
+      const rawRequest = viewRouter({
+        issues: viewIssuesResponse([viewNode({ identifier: "ENG-1", type: "started" })]),
+      });
+      const source = viewBoardSource(rawRequest);
+      await source.verify();
+      const state = await source.fetch();
+      expect(state.issues.map((i) => ({ id: i.id, stateType: i.stateType }))).toStrictEqual([
+        { id: "eng-1", stateType: "started" },
+      ]);
+      expect(rawRequest.mock.calls.filter(([q]) => q.includes("VerifyView"))).toHaveLength(1);
+    });
+
+    it("falls back to defaults when assignee, project, team, description are missing", async () => {
+      const rawRequest = viewRouter({
+        issues: viewIssuesResponse([
+          viewNode({
+            identifier: "ENG-9",
+            assignee: null,
+            project: null,
+            team: null,
+            description: null,
+          }),
+        ]),
+      });
+      const state = await viewBoardSource(rawRequest).fetch();
+      expect(state.issues[0]).toMatchObject({
+        assignee: "Unassigned",
+        teamId: "",
+        projectSlugId: "",
+        hasMoreBlockers: false,
+        blockers: [],
+        repository: undefined,
+      });
+    });
+
+    it("filters backlog/triage and emits parentSkips only for unstarted parents", async () => {
+      const rawRequest = viewRouter({
+        issues: viewIssuesResponse([
+          viewNode({ identifier: "ENG-B", type: "backlog" }),
+          viewNode({ identifier: "ENG-T", type: "triage" }),
+          viewNode({ identifier: "ENG-P", type: "unstarted", children: 2 }),
+          viewNode({ identifier: "ENG-PD", type: "started", children: 1 }),
+          viewNode({ identifier: "ENG-OK", type: "unstarted" }),
+        ]),
+      });
+      const state = await viewBoardSource(rawRequest).fetch();
+      expect(state.issues.map((i) => i.id)).toStrictEqual(["eng-ok"]);
+      expect(state.parentSkips).toStrictEqual([{ id: "eng-p", title: "T", childCount: 2 }]);
+    });
+
+    it("paginates view issues via endCursor", async () => {
+      const rawRequest = viewRouter({
+        issues: [
+          viewIssuesResponse([viewNode({ identifier: "ENG-1" })], {
+            hasNextPage: true,
+            endCursor: "CUR1",
+          }),
+          viewIssuesResponse([viewNode({ identifier: "ENG-2" })]),
+        ],
+      });
+      const state = await viewBoardSource(rawRequest).fetch();
+      expect(state.issues.map((i) => i.id)).toStrictEqual(["eng-1", "eng-2"]);
+    });
+
+    it("throws when customView disappears mid-fetch", async () => {
+      const rawRequest = viewRouter({ issues: { data: { customView: null } } });
+      await expect(viewBoardSource(rawRequest).fetch()).rejects.toThrow(/disappeared mid-fetch/);
+    });
+
+    it("rejects verification when the view slugId resolves to no matching view", async () => {
+      const rawRequest = viewRouter({ verify: { data: { customView: null } } });
+      await expect(viewBoardSource(rawRequest).verify()).rejects.toThrow(/No Linear view found/);
+    });
+  });
 });
 
 describe(fetchResolvedIssue, () => {
@@ -1065,78 +1221,6 @@ describe(fetchResolvedIssue, () => {
     });
     expect(actual.projectSlugId).toBe("");
   });
-
-  it("throws TicketNotInViewError when the ticket is not in the configured view", async () => {
-    const client = makeClient({ pages: [[]] });
-    client.client.rawRequest
-      .mockResolvedValueOnce({
-        data: {
-          issue: {
-            id: "uuid-1",
-            title: "Title",
-            description: "Touches repo-a.",
-            team: { id: "team-default" },
-            project: { slugId: "aaaaaaaaaaaa" },
-            state: { name: "Todo", type: "unstarted" },
-            children: { nodes: [] },
-            labels: { nodes: [{ name: "agent-claude" }] },
-          },
-        },
-      })
-      .mockResolvedValueOnce({
-        data: {
-          customView: { id: "view-uuid", issues: { nodes: [] } },
-        },
-      });
-
-    await expect(
-      fetchResolvedIssue({
-        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests use the LinearClient surface consumed by boardSource
-        client: client as unknown as LinearClient,
-        config: makeConfig({
-          linear: {
-            projects: [],
-            views: [{ viewSlug: "view-61e51e3730dd", slugId: "61e51e3730dd" }],
-          },
-        }),
-        ticket: "team-1",
-      }),
-    ).rejects.toThrow(TicketNotInViewError);
-  });
-
-  it("throws when the view slugId resolves to no matching view", async () => {
-    const client = makeClient({ pages: [[]] });
-    client.client.rawRequest
-      .mockResolvedValueOnce({
-        data: {
-          issue: {
-            id: "uuid-1",
-            title: "Title",
-            description: "Touches repo-a.",
-            team: { id: "team-default" },
-            project: { slugId: "aaaaaaaaaaaa" },
-            state: { name: "Todo", type: "unstarted" },
-            children: { nodes: [] },
-            labels: { nodes: [{ name: "agent-claude" }] },
-          },
-        },
-      })
-      .mockResolvedValueOnce({ data: { customView: null } });
-
-    await expect(
-      fetchResolvedIssue({
-        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests use the LinearClient surface consumed by boardSource
-        client: client as unknown as LinearClient,
-        config: makeConfig({
-          linear: {
-            projects: [],
-            views: [{ viewSlug: "view-61e51e3730dd", slugId: "61e51e3730dd" }],
-          },
-        }),
-        ticket: "team-1",
-      }),
-    ).rejects.toThrow(/No Linear view found with slugId "61e51e3730dd"/);
-  });
 });
 
 function makeIssue(overrides: Partial<Issue> = {}): Issue {
@@ -1146,6 +1230,7 @@ function makeIssue(overrides: Partial<Issue> = {}): Issue {
     title: overrides.title ?? "Title",
     status: overrides.status ?? "Done",
     statusId: overrides.statusId ?? "state-done",
+    stateType: overrides.stateType ?? "completed",
     assignee: overrides.assignee ?? "Alice",
     updatedAt: overrides.updatedAt ?? "2025-01-01T00:00:00.000Z",
     repository: overrides.repository,

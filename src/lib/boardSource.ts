@@ -47,6 +47,8 @@ export interface Issue {
   title: string;
   status: string;
   statusId: string;
+  /** Linear workflow `state.type` (`unstarted` | `started` | `completed` | `canceled` | `backlog` | `triage`). View mode reads this to canonicalize without per-project status config. */
+  stateType: string;
   assignee: string;
   updatedAt: string;
   /**
@@ -130,52 +132,6 @@ export class UnknownProjectError extends Error {
   }
 }
 
-export class TicketNotInViewError extends Error {
-  public readonly ticket: string;
-  public readonly viewSlug: string;
-  public constructor(input: { ticket: string; viewSlug: string }) {
-    const { ticket, viewSlug } = input;
-    super(
-      `Ticket ${ticket} is not in Linear view "${viewSlug}". In view mode, the ticket must be reachable through the configured view's filter.`,
-    );
-    this.name = "TicketNotInViewError";
-    this.ticket = ticket;
-    this.viewSlug = viewSlug;
-  }
-}
-
-async function assertTicketInView(arguments_: {
-  client: LinearClient;
-  view: { viewSlug: string; slugId: string };
-  ticketUuid: string;
-  ticket: string;
-}): Promise<void> {
-  const { client, view, ticketUuid, ticket } = arguments_;
-  const response: { data?: unknown } = await client.client.rawRequest(
-    `query VerifyTicketInView($id: String!, $uuid: ID!) {
-      customView(id: $id) {
-        id
-        issues(filter: { id: { eq: $uuid } }, includeArchived: false, first: 1) {
-          nodes { id }
-        }
-      }
-    }`,
-    { id: view.slugId, uuid: ticketUuid },
-  );
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- shape is fixed by our GraphQL query above
-  const { customView } = response.data as {
-    customView: { id: string; issues: { nodes: { id: string }[] } } | null;
-  };
-  if (customView === null) {
-    throw new Error(
-      `No Linear view found with slugId "${view.slugId}" (linear.views[].viewSlug "${view.viewSlug}"). Check the slug, archived status, or API-key access.`,
-    );
-  }
-  if (customView.issues.nodes.length === 0) {
-    throw new TicketNotInViewError({ ticket, viewSlug: view.viewSlug });
-  }
-}
-
 export interface BoardSource {
   /**
    * Look up the configured projects and warn loudly on any that aren't
@@ -195,6 +151,25 @@ interface BoardSourceDeps {
 
 export function createBoardSource(deps: BoardSourceDeps): BoardSource {
   const { config, client } = deps;
+  const [view] = config.linear.views ?? [];
+  if (view !== undefined) {
+    let uuid: string | undefined;
+    const ensureUuid = async (): Promise<string> => {
+      if (uuid !== undefined) {
+        return uuid;
+      }
+      uuid = await verifyView(client, view);
+      return uuid;
+    };
+    return {
+      async verify() {
+        await ensureUuid();
+      },
+      async fetch() {
+        return await fetchViewBoard(client, config, await ensureUuid());
+      },
+    };
+  }
   return {
     async verify() {
       await verifyProjects(client, config);
@@ -203,6 +178,29 @@ export function createBoardSource(deps: BoardSourceDeps): BoardSource {
       return await fetchBoard(client, config);
     },
   };
+}
+
+async function verifyView(
+  client: LinearClient,
+  view: { viewSlug: string; slugId: string },
+): Promise<string> {
+  const response: { data?: unknown } = await client.client.rawRequest(
+    `query VerifyView($id: String!) {
+      customView(id: $id) { id name slugId }
+    }`,
+    { id: view.slugId },
+  );
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- shape is fixed by our GraphQL query above
+  const { customView } = response.data as {
+    customView: { id: string; name: string; slugId: string } | null;
+  };
+  if (customView === null) {
+    throw new Error(
+      `No Linear view found with slugId "${view.slugId}" (linear.views[].viewSlug "${view.viewSlug}"). Check the slug, archived status, or API-key access.`,
+    );
+  }
+  log(`Resolved Linear view: ${customView.name} (slugId ${customView.slugId})`);
+  return customView.id;
 }
 
 export function projectFor(issue: Issue, config: ResolvedConfig): ResolvedProjectConfig {
@@ -246,7 +244,7 @@ interface IssueNode {
   title: string;
   description?: string;
   updatedAt: string;
-  state?: { id: string; name: string };
+  state?: { id: string; name: string; type: string };
   team?: { id: string; key: string };
   assignee?: { name: string } | null;
   project?: { slugId: string } | null;
@@ -307,6 +305,131 @@ async function verifyProjects(client: LinearClient, config: ResolvedConfig): Pro
   }
 }
 
+async function fetchViewBoard(
+  client: LinearClient,
+  config: ResolvedConfig,
+  viewUuid: string,
+): Promise<BoardState> {
+  const nodes: IssueNode[] = [];
+  let after: string | null = null;
+  for (;;) {
+    // oxlint-disable-next-line no-await-in-loop -- pagination cursor depends on the previous response
+    const response: { data?: unknown } = await client.client.rawRequest(
+      `query ViewIssues($viewId: String!, $agentLabelPrefix: String!, $after: String) {
+        customView(id: $viewId) {
+          id
+          name
+          issues(
+            filter: { labels: { some: { name: { startsWith: $agentLabelPrefix } } } }
+            first: ${ISSUES_PAGE_SIZE}
+            after: $after
+            includeArchived: false
+          ) {
+            nodes {
+              id
+              identifier
+              title
+              description
+              updatedAt
+              state { id name type }
+              team { id key }
+              assignee { name }
+              project { slugId }
+              children { nodes { id } }
+              labels { nodes { name } }
+              inverseRelations(first: 50, includeArchived: false) {
+                nodes {
+                  type
+                  issue {
+                    identifier
+                    title
+                    state { name type }
+                    project { slugId }
+                  }
+                }
+                pageInfo { hasNextPage }
+              }
+            }
+            pageInfo { hasNextPage endCursor }
+          }
+        }
+      }`,
+      { viewId: viewUuid, agentLabelPrefix: AGENT_LABEL_PREFIX, after },
+    );
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- shape is fixed by our GraphQL query above
+    const { customView } = response.data as {
+      customView: {
+        issues: {
+          nodes: IssueNode[];
+          pageInfo: { hasNextPage: boolean; endCursor: string | null };
+        };
+      } | null;
+    };
+    if (customView === null) {
+      throw new Error(
+        `Linear view uuid "${viewUuid}" disappeared mid-fetch. Verify the view still exists and the API key still has access.`,
+      );
+    }
+    nodes.push(...customView.issues.nodes);
+    if (!customView.issues.pageInfo.hasNextPage) {
+      break;
+    }
+    after = customView.issues.pageInfo.endCursor;
+  }
+
+  const issues: Issue[] = [];
+  const parentSkips: ParentSkip[] = [];
+  for (const node of nodes) {
+    /* v8 ignore next @preserve -- ViewIssues query always selects state.type; the ?? "" fallback guards a degenerate Linear response */
+    const stateType = node.state?.type ?? "";
+    if (stateType === "backlog" || stateType === "triage") {
+      continue;
+    }
+    if (node.children.nodes.length > 0) {
+      if (stateType === "unstarted") {
+        parentSkips.push({
+          id: node.identifier.toLowerCase(),
+          title: node.title,
+          childCount: node.children.nodes.length,
+        });
+      }
+      continue;
+    }
+    issues.push(issueFromViewNode(node, config));
+  }
+  return { timestamp: new Date().toISOString(), issues, parentSkips };
+}
+
+function issueFromViewNode(node: IssueNode, config: ResolvedConfig): Issue {
+  const modelResolution = resolveModelFor({ labels: node.labels.nodes, config });
+  warnIfDisabledFallback(node.identifier, modelResolution, config);
+  const { repository, model } = resolveTodoAgentMetadata({
+    ticket: node.identifier,
+    description: node.description ?? undefined,
+    modelResolution,
+    config,
+    isTodo: node.state?.type === "unstarted",
+  });
+  return buildLinearIssue({
+    identifier: node.identifier,
+    uuid: node.id,
+    title: node.title,
+    /* v8 ignore next @preserve -- caller filters out backlog/triage, leaving state defined */
+    status: node.state?.name ?? "Unknown",
+    /* v8 ignore next @preserve -- caller filters out backlog/triage, leaving state defined */
+    statusId: node.state?.id ?? "",
+    /* v8 ignore next @preserve -- caller filters out backlog/triage, leaving state defined */
+    stateType: node.state?.type ?? "",
+    assigneeName: node.assignee?.name,
+    updatedAt: node.updatedAt,
+    repository,
+    model,
+    teamId: node.team?.id ?? "",
+    projectSlugId: node.project?.slugId?.toLowerCase() ?? "",
+    inverseRelations: node.inverseRelations,
+  });
+}
+
 async function fetchBoard(client: LinearClient, config: ResolvedConfig): Promise<BoardState> {
   const nodes: IssueNode[] = [];
   let after: string | null = null;
@@ -354,7 +477,7 @@ async function fetchBoard(client: LinearClient, config: ResolvedConfig): Promise
             title
             description
             updatedAt
-            state { id name }
+            state { id name type }
             team { id key }
             assignee { name }
             project { slugId }
@@ -476,12 +599,13 @@ export function resolveTodoAgentMetadata(arguments_: {
   return { repository, model };
 }
 
-export function buildLinearIssue(input: {
+function buildLinearIssue(input: {
   identifier: string;
   uuid: string;
   title: string;
   status: string;
   statusId: string;
+  stateType: string;
   assigneeName: string | undefined;
   updatedAt: string;
   repository: string | undefined;
@@ -496,6 +620,7 @@ export function buildLinearIssue(input: {
     title: input.title,
     status: input.status,
     statusId: input.statusId,
+    stateType: input.stateType,
     assignee: input.assigneeName ?? "Unassigned",
     updatedAt: input.updatedAt,
     repository: input.repository,
@@ -537,6 +662,8 @@ function issueFromNode(node: IssueNode, config: ResolvedConfig): Issue {
     status: node.state?.name ?? "Unknown",
     /* v8 ignore next @preserve -- post-filter guarantees `state` is defined */
     statusId: node.state?.id ?? "",
+    /* v8 ignore next @preserve -- post-filter guarantees `state` is defined */
+    stateType: node.state?.type ?? "",
     assigneeName: node.assignee?.name,
     updatedAt: node.updatedAt,
     repository,
@@ -893,26 +1020,38 @@ export function resolveModelFor(arguments_: {
   return { kind: "matched", model: parsed.model };
 }
 
-export interface ResolvedAgentMetadata {
-  uuid: string;
-  title: string;
-  description: string;
-  repository: string;
-  model: string;
-  teamId: string;
-  projectSlugId: string | undefined;
-  labels: { name: string }[];
-  stateName: string;
-}
-
-export async function resolveAgentMetadata(arguments_: {
+/**
+ * `agent-any` collapses to `models.default` here — manual setup doesn't run
+ * the usage-gated `any` resolver, so the caller gets a concrete model name
+ * instead of a sentinel that downstream code can't interpret. In project mode
+ * throws `UnknownProjectError` when the ticket lives in an unconfigured
+ * project. In view mode the project check is skipped and `projectSlugId`
+ * falls back to `""` when the ticket has no project.
+ */
+export async function fetchResolvedIssue(arguments_: {
   client: LinearClient;
   config: ResolvedConfig;
   ticket: string;
-}): Promise<ResolvedAgentMetadata> {
+}): Promise<ResolvedIssue> {
   const { client, config, ticket } = arguments_;
   const upper = ticket.toUpperCase();
   const raw = await fetchRawLinearIssue({ client, ticket });
+  const isViewMode = (config.linear.views ?? []).length > 0;
+  let projectSlugId: string;
+  if (isViewMode) {
+    projectSlugId = raw.projectSlugId ?? "";
+  } else {
+    const project =
+      raw.projectSlugId === undefined ? undefined : findProjectBySlugId(config, raw.projectSlugId);
+    if (project === undefined) {
+      throw new UnknownProjectError({
+        ticket: upper,
+        projectSlugId: raw.projectSlugId,
+        configuredSlugIds: config.linear.projects.map((entry) => entry.slugId),
+      });
+    }
+    projectSlugId = project.slugId;
+  }
   const repositoryResolution = resolveRepositoryFor({
     description: raw.description,
     config,
@@ -939,55 +1078,7 @@ export async function resolveAgentMetadata(arguments_: {
     repository: repositoryResolution.repository,
     model,
     teamId: raw.teamId,
-    projectSlugId: raw.projectSlugId,
-    labels: raw.labels,
-    stateName: raw.stateName,
-  };
-}
-
-export async function fetchResolvedIssue(arguments_: {
-  client: LinearClient;
-  config: ResolvedConfig;
-  ticket: string;
-}): Promise<ResolvedIssue> {
-  const { client, config, ticket } = arguments_;
-  const upper = ticket.toUpperCase();
-  const resolved = await resolveAgentMetadata(arguments_);
-  // View mode short-circuit: there are no per-project status configs to look
-  // up, so we don't enforce `linear.projects` membership — instead, enforce
-  // that the ticket is reachable through the configured view.
-  const [view] = config.linear.views ?? [];
-  if (view !== undefined) {
-    await assertTicketInView({ client, view, ticketUuid: resolved.uuid, ticket: upper });
-    return {
-      uuid: resolved.uuid,
-      title: resolved.title,
-      description: resolved.description,
-      repository: resolved.repository,
-      model: resolved.model,
-      teamId: resolved.teamId,
-      projectSlugId: resolved.projectSlugId ?? "",
-    };
-  }
-  const project =
-    resolved.projectSlugId === undefined
-      ? undefined
-      : findProjectBySlugId(config, resolved.projectSlugId);
-  if (project === undefined) {
-    throw new UnknownProjectError({
-      ticket: upper,
-      projectSlugId: resolved.projectSlugId,
-      configuredSlugIds: config.linear.projects.map((entry) => entry.slugId),
-    });
-  }
-  return {
-    uuid: resolved.uuid,
-    title: resolved.title,
-    description: resolved.description,
-    repository: resolved.repository,
-    model: resolved.model,
-    teamId: resolved.teamId,
-    projectSlugId: project.slugId,
+    projectSlugId,
   };
 }
 
