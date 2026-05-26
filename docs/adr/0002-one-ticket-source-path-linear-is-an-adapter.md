@@ -1,5 +1,7 @@
 # One ticket-source path; Linear is just an adapter
 
+**Status:** Accepted; not yet implemented. Implementation is tracked under STAFF-1033 / STAFF-1034 (lands PR #89). The past/present tense below describes the decided end state, not the current code — at time of writing `orchestrator.ts` still calls `boardSource.fetch()` and `boardSource.ts` still exists.
+
 There is a single path from board state to dispatch: `Source[] → Board → Dispatcher`. Linear is a `TicketSource` adapter like any other; the dispatcher and eligibility code never import Linear-specific logic. We deleted the legacy `boardSource.ts → dispatcher` path (which made Linear the only source that could actually start agents) and moved the live Linear logic into `src/lib/adapters/linear/`, because the half-wired parallel architecture meant declared shell sources validated at startup but contributed zero tickets to dispatch — defeating the entire pluggable-source point.
 
 ## Considered Options
