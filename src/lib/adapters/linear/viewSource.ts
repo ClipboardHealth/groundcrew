@@ -55,26 +55,25 @@ interface ResolvedView {
 
 export async function verifyView(arguments_: VerifyViewArguments): Promise<ResolvedView> {
   const { client, viewSlugId, viewSlug } = arguments_;
+  // Linear's `customView(id: ...)` accepts either the view UUID or the 12-char
+  // slugId — the slugId is shorter and what users pasted from the URL.
   const response: { data?: unknown } = await client.client.rawRequest(
-    `query VerifyView($slugId: String!) {
-      customViews(filter: { slugId: { eq: $slugId } }, first: 1) {
-        nodes { id name slugId }
-      }
+    `query VerifyView($id: String!) {
+      customView(id: $id) { id name slugId }
     }`,
-    { slugId: viewSlugId },
+    { id: viewSlugId },
   );
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- shape is fixed by our GraphQL query above
-  const { customViews } = response.data as {
-    customViews: { nodes: { id: string; name: string; slugId: string }[] };
+  const { customView } = response.data as {
+    customView: { id: string; name: string; slugId: string } | null;
   };
-  const [match] = customViews.nodes;
-  if (match === undefined) {
+  if (customView === null) {
     throw new Error(
       `No Linear view found with slugId "${viewSlugId}" (linear.views[].viewSlug "${viewSlug}"). Check the slug, archived status, or API-key access.`,
     );
   }
-  log(`Resolved Linear view: ${match.name} (slugId ${match.slugId})`);
-  return { id: match.id, name: match.name };
+  log(`Resolved Linear view: ${customView.name} (slugId ${customView.slugId})`);
+  return { id: customView.id, name: customView.name };
 }
 
 function createViewUuidResolver(arguments_: VerifyViewArguments): () => Promise<string> {

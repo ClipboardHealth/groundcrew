@@ -1818,11 +1818,11 @@ describe("selectBoardSource", () => {
     const rawRequest = vi.fn<(query: string) => Promise<{ data: unknown }>>(
       routedRawRequest([
         {
-          match: "customViews",
-          data: { customViews: { nodes: [{ id: "vu", name: "v", slugId: "61e51e3730dd" }] } },
+          match: "VerifyView",
+          data: { customView: { id: "vu", name: "v", slugId: "61e51e3730dd" } },
         },
         {
-          match: "customView",
+          match: "ViewIssues",
           data: {
             customView: {
               id: "vu",
@@ -1839,6 +1839,6 @@ describe("selectBoardSource", () => {
     await source.verify();
     const state = await source.fetch();
     expect(state.issues).toStrictEqual([]);
-    expect(rawRequest.mock.calls.filter(([q]) => q.includes("customViews"))).toHaveLength(1);
+    expect(rawRequest.mock.calls.filter(([q]) => q.includes("VerifyView"))).toHaveLength(1);
   });
 });

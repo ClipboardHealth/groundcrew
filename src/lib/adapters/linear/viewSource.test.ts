@@ -148,9 +148,7 @@ describe(canonicalStatusForStateType, () => {
 describe(verifyView, () => {
   it("resolves the view by slugId and returns its uuid", async () => {
     const client = mockClient({
-      customViews: {
-        nodes: [{ id: "uuid-1", name: "My View", slugId: "61e51e3730dd" }],
-      },
+      customView: { id: "uuid-1", name: "My View", slugId: "61e51e3730dd" },
     });
     const resolved = await verifyView({
       client: asClient(client),
@@ -161,7 +159,7 @@ describe(verifyView, () => {
   });
 
   it("throws with the slugId when no view matches", async () => {
-    const client = mockClient({ customViews: { nodes: [] } });
+    const client = mockClient({ customView: null });
     await expect(
       verifyView({
         client: asClient(client),
@@ -309,12 +307,12 @@ const VIEW = { viewSlug: "foo-61e51e3730dd", slugId: "61e51e3730dd" };
 function viewLookupResponses(nodes: unknown[]) {
   return [
     {
-      match: "customViews",
+      match: "VerifyView",
       response: {
-        data: { customViews: { nodes: [{ id: "vu", name: "v", slugId: "61e51e3730dd" }] } },
+        data: { customView: { id: "vu", name: "v", slugId: "61e51e3730dd" } },
       },
     },
-    { match: "customView", response: viewIssuesResponse(nodes) },
+    { match: "ViewIssues", response: viewIssuesResponse(nodes) },
   ];
 }
 
@@ -330,7 +328,7 @@ describe(createViewBoardSource, () => {
     });
     await source.verify();
     await source.fetch();
-    expect(rawRequest.mock.calls.filter(([q]) => q.includes("customViews"))).toHaveLength(1);
+    expect(rawRequest.mock.calls.filter(([q]) => q.includes("VerifyView"))).toHaveLength(1);
   });
 });
 

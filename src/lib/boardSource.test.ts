@@ -11,6 +11,7 @@ import {
   isTerminalStatusForIssue,
   resolveModelFor,
   resolveRepositoryFor,
+  TicketNotInViewError,
   UnknownProjectError,
   type Blocker,
   type Issue,
@@ -988,6 +989,153 @@ describe(fetchResolvedIssue, () => {
         ticket: "team-1",
       }),
     ).rejects.toThrow(/has no associated Linear project/);
+  });
+
+  it("in view mode returns the ticket without enforcing linear.projects membership", async () => {
+    const client = makeClient({ pages: [[]] });
+    client.client.rawRequest
+      .mockResolvedValueOnce({
+        data: {
+          issue: {
+            id: "uuid-1",
+            title: "Title",
+            description: "Touches repo-a.",
+            team: { id: "team-default" },
+            project: { slugId: "off-config-cccccccccccc" },
+            state: { name: "Todo", type: "unstarted" },
+            children: { nodes: [] },
+            labels: { nodes: [{ name: "agent-claude" }] },
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        data: {
+          customView: { id: "view-uuid", issues: { nodes: [{ id: "uuid-1" }] } },
+        },
+      });
+
+    const actual = await fetchResolvedIssue({
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests use the LinearClient surface consumed by boardSource
+      client: client as unknown as LinearClient,
+      config: makeConfig({
+        linear: {
+          projects: [],
+          views: [{ viewSlug: "view-61e51e3730dd", slugId: "61e51e3730dd" }],
+        },
+      }),
+      ticket: "team-1",
+    });
+    expect(actual.projectSlugId).toBe("off-config-cccccccccccc");
+    expect(actual.repository).toBe("repo-a");
+  });
+
+  it("in view mode returns projectSlugId='' when the ticket has no project", async () => {
+    const client = makeClient({ pages: [[]] });
+    client.client.rawRequest
+      .mockResolvedValueOnce({
+        data: {
+          issue: {
+            id: "uuid-1",
+            title: "Title",
+            description: "Touches repo-a.",
+            team: { id: "team-default" },
+            project: null,
+            state: { name: "Todo", type: "unstarted" },
+            children: { nodes: [] },
+            labels: { nodes: [{ name: "agent-claude" }] },
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        data: {
+          customView: { id: "view-uuid", issues: { nodes: [{ id: "uuid-1" }] } },
+        },
+      });
+
+    const actual = await fetchResolvedIssue({
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests use the LinearClient surface consumed by boardSource
+      client: client as unknown as LinearClient,
+      config: makeConfig({
+        linear: {
+          projects: [],
+          views: [{ viewSlug: "view-61e51e3730dd", slugId: "61e51e3730dd" }],
+        },
+      }),
+      ticket: "team-1",
+    });
+    expect(actual.projectSlugId).toBe("");
+  });
+
+  it("throws TicketNotInViewError when the ticket is not in the configured view", async () => {
+    const client = makeClient({ pages: [[]] });
+    client.client.rawRequest
+      .mockResolvedValueOnce({
+        data: {
+          issue: {
+            id: "uuid-1",
+            title: "Title",
+            description: "Touches repo-a.",
+            team: { id: "team-default" },
+            project: { slugId: "aaaaaaaaaaaa" },
+            state: { name: "Todo", type: "unstarted" },
+            children: { nodes: [] },
+            labels: { nodes: [{ name: "agent-claude" }] },
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        data: {
+          customView: { id: "view-uuid", issues: { nodes: [] } },
+        },
+      });
+
+    await expect(
+      fetchResolvedIssue({
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests use the LinearClient surface consumed by boardSource
+        client: client as unknown as LinearClient,
+        config: makeConfig({
+          linear: {
+            projects: [],
+            views: [{ viewSlug: "view-61e51e3730dd", slugId: "61e51e3730dd" }],
+          },
+        }),
+        ticket: "team-1",
+      }),
+    ).rejects.toThrow(TicketNotInViewError);
+  });
+
+  it("throws when the view slugId resolves to no matching view", async () => {
+    const client = makeClient({ pages: [[]] });
+    client.client.rawRequest
+      .mockResolvedValueOnce({
+        data: {
+          issue: {
+            id: "uuid-1",
+            title: "Title",
+            description: "Touches repo-a.",
+            team: { id: "team-default" },
+            project: { slugId: "aaaaaaaaaaaa" },
+            state: { name: "Todo", type: "unstarted" },
+            children: { nodes: [] },
+            labels: { nodes: [{ name: "agent-claude" }] },
+          },
+        },
+      })
+      .mockResolvedValueOnce({ data: { customView: null } });
+
+    await expect(
+      fetchResolvedIssue({
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests use the LinearClient surface consumed by boardSource
+        client: client as unknown as LinearClient,
+        config: makeConfig({
+          linear: {
+            projects: [],
+            views: [{ viewSlug: "view-61e51e3730dd", slugId: "61e51e3730dd" }],
+          },
+        }),
+        ticket: "team-1",
+      }),
+    ).rejects.toThrow(/No Linear view found with slugId "61e51e3730dd"/);
   });
 });
 

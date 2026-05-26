@@ -130,6 +130,52 @@ export class UnknownProjectError extends Error {
   }
 }
 
+export class TicketNotInViewError extends Error {
+  public readonly ticket: string;
+  public readonly viewSlug: string;
+  public constructor(input: { ticket: string; viewSlug: string }) {
+    const { ticket, viewSlug } = input;
+    super(
+      `Ticket ${ticket} is not in Linear view "${viewSlug}". In view mode, the ticket must be reachable through the configured view's filter.`,
+    );
+    this.name = "TicketNotInViewError";
+    this.ticket = ticket;
+    this.viewSlug = viewSlug;
+  }
+}
+
+async function assertTicketInView(arguments_: {
+  client: LinearClient;
+  view: { viewSlug: string; slugId: string };
+  ticketUuid: string;
+  ticket: string;
+}): Promise<void> {
+  const { client, view, ticketUuid, ticket } = arguments_;
+  const response: { data?: unknown } = await client.client.rawRequest(
+    `query VerifyTicketInView($id: String!, $uuid: ID!) {
+      customView(id: $id) {
+        id
+        issues(filter: { id: { eq: $uuid } }, includeArchived: false, first: 1) {
+          nodes { id }
+        }
+      }
+    }`,
+    { id: view.slugId, uuid: ticketUuid },
+  );
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- shape is fixed by our GraphQL query above
+  const { customView } = response.data as {
+    customView: { id: string; issues: { nodes: { id: string }[] } } | null;
+  };
+  if (customView === null) {
+    throw new Error(
+      `No Linear view found with slugId "${view.slugId}" (linear.views[].viewSlug "${view.viewSlug}"). Check the slug, archived status, or API-key access.`,
+    );
+  }
+  if (customView.issues.nodes.length === 0) {
+    throw new TicketNotInViewError({ ticket, viewSlug: view.viewSlug });
+  }
+}
+
 export interface BoardSource {
   /**
    * Look up the configured projects and warn loudly on any that aren't
@@ -904,9 +950,25 @@ export async function fetchResolvedIssue(arguments_: {
   config: ResolvedConfig;
   ticket: string;
 }): Promise<ResolvedIssue> {
-  const { config, ticket } = arguments_;
+  const { client, config, ticket } = arguments_;
   const upper = ticket.toUpperCase();
   const resolved = await resolveAgentMetadata(arguments_);
+  // View mode short-circuit: there are no per-project status configs to look
+  // up, so we don't enforce `linear.projects` membership — instead, enforce
+  // that the ticket is reachable through the configured view.
+  const [view] = config.linear.views ?? [];
+  if (view !== undefined) {
+    await assertTicketInView({ client, view, ticketUuid: resolved.uuid, ticket: upper });
+    return {
+      uuid: resolved.uuid,
+      title: resolved.title,
+      description: resolved.description,
+      repository: resolved.repository,
+      model: resolved.model,
+      teamId: resolved.teamId,
+      projectSlugId: resolved.projectSlugId ?? "",
+    };
+  }
   const project =
     resolved.projectSlugId === undefined
       ? undefined
