@@ -1,7 +1,5 @@
 import { readFileSync } from "node:fs";
 
-import { getLinearClient } from "../lib/adapters/linear/client.ts";
-import { fetchRawLinearIssue } from "../lib/adapters/linear/fetch.ts";
 import { type Board, createBoard } from "../lib/board.ts";
 import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
@@ -45,19 +43,6 @@ function writeSection(title: string): void {
   writeOutput("-".repeat(title.length));
 }
 
-function writeConfigSnapshot(config: ResolvedConfig): void {
-  writeSection("Config snapshot");
-  writeOutput(`projectDir: ${config.workspace.projectDir}`);
-  writeOutput(`repositories: ${config.workspace.knownRepositories.join(", ")}`);
-  writeOutput(`git: remote=${config.git.remote}; defaultBranch=${config.git.defaultBranch}`);
-  writeOutput(`workspaceKind: ${config.workspaceKind}`);
-  writeOutput(`local.runner: ${config.local.runner}`);
-  writeOutput(
-    `models: default=${config.models.default}; enabled=${Object.keys(config.models.definitions).join(", ")}`,
-  );
-  writeOutput(`logFile: ${config.logging.file}`);
-}
-
 function formatDirtiness(dirtiness: WorktreeDirtiness): string {
   if (dirtiness.kind === "dirty") {
     return `dirty (${dirtiness.modified} modified, ${dirtiness.untracked} untracked)`;
@@ -66,7 +51,7 @@ function formatDirtiness(dirtiness: WorktreeDirtiness): string {
 }
 
 async function writeTicketWorktrees(config: ResolvedConfig, ticket: string): Promise<void> {
-  writeSection("Worktree state");
+  writeSection("Worktrees");
   const entries = worktrees.findByTicket(config, ticket);
   if (entries.length === 0) {
     writeOutput("(none)");
@@ -83,7 +68,6 @@ async function writeTicketWorktrees(config: ResolvedConfig, ticket: string): Pro
       branchName: entry.branchName,
     });
     writeOutput(`- ${entry.repository} ${entry.kind}`);
-    writeOutput(`  ticket: ${entry.ticket}`);
     writeOutput(`  branch: ${entry.branchName}`);
     writeOutput(`  dir: ${entry.dir}`);
     writeOutput(`  git: ${formatDirtiness(dirtiness)}`);
@@ -101,13 +85,11 @@ function workspaceProbeUnavailableLine(
     : `Workspace probe unavailable: ${errorMessage(probe.error)}`;
 }
 
-function writeTicketWorkspace(probe: WorkspaceProbe, ticket: string): void {
-  writeSection("Workspace probe");
+function ticketWorkspaceText(probe: WorkspaceProbe, ticket: string): string {
   if (probe.kind === "unavailable") {
-    writeOutput(workspaceProbeUnavailableLine(probe));
-    return;
+    return workspaceProbeUnavailableLine(probe);
   }
-  writeOutput(`live: ${probe.names.has(ticket) ? "yes" : "no"}`);
+  return probe.names.has(ticket) ? "live" : "not live";
 }
 
 function formatRunState(state: RunState | undefined): string {
@@ -133,18 +115,47 @@ function recentTicketLogLines(config: ResolvedConfig, ticket: string): string[] 
     .slice(-RECENT_LOG_LINE_COUNT);
 }
 
-async function linearStatus(ticket: string): Promise<string> {
+async function resolveTicketSource(
+  config: ResolvedConfig,
+  ticket: string,
+): Promise<SourceIssue | undefined> {
+  const board = await buildBoardForStatus(config);
+  return await withLogOutputSuppressed(async () => await board.resolveOne(ticket));
+}
+
+function formatTicketSourceIssue(issue: SourceIssue): string {
+  const base = `${issue.id}  ${issue.status}`;
+  return issue.url === undefined ? base : `${base}  ${issue.url}`;
+}
+
+async function writeTicketSourceStatus(
+  config: ResolvedConfig,
+  ticket: string,
+  cachedTitle: string | undefined,
+): Promise<void> {
+  writeSection("Ticket source");
   try {
-    const issue = await fetchRawLinearIssue({
-      client: getLinearClient(),
-      ticket,
-    });
-    // `stateType` is "" when Linear returned a stateless ticket; surface that
-    // as "unknown" rather than an empty token.
-    return `${issue.stateName} (state.type=${issue.stateType || "unknown"}) — ${issue.title}`;
+    const issue = await resolveTicketSource(config, ticket);
+    if (issue === undefined) {
+      writeOutput("(not found)");
+      return;
+    }
+    writeOutput(formatTicketSourceIssue(issue));
+    if (issue.title !== cachedTitle) {
+      writeOutput(`title: ${issue.title}`);
+    }
   } catch (error) {
-    return `unavailable: ${errorMessage(error)}`;
+    writeOutput(`unavailable: ${errorMessage(error)}`);
   }
+}
+
+function writeRecentLogs(config: ResolvedConfig, ticket: string): void {
+  const logLines = recentTicketLogLines(config, ticket);
+  if (logLines.length === 0) {
+    return;
+  }
+  writeSection("Recent logs");
+  writeOutput(logLines.join("\n"));
 }
 
 async function writeTicketStatus(config: ResolvedConfig, rawTicket: string): Promise<void> {
@@ -153,31 +164,20 @@ async function writeTicketStatus(config: ResolvedConfig, rawTicket: string): Pro
   writeOutput(`groundcrew status ${displayTicket}`);
   writeOutput("=".repeat(`groundcrew status ${displayTicket}`.length));
 
-  // Cached title and url are local; surface them before the
-  // network-dependent Linear section so the header is informative even
-  // when offline.
   const runState = readRunState(config, ticket);
+  const workspaceProbe = await withLogOutputSuppressed(async () => await workspaces.probe(config));
   writeOutput(
     runState?.url === undefined ? `ticket: ${ticket}` : `ticket: ${ticket}  ${runState.url}`,
   );
   if (runState?.title !== undefined) {
     writeOutput(`title: ${runState.title}`);
   }
+  writeOutput(`run: ${formatRunState(runState)}`);
+  writeOutput(`workspace: ${ticketWorkspaceText(workspaceProbe, ticket)}`);
 
-  writeConfigSnapshot(config);
   await writeTicketWorktrees(config, ticket);
-  const workspaceProbe = await withLogOutputSuppressed(async () => await workspaces.probe(config));
-  writeTicketWorkspace(workspaceProbe, ticket);
-
-  writeSection("Run state");
-  writeOutput(formatRunState(runState));
-
-  writeSection("Recent logs");
-  const logLines = recentTicketLogLines(config, ticket);
-  writeOutput(logLines.length === 0 ? "(none)" : logLines.join("\n"));
-
-  writeSection("Last Linear status");
-  writeOutput(await linearStatus(ticket));
+  writeRecentLogs(config, ticket);
+  await writeTicketSourceStatus(config, ticket, runState?.title);
 }
 
 /**

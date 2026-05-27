@@ -2,10 +2,6 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { LinearClient } from "@linear/sdk";
-
-import { getLinearClient } from "../lib/adapters/linear/client.ts";
-import { fetchRawLinearIssue, type RawLinearIssue } from "../lib/adapters/linear/fetch.ts";
 import { buildSources } from "../lib/buildSources.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { findPullRequestsForBranch } from "../lib/pullRequests.ts";
@@ -20,17 +16,9 @@ vi.mock(import("../lib/config.ts"), async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, loadConfig: vi.fn<typeof loadConfig>() };
 });
-vi.mock(import("../lib/adapters/linear/fetch.ts"), async (importOriginal) => {
-  const actual = await importOriginal();
-  return { ...actual, fetchRawLinearIssue: vi.fn<typeof fetchRawLinearIssue>() };
-});
 vi.mock(import("../lib/runState.ts"), async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, readRunState: vi.fn<typeof readRunState>() };
-});
-vi.mock(import("../lib/adapters/linear/client.ts"), async (importOriginal) => {
-  const actual = await importOriginal();
-  return { ...actual, getLinearClient: vi.fn<typeof getLinearClient>() };
 });
 vi.mock(import("../lib/workspaces.ts"), async (importOriginal) => {
   const actual = await importOriginal();
@@ -69,8 +57,6 @@ vi.mock(import("../lib/pullRequests.ts"), async (importOriginal) => {
   };
 });
 
-const fetchRawLinearIssueMock = vi.mocked(fetchRawLinearIssue);
-const getLinearClientMock = vi.mocked(getLinearClient);
 const loadConfigMock = vi.mocked(loadConfig);
 const readRunStateMock = vi.mocked(readRunState);
 const workspaceProbeMock = vi.mocked(workspaces.probe);
@@ -102,10 +88,6 @@ function sourceIssue(overrides: Partial<SourceIssue> = {}): SourceIssue {
 async function noop(): Promise<void> {
   await Promise.resolve();
 }
-async function noopUndefined<T>(): Promise<T | undefined> {
-  await Promise.resolve();
-  return undefined as T | undefined;
-}
 
 async function flushMicrotasks(count = 10): Promise<void> {
   for (let index = 0; index < count; index += 1) {
@@ -119,14 +101,19 @@ function fakeSource(
   overrides: {
     name?: string;
     fetch?: TicketSource["fetch"];
+    resolveOne?: TicketSource["resolveOne"];
   } = {},
 ): TicketSource {
   const fetch: TicketSource["fetch"] = overrides.fetch ?? (async () => [...issues]);
+  const resolveOne: TicketSource["resolveOne"] =
+    overrides.resolveOne ??
+    (async (naturalId) =>
+      issues.find((issue) => issue.id === `${issue.source}:${naturalId.toLowerCase()}`));
   return {
     name: overrides.name ?? "linear",
     verify: noop,
     fetch,
-    resolveOne: noopUndefined,
+    resolveOne,
     markInProgress: noop,
   };
 }
@@ -172,24 +159,6 @@ function worktree(overrides: Partial<WorktreeEntry> = {}): WorktreeEntry {
   };
 }
 
-function rawIssue(overrides: Partial<RawLinearIssue> = {}): RawLinearIssue {
-  return {
-    uuid: "uuid-1",
-    title: "Fix the thing",
-    description: "",
-    teamId: "team-1",
-    labels: [],
-    stateName: "Todo",
-    stateType: "unstarted",
-    stateId: "state-todo",
-    blockers: [],
-    hasMoreBlockers: false,
-    hasChildren: false,
-    url: "https://linear.app/example/issue/TEAM-1",
-    ...overrides,
-  };
-}
-
 function runState(overrides: Partial<RunState> = {}): RunState {
   return {
     ticket: "team-1",
@@ -206,11 +175,6 @@ function runState(overrides: Partial<RunState> = {}): RunState {
   };
 }
 
-function linearClient(): LinearClient {
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- status tests never call the client directly; it is passed through to the mocked fetcher.
-  return { client: {} } as unknown as LinearClient;
-}
-
 describe(status, () => {
   let consoleLog: ConsoleCapture;
   let temporaryDirectory: string;
@@ -222,12 +186,11 @@ describe(status, () => {
     vi.setSystemTime(new Date("2026-05-26T02:14:30.000Z"));
     consoleLog = captureConsoleLog();
     temporaryDirectory = mkdtempSync(join(tmpdir(), "groundcrew-status-test-"));
-    getLinearClientMock.mockReturnValue(linearClient());
-    fetchRawLinearIssueMock.mockResolvedValue(rawIssue());
     readRunStateMock.mockReturnValue(runState({ reason: "manual pause" }));
     workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-1"]) });
     workspaceAccessHintMock.mockReset();
     findPullRequestsMock.mockResolvedValue([]);
+    buildSourcesMock.mockResolvedValue([]);
     findByTicketMock.mockReturnValue([worktree()]);
     listWorktreesMock.mockReturnValue([worktree()]);
     probeWorkingTreeMock.mockResolvedValue({ kind: "clean" });
@@ -266,35 +229,40 @@ describe(status, () => {
       .mockResolvedValueOnce({ kind: "clean" } satisfies WorktreeDirtiness)
       .mockResolvedValueOnce({ kind: "dirty", modified: 2, untracked: 1 })
       .mockResolvedValueOnce({ kind: "unknown" });
-    fetchRawLinearIssueMock.mockResolvedValue(
-      rawIssue({ title: "Fix status", stateName: "In Progress", stateType: "started" }),
-    );
+    buildSourcesMock.mockResolvedValue([
+      fakeSource([
+        sourceIssue({
+          title: "Fix status",
+          status: "in-progress",
+          url: "https://linear.app/example/issue/TEAM-1",
+        }),
+      ]),
+    ]);
 
     await status(config, { ticket: "team-1" });
 
     const output = consoleLog.output();
     expect(output).toContain("groundcrew status TEAM-1");
-    expect(output).toContain("Config snapshot");
-    expect(output).toContain("projectDir: /work");
-    expect(output).toContain("repositories: repo-a, repo-b");
-    expect(output).toContain("models: default=claude; enabled=claude, codex");
-    expect(output).toContain("Worktree state");
+    expect(output).not.toContain("Config snapshot");
+    expect(output).toContain(
+      "run: running; model=claude; updated=2026-05-26T00:01:00.000Z; resumes=0",
+    );
+    expect(output).toContain("manual pause");
+    expect(output).toContain("workspace: live");
+    expect(output).toContain("Worktrees");
     expect(output).toContain("repo-a host");
+    expect(output).not.toContain("  ticket: team-1");
     expect(output).toContain("git: clean");
     expect(output).toContain("git: dirty (2 modified, 1 untracked)");
     expect(output).toContain("git: unknown");
-    expect(output).toContain("Workspace probe");
-    expect(output).toContain("live: yes");
-    expect(output).toContain("Run state");
-    expect(output).toContain("running; model=claude; updated=2026-05-26T00:01:00.000Z; resumes=0");
-    expect(output).toContain("manual pause");
     expect(output).toContain("Recent logs");
     expect(output).toContain("event=dispatch outcome=started ticket=team-1");
     expect(output).not.toContain("ticket=team-10");
     expect(output).toContain('Workspace "TEAM-1" launched');
     expect(output).not.toContain("unrelated ticket");
-    expect(output).toContain("Last Linear status");
-    expect(output).toContain("In Progress (state.type=started) — Fix status");
+    expect(output).toContain("Ticket source");
+    expect(output).toContain("linear:team-1  in-progress  https://linear.app/example/issue/TEAM-1");
+    expect(output).toContain("title: Fix status");
   });
 
   it("prints unavailable fields without attempting recovery", async () => {
@@ -302,20 +270,19 @@ describe(status, () => {
     findByTicketMock.mockReturnValue([]);
     workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set() });
     readRunStateMock.mockReset();
-    fetchRawLinearIssueMock.mockRejectedValue(new Error("Linear down"));
+    buildSourcesMock.mockRejectedValue(new Error("source down"));
 
     await status(config, { ticket: "team-404" });
 
     const output = consoleLog.output();
     expect(output).toContain("ticket: team-404");
-    expect(output).toContain("Worktree state");
+    expect(output).toContain("run: (none)");
+    expect(output).toContain("workspace: not live");
+    expect(output).toContain("Worktrees");
     expect(output).toContain("(none)");
-    expect(output).toContain("live: no");
-    expect(output).toContain("Run state");
-    expect(output).toContain("(none)");
-    expect(output).toContain("Recent logs");
-    expect(output).toContain("(none)");
-    expect(output).toContain("unavailable: Linear down");
+    expect(output).not.toContain("Recent logs");
+    expect(output).toContain("Ticket source");
+    expect(output).toContain("unavailable: source down");
   });
 
   it("rejects an empty direct-call ticket", async () => {
@@ -327,16 +294,18 @@ describe(status, () => {
     expect(listWorktreesMock).not.toHaveBeenCalled();
   });
 
-  it("prints a run-state summary without optional detail and renders an empty state.type as unknown", async () => {
-    const issueWithoutStateType = rawIssue({ title: "No state type", stateType: "" });
+  it("prints a run-state summary without optional detail and source status", async () => {
     readRunStateMock.mockReturnValue(runState());
-    fetchRawLinearIssueMock.mockResolvedValue(issueWithoutStateType);
+    buildSourcesMock.mockResolvedValue([
+      fakeSource([sourceIssue({ title: "No state type", status: "other" })]),
+    ]);
 
     await status(makeConfig(), { ticket: "team-1" });
 
     const output = consoleLog.output();
     expect(output).toContain("running; model=claude; updated=2026-05-26T00:01:00.000Z; resumes=0");
-    expect(output).toContain("Todo (state.type=unknown) — No state type");
+    expect(output).toContain("linear:team-1  other");
+    expect(output).toContain("title: No state type");
   });
 
   it("prints run-state detail when only detail is recorded", async () => {
@@ -356,13 +325,21 @@ describe(status, () => {
     await status(makeConfig(), { ticket: "team-1" });
 
     const output = consoleLog.output();
-    // Cached title (from RunState) should appear in the header, before
-    // sections like "Config snapshot". The live Linear title still appears
-    // later in "Last Linear status".
     const titleIndex = output.indexOf("title: Improve crew status command");
-    const configIndex = output.indexOf("Config snapshot");
+    const runIndex = output.indexOf("run:");
     expect(titleIndex).toBeGreaterThanOrEqual(0);
-    expect(configIndex).toBeGreaterThan(titleIndex);
+    expect(runIndex).toBeGreaterThan(titleIndex);
+  });
+
+  it("omits duplicate source title when it matches the cached title", async () => {
+    readRunStateMock.mockReturnValue(runState({ title: "Improve crew status command" }));
+    buildSourcesMock.mockResolvedValue([
+      fakeSource([sourceIssue({ title: "Improve crew status command" })]),
+    ]);
+
+    await status(makeConfig(), { ticket: "team-1" });
+
+    expect(consoleLog.output().match(/title: Improve crew status command/g)).toHaveLength(1);
   });
 
   it("omits the cached title line when no run state has a title", async () => {
@@ -370,9 +347,8 @@ describe(status, () => {
 
     await status(makeConfig(), { ticket: "team-1" });
 
-    // No header `title:` line; only the Linear-status line at the bottom carries it.
     const output = consoleLog.output();
-    const headerSection = output.slice(0, output.indexOf("Config snapshot"));
+    const headerSection = output.slice(0, output.indexOf("run:"));
     expect(headerSection).not.toContain("title:");
   });
 
@@ -643,7 +619,7 @@ describe(status, () => {
     expect(consoleLog.output()).not.toContain("  pr:");
   });
 
-  it("renders a `pr:` line in the per-ticket Worktree state section when present", async () => {
+  it("renders a `pr:` line in the per-ticket Worktrees section when present", async () => {
     findByTicketMock.mockReturnValue([
       worktree({ ticket: "team-1", repository: "repo-a", dir: "/work/repo-a-team-1" }),
     ]);
@@ -923,8 +899,7 @@ describe(statusCli, () => {
     workspaceAccessHintMock.mockReset();
     findPullRequestsMock.mockResolvedValue([]);
     readRunStateMock.mockReset();
-    fetchRawLinearIssueMock.mockResolvedValue(rawIssue());
-    getLinearClientMock.mockReturnValue(linearClient());
+    buildSourcesMock.mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -935,7 +910,7 @@ describe(statusCli, () => {
   it("loads config and normalizes a ticket argument", async () => {
     await statusCli(["TEAM-1"]);
 
-    expect(findByTicketMock).toHaveBeenCalledWith(expect.any(Object), "team-1");
+    expect(findByTicketMock.mock.calls[0]?.[1]).toBe("team-1");
     expect(consoleLog.output()).toContain("groundcrew status TEAM-1");
   });
 
@@ -944,7 +919,7 @@ describe(statusCli, () => {
 
     await statusCli([]);
 
-    expect(listWorktreesMock).toHaveBeenCalledWith(expect.any(Object));
+    expect(listWorktreesMock.mock.calls.length).toBeGreaterThan(0);
     expect(consoleLog.output()).toContain("Worktrees\n---------\n(none)");
   });
 
