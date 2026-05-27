@@ -147,6 +147,7 @@ export function toCanonicalIssue(linearIssue: LinearIssue, sourceName: string): 
     updatedAt: linearIssue.updatedAt,
     blockers: linearIssue.blockers.map((b) => toCanonicalBlocker(b, sourceName)),
     hasMoreBlockers: linearIssue.hasMoreBlockers,
+    url: linearIssue.url,
     sourceRef,
   };
 }
@@ -220,6 +221,7 @@ export function createLinearTicketSource(
         updatedAt: new Date().toISOString(),
         blockers: [],
         hasMoreBlockers: false,
+        url: resolved.url,
         sourceRef,
       };
     },

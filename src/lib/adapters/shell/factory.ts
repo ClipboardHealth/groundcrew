@@ -73,6 +73,7 @@ export function toCanonicalIssue(shellIssue: ShellIssue, sourceName: string): Ca
     updatedAt: shellIssue.updatedAt,
     blockers,
     hasMoreBlockers: shellIssue.hasMoreBlockers,
+    ...(shellIssue.url === undefined ? {} : { url: shellIssue.url }),
     sourceRef: shellIssue.sourceRef,
   };
 }

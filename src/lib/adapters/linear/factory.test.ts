@@ -56,6 +56,7 @@ function linearIssue(overrides: Partial<LinearIssue> = {}): LinearIssue {
     teamId: overrides.teamId ?? "team-default",
     blockers: overrides.blockers ?? [],
     hasMoreBlockers: overrides.hasMoreBlockers ?? false,
+    url: overrides.url ?? "https://linear.app/example/issue/TEAM-1",
   };
 }
 
@@ -282,6 +283,7 @@ describe(createLinearTicketSource, () => {
       stateType: "unstarted",
       status: "Todo",
       statusId: "state-todo",
+      url: "https://linear.app/example/issue/TEAM-1",
     });
     const source = createLinearTicketSource({ kind: "linear" }, {
       globalConfig: makeConfig(),

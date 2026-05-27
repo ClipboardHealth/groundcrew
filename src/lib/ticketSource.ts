@@ -70,6 +70,13 @@ export interface Issue {
   updatedAt: string;
   blockers: Blocker[];
   hasMoreBlockers: boolean;
+  /**
+   * Direct web URL for the ticket on the source system, when the adapter
+   * knows one. `undefined` when the source can't produce a public URL (e.g.,
+   * a shell script that omits the `url` field). Display-only — never
+   * branched on.
+   */
+  url?: string;
   /** Adapter-private. Consumers MUST NOT inspect; only the producing adapter reads it. */
   sourceRef: unknown;
 }

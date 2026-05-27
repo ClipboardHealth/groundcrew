@@ -68,6 +68,8 @@ export interface Issue {
   teamId: string;
   blockers: Blocker[];
   hasMoreBlockers: boolean;
+  /** Linear `Issue.url` — direct web link to the ticket. */
+  url: string;
 }
 
 /**
@@ -165,6 +167,7 @@ interface IssueNode {
   title: string;
   description?: string;
   updatedAt: string;
+  url: string;
   state?: { id: string; name: string; type: string };
   team?: { id: string; key: string };
   assignee?: { name: string } | null;
@@ -215,6 +218,7 @@ async function fetchBoard(client: LinearClient, config: ResolvedConfig): Promise
             title
             description
             updatedAt
+            url
             state { id name type }
             team { id key }
             assignee { name }
@@ -325,6 +329,7 @@ function buildLinearIssue(input: {
   repository: string | undefined;
   model: string | undefined;
   teamId: string;
+  url: string;
   inverseRelations: { nodes: IssueRelationNode[]; pageInfo: { hasNextPage: boolean } } | undefined;
 }): Issue {
   return {
@@ -341,6 +346,7 @@ function buildLinearIssue(input: {
     repository: input.repository,
     model: input.model,
     teamId: input.teamId,
+    url: input.url,
     blockers: blockersFromRelations(input.inverseRelations?.nodes ?? []),
     hasMoreBlockers: input.inverseRelations?.pageInfo.hasNextPage ?? false,
   };
@@ -374,6 +380,7 @@ function issueFromNode(node: IssueNode, config: ResolvedConfig): Issue {
     repository,
     model,
     teamId: node.team?.id ?? "",
+    url: node.url,
     inverseRelations: node.inverseRelations,
   });
 }
@@ -388,6 +395,7 @@ interface ResolvedIssue {
   stateType: string;
   status: string;
   statusId: string;
+  url: string;
 }
 
 const ISSUE_LABEL_PAGE_SIZE = 50;
@@ -412,6 +420,8 @@ export interface RawLinearIssue {
    * reporting "would dispatch."
    */
   hasChildren: boolean;
+  /** Linear `Issue.url` — direct web link to the ticket. */
+  url: string;
 }
 
 export async function fetchBlockersForTicket(arguments_: {
@@ -477,6 +487,7 @@ export async function fetchRawLinearIssue(arguments_: {
         id
         title
         description
+        url
         team { id }
         state { id name type }
         children { nodes { id } }
@@ -504,6 +515,7 @@ export async function fetchRawLinearIssue(arguments_: {
       id: string;
       title: string;
       description?: string | null;
+      url: string;
       team?: { id: string } | null;
       state?: { id: string; name: string; type: string } | null;
       children?: { nodes: { id: string }[] } | null;
@@ -533,6 +545,7 @@ export async function fetchRawLinearIssue(arguments_: {
     blockers: blockersFromRelations(issue.inverseRelations?.nodes ?? []),
     hasMoreBlockers: issue.inverseRelations?.pageInfo.hasNextPage ?? false,
     hasChildren: (issue.children?.nodes.length ?? 0) > 0,
+    url: issue.url,
   };
 }
 
@@ -627,6 +640,7 @@ export async function fetchResolvedIssue(arguments_: {
     stateType: raw.stateType,
     status: raw.stateName,
     statusId: raw.stateId,
+    url: raw.url,
   };
 }
 
