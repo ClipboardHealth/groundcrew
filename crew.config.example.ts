@@ -66,6 +66,9 @@ export default {
   //     // sandbox. Chain with `&&` so a failed mint aborts launch before
   //     // export. Under the default `safehouse` runner, env is stripped
   //     // unless `cmd` forwards specific names via `safehouse --env-pass`.
+  //     // Note: a `cmd` that starts with `safehouse` bypasses groundcrew's
+  //     // default `safehouse-clearance` wrap (and its host allowlist) — see
+  //     // README "Per-session credentials" for restoring the allowlist.
   //     // claude: {
   //     //   preLaunch: "SESSION_TOKEN=$(your-mint-command) && export SESSION_TOKEN",
   //     //   cmd: "safehouse --env-pass=SESSION_TOKEN your-agent-cli",

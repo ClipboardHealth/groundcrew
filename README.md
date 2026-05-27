@@ -185,6 +185,8 @@ models: {
 
 `&&` ensures `export` only runs when the mint succeeded; a failed mint propagates non-zero out of `preLaunch` and aborts launch before the agent starts. `{{worktree}}` is substituted the same way as in `cmd`. Not supported when `local.runner` resolves to `sdx` in v1 (sdx does not forward arbitrary host env into the sandbox); validated early in `setupWorkspace`.
 
+> **Trade-off with the default Safehouse wrap.** Starting `cmd` with `safehouse` opts the model out of groundcrew's default `safehouse-clearance` wrap — the wrap that supplies the egress host allowlist (see [Safehouse clearance allowlist](#runners) and [`clearance-allow-hosts`](./clearance-allow-hosts)). If you also want the project's clearance allowlist, restore it inside `cmd` (either invoke `safehouse-clearance` directly and add `--env-pass=…`, or re-supply `--append-profile`/`--env` to a bare `safehouse` call). A first-class `preLaunchEnv` field that the launch builder converts to `safehouse --env-pass` so adopters don't have to choose is a tracked follow-up.
+
 ## Runners
 
 `local.runner` picks the local isolation backend. `auto` resolves per platform.
