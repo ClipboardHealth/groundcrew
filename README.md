@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  Dispatch your Linear backlog to AI coding agents. One git worktree per ticket, sandboxed by default.
+  Dispatch your ticket backlog to AI coding agents. One git worktree per ticket, sandboxed by default.
 </p>
 
 <p align="center">
@@ -46,9 +46,9 @@ In Progress (state.type=started) — Add retry logic to the sync job
 
 ## Why
 
-- **Linear-native.** Polls issues assigned to the API key's viewer with `agent-*` labels, honors blockers.
+- **Pluggable ticket sources.** Ships with a built-in Linear adapter (polls your API key viewer's `agent-*`-labeled issues, honors blockers); bring shell, Jira, or any source via `crew.config.ts`.
 - **One worktree per ticket.** Agents work in parallel without stepping on each other.
-- **Local-first sandboxing.** Safehouse on macOS, Docker Sandboxes on Linux, or an explicit `none` escape hatch.
+- **Local-first sandboxing.** Safehouse on macOS, Docker Sandboxes on Linux/WSL, or an explicit `none` escape hatch.
 - **Multi-agent.** Ships with `claude` and `codex`; bring your own CLI via `crew.config.ts`.
 
 ## Quickstart
@@ -225,7 +225,7 @@ Use `crew cleanup <TICKET>` to tear down stale worktrees and `crew resume <TICKE
 
 ## Doctor
 
-`crew doctor` checks host prerequisites only: config validity, Linear reachability, required binaries on PATH, workspace backend availability, workspace.projectDir, local runner capability, and enabled model commands.
+`crew doctor` checks host prerequisites only: config validity, ticket-source reachability (every configured source's `verify()`, including the built-in Linear adapter), required binaries on PATH, workspace backend availability, workspace.projectDir, local runner capability, and enabled model commands.
 
 <details>
 <summary>Sample ticket status output</summary>
