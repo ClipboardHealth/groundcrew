@@ -204,16 +204,16 @@ describe(buildLaunchCommand, () => {
   });
 
   describe("EXIT-trap promptDir cleanup", () => {
-    it("includes a `trap 'rm -rf <promptDir>' EXIT` early in the host chain", () => {
+    it("arms the `trap 'rm -rf <promptDir>' EXIT` before `cd` so a failed `cd` still wipes promptDir", () => {
       const out = buildLaunchCommand(arguments_());
 
       expect(out).toContain(String.raw`trap 'rm -rf '\''/tmp/prompt-team-1'\''' EXIT`);
-      const cdIndex = out.indexOf("cd '/work/repo-a-team-1'");
       const trapIndex = out.indexOf("trap 'rm -rf");
+      const cdIndex = out.indexOf("cd '/work/repo-a-team-1'");
       const setupIndex = out.indexOf("setup_status=$?");
-      expect(cdIndex).toBeGreaterThan(-1);
-      expect(trapIndex).toBeGreaterThan(cdIndex);
-      expect(setupIndex).toBeGreaterThan(trapIndex);
+      expect(trapIndex).toBeGreaterThan(-1);
+      expect(cdIndex).toBeGreaterThan(trapIndex);
+      expect(setupIndex).toBeGreaterThan(cdIndex);
     });
 
     it("includes the same trap as the first link of the sdx chain", () => {
@@ -263,6 +263,38 @@ describe(buildLaunchCommand, () => {
 
         const result = spawnSync("sh", ["-c", out]);
         expect(result.status).toBe(7);
+        expect(() => statSync(promptDir)).toThrow(/ENOENT/);
+      } finally {
+        rmSync(promptDir, { recursive: true, force: true });
+        rmSync(worktreeDir, { recursive: true, force: true });
+      }
+    });
+
+    it("wipes promptDir under the safehouse runner when preLaunch fails before the wrap exec", () => {
+      const promptDir = mkdtempSync(join(tmpdir(), "groundcrew-trap-safehouse-"));
+      const promptFile = join(promptDir, "prompt.txt");
+      const worktreeDir = mkdtempSync(join(tmpdir(), "groundcrew-trap-safehouse-wt-"));
+      try {
+        writeFileSync(promptFile, "the prompt body\n");
+
+        const out = buildLaunchCommand(
+          arguments_({
+            runner: "safehouse",
+            promptFile,
+            worktreeDir,
+            definition: {
+              cmd: "echo never-reached",
+              color: "#fff",
+              preLaunch: "exit 9",
+            },
+          }),
+        );
+
+        // preLaunch aborts before the `exec safehouse-clearance …` link, so we
+        // never invoke the real wrapper here — the EXIT trap is what we're
+        // proving fires.
+        const result = spawnSync("sh", ["-c", out]);
+        expect(result.status).toBe(9);
         expect(() => statSync(promptDir)).toThrow(/ENOENT/);
       } finally {
         rmSync(promptDir, { recursive: true, force: true });

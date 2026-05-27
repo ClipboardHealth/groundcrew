@@ -82,9 +82,10 @@ function trapCleanupLine(promptDir: string): string {
 }
 
 /**
- * Shared opening of every host-shell `&&` chain: `cd` into the worktree, arm
- * the `EXIT` trap that wipes `promptDir` even when a later link aborts, then
- * optionally source the staged `secrets.env`.
+ * Shared opening of every host-shell `&&` chain: arm the `EXIT` trap that
+ * wipes `promptDir` (must come before any link that can fail, including the
+ * `cd`), `cd` into the worktree, then optionally source the staged
+ * `secrets.env`.
  */
 function hostLaunchPrologue(arguments_: {
   worktreeDir: string;
@@ -92,8 +93,8 @@ function hostLaunchPrologue(arguments_: {
   secretsFile?: string | undefined;
 }): string[] {
   const lines = [
-    `cd ${shellSingleQuote(arguments_.worktreeDir)}`,
     trapCleanupLine(arguments_.promptDir),
+    `cd ${shellSingleQuote(arguments_.worktreeDir)}`,
   ];
   if (arguments_.secretsFile !== undefined) {
     lines.push(sourceSecretsLine(arguments_.secretsFile));
