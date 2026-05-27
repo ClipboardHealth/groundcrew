@@ -204,6 +204,18 @@ describe(sourcesFromConfig, () => {
     expect(sourcesFromConfig(config)).toStrictEqual([{ kind: "linear", name: "linear" }]);
   });
 
+  it("omits the implicit linear source when a Linear source is declared with a custom name", () => {
+    // A Linear source with a custom `name` is still Linear; prepending the
+    // implicit `{ kind: "linear" }` would spawn a duplicate adapter pointed at
+    // the same viewer (distinct names, so createBoard wouldn't catch it).
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- sourcesFromConfig only reads sources; unused fields are irrelevant
+    const config = {
+      sources: [{ kind: "linear", name: "custom-linear" }],
+    } as unknown as ResolvedConfig;
+
+    expect(sourcesFromConfig(config)).toStrictEqual([{ kind: "linear", name: "custom-linear" }]);
+  });
+
   it("omits the implicit linear source when the user declared one with name 'linear'", () => {
     // A user-declared shell source with name "linear" would otherwise collide
     // with the implicit Linear source; omit the implicit one.

@@ -50,25 +50,31 @@ export function buildSourcesWith(
   });
 }
 
-/**
- * Returns the runtime source name a `config.sources[]` entry would resolve
- * to. Adapters default the name to their `kind` when `name` is omitted
- * (see `createLinearTicketSource`'s `config.name ?? "linear"`); explicit
- * `name` always wins. Returns `undefined` for malformed entries (no `kind`
- * at all) — those get rejected by the Zod schema downstream.
- */
-const effectiveSourceNameShape = z.looseObject({
+const sourceShape = z.looseObject({
   name: z.string().optional(),
   kind: z.string().optional(),
 });
 
-function effectiveSourceName(raw: unknown): string | undefined {
-  const parsed = effectiveSourceNameShape.safeParse(raw);
+/**
+ * True when `raw` is an explicitly-declared Linear source. Matches either a
+ * `kind: "linear"` entry — regardless of any `name` override — or any entry
+ * whose resolved runtime name (explicit `name`, else `kind`) is "linear".
+ * The latter catches a non-Linear adapter the user named "linear", which
+ * would otherwise collide with the implicit Linear source.
+ *
+ * Used to suppress the synthesized implicit Linear source so a renamed Linear
+ * entry like `{ kind: "linear", name: "custom" }` doesn't spawn a duplicate
+ * adapter pointed at the same viewer. Returns false for malformed entries
+ * (no `kind`/`name`) — those get rejected by the per-adapter Zod schema
+ * downstream.
+ */
+function isExplicitLinearSource(raw: unknown): boolean {
+  const parsed = sourceShape.safeParse(raw);
   /* v8 ignore next 3 @preserve -- looseObject() with all-optional fields only fails to parse non-object inputs (null, primitives); the same input would be rejected by the per-adapter Zod schema in buildSourcesWith, so this guard never fires in practice. */
   if (!parsed.success) {
-    return undefined;
+    return false;
   }
-  return parsed.data.name ?? parsed.data.kind;
+  return parsed.data.kind === "linear" || (parsed.data.name ?? parsed.data.kind) === "linear";
 }
 
 /**
@@ -76,13 +82,12 @@ function effectiveSourceName(raw: unknown): string | undefined {
  * implicit Linear source (Linear is always active under the post-#110
  * model — viewer + agent-* label filtering happens at the GraphQL layer)
  * and appends any user-declared `sources`. The implicit source is omitted
- * when the user already declared one with runtime name "linear" so they
- * can override its `name` / construction without colliding.
+ * when the user already declared a Linear source (by `kind` or by runtime
+ * name "linear") so they can override its `name` / construction without
+ * spawning a duplicate adapter.
  */
 export function sourcesFromConfig(config: ResolvedConfig): readonly unknown[] {
-  const hasExplicitLinear = config.sources.some(
-    (source) => effectiveSourceName(source) === "linear",
-  );
+  const hasExplicitLinear = config.sources.some(isExplicitLinearSource);
   if (hasExplicitLinear) {
     return [...config.sources];
   }
