@@ -217,9 +217,9 @@ Replace `claude` with the sbx agent for the model and `<projectDir>` with `works
 
 ## Inspecting status
 
-`crew status <TICKET>` prints a read-only snapshot for one ticket: resolved config, matching worktrees, workspace probe result, recorded run state, recent log lines for that ticket, and the latest Linear status. It does not fetch, recover, tear down, resume, or mutate any local/remote state.
+`crew status <TICKET>` prints a read-only snapshot for one ticket: cached title/URL when present, resolved config, matching worktrees, git dirtiness, PR links for matching branches, workspace probe result, recorded run state, recent log lines for that ticket, and the latest Linear status. It does not recover, tear down, resume, or mutate any local/remote state.
 
-`crew status` with no ticket prints the current inventory: known worktrees with workspace/run-state presence plus live workspaces reported by the configured backend.
+`crew status` with no ticket prints the current inventory: known worktrees with cached ticket metadata, workspace/run-state agreement, attach hints, worktree paths, PR links, and stray sessions reported by the configured backend. Local worktree/session diagnostics are printed before ticket-source fetches complete; when the source fetch succeeds, status also prints slot usage plus Queue/Blocked sections for eligible Todo tickets. If the source fetch fails, Queue shows `unavailable: <reason>` and the slots line is omitted.
 
 Use `crew cleanup <TICKET>` to tear down stale worktrees and `crew resume <TICKET>` to reopen preserved work. Status is intentionally informational only.
 
@@ -233,22 +233,39 @@ Use `crew cleanup <TICKET>` to tear down stale worktrees and `crew resume <TICKE
 ```text
 groundcrew status HRD-442
 =========================
-ticket: hrd-442
+ticket: hrd-442  https://linear.app/example/issue/HRD-442
+title: Multi-event extractor: year inference can produce date_start > date_end
+
+Config snapshot
+---------------
+projectDir: /Users/paul/dev/groundcrew-workspaces
+repositories: herds-social/herds
+git: remote=origin; defaultBranch=main
+workspaceKind: auto
+local.runner: auto
+models: default=claude; enabled=claude, codex
+logFile: /Users/paul/.config/groundcrew/groundcrew.log
+
+Worktree state
+--------------
+- herds-social/herds host
+  ticket: hrd-442
+  branch: paul-hrd-442
+  dir: /Users/paul/dev/groundcrew-workspaces/herds-social/herds-hrd-442
+  git: dirty (0 modified, 1 untracked)
+  pr: https://github.com/herds-social/herds/pull/224 (open)
+
+Workspace probe
+---------------
+live: yes
 
 Run state
 ---------
 running; model=claude; updated=2026-05-26T00:01:00.000Z; resumes=0
 
-Worktree
---------
-- herds-social host
-  branch: paul-hrd-442
-  dir: /Users/paul/dev/groundcrew-workspaces/herds-social/herds-hrd-442
-  git: dirty (0 modified, 1 untracked)
-
-Workspace
----------
-live: yes
+Recent logs
+-----------
+[10:15:30] Workspace "hrd-442" launched
 
 Last Linear status
 ------------------

@@ -354,13 +354,15 @@ async function collectAccessHints(
   entries: readonly { ticket: string }[],
 ): Promise<Map<string, WorkspaceAccessHint | undefined>> {
   const uniqueTickets = [...new Set(entries.map((entry) => entry.ticket))];
-  const results = await Promise.all(
-    uniqueTickets.map(async (ticket) => {
-      const hint = await workspaces.accessHint(config, ticket);
-      return [ticket, hint] as const;
+  const results = await Promise.allSettled(
+    uniqueTickets.map(async (ticket) => await workspaces.accessHint(config, ticket)),
+  );
+  return new Map(
+    uniqueTickets.map((ticket, index) => {
+      const result = results[index];
+      return [ticket, result?.status === "fulfilled" ? result.value : undefined] as const;
     }),
   );
-  return new Map(results);
 }
 
 async function collectPullRequests(
@@ -493,15 +495,18 @@ async function writeInventoryStatus(config: ResolvedConfig): Promise<void> {
   // Banner ("groundcrew status\n=================") dropped: the command
   // you just ran already tells you what report you're looking at, and the
   // section headers (`Worktrees`, `Queue`, etc.) carry the visual anchors.
-  const boardResult = await fetchBoardForStatus(config);
-  if (boardResult.kind === "ok") {
-    const used = inProgressCount(boardResult.issues);
-    writeOutput(`slots: ${used}/${config.orchestrator.maximumInProgress} used`);
-  }
+  const boardResultPromise = fetchBoardForStatus(config);
   const probe = await withLogOutputSuppressed(async () => await workspaces.probe(config));
   await writeInventoryWorktrees(config, probe);
   const worktreeTickets = new Set(worktrees.list(config).map((entry) => entry.ticket));
   writeStraySessions(probe, worktreeTickets);
+
+  const boardResult = await boardResultPromise;
+  if (boardResult.kind === "ok") {
+    const used = inProgressCount(boardResult.issues);
+    writeOutput();
+    writeOutput(`slots: ${used}/${config.orchestrator.maximumInProgress} used`);
+  }
   writeQueueSections(boardResult);
 }
 

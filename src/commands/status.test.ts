@@ -107,6 +107,13 @@ async function noopUndefined<T>(): Promise<T | undefined> {
   return undefined as T | undefined;
 }
 
+async function flushMicrotasks(count = 10): Promise<void> {
+  for (let index = 0; index < count; index += 1) {
+    // oxlint-disable-next-line no-await-in-loop -- test helper intentionally drains queued promise work.
+    await Promise.resolve();
+  }
+}
+
 function fakeSource(
   issues: readonly SourceIssue[],
   overrides: {
@@ -443,6 +450,27 @@ describe(status, () => {
     expect(output).not.toMatch(/team-2[\s\S]* {2}attach:/);
   });
 
+  it("omits only the failed attach hint when one workspace access hint lookup rejects", async () => {
+    listWorktreesMock.mockReturnValue([
+      worktree({ ticket: "team-1", repository: "repo-a" }),
+      worktree({ ticket: "team-2", repository: "repo-b", branchName: "rocky-team-2" }),
+    ]);
+    workspaceAccessHintMock
+      .mockRejectedValueOnce(new Error("tmux unavailable"))
+      .mockResolvedValueOnce({
+        kind: "attachCommand",
+        command: "tmux attach -t crew:team-2",
+      });
+
+    await status(makeConfig());
+
+    const output = consoleLog.output();
+    expect(output).toContain("team-1\n  state:");
+    expect(output).toContain("team-2\n  state:");
+    expect(output).not.toContain("tmux unavailable");
+    expect(output).toContain("  attach:    tmux attach -t crew:team-2");
+  });
+
   it("hides the Stray sessions section when every live session matches a worktree", async () => {
     listWorktreesMock.mockReturnValue([worktree({ ticket: "team-1", repository: "repo-a" })]);
     workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-1"]) });
@@ -698,6 +726,32 @@ describe(status, () => {
     expect(output).not.toContain("slots:");
     // Queue section still surfaces the diagnostic.
     expect(output).toContain("unavailable: linear down");
+  });
+
+  it("prints local inventory before source fetch completes", async () => {
+    listWorktreesMock.mockReturnValue([worktree({ ticket: "team-1", repository: "repo-a" })]);
+    workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-1"]) });
+    let resolveFetch: ((issues: SourceIssue[]) => void) | undefined;
+    const pendingFetch = new Promise<SourceIssue[]>((resolve) => {
+      resolveFetch = resolve;
+    });
+    buildSourcesMock.mockResolvedValue([
+      fakeSource([], {
+        fetch: async () => await pendingFetch,
+      }),
+    ]);
+
+    const statusPromise = status(makeConfig({ sources: [{ kind: "linear", name: "linear" }] }));
+    await flushMicrotasks();
+
+    const output = consoleLog.output();
+    expect(output).toContain("Worktrees");
+    expect(output).toContain("team-1\n  state:");
+    expect(output).not.toContain("Queue");
+    const completeFetch = resolveFetch;
+    expect(completeFetch).toBeTypeOf("function");
+    completeFetch?.([]);
+    await statusPromise;
   });
 
   it("hides the Queue section entirely when the source has no eligible Todos", async () => {
