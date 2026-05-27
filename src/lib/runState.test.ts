@@ -105,6 +105,134 @@ describe("run state store", () => {
     });
   });
 
+  it("round-trips an optional ticket title", () => {
+    recordRunState({
+      config,
+      state: {
+        ticket: "team-1",
+        repository: "repo-a",
+        model: "claude",
+        worktreeDir: "/work/repo-a-team-1",
+        branchName: "rocky-team-1",
+        workspaceName: "team-1",
+        state: "running",
+        title: "Improve crew status command output",
+      },
+    });
+
+    expect(readRunState(config, "team-1")).toMatchObject({
+      title: "Improve crew status command output",
+    });
+  });
+
+  it("preserves a previously-recorded title when a later recordRunState omits it", () => {
+    recordRunState({
+      config,
+      state: {
+        ticket: "team-1",
+        repository: "repo-a",
+        model: "claude",
+        worktreeDir: "/work/repo-a-team-1",
+        branchName: "rocky-team-1",
+        workspaceName: "team-1",
+        state: "running",
+        title: "Improve crew status command output",
+      },
+    });
+
+    // resume/interrupt callers don't carry the title; the title should
+    // survive on disk so `crew status` can still surface it.
+    recordRunState({
+      config,
+      state: {
+        ticket: "team-1",
+        repository: "repo-a",
+        model: "claude",
+        worktreeDir: "/work/repo-a-team-1",
+        branchName: "rocky-team-1",
+        workspaceName: "team-1",
+        state: "interrupted",
+        reason: "manual pause",
+      },
+    });
+
+    expect(readRunState(config, "team-1")).toMatchObject({
+      state: "interrupted",
+      title: "Improve crew status command output",
+    });
+  });
+
+  it("round-trips an optional ticket url and preserves it across transitions", () => {
+    recordRunState({
+      config,
+      state: {
+        ticket: "team-1",
+        repository: "repo-a",
+        model: "claude",
+        worktreeDir: "/work/repo-a-team-1",
+        branchName: "rocky-team-1",
+        workspaceName: "team-1",
+        state: "running",
+        url: "https://linear.app/example/issue/TEAM-1",
+      },
+    });
+
+    expect(readRunState(config, "team-1")).toMatchObject({
+      url: "https://linear.app/example/issue/TEAM-1",
+    });
+
+    // Subsequent transition omits url — must be preserved.
+    recordRunState({
+      config,
+      state: {
+        ticket: "team-1",
+        repository: "repo-a",
+        model: "claude",
+        worktreeDir: "/work/repo-a-team-1",
+        branchName: "rocky-team-1",
+        workspaceName: "team-1",
+        state: "interrupted",
+      },
+    });
+
+    expect(readRunState(config, "team-1")).toMatchObject({
+      state: "interrupted",
+      url: "https://linear.app/example/issue/TEAM-1",
+    });
+  });
+
+  it("prefers a freshly provided title over the previously-recorded one", () => {
+    recordRunState({
+      config,
+      state: {
+        ticket: "team-1",
+        repository: "repo-a",
+        model: "claude",
+        worktreeDir: "/work/repo-a-team-1",
+        branchName: "rocky-team-1",
+        workspaceName: "team-1",
+        state: "running",
+        title: "Old title",
+      },
+    });
+
+    recordRunState({
+      config,
+      state: {
+        ticket: "team-1",
+        repository: "repo-a",
+        model: "claude",
+        worktreeDir: "/work/repo-a-team-1",
+        branchName: "rocky-team-1",
+        workspaceName: "team-1",
+        state: "running",
+        title: "New title",
+      },
+    });
+
+    expect(readRunState(config, "team-1")).toMatchObject({ title: "New title" });
+  });
+
   it("round-trips every lifecycle state", () => {
     const states: RunLifecycleState[] = ["running", "interrupted", "resumed", "failed-to-launch"];
 

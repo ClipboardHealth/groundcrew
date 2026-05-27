@@ -129,6 +129,15 @@ async function probeWorkspaces(
   return { kind: "ok", names: new Set(raw.map((ws) => ws.name)) };
 }
 
+async function accessHintForWorkspace(
+  config: ResolvedConfig,
+  name: string,
+  signal?: AbortSignal,
+): Promise<WorkspaceAccessHint | undefined> {
+  const adapter = await adapterFor(config, signal);
+  return adapter.accessHint(name);
+}
+
 async function interruptWorkspace(
   config: ResolvedConfig,
   name: string,
@@ -165,12 +174,5 @@ export const workspaces = {
     return await adapter.close(name, signal);
   },
   interrupt: interruptWorkspace,
-  async accessHint(
-    config: ResolvedConfig,
-    name: string,
-    signal?: AbortSignal,
-  ): Promise<WorkspaceAccessHint | undefined> {
-    const adapter = await adapterFor(config, signal);
-    return adapter.accessHint(name);
-  },
+  accessHint: accessHintForWorkspace,
 };

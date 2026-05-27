@@ -18,6 +18,19 @@ export interface RunState {
   resumeCount: number;
   reason?: string;
   detail?: string;
+  /**
+   * Ticket title at dispatch time. Cached so `crew status` can render it
+   * without re-hitting the ticket source; lifecycle transitions
+   * (resume/interrupt) that omit the field preserve the on-disk value.
+   */
+  title?: string;
+  /**
+   * Direct ticket URL at dispatch time. Same caching rationale as `title`;
+   * the source adapter populates it when it can (e.g., Linear), otherwise
+   * the field stays undefined and `crew status` falls back to displaying
+   * just the ticket id.
+   */
+  url?: string;
 }
 
 export interface RunStateDraft {
@@ -31,6 +44,8 @@ export interface RunStateDraft {
   reason?: string;
   detail?: string;
   resumeCount?: number;
+  title?: string;
+  url?: string;
 }
 
 export interface RecordRunStateInput {
@@ -102,6 +117,8 @@ function parseRunState(value: unknown): RunState | undefined {
   const updatedAt = stringField(value, "updatedAt");
   const reason = stringField(value, "reason");
   const detail = stringField(value, "detail");
+  const title = stringField(value, "title");
+  const url = stringField(value, "url");
   if (
     ticket === undefined ||
     repository === undefined ||
@@ -131,6 +148,8 @@ function parseRunState(value: unknown): RunState | undefined {
     resumeCount,
     ...(reason === undefined ? {} : { reason }),
     ...(detail === undefined ? {} : { detail }),
+    ...(title === undefined ? {} : { title }),
+    ...(url === undefined ? {} : { url }),
   };
 }
 
@@ -159,6 +178,11 @@ export function readRunState(config: ResolvedConfig, ticket: string): RunState |
 export function recordRunState(input: RecordRunStateInput): RunState {
   const existing = readRunState(input.config, input.state.ticket);
   const timestamp = nowIso();
+  // Resume/interrupt callers don't know the title or url, so they omit
+  // them. Fall back to the on-disk value so cached display fields survive
+  // transitions.
+  const title = input.state.title ?? existing?.title;
+  const url = input.state.url ?? existing?.url;
   const state: RunState = {
     ticket: ticketKey(input.state.ticket),
     repository: input.state.repository,
@@ -172,6 +196,8 @@ export function recordRunState(input: RecordRunStateInput): RunState {
     resumeCount: input.state.resumeCount ?? existing?.resumeCount ?? 0,
     ...(input.state.reason === undefined ? {} : { reason: input.state.reason }),
     ...(input.state.detail === undefined ? {} : { detail: input.state.detail }),
+    ...(title === undefined ? {} : { title }),
+    ...(url === undefined ? {} : { url }),
   };
   writeState(input.config, state);
   return state;

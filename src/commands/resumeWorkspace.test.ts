@@ -287,6 +287,7 @@ describe(resumeWorkspace, () => {
       stateType: "unstarted",
       status: "Todo",
       statusId: "state-todo",
+      url: "https://linear.app/example/issue/TEAM-1",
     });
 
     await resumeWorkspace(config, { ticket: "team-1" });

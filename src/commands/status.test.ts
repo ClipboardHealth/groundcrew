@@ -6,8 +6,11 @@ import type { LinearClient } from "@linear/sdk";
 
 import { getLinearClient } from "../lib/adapters/linear/client.ts";
 import { fetchRawLinearIssue, type RawLinearIssue } from "../lib/adapters/linear/fetch.ts";
+import { buildSources } from "../lib/buildSources.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
+import { findPullRequestsForBranch } from "../lib/pullRequests.ts";
 import { readRunState, type RunState } from "../lib/runState.ts";
+import type { Issue as SourceIssue, TicketSource } from "../lib/ticketSource.ts";
 import { type WorkspaceProbe, workspaces } from "../lib/workspaces.ts";
 import { type WorktreeDirtiness, type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCapture.ts";
@@ -36,6 +39,7 @@ vi.mock(import("../lib/workspaces.ts"), async (importOriginal) => {
     workspaces: {
       ...actual.workspaces,
       probe: vi.fn<typeof actual.workspaces.probe>(),
+      accessHint: vi.fn<typeof actual.workspaces.accessHint>(),
     },
   };
 });
@@ -51,19 +55,78 @@ vi.mock(import("../lib/worktrees.ts"), async (importOriginal) => {
     },
   };
 });
+vi.mock(import("../lib/buildSources.ts"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, buildSources: vi.fn<typeof actual.buildSources>().mockResolvedValue([]) };
+});
+vi.mock(import("../lib/pullRequests.ts"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    findPullRequestsForBranch: vi
+      .fn<typeof actual.findPullRequestsForBranch>()
+      .mockResolvedValue([]),
+  };
+});
 
 const fetchRawLinearIssueMock = vi.mocked(fetchRawLinearIssue);
 const getLinearClientMock = vi.mocked(getLinearClient);
 const loadConfigMock = vi.mocked(loadConfig);
 const readRunStateMock = vi.mocked(readRunState);
 const workspaceProbeMock = vi.mocked(workspaces.probe);
+const workspaceAccessHintMock = vi.mocked(workspaces.accessHint);
 const findByTicketMock = vi.mocked(worktrees.findByTicket);
 const listWorktreesMock = vi.mocked(worktrees.list);
 const probeWorkingTreeMock = vi.mocked(worktrees.probeWorkingTree);
+const buildSourcesMock = vi.mocked(buildSources);
+const findPullRequestsMock = vi.mocked(findPullRequestsForBranch);
+
+function sourceIssue(overrides: Partial<SourceIssue> = {}): SourceIssue {
+  return {
+    id: "linear:team-1",
+    source: "linear",
+    title: "Queued ticket",
+    description: "",
+    status: "todo",
+    repository: "repo-a",
+    model: "claude",
+    assignee: "me",
+    updatedAt: "2026-05-26T00:00:00.000Z",
+    blockers: [],
+    hasMoreBlockers: false,
+    sourceRef: {},
+    ...overrides,
+  };
+}
+
+async function noop(): Promise<void> {
+  await Promise.resolve();
+}
+async function noopUndefined<T>(): Promise<T | undefined> {
+  await Promise.resolve();
+  return undefined as T | undefined;
+}
+
+function fakeSource(
+  issues: readonly SourceIssue[],
+  overrides: {
+    name?: string;
+    fetch?: TicketSource["fetch"];
+  } = {},
+): TicketSource {
+  const fetch: TicketSource["fetch"] = overrides.fetch ?? (async () => [...issues]);
+  return {
+    name: overrides.name ?? "linear",
+    verify: noop,
+    fetch,
+    resolveOne: noopUndefined,
+    markInProgress: noop,
+  };
+}
 
 function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
   return {
-    sources: [],
+    sources: overrides.sources ?? [],
     git: { remote: "origin", defaultBranch: "main", ...overrides.git },
     workspace: {
       projectDir: "/work",
@@ -115,6 +178,7 @@ function rawIssue(overrides: Partial<RawLinearIssue> = {}): RawLinearIssue {
     blockers: [],
     hasMoreBlockers: false,
     hasChildren: false,
+    url: "https://linear.app/example/issue/TEAM-1",
     ...overrides,
   };
 }
@@ -145,12 +209,18 @@ describe(status, () => {
   let temporaryDirectory: string;
 
   beforeEach(() => {
+    // Pin the clock to createdAt + 2h 14m so `state: running (...)` lines
+    // include a deterministic `2h 14m` duration token.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-05-26T02:14:30.000Z"));
     consoleLog = captureConsoleLog();
     temporaryDirectory = mkdtempSync(join(tmpdir(), "groundcrew-status-test-"));
     getLinearClientMock.mockReturnValue(linearClient());
     fetchRawLinearIssueMock.mockResolvedValue(rawIssue());
     readRunStateMock.mockReturnValue(runState({ reason: "manual pause" }));
     workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-1"]) });
+    workspaceAccessHintMock.mockReset();
+    findPullRequestsMock.mockResolvedValue([]);
     findByTicketMock.mockReturnValue([worktree()]);
     listWorktreesMock.mockReturnValue([worktree()]);
     probeWorkingTreeMock.mockResolvedValue({ kind: "clean" });
@@ -160,6 +230,7 @@ describe(status, () => {
     consoleLog.restore();
     rmSync(temporaryDirectory, { recursive: true, force: true });
     vi.resetAllMocks();
+    vi.useRealTimers();
   });
 
   it("prints the read-only per-ticket status dump", async () => {
@@ -272,11 +343,47 @@ describe(status, () => {
     expect(consoleLog.output()).toContain("spawn failed");
   });
 
+  it("surfaces the cached ticket title at the top of the per-ticket view", async () => {
+    readRunStateMock.mockReturnValue(runState({ title: "Improve crew status command" }));
+
+    await status(makeConfig(), { ticket: "team-1" });
+
+    const output = consoleLog.output();
+    // Cached title (from RunState) should appear in the header, before
+    // sections like "Config snapshot". The live Linear title still appears
+    // later in "Last Linear status".
+    const titleIndex = output.indexOf("title: Improve crew status command");
+    const configIndex = output.indexOf("Config snapshot");
+    expect(titleIndex).toBeGreaterThanOrEqual(0);
+    expect(configIndex).toBeGreaterThan(titleIndex);
+  });
+
+  it("omits the cached title line when no run state has a title", async () => {
+    readRunStateMock.mockReturnValue(runState());
+
+    await status(makeConfig(), { ticket: "team-1" });
+
+    // No header `title:` line; only the Linear-status line at the bottom carries it.
+    const output = consoleLog.output();
+    const headerSection = output.slice(0, output.indexOf("Config snapshot"));
+    expect(headerSection).not.toContain("title:");
+  });
+
   it("prints an inventory when no ticket is provided", async () => {
     listWorktreesMock.mockReturnValue([
-      worktree({ ticket: "team-1", repository: "repo-a" }),
-      worktree({ ticket: "team-1", repository: "repo-b", branchName: "rocky-team-1-b" }),
-      worktree({ ticket: "team-2", repository: "repo-b", branchName: "rocky-team-2" }),
+      worktree({ ticket: "team-1", repository: "repo-a", dir: "/work/repo-a-team-1" }),
+      worktree({
+        ticket: "team-1",
+        repository: "repo-b",
+        branchName: "rocky-team-1-b",
+        dir: "/work/repo-b-team-1",
+      }),
+      worktree({
+        ticket: "team-2",
+        repository: "repo-b",
+        branchName: "rocky-team-2",
+        dir: "/work/repo-b-team-2",
+      }),
     ]);
     const statesByTicket = new Map([["team-1", runState({ ticket: "team-1" })]]);
     readRunStateMock.mockImplementation((_config, ticket) => statesByTicket.get(ticket));
@@ -288,15 +395,433 @@ describe(status, () => {
     await status(makeConfig());
 
     const output = consoleLog.output();
-    expect(output).toContain("groundcrew status");
+    expect(output).not.toContain("groundcrew status\n");
     expect(output).toContain("Worktrees");
-    expect(output).toContain("team-1  repo-a  host  workspace=no  run=running");
-    expect(output).toContain("team-1  repo-b  host  workspace=no  run=running");
-    expect(output).toContain("team-2  repo-b  host  workspace=yes  run=none");
-    expect(output).toContain("Live workspaces");
-    expect(output).toContain("team-2");
-    expect(output).toContain("orphan-workspace");
+    // No `host` kind in the new layout; rows are labeled key-value.
+    expect(output).not.toContain("host  workspace=");
+    // team-1 has a running RunState but workspace probe says no — orphan.
+    expect(output).toContain("team-1\n  state:     running (session dead, 2h 14m)");
+    expect(output).toContain("  repo:      repo-a");
+    expect(output).toContain("  worktree:  /work/repo-a-team-1");
+    // Inventory rows intentionally omit `branch:` — derivable, low signal.
+    // The per-ticket view (`crew status TEAM-1`) still surfaces it.
+    expect(output).not.toContain("  branch:");
+    // team-2 has no RunState but the probe sees a session — stray session.
+    expect(output).toContain("team-2\n  state:     idle (stray session)");
+    expect(output).toContain("Stray sessions");
+    // team-1/team-2 sessions are tied to worktrees and should NOT appear as strays.
+    expect(output).toMatch(/Stray sessions\n-+\norphan-workspace\n/);
     expect(readRunStateMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("prints the cached ticket title and attach hint in the inventory when available", async () => {
+    listWorktreesMock.mockReturnValue([
+      worktree({ ticket: "team-1", repository: "repo-a" }),
+      worktree({ ticket: "team-2", repository: "repo-b", branchName: "rocky-team-2" }),
+    ]);
+    const statesByTicket = new Map([
+      ["team-1", runState({ ticket: "team-1", title: "Improve crew status command" })],
+      // team-2 has a run state but no cached title — title line must be omitted.
+      ["team-2", runState({ ticket: "team-2" })],
+    ]);
+    readRunStateMock.mockImplementation((_config, ticket) => statesByTicket.get(ticket));
+    // Worktrees iterate in sorted-ticket order: team-1 first, then team-2.
+    // First call returns a hint; second (team-2) falls through to the
+    // default `vi.fn` return of undefined.
+    workspaceAccessHintMock.mockResolvedValueOnce({
+      kind: "attachCommand",
+      command: "tmux attach -t crew:team-1",
+    });
+
+    await status(makeConfig());
+
+    const output = consoleLog.output();
+    expect(output).toContain("  title:     Improve crew status command");
+    expect(output).toContain("  attach:    tmux attach -t crew:team-1");
+    // team-2 has neither a cached title nor an access hint; no extra lines.
+    expect(output).not.toMatch(/team-2[\s\S]* {2}title:/);
+    expect(output).not.toMatch(/team-2[\s\S]* {2}attach:/);
+  });
+
+  it("hides the Stray sessions section when every live session matches a worktree", async () => {
+    listWorktreesMock.mockReturnValue([worktree({ ticket: "team-1", repository: "repo-a" })]);
+    workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-1"]) });
+
+    await status(makeConfig());
+
+    expect(consoleLog.output()).not.toContain("Stray sessions");
+  });
+
+  it("formats durations across <1m / Nm / Nh / Nh Mm / Nd / Nd Mh ranges", async () => {
+    listWorktreesMock.mockReturnValue([
+      worktree({ ticket: "team-1", repository: "repo-a" }),
+      worktree({ ticket: "team-2", repository: "repo-b", branchName: "rocky-team-2" }),
+      worktree({ ticket: "team-3", repository: "repo-b", branchName: "rocky-team-3" }),
+      worktree({ ticket: "team-4", repository: "repo-b", branchName: "rocky-team-4" }),
+      worktree({ ticket: "team-5", repository: "repo-b", branchName: "rocky-team-5" }),
+      worktree({ ticket: "team-6", repository: "repo-b", branchName: "rocky-team-6" }),
+    ]);
+    workspaceProbeMock.mockResolvedValue({
+      kind: "ok",
+      names: new Set(["team-1", "team-2", "team-3", "team-4", "team-5", "team-6"]),
+    });
+    // beforeEach pinned now to 2026-05-26T02:14:30Z.
+    const statesByTicket = new Map<string, RunState>([
+      // ~30s old → `<1m`
+      ["team-1", runState({ ticket: "team-1", createdAt: "2026-05-26T02:14:00.000Z" })],
+      // 12m old → `12m`
+      ["team-2", runState({ ticket: "team-2", createdAt: "2026-05-26T02:02:30.000Z" })],
+      // 3d 7h old → `3d 7h`
+      ["team-3", runState({ ticket: "team-3", createdAt: "2026-05-22T19:14:30.000Z" })],
+      // Malformed createdAt → no duration token
+      ["team-4", runState({ ticket: "team-4", createdAt: "not a date" })],
+      // Exactly 5h old → `5h` (whole-hour branch)
+      ["team-5", runState({ ticket: "team-5", createdAt: "2026-05-25T21:14:30.000Z" })],
+      // Exactly 4d old → `4d` (whole-day branch)
+      ["team-6", runState({ ticket: "team-6", createdAt: "2026-05-22T02:14:30.000Z" })],
+    ]);
+    readRunStateMock.mockImplementation((_config, ticket) => statesByTicket.get(ticket));
+
+    await status(makeConfig());
+
+    const output = consoleLog.output();
+    expect(output).toContain("team-1\n  state:     running (<1m)");
+    expect(output).toContain("team-2\n  state:     running (12m)");
+    expect(output).toContain("team-3\n  state:     running (3d 7h)");
+    // Malformed createdAt → no duration token.
+    expect(output).toContain("team-4\n  state:     running\n");
+    expect(output).toContain("team-5\n  state:     running (5h)");
+    expect(output).toContain("team-6\n  state:     running (4d)");
+  });
+
+  it("omits the duration from non-running states (interrupted, idle)", async () => {
+    listWorktreesMock.mockReturnValue([
+      worktree({ ticket: "team-1", repository: "repo-a" }),
+      worktree({ ticket: "team-2", repository: "repo-b", branchName: "rocky-team-2" }),
+    ]);
+    workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set() });
+    const statesByTicket = new Map<string, RunState>([
+      ["team-1", runState({ ticket: "team-1", state: "interrupted" })],
+    ]);
+    readRunStateMock.mockImplementation((_config, ticket) => statesByTicket.get(ticket));
+
+    await status(makeConfig());
+
+    const output = consoleLog.output();
+    expect(output).toContain("  state:     interrupted\n");
+    expect(output).toContain("  state:     idle\n");
+  });
+
+  it("suggests `crew cleanup` next to stray-session rows", async () => {
+    listWorktreesMock.mockReturnValue([worktree({ ticket: "team-1", repository: "repo-a" })]);
+    // idle (no run-state) + live session => stray.
+    readRunStateMock.mockReset();
+    workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-1"]) });
+
+    await status(makeConfig());
+
+    expect(consoleLog.output()).toContain(
+      "  hint:      run 'crew cleanup team-1' to clear this stray session",
+    );
+  });
+
+  it("suggests `crew resume` next to session-dead rows", async () => {
+    listWorktreesMock.mockReturnValue([worktree({ ticket: "team-1", repository: "repo-a" })]);
+    // running run-state + no live session => session dead.
+    readRunStateMock.mockReturnValue(runState({ state: "running" }));
+    workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set() });
+
+    await status(makeConfig());
+
+    expect(consoleLog.output()).toContain(
+      "  hint:      run 'crew resume team-1' to bring the session back",
+    );
+  });
+
+  it("omits the `hint:` line on healthy rows", async () => {
+    listWorktreesMock.mockReturnValue([worktree({ ticket: "team-1", repository: "repo-a" })]);
+    readRunStateMock.mockReturnValue(runState({ state: "running" }));
+    workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-1"]) });
+
+    await status(makeConfig());
+
+    expect(consoleLog.output()).not.toContain("  hint:");
+  });
+
+  it("omits the `hint:` line when the workspace probe is unavailable", async () => {
+    listWorktreesMock.mockReturnValue([worktree({ ticket: "team-1", repository: "repo-a" })]);
+    workspaceProbeMock.mockResolvedValue({ kind: "unavailable" });
+
+    await status(makeConfig());
+
+    expect(consoleLog.output()).not.toContain("  hint:");
+  });
+
+  it("labels run state as `idle` when no RunState file exists and no session is live", async () => {
+    listWorktreesMock.mockReturnValue([worktree({ ticket: "team-1", repository: "repo-a" })]);
+    readRunStateMock.mockReset();
+    workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set() });
+
+    await status(makeConfig());
+
+    const output = consoleLog.output();
+    expect(output).toContain("team-1\n  state:     idle\n");
+    expect(output).not.toContain("session dead");
+    expect(output).not.toContain("stray session");
+  });
+
+  it("renders a `pr:` line in inventory rows when gh finds a pull request", async () => {
+    listWorktreesMock.mockReturnValue([worktree({ ticket: "team-1", repository: "repo-a" })]);
+    findPullRequestsMock.mockResolvedValue([
+      {
+        url: "https://github.com/acme/widgets/pull/42",
+        number: 42,
+        state: "open",
+        title: "Wire up auth",
+      },
+    ]);
+
+    await status(makeConfig());
+
+    expect(consoleLog.output()).toContain(
+      "  pr:        https://github.com/acme/widgets/pull/42 (open)",
+    );
+    expect(findPullRequestsMock).toHaveBeenCalledWith({
+      repository: "repo-a",
+      branchName: "rocky-team-1",
+    });
+  });
+
+  it("joins multiple PRs on one line in inventory rows", async () => {
+    listWorktreesMock.mockReturnValue([worktree({ ticket: "team-1", repository: "repo-a" })]);
+    findPullRequestsMock.mockResolvedValue([
+      { url: "https://x/pull/1", number: 1, state: "open", title: "a" },
+      { url: "https://x/pull/2", number: 2, state: "merged", title: "b" },
+    ]);
+
+    await status(makeConfig());
+
+    expect(consoleLog.output()).toContain(
+      "  pr:        https://x/pull/1 (open), https://x/pull/2 (merged)",
+    );
+  });
+
+  it("omits the `pr:` line in inventory rows when gh returns nothing", async () => {
+    listWorktreesMock.mockReturnValue([worktree({ ticket: "team-1", repository: "repo-a" })]);
+    findPullRequestsMock.mockResolvedValue([]);
+
+    await status(makeConfig());
+
+    expect(consoleLog.output()).not.toContain("  pr:");
+  });
+
+  it("renders a `pr:` line in the per-ticket Worktree state section when present", async () => {
+    findByTicketMock.mockReturnValue([
+      worktree({ ticket: "team-1", repository: "repo-a", dir: "/work/repo-a-team-1" }),
+    ]);
+    findPullRequestsMock.mockResolvedValue([
+      {
+        url: "https://github.com/acme/widgets/pull/99",
+        number: 99,
+        state: "open",
+        title: "Something",
+      },
+    ]);
+
+    await status(makeConfig(), { ticket: "team-1" });
+
+    expect(consoleLog.output()).toContain("  pr: https://github.com/acme/widgets/pull/99 (open)");
+  });
+
+  it("renders the cached ticket url next to the inventory ticket id", async () => {
+    listWorktreesMock.mockReturnValue([worktree({ ticket: "team-1", repository: "repo-a" })]);
+    readRunStateMock.mockReturnValue(
+      runState({ ticket: "team-1", url: "https://linear.app/example/issue/TEAM-1" }),
+    );
+    workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-1"]) });
+
+    await status(makeConfig());
+
+    expect(consoleLog.output()).toContain("team-1  https://linear.app/example/issue/TEAM-1\n");
+  });
+
+  it("renders the cached ticket url next to the per-ticket header", async () => {
+    readRunStateMock.mockReturnValue(runState({ url: "https://linear.app/example/issue/TEAM-1" }));
+
+    await status(makeConfig(), { ticket: "team-1" });
+
+    expect(consoleLog.output()).toContain(
+      "ticket: team-1  https://linear.app/example/issue/TEAM-1",
+    );
+  });
+
+  it("prints `slots: N/M used` reflecting in-progress source issues against the orchestrator cap", async () => {
+    listWorktreesMock.mockReturnValue([]);
+    workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set() });
+    buildSourcesMock.mockResolvedValue([
+      fakeSource([
+        sourceIssue({ id: "linear:team-901", status: "in-progress" }),
+        sourceIssue({ id: "linear:team-902", status: "in-progress" }),
+        sourceIssue({ id: "linear:team-903", status: "todo" }),
+        sourceIssue({ id: "linear:team-904", status: "done" }),
+      ]),
+    ]);
+
+    await status(
+      makeConfig({
+        sources: [{ kind: "linear", name: "linear" }],
+        orchestrator: {
+          maximumInProgress: 4,
+          pollIntervalMilliseconds: 1000,
+          sessionLimitPercentage: 85,
+        },
+      }),
+    );
+
+    expect(consoleLog.output()).toContain("slots: 2/4 used");
+  });
+
+  it("omits the slots line when the source fetch fails", async () => {
+    listWorktreesMock.mockReturnValue([]);
+    workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set() });
+    buildSourcesMock.mockResolvedValue([
+      fakeSource([], {
+        fetch: async () => {
+          throw new Error("linear down");
+        },
+      }),
+    ]);
+
+    await status(makeConfig({ sources: [{ kind: "linear", name: "linear" }] }));
+
+    const output = consoleLog.output();
+    expect(output).not.toContain("slots:");
+    // Queue section still surfaces the diagnostic.
+    expect(output).toContain("unavailable: linear down");
+  });
+
+  it("hides the Queue section entirely when the source has no eligible Todos", async () => {
+    listWorktreesMock.mockReturnValue([]);
+    workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set() });
+    // buildSources resolves to an implicit Linear source whose fetch returns
+    // no eligible Todos — the Queue section should not appear at all.
+    buildSourcesMock.mockResolvedValue([fakeSource([])]);
+
+    await status(makeConfig({ sources: [] }));
+
+    expect(consoleLog.output()).not.toContain("Queue");
+    expect(consoleLog.output()).not.toContain("Blocked");
+  });
+
+  it("renders queue + blocked sections from the configured source", async () => {
+    listWorktreesMock.mockReturnValue([]);
+    workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set() });
+    buildSourcesMock.mockResolvedValue([
+      fakeSource([
+        // Eligible Todo with url and clean blockers list.
+        sourceIssue({
+          id: "linear:team-101",
+          title: "Wire up auth",
+          url: "https://linear.app/example/issue/TEAM-101",
+          repository: "repo-a",
+          model: "claude",
+        }),
+        // Eligible Todo blocked by another in-progress ticket.
+        sourceIssue({
+          id: "linear:team-102",
+          title: "Polish UI",
+          url: "https://linear.app/example/issue/TEAM-102",
+          repository: "repo-b",
+          model: "codex",
+          blockers: [
+            {
+              id: "linear:team-50",
+              title: "Migrate db",
+              status: "in-progress",
+              nativeStatus: "In Progress",
+            },
+          ],
+        }),
+        // Ineligible (no model/repo) — excluded from Queue.
+        sourceIssue({
+          id: "linear:team-103",
+          title: "No label",
+          repository: undefined,
+          model: undefined,
+        }),
+        // Not Todo — excluded.
+        sourceIssue({ id: "linear:team-104", status: "in-progress" }),
+      ]),
+    ]);
+
+    await status(makeConfig({ sources: [{ kind: "linear", name: "linear" }] }));
+
+    const output = consoleLog.output();
+    expect(output).toContain("Queue\n-----");
+    expect(output).toContain("team-101  https://linear.app/example/issue/TEAM-101");
+    expect(output).toContain("  title:     Wire up auth");
+    expect(output).toContain("  repo:      repo-a");
+    expect(output).toContain("  model:     claude");
+    expect(output).toContain("Blocked\n-------");
+    expect(output).toContain("team-102  https://linear.app/example/issue/TEAM-102");
+    expect(output).toContain("  blocked by:  team-50 (In Progress)");
+    // Ineligible / non-Todo issues never appear.
+    expect(output).not.toContain("team-103");
+    expect(output).not.toContain("team-104");
+  });
+
+  it("hides the Queue section when the source has only non-Todo issues", async () => {
+    listWorktreesMock.mockReturnValue([]);
+    workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set() });
+    buildSourcesMock.mockResolvedValue([
+      fakeSource([sourceIssue({ id: "linear:team-201", status: "in-progress" })]),
+    ]);
+
+    await status(makeConfig({ sources: [{ kind: "linear", name: "linear" }] }));
+
+    expect(consoleLog.output()).not.toContain("Queue");
+  });
+
+  it("separates multiple Queue and Blocked rows with blank lines", async () => {
+    listWorktreesMock.mockReturnValue([]);
+    workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set() });
+    const ready1 = sourceIssue({ id: "linear:team-301", title: "First ready" });
+    const ready2 = sourceIssue({ id: "linear:team-302", title: "Second ready" });
+    const blockedA = sourceIssue({
+      id: "linear:team-401",
+      title: "First blocked",
+      blockers: [{ id: "linear:team-9", title: "x", status: "in-progress" }],
+    });
+    const blockedB = sourceIssue({
+      id: "linear:team-402",
+      title: "Second blocked",
+      blockers: [{ id: "linear:team-10", title: "y", status: "in-progress" }],
+    });
+    buildSourcesMock.mockResolvedValue([fakeSource([ready1, ready2, blockedA, blockedB])]);
+
+    await status(makeConfig({ sources: [{ kind: "linear", name: "linear" }] }));
+
+    const output = consoleLog.output();
+    // Queue rows split by a blank line.
+    expect(output).toMatch(/First ready[\s\S]*\n\nteam-302/);
+    // Blocked rows split by a blank line.
+    expect(output).toMatch(/First blocked[\s\S]*\n\nteam-402/);
+  });
+
+  it("prints `unavailable` in the Queue section when source fetch fails", async () => {
+    listWorktreesMock.mockReturnValue([]);
+    workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set() });
+    buildSourcesMock.mockResolvedValue([
+      fakeSource([], {
+        fetch: async () => {
+          throw new Error("linear down");
+        },
+      }),
+    ]);
+
+    await status(makeConfig({ sources: [{ kind: "linear", name: "linear" }] }));
+
+    expect(consoleLog.output()).toContain("Queue\n-----\nunavailable: linear down");
   });
 
   it("prints inventory probe failures and empty worktrees", async () => {
@@ -324,7 +849,10 @@ describe(status, () => {
     await status(makeConfig());
 
     const output = consoleLog.output();
-    expect(output).toContain("team-1  repo-a  host  workspace=unknown  run=running");
+    // probe=unknown shouldn't be flagged as orphaned ("session dead") because
+    // we don't actually know — the probe failed. Duration still shows.
+    expect(output).toContain("team-1\n  state:     running (2h 14m)\n");
+    expect(output).not.toContain("session dead");
     expect(output).toContain("Workspace probe unavailable: cmux unavailable");
   });
 });
@@ -338,6 +866,8 @@ describe(statusCli, () => {
     listWorktreesMock.mockReturnValue([]);
     findByTicketMock.mockReturnValue([]);
     workspaceProbeMock.mockResolvedValue({ kind: "unavailable" });
+    workspaceAccessHintMock.mockReset();
+    findPullRequestsMock.mockResolvedValue([]);
     readRunStateMock.mockReset();
     fetchRawLinearIssueMock.mockResolvedValue(rawIssue());
     getLinearClientMock.mockReturnValue(linearClient());
@@ -361,8 +891,7 @@ describe(statusCli, () => {
     await statusCli([]);
 
     expect(listWorktreesMock).toHaveBeenCalledWith(expect.any(Object));
-    expect(consoleLog.output()).toContain("groundcrew status");
-    expect(consoleLog.output()).toContain("(none)");
+    expect(consoleLog.output()).toContain("Worktrees\n---------\n(none)");
   });
 
   it("rejects an empty ticket argument", async () => {

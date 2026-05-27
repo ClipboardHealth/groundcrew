@@ -134,6 +134,21 @@ describe(createDispatcher, () => {
       );
     });
 
+    it("forwards the ticket url through setupWorkspace details when the source provides one", async () => {
+      const board = makeBoard();
+      const dispatcher = createDispatcher({ config: makeConfig(), board });
+
+      await dispatcher.runOnce({
+        state: boardOf([todoIssue({ url: "https://linear.app/example/issue/TEAM-1" })]),
+        worktreeEntries: [],
+        usage: async () => ({}),
+        dryRun: false,
+      });
+
+      const setupCall = setupMock.mock.calls.at(-1);
+      expect(setupCall?.[1]?.details.url).toBe("https://linear.app/example/issue/TEAM-1");
+    });
+
     it("logs `At capacity` when no slots remain", async () => {
       const config = makeConfig({
         orchestrator: {

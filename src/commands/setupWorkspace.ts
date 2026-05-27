@@ -19,6 +19,8 @@ import { isWorktreeAlreadyExistsError, type WorktreeEntry, worktrees } from "../
 export interface TicketDetails {
   title: string;
   description: string;
+  /** Direct web URL for the ticket; cached into RunState when present. */
+  url?: string;
 }
 
 export interface SetupWorkspaceOptions {
@@ -130,6 +132,8 @@ export async function setupWorkspace(
       branchName,
       workspaceName: ticket,
       state: "running",
+      title: ticketDetails.title,
+      ...(ticketDetails.url === undefined ? {} : { url: ticketDetails.url }),
     });
 
     log(`Workspace "${ticket}" launched (${model})`);
@@ -148,6 +152,8 @@ export async function setupWorkspace(
       workspaceName: ticket,
       state: "failed-to-launch",
       detail: errorMessage(error),
+      title: options.details.title,
+      ...(options.details.url === undefined ? {} : { url: options.details.url }),
     });
     throw error;
   }
@@ -207,7 +213,9 @@ function recordRunStateBestEffort(arguments_: {
   branchName: string;
   workspaceName: string;
   state: "running" | "failed-to-launch";
+  title: string;
   detail?: string;
+  url?: string;
 }): void {
   try {
     recordRunState({
@@ -220,7 +228,9 @@ function recordRunStateBestEffort(arguments_: {
         branchName: arguments_.branchName,
         workspaceName: arguments_.workspaceName,
         state: arguments_.state,
+        title: arguments_.title,
         ...(arguments_.detail === undefined ? {} : { detail: arguments_.detail }),
+        ...(arguments_.url === undefined ? {} : { url: arguments_.url }),
       },
     });
   } catch (error) {
@@ -311,7 +321,11 @@ export async function setupWorkspaceCli(
     ticket: naturalId,
     repository: resolved.repository,
     model: resolved.model,
-    details: { title: resolved.title, description: resolved.description },
+    details: {
+      title: resolved.title,
+      description: resolved.description,
+      ...(resolved.url === undefined ? {} : { url: resolved.url }),
+    },
   });
   await board.markInProgress(resolved);
 }
