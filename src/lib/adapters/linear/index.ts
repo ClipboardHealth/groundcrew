@@ -10,3 +10,5 @@ const definition: AdapterDefinition<typeof linearAdapterConfigSchema> = {
 };
 
 export default definition;
+
+export type { LinearSourceRef } from "./factory.ts";

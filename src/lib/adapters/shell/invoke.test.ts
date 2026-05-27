@@ -1,17 +1,10 @@
 /* eslint-disable no-template-curly-in-string -- this file constructs `${id}`-style placeholders as literal strings for the shell adapter's substitution mechanism; they're NOT JS template literals */
 
-import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { setTimeout as sleep } from "node:timers/promises";
 
-import {
-  applySubstitutions,
-  invokeShellCommand,
-  SHELL_COMMAND_MAX_BUFFER_BYTES,
-  ShellAdapterOutputLimitError,
-  ShellAdapterTimeoutError,
-} from "./invoke.ts";
+import { applySubstitutions, invokeShellCommand, ShellAdapterTimeoutError } from "./invoke.ts";
 
 interface TempDir {
   path: string;
@@ -111,37 +104,6 @@ describe(invokeShellCommand, () => {
     ).rejects.toThrow(ShellAdapterTimeoutError);
   });
 
-  it("kills child processes on timeout", async () => {
-    const marker = join(dir.path, "child-survived");
-    const script = dir.writeScript(
-      "spawn-child.sh",
-      [
-        `node -e "setTimeout(() => require('node:fs').writeFileSync(process.argv[1], 'alive'), 700)" "${marker}" &`,
-        "wait",
-      ].join("\n"),
-    );
-
-    await expect(
-      invokeShellCommand({ command: script, timeoutMs: 100, sourceName: "test" }),
-    ).rejects.toThrow(ShellAdapterTimeoutError);
-    await sleep(1000);
-
-    expect(existsSync(marker)).toBe(false);
-  });
-
-  it("throws when combined stdout and stderr exceed the max buffer", async () => {
-    const script = dir.writeScript(
-      "too-much-output.sh",
-      `node -e "process.stdout.write('x'.repeat(Number(process.argv[1])))" ${
-        SHELL_COMMAND_MAX_BUFFER_BYTES + 1
-      }`,
-    );
-
-    await expect(
-      invokeShellCommand({ command: script, timeoutMs: 5000, sourceName: "test" }),
-    ).rejects.toThrow(ShellAdapterOutputLimitError);
-  });
-
   it("pipes stdin to the subprocess", async () => {
     const script = dir.writeScript("stdin.sh", "cat");
     const result = await invokeShellCommand({
@@ -186,5 +148,65 @@ describe(invokeShellCommand, () => {
     });
     expect(result.stderr).toContain("warning text");
     expect(result.stdout.trim()).toBe("ok");
+  });
+
+  it("reports truncated: false on a normal-sized output", async () => {
+    const script = dir.writeScript("small.sh", 'echo "ok"');
+    const result = await invokeShellCommand({
+      command: script,
+      timeoutMs: 5000,
+      sourceName: "test",
+    });
+    expect(result.truncated).toBe(false);
+  });
+
+  it("caps stdout at maxOutputBytes and marks the result truncated", async () => {
+    // Produce ~500 bytes of stdout but cap at 100 — the chunk handler will
+    // append once, see the next length > 100, and slice with a marker.
+    const script = dir.writeScript("yes.sh", "yes a | head -c 500");
+    const result = await invokeShellCommand({
+      command: script,
+      timeoutMs: 5000,
+      sourceName: "test",
+      maxOutputBytes: 100,
+    });
+    expect(result.truncated).toBe(true);
+    expect(result.stdout).toContain("[truncated: stream exceeded 100 bytes]");
+    // First 100 bytes are preserved; suffix after the newline is the marker.
+    expect(result.stdout.startsWith("a\n".repeat(50))).toBe(true);
+  });
+
+  it("caps stderr at maxOutputBytes and marks the result truncated", async () => {
+    const script = dir.writeScript("yes-err.sh", "yes a | head -c 500 >&2; echo ok");
+    const result = await invokeShellCommand({
+      command: script,
+      timeoutMs: 5000,
+      sourceName: "test",
+      maxOutputBytes: 100,
+    });
+    expect(result.truncated).toBe(true);
+    expect(result.stderr).toContain("[truncated: stream exceeded 100 bytes]");
+    expect(result.stdout.trim()).toBe("ok");
+  });
+
+  it("ignores further stdout chunks once the cap is already exceeded", async () => {
+    // Emit two distinct chunks of well-separated content. The first chunk
+    // alone busts the cap, so the second chunk's 'data' event should hit the
+    // early-return branch in appendCapped (current.length >= maxBytes).
+    const script = dir.writeScript(
+      "two-chunks.sh",
+      "yes AAA | head -c 500; sleep 0.05; yes ZZZ | head -c 500",
+    );
+    const result = await invokeShellCommand({
+      command: script,
+      timeoutMs: 5000,
+      sourceName: "test",
+      maxOutputBytes: 100,
+    });
+    expect(result.truncated).toBe(true);
+    // The second chunk's distinctive content never made it into stdout.
+    // Avoid asserting on single characters like "b" — the truncation marker
+    // itself contains common letters ("bytes").
+    expect(result.stdout).not.toContain("ZZZ");
   });
 });

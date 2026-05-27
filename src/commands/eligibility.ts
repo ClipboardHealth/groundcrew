@@ -7,12 +7,8 @@
  * effects.
  */
 
-import {
-  type Blocker,
-  type GroundcrewIssue,
-  isTerminalStatusForBlocker,
-} from "../lib/boardSource.ts";
 import { AGENT_ANY_MODEL, type ResolvedConfig } from "../lib/config.ts";
+import { naturalIdFromCanonical, type Blocker, type GroundcrewIssue } from "../lib/ticketSource.ts";
 import type { UsageByModel } from "../lib/usage.ts";
 import type { WorkspaceProbe } from "../lib/workspaces.ts";
 import type { WorktreeEntry } from "../lib/worktrees.ts";
@@ -99,7 +95,7 @@ interface BlockerClassification {
 }
 
 function blockerSummary(blocker: Blocker): string {
-  return `${blocker.id}:${blocker.status ?? "missing"}`;
+  return `${blocker.id}:${blocker.status}`;
 }
 
 function blockerVerdictFor(issue: GroundcrewIssue): SkipVerdict | undefined {
@@ -114,7 +110,7 @@ function blockerVerdictFor(issue: GroundcrewIssue): SkipVerdict | undefined {
     };
   }
 
-  const unresolved = issue.blockers.filter((blocker) => !isTerminalStatusForBlocker(blocker));
+  const unresolved = issue.blockers.filter((blocker) => blocker.status !== "done");
   if (unresolved.length === 0) {
     return undefined;
   }
@@ -225,8 +221,9 @@ function classifyRecovery(
     return { kind: "go", recovery: false };
   }
 
+  const naturalId = naturalIdFromCanonical(issue.id);
   const exists = worktreeEntries.some(
-    (entry) => entry.repository === issue.repository && entry.ticket === issue.id,
+    (entry) => entry.repository === issue.repository && entry.ticket === naturalId,
   );
   if (!exists) {
     return { kind: "go", recovery: false };
@@ -239,11 +236,11 @@ function classifyRecovery(
       eventReason: "workspace_list_unavailable",
     };
   }
-  if (!workspaceProbe.names.has(issue.id)) {
+  if (!workspaceProbe.names.has(naturalId)) {
     return {
       kind: "skip",
       issue,
-      message: `Skipping ${issue.id}: worktree exists but no live workspace. Run \`crew cleanup ${issue.id}\` to allow re-provisioning.`,
+      message: `Skipping ${issue.id}: worktree exists but no live workspace. Run \`crew cleanup ${naturalId}\` to allow re-provisioning.`,
       eventReason: "workspace_missing",
     };
   }

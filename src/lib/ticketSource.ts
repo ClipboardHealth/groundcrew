@@ -28,10 +28,34 @@ export interface Blocker {
   id: string;
   title: string;
   status: CanonicalStatus;
+  /**
+   * When `status === "other"`, adapters MUST set this to explain why
+   * they couldn't classify. Consumers (specifically `ticketDoctor`) render
+   * this verbatim to give users an actionable next step.
+   *
+   * - `"missing"`: the source returned no status for this blocker
+   *   (e.g., Linear had no state on the blocker; shell script omitted
+   *   the field).
+   * - `"unmapped"`: the source returned a status that isn't in the
+   *   source's known mapping (e.g., a Linear column not in
+   *   `linear.projects[*].statuses`, or an unrecognized shell value).
+   *
+   * MUST be undefined when `status !== "other"`.
+   */
+  statusReason?: "missing" | "unmapped";
+  /**
+   * Human-readable native status from the source, when available.
+   * Used for diagnostic display only — never branched on. Adapters SHOULD
+   * populate this when `statusReason === "unmapped"` so users can see
+   * which status name to add to their config; MAY populate for mapped
+   * statuses too if the source's native vocabulary differs usefully
+   * from `CanonicalStatus`.
+   */
+  nativeStatus?: string;
 }
 
 export interface Issue {
-  /** Canonical, source-prefixed id, e.g. "linear:eng-220" or "shell-jira:HRD-1". */
+  /** Canonical, source-prefixed id, e.g. "linear:eng-220" or "shell-jira:hrd-1". */
   id: string;
   /** Source name (the adapter's `name`, defaulting to its `kind`). */
   source: string;
@@ -57,9 +81,27 @@ export function isGroundcrewIssue(issue: Issue): issue is GroundcrewIssue {
   return issue.model !== undefined && issue.repository !== undefined;
 }
 
+/**
+ * A parent ticket that was dropped from the fetch result because it has
+ * sub-issues. Surfaced separately so the dispatcher can log WHY a
+ * Todo+labelled ticket wasn't picked up (PR #80 behavior).
+ */
+export interface ParentSkip {
+  /**
+   * Canonical, source-prefixed id, e.g. "linear:eng-220". Matches the form
+   * used by `Issue.id` so consumers can treat all ids uniformly and strip
+   * the prefix with `naturalIdFromCanonical` when displaying to operators.
+   */
+  id: string;
+  title: string;
+  childCount: number;
+}
+
 export interface BoardState {
   timestamp: string;
   issues: Issue[];
+  /** Parent tickets skipped because they have sub-issues. */
+  parentSkips: readonly ParentSkip[];
 }
 
 export interface TicketSource {
@@ -73,6 +115,14 @@ export interface TicketSource {
   resolveOne(naturalId: string): Promise<Issue | undefined>;
   /** Writeback. The adapter downcasts `issue.sourceRef` internally. */
   markInProgress(issue: Issue): Promise<void>;
+
+  /**
+   * Optional: return parent tickets that were excluded from `fetch()` because
+   * they have sub-issues. Board surfaces these so the dispatcher can log WHY
+   * a Todo+labelled ticket was skipped (PR #80 behavior). Adapters that
+   * don't distinguish parents simply omit this method; Board returns [].
+   */
+  fetchParentSkips?(): Promise<readonly ParentSkip[]>;
 }
 
 export class RepositoryResolutionError extends Error {
@@ -93,4 +143,37 @@ export class AmbiguousTicketError extends Error {
     );
     this.name = "AmbiguousTicketError";
   }
+}
+
+/**
+ * Build a canonical source-prefixed id from a source name and a natural
+ * (possibly mixed-case) id. Lower-cases the natural part so the same
+ * ticket always produces the same canonical id regardless of which code
+ * path or adapter constructed it.
+ *
+ * All adapters MUST use this helper when constructing canonical ids
+ * (rather than concatenating `${sourceName}:${naturalId}` inline) so
+ * that `Board.resolveOne` lookups against lower-cased natural-id input
+ * find the issue regardless of the casing the source emitted.
+ */
+export function toCanonicalId(sourceName: string, naturalId: string): string {
+  return `${sourceName}:${naturalId.toLowerCase()}`;
+}
+
+/**
+ * Strip the source prefix from a canonical id, yielding the natural id
+ * the producing adapter exposed. Use at consumer boundaries where you
+ * need to compare a canonical id against natural-id artifacts like
+ * `WorktreeEntry.ticket` or filesystem directory names.
+ *
+ * Canonical ids always carry a `<source>:` prefix; the no-colon branch
+ * is a defensive fallback that's unreachable in normal operation.
+ */
+export function naturalIdFromCanonical(id: string): string {
+  const colonIndex = id.indexOf(":");
+  /* v8 ignore next @preserve -- canonical ids always carry a source prefix; this branch is unreachable */
+  if (colonIndex === -1) {
+    return id;
+  }
+  return id.slice(colonIndex + 1);
 }

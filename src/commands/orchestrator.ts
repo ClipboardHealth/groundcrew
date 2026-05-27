@@ -5,12 +5,12 @@
  * orchestrator's user-facing output.
  */
 
-import { type BoardSource, type BoardState, createBoardSource } from "../lib/boardSource.ts";
 import { type Board, createBoard } from "../lib/board.ts";
-import { buildSources } from "../lib/buildSources.ts";
+import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
+import { type BoardState, RepositoryResolutionError } from "../lib/ticketSource.ts";
 import { getUsageByModel, type UsageByModel } from "../lib/usage.ts";
-import { errorMessage, getLinearClient, log, sleep } from "../lib/util.ts";
+import { errorMessage, log, sleep } from "../lib/util.ts";
 import { worktrees } from "../lib/worktrees.ts";
 import { type Cleaner, createCleaner } from "./cleaner.ts";
 import { createDispatcher, type Dispatcher } from "./dispatcher.ts";
@@ -31,6 +31,10 @@ async function withRetry<T>(
       // oxlint-disable-next-line no-await-in-loop -- retry loop sequences attempts deliberately
       return await function_();
     } catch (error) {
+      /* v8 ignore next 2 @preserve -- fetch() warns-and-skips since PR#88; guard is a defensive no-op in practice */
+      if (error instanceof RepositoryResolutionError) {
+        throw error;
+      }
       if (attempt === maxRetries) {
         throw error;
       }
@@ -78,21 +82,16 @@ async function fetchUsageOrEmpty(
 
 export async function orchestrate(options: OrchestratorOptions): Promise<void> {
   const config = await loadConfig();
-  const client = getLinearClient();
 
-  const boardSource: BoardSource = createBoardSource({ config, client });
-  await boardSource.verify();
-
-  // Verify any pluggable sources declared in config.sources (shell adapters,
-  // future built-in adapters) at startup. The Linear path still runs through
-  // boardSource.fetch in the main loop; shell-source dispatch is a follow-up.
-  // An empty config.sources resolves to an empty Board and verify() is a no-op.
-  const extraSources = await buildSources(config.sources, { globalConfig: config });
-  const board: Board = createBoard(extraSources);
+  // Build all sources (Linear implicit + any user-declared shell adapters).
+  // sourcesFromConfig synthesizes the implicit linear source from the config;
+  // this ensures the Linear adapter's markInProgress is reachable via board.
+  const allSources = await buildSources(sourcesFromConfig(config), { globalConfig: config });
+  const board: Board = createBoard(allSources);
   await board.verify();
 
   const cleaner: Cleaner = createCleaner({ config });
-  const dispatcher: Dispatcher = createDispatcher({ config, client });
+  const dispatcher: Dispatcher = createDispatcher({ config, board });
 
   // Folded into the dispatcher's idle log lines in watch mode so each idle
   // tick prints one combined line instead of "<reason>" + "Next poll in Xs".
@@ -101,7 +100,8 @@ export async function orchestrate(options: OrchestratorOptions): Promise<void> {
     : undefined;
 
   const tick = async (signal?: AbortSignal): Promise<void> => {
-    const state: BoardState = await withRetry(async () => await boardSource.fetch(), signal);
+    const state: BoardState = await withRetry(async () => await board.fetch(), signal);
+
     const worktreeEntries = worktrees.list(config);
     const tickArguments = {
       state,
@@ -109,7 +109,9 @@ export async function orchestrate(options: OrchestratorOptions): Promise<void> {
       dryRun: options.dryRun,
       ...(signal === undefined ? {} : { signal }),
     };
+
     await cleaner.runOnce(tickArguments);
+
     await dispatcher.runOnce({
       ...tickArguments,
       // Lazy: dispatcher only invokes this after its own early-returns, so
@@ -177,6 +179,10 @@ async function runWatchLoop(
       } catch (error) {
         if (error instanceof WatchLoopShutdownError) {
           break;
+        }
+        /* v8 ignore next 2 @preserve -- fetch() warns-and-skips since PR#88; guard is a defensive no-op in practice */
+        if (error instanceof RepositoryResolutionError) {
+          throw error;
         }
         const message = errorMessage(error);
         if (message.includes("Signal: SIGINT")) {

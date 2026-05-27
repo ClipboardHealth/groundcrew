@@ -1,14 +1,10 @@
 import { readFileSync } from "node:fs";
 
-import { fetchRawLinearIssue } from "../lib/boardSource.ts";
+import { getLinearClient } from "../lib/adapters/linear/client.ts";
+import { fetchRawLinearIssue } from "../lib/adapters/linear/fetch.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { readRunState, type RunState } from "../lib/runState.ts";
-import {
-  errorMessage,
-  getLinearClient,
-  withLogOutputSuppressed,
-  writeOutput,
-} from "../lib/util.ts";
+import { errorMessage, withLogOutputSuppressed, writeOutput } from "../lib/util.ts";
 import { type WorkspaceProbe, workspaces } from "../lib/workspaces.ts";
 import { type WorktreeDirtiness, worktrees } from "../lib/worktrees.ts";
 
@@ -121,7 +117,9 @@ function recentTicketLogLines(config: ResolvedConfig, ticket: string): string[] 
 async function linearStatus(ticket: string): Promise<string> {
   try {
     const issue = await fetchRawLinearIssue({ client: getLinearClient(), ticket });
-    return `${issue.stateName} (state.type=${issue.stateType ?? "unknown"}) — ${issue.title}`;
+    // `stateType` is "" when Linear returned a stateless ticket; surface that
+    // as "unknown" rather than an empty token.
+    return `${issue.stateName} (state.type=${issue.stateType || "unknown"}) — ${issue.title}`;
   } catch (error) {
     return `unavailable: ${errorMessage(error)}`;
   }

@@ -1,23 +1,21 @@
 /**
  * Per-iteration decider that picks Todo tickets to start and acts on the
- * picks. One per `orchestrate()` invocation; reuses its team-state cache
- * across iterations within an invocation.
+ * picks. Stateless across iterations. The Board adapter owns its own writeback
+ * caches (e.g., Linear's team-state cache lives in `src/lib/adapters/linear/writeback.ts`).
  *
  * Pure verdict logic lives in `eligibility.ts`; this module is responsible
- * for telemetry, Linear writes, and side-effecting setupWorkspace calls.
+ * for telemetry, writeback via Board, and side-effecting setupWorkspace calls.
  */
 
-import type { LinearClient } from "@linear/sdk";
-
+import type { Board } from "../lib/board.ts";
+import type { ResolvedConfig } from "../lib/config.ts";
+import { dispatchableRepository } from "../lib/repositoryValidation.ts";
 import {
   type BoardState,
   type GroundcrewIssue,
   isGroundcrewIssue,
-  isIssueInProgress,
-  isIssueTodo,
-} from "../lib/boardSource.ts";
-import type { ResolvedConfig } from "../lib/config.ts";
-import { createLinearIssueStatusUpdater } from "../lib/linearIssueStatus.ts";
+  naturalIdFromCanonical,
+} from "../lib/ticketSource.ts";
 import type { UsageByModel } from "../lib/usage.ts";
 import { errorMessage, log, logEvent } from "../lib/util.ts";
 import { type WorkspaceProbe, workspaces } from "../lib/workspaces.ts";
@@ -34,7 +32,7 @@ import { setupWorkspace } from "./setupWorkspace.ts";
 
 interface DispatcherDeps {
   config: ResolvedConfig;
-  client: LinearClient;
+  board: Board;
 }
 
 export interface Dispatcher {
@@ -59,15 +57,14 @@ function logSkip(verdict: SkipVerdict): void {
   logEvent("dispatch", {
     outcome: "skipped",
     reason: verdict.eventReason,
-    ticket: verdict.issue.id,
+    ticket: naturalIdFromCanonical(verdict.issue.id),
     blockers: verdict.blockers,
     model: verdict.model,
   });
 }
 
 export function createDispatcher(deps: DispatcherDeps): Dispatcher {
-  const { config, client } = deps;
-  const issueStatusUpdater = createLinearIssueStatusUpdater({ client });
+  const { config, board } = deps;
 
   function buildExhaustedSet(usage: UsageByModel): Set<string> {
     const exhausted = new Set<string>();
@@ -84,19 +81,20 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     signal?: AbortSignal,
   ): Promise<void> {
     const { issue, recovery } = start;
+    const ticketId = naturalIdFromCanonical(issue.id);
     if (start.resolvedFromAny) {
-      log(`Resolved agent-any for ${issue.id} → ${issue.model}`);
+      log(`Resolved agent-any for ${ticketId} → ${issue.model}`);
     }
 
     if (dryRun) {
       log(
         /* v8 ignore next @preserve -- classifyTodo forces recovery=false in dry-run, so the resume branch can't fire here */
-        `[dry-run] Would ${recovery ? "resume" : "start"} ${issue.id} in ${issue.repository} (${issue.model})`,
+        `[dry-run] Would ${recovery ? "resume" : "start"} ${ticketId} in ${issue.repository} (${issue.model})`,
       );
       logEvent("dispatch", {
         outcome: "skipped",
         reason: "dry_run",
-        ticket: issue.id,
+        ticket: ticketId,
         model: issue.model,
         repository: issue.repository,
       });
@@ -105,29 +103,30 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
 
     try {
       if (recovery) {
-        log(`Worktree and workspace already exist for ${issue.id}; resuming with markInProgress`);
+        log(`Worktree and workspace already exist for ${ticketId}; resuming with markInProgress`);
       } else {
         const setupOptions = {
           repository: issue.repository,
-          ticket: issue.id,
+          ticket: ticketId,
           model: issue.model,
+          details: { title: issue.title, description: issue.description },
         };
         await (signal === undefined
           ? setupWorkspace(config, setupOptions)
           : setupWorkspace(config, setupOptions, { signal }));
       }
-      await issueStatusUpdater.markInProgress(issue);
+      await board.markInProgress(issue);
       logEvent("dispatch", {
         outcome: recovery ? "resumed" : "started",
-        ticket: issue.id,
+        ticket: ticketId,
         model: issue.model,
         repository: issue.repository,
       });
     } catch (error) {
-      log(`Failed to start ${issue.id}: ${errorMessage(error)}`);
+      log(`Failed to start ${ticketId}: ${errorMessage(error)}`);
       logEvent("dispatch", {
         outcome: "failed",
-        ticket: issue.id,
+        ticket: ticketId,
         model: issue.model,
         repository: issue.repository,
         error: errorMessage(error),
@@ -144,29 +143,29 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     idleSuffix?: string;
   }): Promise<void> {
     const { state, worktreeEntries, usage, dryRun, signal, idleSuffix = "" } = arguments_;
-    issueStatusUpdater.resetMissingInProgressCache();
 
-    // Surface parent tickets that fetchBoard silently dropped. Without this
+    // Surface parent tickets that fetch silently dropped. Without this
     // an operator sees "No Todo tickets to pick up" with no signal that an
     // expected Todo+labelled ticket was skipped because it has sub-issues.
     for (const skip of state.parentSkips) {
+      const ticket = naturalIdFromCanonical(skip.id);
       log(
-        `Skipping ${skip.id}: parent ticket with ${skip.childCount} sub-issue(s) — groundcrew works sub-issues, not parents`,
+        `Skipping ${ticket}: parent ticket with ${skip.childCount} sub-issue(s) — groundcrew works sub-issues, not parents`,
       );
       logEvent("dispatch", {
         outcome: "skipped",
         reason: "parent_with_children",
-        ticket: skip.id,
+        ticket,
         children: skip.childCount,
       });
     }
 
-    const activeCount = state.issues.filter((issue) => isIssueInProgress(issue)).length;
+    const activeCount = state.issues.filter((issue) => issue.status === "in-progress").length;
     const slots = config.orchestrator.maximumInProgress - activeCount;
     // Narrow Todo to tickets that opted in via an `agent-*` label.
     // Unlabeled tickets are not groundcrew's concern even when in Todo.
     const todo: readonly GroundcrewIssue[] = state.issues.filter(
-      (issue): issue is GroundcrewIssue => isIssueTodo(issue) && isGroundcrewIssue(issue),
+      (issue): issue is GroundcrewIssue => issue.status === "todo" && isGroundcrewIssue(issue),
     );
 
     if (slots <= 0) {
@@ -192,6 +191,22 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
       return;
     }
 
+    // Validate repositories BEFORE the expensive probes so a tick whose only
+    // candidates have unknown repos short-circuits without paying for the
+    // usage() HTTP call or the workspaces.probe shell-out. Doing this filter
+    // here also keeps an unknown-repo ticket at the head of the queue from
+    // consuming a slot in classifyEligibility and starving later valid
+    // tickets. Each unknown repo still emits a WARN via dispatchableRepository.
+    const dispatchableUnblocked = unblocked.filter((issue) => {
+      const repository = dispatchableRepository(issue, config.workspace.knownRepositories, log);
+      return repository !== undefined;
+    });
+
+    if (dispatchableUnblocked.length === 0) {
+      log(`No eligible Todo tickets after repository validation${idleSuffix}`);
+      return;
+    }
+
     // usage() is an HTTP call; workspaces.probe shells tmux/cmux. Kick off
     // usage first so the workspace probe can overlap with the in-flight request.
     const usagePromise = usage(signal);
@@ -214,7 +229,7 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
 
     const verdicts = classifyEligibility({
       config,
-      unblocked,
+      unblocked: dispatchableUnblocked,
       worktreeEntries,
       workspaceProbe,
       usage: fetchedUsage,
@@ -235,15 +250,19 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
       return;
     }
 
+    const dispatchable = starts;
+
     log(
-      `${slots} slot(s) available, starting ${starts.length} ticket(s): ${starts.map(({ issue }) => `${issue.id}(${issue.model})`).join(", ")}`,
+      `${slots} slot(s) available, starting ${dispatchable.length} ticket(s): ${dispatchable.map(({ issue }) => `${naturalIdFromCanonical(issue.id)}(${issue.model})`).join(", ")}`,
     );
     logEvent("dispatch", {
       outcome: "starting",
-      tickets: starts.map(({ issue }) => `${issue.id}:${issue.model}`),
+      tickets: dispatchable.map(
+        ({ issue }) => `${naturalIdFromCanonical(issue.id)}:${issue.model}`,
+      ),
     });
 
-    for (const start of starts) {
+    for (const start of dispatchable) {
       // oxlint-disable-next-line no-await-in-loop -- one workspace at a time avoids racing on git
       await startEligibleIssue(start, dryRun, signal);
     }

@@ -1,5 +1,5 @@
 import { createBoard } from "./board.ts";
-import type { Issue, TicketSource } from "./ticketSource.ts";
+import type { Issue, ParentSkip, TicketSource } from "./ticketSource.ts";
 
 function fakeSource(name: string, overrides: Partial<TicketSource> = {}): TicketSource {
   return {
@@ -98,6 +98,30 @@ describe("Board.fetch", () => {
     const stamp = Date.parse(state.timestamp);
     expect(stamp).toBeGreaterThanOrEqual(before);
   });
+
+  it("calls fetchParentSkips() AFTER fetch() on each source so adapters that cache during fetch don't serve stale data", async () => {
+    // Mirrors the Linear adapter's pattern: fetch() populates a closure
+    // variable, fetchParentSkips() reads it. If the Board parallelized the
+    // two methods across all sources (instead of serializing per source),
+    // fetchParentSkips() would see the pre-fetch (empty) cache.
+    let cache: ParentSkip[] = [];
+    const board = createBoard([
+      fakeSource("a", {
+        fetch: vi.fn<() => Promise<Issue[]>>().mockImplementation(async () => {
+          await Promise.resolve();
+          cache = [{ id: "a:parent-1", title: "Parent A", childCount: 2 }];
+          return [];
+        }),
+        fetchParentSkips: vi
+          .fn<() => Promise<readonly ParentSkip[]>>()
+          .mockImplementation(async () => cache),
+      }),
+    ]);
+    const state = await board.fetch();
+    expect(state.parentSkips).toStrictEqual([
+      { id: "a:parent-1", title: "Parent A", childCount: 2 },
+    ]);
+  });
 });
 
 describe("Board.resolveOne", () => {
@@ -148,6 +172,38 @@ describe("Board.resolveOne", () => {
   it("throws when canonical id names an unknown source", async () => {
     const board = createBoard([fakeSource("a")]);
     await expect(board.resolveOne("nope:x")).rejects.toThrow(/unknown source.*nope/);
+  });
+
+  // Regression: pre-fix, a single source rejection on resolveOne poisoned
+  // the whole Promise.all and masked a sibling source's successful match.
+  // The real-world trigger was `crew doctor --ticket TEST-1`, where the
+  // Linear adapter throws "Entity not found" while the shell adapter has
+  // the ticket — the user saw "unresolvable: Entity not found" instead of
+  // the shell-resolved issue.
+  it("treats a source rejection as 'not found here' when another source matches", async () => {
+    const aResolve = vi
+      .fn<(id: string) => Promise<Issue | undefined>>()
+      .mockRejectedValue(new Error("Entity not found: Issue"));
+    const bResolve = vi
+      .fn<(id: string) => Promise<Issue | undefined>>()
+      .mockResolvedValue(fakeIssue("b:x", "b"));
+    const board = createBoard([
+      fakeSource("a", { resolveOne: aResolve }),
+      fakeSource("b", { resolveOne: bResolve }),
+    ]);
+    const result = await board.resolveOne("x");
+    expect(result?.id).toBe("b:x");
+  });
+
+  it("surfaces a source rejection when no other source matched", async () => {
+    const aResolve = vi
+      .fn<(id: string) => Promise<Issue | undefined>>()
+      .mockRejectedValue(new Error("Linear API: timeout"));
+    const board = createBoard([
+      fakeSource("a", { resolveOne: aResolve }),
+      fakeSource("b"), // resolves undefined by default
+    ]);
+    await expect(board.resolveOne("x")).rejects.toThrow(/Linear API: timeout/);
   });
 });
 

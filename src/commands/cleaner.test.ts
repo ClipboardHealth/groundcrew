@@ -1,6 +1,7 @@
-import type { BoardState, Issue } from "../lib/boardSource.ts";
 import type { ResolvedConfig } from "../lib/config.ts";
 import { removeRunState } from "../lib/runState.ts";
+import { canonicalLinearIssue } from "../lib/testing/canonicalFixtures.ts";
+import type { BoardState } from "../lib/ticketSource.ts";
 import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCapture.ts";
 import { emptyTeardownResult } from "../testHelpers/teardownResult.ts";
@@ -51,35 +52,7 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
   };
 }
 
-function doneIssue(id: string, overrides: Partial<Issue> = {}): Issue {
-  return {
-    id,
-    uuid: `uuid-${id}`,
-    title: "Title",
-    status: "Done",
-    statusId: "state-done",
-    stateType: "completed",
-    assignee: "Alice",
-    updatedAt: "2025-01-01T00:00:00.000Z",
-    repository: "repo-a",
-    model: "claude",
-    teamId: "team-1",
-    blockers: [],
-    hasMoreBlockers: false,
-    ...overrides,
-  };
-}
-
-function todoIssue(id: string, overrides: Partial<Issue> = {}): Issue {
-  return doneIssue(id, {
-    status: "Todo",
-    statusId: "state-todo",
-    stateType: "unstarted",
-    ...overrides,
-  });
-}
-
-function boardOf(issues: Issue[]): BoardState {
+function boardOf(issues: BoardState["issues"]): BoardState {
   return { timestamp: "2025-01-01T00:00:00.000Z", issues, parentSkips: [] };
 }
 
@@ -106,13 +79,13 @@ describe(createCleaner, () => {
     vi.clearAllMocks();
   });
 
-  it("calls teardown for a Done ticket's worktree", async () => {
+  it("calls teardown for a done ticket's worktree", async () => {
     const cleaner = createCleaner({ config: makeConfig() });
     const entry = hostEntryFor("repo-a", "team-1");
     teardownMock.mockResolvedValue(emptyTeardownResult({ removed: [entry] }));
 
     await cleaner.runOnce({
-      state: boardOf([doneIssue("team-1")]),
+      state: boardOf([canonicalLinearIssue({ naturalId: "team-1", status: "done" })]),
       worktreeEntries: [entry],
       dryRun: false,
     });
@@ -122,11 +95,11 @@ describe(createCleaner, () => {
     expect(consoleLog.output()).toContain("event=cleanup outcome=cleaned ticket=team-1");
   });
 
-  it("ignores worktrees whose ticket is not in the board snapshot", async () => {
+  it("ignores worktrees whose ticket is not in the terminal set", async () => {
     const cleaner = createCleaner({ config: makeConfig() });
 
     await cleaner.runOnce({
-      state: boardOf([doneIssue("team-1")]),
+      state: boardOf([canonicalLinearIssue({ naturalId: "team-1", status: "done" })]),
       worktreeEntries: [hostEntryFor("repo-a", "other-1")],
       dryRun: false,
     });
@@ -138,7 +111,7 @@ describe(createCleaner, () => {
     const cleaner = createCleaner({ config: makeConfig() });
 
     await cleaner.runOnce({
-      state: boardOf([todoIssue("team-1")]),
+      state: boardOf([canonicalLinearIssue({ naturalId: "team-1", status: "todo" })]),
       worktreeEntries: [hostEntryFor("repo-a", "team-1")],
       dryRun: false,
     });
@@ -146,23 +119,16 @@ describe(createCleaner, () => {
     expect(teardownMock).not.toHaveBeenCalled();
   });
 
-  it("treats canceled tickets as terminal regardless of status name", async () => {
+  it("treats in-progress tickets as non-terminal", async () => {
     const cleaner = createCleaner({ config: makeConfig() });
-    const entry = hostEntryFor("repo-a", "team-1");
 
     await cleaner.runOnce({
-      state: boardOf([
-        doneIssue("team-1", {
-          status: "Won't fix",
-          statusId: "state-wont-fix",
-          stateType: "canceled",
-        }),
-      ]),
-      worktreeEntries: [entry],
+      state: boardOf([canonicalLinearIssue({ naturalId: "team-1", status: "in-progress" })]),
+      worktreeEntries: [hostEntryFor("repo-a", "team-1")],
       dryRun: false,
     });
 
-    expect(teardownMock).toHaveBeenCalledWith(expect.anything(), [entry]);
+    expect(teardownMock).not.toHaveBeenCalled();
   });
 
   it("logs workspace_closed events for tickets reported by teardown", async () => {
@@ -170,7 +136,7 @@ describe(createCleaner, () => {
     teardownMock.mockResolvedValue(emptyTeardownResult({ closed: ["team-1"] }));
 
     await cleaner.runOnce({
-      state: boardOf([doneIssue("team-1")]),
+      state: boardOf([canonicalLinearIssue({ naturalId: "team-1", status: "done" })]),
       worktreeEntries: [hostEntryFor("repo-a", "team-1")],
       dryRun: false,
     });
@@ -185,7 +151,7 @@ describe(createCleaner, () => {
     );
 
     await cleaner.runOnce({
-      state: boardOf([doneIssue("team-1")]),
+      state: boardOf([canonicalLinearIssue({ naturalId: "team-1", status: "done" })]),
       worktreeEntries: [hostEntryFor("repo-a", "team-1")],
       dryRun: false,
     });
@@ -204,7 +170,7 @@ describe(createCleaner, () => {
     );
 
     await cleaner.runOnce({
-      state: boardOf([doneIssue("team-1")]),
+      state: boardOf([canonicalLinearIssue({ naturalId: "team-1", status: "done" })]),
       worktreeEntries: [hostEntryFor("repo-a", "team-1")],
       dryRun: false,
     });
@@ -224,7 +190,7 @@ describe(createCleaner, () => {
     );
 
     await cleaner.runOnce({
-      state: boardOf([doneIssue("team-1")]),
+      state: boardOf([canonicalLinearIssue({ naturalId: "team-1", status: "done" })]),
       worktreeEntries: [entry],
       dryRun: false,
     });
@@ -245,7 +211,7 @@ describe(createCleaner, () => {
     );
 
     await cleaner.runOnce({
-      state: boardOf([doneIssue("team-1")]),
+      state: boardOf([canonicalLinearIssue({ naturalId: "team-1", status: "done" })]),
       worktreeEntries: [entry],
       dryRun: false,
     });
@@ -257,7 +223,7 @@ describe(createCleaner, () => {
     const cleaner = createCleaner({ config: makeConfig() });
 
     await cleaner.runOnce({
-      state: boardOf([doneIssue("team-1")]),
+      state: boardOf([canonicalLinearIssue({ naturalId: "team-1", status: "done" })]),
       worktreeEntries: [hostEntryFor("repo-a", "team-1")],
       dryRun: true,
     });
@@ -275,7 +241,7 @@ describe(createCleaner, () => {
     const cleaner = createCleaner({ config: makeConfig() });
 
     await cleaner.runOnce({
-      state: boardOf([doneIssue("team-1")]),
+      state: boardOf([canonicalLinearIssue({ naturalId: "team-1", status: "done" })]),
       worktreeEntries: [entry],
       dryRun: false,
       signal,

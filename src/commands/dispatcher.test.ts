@@ -1,7 +1,7 @@
-import type { LinearClient } from "@linear/sdk";
-
-import type { BoardState, Issue } from "../lib/boardSource.ts";
 import type { ResolvedConfig } from "../lib/config.ts";
+import { canonicalLinearIssue } from "../lib/testing/canonicalFixtures.ts";
+import { makeBoard } from "../testHelpers/boardFixtures.ts";
+import type { BoardState, Issue } from "../lib/ticketSource.ts";
 import { EXHAUSTED_USAGE } from "../lib/usage.ts";
 import { workspaces } from "../lib/workspaces.ts";
 import type { WorktreeEntry } from "../lib/worktrees.ts";
@@ -61,35 +61,26 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
 }
 
 function todoIssue(overrides: Partial<Issue> = {}): Issue {
-  return {
-    id: "team-1",
-    uuid: "uuid-1",
-    title: "Title",
-    status: "Todo",
-    statusId: "state-todo",
-    stateType: "unstarted",
-    assignee: "Alice",
-    updatedAt: "2025-01-01T00:00:00.000Z",
+  return canonicalLinearIssue({
+    naturalId: "team-1",
+    status: "todo",
     repository: "repo-a",
     model: "claude",
-    teamId: "team-1",
-    blockers: [],
-    hasMoreBlockers: false,
-    ...overrides,
-  };
-}
-
-function activeIssue(overrides: Partial<Issue> = {}): Issue {
-  return todoIssue({
-    status: "In Progress",
-    statusId: "state-active",
-    stateType: "started",
+    title: "Title",
+    description: "",
     ...overrides,
   });
 }
 
-function boardOf(issues: Issue[]): BoardState {
-  return { timestamp: "2025-01-01T00:00:00.000Z", issues, parentSkips: [] };
+function activeIssue(overrides: Partial<Issue> = {}): Issue {
+  return todoIssue({ status: "in-progress", ...overrides });
+}
+
+function boardOf(
+  issues: Issue[],
+  { parentSkips = [] }: { parentSkips?: BoardState["parentSkips"] } = {},
+): BoardState {
+  return { timestamp: "2025-01-01T00:00:00.000Z", issues, parentSkips };
 }
 
 function hostEntryFor(repository: string, ticket: string): WorktreeEntry {
@@ -100,37 +91,6 @@ function hostEntryFor(repository: string, ticket: string): WorktreeEntry {
     dir: `/work/${repository}-${ticket}`,
     kind: "host",
   };
-}
-
-interface ClientStub {
-  team: ReturnType<typeof vi.fn>;
-  updateIssue: ReturnType<typeof vi.fn>;
-}
-
-function makeClient(options: { omitInProgressState?: boolean } = {}): ClientStub {
-  const { omitInProgressState = false } = options;
-  interface StateNode {
-    id: string;
-    name: string;
-    type: string;
-  }
-  return {
-    team: vi
-      .fn<() => Promise<{ states: () => Promise<{ nodes: StateNode[] }> }>>()
-      .mockResolvedValue({
-        states: vi.fn<() => Promise<{ nodes: StateNode[] }>>().mockResolvedValue({
-          nodes: omitInProgressState
-            ? [{ id: "state-other", name: "Other", type: "unstarted" }]
-            : [{ id: "state-in-progress", name: "In Progress", type: "started" }],
-        }),
-      }),
-    updateIssue: vi.fn<() => Promise<Record<string, never>>>().mockResolvedValue({}),
-  };
-}
-
-function asLinearClient(stub: ClientStub): LinearClient {
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests use the LinearClient surface consumed by dispatcher
-  return stub as unknown as LinearClient;
 }
 
 describe(createDispatcher, () => {
@@ -149,8 +109,8 @@ describe(createDispatcher, () => {
 
   describe("slot math", () => {
     it("starts a Todo ticket and marks it In Progress", async () => {
-      const client = makeClient();
-      const dispatcher = createDispatcher({ config: makeConfig(), client: asLinearClient(client) });
+      const board = makeBoard();
+      const dispatcher = createDispatcher({ config: makeConfig(), board });
 
       await dispatcher.runOnce({
         state: boardOf([todoIssue()]),
@@ -165,9 +125,13 @@ describe(createDispatcher, () => {
           ticket: "team-1",
           repository: "repo-a",
           model: "claude",
+          details: { title: "Title", description: "" },
         }),
       );
-      expect(client.updateIssue).toHaveBeenCalledWith("uuid-1", { stateId: "state-in-progress" });
+      // oxlint-disable-next-line typescript/unbound-method -- board is a plain vi.fn stub; markInProgress has no `this` binding
+      expect(board.markInProgress).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "linear:team-1" }),
+      );
     });
 
     it("logs `At capacity` when no slots remain", async () => {
@@ -178,14 +142,11 @@ describe(createDispatcher, () => {
           sessionLimitPercentage: 85,
         },
       });
-      const client = makeClient();
-      const dispatcher = createDispatcher({ config, client: asLinearClient(client) });
+      const board = makeBoard();
+      const dispatcher = createDispatcher({ config, board });
 
       await dispatcher.runOnce({
-        state: boardOf([
-          activeIssue({ id: "team-a" }),
-          todoIssue({ id: "team-b", uuid: "uuid-b" }),
-        ]),
+        state: boardOf([activeIssue({ id: "linear:team-a" }), todoIssue({ id: "linear:team-b" })]),
         worktreeEntries: [],
         usage: async () => ({}),
         dryRun: false,
@@ -196,8 +157,8 @@ describe(createDispatcher, () => {
     });
 
     it("logs `No Todo tickets` when nothing is queued", async () => {
-      const client = makeClient();
-      const dispatcher = createDispatcher({ config: makeConfig(), client: asLinearClient(client) });
+      const board = makeBoard();
+      const dispatcher = createDispatcher({ config: makeConfig(), board });
 
       await dispatcher.runOnce({
         state: boardOf([activeIssue()]),
@@ -212,8 +173,8 @@ describe(createDispatcher, () => {
     it("ignores Todo tickets without an agent-* label (model: undefined)", async () => {
       // Unlabeled Todo tickets reach the dispatcher in the board snapshot
       // but should be filtered out via isGroundcrewIssue before eligibility.
-      const client = makeClient();
-      const dispatcher = createDispatcher({ config: makeConfig(), client: asLinearClient(client) });
+      const board = makeBoard();
+      const dispatcher = createDispatcher({ config: makeConfig(), board });
 
       await dispatcher.runOnce({
         state: boardOf([todoIssue({ model: undefined, repository: undefined })]),
@@ -223,7 +184,8 @@ describe(createDispatcher, () => {
       });
 
       expect(setupMock).not.toHaveBeenCalled();
-      expect(client.updateIssue).not.toHaveBeenCalled();
+      // oxlint-disable-next-line typescript/unbound-method -- board is a plain vi.fn stub; markInProgress has no `this` binding
+      expect(board.markInProgress).not.toHaveBeenCalled();
       expect(consoleLog.output()).toContain("No Todo tickets");
     });
 
@@ -235,14 +197,11 @@ describe(createDispatcher, () => {
           sessionLimitPercentage: 85,
         },
       });
-      const client = makeClient();
-      const dispatcher = createDispatcher({ config, client: asLinearClient(client) });
+      const board = makeBoard();
+      const dispatcher = createDispatcher({ config, board });
 
       await dispatcher.runOnce({
-        state: boardOf([
-          todoIssue({ id: "team-1", uuid: "uuid-1" }),
-          todoIssue({ id: "team-2", uuid: "uuid-2" }),
-        ]),
+        state: boardOf([todoIssue({ id: "linear:team-1" }), todoIssue({ id: "linear:team-2" })]),
         worktreeEntries: [],
         usage: async () => ({}),
         dryRun: false,
@@ -254,18 +213,17 @@ describe(createDispatcher, () => {
 
   describe("blocker classification", () => {
     it("skips a ticket whose blocker is not in a terminal state", async () => {
-      const client = makeClient();
-      const dispatcher = createDispatcher({ config: makeConfig(), client: asLinearClient(client) });
+      const board = makeBoard();
+      const dispatcher = createDispatcher({ config: makeConfig(), board });
 
       await dispatcher.runOnce({
         state: boardOf([
           todoIssue({
             blockers: [
               {
-                id: "team-0",
+                id: "linear:team-0",
                 title: "Blocker",
-                status: "In Progress",
-                stateType: "started",
+                status: "in-progress",
               },
             ],
           }),
@@ -282,13 +240,13 @@ describe(createDispatcher, () => {
     });
 
     it("dispatches a ticket whose blocker is terminal", async () => {
-      const client = makeClient();
-      const dispatcher = createDispatcher({ config: makeConfig(), client: asLinearClient(client) });
+      const board = makeBoard();
+      const dispatcher = createDispatcher({ config: makeConfig(), board });
 
       await dispatcher.runOnce({
         state: boardOf([
           todoIssue({
-            blockers: [{ id: "team-0", title: "Blocker", status: "Done", stateType: "completed" }],
+            blockers: [{ id: "linear:team-0", title: "Blocker", status: "done" }],
           }),
         ]),
         worktreeEntries: [],
@@ -303,8 +261,8 @@ describe(createDispatcher, () => {
     });
 
     it("conservatively skips a ticket when blocker pagination overflowed", async () => {
-      const client = makeClient();
-      const dispatcher = createDispatcher({ config: makeConfig(), client: asLinearClient(client) });
+      const board = makeBoard();
+      const dispatcher = createDispatcher({ config: makeConfig(), board });
 
       await dispatcher.runOnce({
         state: boardOf([todoIssue({ hasMoreBlockers: true })]),
@@ -319,13 +277,13 @@ describe(createDispatcher, () => {
     });
 
     it("conservatively skips a ticket when a blocker state is missing", async () => {
-      const client = makeClient();
-      const dispatcher = createDispatcher({ config: makeConfig(), client: asLinearClient(client) });
+      const board = makeBoard();
+      const dispatcher = createDispatcher({ config: makeConfig(), board });
 
       await dispatcher.runOnce({
         state: boardOf([
           todoIssue({
-            blockers: [{ id: "team-0", title: "Blocker", status: undefined, stateType: undefined }],
+            blockers: [{ id: "linear:team-0", title: "Blocker", status: "other" }],
           }),
         ]),
         worktreeEntries: [],
@@ -334,38 +292,35 @@ describe(createDispatcher, () => {
       });
 
       expect(setupMock).not.toHaveBeenCalled();
-      expect(consoleLog.output()).toContain("blockers=team-0:missing");
+      expect(consoleLog.output()).toContain("blockers=linear:team-0:other");
     });
 
     // Regression: the lazy `usage` callback exists so all-blocked ticks don't
     // burn a codexbar HTTP call and a cmux/tmux shell-out for nothing.
     it("does not probe usage or workspaces when every Todo is blocked", async () => {
       const usageProbe = vi.fn<() => Promise<Record<string, never>>>().mockResolvedValue({});
-      const client = makeClient();
-      const dispatcher = createDispatcher({ config: makeConfig(), client: asLinearClient(client) });
+      const board = makeBoard();
+      const dispatcher = createDispatcher({ config: makeConfig(), board });
 
       await dispatcher.runOnce({
         state: boardOf([
           todoIssue({
-            id: "team-1",
+            id: "linear:team-1",
             blockers: [
               {
-                id: "team-0",
+                id: "linear:team-0",
                 title: "Blocker",
-                status: "In Progress",
-                stateType: "started",
+                status: "in-progress",
               },
             ],
           }),
           todoIssue({
-            id: "team-2",
-            uuid: "uuid-2",
+            id: "linear:team-2",
             blockers: [
               {
-                id: "team-0",
+                id: "linear:team-0",
                 title: "Blocker",
-                status: "In Progress",
-                stateType: "started",
+                status: "in-progress",
               },
             ],
           }),
@@ -383,8 +338,8 @@ describe(createDispatcher, () => {
 
   describe("agent-any resolution", () => {
     it("picks the model with the lowest session-used percent", async () => {
-      const client = makeClient();
-      const dispatcher = createDispatcher({ config: makeConfig(), client: asLinearClient(client) });
+      const board = makeBoard();
+      const dispatcher = createDispatcher({ config: makeConfig(), board });
 
       await dispatcher.runOnce({
         state: boardOf([todoIssue({ model: "any" })]),
@@ -404,8 +359,8 @@ describe(createDispatcher, () => {
     });
 
     it("skips agent-any when every model is exhausted", async () => {
-      const client = makeClient();
-      const dispatcher = createDispatcher({ config: makeConfig(), client: asLinearClient(client) });
+      const board = makeBoard();
+      const dispatcher = createDispatcher({ config: makeConfig(), board });
 
       await dispatcher.runOnce({
         state: boardOf([todoIssue({ model: "any" })]),
@@ -425,8 +380,8 @@ describe(createDispatcher, () => {
   describe("eligibility", () => {
     it("resumes when worktree exists and a matching live workspace is present", async () => {
       workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-1"]) });
-      const client = makeClient();
-      const dispatcher = createDispatcher({ config: makeConfig(), client: asLinearClient(client) });
+      const board = makeBoard();
+      const dispatcher = createDispatcher({ config: makeConfig(), board });
 
       await dispatcher.runOnce({
         state: boardOf([todoIssue()]),
@@ -436,14 +391,17 @@ describe(createDispatcher, () => {
       });
 
       expect(setupMock).not.toHaveBeenCalled();
-      expect(client.updateIssue).toHaveBeenCalledWith("uuid-1", { stateId: "state-in-progress" });
+      // oxlint-disable-next-line typescript/unbound-method -- board is a plain vi.fn stub; markInProgress has no `this` binding
+      expect(board.markInProgress).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "linear:team-1" }),
+      );
       expect(consoleLog.output()).toContain("resuming with markInProgress");
     });
 
     it("skips when worktree exists but no live workspace matches", async () => {
       workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set<string>() });
-      const client = makeClient();
-      const dispatcher = createDispatcher({ config: makeConfig(), client: asLinearClient(client) });
+      const board = makeBoard();
+      const dispatcher = createDispatcher({ config: makeConfig(), board });
 
       await dispatcher.runOnce({
         state: boardOf([todoIssue()]),
@@ -453,14 +411,15 @@ describe(createDispatcher, () => {
       });
 
       expect(setupMock).not.toHaveBeenCalled();
-      expect(client.updateIssue).not.toHaveBeenCalled();
+      // oxlint-disable-next-line typescript/unbound-method -- board is a plain vi.fn stub; markInProgress has no `this` binding
+      expect(board.markInProgress).not.toHaveBeenCalled();
       expect(consoleLog.output()).toContain("Run `crew cleanup");
     });
 
     it("retries next iteration when the workspace list is unavailable", async () => {
       workspacesProbeMock.mockResolvedValue({ kind: "unavailable" });
-      const client = makeClient();
-      const dispatcher = createDispatcher({ config: makeConfig(), client: asLinearClient(client) });
+      const board = makeBoard();
+      const dispatcher = createDispatcher({ config: makeConfig(), board });
 
       await dispatcher.runOnce({
         state: boardOf([todoIssue()]),
@@ -474,8 +433,8 @@ describe(createDispatcher, () => {
     });
 
     it("dry-run logs `Would start` without invoking setupWorkspace", async () => {
-      const client = makeClient();
-      const dispatcher = createDispatcher({ config: makeConfig(), client: asLinearClient(client) });
+      const board = makeBoard();
+      const dispatcher = createDispatcher({ config: makeConfig(), board });
 
       await dispatcher.runOnce({
         state: boardOf([todoIssue()]),
@@ -490,8 +449,8 @@ describe(createDispatcher, () => {
     });
 
     it("rethrows workspace probe failures after attaching a usage rejection handler", async () => {
-      const client = makeClient();
-      const dispatcher = createDispatcher({ config: makeConfig(), client: asLinearClient(client) });
+      const board = makeBoard();
+      const dispatcher = createDispatcher({ config: makeConfig(), board });
       const usageProbe = vi
         .fn<() => Promise<Record<string, never>>>()
         .mockRejectedValue(new Error("usage failed"));
@@ -510,8 +469,8 @@ describe(createDispatcher, () => {
 
   describe("session limits", () => {
     it("skips a Todo ticket whose model is over the session limit", async () => {
-      const client = makeClient();
-      const dispatcher = createDispatcher({ config: makeConfig(), client: asLinearClient(client) });
+      const board = makeBoard();
+      const dispatcher = createDispatcher({ config: makeConfig(), board });
 
       await dispatcher.runOnce({
         state: boardOf([todoIssue()]),
@@ -527,7 +486,7 @@ describe(createDispatcher, () => {
     });
 
     it("treats EXHAUSTED_USAGE as exhausted at sessionLimitPercentage=100", async () => {
-      const client = makeClient();
+      const board = makeBoard();
       const dispatcher = createDispatcher({
         config: makeConfig({
           orchestrator: {
@@ -536,7 +495,7 @@ describe(createDispatcher, () => {
             sessionLimitPercentage: 100,
           },
         }),
-        client: asLinearClient(client),
+        board,
       });
 
       await dispatcher.runOnce({
@@ -561,8 +520,8 @@ describe(createDispatcher, () => {
 
     it("does not gate when weekly usage is below the current day budget", async () => {
       // End of day 3 → 3/7 = 42.86% allowed. Used 30% — well under the line.
-      const client = makeClient();
-      const dispatcher = createDispatcher({ config: makeConfig(), client: asLinearClient(client) });
+      const board = makeBoard();
+      const dispatcher = createDispatcher({ config: makeConfig(), board });
 
       await dispatcher.runOnce({
         state: boardOf([todoIssue()]),
@@ -583,8 +542,8 @@ describe(createDispatcher, () => {
 
     it("allows the first-day budget immediately after weekly rollover", async () => {
       // 19 minutes after rollover is still day 1, so 1/7 = 14.29% is allowed.
-      const client = makeClient();
-      const dispatcher = createDispatcher({ config: makeConfig(), client: asLinearClient(client) });
+      const board = makeBoard();
+      const dispatcher = createDispatcher({ config: makeConfig(), board });
 
       await dispatcher.runOnce({
         state: boardOf([todoIssue({ model: "codex" })]),
@@ -606,8 +565,8 @@ describe(createDispatcher, () => {
 
     it("gates when weekly usage exceeds the current day budget", async () => {
       // End of day 1 → 1/7 = 14.29% allowed. Used 20% — over the line.
-      const client = makeClient();
-      const dispatcher = createDispatcher({ config: makeConfig(), client: asLinearClient(client) });
+      const board = makeBoard();
+      const dispatcher = createDispatcher({ config: makeConfig(), board });
 
       await dispatcher.runOnce({
         state: boardOf([todoIssue()]),
@@ -635,8 +594,8 @@ describe(createDispatcher, () => {
     // refactor to `>=` can't silently start benching models early.
     it("does not gate when weekly usage exactly equals the current day budget", async () => {
       // Mid-week (3.5 days in) is day 4's bucket, and used exactly 4/7.
-      const client = makeClient();
-      const dispatcher = createDispatcher({ config: makeConfig(), client: asLinearClient(client) });
+      const board = makeBoard();
+      const dispatcher = createDispatcher({ config: makeConfig(), board });
 
       await dispatcher.runOnce({
         state: boardOf([todoIssue()]),
@@ -660,8 +619,8 @@ describe(createDispatcher, () => {
     // usage gives nightly agents the full 2/7 = 28.57% budget — i.e.,
     // catch-up usage is permitted when behind the pace.
     it("permits catch-up usage when behind the pace", async () => {
-      const client = makeClient();
-      const dispatcher = createDispatcher({ config: makeConfig(), client: asLinearClient(client) });
+      const board = makeBoard();
+      const dispatcher = createDispatcher({ config: makeConfig(), board });
 
       await dispatcher.runOnce({
         state: boardOf([todoIssue()]),
@@ -682,8 +641,8 @@ describe(createDispatcher, () => {
     });
 
     it("ignores a null weekly value (no codexbar secondary window)", async () => {
-      const client = makeClient();
-      const dispatcher = createDispatcher({ config: makeConfig(), client: asLinearClient(client) });
+      const board = makeBoard();
+      const dispatcher = createDispatcher({ config: makeConfig(), board });
 
       await dispatcher.runOnce({
         state: boardOf([todoIssue()]),
@@ -698,8 +657,8 @@ describe(createDispatcher, () => {
     });
 
     it("ignores a null weekEndDuration (can't compute pace this tick)", async () => {
-      const client = makeClient();
-      const dispatcher = createDispatcher({ config: makeConfig(), client: asLinearClient(client) });
+      const board = makeBoard();
+      const dispatcher = createDispatcher({ config: makeConfig(), board });
 
       await dispatcher.runOnce({
         state: boardOf([todoIssue()]),
@@ -726,8 +685,8 @@ describe(createDispatcher, () => {
       // Anomalous weekEndDuration > MINUTES_PER_WEEK (e.g., codexbar
       // returned a value from before the window started). Elapsed should
       // clamp to the first day bucket, so usage over 1/7 trips the gate.
-      const client = makeClient();
-      const dispatcher = createDispatcher({ config: makeConfig(), client: asLinearClient(client) });
+      const board = makeBoard();
+      const dispatcher = createDispatcher({ config: makeConfig(), board });
 
       await dispatcher.runOnce({
         state: boardOf([todoIssue()]),
@@ -748,8 +707,8 @@ describe(createDispatcher, () => {
     });
 
     it("does not double-gate when weekly is Infinity (session gate handles EXHAUSTED_USAGE)", async () => {
-      const client = makeClient();
-      const dispatcher = createDispatcher({ config: makeConfig(), client: asLinearClient(client) });
+      const board = makeBoard();
+      const dispatcher = createDispatcher({ config: makeConfig(), board });
 
       await dispatcher.runOnce({
         state: boardOf([todoIssue()]),
@@ -766,103 +725,11 @@ describe(createDispatcher, () => {
     });
   });
 
-  describe("team-state cache", () => {
-    it("fetches the In-Progress state once across multiple tickets in the same team", async () => {
-      const client = makeClient();
-      const dispatcher = createDispatcher({ config: makeConfig(), client: asLinearClient(client) });
-
-      await dispatcher.runOnce({
-        state: boardOf([
-          todoIssue({ id: "team-1", uuid: "uuid-1", teamId: "shared" }),
-          todoIssue({ id: "team-2", uuid: "uuid-2", teamId: "shared" }),
-        ]),
-        worktreeEntries: [],
-        usage: async () => ({}),
-        dryRun: false,
-      });
-
-      expect(client.team).toHaveBeenCalledTimes(1);
-    });
-
-    it("reuses the cached state across multiple runOnce invocations", async () => {
-      const client = makeClient();
-      const dispatcher = createDispatcher({ config: makeConfig(), client: asLinearClient(client) });
-
-      await dispatcher.runOnce({
-        state: boardOf([todoIssue({ id: "team-1", uuid: "uuid-1", teamId: "shared" })]),
-        worktreeEntries: [],
-        usage: async () => ({}),
-        dryRun: false,
-      });
-      await dispatcher.runOnce({
-        state: boardOf([todoIssue({ id: "team-2", uuid: "uuid-2", teamId: "shared" })]),
-        worktreeEntries: [],
-        usage: async () => ({}),
-        dryRun: false,
-      });
-
-      expect(client.team).toHaveBeenCalledTimes(1);
-      expect(client.updateIssue).toHaveBeenCalledTimes(2);
-    });
-
-    it("logs and continues when the team has no In-Progress state", async () => {
-      const client = makeClient({ omitInProgressState: true });
-      const dispatcher = createDispatcher({ config: makeConfig(), client: asLinearClient(client) });
-
-      await dispatcher.runOnce({
-        state: boardOf([todoIssue()]),
-        worktreeEntries: [],
-        usage: async () => ({}),
-        dryRun: false,
-      });
-
-      expect(consoleLog.output()).toContain('Could not find a workflow state with type "started"');
-    });
-
-    it("dedupes a misconfigured-team lookup within an iteration", async () => {
-      const client = makeClient({ omitInProgressState: true });
-      const dispatcher = createDispatcher({ config: makeConfig(), client: asLinearClient(client) });
-
-      await dispatcher.runOnce({
-        state: boardOf([
-          todoIssue({ id: "team-1", uuid: "uuid-1", teamId: "broken" }),
-          todoIssue({ id: "team-2", uuid: "uuid-2", teamId: "broken" }),
-          todoIssue({ id: "team-3", uuid: "uuid-3", teamId: "broken" }),
-        ]),
-        worktreeEntries: [],
-        usage: async () => ({}),
-        dryRun: false,
-      });
-
-      expect(client.team).toHaveBeenCalledTimes(1);
-    });
-
-    it("re-fetches a misconfigured team next iteration so a Linear-side fix auto-recovers", async () => {
-      const client = makeClient({ omitInProgressState: true });
-      const dispatcher = createDispatcher({ config: makeConfig(), client: asLinearClient(client) });
-
-      await dispatcher.runOnce({
-        state: boardOf([todoIssue({ id: "team-1", uuid: "uuid-1", teamId: "broken" })]),
-        worktreeEntries: [],
-        usage: async () => ({}),
-        dryRun: false,
-      });
-      await dispatcher.runOnce({
-        state: boardOf([todoIssue({ id: "team-2", uuid: "uuid-2", teamId: "broken" })]),
-        worktreeEntries: [],
-        usage: async () => ({}),
-        dryRun: false,
-      });
-
-      expect(client.team).toHaveBeenCalledTimes(2);
-    });
-  });
-
   describe("setup failures", () => {
     it("logs setupWorkspace failures without crashing the loop", async () => {
       setupMock.mockRejectedValue(new Error("boom"));
-      const client = makeClient();
-      const dispatcher = createDispatcher({ config: makeConfig(), client: asLinearClient(client) });
+      const board = makeBoard();
+      const dispatcher = createDispatcher({ config: makeConfig(), board });
 
       await dispatcher.runOnce({
         state: boardOf([todoIssue()]),
@@ -875,24 +742,84 @@ describe(createDispatcher, () => {
     });
   });
 
-  // Without these logs, a parent Todo ticket disappears silently from the
-  // daemon log — operators see "No Todo tickets to pick up" and can't tell
-  // why. Surfacing each parent skip makes the silent fetchBoard filter
-  // visible.
-  describe("parent ticket logging", () => {
-    it("emits a dispatch skip event for every parent ticket in state.parentSkips", async () => {
-      const client = makeClient();
-      const dispatcher = createDispatcher({ config: makeConfig(), client: asLinearClient(client) });
+  describe("repository validation", () => {
+    it("WARN-skips an issue whose repository is not in knownRepositories", async () => {
+      const board = makeBoard();
+      const dispatcher = createDispatcher({ config: makeConfig(), board });
 
       await dispatcher.runOnce({
-        state: {
-          timestamp: "2025-01-01T00:00:00.000Z",
-          issues: [],
+        state: boardOf([todoIssue({ repository: "unknown-repo" })]),
+        worktreeEntries: [],
+        usage: async () => ({}),
+        dryRun: false,
+      });
+
+      expect(setupMock).not.toHaveBeenCalled();
+      // oxlint-disable-next-line typescript/unbound-method -- board is a plain vi.fn stub; markInProgress has no `this` binding
+      expect(board.markInProgress).not.toHaveBeenCalled();
+      expect(consoleLog.output()).toContain("references unknown repository unknown-repo");
+    });
+
+    it("short-circuits BEFORE usage() and workspaces.probe when every candidate has an unknown repo", async () => {
+      // Pins the ordering invariant: repository validation runs ahead of the
+      // expensive probes, so an all-unknown-repo tick doesn't pay the HTTP +
+      // shell-out cost just to drop every candidate afterward.
+      const board = makeBoard();
+      const dispatcher = createDispatcher({ config: makeConfig(), board });
+      const usageMock = vi.fn<() => Promise<Record<string, never>>>().mockResolvedValue({});
+
+      await dispatcher.runOnce({
+        state: boardOf([todoIssue({ repository: "unknown-repo" })]),
+        worktreeEntries: [],
+        usage: usageMock,
+        dryRun: false,
+      });
+
+      expect(usageMock).not.toHaveBeenCalled();
+      expect(workspacesProbeMock).not.toHaveBeenCalled();
+      expect(consoleLog.output()).toContain("No eligible Todo tickets after repository validation");
+    });
+
+    it("dispatches issues whose repository is in knownRepositories", async () => {
+      const board = makeBoard();
+      const dispatcher = createDispatcher({ config: makeConfig(), board });
+
+      await dispatcher.runOnce({
+        state: boardOf([todoIssue({ repository: "repo-b" })]),
+        worktreeEntries: [],
+        usage: async () => ({}),
+        dryRun: false,
+      });
+
+      expect(setupMock).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ repository: "repo-b" }),
+      );
+      // oxlint-disable-next-line typescript/unbound-method -- board is a plain vi.fn stub; markInProgress has no `this` binding
+      expect(board.markInProgress).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "linear:team-1" }),
+      );
+    });
+  });
+
+  // Parent tickets are silently dropped by board.fetch (children filter).
+  // Surfacing each parent skip makes the silent filter visible so operators
+  // see WHY a Todo ticket isn't being picked up (PR #80 behavior).
+  describe("parent ticket logging", () => {
+    it("emits a dispatch skip event for every parent ticket in state.parentSkips", async () => {
+      const board = makeBoard();
+      const dispatcher = createDispatcher({ config: makeConfig(), board });
+
+      // ParentSkip.id is canonical (source-prefixed) per the contract in
+      // ticketSource.ts. The dispatcher strips the prefix before logging so
+      // operator output is uniform with the rest of the dispatcher's log lines.
+      await dispatcher.runOnce({
+        state: boardOf([], {
           parentSkips: [
-            { id: "team-9", title: "Umbrella epic", childCount: 3 },
-            { id: "team-10", title: "Another epic", childCount: 1 },
+            { id: "linear:team-9", title: "Umbrella epic", childCount: 3 },
+            { id: "linear:team-10", title: "Another epic", childCount: 1 },
           ],
-        },
+        }),
         worktreeEntries: [],
         usage: async () => ({}),
         dryRun: false,
@@ -905,12 +832,14 @@ describe(createDispatcher, () => {
       expect(output).toContain(
         "event=dispatch outcome=skipped reason=parent_with_children ticket=team-10",
       );
-      expect(output).toMatch(/team-9.*3 sub-issue/);
+      expect(output).toMatch(/Skipping team-9: parent ticket with 3 sub-issue/);
+      expect(output).not.toContain("linear:team-9");
+      expect(output).not.toContain("linear:team-10");
     });
 
     it("does not log parent skips when state.parentSkips is empty", async () => {
-      const client = makeClient();
-      const dispatcher = createDispatcher({ config: makeConfig(), client: asLinearClient(client) });
+      const board = makeBoard();
+      const dispatcher = createDispatcher({ config: makeConfig(), board });
 
       await dispatcher.runOnce({
         state: boardOf([]),

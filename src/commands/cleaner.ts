@@ -4,9 +4,9 @@
  * invocation; stateless across iterations. Mirrors `Dispatcher`.
  */
 
-import { type BoardState, isTerminalStatusForIssue } from "../lib/boardSource.ts";
 import type { ResolvedConfig } from "../lib/config.ts";
 import { recordCleanedUpRuns } from "../lib/runStateCleanup.ts";
+import { naturalIdFromCanonical, type BoardState } from "../lib/ticketSource.ts";
 import { log, logEvent } from "../lib/util.ts";
 import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 import { logTeardown, recordTeardownEvents } from "./teardownReporter.ts";
@@ -36,7 +36,9 @@ export function createCleaner(deps: CleanerDeps): Cleaner {
     const { state, worktreeEntries, dryRun, signal } = arguments_;
 
     const terminalTickets = new Set(
-      state.issues.filter((issue) => isTerminalStatusForIssue(issue)).map((issue) => issue.id),
+      state.issues
+        .filter((issue) => issue.status === "done")
+        .map((issue) => naturalIdFromCanonical(issue.id)),
     );
     if (terminalTickets.size === 0) {
       return;

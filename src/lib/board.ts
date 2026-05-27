@@ -9,6 +9,7 @@ import {
   AmbiguousTicketError,
   type BoardState,
   type Issue,
+  type ParentSkip,
   type TicketSource,
 } from "./ticketSource.ts";
 
@@ -30,6 +31,13 @@ async function callVerify(source: TicketSource): Promise<void> {
 
 async function callFetch(source: TicketSource): Promise<Issue[]> {
   return await source.fetch();
+}
+
+async function callFetchParentSkips(source: TicketSource): Promise<readonly ParentSkip[]> {
+  if (source.fetchParentSkips !== undefined) {
+    return await source.fetchParentSkips();
+  }
+  return [];
 }
 
 async function callResolveOne(source: TicketSource, naturalId: string): Promise<Issue | undefined> {
@@ -65,8 +73,23 @@ export function createBoard(sources: readonly TicketSource[]): Board {
     },
 
     async fetch(): Promise<BoardState> {
-      const issuesPerSource = await Promise.all(sources.map(callFetch));
-      return { timestamp: new Date().toISOString(), issues: issuesPerSource.flat() };
+      // Per-source serialization: each source's callFetch must complete
+      // before its callFetchParentSkips so adapters that cache parent skips
+      // as a side effect of fetch() (e.g. Linear, which stores them on
+      // `lastParentSkips`) don't serve stale or empty data. Outer Promise.all
+      // keeps cross-source fan-out concurrent.
+      const perSource = await Promise.all(
+        sources.map(async (source) => {
+          const issues = await callFetch(source);
+          const parentSkips = await callFetchParentSkips(source);
+          return { issues, parentSkips };
+        }),
+      );
+      return {
+        timestamp: new Date().toISOString(),
+        issues: perSource.flatMap((entry) => entry.issues),
+        parentSkips: perSource.flatMap((entry) => entry.parentSkips),
+      };
     },
 
     async resolveOne(idArgument: string): Promise<Issue | undefined> {
@@ -80,11 +103,31 @@ export function createBoard(sources: readonly TicketSource[]): Board {
         }
         return await callResolveOne(source, naturalId);
       }
-      const results = await Promise.all(
+      // Per-source resolveOne errors must not poison sibling resolutions.
+      // A source that rejects on a natural-id lookup is treated as "I don't
+      // have this ticket" (or "I can't say"). If any source resolved we use
+      // it; only when none resolved AND at least one rejected do we surface
+      // the rejection — so the user sees a real Linear/network error when
+      // there's no fallback, but a stray "not found" from one source doesn't
+      // mask a successful match from another.
+      const results = await Promise.allSettled(
         sources.map(async (s) => await callResolveOne(s, idArgument)),
       );
-      const matches = results.filter((r): r is Issue => r !== undefined);
+      const matches: Issue[] = [];
+      const rejections: unknown[] = [];
+      for (const result of results) {
+        if (result.status === "rejected") {
+          rejections.push(result.reason);
+          continue;
+        }
+        if (result.value !== undefined) {
+          matches.push(result.value);
+        }
+      }
       if (matches.length === 0) {
+        if (rejections.length > 0) {
+          throw rejections[0];
+        }
         return undefined;
       }
       if (matches.length === 1) {

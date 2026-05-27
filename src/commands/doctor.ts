@@ -5,17 +5,18 @@
 
 import { existsSync, statSync } from "node:fs";
 
+import { type Board, createBoard } from "../lib/board.ts";
+import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
 import {
   type LocalRunner,
   type LocalRunnerSetting,
   loadConfig,
   type ResolvedConfig,
 } from "../lib/config.ts";
-import { createBoardSource } from "../lib/boardSource.ts";
 import { detectHostCapabilities, type HostCapabilities, which } from "../lib/host.ts";
 import { resolveLocalRunner } from "../lib/localRunner.ts";
 import { gatedModels } from "../lib/usage.ts";
-import { errorMessage, getLinearClient, resolveLinearApiKey, writeOutput } from "../lib/util.ts";
+import { errorMessage, writeOutput } from "../lib/util.ts";
 import { resolveWorkspaceKind, type WorkspaceResolution } from "../lib/workspaces.ts";
 
 // Tokenization stops after this many non-flag tokens. Two is enough to
@@ -43,31 +44,26 @@ async function checkCmd(cmd: string, required: boolean, hint?: string): Promise<
   return result;
 }
 
-async function checkLinearReachability(config: ResolvedConfig): Promise<Check> {
-  const resolved = resolveLinearApiKey();
-  if (resolved === undefined) {
-    return {
-      name: "linear reachability",
-      ok: false,
-      required: true,
-      hint: "export $GROUNDCREW_LINEAR_API_KEY or $LINEAR_API_KEY",
-    };
-  }
+/**
+ * Source-agnostic reachability check: build every configured ticket source
+ * and run the Board's `verify()` fan-out. Replaces the old Linear-only
+ * "api key + reachability" probe so a misconfigured shell (or future Jira)
+ * source surfaces here too. A missing Linear API key still fails verify with
+ * its own user-facing message, so the prior behavior is preserved.
+ */
+async function checkSourceProbe(config: ResolvedConfig): Promise<Check> {
   try {
-    await createBoardSource({ config, client: getLinearClient() }).verify();
+    const sources = await buildSources(sourcesFromConfig(config), { globalConfig: config });
+    const board: Board = createBoard(sources);
+    await board.verify();
     return {
-      name: "linear reachability",
+      name: "source probe",
       ok: true,
       required: true,
-      hint: `set via $${resolved.source}`,
+      hint: `${sources.length} source(s) verified`,
     };
   } catch (error) {
-    return {
-      name: "linear reachability",
-      ok: false,
-      required: true,
-      hint: errorMessage(error),
-    };
+    return { name: "source probe", ok: false, required: true, hint: errorMessage(error) };
   }
 }
 
@@ -181,7 +177,7 @@ export async function doctor(): Promise<boolean> {
   reportWorkspaceKind(config, workspaceOutcome);
 
   const checks: Check[] = [
-    await checkLinearReachability(config),
+    await checkSourceProbe(config),
     await checkCmd("git", true, "https://git-scm.com/"),
     ...(await workspaceChecks(workspaceOutcome)),
     checkDir(config.workspace.projectDir, "workspace.projectDir"),
