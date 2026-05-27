@@ -1,6 +1,6 @@
 # Groundcrew uses sandboxes but does not provision them
 
-**Status:** Accepted; not yet implemented. Implementation is tracked under STAFF-1033 and its slices. The past tense below describes the decided end state, not the current code — at time of writing `lib/dockerSandbox.ts` and `crew sandbox` still exist.
+**Status:** Accepted and implemented. Implementation is tracked under STAFF-1033 and its slices.
 
 Groundcrew launches agent processes _inside_ an isolation backend (safehouse on macOS, sdx/Docker Sandboxes elsewhere, or `none`), but it no longer manages the lifecycle of those sandboxes. We removed `crew sandbox` (ensure/regenerate/auth/rm/list), the auth-recipe machinery, and `lib/dockerSandbox.ts` because they duplicated functionality `sbx` already provides — wrapping someone else's CLI to be marginally more ergonomic cost ~1100 LOC and pulled sandbox-provisioning concepts (templates, kits, auth recipes, git defaults) into groundcrew's config surface for no proportional benefit.
 

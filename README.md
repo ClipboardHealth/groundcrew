@@ -143,7 +143,7 @@ Resolution order: `GROUNDCREW_CONFIG` → cosmiconfig project-walk from cwd (any
 | `models.definitions.<name>.cmd`         | —                   | Shell command launched for the model. Runs in the worktree through the resolved `local.runner`. `{{worktree}}` is replaced before launch; `{{sandbox}}` expands to the sbx sandbox name under the sdx runner and an empty string otherwise.                                                                                                                             |
 | `models.definitions.<name>.color`       | —                   | Color for the workspace status pill (cmux only; tmux silently drops it).                                                                                                                                                                                                                                                                                                |
 | `models.definitions.<name>.usage`       | optional            | If set, codexbar usage is fetched for this model and gated by `sessionLimitPercentage`. Falls back to default when unset, with gating enabled for known models. When `usage.codexbar.source` is omitted, groundcrew uses `oauth` for Codex/Claude on macOS, `auto` for other macOS providers, and `cli` elsewhere. Set to `{ disabled: true }` to disable usage gating. |
-| `models.definitions.<name>.sandbox`     | optional            | Docker Sandboxes binding for the model. Required at launch when `local.runner` resolves to `sdx`. Fields: `agent` (required sbx agent name), `template`, `kits`, `setupCommand` (override for the inside-sandbox setup script).                                                                                                                                         |
+| `models.definitions.<name>.sandbox`     | optional            | Docker Sandboxes binding for the model. Required at launch when `local.runner` resolves to `sdx`. Fields: `agent` (required sbx agent name) and `setupCommand` (override for the inside-sandbox setup script). Groundcrew assumes the `groundcrew-<agent>` sandbox already exists.                                                                                      |
 | `models.definitions.<name>.disabled`    | optional            | When set to exactly `true`, drops the named shipped default (`claude` or `codex`). Doctor skips probing it; `agent-<name>` labels fall back to `models.default` with a warning.                                                                                                                                                                                         |
 | `prompts.initial`                       | unattended template | First message sent to the agent. Placeholders: `{{ticket}}`, `{{worktree}}`, `{{title}}`, `{{description}}`. Override this from `crew.config.ts` for team-specific statuses, tools, plugins, or review loops.                                                                                                                                                           |
 | `workspaceKind`                         | `"auto"`            | Terminal session manager. `"auto"` picks `cmux` when on PATH, else `tmux`. Set to `"cmux"` or `"tmux"` to fail loudly when the chosen backend is missing.                                                                                                                                                                                                               |
@@ -188,9 +188,17 @@ Watch `${XDG_CACHE_HOME:-$HOME/.cache}/clearance/clearance.log` for `DENY` lines
 <details>
 <summary>Docker Sandboxes (sdx) setup</summary>
 
-Each model that runs under `sdx` needs a `sandbox: { agent: "<sbx-agent>" }` block in `crew.config.ts`. Groundcrew names sandboxes `groundcrew-<agent>` (e.g. `groundcrew-claude`) and reuses one sandbox per agent across repos and tickets. First-time agent auth happens inside the sandbox the first time it launches. To bootstrap manually instead, run `sbx create --name groundcrew-<agent> <agent> <projectDir>` once.
+Each model that runs under `sdx` needs a `sandbox: { agent: "<sbx-agent>" }` block in `crew.config.ts`. Groundcrew addresses the sandbox as `groundcrew-<agent>` (e.g. `groundcrew-claude`) and reuses one existing sandbox per agent across repos and tickets.
 
-Groundcrew auto-creates sandboxes when missing but never deletes them — they persist across tickets and `crew cleanup`. Auth state lives inside the sandbox, so deleting it forces a re-login. Manage with `sbx ls` / `sbx rm`.
+First-time setup is manual:
+
+```bash
+sbx create --name groundcrew-claude claude <projectDir>
+sbx exec -it groundcrew-claude claude auth login
+sbx exec -it groundcrew-claude gh auth login
+```
+
+Replace `claude` with the sbx agent for the model and `<projectDir>` with `workspace.projectDir` from `crew.config.ts`. Manage lifecycle and auth with `sbx` directly (`sbx ls`, `sbx exec`, `sbx rm`). Groundcrew does not create, authenticate, regenerate, list, or remove sandboxes.
 
 </details>
 
@@ -238,7 +246,7 @@ In Progress (state.type=started) — Multi-event extractor: year inference can p
 
 ### `crew start <TICKET>`
 
-Provisions and launches one ticket immediately, bypassing orchestrator eligibility. Use it to dispatch a specific ticket on demand — including unlabeled tickets that `crew run` ignores. (Replaces the deprecated `crew run --ticket <TICKET>`.)
+Launches one ticket immediately, bypassing orchestrator eligibility. Use it to dispatch a specific ticket on demand — including unlabeled tickets that `crew run` ignores. (Replaces the deprecated `crew run --ticket <TICKET>`.)
 
 ```bash
 crew start HRD-442

@@ -68,59 +68,18 @@ export const LOCAL_RUNNER_SETTINGS: readonly LocalRunnerSetting[] = [
 
 /**
  * Per-model Docker Sandboxes (sdx) binding. Required at launch when
- * `local.runner` resolves to `sdx` so groundcrew knows which sbx agent
- * to address and how to seed the sandbox.
+ * `local.runner` resolves to `sdx` so groundcrew knows which existing
+ * sbx sandbox to address.
  */
 export interface SandboxDefinition {
   /** sbx agent name (e.g. "claude", "codex"). */
   agent: string;
-  /** Optional `sbx run --template` value. */
-  template?: string;
-  /** Optional `sbx run --kit` values (each passed as a separate flag). */
-  kits?: string[];
   /**
    * Setup command run **inside** the sandbox before the agent exec.
    * Defaults to the shared `.groundcrew/setup.sh --deps-only` convention
    * (see `launchCommand.ts`) when omitted.
    */
   setupCommand?: string;
-}
-
-/**
- * Recipe used by `crew sandbox auth <model>` to drive an interactive
- * login flow inside a sbx sandbox and then verify it. The flow is
- * picker-driven — no positional `<tool>` argument; the picker lists
- * every recipe visible to the current sandbox.
- *
- * `binary` defaults to the recipe key (typically the agent or CLI name).
- * `authenticatedPattern` matches against combined stdout+stderr from
- * `statusArgs` — exit code alone isn't reliable because some CLIs
- * report "not logged in" while still exiting 0.
- * `kind` controls visibility in the interactive picker: `"agent"`
- * recipes are scoped to a specific sbx agent and only appear when you
- * `auth` against that agent's sandbox; `"tool"` recipes (default)
- * appear in every sandbox's picker because they're cross-cutting
- * (github, npm, gcloud, …). Defaults to `"tool"` when omitted.
- *
- * Ship-side recipes for `claude`, `codex`, and `cursor` live in
- * `src/commands/sandbox/auth.ts`; users register additional tools
- * under `sandbox.authRecipes` in their config.
- */
-export interface AuthRecipe {
-  displayName: string;
-  binary?: string;
-  loginArgs: readonly string[];
-  statusArgs: readonly string[];
-  authenticatedPattern: RegExp;
-  kind?: "agent" | "tool";
-  /**
-   * Environment variables passed to `sbx exec` for both the login and
-   * status calls. Use this for CLIs whose default flow assumes a
-   * browser or other host-only feature — e.g. cursor-agent wants
-   * `NO_OPEN_BROWSER=1` to print a device code instead of trying to
-   * launch a browser inside the sandbox.
-   */
-  env?: Record<string, string>;
 }
 
 export interface ModelDefinition {
@@ -227,32 +186,6 @@ export interface Config {
   local?: {
     runner?: LocalRunnerSetting;
   };
-  /**
-   * Sandbox-wide settings. `authRecipes` lets users register additional
-   * tools (github, npm, gcloud, …) for `crew sandbox auth <model>` to
-   * authenticate inside the sandbox. The auth flow is picker-driven —
-   * registered recipes show up in the picker alongside the shipped ones,
-   * and a user recipe under the same key (e.g. "claude") overrides the
-   * shipped one.
-   */
-  sandbox?: {
-    authRecipes?: Record<string, AuthRecipe>;
-    /**
-     * When true (default), every `crew sandbox ensure` / `auth` run applies
-     * a small set of git defaults inside the sandbox so robot commits push
-     * over `gh`-managed HTTPS regardless of how the user cloned the repo:
-     *
-     *   - disable GPG signing for commits and tags
-     *   - rewrite `git@github.com:` and `ssh://git@github.com/` URLs to
-     *     `https://github.com/` so push uses gh's credential helper
-     *   - after a successful `github` auth recipe login, run
-     *     `gh auth setup-git` inside the sandbox
-     *
-     * Set `false` to skip both the git-config block and the post-login
-     * `gh auth setup-git` step.
-     */
-    gitDefaults?: boolean;
-  };
   logging?: {
     /**
      * Append-mode log file destination. `log()` and `logEvent()` tee here
@@ -307,14 +240,6 @@ export interface ResolvedConfig {
    */
   local: {
     runner: LocalRunnerSetting;
-  };
-  /**
-   * Sandbox-wide settings. Always present after defaults; `authRecipes`
-   * is `{}` when the user provides none.
-   */
-  sandbox: {
-    authRecipes: Record<string, AuthRecipe>;
-    gitDefaults: boolean;
   };
   logging: {
     file: string;
@@ -439,31 +364,6 @@ function normalizeOptionalString(value: unknown, path: string): string | undefin
   return value.trim();
 }
 
-function normalizeOptionalBoolean(value: unknown, path: string): boolean | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (typeof value !== "boolean") {
-    fail(`${path} must be a boolean`);
-  }
-  return value;
-}
-
-function normalizeOptionalStringArray(value: unknown, path: string): string[] | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (!Array.isArray(value)) {
-    fail(`${path} must be an array`);
-  }
-  return value.map((entry, index) => {
-    if (typeof entry !== "string" || entry.trim().length === 0) {
-      fail(`${path}[${index}] must be a non-empty string`);
-    }
-    return entry.trim();
-  });
-}
-
 function isWorkspaceKindSetting(value: unknown): value is WorkspaceKindSetting {
   return (
     typeof value === "string" && (WORKSPACE_KIND_SETTINGS as readonly string[]).includes(value)
@@ -502,26 +402,37 @@ function normalizeSandbox(value: unknown, path: string): SandboxDefinition {
   if (!isPlainObject(value)) {
     fail(`${path} must be an object`);
   }
-  const { agent, template, kits, setupCommand } = value;
+  if (Object.hasOwn(value, "template")) {
+    failRemovedConfigKey(
+      `${path}.template`,
+      "Groundcrew no longer creates or re-templates sdx sandboxes.",
+    );
+  }
+  if (Object.hasOwn(value, "kits")) {
+    failRemovedConfigKey(
+      `${path}.kits`,
+      "Groundcrew no longer creates sdx sandboxes or applies sandbox kits.",
+    );
+  }
+  const { agent, setupCommand } = value;
   requireString(agent, `${path}.agent`);
   const trimmedAgent = agent.trim();
   if (trimmedAgent.length === 0) {
     fail(`${path}.agent must be a non-empty string (got ${JSON.stringify(agent)})`);
   }
   const sandbox: SandboxDefinition = { agent: trimmedAgent };
-  const normalizedTemplate = normalizeOptionalString(template, `${path}.template`);
-  if (normalizedTemplate !== undefined) {
-    sandbox.template = normalizedTemplate;
-  }
-  const normalizedKits = normalizeOptionalStringArray(kits, `${path}.kits`);
-  if (normalizedKits !== undefined) {
-    sandbox.kits = normalizedKits;
-  }
   const normalizedSetup = normalizeOptionalString(setupCommand, `${path}.setupCommand`);
   if (normalizedSetup !== undefined) {
     sandbox.setupCommand = normalizedSetup;
   }
   return sandbox;
+}
+
+function failRemovedConfigKey(path: string, reason: string): never {
+  fail(
+    `${path} is no longer supported: ${reason} ` +
+      "Provision and manage the sandbox yourself with `sbx` (for example `sbx create --name groundcrew-<agent> <agent> <projectDir>`), then keep only `models.definitions.<model>.sandbox.agent` plus optional `setupCommand` in crew.config.ts.",
+  );
 }
 
 function failIfLegacyModelKeys(
@@ -652,12 +563,6 @@ function requireObject(value: unknown, path: string): void {
   }
 }
 
-function requireOptionalObject(value: unknown, path: string): void {
-  if (value !== undefined && !isPlainObject(value)) {
-    fail(`${path} must be an object`);
-  }
-}
-
 function failOnLegacyLinearShape(user: Record<string, unknown>): void {
   if (!Object.hasOwn(user, "linear")) {
     return;
@@ -670,6 +575,28 @@ function failOnLegacyLinearShape(user: Record<string, unknown>): void {
       "If you only want a subset of your Linear tickets to be picked up, leave the unwanted tickets unassigned or remove their `agent-*` label.",
     ].join("\n"),
   );
+}
+
+function failOnRemovedSandboxSettings(user: Record<string, unknown>): void {
+  const { sandbox } = user;
+  if (sandbox === undefined) {
+    return;
+  }
+  if (!isPlainObject(sandbox)) {
+    fail("sandbox must be an object");
+  }
+  if (Object.hasOwn(sandbox, "authRecipes")) {
+    failRemovedConfigKey(
+      "sandbox.authRecipes",
+      "Groundcrew no longer drives in-sandbox auth flows.",
+    );
+  }
+  if (Object.hasOwn(sandbox, "gitDefaults")) {
+    failRemovedConfigKey(
+      "sandbox.gitDefaults",
+      "Groundcrew no longer seeds git defaults inside sdx sandboxes.",
+    );
+  }
 }
 
 function normalizeSources(raw: unknown): SourceConfig[] {
@@ -711,72 +638,14 @@ function normalizeSources(raw: unknown): SourceConfig[] {
   return raw as SourceConfig[];
 }
 
-function normalizeAuthRecipes(value: unknown, path: string): Record<string, AuthRecipe> {
-  if (value === undefined) {
-    return {};
-  }
-  if (!isPlainObject(value)) {
-    fail(`${path} must be an object`);
-  }
-  const recipes: Record<string, AuthRecipe> = {};
-  for (const [key, raw] of Object.entries(value)) {
-    const recipePath = `${path}.${key}`;
-    if (!isPlainObject(raw)) {
-      fail(`${recipePath} must be an object`);
-    }
-    const { displayName, binary, loginArgs, statusArgs, authenticatedPattern, kind, env } = raw;
-    requireString(displayName, `${recipePath}.displayName`);
-    const loginArray = normalizeOptionalStringArray(loginArgs, `${recipePath}.loginArgs`);
-    const statusArray = normalizeOptionalStringArray(statusArgs, `${recipePath}.statusArgs`);
-    if (loginArray === undefined) {
-      fail(`${recipePath}.loginArgs is required`);
-    }
-    if (statusArray === undefined) {
-      fail(`${recipePath}.statusArgs is required`);
-    }
-    if (!(authenticatedPattern instanceof RegExp)) {
-      fail(`${recipePath}.authenticatedPattern must be a RegExp`);
-    }
-    const recipe: AuthRecipe = {
-      displayName,
-      loginArgs: loginArray,
-      statusArgs: statusArray,
-      authenticatedPattern,
-    };
-    const binaryString = normalizeOptionalString(binary, `${recipePath}.binary`);
-    if (binaryString !== undefined) {
-      recipe.binary = binaryString;
-    }
-    if (kind !== undefined) {
-      if (kind !== "agent" && kind !== "tool") {
-        fail(`${recipePath}.kind must be "agent" or "tool"`);
-      }
-      recipe.kind = kind;
-    }
-    if (env !== undefined) {
-      if (!isPlainObject(env)) {
-        fail(`${recipePath}.env must be an object`);
-      }
-      const normalizedEnv: Record<string, string> = {};
-      for (const [envKey, envValue] of Object.entries(env)) {
-        if (typeof envValue !== "string") {
-          fail(`${recipePath}.env.${envKey} must be a string`);
-        }
-        normalizedEnv[envKey] = envValue;
-      }
-      recipe.env = normalizedEnv;
-    }
-    recipes[key] = recipe;
-  }
-  return recipes;
-}
-
 function applyDefaults(user: Config): ResolvedConfig {
   // Guard the top-level shape before reading nested fields, so a
   // malformed runtime config produces a `groundcrew config: ...` error
   // instead of a raw `TypeError: Cannot read properties of undefined`.
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- `user` is loosely typed input from the loader; we narrow with requireObject below
-  failOnLegacyLinearShape(user as unknown as Record<string, unknown>);
+  const rawUser = user as unknown as Record<string, unknown>;
+  failOnLegacyLinearShape(rawUser);
+  failOnRemovedSandboxSettings(rawUser);
   requireObject(user.workspace, "workspace");
   if (isPlainObject(user.models) && Object.hasOwn(user.models, "isolation")) {
     fail(
@@ -788,7 +657,6 @@ function applyDefaults(user: Config): ResolvedConfig {
       "remote is no longer supported: groundcrew runs locally via safehouse/sdx/none; remove the remote block from your config",
     );
   }
-  requireOptionalObject(user.sandbox, "sandbox");
   const userLocal = (user as { local?: { runner?: unknown } }).local;
   if (userLocal !== undefined && !isPlainObject(userLocal)) {
     fail("local must be an object");
@@ -813,11 +681,6 @@ function applyDefaults(user: Config): ResolvedConfig {
     workspaceKind: normalizeWorkspaceKind(user.workspaceKind, "workspaceKind") ?? "auto",
     local: {
       runner: normalizeLocalRunner(userLocal?.runner, "local.runner") ?? "auto",
-    },
-    sandbox: {
-      authRecipes: normalizeAuthRecipes(user.sandbox?.authRecipes, "sandbox.authRecipes"),
-      gitDefaults:
-        normalizeOptionalBoolean(user.sandbox?.gitDefaults, "sandbox.gitDefaults") ?? true,
     },
     logging: {
       file: expandHome(

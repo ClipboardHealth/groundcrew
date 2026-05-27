@@ -7,7 +7,6 @@ import { doctor } from "./commands/doctor.ts";
 import { interruptWorkspaceCli } from "./commands/interruptWorkspace.ts";
 import { orchestrate } from "./commands/orchestrator.ts";
 import { resumeWorkspaceCli } from "./commands/resumeWorkspace.ts";
-import { sandboxCli } from "./commands/sandbox/index.ts";
 import { setupReposCli } from "./commands/setupRepos.ts";
 import { setupWorkspaceCli } from "./commands/setupWorkspace.ts";
 import { statusCli } from "./commands/status.ts";
@@ -39,9 +38,6 @@ vi.mock(import("./commands/orchestrator.ts"), () => ({
 vi.mock(import("./commands/resumeWorkspace.ts"), () => ({
   resumeWorkspaceCli: vi.fn<typeof resumeWorkspaceCli>(),
 }));
-vi.mock(import("./commands/sandbox/index.ts"), () => ({
-  sandboxCli: vi.fn<typeof sandboxCli>(),
-}));
 vi.mock(import("./commands/setupWorkspace.ts"), () => ({
   setupWorkspaceCli: vi.fn<typeof setupWorkspaceCli>(),
 }));
@@ -67,7 +63,6 @@ const orchestrateMock = vi.mocked(orchestrate);
 const doctorMock = vi.mocked(doctor);
 const interruptMock = vi.mocked(interruptWorkspaceCli);
 const resumeMock = vi.mocked(resumeWorkspaceCli);
-const sandboxMock = vi.mocked(sandboxCli);
 const setupMock = vi.mocked(setupWorkspaceCli);
 const setupReposMock = vi.mocked(setupReposCli);
 const cleanupMock = vi.mocked(cleanupWorkspaceCli);
@@ -134,7 +129,6 @@ describe(run, () => {
     doctorMock.mockResolvedValue(true);
     interruptMock.mockResolvedValue();
     resumeMock.mockResolvedValue();
-    sandboxMock.mockResolvedValue();
     setupMock.mockResolvedValue();
     setupReposMock.mockResolvedValue();
     cleanupMock.mockResolvedValue();
@@ -160,7 +154,7 @@ describe(run, () => {
     expect(helpOutput).toContain("Usage: crew <command>");
     expect(helpOutput).toContain("-v, --version");
     expect(helpOutput).toContain("run");
-    expect(helpOutput).toContain("sandbox");
+    expect(helpOutput).not.toContain("sandbox");
     expect(helpOutput).not.toContain("crew ticket");
     expect(process.exitCode).toBe(1);
   });
@@ -202,19 +196,12 @@ describe(run, () => {
     expect(process.exitCode).toBe(1);
   });
 
-  it("dispatches `sandbox <verb> [args...]` to sandboxCli with the remaining argv", async () => {
+  it("hard-fails `sandbox <verb> [args...]` with the manual sbx workflow", async () => {
     await run(["sandbox", "auth", "claude"]);
 
-    expect(sandboxMock).toHaveBeenCalledWith(["auth", "claude"]);
-    expect(process.exitCode).toBeUndefined();
-  });
-
-  it("sets exit code to 1 when sandboxCli throws and surfaces the error message", async () => {
-    sandboxMock.mockRejectedValueOnce(new Error("crew sandbox: unknown model 'ghost'"));
-
-    await run(["sandbox", "ensure", "ghost"]);
-
-    expect(consoleError.output()).toContain("crew sandbox: unknown model 'ghost'");
+    expect(consoleError.output()).toContain("`crew sandbox` is no longer supported");
+    expect(consoleError.output()).toContain("manual `sbx` workflow");
+    expect(consoleError.output()).toContain("models.definitions.<model>.sandbox.agent");
     expect(process.exitCode).toBe(1);
   });
 

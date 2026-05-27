@@ -73,24 +73,11 @@ export default {
   // // macOS when you need an agent to use Docker safely.
   // local: { runner: "auto" },
   //
-  // // Additional auth recipes for `crew sandbox auth <model> <tool>`. The
-  // // shipped recipes (claude/codex/cursor agents + github tool) are merged
-  // // with whatever you declare here; your recipe wins on key collision.
-  // // Describe each tool's in-sandbox login + status commands and a regex
-  // // that matches its logged-in output. Omit `kind` for cross-cutting
-  // // tools that should appear in every sandbox's picker; set
-  // // `kind: "agent"` to scope a recipe to a single sbx agent.
-  // sandbox: {
-  //   authRecipes: {
-  //     gcloud: {
-  //       displayName: "gcloud",
-  //       binary: "gcloud",
-  //       loginArgs: ["auth", "login", "--no-launch-browser"],
-  //       statusArgs: ["auth", "list", "--filter=status:ACTIVE", "--format=value(account)"],
-  //       authenticatedPattern: /@/,
-  //     },
-  //   },
-  // },
+  // // Groundcrew does not create or authenticate sdx sandboxes. For an sdx
+  // // model, create the matching sandbox yourself before first launch:
+  // //   sbx create --name groundcrew-claude claude ~/dev/groundcrew
+  // //   sbx exec -it groundcrew-claude claude auth login
+  // //   sbx exec -it groundcrew-claude gh auth login
   //
   // prompts: {
   //   // Keep personal workflow instructions next to this config, for example

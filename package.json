@@ -68,7 +68,6 @@
   },
   "dependencies": {
     "@clipboard-health/clearance": "1.0.8",
-    "@inquirer/checkbox": "5.1.5",
     "@linear/sdk": "86.0.0",
     "cosmiconfig": "9.0.1",
     "tslib": "2.8.1",

@@ -6,7 +6,6 @@ import { initConfigCli } from "./commands/init.ts";
 import { interruptWorkspaceCli } from "./commands/interruptWorkspace.ts";
 import { orchestrate } from "./commands/orchestrator.ts";
 import { resumeWorkspaceCli } from "./commands/resumeWorkspace.ts";
-import { sandboxCli } from "./commands/sandbox/index.ts";
 import { setupReposCli } from "./commands/setupRepos.ts";
 import { setupWorkspaceCli } from "./commands/setupWorkspace.ts";
 import { statusCli } from "./commands/status.ts";
@@ -27,6 +26,11 @@ import {
 
 const NUDGE_TTL_MS = 6 * 60 * 60 * 1000;
 const NUDGE_FETCH_TIMEOUT_MS = 1000;
+const REMOVED_SANDBOX_COMMAND_MESSAGE = [
+  "`crew sandbox` is no longer supported.",
+  "Groundcrew now launches agents inside existing sbx sandboxes but does not list, create, regenerate, authenticate, or remove them.",
+  "Use the manual `sbx` workflow in README.md#docker-sandboxes-sdx-setup, then keep `models.definitions.<model>.sandbox.agent` in crew.config.ts so launches can address the existing sandbox.",
+].join("\n");
 
 interface PackageMetadata {
   name: string;
@@ -179,7 +183,7 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
     invoke: runCli,
   },
   start: {
-    summary: "Provision and launch one ticket immediately, bypassing eligibility",
+    summary: "Launch one ticket immediately, bypassing eligibility",
     usage: "<ticket> [--dry-run]",
     invoke: startCli,
   },
@@ -216,11 +220,6 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
     summary: "Reopen an existing ticket worktree with a continuation prompt",
     usage: "<ticket>",
     invoke: resumeWorkspaceCli,
-  },
-  sandbox: {
-    summary: "Manage Docker Sandboxes (sbx) for configured models",
-    usage: "<list|ensure|regenerate|auth|rm> [...args]",
-    invoke: sandboxCli,
   },
   setup: {
     summary: "Project-level setup commands (currently: repos)",
@@ -275,6 +274,12 @@ export async function run(argv: string[]): Promise<void> {
 
   if (subcommand === "-v" || subcommand === "--version") {
     writeOutput(packageVersion());
+    return;
+  }
+
+  if (subcommand === "sandbox") {
+    writeError(REMOVED_SANDBOX_COMMAND_MESSAGE);
+    process.exitCode = 1;
     return;
   }
 

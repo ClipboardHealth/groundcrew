@@ -1,7 +1,7 @@
 import { rmSync } from "node:fs";
 import { fetchResolvedIssue } from "../lib/boardSource.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
-import { ensureAgentSandbox, openAgentWorkspace, prepareAgentLaunch } from "../lib/agentLaunch.ts";
+import { openAgentWorkspace, prepareAgentLaunch } from "../lib/agentLaunch.ts";
 import { buildLaunchCommand } from "../lib/launchCommand.ts";
 import { createLinearIssueStatusUpdater } from "../lib/linearIssueStatus.ts";
 import { recordRunState } from "../lib/runState.ts";
@@ -116,13 +116,6 @@ export async function setupWorkspace(
     promptDir = stagedPrompt.directory;
 
     const secretsFile = stageBuildSecrets(promptDir);
-    await ensureAgentSandbox({
-      config,
-      definition,
-      sandboxName,
-      ...(signal === undefined ? {} : { signal }),
-    });
-
     const launchCommand = buildLaunchCommand({
       definition,
       promptFile: stagedPrompt.file,
