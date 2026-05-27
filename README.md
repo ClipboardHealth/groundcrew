@@ -20,7 +20,7 @@
 $ crew status HRD-446
 groundcrew status HRD-446
 ========================
-ticket: hrd-446  https://linear.app/example/issue/HRD-446
+ticket: hrd-446  in-progress  https://linear.app/example/issue/HRD-446
 title: Add retry logic to the sync job
 run: running; model=claude; updated=2026-05-26T00:01:00.000Z; resumes=0
 workspace: live
@@ -31,10 +31,6 @@ Worktrees
   branch: rocky-hrd-446
   dir: /dev/workspaces/owner/repo-hrd-446
   git: dirty (2 modified, 1 untracked)
-
-Ticket source
--------------
-linear:hrd-446  in-progress  https://linear.app/example/issue/HRD-446
 ```
 
 ## Why
@@ -226,7 +222,7 @@ Use `crew cleanup <TICKET>` to tear down stale worktrees and `crew resume <TICKE
 ```text
 groundcrew status HRD-442
 =========================
-ticket: hrd-442  https://linear.app/example/issue/HRD-442
+ticket: hrd-442  in-progress  https://linear.app/example/issue/HRD-442
 title: Multi-event extractor: year inference can produce date_start > date_end
 run: running; model=claude; updated=2026-05-26T00:01:00.000Z; resumes=0
 workspace: live
@@ -242,10 +238,6 @@ Worktrees
 Recent logs
 -----------
 [10:15:30] Workspace "hrd-442" launched
-
-Ticket source
--------------
-linear:hrd-442  in-progress  https://linear.app/example/issue/HRD-442
 ```
 
 </details>

@@ -123,29 +123,23 @@ async function resolveTicketSource(
   return await withLogOutputSuppressed(async () => await board.resolveOne(ticket));
 }
 
-function formatTicketSourceIssue(issue: SourceIssue): string {
-  const base = `${issue.id}  ${issue.status}`;
-  return issue.url === undefined ? base : `${base}  ${issue.url}`;
-}
+type TicketSourceStatus =
+  | { kind: "found"; issue: SourceIssue }
+  | { kind: "not-found" }
+  | { kind: "unavailable"; reason: string };
 
-async function writeTicketSourceStatus(
+async function readTicketSourceStatus(
   config: ResolvedConfig,
   ticket: string,
-  cachedTitle: string | undefined,
-): Promise<void> {
-  writeSection("Ticket source");
+): Promise<TicketSourceStatus> {
   try {
     const issue = await resolveTicketSource(config, ticket);
     if (issue === undefined) {
-      writeOutput("(not found)");
-      return;
+      return { kind: "not-found" };
     }
-    writeOutput(formatTicketSourceIssue(issue));
-    if (issue.title !== cachedTitle) {
-      writeOutput(`title: ${issue.title}`);
-    }
+    return { kind: "found", issue };
   } catch (error) {
-    writeOutput(`unavailable: ${errorMessage(error)}`);
+    return { kind: "unavailable", reason: errorMessage(error) };
   }
 }
 
@@ -158,6 +152,41 @@ function writeRecentLogs(config: ResolvedConfig, ticket: string): void {
   writeOutput(logLines.join("\n"));
 }
 
+function formatTicketLine(
+  ticket: string,
+  runState: RunState | undefined,
+  sourceStatus: TicketSourceStatus,
+): string {
+  const parts = [`ticket: ${ticket}`];
+  if (sourceStatus.kind === "found") {
+    parts.push(sourceStatus.issue.status);
+  }
+  const url =
+    sourceStatus.kind === "found" ? (sourceStatus.issue.url ?? runState?.url) : runState?.url;
+  if (url !== undefined) {
+    parts.push(url);
+  }
+  if (sourceStatus.kind === "not-found") {
+    parts.push("source not found");
+  }
+  if (sourceStatus.kind === "unavailable") {
+    parts.push(`source unavailable: ${sourceStatus.reason}`);
+  }
+  return parts.join("  ");
+}
+
+function writeTicketTitle(runState: RunState | undefined, sourceStatus: TicketSourceStatus): void {
+  const cachedTitle = runState?.title;
+  const sourceTitle = sourceStatus.kind === "found" ? sourceStatus.issue.title : undefined;
+  const title = cachedTitle ?? sourceTitle;
+  if (title !== undefined) {
+    writeOutput(`title: ${title}`);
+  }
+  if (cachedTitle !== undefined && sourceTitle !== undefined && cachedTitle !== sourceTitle) {
+    writeOutput(`source title: ${sourceTitle}`);
+  }
+}
+
 async function writeTicketStatus(config: ResolvedConfig, rawTicket: string): Promise<void> {
   const ticket = rawTicket.toLowerCase();
   const displayTicket = ticket.toUpperCase();
@@ -165,19 +194,17 @@ async function writeTicketStatus(config: ResolvedConfig, rawTicket: string): Pro
   writeOutput("=".repeat(`groundcrew status ${displayTicket}`.length));
 
   const runState = readRunState(config, ticket);
-  const workspaceProbe = await withLogOutputSuppressed(async () => await workspaces.probe(config));
-  writeOutput(
-    runState?.url === undefined ? `ticket: ${ticket}` : `ticket: ${ticket}  ${runState.url}`,
-  );
-  if (runState?.title !== undefined) {
-    writeOutput(`title: ${runState.title}`);
-  }
+  const [workspaceProbe, sourceStatus] = await Promise.all([
+    withLogOutputSuppressed(async () => await workspaces.probe(config)),
+    readTicketSourceStatus(config, ticket),
+  ]);
+  writeOutput(formatTicketLine(ticket, runState, sourceStatus));
+  writeTicketTitle(runState, sourceStatus);
   writeOutput(`run: ${formatRunState(runState)}`);
   writeOutput(`workspace: ${ticketWorkspaceText(workspaceProbe, ticket)}`);
 
   await writeTicketWorktrees(config, ticket);
   writeRecentLogs(config, ticket);
-  await writeTicketSourceStatus(config, ticket, runState?.title);
 }
 
 /**

@@ -260,8 +260,10 @@ describe(status, () => {
     expect(output).not.toContain("ticket=team-10");
     expect(output).toContain('Workspace "TEAM-1" launched');
     expect(output).not.toContain("unrelated ticket");
-    expect(output).toContain("Ticket source");
-    expect(output).toContain("linear:team-1  in-progress  https://linear.app/example/issue/TEAM-1");
+    expect(output).not.toContain("Ticket source");
+    expect(output).toContain(
+      "ticket: team-1  in-progress  https://linear.app/example/issue/TEAM-1",
+    );
     expect(output).toContain("title: Fix status");
   });
 
@@ -275,14 +277,13 @@ describe(status, () => {
     await status(config, { ticket: "team-404" });
 
     const output = consoleLog.output();
-    expect(output).toContain("ticket: team-404");
+    expect(output).toContain("ticket: team-404  source unavailable: source down");
     expect(output).toContain("run: (none)");
     expect(output).toContain("workspace: not live");
     expect(output).toContain("Worktrees");
     expect(output).toContain("(none)");
     expect(output).not.toContain("Recent logs");
-    expect(output).toContain("Ticket source");
-    expect(output).toContain("unavailable: source down");
+    expect(output).not.toContain("Ticket source");
   });
 
   it("rejects an empty direct-call ticket", async () => {
@@ -304,7 +305,7 @@ describe(status, () => {
 
     const output = consoleLog.output();
     expect(output).toContain("running; model=claude; updated=2026-05-26T00:01:00.000Z; resumes=0");
-    expect(output).toContain("linear:team-1  other");
+    expect(output).toContain("ticket: team-1  other");
     expect(output).toContain("title: No state type");
   });
 
@@ -340,6 +341,17 @@ describe(status, () => {
     await status(makeConfig(), { ticket: "team-1" });
 
     expect(consoleLog.output().match(/title: Improve crew status command/g)).toHaveLength(1);
+  });
+
+  it("prints a changed source title separately from the cached title", async () => {
+    readRunStateMock.mockReturnValue(runState({ title: "Cached title" }));
+    buildSourcesMock.mockResolvedValue([fakeSource([sourceIssue({ title: "Current title" })])]);
+
+    await status(makeConfig(), { ticket: "team-1" });
+
+    const output = consoleLog.output();
+    expect(output).toContain("title: Cached title");
+    expect(output).toContain("source title: Current title");
   });
 
   it("omits the cached title line when no run state has a title", async () => {
