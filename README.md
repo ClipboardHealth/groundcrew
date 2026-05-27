@@ -94,8 +94,6 @@ crew cleanup <TICKET>                                    # tear down every workt
 crew upgrade [<version>]                                 # reinstall crew globally through npm
 ```
 
-Deprecated aliases still work but print a warning and will be removed in the next major version: `crew interrupt` → `crew stop`, `crew run --ticket <TICKET>` → `crew start <TICKET>`, `crew doctor --ticket <TICKET>` → `crew status <TICKET>`.
-
 ## Manual repository bootstrap
 
 Groundcrew never clones repositories for you. Clone each `workspace.knownRepositories` entry into `workspace.projectDir` using the same relative path the config uses. For an `OWNER/REPO` entry:
@@ -136,7 +134,7 @@ Status classification uses Linear's workflow `state.type` (`unstarted`, `started
 <details>
 <summary>Config discovery</summary>
 
-Resolution order: `GROUNDCREW_CONFIG` → cosmiconfig project-walk from cwd (any of `crew.config.{ts,mjs,js,json}`, `.crewrc{,.json,.ts}`, `.config/crew.config.{ts,json}`, `.config/crewrc{,.json}`) → `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/crew.config.ts` (legacy `config.ts` accepted for one release). The "Loaded config from …" line at startup tells you which won.
+Resolution order: `GROUNDCREW_CONFIG` → cosmiconfig project-walk from cwd (any of `crew.config.{ts,mjs,js,json}`, `.crewrc{,.json,.ts}`, `.config/crew.config.{ts,json}`, `.config/crewrc{,.json}`) → `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/crew.config.ts`. The "Loaded config from …" line at startup tells you which won.
 
 </details>
 
@@ -261,7 +259,7 @@ In Progress (state.type=started) — Multi-event extractor: year inference can p
 
 ### `crew start <TICKET>`
 
-Launches one ticket immediately, bypassing orchestrator eligibility. Use it to dispatch a specific ticket on demand — including unlabeled tickets that `crew run` ignores. (Replaces the deprecated `crew run --ticket <TICKET>`.)
+Launches one ticket immediately, bypassing orchestrator eligibility. Use it to dispatch a specific ticket on demand — including unlabeled tickets that `crew run` ignores.
 
 ```bash
 crew start HRD-442
@@ -270,7 +268,7 @@ crew start HRD-442 --dry-run
 
 ### `crew stop <TICKET>`
 
-Stops a live workspace pane while preserving the ticket worktree and branch. The manual pause button for cases where you need terminal capacity back, want to stop an agent that's going in the wrong direction, or need to inspect the diff before letting another agent continue. (Replaces the deprecated `crew interrupt <TICKET>`.)
+Stops a live workspace pane while preserving the ticket worktree and branch. The manual pause button for cases where you need terminal capacity back, want to stop an agent that's going in the wrong direction, or need to inspect the diff before letting another agent continue.
 
 ```bash
 crew stop HRD-442 --reason "wrong implementation direction"
@@ -535,7 +533,7 @@ node --run crew -- doctor
 node --run crew:op -- run --watch
 ```
 
-Both forms discover config via cosmiconfig — project-walk from cwd for `crew.config.ts` and friends, then `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/crew.config.ts` (legacy `config.ts` is still accepted for one release). Set `GROUNDCREW_CONFIG` to point elsewhere. The `crew:op` wrapper additionally reads `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/op.env` (1Password env-file with `op://` references resolved at launch).
+Both forms discover config via cosmiconfig — project-walk from cwd for `crew.config.ts` and friends, then `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/crew.config.ts`. Set `GROUNDCREW_CONFIG` to point elsewhere. The `crew:op` wrapper additionally reads `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/op.env` (1Password env-file with `op://` references resolved at launch).
 
 Logs land in `${XDG_STATE_HOME:-$HOME/.local/state}/groundcrew/groundcrew.log` by default (override via `logging.file`).
 
