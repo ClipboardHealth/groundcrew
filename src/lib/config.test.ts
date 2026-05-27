@@ -100,7 +100,8 @@ describe("loadConfig", () => {
     expect(actual.prompts.initial).toContain("There is no human watching this session");
     expect(actual.prompts.initial).toMatch(/documented verification/i);
     expect(actual.prompts.initial).toMatch(/open a pull request/i);
-    expect(actual.prompts.initial).toContain("tmux attach -t groundcrew:{{ticket}}");
+    expect(actual.prompts.initial).toContain("{{workspaceContinuationInstruction}}");
+    expect(actual.prompts.initial).not.toContain("tmux attach -t groundcrew:{{ticket}}");
   });
 
   it("rejects a `linear` config block with a migration message", async () => {
@@ -709,13 +710,18 @@ describe("loadConfig", () => {
       temporary,
       configSource({
         workspace: VALID_WORKSPACE(temporary),
-        prompts: { initial: "{{ticket}} {{worktree}} {{title}} {{description}}" },
+        prompts: {
+          initial:
+            "{{ticket}} {{worktree}} {{title}} {{description}} {{workspaceContinuationInstruction}}",
+        },
       }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
-    expect(actual.prompts.initial).toBe("{{ticket}} {{worktree}} {{title}} {{description}}");
+    expect(actual.prompts.initial).toBe(
+      "{{ticket}} {{worktree}} {{title}} {{description}} {{workspaceContinuationInstruction}}",
+    );
   });
 
   it("fails when prompts.initial contains an unknown placeholder", async () => {

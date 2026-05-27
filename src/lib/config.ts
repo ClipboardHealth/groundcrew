@@ -289,7 +289,7 @@ const DEFAULT_PROMPT_INITIAL = [
   "4. Review your own diff before stopping. Look for bugs, regressions, missing tests, security issues, and convention violations, then fix any issues you find.",
   "5. If this repository uses GitHub and the `gh` CLI is available and authenticated, open a pull request. If you cannot open one, leave the branch ready and record the blocker.",
   "6. Include `Closes {{ticket}}` in the PR description.",
-  "7. Include a short continuation note in the PR body when you know how to reattach to this workspace. For the tmux backend, use `tmux attach -t groundcrew:{{ticket}}`.",
+  "{{workspaceContinuationInstruction}}",
   "",
   "Stop after the branch is ready or the PR is open.",
 ].join("\n");
@@ -299,6 +299,7 @@ const ALLOWED_PROMPT_PLACEHOLDERS = new Set([
   "{{worktree}}",
   "{{title}}",
   "{{description}}",
+  "{{workspaceContinuationInstruction}}",
 ]);
 const PROMPT_PLACEHOLDER_RE = /{{[^{}]*}}/g;
 

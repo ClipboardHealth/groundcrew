@@ -469,6 +469,46 @@ describe(setupWorkspace, () => {
     );
   });
 
+  it("renders a tmux continuation instruction with the command in backticks", async () => {
+    mockTmuxHost();
+    const config = {
+      ...makeConfig(),
+      prompts: {
+        initial: "Before\n{{workspaceContinuationInstruction}}\nAfter",
+      },
+    };
+
+    await setupWorkspace(config, {
+      ticket: "team-1",
+      repository: "repo-a",
+      model: "claude",
+      details: { title: "Test Title", description: "Body" },
+    });
+
+    const prompt = writtenFileContent("/tmp/groundcrew-team-1-x/prompt.txt");
+    expect(prompt).toContain("Workspace attach: `tmux attach -t groundcrew:team-1`");
+    expect(prompt).not.toContain("{{workspaceContinuationInstruction}}");
+  });
+
+  it("omits the workspace continuation instruction when the backend has no access hint", async () => {
+    const config = {
+      ...makeConfig(),
+      prompts: {
+        initial: "Before\n{{workspaceContinuationInstruction}}\nAfter",
+      },
+    };
+    mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
+
+    await setupWorkspace(config, {
+      ticket: "team-1",
+      repository: "repo-a",
+      model: "claude",
+      details: { title: "Test Title", description: "Body" },
+    });
+
+    expect(writtenFileContent("/tmp/groundcrew-team-1-x/prompt.txt")).toBe("Before\n\nAfter");
+  });
+
   it("wraps the agent command with Safehouse and runs the host setup script for local runs", async () => {
     detectHostMock.mockResolvedValue(host());
     const config = makeConfig({

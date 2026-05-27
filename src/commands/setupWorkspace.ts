@@ -37,6 +37,7 @@ function stagePrompt(input: {
   ticket: string;
   ticketDetails: TicketDetails;
   worktreeName: string;
+  workspaceContinuationInstruction: string;
 }): StagedPrompt {
   return stagePromptFromTemplate({
     config: input.config,
@@ -47,6 +48,7 @@ function stagePrompt(input: {
       worktree: input.worktreeName,
       title: input.ticketDetails.title,
       description: input.ticketDetails.description,
+      workspaceContinuationInstruction: input.workspaceContinuationInstruction,
     },
   });
 }
@@ -96,8 +98,15 @@ export async function setupWorkspace(
   let promptDir: string | undefined;
   try {
     const ticketDetails = options.details;
+    const accessHint = await workspaces.accessHint(config, ticket, signal);
 
-    const stagedPrompt = stagePrompt({ config, ticket, ticketDetails, worktreeName });
+    const stagedPrompt = stagePrompt({
+      config,
+      ticket,
+      ticketDetails,
+      worktreeName,
+      workspaceContinuationInstruction: renderWorkspaceContinuationInstruction(accessHint),
+    });
     promptDir = stagedPrompt.directory;
 
     const secretsFile = stageBuildSecrets(promptDir);
@@ -135,7 +144,9 @@ export async function setupWorkspace(
     log(`Workspace "${ticket}" launched (${model})`);
     log(`  Worktree: ${launchDir}`);
     log(`  Branch:   ${branchName}`);
-    await logWorkspaceAccessHint({ config, ticket, signal });
+    if (accessHint !== undefined) {
+      logAccessHint(accessHint);
+    }
   } catch (error) {
     await rollbackWorktree({ config, entry: created, promptDir });
     recordRunStateBestEffort({
@@ -178,24 +189,17 @@ async function logAccessHintForExistingWorkspace(arguments_: {
   logAccessHint(accessHint);
 }
 
-async function logWorkspaceAccessHint(arguments_: {
-  config: ResolvedConfig;
-  ticket: string;
-  signal: AbortSignal | undefined;
-}): Promise<void> {
-  const accessHint = await workspaces.accessHint(
-    arguments_.config,
-    arguments_.ticket,
-    arguments_.signal,
-  );
-  if (accessHint === undefined) {
-    return;
-  }
-  logAccessHint(accessHint);
-}
-
 function logAccessHint(accessHint: WorkspaceAccessHint): void {
   log(`  Attach:   ${accessHint.command}`);
+}
+
+function renderWorkspaceContinuationInstruction(
+  accessHint: WorkspaceAccessHint | undefined,
+): string {
+  if (accessHint === undefined) {
+    return "";
+  }
+  return `7. Include this workspace continuation note in the PR body: Workspace attach: \`${accessHint.command}\`.`;
 }
 
 function recordRunStateBestEffort(arguments_: {
