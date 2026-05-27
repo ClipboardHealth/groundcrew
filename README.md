@@ -63,7 +63,9 @@ npm install -g @clipboard-health/groundcrew
 crew init && $EDITOR crew.config.ts
 
 # 4. Clone the repos referenced in your config
-crew setup repos
+PROJECT_DIR="$HOME/dev/c"
+mkdir -p "$PROJECT_DIR/OWNER"
+git clone git@github.com:OWNER/REPO.git "$PROJECT_DIR/OWNER/REPO"
 
 # 5. Export your Linear API key
 export GROUNDCREW_LINEAR_API_KEY="lin_api_..."
@@ -86,13 +88,34 @@ crew status [<TICKET>]                                   # inspect current state
 crew run                                                 # one-shot orchestration
 crew run --watch                                         # poll forever
 crew start <TICKET>                                      # provision + launch one ticket now
-crew setup repos [<repo>...] [--dry-run]                 # clone known repos via gh
 crew stop <TICKET> [--reason <text>]                     # stop workspace, keep worktree
 crew resume <TICKET>                                     # reopen a paused ticket
 crew cleanup <TICKET>                                    # tear down every worktree for a ticket
+crew upgrade [<version>]                                 # reinstall crew globally through npm
 ```
 
 Deprecated aliases still work but print a warning and will be removed in the next major version: `crew interrupt` → `crew stop`, `crew run --ticket <TICKET>` → `crew start <TICKET>`, `crew doctor --ticket <TICKET>` → `crew status <TICKET>`.
+
+## Manual Repository Bootstrap
+
+Groundcrew no longer clones repositories for you. For each `workspace.knownRepositories` entry,
+clone the repository into `workspace.projectDir` using the same relative path that appears in the
+config. For an `OWNER/REPO` entry:
+
+```bash
+PROJECT_DIR="$HOME/dev/c"
+mkdir -p "$PROJECT_DIR/OWNER"
+git clone git@github.com:OWNER/REPO.git "$PROJECT_DIR/OWNER/REPO"
+```
+
+HTTPS works the same way if you do not use SSH:
+
+```bash
+git clone https://github.com/OWNER/REPO.git "$PROJECT_DIR/OWNER/REPO"
+```
+
+Bare-name entries do not include an owner, so choose the correct remote URL yourself and clone it to
+`$PROJECT_DIR/<name>`. `crew setup repos` now exits non-zero and points back to this section.
 
 ## Configuration
 
@@ -505,13 +528,6 @@ Set `workspaceKind: "tmux"` to force the tmux backend when cmux's CLI/socket bri
 <summary>Agent CLI must accept a positional prompt</summary>
 
 The handoff is `<your cmd> "<prompt>"`. `claude`, `codex`, and `cursor-agent` all support this.
-
-</details>
-
-<details>
-<summary><code>crew setup repos</code> only auto-clones <code>owner/repo</code> entries</summary>
-
-Bare-name entries in `workspace.knownRepositories` (e.g. `"api"` rather than `"clipboardhealth/api"`) are skipped with a hint to clone manually — the command refuses to guess the owner. After a partial setup, the exit code is non-zero so CI gates notice; rerun is idempotent once you clone the bare ones into `<projectDir>/<name>` yourself.
 
 </details>
 
