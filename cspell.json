@@ -44,6 +44,7 @@
     "discriminable",
     "initialised",
     "dedup",
+    "dispatchable",
     "misconfig",
     "ticketsource",
     "writeback",

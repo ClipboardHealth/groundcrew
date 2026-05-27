@@ -8,7 +8,8 @@ import type * as configModule from "../lib/config.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { getUsageByModel } from "../lib/usage.ts";
 import type * as utilModule from "../lib/util.ts";
-import { getLinearClient, sleep } from "../lib/util.ts";
+import { sleep } from "../lib/util.ts";
+import { getLinearClient } from "../lib/adapters/linear/client.ts";
 import { workspaces } from "../lib/workspaces.ts";
 import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCapture.ts";
@@ -20,11 +21,14 @@ vi.mock(import("../lib/config.ts"), async (importOriginal) => {
   const actual = await importOriginal<typeof configModule>();
   return { ...actual, loadConfig: vi.fn<typeof loadConfig>() };
 });
+vi.mock(import("../lib/adapters/linear/client.ts"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, getLinearClient: vi.fn<typeof getLinearClient>() };
+});
 vi.mock(import("../lib/util.ts"), async (importOriginal) => {
   const actual = await importOriginal<typeof utilModule>();
   return {
     ...actual,
-    getLinearClient: vi.fn<typeof getLinearClient>(),
     sleep: vi.fn<typeof sleep>(),
     // log() is forwarded to stdout so test assertions on render output
     // can also see status/info lines emitted via log().
@@ -793,7 +797,7 @@ describe(orchestrate, () => {
             state: { id: "state-todo", name: "Todo", type: "unstarted" },
             labels: { nodes: [{ name: "agent-any" }] },
             inverseRelations: {
-              nodes: [blockingRelation("TEAM-0", "In Progress")],
+              nodes: [blockingRelation("TEAM-0", "In Progress", "started")],
               pageInfo: { hasNextPage: false },
             },
           }),
@@ -807,7 +811,8 @@ describe(orchestrate, () => {
     expect(setupMock).not.toHaveBeenCalled();
     const out = consoleLog.output();
     expect(out).toContain("event=dispatch outcome=skipped reason=blocked ticket=team-1");
-    expect(out).toContain('blockers="team-0:In Progress"');
+    // After main's #110: state.type drives classification; "started" maps to "in-progress".
+    expect(out).toContain("blockers=linear:team-0:in-progress");
   });
 
   it("dispatches Todo tickets whose blockers are terminal", async () => {
@@ -879,7 +884,8 @@ describe(orchestrate, () => {
     await orchestrate({ watch: false, dryRun: false });
 
     expect(setupMock).not.toHaveBeenCalled();
-    expect(consoleLog.output()).toContain("blockers=team-0:missing");
+    // After canonical migration: undefined status maps to "other"; id is source-prefixed.
+    expect(consoleLog.output()).toContain("blockers=linear:team-0:other");
   });
 
   it("ignores non-blocking relations and skips malformed blockers", async () => {
@@ -912,7 +918,8 @@ describe(orchestrate, () => {
     await orchestrate({ watch: false, dryRun: false });
 
     expect(setupMock).not.toHaveBeenCalled();
-    expect(consoleLog.output()).toContain("blockers=unknown:missing");
+    // After canonical migration: malformed blocker (null issue) maps to "linear:unknown:other".
+    expect(consoleLog.output()).toContain("blockers=linear:unknown:other");
   });
 
   it("conservatively skips Todo tickets when blocker relations are paginated", async () => {

@@ -1,35 +1,49 @@
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-
+import type * as nodeFs from "node:fs";
 import { ensureClearance } from "@clipboard-health/clearance";
-
 import type { RunCommandOptions } from "../lib/commandRunner.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
 import { SETUP_COMMAND } from "../lib/launchCommand.ts";
 import { recordRunState } from "../lib/runState.ts";
+import { canonicalLinearIssue } from "../lib/testing/canonicalFixtures.ts";
+import { createBoard } from "../lib/board.ts";
+import type * as boardModule from "../lib/board.ts";
+import { buildSources } from "../lib/buildSources.ts";
+import type * as buildSourcesModule from "../lib/buildSources.ts";
+import type { BoardState, Issue } from "../lib/ticketSource.ts";
 import type * as utilModule from "../lib/util.ts";
-import { getLinearClient, log } from "../lib/util.ts";
+import { log } from "../lib/util.ts";
 import { WorktreeAlreadyExistsError, type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 import { deleteEnvironmentVariable, setEnvironmentVariable } from "../testHelpers/env.ts";
 import { emptyTeardownResult } from "../testHelpers/teardownResult.ts";
-import { setupWorkspace, setupWorkspaceCli } from "./setupWorkspace.ts";
+import {
+  setupWorkspace,
+  setupWorkspaceCli,
+  type SetupWorkspaceOptions,
+  type TicketDetails,
+} from "./setupWorkspace.ts";
 
-interface NodeFsMock {
+interface NodeFsMock extends Omit<
+  typeof nodeFs,
+  "existsSync" | "mkdtempSync" | "rmSync" | "writeFileSync"
+> {
   existsSync: ReturnType<typeof vi.fn<typeof existsSync>>;
   mkdtempSync: ReturnType<typeof vi.fn<typeof mkdtempSync>>;
   rmSync: ReturnType<typeof vi.fn<typeof rmSync>>;
   writeFileSync: ReturnType<typeof vi.fn<typeof writeFileSync>>;
 }
 
-vi.mock(
-  "node:fs",
-  (): NodeFsMock => ({
+vi.mock("node:fs", async (importOriginal): Promise<NodeFsMock> => {
+  const actual = await importOriginal<typeof nodeFs>();
+  return {
+    ...actual,
     existsSync: vi.fn<typeof existsSync>().mockReturnValue(true),
     mkdtempSync: vi.fn<typeof mkdtempSync>(),
     rmSync: vi.fn<typeof rmSync>(),
     writeFileSync: vi.fn<typeof writeFileSync>(),
-  }),
-);
+  };
+});
 vi.mock(import("../lib/config.ts"), async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, loadConfig: vi.fn<typeof loadConfig>() };
@@ -70,7 +84,6 @@ vi.mock(import("../lib/util.ts"), async (importOriginal) => {
   const actual = await importOriginal<typeof utilModule>();
   return {
     ...actual,
-    getLinearClient: vi.fn<typeof getLinearClient>(),
     log: vi.fn<typeof actual.log>(),
   };
 });
@@ -85,6 +98,30 @@ vi.mock(import("../lib/worktrees.ts"), async (importOriginal) => {
     },
   };
 });
+vi.mock(import("../lib/board.ts"), async (importOriginal) => {
+  const actual = await importOriginal<typeof boardModule>();
+  return {
+    ...actual,
+    createBoard: vi.fn<typeof actual.createBoard>(() => ({
+      verify: vi.fn<() => Promise<void>>().mockResolvedValue(),
+      fetch: vi.fn<() => Promise<BoardState>>(),
+      resolveOne: vi.fn<(id: string) => Promise<Issue | undefined>>().mockResolvedValue(
+        canonicalLinearIssue({
+          naturalId: "team-1",
+          repository: "repo-a",
+          model: "claude",
+          title: "Title",
+          description: "Body for repo-a",
+        }),
+      ),
+      markInProgress: vi.fn<(issue: Issue) => Promise<void>>().mockResolvedValue(),
+    })),
+  };
+});
+vi.mock(import("../lib/buildSources.ts"), async (importOriginal) => {
+  const actual = await importOriginal<typeof buildSourcesModule>();
+  return { ...actual, buildSources: vi.fn<typeof actual.buildSources>().mockResolvedValue([]) };
+});
 
 const mkdtempMock = vi.mocked(mkdtempSync);
 const existsMock = vi.mocked(existsSync);
@@ -93,7 +130,6 @@ const rmMock = vi.mocked(rmSync);
 const loadConfigMock = vi.mocked(loadConfig);
 const detectHostMock = vi.mocked(detectHostCapabilities);
 const ensureClearanceMock = vi.mocked(ensureClearance);
-const linearClientMock = vi.mocked(getLinearClient);
 const logMock = vi.mocked(log);
 const recordRunStateMock = vi.mocked(recordRunState);
 const createMock = vi.mocked(worktrees.create);
@@ -107,58 +143,6 @@ function lastRecordedRunState(): RecordedRunState {
     throw new Error("recordRunState was not called");
   }
   return input.state;
-}
-
-interface MockedLabel {
-  name: string;
-}
-interface MockedIssue {
-  title: string;
-  description?: string | undefined;
-}
-const issueResolver = vi.fn<(id: string) => Promise<MockedIssue>>();
-const rawRequestMock =
-  vi.fn<(query: string, variables?: Record<string, unknown>) => Promise<unknown>>();
-const teamStatesMock =
-  vi.fn<() => Promise<{ nodes: { id: string; name: string; type: string }[] }>>();
-const teamMock = vi.fn<
-  (id: string) => Promise<{
-    states: () => Promise<{ nodes: { id: string; name: string; type: string }[] }>;
-  }>
->();
-const updateIssueMock =
-  vi.fn<(id: string, input: { stateId: string }) => Promise<Record<string, never>>>();
-
-function buildMockedIssue(overrides: {
-  title?: string;
-  description?: string | undefined;
-}): MockedIssue {
-  return {
-    title: overrides.title ?? "Title",
-    description: "description" in overrides ? overrides.description : "Body",
-  };
-}
-
-function buildResolveIssueResponse(overrides: {
-  uuid?: string;
-  teamId?: string;
-  title?: string;
-  description?: string | null | undefined;
-  labels?: MockedLabel[];
-  stateType?: string;
-}): unknown {
-  return {
-    data: {
-      issue: {
-        id: overrides.uuid ?? "uuid-1",
-        title: overrides.title ?? "Title",
-        description: "description" in overrides ? overrides.description : "Body for repo-a",
-        labels: { nodes: overrides.labels ?? [] },
-        team: { id: overrides.teamId ?? "team-1" },
-        state: { name: "Todo", type: overrides.stateType ?? "unstarted" },
-      },
-    },
-  };
 }
 
 function host(overrides: Partial<HostCapabilities> = {}): HostCapabilities {
@@ -213,23 +197,6 @@ function makeConfig(overrides: Partial<ResolvedConfig["models"]> = {}): Resolved
     local: { runner: "auto" },
     logging: { file: "/tmp/groundcrew-test.log" },
   };
-}
-
-function mockLinearClient(): void {
-  teamStatesMock.mockResolvedValue({
-    nodes: [{ id: "state-in-progress", name: "In Progress", type: "started" }],
-  });
-  teamMock.mockResolvedValue({ states: teamStatesMock });
-  updateIssueMock.mockResolvedValue({});
-  const linearClient = {
-    issue: issueResolver,
-    team: teamMock,
-    updateIssue: updateIssueMock,
-    client: { rawRequest: rawRequestMock },
-  };
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests stub only the surfaces touched by setupWorkspace + fetchResolvedIssue
-  const typedLinearClient = linearClient as unknown as ReturnType<typeof getLinearClient>;
-  linearClientMock.mockReturnValue(typedLinearClient);
 }
 
 function isCmuxNewWorkspace(cmd: string, arguments_: readonly string[]): boolean {
@@ -355,8 +322,6 @@ async function waitForClearanceSleep(input: Parameters<typeof ensureClearance>[0
 describe(setupWorkspace, () => {
   beforeEach(() => {
     existsMock.mockReturnValue(true);
-    mockLinearClient();
-    issueResolver.mockResolvedValue(buildMockedIssue({ title: "Test Title", description: "Body" }));
     detectHostMock.mockResolvedValue(host());
     createMock.mockImplementation(async () => hostEntry());
     ensureClearanceMock.mockResolvedValue(clearanceResult());
@@ -375,7 +340,12 @@ describe(setupWorkspace, () => {
     const config = makeConfig();
     mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
 
-    await setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" });
+    await setupWorkspace(config, {
+      ticket: "team-1",
+      repository: "repo-a",
+      model: "claude",
+      details: { title: "Test Title", description: "Body" },
+    });
 
     expect(createMock).toHaveBeenCalledWith(
       config,
@@ -412,6 +382,7 @@ describe(setupWorkspace, () => {
       ticket: "team-1",
       repository: "repo-a",
       model: "claude",
+      details: { title: "Test Title", description: "Body" },
     });
 
     const command = lastRunArgumentFromCallWithArgument("new-workspace");
@@ -431,7 +402,12 @@ describe(setupWorkspace, () => {
 
     await setupWorkspace(
       config,
-      { ticket: "team-1", repository: "repo-a", model: "claude" },
+      {
+        ticket: "team-1",
+        repository: "repo-a",
+        model: "claude",
+        details: { title: "Test Title", description: "Body" },
+      },
       { signal },
     );
 
@@ -461,7 +437,12 @@ describe(setupWorkspace, () => {
 
     const setupPromise = setupWorkspace(
       config,
-      { ticket: "team-1", repository: "repo-a", model: "claude" },
+      {
+        ticket: "team-1",
+        repository: "repo-a",
+        model: "claude",
+        details: { title: "Test Title", description: "Body" },
+      },
       { signal: controller.signal },
     );
 
@@ -471,7 +452,7 @@ describe(setupWorkspace, () => {
     expect(createMock).not.toHaveBeenCalled();
   });
 
-  it("uses provided ticket details without fetching from Linear", async () => {
+  it("uses provided ticket details for prompt rendering", async () => {
     const config = makeConfig();
     mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
 
@@ -482,7 +463,6 @@ describe(setupWorkspace, () => {
       details: { title: "Provided Title", description: "Provided Body" },
     });
 
-    expect(issueResolver).not.toHaveBeenCalled();
     expect(writeFileMock).toHaveBeenCalledWith(
       "/tmp/groundcrew-team-1-x/prompt.txt",
       expect.stringContaining("Provided Title"),
@@ -501,7 +481,12 @@ describe(setupWorkspace, () => {
     });
     mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
 
-    await setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" });
+    await setupWorkspace(config, {
+      ticket: "team-1",
+      repository: "repo-a",
+      model: "claude",
+      details: { title: "Test Title", description: "Body" },
+    });
 
     expect(ensureClearanceMock).toHaveBeenCalledTimes(1);
     expect(firstInvocationOrder(ensureClearanceMock)).toBeLessThan(
@@ -547,7 +532,12 @@ describe(setupWorkspace, () => {
     });
     mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
 
-    await setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" });
+    await setupWorkspace(config, {
+      ticket: "team-1",
+      repository: "repo-a",
+      model: "claude",
+      details: { title: "Test Title", description: "Body" },
+    });
 
     expect(ensureClearanceMock).not.toHaveBeenCalled();
     const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
@@ -567,7 +557,12 @@ describe(setupWorkspace, () => {
       },
     });
 
-    await setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" });
+    await setupWorkspace(config, {
+      ticket: "team-1",
+      repository: "repo-a",
+      model: "claude",
+      details: { title: "Test Title", description: "Body" },
+    });
 
     expect(runCommandMock.mock.calls.filter(([command]) => command === "sbx")).toStrictEqual([]);
     expect(teardownMock).not.toHaveBeenCalled();
@@ -580,7 +575,12 @@ describe(setupWorkspace, () => {
     const config = makeConfig();
 
     await expect(
-      setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" }),
+      setupWorkspace(config, {
+        ticket: "team-1",
+        repository: "repo-a",
+        model: "claude",
+        details: { title: "Test Title", description: "Body" },
+      }),
     ).rejects.toThrow("proxy unavailable");
 
     expect(createMock).not.toHaveBeenCalled();
@@ -600,7 +600,12 @@ describe(setupWorkspace, () => {
     });
     mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
 
-    await setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" });
+    await setupWorkspace(config, {
+      ticket: "team-1",
+      repository: "repo-a",
+      model: "claude",
+      details: { title: "Test Title", description: "Body" },
+    });
 
     const command = lastRunArgumentFromCallWithArgument("new-workspace");
     const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
@@ -624,6 +629,7 @@ describe(setupWorkspace, () => {
         ticket: "team-1",
         repository: "repo-a",
         model: "claude",
+        details: { title: "Test Title", description: "Body" },
       });
 
       expect(writeFileMock).toHaveBeenCalledWith(
@@ -647,6 +653,7 @@ describe(setupWorkspace, () => {
         ticket: "team-1",
         repository: "repo-a",
         model: "claude",
+        details: { title: "Test Title", description: "Body" },
       });
 
       expect(writeFileMock).toHaveBeenCalledWith(
@@ -665,6 +672,7 @@ describe(setupWorkspace, () => {
         ticket: "team-1",
         repository: "repo-a",
         model: "claude",
+        details: { title: "Test Title", description: "Body" },
       });
 
       expect(writeFileMock).toHaveBeenCalledWith(
@@ -683,6 +691,7 @@ describe(setupWorkspace, () => {
         ticket: "team-1",
         repository: "repo-a",
         model: "claude",
+        details: { title: "Test Title", description: "Body" },
       });
 
       expect(writeFileMock).not.toHaveBeenCalledWith(
@@ -703,7 +712,12 @@ describe(setupWorkspace, () => {
     mockTmuxHost();
     const config = makeConfig();
 
-    await setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" });
+    await setupWorkspace(config, {
+      ticket: "team-1",
+      repository: "repo-a",
+      model: "claude",
+      details: { title: "Test Title", description: "Body" },
+    });
 
     expect(logMock).toHaveBeenCalledWith("  Attach:   tmux attach -t groundcrew:team-1");
   });
@@ -712,7 +726,12 @@ describe(setupWorkspace, () => {
     const config = makeConfig();
     mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
 
-    await setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" });
+    await setupWorkspace(config, {
+      ticket: "team-1",
+      repository: "repo-a",
+      model: "claude",
+      details: { title: "Test Title", description: "Body" },
+    });
 
     expect(logMock).not.toHaveBeenCalledWith(expect.stringMatching(/^ {2}Attach:/));
   });
@@ -732,7 +751,12 @@ describe(setupWorkspace, () => {
     config.local = { runner: "safehouse" };
 
     await expect(
-      setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" }),
+      setupWorkspace(config, {
+        ticket: "team-1",
+        repository: "repo-a",
+        model: "claude",
+        details: { title: "Test Title", description: "Body" },
+      }),
     ).rejects.toThrow(/Local groundcrew runs with the safehouse runner require macOS/);
 
     expect(createMock).not.toHaveBeenCalled();
@@ -759,7 +783,12 @@ describe(setupWorkspace, () => {
     });
 
     await expect(
-      setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" }),
+      setupWorkspace(config, {
+        ticket: "team-1",
+        repository: "repo-a",
+        model: "claude",
+        details: { title: "Test Title", description: "Body" },
+      }),
     ).rejects.toThrow(/sdx runner require `sbx`/);
 
     expect(createMock).not.toHaveBeenCalled();
@@ -781,7 +810,12 @@ describe(setupWorkspace, () => {
     const config = makeConfig();
 
     await expect(
-      setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" }),
+      setupWorkspace(config, {
+        ticket: "team-1",
+        repository: "repo-a",
+        model: "claude",
+        details: { title: "Test Title", description: "Body" },
+      }),
     ).rejects.toThrow(/sdx runner require a sandbox config on model 'claude'/);
 
     expect(createMock).not.toHaveBeenCalled();
@@ -793,7 +827,12 @@ describe(setupWorkspace, () => {
     const config = makeConfig();
 
     await expect(
-      setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" }),
+      setupWorkspace(config, {
+        ticket: "team-1",
+        repository: "repo-a",
+        model: "claude",
+        details: { title: "Test Title", description: "Body" },
+      }),
     ).rejects.toThrow(/require `safehouse` on PATH/);
 
     expect(createMock).not.toHaveBeenCalled();
@@ -808,6 +847,7 @@ describe(setupWorkspace, () => {
         ticket: "team-1",
         repository: "repo-a",
         model: "claude",
+        details: { title: "Test Title", description: "Body" },
       }),
     ).rejects.toThrow(/git fetch failed/);
     expect(runCommandMock).not.toHaveBeenCalledWith(
@@ -826,6 +866,7 @@ describe(setupWorkspace, () => {
         ticket: "team-1",
         repository: "repo-a",
         model: "claude",
+        details: { title: "Test Title", description: "Body" },
       }),
     ).rejects.toThrow(/Worktree already exists/);
 
@@ -842,6 +883,7 @@ describe(setupWorkspace, () => {
         ticket: "team-1",
         repository: "repo-a",
         model: "claude",
+        details: { title: "Test Title", description: "Body" },
       }),
     ).rejects.toThrow(/Worktree already exists/);
 
@@ -856,6 +898,7 @@ describe(setupWorkspace, () => {
         ticket: "team-1",
         repository: "repo-a",
         model: "claude",
+        details: { title: "Test Title", description: "Body" },
       }),
     ).rejects.toThrow(/Worktree already exists/);
 
@@ -865,7 +908,12 @@ describe(setupWorkspace, () => {
 
   it("rejects unknown models", async () => {
     await expect(
-      setupWorkspace(makeConfig(), { ticket: "team-1", repository: "repo-a", model: "ghost" }),
+      setupWorkspace(makeConfig(), {
+        ticket: "team-1",
+        repository: "repo-a",
+        model: "ghost",
+        details: { title: "Test Title", description: "Body" },
+      }),
     ).rejects.toThrow(/Unknown model: ghost/);
   });
 
@@ -874,7 +922,12 @@ describe(setupWorkspace, () => {
     mockCmuxNewWorkspaceOutput("garbage that has no ref");
 
     await expect(
-      setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" }),
+      setupWorkspace(config, {
+        ticket: "team-1",
+        repository: "repo-a",
+        model: "claude",
+        details: { title: "Test Title", description: "Body" },
+      }),
     ).rejects.toThrow(/Unexpected cmux output/);
 
     expect(teardownMock).toHaveBeenCalledWith(
@@ -897,7 +950,12 @@ describe(setupWorkspace, () => {
     const config = makeConfig();
     mockCmuxNewWorkspaceOutput("Created workspace:99 successfully");
 
-    await setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" });
+    await setupWorkspace(config, {
+      ticket: "team-1",
+      repository: "repo-a",
+      model: "claude",
+      details: { title: "Test Title", description: "Body" },
+    });
 
     expect(runCommandMock).toHaveBeenCalledWith(
       "cmux",
@@ -912,30 +970,12 @@ describe(setupWorkspace, () => {
       ticket: "team-1",
       repository: "repo-a",
       model: "claude",
+      details: { title: "Test Title", description: "Body" },
     });
 
     expect(runCommandMock).toHaveBeenCalledWith(
       "cmux",
       expect.arrayContaining(["--workspace", "workspace:55"]),
-    );
-  });
-
-  it("rolls back without touching the prompt dir when Linear fails before mkdtemp", async () => {
-    issueResolver.mockRejectedValue(new Error("linear unreachable"));
-
-    await expect(
-      setupWorkspace(makeConfig(), {
-        ticket: "team-1",
-        repository: "repo-a",
-        model: "claude",
-      }),
-    ).rejects.toThrow(/linear unreachable/);
-
-    expect(rmMock).not.toHaveBeenCalled();
-    expect(teardownMock).toHaveBeenCalledWith(
-      expect.anything(),
-      [expect.objectContaining({ ticket: "team-1" })],
-      { force: true },
     );
   });
 
@@ -946,6 +986,7 @@ describe(setupWorkspace, () => {
       ticket: "team-1",
       repository: "repo-a",
       model: "claude",
+      details: { title: "Test Title", description: "Body" },
     });
 
     expect(runCommandMock).toHaveBeenCalledWith(
@@ -965,7 +1006,12 @@ describe(setupWorkspace, () => {
       });
 
     await expect(
-      setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" }),
+      setupWorkspace(config, {
+        ticket: "team-1",
+        repository: "repo-a",
+        model: "claude",
+        details: { title: "Test Title", description: "Body" },
+      }),
     ).resolves.toBeUndefined();
 
     expect(runCommandMock).not.toHaveBeenCalledWith(
@@ -983,7 +1029,12 @@ describe(setupWorkspace, () => {
     });
 
     await expect(
-      setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" }),
+      setupWorkspace(config, {
+        ticket: "team-1",
+        repository: "repo-a",
+        model: "claude",
+        details: { title: "Test Title", description: "Body" },
+      }),
     ).rejects.toThrow(/cmux down/);
   });
 
@@ -992,7 +1043,12 @@ describe(setupWorkspace, () => {
     mockCmuxFailure();
 
     await expect(
-      setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" }),
+      setupWorkspace(config, {
+        ticket: "team-1",
+        repository: "repo-a",
+        model: "claude",
+        details: { title: "Test Title", description: "Body" },
+      }),
     ).rejects.toThrow(/cmux down/);
 
     expect(lastRecordedRunState()).toMatchObject({
@@ -1011,7 +1067,12 @@ describe(setupWorkspace, () => {
       throw new Error("disk full");
     });
 
-    await setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" });
+    await setupWorkspace(config, {
+      ticket: "team-1",
+      repository: "repo-a",
+      model: "claude",
+      details: { title: "Test Title", description: "Body" },
+    });
 
     expect(logMock).toHaveBeenCalledWith(expect.stringContaining("Run state update failed"));
   });
@@ -1026,7 +1087,12 @@ describe(setupWorkspace, () => {
     );
 
     await expect(
-      setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" }),
+      setupWorkspace(config, {
+        ticket: "team-1",
+        repository: "repo-a",
+        model: "claude",
+        details: { title: "Test Title", description: "Body" },
+      }),
     ).rejects.toThrow(/cmux down/);
   });
 
@@ -1036,7 +1102,12 @@ describe(setupWorkspace, () => {
     teardownMock.mockRejectedValue(new Error("teardown failed"));
 
     await expect(
-      setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" }),
+      setupWorkspace(config, {
+        ticket: "team-1",
+        repository: "repo-a",
+        model: "claude",
+        details: { title: "Test Title", description: "Body" },
+      }),
     ).rejects.toThrow(/cmux down/);
 
     expect(rmMock).toHaveBeenCalledWith("/tmp/groundcrew-team-1-x", expect.anything());
@@ -1055,7 +1126,12 @@ describe(setupWorkspace, () => {
     );
 
     await expect(
-      setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" }),
+      setupWorkspace(config, {
+        ticket: "team-1",
+        repository: "repo-a",
+        model: "claude",
+        details: { title: "Test Title", description: "Body" },
+      }),
     ).rejects.toThrow(/cmux down/);
 
     expect(logMock).toHaveBeenCalledWith(
@@ -1071,7 +1147,12 @@ describe(setupWorkspace, () => {
     );
 
     await expect(
-      setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" }),
+      setupWorkspace(config, {
+        ticket: "team-1",
+        repository: "repo-a",
+        model: "claude",
+        details: { title: "Test Title", description: "Body" },
+      }),
     ).rejects.toThrow(/cmux down/);
 
     expect(logMock).toHaveBeenCalledWith(
@@ -1079,19 +1160,37 @@ describe(setupWorkspace, () => {
     );
   });
 
-  it("renders an empty description when Linear returns no description", async () => {
-    issueResolver.mockResolvedValue(buildMockedIssue({ title: "T", description: undefined }));
+  it("renders an empty description when details has empty description", async () => {
     mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:1" }));
 
     await setupWorkspace(makeConfig(), {
       ticket: "team-1",
       repository: "repo-a",
       model: "claude",
+      details: { title: "T", description: "" },
     });
 
     const [writeCall] = writeFileMock.mock.calls;
     expect(writeCall?.[1]).toContain("(T)");
     expect(writeCall?.[1]).not.toContain("undefined");
+  });
+
+  it("rolls back worktree without rmSync when mkdtemp fails before promptDir is set", async () => {
+    mkdtempMock.mockImplementation(() => {
+      throw new Error("mkdtemp failed");
+    });
+
+    await expect(
+      setupWorkspace(makeConfig(), {
+        ticket: "team-1",
+        repository: "repo-a",
+        model: "claude",
+        details: { title: "Test Title", description: "Body" },
+      }),
+    ).rejects.toThrow("mkdtemp failed");
+
+    expect(teardownMock).toHaveBeenCalledWith(makeConfig(), expect.any(Array), { force: true });
+    expect(rmMock).not.toHaveBeenCalled();
   });
 
   it("escapes single quotes in the launch script path and prompt path", async () => {
@@ -1102,6 +1201,7 @@ describe(setupWorkspace, () => {
       ticket: "team-1",
       repository: "repo-a",
       model: "claude",
+      details: { title: "Test Title", description: "Body" },
     });
 
     const cmd = lastRunArgumentFromCallWithArgument("new-workspace");
@@ -1109,27 +1209,65 @@ describe(setupWorkspace, () => {
     expect(cmd).toContain(String.raw`'\''`);
     expect(launchScript).toContain(String.raw`_p=$(cat '/tmp/with'\''quote-1/prompt.txt')`);
   });
+
+  it("requires details from the caller (no Linear re-fetch)", () => {
+    // Type-level test: SetupWorkspaceOptions.details is non-optional.
+    type _DetailsRequired = SetupWorkspaceOptions["details"] extends TicketDetails ? true : never;
+    const _check: _DetailsRequired = true;
+    expect(_check).toBe(true);
+  });
 });
 
+const createBoardMock = vi.mocked(createBoard);
+const buildSourcesMock = vi.mocked(buildSources);
+
+interface FakeBoard extends ReturnType<typeof createBoard> {
+  resolveOne: ReturnType<typeof vi.fn<(id: string) => Promise<Issue | undefined>>>;
+  markInProgress: ReturnType<typeof vi.fn<(issue: Issue) => Promise<void>>>;
+}
+
+function fakeBoard(resolvedIssue: Issue | undefined): FakeBoard {
+  return {
+    verify: vi.fn<() => Promise<void>>().mockResolvedValue(),
+    fetch: vi.fn<() => Promise<BoardState>>(),
+    resolveOne: vi
+      .fn<(id: string) => Promise<Issue | undefined>>()
+      .mockResolvedValue(resolvedIssue),
+    markInProgress: vi.fn<(issue: Issue) => Promise<void>>().mockResolvedValue(),
+  };
+}
+
 describe(setupWorkspaceCli, () => {
+  let defaultBoard: FakeBoard;
+
   beforeEach(() => {
     existsMock.mockReturnValue(true);
-    mockLinearClient();
-    rawRequestMock.mockResolvedValue(buildResolveIssueResponse({}));
     detectHostMock.mockResolvedValue(host());
     createMock.mockImplementation(async () => hostEntry());
     mkdtempMock.mockReturnValue("/tmp/groundcrew-team-1-x");
     runCommandMock.mockReturnValue(JSON.stringify({ ref: "workspace:1" }));
     loadConfigMock.mockResolvedValue(makeConfig());
+    defaultBoard = fakeBoard(
+      canonicalLinearIssue({
+        naturalId: "team-1",
+        repository: "repo-a",
+        model: "claude",
+        title: "Title",
+        description: "Body for repo-a",
+      }),
+    );
+    createBoardMock.mockReturnValue(defaultBoard);
   });
 
   afterEach(() => {
     vi.resetAllMocks();
   });
 
-  it("uses the repository hint and default model when the ticket has no agent label", async () => {
+  it("resolves the ticket via Board and provisions the workspace", async () => {
     await setupWorkspaceCli("team-1");
 
+    expect(createBoardMock).toHaveBeenCalledTimes(1);
+    expect(defaultBoard.resolveOne).toHaveBeenCalledWith("team-1");
     expect(createMock).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ repository: "repo-a", ticket: "team-1" }),
@@ -1140,173 +1278,119 @@ describe(setupWorkspaceCli, () => {
     );
   });
 
-  it("marks the ticket In Progress after launching the workspace", async () => {
-    rawRequestMock.mockResolvedValue(
-      buildResolveIssueResponse({ uuid: "issue-uuid-1", teamId: "linear-team-1" }),
-    );
-
+  it("marks the ticket In Progress via board.markInProgress after launching the workspace", async () => {
     await setupWorkspaceCli("team-1");
 
-    expect(teamMock).toHaveBeenCalledWith("linear-team-1");
-    expect(updateIssueMock).toHaveBeenCalledWith("issue-uuid-1", {
-      stateId: "state-in-progress",
-    });
+    expect(defaultBoard.markInProgress).toHaveBeenCalledTimes(1);
     expect(firstInvocationOrder(runCommandMock)).toBeLessThan(
-      firstInvocationOrder(updateIssueMock),
+      firstInvocationOrder(defaultBoard.markInProgress),
     );
   });
 
-  it("does not mark the ticket In Progress in dry-run mode", async () => {
+  it("does not provision or mark In Progress in dry-run mode", async () => {
     await setupWorkspaceCli("team-1", { dryRun: true });
 
     expect(createMock).not.toHaveBeenCalled();
-    expect(teamMock).not.toHaveBeenCalled();
-    expect(updateIssueMock).not.toHaveBeenCalled();
-  });
-
-  it("fails clearly when the configured In Progress status is missing", async () => {
-    teamStatesMock.mockResolvedValue({
-      nodes: [{ id: "state-other", name: "Other", type: "unstarted" }],
-    });
-
-    await expect(setupWorkspaceCli("team-1")).rejects.toThrow(
-      /Could not find a workflow state with type "started" for team-1/,
-    );
-    expect(updateIssueMock).not.toHaveBeenCalled();
+    expect(runCommandMock).not.toHaveBeenCalled();
+    expect(defaultBoard.markInProgress).not.toHaveBeenCalled();
+    const logged = logMock.mock.calls.map(([message]) => message).join("\n");
+    expect(logged).toContain("[dry-run] Would launch team-1 in repo-a (claude)");
   });
 
   it("does not mark the ticket In Progress when workspace setup fails", async () => {
     createMock.mockRejectedValue(new Error("worktree failed"));
 
     await expect(setupWorkspaceCli("team-1")).rejects.toThrow(/worktree failed/);
-    expect(teamMock).not.toHaveBeenCalled();
-    expect(updateIssueMock).not.toHaveBeenCalled();
+
+    expect(defaultBoard.markInProgress).not.toHaveBeenCalled();
   });
 
-  it("rejects when the ticket description has no known repository", async () => {
-    rawRequestMock.mockResolvedValue(buildResolveIssueResponse({ description: "Body" }));
+  it("throws a clear error when the ticket is not found", async () => {
+    // oxlint-disable-next-line unicorn/no-useless-undefined -- explicit signal that resolveOne returns no match
+    createBoardMock.mockReturnValueOnce(fakeBoard(undefined));
 
-    await expect(setupWorkspaceCli("team-1")).rejects.toThrow(
-      /No known repository found in ticket TEAM-1 description/,
+    await expect(setupWorkspaceCli("ghost-999")).rejects.toThrow(
+      /Ticket ghost-999 not found across configured sources/,
     );
     expect(createMock).not.toHaveBeenCalled();
   });
 
-  it("infers the repository from the Linear description", async () => {
-    const config = makeConfig();
-    config.workspace.knownRepositories = ["repo-a", "repo-b"];
-    loadConfigMock.mockResolvedValue(config);
-    rawRequestMock.mockResolvedValue(
-      buildResolveIssueResponse({ description: "Touches repo-b for the migration." }),
-    );
+  it("throws a clear error when the ticket is not groundcrew-eligible", async () => {
+    createBoardMock.mockReturnValueOnce(fakeBoard(canonicalLinearIssue({ naturalId: "team-1" })));
 
-    await setupWorkspaceCli("team-1");
+    await expect(setupWorkspaceCli("team-1")).rejects.toThrow(/isn't groundcrew-eligible/);
+    expect(createMock).not.toHaveBeenCalled();
+  });
 
-    expect(createMock).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ repository: "repo-b" }),
+  it("wraps buildSources errors with CLI context", async () => {
+    buildSourcesMock.mockRejectedValueOnce(new Error("unknown source kind 'wat'"));
+
+    await expect(setupWorkspaceCli("eng-1")).rejects.toThrow(
+      /Could not initialize ticket sources for 'crew setup eng-1': unknown source kind 'wat'/,
     );
   });
 
-  it("picks the model from the ticket's agent-* label", async () => {
-    rawRequestMock.mockResolvedValue(
-      buildResolveIssueResponse({ labels: [{ name: "agent-codex" }, { name: "priority/low" }] }),
+  it("strips the source prefix when passing the natural id to setupWorkspace", async () => {
+    createBoardMock.mockReturnValueOnce(
+      fakeBoard(
+        canonicalLinearIssue({
+          naturalId: "staff-508",
+          repository: "repo-a",
+          model: "claude",
+          title: "Title",
+          description: "Body",
+        }),
+      ),
     );
 
-    await setupWorkspaceCli("team-1");
-
-    expect(runCommandMock).toHaveBeenCalledWith(
-      "cmux",
-      expect.arrayContaining(["set-status", "model", "codex"]),
-    );
-  });
-
-  it("collapses agent-any to the configured default model", async () => {
-    rawRequestMock.mockResolvedValue(
-      buildResolveIssueResponse({ labels: [{ name: "agent-any" }] }),
-    );
-
-    await setupWorkspaceCli("team-1");
-
-    expect(runCommandMock).toHaveBeenCalledWith(
-      "cmux",
-      expect.arrayContaining(["set-status", "model", "claude"]),
-    );
-  });
-
-  it("falls back to the default model for unknown agent-* labels", async () => {
-    rawRequestMock.mockResolvedValue(
-      buildResolveIssueResponse({ labels: [{ name: "agent-ghost" }] }),
-    );
-
-    await setupWorkspaceCli("team-1");
-
-    expect(runCommandMock).toHaveBeenCalledWith(
-      "cmux",
-      expect.arrayContaining(["set-status", "model", "claude"]),
-    );
-  });
-
-  it("lowercases an uppercase ticket arg before provisioning", async () => {
-    await setupWorkspaceCli("STAFF-508");
+    await setupWorkspaceCli("staff-508");
 
     expect(createMock).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ ticket: "staff-508" }),
     );
-    expect(runCommandMock).toHaveBeenCalledWith(
-      "cmux",
-      expect.arrayContaining(["new-workspace", "--name", "staff-508"]),
-    );
   });
 
-  it("queries Linear with the upper-case ticket identifier", async () => {
-    await setupWorkspaceCli("staff-508");
-
-    expect(rawRequestMock).toHaveBeenCalledWith(
-      expect.stringContaining("ResolveIssue"),
-      expect.objectContaining({ id: "STAFF-508" }),
+  it("passes title and description from the resolved issue as details", async () => {
+    createBoardMock.mockReturnValueOnce(
+      fakeBoard(
+        canonicalLinearIssue({
+          naturalId: "team-1",
+          repository: "repo-a",
+          model: "claude",
+          title: "Resolved Title",
+          description: "Resolved Body",
+        }),
+      ),
     );
-  });
 
-  it("rejects when resolving the repository from a null description", async () => {
-    rawRequestMock.mockResolvedValue(buildResolveIssueResponse({ description: null }));
-
-    await expect(setupWorkspaceCli("team-1")).rejects.toThrow(
-      /No known repository found in ticket TEAM-1 description/,
-    );
-    expect(createMock).not.toHaveBeenCalled();
-  });
-
-  it("throws a clear error when Linear has no issue with that id", async () => {
-    rawRequestMock.mockResolvedValue({ data: { issue: null } });
-
-    await expect(setupWorkspaceCli("ghost-999")).rejects.toThrow(
-      /Ticket GHOST-999 not found in Linear/,
-    );
-    expect(createMock).not.toHaveBeenCalled();
-  });
-
-  it("does not re-fetch from Linear once fetchResolvedIssue has the details", async () => {
     await setupWorkspaceCli("team-1");
 
-    expect(rawRequestMock).toHaveBeenCalledTimes(1);
-    expect(issueResolver).not.toHaveBeenCalled();
+    expect(writeFileMock).toHaveBeenCalledWith(
+      "/tmp/groundcrew-team-1-x/prompt.txt",
+      expect.stringContaining("Resolved Title"),
+    );
   });
 
-  it("resolves and reports without provisioning when dryRun is true", async () => {
-    rawRequestMock.mockResolvedValue(
-      buildResolveIssueResponse({
-        description: "Body for repo-a",
-        labels: [{ name: "agent-codex" }],
+  it("uses the full id as the ticket when there is no colon prefix", async () => {
+    createBoardMock.mockReturnValueOnce(
+      fakeBoard({
+        ...canonicalLinearIssue({
+          naturalId: "team-1",
+          repository: "repo-a",
+          model: "claude",
+          title: "Title",
+          description: "Body",
+        }),
+        id: "team-1",
       }),
     );
 
-    await setupWorkspaceCli("team-1", { dryRun: true });
+    await setupWorkspaceCli("team-1");
 
-    expect(createMock).not.toHaveBeenCalled();
-    expect(runCommandMock).not.toHaveBeenCalled();
-    const logged = logMock.mock.calls.map(([message]) => message).join("\n");
-    expect(logged).toContain("[dry-run] Would launch team-1 in repo-a (codex)");
+    expect(createMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ ticket: "team-1" }),
+    );
   });
 });

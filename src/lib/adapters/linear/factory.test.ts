@@ -1,20 +1,14 @@
 import type { LinearClient } from "@linear/sdk";
 
 import type { AdapterContext } from "../../adapterDefinition.ts";
-import * as boardSource from "../../boardSource.ts";
-import type {
-  BoardSource,
-  Blocker as LinearBlocker,
-  Issue as LinearIssue,
-} from "../../boardSource.ts";
 import type { ResolvedConfig } from "../../config.ts";
-import * as linearIssueStatus from "../../linearIssueStatus.ts";
-import * as util from "../../util.ts";
-import {
-  canonicalStatusFromStateType,
-  createLinearTicketSource,
-  toCanonicalIssue,
-} from "./factory.ts";
+import { readEnvironmentVariable } from "../../util.ts";
+import { deleteEnvironmentVariable, setEnvironmentVariable } from "../../../testHelpers/env.ts";
+import * as boardSource from "./fetch.ts";
+import type { Issue as LinearIssue } from "./fetch.ts";
+import * as linearIssueStatus from "./writeback.ts";
+import * as client from "./client.ts";
+import { createLinearTicketSource, toCanonicalIssue } from "./factory.ts";
 
 function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
   return {
@@ -51,6 +45,7 @@ function linearIssue(overrides: Partial<LinearIssue> = {}): LinearIssue {
     id: overrides.id ?? "team-1",
     uuid: overrides.uuid ?? "uuid-1",
     title: overrides.title ?? "Title",
+    description: overrides.description ?? "",
     status: overrides.status ?? "Todo",
     statusId: overrides.statusId ?? "state-todo",
     stateType: overrides.stateType ?? "unstarted",
@@ -63,26 +58,6 @@ function linearIssue(overrides: Partial<LinearIssue> = {}): LinearIssue {
     hasMoreBlockers: overrides.hasMoreBlockers ?? false,
   };
 }
-
-describe(canonicalStatusFromStateType, () => {
-  it("maps unstarted to canonical 'todo'", () => {
-    expect(canonicalStatusFromStateType("unstarted")).toBe("todo");
-  });
-  it("maps started to canonical 'in-progress'", () => {
-    expect(canonicalStatusFromStateType("started")).toBe("in-progress");
-  });
-  it("maps completed/canceled/duplicate to canonical 'done'", () => {
-    expect(canonicalStatusFromStateType("completed")).toBe("done");
-    expect(canonicalStatusFromStateType("canceled")).toBe("done");
-    expect(canonicalStatusFromStateType("duplicate")).toBe("done");
-  });
-  it("maps anything else to 'other'", () => {
-    expect(canonicalStatusFromStateType("backlog")).toBe("other");
-    expect(canonicalStatusFromStateType("triage")).toBe("other");
-    // oxlint-disable-next-line unicorn/no-useless-undefined -- the function's documented contract includes the undefined branch
-    expect(canonicalStatusFromStateType(undefined)).toBe("other");
-  });
-});
 
 describe(toCanonicalIssue, () => {
   it("prefixes the canonical id with the source name", () => {
@@ -97,6 +72,7 @@ describe(toCanonicalIssue, () => {
         uuid: "uuid-abc",
         statusId: "state-todo",
         teamId: "team-xyz",
+        stateType: "unstarted",
         status: "Todo",
       }),
       "linear",
@@ -105,33 +81,102 @@ describe(toCanonicalIssue, () => {
       uuid: "uuid-abc",
       statusId: "state-todo",
       teamId: "team-xyz",
+      stateType: "unstarted",
       nativeStatus: "Todo",
     });
   });
 
-  it("canonicalizes the status using the issue's stateType", () => {
+  it("canonicalizes status using the workflow state.type", () => {
     const result = toCanonicalIssue(
-      linearIssue({ status: "Doing", stateType: "started" }),
+      linearIssue({ status: "In Progress", stateType: "started" }),
       "linear",
     );
     expect(result.status).toBe("in-progress");
   });
 
-  it("leaves description empty (board snapshot doesn't fetch description)", () => {
-    const result = toCanonicalIssue(linearIssue(), "linear");
-    expect(result.description).toBe("");
+  it("maps state.type 'completed' to canonical 'done'", () => {
+    const result = toCanonicalIssue(
+      linearIssue({ status: "Shipped", stateType: "completed" }),
+      "linear",
+    );
+    expect(result.status).toBe("done");
   });
 
-  it("source-prefixes blocker ids and maps statuses from stateType", () => {
-    const blockers: LinearBlocker[] = [
-      { id: "team-2", title: "Block A", status: "Done", stateType: "completed" },
-      { id: "team-3", title: "Block B", status: "Todo", stateType: "unstarted" },
-    ];
-    const issue = linearIssue({ blockers });
+  it("maps state.type 'canceled' to canonical 'done'", () => {
+    const result = toCanonicalIssue(
+      linearIssue({ status: "Won't fix", stateType: "canceled" }),
+      "linear",
+    );
+    expect(result.status).toBe("done");
+  });
+
+  it("maps state.type 'duplicate' to canonical 'done'", () => {
+    const result = toCanonicalIssue(
+      linearIssue({ status: "Duplicate", stateType: "duplicate" }),
+      "linear",
+    );
+    expect(result.status).toBe("done");
+  });
+
+  it("maps unknown state.type to canonical 'other'", () => {
+    const result = toCanonicalIssue(
+      linearIssue({ status: "Backlog", stateType: "backlog" }),
+      "linear",
+    );
+    expect(result.status).toBe("other");
+  });
+
+  it("copies description from the legacy Linear issue onto the canonical Issue", () => {
+    const result = toCanonicalIssue(linearIssue({ description: "Body of the ticket." }), "linear");
+    expect(result.description).toBe("Body of the ticket.");
+  });
+
+  it("source-prefixes blocker ids and canonicalizes their statuses via stateType", () => {
+    const issue = linearIssue({
+      blockers: [
+        { id: "team-2", title: "Block A", status: "Done", stateType: "completed" },
+        { id: "team-3", title: "Block B", status: "Todo", stateType: "unstarted" },
+      ],
+    });
     const result = toCanonicalIssue(issue, "linear");
     expect(result.blockers).toStrictEqual([
-      { id: "linear:team-2", title: "Block A", status: "done" },
-      { id: "linear:team-3", title: "Block B", status: "todo" },
+      { id: "linear:team-2", title: "Block A", status: "done", nativeStatus: "Done" },
+      { id: "linear:team-3", title: "Block B", status: "todo", nativeStatus: "Todo" },
+    ]);
+  });
+
+  it("flags a blocker with missing stateType as 'other'/missing", () => {
+    const issue = linearIssue({
+      blockers: [{ id: "team-2", title: "Block A", status: "Done", stateType: undefined }],
+    });
+    const result = toCanonicalIssue(issue, "linear");
+    expect(result.blockers).toStrictEqual([
+      {
+        id: "linear:team-2",
+        title: "Block A",
+        status: "other",
+        statusReason: "missing",
+        nativeStatus: "Done",
+      },
+    ]);
+  });
+
+  it("flags a blocker with backlog/triage stateType as 'other'/unmapped", () => {
+    // Blockers can carry `state.type` values outside the actionable set
+    // (`backlog`, `triage`). They aren't terminal, but the orchestrator can't
+    // act on them either, so surface as "other" with statusReason "unmapped".
+    const issue = linearIssue({
+      blockers: [{ id: "team-2", title: "Block A", status: "Backlog", stateType: "backlog" }],
+    });
+    const result = toCanonicalIssue(issue, "linear");
+    expect(result.blockers).toStrictEqual([
+      {
+        id: "linear:team-2",
+        title: "Block A",
+        status: "other",
+        statusReason: "unmapped",
+        nativeStatus: "Backlog",
+      },
     ]);
   });
 
@@ -146,7 +191,7 @@ describe(createLinearTicketSource, () => {
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- factory only uses the client when its methods are called; tests that exercise those methods stub the boardSource/linearIssueStatus calls so the client is never actually invoked
   const fakeClient = {} as LinearClient;
   beforeEach(() => {
-    vi.spyOn(util, "getLinearClient").mockReturnValue(fakeClient);
+    vi.spyOn(client, "getLinearClient").mockReturnValue(fakeClient);
   });
   afterEach(() => {
     vi.restoreAllMocks();
@@ -170,7 +215,7 @@ describe(createLinearTicketSource, () => {
     const innerVerify = vi.fn<() => Promise<void>>().mockResolvedValue();
     vi.spyOn(boardSource, "createBoardSource").mockReturnValue({
       verify: innerVerify,
-      fetch: vi.fn<BoardSource["fetch"]>(),
+      fetch: vi.fn<() => Promise<boardSource.BoardState>>(),
     });
     const source = createLinearTicketSource({ kind: "linear" }, {
       globalConfig: makeConfig(),
@@ -180,7 +225,7 @@ describe(createLinearTicketSource, () => {
   });
 
   it("fetch() converts each LinearIssue into a canonical Issue", async () => {
-    const innerFetch = vi.fn<BoardSource["fetch"]>().mockResolvedValue({
+    const innerFetch = vi.fn<() => Promise<boardSource.BoardState>>().mockResolvedValue({
       timestamp: "2026-01-01T00:00:00Z",
       issues: [
         linearIssue({ id: "team-1" }),
@@ -200,6 +245,32 @@ describe(createLinearTicketSource, () => {
     expect(issues[1]?.status).toBe("in-progress");
   });
 
+  it("fetchParentSkips() returns canonical (source-prefixed) ids", async () => {
+    const innerFetch = vi.fn<() => Promise<boardSource.BoardState>>().mockResolvedValue({
+      timestamp: "2026-01-01T00:00:00Z",
+      issues: [],
+      parentSkips: [
+        { id: "team-9", title: "Umbrella epic", childCount: 3 },
+        { id: "team-10", title: "Another epic", childCount: 1 },
+      ],
+    });
+    vi.spyOn(boardSource, "createBoardSource").mockReturnValue({
+      verify: vi.fn<() => Promise<void>>(),
+      fetch: innerFetch,
+    });
+    const source = createLinearTicketSource({ kind: "linear", name: "work-linear" }, {
+      globalConfig: makeConfig(),
+    } satisfies AdapterContext);
+
+    await source.fetch();
+    const skips = await source.fetchParentSkips?.();
+
+    expect(skips).toStrictEqual([
+      { id: "work-linear:team-9", title: "Umbrella epic", childCount: 3 },
+      { id: "work-linear:team-10", title: "Another epic", childCount: 1 },
+    ]);
+  });
+
   it("resolveOne() returns a canonical Issue with description populated from fetchResolvedIssue", async () => {
     vi.spyOn(boardSource, "fetchResolvedIssue").mockResolvedValue({
       uuid: "uuid-abc",
@@ -208,6 +279,9 @@ describe(createLinearTicketSource, () => {
       repository: "repo-a",
       model: "claude",
       teamId: "team-xyz",
+      stateType: "unstarted",
+      status: "Todo",
+      statusId: "state-todo",
     });
     const source = createLinearTicketSource({ kind: "linear" }, {
       globalConfig: makeConfig(),
@@ -218,13 +292,13 @@ describe(createLinearTicketSource, () => {
     expect(issue?.description).toBe("Resolved description");
     expect(issue?.repository).toBe("repo-a");
     expect(issue?.model).toBe("claude");
+    expect(issue?.status).toBe("todo");
   });
 
   it("markInProgress() forwards uuid/teamId from sourceRef", async () => {
     const innerMarkInProgress = vi.fn<(...args: unknown[]) => Promise<void>>().mockResolvedValue();
     vi.spyOn(linearIssueStatus, "createLinearIssueStatusUpdater").mockReturnValue({
       markInProgress: innerMarkInProgress,
-      resetMissingInProgressCache: vi.fn<() => void>(),
     });
     const source = createLinearTicketSource({ kind: "linear" }, {
       globalConfig: makeConfig(),
@@ -245,6 +319,7 @@ describe(createLinearTicketSource, () => {
         uuid: "uuid-1",
         statusId: "s",
         teamId: "team-default",
+        stateType: "unstarted",
         nativeStatus: "Todo",
       },
     });
@@ -253,5 +328,61 @@ describe(createLinearTicketSource, () => {
       uuid: "uuid-1",
       teamId: "team-default",
     });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Lazy client construction — the Linear adapter must be constructible
+// without a Linear API key in env. Callers that only touch a sibling
+// source (multi-source Board fan-out, `crew doctor --ticket <shell-id>`)
+// must not crash at adapter-construction time on a missing key. These
+// tests deliberately do NOT stub `getLinearClient` — the point is to
+// exercise the real key-resolution path.
+// ─────────────────────────────────────────────────────────────────────────
+
+describe("createLinearTicketSource — lazy client construction", () => {
+  const originalGroundcrewKey = readEnvironmentVariable("GROUNDCREW_LINEAR_API_KEY");
+  const originalLinearKey = readEnvironmentVariable("LINEAR_API_KEY");
+
+  beforeEach(() => {
+    deleteEnvironmentVariable("GROUNDCREW_LINEAR_API_KEY");
+    deleteEnvironmentVariable("LINEAR_API_KEY");
+  });
+
+  afterEach(() => {
+    if (originalGroundcrewKey === undefined) {
+      deleteEnvironmentVariable("GROUNDCREW_LINEAR_API_KEY");
+    } else {
+      setEnvironmentVariable("GROUNDCREW_LINEAR_API_KEY", originalGroundcrewKey);
+    }
+    if (originalLinearKey === undefined) {
+      deleteEnvironmentVariable("LINEAR_API_KEY");
+    } else {
+      setEnvironmentVariable("LINEAR_API_KEY", originalLinearKey);
+    }
+  });
+
+  it("constructs the adapter without throwing when no Linear API key is set", () => {
+    expect(() =>
+      createLinearTicketSource({ kind: "linear" }, {
+        globalConfig: makeConfig(),
+      } satisfies AdapterContext),
+    ).not.toThrow();
+  });
+
+  it("throws about the missing key only when verify() is invoked", async () => {
+    const source = createLinearTicketSource({ kind: "linear" }, {
+      globalConfig: makeConfig(),
+    } satisfies AdapterContext);
+
+    await expect(source.verify()).rejects.toThrow(/GROUNDCREW_LINEAR_API_KEY or LINEAR_API_KEY/);
+  });
+
+  it("throws about the missing key only when fetch() is invoked", async () => {
+    const source = createLinearTicketSource({ kind: "linear" }, {
+      globalConfig: makeConfig(),
+    } satisfies AdapterContext);
+
+    await expect(source.fetch()).rejects.toThrow(/GROUNDCREW_LINEAR_API_KEY or LINEAR_API_KEY/);
   });
 });

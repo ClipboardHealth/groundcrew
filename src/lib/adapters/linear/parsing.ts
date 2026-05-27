@@ -1,0 +1,217 @@
+/**
+ * Linear adapter — parsing helpers for model/repository resolution from
+ * issue labels and descriptions. Extracted from boardSource.ts (Task 10).
+ */
+
+import { AGENT_ANY_MODEL, isShippedDefaultDisabled, type ResolvedConfig } from "../../config.ts";
+import { RepositoryResolutionError } from "../../ticketSource.ts";
+
+export const AGENT_LABEL_PREFIX = "agent-";
+
+export type RepositoryResolution = { kind: "ok"; repository: string } | { kind: "missing" };
+
+export type ModelResolution =
+  | { kind: "matched"; model: string }
+  | { kind: "no-label" }
+  | { kind: "agent-any" }
+  | { kind: "disabled-fallback"; requestedModel: string; fallbackModel: string };
+
+function escapeRegex(value: string): string {
+  return value.replaceAll(/[$()*+.?[\\\]^{|}]/g, String.raw`\$&`);
+}
+
+// Sort by descending length so longer names match first — `api-admin`
+// must beat `api` when both are configured. `\b` treats `-` as a word
+// boundary, so without this ordering `api` would win on `api-admin`.
+export function buildRepositoryRegex(config: ResolvedConfig): RegExp {
+  const candidates = config.workspace.knownRepositories.flatMap((repo) => {
+    const slashIndex = repo.indexOf("/");
+    return slashIndex === -1 ? [repo] : [repo, repo.slice(slashIndex + 1)];
+  });
+  const alternation = candidates
+    .toSorted((a, b) => b.length - a.length)
+    .map(escapeRegex)
+    .join("|");
+  return new RegExp(String.raw`\b(${alternation})\b`);
+}
+
+// Shared canonicalization for parseRepository (auto-pickup / dispatch path)
+// and resolveRepositoryFor (manual setup / single-ticket path). The regex
+// can capture either a full `owner/repo` or a bare `repo` when only that
+// appears in the description; canonicalization resolves a bare match back
+// to its full `owner/repo` entry in knownRepositories, and rejects bare
+// names that map to multiple knownRepositories as ambiguous. Both callers
+// share this so the two paths can't drift on what counts as a match.
+type CanonicalizedRepositoryMatch =
+  | { kind: "canonical"; repository: string }
+  | { kind: "unknown"; repository: string }
+  | { kind: "missing" }
+  | { kind: "ambiguous" };
+
+function canonicalizeRepositoryMatch(
+  description: string | undefined,
+  config: ResolvedConfig,
+  repositoryRegex: RegExp,
+): CanonicalizedRepositoryMatch {
+  if (description === undefined || description.length === 0) {
+    return { kind: "missing" };
+  }
+  // Guard against an empty knownRepositories config: buildRepositoryRegex
+  // would produce /\b()\b/, which matches the empty string at any word
+  // boundary and returns a bogus "" match. Treat that as "no repo could
+  // be resolved" so neither the dispatch path nor the doctor path emits
+  // a spurious empty-string repository.
+  if (config.workspace.knownRepositories.length === 0) {
+    return { kind: "missing" };
+  }
+  const matched = repositoryRegex.exec(description)?.[1];
+  if (matched === undefined) {
+    return { kind: "missing" };
+  }
+  const candidates = config.workspace.knownRepositories.filter(
+    (r) => r === matched || r.endsWith(`/${matched}`),
+  );
+  if (candidates.length > 1) {
+    return { kind: "ambiguous" };
+  }
+  if (candidates.length === 1) {
+    /* v8 ignore next @preserve -- length-1 guarantees [0] defined */
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- length-1 guarantees [0] is defined
+    return { kind: "canonical", repository: candidates[0]! };
+  }
+  return { kind: "unknown", repository: matched };
+}
+
+export function resolveRepositoryFor(arguments_: {
+  description: string | undefined;
+  config: ResolvedConfig;
+}): RepositoryResolution {
+  const { description, config } = arguments_;
+  const match = canonicalizeRepositoryMatch(description, config, buildRepositoryRegex(config));
+  switch (match.kind) {
+    case "missing":
+    case "ambiguous": {
+      // Ambiguous matches surface as "missing" so fetchResolvedIssue throws
+      // RepositoryResolutionError — same conflation parseRepository uses,
+      // and the right call for single-ticket flows: the launcher can't
+      // disambiguate "matched N known repos" any more than the dispatcher can.
+      return { kind: "missing" };
+    }
+    case "canonical":
+    case "unknown": {
+      return { kind: "ok", repository: match.repository };
+    }
+    /* v8 ignore next 5 @preserve -- exhaustive over CanonicalizedRepositoryMatch.kind */
+    default: {
+      throw new Error(
+        `resolveRepositoryFor: unexpected match kind ${(match satisfies never as CanonicalizedRepositoryMatch).kind}`,
+      );
+    }
+  }
+}
+
+interface ParseRepositoryArguments {
+  description: string | undefined;
+  config: ResolvedConfig;
+  repositoryRegex: RegExp;
+  ticket: string;
+}
+
+export function parseRepository(arguments_: ParseRepositoryArguments): string {
+  const { description, config, repositoryRegex, ticket } = arguments_;
+  const match = canonicalizeRepositoryMatch(description, config, repositoryRegex);
+  switch (match.kind) {
+    case "missing":
+    case "ambiguous": {
+      throw new RepositoryResolutionError({
+        ticket,
+        repositories: config.workspace.knownRepositories,
+      });
+    }
+    case "canonical": {
+      return match.repository;
+    }
+    case "unknown": {
+      // No match in knownRepositories — return the asserted name as-is. The
+      // dispatcher's dispatchableRepository helper WARN-logs and skips at
+      // the host layer, uniformly across all sources.
+      return match.repository;
+    }
+    /* v8 ignore next 5 @preserve -- exhaustive over CanonicalizedRepositoryMatch.kind */
+    default: {
+      throw new Error(
+        `parseRepository: unexpected match kind ${(match satisfies never as CanonicalizedRepositoryMatch).kind}`,
+      );
+    }
+  }
+}
+
+/**
+ * Returns the resolved agent metadata for a ticket, or `undefined` when the
+ * ticket has no `agent-*` label — those tickets are not groundcrew's concern
+ * and downstream code skips them. An explicit `agent-<unknown>` label still
+ * falls back to `models.default` because the user opted in by labeling.
+ *
+ * `disabledFallback` is set when the label matched a shipped default the user
+ * explicitly disabled (e.g. `agent-codex` against `codex: { disabled: true }`).
+ * Callers warn on this so the user can spot the config/labeling mismatch; we
+ * still fall back rather than skip because skipping would block the ticket
+ * indefinitely. Unknown labels stay silent — those are likelier to be typos.
+ */
+interface ParsedAgentLabels {
+  model: string;
+  disabledFallback?: string;
+}
+
+function parseAgentLabels(
+  labels: { name: string }[],
+  config: ResolvedConfig,
+): ParsedAgentLabels | undefined {
+  const agentLabels = labels.filter((label) => label.name.startsWith(AGENT_LABEL_PREFIX));
+  if (agentLabels.length === 0) {
+    return undefined;
+  }
+  let disabledFallback: string | undefined;
+  for (const label of agentLabels) {
+    const name = label.name.slice(AGENT_LABEL_PREFIX.length);
+    if (name === AGENT_ANY_MODEL) {
+      return { model: AGENT_ANY_MODEL };
+    }
+    // Own-property check, not `in`: a label like `agent-toString` or
+    // `agent-__proto__` would otherwise resolve through the prototype chain
+    // instead of falling back to `models.default`.
+    if (Object.hasOwn(config.models.definitions, name)) {
+      return { model: name };
+    }
+    if (disabledFallback === undefined && isShippedDefaultDisabled(config, name)) {
+      disabledFallback = name;
+    }
+  }
+  const fallback: ParsedAgentLabels = { model: config.models.default };
+  if (disabledFallback !== undefined) {
+    fallback.disabledFallback = disabledFallback;
+  }
+  return fallback;
+}
+
+export function resolveModelFor(arguments_: {
+  labels: { name: string }[];
+  config: ResolvedConfig;
+}): ModelResolution {
+  const { labels, config } = arguments_;
+  const parsed = parseAgentLabels(labels, config);
+  if (parsed === undefined) {
+    return { kind: "no-label" };
+  }
+  if (parsed.model === AGENT_ANY_MODEL) {
+    return { kind: "agent-any" };
+  }
+  if (parsed.disabledFallback !== undefined) {
+    return {
+      kind: "disabled-fallback",
+      requestedModel: parsed.disabledFallback,
+      fallbackModel: parsed.model,
+    };
+  }
+  return { kind: "matched", model: parsed.model };
+}

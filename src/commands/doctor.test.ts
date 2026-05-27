@@ -1,12 +1,12 @@
 import { existsSync, statSync } from "node:fs";
 
-import { createBoardSource, type BoardSource } from "../lib/boardSource.ts";
+import { type Board, createBoard } from "../lib/board.ts";
+import { buildSources, type sourcesFromConfig } from "../lib/buildSources.ts";
 import type { RunCommandOptions } from "../lib/commandRunner.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
-import { readEnvironmentVariable } from "../lib/util.ts";
+import type { TicketSource } from "../lib/ticketSource.ts";
 import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCapture.ts";
-import { deleteEnvironmentVariable, setEnvironmentVariable } from "../testHelpers/env.ts";
 import { doctor } from "./doctor.ts";
 
 interface NodeFsMock {
@@ -29,10 +29,17 @@ vi.mock(import("../lib/host.ts"), async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, detectHostCapabilities: vi.fn<typeof detectHostCapabilities>() };
 });
-vi.mock(import("../lib/boardSource.ts"), async (importOriginal) => {
-  const actual = await importOriginal();
-  return { ...actual, createBoardSource: vi.fn<typeof createBoardSource>() };
-});
+// Full replacements (no importOriginal): pulling in the real buildSources/board
+// would load the adapter registry, which scans the adapters directory and
+// imports each adapter — dragging the real config module into the graph and
+// defeating the config.ts mock when this suite runs alongside others.
+vi.mock(import("../lib/buildSources.ts"), () => ({
+  buildSources: vi.fn<typeof buildSources>(),
+  sourcesFromConfig: vi.fn<typeof sourcesFromConfig>(() => []),
+}));
+vi.mock(import("../lib/board.ts"), () => ({
+  createBoard: vi.fn<typeof createBoard>(),
+}));
 type RunCommandMock = (
   command: string,
   arguments_: readonly string[],
@@ -53,10 +60,34 @@ vi.mock(import("../lib/commandRunner.ts"), async (importOriginal) => {
 
 const existsMock = vi.mocked(existsSync);
 const statMock = vi.mocked(statSync);
-const createBoardSourceMock = vi.mocked(createBoardSource);
+const buildSourcesMock = vi.mocked(buildSources);
+const createBoardMock = vi.mocked(createBoard);
 const loadConfigMock = vi.mocked(loadConfig);
 const detectHostMock = vi.mocked(detectHostCapabilities);
-const linearVerifyMock = vi.fn<BoardSource["verify"]>();
+const boardVerifyMock = vi.fn<Board["verify"]>();
+
+/**
+ * A minimal Board whose `verify()` is the controllable mock. The other
+ * Board methods are unused by the source-probe check, so they're stubbed.
+ */
+function stubBoard(): Board {
+  return {
+    verify: boardVerifyMock,
+    fetch: vi.fn<Board["fetch"]>(),
+    resolveOne: vi.fn<Board["resolveOne"]>(),
+    markInProgress: vi.fn<Board["markInProgress"]>(),
+  };
+}
+
+function stubSource(name: string): TicketSource {
+  return {
+    name,
+    verify: vi.fn<TicketSource["verify"]>(),
+    fetch: vi.fn<TicketSource["fetch"]>(),
+    resolveOne: vi.fn<TicketSource["resolveOne"]>(),
+    markInProgress: vi.fn<TicketSource["markInProgress"]>(),
+  };
+}
 
 function makeConfig(overrides: Partial<ResolvedConfig["models"]> = {}): ResolvedConfig {
   return {
@@ -140,20 +171,15 @@ function mockMissingPath(missingPath: string): void {
 
 describe(doctor, () => {
   let consoleLog: ConsoleCapture;
-  const originalGroundcrewKey = readEnvironmentVariable("GROUNDCREW_LINEAR_API_KEY");
-  const originalLinearKey = readEnvironmentVariable("LINEAR_API_KEY");
 
   beforeEach(() => {
     consoleLog = captureConsoleLog();
-    deleteEnvironmentVariable("GROUNDCREW_LINEAR_API_KEY");
-    setEnvironmentVariable("LINEAR_API_KEY", "lin_api_test");
     existsMock.mockReturnValue(true);
     statMock.mockReturnValue(statsWithDirectoryValue(true));
     detectHostMock.mockResolvedValue(host());
-    createBoardSourceMock.mockReturnValue({
-      verify: linearVerifyMock,
-      fetch: vi.fn<BoardSource["fetch"]>(),
-    });
+    buildSourcesMock.mockResolvedValue([stubSource("linear")]);
+    createBoardMock.mockReturnValue(stubBoard());
+    boardVerifyMock.mockResolvedValue();
     runCommandMock.mockImplementation((_cmd, arguments_) => {
       const target = firstArgument(arguments_);
       return `/usr/bin/${target}\n`;
@@ -162,16 +188,6 @@ describe(doctor, () => {
 
   afterEach(() => {
     consoleLog.restore();
-    if (originalGroundcrewKey === undefined) {
-      deleteEnvironmentVariable("GROUNDCREW_LINEAR_API_KEY");
-    } else {
-      setEnvironmentVariable("GROUNDCREW_LINEAR_API_KEY", originalGroundcrewKey);
-    }
-    if (originalLinearKey === undefined) {
-      deleteEnvironmentVariable("LINEAR_API_KEY");
-    } else {
-      setEnvironmentVariable("LINEAR_API_KEY", originalLinearKey);
-    }
     vi.resetAllMocks();
   });
 
@@ -200,63 +216,23 @@ describe(doctor, () => {
     const actual = await doctor();
 
     expect(actual).toBe(true);
-    expect(createBoardSourceMock).toHaveBeenCalledTimes(1);
-    const createBoardSourceArguments = createBoardSourceMock.mock.calls[0]?.[0];
-    expect(createBoardSourceArguments?.config.workspace.projectDir).toBe("/work");
-    expect(createBoardSourceArguments?.client).toBeDefined();
-    expect(linearVerifyMock).toHaveBeenCalledTimes(1);
-    expect(consoleLog.output()).toContain("All required checks passed");
+    expect(buildSourcesMock).toHaveBeenCalledTimes(1);
+    expect(boardVerifyMock).toHaveBeenCalledTimes(1);
+    const output = consoleLog.output();
+    expect(output).toContain("[ok] source probe");
+    expect(output).toContain("1 source(s) verified");
+    expect(output).toContain("All required checks passed");
   });
 
-  it("returns false and reports both env var names when neither key is set", async () => {
-    deleteEnvironmentVariable("LINEAR_API_KEY");
+  it("reports a source probe failure when board verification throws", async () => {
     loadConfigMock.mockResolvedValue(makeConfig());
+    boardVerifyMock.mockRejectedValue(new Error("viewer lookup failed"));
 
     const actual = await doctor();
 
     expect(actual).toBe(false);
     const output = consoleLog.output();
-    expect(output).toContain("linear reachability");
-    expect(output).toContain("$GROUNDCREW_LINEAR_API_KEY");
-    expect(output).toContain("$LINEAR_API_KEY");
-    expect(linearVerifyMock).not.toHaveBeenCalled();
-  });
-
-  it("reports the resolved env var when only GROUNDCREW_LINEAR_API_KEY is set", async () => {
-    deleteEnvironmentVariable("LINEAR_API_KEY");
-    setEnvironmentVariable("GROUNDCREW_LINEAR_API_KEY", "lin_api_groundcrew");
-    loadConfigMock.mockResolvedValue(makeConfig());
-
-    const actual = await doctor();
-
-    expect(actual).toBe(true);
-    const output = consoleLog.output();
-    expect(output).toContain("linear reachability");
-    expect(output).toContain("$GROUNDCREW_LINEAR_API_KEY");
-  });
-
-  it("prefers GROUNDCREW_LINEAR_API_KEY in doctor output when both env vars are set", async () => {
-    setEnvironmentVariable("GROUNDCREW_LINEAR_API_KEY", "lin_api_groundcrew");
-    setEnvironmentVariable("LINEAR_API_KEY", "lin_api_legacy");
-    loadConfigMock.mockResolvedValue(makeConfig());
-
-    const actual = await doctor();
-
-    expect(actual).toBe(true);
-    const output = consoleLog.output();
-    expect(output).toContain("$GROUNDCREW_LINEAR_API_KEY");
-    expect(output).not.toMatch(/set via \$LINEAR_API_KEY/);
-  });
-
-  it("returns false when Linear cannot be reached", async () => {
-    loadConfigMock.mockResolvedValue(makeConfig());
-    linearVerifyMock.mockRejectedValue(new Error("viewer lookup failed"));
-
-    const actual = await doctor();
-
-    expect(actual).toBe(false);
-    const output = consoleLog.output();
-    expect(output).toContain("[--] linear reachability");
+    expect(output).toContain("[--] source probe");
     expect(output).toContain("viewer lookup failed");
   });
 

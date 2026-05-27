@@ -12,12 +12,13 @@
 import { z } from "zod";
 
 const canonicalStatusSchema = z.enum(["todo", "in-progress", "in-review", "done", "other"]);
-const timeoutSchema = z.number().int().positive();
 
 const shellBlockerSchema = z.object({
   id: z.string(),
   title: z.string(),
   status: canonicalStatusSchema,
+  statusReason: z.enum(["missing", "unmapped"]).optional(),
+  nativeStatus: z.string().optional(),
 });
 
 export const shellIssueSchema = z.object({
@@ -52,10 +53,13 @@ export const shellAdapterConfigSchema = z.object({
   cwd: z.string().optional(),
   timeouts: z
     .object({
-      verify: timeoutSchema.optional(),
-      fetch: timeoutSchema.optional(),
-      resolveOne: timeoutSchema.optional(),
-      markInProgress: timeoutSchema.optional(),
+      // Per-method timeout in milliseconds. Must be a positive integer —
+      // zero, negative, and fractional values would either deadlock or
+      // misbehave inside setTimeout.
+      verify: z.number().int().positive().optional(),
+      fetch: z.number().int().positive().optional(),
+      resolveOne: z.number().int().positive().optional(),
+      markInProgress: z.number().int().positive().optional(),
     })
     .optional(),
   env: z.record(z.string(), z.string()).optional(),

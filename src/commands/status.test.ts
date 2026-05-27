@@ -4,10 +4,10 @@ import { join } from "node:path";
 
 import type { LinearClient } from "@linear/sdk";
 
-import { fetchRawLinearIssue, type RawLinearIssue } from "../lib/boardSource.ts";
+import { getLinearClient } from "../lib/adapters/linear/client.ts";
+import { fetchRawLinearIssue, type RawLinearIssue } from "../lib/adapters/linear/fetch.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { readRunState, type RunState } from "../lib/runState.ts";
-import { getLinearClient } from "../lib/util.ts";
 import { type WorkspaceProbe, workspaces } from "../lib/workspaces.ts";
 import { type WorktreeDirtiness, type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCapture.ts";
@@ -17,7 +17,7 @@ vi.mock(import("../lib/config.ts"), async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, loadConfig: vi.fn<typeof loadConfig>() };
 });
-vi.mock(import("../lib/boardSource.ts"), async (importOriginal) => {
+vi.mock(import("../lib/adapters/linear/fetch.ts"), async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, fetchRawLinearIssue: vi.fn<typeof fetchRawLinearIssue>() };
 });
@@ -25,7 +25,7 @@ vi.mock(import("../lib/runState.ts"), async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, readRunState: vi.fn<typeof readRunState>() };
 });
-vi.mock(import("../lib/util.ts"), async (importOriginal) => {
+vi.mock(import("../lib/adapters/linear/client.ts"), async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, getLinearClient: vi.fn<typeof getLinearClient>() };
 });
@@ -111,6 +111,7 @@ function rawIssue(overrides: Partial<RawLinearIssue> = {}): RawLinearIssue {
     labels: [],
     stateName: "Todo",
     stateType: "unstarted",
+    stateId: "state-todo",
     blockers: [],
     hasMoreBlockers: false,
     hasChildren: false,
@@ -248,9 +249,8 @@ describe(status, () => {
     expect(listWorktreesMock).not.toHaveBeenCalled();
   });
 
-  it("prints a run-state summary without optional detail", async () => {
-    const issueWithoutStateType = rawIssue({ title: "No state type" });
-    delete issueWithoutStateType.stateType;
+  it("prints a run-state summary without optional detail and renders an empty state.type as unknown", async () => {
+    const issueWithoutStateType = rawIssue({ title: "No state type", stateType: "" });
     readRunStateMock.mockReturnValue(runState());
     fetchRawLinearIssueMock.mockResolvedValue(issueWithoutStateType);
 

@@ -15,10 +15,11 @@
  */
 
 import type { AdapterContext } from "../../adapterDefinition.ts";
-import type {
-  Blocker as CanonicalBlocker,
-  Issue as CanonicalIssue,
-  TicketSource,
+import {
+  toCanonicalId,
+  type Blocker as CanonicalBlocker,
+  type Issue as CanonicalIssue,
+  type TicketSource,
 } from "../../ticketSource.ts";
 
 import { invokeShellCommand } from "./invoke.ts";
@@ -54,12 +55,14 @@ function mergeTimeouts(overrides: ShellAdapterConfig["timeouts"]): ResolvedShell
 
 export function toCanonicalIssue(shellIssue: ShellIssue, sourceName: string): CanonicalIssue {
   const blockers: CanonicalBlocker[] = shellIssue.blockers.map((b) => ({
-    id: `${sourceName}:${b.id}`,
+    id: toCanonicalId(sourceName, b.id),
     title: b.title,
     status: b.status,
+    ...(b.statusReason !== undefined && { statusReason: b.statusReason }),
+    ...(b.nativeStatus !== undefined && { nativeStatus: b.nativeStatus }),
   }));
   return {
-    id: `${sourceName}:${shellIssue.id}`,
+    id: toCanonicalId(sourceName, shellIssue.id),
     source: sourceName,
     title: shellIssue.title,
     description: shellIssue.description,
@@ -110,10 +113,11 @@ export function createShellTicketSource(
     },
     fetch: runFetch,
     async resolveOne(naturalId: string): Promise<CanonicalIssue | undefined> {
+      const canonicalId = toCanonicalId(sourceName, naturalId);
       const resolveCommand = config.commands.resolveOne;
       if (resolveCommand === undefined) {
         const all = await runFetch();
-        return all.find((i) => i.id === `${sourceName}:${naturalId}`);
+        return all.find((i) => i.id === canonicalId);
       }
       const result = await invokeShellCommand({
         command: resolveCommand,
@@ -122,7 +126,7 @@ export function createShellTicketSource(
         env: config.env,
         substitutions: {
           id: naturalId,
-          canonicalId: `${sourceName}:${naturalId}`,
+          canonicalId,
           name: sourceName,
         },
         sourceName,

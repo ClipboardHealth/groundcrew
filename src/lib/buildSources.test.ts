@@ -1,9 +1,11 @@
 import { z } from "zod";
 
+import { deleteEnvironmentVariable, setEnvironmentVariable } from "../testHelpers/env.ts";
 import type { AdapterContext, AdapterDefinition } from "./adapterDefinition.ts";
-import { buildSources, buildSourcesWith } from "./buildSources.ts";
+import { buildSources, buildSourcesWith, sourcesFromConfig } from "./buildSources.ts";
 import type { ResolvedConfig } from "./config.ts";
 import type { TicketSource } from "./ticketSource.ts";
+import { readEnvironmentVariable } from "./util.ts";
 
 const fakeContext: AdapterContext = {
   // Tests don't need a real ResolvedConfig — fakeAdapter ignores its context arg.
@@ -91,5 +93,139 @@ describe(buildSources, () => {
     // production async path through the registry.
     const sources = await buildSources([], fakeContext);
     expect(sources).toStrictEqual([]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Cross-source independence: a user with `linear.projects=[…]` and an
+// explicit `sources=[{kind:"shell"}]` block must be able to construct
+// both adapters even when no Linear API key is in env. The Linear
+// adapter's eager `getLinearClient()` call used to crash buildSources
+// on the missing key, which broke `crew doctor --ticket <shell-id>`
+// and any other shell-only operation. These tests pin that behavior
+// using the REAL production adapter registry (no spies, no fakes).
+// ─────────────────────────────────────────────────────────────────────────
+
+function makeMixedConfig(): ResolvedConfig {
+  // Minimal ResolvedConfig with an explicit shell source. The Linear adapter
+  // is synthesized implicitly by sourcesFromConfig under the post-#110 model
+  // (Linear is always-on, filtered server-side by viewer + agent-* label).
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- test fixture; the linear adapter only reads workspace.knownRepositories
+  return {
+    sources: [
+      {
+        kind: "shell",
+        name: "shell-test",
+        commands: { fetch: "echo '[]'" },
+      },
+    ],
+    workspace: { projectDir: "/work", knownRepositories: ["repo-a"] },
+  } as unknown as ResolvedConfig;
+}
+
+describe(`${buildSources.name} — cross-source independence with no Linear API key`, () => {
+  const originalGroundcrewKey = readEnvironmentVariable("GROUNDCREW_LINEAR_API_KEY");
+  const originalLinearKey = readEnvironmentVariable("LINEAR_API_KEY");
+
+  beforeEach(() => {
+    deleteEnvironmentVariable("GROUNDCREW_LINEAR_API_KEY");
+    deleteEnvironmentVariable("LINEAR_API_KEY");
+  });
+
+  afterEach(() => {
+    if (originalGroundcrewKey === undefined) {
+      deleteEnvironmentVariable("GROUNDCREW_LINEAR_API_KEY");
+    } else {
+      setEnvironmentVariable("GROUNDCREW_LINEAR_API_KEY", originalGroundcrewKey);
+    }
+    if (originalLinearKey === undefined) {
+      deleteEnvironmentVariable("LINEAR_API_KEY");
+    } else {
+      setEnvironmentVariable("LINEAR_API_KEY", originalLinearKey);
+    }
+  });
+
+  it("constructs both Linear and shell sources without throwing", async () => {
+    const config = makeMixedConfig();
+
+    const sources = await buildSources(sourcesFromConfig(config), { globalConfig: config });
+
+    expect(sources.map((s) => s.name)).toStrictEqual(["linear", "shell-test"]);
+  });
+
+  it("a shell source can fetch() successfully even when Linear has no API key", async () => {
+    const config = makeMixedConfig();
+    const sources = await buildSources(sourcesFromConfig(config), { globalConfig: config });
+    const shell = sources.find((s) => s.name === "shell-test");
+
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- buildSources asserted both above
+    const issues = await shell!.fetch();
+
+    expect(issues).toStrictEqual([]);
+  });
+
+  it("the Linear source defers its credential check until a method is invoked", async () => {
+    const config = makeMixedConfig();
+    const sources = await buildSources(sourcesFromConfig(config), { globalConfig: config });
+    const linear = sources.find((s) => s.name === "linear");
+
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- buildSources asserted above
+    await expect(linear!.verify()).rejects.toThrow(/GROUNDCREW_LINEAR_API_KEY or LINEAR_API_KEY/);
+  });
+});
+
+describe(sourcesFromConfig, () => {
+  it("prepends an implicit linear source by default", () => {
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- sourcesFromConfig only reads sources; unused fields are irrelevant
+    const config = {
+      sources: [{ kind: "shell", command: ["./fetch.sh"] }],
+    } as unknown as ResolvedConfig;
+
+    const result = sourcesFromConfig(config);
+
+    expect(result).toStrictEqual([{ kind: "linear" }, { kind: "shell", command: ["./fetch.sh"] }]);
+  });
+
+  it("returns just the implicit linear source when config.sources is empty", () => {
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- sourcesFromConfig only reads sources; unused fields are irrelevant
+    const config = { sources: [] } as unknown as ResolvedConfig;
+
+    const result = sourcesFromConfig(config);
+
+    expect(result).toStrictEqual([{ kind: "linear" }]);
+  });
+
+  it("omits the implicit linear source when the user already declared one with kind 'linear'", () => {
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- sourcesFromConfig only reads sources; unused fields are irrelevant
+    const config = {
+      sources: [{ kind: "linear", name: "linear" }],
+    } as unknown as ResolvedConfig;
+
+    expect(sourcesFromConfig(config)).toStrictEqual([{ kind: "linear", name: "linear" }]);
+  });
+
+  it("omits the implicit linear source when the user declared one with name 'linear'", () => {
+    // A user-declared shell source with name "linear" would otherwise collide
+    // with the implicit Linear source; omit the implicit one.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- sourcesFromConfig only reads sources; unused fields are irrelevant
+    const config = {
+      sources: [{ kind: "shell", name: "linear", command: ["./fetch.sh"] }],
+    } as unknown as ResolvedConfig;
+
+    expect(sourcesFromConfig(config)).toStrictEqual([
+      { kind: "shell", name: "linear", command: ["./fetch.sh"] },
+    ]);
+  });
+
+  it("keeps the implicit linear source when explicit sources use distinct names", () => {
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- sourcesFromConfig only reads sources; unused fields are irrelevant
+    const config = {
+      sources: [{ kind: "shell", name: "jira", command: ["./fetch.sh"] }],
+    } as unknown as ResolvedConfig;
+
+    expect(sourcesFromConfig(config)).toStrictEqual([
+      { kind: "linear" },
+      { kind: "shell", name: "jira", command: ["./fetch.sh"] },
+    ]);
   });
 });

@@ -1,6 +1,7 @@
 import type { LinearClient } from "@linear/sdk";
 
-import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCapture.ts";
+import { captureConsoleLog, type ConsoleCapture } from "../../../testHelpers/consoleCapture.ts";
+import type { ResolvedConfig } from "../../config.ts";
 import {
   blockersFromRelations,
   createBoardSource,
@@ -12,10 +13,8 @@ import {
   isIssueTodo,
   isTerminalStatusForBlocker,
   isTerminalStatusForIssue,
-  resolveModelFor,
-  resolveRepositoryFor,
-} from "./boardSource.ts";
-import type { ResolvedConfig } from "./config.ts";
+} from "./fetch.ts";
+import { resolveModelFor, resolveRepositoryFor } from "./parsing.ts";
 
 interface IssueNodeStub {
   id: string;
@@ -400,6 +399,32 @@ describe(fetchResolvedIssue, () => {
     expect(resolved.teamId).toBe("team-default");
   });
 
+  it("resolves a matched non-default model from an enabled agent-* label", async () => {
+    const client = {
+      client: {
+        rawRequest: vi.fn<RawRequest>(async () => ({
+          data: {
+            issue: {
+              id: "uuid-1",
+              title: "Title",
+              description: "Touches repo-a.",
+              team: { id: "team-default" },
+              labels: { nodes: [{ name: "agent-codex" }] },
+              state: { name: "Todo", type: "unstarted" },
+            },
+          },
+        })),
+      },
+    };
+    const resolved = await fetchResolvedIssue({
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests hit the LinearClient surface consumed by boardSource
+      client: client as unknown as LinearClient,
+      config: makeConfig(),
+      ticket: "TEAM-1",
+    });
+    expect(resolved.model).toBe("codex");
+  });
+
   it("falls back to models.default when the label refers to a disabled shipped default", async () => {
     const client = {
       client: {
@@ -606,7 +631,6 @@ describe(resolveRepositoryFor, () => {
     const result = resolveRepositoryFor({
       description: "Touches repo-a.",
       config: makeConfig(),
-      ticket: "TEAM-1",
     });
     expect(result).toStrictEqual({ kind: "ok", repository: "repo-a" });
   });
@@ -615,9 +639,7 @@ describe(resolveRepositoryFor, () => {
     const config = makeConfig({
       workspace: { projectDir: "/work", knownRepositories: ["acme/api"] },
     });
-    expect(
-      resolveRepositoryFor({ description: "api is sad", config, ticket: "TEAM-1" }),
-    ).toStrictEqual({
+    expect(resolveRepositoryFor({ description: "api is sad", config })).toStrictEqual({
       kind: "ok",
       repository: "acme/api",
     });
@@ -627,9 +649,9 @@ describe(resolveRepositoryFor, () => {
     const config = makeConfig({
       workspace: { projectDir: "/work", knownRepositories: ["acme/api", "beta/api"] },
     });
-    expect(
-      resolveRepositoryFor({ description: "api is sad", config, ticket: "TEAM-1" }),
-    ).toStrictEqual({ kind: "missing" });
+    expect(resolveRepositoryFor({ description: "api is sad", config })).toStrictEqual({
+      kind: "missing",
+    });
   });
 
   it("returns missing when no known repo is in the description", () => {
@@ -637,21 +659,20 @@ describe(resolveRepositoryFor, () => {
       resolveRepositoryFor({
         description: "no matching repo here",
         config: makeConfig(),
-        ticket: "TEAM-1",
       }),
     ).toStrictEqual({ kind: "missing" });
   });
 
   it("returns missing on empty description", () => {
-    expect(
-      resolveRepositoryFor({ description: "", config: makeConfig(), ticket: "TEAM-1" }),
-    ).toStrictEqual({ kind: "missing" });
+    expect(resolveRepositoryFor({ description: "", config: makeConfig() })).toStrictEqual({
+      kind: "missing",
+    });
   });
 
   it("returns missing on undefined description", () => {
-    expect(
-      resolveRepositoryFor({ description: undefined, config: makeConfig(), ticket: "TEAM-1" }),
-    ).toStrictEqual({ kind: "missing" });
+    expect(resolveRepositoryFor({ description: undefined, config: makeConfig() })).toStrictEqual({
+      kind: "missing",
+    });
   });
 });
 

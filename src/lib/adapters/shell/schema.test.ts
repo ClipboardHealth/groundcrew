@@ -67,6 +67,72 @@ describe("shell issue schema", () => {
     };
     expect(() => shellIssueSchema.parse(issueWithBadBlocker)).toThrow(/status/i);
   });
+
+  it("accepts blockers with optional statusReason and nativeStatus fields", () => {
+    const issue = {
+      id: "x",
+      title: "t",
+      description: "",
+      status: "todo",
+      repository: null,
+      model: null,
+      assignee: "u",
+      updatedAt: "2026-01-01T00:00:00Z",
+      blockers: [
+        { id: "b1", title: "missing", status: "other", statusReason: "missing" },
+        {
+          id: "b2",
+          title: "unmapped",
+          status: "other",
+          statusReason: "unmapped",
+          nativeStatus: "Triage",
+        },
+        { id: "b3", title: "mapped", status: "done", nativeStatus: "Done" },
+      ],
+      sourceRef: null,
+    };
+    const parsed = shellIssueSchema.parse(issue);
+    expect(parsed.blockers[0]?.statusReason).toBe("missing");
+    expect(parsed.blockers[0]?.nativeStatus).toBeUndefined();
+    expect(parsed.blockers[1]?.statusReason).toBe("unmapped");
+    expect(parsed.blockers[1]?.nativeStatus).toBe("Triage");
+    expect(parsed.blockers[2]?.statusReason).toBeUndefined();
+    expect(parsed.blockers[2]?.nativeStatus).toBe("Done");
+  });
+
+  it("defaults blocker statusReason and nativeStatus to undefined when omitted", () => {
+    const issue = {
+      id: "x",
+      title: "t",
+      description: "",
+      status: "todo",
+      repository: null,
+      model: null,
+      assignee: "u",
+      updatedAt: "2026-01-01T00:00:00Z",
+      blockers: [{ id: "b1", title: "plain", status: "in-progress" }],
+      sourceRef: null,
+    };
+    const parsed = shellIssueSchema.parse(issue);
+    expect(parsed.blockers[0]?.statusReason).toBeUndefined();
+    expect(parsed.blockers[0]?.nativeStatus).toBeUndefined();
+  });
+
+  it("rejects an invalid statusReason value on a blocker", () => {
+    const issue = {
+      id: "x",
+      title: "t",
+      description: "",
+      status: "todo",
+      repository: null,
+      model: null,
+      assignee: "u",
+      updatedAt: "2026-01-01T00:00:00Z",
+      blockers: [{ id: "b1", title: "bad", status: "other", statusReason: "invalid-reason" }],
+      sourceRef: null,
+    };
+    expect(() => shellIssueSchema.parse(issue)).toThrow(/.+/);
+  });
 });
 
 describe("shell fetch output schema", () => {
@@ -129,19 +195,33 @@ describe("shell adapter config schema", () => {
     expect(() => shellAdapterConfigSchema.parse(config)).not.toThrow();
   });
 
-  it.each([
-    ["verify", 0],
-    ["fetch", -1],
-    ["resolveOne", 1.5],
-    ["markInProgress", 0],
-  ] as const)("rejects invalid %s timeout override %s", (field, value) => {
+  it("rejects a negative timeout", () => {
     const config = {
       kind: "shell",
       name: "jira",
-      commands: { fetch: "echo '[]'" },
-      timeouts: { [field]: value },
+      commands: { fetch: "./fetch.sh" },
+      timeouts: { fetch: -1 },
     };
+    expect(() => shellAdapterConfigSchema.parse(config)).toThrow(/too small|>0/i);
+  });
 
-    expect(() => shellAdapterConfigSchema.parse(config)).toThrow(/.+/);
+  it("rejects a zero timeout", () => {
+    const config = {
+      kind: "shell",
+      name: "jira",
+      commands: { fetch: "./fetch.sh" },
+      timeouts: { fetch: 0 },
+    };
+    expect(() => shellAdapterConfigSchema.parse(config)).toThrow(/too small|>0/i);
+  });
+
+  it("rejects a non-integer timeout", () => {
+    const config = {
+      kind: "shell",
+      name: "jira",
+      commands: { fetch: "./fetch.sh" },
+      timeouts: { fetch: 1500.5 },
+    };
+    expect(() => shellAdapterConfigSchema.parse(config)).toThrow(/expected int|integer/i);
   });
 });
