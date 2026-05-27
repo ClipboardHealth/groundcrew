@@ -198,11 +198,15 @@ async function writeInventoryStatus(config: ResolvedConfig): Promise<void> {
 }
 
 export async function status(config: ResolvedConfig, options: StatusOptions = {}): Promise<void> {
-  if (options.ticket === undefined) {
+  const ticket = options.ticket?.trim();
+  if (ticket === undefined) {
     await writeInventoryStatus(config);
     return;
   }
-  await writeTicketStatus(config, options.ticket);
+  if (ticket.length === 0 || ticket.startsWith("-")) {
+    throw new Error("ticket must be a non-empty value");
+  }
+  await writeTicketStatus(config, ticket);
 }
 
 export async function statusCli(argv: string[]): Promise<void> {

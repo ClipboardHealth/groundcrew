@@ -240,6 +240,15 @@ describe(status, () => {
     expect(output).toContain("unavailable: Linear down");
   });
 
+  it("rejects an empty direct-call ticket", async () => {
+    await expect(status(makeConfig(), { ticket: "   " })).rejects.toThrow(
+      "ticket must be a non-empty value",
+    );
+
+    expect(findByTicketMock).not.toHaveBeenCalled();
+    expect(listWorktreesMock).not.toHaveBeenCalled();
+  });
+
   it("prints a run-state summary without optional detail", async () => {
     const issueWithoutStateType = rawIssue({ title: "No state type" });
     delete issueWithoutStateType.stateType;

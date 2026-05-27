@@ -110,6 +110,47 @@ describe(withLogOutputSuppressed, () => {
     expect(consoleLog.output()).not.toMatch(/hidden/);
     consoleLog.restore();
   });
+
+  it("keeps logs suppressed through nested calls", async () => {
+    const consoleLog = captureConsoleLog();
+
+    await withLogOutputSuppressed(async () => {
+      log("hidden-outer");
+      logEvent("hidden-outer-event", {});
+      await withLogOutputSuppressed(async () => {
+        log("hidden-inner");
+        logEvent("hidden-inner-event", {});
+      });
+      log("hidden-after-inner");
+      logEvent("hidden-after-inner-event", {});
+    });
+    log("visible");
+    logEvent("visible-event", { outcome: "ok" });
+
+    expect(consoleLog.output()).toMatch(/visible/);
+    expect(consoleLog.output()).toMatch(/event=visible-event outcome=ok/);
+    expect(consoleLog.output()).not.toMatch(/hidden/);
+    consoleLog.restore();
+  });
+
+  it("restores logging after the suppressed operation throws", async () => {
+    const consoleLog = captureConsoleLog();
+
+    await expect(
+      withLogOutputSuppressed(async () => {
+        log("hidden");
+        logEvent("hidden-event", {});
+        throw new Error("boom");
+      }),
+    ).rejects.toThrow("boom");
+    log("visible");
+    logEvent("visible-event", { outcome: "ok" });
+
+    expect(consoleLog.output()).toMatch(/visible/);
+    expect(consoleLog.output()).toMatch(/event=visible-event outcome=ok/);
+    expect(consoleLog.output()).not.toMatch(/hidden/);
+    consoleLog.restore();
+  });
 });
 
 describe(setLogFile, () => {
