@@ -81,6 +81,50 @@ function trapCleanupLine(promptDir: string): string {
   return `trap ${shellSingleQuote(cleanupCmd)} EXIT`;
 }
 
+/**
+ * Shared opening of every host-shell `&&` chain: `cd` into the worktree, arm
+ * the `EXIT` trap that wipes `promptDir` even when a later link aborts, then
+ * optionally source the staged `secrets.env`.
+ */
+function hostLaunchPrologue(arguments_: {
+  worktreeDir: string;
+  promptDir: string;
+  secretsFile?: string | undefined;
+}): string[] {
+  const lines = [
+    `cd ${shellSingleQuote(arguments_.worktreeDir)}`,
+    trapCleanupLine(arguments_.promptDir),
+  ];
+  if (arguments_.secretsFile !== undefined) {
+    lines.push(sourceSecretsLine(arguments_.secretsFile));
+  }
+  return lines;
+}
+
+/**
+ * Shared tail of every host-shell `&&` chain: optional `preLaunch`, then the
+ * staged prompt read, the explicit success-path `rm -rf` (the trap covers the
+ * failure path), and the final `exec` of whatever wraps (or is) the agent.
+ */
+function preLaunchPromptAndExec(arguments_: {
+  definition: ModelDefinition;
+  worktreeDir: string;
+  promptFile: string;
+  promptDir: string;
+  execLine: string;
+}): string[] {
+  const lines: string[] = [];
+  if (arguments_.definition.preLaunch !== undefined) {
+    lines.push(renderPreLaunch(arguments_.definition.preLaunch, arguments_.worktreeDir));
+  }
+  lines.push(
+    `_p=$(cat ${shellSingleQuote(arguments_.promptFile)})`,
+    `rm -rf ${shellSingleQuote(arguments_.promptDir)}`,
+    arguments_.execLine,
+  );
+  return lines;
+}
+
 interface LaunchCommandArguments {
   definition: ModelDefinition;
   promptFile: string;
@@ -157,24 +201,23 @@ function buildUnwrappedHostLaunchCommand(arguments_: LaunchCommandArguments): st
     sandboxName: "",
   });
 
-  const lines: string[] = [
-    `cd ${shellSingleQuote(arguments_.worktreeDir)}`,
-    trapCleanupLine(promptDir),
-  ];
-  if (arguments_.secretsFile !== undefined) {
-    lines.push(sourceSecretsLine(arguments_.secretsFile));
-  }
+  const lines = hostLaunchPrologue({
+    worktreeDir: arguments_.worktreeDir,
+    promptDir,
+    secretsFile: arguments_.secretsFile,
+  });
   lines.push(setupWithStatusReporting(SETUP_COMMAND));
   if (arguments_.secretsFile !== undefined) {
     lines.push(unsetSecretsLine());
   }
-  if (arguments_.definition.preLaunch !== undefined) {
-    lines.push(renderPreLaunch(arguments_.definition.preLaunch, arguments_.worktreeDir));
-  }
   lines.push(
-    `_p=$(cat ${shellSingleQuote(arguments_.promptFile)})`,
-    `rm -rf ${shellSingleQuote(promptDir)}`,
-    `exec ${agentCmd} "$_p"`,
+    ...preLaunchPromptAndExec({
+      definition: arguments_.definition,
+      worktreeDir: arguments_.worktreeDir,
+      promptFile: arguments_.promptFile,
+      promptDir,
+      execLine: `exec ${agentCmd} "$_p"`,
+    }),
   );
   return lines.join(" && ");
 }
@@ -208,17 +251,19 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
   const envPassFlag =
     arguments_.secretsFile === undefined ? "" : `--env-pass=${BUILD_SECRET_NAMES.join(",")} `;
 
-  const lines: string[] = [
-    `cd ${shellSingleQuote(arguments_.worktreeDir)}`,
-    trapCleanupLine(promptDir),
-  ];
-  if (arguments_.secretsFile !== undefined) {
-    lines.push(sourceSecretsLine(arguments_.secretsFile));
-  }
+  const lines = hostLaunchPrologue({
+    worktreeDir: arguments_.worktreeDir,
+    promptDir,
+    secretsFile: arguments_.secretsFile,
+  });
   lines.push(
-    `_p=$(cat ${shellSingleQuote(arguments_.promptFile)})`,
-    `rm -rf ${shellSingleQuote(promptDir)}`,
-    `exec ${shellSingleQuote(SAFEHOUSE_CLEARANCE_WRAPPER_PATH)} ${envPassFlag}sh -lc ${shellSingleQuote(innerCommand)} sh "$_p"`,
+    ...preLaunchPromptAndExec({
+      definition: arguments_.definition,
+      worktreeDir: arguments_.worktreeDir,
+      promptFile: arguments_.promptFile,
+      promptDir,
+      execLine: `exec ${shellSingleQuote(SAFEHOUSE_CLEARANCE_WRAPPER_PATH)} ${envPassFlag}sh -lc ${shellSingleQuote(innerCommand)} sh "$_p"`,
+    }),
   );
   return lines.join(" && ");
 }

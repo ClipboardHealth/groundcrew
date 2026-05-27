@@ -280,7 +280,7 @@ describe(buildLaunchCommand, () => {
       expect(out).toBe(baseline);
     });
 
-    it("splices preLaunch after secrets unset and before reading the prompt", () => {
+    it("runs preLaunch on the host shell after the secrets source and before reading the prompt", () => {
       const out = buildLaunchCommand(
         arguments_({
           definition: {
@@ -292,14 +292,18 @@ describe(buildLaunchCommand, () => {
         }),
       );
 
-      const unsetIndex = out.indexOf("unset NPM_TOKEN BUF_TOKEN");
+      const sourceIndex = out.indexOf(". '/tmp/prompt-team-1/secrets.env'");
       const preLaunchIndex = out.indexOf("export FOO=bar");
       const readPromptIndex = out.indexOf("_p=$(cat '/tmp/prompt-team-1/prompt.txt')");
       const execIndex = out.indexOf("safehouse-clearance");
-      expect(unsetIndex).toBeGreaterThan(-1);
-      expect(preLaunchIndex).toBeGreaterThan(unsetIndex);
+      expect(sourceIndex).toBeGreaterThan(-1);
+      expect(preLaunchIndex).toBeGreaterThan(sourceIndex);
       expect(readPromptIndex).toBeGreaterThan(preLaunchIndex);
       expect(execIndex).toBeGreaterThan(readPromptIndex);
+      // `unset NPM_TOKEN BUF_TOKEN` now lives inside the Safehouse wrap (after
+      // setup) rather than on the host, so the host chain shouldn't contain
+      // it before the exec.
+      expect(out.slice(0, execIndex)).not.toContain("unset NPM_TOKEN BUF_TOKEN");
     });
 
     it("runs preLaunch without double-wrapping when cmd already starts with safehouse", () => {
