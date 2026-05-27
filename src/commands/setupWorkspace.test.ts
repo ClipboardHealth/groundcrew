@@ -396,11 +396,6 @@ describe(setupWorkspace, () => {
     mkdtempMock.mockReturnValue("/tmp/groundcrew-team-1-x");
     runCommandMock.mockReturnValue("");
     teardownMock.mockResolvedValue(emptyTeardownResult());
-    // Tests assume a local (non-SSH) cmux. CMUX_WORKSPACE_ID is set in any
-    // shell launched inside cmux (including the one running the test
-    // suite); leaving it would make every open() probe current-workspace
-    // first and shift the mock call order.
-    deleteEnvironmentVariable("CMUX_WORKSPACE_ID");
   });
 
   afterEach(() => {
