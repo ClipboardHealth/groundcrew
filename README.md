@@ -168,23 +168,22 @@ Resolution order: `GROUNDCREW_CONFIG` → cosmiconfig project-walk from cwd (any
 
 ### Per-session credentials (`preLaunch`)
 
-Build secrets shuttle build-time values *into* setup. `preLaunch` does the opposite for the *agent* phase: it runs a host-shell snippet **outside** Safehouse/sdx, after build-secret cleanup and before the prompt is read, so exports are inherited by the wrapped `cmd`. Use this when the agent needs a short-lived credential that has to be minted from something the sandbox can't reach (e.g. an engineer CLI session in Keychain), and you don't want any of that source material in the agent's process.
+Build secrets shuttle build-time values *into* setup. `preLaunch` does the opposite for the *agent* phase: it runs a host-shell snippet **outside** Safehouse/sdx, after build-secret cleanup and before the prompt is read, so exports land in the launch shell. Use this when the agent needs a short-lived credential that has to be minted from something the sandbox can't reach (e.g. an engineer CLI session in Keychain), and you don't want any of that source material in the agent's process.
+
+Under the default `safehouse` runner, the agent runs under a sanitized env allowlist — exports from `preLaunch` land in the launch shell but are stripped before reaching the agent unless `cmd` forwards them via `safehouse --env-pass=NAMES` (or `--env=FILE` / `--env`). Under `runner: "none"`, exports flow through unchanged.
 
 ```typescript
 models: {
   definitions: {
     claude: {
-      preLaunch: [
-        "SESSION_TOKEN=$(your-mint-command)",
-        "export SESSION_TOKEN",
-      ].join("; "),
-      cmd: "your-agent-cli",
+      preLaunch: "SESSION_TOKEN=$(your-mint-command) && export SESSION_TOKEN",
+      cmd: 'safehouse --env-pass=SESSION_TOKEN your-agent-cli',
     },
   },
 },
 ```
 
-`{{worktree}}` is substituted the same way as in `cmd`. A non-zero exit aborts launch — intentional for credential minting so the agent never starts without its bootstrap env. Not supported when `local.runner` resolves to `sdx` in v1 (sdx does not forward arbitrary host env into the sandbox); validated early in `setupWorkspace`.
+`&&` ensures `export` only runs when the mint succeeded; a failed mint propagates non-zero out of `preLaunch` and aborts launch before the agent starts. `{{worktree}}` is substituted the same way as in `cmd`. Not supported when `local.runner` resolves to `sdx` in v1 (sdx does not forward arbitrary host env into the sandbox); validated early in `setupWorkspace`.
 
 ## Runners
 

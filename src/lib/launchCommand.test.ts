@@ -203,6 +203,74 @@ describe(buildLaunchCommand, () => {
     });
   });
 
+  describe("EXIT-trap promptDir cleanup", () => {
+    it("includes a `trap 'rm -rf <promptDir>' EXIT` early in the host chain", () => {
+      const out = buildLaunchCommand(arguments_());
+
+      expect(out).toContain(String.raw`trap 'rm -rf '\''/tmp/prompt-team-1'\''' EXIT`);
+      const cdIndex = out.indexOf("cd '/work/repo-a-team-1'");
+      const trapIndex = out.indexOf("trap 'rm -rf");
+      const setupIndex = out.indexOf("setup_status=$?");
+      expect(cdIndex).toBeGreaterThan(-1);
+      expect(trapIndex).toBeGreaterThan(cdIndex);
+      expect(setupIndex).toBeGreaterThan(trapIndex);
+    });
+
+    it("includes the same trap as the first link of the sdx chain", () => {
+      const out = buildLaunchCommand(
+        arguments_({
+          definition: { cmd: "claude", color: "#fff", sandbox: { agent: "claude" } },
+          runner: "sdx",
+          sandboxName: "groundcrew-claude",
+        }),
+      );
+
+      expect(out).toMatch(/^trap 'rm -rf '\\''\/tmp\/prompt-team-1'\\''' EXIT/);
+    });
+
+    it("double-escapes apostrophes in promptDir so the trap arg survives both quote layers", () => {
+      const out = buildLaunchCommand(
+        arguments_({
+          promptFile: "/tmp/it's-fine/prompt.txt",
+        }),
+      );
+
+      expect(out).toContain(String.raw`trap 'rm -rf '\''/tmp/it'\''\'\'''\''s-fine'\''' EXIT`);
+    });
+
+    it("wipes promptDir when preLaunch fails before the explicit `rm -rf` would run", () => {
+      const promptDir = mkdtempSync(join(tmpdir(), "groundcrew-trap-cleanup-"));
+      const promptFile = join(promptDir, "prompt.txt");
+      const secretsFile = join(promptDir, "secrets.env");
+      const worktreeDir = mkdtempSync(join(tmpdir(), "groundcrew-trap-worktree-"));
+      try {
+        writeFileSync(promptFile, "the prompt body\n");
+        writeFileSync(secretsFile, "NPM_TOKEN='leaked'\n");
+
+        const out = buildLaunchCommand(
+          arguments_({
+            runner: "none",
+            promptFile,
+            worktreeDir,
+            secretsFile,
+            definition: {
+              cmd: "echo never-reached",
+              color: "#fff",
+              preLaunch: "exit 7",
+            },
+          }),
+        );
+
+        const result = spawnSync("sh", ["-c", out]);
+        expect(result.status).toBe(7);
+        expect(() => statSync(promptDir)).toThrow(/ENOENT/);
+      } finally {
+        rmSync(promptDir, { recursive: true, force: true });
+        rmSync(worktreeDir, { recursive: true, force: true });
+      }
+    });
+  });
+
   describe("preLaunch", () => {
     const baseline = buildLaunchCommand(arguments_());
 

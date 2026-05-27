@@ -76,6 +76,11 @@ function unsetSecretsLine(): string {
   return `unset ${BUILD_SECRET_NAMES.join(" ")}`;
 }
 
+function trapCleanupLine(promptDir: string): string {
+  const cleanupCmd = `rm -rf ${shellSingleQuote(promptDir)}`;
+  return `trap ${shellSingleQuote(cleanupCmd)} EXIT`;
+}
+
 interface LaunchCommandArguments {
   definition: ModelDefinition;
   promptFile: string;
@@ -152,7 +157,10 @@ function buildUnwrappedHostLaunchCommand(arguments_: LaunchCommandArguments): st
     sandboxName: "",
   });
 
-  const lines: string[] = [`cd ${shellSingleQuote(arguments_.worktreeDir)}`];
+  const lines: string[] = [
+    `cd ${shellSingleQuote(arguments_.worktreeDir)}`,
+    trapCleanupLine(promptDir),
+  ];
   if (arguments_.secretsFile !== undefined) {
     lines.push(sourceSecretsLine(arguments_.secretsFile));
   }
@@ -200,7 +208,10 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
   const envPassFlag =
     arguments_.secretsFile === undefined ? "" : `--env-pass=${BUILD_SECRET_NAMES.join(",")} `;
 
-  const lines: string[] = [`cd ${shellSingleQuote(arguments_.worktreeDir)}`];
+  const lines: string[] = [
+    `cd ${shellSingleQuote(arguments_.worktreeDir)}`,
+    trapCleanupLine(promptDir),
+  ];
   if (arguments_.secretsFile !== undefined) {
     lines.push(sourceSecretsLine(arguments_.secretsFile));
   }
@@ -240,7 +251,7 @@ function buildSdxLaunchCommand(arguments_: LaunchCommandArguments): string {
     arguments_.secretsFile === undefined
       ? ""
       : `${BUILD_SECRET_NAMES.map((name) => `-e ${name}`).join(" ")} `;
-  const lines: string[] = [];
+  const lines: string[] = [trapCleanupLine(promptDir)];
   if (arguments_.secretsFile !== undefined) {
     lines.push(sourceSecretsLine(arguments_.secretsFile));
   }

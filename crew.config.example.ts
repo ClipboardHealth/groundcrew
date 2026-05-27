@@ -62,12 +62,13 @@ export default {
   //       color: "#929292",
   //     },
   //     // Optional: shell snippet run outside Safehouse before the agent exec.
-  //     // Use to mint short-lived credentials the wrapped `cmd` inherits via env.
+  //     // Use to mint short-lived credentials and forward them into the
+  //     // sandbox. Chain with `&&` so a failed mint aborts launch before
+  //     // export. Under the default `safehouse` runner, env is stripped
+  //     // unless `cmd` forwards specific names via `safehouse --env-pass`.
   //     // claude: {
-  //     //   preLaunch: [
-  //     //     "SESSION_TOKEN=$(your-mint-command)",
-  //     //     "export SESSION_TOKEN",
-  //     //   ].join("; "),
+  //     //   preLaunch: "SESSION_TOKEN=$(your-mint-command) && export SESSION_TOKEN",
+  //     //   cmd: "safehouse --env-pass=SESSION_TOKEN your-agent-cli",
   //     // },
   //     // To run a model under the sdx (Docker Sandboxes) runner, bind it to
   //     // an sbx agent. Required when `local.runner` resolves to `sdx`.
