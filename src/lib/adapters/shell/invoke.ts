@@ -121,6 +121,7 @@ export async function invokeShellCommand(args: InvokeArgs): Promise<InvokeResult
     });
 
     child.on("close", (code) => {
+      /* v8 ignore next 3 @preserve -- timer/close race: when the timeout fires first it SIGKILLs and sets settled=true; the 'close' event still arrives and must no-op. No deterministic test exists — an orphaned grandchild (`sh -c "sleep N; ..."`) keeps the stdout pipe open, so 'close' doesn't arrive until the real timeout elapses; mirrors the ignored timer/error settle guards above. */
       if (settled) {
         return;
       }
