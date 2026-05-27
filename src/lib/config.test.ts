@@ -297,14 +297,14 @@ describe("loadConfig", () => {
     );
   });
 
-  it("accepts a per-model sandbox config and surfaces it on the resolved definition", async () => {
+  it("accepts a per-model sandbox agent binding and surfaces it on the resolved definition", async () => {
     const path = writeConfigFile(
       temporary,
       configSource({
         workspace: VALID_WORKSPACE(temporary),
         models: {
           definitions: {
-            claude: { sandbox: { agent: "claude", template: "node-22", kits: ["npm-cache"] } },
+            claude: { sandbox: { agent: "claude" } },
           },
         },
       }),
@@ -316,8 +316,6 @@ describe("loadConfig", () => {
 
     expect(actual.models.definitions["claude"]?.sandbox).toStrictEqual({
       agent: "claude",
-      template: "node-22",
-      kits: ["npm-cache"],
     });
   });
 
@@ -338,38 +336,40 @@ describe("loadConfig", () => {
     );
   });
 
-  it("rejects a per-model sandbox config with non-array kits", async () => {
+  it("rejects removed per-model sandbox.template with migration guidance", async () => {
     const path = writeConfigFile(
       temporary,
       [
         "export default {",
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        `  models: { definitions: { claude: { sandbox: { agent: "claude", kits: 5 } } } },`,
+        `  models: { definitions: { claude: { sandbox: { agent: "claude", template: "node-22" } } } },`,
         "};",
       ].join("\n"),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(
-      /models\.definitions\.claude\.sandbox\.kits must be an array/,
+      /models\.definitions\.claude\.sandbox\.template is no longer supported/,
     );
+    await expect(loadConfig()).rejects.toThrow(/sbx create --name groundcrew-<agent>/);
   });
 
-  it("rejects a per-model sandbox config with a non-string kit entry", async () => {
+  it("rejects removed per-model sandbox.kits with migration guidance", async () => {
     const path = writeConfigFile(
       temporary,
       [
         "export default {",
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        `  models: { definitions: { claude: { sandbox: { agent: "claude", kits: [5] } } } },`,
+        `  models: { definitions: { claude: { sandbox: { agent: "claude", kits: ["npm-cache"] } } } },`,
         "};",
       ].join("\n"),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(
-      /models\.definitions\.claude\.sandbox\.kits\[0\] must be a non-empty string/,
+      /models\.definitions\.claude\.sandbox\.kits is no longer supported/,
     );
+    await expect(loadConfig()).rejects.toThrow(/Provision and manage the sandbox yourself/);
   });
 
   it("threads sandbox.setupCommand through to the resolved sandbox definition", async () => {
@@ -471,44 +471,67 @@ describe("loadConfig", () => {
     );
   });
 
-  it("defaults sandbox.gitDefaults to true when omitted", async () => {
-    const path = writeConfigFile(
-      temporary,
-      configSource({ workspace: VALID_WORKSPACE(temporary) }),
-    );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-    const { loadConfig } = await loadFreshConfig();
-    const actual = await loadConfig();
-    expect(actual.sandbox.gitDefaults).toBe(true);
-  });
-
-  it("threads an explicit sandbox.gitDefaults: false through to the resolved config", async () => {
-    const path = writeConfigFile(
-      temporary,
-      configSource({
-        workspace: VALID_WORKSPACE(temporary),
-        sandbox: { gitDefaults: false },
-      }),
-    );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
-    const { loadConfig } = await loadFreshConfig();
-    const actual = await loadConfig();
-    expect(actual.sandbox.gitDefaults).toBe(false);
-  });
-
-  it("rejects a non-boolean sandbox.gitDefaults", async () => {
+  it("rejects a non-object top-level sandbox block", async () => {
     const path = writeConfigFile(
       temporary,
       [
         "export default {",
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        `  sandbox: { gitDefaults: 'no' },`,
+        `  sandbox: 'nope',`,
         "};",
       ].join("\n"),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
     const { loadConfig } = await loadFreshConfig();
-    await expect(loadConfig()).rejects.toThrow(/sandbox\.gitDefaults must be a boolean/);
+    await expect(loadConfig()).rejects.toThrow(/sandbox must be an object/);
+  });
+
+  it("allows an empty top-level sandbox block during migration", async () => {
+    const path = writeConfigFile(
+      temporary,
+      [
+        "export default {",
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        `  sandbox: {},`,
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+    expect(actual.workspace.projectDir).toBe(temporary);
+  });
+
+  it("rejects removed sandbox.gitDefaults with migration guidance", async () => {
+    const path = writeConfigFile(
+      temporary,
+      [
+        "export default {",
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        `  sandbox: { gitDefaults: false },`,
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(/sandbox\.gitDefaults is no longer supported/);
+    await expect(loadConfig()).rejects.toThrow(/no longer seeds git defaults/);
+  });
+
+  it("rejects removed sandbox.authRecipes with migration guidance", async () => {
+    const path = writeConfigFile(
+      temporary,
+      [
+        "export default {",
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        `  sandbox: { authRecipes: { gh: { displayName: 'GitHub CLI' } } },`,
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(/sandbox\.authRecipes is no longer supported/);
+    await expect(loadConfig()).rejects.toThrow(/no longer drives in-sandbox auth flows/);
   });
 
   it("rejects an invalid local.runner value", async () => {

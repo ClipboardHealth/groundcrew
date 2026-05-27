@@ -1,11 +1,9 @@
-import { resolve } from "node:path";
-
 import { ensureClearance } from "@clipboard-health/clearance";
 
 import type { LocalRunner, ModelDefinition, ResolvedConfig } from "./config.ts";
-import { ensureSandbox, sandboxNameFor } from "./dockerSandbox.ts";
 import { detectHostCapabilities } from "./host.ts";
 import { assertLocalRunnerRequirements, resolveLocalRunner } from "./localRunner.ts";
+import { sandboxNameFor } from "./sandboxName.ts";
 import { log, sleep } from "./util.ts";
 import { workspaces } from "./workspaces.ts";
 
@@ -49,25 +47,6 @@ export async function prepareAgentLaunch(input: {
       ? sandboxNameFor({ agent: input.definition.sandbox.agent })
       : undefined;
   return { runner, sandboxName };
-}
-
-export async function ensureAgentSandbox(input: {
-  config: ResolvedConfig;
-  definition: ModelDefinition;
-  sandboxName: string | undefined;
-  signal?: AbortSignal;
-}): Promise<void> {
-  if (input.sandboxName !== undefined && input.definition.sandbox !== undefined) {
-    await ensureSandbox(
-      {
-        sandboxName: input.sandboxName,
-        sandbox: input.definition.sandbox,
-        mountPath: resolve(input.config.workspace.projectDir),
-        gitDefaults: input.config.sandbox.gitDefaults,
-      },
-      input.signal,
-    );
-  }
 }
 
 export async function openAgentWorkspace(input: {

@@ -1,6 +1,6 @@
 import { fetchResolvedIssue } from "../lib/boardSource.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
-import { ensureAgentSandbox, openAgentWorkspace, prepareAgentLaunch } from "../lib/agentLaunch.ts";
+import { openAgentWorkspace, prepareAgentLaunch } from "../lib/agentLaunch.ts";
 import { buildLaunchCommand } from "../lib/launchCommand.ts";
 import { readRunState, recordRunState, type RunState } from "../lib/runState.ts";
 import {
@@ -165,7 +165,6 @@ export async function resumeWorkspace(
     text: renderResumePrompt(context),
   });
   const secretsFile = stageBuildSecrets(stagedPrompt.directory);
-  await ensureAgentSandbox({ config, definition, sandboxName });
   const launchCommand = buildLaunchCommand({
     definition,
     promptFile: stagedPrompt.file,

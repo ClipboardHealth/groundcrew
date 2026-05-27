@@ -9,7 +9,6 @@ import { doctor } from "./commands/doctor.ts";
 import { interruptWorkspaceCli } from "./commands/interruptWorkspace.ts";
 import { orchestrate } from "./commands/orchestrator.ts";
 import { resumeWorkspaceCli } from "./commands/resumeWorkspace.ts";
-import { sandboxCli } from "./commands/sandbox/index.ts";
 import { setupWorkspaceCli } from "./commands/setupWorkspace.ts";
 import { statusCli } from "./commands/status.ts";
 import {
@@ -39,9 +38,6 @@ vi.mock(import("./commands/orchestrator.ts"), () => ({
 vi.mock(import("./commands/resumeWorkspace.ts"), () => ({
   resumeWorkspaceCli: vi.fn<typeof resumeWorkspaceCli>(),
 }));
-vi.mock(import("./commands/sandbox/index.ts"), () => ({
-  sandboxCli: vi.fn<typeof sandboxCli>(),
-}));
 vi.mock(import("./commands/setupWorkspace.ts"), () => ({
   setupWorkspaceCli: vi.fn<typeof setupWorkspaceCli>(),
 }));
@@ -57,7 +53,6 @@ const orchestrateMock = vi.mocked(orchestrate);
 const doctorMock = vi.mocked(doctor);
 const interruptMock = vi.mocked(interruptWorkspaceCli);
 const resumeMock = vi.mocked(resumeWorkspaceCli);
-const sandboxMock = vi.mocked(sandboxCli);
 const setupMock = vi.mocked(setupWorkspaceCli);
 const cleanupMock = vi.mocked(cleanupWorkspaceCli);
 const statusMock = vi.mocked(statusCli);
@@ -117,7 +112,6 @@ describe(run, () => {
     doctorMock.mockResolvedValue(true);
     interruptMock.mockResolvedValue();
     resumeMock.mockResolvedValue();
-    sandboxMock.mockResolvedValue();
     setupMock.mockResolvedValue();
     cleanupMock.mockResolvedValue();
     statusMock.mockResolvedValue();
@@ -140,7 +134,7 @@ describe(run, () => {
     expect(helpOutput).toContain("Usage: crew <command>");
     expect(helpOutput).toContain("-v, --version");
     expect(helpOutput).toContain("run");
-    expect(helpOutput).toContain("sandbox");
+    expect(helpOutput).not.toContain("sandbox");
     expect(helpOutput).not.toContain("crew ticket");
     expect(process.exitCode).toBe(1);
   });
@@ -182,19 +176,12 @@ describe(run, () => {
     expect(process.exitCode).toBe(1);
   });
 
-  it("dispatches `sandbox <verb> [args...]` to sandboxCli with the remaining argv", async () => {
+  it("hard-fails `sandbox <verb> [args...]` with the manual sbx workflow", async () => {
     await run(["sandbox", "auth", "claude"]);
 
-    expect(sandboxMock).toHaveBeenCalledWith(["auth", "claude"]);
-    expect(process.exitCode).toBeUndefined();
-  });
-
-  it("sets exit code to 1 when sandboxCli throws and surfaces the error message", async () => {
-    sandboxMock.mockRejectedValueOnce(new Error("crew sandbox: unknown model 'ghost'"));
-
-    await run(["sandbox", "ensure", "ghost"]);
-
-    expect(consoleError.output()).toContain("crew sandbox: unknown model 'ghost'");
+    expect(consoleError.output()).toContain("`crew sandbox` is no longer supported");
+    expect(consoleError.output()).toContain("manual `sbx` workflow");
+    expect(consoleError.output()).toContain("models.definitions.<model>.sandbox.agent");
     expect(process.exitCode).toBe(1);
   });
 
@@ -223,15 +210,18 @@ describe(run, () => {
     expect(orchestrateMock).toHaveBeenCalledWith({ watch: true, dryRun: true });
   });
 
-  it("dispatches `run --ticket <id>` to setupWorkspaceCli", async () => {
+  it("dispatches the deprecated `run --ticket <id>` alias to setupWorkspaceCli with a warning", async () => {
     await run(["run", "--ticket", "team-220"]);
 
     expect(setupMock).toHaveBeenCalledWith("team-220", { dryRun: false });
     expect(orchestrateMock).not.toHaveBeenCalled();
+    expect(consoleError.output()).toContain("crew run --ticket is deprecated");
+    expect(consoleError.output()).toContain("use crew start");
+    expect(consoleError.output()).toContain("next major");
   });
 
-  it("documents `run --ticket <TICKET>` as the manual ticket setup command", () => {
-    expect(README_TEXT).toContain("crew run --ticket <TICKET>");
+  it("documents `crew start <TICKET>` as the manual ticket setup command", () => {
+    expect(README_TEXT).toContain("crew start <TICKET>");
     expect(README_TEXT).not.toContain("crew setup <TICKET>");
   });
 
@@ -292,6 +282,51 @@ describe(run, () => {
     expect(setupMock).not.toHaveBeenCalled();
   });
 
+  it("dispatches `start <ticket>` to setupWorkspaceCli with no deprecation warning", async () => {
+    await run(["start", "team-220"]);
+
+    expect(setupMock).toHaveBeenCalledWith("team-220", { dryRun: false });
+    expect(orchestrateMock).not.toHaveBeenCalled();
+    expect(consoleError.calls).toStrictEqual([]);
+  });
+
+  it("forwards --dry-run to setupWorkspaceCli under `start`", async () => {
+    await run(["start", "team-220", "--dry-run"]);
+
+    expect(setupMock).toHaveBeenCalledWith("team-220", { dryRun: true });
+  });
+
+  it("rejects `start` with no ticket", async () => {
+    await run(["start"]);
+
+    expect(consoleError.output()).toContain("Usage: crew start <ticket>");
+    expect(process.exitCode).toBe(1);
+    expect(setupMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects unknown flags under `start`", async () => {
+    await run(["start", "team-220", "--watch"]);
+
+    expect(consoleError.output()).toContain("Unknown option: --watch");
+    expect(process.exitCode).toBe(1);
+    expect(setupMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects extra positional args under `start`", async () => {
+    await run(["start", "team-220", "extra"]);
+
+    expect(consoleError.output()).toContain("Usage: crew start <ticket>");
+    expect(process.exitCode).toBe(1);
+    expect(setupMock).not.toHaveBeenCalled();
+  });
+
+  it("dispatches `stop` to interruptWorkspaceCli with no deprecation warning", async () => {
+    await run(["stop", "TEAM-1", "--reason", "wrong direction"]);
+
+    expect(interruptMock).toHaveBeenCalledWith(["TEAM-1", "--reason", "wrong direction"]);
+    expect(consoleError.calls).toStrictEqual([]);
+  });
+
   it("calls doctor and leaves exit code untouched on success", async () => {
     doctorMock.mockResolvedValue(true);
 
@@ -315,11 +350,32 @@ describe(run, () => {
     expect(process.exitCode).toBeUndefined();
   });
 
-  it("rejects legacy doctor ticket mode", async () => {
+  it("routes the deprecated `doctor --ticket <id>` alias to status with a warning", async () => {
     await run(["doctor", "--ticket", "team-220"]);
 
-    expect(consoleError.output()).toContain("Usage: crew doctor");
+    expect(statusMock).toHaveBeenCalledWith(["team-220"]);
+    expect(doctorMock).not.toHaveBeenCalled();
+    expect(consoleError.output()).toContain("crew doctor --ticket is deprecated");
+    expect(consoleError.output()).toContain("use crew status");
+    expect(consoleError.output()).toContain("next major");
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it("rejects `doctor --ticket` with no value", async () => {
+    await run(["doctor", "--ticket"]);
+
+    expect(consoleError.output()).toContain("ticket id is required");
     expect(process.exitCode).toBe(1);
+    expect(statusMock).not.toHaveBeenCalled();
+    expect(doctorMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects extra args after `doctor --ticket <id>`", async () => {
+    await run(["doctor", "--ticket", "team-220", "extra"]);
+
+    expect(consoleError.output()).toContain("Usage: crew status");
+    expect(process.exitCode).toBe(1);
+    expect(statusMock).not.toHaveBeenCalled();
     expect(doctorMock).not.toHaveBeenCalled();
   });
 
@@ -353,10 +409,13 @@ describe(run, () => {
     expect(cleanupMock).toHaveBeenCalledWith(["--force", "TEAM-1"]);
   });
 
-  it("dispatches interrupt to interruptWorkspaceCli with the remaining argv", async () => {
+  it("routes the deprecated `interrupt` alias to interruptWorkspaceCli with a warning", async () => {
     await run(["interrupt", "TEAM-1", "--reason", "wrong direction"]);
 
     expect(interruptMock).toHaveBeenCalledWith(["TEAM-1", "--reason", "wrong direction"]);
+    expect(consoleError.output()).toContain("crew interrupt is deprecated");
+    expect(consoleError.output()).toContain("use crew stop");
+    expect(consoleError.output()).toContain("next major");
   });
 
   it("dispatches resume to resumeWorkspaceCli with the remaining argv", async () => {
@@ -401,7 +460,7 @@ describe(run, () => {
   it("prints the error message and sets exit code 1 when a subcommand throws", async () => {
     setupMock.mockRejectedValue(new Error("boom"));
 
-    await run(["run", "--ticket", "team-1"]);
+    await run(["start", "team-1"]);
 
     expect(consoleError.output()).toBe("boom");
     expect(process.exitCode).toBe(1);

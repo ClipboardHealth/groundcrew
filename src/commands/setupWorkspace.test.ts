@@ -211,7 +211,6 @@ function makeConfig(overrides: Partial<ResolvedConfig["models"]> = {}): Resolved
     },
     workspaceKind: "auto",
     local: { runner: "auto" },
-    sandbox: { authRecipes: {}, gitDefaults: false },
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }
@@ -250,38 +249,6 @@ function mockCmuxFailure(): void {
     }
     return "";
   });
-}
-
-interface SdxRunMockOptions {
-  existingSandboxes?: readonly string[];
-  sbxCreateThrows?: Error;
-}
-
-function mockSdxRun(options: SdxRunMockOptions = {}): void {
-  const lsOutput = [
-    "NAME STATUS",
-    ...(options.existingSandboxes ?? []).map((n) => `${n} running`),
-    "",
-  ].join("\n");
-  runCommandMock.mockImplementation((cmd, arguments_) => {
-    if (isCmuxNewWorkspace(cmd, arguments_)) {
-      return JSON.stringify({ ref: "workspace:42" });
-    }
-    if (cmd === "sbx" && arguments_[0] === "ls") {
-      return lsOutput;
-    }
-    if (cmd === "sbx" && arguments_[0] === "create" && options.sbxCreateThrows !== undefined) {
-      throw options.sbxCreateThrows;
-    }
-    return "";
-  });
-}
-
-function findSbxCreateCall(): readonly string[] | undefined {
-  const call = runCommandMock.mock.calls.find(
-    ([cmd, arguments_]) => cmd === "sbx" && arguments_[0] === "create",
-  );
-  return call?.[1];
 }
 
 function sdxHost(): HostCapabilities {
@@ -396,11 +363,6 @@ describe(setupWorkspace, () => {
     mkdtempMock.mockReturnValue("/tmp/groundcrew-team-1-x");
     runCommandMock.mockReturnValue("");
     teardownMock.mockResolvedValue(emptyTeardownResult());
-    // Tests assume a local (non-SSH) cmux. CMUX_WORKSPACE_ID is set in any
-    // shell launched inside cmux (including the one running the test
-    // suite); leaving it would make every open() probe current-workspace
-    // first and shift the mock call order.
-    deleteEnvironmentVariable("CMUX_WORKSPACE_ID");
   });
 
   afterEach(() => {
@@ -596,7 +558,7 @@ describe(setupWorkspace, () => {
     expect(launchScript).not.toContain("safehouse-clearance");
   });
 
-  it("auto-creates the sandbox via `sbx create` when it does not exist", async () => {
+  it("does not probe or provision the sandbox when runner='sdx'", async () => {
     detectHostMock.mockResolvedValue(sdxHost());
     const config = makeConfig({
       definitions: {
@@ -604,81 +566,12 @@ describe(setupWorkspace, () => {
         codex: { cmd: "codex", color: "#000" },
       },
     });
-    mockSdxRun();
 
     await setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" });
 
-    expect(runCommandMock).toHaveBeenCalledWith(
-      "sbx",
-      ["create", "--name", "groundcrew-claude", "claude", "/work"],
-      expect.any(Object),
-    );
-  });
-
-  it("skips `sbx create` when the sandbox already exists", async () => {
-    detectHostMock.mockResolvedValue(sdxHost());
-    const config = makeConfig({
-      definitions: {
-        claude: { cmd: "claude --auto", color: "#fff", sandbox: { agent: "claude" } },
-        codex: { cmd: "codex", color: "#000" },
-      },
-    });
-    mockSdxRun({ existingSandboxes: ["groundcrew-claude"] });
-
-    await setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" });
-
-    expect(findSbxCreateCall()).toBeUndefined();
-  });
-
-  it("forwards sandbox template and kits to `sbx create`", async () => {
-    detectHostMock.mockResolvedValue(sdxHost());
-    const config = makeConfig({
-      definitions: {
-        claude: {
-          cmd: "claude --auto",
-          color: "#fff",
-          sandbox: { agent: "claude", template: "node-22", kits: ["npm-cache", "tools"] },
-        },
-        codex: { cmd: "codex", color: "#000" },
-      },
-    });
-    mockSdxRun();
-
-    await setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" });
-
-    expect(runCommandMock).toHaveBeenCalledWith(
-      "sbx",
-      [
-        "create",
-        "--name",
-        "groundcrew-claude",
-        "--template",
-        "node-22",
-        "--kit",
-        "npm-cache",
-        "--kit",
-        "tools",
-        "claude",
-        "/work",
-      ],
-      expect.any(Object),
-    );
-  });
-
-  it("rolls back the worktree when sandbox creation fails", async () => {
-    detectHostMock.mockResolvedValue(sdxHost());
-    const config = makeConfig({
-      definitions: {
-        claude: { cmd: "claude --auto", color: "#fff", sandbox: { agent: "claude" } },
-        codex: { cmd: "codex", color: "#000" },
-      },
-    });
-    mockSdxRun({ sbxCreateThrows: new Error("sbx create failed") });
-
-    await expect(
-      setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" }),
-    ).rejects.toThrow("sbx create failed");
-    expect(teardownMock).toHaveBeenCalledWith(config, expect.any(Array), { force: true });
+    expect(runCommandMock.mock.calls.filter(([command]) => command === "sbx")).toStrictEqual([]);
+    expect(teardownMock).not.toHaveBeenCalled();
+    expect(writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh")).toContain("exec sbx exec -it");
   });
 
   it("does not create a worktree when the safehouse clearance cannot start", async () => {

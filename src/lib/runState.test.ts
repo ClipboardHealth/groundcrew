@@ -33,7 +33,6 @@ function makeConfig(stateRoot: string): ResolvedConfig {
     prompts: { initial: "x" },
     workspaceKind: "auto",
     local: { runner: "auto" },
-    sandbox: { authRecipes: {}, gitDefaults: false },
     logging: { file: join(stateRoot, "groundcrew.log") },
   };
 }

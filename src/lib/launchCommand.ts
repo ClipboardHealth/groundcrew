@@ -92,9 +92,9 @@ interface LaunchCommandArguments {
   runner: LocalRunner;
   /**
    * sbx sandbox name when `runner === "sdx"`. Derived by the caller from
-   * `sandboxNameFor({ repository, model })`. Required for sdx; ignored
-   * otherwise. Kept off the model definition so a model can launch under
-   * safehouse on one host and sdx on another without config edits.
+   * `sandboxNameFor({ agent })`. Required for sdx; ignored otherwise.
+   * Kept off the model definition so a model can launch under safehouse
+   * on one host and sdx on another without config edits.
    */
   sandboxName?: string | undefined;
 }

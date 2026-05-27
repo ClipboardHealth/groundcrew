@@ -73,7 +73,6 @@ function makeConfig(): ResolvedConfig {
     prompts: { initial: "x" },
     workspaceKind: "auto",
     local: { runner: "auto" },
-    sandbox: { authRecipes: {}, gitDefaults: false },
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }
@@ -213,7 +212,7 @@ describe(interruptWorkspaceCli, () => {
   });
 
   it("rejects missing ticket", async () => {
-    await expect(interruptWorkspaceCli([])).rejects.toThrow(/Usage: crew interrupt/);
+    await expect(interruptWorkspaceCli([])).rejects.toThrow(/Usage: crew stop/);
   });
 
   it("rejects missing reason text", async () => {

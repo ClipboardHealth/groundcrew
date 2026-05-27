@@ -6,11 +6,22 @@ import { initConfigCli } from "./commands/init.ts";
 import { interruptWorkspaceCli } from "./commands/interruptWorkspace.ts";
 import { orchestrate } from "./commands/orchestrator.ts";
 import { resumeWorkspaceCli } from "./commands/resumeWorkspace.ts";
-import { sandboxCli } from "./commands/sandbox/index.ts";
 import { setupWorkspaceCli } from "./commands/setupWorkspace.ts";
 import { statusCli } from "./commands/status.ts";
 import { createDefaultUpgradeCliOptions, upgradeCli } from "./commands/upgrade.ts";
-import { errorMessage, readTicketArgument, writeError, writeOutput } from "./lib/util.ts";
+import {
+  errorMessage,
+  parseDryRunPositionals,
+  readTicketArgument,
+  writeError,
+  writeOutput,
+} from "./lib/util.ts";
+
+const REMOVED_SANDBOX_COMMAND_MESSAGE = [
+  "`crew sandbox` is no longer supported.",
+  "Groundcrew now launches agents inside existing sbx sandboxes but does not list, create, regenerate, authenticate, or remove them.",
+  "Use the manual `sbx` workflow in README.md#docker-sandboxes-sdx-setup, then keep `models.definitions.<model>.sandbox.agent` in crew.config.ts so launches can address the existing sandbox.",
+].join("\n");
 
 interface PackageMetadata {
   name: string;
@@ -22,6 +33,8 @@ interface Subcommand {
   usage: string;
   hidden?: boolean;
   invoke: (argv: string[]) => Promise<void>;
+  // Deprecated aliases keep working but are hidden from `crew --help`.
+  deprecated?: boolean;
 }
 
 const requireFromCli = createRequire(import.meta.url);
@@ -31,6 +44,16 @@ const SETUP_REPOS_REMOVED_MESSAGE = [
   "Clone repositories manually with git clone into workspace.projectDir.",
   "See README.md#manual-repository-bootstrap for the replacement workflow.",
 ].join(" ");
+
+/**
+ * Prints a deprecation warning to stderr naming the canonical command and that
+ * the old form is removed in the next major, then lets the caller proceed.
+ */
+function warnDeprecated(forms: { oldForm: string; newForm: string }): void {
+  writeError(
+    `crew ${forms.oldForm} is deprecated and will be removed in the next major version; use crew ${forms.newForm} instead.`,
+  );
+}
 
 function setupUsage(): string {
   return `Usage: crew setup repos\n\n${SETUP_REPOS_REMOVED_MESSAGE}`;
@@ -75,6 +98,18 @@ async function runCli(argv: string[]): Promise<void> {
     await orchestrate({ watch, dryRun });
     return;
   }
+  warnDeprecated({ oldForm: "run --ticket", newForm: "start" });
+  await setupWorkspaceCli(ticket, { dryRun });
+}
+
+const START_USAGE = "crew start <ticket> [--dry-run]";
+
+async function startCli(argv: string[]): Promise<void> {
+  const { dryRun, positionals } = parseDryRunPositionals(argv, START_USAGE);
+  const [ticket, ...extras] = positionals;
+  if (ticket === undefined || ticket.length === 0 || extras.length > 0) {
+    throw new Error(`Usage: ${START_USAGE}`);
+  }
   await setupWorkspaceCli(ticket, { dryRun });
 }
 
@@ -90,7 +125,24 @@ async function upgradeCliInvoke(argv: string[]): Promise<void> {
   );
 }
 
+function doctorTicketAlias(argv: string[]): string | undefined {
+  if (argv[0] !== "--ticket") {
+    return undefined;
+  }
+  const ticket = readTicketArgument(argv, 0, "doctor");
+  if (argv.length > 2) {
+    throw new Error("Usage: crew status [<ticket>]");
+  }
+  return ticket;
+}
+
 async function doctorCli(argv: string[]): Promise<void> {
+  const aliasTicket = doctorTicketAlias(argv);
+  if (aliasTicket !== undefined) {
+    warnDeprecated({ oldForm: "doctor --ticket", newForm: "status" });
+    await statusCli([aliasTicket]);
+    return;
+  }
   if (argv.length > 0) {
     throw new Error("Usage: crew doctor");
   }
@@ -105,9 +157,14 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
     invoke: initConfigCli,
   },
   run: {
-    summary: "Run the orchestrator (one-shot by default), or provision one ticket with --ticket",
-    usage: "[--watch] [--dry-run] [--ticket <ticket>]",
+    summary: "Run the orchestrator: poll sources and start eligible tickets (one-shot by default)",
+    usage: "[--watch] [--dry-run]",
     invoke: runCli,
+  },
+  start: {
+    summary: "Launch one ticket immediately, bypassing eligibility",
+    usage: "<ticket> [--dry-run]",
+    invoke: startCli,
   },
   doctor: {
     summary: "Verify host prerequisites (PATH tools, config validity, Linear reachability)",
@@ -124,20 +181,24 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
     usage: "[--force] <ticket>",
     invoke: cleanupWorkspaceCli,
   },
-  interrupt: {
+  stop: {
     summary: "Stop a live ticket workspace while preserving its worktree",
     usage: "<ticket> [--reason <text>]",
     invoke: interruptWorkspaceCli,
+  },
+  interrupt: {
+    summary: "Deprecated alias for `crew stop`",
+    usage: "<ticket> [--reason <text>]",
+    deprecated: true,
+    invoke: async (argv) => {
+      warnDeprecated({ oldForm: "interrupt", newForm: "stop" });
+      await interruptWorkspaceCli(argv);
+    },
   },
   resume: {
     summary: "Reopen an existing ticket worktree with a continuation prompt",
     usage: "<ticket>",
     invoke: resumeWorkspaceCli,
-  },
-  sandbox: {
-    summary: "Manage Docker Sandboxes (sbx) for configured models",
-    usage: "<list|ensure|regenerate|auth|rm> [...args]",
-    invoke: sandboxCli,
   },
   setup: {
     summary: "Removed repository bootstrap command",
@@ -153,7 +214,9 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
 };
 
 function printHelp(): void {
-  const visibleCommands = Object.entries(SUBCOMMANDS).filter(([, command]) => !command.hidden);
+  const visibleCommands = Object.entries(SUBCOMMANDS).filter(
+    ([, command]) => command.hidden !== true && command.deprecated !== true,
+  );
   const width = Math.max(...visibleCommands.map(([key]) => key.length));
   writeOutput("Usage: crew <command> [...args]\n");
   writeOutput("Options:");
@@ -191,6 +254,12 @@ export async function run(argv: string[]): Promise<void> {
 
   if (subcommand === "-v" || subcommand === "--version") {
     writeOutput(packageVersion());
+    return;
+  }
+
+  if (subcommand === "sandbox") {
+    writeError(REMOVED_SANDBOX_COMMAND_MESSAGE);
+    process.exitCode = 1;
     return;
   }
 

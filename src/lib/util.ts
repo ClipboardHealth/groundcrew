@@ -173,6 +173,33 @@ export function readTicketArgument(argv: string[], index: number, command: strin
   return value;
 }
 
+export interface DryRunPositionals {
+  dryRun: boolean;
+  positionals: string[];
+}
+
+/**
+ * Parses an argv that accepts an optional `--dry-run` flag plus free
+ * positionals, rejecting any other dash-prefixed token. Shared by the
+ * subcommands whose only flag is `--dry-run` so each parser stays DRY; pass the
+ * command's `usage` string for the "Unknown option" error.
+ */
+export function parseDryRunPositionals(argv: string[], usage: string): DryRunPositionals {
+  let dryRun = false;
+  const positionals: string[] = [];
+  for (const argument of argv) {
+    if (argument === "--dry-run") {
+      dryRun = true;
+      continue;
+    }
+    if (argument.startsWith("-")) {
+      throw new Error(`Unknown option: ${argument}\nUsage: ${usage}`);
+    }
+    positionals.push(argument);
+  }
+  return { dryRun, positionals };
+}
+
 export function errorMessage(error: unknown): string {
   if (error instanceof Error) {
     return error.message;

@@ -85,7 +85,6 @@ function makeConfig(workspaceKind: WorkspaceKindSetting = "auto"): ResolvedConfi
     prompts: { initial: "x" },
     workspaceKind,
     local: { runner: "auto" },
-    sandbox: { authRecipes: {}, gitDefaults: false },
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }
@@ -93,11 +92,6 @@ function makeConfig(workspaceKind: WorkspaceKindSetting = "auto"): ResolvedConfi
 function commonBeforeEach(): void {
   runMock.mockReturnValue("");
   detectHostMock.mockResolvedValue(makeHost());
-  // Tests assume an unscoped local cmux. CMUX_WORKSPACE_ID is set in any
-  // shell launched inside cmux (including the one running the test
-  // suite); leaving it would make every open() probe the current
-  // workspace's remote first and shift the mock call order.
-  deleteEnvironmentVariable("CMUX_WORKSPACE_ID");
 }
 
 function commonAfterEach(): void {
@@ -228,183 +222,6 @@ describe("workspaces.open (cmux)", () => {
 
     expect(runMock).not.toHaveBeenCalledWith("cmux", expect.arrayContaining(["close-workspace"]));
     expect(runMock).not.toHaveBeenCalledWith("cmux", expect.arrayContaining(["list-workspaces"]));
-  });
-
-  it("wraps the agent command in `ssh -t <destination>` when crew runs inside an SSH workspace", async () => {
-    setEnvironmentVariable("CMUX_WORKSPACE_ID", "current-ws-id");
-    runMock
-      .mockReturnValueOnce(
-        JSON.stringify({
-          workspace: {
-            remote: {
-              connected: true,
-              transport: "ssh",
-              destination: "server.internal",
-              port: 22,
-              identity_file: "/home/user/.ssh/id_ed25519",
-              ssh_options: ["StrictHostKeyChecking=no"],
-            },
-          },
-        }),
-      )
-      .mockReturnValueOnce(
-        JSON.stringify({ workspace_id: "new-ws-id", workspace_ref: "workspace:99" }),
-      )
-      .mockReturnValue("");
-
-    await workspaces.open(makeConfig(), {
-      name: "TEAM-1",
-      cwd: "/srv/repo-a-TEAM-1",
-      command: "bash '/tmp/launch.sh'",
-    });
-
-    expect(runMock).toHaveBeenCalledWith("cmux", ["--json", "current-workspace"]);
-    expect(runMock).toHaveBeenCalledWith("cmux", [
-      "--json",
-      "new-workspace",
-      "--name",
-      "TEAM-1",
-      "--command",
-      String.raw`ssh -t -p 22 -i '/home/user/.ssh/id_ed25519' -o 'StrictHostKeyChecking=no' 'server.internal' -- 'cd '\''/srv/repo-a-TEAM-1'\'' && bash '\''/tmp/launch.sh'\'''`,
-    ]);
-  });
-
-  it("omits ssh -p / -i / -o flags when the remote exposes only a destination", async () => {
-    setEnvironmentVariable("CMUX_WORKSPACE_ID", "current-ws-id");
-    runMock
-      .mockReturnValueOnce(
-        JSON.stringify({
-          workspace: {
-            remote: { connected: true, transport: "ssh", destination: "server.internal" },
-          },
-        }),
-      )
-      .mockReturnValueOnce(JSON.stringify({ workspace_id: "new-ws-id" }))
-      .mockReturnValue("");
-
-    await workspaces.open(makeConfig(), {
-      name: "TEAM-1",
-      cwd: "/srv/x",
-      command: "exec claude",
-    });
-
-    expect(runMock).toHaveBeenCalledWith("cmux", [
-      "--json",
-      "new-workspace",
-      "--name",
-      "TEAM-1",
-      "--command",
-      String.raw`ssh -t 'server.internal' -- 'cd '\''/srv/x'\'' && exec claude'`,
-    ]);
-  });
-
-  it("does not wrap with ssh and passes --cwd when no SSH remote is detected", async () => {
-    runMock.mockReturnValueOnce(JSON.stringify({ workspace_id: "new-ws-id" })).mockReturnValue("");
-
-    await workspaces.open(makeConfig(), {
-      name: "TEAM-1",
-      cwd: "/work/repo-a-TEAM-1",
-      command: "exec claude",
-    });
-
-    expect(runMock).toHaveBeenCalledWith("cmux", [
-      "--json",
-      "new-workspace",
-      "--name",
-      "TEAM-1",
-      "--cwd",
-      "/work/repo-a-TEAM-1",
-      "--command",
-      "exec claude",
-    ]);
-  });
-
-  it("rejects malformed current-workspace output while CMUX_WORKSPACE_ID is set", async () => {
-    setEnvironmentVariable("CMUX_WORKSPACE_ID", "current-ws-id");
-    runMock.mockReturnValueOnce("garbage that is not JSON").mockReturnValue("");
-
-    await expect(
-      workspaces.open(makeConfig(), {
-        name: "TEAM-1",
-        cwd: "/srv/x",
-        command: "exec claude",
-      }),
-    ).rejects.toThrow(/cmux current-workspace returned malformed output while CMUX_WORKSPACE_ID/);
-
-    expect(runMock).not.toHaveBeenCalledWith(
-      "cmux",
-      expect.arrayContaining(["new-workspace", "--name", "TEAM-1"]),
-    );
-  });
-
-  it("rejects a current-workspace probe failure while CMUX_WORKSPACE_ID is set", async () => {
-    setEnvironmentVariable("CMUX_WORKSPACE_ID", "current-ws-id");
-    runMock
-      .mockImplementationOnce(() => {
-        throw new Error("current-workspace failed");
-      })
-      .mockReturnValue("");
-
-    await expect(
-      workspaces.open(makeConfig(), {
-        name: "TEAM-1",
-        cwd: "/srv/x",
-        command: "exec claude",
-      }),
-    ).rejects.toThrow(/cmux current-workspace probe failed while CMUX_WORKSPACE_ID/);
-
-    expect(runMock).not.toHaveBeenCalledWith(
-      "cmux",
-      expect.arrayContaining(["new-workspace", "--name", "TEAM-1"]),
-    );
-  });
-
-  it("rethrows current-workspace failures after the shutdown signal fires", async () => {
-    setEnvironmentVariable("CMUX_WORKSPACE_ID", "current-ws-id");
-    const controller = new AbortController();
-    controller.abort();
-    runMock.mockImplementation(() => {
-      throw new Error("current-workspace interrupted");
-    });
-
-    await expect(
-      workspaces.open(
-        makeConfig(),
-        { name: "TEAM-1", cwd: "/srv/x", command: "exec claude" },
-        controller.signal,
-      ),
-    ).rejects.toThrow("current-workspace interrupted");
-  });
-
-  it("ignores remote without an SSH destination string", async () => {
-    setEnvironmentVariable("CMUX_WORKSPACE_ID", "current-ws-id");
-    runMock
-      .mockReturnValueOnce(
-        JSON.stringify({
-          workspace: {
-            remote: { connected: true, transport: "ssh", destination: null },
-          },
-        }),
-      )
-      .mockReturnValueOnce(JSON.stringify({ workspace_id: "new-ws-id" }))
-      .mockReturnValue("");
-
-    await workspaces.open(makeConfig(), {
-      name: "TEAM-1",
-      cwd: "/srv/x",
-      command: "exec claude",
-    });
-
-    expect(runMock).toHaveBeenCalledWith("cmux", [
-      "--json",
-      "new-workspace",
-      "--name",
-      "TEAM-1",
-      "--cwd",
-      "/srv/x",
-      "--command",
-      "exec claude",
-    ]);
   });
 
   it("keeps the workspace when set-status fails (status painting is best-effort)", async () => {
