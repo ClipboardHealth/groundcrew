@@ -102,6 +102,14 @@ describe(invokeShellCommand, () => {
     await expect(
       invokeShellCommand({ command: script, timeoutMs: 200, sourceName: "test" }),
     ).rejects.toThrow(ShellAdapterTimeoutError);
+    // The timeout SIGKILLs the child; its 'close' event then fires
+    // asynchronously and is swallowed by the handler's `settled` guard.
+    // Wait a beat so that guard executes within the test — without it the
+    // branch is recorded non-deterministically across platforms (covered on
+    // macOS, missed on Linux CI), failing the 100% coverage gate.
+    await new Promise((resolve) => {
+      setTimeout(resolve, 250);
+    });
   });
 
   it("pipes stdin to the subprocess", async () => {
