@@ -96,26 +96,18 @@ crew upgrade [<version>]                                 # reinstall crew global
 
 Deprecated aliases still work but print a warning and will be removed in the next major version: `crew interrupt` → `crew stop`, `crew run --ticket <TICKET>` → `crew start <TICKET>`, `crew doctor --ticket <TICKET>` → `crew status <TICKET>`.
 
-## Manual Repository Bootstrap
+## Manual repository bootstrap
 
-Groundcrew no longer clones repositories for you. For each `workspace.knownRepositories` entry,
-clone the repository into `workspace.projectDir` using the same relative path that appears in the
-config. For an `OWNER/REPO` entry:
+Groundcrew never clones repositories for you. Clone each `workspace.knownRepositories` entry into `workspace.projectDir` using the same relative path the config uses. For an `OWNER/REPO` entry:
 
 ```bash
 PROJECT_DIR="$HOME/dev/c"
 mkdir -p "$PROJECT_DIR/OWNER"
 git clone git@github.com:OWNER/REPO.git "$PROJECT_DIR/OWNER/REPO"
+# HTTPS works the same: git clone https://github.com/OWNER/REPO.git "$PROJECT_DIR/OWNER/REPO"
 ```
 
-HTTPS works the same way if you do not use SSH:
-
-```bash
-git clone https://github.com/OWNER/REPO.git "$PROJECT_DIR/OWNER/REPO"
-```
-
-Bare-name entries do not include an owner, so choose the correct remote URL yourself and clone it to
-`$PROJECT_DIR/<name>`. `crew setup repos` now exits non-zero and points back to this section.
+Bare-name entries have no owner, so pick the remote URL yourself and clone to `$PROJECT_DIR/<name>`.
 
 ## Configuration
 
@@ -153,7 +145,7 @@ Resolution order: `GROUNDCREW_CONFIG` → cosmiconfig project-walk from cwd (any
 
 | Key                                     | Default             | What it does                                                                                                                                                                                                                                                                                                                                                            |
 | --------------------------------------- | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `sources`                               | `[]`                | Additional pluggable ticket sources. Extra sources are verified at startup; the built-in Linear adapter remains the dispatch read path until the canonical consumer refactor. Built-in kinds: `shell`, `linear`.                                                                                                                                                        |
+| `sources`                               | `[]`                | Additional pluggable ticket sources, dispatched alongside the built-in Linear adapter. Built-in kinds: `shell`, `linear`.                                                                                                                                                                                                                                               |
 | `git.remote`                            | `"origin"`          | Remote used for `fetch` and as the worktree base ref.                                                                                                                                                                                                                                                                                                                   |
 | `git.defaultBranch`                     | `"main"`            | Branch fetched from `git.remote` and used as the worktree base.                                                                                                                                                                                                                                                                                                         |
 | `workspace.projectDir`                  | **required**        | Parent dir for cloned repos and sibling ticket worktrees.                                                                                                                                                                                                                                                                                                               |
@@ -368,7 +360,7 @@ To scaffold `.groundcrew/setup.sh` with a coding agent (Claude Code, Cursor, etc
 
 ## Pluggable ticket sources
 
-`sources` declares extra ticket-system adapters. The current release verifies configured extra sources during `crew run` startup; the dispatch loop still reads Linear directly through the built-in Linear adapter until the canonical consumer refactor lands. This lets you validate shell/Jira/local-plan integrations without changing existing Linear behavior.
+`sources` declares extra ticket-system adapters. They're verified at `crew run` startup and dispatched alongside the built-in Linear adapter, so a shell, Jira, or local-plan integration feeds the same orchestration loop as Linear.
 
 The built-in `shell` adapter runs command templates and reads JSON from stdout:
 
@@ -547,7 +539,7 @@ Both forms discover config via cosmiconfig — project-walk from cwd for `crew.c
 
 Logs land in `${XDG_STATE_HOME:-$HOME/.local/state}/groundcrew/groundcrew.log` by default (override via `logging.file`).
 
-Source edits in `src/**` are picked up on the next invocation. Requires Node ≥ 24.3 (native `.ts` type stripping).
+Source edits in `src/**` are picked up on the next invocation. Requires Node ≥ 24 (native `.ts` type stripping).
 
 ## License
 
