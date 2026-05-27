@@ -101,6 +101,19 @@ export interface ModelDefinition {
    * Not supported for `local.runner` `sdx` in v1.
    */
   preLaunch?: string;
+  /**
+   * Optional list of env var names to forward from the launch shell into
+   * the agent under the safehouse runner. Companion to `preLaunch` —
+   * names exported by `preLaunch` go here so groundcrew appends them to
+   * the `safehouse-clearance` wrap's `--env-pass=` flag, preserving the
+   * project's egress allowlist (`clearance-allow-hosts`) without forcing
+   * the user to rewrite `cmd`. Under `local.runner: "none"` exports flow
+   * through unchanged, so `preLaunchEnv` is a no-op. Not supported for
+   * `local.runner` `sdx` in v1. Rejected at launch when `cmd` already
+   * starts with `safehouse` (the user owns env forwarding in that case).
+   * Each name must match `[A-Za-z_][A-Za-z0-9_]*` (POSIX env var name).
+   */
+  preLaunchEnv?: string[];
   color: string;
   usage?: {
     codexbar: { provider: string; source?: string };
@@ -374,6 +387,22 @@ function normalizeOptionalString(value: unknown, path: string): string | undefin
   return value.trim();
 }
 
+const ENV_VAR_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+function validatePreLaunchEnv(modelName: string, value: unknown): asserts value is string[] {
+  const path = `models.definitions.${modelName}.preLaunchEnv`;
+  if (!Array.isArray(value)) {
+    fail(`${path} must be an array of env var names (got ${JSON.stringify(value)})`);
+  }
+  for (const [index, entry] of value.entries()) {
+    if (typeof entry !== "string" || !ENV_VAR_NAME_PATTERN.test(entry)) {
+      fail(
+        `${path}[${index}] must be a POSIX env var name matching ${ENV_VAR_NAME_PATTERN.source} (got ${JSON.stringify(entry)})`,
+      );
+    }
+  }
+}
+
 function isWorkspaceKindSetting(value: unknown): value is WorkspaceKindSetting {
   return (
     typeof value === "string" && (WORKSPACE_KIND_SETTINGS as readonly string[]).includes(value)
@@ -463,9 +492,9 @@ function failIfLegacyModelKeys(
         `models.definitions.${name}.disabled must be exactly \`true\` when set (got ${JSON.stringify(override["disabled"])})`,
       );
     }
-    const conflicting = (["cmd", "color", "usage", "sandbox", "preLaunch"] as const).filter((key) =>
-      Object.hasOwn(override, key),
-    );
+    const conflicting = (
+      ["cmd", "color", "usage", "sandbox", "preLaunch", "preLaunchEnv"] as const
+    ).filter((key) => Object.hasOwn(override, key));
     if (conflicting.length > 0) {
       fail(
         `models.definitions.${name}: cannot combine \`disabled: true\` with other fields (${conflicting.join(", ")}). Either disable the model or override its fields, not both.`,
@@ -523,6 +552,9 @@ function buildOverrideCandidate(
   if (override.preLaunch !== undefined) {
     candidate.preLaunch = override.preLaunch;
   }
+  if (override.preLaunchEnv !== undefined) {
+    candidate.preLaunchEnv = override.preLaunchEnv;
+  }
   return candidate;
 }
 
@@ -556,7 +588,7 @@ function mergeDefinitions(
     }
 
     const candidate = buildOverrideCandidate(name, override, merged[name]);
-    const { cmd, color, usage, sandbox, preLaunch } = candidate;
+    const { cmd, color, usage, sandbox, preLaunch, preLaunchEnv } = candidate;
     if (typeof cmd !== "string" || cmd.length === 0) {
       fail(`models.definitions.${name}.cmd must be a non-empty string`);
     }
@@ -572,6 +604,9 @@ function mergeDefinitions(
     }
     if (preLaunch !== undefined) {
       definition.preLaunch = preLaunch;
+    }
+    if (preLaunchEnv !== undefined) {
+      definition.preLaunchEnv = preLaunchEnv;
     }
     merged[name] = definition;
   }
@@ -784,6 +819,9 @@ function validate(config: ResolvedConfig): void {
       if (definition.preLaunch.trim().length === 0) {
         fail(`models.definitions.${name}.preLaunch must contain non-whitespace characters`);
       }
+    }
+    if (definition.preLaunchEnv !== undefined) {
+      validatePreLaunchEnv(name, definition.preLaunchEnv);
     }
   }
 

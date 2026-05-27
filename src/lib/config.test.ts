@@ -504,6 +504,75 @@ describe("loadConfig", () => {
     expect(config.models.definitions["cursor"]?.preLaunch).toBe("export FOO=bar");
   });
 
+  it("merges preLaunchEnv through an override and preserves cmd/color defaults", async () => {
+    const path = writeConfigFile(
+      temporary,
+      configSource({
+        workspace: VALID_WORKSPACE(temporary),
+        models: {
+          definitions: { claude: { preLaunchEnv: ["SESSION_TOKEN", "TEAM_ID"] } },
+        },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+
+    expect(actual.models.definitions["claude"]?.preLaunchEnv).toStrictEqual([
+      "SESSION_TOKEN",
+      "TEAM_ID",
+    ]);
+    expect(actual.models.definitions["claude"]?.cmd).toBeTypeOf("string");
+    expect(actual.models.definitions["claude"]?.color).toBeTypeOf("string");
+  });
+
+  it("rejects a non-array preLaunchEnv", async () => {
+    const path = writeConfigFile(
+      temporary,
+      [
+        "export const config = {",
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        '  models: { definitions: { claude: { preLaunchEnv: "SESSION_TOKEN" } } },',
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(
+      /models\.definitions\.claude\.preLaunchEnv must be an array/,
+    );
+  });
+
+  it("rejects a preLaunchEnv entry that isn't a valid POSIX env var name", async () => {
+    const path = writeConfigFile(
+      temporary,
+      configSource({
+        workspace: VALID_WORKSPACE(temporary),
+        models: { definitions: { claude: { preLaunchEnv: ["SESSION_TOKEN", "1bad"] } } },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(
+      /models\.definitions\.claude\.preLaunchEnv\[1\] must be a POSIX env var name/,
+    );
+  });
+
+  it("rejects combining disabled: true with preLaunchEnv", async () => {
+    const path = writeConfigFile(
+      temporary,
+      [
+        "export const config = {",
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        '  models: { definitions: { claude: { disabled: true, preLaunchEnv: ["SESSION_TOKEN"] } } },',
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(/cannot combine `disabled: true` with other fields/);
+  });
+
   it("trims surrounding whitespace from a per-model sandbox agent", async () => {
     const path = writeConfigFile(
       temporary,

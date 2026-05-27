@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { ModelDefinition } from "./config.ts";
+import { BUILD_SECRET_NAMES, type ModelDefinition } from "./config.ts";
 import {
   buildLaunchCommand,
   resolveSafehouseClearancePath,
@@ -402,6 +402,98 @@ describe(buildLaunchCommand, () => {
           }),
         ),
       ).toThrow(/preLaunch is not yet supported for runner='sdx'/);
+    });
+  });
+
+  describe("preLaunchEnv", () => {
+    it("appends preLaunchEnv names to --env-pass when secretsFile is also staged", () => {
+      const out = buildLaunchCommand(
+        arguments_({
+          secretsFile: "/tmp/prompt-team-1/secrets.env",
+          definition: {
+            cmd: "claude",
+            color: "#fff",
+            preLaunchEnv: ["SESSION_TOKEN", "TEAM_ID"],
+          },
+        }),
+      );
+
+      expect(out).toContain(`--env-pass=${BUILD_SECRET_NAMES.join(",")},SESSION_TOKEN,TEAM_ID `);
+    });
+
+    it("emits a standalone --env-pass when no secretsFile is staged", () => {
+      const out = buildLaunchCommand(
+        arguments_({
+          definition: {
+            cmd: "claude",
+            color: "#fff",
+            preLaunchEnv: ["SESSION_TOKEN"],
+          },
+        }),
+      );
+
+      expect(out).toContain("--env-pass=SESSION_TOKEN ");
+      // No build-secret names should sneak in.
+      for (const name of BUILD_SECRET_NAMES) {
+        expect(out).not.toContain(name);
+      }
+    });
+
+    it("omits --env-pass entirely when preLaunchEnv is an empty array and there is no secretsFile", () => {
+      const out = buildLaunchCommand(
+        arguments_({
+          definition: { cmd: "claude", color: "#fff", preLaunchEnv: [] },
+        }),
+      );
+
+      expect(out).not.toContain("--env-pass");
+    });
+
+    it("throws when preLaunchEnv is set with runner='sdx'", () => {
+      expect(() =>
+        buildLaunchCommand(
+          arguments_({
+            runner: "sdx",
+            sandboxName: "groundcrew-repo-a-claude",
+            definition: {
+              cmd: "claude",
+              color: "#fff",
+              sandbox: { agent: "claude" },
+              preLaunchEnv: ["SESSION_TOKEN"],
+            },
+          }),
+        ),
+      ).toThrow(/preLaunchEnv is not yet supported for runner='sdx'/);
+    });
+
+    it("throws when preLaunchEnv is set with a cmd that already starts with safehouse", () => {
+      expect(() =>
+        buildLaunchCommand(
+          arguments_({
+            definition: {
+              cmd: "safehouse --env-pass=OTHER my-agent",
+              color: "#fff",
+              preLaunchEnv: ["SESSION_TOKEN"],
+            },
+          }),
+        ),
+      ).toThrow(/preLaunchEnv cannot be injected when `cmd` starts with `safehouse`/);
+    });
+
+    it("does not throw on runner='none' with preLaunchEnv (exports already inherit)", () => {
+      const out = buildLaunchCommand(
+        arguments_({
+          runner: "none",
+          definition: {
+            cmd: "claude",
+            color: "#fff",
+            preLaunchEnv: ["SESSION_TOKEN"],
+          },
+        }),
+      );
+
+      // runner='none' goes through the unwrapped host path — no wrap, no flag.
+      expect(out).not.toContain("--env-pass");
     });
   });
 

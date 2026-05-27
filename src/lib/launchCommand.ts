@@ -168,10 +168,30 @@ export function buildLaunchCommand(arguments_: LaunchCommandArguments): string {
         "preLaunch is not yet supported for runner='sdx'. Set local.runner to 'safehouse' or 'none', or open an issue for sdx support.",
       );
     }
+    if (
+      arguments_.definition.preLaunchEnv !== undefined &&
+      arguments_.definition.preLaunchEnv.length > 0
+    ) {
+      throw new Error(
+        "preLaunchEnv is not yet supported for runner='sdx'. Set local.runner to 'safehouse' or 'none', or open an issue for sdx support.",
+      );
+    }
     return buildSdxLaunchCommand(arguments_);
   }
   if (shouldWrapWithSafehouse(arguments_)) {
     return buildSafehouseLaunchCommand(arguments_);
+  }
+  if (
+    arguments_.definition.preLaunchEnv !== undefined &&
+    arguments_.definition.preLaunchEnv.length > 0 &&
+    arguments_.runner === "safehouse"
+  ) {
+    // `runner === "safehouse"` but `cmd` already starts with `safehouse` — the
+    // user owns env forwarding in that case, so there's no wrap flag for us to
+    // inject into. Fail loudly instead of silently dropping the contract.
+    throw new Error(
+      "preLaunchEnv cannot be injected when `cmd` starts with `safehouse` — your cmd owns the wrap, so add the names to its own `--env-pass=` flag, or drop the `safehouse` prefix from `cmd` to let groundcrew compose the flag for you.",
+    );
   }
   return buildUnwrappedHostLaunchCommand(arguments_);
 }
@@ -248,9 +268,14 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
   innerParts.push(`exec ${agentCmd} "$@"`);
   const innerCommand = innerParts.join("; ");
 
-  // Trailing space keeps the flag and `sh` separated; empty when no secrets.
-  const envPassFlag =
-    arguments_.secretsFile === undefined ? "" : `--env-pass=${BUILD_SECRET_NAMES.join(",")} `;
+  // Compose the wrap's --env-pass list from build secrets (when staged) and
+  // the user's preLaunchEnv names. Trailing space keeps the flag separated
+  // from the next argv token; empty string when neither contributes.
+  const envPassNames = [
+    ...(arguments_.secretsFile === undefined ? [] : BUILD_SECRET_NAMES),
+    ...(arguments_.definition.preLaunchEnv ?? []),
+  ];
+  const envPassFlag = envPassNames.length === 0 ? "" : `--env-pass=${envPassNames.join(",")} `;
 
   const lines = hostLaunchPrologue({
     worktreeDir: arguments_.worktreeDir,
