@@ -59,11 +59,11 @@ export interface Issue {
   /**
    * `undefined` unless the ticket is in Todo with a parseable `agent-*` label
    * and a known-repo reference in its description — i.e. the dispatcher would
-   * actually pick it up. Resolving on non-Todo statuses would just invite
-   * tick-spam warnings on already-finished work.
+   * actually pick it up. Non-Todo tickets do not resolve repositories because
+   * that would invite tick-spam warnings on already-finished work.
    */
   repository: string | undefined;
-  /** `undefined` whenever `repository` is — the two are populated together. */
+  /** Parsed from the `agent-*` label when present, including non-Todo tickets for slot logs. */
   model: string | undefined;
   teamId: string;
   blockers: Blocker[];
@@ -283,7 +283,7 @@ export function modelForResolution(
   return "any";
 }
 
-function resolveTodoAgentMetadata(arguments_: {
+function resolveAgentMetadata(arguments_: {
   ticket: string;
   description: string | undefined;
   modelResolution: ModelResolution;
@@ -293,12 +293,17 @@ function resolveTodoAgentMetadata(arguments_: {
   const { ticket, description, modelResolution, config, isTodo } = arguments_;
   let repository: string | undefined;
   let model: string | undefined;
-  if (modelResolution.kind !== "no-label" && isTodo) {
+  if (modelResolution.kind === "no-label") {
+    return { repository, model };
+  }
+
+  model = modelForResolution(modelResolution);
+  if (isTodo) {
     const resolution = resolveRepositoryFor({ description, config });
     if (resolution.kind === "ok") {
       ({ repository } = resolution);
-      model = modelForResolution(modelResolution);
     } else {
+      model = undefined;
       log(
         `WARNING: ${ticket} has an ${AGENT_LABEL_PREFIX}* label but no known repository in its description; skipping dispatch. Add one of workspace.knownRepositories to the description, or remove the ${AGENT_LABEL_PREFIX}* label: ${config.workspace.knownRepositories.join(", ")}`,
       );
@@ -344,7 +349,7 @@ function buildLinearIssue(input: {
 function issueFromNode(node: IssueNode, config: ResolvedConfig): Issue {
   const modelResolution = resolveModelFor({ labels: node.labels.nodes, config });
   warnIfDisabledFallback(node.identifier, modelResolution, config);
-  const { repository, model } = resolveTodoAgentMetadata({
+  const { repository, model } = resolveAgentMetadata({
     ticket: node.identifier,
     /* v8 ignore next @preserve -- BoardIssues query selects description; the ?? guard normalises a null vs undefined edge */
     description: node.description ?? undefined,

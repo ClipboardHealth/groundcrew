@@ -320,7 +320,7 @@ describe(createBoardSource, () => {
       expect(boardCalls).toHaveLength(2);
     });
 
-    it("only resolves repository on Todo tickets with an agent-* label", async () => {
+    it("resolves model on in-progress tickets but only resolves repository on Todo tickets", async () => {
       const todo = issueNode({
         identifier: "TEAM-1",
         labels: { nodes: [{ name: "agent-claude" }] },
@@ -337,7 +337,7 @@ describe(createBoardSource, () => {
       expect(first?.repository).toBe("repo-a");
       expect(first?.model).toBe("claude");
       expect(second?.repository).toBeUndefined();
-      expect(second?.model).toBeUndefined();
+      expect(second?.model).toBe("claude");
     });
 
     it("falls back to models.default when a Todo's agent-* label refers to a disabled shipped default", async () => {

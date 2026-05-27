@@ -62,9 +62,9 @@ export interface Issue {
   title: string;
   description: string;
   status: CanonicalStatus;
-  /** `undefined` when the ticket isn't groundcrew-eligible (no agent label / no repo match). */
+  /** `undefined` when the ticket is not dispatchable to a repository. */
   repository: string | undefined;
-  /** `undefined` when the ticket isn't groundcrew-eligible. */
+  /** Parsed agent model when the source can resolve one; may be present on non-Todo tickets for logs. */
   model: string | undefined;
   assignee: string;
   updatedAt: string;

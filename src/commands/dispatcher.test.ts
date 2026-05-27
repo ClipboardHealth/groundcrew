@@ -239,7 +239,7 @@ describe(createDispatcher, () => {
 
       await dispatcher.runOnce({
         state: boardOf([
-          // Active issue whose `agent-*` label is gone — model resolves to undefined.
+          // Defensive fallback for a source that cannot resolve model metadata.
           activeIssue({ id: "linear:team-stale", model: undefined }),
           todoIssue({ id: "linear:team-new" }),
         ]),
