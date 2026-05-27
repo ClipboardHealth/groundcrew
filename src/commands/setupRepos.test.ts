@@ -212,6 +212,24 @@ knownRepositories: ["a/b"]
     expect(actual.text).toBe(`knownRepositories: [\r\n  "a/b",\r\n  "c/d",\r\n  "e/f",\r\n]`);
   });
 
+  it("keeps positions aligned when a nearby comment contains an astral character (emoji)", () => {
+    // Astral characters (4-byte UTF-8 / surrogate-pair UTF-16) inside a
+    // masked region must not shrink the masked string's code-unit length —
+    // otherwise the `match.indices` returned by the regex would slice the
+    // wrong bytes from the original text. The fishing-pole emoji ('🎣') is a
+    // surrogate-pair character (two UTF-16 code units).
+    const input = `// 🎣 known repos live here
+knownRepositories: ["a/b"]
+`;
+
+    const actual = addRepositoryToConfigText(input, "new/repo");
+
+    expect(actual.alreadyPresent).toBe(false);
+    expect(actual.text).toBe(
+      `// 🎣 known repos live here\nknownRepositories: ["a/b", "new/repo"]\n`,
+    );
+  });
+
   it("does not misinterpret backslash-escape sequences in surrounding strings", () => {
     // The Windows-style path contains backslash-escape sequences (`\\U`, `\\m`)
     // that the masker must consume without exiting the string state — otherwise

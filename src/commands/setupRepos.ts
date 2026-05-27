@@ -77,12 +77,15 @@ const STRING_CLOSE_CHARS: Record<"str-sq" | "str-dq" | "str-bt", string> = {
 };
 
 function maskNonCode(text: string): string {
-  // Spread iterates by code point, which would re-encode surrogate pairs;
-  // for our purpose we only inspect ASCII syntax characters and `.join("")`
-  // re-emits the original code units, so any non-ASCII content round-trips
-  // unchanged through the array.
-  // oxlint-disable-next-line typescript/no-misused-spread -- structural-only scan; we don't care about non-ASCII grapheme integrity
-  const chars = [...text];
+  // Split by UTF-16 code unit, NOT by code point. Spread iteration collapses
+  // surrogate pairs into single array elements; replacing one of those with
+  // a single ASCII placeholder would shrink the masked string by one code
+  // unit and break alignment with the RegExp `match.indices` we later slice
+  // from the original text. An astral character (emoji, CJK supplemental, …)
+  // inside a nearby comment is enough to trip this, so we work at the
+  // code-unit level instead.
+  // oxlint-disable-next-line unicorn/prefer-spread -- code-unit alignment with `match.indices` is the whole point of using `.split("")` here
+  const chars = text.split("");
   let state: ScanState = "code";
   let index = 0;
   while (index < chars.length) {

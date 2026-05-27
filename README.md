@@ -91,7 +91,7 @@ crew start <TICKET>                                      # provision + launch on
 crew stop <TICKET> [--reason <text>]                     # stop workspace, keep worktree
 crew resume <TICKET>                                     # reopen a paused ticket
 crew cleanup <TICKET>                                    # tear down every worktree for a ticket
-crew setup repos <OWNER/REPO>                            # add a repo to the config and clone it
+crew setup repos <OWNER/REPO | REPO>                     # add a repo to the config (clones when OWNER/ is given)
 crew upgrade [<version>]                                 # reinstall crew globally through npm
 ```
 
