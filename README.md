@@ -20,28 +20,17 @@
 $ crew status HRD-446
 groundcrew status HRD-446
 ========================
-ticket: hrd-446
+ticket: hrd-446  in-progress  https://linear.app/example/issue/HRD-446
+title: Add retry logic to the sync job
+run: running; model=claude; updated=2026-05-26T00:01:00.000Z; resumes=0
+workspace: live
 
-Config snapshot
----------------
-projectDir: /dev/workspaces
-repositories: owner/repo
-git: remote=origin; defaultBranch=main
-workspaceKind: auto
-
-Worktree state
---------------
+Worktrees
+---------
 - owner/repo host
   branch: rocky-hrd-446
+  dir: /dev/workspaces/owner/repo-hrd-446
   git: dirty (2 modified, 1 untracked)
-
-Workspace probe
----------------
-live: yes
-
-Last Linear status
-------------------
-In Progress (state.type=started) — Add retry logic to the sync job
 ```
 
 ## Why
@@ -252,9 +241,9 @@ Replace `claude` with the sbx agent for the model and `<projectDir>` with `works
 
 ## Inspecting status
 
-`crew status <TICKET>` prints a read-only snapshot for one ticket: resolved config, matching worktrees, workspace probe result, recorded run state, recent log lines for that ticket, and the latest Linear status. It does not fetch, recover, tear down, resume, or mutate any local/remote state.
+`crew status <TICKET>` prints a read-only snapshot for one ticket: cached title/URL when present, recorded run state, live workspace presence, matching worktrees, git dirtiness, PR links for matching branches, recent log lines when present, and the ticket status from the configured ticket source. It does not recover, tear down, resume, or mutate any local/remote state.
 
-`crew status` with no ticket prints the current inventory: known worktrees with workspace/run-state presence plus live workspaces reported by the configured backend.
+`crew status` with no ticket prints the current inventory: known worktrees with cached ticket metadata, workspace/run-state agreement, attach hints, worktree paths, PR links, and stray sessions reported by the configured backend. Local worktree/session diagnostics are printed before ticket-source fetches complete; when the source fetch succeeds, status also prints slot usage plus Queue/Blocked sections for eligible Todo tickets. If the source fetch fails, Queue shows `unavailable: <reason>` and the slots line is omitted.
 
 Use `crew cleanup <TICKET>` to tear down stale worktrees and `crew resume <TICKET>` to reopen preserved work. Status is intentionally informational only.
 
@@ -268,26 +257,22 @@ Use `crew cleanup <TICKET>` to tear down stale worktrees and `crew resume <TICKE
 ```text
 groundcrew status HRD-442
 =========================
-ticket: hrd-442
+ticket: hrd-442  in-progress  https://linear.app/example/issue/HRD-442
+title: Multi-event extractor: year inference can produce date_start > date_end
+run: running; model=claude; updated=2026-05-26T00:01:00.000Z; resumes=0
+workspace: live
 
-Run state
+Worktrees
 ---------
-running; model=claude; updated=2026-05-26T00:01:00.000Z; resumes=0
-
-Worktree
---------
-- herds-social host
+- herds-social/herds host
   branch: paul-hrd-442
-  dir: /Users/paul/dev/groundcrew-workspaces/herds-social/herds-hrd-442
+  dir: /dev/workspaces/herds-social/herds-hrd-442
   git: dirty (0 modified, 1 untracked)
+  pr: https://github.com/herds-social/herds/pull/224 (open)
 
-Workspace
----------
-live: yes
-
-Last Linear status
-------------------
-In Progress (state.type=started) — Multi-event extractor: year inference can produce date_start > date_end
+Recent logs
+-----------
+[10:15:30] Workspace "hrd-442" launched
 ```
 
 </details>
@@ -498,7 +483,7 @@ op run --env-file .env.1password -- crew doctor
 
 ## Troubleshooting
 
-First stop for "what exists locally right now": `crew status <ticket>` shows the ticket's worktrees, workspace presence, run state, logs, and latest Linear status. Use `crew doctor` when you need to verify host setup.
+First stop for "what exists locally right now": `crew status <ticket>` shows the ticket's worktrees, workspace presence, run state, logs, and ticket-source status. Use `crew doctor` when you need to verify host setup.
 
 <details>
 <summary>Safehouse-already-wrapped commands are not re-wrapped</summary>

@@ -110,7 +110,11 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
           repository: issue.repository,
           ticket: ticketId,
           model: issue.model,
-          details: { title: issue.title, description: issue.description },
+          details: {
+            title: issue.title,
+            description: issue.description,
+            ...(issue.url === undefined ? {} : { url: issue.url }),
+          },
         };
         await (signal === undefined
           ? setupWorkspace(config, setupOptions)

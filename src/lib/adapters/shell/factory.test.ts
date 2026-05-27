@@ -49,6 +49,7 @@ function shellIssue(overrides: Partial<ShellIssue> = {}): ShellIssue {
     blockers: overrides.blockers ?? [],
     hasMoreBlockers: overrides.hasMoreBlockers ?? false,
     sourceRef: "sourceRef" in overrides ? overrides.sourceRef : { path: "/tmp/p.md" },
+    ...("url" in overrides ? { url: overrides.url } : {}),
   };
 }
 
@@ -85,6 +86,19 @@ describe(toCanonicalIssue, () => {
     );
     expect(result.repository).toBe("org/repo");
     expect(result.model).toBe("claude");
+  });
+
+  it("passes a url through to the canonical Issue when the script provides one", () => {
+    const result = toCanonicalIssue(
+      shellIssue({ url: "https://jira.example.com/browse/X-1" }),
+      "jira",
+    );
+    expect(result.url).toBe("https://jira.example.com/browse/X-1");
+  });
+
+  it("omits the canonical url when the script's payload has none", () => {
+    const result = toCanonicalIssue(shellIssue(), "jira");
+    expect(result).not.toHaveProperty("url");
   });
 
   it("source-prefixes blocker ids", () => {

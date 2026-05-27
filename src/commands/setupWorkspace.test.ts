@@ -371,6 +371,51 @@ describe(setupWorkspace, () => {
       branchName: "rocky-team-1",
       workspaceName: "team-1",
       state: "running",
+      title: "Test Title",
+    });
+  });
+
+  it("records the ticket url in RunState when the source provides one", async () => {
+    const config = makeConfig();
+    mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
+
+    await setupWorkspace(config, {
+      ticket: "team-1",
+      repository: "repo-a",
+      model: "claude",
+      details: {
+        title: "Test Title",
+        description: "Body",
+        url: "https://linear.app/example/issue/TEAM-1",
+      },
+    });
+
+    expect(lastRecordedRunState()).toMatchObject({
+      state: "running",
+      url: "https://linear.app/example/issue/TEAM-1",
+    });
+  });
+
+  it("records the ticket url even on the failed-to-launch rollback path", async () => {
+    const config = makeConfig();
+    mockCmuxFailure();
+
+    await expect(
+      setupWorkspace(config, {
+        ticket: "team-1",
+        repository: "repo-a",
+        model: "claude",
+        details: {
+          title: "Test Title",
+          description: "Body",
+          url: "https://linear.app/example/issue/TEAM-1",
+        },
+      }),
+    ).rejects.toThrow(/cmux down/);
+
+    expect(lastRecordedRunState()).toMatchObject({
+      state: "failed-to-launch",
+      url: "https://linear.app/example/issue/TEAM-1",
     });
   });
 
@@ -1172,6 +1217,7 @@ describe(setupWorkspace, () => {
       repository: "repo-a",
       model: "claude",
       state: "failed-to-launch",
+      title: "Test Title",
     });
     expect(lastRecordedRunState().detail).toContain("cmux down");
   });
@@ -1392,6 +1438,24 @@ describe(setupWorkspaceCli, () => {
       "cmux",
       expect.arrayContaining(["set-status", "model", "claude"]),
     );
+  });
+
+  it("forwards the resolved ticket url into RunState when the source supplied one", async () => {
+    const boardWithUrl = fakeBoard(
+      canonicalLinearIssue({
+        naturalId: "team-1",
+        repository: "repo-a",
+        model: "claude",
+        title: "Title",
+        description: "Body for repo-a",
+        url: "https://linear.app/example/issue/TEAM-1",
+      }),
+    );
+    createBoardMock.mockReturnValue(boardWithUrl);
+
+    await setupWorkspaceCli("team-1");
+
+    expect(lastRecordedRunState().url).toBe("https://linear.app/example/issue/TEAM-1");
   });
 
   it("marks the ticket In Progress via board.markInProgress after launching the workspace", async () => {
