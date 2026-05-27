@@ -9,6 +9,7 @@ import { doctor } from "./commands/doctor.ts";
 import { interruptWorkspaceCli } from "./commands/interruptWorkspace.ts";
 import { orchestrate } from "./commands/orchestrator.ts";
 import { resumeWorkspaceCli } from "./commands/resumeWorkspace.ts";
+import { setupReposCli } from "./commands/setupRepos.ts";
 import { setupWorkspaceCli } from "./commands/setupWorkspace.ts";
 import { statusCli } from "./commands/status.ts";
 import {
@@ -38,6 +39,9 @@ vi.mock(import("./commands/orchestrator.ts"), () => ({
 vi.mock(import("./commands/resumeWorkspace.ts"), () => ({
   resumeWorkspaceCli: vi.fn<typeof resumeWorkspaceCli>(),
 }));
+vi.mock(import("./commands/setupRepos.ts"), () => ({
+  setupReposCli: vi.fn<typeof setupReposCli>(),
+}));
 vi.mock(import("./commands/setupWorkspace.ts"), () => ({
   setupWorkspaceCli: vi.fn<typeof setupWorkspaceCli>(),
 }));
@@ -54,6 +58,7 @@ const doctorMock = vi.mocked(doctor);
 const interruptMock = vi.mocked(interruptWorkspaceCli);
 const resumeMock = vi.mocked(resumeWorkspaceCli);
 const setupMock = vi.mocked(setupWorkspaceCli);
+const setupReposMock = vi.mocked(setupReposCli);
 const cleanupMock = vi.mocked(cleanupWorkspaceCli);
 const statusMock = vi.mocked(statusCli);
 const upgradeCliMock = vi.mocked(upgradeCli);
@@ -113,6 +118,7 @@ describe(run, () => {
     interruptMock.mockResolvedValue();
     resumeMock.mockResolvedValue();
     setupMock.mockResolvedValue();
+    setupReposMock.mockResolvedValue();
     cleanupMock.mockResolvedValue();
     statusMock.mockResolvedValue();
     upgradeCliMock.mockResolvedValue();
@@ -424,37 +430,35 @@ describe(run, () => {
     expect(resumeMock).toHaveBeenCalledWith(["TEAM-1"]);
   });
 
-  it("hard-fails removed `setup repos` with a README-backed manual clone pointer", async () => {
+  it("dispatches `setup repos <new-repo>` to setupReposCli with the remaining argv", async () => {
+    await run(["setup", "repos", "owner/repo"]);
+
+    expect(setupReposMock).toHaveBeenCalledWith(["owner/repo"]);
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it("forwards --dry-run to setupReposCli", async () => {
     await run(["setup", "repos", "--dry-run", "owner/repo"]);
 
-    expect(consoleError.output()).toContain("crew setup repos was removed");
-    expect(consoleError.output()).toContain("git clone");
-    expect(consoleError.output()).toContain("README.md#manual-repository-bootstrap");
-    expect(process.exitCode).toBe(1);
+    expect(setupReposMock).toHaveBeenCalledWith(["--dry-run", "owner/repo"]);
   });
 
-  it("hard-fails bare `setup repos` with the same replacement workflow", async () => {
-    await run(["setup", "repos"]);
-
-    expect(consoleError.output()).toContain("crew setup repos was removed");
-    expect(consoleError.output()).toContain("README.md#manual-repository-bootstrap");
-    expect(process.exitCode).toBe(1);
-  });
-
-  it("reports an unknown `setup` verb with the removed command usage", async () => {
+  it("reports an unknown `setup` verb with the setup usage", async () => {
     await run(["setup", "bogus"]);
 
     expect(consoleError.output()).toContain("Usage: crew setup repos");
-    expect(consoleError.output()).toContain("README.md#manual-repository-bootstrap");
+    expect(consoleError.output()).toContain("<new-repo>");
     expect(process.exitCode).toBe(1);
+    expect(setupReposMock).not.toHaveBeenCalled();
   });
 
   it("prints the setup usage when no verb is given", async () => {
     await run(["setup"]);
 
     expect(consoleError.output()).toContain("Usage: crew setup repos");
-    expect(consoleError.output()).toContain("README.md#manual-repository-bootstrap");
+    expect(consoleError.output()).toContain("<new-repo>");
     expect(process.exitCode).toBe(1);
+    expect(setupReposMock).not.toHaveBeenCalled();
   });
 
   it("prints the error message and sets exit code 1 when a subcommand throws", async () => {

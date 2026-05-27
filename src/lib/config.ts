@@ -861,24 +861,30 @@ function findXdgConfigFile(): string | undefined {
   );
 }
 
-async function discoverUserConfig(): Promise<DiscoveredConfig> {
+/**
+ * Discover the path to the user's crew config file using the same precedence
+ * as `loadConfig`: `GROUNDCREW_CONFIG` env var → cosmiconfig project search →
+ * XDG fallback. Commands that mutate the config (e.g. `crew setup repos`)
+ * resolve the same file `loadConfig` reads via this helper.
+ */
+export async function findConfigFilepath(): Promise<string> {
   const override = readEnvironmentVariable("GROUNDCREW_CONFIG");
   if (override !== undefined && override.length > 0) {
     const overridePath = resolve(override);
     if (!existsSync(overridePath)) {
       fail(`GROUNDCREW_CONFIG=${overridePath} not found`);
     }
-    return await loadAt(overridePath);
+    return overridePath;
   }
 
   const project = await explorer.search(process.cwd());
   if (project !== null && project.isEmpty !== true) {
-    return project;
+    return project.filepath;
   }
 
   const xdgPath = findXdgConfigFile();
   if (xdgPath !== undefined) {
-    return await loadAt(xdgPath);
+    return xdgPath;
   }
 
   // Throw directly so oxlint's `consistent-return` rule sees a
@@ -889,6 +895,11 @@ async function discoverUserConfig(): Promise<DiscoveredConfig> {
       "crew.config.ts",
     )}, or set GROUNDCREW_CONFIG.`,
   );
+}
+
+async function discoverUserConfig(): Promise<DiscoveredConfig> {
+  const filepath = await findConfigFilepath();
+  return await loadAt(filepath);
 }
 
 let cached: Readonly<ResolvedConfig> | undefined;

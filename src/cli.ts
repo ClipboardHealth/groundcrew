@@ -6,6 +6,7 @@ import { initConfigCli } from "./commands/init.ts";
 import { interruptWorkspaceCli } from "./commands/interruptWorkspace.ts";
 import { orchestrate } from "./commands/orchestrator.ts";
 import { resumeWorkspaceCli } from "./commands/resumeWorkspace.ts";
+import { setupReposCli } from "./commands/setupRepos.ts";
 import { setupWorkspaceCli } from "./commands/setupWorkspace.ts";
 import { statusCli } from "./commands/status.ts";
 import { createDefaultUpgradeCliOptions, upgradeCli } from "./commands/upgrade.ts";
@@ -39,11 +40,7 @@ interface Subcommand {
 
 const requireFromCli = createRequire(import.meta.url);
 
-const SETUP_REPOS_REMOVED_MESSAGE = [
-  "crew setup repos was removed.",
-  "Clone repositories manually with git clone into workspace.projectDir.",
-  "See README.md#manual-repository-bootstrap for the replacement workflow.",
-].join(" ");
+const SETUP_USAGE = "crew setup repos [--dry-run] <new-repo>";
 
 /**
  * Prints a deprecation warning to stderr naming the canonical command and that
@@ -55,16 +52,13 @@ function warnDeprecated(forms: { oldForm: string; newForm: string }): void {
   );
 }
 
-function setupUsage(): string {
-  return `Usage: crew setup repos\n\n${SETUP_REPOS_REMOVED_MESSAGE}`;
-}
-
 async function setupCli(argv: string[]): Promise<void> {
-  const [verb] = argv;
+  const [verb, ...rest] = argv;
   if (verb === "repos") {
-    throw new Error(SETUP_REPOS_REMOVED_MESSAGE);
+    await setupReposCli(rest);
+    return;
   }
-  throw new Error(setupUsage());
+  throw new Error(`Usage: ${SETUP_USAGE}`);
 }
 
 async function runCli(argv: string[]): Promise<void> {
@@ -201,9 +195,8 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
     invoke: resumeWorkspaceCli,
   },
   setup: {
-    summary: "Removed repository bootstrap command",
-    usage: "repos",
-    hidden: true,
+    summary: "Add a repository to workspace.knownRepositories and clone it",
+    usage: "repos [--dry-run] <new-repo>",
     invoke: setupCli,
   },
   upgrade: {

@@ -91,12 +91,24 @@ crew start <TICKET>                                      # provision + launch on
 crew stop <TICKET> [--reason <text>]                     # stop workspace, keep worktree
 crew resume <TICKET>                                     # reopen a paused ticket
 crew cleanup <TICKET>                                    # tear down every worktree for a ticket
+crew setup repos <OWNER/REPO>                            # add a repo to the config and clone it
 crew upgrade [<version>]                                 # reinstall crew globally through npm
 ```
 
+## Adding a repository
+
+`crew setup repos <OWNER/REPO>` adds the entry to `workspace.knownRepositories` in your crew config and clones the repo into `workspace.projectDir/<OWNER>/<REPO>` via `gh repo clone`. It is idempotent: re-running with an entry that is already in the config and already cloned reports no work.
+
+```bash
+crew setup repos ClipboardHealth/web
+crew setup repos ClipboardHealth/web --dry-run   # preview the config edit and clone
+```
+
+Bare-name entries (no `OWNER/`) are added to the config but not cloned, because the canonical remote URL is not derivable — clone those manually as below.
+
 ## Manual repository bootstrap
 
-Groundcrew never clones repositories for you. Clone each `workspace.knownRepositories` entry into `workspace.projectDir` using the same relative path the config uses. For an `OWNER/REPO` entry:
+`crew setup repos` is the one-shot path; the manual flow below still works when `gh` is unavailable or when you want a bare-name entry. Clone each `workspace.knownRepositories` entry into `workspace.projectDir` using the same relative path the config uses. For an `OWNER/REPO` entry:
 
 ```bash
 PROJECT_DIR="$HOME/dev/c"
