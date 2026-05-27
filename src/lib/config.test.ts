@@ -431,7 +431,6 @@ describe("loadConfig", () => {
       temporary,
       [
         "export const config = {",
-        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
         '  models: { definitions: { claude: { preLaunch: "export FOO=bar" } } },',
         "};",
@@ -452,7 +451,6 @@ describe("loadConfig", () => {
       temporary,
       [
         "export const config = {",
-        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
         '  models: { definitions: { claude: { preLaunch: "" } } },',
         "};",
@@ -472,7 +470,6 @@ describe("loadConfig", () => {
       temporary,
       [
         "export const config = {",
-        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
         String.raw`  models: { definitions: { claude: { preLaunch: "   \n\t " } } },`,
         "};",
@@ -492,7 +489,6 @@ describe("loadConfig", () => {
       temporary,
       [
         "export const config = {",
-        `  linear: ${JSON.stringify(VALID_LINEAR)},`,
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
         "  models: {",
         '    definitions: { cursor: { cmd: "cursor-agent", color: "#929292", preLaunch: "export FOO=bar" } },',

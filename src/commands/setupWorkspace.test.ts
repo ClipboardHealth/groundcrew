@@ -889,7 +889,12 @@ describe(setupWorkspace, () => {
     });
 
     await expect(
-      setupWorkspace(config, { ticket: "team-1", repository: "repo-a", model: "claude" }),
+      setupWorkspace(config, {
+        ticket: "team-1",
+        repository: "repo-a",
+        model: "claude",
+        details: { title: "Test Title", description: "Body" },
+      }),
     ).rejects.toThrow(/sdx runner do not support preLaunch on model 'claude'/);
 
     expect(createMock).not.toHaveBeenCalled();
