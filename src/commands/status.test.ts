@@ -459,6 +459,29 @@ describe(status, () => {
     expect(output).toContain("  attach:    tmux attach -t crew:team-2");
   });
 
+  it("omits only the failed pull request row when one PR lookup rejects", async () => {
+    listWorktreesMock.mockReturnValue([
+      worktree({ ticket: "team-1", repository: "repo-a" }),
+      worktree({ ticket: "team-2", repository: "repo-b", branchName: "rocky-team-2" }),
+    ]);
+    findPullRequestsMock.mockRejectedValueOnce(new Error("gh rate limited")).mockResolvedValueOnce([
+      {
+        url: "https://github.com/acme/widgets/pull/42",
+        number: 42,
+        state: "open",
+        title: "Wire up auth",
+      },
+    ]);
+
+    await status(makeConfig());
+
+    const output = consoleLog.output();
+    expect(output).toContain("team-1\n  state:");
+    expect(output).toContain("team-2\n  state:");
+    expect(output).not.toContain("gh rate limited");
+    expect(output).toContain("  pr:        https://github.com/acme/widgets/pull/42 (open)");
+  });
+
   it("hides the Stray sessions section when every live session matches a worktree", async () => {
     listWorktreesMock.mockReturnValue([worktree({ ticket: "team-1", repository: "repo-a" })]);
     workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-1"]) });

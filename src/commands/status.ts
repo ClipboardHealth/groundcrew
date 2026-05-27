@@ -405,13 +405,18 @@ async function collectPullRequests(
       branchName: entry.branchName,
     });
   }
-  const results = await Promise.all(
+  const results = await Promise.allSettled(
     [...uniqueKeys.entries()].map(async ([key, { repository, branchName }]) => {
       const prs = await findPullRequestsForBranch({ repository, branchName });
       return [key, prs] as const;
     }),
   );
-  return new Map(results);
+  return new Map(
+    [...uniqueKeys.keys()].map((key, index) => {
+      const result = results[index];
+      return [key, result?.status === "fulfilled" ? result.value[1] : []] as const;
+    }),
+  );
 }
 
 function writeStraySessions(probe: WorkspaceProbe, worktreeTickets: ReadonlySet<string>): void {
