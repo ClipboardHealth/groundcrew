@@ -111,21 +111,36 @@ export function buildLaunchCommand(arguments_: LaunchCommandArguments): string {
   if (arguments_.runner === "sdx") {
     return buildSdxLaunchCommand(arguments_);
   }
-  return buildHostLaunchCommand(arguments_);
+  if (shouldWrapWithSafehouse(arguments_)) {
+    return buildSafehouseLaunchCommand(arguments_);
+  }
+  return buildUnwrappedHostLaunchCommand(arguments_);
 }
 
-function buildHostLaunchCommand(arguments_: LaunchCommandArguments): string {
+/**
+ * The Safehouse wrap applies only when `runner === "safehouse"` and `cmd` does
+ * not already invoke `safehouse` itself. A `safehouse …` cmd owns its own
+ * sandbox flags, and we can't splice setup into a command we don't control, so
+ * those (and the `none` runner) fall through to the unwrapped host path.
+ */
+function shouldWrapWithSafehouse(arguments_: LaunchCommandArguments): boolean {
+  if (arguments_.runner !== "safehouse") {
+    return false;
+  }
+  return !/^safehouse(\s|$)/.test(arguments_.definition.cmd);
+}
+
+/**
+ * Unsandboxed host launch (`runner === "none"`, or a `safehouse …` cmd that
+ * brings its own wrap). Setup, secret sourcing, and the agent all run on the
+ * host shell because there is no groundcrew-managed sandbox to run them inside.
+ */
+function buildUnwrappedHostLaunchCommand(arguments_: LaunchCommandArguments): string {
   const promptDir = dirname(arguments_.promptFile);
   const agentCmd = renderAgentCommand({
     agentCmd: arguments_.definition.cmd,
     worktreeDir: arguments_.worktreeDir,
     sandboxName: "",
-  });
-
-  const wrapped = wrapAgentForHostRunner({
-    runner: arguments_.runner,
-    rawCmd: arguments_.definition.cmd,
-    agentCmd,
   });
 
   const lines: string[] = [`cd ${shellSingleQuote(arguments_.worktreeDir)}`];
@@ -139,36 +154,50 @@ function buildHostLaunchCommand(arguments_: LaunchCommandArguments): string {
   lines.push(
     `_p=$(cat ${shellSingleQuote(arguments_.promptFile)})`,
     `rm -rf ${shellSingleQuote(promptDir)}`,
-    `exec ${wrapped} "$_p"`,
+    `exec ${agentCmd} "$_p"`,
   );
   return lines.join(" && ");
 }
 
-interface WrapForHostRunnerArguments {
-  runner: LocalRunner;
-  rawCmd: string;
-  agentCmd: string;
-}
+/**
+ * Safehouse launch. Setup runs *inside* the `safehouse-clearance` wrap (mirroring
+ * the sdx runner) so the repo's `.groundcrew/setup.sh` and its `npm install` are
+ * filesystem-isolated and egress-restricted, rather than running on the bare host.
+ *
+ * Build secrets are sourced into the host launch shell so Safehouse can forward
+ * them into the sandbox via `--env-pass` (Safehouse's `--env=FILE` mode otherwise
+ * strips them); they're `unset` inside the wrap after setup so the agent process
+ * never inherits them. The host keeps only `cd`, the prompt read, and the wrap exec.
+ */
+function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string {
+  const promptDir = dirname(arguments_.promptFile);
+  const agentCmd = renderAgentCommand({
+    agentCmd: arguments_.definition.cmd,
+    worktreeDir: arguments_.worktreeDir,
+    sandboxName: "",
+  });
 
-function wrapAgentForHostRunner(arguments_: WrapForHostRunnerArguments): string {
-  if (arguments_.runner === "none") {
-    return arguments_.agentCmd;
+  const innerParts = [setupWithStatusReporting(SETUP_COMMAND)];
+  if (arguments_.secretsFile !== undefined) {
+    innerParts.push(unsetSecretsLine());
   }
-  // buildLaunchCommand routes `sdx` through buildSdxLaunchCommand, so the
-  // only remaining shape here is `safehouse`. Treat the explicit branch as
-  // the safehouse wrap to keep this function readable; the `sdx` arm exists
-  // only to satisfy TS's exhaustiveness checker.
-  /* v8 ignore next 3 @preserve -- buildLaunchCommand short-circuits sdx before calling this helper */
-  if (arguments_.runner === "sdx") {
-    return arguments_.agentCmd;
+  innerParts.push(`exec ${agentCmd} "$@"`);
+  const innerCommand = innerParts.join("; ");
+
+  // Trailing space keeps the flag and `sh` separated; empty when no secrets.
+  const envPassFlag =
+    arguments_.secretsFile === undefined ? "" : `--env-pass=${BUILD_SECRET_NAMES.join(",")} `;
+
+  const lines: string[] = [`cd ${shellSingleQuote(arguments_.worktreeDir)}`];
+  if (arguments_.secretsFile !== undefined) {
+    lines.push(sourceSecretsLine(arguments_.secretsFile));
   }
-  // safehouse: skip the wrap if `cmd` already starts with `safehouse` so
-  // legacy configs don't double-wrap.
-  const cmdStartsWithSafehouse = /^safehouse(\s|$)/.test(arguments_.rawCmd);
-  if (cmdStartsWithSafehouse) {
-    return arguments_.agentCmd;
-  }
-  return [shellSingleQuote(SAFEHOUSE_CLEARANCE_WRAPPER_PATH), arguments_.agentCmd].join(" ");
+  lines.push(
+    `_p=$(cat ${shellSingleQuote(arguments_.promptFile)})`,
+    `rm -rf ${shellSingleQuote(promptDir)}`,
+    `exec ${shellSingleQuote(SAFEHOUSE_CLEARANCE_WRAPPER_PATH)} ${envPassFlag}sh -lc ${shellSingleQuote(innerCommand)} sh "$_p"`,
+  );
+  return lines.join(" && ");
 }
 
 function buildSdxLaunchCommand(arguments_: LaunchCommandArguments): string {

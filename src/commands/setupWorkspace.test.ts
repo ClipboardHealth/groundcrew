@@ -501,9 +501,11 @@ describe(setupWorkspace, () => {
     expect(launchScript).not.toContain("npm clean-install");
     expect(launchScript).toContain("exec '/");
     expect(launchScript).toContain(
-      "/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance' claude",
+      "/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance' sh -lc",
     );
-    expect(launchScript).toContain('claude --permission-mode auto "$_p"');
+    // The agent runs inside the wrap (after setup), so the prompt is the sh -lc arg.
+    expect(launchScript).toContain('exec claude --permission-mode auto "$@"');
+    expect(launchScript).toContain('sh "$_p"');
     // setup-status guard so a failed install still launches the agent
     expect(launchScript).toContain('"$setup_status" -ne 0');
   });
