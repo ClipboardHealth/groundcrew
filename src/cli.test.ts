@@ -1,5 +1,7 @@
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { run } from "./cli.ts";
 import { cleanupWorkspaceCli } from "./commands/cleanupWorkspace.ts";
@@ -8,7 +10,6 @@ import { interruptWorkspaceCli } from "./commands/interruptWorkspace.ts";
 import { orchestrate } from "./commands/orchestrator.ts";
 import { resumeWorkspaceCli } from "./commands/resumeWorkspace.ts";
 import { sandboxCli } from "./commands/sandbox/index.ts";
-import { setupReposCli } from "./commands/setupRepos.ts";
 import { setupWorkspaceCli } from "./commands/setupWorkspace.ts";
 import { statusCli } from "./commands/status.ts";
 import {
@@ -17,7 +18,6 @@ import {
   type UpgradeCliOptions,
   type UpgradeCliOptionsInput,
 } from "./commands/upgrade.ts";
-import { computeUpgradeNudge } from "./lib/upgrade.ts";
 import {
   captureConsoleError,
   captureConsoleLog,
@@ -45,9 +45,6 @@ vi.mock(import("./commands/sandbox/index.ts"), () => ({
 vi.mock(import("./commands/setupWorkspace.ts"), () => ({
   setupWorkspaceCli: vi.fn<typeof setupWorkspaceCli>(),
 }));
-vi.mock(import("./commands/setupRepos.ts"), () => ({
-  setupReposCli: vi.fn<typeof setupReposCli>(),
-}));
 vi.mock(import("./commands/status.ts"), () => ({
   statusCli: vi.fn<typeof statusCli>(),
 }));
@@ -55,13 +52,6 @@ vi.mock(import("./commands/upgrade.ts"), () => ({
   upgradeCli: vi.fn<typeof upgradeCli>(),
   createDefaultUpgradeCliOptions: vi.fn<typeof createDefaultUpgradeCliOptions>(),
 }));
-vi.mock(import("./lib/upgrade.ts"), async (importOriginal) => {
-  const actual = await importOriginal();
-  return {
-    ...actual,
-    computeUpgradeNudge: vi.fn<typeof computeUpgradeNudge>(),
-  };
-});
 
 const orchestrateMock = vi.mocked(orchestrate);
 const doctorMock = vi.mocked(doctor);
@@ -69,12 +59,10 @@ const interruptMock = vi.mocked(interruptWorkspaceCli);
 const resumeMock = vi.mocked(resumeWorkspaceCli);
 const sandboxMock = vi.mocked(sandboxCli);
 const setupMock = vi.mocked(setupWorkspaceCli);
-const setupReposMock = vi.mocked(setupReposCli);
 const cleanupMock = vi.mocked(cleanupWorkspaceCli);
 const statusMock = vi.mocked(statusCli);
 const upgradeCliMock = vi.mocked(upgradeCli);
 const createDefaultUpgradeCliOptionsMock = vi.mocked(createDefaultUpgradeCliOptions);
-const computeUpgradeNudgeMock = vi.mocked(computeUpgradeNudge);
 const requireFromTest = createRequire(import.meta.url);
 const PACKAGE_VERSION = readPackageVersion();
 const README_TEXT = readFileSync(new URL("../README.md", import.meta.url), "utf8");
@@ -96,20 +84,15 @@ function readPackageVersion(): string {
   return packageMetadata.version;
 }
 
-function makeFakeUpgradeOptions(currentVersion: string): UpgradeCliOptions {
+function makeFakeUpgradeOptions(): UpgradeCliOptions {
   return {
-    currentVersion,
     packageName: "@clipboard-health/groundcrew",
     resolveInstall: async () => ({
       installKind: "global",
       installPath: "/install",
       npmBin: "/usr/local/bin/npm",
     }),
-    fetcher: vi.fn<UpgradeCliOptions["fetcher"]>(),
     runInstall: vi.fn<UpgradeCliOptions["runInstall"]>(),
-    fetchTimeoutMs: 5000,
-    cachePath: "/tmp/cli-test-upgrade-cache.json",
-    now: () => 1_700_000_000_000,
   };
 }
 
@@ -136,13 +119,10 @@ describe(run, () => {
     resumeMock.mockResolvedValue();
     sandboxMock.mockResolvedValue();
     setupMock.mockResolvedValue();
-    setupReposMock.mockResolvedValue();
     cleanupMock.mockResolvedValue();
     statusMock.mockResolvedValue();
     upgradeCliMock.mockResolvedValue();
-    createDefaultUpgradeCliOptionsMock.mockResolvedValue(makeFakeUpgradeOptions(PACKAGE_VERSION));
-    // oxlint-disable-next-line unicorn/no-useless-undefined -- exercises the no-nudge branch
-    computeUpgradeNudgeMock.mockResolvedValue(undefined);
+    createDefaultUpgradeCliOptionsMock.mockResolvedValue(makeFakeUpgradeOptions());
   });
 
   afterEach(() => {
@@ -384,31 +364,37 @@ describe(run, () => {
 
     expect(resumeMock).toHaveBeenCalledWith(["TEAM-1"]);
   });
-  it("dispatches `setup repos` to setupReposCli with the remaining argv", async () => {
+
+  it("hard-fails removed `setup repos` with a README-backed manual clone pointer", async () => {
     await run(["setup", "repos", "--dry-run", "owner/repo"]);
 
-    expect(setupReposMock).toHaveBeenCalledWith(["--dry-run", "owner/repo"]);
+    expect(consoleError.output()).toContain("crew setup repos was removed");
+    expect(consoleError.output()).toContain("git clone");
+    expect(consoleError.output()).toContain("README.md#manual-repository-bootstrap");
+    expect(process.exitCode).toBe(1);
   });
 
-  it("dispatches bare `setup repos` (no args) to setupReposCli", async () => {
+  it("hard-fails bare `setup repos` with the same replacement workflow", async () => {
     await run(["setup", "repos"]);
 
-    expect(setupReposMock).toHaveBeenCalledWith([]);
+    expect(consoleError.output()).toContain("crew setup repos was removed");
+    expect(consoleError.output()).toContain("README.md#manual-repository-bootstrap");
+    expect(process.exitCode).toBe(1);
   });
 
-  it("reports an unknown `setup` verb instead of routing it", async () => {
+  it("reports an unknown `setup` verb with the removed command usage", async () => {
     await run(["setup", "bogus"]);
 
-    expect(setupReposMock).not.toHaveBeenCalled();
     expect(consoleError.output()).toContain("Usage: crew setup repos");
+    expect(consoleError.output()).toContain("README.md#manual-repository-bootstrap");
     expect(process.exitCode).toBe(1);
   });
 
   it("prints the setup usage when no verb is given", async () => {
     await run(["setup"]);
 
-    expect(setupReposMock).not.toHaveBeenCalled();
     expect(consoleError.output()).toContain("Usage: crew setup repos");
+    expect(consoleError.output()).toContain("README.md#manual-repository-bootstrap");
     expect(process.exitCode).toBe(1);
   });
 
@@ -422,7 +408,7 @@ describe(run, () => {
   });
 
   it("dispatches `upgrade` to upgradeCli with lazy default options", async () => {
-    const assembled = makeFakeUpgradeOptions(PACKAGE_VERSION);
+    const assembled = makeFakeUpgradeOptions();
     createDefaultUpgradeCliOptionsMock.mockResolvedValue(assembled);
     upgradeCliMock.mockImplementationOnce(async (_argv, optionsInput) => {
       const optionsFactory = expectUpgradeOptionsFactory(optionsInput);
@@ -433,66 +419,25 @@ describe(run, () => {
     await run(["upgrade", "3.2.0"]);
 
     const call = createDefaultUpgradeCliOptionsMock.mock.calls[0]?.[0];
-    expect(call?.currentVersion).toBe(PACKAGE_VERSION);
     expect(call?.packageName).toBe("@clipboard-health/groundcrew");
     expect(call?.cliMetaUrl).toMatch(/cli\.ts$/);
     expect(upgradeCliMock).toHaveBeenCalledWith(["3.2.0"], expect.any(Function));
   });
 
-  it("does not run the upgrade nudge when the subcommand is upgrade", async () => {
-    await run(["upgrade", "--check"]);
-
-    expect(computeUpgradeNudgeMock).not.toHaveBeenCalled();
-  });
-
-  it("prints the upgrade nudge to stderr before non-upgrade subcommands", async () => {
-    computeUpgradeNudgeMock.mockResolvedValue(
-      "[crew] 3.2.0 available — run `crew upgrade` (you have 3.1.8)",
-    );
-    await run(["doctor"]);
-
-    expect(computeUpgradeNudgeMock).toHaveBeenCalledTimes(1);
-    expect(consoleError.output()).toContain("[crew] 3.2.0 available");
-    expect(doctorMock).toHaveBeenCalledWith();
-  });
-
-  it("skips the nudge message when no upgrade is available", async () => {
-    // oxlint-disable-next-line unicorn/no-useless-undefined -- exercises the no-nudge branch
-    computeUpgradeNudgeMock.mockResolvedValue(undefined);
-    await run(["doctor"]);
-
-    expect(computeUpgradeNudgeMock).toHaveBeenCalledTimes(1);
-    expect(consoleError.calls).toStrictEqual([]);
-  });
-
-  it("forwards npm_config_registry and the env opt-out flag to the nudge", async () => {
-    vi.stubEnv("npm_config_registry", "https://npm.mirror.example");
-    vi.stubEnv("GROUNDCREW_NO_UPGRADE_CHECK", "1");
+  it("does not perform passive upgrade checks before non-upgrade subcommands", async () => {
+    const cacheDir = mkdtempSync(join(tmpdir(), "groundcrew-no-passive-upgrade-"));
+    const fetchMock = vi.fn<typeof fetch>();
+    vi.stubEnv("XDG_CACHE_HOME", cacheDir);
+    vi.stubGlobal("fetch", fetchMock);
     try {
       await run(["doctor"]);
-      expect(computeUpgradeNudgeMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          packageName: "@clipboard-health/groundcrew",
-          ttlMs: 6 * 60 * 60 * 1000,
-          fetchTimeoutMs: 1000,
-          registry: "https://npm.mirror.example",
-          noUpgradeCheck: true,
-        }),
-      );
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(consoleError.calls).toStrictEqual([]);
     } finally {
+      vi.unstubAllGlobals();
       vi.unstubAllEnvs();
+      rmSync(cacheDir, { recursive: true, force: true });
     }
-  });
-
-  it("does not run the nudge for unknown subcommands", async () => {
-    await run(["bogus"]);
-
-    expect(computeUpgradeNudgeMock).not.toHaveBeenCalled();
-  });
-
-  it("still runs the requested subcommand when the nudge throws", async () => {
-    computeUpgradeNudgeMock.mockRejectedValueOnce(new Error("nudge boom"));
-    await run(["doctor"]);
 
     expect(doctorMock).toHaveBeenCalledWith();
     expect(process.exitCode).toBeUndefined();

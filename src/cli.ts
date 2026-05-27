@@ -7,25 +7,10 @@ import { interruptWorkspaceCli } from "./commands/interruptWorkspace.ts";
 import { orchestrate } from "./commands/orchestrator.ts";
 import { resumeWorkspaceCli } from "./commands/resumeWorkspace.ts";
 import { sandboxCli } from "./commands/sandbox/index.ts";
-import { setupReposCli } from "./commands/setupRepos.ts";
 import { setupWorkspaceCli } from "./commands/setupWorkspace.ts";
 import { statusCli } from "./commands/status.ts";
 import { createDefaultUpgradeCliOptions, upgradeCli } from "./commands/upgrade.ts";
-import {
-  computeUpgradeNudge,
-  defaultUpgradeCheckCachePath,
-  fetchLatestVersion,
-} from "./lib/upgrade.ts";
-import {
-  errorMessage,
-  readEnvironmentVariable,
-  readTicketArgument,
-  writeError,
-  writeOutput,
-} from "./lib/util.ts";
-
-const NUDGE_TTL_MS = 6 * 60 * 60 * 1000;
-const NUDGE_FETCH_TIMEOUT_MS = 1000;
+import { errorMessage, readTicketArgument, writeError, writeOutput } from "./lib/util.ts";
 
 interface PackageMetadata {
   name: string;
@@ -35,20 +20,26 @@ interface PackageMetadata {
 interface Subcommand {
   summary: string;
   usage: string;
+  hidden?: boolean;
   invoke: (argv: string[]) => Promise<void>;
 }
 
 const requireFromCli = createRequire(import.meta.url);
 
+const SETUP_REPOS_REMOVED_MESSAGE = [
+  "crew setup repos was removed.",
+  "Clone repositories manually with git clone into workspace.projectDir.",
+  "See README.md#manual-repository-bootstrap for the replacement workflow.",
+].join(" ");
+
 function setupUsage(): string {
-  return "Usage: crew setup repos [--dry-run] [<repo>...]";
+  return `Usage: crew setup repos\n\n${SETUP_REPOS_REMOVED_MESSAGE}`;
 }
 
 async function setupCli(argv: string[]): Promise<void> {
-  const [verb, ...rest] = argv;
+  const [verb] = argv;
   if (verb === "repos") {
-    await setupReposCli(rest);
-    return;
+    throw new Error(SETUP_REPOS_REMOVED_MESSAGE);
   }
   throw new Error(setupUsage());
 }
@@ -93,28 +84,10 @@ async function upgradeCliInvoke(argv: string[]): Promise<void> {
     argv,
     async () =>
       await createDefaultUpgradeCliOptions({
-        currentVersion: metadata.version,
         packageName: metadata.name,
         cliMetaUrl: import.meta.url,
       }),
   );
-}
-
-async function maybeRunUpgradeNudge(metadata: PackageMetadata): Promise<void> {
-  const message = await computeUpgradeNudge({
-    currentVersion: metadata.version,
-    packageName: metadata.name,
-    cachePath: defaultUpgradeCheckCachePath(),
-    ttlMs: NUDGE_TTL_MS,
-    fetchTimeoutMs: NUDGE_FETCH_TIMEOUT_MS,
-    registry: readEnvironmentVariable("npm_config_registry"),
-    noUpgradeCheck: readEnvironmentVariable("GROUNDCREW_NO_UPGRADE_CHECK") === "1",
-    now: Date.now,
-    fetcher: fetchLatestVersion,
-  });
-  if (message !== undefined) {
-    writeError(message);
-  }
 }
 
 async function doctorCli(argv: string[]): Promise<void> {
@@ -167,26 +140,28 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
     invoke: sandboxCli,
   },
   setup: {
-    summary: "Project-level setup commands (currently: repos)",
-    usage: "repos [--dry-run] [<repo>...]",
+    summary: "Removed repository bootstrap command",
+    usage: "repos",
+    hidden: true,
     invoke: setupCli,
   },
   upgrade: {
     summary: "Install the latest version of crew (or pin to a specific version)",
-    usage: "[<version>] [--check]",
+    usage: "[<version>]",
     invoke: upgradeCliInvoke,
   },
 };
 
 function printHelp(): void {
-  const width = Math.max(...Object.keys(SUBCOMMANDS).map((key) => key.length));
+  const visibleCommands = Object.entries(SUBCOMMANDS).filter(([, command]) => !command.hidden);
+  const width = Math.max(...visibleCommands.map(([key]) => key.length));
   writeOutput("Usage: crew <command> [...args]\n");
   writeOutput("Options:");
   writeOutput("  -h, --help     Show help");
   writeOutput("  -v, --version  Print version");
   writeOutput("");
   writeOutput("Commands:");
-  for (const [name, command] of Object.entries(SUBCOMMANDS)) {
+  for (const [name, command] of visibleCommands) {
     writeOutput(`  ${name.padEnd(width)}  ${command.summary}`);
     writeOutput(`  ${" ".repeat(width)}  → crew ${name} ${command.usage}`);
   }
@@ -225,14 +200,6 @@ export async function run(argv: string[]): Promise<void> {
     printHelp();
     process.exitCode = 1;
     return;
-  }
-
-  if (subcommand !== "upgrade") {
-    try {
-      await maybeRunUpgradeNudge(packageMetadata());
-    } catch {
-      // Passive nudge is never load-bearing; never block the user's command.
-    }
   }
 
   try {
