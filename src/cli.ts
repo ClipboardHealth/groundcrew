@@ -18,6 +18,7 @@ import {
 } from "./lib/upgrade.ts";
 import {
   errorMessage,
+  parseDryRunPositionals,
   readEnvironmentVariable,
   readTicketArgument,
   writeError,
@@ -36,9 +37,21 @@ interface Subcommand {
   summary: string;
   usage: string;
   invoke: (argv: string[]) => Promise<void>;
+  // Deprecated aliases keep working but are hidden from `crew --help`.
+  deprecated?: boolean;
 }
 
 const requireFromCli = createRequire(import.meta.url);
+
+/**
+ * Prints a deprecation warning to stderr naming the canonical command and that
+ * the old form is removed in the next major, then lets the caller proceed.
+ */
+function warnDeprecated(forms: { oldForm: string; newForm: string }): void {
+  writeError(
+    `crew ${forms.oldForm} is deprecated and will be removed in the next major version; use crew ${forms.newForm} instead.`,
+  );
+}
 
 function setupUsage(): string {
   return "Usage: crew setup repos [--dry-run] [<repo>...]";
@@ -84,6 +97,18 @@ async function runCli(argv: string[]): Promise<void> {
     await orchestrate({ watch, dryRun });
     return;
   }
+  warnDeprecated({ oldForm: "run --ticket", newForm: "start" });
+  await setupWorkspaceCli(ticket, { dryRun });
+}
+
+const START_USAGE = "crew start <ticket> [--dry-run]";
+
+async function startCli(argv: string[]): Promise<void> {
+  const { dryRun, positionals } = parseDryRunPositionals(argv, START_USAGE);
+  const [ticket, ...extras] = positionals;
+  if (ticket === undefined || ticket.length === 0 || extras.length > 0) {
+    throw new Error(`Usage: ${START_USAGE}`);
+  }
   await setupWorkspaceCli(ticket, { dryRun });
 }
 
@@ -117,7 +142,24 @@ async function maybeRunUpgradeNudge(metadata: PackageMetadata): Promise<void> {
   }
 }
 
+function doctorTicketAlias(argv: string[]): string | undefined {
+  if (argv[0] !== "--ticket") {
+    return undefined;
+  }
+  const ticket = readTicketArgument(argv, 0, "doctor");
+  if (argv.length > 2) {
+    throw new Error("Usage: crew status [<ticket>]");
+  }
+  return ticket;
+}
+
 async function doctorCli(argv: string[]): Promise<void> {
+  const aliasTicket = doctorTicketAlias(argv);
+  if (aliasTicket !== undefined) {
+    warnDeprecated({ oldForm: "doctor --ticket", newForm: "status" });
+    await statusCli([aliasTicket]);
+    return;
+  }
   if (argv.length > 0) {
     throw new Error("Usage: crew doctor");
   }
@@ -132,9 +174,14 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
     invoke: initConfigCli,
   },
   run: {
-    summary: "Run the orchestrator (one-shot by default), or provision one ticket with --ticket",
-    usage: "[--watch] [--dry-run] [--ticket <ticket>]",
+    summary: "Run the orchestrator: poll sources and start eligible tickets (one-shot by default)",
+    usage: "[--watch] [--dry-run]",
     invoke: runCli,
+  },
+  start: {
+    summary: "Provision and launch one ticket immediately, bypassing eligibility",
+    usage: "<ticket> [--dry-run]",
+    invoke: startCli,
   },
   doctor: {
     summary: "Verify host prerequisites (PATH tools, config validity, Linear reachability)",
@@ -151,10 +198,19 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
     usage: "[--force] <ticket>",
     invoke: cleanupWorkspaceCli,
   },
-  interrupt: {
+  stop: {
     summary: "Stop a live ticket workspace while preserving its worktree",
     usage: "<ticket> [--reason <text>]",
     invoke: interruptWorkspaceCli,
+  },
+  interrupt: {
+    summary: "Deprecated alias for `crew stop`",
+    usage: "<ticket> [--reason <text>]",
+    deprecated: true,
+    invoke: async (argv) => {
+      warnDeprecated({ oldForm: "interrupt", newForm: "stop" });
+      await interruptWorkspaceCli(argv);
+    },
   },
   resume: {
     summary: "Reopen an existing ticket worktree with a continuation prompt",
@@ -187,6 +243,9 @@ function printHelp(): void {
   writeOutput("");
   writeOutput("Commands:");
   for (const [name, command] of Object.entries(SUBCOMMANDS)) {
+    if (command.deprecated === true) {
+      continue;
+    }
     writeOutput(`  ${name.padEnd(width)}  ${command.summary}`);
     writeOutput(`  ${" ".repeat(width)}  → crew ${name} ${command.usage}`);
   }

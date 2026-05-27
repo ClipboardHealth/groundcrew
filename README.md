@@ -83,14 +83,16 @@ In Linear, assign tickets to yourself and add an `agent-*` label (`agent-claude`
 crew init [--global | --local] [--force] [--dry-run]     # create a crew.config.ts
 crew doctor                                              # check setup
 crew status [<TICKET>]                                   # inspect current state or one ticket
-crew run                                                 # one-shot dispatch
+crew run                                                 # one-shot orchestration
 crew run --watch                                         # poll forever
-crew run --ticket <TICKET>                               # dispatch one ticket
+crew start <TICKET>                                      # provision + launch one ticket now
 crew setup repos [<repo>...] [--dry-run]                 # clone known repos via gh
-crew interrupt <TICKET> [--reason <text>]                # stop workspace, keep worktree
+crew stop <TICKET> [--reason <text>]                     # stop workspace, keep worktree
 crew resume <TICKET>                                     # reopen a paused ticket
 crew cleanup <TICKET>                                    # tear down every worktree for a ticket
 ```
+
+Deprecated aliases still work but print a warning and will be removed in the next major version: `crew interrupt` → `crew stop`, `crew run --ticket <TICKET>` → `crew start <TICKET>`, `crew doctor --ticket <TICKET>` → `crew status <TICKET>`.
 
 ## Configuration
 
@@ -109,7 +111,7 @@ The branch prefix (`<prefix>-<TICKET>`) is derived from `os.userInfo().username`
 - `agent-claude`, `agent-codex`, `agent-<name>` → that model.
 - `agent-any` → the model with the most available session capacity.
 - Unknown `agent-<name>` → falls back to `models.default` with a warning.
-- No `agent-*` label → ignored by `crew run`. Dispatch on demand with `crew run --ticket <TICKET>` (also falls back to `models.default`).
+- No `agent-*` label → ignored by `crew run`. Dispatch on demand with `crew start <TICKET>` (also falls back to `models.default`).
 - Todo tickets blocked by non-terminal blockers are skipped until their blockers reach a terminal status.
 
 Status classification uses Linear's workflow `state.type` (`unstarted`, `started`, `completed`, `canceled`, `duplicate`), so renamed status columns work without configuration. Parent issues with children are ignored — sub-issues are the work items.
@@ -136,7 +138,7 @@ Resolution order: `GROUNDCREW_CONFIG` → cosmiconfig project-walk from cwd (any
 | `orchestrator.maximumInProgress`        | `4`                 | Cap on in-progress tickets at once for this `crew` instance.                                                                                                                                                                                                                                                                                                            |
 | `orchestrator.pollIntervalMilliseconds` | `120_000`           | Poll interval in `--watch` mode.                                                                                                                                                                                                                                                                                                                                        |
 | `orchestrator.sessionLimitPercentage`   | `85`                | Number in `(0, 100]`. A model whose codexbar session window exceeds this percentage is skipped that tick.                                                                                                                                                                                                                                                               |
-| `models.default`                        | `"claude"`          | Tiebreak for `agent-any` resolution and fallback for explicit but unknown `agent-*` labels. Also used by `crew run --ticket <TICKET>` for unlabeled tickets. `crew run` without `--ticket` ignores unlabeled tickets and does not apply this default. Must exist in `models.definitions`.                                                                               |
+| `models.default`                        | `"claude"`          | Tiebreak for `agent-any` resolution and fallback for explicit but unknown `agent-*` labels. Also used by `crew start <TICKET>` for unlabeled tickets. `crew run` ignores unlabeled tickets and does not apply this default. Must exist in `models.definitions`.                                                                                                         |
 | `models.definitions`                    | `{ claude, codex }` | Agent definitions. Additive merge with shipped defaults.                                                                                                                                                                                                                                                                                                                |
 | `models.definitions.<name>.cmd`         | —                   | Shell command launched for the model. Runs in the worktree through the resolved `local.runner`. `{{worktree}}` is replaced before launch; `{{sandbox}}` expands to the sbx sandbox name under the sdx runner and an empty string otherwise.                                                                                                                             |
 | `models.definitions.<name>.color`       | —                   | Color for the workspace status pill (cmux only; tmux silently drops it).                                                                                                                                                                                                                                                                                                |
@@ -234,21 +236,30 @@ In Progress (state.type=started) — Multi-event extractor: year inference can p
 
 </details>
 
-### `crew interrupt <TICKET>`
+### `crew start <TICKET>`
 
-Stops a live workspace pane while preserving the ticket worktree and branch. The manual pause button for cases where you need terminal capacity back, want to stop an agent that's going in the wrong direction, or need to inspect the diff before letting another agent continue.
+Provisions and launches one ticket immediately, bypassing orchestrator eligibility. Use it to dispatch a specific ticket on demand — including unlabeled tickets that `crew run` ignores. (Replaces the deprecated `crew run --ticket <TICKET>`.)
 
 ```bash
-crew interrupt HRD-442 --reason "wrong implementation direction"
+crew start HRD-442
+crew start HRD-442 --dry-run
+```
+
+### `crew stop <TICKET>`
+
+Stops a live workspace pane while preserving the ticket worktree and branch. The manual pause button for cases where you need terminal capacity back, want to stop an agent that's going in the wrong direction, or need to inspect the diff before letting another agent continue. (Replaces the deprecated `crew interrupt <TICKET>`.)
+
+```bash
+crew stop HRD-442 --reason "wrong implementation direction"
 crew status HRD-442
 crew resume HRD-442
 ```
 
-The command closes the cmux/tmux workspace if present, records local run state, and never tears down the worktree. If the workspace was already gone but the worktree is still present, interrupt records that fact so status can show the preserved branch.
+The command closes the cmux/tmux workspace if present, records local run state, and never tears down the worktree. If the workspace was already gone but the worktree is still present, stop records that fact so status can show the preserved branch.
 
 ### `crew resume <TICKET>`
 
-Reopens an existing ticket worktree with a continuation prompt. Resume never creates a new worktree; if none exists it fails and leaves re-dispatch to `crew run --ticket <ticket>`.
+Reopens an existing ticket worktree with a continuation prompt. Resume never creates a new worktree; if none exists it fails and leaves re-dispatch to `crew start <ticket>`.
 
 The resume prompt tells the agent to inspect git status and diff before editing, includes the previous interrupt reason when recorded, and reuses the recorded model, repository, branch, runner, sandbox, and workspace backend. When no run-state file exists but a worktree does, resume falls back to Linear resolution for the model and ticket context.
 

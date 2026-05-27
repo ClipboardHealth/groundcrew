@@ -31,22 +31,20 @@ function parseArguments(argv: string[]): InterruptWorkspaceOptions {
     if (argument === "--reason") {
       const value = argv[index + 1];
       if (value === undefined || value.length === 0 || value.startsWith("-")) {
-        throw new Error("crew interrupt --reason: reason text is required");
+        throw new Error("crew stop --reason: reason text is required");
       }
       reason = value;
       index += 1;
       continue;
     }
     if (argument.startsWith("-")) {
-      throw new Error(
-        `Unknown option: ${argument}\nUsage: crew interrupt <ticket> [--reason <text>]`,
-      );
+      throw new Error(`Unknown option: ${argument}\nUsage: crew stop <ticket> [--reason <text>]`);
     }
     positionals.push(argument);
   }
   const [ticket, ...extras] = positionals;
   if (ticket === undefined || ticket.length === 0 || extras.length > 0) {
-    throw new Error("Usage: crew interrupt <ticket> [--reason <text>]");
+    throw new Error("Usage: crew stop <ticket> [--reason <text>]");
   }
   return { ticket: ticket.toLowerCase(), ...(reason === undefined ? {} : { reason }) };
 }

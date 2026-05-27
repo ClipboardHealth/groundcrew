@@ -243,15 +243,18 @@ describe(run, () => {
     expect(orchestrateMock).toHaveBeenCalledWith({ watch: true, dryRun: true });
   });
 
-  it("dispatches `run --ticket <id>` to setupWorkspaceCli", async () => {
+  it("dispatches the deprecated `run --ticket <id>` alias to setupWorkspaceCli with a warning", async () => {
     await run(["run", "--ticket", "team-220"]);
 
     expect(setupMock).toHaveBeenCalledWith("team-220", { dryRun: false });
     expect(orchestrateMock).not.toHaveBeenCalled();
+    expect(consoleError.output()).toContain("crew run --ticket is deprecated");
+    expect(consoleError.output()).toContain("use crew start");
+    expect(consoleError.output()).toContain("next major");
   });
 
-  it("documents `run --ticket <TICKET>` as the manual ticket setup command", () => {
-    expect(README_TEXT).toContain("crew run --ticket <TICKET>");
+  it("documents `crew start <TICKET>` as the manual ticket setup command", () => {
+    expect(README_TEXT).toContain("crew start <TICKET>");
     expect(README_TEXT).not.toContain("crew setup <TICKET>");
   });
 
@@ -312,6 +315,51 @@ describe(run, () => {
     expect(setupMock).not.toHaveBeenCalled();
   });
 
+  it("dispatches `start <ticket>` to setupWorkspaceCli with no deprecation warning", async () => {
+    await run(["start", "team-220"]);
+
+    expect(setupMock).toHaveBeenCalledWith("team-220", { dryRun: false });
+    expect(orchestrateMock).not.toHaveBeenCalled();
+    expect(consoleError.calls).toStrictEqual([]);
+  });
+
+  it("forwards --dry-run to setupWorkspaceCli under `start`", async () => {
+    await run(["start", "team-220", "--dry-run"]);
+
+    expect(setupMock).toHaveBeenCalledWith("team-220", { dryRun: true });
+  });
+
+  it("rejects `start` with no ticket", async () => {
+    await run(["start"]);
+
+    expect(consoleError.output()).toContain("Usage: crew start <ticket>");
+    expect(process.exitCode).toBe(1);
+    expect(setupMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects unknown flags under `start`", async () => {
+    await run(["start", "team-220", "--watch"]);
+
+    expect(consoleError.output()).toContain("Unknown option: --watch");
+    expect(process.exitCode).toBe(1);
+    expect(setupMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects extra positional args under `start`", async () => {
+    await run(["start", "team-220", "extra"]);
+
+    expect(consoleError.output()).toContain("Usage: crew start <ticket>");
+    expect(process.exitCode).toBe(1);
+    expect(setupMock).not.toHaveBeenCalled();
+  });
+
+  it("dispatches `stop` to interruptWorkspaceCli with no deprecation warning", async () => {
+    await run(["stop", "TEAM-1", "--reason", "wrong direction"]);
+
+    expect(interruptMock).toHaveBeenCalledWith(["TEAM-1", "--reason", "wrong direction"]);
+    expect(consoleError.calls).toStrictEqual([]);
+  });
+
   it("calls doctor and leaves exit code untouched on success", async () => {
     doctorMock.mockResolvedValue(true);
 
@@ -335,11 +383,32 @@ describe(run, () => {
     expect(process.exitCode).toBeUndefined();
   });
 
-  it("rejects legacy doctor ticket mode", async () => {
+  it("routes the deprecated `doctor --ticket <id>` alias to status with a warning", async () => {
     await run(["doctor", "--ticket", "team-220"]);
 
-    expect(consoleError.output()).toContain("Usage: crew doctor");
+    expect(statusMock).toHaveBeenCalledWith(["team-220"]);
+    expect(doctorMock).not.toHaveBeenCalled();
+    expect(consoleError.output()).toContain("crew doctor --ticket is deprecated");
+    expect(consoleError.output()).toContain("use crew status");
+    expect(consoleError.output()).toContain("next major");
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it("rejects `doctor --ticket` with no value", async () => {
+    await run(["doctor", "--ticket"]);
+
+    expect(consoleError.output()).toContain("ticket id is required");
     expect(process.exitCode).toBe(1);
+    expect(statusMock).not.toHaveBeenCalled();
+    expect(doctorMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects extra args after `doctor --ticket <id>`", async () => {
+    await run(["doctor", "--ticket", "team-220", "extra"]);
+
+    expect(consoleError.output()).toContain("Usage: crew status");
+    expect(process.exitCode).toBe(1);
+    expect(statusMock).not.toHaveBeenCalled();
     expect(doctorMock).not.toHaveBeenCalled();
   });
 
@@ -373,10 +442,13 @@ describe(run, () => {
     expect(cleanupMock).toHaveBeenCalledWith(["--force", "TEAM-1"]);
   });
 
-  it("dispatches interrupt to interruptWorkspaceCli with the remaining argv", async () => {
+  it("routes the deprecated `interrupt` alias to interruptWorkspaceCli with a warning", async () => {
     await run(["interrupt", "TEAM-1", "--reason", "wrong direction"]);
 
     expect(interruptMock).toHaveBeenCalledWith(["TEAM-1", "--reason", "wrong direction"]);
+    expect(consoleError.output()).toContain("crew interrupt is deprecated");
+    expect(consoleError.output()).toContain("use crew stop");
+    expect(consoleError.output()).toContain("next major");
   });
 
   it("dispatches resume to resumeWorkspaceCli with the remaining argv", async () => {
@@ -415,7 +487,7 @@ describe(run, () => {
   it("prints the error message and sets exit code 1 when a subcommand throws", async () => {
     setupMock.mockRejectedValue(new Error("boom"));
 
-    await run(["run", "--ticket", "team-1"]);
+    await run(["start", "team-1"]);
 
     expect(consoleError.output()).toBe("boom");
     expect(process.exitCode).toBe(1);

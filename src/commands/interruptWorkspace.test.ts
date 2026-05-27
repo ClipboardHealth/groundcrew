@@ -213,7 +213,7 @@ describe(interruptWorkspaceCli, () => {
   });
 
   it("rejects missing ticket", async () => {
-    await expect(interruptWorkspaceCli([])).rejects.toThrow(/Usage: crew interrupt/);
+    await expect(interruptWorkspaceCli([])).rejects.toThrow(/Usage: crew stop/);
   });
 
   it("rejects missing reason text", async () => {

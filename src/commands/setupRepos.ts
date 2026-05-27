@@ -12,7 +12,7 @@ import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { runCommandAsync } from "../lib/commandRunner.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { which } from "../lib/host.ts";
-import { errorMessage, log, writeOutput } from "../lib/util.ts";
+import { errorMessage, log, parseDryRunPositionals, writeOutput } from "../lib/util.ts";
 
 export interface SetupReposOptions {
   /** Print the plan without running any clone. */
@@ -267,20 +267,10 @@ export async function setupRepos(
 }
 
 function parseArguments(argv: string[]): SetupReposOptions {
-  let dryRun = false;
-  const positionals: string[] = [];
-  for (const argument of argv) {
-    if (argument === "--dry-run") {
-      dryRun = true;
-      continue;
-    }
-    if (argument.startsWith("-")) {
-      throw new Error(
-        `Unknown option: ${argument}\nUsage: crew setup repos [--dry-run] [<repo>...]`,
-      );
-    }
-    positionals.push(argument);
-  }
+  const { dryRun, positionals } = parseDryRunPositionals(
+    argv,
+    "crew setup repos [--dry-run] [<repo>...]",
+  );
   const options: SetupReposOptions = { dryRun };
   if (positionals.length > 0) {
     options.only = positionals;
