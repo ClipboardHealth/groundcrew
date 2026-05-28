@@ -82,24 +82,22 @@ function trapCleanupLine(promptDir: string): string {
 }
 
 /**
- * Shared opening of every host-shell `&&` chain: arm the `EXIT` trap that
- * wipes `promptDir` (must come before any link that can fail, including the
- * `cd`), `cd` into the worktree, then optionally source the staged
- * `secrets.env`.
+ * Shared head of every host-shell `&&` chain: arm the `EXIT` trap that wipes
+ * `promptDir` (must come before any link that can fail, including the `cd`),
+ * then `cd` into the worktree. Kept separate from secret sourcing so the
+ * safehouse path can splice `preLaunch` between the `cd` and the secrets
+ * source — preLaunch must never see build-time secrets in env.
  */
-function hostLaunchPrologue(arguments_: {
-  worktreeDir: string;
-  promptDir: string;
-  secretsFile?: string | undefined;
-}): string[] {
-  const lines = [
-    trapCleanupLine(arguments_.promptDir),
-    `cd ${shellSingleQuote(arguments_.worktreeDir)}`,
-  ];
-  if (arguments_.secretsFile !== undefined) {
-    lines.push(sourceSecretsLine(arguments_.secretsFile));
-  }
-  return lines;
+function hostTrapAndCd(arguments_: { worktreeDir: string; promptDir: string }): string[] {
+  return [trapCleanupLine(arguments_.promptDir), `cd ${shellSingleQuote(arguments_.worktreeDir)}`];
+}
+
+/**
+ * Optional source-of-secrets line. Returns `[]` when no `secretsFile` is
+ * staged so callers can splat the result into their chain unconditionally.
+ */
+function hostSourceSecrets(secretsFile: string | undefined): string[] {
+  return secretsFile === undefined ? [] : [sourceSecretsLine(secretsFile)];
 }
 
 /**
@@ -222,12 +220,11 @@ function buildUnwrappedHostLaunchCommand(arguments_: LaunchCommandArguments): st
     sandboxName: "",
   });
 
-  const lines = hostLaunchPrologue({
-    worktreeDir: arguments_.worktreeDir,
-    promptDir,
-    secretsFile: arguments_.secretsFile,
-  });
-  lines.push(setupWithStatusReporting(SETUP_COMMAND));
+  const lines = [
+    ...hostTrapAndCd({ worktreeDir: arguments_.worktreeDir, promptDir }),
+    ...hostSourceSecrets(arguments_.secretsFile),
+    setupWithStatusReporting(SETUP_COMMAND),
+  ];
   if (arguments_.secretsFile !== undefined) {
     lines.push(unsetSecretsLine());
   }
@@ -248,10 +245,12 @@ function buildUnwrappedHostLaunchCommand(arguments_: LaunchCommandArguments): st
  * the sdx runner) so the repo's `.groundcrew/setup.sh` and its `npm install` are
  * filesystem-isolated and egress-restricted, rather than running on the bare host.
  *
- * Build secrets are sourced into the host launch shell so Safehouse can forward
+ * Host ordering matters: `preLaunch` runs *before* `secrets.env` is sourced so
+ * the credential-minting snippet never sees build-time secrets in env. Build
+ * secrets are then sourced into the host launch shell so Safehouse can forward
  * them into the sandbox via `--env-pass` (Safehouse's `--env=FILE` mode otherwise
  * strips them); they're `unset` inside the wrap after setup so the agent process
- * never inherits them. The host keeps only `cd`, the prompt read, and the wrap exec.
+ * never inherits them.
  */
 function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string {
   const promptDir = dirname(arguments_.promptFile);
@@ -277,19 +276,15 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
   ];
   const envPassFlag = envPassNames.length === 0 ? "" : `--env-pass=${envPassNames.join(",")} `;
 
-  const lines = hostLaunchPrologue({
-    worktreeDir: arguments_.worktreeDir,
-    promptDir,
-    secretsFile: arguments_.secretsFile,
-  });
+  const lines = hostTrapAndCd({ worktreeDir: arguments_.worktreeDir, promptDir });
+  if (arguments_.definition.preLaunch !== undefined) {
+    lines.push(renderPreLaunch(arguments_.definition.preLaunch, arguments_.worktreeDir));
+  }
   lines.push(
-    ...preLaunchPromptAndExec({
-      definition: arguments_.definition,
-      worktreeDir: arguments_.worktreeDir,
-      promptFile: arguments_.promptFile,
-      promptDir,
-      execLine: `exec ${shellSingleQuote(SAFEHOUSE_CLEARANCE_WRAPPER_PATH)} ${envPassFlag}sh -lc ${shellSingleQuote(innerCommand)} sh "$_p"`,
-    }),
+    ...hostSourceSecrets(arguments_.secretsFile),
+    `_p=$(cat ${shellSingleQuote(arguments_.promptFile)})`,
+    `rm -rf ${shellSingleQuote(promptDir)}`,
+    `exec ${shellSingleQuote(SAFEHOUSE_CLEARANCE_WRAPPER_PATH)} ${envPassFlag}sh -lc ${shellSingleQuote(innerCommand)} sh "$_p"`,
   );
   return lines.join(" && ");
 }

@@ -158,7 +158,7 @@ Resolution order: `GROUNDCREW_CONFIG` → cosmiconfig project-walk from cwd (any
 
 ### Per-session credentials (`preLaunch` + `preLaunchEnv`)
 
-Build secrets shuttle build-time values _into_ setup. `preLaunch` does the opposite for the _agent_ phase: it runs a host-shell snippet **outside** Safehouse/sdx, after build-secret cleanup and before the prompt is read, so exports land in the launch shell. Use this when the agent needs a short-lived credential that has to be minted from something the sandbox can't reach (e.g. an engineer CLI session in Keychain), and you don't want any of that source material in the agent's process.
+Build secrets shuttle build-time values _into_ setup. `preLaunch` does the opposite for the _agent_ phase: it runs a host-shell snippet **outside** Safehouse/sdx, **before any build secrets are sourced** into the launch shell and before the prompt is read, so the minting snippet never sees `NPM_TOKEN` / `BUF_TOKEN` and its exports still land in the launch shell. Use this when the agent needs a short-lived credential that has to be minted from something the sandbox can't reach (e.g. an engineer CLI session in Keychain), and you don't want any of that source material — build-time or otherwise — in the minting snippet's environment or in the agent's process.
 
 Under the default `safehouse` runner, the agent runs under a sanitized env allowlist — exports from `preLaunch` land in the launch shell but are stripped before reaching the agent unless they're forwarded. `preLaunchEnv` is the supported way to forward them: groundcrew appends the names to its own `safehouse-clearance` wrap's `--env-pass=` flag, so you keep the project's egress host allowlist (`clearance-allow-hosts`) without touching `cmd`.
 

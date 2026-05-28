@@ -312,7 +312,7 @@ describe(buildLaunchCommand, () => {
       expect(out).toBe(baseline);
     });
 
-    it("runs preLaunch on the host shell after the secrets source and before reading the prompt", () => {
+    it("runs preLaunch on the host before sourcing build secrets so the minting snippet never sees NPM_TOKEN / BUF_TOKEN (safehouse)", () => {
       const out = buildLaunchCommand(
         arguments_({
           definition: {
@@ -324,17 +324,19 @@ describe(buildLaunchCommand, () => {
         }),
       );
 
-      const sourceIndex = out.indexOf(". '/tmp/prompt-team-1/secrets.env'");
+      const cdIndex = out.indexOf("cd '/work/repo-a-team-1'");
       const preLaunchIndex = out.indexOf("export FOO=bar");
+      const sourceIndex = out.indexOf(". '/tmp/prompt-team-1/secrets.env'");
       const readPromptIndex = out.indexOf("_p=$(cat '/tmp/prompt-team-1/prompt.txt')");
       const execIndex = out.indexOf("safehouse-clearance");
-      expect(sourceIndex).toBeGreaterThan(-1);
-      expect(preLaunchIndex).toBeGreaterThan(sourceIndex);
-      expect(readPromptIndex).toBeGreaterThan(preLaunchIndex);
+      // trap → cd → preLaunch → source secrets.env → read prompt → exec wrap.
+      expect(cdIndex).toBeGreaterThan(-1);
+      expect(preLaunchIndex).toBeGreaterThan(cdIndex);
+      expect(sourceIndex).toBeGreaterThan(preLaunchIndex);
+      expect(readPromptIndex).toBeGreaterThan(sourceIndex);
       expect(execIndex).toBeGreaterThan(readPromptIndex);
-      // `unset NPM_TOKEN BUF_TOKEN` now lives inside the Safehouse wrap (after
-      // setup) rather than on the host, so the host chain shouldn't contain
-      // it before the exec.
+      // `unset NPM_TOKEN BUF_TOKEN` lives inside the Safehouse wrap (after
+      // setup), not on the host, so the host chain must not contain it.
       expect(out.slice(0, execIndex)).not.toContain("unset NPM_TOKEN BUF_TOKEN");
     });
 
@@ -369,6 +371,34 @@ describe(buildLaunchCommand, () => {
       expect(out).toContain("export FOO=bar");
       expect(out).not.toContain("safehouse-clearance");
       expect(out).toMatch(/exec claude "\$_p"$/);
+    });
+
+    it("runs preLaunch after build-secret unset on the unwrapped host path (runner='none' + secretsFile)", () => {
+      const out = buildLaunchCommand(
+        arguments_({
+          runner: "none",
+          definition: {
+            cmd: "claude",
+            color: "#fff",
+            preLaunch: "export FOO=bar",
+          },
+          secretsFile: "/tmp/prompt-team-1/secrets.env",
+        }),
+      );
+
+      const sourceIndex = out.indexOf(". '/tmp/prompt-team-1/secrets.env'");
+      const setupIndex = out.indexOf("setup_status=$?");
+      const unsetIndex = out.indexOf("unset NPM_TOKEN BUF_TOKEN");
+      const preLaunchIndex = out.indexOf("export FOO=bar");
+      const execIndex = out.indexOf(`exec claude "$_p"`);
+      // Unwrapped host path: source → setup → unset → preLaunch → exec.
+      // Same "preLaunch sees a clean env" contract as the safehouse path,
+      // just enforced via an explicit `unset` instead of source-after-mint.
+      expect(sourceIndex).toBeGreaterThan(-1);
+      expect(setupIndex).toBeGreaterThan(sourceIndex);
+      expect(unsetIndex).toBeGreaterThan(setupIndex);
+      expect(preLaunchIndex).toBeGreaterThan(unsetIndex);
+      expect(execIndex).toBeGreaterThan(preLaunchIndex);
     });
 
     it("substitutes {{worktree}} inside preLaunch", () => {
