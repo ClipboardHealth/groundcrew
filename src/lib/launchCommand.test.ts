@@ -79,7 +79,7 @@ describe(buildLaunchCommand, () => {
     expect(out).toContain("_p=$(cat '/tmp/prompt-team-1/prompt.txt')");
     expect(out).toContain("rm -rf '/tmp/prompt-team-1'");
     expect(out).toContain(
-      "/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance' sh -lc",
+      "/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance' sh -c",
     );
     // Setup now runs inside the wrap (fs-isolated + clearance egress), not on the host.
     expect(out).toContain(SETUP_COMMAND);
@@ -108,7 +108,7 @@ describe(buildLaunchCommand, () => {
       }),
     );
 
-    // The agent command is single-quoted for the wrap's `sh -lc`, so embedded
+    // The agent command is single-quoted for the wrap's `sh -c`, so embedded
     // worktree quotes are escaped via the `'\''` close-escape-reopen dance.
     expect(out).toContain(String.raw`--worktree '\''/work/repo-a-team-1'\''`);
     // `{{sandbox}}` is a legacy placeholder; local runs no longer have one.
@@ -171,7 +171,7 @@ describe(buildLaunchCommand, () => {
     it("does not unset secrets on the host (the wrap needs them to forward)", () => {
       const out = buildLaunchCommand(arguments_({ secretsFile: "/tmp/prompt-team-1/secrets.env" }));
 
-      // The only unset is inside the wrapped `sh -lc`, after the wrapper token.
+      // The only unset is inside the wrapped `sh -c`, after the wrapper token.
       const hostSegment = out.slice(0, out.indexOf("safehouse-clearance"));
       expect(hostSegment).not.toContain("unset NPM_TOKEN");
       expect(out).toMatch(/sh "\$_p"$/);
@@ -219,12 +219,10 @@ describe(buildLaunchCommand, () => {
       });
     }
 
-    it("wraps the agent in `sbx exec -it -w <worktree> <sandbox> sh -lc <setup; exec agent>`", () => {
+    it("wraps the agent in `sbx exec -it -w <worktree> <sandbox> sh -c <setup; exec agent>`", () => {
       const out = buildLaunchCommand(sdxArguments());
 
-      expect(out).toContain(
-        "exec sbx exec -it -w '/work/repo-a-team-1' 'groundcrew-claude' sh -lc",
-      );
+      expect(out).toContain("exec sbx exec -it -w '/work/repo-a-team-1' 'groundcrew-claude' sh -c");
       expect(out).toContain("exec claude");
       expect(out).toMatch(/sh "\$_p"$/);
     });
@@ -262,7 +260,7 @@ describe(buildLaunchCommand, () => {
         }),
       );
 
-      // The inner agent command is single-quoted for `sh -lc`, so embedded
+      // The inner agent command is single-quoted for `sh -c`, so embedded
       // sandbox / worktree quotes are escaped via the `'\''` close-escape-reopen
       // dance — `groundcrew-claude` still lands as `--sandbox`'s value.
       expect(out).toContain(String.raw`--sandbox '\''groundcrew-claude'\''`);
