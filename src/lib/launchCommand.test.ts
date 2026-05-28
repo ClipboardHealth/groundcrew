@@ -441,6 +441,38 @@ describe(buildLaunchCommand, () => {
         rmSync(worktreeDir, { recursive: true, force: true });
       }
     });
+
+    it("wipes promptDir under the safehouse runner when preLaunch returns non-zero", () => {
+      const promptDir = mkdtempSync(join(tmpdir(), "groundcrew-trap-safehouse-status-"));
+      const promptFile = join(promptDir, "prompt.txt");
+      const secretsFile = join(promptDir, "secrets.env");
+      const worktreeDir = mkdtempSync(join(tmpdir(), "groundcrew-trap-safehouse-status-wt-"));
+      try {
+        writeFileSync(promptFile, "the prompt body\n");
+        writeFileSync(secretsFile, "NPM_TOKEN='leaked'\n");
+
+        const out = buildLaunchCommand(
+          arguments_({
+            runner: "safehouse",
+            promptFile,
+            worktreeDir,
+            secretsFile,
+            definition: {
+              cmd: "echo never-reached",
+              color: "#fff",
+              preLaunch: "SESSION_TOKEN=$(false) && export SESSION_TOKEN",
+            },
+          }),
+        );
+
+        const result = spawnSync("sh", ["-c", out]);
+        expect(result.status).toBe(1);
+        expect(() => statSync(promptDir)).toThrow(/ENOENT/);
+      } finally {
+        rmSync(promptDir, { recursive: true, force: true });
+        rmSync(worktreeDir, { recursive: true, force: true });
+      }
+    });
   });
 
   describe("preLaunch", () => {
