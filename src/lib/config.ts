@@ -10,6 +10,8 @@ import type { ShellAdapterConfig } from "./adapters/shell/schema.ts";
 import { log, readEnvironmentVariable, setLogFile } from "./util.ts";
 import { xdgConfigPath, xdgStatePath } from "./xdg.ts";
 
+import { BUILD_SECRET_NAMES } from "./buildSecrets.ts";
+
 export { BUILD_SECRET_NAMES } from "./buildSecrets.ts";
 
 /**
@@ -398,6 +400,17 @@ function validatePreLaunchEnv(modelName: string, value: unknown): asserts value 
     if (typeof entry !== "string" || !ENV_VAR_NAME_PATTERN.test(entry)) {
       fail(
         `${path}[${index}] must be a POSIX env var name matching ${ENV_VAR_NAME_PATTERN.source} (got ${JSON.stringify(entry)})`,
+      );
+    }
+    // Build secrets are sourced into the host launch shell, forwarded only to
+    // the Safehouse *setup* wrap, and `unset` on the host before the agent
+    // wrap is exec'd. Listing one here would silently never reach the agent —
+    // fail loudly so the operator picks a different name (or removes the
+    // entry) instead of debugging a missing env var at runtime.
+    if ((BUILD_SECRET_NAMES as readonly string[]).includes(entry)) {
+      fail(
+        `${path}[${index}] cannot be a BUILD_SECRET_NAMES entry (${BUILD_SECRET_NAMES.join(", ")}); ` +
+          "those are unset on the host before the agent wrap is exec'd, so forwarding them via --env-pass would be a no-op.",
       );
     }
   }

@@ -558,6 +558,24 @@ describe("loadConfig", () => {
     );
   });
 
+  it("rejects a preLaunchEnv entry that overlaps BUILD_SECRET_NAMES", async () => {
+    // BUILD_SECRET_NAMES are `unset` on the host between the setup wrap and
+    // the agent wrap, so forwarding them via --env-pass would silently never
+    // reach the agent. Fail at config-load time.
+    const path = writeConfigFile(
+      temporary,
+      configSource({
+        workspace: VALID_WORKSPACE(temporary),
+        models: { definitions: { claude: { preLaunchEnv: ["SESSION_TOKEN", "NPM_TOKEN"] } } },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(
+      /models\.definitions\.claude\.preLaunchEnv\[1\] cannot be a BUILD_SECRET_NAMES entry/,
+    );
+  });
+
   it("rejects combining disabled: true with preLaunchEnv", async () => {
     const path = writeConfigFile(
       temporary,
