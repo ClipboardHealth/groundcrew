@@ -586,7 +586,7 @@ describe(setupWorkspace, () => {
     expect(launchScript).not.toContain("npm clean-install");
     expect(launchScript).toContain("exec '/");
     expect(launchScript).toContain(
-      "/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance' sh -lc",
+      "/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance' --enable=all-agents sh -lc",
     );
     // The agent runs inside the wrap (after setup), so the prompt is the sh -lc arg.
     expect(launchScript).toContain('exec claude --permission-mode auto "$@"');

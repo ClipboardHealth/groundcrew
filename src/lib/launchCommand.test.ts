@@ -79,12 +79,27 @@ describe(buildLaunchCommand, () => {
     expect(out).toContain("_p=$(cat '/tmp/prompt-team-1/prompt.txt')");
     expect(out).toContain("rm -rf '/tmp/prompt-team-1'");
     expect(out).toContain(
-      "/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance' sh -lc",
+      "/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance' --enable=all-agents sh -lc",
     );
     // Setup now runs inside the wrap (fs-isolated + clearance egress), not on the host.
     expect(out).toContain(SETUP_COMMAND);
     expect(out).toContain(`exec claude "$@"`);
     expect(out).toMatch(/sh "\$_p"$/);
+  });
+
+  it("force-enables agent sandbox profiles so Safehouse applies claude-code's grants through the sh wrapper", () => {
+    const out = buildLaunchCommand(arguments_());
+
+    // Safehouse auto-selects an agent profile from the wrapped command's
+    // basename. groundcrew wraps the agent in `sh -lc`, so the basename it
+    // sees is `sh`; without this flag claude-code.sb (and its transitive
+    // keychain/state grants + PATH injection) is never applied and the agent
+    // hangs at startup.
+    expect(out).toContain("safehouse-clearance' --enable=all-agents ");
+    const enableIndex = out.indexOf("--enable=all-agents");
+    const shIndex = out.indexOf(" sh -lc ");
+    expect(enableIndex).toBeGreaterThan(-1);
+    expect(shIndex).toBeGreaterThan(enableIndex);
   });
 
   it("does not double-wrap when cmd already starts with safehouse", () => {
@@ -96,6 +111,9 @@ describe(buildLaunchCommand, () => {
 
     expect(out).toMatch(/exec safehouse claude "\$_p"$/);
     expect(out).not.toContain("safehouse safehouse");
+    // A bring-your-own-safehouse cmd owns its sandbox flags; groundcrew must
+    // not splice its own --enable into a command it does not control.
+    expect(out).not.toContain("--enable=all-agents");
   });
 
   it("substitutes {{worktree}} and {{sandbox}} in the agent command", () => {
@@ -183,6 +201,7 @@ describe(buildLaunchCommand, () => {
       const out = buildLaunchCommand(arguments_({ runner: "none" }));
 
       expect(out).not.toContain("safehouse-clearance");
+      expect(out).not.toContain("--enable=all-agents");
       expect(out).toMatch(/exec claude "\$_p"$/);
     });
 
@@ -227,6 +246,9 @@ describe(buildLaunchCommand, () => {
       );
       expect(out).toContain("exec claude");
       expect(out).toMatch(/sh "\$_p"$/);
+      // sdx routes through `sbx exec`, not Safehouse, so the Safehouse-only
+      // profile-selection flag must not leak onto this path.
+      expect(out).not.toContain("--enable=all-agents");
     });
 
     it("uses the per-model sandbox setupCommand override when configured", () => {

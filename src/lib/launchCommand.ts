@@ -195,7 +195,16 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
   lines.push(
     `_p=$(cat ${shellSingleQuote(arguments_.promptFile)})`,
     `rm -rf ${shellSingleQuote(promptDir)}`,
-    `exec ${shellSingleQuote(SAFEHOUSE_CLEARANCE_WRAPPER_PATH)} ${envPassFlag}sh -lc ${shellSingleQuote(innerCommand)} sh "$_p"`,
+    // `--enable=all-agents`: Safehouse picks the agent sandbox profile
+    // (e.g. claude-code.sb, which grants ~/.claude, ~/.claude.json, keychain,
+    // electron, and puts the agent's install dir on PATH) by matching the
+    // *wrapped command's basename* against each profile's command alias. We
+    // wrap the agent in `sh -lc`, so the basename Safehouse sees is `sh` — the
+    // agent profile never matches, the agent is silently denied its grants
+    // (and its binary is left off PATH), and an interactive agent hangs at
+    // startup. Forcing all agent profiles on restores them regardless of the
+    // command token. (Safehouse has no per-agent --enable token today.)
+    `exec ${shellSingleQuote(SAFEHOUSE_CLEARANCE_WRAPPER_PATH)} --enable=all-agents ${envPassFlag}sh -lc ${shellSingleQuote(innerCommand)} sh "$_p"`,
   );
   return lines.join(" && ");
 }
