@@ -75,17 +75,20 @@ describe(buildLaunchCommand, () => {
   it("runs setup under plain Safehouse, then runs only the agent through the profile shim", () => {
     const out = buildLaunchCommand(arguments_());
 
-    const setupWrapIndex = out.indexOf("safehouse-clearance' sh -lc");
+    const setupWrapIndex = out.indexOf("safehouse-clearance' sh -c");
     const setupIndex = out.indexOf(SETUP_COMMAND);
     const shimIndex = out.indexOf("_safehouse_shim_dir=$(mktemp");
-    const agentWrapIndex = out.indexOf('"$_safehouse_shim" -lc');
+    const agentWrapIndex = out.indexOf('"$_safehouse_shim" -c');
     const agentIndex = out.indexOf(`exec claude "$@"`);
 
     expect(out).toContain("cd '/work/repo-a-team-1'");
     expect(out).toContain("_p=$(cat '/tmp/prompt-team-1/prompt.txt')");
     expect(out).toContain("rm -rf '/tmp/prompt-team-1'");
     expect(out).toContain(
-      '/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance\' "$_safehouse_shim" -lc',
+      "/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance' sh -c",
+    );
+    expect(out).toContain(
+      '/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance\' "$_safehouse_shim" -c',
     );
     expect(out).not.toContain("--enable=all-agents");
     expect(out).toContain(SETUP_COMMAND);
@@ -107,7 +110,7 @@ describe(buildLaunchCommand, () => {
     expect(out).toContain("trap 'rm -rf \"$_safehouse_shim_dir\"' EXIT");
     expect(out).toContain('_safehouse_shim="$_safehouse_shim_dir/claude"');
     expect(out).toContain('ln -s /bin/sh "$_safehouse_shim"');
-    expect(out).toContain('"$_safehouse_shim" -lc');
+    expect(out).toContain('"$_safehouse_shim" -c');
     expect(out).not.toContain("--enable=all-agents");
   });
 
@@ -230,7 +233,7 @@ describe(buildLaunchCommand, () => {
       }),
     );
 
-    // The agent command is single-quoted for the wrap's `sh -lc`, so embedded
+    // The agent command is single-quoted for the wrap's `sh -c`, so embedded
     // worktree quotes are escaped via the `'\''` close-escape-reopen dance.
     expect(out).toContain(String.raw`--worktree '\''/work/repo-a-team-1'\''`);
     // `{{sandbox}}` is a legacy placeholder; local runs no longer have one.
@@ -273,11 +276,11 @@ describe(buildLaunchCommand, () => {
 
       const sourceIndex = out.indexOf(". '/tmp/prompt-team-1/secrets.env'");
       const setupWrapIndex = out.indexOf(
-        "safehouse-clearance' --env-pass=NPM_TOKEN,BUF_TOKEN sh -lc",
+        "safehouse-clearance' --env-pass=NPM_TOKEN,BUF_TOKEN sh -c",
       );
       const setupIndex = out.indexOf("setup_status=$?");
       const unsetIndex = out.indexOf("unset NPM_TOKEN BUF_TOKEN");
-      const agentWrapIndex = out.indexOf('"$_safehouse_shim" -lc');
+      const agentWrapIndex = out.indexOf('"$_safehouse_shim" -c');
       const agentIndex = out.indexOf(`exec claude "$@"`);
 
       // Secrets are sourced into the host shell before the wrap so Safehouse can
@@ -300,7 +303,7 @@ describe(buildLaunchCommand, () => {
       const out = buildLaunchCommand(arguments_({ secretsFile: "/tmp/prompt-team-1/secrets.env" }));
 
       const unsetIndex = out.indexOf("unset NPM_TOKEN BUF_TOKEN");
-      const agentWrapIndex = out.indexOf('"$_safehouse_shim" -lc');
+      const agentWrapIndex = out.indexOf('"$_safehouse_shim" -c');
       expect(unsetIndex).toBeGreaterThan(-1);
       expect(agentWrapIndex).toBeGreaterThan(unsetIndex);
       expect(out).toContain('sh "$_p"; _safehouse_status=$?');
@@ -349,12 +352,10 @@ describe(buildLaunchCommand, () => {
       });
     }
 
-    it("wraps the agent in `sbx exec -it -w <worktree> <sandbox> sh -lc <setup; exec agent>`", () => {
+    it("wraps the agent in `sbx exec -it -w <worktree> <sandbox> sh -c <setup; exec agent>`", () => {
       const out = buildLaunchCommand(sdxArguments());
 
-      expect(out).toContain(
-        "exec sbx exec -it -w '/work/repo-a-team-1' 'groundcrew-claude' sh -lc",
-      );
+      expect(out).toContain("exec sbx exec -it -w '/work/repo-a-team-1' 'groundcrew-claude' sh -c");
       expect(out).toContain("exec claude");
       expect(out).toMatch(/sh "\$_p"$/);
       // sdx routes through `sbx exec`, not Safehouse, so the Safehouse-only
@@ -395,7 +396,7 @@ describe(buildLaunchCommand, () => {
         }),
       );
 
-      // The inner agent command is single-quoted for `sh -lc`, so embedded
+      // The inner agent command is single-quoted for `sh -c`, so embedded
       // sandbox / worktree quotes are escaped via the `'\''` close-escape-reopen
       // dance — `groundcrew-claude` still lands as `--sandbox`'s value.
       expect(out).toContain(String.raw`--sandbox '\''groundcrew-claude'\''`);

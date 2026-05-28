@@ -251,7 +251,7 @@ function buildUnwrappedHostLaunchCommand(arguments_: LaunchCommandArguments): st
  * strips them); they're `unset` on the host after setup and not passed to the
  * agent wrap. The host keeps `cd`, the prompt read, and a temporary
  * command-named shim so Safehouse can select the intended agent profile while
- * the actual agent command remains `sh -lc`.
+ * the actual agent command remains `sh -c`.
  */
 function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string {
   const promptDir = dirname(arguments_.promptFile);
@@ -277,7 +277,7 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
   lines.push(
     `_p=$(cat ${shellSingleQuote(arguments_.promptFile)})`,
     `rm -rf ${shellSingleQuote(promptDir)}`,
-    `${safehouseWrapper} ${envPassFlag}sh -lc ${shellSingleQuote(setupCommand)}`,
+    `${safehouseWrapper} ${envPassFlag}sh -c ${shellSingleQuote(setupCommand)}`,
   );
   if (arguments_.secretsFile !== undefined) {
     lines.push(unsetSecretsLine());
@@ -288,10 +288,10 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
     `_safehouse_shim="$_safehouse_shim_dir/${safehouseCommandName}"`,
     `ln -s /bin/sh "$_safehouse_shim"`,
     // Safehouse selects an agent profile from the wrapped command's basename.
-    // Running the real launch chain as `sh -lc` would make it see `sh`, so use
+    // Running the real launch chain as `sh -c` would make it see `sh`, so use
     // an agent-named symlink to /bin/sh. This preserves per-agent profile
     // selection without enabling every agent profile.
-    `${safehouseWrapper} "$_safehouse_shim" -lc ${shellSingleQuote(agentCommand)} sh "$_p"; _safehouse_status=$?; rm -rf "$_safehouse_shim_dir"; trap - EXIT; exit "$_safehouse_status"`,
+    `${safehouseWrapper} "$_safehouse_shim" -c ${shellSingleQuote(agentCommand)} sh "$_p"; _safehouse_status=$?; rm -rf "$_safehouse_shim_dir"; trap - EXIT; exit "$_safehouse_status"`,
   );
   return lines.join(" && ");
 }
@@ -331,7 +331,7 @@ function buildSdxLaunchCommand(arguments_: LaunchCommandArguments): string {
   lines.push(
     `_p=$(cat ${shellSingleQuote(arguments_.promptFile)})`,
     `rm -rf ${shellSingleQuote(promptDir)}`,
-    `exec sbx exec -it ${sbxEnvironmentFlags}-w ${shellSingleQuote(arguments_.worktreeDir)} ${shellSingleQuote(arguments_.sandboxName)} sh -lc ${shellSingleQuote(innerCommand)} sh "$_p"`,
+    `exec sbx exec -it ${sbxEnvironmentFlags}-w ${shellSingleQuote(arguments_.worktreeDir)} ${shellSingleQuote(arguments_.sandboxName)} sh -c ${shellSingleQuote(innerCommand)} sh "$_p"`,
   );
   return lines.join(" && ");
 }
