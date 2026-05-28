@@ -95,6 +95,7 @@ function commonBeforeEach(): void {
 }
 
 function commonAfterEach(): void {
+  deleteEnvironmentVariable("GROUNDCREW_KEEP_DEAD_WINDOWS");
   vi.resetAllMocks();
 }
 
@@ -669,6 +670,17 @@ describe("workspaces.probe (tmux)", () => {
       "-F",
       "#{window_name}\t#{pane_dead}",
     ]);
+  });
+
+  it("includes exited tmux windows when GROUNDCREW_KEEP_DEAD_WINDOWS is set", async () => {
+    setEnvironmentVariable("GROUNDCREW_KEEP_DEAD_WINDOWS", "1");
+    runMock.mockReturnValue("_groundcrew_idle\t0\nTEAM-1\t0\nTEAM-2\t1\nTEAM-3\t0\n");
+
+    await expect(workspaces.probe(makeConfig("tmux"))).resolves.toStrictEqual({
+      kind: "ok",
+      names: new Set(["TEAM-1", "TEAM-2", "TEAM-3"]),
+      exitedNames: new Set(["TEAM-2"]),
+    });
   });
 
   it("returns kind=ok with empty names when the groundcrew session does not exist", async () => {

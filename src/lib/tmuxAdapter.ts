@@ -26,8 +26,7 @@ export const tmuxAdapter: Adapter = {
   async open(spec, signal) {
     await ensureTmuxSession(signal);
     const target = tmuxTarget(spec.name);
-    const keepDeadWindowsEnv = readEnvironmentVariable("GROUNDCREW_KEEP_DEAD_WINDOWS");
-    const keepDeadWindows = keepDeadWindowsEnv !== undefined && keepDeadWindowsEnv.length > 0;
+    const keepDeadWindows = shouldKeepDeadWindows();
     await runWorkspaceCommand(
       "tmux",
       [
@@ -67,7 +66,7 @@ export const tmuxAdapter: Adapter = {
       // oxlint-disable-next-line unicorn/no-useless-undefined -- undefined marks the workspace backend as unavailable.
       return undefined;
     }
-    return parseTmuxWindows(probe.output);
+    return parseTmuxWindows(probe.output, { includeExited: shouldKeepDeadWindows() });
   },
   async close(name, signal) {
     try {
@@ -90,6 +89,11 @@ export const tmuxAdapter: Adapter = {
 
 function tmuxTarget(name: string): string {
   return `${TMUX_SESSION}:${name}`;
+}
+
+function shouldKeepDeadWindows(): boolean {
+  const keepDeadWindowsEnv = readEnvironmentVariable("GROUNDCREW_KEEP_DEAD_WINDOWS");
+  return keepDeadWindowsEnv !== undefined && keepDeadWindowsEnv.length > 0;
 }
 
 function isTmuxNotFoundError(error: unknown): boolean {
@@ -158,7 +162,7 @@ async function ensureTmuxSession(signal?: AbortSignal): Promise<void> {
   }
 }
 
-function parseTmuxWindows(output: string): Workspace[] {
+function parseTmuxWindows(output: string, options: { includeExited?: boolean } = {}): Workspace[] {
   const items: Workspace[] = [];
   for (const line of output.split("\n")) {
     if (line.length === 0) {
@@ -175,10 +179,11 @@ function parseTmuxWindows(output: string): Workspace[] {
     // pane_dead != 0 means the command exited and the window is a zombie
     // (only happens when remain-on-exit is on; defense in depth in case a
     // user-globally-set value beats our per-window override).
-    if (deadFlag !== undefined && deadFlag !== "0") {
+    const isExited = deadFlag !== undefined && deadFlag !== "0";
+    if (isExited && options.includeExited !== true) {
       continue;
     }
-    items.push({ name });
+    items.push(isExited ? { name, state: "exited" } : { name });
   }
   return items;
 }

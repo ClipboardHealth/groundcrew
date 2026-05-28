@@ -126,7 +126,9 @@ async function probeWorkspaces(
   if (raw === undefined) {
     return { kind: "unavailable" };
   }
-  return { kind: "ok", names: new Set(raw.map((ws) => ws.name)) };
+  const names = new Set(raw.map((ws) => ws.name));
+  const exitedNames = new Set(raw.filter((ws) => ws.state === "exited").map((ws) => ws.name));
+  return exitedNames.size === 0 ? { kind: "ok", names } : { kind: "ok", names, exitedNames };
 }
 
 async function accessHintForWorkspace(

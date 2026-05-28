@@ -460,7 +460,7 @@ If a `models.definitions.<name>.cmd` already starts with `safehouse`, groundcrew
 <details>
 <summary>Dead tmux windows vanish by default</summary>
 
-When a wrapped agent command fails (e.g. `safehouse-clearance` not found, `npm install` crash), the tmux window closes immediately and the error scrolls into the void. Set `GROUNDCREW_KEEP_DEAD_WINDOWS=1` in the env you launch `crew` from to flip the per-window `remain-on-exit` to `on`; the window stays open with the error visible. Close it manually with `tmux kill-window -t groundcrew:<ticket>` after diagnosis. tmux backend only.
+When a wrapped agent command fails (e.g. `safehouse-clearance` not found, `npm install` crash), the tmux window closes immediately and the error scrolls into the void. Set `GROUNDCREW_KEEP_DEAD_WINDOWS=1` in the env you launch `crew` from to flip the per-window `remain-on-exit` to `on`; the window stays open with the error visible. `crew status` reports those kept windows as `exited` and keeps the tmux attach command visible so you can inspect scrollback before resuming or cleaning up. tmux backend only.
 
 </details>
 

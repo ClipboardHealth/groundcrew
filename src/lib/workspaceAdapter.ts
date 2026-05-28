@@ -14,6 +14,8 @@ export type WorkspaceKind = "cmux" | "tmux";
 export interface Workspace {
   /** Ticket id; the join key callers use. */
   name: string;
+  /** Omitted means live, for backends that do not expose an exited state. */
+  state?: "exited";
 }
 
 export interface WorkspaceStatus {
@@ -43,7 +45,7 @@ export interface OpenSpec {
  * would close every live workspace by deduction.
  */
 export type WorkspaceProbe =
-  | { kind: "ok"; names: Set<string> }
+  | { kind: "ok"; names: Set<string>; exitedNames?: Set<string> }
   | { kind: "unavailable"; error?: unknown };
 
 export type WorkspaceInterruptResult =
@@ -59,7 +61,7 @@ export type WorkspaceCloseResult =
 export interface Adapter {
   open(spec: OpenSpec, signal?: AbortSignal): Promise<void>;
   /**
-   * Live workspaces only. Returns:
+   * Known workspaces. Returns:
    * - `Workspace[]` when the adapter probe succeeded (may be empty).
    * - `undefined` when the adapter binary failed in a way that doesn't
    *   distinguish "no live workspaces" from "couldn't ask".
