@@ -501,21 +501,74 @@ describe(buildLaunchCommand, () => {
       const sourceIndex = out.indexOf(". '/tmp/prompt-team-1/secrets.env'");
       const readPromptIndex = out.indexOf("_p=$(cat '/tmp/prompt-team-1/prompt.txt')");
       const setupWrapIndex = out.indexOf("safehouse-clearance");
-      const unsetIndex = out.indexOf("unset NPM_TOKEN BUF_TOKEN");
+      // Two `unset NPM_TOKEN BUF_TOKEN` occurrences now: the first scrubs the
+      // inherited env before preLaunch, the last clears the file-sourced
+      // values between the setup and agent wraps.
+      const scrubUnsetIndex = out.indexOf("unset NPM_TOKEN BUF_TOKEN");
+      const betweenWrapsUnsetIndex = out.lastIndexOf("unset NPM_TOKEN BUF_TOKEN");
       const agentWrapIndex = out.indexOf('"$_safehouse_shim" -c');
-      // trap → cd → preLaunch → source secrets.env → read prompt → setup wrap
-      //   → host-side unset → agent wrap. preLaunch precedes the source so it
-      // never sees build secrets in env; unset lives on the host between the
-      // two wraps so build secrets cannot reach the agent wrap (#128).
+      // trap → cd → unset (scrub inherited) → preLaunch → source secrets.env →
+      //   read prompt → setup wrap → host-side unset → agent wrap. The scrub
+      // runs before preLaunch so it sees neither inherited nor sourced build
+      // secrets; the between-wraps unset keeps them off the agent wrap (#128).
       expect(cdIndex).toBeGreaterThan(-1);
-      expect(preLaunchIndex).toBeGreaterThan(cdIndex);
+      expect(scrubUnsetIndex).toBeGreaterThan(cdIndex);
+      expect(preLaunchIndex).toBeGreaterThan(scrubUnsetIndex);
       expect(sourceIndex).toBeGreaterThan(preLaunchIndex);
       expect(readPromptIndex).toBeGreaterThan(sourceIndex);
       expect(setupWrapIndex).toBeGreaterThan(readPromptIndex);
-      expect(unsetIndex).toBeGreaterThan(setupWrapIndex);
-      expect(agentWrapIndex).toBeGreaterThan(unsetIndex);
-      // preLaunch runs strictly before any build secrets touch env.
-      expect(out.slice(0, preLaunchIndex)).not.toContain("NPM_TOKEN");
+      expect(betweenWrapsUnsetIndex).toBeGreaterThan(setupWrapIndex);
+      expect(agentWrapIndex).toBeGreaterThan(betweenWrapsUnsetIndex);
+      // No build-secret *values* are sourced into env before preLaunch runs.
+      expect(out.slice(0, preLaunchIndex)).not.toContain(". '/tmp/prompt-team-1/secrets.env'");
+    });
+
+    it("scrubs build secrets inherited from the launching env so preLaunch cannot read NPM_TOKEN / BUF_TOKEN (safehouse)", () => {
+      // stageBuildSecrets copies build secrets out of groundcrew's own
+      // process env, which the launch shell inherits. Sourcing secrets.env
+      // after preLaunch is not enough on its own — the inherited values are
+      // already in env. Simulate that here by seeding NPM_TOKEN / BUF_TOKEN in
+      // the spawn env. preLaunch always aborts before the real wrapper and
+      // encodes leak (11) vs clean (22) in its exit code.
+      const promptDir = mkdtempSync(join(tmpdir(), "groundcrew-inherit-"));
+      const promptFile = join(promptDir, "prompt.txt");
+      const secretsFile = join(promptDir, "secrets.env");
+      const worktreeDir = mkdtempSync(join(tmpdir(), "groundcrew-inherit-wt-"));
+      try {
+        writeFileSync(promptFile, "the prompt body\n");
+        writeFileSync(secretsFile, "NPM_TOKEN='from-file'\nBUF_TOKEN='from-file'\n");
+
+        const out = buildLaunchCommand(
+          arguments_({
+            runner: "safehouse",
+            promptFile,
+            worktreeDir,
+            secretsFile,
+            definition: {
+              cmd: "echo never-reached",
+              color: "#fff",
+              // Aborts before the real wrapper (and any external command), so
+              // only shell builtins run: leak -> exit 11, clean -> exit 22.
+              preLaunch: 'if [ -n "$NPM_TOKEN" ] || [ -n "$BUF_TOKEN" ]; then exit 11; fi; exit 22',
+            },
+          }),
+        );
+
+        const result = spawnSync("sh", ["-c", out], {
+          // Seed the build secrets in the spawn env to simulate the launch
+          // shell inheriting them from groundcrew. A fixed PATH avoids
+          // depending on the parent env (and the lint ban on `process.env`).
+          env: {
+            PATH: "/usr/bin:/bin",
+            NPM_TOKEN: "inherited-secret",
+            BUF_TOKEN: "inherited-secret",
+          },
+        });
+        expect(result.status).toBe(22);
+      } finally {
+        rmSync(promptDir, { recursive: true, force: true });
+        rmSync(worktreeDir, { recursive: true, force: true });
+      }
     });
 
     it("runs preLaunch without double-wrapping when cmd already starts with safehouse", () => {

@@ -330,12 +330,15 @@ function buildUnwrappedHostLaunchCommand(arguments_: LaunchCommandArguments): st
  *      from the wrapped command's basename (`claude-code.sb` etc.) without
  *      needing every agent profile enabled globally.
  *
- * Host ordering matters: `preLaunch` runs *before* `secrets.env` is sourced so
- * the credential-minting snippet never sees build-time secrets in env. Build
- * secrets are then sourced into the host launch shell so Safehouse can forward
- * them into the **setup wrap** via `--env-pass=` (Safehouse's `--env=FILE` mode
+ * Host ordering matters: when a `preLaunch` hook is present and build secrets
+ * are staged, `BUILD_SECRET_NAMES` are `unset` *before* `preLaunch` runs so the
+ * credential-minting snippet never sees build-time secrets in env — neither the
+ * inherited values (the launch shell inherits groundcrew's env, from which
+ * `stageBuildSecrets` reads them) nor the file-sourced ones. `secrets.env` is
+ * then sourced into the host launch shell so Safehouse can forward the values
+ * into the **setup wrap** via `--env-pass=` (Safehouse's `--env=FILE` mode
  * strips them otherwise). After setup returns, `BUILD_SECRET_NAMES` are `unset`
- * on the host so they cannot reach the agent wrap.
+ * again on the host so they cannot reach the agent wrap.
  *
  * `--env-pass` composition is split per wrap (deliberate, post PR #128):
  * - Setup wrap forwards build secrets only.
@@ -375,6 +378,17 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
   const shimAndPromptTrap = `trap ${shellSingleQuote(shimAndPromptCleanup)} EXIT`;
 
   const lines = hostTrapAndCd({ worktreeDir: arguments_.worktreeDir, promptDir });
+  // Scrub build secrets inherited from groundcrew's own process env before
+  // preLaunch runs. `stageBuildSecrets` copies NPM_TOKEN / BUF_TOKEN out of
+  // `process.env`, and the launch shell inherits that env, so sourcing
+  // `secrets.env` *after* preLaunch is not enough on its own — the inherited
+  // values are already present. The `unset` here clears them; `secrets.env`
+  // is re-sourced below to forward them into the setup wrap. Only emitted
+  // when a preLaunch hook exists to observe them (the agent never sees build
+  // secrets either way — they are unset again before the agent wrap).
+  if (arguments_.secretsFile !== undefined && arguments_.definition.preLaunch !== undefined) {
+    lines.push(unsetSecretsLine());
+  }
   if (arguments_.definition.preLaunch !== undefined) {
     lines.push(renderPreLaunch(arguments_.definition.preLaunch, arguments_.worktreeDir));
   }
