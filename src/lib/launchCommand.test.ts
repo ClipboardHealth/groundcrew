@@ -446,7 +446,7 @@ describe(buildLaunchCommand, () => {
   describe("preLaunch", () => {
     const baseline = buildLaunchCommand(arguments_());
 
-    it("omits preLaunch when undefined (byte-identical to baseline)", () => {
+    it("is deterministic when preLaunch is undefined (same launch string across calls)", () => {
       const out = buildLaunchCommand(arguments_());
 
       expect(out).toBe(baseline);
