@@ -658,6 +658,27 @@ describe(buildLaunchCommand, () => {
       ).toThrow(/preLaunchEnv is not yet supported for runner='sdx'/);
     });
 
+    it("treats preLaunchEnv: [] as a no-op under sdx (no throw, no --env-pass)", () => {
+      // Empty list forwards zero names → unsupported-runner guard must not
+      // fire. Locks the "empty is a uniform no-op in every runner" contract
+      // at the launch-command boundary as well as the prepare boundary.
+      const out = buildLaunchCommand(
+        arguments_({
+          runner: "sdx",
+          sandboxName: "groundcrew-repo-a-claude",
+          definition: {
+            cmd: "claude",
+            color: "#fff",
+            sandbox: { agent: "claude" },
+            preLaunchEnv: [],
+          },
+        }),
+      );
+
+      expect(out).toContain("exec sbx exec -it");
+      expect(out).not.toContain("--env-pass");
+    });
+
     it("throws when preLaunchEnv is set with a cmd that already starts with safehouse", () => {
       expect(() =>
         buildLaunchCommand(
@@ -670,6 +691,25 @@ describe(buildLaunchCommand, () => {
           }),
         ),
       ).toThrow(/preLaunchEnv cannot be injected when `cmd` starts with `safehouse`/);
+    });
+
+    it("treats preLaunchEnv: [] as a no-op when cmd already starts with safehouse", () => {
+      // Same contract on the safehouse-prefixed-cmd path: an empty list has
+      // nothing to inject, so the user-owns-the-wrap guard must not fire,
+      // and groundcrew must not splice a second --env-pass onto a wrap it
+      // does not own.
+      const out = buildLaunchCommand(
+        arguments_({
+          definition: {
+            cmd: "safehouse my-agent",
+            color: "#fff",
+            preLaunchEnv: [],
+          },
+        }),
+      );
+
+      expect(out).toMatch(/exec safehouse my-agent "\$_p"$/);
+      expect(out).not.toContain("--env-pass");
     });
 
     it("does not throw on runner='none' with preLaunchEnv (exports already inherit)", () => {

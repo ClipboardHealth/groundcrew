@@ -1,6 +1,11 @@
 import { ensureClearance } from "@clipboard-health/clearance";
 
-import type { LocalRunner, ModelDefinition, ResolvedConfig } from "./config.ts";
+import {
+  hasPreLaunchEnv,
+  type LocalRunner,
+  type ModelDefinition,
+  type ResolvedConfig,
+} from "./config.ts";
 import { detectHostCapabilities } from "./host.ts";
 import { assertLocalRunnerRequirements, resolveLocalRunner } from "./localRunner.ts";
 import { sandboxNameFor } from "./sandboxName.ts";
@@ -47,11 +52,7 @@ export async function prepareAgentLaunch(input: {
         "Use local.runner 'safehouse' or 'none', or remove preLaunch from the model.",
     );
   }
-  if (
-    runner === "sdx" &&
-    input.definition.preLaunchEnv !== undefined &&
-    input.definition.preLaunchEnv.length > 0
-  ) {
+  if (runner === "sdx" && hasPreLaunchEnv(input.definition)) {
     throw new Error(
       `Local groundcrew ${input.purpose} with the sdx runner do not support preLaunchEnv on model '${input.model}'. ` +
         "Use local.runner 'safehouse' or 'none', or remove preLaunchEnv from the model.",
@@ -62,8 +63,7 @@ export async function prepareAgentLaunch(input: {
   // the launch shell. The buildLaunchCommand check stays as defense in depth.
   if (
     runner === "safehouse" &&
-    input.definition.preLaunchEnv !== undefined &&
-    input.definition.preLaunchEnv.length > 0 &&
+    hasPreLaunchEnv(input.definition) &&
     /^safehouse(\s|$)/.test(input.definition.cmd)
   ) {
     throw new Error(

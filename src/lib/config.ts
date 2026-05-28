@@ -110,8 +110,10 @@ export interface ModelDefinition {
    * the `safehouse-clearance` wrap's `--env-pass=` flag, preserving the
    * project's egress allowlist (`clearance-allow-hosts`) without forcing
    * the user to rewrite `cmd`. Under `local.runner: "none"` exports flow
-   * through unchanged, so `preLaunchEnv` is a no-op. Not supported for
-   * `local.runner` `sdx` in v1. Rejected at launch when `cmd` already
+   * through unchanged, so `preLaunchEnv` is a no-op. An empty array is a
+   * uniform no-op in every runner (it forwards zero names, so the
+   * unsupported-runner guards do not fire). A non-empty list is rejected
+   * when `local.runner` resolves to `sdx` in v1, and when `cmd` already
    * starts with `safehouse` (the user owns env forwarding in that case).
    * Each name must match `[A-Za-z_][A-Za-z0-9_]*` (POSIX env var name).
    */
@@ -414,6 +416,20 @@ function validatePreLaunchEnv(modelName: string, value: unknown): asserts value 
       );
     }
   }
+}
+
+/**
+ * Single source of truth for "is preLaunchEnv asking us to forward anything?"
+ *
+ * An empty array forwards zero names, so it is a uniform no-op in every
+ * runner. The unsupported-runner guards (sdx, safehouse-prefixed cmd) only
+ * fire when there is actually something to forward — rejecting `[]` only on
+ * those runners would make an empty list accepted under `safehouse`/`none`
+ * but fatal elsewhere, which is a worse asymmetry than what the helper
+ * collapses. Centralized so all four call sites stay in lockstep.
+ */
+export function hasPreLaunchEnv(definition: Pick<ModelDefinition, "preLaunchEnv">): boolean {
+  return definition.preLaunchEnv !== undefined && definition.preLaunchEnv.length > 0;
 }
 
 function isWorkspaceKindSetting(value: unknown): value is WorkspaceKindSetting {

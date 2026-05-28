@@ -1,7 +1,12 @@
 import { createRequire } from "node:module";
 import { basename, dirname, resolve } from "node:path";
 
-import { BUILD_SECRET_NAMES, type LocalRunner, type ModelDefinition } from "./config.ts";
+import {
+  BUILD_SECRET_NAMES,
+  hasPreLaunchEnv,
+  type LocalRunner,
+  type ModelDefinition,
+} from "./config.ts";
 import { shellSingleQuote } from "./shell.ts";
 
 export { shellSingleQuote } from "./shell.ts";
@@ -246,10 +251,7 @@ export function buildLaunchCommand(arguments_: LaunchCommandArguments): string {
         "preLaunch is not yet supported for runner='sdx'. Set local.runner to 'safehouse' or 'none', or open an issue for sdx support.",
       );
     }
-    if (
-      arguments_.definition.preLaunchEnv !== undefined &&
-      arguments_.definition.preLaunchEnv.length > 0
-    ) {
+    if (hasPreLaunchEnv(arguments_.definition)) {
       throw new Error(
         "preLaunchEnv is not yet supported for runner='sdx'. Set local.runner to 'safehouse' or 'none', or open an issue for sdx support.",
       );
@@ -259,11 +261,7 @@ export function buildLaunchCommand(arguments_: LaunchCommandArguments): string {
   if (shouldWrapWithSafehouse(arguments_)) {
     return buildSafehouseLaunchCommand(arguments_);
   }
-  if (
-    arguments_.definition.preLaunchEnv !== undefined &&
-    arguments_.definition.preLaunchEnv.length > 0 &&
-    arguments_.runner === "safehouse"
-  ) {
+  if (hasPreLaunchEnv(arguments_.definition) && arguments_.runner === "safehouse") {
     // `runner === "safehouse"` but `cmd` already starts with `safehouse` — the
     // user owns env forwarding in that case, so there's no wrap flag for us to
     // inject into. Fail loudly instead of silently dropping the contract.

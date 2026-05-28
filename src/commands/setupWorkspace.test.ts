@@ -987,6 +987,34 @@ describe(setupWorkspace, () => {
     expect(ensureClearanceMock).not.toHaveBeenCalled();
   });
 
+  it("treats preLaunchEnv: [] as a no-op under sdx and proceeds with the normal launch", async () => {
+    // An empty list forwards zero names, so the unsupported-runner guard
+    // should not fire — locks the "empty is a uniform no-op in every runner"
+    // contract so it can't regress per-site.
+    detectHostMock.mockResolvedValue(sdxHost());
+    const config = makeConfig({
+      definitions: {
+        claude: {
+          cmd: "claude --auto",
+          color: "#fff",
+          sandbox: { agent: "claude" },
+          preLaunchEnv: [],
+        },
+        codex: { cmd: "codex", color: "#000" },
+      },
+    });
+
+    await setupWorkspace(config, {
+      ticket: "team-1",
+      repository: "repo-a",
+      model: "claude",
+      details: { title: "Test Title", description: "Body" },
+    });
+
+    expect(ensureClearanceMock).not.toHaveBeenCalled();
+    expect(writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh")).toContain("exec sbx exec -it");
+  });
+
   it("fails before creating a worktree when safehouse cmd uses preLaunchEnv with a safehouse-prefixed cmd", async () => {
     // safehouse-prefixed cmd owns its own --env-pass flag, so groundcrew can't
     // splice preLaunchEnv into a wrap it does not control. Fail at prepare-
