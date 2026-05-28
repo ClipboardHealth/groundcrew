@@ -10,7 +10,7 @@ import type { Issue as SourceIssue, TicketSource } from "../lib/ticketSource.ts"
 import { type WorkspaceProbe, workspaces } from "../lib/workspaces.ts";
 import { type WorktreeDirtiness, type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCapture.ts";
-import { status, statusCli } from "./status.ts";
+import { parseArguments, status, statusCli } from "./status.ts";
 
 vi.mock(import("../lib/config.ts"), async (importOriginal) => {
   const actual = await importOriginal();
@@ -265,6 +265,16 @@ describe(status, () => {
       "ticket: team-1  in-progress  https://linear.app/example/issue/TEAM-1",
     );
     expect(output).toContain("title: Fix status");
+  });
+
+  it("normalizes an uppercase ticket before looking up worktrees", async () => {
+    workspaceProbeMock.mockResolvedValue({ kind: "unavailable" });
+
+    await status(makeConfig(), { ticket: "TEAM-1" });
+
+    expect(findByTicketMock.mock.calls[0]?.[1]).toBe("team-1");
+    expect(consoleLog.output()).toContain("groundcrew status TEAM-1");
+    expect(consoleLog.output()).toContain("workspace: Workspace probe unavailable");
   });
 
   it("prints the agent log path when a captured log exists", async () => {
@@ -945,6 +955,22 @@ describe(status, () => {
   });
 });
 
+describe(parseArguments, () => {
+  it("lowercases a positional ticket argument", () => {
+    expect(parseArguments(["TEAM-1"])).toStrictEqual({ ticket: "team-1" });
+  });
+
+  it("returns no ticket when argv is empty", () => {
+    expect(parseArguments([])).toStrictEqual({});
+  });
+
+  it("rejects flags, empty tickets, and extra positionals", () => {
+    expect(() => parseArguments(["--ticket"])).toThrow(/Usage: crew status/);
+    expect(() => parseArguments([""])).toThrow(/Usage: crew status/);
+    expect(() => parseArguments(["team-1", "extra"])).toThrow(/Usage: crew status/);
+  });
+});
+
 describe(statusCli, () => {
   let consoleLog: ConsoleCapture;
 
@@ -963,13 +989,6 @@ describe(statusCli, () => {
   afterEach(() => {
     consoleLog.restore();
     vi.resetAllMocks();
-  });
-
-  it("loads config and normalizes a ticket argument", async () => {
-    await statusCli(["TEAM-1"]);
-
-    expect(findByTicketMock.mock.calls[0]?.[1]).toBe("team-1");
-    expect(consoleLog.output()).toContain("groundcrew status TEAM-1");
   });
 
   it("loads config and prints inventory with no ticket argument", async () => {

@@ -30,7 +30,7 @@ function ticketLinePattern(ticket: string): RegExp {
   return new RegExp(`(^|[^a-z0-9])${escapeRegExp(ticket)}([^a-z0-9]|$)`, "i");
 }
 
-function parseArguments(argv: string[]): StatusOptions {
+export function parseArguments(argv: string[]): StatusOptions {
   const [ticket, ...extras] = argv;
   if (extras.length > 0 || ticket?.length === 0 || ticket?.startsWith("-") === true) {
     throw new Error("Usage: crew status [<ticket>]");
