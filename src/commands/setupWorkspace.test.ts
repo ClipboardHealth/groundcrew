@@ -987,6 +987,35 @@ describe(setupWorkspace, () => {
     expect(ensureClearanceMock).not.toHaveBeenCalled();
   });
 
+  it("fails before creating a worktree when safehouse cmd uses preLaunchEnv with a safehouse-prefixed cmd", async () => {
+    // safehouse-prefixed cmd owns its own --env-pass flag, so groundcrew can't
+    // splice preLaunchEnv into a wrap it does not control. Fail at prepare-
+    // launch time so the operator sees it before the workspace is created
+    // (mirror of the duplicate defense in buildLaunchCommand).
+    detectHostMock.mockResolvedValue(host({ hasSafehouse: true, isMacOS: true }));
+    const config = makeConfig({
+      definitions: {
+        claude: {
+          cmd: "safehouse --env-pass=OTHER claude --auto",
+          color: "#fff",
+          preLaunchEnv: ["SESSION_TOKEN"],
+        },
+        codex: { cmd: "codex", color: "#000" },
+      },
+    });
+
+    await expect(
+      setupWorkspace(config, {
+        ticket: "team-1",
+        repository: "repo-a",
+        model: "claude",
+        details: { title: "Test Title", description: "Body" },
+      }),
+    ).rejects.toThrow(/cannot inject preLaunchEnv when 'cmd' already starts with 'safehouse'/);
+
+    expect(createMock).not.toHaveBeenCalled();
+  });
+
   it("fails before creating a worktree when safehouse is missing on macOS", async () => {
     detectHostMock.mockResolvedValue(host({ hasSafehouse: false }));
     const config = makeConfig();

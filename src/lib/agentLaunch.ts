@@ -57,6 +57,20 @@ export async function prepareAgentLaunch(input: {
         "Use local.runner 'safehouse' or 'none', or remove preLaunchEnv from the model.",
     );
   }
+  // Mirror of buildLaunchCommand's defense — fail at config-resolution time so
+  // the operator sees the problem before the workspace is spawned, not deep in
+  // the launch shell. The buildLaunchCommand check stays as defense in depth.
+  if (
+    runner === "safehouse" &&
+    input.definition.preLaunchEnv !== undefined &&
+    input.definition.preLaunchEnv.length > 0 &&
+    /^safehouse(\s|$)/.test(input.definition.cmd)
+  ) {
+    throw new Error(
+      `Local groundcrew ${input.purpose} on model '${input.model}' cannot inject preLaunchEnv when 'cmd' already starts with 'safehouse'. ` +
+        "Your cmd owns the wrap, so add the names to its own '--env-pass=' flag, or drop the 'safehouse' prefix from 'cmd' to let groundcrew compose the flag for you.",
+    );
+  }
 
   const sandboxName =
     runner === "sdx" && input.definition.sandbox !== undefined
