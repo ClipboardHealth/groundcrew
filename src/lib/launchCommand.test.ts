@@ -72,8 +72,14 @@ describe(buildLaunchCommand, () => {
     });
   });
 
-  it("cd's into the worktree on the host, then runs setup and the agent inside the Safehouse wrap", () => {
+  it("runs setup under plain Safehouse, then runs only the agent through the profile shim", () => {
     const out = buildLaunchCommand(arguments_());
+
+    const setupWrapIndex = out.indexOf("safehouse-clearance' sh -lc");
+    const setupIndex = out.indexOf(SETUP_COMMAND);
+    const shimIndex = out.indexOf("_safehouse_shim_dir=$(mktemp");
+    const agentWrapIndex = out.indexOf('"$_safehouse_shim" -lc');
+    const agentIndex = out.indexOf(`exec claude "$@"`);
 
     expect(out).toContain("cd '/work/repo-a-team-1'");
     expect(out).toContain("_p=$(cat '/tmp/prompt-team-1/prompt.txt')");
@@ -82,10 +88,15 @@ describe(buildLaunchCommand, () => {
       '/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance\' "$_safehouse_shim" -lc',
     );
     expect(out).not.toContain("--enable=all-agents");
-    // Setup now runs inside the wrap (fs-isolated + clearance egress), not on the host.
     expect(out).toContain(SETUP_COMMAND);
     expect(out).toContain(`exec claude "$@"`);
     expect(out).toContain('sh "$_p"; _safehouse_status=$?');
+    expect(setupWrapIndex).toBeGreaterThan(-1);
+    expect(setupIndex).toBeGreaterThan(setupWrapIndex);
+    expect(shimIndex).toBeGreaterThan(setupIndex);
+    expect(agentWrapIndex).toBeGreaterThan(shimIndex);
+    expect(agentIndex).toBeGreaterThan(agentWrapIndex);
+    expect(out.slice(agentWrapIndex)).not.toContain(SETUP_COMMAND);
   });
 
   it("uses an agent-named shell shim so Safehouse applies only the matching agent profile", () => {
@@ -257,34 +268,41 @@ describe(buildLaunchCommand, () => {
       expect(out).not.toContain("--env-pass");
     });
 
-    it("sources secrets on the host, forwards them via --env-pass, and clears them inside the wrap before the agent", () => {
+    it("sources secrets on the host, forwards them only to setup, and clears them before the agent", () => {
       const out = buildLaunchCommand(arguments_({ secretsFile: "/tmp/prompt-team-1/secrets.env" }));
 
       const sourceIndex = out.indexOf(". '/tmp/prompt-team-1/secrets.env'");
-      const wrapIndex = out.indexOf("safehouse-clearance");
+      const setupWrapIndex = out.indexOf(
+        "safehouse-clearance' --env-pass=NPM_TOKEN,BUF_TOKEN sh -lc",
+      );
       const setupIndex = out.indexOf("setup_status=$?");
       const unsetIndex = out.indexOf("unset NPM_TOKEN BUF_TOKEN");
+      const agentWrapIndex = out.indexOf('"$_safehouse_shim" -lc');
       const agentIndex = out.indexOf(`exec claude "$@"`);
 
       // Secrets are sourced into the host shell before the wrap so Safehouse can
-      // forward them in; setup runs inside the wrap; the agent never inherits them.
+      // forward them into setup; the agent Safehouse process never gets them.
       expect(sourceIndex).toBeGreaterThan(-1);
-      expect(wrapIndex).toBeGreaterThan(sourceIndex);
+      expect(setupWrapIndex).toBeGreaterThan(sourceIndex);
       expect(out).toContain("--env-pass=NPM_TOKEN,BUF_TOKEN");
-      expect(setupIndex).toBeGreaterThan(wrapIndex);
+      expect(setupIndex).toBeGreaterThan(setupWrapIndex);
       expect(unsetIndex).toBeGreaterThan(setupIndex);
-      expect(agentIndex).toBeGreaterThan(unsetIndex);
+      expect(agentWrapIndex).toBeGreaterThan(unsetIndex);
+      expect(agentIndex).toBeGreaterThan(agentWrapIndex);
+      expect(out.slice(agentWrapIndex)).not.toContain("--env-pass");
+      expect(out.slice(agentWrapIndex)).not.toContain("unset NPM_TOKEN");
       expect(out).toContain(
         "if [ -f '/tmp/prompt-team-1/secrets.env' ]; then set -a && . '/tmp/prompt-team-1/secrets.env' && set +a; fi",
       );
     });
 
-    it("does not unset secrets on the host (the wrap needs them to forward)", () => {
+    it("clears secrets on the host before the agent Safehouse invocation", () => {
       const out = buildLaunchCommand(arguments_({ secretsFile: "/tmp/prompt-team-1/secrets.env" }));
 
-      // The only unset is inside the wrapped `sh -lc`, after the wrapper token.
-      const hostSegment = out.slice(0, out.indexOf("safehouse-clearance"));
-      expect(hostSegment).not.toContain("unset NPM_TOKEN");
+      const unsetIndex = out.indexOf("unset NPM_TOKEN BUF_TOKEN");
+      const agentWrapIndex = out.indexOf('"$_safehouse_shim" -lc');
+      expect(unsetIndex).toBeGreaterThan(-1);
+      expect(agentWrapIndex).toBeGreaterThan(unsetIndex);
       expect(out).toContain('sh "$_p"; _safehouse_status=$?');
     });
   });

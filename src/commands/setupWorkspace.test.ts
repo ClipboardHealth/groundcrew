@@ -585,6 +585,9 @@ describe(setupWorkspace, () => {
     expect(launchScript).not.toContain(".claude/setup.sh");
     expect(launchScript).not.toContain("npm clean-install");
     expect(launchScript).toContain(
+      "/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance' sh -lc",
+    );
+    expect(launchScript).toContain(
       '/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance\' "$_safehouse_shim" -lc',
     );
     expect(launchScript).toContain('_safehouse_shim="$_safehouse_shim_dir/claude"');
