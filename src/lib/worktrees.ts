@@ -8,9 +8,9 @@
  * git directly.
  */
 
-import { type Dirent, existsSync, readdirSync } from "node:fs";
+import { type Dirent, existsSync, readdirSync, rmSync } from "node:fs";
 import { userInfo } from "node:os";
-import { resolve } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
 
 import { runCommandAsync, type RunCommandOptions } from "./commandRunner.ts";
 import type { ResolvedConfig } from "./config.ts";
@@ -19,6 +19,7 @@ import { errorMessage, log } from "./util.ts";
 import { type WorkspaceProbe, workspaces } from "./workspaces.ts";
 
 const LONG_RUNNING_COMMAND_OPTIONS = { stdio: "inherit", timeoutMs: 0 } as const;
+const WORKTREE_LIST_PREFIX = "worktree ";
 
 export type WorktreeKind = "host";
 
@@ -259,29 +260,48 @@ async function removeWorktree(
       // ourselves so the failure message names the condition — dirty
       // (modified/untracked files, fixable with `crew cleanup --force`) or
       // orphan (directory exists on disk but is not registered with the
-      // parent repo, requires manual inspection + `rm -rf`).
-      if (options.force || options.signal?.aborted === true) {
+      // parent repo, fixable with `crew cleanup --force` when the path still
+      // matches groundcrew's expected worktree location).
+      if (options.signal?.aborted === true) {
         throw error;
       }
-      const dirtiness = await probeWorktreeDirtiness(entry.dir, options.signal);
-      if (dirtiness.kind === "dirty") {
-        throw new Error(
-          describeDirtyWorktree({
-            ticket: entry.ticket,
-            dir: entry.dir,
-            modified: dirtiness.modified,
-            untracked: dirtiness.untracked,
-          }),
-          { cause: error },
-        );
-      }
-      if (dirtiness.kind === "unknown") {
-        const registration = await probeWorktreeRegistration(entry.dir, options.signal);
-        if (registration === "orphan") {
-          throw new Error(describeOrphanWorktree({ dir: entry.dir }), { cause: error });
+      if (options.force) {
+        const registration = await probeWorktreeRegistration({
+          repoDir,
+          worktreeDir: entry.dir,
+          ...signalProperty(options.signal),
+        });
+        if (registration !== "orphan") {
+          throw error;
         }
+        removeOrphanWorktreeDirectory(config, entry);
+      } else {
+        const dirtiness = await probeWorktreeDirtiness(entry.dir, options.signal);
+        if (dirtiness.kind === "dirty") {
+          throw new Error(
+            describeDirtyWorktree({
+              ticket: entry.ticket,
+              dir: entry.dir,
+              modified: dirtiness.modified,
+              untracked: dirtiness.untracked,
+            }),
+            { cause: error },
+          );
+        }
+        if (dirtiness.kind === "unknown") {
+          const registration = await probeWorktreeRegistration({
+            repoDir,
+            worktreeDir: entry.dir,
+            ...signalProperty(options.signal),
+          });
+          if (registration === "orphan") {
+            throw new Error(describeOrphanWorktree({ ticket: entry.ticket, dir: entry.dir }), {
+              cause: error,
+            });
+          }
+        }
+        throw error;
       }
-      throw error;
     }
   } else {
     log(`Worktree directory ${entry.dir} not found, pruning stale refs...`);
@@ -357,26 +377,62 @@ function describeDirtyWorktree(arguments_: {
 
 type WorktreeRegistration = "registered" | "orphan" | "unknown";
 
-async function probeWorktreeRegistration(
-  worktreeDir: string,
-  signal: AbortSignal | undefined,
-): Promise<WorktreeRegistration> {
+async function probeWorktreeRegistration(arguments_: {
+  repoDir: string;
+  worktreeDir: string;
+  signal?: AbortSignal;
+}): Promise<WorktreeRegistration> {
   let output: string;
   try {
     output = await runCommandAsync(
       "git",
-      ["-C", worktreeDir, "rev-parse", "--is-inside-work-tree"],
-      signalProperty(signal),
+      ["-C", arguments_.repoDir, "worktree", "list", "--porcelain"],
+      signalProperty(arguments_.signal),
     );
   } catch {
     return "unknown";
   }
-  return output === "true" ? "registered" : "orphan";
+  const resolvedWorktreeDir = resolve(arguments_.worktreeDir);
+  for (const line of output.split("\n")) {
+    if (!line.startsWith(WORKTREE_LIST_PREFIX)) {
+      continue;
+    }
+    if (resolve(line.slice(WORKTREE_LIST_PREFIX.length)) === resolvedWorktreeDir) {
+      return "registered";
+    }
+  }
+  return "orphan";
 }
 
-function describeOrphanWorktree(arguments_: { dir: string }): string {
-  const { dir } = arguments_;
-  return `directory exists but is not a registered git worktree. If ${dir} has nothing of value, \`rm -rf\` ${dir} manually; otherwise inspect it before deleting.`;
+function describeOrphanWorktree(arguments_: { ticket: string; dir: string }): string {
+  const { ticket, dir } = arguments_;
+  return `directory exists but is not a registered git worktree. Run \`crew cleanup --force ${ticket}\` to remove ${dir}, or inspect it first if it may contain valuable files.`;
+}
+
+function expectedHostWorktreeDir(config: ResolvedConfig, entry: WorktreeEntry): string {
+  return resolve(config.workspace.projectDir, `${entry.repository}-${entry.ticket}`);
+}
+
+function isInsideDirectory(parentDir: string, childDir: string): boolean {
+  const childRelativePath = relative(parentDir, childDir);
+  return (
+    childRelativePath.length > 0 &&
+    !childRelativePath.startsWith("..") &&
+    !isAbsolute(childRelativePath)
+  );
+}
+
+function removeOrphanWorktreeDirectory(config: ResolvedConfig, entry: WorktreeEntry): void {
+  const projectDir = resolve(config.workspace.projectDir);
+  const expectedDir = expectedHostWorktreeDir(config, entry);
+  const targetDir = resolve(entry.dir);
+  if (targetDir !== expectedDir || !isInsideDirectory(projectDir, targetDir)) {
+    throw new Error(
+      `Refusing to force-delete ${entry.dir}: expected groundcrew worktree path ${expectedDir}.`,
+    );
+  }
+  log(`Removing orphaned worktree directory ${entry.dir} (--force)...`);
+  rmSync(targetDir, { recursive: true, force: true });
 }
 
 function list(config: ResolvedConfig): WorktreeEntry[] {
