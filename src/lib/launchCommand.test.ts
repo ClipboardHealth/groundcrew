@@ -571,6 +571,45 @@ describe(buildLaunchCommand, () => {
       }
     });
 
+    it("scrubs listed preLaunchEnv names before preLaunch so stale ambient values are not forwarded", () => {
+      const promptDir = mkdtempSync(join(tmpdir(), "groundcrew-prelaunch-pass-scrub-"));
+      const promptFile = join(promptDir, "prompt.txt");
+      const worktreeDir = mkdtempSync(join(tmpdir(), "groundcrew-prelaunch-pass-scrub-wt-"));
+      try {
+        writeFileSync(promptFile, "the prompt body\n");
+
+        const out = buildLaunchCommand(
+          arguments_({
+            runner: "safehouse",
+            promptFile,
+            worktreeDir,
+            definition: {
+              cmd: "echo never-reached",
+              color: "#fff",
+              preLaunch: `[ -z "\${SESSION_TOKEN-}" ] || exit 41; exit 42`,
+              preLaunchEnv: ["SESSION_TOKEN"],
+            },
+          }),
+        );
+
+        const scrubIndex = out.indexOf("unset NPM_TOKEN BUF_TOKEN SESSION_TOKEN");
+        const preLaunchIndex = out.indexOf(`[ -z "\${SESSION_TOKEN-}" ]`);
+        const agentEnvPassIndex = out.indexOf("--env-pass=SESSION_TOKEN");
+        expect(scrubIndex).toBeGreaterThan(-1);
+        expect(preLaunchIndex).toBeGreaterThan(scrubIndex);
+        expect(agentEnvPassIndex).toBeGreaterThan(preLaunchIndex);
+
+        const actual = spawnSync("sh", ["-c", out], {
+          env: { PATH: "/bin:/usr/bin", SESSION_TOKEN: "stale-token" },
+        });
+        expect(actual.status).toBe(42);
+        expect(() => statSync(promptDir)).toThrow(/ENOENT/);
+      } finally {
+        rmSync(promptDir, { recursive: true, force: true });
+        rmSync(worktreeDir, { recursive: true, force: true });
+      }
+    });
+
     it("runs preLaunch without double-wrapping when cmd already starts with safehouse", () => {
       const out = buildLaunchCommand(
         arguments_({
