@@ -27,7 +27,7 @@ export function classifyInstall(options: ClassifyInstallOptions): InstallKind {
 
 export interface NpmSpawnerResult {
   exitCode: number;
-  stderrText: string;
+  outputText: string;
 }
 
 export type NpmSpawner = (command: string, args: readonly string[]) => Promise<NpmSpawnerResult>;
@@ -35,6 +35,7 @@ export type NpmSpawner = (command: string, args: readonly string[]) => Promise<N
 export interface NpmRunResult {
   exitCode: number;
   sawEacces: boolean;
+  outputText: string;
 }
 
 export interface RunNpmInstallOptions {
@@ -49,7 +50,8 @@ export async function runNpmInstallGlobal(options: RunNpmInstallOptions): Promis
   const result = await options.spawner(options.npmBin, args);
   return {
     exitCode: result.exitCode,
-    sawEacces: result.stderrText.includes("EACCES"),
+    sawEacces: result.outputText.includes("EACCES"),
+    outputText: result.outputText,
   };
 }
 
@@ -75,22 +77,22 @@ export function detectIsSymlink(path: string): boolean {
   }
 }
 
-export function createDefaultNpmSpawner(passthroughStderr: NodeJS.WritableStream): NpmSpawner {
+export function createDefaultNpmSpawner(): NpmSpawner {
   return async (command, args) =>
     await new Promise<NpmSpawnerResult>((resolve, reject) => {
-      const child = spawn(command, [...args], { stdio: ["inherit", "inherit", "pipe"] });
-      const { stderr } = child;
+      const child = spawn(command, [...args], { stdio: ["inherit", "pipe", "pipe"] });
       const chunks: Buffer[] = [];
 
-      stderr.on("data", (chunk: Buffer) => {
+      const collect = (chunk: Buffer): void => {
         chunks.push(chunk);
-        passthroughStderr.write(chunk);
-      });
+      };
+      child.stdout.on("data", collect);
+      child.stderr.on("data", collect);
       child.on("error", reject);
       child.on("close", (code) => {
         resolve({
           exitCode: code ?? 1,
-          stderrText: Buffer.concat(chunks).toString("utf8"),
+          outputText: Buffer.concat(chunks).toString("utf8"),
         });
       });
     });

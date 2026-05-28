@@ -1,5 +1,5 @@
 import { createRequire } from "node:module";
-import { dirname, resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 
 import { BUILD_SECRET_NAMES, type LocalRunner, type ModelDefinition } from "./config.ts";
 import { shellSingleQuote } from "./shell.ts";
@@ -124,6 +124,86 @@ function preLaunchPromptAndExec(arguments_: {
   return lines;
 }
 
+function tokenizeShellPrefix(command: string): string[] {
+  const tokens: string[] = [];
+  let current = "";
+  let quote: "'" | '"' | undefined;
+  let isEscaped = false;
+  for (const character of command.trim()) {
+    if (isEscaped) {
+      current += character;
+      isEscaped = false;
+      continue;
+    }
+    if (character === "\\" && quote !== "'") {
+      isEscaped = true;
+      continue;
+    }
+    if (quote !== undefined) {
+      if (character === quote) {
+        quote = undefined;
+      } else {
+        current += character;
+      }
+      continue;
+    }
+    if (character === "'" || character === '"') {
+      quote = character;
+      continue;
+    }
+    if (/\s/.test(character)) {
+      if (current.length > 0) {
+        tokens.push(current);
+        current = "";
+      }
+      continue;
+    }
+    current += character;
+  }
+  if (current.length > 0) {
+    tokens.push(current);
+  }
+  return tokens;
+}
+
+function isEnvironmentAssignment(token: string): boolean {
+  return /^[A-Za-z_][A-Za-z0-9_]*=/.test(token);
+}
+
+function safehouseProfileCommandName(agentCmd: string): string {
+  const tokens = tokenizeShellPrefix(agentCmd);
+  let tokenIndex = tokens[0] === "env" ? 1 : 0;
+  if (tokens[0] === "env" && tokens[tokenIndex] === "--") {
+    tokenIndex += 1;
+  }
+  let commandToken: string | undefined;
+  for (const token of tokens.slice(tokenIndex)) {
+    if (isEnvironmentAssignment(token)) {
+      continue;
+    }
+    commandToken = token;
+    break;
+  }
+  if (commandToken === undefined) {
+    throw new Error(
+      `Cannot infer Safehouse agent profile command from model cmd ${JSON.stringify(agentCmd)}.`,
+    );
+  }
+
+  const commandName = basename(commandToken);
+  if (
+    commandName === "." ||
+    commandName === ".." ||
+    commandName.startsWith("-") ||
+    !/^[A-Za-z0-9._-]+$/.test(commandName)
+  ) {
+    throw new Error(
+      `Cannot use ${JSON.stringify(commandName)} as a Safehouse agent profile command name inferred from model cmd ${JSON.stringify(agentCmd)}.`,
+    );
+  }
+  return commandName;
+}
+
 interface LaunchCommandArguments {
   definition: ModelDefinition;
   promptFile: string;
@@ -241,40 +321,60 @@ function buildUnwrappedHostLaunchCommand(arguments_: LaunchCommandArguments): st
 }
 
 /**
- * Safehouse launch. Setup runs *inside* the `safehouse-clearance` wrap (mirroring
- * the sdx runner) so the repo's `.groundcrew/setup.sh` and its `npm install` are
- * filesystem-isolated and egress-restricted, rather than running on the bare host.
+ * Safehouse launch. Two Safehouse wraps, by design:
+ *
+ *   1. **Setup wrap**: plain `safehouse-clearance ... sh -c '<setup>'`. Runs
+ *      `.groundcrew/setup.sh --deps-only` filesystem-isolated and
+ *      egress-restricted, **without** inheriting agent-profile grants.
+ *   2. **Agent wrap**: `safehouse-clearance "$shim" -c '<exec agent>' sh "$_p"`
+ *      where `$shim` is a `mktemp`-d symlink to `/bin/sh` named after the
+ *      agent (e.g. `claude`). Safehouse selects the matching agent profile
+ *      from the wrapped command's basename (`claude-code.sb` etc.) without
+ *      needing every agent profile enabled globally.
  *
  * Host ordering matters: `preLaunch` runs *before* `secrets.env` is sourced so
  * the credential-minting snippet never sees build-time secrets in env. Build
  * secrets are then sourced into the host launch shell so Safehouse can forward
- * them into the sandbox via `--env-pass` (Safehouse's `--env=FILE` mode otherwise
- * strips them); they're `unset` inside the wrap after setup so the agent process
- * never inherits them.
+ * them into the **setup wrap** via `--env-pass=` (Safehouse's `--env=FILE` mode
+ * strips them otherwise). After setup returns, `BUILD_SECRET_NAMES` are `unset`
+ * on the host so they cannot reach the agent wrap.
+ *
+ * `--env-pass` composition is split per wrap (deliberate, post PR #128):
+ * - Setup wrap forwards build secrets only.
+ * - Agent wrap forwards `preLaunchEnv` names only. preLaunch credentials never
+ *   reach the profile-neutral setup phase.
  */
 function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string {
   const promptDir = dirname(arguments_.promptFile);
+  const safehouseCommandName = safehouseProfileCommandName(arguments_.definition.cmd);
   const agentCmd = renderAgentCommand({
     agentCmd: arguments_.definition.cmd,
     worktreeDir: arguments_.worktreeDir,
     sandboxName: "",
   });
 
-  const innerParts = [setupWithStatusReporting(SETUP_COMMAND)];
-  if (arguments_.secretsFile !== undefined) {
-    innerParts.push(unsetSecretsLine());
-  }
-  innerParts.push(`exec ${agentCmd} "$@"`);
-  const innerCommand = innerParts.join("; ");
+  const setupCommand = setupWithStatusReporting(SETUP_COMMAND);
+  const agentCommand = `exec ${agentCmd} "$@"`;
 
-  // Compose the wrap's --env-pass list from build secrets (when staged) and
-  // the user's preLaunchEnv names. Trailing space keeps the flag separated
-  // from the next argv token; empty string when neither contributes.
-  const envPassNames = [
-    ...(arguments_.secretsFile === undefined ? [] : BUILD_SECRET_NAMES),
-    ...(arguments_.definition.preLaunchEnv ?? []),
-  ];
-  const envPassFlag = envPassNames.length === 0 ? "" : `--env-pass=${envPassNames.join(",")} `;
+  // Split --env-pass per wrap: the setup wrap only needs build secrets (so
+  // `npm install` etc. can authenticate); the agent wrap only needs the
+  // user's preLaunchEnv (build secrets are `unset` on the host between the
+  // two wraps, so forwarding them here would silently no-op). Keeps preLaunch
+  // credentials out of the profile-neutral setup phase — see PR #128.
+  // Trailing space keeps each flag separated from the next argv token.
+  const setupEnvPassFlag =
+    arguments_.secretsFile === undefined ? "" : `--env-pass=${BUILD_SECRET_NAMES.join(",")} `;
+  const preLaunchEnvNames = arguments_.definition.preLaunchEnv ?? [];
+  const agentEnvPassFlag =
+    preLaunchEnvNames.length === 0 ? "" : `--env-pass=${preLaunchEnvNames.join(",")} `;
+  const safehouseWrapper = shellSingleQuote(SAFEHOUSE_CLEARANCE_WRAPPER_PATH);
+
+  // Defensive shim+promptDir trap: by the time we arm it, `rm -rf <promptDir>`
+  // has already run (line below) so the promptDir wipe is a no-op on the happy
+  // path. Keeps the failure-window between shim creation and the explicit
+  // post-wrap cleanup covered for both targets without an unarmed window.
+  const shimAndPromptCleanup = `rm -rf "$_safehouse_shim_dir"; rm -rf ${shellSingleQuote(promptDir)}`;
+  const shimAndPromptTrap = `trap ${shellSingleQuote(shimAndPromptCleanup)} EXIT`;
 
   const lines = hostTrapAndCd({ worktreeDir: arguments_.worktreeDir, promptDir });
   if (arguments_.definition.preLaunch !== undefined) {
@@ -284,7 +384,21 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
     ...hostSourceSecrets(arguments_.secretsFile),
     `_p=$(cat ${shellSingleQuote(arguments_.promptFile)})`,
     `rm -rf ${shellSingleQuote(promptDir)}`,
-    `exec ${shellSingleQuote(SAFEHOUSE_CLEARANCE_WRAPPER_PATH)} ${envPassFlag}sh -lc ${shellSingleQuote(innerCommand)} sh "$_p"`,
+    `${safehouseWrapper} ${setupEnvPassFlag}sh -c ${shellSingleQuote(setupCommand)}`,
+  );
+  if (arguments_.secretsFile !== undefined) {
+    lines.push(unsetSecretsLine());
+  }
+  lines.push(
+    `_safehouse_shim_dir=$(mktemp -d "\${TMPDIR:-/tmp}/groundcrew-safehouse-XXXXXX")`,
+    shimAndPromptTrap,
+    `_safehouse_shim="$_safehouse_shim_dir/${safehouseCommandName}"`,
+    `ln -s /bin/sh "$_safehouse_shim"`,
+    // Safehouse selects an agent profile from the wrapped command's basename.
+    // Running the real launch chain as `sh -c` would make it see `sh`, so use
+    // an agent-named symlink to /bin/sh. This preserves per-agent profile
+    // selection without enabling every agent profile.
+    `${safehouseWrapper} ${agentEnvPassFlag}"$_safehouse_shim" -c ${shellSingleQuote(agentCommand)} sh "$_p"; _safehouse_status=$?; rm -rf "$_safehouse_shim_dir"; trap - EXIT; exit "$_safehouse_status"`,
   );
   return lines.join(" && ");
 }
@@ -324,7 +438,7 @@ function buildSdxLaunchCommand(arguments_: LaunchCommandArguments): string {
   lines.push(
     `_p=$(cat ${shellSingleQuote(arguments_.promptFile)})`,
     `rm -rf ${shellSingleQuote(promptDir)}`,
-    `exec sbx exec -it ${sbxEnvironmentFlags}-w ${shellSingleQuote(arguments_.worktreeDir)} ${shellSingleQuote(arguments_.sandboxName)} sh -lc ${shellSingleQuote(innerCommand)} sh "$_p"`,
+    `exec sbx exec -it ${sbxEnvironmentFlags}-w ${shellSingleQuote(arguments_.worktreeDir)} ${shellSingleQuote(arguments_.sandboxName)} sh -c ${shellSingleQuote(innerCommand)} sh "$_p"`,
   );
   return lines.join(" && ");
 }

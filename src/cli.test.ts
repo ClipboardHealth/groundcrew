@@ -88,6 +88,7 @@ function makeFakeUpgradeOptions(): UpgradeCliOptions {
       npmBin: "/usr/local/bin/npm",
     }),
     runInstall: vi.fn<UpgradeCliOptions["runInstall"]>(),
+    readInstalledVersion: vi.fn<UpgradeCliOptions["readInstalledVersion"]>(),
   };
 }
 
