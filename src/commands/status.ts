@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 
+import { latestAgentLogPath } from "../lib/agentLog.ts";
 import { type Board, createBoard } from "../lib/board.ts";
 import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
@@ -148,7 +149,7 @@ function writeRecentLogs(config: ResolvedConfig, ticket: string): void {
   if (logLines.length === 0) {
     return;
   }
-  writeSection("Recent logs");
+  writeSection("Orchestrator activity");
   writeOutput(logLines.join("\n"));
 }
 
@@ -202,6 +203,10 @@ async function writeTicketStatus(config: ResolvedConfig, rawTicket: string): Pro
   writeTicketTitle(runState, sourceStatus);
   writeOutput(`run: ${formatRunState(runState)}`);
   writeOutput(`workspace: ${ticketWorkspaceText(workspaceProbe, ticket)}`);
+  const agentLogPath = latestAgentLogPath(config, ticket);
+  if (agentLogPath !== undefined) {
+    writeOutput(`agent log: ${agentLogPath}`);
+  }
 
   await writeTicketWorktrees(config, ticket);
   writeRecentLogs(config, ticket);

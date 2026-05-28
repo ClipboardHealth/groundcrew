@@ -24,6 +24,7 @@ ticket: hrd-446  in-progress  https://linear.app/example/issue/HRD-446
 title: Add retry logic to the sync job
 run: running; model=claude; updated=2026-05-26T00:01:00.000Z; resumes=0
 workspace: live
+agent log: ~/.local/state/groundcrew/agents/hrd-446.log
 
 Worktrees
 ---------
@@ -227,6 +228,7 @@ ticket: hrd-442  in-progress  https://linear.app/example/issue/HRD-442
 title: Multi-event extractor: year inference can produce date_start > date_end
 run: running; model=claude; updated=2026-05-26T00:01:00.000Z; resumes=0
 workspace: live
+agent log: ~/.local/state/groundcrew/agents/hrd-442.log
 
 Worktrees
 ---------
@@ -236,8 +238,8 @@ Worktrees
   git: dirty (0 modified, 1 untracked)
   pr: https://github.com/herds-social/herds/pull/224 (open)
 
-Recent logs
------------
+Orchestrator activity
+---------------------
 [10:15:30] Workspace "hrd-442" launched
 ```
 

@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { removeAgentLogsForTicket } from "./agentLog.ts";
+import { latestAgentLogPath, removeAgentLogsForTicket } from "./agentLog.ts";
 import type { ResolvedConfig } from "./config.ts";
 import { writeError } from "./util.ts";
 
@@ -96,5 +96,32 @@ describe(removeAgentLogsForTicket, () => {
 
     expect(readdirSync(sandbox)).toStrictEqual(["team-1-20260517-150300.log"]);
     expect(vi.mocked(writeError)).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe(latestAgentLogPath, () => {
+  let sandbox: string;
+
+  beforeEach(() => {
+    sandbox = mkdtempSync(join(tmpdir(), "groundcrew-latestAgentLog-"));
+  });
+
+  afterEach(() => {
+    rmSync(sandbox, { recursive: true, force: true });
+  });
+
+  it("returns the <ticket>.log symlink path when a captured log exists", () => {
+    writeFileSync(join(sandbox, "team-1-20260517-150234.log"), "x");
+    symlinkSync("team-1-20260517-150234.log", join(sandbox, "team-1.log"));
+
+    expect(latestAgentLogPath(makeConfig(sandbox), "team-1")).toBe(join(sandbox, "team-1.log"));
+  });
+
+  it("returns undefined when no log exists for the ticket", () => {
+    expect(latestAgentLogPath(makeConfig(sandbox), "team-1")).toBeUndefined();
+  });
+
+  it("returns undefined when capture is disabled", () => {
+    expect(latestAgentLogPath(makeConfig(false), "team-1")).toBeUndefined();
   });
 });

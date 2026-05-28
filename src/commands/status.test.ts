@@ -255,7 +255,7 @@ describe(status, () => {
     expect(output).toContain("git: clean");
     expect(output).toContain("git: dirty (2 modified, 1 untracked)");
     expect(output).toContain("git: unknown");
-    expect(output).toContain("Recent logs");
+    expect(output).toContain("Orchestrator activity");
     expect(output).toContain("event=dispatch outcome=started ticket=team-1");
     expect(output).not.toContain("ticket=team-10");
     expect(output).toContain('Workspace "TEAM-1" launched');
@@ -265,6 +265,27 @@ describe(status, () => {
       "ticket: team-1  in-progress  https://linear.app/example/issue/TEAM-1",
     );
     expect(output).toContain("title: Fix status");
+  });
+
+  it("prints the agent log path when a captured log exists", async () => {
+    writeFileSync(join(temporaryDirectory, "team-1.log"), "x");
+    const config = makeConfig({
+      logging: { file: join(temporaryDirectory, "missing.log"), agentLogDir: temporaryDirectory },
+    });
+
+    await status(config, { ticket: "team-1" });
+
+    expect(consoleLog.output()).toContain(`agent log: ${join(temporaryDirectory, "team-1.log")}`);
+  });
+
+  it("omits the log line when capture is disabled", async () => {
+    const config = makeConfig({
+      logging: { file: join(temporaryDirectory, "missing.log"), agentLogDir: false },
+    });
+
+    await status(config, { ticket: "team-1" });
+
+    expect(consoleLog.output()).not.toMatch(/^agent log: /m);
   });
 
   it("prints unavailable fields without attempting recovery", async () => {
@@ -284,7 +305,7 @@ describe(status, () => {
     expect(output).toContain("workspace: not live");
     expect(output).toContain("Worktrees");
     expect(output).toContain("(none)");
-    expect(output).not.toContain("Recent logs");
+    expect(output).not.toContain("Orchestrator activity");
     expect(output).not.toContain("Ticket source");
   });
 

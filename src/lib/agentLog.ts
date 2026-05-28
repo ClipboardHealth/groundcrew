@@ -162,6 +162,20 @@ function isAgentLogForTicket(name: string, ticket: string): boolean {
 }
 
 /**
+ * Path of the `<ticket>.log` symlink (the always-latest pointer) when capture
+ * is enabled and a log for the ticket exists on disk, else `undefined`. Used to
+ * surface a ready-to-open path in `crew status`. A disabled dir or a missing /
+ * dangling symlink yields `undefined` so callers never advertise a dead path.
+ */
+export function latestAgentLogPath(config: ResolvedConfig, ticket: string): string | undefined {
+  if (config.logging.agentLogDir === false) {
+    return undefined;
+  }
+  const latestSymlink = resolve(config.logging.agentLogDir, `${ticket}.log`);
+  return existsSync(latestSymlink) ? latestSymlink : undefined;
+}
+
+/**
  * Best-effort removal of a ticket's per-launch agent logs from the configured
  * agent log dir, called when its workspace is torn down. Never throws: a
  * disabled/missing dir is a no-op, and a file that won't delete warns and is
