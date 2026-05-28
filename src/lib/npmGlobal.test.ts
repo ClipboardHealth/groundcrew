@@ -1,7 +1,6 @@
 import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
-import { PassThrough } from "node:stream";
 import { pathToFileURL } from "node:url";
 
 import {
@@ -76,7 +75,7 @@ describe(classifyInstall, () => {
 
 describe(runNpmInstallGlobal, () => {
   it("invokes npm install -g <package>@<version> and forwards the exit code", async () => {
-    const spawner = vi.fn<NpmSpawner>().mockResolvedValueOnce({ exitCode: 0, stderrText: "" });
+    const spawner = vi.fn<NpmSpawner>().mockResolvedValueOnce({ exitCode: 0, outputText: "" });
     const result = await runNpmInstallGlobal({
       packageName: "@scope/pkg",
       version: "3.2.0",
@@ -88,67 +87,65 @@ describe(runNpmInstallGlobal, () => {
       "-g",
       "@scope/pkg@3.2.0",
     ]);
-    expect(result).toStrictEqual({ exitCode: 0, sawEacces: false });
+    expect(result).toStrictEqual({ exitCode: 0, sawEacces: false, outputText: "" });
   });
 
   it("forwards a non-zero exit code", async () => {
-    const spawner = vi.fn<NpmSpawner>().mockResolvedValueOnce({ exitCode: 1, stderrText: "boom" });
+    const spawner = vi.fn<NpmSpawner>().mockResolvedValueOnce({ exitCode: 1, outputText: "boom" });
     const result = await runNpmInstallGlobal({
       packageName: "@scope/pkg",
       version: "3.2.0",
       npmBin: "npm",
       spawner,
     });
-    expect(result).toStrictEqual({ exitCode: 1, sawEacces: false });
+    expect(result).toStrictEqual({ exitCode: 1, sawEacces: false, outputText: "boom" });
   });
 
-  it("flags sawEacces when stderr contains EACCES", async () => {
+  it("flags sawEacces when captured output contains EACCES", async () => {
     const spawner = vi
       .fn<NpmSpawner>()
-      .mockResolvedValueOnce({ exitCode: 243, stderrText: "npm ERR! EACCES: permission denied" });
+      .mockResolvedValueOnce({ exitCode: 243, outputText: "npm ERR! EACCES: permission denied" });
     const result = await runNpmInstallGlobal({
       packageName: "@scope/pkg",
       version: "3.2.0",
       npmBin: "npm",
       spawner,
     });
-    expect(result).toStrictEqual({ exitCode: 243, sawEacces: true });
+    expect(result).toStrictEqual({
+      exitCode: 243,
+      sawEacces: true,
+      outputText: "npm ERR! EACCES: permission denied",
+    });
   });
 });
 
 describe(createDefaultNpmSpawner, () => {
-  it("captures stderr text and exit code from a real subprocess", async () => {
-    const passthrough = new PassThrough();
-    const chunks: Buffer[] = [];
-    passthrough.on("data", (chunk: Buffer) => {
-      chunks.push(chunk);
-    });
-
-    const spawner = createDefaultNpmSpawner(passthrough);
+  it("captures both stdout and stderr from a real subprocess", async () => {
+    const spawner = createDefaultNpmSpawner();
     const result = await spawner(process.execPath, [
       "--eval",
-      String.raw`process.stderr.write('EACCES: permission denied\n'); process.exit(2);`,
+      String.raw`process.stdout.write('changed 24 packages\n'); process.stderr.write('EACCES: permission denied\n'); process.exit(2);`,
     ]);
 
     expect(result.exitCode).toBe(2);
-    expect(result.stderrText).toContain("EACCES");
-    expect(Buffer.concat(chunks).toString("utf8")).toContain("EACCES");
+    expect(result.outputText).toContain("EACCES");
+    expect(result.outputText).toContain("changed 24 packages");
   });
 
   it("rejects when the subprocess cannot be spawned", async () => {
-    const spawner = createDefaultNpmSpawner(new PassThrough());
+    const spawner = createDefaultNpmSpawner();
     await expect(spawner("/definitely/missing/npm", [])).rejects.toThrow(/ENOENT/);
   });
 
   it("reports exit code 0 for a successful subprocess", async () => {
-    const spawner = createDefaultNpmSpawner(new PassThrough());
+    const spawner = createDefaultNpmSpawner();
     const result = await spawner(process.execPath, ["--eval", "process.exit(0)"]);
     expect(result.exitCode).toBe(0);
-    expect(result.stderrText).toBe("");
+    expect(result.outputText).toBe("");
   });
 
   it("reports exit code 1 when the subprocess is terminated by a signal", async () => {
-    const spawner = createDefaultNpmSpawner(new PassThrough());
+    const spawner = createDefaultNpmSpawner();
     const result = await spawner(process.execPath, [
       "--eval",
       "process.kill(process.pid, 'SIGTERM')",

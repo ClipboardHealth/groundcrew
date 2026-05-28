@@ -584,11 +584,15 @@ describe(setupWorkspace, () => {
     expect(launchScript).toContain(SETUP_COMMAND);
     expect(launchScript).not.toContain(".claude/setup.sh");
     expect(launchScript).not.toContain("npm clean-install");
-    expect(launchScript).toContain("exec '/");
     expect(launchScript).toContain(
       "/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance' sh -c",
     );
     // The agent runs inside the wrap (after setup), so the prompt is the sh -c arg.
+    expect(launchScript).toContain(
+      '/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance\' "$_safehouse_shim" -c',
+    );
+    expect(launchScript).toContain('_safehouse_shim="$_safehouse_shim_dir/claude"');
+    expect(launchScript).not.toContain("--enable=all-agents");
     expect(launchScript).toContain('exec claude --permission-mode auto "$@"');
     expect(launchScript).toContain('sh "$_p"');
     // setup-status guard so a failed install still launches the agent

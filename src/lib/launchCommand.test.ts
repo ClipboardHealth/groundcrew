@@ -72,8 +72,14 @@ describe(buildLaunchCommand, () => {
     });
   });
 
-  it("cd's into the worktree on the host, then runs setup and the agent inside the Safehouse wrap", () => {
+  it("runs setup under plain Safehouse, then runs only the agent through the profile shim", () => {
     const out = buildLaunchCommand(arguments_());
+
+    const setupWrapIndex = out.indexOf("safehouse-clearance' sh -c");
+    const setupIndex = out.indexOf(SETUP_COMMAND);
+    const shimIndex = out.indexOf("_safehouse_shim_dir=$(mktemp");
+    const agentWrapIndex = out.indexOf('"$_safehouse_shim" -c');
+    const agentIndex = out.indexOf(`exec claude "$@"`);
 
     expect(out).toContain("cd '/work/repo-a-team-1'");
     expect(out).toContain("_p=$(cat '/tmp/prompt-team-1/prompt.txt')");
@@ -81,10 +87,126 @@ describe(buildLaunchCommand, () => {
     expect(out).toContain(
       "/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance' sh -c",
     );
-    // Setup now runs inside the wrap (fs-isolated + clearance egress), not on the host.
+    expect(out).toContain(
+      '/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance\' "$_safehouse_shim" -c',
+    );
+    expect(out).not.toContain("--enable=all-agents");
     expect(out).toContain(SETUP_COMMAND);
     expect(out).toContain(`exec claude "$@"`);
-    expect(out).toMatch(/sh "\$_p"$/);
+    expect(out).toContain('sh "$_p"; _safehouse_status=$?');
+    expect(setupWrapIndex).toBeGreaterThan(-1);
+    expect(setupIndex).toBeGreaterThan(setupWrapIndex);
+    expect(shimIndex).toBeGreaterThan(setupIndex);
+    expect(agentWrapIndex).toBeGreaterThan(shimIndex);
+    expect(agentIndex).toBeGreaterThan(agentWrapIndex);
+    expect(out.slice(agentWrapIndex)).not.toContain(SETUP_COMMAND);
+  });
+
+  it("uses an agent-named shell shim so Safehouse applies only the matching agent profile", () => {
+    const out = buildLaunchCommand(arguments_());
+
+    expect(out).toContain('_safehouse_shim_dir=$(mktemp -d "');
+    expect(out).toContain('/groundcrew-safehouse-XXXXXX")');
+    expect(out).toContain("trap 'rm -rf \"$_safehouse_shim_dir\"' EXIT");
+    expect(out).toContain('_safehouse_shim="$_safehouse_shim_dir/claude"');
+    expect(out).toContain('ln -s /bin/sh "$_safehouse_shim"');
+    expect(out).toContain('"$_safehouse_shim" -c');
+    expect(out).not.toContain("--enable=all-agents");
+  });
+
+  it("infers the Safehouse profile command from an absolute agent path", () => {
+    const out = buildLaunchCommand(
+      arguments_({
+        definition: { cmd: "/Users/dev/.local/bin/claude --permission-mode auto", color: "#fff" },
+      }),
+    );
+
+    expect(out).toContain('_safehouse_shim="$_safehouse_shim_dir/claude"');
+    expect(out).toContain('exec /Users/dev/.local/bin/claude --permission-mode auto "$@"');
+  });
+
+  it("skips `env` environment assignments when inferring the Safehouse profile command", () => {
+    const out = buildLaunchCommand(
+      arguments_({
+        definition: {
+          cmd: "env ANTHROPIC_MODEL=sonnet claude --permission-mode auto",
+          color: "#fff",
+        },
+      }),
+    );
+
+    expect(out).toContain('_safehouse_shim="$_safehouse_shim_dir/claude"');
+    expect(out).toContain('exec env ANTHROPIC_MODEL=sonnet claude --permission-mode auto "$@"');
+  });
+
+  it("skips an `env --` delimiter when inferring the Safehouse profile command", () => {
+    const out = buildLaunchCommand(
+      arguments_({
+        definition: {
+          cmd: "env -- claude --permission-mode auto",
+          color: "#fff",
+        },
+      }),
+    );
+
+    expect(out).toContain('_safehouse_shim="$_safehouse_shim_dir/claude"');
+    expect(out).toContain('exec env -- claude --permission-mode auto "$@"');
+  });
+
+  it("skips leading environment assignments when inferring the Safehouse profile command", () => {
+    const out = buildLaunchCommand(
+      arguments_({
+        definition: {
+          cmd: "ANTHROPIC_MODEL=sonnet claude --permission-mode auto",
+          color: "#fff",
+        },
+      }),
+    );
+
+    expect(out).toContain('_safehouse_shim="$_safehouse_shim_dir/claude"');
+    expect(out).toContain('exec ANTHROPIC_MODEL=sonnet claude --permission-mode auto "$@"');
+  });
+
+  it("skips `env` and quoted environment assignments when inferring the Safehouse profile command", () => {
+    const out = buildLaunchCommand(
+      arguments_({
+        definition: {
+          cmd: String.raw`env ANTHROPIC_MODEL='claude 3' claude  --permission-mode auto`,
+          color: "#fff",
+        },
+      }),
+    );
+
+    expect(out).toContain('_safehouse_shim="$_safehouse_shim_dir/claude"');
+    expect(out).toContain(String.raw`ANTHROPIC_MODEL='\''claude 3'\'' claude`);
+  });
+
+  it("fails loudly when the Safehouse profile command cannot be inferred", () => {
+    expect(() =>
+      buildLaunchCommand(
+        arguments_({
+          definition: { cmd: "env ANTHROPIC_MODEL=sonnet", color: "#fff" },
+        }),
+      ),
+    ).toThrow(/Cannot infer Safehouse agent profile command/);
+
+    expect(() =>
+      buildLaunchCommand(
+        arguments_({
+          definition: { cmd: "   ", color: "#fff" },
+        }),
+      ),
+    ).toThrow(/Cannot infer Safehouse agent profile command/);
+  });
+
+  it("rejects unsafe inferred Safehouse profile command names", () => {
+    expect(() =>
+      buildLaunchCommand(
+        arguments_({
+          definition: { cmd: String.raw`claude\ code --permission-mode auto`, color: "#fff" },
+        }),
+      ),
+    ).toThrow(/Cannot use "claude code" as a Safehouse agent profile command name/);
   });
 
   it("does not double-wrap when cmd already starts with safehouse", () => {
@@ -96,6 +218,9 @@ describe(buildLaunchCommand, () => {
 
     expect(out).toMatch(/exec safehouse claude "\$_p"$/);
     expect(out).not.toContain("safehouse safehouse");
+    // A bring-your-own-safehouse cmd owns its sandbox flags; groundcrew must
+    // not splice its own --enable into a command it does not control.
+    expect(out).not.toContain("--enable=all-agents");
   });
 
   it("substitutes {{worktree}} and {{sandbox}} in the agent command", () => {
@@ -146,35 +271,42 @@ describe(buildLaunchCommand, () => {
       expect(out).not.toContain("--env-pass");
     });
 
-    it("sources secrets on the host, forwards them via --env-pass, and clears them inside the wrap before the agent", () => {
+    it("sources secrets on the host, forwards them only to setup, and clears them before the agent", () => {
       const out = buildLaunchCommand(arguments_({ secretsFile: "/tmp/prompt-team-1/secrets.env" }));
 
       const sourceIndex = out.indexOf(". '/tmp/prompt-team-1/secrets.env'");
-      const wrapIndex = out.indexOf("safehouse-clearance");
+      const setupWrapIndex = out.indexOf(
+        "safehouse-clearance' --env-pass=NPM_TOKEN,BUF_TOKEN sh -c",
+      );
       const setupIndex = out.indexOf("setup_status=$?");
       const unsetIndex = out.indexOf("unset NPM_TOKEN BUF_TOKEN");
+      const agentWrapIndex = out.indexOf('"$_safehouse_shim" -c');
       const agentIndex = out.indexOf(`exec claude "$@"`);
 
       // Secrets are sourced into the host shell before the wrap so Safehouse can
-      // forward them in; setup runs inside the wrap; the agent never inherits them.
+      // forward them into setup; the agent Safehouse process never gets them.
       expect(sourceIndex).toBeGreaterThan(-1);
-      expect(wrapIndex).toBeGreaterThan(sourceIndex);
+      expect(setupWrapIndex).toBeGreaterThan(sourceIndex);
       expect(out).toContain("--env-pass=NPM_TOKEN,BUF_TOKEN");
-      expect(setupIndex).toBeGreaterThan(wrapIndex);
+      expect(setupIndex).toBeGreaterThan(setupWrapIndex);
       expect(unsetIndex).toBeGreaterThan(setupIndex);
-      expect(agentIndex).toBeGreaterThan(unsetIndex);
+      expect(agentWrapIndex).toBeGreaterThan(unsetIndex);
+      expect(agentIndex).toBeGreaterThan(agentWrapIndex);
+      expect(out.slice(agentWrapIndex)).not.toContain("--env-pass");
+      expect(out.slice(agentWrapIndex)).not.toContain("unset NPM_TOKEN");
       expect(out).toContain(
         "if [ -f '/tmp/prompt-team-1/secrets.env' ]; then set -a && . '/tmp/prompt-team-1/secrets.env' && set +a; fi",
       );
     });
 
-    it("does not unset secrets on the host (the wrap needs them to forward)", () => {
+    it("clears secrets on the host before the agent Safehouse invocation", () => {
       const out = buildLaunchCommand(arguments_({ secretsFile: "/tmp/prompt-team-1/secrets.env" }));
 
-      // The only unset is inside the wrapped `sh -c`, after the wrapper token.
-      const hostSegment = out.slice(0, out.indexOf("safehouse-clearance"));
-      expect(hostSegment).not.toContain("unset NPM_TOKEN");
-      expect(out).toMatch(/sh "\$_p"$/);
+      const unsetIndex = out.indexOf("unset NPM_TOKEN BUF_TOKEN");
+      const agentWrapIndex = out.indexOf('"$_safehouse_shim" -c');
+      expect(unsetIndex).toBeGreaterThan(-1);
+      expect(agentWrapIndex).toBeGreaterThan(unsetIndex);
+      expect(out).toContain('sh "$_p"; _safehouse_status=$?');
     });
   });
 
@@ -183,6 +315,7 @@ describe(buildLaunchCommand, () => {
       const out = buildLaunchCommand(arguments_({ runner: "none" }));
 
       expect(out).not.toContain("safehouse-clearance");
+      expect(out).not.toContain("--enable=all-agents");
       expect(out).toMatch(/exec claude "\$_p"$/);
     });
 
@@ -225,6 +358,9 @@ describe(buildLaunchCommand, () => {
       expect(out).toContain("exec sbx exec -it -w '/work/repo-a-team-1' 'groundcrew-claude' sh -c");
       expect(out).toContain("exec claude");
       expect(out).toMatch(/sh "\$_p"$/);
+      // sdx routes through `sbx exec`, not Safehouse, so the Safehouse-only
+      // profile-selection flag must not leak onto this path.
+      expect(out).not.toContain("--enable=all-agents");
     });
 
     it("uses the per-model sandbox setupCommand override when configured", () => {

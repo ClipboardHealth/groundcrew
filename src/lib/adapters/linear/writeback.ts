@@ -16,8 +16,8 @@ export function createLinearIssueStatusUpdater(arguments_: {
   client: LinearClient;
 }): LinearIssueStatusUpdater {
   const { client } = arguments_;
-  // Positive cache only. Keyed by teamId because the workflow `state.type ===
-  // "started"` lookup yields a single stateId per team — independent of which
+  // Positive cache only. Keyed by teamId because the in-progress-state
+  // resolution yields a single stateId per team — independent of which
   // project the ticket belongs to. State ids don't change for misconfig
   // reasons, so caching successful resolutions is safe across the process.
   //
@@ -39,10 +39,17 @@ export function createLinearIssueStatusUpdater(arguments_: {
     }
     const team = await client.team(teamId);
     const states = await team.states();
-    // Use the workflow state's `type` — Linear standardises on `started` for
-    // in-progress columns regardless of how the user renames them, so this
-    // works without any per-team status-name configuration.
-    const inProgress = states.nodes.find((state) => state.type === "started");
+    // Linear's default workflow has MULTIPLE `started`-type states — both
+    // "In Progress" and "In Review" are `started`. `team.states()` orders by
+    // updatedAt (the connection has no position ordering), so array order
+    // can't disambiguate them. Prefer the state literally named "In Progress";
+    // otherwise fall back to the lowest-position (leftmost) `started` column,
+    // which by Linear convention is the in-progress one. This survives teams
+    // that rename the column ("Doing", "WIP", ...).
+    const startedStates = states.nodes.filter((state) => state.type === "started");
+    const inProgress =
+      startedStates.find((state) => state.name.trim().toLowerCase() === "in progress") ??
+      startedStates.toSorted((a, b) => a.position - b.position).at(0);
     if (inProgress?.id === undefined) {
       return undefined;
     }

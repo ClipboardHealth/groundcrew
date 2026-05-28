@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { runCommand, type RunCommandOptions } from "../lib/commandRunner.ts";
@@ -48,6 +51,7 @@ const PACKAGE_NAME = "@clipboard-health/groundcrew";
 
 type RunInstallFn = UpgradeCliOptions["runInstall"];
 type ResolveInstallFn = UpgradeCliOptions["resolveInstall"];
+type ReadInstalledVersionFn = UpgradeCliOptions["readInstalledVersion"];
 type MakeOptionsOverrides = Partial<Omit<UpgradeCliOptions, "resolveInstall">> &
   Partial<UpgradeInstallDetails> & {
     resolveInstall?: ResolveInstallFn;
@@ -65,7 +69,10 @@ function makeOptions(overrides: MakeOptionsOverrides = {}): UpgradeCliOptions {
   return {
     packageName: PACKAGE_NAME,
     resolveInstall: resolvedInstall,
-    runInstall: vi.fn<RunInstallFn>().mockResolvedValue({ exitCode: 0, sawEacces: false }),
+    runInstall: vi
+      .fn<RunInstallFn>()
+      .mockResolvedValue({ exitCode: 0, sawEacces: false, outputText: "" }),
+    readInstalledVersion: vi.fn<ReadInstalledVersionFn>().mockReturnValue("4.2.4"),
     ...optionOverrides,
   };
 }
@@ -139,7 +146,9 @@ describe(upgradeCli, () => {
   });
 
   it("installs latest when no version is provided", async () => {
-    const runInstall = vi.fn<RunInstallFn>().mockResolvedValue({ exitCode: 0, sawEacces: false });
+    const runInstall = vi
+      .fn<RunInstallFn>()
+      .mockResolvedValue({ exitCode: 0, sawEacces: false, outputText: "" });
 
     await upgradeCli([], makeOptions({ runInstall }));
 
@@ -152,7 +161,9 @@ describe(upgradeCli, () => {
   });
 
   it("installs a supplied npm version or tag", async () => {
-    const runInstall = vi.fn<RunInstallFn>().mockResolvedValue({ exitCode: 0, sawEacces: false });
+    const runInstall = vi
+      .fn<RunInstallFn>()
+      .mockResolvedValue({ exitCode: 0, sawEacces: false, outputText: "" });
 
     await upgradeCli(["next"], makeOptions({ runInstall }));
 
@@ -165,7 +176,9 @@ describe(upgradeCli, () => {
   });
 
   it("forwards a non-zero install exit code", async () => {
-    const runInstall = vi.fn<RunInstallFn>().mockResolvedValue({ exitCode: 7, sawEacces: false });
+    const runInstall = vi
+      .fn<RunInstallFn>()
+      .mockResolvedValue({ exitCode: 7, sawEacces: false, outputText: "" });
 
     await upgradeCli([], makeOptions({ runInstall }));
 
@@ -173,13 +186,97 @@ describe(upgradeCli, () => {
   });
 
   it("appends an EACCES hint when install fails with EACCES", async () => {
-    const runInstall = vi.fn<RunInstallFn>().mockResolvedValue({ exitCode: 243, sawEacces: true });
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+      const runInstall = vi
+        .fn<RunInstallFn>()
+        .mockResolvedValue({ exitCode: 243, sawEacces: true, outputText: "npm ERR! EACCES" });
 
-    await upgradeCli([], makeOptions({ runInstall }));
+      await upgradeCli([], makeOptions({ runInstall }));
 
-    expect(consoleErr.output()).toMatch(/EACCES/i);
-    expect(consoleErr.output()).toMatch(/permission/i);
-    expect(process.exitCode).toBe(243);
+      expect(stderrSpy).toHaveBeenCalledWith("npm ERR! EACCES");
+      expect(stderrSpy).toHaveBeenCalledWith("\n");
+      expect(consoleErr.output()).toMatch(/EACCES/i);
+      expect(consoleErr.output()).toMatch(/permission/i);
+      expect(process.exitCode).toBe(243);
+    } finally {
+      stderrSpy.mockRestore();
+    }
+  });
+
+  it("reports the from/to versions on a successful upgrade", async () => {
+    const readInstalledVersion = vi
+      .fn<ReadInstalledVersionFn>()
+      .mockReturnValueOnce("4.2.4")
+      .mockReturnValueOnce("4.3.0");
+
+    await upgradeCli([], makeOptions({ readInstalledVersion }));
+
+    expect(consoleLog.output()).toContain("Upgrading crew…");
+    expect(consoleLog.output()).toContain("Upgraded crew from 4.2.4 to 4.3.0");
+  });
+
+  it("reports already-on-version when the install left the version unchanged", async () => {
+    const readInstalledVersion = vi.fn<ReadInstalledVersionFn>().mockReturnValue("4.3.0");
+
+    await upgradeCli([], makeOptions({ readInstalledVersion }));
+
+    expect(consoleLog.output()).toContain("crew is already on version 4.3.0");
+  });
+
+  it("falls back to a generic success when the version reads fail", async () => {
+    // oxlint-disable-next-line unicorn/no-useless-undefined -- exercises the fallback path
+    const readInstalledVersion = vi.fn<ReadInstalledVersionFn>().mockReturnValue(undefined);
+
+    await upgradeCli([], makeOptions({ readInstalledVersion }));
+
+    expect(consoleLog.output()).toContain("crew upgrade complete");
+    expect(consoleLog.output()).not.toMatch(/version/i);
+  });
+
+  it("reports the new version when only the post-install read succeeds", async () => {
+    const readInstalledVersion = vi
+      .fn<ReadInstalledVersionFn>()
+      // oxlint-disable-next-line unicorn/no-useless-undefined -- first read fails, second succeeds
+      .mockReturnValueOnce(undefined)
+      .mockReturnValueOnce("4.3.0");
+
+    await upgradeCli([], makeOptions({ readInstalledVersion }));
+
+    expect(consoleLog.output()).toContain("crew is now on version 4.3.0");
+  });
+
+  it("replays captured npm output on stderr when the install fails", async () => {
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+      const runInstall = vi.fn<RunInstallFn>().mockResolvedValue({
+        exitCode: 1,
+        sawEacces: false,
+        outputText: "npm ERR! something went wrong\n",
+      });
+
+      await upgradeCli([], makeOptions({ runInstall }));
+
+      expect(stderrSpy).toHaveBeenCalledWith("npm ERR! something went wrong\n");
+      expect(process.exitCode).toBe(1);
+    } finally {
+      stderrSpy.mockRestore();
+    }
+  });
+
+  it("skips the stderr replay when the install produced no output", async () => {
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+      const runInstall = vi
+        .fn<RunInstallFn>()
+        .mockResolvedValue({ exitCode: 1, sawEacces: false, outputText: "" });
+
+      await upgradeCli([], makeOptions({ runInstall }));
+
+      expect(stderrSpy).not.toHaveBeenCalled();
+    } finally {
+      stderrSpy.mockRestore();
+    }
   });
 
   it("rejects an unknown flag", async () => {
@@ -247,7 +344,7 @@ describe(createDefaultUpgradeCliOptions, () => {
     runCommandMock.mockReturnValue("/usr/local/lib/node_modules");
     const fakeSpawner = vi.fn<NpmSpawner>();
     createDefaultNpmSpawnerMock.mockReturnValue(fakeSpawner);
-    runNpmInstallGlobalMock.mockResolvedValue({ exitCode: 0, sawEacces: false });
+    runNpmInstallGlobalMock.mockResolvedValue({ exitCode: 0, sawEacces: false, outputText: "" });
 
     const options = await createDefaultUpgradeCliOptions({
       packageName: PACKAGE_NAME,
@@ -259,13 +356,87 @@ describe(createDefaultUpgradeCliOptions, () => {
       npmBin: "/usr/local/bin/npm",
     });
 
-    expect(createDefaultNpmSpawnerMock).toHaveBeenCalledWith(process.stderr);
+    expect(createDefaultNpmSpawnerMock).toHaveBeenCalledWith();
     expect(runNpmInstallGlobalMock).toHaveBeenCalledWith({
       packageName: PACKAGE_NAME,
       version: "latest",
       npmBin: "/usr/local/bin/npm",
       spawner: fakeSpawner,
     });
-    expect(result).toStrictEqual({ exitCode: 0, sawEacces: false });
+    expect(result).toStrictEqual({ exitCode: 0, sawEacces: false, outputText: "" });
+  });
+
+  it("wires readInstalledVersion to read the version from package.json on disk", async () => {
+    whichMock.mockResolvedValue("/usr/local/bin/npm");
+    runCommandMock.mockReturnValue("/usr/local/lib/node_modules");
+
+    const tmp = mkdtempSync(join(tmpdir(), "groundcrew-upgrade-"));
+    try {
+      writeFileSync(join(tmp, "package.json"), JSON.stringify({ version: "4.3.0" }));
+
+      const options = await createDefaultUpgradeCliOptions({
+        packageName: PACKAGE_NAME,
+        cliMetaUrl: pathToFileURL("/opt/pkg/dist/cli.js").toString(),
+      });
+
+      expect(options.readInstalledVersion(tmp)).toBe("4.3.0");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("returns undefined from readInstalledVersion when package.json is missing", async () => {
+    whichMock.mockResolvedValue("/usr/local/bin/npm");
+    runCommandMock.mockReturnValue("/usr/local/lib/node_modules");
+
+    const tmp = mkdtempSync(join(tmpdir(), "groundcrew-upgrade-"));
+    try {
+      const options = await createDefaultUpgradeCliOptions({
+        packageName: PACKAGE_NAME,
+        cliMetaUrl: pathToFileURL("/opt/pkg/dist/cli.js").toString(),
+      });
+
+      expect(options.readInstalledVersion(tmp)).toBeUndefined();
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("returns undefined from readInstalledVersion when package.json is malformed JSON", async () => {
+    whichMock.mockResolvedValue("/usr/local/bin/npm");
+    runCommandMock.mockReturnValue("/usr/local/lib/node_modules");
+
+    const tmp = mkdtempSync(join(tmpdir(), "groundcrew-upgrade-"));
+    try {
+      writeFileSync(join(tmp, "package.json"), "{ this is not valid json");
+
+      const options = await createDefaultUpgradeCliOptions({
+        packageName: PACKAGE_NAME,
+        cliMetaUrl: pathToFileURL("/opt/pkg/dist/cli.js").toString(),
+      });
+
+      expect(options.readInstalledVersion(tmp)).toBeUndefined();
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("returns undefined from readInstalledVersion when package.json lacks a string version", async () => {
+    whichMock.mockResolvedValue("/usr/local/bin/npm");
+    runCommandMock.mockReturnValue("/usr/local/lib/node_modules");
+
+    const tmp = mkdtempSync(join(tmpdir(), "groundcrew-upgrade-"));
+    try {
+      writeFileSync(join(tmp, "package.json"), JSON.stringify({ name: "no-version" }));
+
+      const options = await createDefaultUpgradeCliOptions({
+        packageName: PACKAGE_NAME,
+        cliMetaUrl: pathToFileURL("/opt/pkg/dist/cli.js").toString(),
+      });
+
+      expect(options.readInstalledVersion(tmp)).toBeUndefined();
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });

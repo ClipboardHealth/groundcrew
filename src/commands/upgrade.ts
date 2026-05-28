@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { runCommand } from "../lib/commandRunner.ts";
 import { which } from "../lib/host.ts";
 import {
@@ -22,12 +25,18 @@ export interface UpgradeCliOptions {
     version: string;
     npmBin: string;
   }) => Promise<NpmRunResult>;
+  readInstalledVersion: (installPath: string) => string | undefined;
 }
 
 export interface UpgradeInstallDetails {
   installKind: InstallKind;
   installPath: string;
   npmBin: string | undefined;
+}
+
+interface GlobalInstall {
+  installPath: string;
+  npmBin: string;
 }
 
 type ParsedArgs =
@@ -100,14 +109,16 @@ export async function upgradeCli(
   }
 
   const options = await resolveOptions(optionsInput);
-  const npmBin = await resolveGlobalNpmBin(options);
-  if (npmBin === undefined) {
+  const install = await resolveGlobalInstall(options);
+  if (install === undefined) {
     return;
   }
-  await runInstallAndReport(options, npmBin, parsed.version);
+  await runInstallAndReport(options, install, parsed.version);
 }
 
-async function resolveGlobalNpmBin(options: UpgradeCliOptions): Promise<string | undefined> {
+async function resolveGlobalInstall(
+  options: UpgradeCliOptions,
+): Promise<GlobalInstall | undefined> {
   const install = await options.resolveInstall();
   if (install.installKind !== "global") {
     writeError(refusalMessage(install.installKind, install.installPath, options.packageName));
@@ -119,21 +130,31 @@ async function resolveGlobalNpmBin(options: UpgradeCliOptions): Promise<string |
     process.exitCode = 1;
     return undefined;
   }
-  return install.npmBin;
+  return { installPath: install.installPath, npmBin: install.npmBin };
 }
 
 async function runInstallAndReport(
   options: UpgradeCliOptions,
-  npmBin: string,
+  install: GlobalInstall,
   version: string,
 ): Promise<void> {
+  const fromVersion = options.readInstalledVersion(install.installPath);
+  writeOutput("Upgrading crew…");
   const result = await options.runInstall({
     packageName: options.packageName,
     version,
-    npmBin,
+    npmBin: install.npmBin,
   });
   if (result.exitCode === 0) {
+    const toVersion = options.readInstalledVersion(install.installPath);
+    writeOutput(formatUpgradeSuccess({ fromVersion, toVersion }));
     return;
+  }
+  if (result.outputText.length > 0) {
+    process.stderr.write(result.outputText);
+    if (!result.outputText.endsWith("\n")) {
+      process.stderr.write("\n");
+    }
   }
   if (result.sawEacces) {
     writeError(
@@ -141,6 +162,23 @@ async function runInstallAndReport(
     );
   }
   process.exitCode = result.exitCode;
+}
+
+function formatUpgradeSuccess(versions: {
+  fromVersion: string | undefined;
+  toVersion: string | undefined;
+}): string {
+  const { fromVersion, toVersion } = versions;
+  if (toVersion === undefined) {
+    return "crew upgrade complete";
+  }
+  if (fromVersion === undefined) {
+    return `crew is now on version ${toVersion}`;
+  }
+  if (fromVersion === toVersion) {
+    return `crew is already on version ${toVersion}`;
+  }
+  return `Upgraded crew from ${fromVersion} to ${toVersion}`;
 }
 
 export interface CreateUpgradeOptionsArgs {
@@ -168,7 +206,32 @@ export async function createDefaultUpgradeCliOptions(
     runInstall: async (options) =>
       await runNpmInstallGlobal({
         ...options,
-        spawner: createDefaultNpmSpawner(process.stderr),
+        spawner: createDefaultNpmSpawner(),
       }),
+    readInstalledVersion: readInstalledVersionFromDisk,
   };
+}
+
+function readInstalledVersionFromDisk(installPath: string): string | undefined {
+  let raw: string;
+  try {
+    raw = readFileSync(join(installPath, "package.json"), "utf8");
+  } catch {
+    return undefined;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+  if (
+    typeof parsed === "object" &&
+    parsed !== null &&
+    "version" in parsed &&
+    typeof parsed.version === "string"
+  ) {
+    return parsed.version;
+  }
+  return undefined;
 }

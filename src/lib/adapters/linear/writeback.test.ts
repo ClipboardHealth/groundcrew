@@ -12,18 +12,24 @@ interface StateNode {
   id: string;
   name: string;
   type: string;
+  position: number;
 }
 
-function makeClient(options: { omitInProgressState?: boolean } = {}): ClientStub {
-  const { omitInProgressState = false } = options;
+function makeClient(
+  options: { omitInProgressState?: boolean; states?: StateNode[] } = {},
+): ClientStub {
+  const { omitInProgressState = false, states } = options;
+  const nodes =
+    states ??
+    (omitInProgressState
+      ? [{ id: "state-other", name: "Other", type: "unstarted", position: 1 }]
+      : [{ id: "state-in-progress", name: "In Progress", type: "started", position: 1 }]);
   return {
     team: vi
       .fn<() => Promise<{ states: () => Promise<{ nodes: StateNode[] }> }>>()
       .mockResolvedValue({
         states: vi.fn<() => Promise<{ nodes: StateNode[] }>>().mockResolvedValue({
-          nodes: omitInProgressState
-            ? [{ id: "state-other", name: "Other", type: "unstarted" }]
-            : [{ id: "state-in-progress", name: "In Progress", type: "started" }],
+          nodes,
         }),
       }),
     updateIssue: vi.fn<() => Promise<Record<string, never>>>().mockResolvedValue({}),
@@ -66,6 +72,40 @@ describe(createLinearIssueStatusUpdater, () => {
 
     expect(client.team).toHaveBeenCalledTimes(1);
     expect(client.updateIssue).toHaveBeenCalledTimes(2);
+  });
+
+  it("targets the 'In Progress' state even when 'In Review' (also started) is returned first", async () => {
+    // Linear's default workflow has TWO started-type states: In Progress and
+    // In Review. team.states() orders by updatedAt, not board position, so the
+    // In Review state can come first — the old `.find(type === "started")`
+    // parked tickets in In Review on launch.
+    const client = makeClient({
+      states: [
+        { id: "state-in-review", name: "In Review", type: "started", position: 2 },
+        { id: "state-in-progress", name: "In Progress", type: "started", position: 1 },
+      ],
+    });
+    const updater = createLinearIssueStatusUpdater({ client: asLinearClient(client) });
+
+    await updater.markInProgress({ id: "team-1", uuid: "uuid-1", teamId: "shared" });
+
+    expect(client.updateIssue).toHaveBeenCalledWith("uuid-1", { stateId: "state-in-progress" });
+  });
+
+  it("falls back to the lowest-position started state when no state is named 'In Progress'", async () => {
+    // Teams rename the in-progress column ("Doing", "WIP", ...). With no exact
+    // name match, the leftmost (lowest-position) started column is In Progress.
+    const client = makeClient({
+      states: [
+        { id: "state-code-review", name: "Code Review", type: "started", position: 3 },
+        { id: "state-doing", name: "Doing", type: "started", position: 1 },
+      ],
+    });
+    const updater = createLinearIssueStatusUpdater({ client: asLinearClient(client) });
+
+    await updater.markInProgress({ id: "team-1", uuid: "uuid-1", teamId: "shared" });
+
+    expect(client.updateIssue).toHaveBeenCalledWith("uuid-1", { stateId: "state-doing" });
   });
 
   it("re-fetches team workflow states on every failing markInProgress so an operator-side fix is picked up without restart", async () => {
