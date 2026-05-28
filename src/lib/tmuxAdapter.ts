@@ -93,7 +93,7 @@ function tmuxTarget(name: string): string {
 
 function shouldKeepDeadWindows(): boolean {
   const keepDeadWindowsEnv = readEnvironmentVariable("GROUNDCREW_KEEP_DEAD_WINDOWS");
-  return keepDeadWindowsEnv !== undefined && keepDeadWindowsEnv.length > 0;
+  return keepDeadWindowsEnv === "1";
 }
 
 function isTmuxNotFoundError(error: unknown): boolean {
