@@ -152,6 +152,9 @@ async function runInstallAndReport(
   }
   if (result.outputText.length > 0) {
     process.stderr.write(result.outputText);
+    if (!result.outputText.endsWith("\n")) {
+      process.stderr.write("\n");
+    }
   }
   if (result.sawEacces) {
     writeError(

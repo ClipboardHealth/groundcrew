@@ -186,15 +186,22 @@ describe(upgradeCli, () => {
   });
 
   it("appends an EACCES hint when install fails with EACCES", async () => {
-    const runInstall = vi
-      .fn<RunInstallFn>()
-      .mockResolvedValue({ exitCode: 243, sawEacces: true, outputText: "npm ERR! EACCES" });
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+      const runInstall = vi
+        .fn<RunInstallFn>()
+        .mockResolvedValue({ exitCode: 243, sawEacces: true, outputText: "npm ERR! EACCES" });
 
-    await upgradeCli([], makeOptions({ runInstall }));
+      await upgradeCli([], makeOptions({ runInstall }));
 
-    expect(consoleErr.output()).toMatch(/EACCES/i);
-    expect(consoleErr.output()).toMatch(/permission/i);
-    expect(process.exitCode).toBe(243);
+      expect(stderrSpy).toHaveBeenCalledWith("npm ERR! EACCES");
+      expect(stderrSpy).toHaveBeenCalledWith("\n");
+      expect(consoleErr.output()).toMatch(/EACCES/i);
+      expect(consoleErr.output()).toMatch(/permission/i);
+      expect(process.exitCode).toBe(243);
+    } finally {
+      stderrSpy.mockRestore();
+    }
   });
 
   it("reports the from/to versions on a successful upgrade", async () => {
