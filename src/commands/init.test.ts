@@ -138,6 +138,25 @@ describe("crew init", () => {
       expect(result.outcome).toBe("dry-run-would-write");
       expect(readFileSync(destination, "utf8")).toBe("existing content");
     });
+
+    it("writes a customized config when quickstart fields are supplied", () => {
+      const result = initConfig({
+        cwd,
+        projectDir: "~/dev",
+        repositories: ["OWNER/REPO"],
+        runner: "none",
+        model: "claude",
+      });
+
+      const destination = join(cwd, "crew.config.ts");
+      const actual = readFileSync(destination, "utf8");
+      expect(result.outcome).toBe("wrote");
+      expect(actual).toContain('projectDir: "~/dev"');
+      expect(actual).toContain('knownRepositories: ["OWNER/REPO"]');
+      expect(actual).toContain('local: { runner: "none" }');
+      expect(actual).toContain('default: "claude"');
+      expect(actual).toContain("codex: { disabled: true }");
+    });
   });
 
   describe(initConfigCli, () => {
@@ -169,6 +188,74 @@ describe("crew init", () => {
       expect(existsSync(join(xdgHome, "groundcrew", "crew.config.ts"))).toBe(true);
     });
 
+    it("accepts quickstart flags and prints clone plus Linear guidance", async () => {
+      await initConfigCli([
+        "--global",
+        "--project-dir",
+        "~/dev",
+        "--repo",
+        "OWNER/REPO",
+        "--runner",
+        "none",
+        "--model",
+        "claude",
+      ]);
+
+      const destination = join(xdgHome, "groundcrew", "crew.config.ts");
+      const actual = readFileSync(destination, "utf8");
+      const output = consoleLog.output();
+      expect(actual).toContain('projectDir: "~/dev"');
+      expect(actual).toContain('knownRepositories: ["OWNER/REPO"]');
+      expect(actual).toContain('local: { runner: "none" }');
+      expect(actual).toContain("codex: { disabled: true }");
+      expect(output).toContain('PROJECT_DIR="$HOME/dev"');
+      expect(output).toContain('mkdir -p "$PROJECT_DIR/OWNER"');
+      expect(output).toContain('git clone git@github.com:OWNER/REPO.git "$PROJECT_DIR/OWNER/REPO"');
+      expect(output).toContain('export GROUNDCREW_LINEAR_API_KEY="lin_api_..."');
+      expect(output).toContain("crew doctor");
+      expect(output).toContain("crew run --watch");
+    });
+
+    it("supports Codex-only quickstart config and shell-escapes a ~/ project dir", async () => {
+      await initConfigCli([
+        "--global",
+        "--project-dir",
+        "~/Dev $Box",
+        "--repo",
+        "OWNER/REPO",
+        "--model",
+        "codex",
+      ]);
+
+      const destination = join(xdgHome, "groundcrew", "crew.config.ts");
+      const actual = readFileSync(destination, "utf8");
+      const output = consoleLog.output();
+      expect(actual).toContain('default: "codex"');
+      expect(actual).toContain("claude: { disabled: true }");
+      expect(output).toContain(String.raw`PROJECT_DIR="$HOME/Dev \$Box"`);
+    });
+
+    it("prints clone guidance for a bare repo and shell-quotes an absolute project dir", async () => {
+      await initConfigCli(["--global", "--project-dir", "/tmp/ground crew's", "--repo", "repo-a"]);
+
+      const output = consoleLog.output();
+      expect(output).toContain(String.raw`PROJECT_DIR='/tmp/ground crew'\''s'`);
+      expect(output).toContain('mkdir -p "$PROJECT_DIR"');
+      expect(output).toContain('git clone <REMOTE_URL_FOR_repo-a> "$PROJECT_DIR/repo-a"');
+    });
+
+    it("uses the example project dir in clone guidance when only repos are supplied", async () => {
+      await initConfigCli(["--global", "--repo", "OWNER/REPO"]);
+
+      expect(consoleLog.output()).toContain('PROJECT_DIR="$HOME/dev/groundcrew"');
+    });
+
+    it("prints a HOME-only assignment when project dir is ~", async () => {
+      await initConfigCli(["--global", "--project-dir", "~", "--repo", "OWNER/REPO"]);
+
+      expect(consoleLog.output()).toContain('PROJECT_DIR="$HOME"');
+    });
+
     it("accepts an explicit --local flag (cwd default)", async () => {
       await withCwd(cwd, async () => {
         await initConfigCli(["--local"]);
@@ -191,6 +278,22 @@ describe("crew init", () => {
     it("rejects an unknown flag with a helpful usage line", async () => {
       await expect(initConfigCli(["--what"])).rejects.toThrow(
         /Unknown option: --what[\s\S]*Usage: crew init/,
+      );
+    });
+
+    it("rejects --runner without a value", async () => {
+      await expect(initConfigCli(["--runner"])).rejects.toThrow(/crew init --runner/);
+    });
+
+    it("rejects unsupported runner values", async () => {
+      await expect(initConfigCli(["--runner", "unsafe"])).rejects.toThrow(
+        /--runner must be one of/,
+      );
+    });
+
+    it("rejects unsupported model values", async () => {
+      await expect(initConfigCli(["--model", "cursor"])).rejects.toThrow(
+        /--model must be one of claude, codex/,
       );
     });
 

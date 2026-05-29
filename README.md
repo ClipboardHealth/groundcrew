@@ -43,18 +43,17 @@ Worktrees
 ## Quickstart
 
 ```bash
-# 1. Install Node ≥ 24, git, cmux or tmux, and the agent CLIs you'll use (claude, codex, ...).
+# 1. Install Node ≥ 24, git, cmux or tmux, and the agent CLI(s) you'll use.
+#    By default, both claude and codex are enabled; use --model to keep only one.
 
 # 2. Install groundcrew
 npm install -g @clipboard-health/groundcrew
 
-# 3. Scaffold a config and edit workspace.projectDir + workspace.knownRepositories
-crew init && $EDITOR crew.config.ts
+# 3. Scaffold a global config.
+#    runner=none is the quickest path, but it runs agents unsandboxed on the host.
+crew init --global --project-dir ~/dev --repo OWNER/REPO --runner none --model claude
 
-# 4. Clone the repos referenced in your config
-PROJECT_DIR="$HOME/dev/c"
-mkdir -p "$PROJECT_DIR/OWNER"
-git clone git@github.com:OWNER/REPO.git "$PROJECT_DIR/OWNER/REPO"
+# 4. Run the clone commands printed by `crew init`.
 
 # 5. Export your Linear API key
 export GROUNDCREW_LINEAR_API_KEY="lin_api_..."
@@ -66,12 +65,14 @@ crew run --watch
 
 In Linear, assign tickets to yourself and add an `agent-*` label (`agent-claude`, `agent-codex`, or `agent-any`). Groundcrew picks them up across every team and project your API key can see.
 
-`crew init --global` writes the config into `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/` instead of the cwd. Both forms refuse to overwrite — pass `--force` to replace, `--dry-run` to preview.
+`crew init --global` writes the config into `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/` instead of the cwd. Both forms refuse to overwrite — pass `--force` to replace, `--dry-run` to preview. `--repo` can be repeated; `--model claude` disables Codex, and `--model codex` disables Claude.
 
 ## Commands
 
 ```bash
 crew init [--global | --local] [--force] [--dry-run]     # create a crew.config.ts
+          [--project-dir <dir>] [--repo <repo>]
+          [--runner <auto|safehouse|sdx|none>] [--model <claude|codex>]
 crew doctor                                              # check setup
 crew status [<TICKET>]                                   # inspect current state or one ticket
 crew run                                                 # one-shot orchestration

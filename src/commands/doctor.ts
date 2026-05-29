@@ -22,6 +22,7 @@ import { resolveWorkspaceKind, type WorkspaceResolution } from "../lib/workspace
 // Tokenization stops after this many non-flag tokens. Two is enough to
 // catch wrapper + wrapped CLI commands like `safehouse claude --foo`.
 const MAX_TOKENS_PER_CMD = 2;
+const SHIPPED_DEFAULT_MODEL_NAMES = ["claude", "codex"] as const;
 
 interface Check {
   name: string;
@@ -121,14 +122,38 @@ function commandTokensToCheck(cmd: string): string[] {
   return result;
 }
 
-function gatherToolTokens(config: ResolvedConfig): string[] {
-  const all = new Set<string>();
-  for (const definition of Object.values(config.models.definitions)) {
+interface ToolCheckTarget {
+  token: string;
+  hint?: string;
+}
+
+function gatherToolTargets(config: ResolvedConfig): ToolCheckTarget[] {
+  const all = new Map<string, string | undefined>();
+  for (const [modelName, definition] of Object.entries(config.models.definitions)) {
     for (const token of commandTokensToCheck(definition.cmd)) {
-      all.add(token);
+      const hint = modelCliHint(modelName, token);
+      if (!all.has(token) || all.get(token) === undefined) {
+        all.set(token, hint);
+      }
     }
   }
-  return [...all];
+  return [...all].map(([token, hint]) => (hint === undefined ? { token } : { token, hint }));
+}
+
+function modelCliHint(modelName: string, token: string): string | undefined {
+  if (token !== modelName) {
+    return undefined;
+  }
+  if (!isShippedDefaultModelName(modelName)) {
+    return undefined;
+  }
+  return `install ${token} or disable it in crew.config.ts: \`models.definitions.${modelName} = { disabled: true }\``;
+}
+
+function isShippedDefaultModelName(
+  value: string,
+): value is (typeof SHIPPED_DEFAULT_MODEL_NAMES)[number] {
+  return value === "claude" || value === "codex";
 }
 
 function format(check: Check): string {
@@ -184,11 +209,11 @@ export async function doctor(): Promise<boolean> {
     localCapability,
   ];
 
-  const toolTokens = gatherToolTokens(config);
-  for (const token of toolTokens) {
+  const toolTargets = gatherToolTargets(config);
+  for (const { token, hint } of toolTargets) {
     const required = localCapability.ok;
     // oxlint-disable-next-line no-await-in-loop -- doctor reports tools in deterministic order
-    const check = await checkCmd(token, required, required ? undefined : "required for local runs");
+    const check = await checkCmd(token, required, required ? hint : "required for local runs");
     checks.push(check);
   }
 
