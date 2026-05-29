@@ -59,7 +59,7 @@ crew doctor
 crew run --watch
 ```
 
-`crew init --global` writes config to `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/`. Pass `--repo` more than once for multiple repos. If you only have one CLI installed, pass `--model claude` (or `--model codex`) so Groundcrew disables the other and `doctor` won't flag it as missing.
+`crew init --global` writes config to `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/`. Pass `--repo` more than once for multiple repos. If you only have one CLI installed, pass `--model claude` (or `--model codex`) so Groundcrew disables the other model and `doctor` won't flag it as missing.
 
 ## Ticket Pickup
 
