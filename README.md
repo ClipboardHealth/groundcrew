@@ -16,48 +16,64 @@
   <a href="./LICENSE"><img alt="license" src="https://img.shields.io/npm/l/@clipboard-health/groundcrew?style=flat-square&label=license&color=18181b&labelColor=18181b"></a>
 </p>
 
-Groundcrew watches assigned tickets, creates isolated worktrees, launches agent CLIs in cmux or tmux, and leaves each ticket's work on its own branch. The longer product story is in [Tickets to pull requests while you sleep](https://www.clipboardworks.com/resources/blog/tickets-to-pull-requests-while-you-sleep).
+<p align="center">
+  <img alt="Groundcrew picking up tickets and running coding agents in parallel" src="./static/demo.gif" width="800">
+</p>
+
+Groundcrew watches assigned tickets, creates isolated worktrees, launches agent CLIs in dedicated terminals, and leaves each ticket's work on its own PR-ready branch. For the backstory, read _[Tickets to pull requests while you sleep](https://www.clipboardworks.com/resources/blog/tickets-to-pull-requests-while-you-sleep)_.
 
 ## Why
 
 - **One worktree per ticket.** Agents work in parallel without stepping on each other.
-- **Linear out of the box.** Assign yourself an `agent-*` labeled issue and Groundcrew can pick it up.
-- **Local-first isolation.** Safehouse on macOS, Docker Sandboxes on Linux/WSL, or an explicit `none` escape hatch.
+- **Pluggable ticket sources.** Linear by default; Jira and local files via [ticket sources](./docs/ticket-sources.md).
+- **Local-first isolation.** Safehouse, Docker Sandboxes, or an explicit `none` escape hatch.
 - **Multi-agent routing.** Ships with `claude` and `codex`; bring your own CLI in config.
+
+## Prerequisites
+
+`crew doctor` checks all of these, so you can install as you go.
+
+- **Node >= 24:** [nvm](https://github.com/nvm-sh/nvm): `nvm install 24`.
+- **git:** e.g., `brew install git`, `apt install git`.
+- **A terminal multiplexer:** [tmux](https://github.com/tmux/tmux/wiki/Installing) (cross-platform) or [cmux](https://cmux.com/) (macOS).
+- **An agent CLI:** [Claude Code](https://code.claude.com/docs/en/quickstart) and/or [Codex](https://developers.openai.com/codex/quickstart?setup=cli).
+- **A sandbox runner:** [Docker Sandboxes](https://docs.docker.com/sandboxes/) (cross-platform) or [Safehouse](https://agent-safehouse.dev/) on macOS. Skip only with `--runner none`.
 
 ## Quickstart
 
 ```bash
-# 1. Install Node >= 24, git, cmux or tmux, and the agent CLI you'll use.
-
-# 2. Install groundcrew.
+# 1. Install groundcrew.
 npm install -g @clipboard-health/groundcrew
 
-# 3. Scaffold a global config.
-#    runner=none is the quickest path, but it runs agents unsandboxed on the host.
-crew init --global --project-dir ~/dev --repo OWNER/REPO --runner none --model claude
+# 2. Scaffold a global config. Agents are sandboxed by default
+#    (Safehouse/Docker Sandboxes); add --runner none to run unsandboxed on the host.
+crew init --global --project-dir ~/dev --repo OWNER/REPO --model claude
 
-# 4. Run the clone commands printed by `crew init`.
+# 3. Run the clone commands printed by `crew init`.
 
-# 5. If using Linear, export your API key.
+# 4. Using Linear? Export your API key. (Jira and other trackers: see Ticket Pickup.)
 export GROUNDCREW_LINEAR_API_KEY="lin_api_..."
 
-# 6. Verify setup, then dispatch.
+# 5. Verify setup, then dispatch.
 crew doctor
 crew run --watch
 ```
 
-`crew init --global` writes config to `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/`. Pass `--repo` more than once for multiple repos. Pass `--model claude` or `--model codex` to disable the missing CLI if you only have one installed.
+`crew init --global` writes config to `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/`. Pass `--repo` more than once for multiple repos. If you only have one CLI installed, pass `--model claude` (or `--model codex`) so Groundcrew disables the other and `doctor` won't flag it as missing.
 
 ## Ticket Pickup
 
-For Linear, assign tickets to yourself and add an `agent-*` label:
+**Not on Linear?** Use Jira or local files via [ticket sources](./docs/ticket-sources.md).
+
+Linear works out of the box: assign tickets to yourself and add an `agent-*` label.
 
 - `agent-claude`, `agent-codex`, or `agent-<name>` routes to that model.
 - `agent-any` routes to the enabled model with the most available capacity.
 - Tickets without an `agent-*` label are ignored by `crew run`; dispatch one manually with `crew start <TICKET>`.
 
-Groundcrew scans `workspace.knownRepositories` to infer which repo a ticket belongs to. A ticket blocked by non-terminal blockers is skipped until those blockers are done.
+Groundcrew scans `workspace.knownRepositories` to infer which repo a ticket belongs to.
+
+A ticket blocked by non-terminal blockers is skipped until those blockers are done.
 
 ## Commands
 
@@ -91,7 +107,7 @@ export default {
     knownRepositories: ["OWNER/REPO"],
   },
   local: {
-    runner: "none",
+    runner: "auto",
   },
   models: {
     default: "claude",
