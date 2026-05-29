@@ -40,6 +40,8 @@ interface InitConfigOptions {
   runner?: LocalRunnerSetting;
   /** Keep one shipped default model enabled and disable the other. */
   model?: InitModel;
+  /** Override the source template path. */
+  examplePath?: string;
 }
 
 type InitConfigOutcome = "dry-run-would-write" | "exists" | "wrote";
@@ -52,7 +54,7 @@ interface InitConfigResult {
 export function initConfig(options: InitConfigOptions = {}): InitConfigResult {
   const scope = options.scope ?? "local";
   const cwd = options.cwd ?? process.cwd();
-  const source = resolveExamplePath();
+  const source = options.examplePath ?? resolveExamplePath();
   const destination = destinationFor({ scope, cwd });
 
   if (existsSync(destination) && options.force !== true) {
@@ -206,27 +208,50 @@ function tsString(value: string): string {
 function renderConfig(source: string, options: InitConfigOptions): string {
   let contents = readFileSync(source, "utf8");
   if (options.projectDir !== undefined) {
-    contents = contents.replace(
+    contents = replaceRequired(
+      contents,
       `projectDir: ${tsString(DEFAULT_EXAMPLE_PROJECT_DIR)}`,
       `projectDir: ${tsString(options.projectDir)}`,
+      "--project-dir",
     );
   }
   if (options.repositories !== undefined && options.repositories.length > 0) {
-    contents = contents.replace(
+    contents = replaceRequired(
+      contents,
       'knownRepositories: ["your-org/your-repo"]',
       `knownRepositories: [${options.repositories.map(tsString).join(", ")}]`,
+      "--repo",
     );
   }
   if (options.runner !== undefined) {
-    contents = contents.replace(
+    contents = replaceRequired(
+      contents,
       `  // local: { runner: "auto" },`,
       `  local: { runner: ${tsString(options.runner)} },`,
+      "--runner",
     );
   }
   if (options.model !== undefined) {
-    contents = contents.replace("  // prompts: {", `${modelBlock(options.model)}\n  // prompts: {`);
+    contents = replaceRequired(
+      contents,
+      "  // prompts: {",
+      `${modelBlock(options.model)}\n  // prompts: {`,
+      "--model",
+    );
   }
   return contents;
+}
+
+function replaceRequired(
+  contents: string,
+  search: string,
+  replacement: string,
+  flag: string,
+): string {
+  if (!contents.includes(search)) {
+    throw new Error(`crew init ${flag}: template anchor not found in ${EXAMPLE_FILE_NAME}`);
+  }
+  return contents.replace(search, replacement);
 }
 
 function modelBlock(model: InitModel): string {

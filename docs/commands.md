@@ -12,8 +12,8 @@ Status is informational only. Use `crew cleanup <TICKET>` to tear down stale wor
 <summary>Sample ticket status output</summary>
 
 ```text
-groundcrew status HRD-442
-=========================
+crew status HRD-442
+===================
 ticket: hrd-442  in-progress  https://linear.app/example/issue/HRD-442
 title: Multi-event extractor: year inference can produce date_start > date_end
 run: running; model=claude; updated=2026-05-26T00:01:00.000Z; resumes=0

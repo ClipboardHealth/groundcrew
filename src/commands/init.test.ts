@@ -157,6 +157,19 @@ describe("crew init", () => {
       expect(actual).toContain('default: "claude"');
       expect(actual).toContain("codex: { disabled: true }");
     });
+
+    it("fails loudly when a quickstart template anchor is missing", () => {
+      const template = join(cwd, "crew.config.example.ts");
+      writeFileSync(
+        template,
+        exampleContents.replace('projectDir: "~/dev/groundcrew"', 'projectDir: "~/elsewhere"'),
+      );
+
+      expect(() => initConfig({ cwd, projectDir: "~/dev", examplePath: template })).toThrow(
+        /crew init --project-dir: template anchor not found/,
+      );
+      expect(existsSync(join(cwd, "crew.config.ts"))).toBe(false);
+    });
   });
 
   describe(initConfigCli, () => {
