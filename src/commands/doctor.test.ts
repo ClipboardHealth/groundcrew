@@ -246,6 +246,26 @@ describe(doctor, () => {
     expect(consoleLog.output()).toContain("[--] git");
   });
 
+  it("explains how to disable a missing shipped default model CLI", async () => {
+    loadConfigMock.mockResolvedValue(
+      makeConfig({
+        default: "claude",
+        definitions: {
+          claude: { cmd: "claude", color: "#fff" },
+          codex: { cmd: "codex --dangerously-bypass-approvals-and-sandbox", color: "#3267e3" },
+        },
+      }),
+    );
+    mockWhichFailure("codex", "not installed");
+
+    const actual = await doctor();
+
+    expect(actual).toBe(false);
+    expect(consoleLog.output()).toContain(
+      "[--] codex  — install codex or disable it in crew.config.ts: `models.definitions.codex = { disabled: true }`",
+    );
+  });
+
   it("treats an empty `which` result as missing", async () => {
     loadConfigMock.mockResolvedValue(makeConfig());
     mockWhichEmpty("cmux");
@@ -492,6 +512,41 @@ describe(doctor, () => {
     await doctor();
 
     expect(consoleLog.output()).toMatch(/\[--] bare-cli\s*$/m);
+  });
+
+  it("does not use shipped-default disable guidance for custom model names", async () => {
+    loadConfigMock.mockResolvedValue(
+      makeConfig({
+        default: "cursor",
+        definitions: {
+          cursor: { cmd: "cursor", color: "#fff" },
+        },
+      }),
+    );
+    mockWhichFailure("cursor", "missing");
+
+    await doctor();
+
+    expect(consoleLog.output()).toMatch(/\[--] cursor\s*$/m);
+  });
+
+  it("keeps the first useful hint when multiple models share a command token", async () => {
+    loadConfigMock.mockResolvedValue(
+      makeConfig({
+        default: "claude",
+        definitions: {
+          claude: { cmd: "claude", color: "#fff" },
+          alias: { cmd: "claude", color: "#fff" },
+        },
+      }),
+    );
+    mockWhichFailure("claude", "missing");
+
+    await doctor();
+
+    expect(consoleLog.output()).toContain(
+      "[--] claude  — install claude or disable it in crew.config.ts: `models.definitions.claude = { disabled: true }`",
+    );
   });
 
   it("treats the token after a leading flag as the flag's value and stops after MAX tokens", async () => {

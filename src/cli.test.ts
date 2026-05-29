@@ -135,6 +135,10 @@ describe(run, () => {
     expect(helpOutput).toContain("Usage: crew <command>");
     expect(helpOutput).toContain("-v, --version");
     expect(helpOutput).toContain("run");
+    expect(helpOutput).toContain("--project-dir <dir>");
+    expect(helpOutput).toContain("[--repo <repo>]...");
+    expect(helpOutput).toContain("--runner <runner>");
+    expect(helpOutput).toContain("--model <model>");
     expect(helpOutput).not.toContain("sandbox");
     expect(helpOutput).not.toContain("crew ticket");
     expect(process.exitCode).toBe(1);

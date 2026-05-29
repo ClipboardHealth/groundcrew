@@ -5,16 +5,23 @@
  * `cp` dance documented in the README.
  */
 
-import { copyFileSync, existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
+import { LOCAL_RUNNER_SETTINGS, type LocalRunnerSetting } from "../lib/config.ts";
+import { shellSingleQuote } from "../lib/shell.ts";
 import { log, writeOutput } from "../lib/util.ts";
 import { xdgConfigPath } from "../lib/xdg.ts";
 
 const CONFIG_FILE_NAME = "crew.config.ts";
 const EXAMPLE_FILE_NAME = "crew.config.example.ts";
+const DEFAULT_EXAMPLE_PROJECT_DIR = "~/dev/groundcrew";
+const INIT_USAGE =
+  "Usage: crew init [--global | --local] [--force] [--dry-run] [--project-dir <dir>] [--repo <owner/repo>]... [--runner <auto|safehouse|sdx|none>] [--model <claude|codex>]";
+const INIT_MODELS = ["claude", "codex"] as const;
 
 type InitConfigScope = "global" | "local";
+type InitModel = (typeof INIT_MODELS)[number];
 
 interface InitConfigOptions {
   /** Where to write the config. Defaults to "local" (cwd). */
@@ -25,6 +32,16 @@ interface InitConfigOptions {
   dryRun?: boolean;
   /** Override for the working directory; defaults to `process.cwd()`. */
   cwd?: string;
+  /** Pre-fill workspace.projectDir in the generated config. */
+  projectDir?: string;
+  /** Pre-fill workspace.knownRepositories in the generated config. */
+  repositories?: string[];
+  /** Pre-fill local.runner in the generated config. */
+  runner?: LocalRunnerSetting;
+  /** Keep one shipped default model enabled and disable the other. */
+  model?: InitModel;
+  /** Override the source template path. */
+  examplePath?: string;
 }
 
 type InitConfigOutcome = "dry-run-would-write" | "exists" | "wrote";
@@ -37,7 +54,7 @@ interface InitConfigResult {
 export function initConfig(options: InitConfigOptions = {}): InitConfigResult {
   const scope = options.scope ?? "local";
   const cwd = options.cwd ?? process.cwd();
-  const source = resolveExamplePath();
+  const source = options.examplePath ?? resolveExamplePath();
   const destination = destinationFor({ scope, cwd });
 
   if (existsSync(destination) && options.force !== true) {
@@ -51,7 +68,7 @@ export function initConfig(options: InitConfigOptions = {}): InitConfigResult {
   }
 
   mkdirSync(dirname(destination), { recursive: true });
-  copyFileSync(source, destination);
+  writeFileSync(destination, renderConfig(source, options));
   log(`[wrote] ${destination}`);
   return { destination, outcome: "wrote" };
 }
@@ -65,13 +82,7 @@ export async function initConfigCli(argv: string[]): Promise<void> {
     return;
   }
   if (result.outcome === "wrote") {
-    writeOutput("");
-    writeOutput("Next steps:");
-    writeOutput(`  - Edit ${result.destination}`);
-    writeOutput("  - Set workspace.projectDir, workspace.knownRepositories");
-    writeOutput("  - Export GROUNDCREW_LINEAR_API_KEY (or LINEAR_API_KEY)");
-    writeOutput("  - Assign Linear tickets to yourself and add an agent-* label to opt them in");
-    writeOutput("  - Verify with `crew doctor`");
+    writeInitGuidance(result.destination, options);
   }
 }
 
@@ -79,14 +90,21 @@ function parseArguments(argv: string[]): InitConfigOptions {
   let scope: InitConfigScope | undefined;
   let force = false;
   let dryRun = false;
+  let projectDir: string | undefined;
+  const repositories: string[] = [];
+  let runner: LocalRunnerSetting | undefined;
+  let model: InitModel | undefined;
 
-  for (const argument of argv) {
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
+    /* v8 ignore next 3 @preserve -- loop bounds keep argv[index] defined */
+    if (argument === undefined) {
+      continue;
+    }
     if (argument === "--global" || argument === "--local") {
       const next: InitConfigScope = argument === "--global" ? "global" : "local";
       if (scope !== undefined && scope !== next) {
-        throw new Error(
-          "crew init: --global and --local are mutually exclusive.\nUsage: crew init [--global | --local] [--force] [--dry-run]",
-        );
+        throw new Error(`crew init: --global and --local are mutually exclusive.\n${INIT_USAGE}`);
       }
       scope = next;
       continue;
@@ -99,12 +117,45 @@ function parseArguments(argv: string[]): InitConfigOptions {
       dryRun = true;
       continue;
     }
-    throw new Error(
-      `Unknown option: ${argument}\nUsage: crew init [--global | --local] [--force] [--dry-run]`,
-    );
+    if (argument === "--project-dir") {
+      projectDir = readOptionValue(argv, index, argument);
+      index += 1;
+      continue;
+    }
+    if (argument === "--repo") {
+      repositories.push(readOptionValue(argv, index, argument));
+      index += 1;
+      continue;
+    }
+    if (argument === "--runner") {
+      runner = parseRunner(readOptionValue(argv, index, argument));
+      index += 1;
+      continue;
+    }
+    if (argument === "--model") {
+      model = parseModel(readOptionValue(argv, index, argument));
+      index += 1;
+      continue;
+    }
+    throw new Error(`Unknown option: ${argument}\n${INIT_USAGE}`);
   }
 
-  return { scope: scope ?? "local", force, dryRun };
+  const parsed: InitConfigOptions = {
+    scope: scope ?? "local",
+    force,
+    dryRun,
+    repositories,
+  };
+  if (projectDir !== undefined) {
+    parsed.projectDir = projectDir;
+  }
+  if (runner !== undefined) {
+    parsed.runner = runner;
+  }
+  if (model !== undefined) {
+    parsed.model = model;
+  }
+  return parsed;
 }
 
 function destinationFor(args: { scope: InitConfigScope; cwd: string }): string {
@@ -118,4 +169,169 @@ function resolveExamplePath(): string {
   // `init.ts` lives at src/commands/init.ts in source and dist/commands/init.js
   // after build; the example ships at the package root in both cases.
   return resolve(import.meta.dirname, "..", "..", EXAMPLE_FILE_NAME);
+}
+
+function readOptionValue(argv: string[], index: number, flag: string): string {
+  const value = argv[index + 1];
+  if (value === undefined || value.length === 0 || value.startsWith("-")) {
+    throw new Error(`crew init ${flag}: value is required\n${INIT_USAGE}`);
+  }
+  return value;
+}
+
+function parseRunner(value: string): LocalRunnerSetting {
+  if (isLocalRunnerSetting(value)) {
+    return value;
+  }
+  throw new Error(`crew init --runner must be one of ${LOCAL_RUNNER_SETTINGS.join(", ")}`);
+}
+
+function parseModel(value: string): InitModel {
+  if (isInitModel(value)) {
+    return value;
+  }
+  throw new Error(`crew init --model must be one of ${INIT_MODELS.join(", ")}`);
+}
+
+function isLocalRunnerSetting(value: string): value is LocalRunnerSetting {
+  return value === "auto" || value === "safehouse" || value === "sdx" || value === "none";
+}
+
+function isInitModel(value: string): value is InitModel {
+  return value === "claude" || value === "codex";
+}
+
+function tsString(value: string): string {
+  return JSON.stringify(value);
+}
+
+function renderConfig(source: string, options: InitConfigOptions): string {
+  let contents = readFileSync(source, "utf8");
+  if (options.projectDir !== undefined) {
+    contents = replaceRequired(
+      contents,
+      `projectDir: ${tsString(DEFAULT_EXAMPLE_PROJECT_DIR)}`,
+      `projectDir: ${tsString(options.projectDir)}`,
+      "--project-dir",
+    );
+  }
+  if (options.repositories !== undefined && options.repositories.length > 0) {
+    contents = replaceRequired(
+      contents,
+      'knownRepositories: ["your-org/your-repo"]',
+      `knownRepositories: [${options.repositories.map(tsString).join(", ")}]`,
+      "--repo",
+    );
+  }
+  if (options.runner !== undefined) {
+    contents = replaceRequired(
+      contents,
+      `  // local: { runner: "auto" },`,
+      `  local: { runner: ${tsString(options.runner)} },`,
+      "--runner",
+    );
+  }
+  if (options.model !== undefined) {
+    contents = replaceRequired(
+      contents,
+      "  // prompts: {",
+      `${modelBlock(options.model)}\n  // prompts: {`,
+      "--model",
+    );
+  }
+  return contents;
+}
+
+function replaceRequired(
+  contents: string,
+  search: string,
+  replacement: string,
+  flag: string,
+): string {
+  if (!contents.includes(search)) {
+    throw new Error(`crew init ${flag}: template anchor not found in ${EXAMPLE_FILE_NAME}`);
+  }
+  return contents.replace(search, replacement);
+}
+
+function modelBlock(model: InitModel): string {
+  const disabled = model === "claude" ? "codex" : "claude";
+  return [
+    "  models: {",
+    `    default: ${tsString(model)},`,
+    "    definitions: {",
+    `      ${disabled}: { disabled: true },`,
+    "    },",
+    "  },",
+    "",
+  ].join("\n");
+}
+
+function writeInitGuidance(destination: string, options: InitConfigOptions): void {
+  writeOutput("");
+  writeOutput("Next steps:");
+  writeOutput(`  - Review ${destination}`);
+  if (
+    options.projectDir === undefined ||
+    options.repositories === undefined ||
+    options.repositories.length === 0
+  ) {
+    writeOutput("  - Set workspace.projectDir and workspace.knownRepositories");
+  }
+  writeCloneGuidance(options);
+  writeOutput("  - If using Linear, export your API key:");
+  writeOutput('      export GROUNDCREW_LINEAR_API_KEY="lin_api_..."');
+  writeOutput("  - In Linear, assign tickets to yourself and add an agent-* label to opt them in");
+  writeOutput("  - Validate and start:");
+  writeOutput("      crew doctor");
+  writeOutput("      crew run --watch");
+}
+
+function writeCloneGuidance(options: InitConfigOptions): void {
+  if (options.repositories === undefined || options.repositories.length === 0) {
+    return;
+  }
+  writeOutput("  - Clone configured repositories:");
+  writeOutput(`      ${projectDirAssignment(options.projectDir ?? DEFAULT_EXAMPLE_PROJECT_DIR)}`);
+  for (const repository of options.repositories) {
+    for (const command of cloneCommands(repository)) {
+      writeOutput(`      ${command}`);
+    }
+  }
+}
+
+function projectDirAssignment(projectDir: string): string {
+  if (projectDir === "~") {
+    return 'PROJECT_DIR="$HOME"';
+  }
+  if (projectDir.startsWith("~/")) {
+    return `PROJECT_DIR="$HOME/${escapeDoubleQuotedShellValue(projectDir.slice(2))}"`;
+  }
+  return `PROJECT_DIR=${shellSingleQuote(projectDir)}`;
+}
+
+function cloneCommands(repository: string): string[] {
+  const parts = repository.split("/");
+  const [owner, name, extra] = parts;
+  if (owner !== undefined && name !== undefined && extra === undefined) {
+    return [
+      `mkdir -p "$PROJECT_DIR/${owner}"`,
+      `git clone git@github.com:${owner}/${name}.git "$PROJECT_DIR/${owner}/${name}"`,
+    ];
+  }
+  return [
+    'mkdir -p "$PROJECT_DIR"',
+    `git clone <REMOTE_URL_FOR_${repository}> "$PROJECT_DIR/${repository}"`,
+  ];
+}
+
+function escapeDoubleQuotedShellValue(value: string): string {
+  let escaped = "";
+  for (const character of value) {
+    escaped +=
+      character === '"' || character === "\\" || character === "$" || character === "`"
+        ? `\\${character}`
+        : character;
+  }
+  return escaped;
 }
