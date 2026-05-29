@@ -63,7 +63,7 @@ Groundcrew scans `workspace.knownRepositories` to infer which repo a ticket belo
 
 ```bash
 crew init [--global | --local] [--force] [--dry-run]     # create a crew.config.ts
-          [--project-dir <dir>] [--repo <repo>]
+          [--project-dir <dir>] [--repo <repo>]...
           [--runner <auto|safehouse|sdx|none>] [--model <claude|codex>]
 crew doctor                                              # check setup
 crew status [<TICKET>]                                   # inspect current state or one ticket

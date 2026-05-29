@@ -136,7 +136,7 @@ describe(run, () => {
     expect(helpOutput).toContain("-v, --version");
     expect(helpOutput).toContain("run");
     expect(helpOutput).toContain("--project-dir <dir>");
-    expect(helpOutput).toContain("--repo <repo>");
+    expect(helpOutput).toContain("[--repo <repo>]...");
     expect(helpOutput).toContain("--runner <runner>");
     expect(helpOutput).toContain("--model <model>");
     expect(helpOutput).not.toContain("sandbox");

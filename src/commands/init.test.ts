@@ -304,6 +304,10 @@ describe("crew init", () => {
       );
     });
 
+    it("rejects --model without a value", async () => {
+      await expect(initConfigCli(["--model"])).rejects.toThrow(/crew init --model/);
+    });
+
     it("rejects unsupported model values", async () => {
       await expect(initConfigCli(["--model", "cursor"])).rejects.toThrow(
         /--model must be one of claude, codex/,

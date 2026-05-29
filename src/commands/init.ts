@@ -17,7 +17,7 @@ const CONFIG_FILE_NAME = "crew.config.ts";
 const EXAMPLE_FILE_NAME = "crew.config.example.ts";
 const DEFAULT_EXAMPLE_PROJECT_DIR = "~/dev/groundcrew";
 const INIT_USAGE =
-  "Usage: crew init [--global | --local] [--force] [--dry-run] [--project-dir <dir>] [--repo <owner/repo>] [--runner <auto|safehouse|sdx|none>] [--model <claude|codex>]";
+  "Usage: crew init [--global | --local] [--force] [--dry-run] [--project-dir <dir>] [--repo <owner/repo>]... [--runner <auto|safehouse|sdx|none>] [--model <claude|codex>]";
 const INIT_MODELS = ["claude", "codex"] as const;
 
 type InitConfigScope = "global" | "local";

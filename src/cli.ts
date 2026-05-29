@@ -154,7 +154,7 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
   init: {
     summary: "Create a crew.config.ts in the cwd (or --global into the XDG config dir)",
     usage:
-      "[--global | --local] [--force] [--dry-run] [--project-dir <dir>] [--repo <repo>] [--runner <runner>] [--model <model>]",
+      "[--global | --local] [--force] [--dry-run] [--project-dir <dir>] [--repo <repo>]... [--runner <runner>] [--model <model>]",
     invoke: initConfigCli,
   },
   run: {
