@@ -1,4 +1,4 @@
-import { errorMessage, log, logEvent } from "../lib/util.ts";
+import { debug, errorMessage, log, logEvent, okMark } from "../lib/util.ts";
 import type { TeardownResult } from "../lib/worktrees.ts";
 
 export function logTeardown(result: TeardownResult): void {
@@ -6,11 +6,11 @@ export function logTeardown(result: TeardownResult): void {
     log(`workspace list failed: ${errorMessage(result.workspaceProbe.error)}`);
   }
   for (const ticket of result.closed) {
-    log(`Closed workspace ${ticket}`);
+    debug(`Closed workspace ${ticket}`);
   }
   for (const entry of result.removed) {
-    log(`Cleanup complete for ${entry.ticket} (${entry.kind})`);
-    log(`  Worktree: ${entry.dir} (removed)`);
+    log(`${okMark()} Cleanup complete for ${entry.ticket} (${entry.kind})`);
+    debug(`  Worktree: ${entry.dir} (removed)`);
   }
   for (const failure of result.failures) {
     const message = errorMessage(failure.error);

@@ -1,13 +1,17 @@
+import { setVerbose } from "../lib/util.ts";
 import type { TeardownResult, WorktreeEntry } from "../lib/worktrees.ts";
 import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCapture.ts";
 import { emptyTeardownResult } from "../testHelpers/teardownResult.ts";
 import { logTeardown, recordTeardownEvents } from "./teardownReporter.ts";
 
+// The teardown reporter's telemetry (logEvent) and sub-step lines (debug) are
+// diagnostic, so they only reach the console under verbose. These cases assert
+// that exact wording reaches the console, so each describe opts in.
 function hostEntry(ticket: string): WorktreeEntry {
   return {
     repository: "repo-a",
     ticket,
-    branchName: `rocky-${ticket}`,
+    branchName: `dev-${ticket}`,
     dir: `/work/repo-a-${ticket}`,
     kind: "host",
   };
@@ -18,10 +22,12 @@ describe(logTeardown, () => {
 
   beforeEach(() => {
     consoleLog = captureConsoleLog();
+    setVerbose(true);
   });
 
   afterEach(() => {
     consoleLog.restore();
+    setVerbose(false);
   });
 
   it("emits nothing when the result is empty and the probe was clean", () => {
@@ -94,10 +100,12 @@ describe(recordTeardownEvents, () => {
 
   beforeEach(() => {
     consoleLog = captureConsoleLog();
+    setVerbose(true);
   });
 
   afterEach(() => {
     consoleLog.restore();
+    setVerbose(false);
   });
 
   it("emits nothing when the result is empty and the probe was clean", () => {

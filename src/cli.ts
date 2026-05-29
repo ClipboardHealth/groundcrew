@@ -12,7 +12,9 @@ import { createDefaultUpgradeCliOptions, upgradeCli } from "./commands/upgrade.t
 import {
   errorMessage,
   parseDryRunPositionals,
+  readEnvironmentVariable,
   readTicketArgument,
+  setVerbose,
   writeError,
   writeOutput,
 } from "./lib/util.ts";
@@ -223,6 +225,7 @@ function printHelp(): void {
   writeOutput("Options:");
   writeOutput("  -h, --help     Show help");
   writeOutput("  -v, --version  Print version");
+  writeOutput("      --verbose  Show diagnostic output (or set GROUNDCREW_VERBOSE)");
   writeOutput("");
   writeOutput("Commands:");
   for (const [name, command] of visibleCommands) {
@@ -242,8 +245,30 @@ function packageVersion(): string {
   return packageMetadata().version;
 }
 
+const VERBOSE_FLAG = "--verbose";
+
+function environmentVerbose(): boolean {
+  const raw = readEnvironmentVariable("GROUNDCREW_VERBOSE");
+  return raw !== undefined && raw !== "" && raw !== "0" && raw.toLowerCase() !== "false";
+}
+
+/**
+ * Pulls the global `--verbose` flag out of argv before subcommand dispatch so
+ * every command supports it and the strict per-command parsers never see it.
+ * GROUNDCREW_VERBOSE enables it without the flag.
+ */
+function extractVerbose(argv: string[]): { verbose: boolean; commandArgv: string[] } {
+  const commandArgv = argv.filter((argument) => argument !== VERBOSE_FLAG);
+  const verbose = commandArgv.length !== argv.length || environmentVerbose();
+  return { verbose, commandArgv };
+}
+
 export async function run(argv: string[]): Promise<void> {
-  const [subcommand, ...rest] = argv;
+  const { verbose, commandArgv } = extractVerbose(argv);
+  if (verbose) {
+    setVerbose(true);
+  }
+  const [subcommand, ...rest] = commandArgv;
 
   if (subcommand === undefined || subcommand === "-h" || subcommand === "--help") {
     printHelp();

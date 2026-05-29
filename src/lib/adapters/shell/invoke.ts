@@ -14,7 +14,7 @@
 
 import { spawn } from "node:child_process";
 
-import { log } from "../../util.ts";
+import { debug } from "../../util.ts";
 
 /**
  * Hard cap on captured stdout/stderr per stream. Misbehaving scripts that
@@ -129,7 +129,7 @@ export async function invokeShellCommand(args: InvokeArgs): Promise<InvokeResult
       clearTimeout(timer);
       const stderrText = stderr.toString("utf8");
       if (stderrText.length > 0) {
-        log(`[shell:${args.sourceName}] ${command}\n${stderrText.trimEnd()}`);
+        debug(`[shell:${args.sourceName}] ${command}\n${stderrText.trimEnd()}`);
       }
       /* v8 ignore next @preserve -- `code` is null only when the process was killed by signal; the timeout path SIGKILLs but settles via the timer rather than 'close' */
       const exitCode = code ?? 1;

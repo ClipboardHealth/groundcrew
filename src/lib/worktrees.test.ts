@@ -7,6 +7,7 @@ import { probeError } from "../testHelpers/workspaceProbe.ts";
 import type * as commandRunnerModule from "./commandRunner.ts";
 import { runCommandAsync, type RunCommandOptions } from "./commandRunner.ts";
 import type { ResolvedConfig } from "./config.ts";
+import { setVerbose } from "./util.ts";
 import { workspaces } from "./workspaces.ts";
 import { type WorktreeEntry, worktrees } from "./worktrees.ts";
 
@@ -100,13 +101,14 @@ function setupTempProjectDir(): void {
   beforeEach(() => {
     projectDir = mkdtempSync(join(tmpdir(), "groundcrew-worktrees-"));
     vi.stubEnv("XDG_STATE_HOME", join(projectDir, "state"));
-    userInfoMock.mockReturnValue(makeUserInfo("rocky"));
+    userInfoMock.mockReturnValue(makeUserInfo("dev"));
     runCommandMock.mockReturnValue("");
   });
 
   afterEach(() => {
     rmSync(projectDir, { recursive: true, force: true });
     vi.unstubAllEnvs();
+    setVerbose(false);
     vi.clearAllMocks();
   });
 }
@@ -147,7 +149,7 @@ describe(list, () => {
       {
         repository: "repo-a",
         ticket: "team-1",
-        branchName: "rocky-team-1",
+        branchName: "dev-team-1",
         dir: join(projectDir, "repo-a-team-1"),
         kind: "host",
       },
@@ -177,7 +179,7 @@ describe(list, () => {
       {
         repository: "owner/repo",
         ticket: "team-1",
-        branchName: "rocky-team-1",
+        branchName: "dev-team-1",
         dir: join(projectDir, "owner", "repo-team-1"),
         kind: "host",
       },
@@ -198,14 +200,14 @@ describe(list, () => {
       {
         repository: "owner1/repo",
         ticket: "team-1",
-        branchName: "rocky-team-1",
+        branchName: "dev-team-1",
         dir: join(projectDir, "owner1", "repo-team-1"),
         kind: "host",
       },
       {
         repository: "owner2/repo",
         ticket: "team-2",
-        branchName: "rocky-team-2",
+        branchName: "dev-team-2",
         dir: join(projectDir, "owner2", "repo-team-2"),
         kind: "host",
       },
@@ -216,7 +218,7 @@ describe(list, () => {
     const repoDir = join(projectDir, "repo-a");
     const sandboxRoot = join(repoDir, ".sbx", "groundcrew-repo-a-claude-worktrees");
     mkdirSync(sandboxRoot, { recursive: true });
-    mkdirSync(join(sandboxRoot, "rocky-team-1"));
+    mkdirSync(join(sandboxRoot, "dev-team-1"));
     const config = makeConfig({ projectDir });
 
     expect(list(config)).toStrictEqual([]);
@@ -273,7 +275,7 @@ describe(create, () => {
     expect(runCommandMock).toHaveBeenCalledWith(
       "git",
       ["-C", join(projectDir, "repo-a"), "fetch", "origin", "main"],
-      { stdio: "inherit", timeoutMs: 0 },
+      { stdio: "captured", timeoutMs: 0 },
     );
     expect(runCommandMock).toHaveBeenCalledWith(
       "git",
@@ -283,14 +285,35 @@ describe(create, () => {
         "worktree",
         "add",
         "-b",
-        "rocky-team-1",
+        "dev-team-1",
         join(projectDir, "repo-a-team-1"),
         "origin/main",
       ],
-      { stdio: "inherit", timeoutMs: 0 },
+      { stdio: "captured", timeoutMs: 0 },
     );
     expect(actual.kind).toBe("host");
     expect(actual.dir).toBe(join(projectDir, "repo-a-team-1"));
+  });
+
+  it("streams git output (stdio inherit) under verbose", async () => {
+    mkdirSync(join(projectDir, "repo-a"));
+    const config = makeConfig({ projectDir });
+    runCommandMock.mockImplementation((_command, arguments_) => {
+      // oxlint-disable-next-line vitest/no-conditional-in-test -- discriminator reports an origin/main-backed repo
+      if (hasArguments(arguments_, "symbolic-ref", "refs/remotes/origin/HEAD")) {
+        return "origin/main\n";
+      }
+      return "";
+    });
+    setVerbose(true);
+
+    await create(config, { repository: "repo-a", ticket: "team-1" });
+
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "git",
+      ["-C", join(projectDir, "repo-a"), "fetch", "origin", "main"],
+      { stdio: "inherit", timeoutMs: 0 },
+    );
   });
 
   it("uses the per-repo default branch reported by origin/HEAD (e.g. master)", async () => {
@@ -312,7 +335,7 @@ describe(create, () => {
     expect(runCommandMock).toHaveBeenCalledWith(
       "git",
       ["-C", join(projectDir, "repo-a"), "fetch", "origin", "master"],
-      { stdio: "inherit", timeoutMs: 0 },
+      { stdio: "captured", timeoutMs: 0 },
     );
     expect(runCommandMock).toHaveBeenCalledWith(
       "git",
@@ -322,11 +345,11 @@ describe(create, () => {
         "worktree",
         "add",
         "-b",
-        "rocky-team-1",
+        "dev-team-1",
         join(projectDir, "repo-a-team-1"),
         "origin/master",
       ],
-      { stdio: "inherit", timeoutMs: 0 },
+      { stdio: "captured", timeoutMs: 0 },
     );
   });
 
@@ -359,7 +382,7 @@ describe(create, () => {
     expect(runCommandMock).toHaveBeenCalledWith(
       "git",
       ["-C", join(projectDir, "repo-a"), "fetch", "origin", "trunk"],
-      { stdio: "inherit", timeoutMs: 0 },
+      { stdio: "captured", timeoutMs: 0 },
     );
     expect(runCommandMock).toHaveBeenCalledWith(
       "git",
@@ -369,11 +392,11 @@ describe(create, () => {
         "worktree",
         "add",
         "-b",
-        "rocky-team-1",
+        "dev-team-1",
         join(projectDir, "repo-a-team-1"),
         "origin/trunk",
       ],
-      { stdio: "inherit", timeoutMs: 0 },
+      { stdio: "captured", timeoutMs: 0 },
     );
   });
 
@@ -461,7 +484,7 @@ describe(remove, () => {
     await remove(config, {
       repository: "repo-a",
       ticket: "team-1",
-      branchName: "rocky-team-1",
+      branchName: "dev-team-1",
       dir: join(projectDir, "repo-a-team-1"),
       kind: "host",
     });
@@ -469,14 +492,14 @@ describe(remove, () => {
     expect(runCommandMock).toHaveBeenCalledWith(
       "git",
       ["-C", join(projectDir, "repo-a"), "worktree", "remove", join(projectDir, "repo-a-team-1")],
-      { stdio: "inherit", timeoutMs: 0 },
+      { stdio: "captured", timeoutMs: 0 },
     );
     expect(runCommandMock).toHaveBeenCalledWith("git", [
       "-C",
       join(projectDir, "repo-a"),
       "branch",
       "-D",
-      "rocky-team-1",
+      "dev-team-1",
     ]);
   });
 
@@ -490,7 +513,7 @@ describe(remove, () => {
       {
         repository: "repo-a",
         ticket: "team-1",
-        branchName: "rocky-team-1",
+        branchName: "dev-team-1",
         dir: join(projectDir, "repo-a-team-1"),
         kind: "host",
       },
@@ -507,7 +530,7 @@ describe(remove, () => {
         "--force",
         join(projectDir, "repo-a-team-1"),
       ],
-      { stdio: "inherit", timeoutMs: 0 },
+      { stdio: "captured", timeoutMs: 0 },
     );
   });
 
@@ -518,7 +541,7 @@ describe(remove, () => {
     await remove(config, {
       repository: "repo-a",
       ticket: "team-1",
-      branchName: "rocky-team-1",
+      branchName: "dev-team-1",
       dir: join(projectDir, "repo-a-team-1"),
       kind: "host",
     });
@@ -526,7 +549,7 @@ describe(remove, () => {
     expect(runCommandMock).toHaveBeenCalledWith(
       "git",
       ["-C", join(projectDir, "repo-a"), "worktree", "prune"],
-      { stdio: "inherit", timeoutMs: 0 },
+      { stdio: "captured", timeoutMs: 0 },
     );
     expect(runCommandMock).not.toHaveBeenCalledWith(
       "git",
@@ -553,7 +576,7 @@ describe(remove, () => {
       await remove(config, {
         repository: "repo-a",
         ticket: "team-1",
-        branchName: "rocky-team-1",
+        branchName: "dev-team-1",
         dir: join(projectDir, "repo-a-team-1"),
         kind: "host",
       });
@@ -583,7 +606,7 @@ describe(remove, () => {
       await remove(config, {
         repository: "repo-a",
         ticket: "team-1",
-        branchName: "rocky-team-1",
+        branchName: "dev-team-1",
         dir: join(projectDir, "repo-a-team-1"),
         kind: "host",
       });
@@ -619,7 +642,7 @@ describe(remove, () => {
       await remove(config, {
         repository: "repo-a",
         ticket: "team-1",
-        branchName: "rocky-team-1",
+        branchName: "dev-team-1",
         dir: join(projectDir, "repo-a-team-1"),
         kind: "host",
       });
@@ -651,7 +674,7 @@ describe(remove, () => {
       await remove(config, {
         repository: "repo-a",
         ticket: "team-1",
-        branchName: "rocky-team-1",
+        branchName: "dev-team-1",
         dir: join(projectDir, "repo-a-team-1"),
         kind: "host",
       });
@@ -687,7 +710,7 @@ describe(remove, () => {
       await remove(config, {
         repository: "repo-a",
         ticket: "team-1",
-        branchName: "rocky-team-1",
+        branchName: "dev-team-1",
         dir: join(projectDir, "repo-a-team-1"),
         kind: "host",
       });
@@ -728,7 +751,7 @@ describe(remove, () => {
       remove(config, {
         repository: "repo-a",
         ticket: "team-1",
-        branchName: "rocky-team-1",
+        branchName: "dev-team-1",
         dir: join(projectDir, "repo-a-team-1"),
         kind: "host",
       }),
@@ -751,7 +774,7 @@ describe(remove, () => {
       }
       // oxlint-disable-next-line vitest/no-conditional-in-test -- as above
       if (hasArguments(arguments_, "worktree", "list", "--porcelain")) {
-        return `worktree ${join(projectDir, "repo-a")}\nHEAD abc123\nbranch refs/heads/main\n\nworktree ${join(projectDir, "repo-a-team-1")}\nHEAD def456\nbranch refs/heads/rocky-team-1\n`;
+        return `worktree ${join(projectDir, "repo-a")}\nHEAD abc123\nbranch refs/heads/main\n\nworktree ${join(projectDir, "repo-a-team-1")}\nHEAD def456\nbranch refs/heads/dev-team-1\n`;
       }
       return "";
     });
@@ -760,7 +783,7 @@ describe(remove, () => {
       remove(config, {
         repository: "repo-a",
         ticket: "team-1",
-        branchName: "rocky-team-1",
+        branchName: "dev-team-1",
         dir: join(projectDir, "repo-a-team-1"),
         kind: "host",
       }),
@@ -784,7 +807,7 @@ describe(remove, () => {
       remove(config, {
         repository: "repo-a",
         ticket: "team-1",
-        branchName: "rocky-team-1",
+        branchName: "dev-team-1",
         dir: join(projectDir, "repo-a-team-1"),
         kind: "host",
       }),
@@ -814,7 +837,7 @@ describe(remove, () => {
       {
         repository: "repo-a",
         ticket: "team-1",
-        branchName: "rocky-team-1",
+        branchName: "dev-team-1",
         dir: join(projectDir, "repo-a-team-1"),
         kind: "host",
       },
@@ -827,7 +850,7 @@ describe(remove, () => {
       join(projectDir, "repo-a"),
       "branch",
       "-D",
-      "rocky-team-1",
+      "dev-team-1",
     ]);
   });
 
@@ -855,7 +878,7 @@ describe(remove, () => {
         {
           repository: "repo-a",
           ticket: "team-1",
-          branchName: "rocky-team-1",
+          branchName: "dev-team-1",
           dir: join(projectDir, "repo-a-team-1-unexpected"),
           kind: "host",
         },
@@ -878,7 +901,7 @@ describe(remove, () => {
       }
       // oxlint-disable-next-line vitest/no-conditional-in-test -- the failed forced remove still targets a registered worktree.
       if (hasArguments(arguments_, "worktree", "list", "--porcelain")) {
-        return `worktree ${join(projectDir, "repo-a")}\nHEAD abc123\nbranch refs/heads/main\n\nworktree ${join(projectDir, "repo-a-team-1")}\nHEAD def456\nbranch refs/heads/rocky-team-1\n`;
+        return `worktree ${join(projectDir, "repo-a")}\nHEAD abc123\nbranch refs/heads/main\n\nworktree ${join(projectDir, "repo-a-team-1")}\nHEAD def456\nbranch refs/heads/dev-team-1\n`;
       }
       return "";
     });
@@ -889,7 +912,7 @@ describe(remove, () => {
         {
           repository: "repo-a",
           ticket: "team-1",
-          branchName: "rocky-team-1",
+          branchName: "dev-team-1",
           dir: join(projectDir, "repo-a-team-1"),
           kind: "host",
         },
@@ -927,7 +950,7 @@ describe(remove, () => {
         {
           repository: "repo-a",
           ticket: "team-1",
-          branchName: "rocky-team-1",
+          branchName: "dev-team-1",
           dir: join(projectDir, "repo-a-team-1"),
           kind: "host",
         },
@@ -953,7 +976,7 @@ describe(teardown, () => {
     return {
       repository: "repo-a",
       ticket,
-      branchName: `rocky-${ticket}`,
+      branchName: `dev-${ticket}`,
       dir: join(projectDir, `repo-a-${ticket}`),
       kind: "host",
     };
@@ -1020,7 +1043,7 @@ describe(teardown, () => {
       {
         repository: "repo-b",
         ticket: "team-1",
-        branchName: "rocky-team-1",
+        branchName: "dev-team-1",
         dir: join(projectDir, "repo-b-team-1"),
         kind: "host" as const,
       },
@@ -1094,7 +1117,7 @@ describe(teardown, () => {
       {
         repository: "repo-b",
         ticket: "team-1",
-        branchName: "rocky-team-1",
+        branchName: "dev-team-1",
         dir: join(projectDir, "repo-b-team-1"),
         kind: "host" as const,
       },
@@ -1196,11 +1219,11 @@ describe(teardown, () => {
 
 describe("worktrees.branchNameForTicket", () => {
   it("returns the same branch name that create() uses", () => {
-    expect(worktrees.branchNameForTicket("HRD-442")).toMatch(/-HRD-442$/);
+    expect(worktrees.branchNameForTicket("ENG-123")).toMatch(/-ENG-123$/);
   });
 
   it("is case-preserving on the ticket portion", () => {
-    expect(worktrees.branchNameForTicket("hrd-442")).toMatch(/-hrd-442$/);
+    expect(worktrees.branchNameForTicket("eng-123")).toMatch(/-eng-123$/);
   });
 });
 

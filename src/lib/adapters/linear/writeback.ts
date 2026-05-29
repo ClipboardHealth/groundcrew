@@ -1,6 +1,6 @@
 import type { LinearClient } from "@linear/sdk";
 
-import { log } from "../../util.ts";
+import { debug } from "../../util.ts";
 
 interface LinearIssueReference {
   id: string;
@@ -65,7 +65,7 @@ export function createLinearIssueStatusUpdater(arguments_: {
       );
     }
     await client.updateIssue(issue.uuid, { stateId });
-    log(`Marked ${issue.id} as in progress`);
+    debug(`Marked ${issue.id} as in progress`);
   }
 
   return { markInProgress };

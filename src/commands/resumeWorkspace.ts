@@ -153,12 +153,13 @@ export async function resumeWorkspace(
     throw new Error(`Unknown model: ${context.model}`);
   }
 
-  const { runner, sandboxName } = await prepareAgentLaunch({
+  const { runner, sandboxName, ensureReady } = await prepareAgentLaunch({
     config,
     model: context.model,
     definition,
     purpose: "resumes",
   });
+  await ensureReady();
 
   const stagedPrompt = stagePromptText({
     prefix: "groundcrew-resume",

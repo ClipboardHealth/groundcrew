@@ -4,7 +4,7 @@ import type { RunCommandOptions } from "./commandRunner.ts";
 import type { ResolvedConfig, WorkspaceKindSetting } from "./config.ts";
 import type * as hostModule from "./host.ts";
 import { detectHostCapabilities, type HostCapabilities } from "./host.ts";
-import { log } from "./util.ts";
+import { debug } from "./util.ts";
 import type * as utilModule from "./util.ts";
 import {
   resolveWorkspaceKind,
@@ -13,7 +13,7 @@ import {
   workspaces,
 } from "./workspaces.ts";
 
-const logMock = vi.mocked(log);
+const debugMock = vi.mocked(debug);
 
 type RunCommandMock = (
   command: string,
@@ -37,6 +37,7 @@ vi.mock(import("./util.ts"), async (importOriginal) => {
   return {
     ...actual,
     log: vi.fn<typeof actual.log>(),
+    debug: vi.fn<typeof actual.debug>(),
   };
 });
 vi.mock(import("./host.ts"), async (importOriginal) => {
@@ -243,7 +244,7 @@ describe("workspaces.open (cmux)", () => {
     ).resolves.toBeUndefined();
 
     expect(runMock).not.toHaveBeenCalledWith("cmux", expect.arrayContaining(["close-workspace"]));
-    expect(logMock).toHaveBeenCalledWith(expect.stringContaining("cmux set-status failed"));
+    expect(debugMock).toHaveBeenCalledWith(expect.stringContaining("cmux set-status failed"));
   });
 
   it("silently swallows set-status when the cmux build reports `unknown command`", async () => {
@@ -266,7 +267,7 @@ describe("workspaces.open (cmux)", () => {
     ).resolves.toBeUndefined();
 
     expect(runMock).not.toHaveBeenCalledWith("cmux", expect.arrayContaining(["close-workspace"]));
-    expect(logMock).not.toHaveBeenCalledWith(expect.stringContaining("set-status"));
+    expect(debugMock).not.toHaveBeenCalledWith(expect.stringContaining("set-status"));
   });
 
   it("caches the resolved adapter per config so detectHostCapabilities is not re-run", async () => {

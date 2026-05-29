@@ -240,10 +240,14 @@ describe(createBoardSource, () => {
       await expect(source.verify()).rejects.toThrow(/did not return a viewer/);
     });
 
-    it("logs the resolved viewer on success", async () => {
+    it("logs the resolved viewer name without the email", async () => {
       const { source } = makeBoardSource(makeClient({ viewerFound: true }));
+
       await source.verify();
-      expect(consoleLog.output()).toContain("Resolved Linear viewer: Alice");
+
+      const actual = consoleLog.output();
+      expect(actual).toContain("Resolved Linear viewer: Alice");
+      expect(actual).not.toContain("alice@example.com");
     });
   });
 

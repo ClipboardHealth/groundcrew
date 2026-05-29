@@ -1,5 +1,6 @@
 import type { ResolvedConfig } from "../lib/config.ts";
 import { removeRunState } from "../lib/runState.ts";
+import { setVerbose } from "../lib/util.ts";
 import { canonicalLinearIssue } from "../lib/testing/canonicalFixtures.ts";
 import type { BoardState } from "../lib/ticketSource.ts";
 import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
@@ -60,7 +61,7 @@ function hostEntryFor(repository: string, ticket: string): WorktreeEntry {
   return {
     repository,
     ticket,
-    branchName: `rocky-${ticket.toLowerCase()}`,
+    branchName: `dev-${ticket.toLowerCase()}`,
     dir: `/work/${repository}-${ticket}`,
     kind: "host",
   };
@@ -72,10 +73,14 @@ describe(createCleaner, () => {
   beforeEach(() => {
     consoleLog = captureConsoleLog();
     teardownMock.mockResolvedValue(emptyTeardownResult());
+    // Cleanup telemetry (event= lines) is diagnostic, so it only reaches the
+    // console under verbose — these cases assert that wording.
+    setVerbose(true);
   });
 
   afterEach(() => {
     consoleLog.restore();
+    setVerbose(false);
     vi.clearAllMocks();
   });
 

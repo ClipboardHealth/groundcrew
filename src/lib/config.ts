@@ -7,7 +7,7 @@ import { cosmiconfig, type CosmiconfigResult, type Loader } from "cosmiconfig";
 
 import type { LinearAdapterConfig } from "./adapters/linear/schema.ts";
 import type { ShellAdapterConfig } from "./adapters/shell/schema.ts";
-import { log, readEnvironmentVariable, setLogFile } from "./util.ts";
+import { debug, log, readEnvironmentVariable, setLogFile } from "./util.ts";
 import { xdgConfigPath, xdgStatePath } from "./xdg.ts";
 
 import { BUILD_SECRET_NAMES } from "./buildSecrets.ts";
@@ -1004,7 +1004,7 @@ export async function loadConfig(): Promise<Readonly<ResolvedConfig>> {
       `${filepath} must export a config object (e.g. \`export default { ... } satisfies Config\`)`,
     );
   }
-  log(`Loaded config from ${filepath}`);
+  debug(`Loaded config from ${filepath}`);
 
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- runtime fields are validated by applyDefaults/validate
   const resolved = applyDefaults(userConfig as unknown as Config);

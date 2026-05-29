@@ -10,7 +10,7 @@ import {
   runWorkspaceCommand,
   type WorkspaceStatus,
 } from "./workspaceAdapter.ts";
-import { errorMessage, log } from "./util.ts";
+import { debug, errorMessage, log } from "./util.ts";
 
 export const cmuxAdapter: Adapter = {
   async open(spec, signal) {
@@ -43,7 +43,7 @@ export const cmuxAdapter: Adapter = {
         // so swallow that specific gap silently; surface anything else so a real
         // regression doesn't hide behind the same swallow.
         if (!isCmuxSetStatusUnsupported(error)) {
-          log(`cmux set-status failed for ${spec.name} (continuing): ${errorMessage(error)}`);
+          debug(`cmux set-status failed for ${spec.name} (continuing): ${errorMessage(error)}`);
         }
       }
     }
@@ -58,7 +58,7 @@ export const cmuxAdapter: Adapter = {
       // cmux v2 `workspace.close` rejects titles, so forwarding `name`
       // would always fail. The list failure has already been logged by
       // `listCmuxRaw`; bail rather than guarantee a downstream error.
-      log(`cmux close-workspace skipped for ${name}: list-workspaces failed, no usable id`);
+      debug(`cmux close-workspace skipped for ${name}: list-workspaces failed, no usable id`);
       return { kind: "unavailable" };
     }
     const match = raw.find((ws) => ws.title === name);
@@ -110,7 +110,7 @@ function parseCmuxList(output: string): CmuxRawWorkspace[] {
     }
     const id = pickCmuxId(ws);
     if (id === undefined) {
-      log(
+      debug(
         `cmux list-workspaces returned workspace "${ws.title}" without a usable id or ref; skipping`,
       );
       continue;
@@ -144,7 +144,7 @@ async function listCmuxRaw(signal?: AbortSignal): Promise<CmuxRawWorkspace[] | u
     if (isSignalAborted(signal)) {
       throw error;
     }
-    log(`cmux list-workspaces failed: ${errorMessage(error)}`);
+    debug(`cmux list-workspaces failed: ${errorMessage(error)}`);
     return undefined;
   }
 }

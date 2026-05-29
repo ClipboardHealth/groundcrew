@@ -1,6 +1,6 @@
 import type { LocalRunner, LocalRunnerSetting } from "./config.ts";
 import type { HostCapabilities } from "./host.ts";
-import { log } from "./util.ts";
+import { log, styleWarning } from "./util.ts";
 
 /**
  * Resolve `local.runner` from config + host capabilities into a concrete
@@ -61,6 +61,8 @@ export function assertLocalRunnerRequirements(host: HostCapabilities, runner: Lo
   }
   // runner === "none"
   log(
-    "WARNING: local.runner='none' — agent process will run on the host without sandboxing. Only use this when you understand the implications.",
+    styleWarning(
+      "WARNING: local.runner='none' — agent process will run on the host without sandboxing. Only use this when you understand the implications.",
+    ),
   );
 }

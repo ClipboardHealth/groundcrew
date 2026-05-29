@@ -8,7 +8,7 @@ import type * as configModule from "../lib/config.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { getUsageByModel } from "../lib/usage.ts";
 import type * as utilModule from "../lib/util.ts";
-import { sleep } from "../lib/util.ts";
+import { setVerbose, sleep } from "../lib/util.ts";
 import { getLinearClient } from "../lib/adapters/linear/client.ts";
 import { workspaces } from "../lib/workspaces.ts";
 import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
@@ -264,7 +264,7 @@ function hostEntryFor(repository: string, ticket: string): WorktreeEntry {
   return {
     repository,
     ticket,
-    branchName: `rocky-${ticket.toLowerCase()}`,
+    branchName: `dev-${ticket.toLowerCase()}`,
     dir: `/work/${repository}-${ticket}`,
     kind: "host",
   };
@@ -332,11 +332,15 @@ describe(orchestrate, () => {
     usageMock.mockResolvedValue({});
     setupMock.mockResolvedValue();
     workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set<string>() });
+    // Telemetry (event= lines) and teardown sub-steps are diagnostic, surfacing
+    // on the console only under verbose — several cases assert that wording.
+    setVerbose(true);
   });
 
   afterEach(() => {
     vi.useRealTimers();
     consoleLog.restore();
+    setVerbose(false);
     vi.clearAllMocks();
   });
 
@@ -388,6 +392,28 @@ describe(orchestrate, () => {
       expect.objectContaining({ ticket: "team-1", repository: "repo-a", model: "claude" }),
     );
     expect(client.updateIssue).toHaveBeenCalledWith("uuid-1", { stateId: "state-in-progress" });
+  });
+
+  it("skips the workspace probe when all eligible tickets are fresh starts", async () => {
+    const client = makeClient({
+      pages: [
+        [
+          issue({
+            identifier: "TEAM-1",
+            state: { id: "state-todo", name: "Todo", type: "unstarted" },
+          }),
+        ],
+      ],
+    });
+    mockLinearClient(client);
+
+    await orchestrate({ watch: false, dryRun: false });
+
+    expect(workspacesProbeMock).not.toHaveBeenCalled();
+    expect(setupMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ ticket: "team-1" }),
+    );
   });
 
   it("infers the repository from a known repository name in the description", async () => {

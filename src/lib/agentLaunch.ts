@@ -9,12 +9,13 @@ import {
 import { detectHostCapabilities } from "./host.ts";
 import { assertLocalRunnerRequirements, resolveLocalRunner } from "./localRunner.ts";
 import { sandboxNameFor } from "./sandboxName.ts";
-import { log, sleep } from "./util.ts";
+import { debug, sleep } from "./util.ts";
 import { workspaces } from "./workspaces.ts";
 
 interface PreparedAgentLaunch {
   runner: LocalRunner;
   sandboxName: string | undefined;
+  ensureReady: () => Promise<void>;
 }
 
 export async function prepareAgentLaunch(input: {
@@ -27,20 +28,13 @@ export async function prepareAgentLaunch(input: {
   const host = await detectHostCapabilities(input.signal);
   const runner = resolveLocalRunner(input.config.local.runner, host);
   assertLocalRunnerRequirements(host, runner);
-  if (runner === "safehouse") {
-    await ensureClearance({
-      logger: log,
-      ...(input.signal === undefined
-        ? {}
-        : {
-            sleep: async (ms) => {
-              await sleep(ms, input.signal);
-              input.signal?.throwIfAborted();
-            },
-          }),
-    });
-    input.signal?.throwIfAborted();
-  }
+  const ensureReady =
+    runner === "safehouse"
+      ? async (): Promise<void> => {
+          await ensureSafehouseClearance(input.signal);
+        }
+      : alreadyReady;
+
   if (runner === "sdx" && input.definition.sandbox === undefined) {
     throw new Error(
       `Local groundcrew ${input.purpose} with the sdx runner require a sandbox config on model '${input.model}'.`,
@@ -76,7 +70,26 @@ export async function prepareAgentLaunch(input: {
     runner === "sdx" && input.definition.sandbox !== undefined
       ? sandboxNameFor({ agent: input.definition.sandbox.agent })
       : undefined;
-  return { runner, sandboxName };
+  return { runner, sandboxName, ensureReady };
+}
+
+async function alreadyReady(): Promise<void> {
+  await Promise.resolve();
+}
+
+async function ensureSafehouseClearance(signal?: AbortSignal): Promise<void> {
+  await ensureClearance({
+    logger: debug,
+    ...(signal === undefined
+      ? {}
+      : {
+          sleep: async (ms) => {
+            await sleep(ms, signal);
+            signal.throwIfAborted();
+          },
+        }),
+  });
+  signal?.throwIfAborted();
 }
 
 export async function openAgentWorkspace(input: {

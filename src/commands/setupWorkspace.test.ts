@@ -13,7 +13,7 @@ import { buildSources } from "../lib/buildSources.ts";
 import type * as buildSourcesModule from "../lib/buildSources.ts";
 import type { BoardState, Issue } from "../lib/ticketSource.ts";
 import type * as utilModule from "../lib/util.ts";
-import { log } from "../lib/util.ts";
+import { debug, log } from "../lib/util.ts";
 import { WorktreeAlreadyExistsError, type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 import { deleteEnvironmentVariable, setEnvironmentVariable } from "../testHelpers/env.ts";
 import { emptyTeardownResult } from "../testHelpers/teardownResult.ts";
@@ -85,6 +85,7 @@ vi.mock(import("../lib/util.ts"), async (importOriginal) => {
   return {
     ...actual,
     log: vi.fn<typeof actual.log>(),
+    debug: vi.fn<typeof actual.debug>(),
   };
 });
 vi.mock(import("../lib/worktrees.ts"), async (importOriginal) => {
@@ -131,6 +132,7 @@ const loadConfigMock = vi.mocked(loadConfig);
 const detectHostMock = vi.mocked(detectHostCapabilities);
 const ensureClearanceMock = vi.mocked(ensureClearance);
 const logMock = vi.mocked(log);
+const debugMock = vi.mocked(debug);
 const recordRunStateMock = vi.mocked(recordRunState);
 const createMock = vi.mocked(worktrees.create);
 const teardownMock = vi.mocked(worktrees.teardown);
@@ -163,7 +165,7 @@ function hostEntry(): WorktreeEntry {
   return {
     repository: "repo-a",
     ticket: "team-1",
-    branchName: "rocky-team-1",
+    branchName: "dev-team-1",
     dir: "/work/repo-a-team-1",
     kind: "host",
   };
@@ -368,7 +370,7 @@ describe(setupWorkspace, () => {
       repository: "repo-a",
       model: "claude",
       worktreeDir: "/work/repo-a-team-1",
-      branchName: "rocky-team-1",
+      branchName: "dev-team-1",
       workspaceName: "team-1",
       state: "running",
       title: "Test Title",
@@ -494,7 +496,56 @@ describe(setupWorkspace, () => {
     await sleepStarted.promise;
     controller.abort(new Error("stop setup"));
     await expect(setupPromise).rejects.toThrow("stop setup");
-    expect(createMock).not.toHaveBeenCalled();
+    expect(createMock).toHaveBeenCalledWith(
+      config,
+      expect.objectContaining({ repository: "repo-a", ticket: "team-1" }),
+      controller.signal,
+    );
+    expect(teardownMock).toHaveBeenCalledWith(config, [expect.objectContaining(hostEntry())], {
+      force: true,
+    });
+    expect(runCommandMock).not.toHaveBeenCalledWith(
+      "cmux",
+      expect.arrayContaining(["new-workspace"]),
+    );
+  });
+
+  it("starts worktree creation before waiting for Safehouse clearance", async () => {
+    const config = makeConfig();
+    const clearanceStarted = createDeferred();
+    const releaseClearance = createDeferred();
+    mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
+    ensureClearanceMock.mockImplementationOnce(async () => {
+      clearanceStarted.resolve();
+      await releaseClearance.promise;
+      return clearanceResult();
+    });
+
+    const setupPromise = setupWorkspace(config, {
+      ticket: "team-1",
+      repository: "repo-a",
+      model: "claude",
+      details: { title: "Test Title", description: "Body" },
+    });
+
+    try {
+      await clearanceStarted.promise;
+      await Promise.resolve();
+
+      expect(createMock).toHaveBeenCalledWith(
+        config,
+        expect.objectContaining({ repository: "repo-a", ticket: "team-1" }),
+      );
+      expect(runCommandMock).not.toHaveBeenCalledWith(
+        "cmux",
+        expect.arrayContaining(["new-workspace"]),
+      );
+    } finally {
+      releaseClearance.resolve();
+      await setupPromise.catch((error: unknown) => error);
+    }
+
+    await setupPromise;
   });
 
   it("uses provided ticket details for prompt rendering", async () => {
@@ -574,8 +625,8 @@ describe(setupWorkspace, () => {
     });
 
     expect(ensureClearanceMock).toHaveBeenCalledTimes(1);
-    expect(firstInvocationOrder(ensureClearanceMock)).toBeLessThan(
-      firstInvocationOrder(createMock),
+    expect(firstInvocationOrder(createMock)).toBeLessThan(
+      firstInvocationOrder(ensureClearanceMock),
     );
     const command = lastRunArgumentFromCallWithArgument("new-workspace");
     const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
@@ -660,7 +711,7 @@ describe(setupWorkspace, () => {
     expect(writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh")).toContain("exec sbx exec -it");
   });
 
-  it("does not create a worktree when the safehouse clearance cannot start", async () => {
+  it("rolls back the worktree when the safehouse clearance cannot start", async () => {
     detectHostMock.mockResolvedValue(host());
     ensureClearanceMock.mockRejectedValue(new Error("proxy unavailable"));
     const config = makeConfig();
@@ -674,7 +725,17 @@ describe(setupWorkspace, () => {
       }),
     ).rejects.toThrow("proxy unavailable");
 
-    expect(createMock).not.toHaveBeenCalled();
+    expect(createMock).toHaveBeenCalledWith(
+      config,
+      expect.objectContaining({ repository: "repo-a", ticket: "team-1" }),
+    );
+    expect(teardownMock).toHaveBeenCalledWith(config, [expect.objectContaining(hostEntry())], {
+      force: true,
+    });
+    expect(runCommandMock).not.toHaveBeenCalledWith(
+      "cmux",
+      expect.arrayContaining(["new-workspace"]),
+    );
   });
 
   it("does not double-wrap when the cmd already starts with safehouse", async () => {
@@ -810,7 +871,24 @@ describe(setupWorkspace, () => {
       details: { title: "Test Title", description: "Body" },
     });
 
-    expect(logMock).toHaveBeenCalledWith("  Attach:   tmux attach -t groundcrew:team-1");
+    expect(debugMock).toHaveBeenCalledWith("  Attach:   tmux attach -t groundcrew:team-1");
+  });
+
+  it("collapses the launch into a single success line naming model and worktree", async () => {
+    mockTmuxHost();
+    const config = makeConfig();
+
+    await setupWorkspace(config, {
+      ticket: "team-1",
+      repository: "repo-a",
+      model: "claude",
+      details: { title: "Test Title", description: "Body" },
+    });
+
+    expect(logMock).toHaveBeenCalledWith('✓ "team-1" launched (claude)  worktree repo-a-team-1');
+    // The verbose-only detail lines must not reach the important (log) tier.
+    expect(logMock).not.toHaveBeenCalledWith(expect.stringMatching(/^ {2}(Worktree|Branch):/));
+    expect(logMock).not.toHaveBeenCalledWith("Opening workspace...");
   });
 
   it("omits the access hint when the backend has no external hint (cmux)", async () => {
@@ -824,7 +902,7 @@ describe(setupWorkspace, () => {
       details: { title: "Test Title", description: "Body" },
     });
 
-    expect(logMock).not.toHaveBeenCalledWith(expect.stringMatching(/^ {2}Attach:/));
+    expect(debugMock).not.toHaveBeenCalledWith(expect.stringMatching(/^ {2}Attach:/));
   });
 
   it("fails before creating a worktree when safehouse is requested off macOS", async () => {
@@ -1092,7 +1170,7 @@ describe(setupWorkspace, () => {
       }),
     ).rejects.toThrow(/Worktree already exists/);
 
-    expect(logMock).toHaveBeenCalledWith("  Attach:   tmux attach -t groundcrew:team-1");
+    expect(debugMock).toHaveBeenCalledWith("  Attach:   tmux attach -t groundcrew:team-1");
   });
 
   it("does not log an access hint when the worktree exists but no live workspace remains", async () => {
@@ -1109,7 +1187,7 @@ describe(setupWorkspace, () => {
       }),
     ).rejects.toThrow(/Worktree already exists/);
 
-    expect(logMock).not.toHaveBeenCalledWith(expect.stringMatching(/^ {2}Attach:/));
+    expect(debugMock).not.toHaveBeenCalledWith(expect.stringMatching(/^ {2}Attach:/));
   });
 
   it("does not probe for an existing workspace when the backend has no external hint", async () => {
@@ -1125,7 +1203,7 @@ describe(setupWorkspace, () => {
     ).rejects.toThrow(/Worktree already exists/);
 
     expect(runCommandMock).not.toHaveBeenCalled();
-    expect(logMock).not.toHaveBeenCalledWith(expect.stringMatching(/^ {2}Attach:/));
+    expect(debugMock).not.toHaveBeenCalledWith(expect.stringMatching(/^ {2}Attach:/));
   });
 
   it("rejects unknown models", async () => {
@@ -1160,7 +1238,7 @@ describe(setupWorkspace, () => {
           ticket: "team-1",
           kind: "host",
           dir: "/work/repo-a-team-1",
-          branchName: "rocky-team-1",
+          branchName: "dev-team-1",
         }),
       ],
       { force: true },

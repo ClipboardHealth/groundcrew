@@ -1,6 +1,6 @@
 import type { ResolvedConfig } from "./config.ts";
 import { removeRunState } from "./runState.ts";
-import { errorMessage, log } from "./util.ts";
+import { debug, errorMessage } from "./util.ts";
 import type { WorktreeEntry } from "./worktrees.ts";
 
 export function recordCleanedUpRuns(
@@ -11,7 +11,7 @@ export function recordCleanedUpRuns(
     try {
       removeRunState(config, entry.ticket);
     } catch (error) {
-      log(`Run state cleanup failed for ${entry.ticket}: ${errorMessage(error)}`);
+      debug(`Run state cleanup failed for ${entry.ticket}: ${errorMessage(error)}`);
     }
   }
 }

@@ -12,7 +12,7 @@ import {
   type StagedPrompt,
 } from "../lib/stagedLaunch.ts";
 import { naturalIdFromCanonical } from "../lib/ticketSource.ts";
-import { errorMessage, log } from "../lib/util.ts";
+import { debug, errorMessage, log, okMark } from "../lib/util.ts";
 import { type WorkspaceAccessHint, workspaces } from "../lib/workspaces.ts";
 import { isWorktreeAlreadyExistsError, type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 
@@ -66,7 +66,7 @@ export async function setupWorkspace(
   if (!definition) {
     throw new Error(`Unknown model: ${model}`);
   }
-  const { runner, sandboxName } = await prepareAgentLaunch({
+  const { runner, sandboxName, ensureReady } = await prepareAgentLaunch({
     config,
     model,
     definition,
@@ -76,11 +76,11 @@ export async function setupWorkspace(
 
   const spec = { repository, ticket };
   let created: WorktreeEntry;
+  const createdPromise =
+    signal === undefined ? worktrees.create(config, spec) : worktrees.create(config, spec, signal);
+  const readinessPromise = startLaunchReadiness(ensureReady);
   try {
-    created =
-      signal === undefined
-        ? await worktrees.create(config, spec)
-        : await worktrees.create(config, spec, signal);
+    created = await createdPromise;
   } catch (error) {
     if (isWorktreeAlreadyExistsError(error)) {
       await logAccessHintForExistingWorkspace({ config, ticket, signal });
@@ -99,6 +99,8 @@ export async function setupWorkspace(
   // the ticket strands forever.
   let promptDir: string | undefined;
   try {
+    await assertLaunchReady(readinessPromise);
+
     const ticketDetails = options.details;
     const accessHint = await workspaces.accessHint(config, ticket, signal);
 
@@ -122,7 +124,7 @@ export async function setupWorkspace(
     });
     const launchCmd = stageWorkspaceLaunchCommand(promptDir, launchCommand);
 
-    log("Opening workspace...");
+    debug("Opening workspace...");
     await openAgentWorkspace({
       config,
       name: ticket,
@@ -145,9 +147,9 @@ export async function setupWorkspace(
       ...(ticketDetails.url === undefined ? {} : { url: ticketDetails.url }),
     });
 
-    log(`Workspace "${ticket}" launched (${model})`);
-    log(`  Worktree: ${launchDir}`);
-    log(`  Branch:   ${branchName}`);
+    log(`${okMark()} "${ticket}" launched (${model})  worktree ${worktreeName}`);
+    debug(`  Worktree: ${launchDir}`);
+    debug(`  Branch:   ${branchName}`);
     if (accessHint !== undefined) {
       logAccessHint(accessHint);
     }
@@ -167,6 +169,26 @@ export async function setupWorkspace(
       ...(options.details.url === undefined ? {} : { url: options.details.url }),
     });
     throw error;
+  }
+}
+
+type LaunchReadinessResult = { kind: "ready" } | { kind: "failed"; error: unknown };
+
+async function startLaunchReadiness(
+  ensureReady: () => Promise<void>,
+): Promise<LaunchReadinessResult> {
+  try {
+    await ensureReady();
+    return { kind: "ready" };
+  } catch (error) {
+    return { kind: "failed", error };
+  }
+}
+
+async function assertLaunchReady(readinessPromise: Promise<LaunchReadinessResult>): Promise<void> {
+  const readiness = await readinessPromise;
+  if (readiness.kind === "failed") {
+    throw readiness.error;
   }
 }
 
@@ -196,7 +218,7 @@ async function logAccessHintForExistingWorkspace(arguments_: {
 }
 
 function logAccessHint(accessHint: WorkspaceAccessHint): void {
-  log(`  Attach:   ${accessHint.command}`);
+  debug(`  Attach:   ${accessHint.command}`);
 }
 
 function renderWorkspaceContinuationInstruction(

@@ -18,7 +18,7 @@ import {
   naturalIdFromCanonical,
 } from "../lib/ticketSource.ts";
 import type { UsageByModel } from "../lib/usage.ts";
-import { errorMessage, log, logEvent } from "../lib/util.ts";
+import { errorMessage, failMark, log, logEvent } from "../lib/util.ts";
 import { type WorkspaceProbe, workspaces } from "../lib/workspaces.ts";
 import type { WorktreeEntry } from "../lib/worktrees.ts";
 import {
@@ -128,7 +128,7 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
         repository: issue.repository,
       });
     } catch (error) {
-      log(`Failed to start ${ticketId}: ${errorMessage(error)}`);
+      log(`${failMark()} Failed to start ${ticketId}: ${errorMessage(error)}`);
       logEvent("dispatch", {
         outcome: "failed",
         ticket: ticketId,
@@ -216,18 +216,21 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     }
 
     // usage() is an HTTP call; workspaces.probe shells tmux/cmux. Kick off
-    // usage first so the workspace probe can overlap with the in-flight request.
+    // usage first so any necessary workspace probe can overlap with the
+    // in-flight request.
     const usagePromise = usage(signal);
     // Snapshot live workspace names once per iteration so eligibility can
     // distinguish "worktree exists AND its agent is still running" (resume)
     // from "worktree exists but the workspace is gone" (ambiguous — don't
-    // auto-recover). Done before slot-counting so a skipped stale ticket
-    // doesn't consume an eligible slot and starve later Todo tickets.
+    // auto-recover). Skip the shell-out entirely for fresh-start-only ticks:
+    // if none of the candidates has a matching worktree, classifyRecovery()
+    // will never read the probe.
     let workspaceProbe: WorkspaceProbe;
     try {
-      workspaceProbe = dryRun
-        ? { kind: "ok", names: new Set<string>() }
-        : await workspaces.probe(config, signal);
+      workspaceProbe =
+        dryRun || !hasRecoverableCandidate(dispatchableUnblocked, worktreeEntries)
+          ? { kind: "ok", names: new Set<string>() }
+          : await workspaces.probe(config, signal);
     } catch (error) {
       usagePromise.catch(() => "ignored");
       throw error;
@@ -277,6 +280,18 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
   }
 
   return { runOnce };
+}
+
+function hasRecoverableCandidate(
+  issues: readonly GroundcrewIssue[],
+  worktreeEntries: readonly WorktreeEntry[],
+): boolean {
+  return issues.some((issue) => {
+    const naturalId = naturalIdFromCanonical(issue.id);
+    return worktreeEntries.some(
+      (entry) => entry.repository === issue.repository && entry.ticket === naturalId,
+    );
+  });
 }
 
 function formatUsageExhaustion(exhaustion: ModelUsageExhaustion): string {

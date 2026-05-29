@@ -152,7 +152,7 @@ function worktree(overrides: Partial<WorktreeEntry> = {}): WorktreeEntry {
   return {
     repository: "repo-a",
     ticket: "team-1",
-    branchName: "rocky-team-1",
+    branchName: "dev-team-1",
     dir: "/work/repo-a-team-1",
     kind: "host",
     ...overrides,
@@ -165,7 +165,7 @@ function runState(overrides: Partial<RunState> = {}): RunState {
     repository: "repo-a",
     model: "claude",
     worktreeDir: "/work/repo-a-team-1",
-    branchName: "rocky-team-1",
+    branchName: "dev-team-1",
     workspaceName: "team-1",
     state: "running",
     createdAt: "2026-05-26T00:00:00.000Z",
@@ -217,11 +217,11 @@ describe(status, () => {
     const config = makeConfig({ logging: { file: logFile } });
     const entries = [
       worktree({ repository: "repo-a", dir: "/work/repo-a-team-1" }),
-      worktree({ repository: "repo-b", dir: "/work/repo-b-team-1", branchName: "rocky-team-1-b" }),
+      worktree({ repository: "repo-b", dir: "/work/repo-b-team-1", branchName: "dev-team-1-b" }),
       worktree({
         repository: "repo-b",
         dir: "/work/repo-b-team-1-alt",
-        branchName: "rocky-team-1-c",
+        branchName: "dev-team-1-c",
       }),
     ];
     findByTicketMock.mockReturnValue(entries);
@@ -404,13 +404,13 @@ describe(status, () => {
       worktree({
         ticket: "team-1",
         repository: "repo-b",
-        branchName: "rocky-team-1-b",
+        branchName: "dev-team-1-b",
         dir: "/work/repo-b-team-1",
       }),
       worktree({
         ticket: "team-2",
         repository: "repo-b",
-        branchName: "rocky-team-2",
+        branchName: "dev-team-2",
         dir: "/work/repo-b-team-2",
       }),
     ]);
@@ -446,7 +446,7 @@ describe(status, () => {
   it("prints the cached ticket title and attach hint in the inventory when available", async () => {
     listWorktreesMock.mockReturnValue([
       worktree({ ticket: "team-1", repository: "repo-a" }),
-      worktree({ ticket: "team-2", repository: "repo-b", branchName: "rocky-team-2" }),
+      worktree({ ticket: "team-2", repository: "repo-b", branchName: "dev-team-2" }),
     ]);
     const statesByTicket = new Map([
       ["team-1", runState({ ticket: "team-1", title: "Improve crew status command" })],
@@ -475,7 +475,7 @@ describe(status, () => {
   it("omits only the failed attach hint when one workspace access hint lookup rejects", async () => {
     listWorktreesMock.mockReturnValue([
       worktree({ ticket: "team-1", repository: "repo-a" }),
-      worktree({ ticket: "team-2", repository: "repo-b", branchName: "rocky-team-2" }),
+      worktree({ ticket: "team-2", repository: "repo-b", branchName: "dev-team-2" }),
     ]);
     workspaceAccessHintMock
       .mockRejectedValueOnce(new Error("tmux unavailable"))
@@ -496,7 +496,7 @@ describe(status, () => {
   it("omits only the failed pull request row when one PR lookup rejects", async () => {
     listWorktreesMock.mockReturnValue([
       worktree({ ticket: "team-1", repository: "repo-a" }),
-      worktree({ ticket: "team-2", repository: "repo-b", branchName: "rocky-team-2" }),
+      worktree({ ticket: "team-2", repository: "repo-b", branchName: "dev-team-2" }),
     ]);
     findPullRequestsMock.mockRejectedValueOnce(new Error("gh rate limited")).mockResolvedValueOnce([
       {
@@ -528,11 +528,11 @@ describe(status, () => {
   it("formats durations across <1m / Nm / Nh / Nh Mm / Nd / Nd Mh ranges", async () => {
     listWorktreesMock.mockReturnValue([
       worktree({ ticket: "team-1", repository: "repo-a" }),
-      worktree({ ticket: "team-2", repository: "repo-b", branchName: "rocky-team-2" }),
-      worktree({ ticket: "team-3", repository: "repo-b", branchName: "rocky-team-3" }),
-      worktree({ ticket: "team-4", repository: "repo-b", branchName: "rocky-team-4" }),
-      worktree({ ticket: "team-5", repository: "repo-b", branchName: "rocky-team-5" }),
-      worktree({ ticket: "team-6", repository: "repo-b", branchName: "rocky-team-6" }),
+      worktree({ ticket: "team-2", repository: "repo-b", branchName: "dev-team-2" }),
+      worktree({ ticket: "team-3", repository: "repo-b", branchName: "dev-team-3" }),
+      worktree({ ticket: "team-4", repository: "repo-b", branchName: "dev-team-4" }),
+      worktree({ ticket: "team-5", repository: "repo-b", branchName: "dev-team-5" }),
+      worktree({ ticket: "team-6", repository: "repo-b", branchName: "dev-team-6" }),
     ]);
     workspaceProbeMock.mockResolvedValue({
       kind: "ok",
@@ -570,7 +570,7 @@ describe(status, () => {
   it("omits the duration from non-running states (interrupted, idle)", async () => {
     listWorktreesMock.mockReturnValue([
       worktree({ ticket: "team-1", repository: "repo-a" }),
-      worktree({ ticket: "team-2", repository: "repo-b", branchName: "rocky-team-2" }),
+      worktree({ ticket: "team-2", repository: "repo-b", branchName: "dev-team-2" }),
     ]);
     workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set() });
     const statesByTicket = new Map<string, RunState>([
@@ -702,7 +702,7 @@ describe(status, () => {
     );
     expect(findPullRequestsMock).toHaveBeenCalledWith({
       repository: "repo-a",
-      branchName: "rocky-team-1",
+      branchName: "dev-team-1",
     });
   });
 

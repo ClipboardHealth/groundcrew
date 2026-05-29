@@ -13,7 +13,7 @@ import type { LinearClient } from "@linear/sdk";
 
 import type { ResolvedConfig } from "../../config.ts";
 import { RepositoryResolutionError } from "../../ticketSource.ts";
-import { log } from "../../util.ts";
+import { log, styleWarning } from "../../util.ts";
 import {
   AGENT_LABEL_PREFIX,
   resolveModelFor,
@@ -122,18 +122,18 @@ export function createBoardSource(deps: BoardSourceDeps): BoardSource {
 
 async function verifyViewer(client: LinearClient): Promise<void> {
   const response: { data?: unknown } = await client.client.rawRequest(
-    `query VerifyViewer { viewer { id name email } }`,
+    `query VerifyViewer { viewer { id name } }`,
   );
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- shape is fixed by our GraphQL query above
   const { viewer } = response.data as {
-    viewer: { id: string; name: string; email: string } | null;
+    viewer: { id: string; name: string } | null;
   };
   if (viewer === null) {
     throw new Error(
       "Linear API did not return a viewer for this API key. Confirm LINEAR_API_KEY is set and points to a personal API key, not a workspace key.",
     );
   }
-  log(`Resolved Linear viewer: ${viewer.name} (${viewer.email})`);
+  log(`Resolved Linear viewer: ${viewer.name}`);
 }
 
 export function isIssueInProgress(issue: Pick<Issue, "stateType">): boolean {
@@ -309,7 +309,9 @@ function resolveAgentMetadata(arguments_: {
     } else {
       model = undefined;
       log(
-        `WARNING: ${ticket} has an ${AGENT_LABEL_PREFIX}* label but no known repository in its description; skipping dispatch. Add one of workspace.knownRepositories to the description, or remove the ${AGENT_LABEL_PREFIX}* label: ${config.workspace.knownRepositories.join(", ")}`,
+        styleWarning(
+          `WARNING: ${ticket} has an ${AGENT_LABEL_PREFIX}* label but no known repository in its description; skipping dispatch. Add one of workspace.knownRepositories to the description, or remove the ${AGENT_LABEL_PREFIX}* label: ${config.workspace.knownRepositories.join(", ")}`,
+        ),
       );
     }
   }

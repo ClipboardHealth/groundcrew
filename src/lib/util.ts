@@ -1,5 +1,6 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { styleText } from "node:util";
 
 export async function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   if (signal?.aborted === true) {
@@ -32,6 +33,45 @@ export function writeOutput(message?: string): void {
 export function writeError(message: string): void {
   // oxlint-disable-next-line no-console -- Centralized CLI stderr writer.
   console.error(message);
+}
+
+// Gates whether the diagnostic tier — debug() and logEvent() — is echoed to the
+// console. Both tiers always tee to the log file regardless of this flag, so the
+// full stream is never lost. The CLI arms this from `--verbose` /
+// GROUNDCREW_VERBOSE before dispatching a command.
+let verboseConsole = false;
+
+export function setVerbose(value: boolean): void {
+  verboseConsole = value;
+}
+
+export function isVerbose(): boolean {
+  return verboseConsole;
+}
+
+// styleText returns the text unchanged when stdout has no color support (not a
+// TTY, or NO_COLOR set), so callers never branch on TTY detection themselves —
+// and test assertions stay plain because vitest runs with a piped stdout.
+type StyleFormat = Parameters<typeof styleText>[0];
+
+function paint(format: StyleFormat, text: string): string {
+  return styleText(format, text, { stream: process.stdout });
+}
+
+export function okMark(): string {
+  return paint("green", "✓");
+}
+
+export function failMark(): string {
+  return paint("red", "✗");
+}
+
+export function styleWarning(text: string): string {
+  return paint("yellow", text);
+}
+
+export function styleDim(text: string): string {
+  return paint("dim", text);
 }
 
 // Module-scoped sink for tee-ing log()/logEvent() to disk. Unset by default
@@ -69,14 +109,35 @@ function appendLogLine(line: string): void {
   }
 }
 
+function timestamped(message: string): { plain: string; timestamp: string } {
+  const timestamp = new Date().toLocaleTimeString();
+  return { plain: `[${timestamp}] ${message}`, timestamp };
+}
+
+/** Important tier: always on the console (dimmed timestamp) and the log file. */
 export function log(message: string): void {
   if (suppressedLogDepth > 0) {
     return;
   }
-  const timestamp = new Date().toLocaleTimeString();
-  const line = `[${timestamp}] ${message}`;
-  writeOutput(line);
-  appendLogLine(line);
+  const { plain, timestamp } = timestamped(message);
+  writeOutput(`${styleDim(`[${timestamp}]`)} ${message}`);
+  appendLogLine(plain);
+}
+
+/**
+ * Diagnostic tier: always tee'd to the log file, but echoed to the console only
+ * under --verbose. Use for mechanics (git porcelain brackets, adapter probe
+ * failures, "loaded config") that an operator rarely needs while watching.
+ */
+export function debug(message: string): void {
+  if (suppressedLogDepth > 0) {
+    return;
+  }
+  const { plain } = timestamped(message);
+  if (verboseConsole) {
+    writeOutput(styleDim(plain));
+  }
+  appendLogLine(plain);
 }
 
 type LogEventFieldValue = boolean | number | string | readonly string[] | undefined;
@@ -101,7 +162,10 @@ export function logEvent(event: string, fields: Record<string, LogEventFieldValu
     parts.push(`${key}=${formatLogEventFieldValue(value)}`);
   }
   const line = parts.join(" ");
-  writeOutput(line);
+  // Structured telemetry is diagnostic: file always, console only under --verbose.
+  if (verboseConsole) {
+    writeOutput(styleDim(line));
+  }
   appendLogLine(line);
 }
 

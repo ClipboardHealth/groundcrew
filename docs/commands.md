@@ -12,24 +12,24 @@ Status is informational only. Use `crew cleanup <TICKET>` to tear down stale wor
 <summary>Sample ticket status output</summary>
 
 ```text
-crew status HRD-442
+crew status ENG-123
 ===================
-ticket: hrd-442  in-progress  https://linear.app/example/issue/HRD-442
+ticket: eng-123  in-progress  https://linear.app/example/issue/ENG-123
 title: Multi-event extractor: year inference can produce date_start > date_end
 run: running; model=claude; updated=2026-05-26T00:01:00.000Z; resumes=0
 workspace: live
 
 Worktrees
 ---------
-- herds-social/herds host
-  branch: paul-hrd-442
-  dir: /dev/workspaces/herds-social/herds-hrd-442
+- acme/widgets host
+  branch: dev-eng-123
+  dir: /dev/workspaces/acme/widgets-eng-123
   git: dirty (0 modified, 1 untracked)
-  pr: https://github.com/herds-social/herds/pull/224 (open)
+  pr: https://github.com/acme/widgets/pull/224 (open)
 
 Recent logs
 -----------
-[10:15:30] Workspace "hrd-442" launched
+[10:15:30] Workspace "eng-123" launched
 ```
 
 </details>
@@ -45,8 +45,8 @@ Doctor's command introspection is intentionally shallow. It reports the resolved
 `crew start <TICKET>` launches one ticket immediately, bypassing orchestrator eligibility. Use it to dispatch a specific ticket on demand, including unlabeled tickets that `crew run` ignores.
 
 ```bash
-crew start HRD-442
-crew start HRD-442 --dry-run
+crew start ENG-123
+crew start ENG-123 --dry-run
 ```
 
 ## Stop
@@ -54,9 +54,9 @@ crew start HRD-442 --dry-run
 `crew stop <TICKET>` stops a live workspace pane while preserving the ticket worktree and branch. Use it when you need terminal capacity back, want to stop an agent going in the wrong direction, or need to inspect the diff before letting another agent continue.
 
 ```bash
-crew stop HRD-442 --reason "wrong implementation direction"
-crew status HRD-442
-crew resume HRD-442
+crew stop ENG-123 --reason "wrong implementation direction"
+crew status ENG-123
+crew resume ENG-123
 ```
 
 The command closes the cmux/tmux workspace if present, records local run state, and never tears down the worktree. If the workspace was already gone but the worktree is still present, stop records that fact so status can show the preserved branch.

@@ -11,7 +11,7 @@ import {
   runWorkspaceCommand,
   type Workspace,
 } from "./workspaceAdapter.ts";
-import { errorMessage, log, readEnvironmentVariable } from "./util.ts";
+import { debug, errorMessage, readEnvironmentVariable } from "./util.ts";
 
 const TMUX_SESSION = "groundcrew";
 
@@ -62,7 +62,7 @@ export const tmuxAdapter: Adapter = {
       return [];
     }
     if (probe.status === "failed") {
-      log(`tmux list-windows failed: ${probe.reason}`);
+      debug(`tmux list-windows failed: ${probe.reason}`);
       // oxlint-disable-next-line unicorn/no-useless-undefined -- undefined marks the workspace backend as unavailable.
       return undefined;
     }

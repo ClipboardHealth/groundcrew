@@ -8,7 +8,7 @@
 
 import { runCommandAsync } from "./commandRunner.ts";
 import type { ModelDefinition, ResolvedConfig } from "./config.ts";
-import { errorMessage, log } from "./util.ts";
+import { debug, errorMessage } from "./util.ts";
 
 interface UsageWindow {
   usedPercent: number;
@@ -197,10 +197,12 @@ export async function getUsageByModel(
       }
       // Per-model failure: fail closed. A silent skip would let the
       // dispatcher spawn agents on a model whose quota we can't see —
-      // the exact bug a usage gate is supposed to prevent. Log the
-      // failure so operators can fix the underlying CLI, and return
-      // a fully-exhausted snapshot so the dispatcher gates the model.
-      log(`Usage check failed for ${model} (treating as exhausted): ${errorMessage(error)}`);
+      // the exact bug a usage gate is supposed to prevent. Record the
+      // failure (debug-tier — always in the log file, console under
+      // --verbose) so operators can fix the underlying CLI, and return a
+      // fully-exhausted snapshot so the dispatcher gates the model. The
+      // gate itself surfaces a visible skip line via formatUsageExhaustion.
+      debug(`Usage check failed for ${model} (treating as exhausted): ${errorMessage(error)}`);
       out[model] = EXHAUSTED_USAGE;
     }
   }

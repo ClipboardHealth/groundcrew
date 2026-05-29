@@ -5,6 +5,7 @@ import type { BoardState, Issue } from "../lib/ticketSource.ts";
 import { EXHAUSTED_USAGE } from "../lib/usage.ts";
 import { workspaces } from "../lib/workspaces.ts";
 import type { WorktreeEntry } from "../lib/worktrees.ts";
+import { setVerbose } from "../lib/util.ts";
 import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCapture.ts";
 import { createDispatcher, formatActiveSlotList } from "./dispatcher.ts";
 import { setupWorkspace } from "./setupWorkspace.ts";
@@ -87,7 +88,7 @@ function hostEntryFor(repository: string, ticket: string): WorktreeEntry {
   return {
     repository,
     ticket,
-    branchName: `rocky-${ticket.toLowerCase()}`,
+    branchName: `dev-${ticket.toLowerCase()}`,
     dir: `/work/${repository}-${ticket}`,
     kind: "host",
   };
@@ -100,10 +101,14 @@ describe(createDispatcher, () => {
     consoleLog = captureConsoleLog();
     setupMock.mockResolvedValue();
     workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set<string>() });
+    // Dispatch telemetry (event= lines) is diagnostic, so it only reaches the
+    // console under verbose — many cases assert that wording.
+    setVerbose(true);
   });
 
   afterEach(() => {
     consoleLog.restore();
+    setVerbose(false);
     vi.clearAllMocks();
   });
 
@@ -571,7 +576,7 @@ describe(createDispatcher, () => {
       await expect(
         dispatcher.runOnce({
           state: boardOf([todoIssue()]),
-          worktreeEntries: [],
+          worktreeEntries: [hostEntryFor("repo-a", "team-1")],
           usage: usageProbe,
           dryRun: false,
         }),

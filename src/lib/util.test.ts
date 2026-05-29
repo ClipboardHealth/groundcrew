@@ -3,7 +3,24 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { captureConsoleError, captureConsoleLog } from "../testHelpers/consoleCapture.ts";
-import { errorMessage, log, logEvent, setLogFile, sleep, withLogOutputSuppressed } from "./util.ts";
+import {
+  debug,
+  errorMessage,
+  failMark,
+  isVerbose,
+  log,
+  logEvent,
+  okMark,
+  setLogFile,
+  setVerbose,
+  sleep,
+  styleDim,
+  styleWarning,
+  withLogOutputSuppressed,
+} from "./util.ts";
+
+// Verbose is module-global; each describe that enables it resets afterward so
+// the diagnostic tier can't leak onto another case's console assertions.
 
 describe(sleep, () => {
   beforeEach(() => {
@@ -65,8 +82,22 @@ describe(log, () => {
 });
 
 describe(logEvent, () => {
-  it("prints stable key-value fields and skips undefined fields", () => {
+  afterEach(() => {
+    setVerbose(false);
+  });
+
+  it("stays off the console by default", () => {
     const consoleLog = captureConsoleLog();
+
+    logEvent("dispatch", { outcome: "skipped" });
+
+    expect(consoleLog.calls).toHaveLength(0);
+    consoleLog.restore();
+  });
+
+  it("prints stable key-value fields and skips undefined fields under verbose", () => {
+    const consoleLog = captureConsoleLog();
+    setVerbose(true);
 
     logEvent("dispatch", {
       outcome: "skipped",
@@ -82,12 +113,49 @@ describe(logEvent, () => {
   });
 });
 
+describe(debug, () => {
+  afterEach(() => {
+    setVerbose(false);
+  });
+
+  it("stays off the console by default", () => {
+    const consoleLog = captureConsoleLog();
+
+    debug("diagnostic detail");
+
+    expect(consoleLog.calls).toHaveLength(0);
+    consoleLog.restore();
+  });
+
+  it("echoes a timestamped line to the console under verbose", () => {
+    const consoleLog = captureConsoleLog();
+    setVerbose(true);
+
+    debug("diagnostic detail");
+
+    expect(consoleLog.calls).toHaveLength(1);
+    expect(consoleLog.output()).toMatch(/^\[.+] diagnostic detail$/);
+    consoleLog.restore();
+  });
+});
+
 describe(withLogOutputSuppressed, () => {
+  // logEvent only reaches the console under verbose; these cases assert the
+  // visible event lines, so opt in.
+  beforeEach(() => {
+    setVerbose(true);
+  });
+
+  afterEach(() => {
+    setVerbose(false);
+  });
+
   it("suppresses log output and restores logging afterwards", async () => {
     const consoleLog = captureConsoleLog();
 
     await withLogOutputSuppressed(async () => {
       log("hidden");
+      debug("hidden-debug");
       logEvent("hidden-event", {});
     });
     log("visible");
@@ -174,6 +242,18 @@ describe(setLogFile, () => {
     consoleLog.restore();
   });
 
+  it("tees debug() output to the configured file even when off the console", () => {
+    const consoleLog = captureConsoleLog();
+    const path = join(temporary, "debug.log");
+    setLogFile(path);
+
+    debug("diagnostic detail");
+
+    expect(consoleLog.calls).toHaveLength(0);
+    expect(readFileSync(path, "utf8")).toMatch(/^\[.+] diagnostic detail\n$/);
+    consoleLog.restore();
+  });
+
   it("appends successive writes to the same file", () => {
     const consoleLog = captureConsoleLog();
     const path = join(temporary, "events.log");
@@ -215,6 +295,32 @@ describe(setLogFile, () => {
     expect(readFileSync(path, "utf8")).toBe("event=first\n");
     consoleLog.restore();
     consoleError.restore();
+  });
+});
+
+describe(setVerbose, () => {
+  afterEach(() => {
+    setVerbose(false);
+  });
+
+  it("defaults to non-verbose and toggles", () => {
+    expect(isVerbose()).toBe(false);
+
+    setVerbose(true);
+
+    expect(isVerbose()).toBe(true);
+  });
+});
+
+describe("styling helpers", () => {
+  // vitest runs with a piped stdout, so styleText emits no ANSI — the markers
+  // and styled text fall back to their plain glyphs. The dim/color only appears
+  // in a real color-capable TTY.
+  it("returns plain glyphs and text without a color-capable stdout", () => {
+    expect(okMark()).toBe("✓");
+    expect(failMark()).toBe("✗");
+    expect(styleWarning("WARNING: x")).toBe("WARNING: x");
+    expect(styleDim("[12:00]")).toBe("[12:00]");
   });
 });
 

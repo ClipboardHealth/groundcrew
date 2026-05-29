@@ -12,13 +12,12 @@ import { type Dirent, existsSync, readdirSync, rmSync } from "node:fs";
 import { userInfo } from "node:os";
 import { isAbsolute, relative, resolve } from "node:path";
 
-import { runCommandAsync, type RunCommandOptions } from "./commandRunner.ts";
+import { runCommandAsync } from "./commandRunner.ts";
 import type { ResolvedConfig } from "./config.ts";
 import { resolveDefaultBranch } from "./defaultBranch.ts";
-import { errorMessage, log } from "./util.ts";
+import { debug, errorMessage, isVerbose } from "./util.ts";
 import { type WorkspaceProbe, workspaces } from "./workspaces.ts";
 
-const LONG_RUNNING_COMMAND_OPTIONS = { stdio: "inherit", timeoutMs: 0 } as const;
 const WORKTREE_LIST_PREFIX = "worktree ";
 
 export type WorktreeKind = "host";
@@ -116,10 +115,23 @@ function signalProperty(signal?: AbortSignal): { signal: AbortSignal } | Record<
   return signal === undefined ? {} : { signal };
 }
 
-function longRunningCommandOptions(signal?: AbortSignal): RunCommandOptions & { stdio: "inherit" } {
-  return signal === undefined
-    ? LONG_RUNNING_COMMAND_OPTIONS
-    : { ...LONG_RUNNING_COMMAND_OPTIONS, signal };
+/**
+ * Runs a long-running git command (fetch, worktree add/remove/prune) with no
+ * timeout. Under --verbose the git porcelain streams live to the terminal;
+ * otherwise it is captured and discarded on success — the bracketing debug()
+ * lines record what ran, and a failure still carries git's stderr via the
+ * thrown error (see normalizeCommandError in commandRunner.ts).
+ */
+async function runLongGitCommand(
+  arguments_: readonly string[],
+  signal?: AbortSignal,
+): Promise<void> {
+  const signalOption = signal === undefined ? {} : { signal };
+  if (isVerbose()) {
+    await runCommandAsync("git", arguments_, { stdio: "inherit", timeoutMs: 0, ...signalOption });
+    return;
+  }
+  await runCommandAsync("git", arguments_, { stdio: "captured", timeoutMs: 0, ...signalOption });
 }
 
 async function deleteBranchBestEffort(arguments_: {
@@ -132,12 +144,12 @@ async function deleteBranchBestEffort(arguments_: {
     await (arguments_.signal === undefined
       ? runCommandAsync(arguments_.cmd, arguments_.cmdArgs)
       : runCommandAsync(arguments_.cmd, arguments_.cmdArgs, { signal: arguments_.signal }));
-    log(`Deleted branch ${arguments_.branchName}`);
+    debug(`Deleted branch ${arguments_.branchName}`);
   } catch (error) {
     if (arguments_.signal?.aborted === true) {
       throw error;
     }
-    log(`Branch ${arguments_.branchName} cleanup skipped: ${errorMessage(error)}`);
+    debug(`Branch ${arguments_.branchName} cleanup skipped: ${errorMessage(error)}`);
   }
 }
 
@@ -154,19 +166,14 @@ async function createWorktree(
     ...signalProperty(signal),
   });
   const baseRef = `${config.git.remote}/${defaultBranch}`;
-  log(`Fetching ${baseRef} in ${spec.repository}...`);
-  await runCommandAsync(
-    "git",
-    ["-C", base.repoDir, "fetch", config.git.remote, defaultBranch],
-    longRunningCommandOptions(signal),
-  );
-  log(
+  debug(`Fetching ${baseRef} in ${spec.repository}...`);
+  await runLongGitCommand(["-C", base.repoDir, "fetch", config.git.remote, defaultBranch], signal);
+  debug(
     `Creating worktree ${spec.repository}-${spec.ticket} (branch ${base.branchName} from ${baseRef})...`,
   );
-  await runCommandAsync(
-    "git",
+  await runLongGitCommand(
     ["-C", base.repoDir, "worktree", "add", "-b", base.branchName, base.hostWorktreeDir, baseRef],
-    longRunningCommandOptions(signal),
+    signal,
   );
   return {
     repository: spec.repository,
@@ -246,18 +253,19 @@ async function removeWorktree(
   const repoDir = resolve(projectDir, entry.repository);
 
   if (existsSync(entry.dir)) {
-    log(`Removing worktree ${entry.dir}${options.force ? " (--force)" : ""}...`);
+    debug(`Removing worktree ${entry.dir}${options.force ? " (--force)" : ""}...`);
     const removeArguments = ["-C", repoDir, "worktree", "remove"];
     if (options.force) {
       removeArguments.push("--force");
     }
     removeArguments.push(entry.dir);
     try {
-      await runCommandAsync("git", removeArguments, longRunningCommandOptions(options.signal));
+      await runLongGitCommand(removeArguments, options.signal);
     } catch (error) {
-      // git's `fatal: ...` diagnostic goes to inherited stderr, so the
-      // captured error is just "Exit status: 128". Probe the worktree
-      // ourselves so the failure message names the condition — dirty
+      // Under --verbose git's `fatal: ...` streams to the terminal rather than
+      // the captured error, so the failure may surface as just "Exit status:
+      // 128". Probe the worktree ourselves so the failure message names the
+      // condition either way — dirty
       // (modified/untracked files, fixable with `crew cleanup --force`) or
       // orphan (directory exists on disk but is not registered with the
       // parent repo, fixable with `crew cleanup --force` when the path still
@@ -304,12 +312,8 @@ async function removeWorktree(
       }
     }
   } else {
-    log(`Worktree directory ${entry.dir} not found, pruning stale refs...`);
-    await runCommandAsync(
-      "git",
-      ["-C", repoDir, "worktree", "prune"],
-      longRunningCommandOptions(options.signal),
-    );
+    debug(`Worktree directory ${entry.dir} not found, pruning stale refs...`);
+    await runLongGitCommand(["-C", repoDir, "worktree", "prune"], options.signal);
   }
   await deleteBranchBestEffort({
     cmd: "git",
@@ -431,7 +435,7 @@ function removeOrphanWorktreeDirectory(config: ResolvedConfig, entry: WorktreeEn
       `Refusing to force-delete ${entry.dir}: expected groundcrew worktree path ${expectedDir}.`,
     );
   }
-  log(`Removing orphaned worktree directory ${entry.dir} (--force)...`);
+  debug(`Removing orphaned worktree directory ${entry.dir} (--force)...`);
   rmSync(targetDir, { recursive: true, force: true });
 }
 

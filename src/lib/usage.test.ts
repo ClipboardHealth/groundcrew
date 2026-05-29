@@ -2,6 +2,7 @@ import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCa
 import type { RunCommandOptions } from "./commandRunner.ts";
 import type { ResolvedConfig } from "./config.ts";
 import { EXHAUSTED_USAGE, getUsageByModel } from "./usage.ts";
+import { setVerbose } from "./util.ts";
 
 type RunCommandMock = (
   command: string,
@@ -107,10 +108,14 @@ describe(getUsageByModel, () => {
   beforeEach(() => {
     runCommandMock.mockReturnValue(mockCodexbarResponse("openai-web"));
     consoleCapture = captureConsoleLog();
+    // The per-model "usage check failed" line is diagnostic (debug-tier), so it
+    // only reaches the console under verbose — these cases assert that wording.
+    setVerbose(true);
   });
 
   afterEach(() => {
     consoleCapture.restore();
+    setVerbose(false);
     restorePlatform();
     vi.clearAllMocks();
   });

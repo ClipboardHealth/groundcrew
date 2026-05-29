@@ -1,5 +1,6 @@
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { removeRunState } from "../lib/runState.ts";
+import { setVerbose } from "../lib/util.ts";
 import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCapture.ts";
 import { emptyTeardownResult } from "../testHelpers/teardownResult.ts";
@@ -33,7 +34,7 @@ const removeRunStateMock = vi.mocked(removeRunState);
 const hostEntry: WorktreeEntry = {
   repository: "repo-a",
   ticket: "team-1",
-  branchName: "rocky-team-1",
+  branchName: "dev-team-1",
   dir: "/work/repo-a-team-1",
   kind: "host",
 };
@@ -66,10 +67,15 @@ describe(cleanupWorkspace, () => {
   beforeEach(() => {
     consoleLog = captureConsoleLog();
     teardownMock.mockResolvedValue(emptyTeardownResult());
+    // Teardown sub-steps (Closed workspace, Worktree removed) and best-effort
+    // run-state-cleanup failures are diagnostic (debug-tier), reaching the
+    // console only under verbose — these cases assert that wording.
+    setVerbose(true);
   });
 
   afterEach(() => {
     consoleLog.restore();
+    setVerbose(false);
     vi.resetAllMocks();
   });
 

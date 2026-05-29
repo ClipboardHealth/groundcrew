@@ -22,6 +22,7 @@ import {
   captureConsoleLog,
   type ConsoleCapture,
 } from "./testHelpers/consoleCapture.ts";
+import { isVerbose, setVerbose } from "./lib/util.ts";
 
 vi.mock(import("./commands/cleanupWorkspace.ts"), () => ({
   cleanupWorkspaceCli: vi.fn<typeof cleanupWorkspaceCli>(),
@@ -124,6 +125,8 @@ describe(run, () => {
     consoleLog.restore();
     consoleError.restore();
     process.exitCode = undefined;
+    setVerbose(false);
+    vi.unstubAllEnvs();
     vi.clearAllMocks();
   });
 
@@ -213,6 +216,35 @@ describe(run, () => {
     await run(["run", "--watch", "--dry-run"]);
 
     expect(orchestrateMock).toHaveBeenCalledWith({ watch: true, dryRun: true });
+  });
+
+  it("enables verbose and strips --verbose before subcommand dispatch", async () => {
+    await run(["run", "--verbose", "--dry-run"]);
+
+    expect(isVerbose()).toBe(true);
+    expect(orchestrateMock).toHaveBeenCalledWith({ watch: false, dryRun: true });
+  });
+
+  it("enables verbose from GROUNDCREW_VERBOSE without the flag", async () => {
+    vi.stubEnv("GROUNDCREW_VERBOSE", "1");
+
+    await run(["run"]);
+
+    expect(isVerbose()).toBe(true);
+    expect(orchestrateMock).toHaveBeenCalledWith({ watch: false, dryRun: false });
+  });
+
+  it("leaves verbose off by default", async () => {
+    await run(["run"]);
+
+    expect(isVerbose()).toBe(false);
+  });
+
+  it("documents --verbose in the help output", async () => {
+    await run(["--help"]);
+
+    expect(consoleLog.output()).toContain("--verbose");
+    expect(consoleLog.output()).toContain("GROUNDCREW_VERBOSE");
   });
 
   it("dispatches the deprecated `run --ticket <id>` alias to setupWorkspaceCli with a warning", async () => {

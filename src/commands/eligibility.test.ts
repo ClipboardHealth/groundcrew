@@ -66,7 +66,7 @@ function hostEntryFor(repository: string, ticket: string): WorktreeEntry {
   return {
     repository,
     ticket,
-    branchName: `rocky-${ticket.toLowerCase()}`,
+    branchName: `dev-${ticket.toLowerCase()}`,
     dir: `/work/${repository}-${ticket}`,
     kind: "host",
   };

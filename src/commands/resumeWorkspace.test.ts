@@ -153,7 +153,7 @@ function makeWorktree(): WorktreeEntry {
   return {
     repository: "repo-a",
     ticket: "team-1",
-    branchName: "rocky-team-1",
+    branchName: "dev-team-1",
     dir: "/work/repo-a-team-1",
     kind: "host",
   };
@@ -165,7 +165,7 @@ function makeRunState(overrides: Partial<RunState> = {}): RunState {
     repository: "repo-a",
     model: "claude",
     worktreeDir: "/work/repo-a-team-1",
-    branchName: "rocky-team-1",
+    branchName: "dev-team-1",
     workspaceName: "team-1",
     state: "interrupted",
     reason: "wrong direction",

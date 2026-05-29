@@ -115,32 +115,32 @@ describe(parseRepository, () => {
 describe(resolveRepositoryFor, () => {
   it("returns the repository when the description mentions a known one", () => {
     const config = makeConfig({
-      workspace: { projectDir: "/work", knownRepositories: ["herds-social/herds"] },
+      workspace: { projectDir: "/work", knownRepositories: ["acme/widgets"] },
     });
     const result = resolveRepositoryFor({
-      description: "fix the herds-social/herds bug",
+      description: "fix the acme/widgets bug",
       config,
     });
-    expect(result).toStrictEqual({ kind: "ok", repository: "herds-social/herds" });
+    expect(result).toStrictEqual({ kind: "ok", repository: "acme/widgets" });
   });
 
   it("returns missing when no known repo is in the description", () => {
     const config = makeConfig({
-      workspace: { projectDir: "/work", knownRepositories: ["herds-social/herds"] },
+      workspace: { projectDir: "/work", knownRepositories: ["acme/widgets"] },
     });
     expect(resolveRepositoryFor({ description: "nothing here", config }).kind).toBe("missing");
   });
 
   it("returns missing on empty description", () => {
     const config = makeConfig({
-      workspace: { projectDir: "/work", knownRepositories: ["herds-social/herds"] },
+      workspace: { projectDir: "/work", knownRepositories: ["acme/widgets"] },
     });
     expect(resolveRepositoryFor({ description: "", config }).kind).toBe("missing");
   });
 
   it("returns missing on undefined description", () => {
     const config = makeConfig({
-      workspace: { projectDir: "/work", knownRepositories: ["herds-social/herds"] },
+      workspace: { projectDir: "/work", knownRepositories: ["acme/widgets"] },
     });
     expect(resolveRepositoryFor({ description: undefined, config }).kind).toBe("missing");
   });
@@ -245,10 +245,10 @@ describe(buildRepositoryRegex, () => {
 
   it("produces a regex that matches a full org/repo path", () => {
     const config = makeConfig({
-      workspace: { projectDir: "/work", knownRepositories: ["herds-social/herds"] },
+      workspace: { projectDir: "/work", knownRepositories: ["acme/widgets"] },
     });
     const regex = buildRepositoryRegex(config);
-    const match = regex.exec("fix the herds-social/herds bug");
-    expect(match?.[1]).toBe("herds-social/herds");
+    const match = regex.exec("fix the acme/widgets bug");
+    expect(match?.[1]).toBe("acme/widgets");
   });
 });
