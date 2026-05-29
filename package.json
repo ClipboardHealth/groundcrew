@@ -26,6 +26,7 @@
     "clearance-allow-hosts",
     "crew.config.example.ts",
     "dist",
+    "docs",
     "static"
   ],
   "type": "module",
