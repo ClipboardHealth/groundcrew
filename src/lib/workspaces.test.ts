@@ -95,6 +95,7 @@ function commonBeforeEach(): void {
 }
 
 function commonAfterEach(): void {
+  deleteEnvironmentVariable("GROUNDCREW_KEEP_DEAD_WINDOWS");
   vi.resetAllMocks();
 }
 
@@ -545,6 +546,40 @@ describe("workspaces.open (tmux)", () => {
     ]);
   });
 
+  it("sets remain-on-exit off when GROUNDCREW_KEEP_DEAD_WINDOWS is not 1", async () => {
+    setEnvironmentVariable("GROUNDCREW_KEEP_DEAD_WINDOWS", "0");
+
+    await workspaces.open(makeConfig("tmux"), {
+      name: "TEAM-1",
+      cwd: "/work/repo-a-TEAM-1",
+      command: "exec claude",
+    });
+
+    expect(runMock).toHaveBeenCalledWith("tmux", [
+      "new-window",
+      "-d",
+      "-t",
+      "groundcrew",
+      "-n",
+      "TEAM-1",
+      "-c",
+      "/work/repo-a-TEAM-1",
+      "exec claude",
+      ";",
+      "set-window-option",
+      "-t",
+      "groundcrew:TEAM-1",
+      "remain-on-exit",
+      "off",
+      ";",
+      "set-window-option",
+      "-t",
+      "groundcrew:TEAM-1",
+      "allow-rename",
+      "off",
+    ]);
+  });
+
   it("creates the groundcrew session with a named idle window when has-session fails", async () => {
     runMock
       .mockImplementationOnce(() => {
@@ -669,6 +704,27 @@ describe("workspaces.probe (tmux)", () => {
       "-F",
       "#{window_name}\t#{pane_dead}",
     ]);
+  });
+
+  it("includes exited tmux windows when GROUNDCREW_KEEP_DEAD_WINDOWS is set", async () => {
+    setEnvironmentVariable("GROUNDCREW_KEEP_DEAD_WINDOWS", "1");
+    runMock.mockReturnValue("_groundcrew_idle\t0\nTEAM-1\t0\nTEAM-2\t1\nTEAM-3\t0\n");
+
+    await expect(workspaces.probe(makeConfig("tmux"))).resolves.toStrictEqual({
+      kind: "ok",
+      names: new Set(["TEAM-1", "TEAM-2", "TEAM-3"]),
+      exitedNames: new Set(["TEAM-2"]),
+    });
+  });
+
+  it("filters exited tmux windows when GROUNDCREW_KEEP_DEAD_WINDOWS is not 1", async () => {
+    setEnvironmentVariable("GROUNDCREW_KEEP_DEAD_WINDOWS", "0");
+    runMock.mockReturnValue("_groundcrew_idle\t0\nTEAM-1\t0\nTEAM-2\t1\nTEAM-3\t0\n");
+
+    await expect(workspaces.probe(makeConfig("tmux"))).resolves.toStrictEqual({
+      kind: "ok",
+      names: new Set(["TEAM-1", "TEAM-3"]),
+    });
   });
 
   it("returns kind=ok with empty names when the groundcrew session does not exist", async () => {

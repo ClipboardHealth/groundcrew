@@ -286,6 +286,40 @@ describe(status, () => {
     expect(output).not.toContain("Ticket source");
   });
 
+  it("prints exited workspace status and attach command when a kept tmux window has exited", async () => {
+    workspaceProbeMock.mockResolvedValue({
+      kind: "ok",
+      names: new Set(["team-1"]),
+      exitedNames: new Set(["team-1"]),
+    });
+    workspaceAccessHintMock.mockResolvedValue({
+      kind: "attachCommand",
+      command: "tmux attach -t groundcrew:team-1",
+    });
+
+    await status(makeConfig(), { ticket: "team-1" });
+
+    const output = consoleLog.output();
+    expect(output).toContain("workspace: exited");
+    expect(output).toContain("attach: tmux attach -t groundcrew:team-1");
+  });
+
+  it("still prints exited workspace status when the attach hint lookup fails", async () => {
+    workspaceProbeMock.mockResolvedValue({
+      kind: "ok",
+      names: new Set(["team-1"]),
+      exitedNames: new Set(["team-1"]),
+    });
+    workspaceAccessHintMock.mockRejectedValue(new Error("tmux unavailable"));
+
+    await status(makeConfig(), { ticket: "team-1" });
+
+    const output = consoleLog.output();
+    expect(output).toContain("workspace: exited");
+    expect(output).not.toContain("attach:");
+    expect(output).not.toContain("tmux unavailable");
+  });
+
   it("rejects an empty direct-call ticket", async () => {
     await expect(status(makeConfig(), { ticket: "   " })).rejects.toThrow(
       "ticket must be a non-empty value",
@@ -574,6 +608,47 @@ describe(status, () => {
 
     expect(consoleLog.output()).toContain(
       "  hint:      run 'crew resume team-1' to bring the session back",
+    );
+  });
+
+  it("marks running inventory rows as exited when a kept tmux window has exited", async () => {
+    listWorktreesMock.mockReturnValue([worktree({ ticket: "team-1", repository: "repo-a" })]);
+    readRunStateMock.mockReturnValue(runState({ state: "running" }));
+    workspaceProbeMock.mockResolvedValue({
+      kind: "ok",
+      names: new Set(["team-1"]),
+      exitedNames: new Set(["team-1"]),
+    });
+    workspaceAccessHintMock.mockResolvedValue({
+      kind: "attachCommand",
+      command: "tmux attach -t groundcrew:team-1",
+    });
+
+    await status(makeConfig());
+
+    const output = consoleLog.output();
+    expect(output).toContain("  state:     running (session exited, 2h 14m)");
+    expect(output).toContain("  attach:    tmux attach -t groundcrew:team-1");
+    expect(output).toContain(
+      "  hint:      attach to inspect scrollback, then run 'crew resume team-1'",
+    );
+  });
+
+  it("marks idle inventory rows as stray exited sessions when a kept tmux window has exited", async () => {
+    listWorktreesMock.mockReturnValue([worktree({ ticket: "team-1", repository: "repo-a" })]);
+    readRunStateMock.mockReset();
+    workspaceProbeMock.mockResolvedValue({
+      kind: "ok",
+      names: new Set(["team-1"]),
+      exitedNames: new Set(["team-1"]),
+    });
+
+    await status(makeConfig());
+
+    const output = consoleLog.output();
+    expect(output).toContain("  state:     idle (stray exited session)");
+    expect(output).toContain(
+      "  hint:      run 'crew cleanup team-1' to clear this stray exited session",
     );
   });
 

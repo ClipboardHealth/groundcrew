@@ -89,7 +89,14 @@ function ticketWorkspaceText(probe: WorkspaceProbe, ticket: string): string {
   if (probe.kind === "unavailable") {
     return workspaceProbeUnavailableLine(probe);
   }
+  if (isWorkspaceExited(probe, ticket)) {
+    return "exited";
+  }
   return probe.names.has(ticket) ? "live" : "not live";
+}
+
+function isWorkspaceExited(probe: WorkspaceProbe, ticket: string): boolean {
+  return probe.kind === "ok" && probe.exitedNames?.has(ticket) === true;
 }
 
 function formatRunState(state: RunState | undefined): string {
@@ -152,6 +159,21 @@ function writeRecentLogs(config: ResolvedConfig, ticket: string): void {
   writeOutput(logLines.join("\n"));
 }
 
+async function exitedWorkspaceAccessHint(
+  config: ResolvedConfig,
+  probe: WorkspaceProbe,
+  ticket: string,
+): Promise<WorkspaceAccessHint | undefined> {
+  if (!isWorkspaceExited(probe, ticket)) {
+    return undefined;
+  }
+  try {
+    return await withLogOutputSuppressed(async () => await workspaces.accessHint(config, ticket));
+  } catch {
+    return undefined;
+  }
+}
+
 function formatTicketLine(
   ticket: string,
   runState: RunState | undefined,
@@ -198,10 +220,14 @@ async function writeTicketStatus(config: ResolvedConfig, rawTicket: string): Pro
     withLogOutputSuppressed(async () => await workspaces.probe(config)),
     readTicketSourceStatus(config, ticket),
   ]);
+  const accessHint = await exitedWorkspaceAccessHint(config, workspaceProbe, ticket);
   writeOutput(formatTicketLine(ticket, runState, sourceStatus));
   writeTicketTitle(runState, sourceStatus);
   writeOutput(`run: ${formatRunState(runState)}`);
   writeOutput(`workspace: ${ticketWorkspaceText(workspaceProbe, ticket)}`);
+  if (accessHint !== undefined) {
+    writeOutput(`attach: ${accessHint.command}`);
+  }
 
   await writeTicketWorktrees(config, ticket);
   writeRecentLogs(config, ticket);
@@ -251,11 +277,11 @@ function formatDuration(ms: number): string {
 /**
  * Combined human-readable state for the inventory row. Surfaces RunState
  * lifecycle and flags the two interesting disagreements with the workspace
- * probe — `(session dead)` when we recorded a running dispatch but no
- * session is alive, and `(stray session)` when a session is alive without
- * any recorded dispatch. `probe.kind === "unavailable"` is treated as
- * "we don't know" and never produces a suffix. When the row is actively
- * running, appends the elapsed wall-clock time since dispatch.
+ * probe. A recorded running dispatch can have a missing or exited session;
+ * an idle row can have a stray live or exited session. `probe.kind ===
+ * "unavailable"` is treated as "we don't know" and never produces a suffix.
+ * When the row is actively running, appends the elapsed wall-clock time since
+ * dispatch.
  */
 function inventoryStateText(
   runState: RunState | undefined,
@@ -267,11 +293,14 @@ function inventoryStateText(
   const duration = runStateDurationMs(runState, now);
   const flags: string[] = [];
   if (probe.kind === "ok") {
-    const sessionLive = probe.names.has(ticket);
-    if (lifecycle === "idle" && sessionLive) {
-      flags.push("stray session");
+    const sessionPresent = probe.names.has(ticket);
+    const sessionExited = isWorkspaceExited(probe, ticket);
+    if (lifecycle === "idle" && sessionPresent) {
+      flags.push(sessionExited ? "stray exited session" : "stray session");
     }
-    if ((lifecycle === "running" || lifecycle === "resumed") && !sessionLive) {
+    if ((lifecycle === "running" || lifecycle === "resumed") && sessionExited) {
+      flags.push("session exited");
+    } else if ((lifecycle === "running" || lifecycle === "resumed") && !sessionPresent) {
       flags.push("session dead");
     }
   }
@@ -286,9 +315,11 @@ function inventoryStateText(
  * probe disagree. Returned commands are safe defaults; the user is free to
  * ignore them and use `attach:` + `pr:` to investigate first.
  *
- * - Stray session (live session, no run-state record) → `crew cleanup` to
- *   tear down the orphaned worktree + close the session.
- * - Session dead (run-state says running/resumed, no live session) →
+ * - Stray session (session present, no run-state record) -> `crew cleanup`
+ *   to tear down the orphaned worktree and close the session.
+ * - Session exited (run-state says running/resumed, kept dead tmux window)
+ *   -> attach first so the failed command remains available for inspection.
+ * - Session dead (run-state says running/resumed, no session present) ->
  *   `crew resume` to bring the agent back; the worktree is preserved.
  *
  * No hint when the probe is unavailable (we genuinely don't know whether
@@ -303,11 +334,17 @@ function inventoryHint(
     return undefined;
   }
   const lifecycle = runState?.state ?? "idle";
-  const sessionLive = probe.names.has(ticket);
-  if (lifecycle === "idle" && sessionLive) {
-    return `run 'crew cleanup ${ticket}' to clear this stray session`;
+  const sessionPresent = probe.names.has(ticket);
+  const sessionExited = isWorkspaceExited(probe, ticket);
+  if (lifecycle === "idle" && sessionPresent) {
+    return sessionExited
+      ? `run 'crew cleanup ${ticket}' to clear this stray exited session`
+      : `run 'crew cleanup ${ticket}' to clear this stray session`;
   }
-  if ((lifecycle === "running" || lifecycle === "resumed") && !sessionLive) {
+  if ((lifecycle === "running" || lifecycle === "resumed") && sessionExited) {
+    return `attach to inspect scrollback, then run 'crew resume ${ticket}'`;
+  }
+  if ((lifecycle === "running" || lifecycle === "resumed") && !sessionPresent) {
     return `run 'crew resume ${ticket}' to bring the session back`;
   }
   return undefined;
