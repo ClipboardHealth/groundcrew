@@ -94,7 +94,7 @@
     "oxfmt": "0.52.0",
     "oxlint": "1.65.0",
     "oxlint-tsgolint": "0.23.0",
-    "syncpack": "15.2.0",
+    "syncpack": "15.3.1",
     "vite": "8.0.14",
     "vitest": "4.1.7"
   },
