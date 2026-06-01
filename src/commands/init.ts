@@ -244,8 +244,32 @@ function renderConfig(source: string, options: InitConfigOptions): string {
       `      ${options.model}: {},`,
       "--model",
     );
+    contents = removeDuplicateModelDefinitionLines(contents, options.model);
   }
   return contents;
+}
+
+function removeDuplicateModelDefinitionLines(contents: string, model: InitModel): string {
+  const linePattern = new RegExp(`^\\s*(?://\\s*)?${escapeRegExp(model)}:\\s*\\{\\},\\s*$`);
+  let hasActiveEntry = false;
+  return contents
+    .split("\n")
+    .filter((line) => {
+      if (!linePattern.test(line)) {
+        return true;
+      }
+      const isCommented = line.trimStart().startsWith("//");
+      if (!isCommented && !hasActiveEntry) {
+        hasActiveEntry = true;
+        return true;
+      }
+      return false;
+    })
+    .join("\n");
+}
+
+function escapeRegExp(value: string): string {
+  return value.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
 }
 
 function replaceRequired(

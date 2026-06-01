@@ -810,7 +810,6 @@ function validate(config: ResolvedConfig): void {
   requirePercent(config.orchestrator.sessionLimitPercentage, "orchestrator.sessionLimitPercentage");
 
   const { definitions } = config.models;
-  /* v8 ignore next 3 @preserve -- mergeDefinitions seeds claude+codex defaults, so an empty map is unreachable */
   if (Object.keys(definitions).length === 0) {
     fail("models.definitions must contain at least one model");
   }

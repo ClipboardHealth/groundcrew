@@ -286,6 +286,23 @@ describe("loadConfig", () => {
     await expect(loadConfig()).rejects.toThrow(/models\.definitions must be an object/);
   });
 
+  it("rejects empty model definitions", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      configSource({
+        workspace: VALID_WORKSPACE(temporary),
+        models: { definitions: {} },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(
+      /models\.definitions must contain at least one model/,
+    );
+  });
+
   it("rejects non-object per-model definitions", async () => {
     const configPath = writeConfigFile(
       temporary,

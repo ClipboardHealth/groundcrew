@@ -248,6 +248,7 @@ describe("crew init", () => {
       const output = consoleLog.output();
       expect(actual).toContain('default: "codex"');
       expect(actual).toContain("codex: {}");
+      expect(actual).not.toContain("// codex: {}");
       expect(actual).not.toContain("disabled: true");
       expect(output).toContain(String.raw`PROJECT_DIR="$HOME/Dev \$Box"`);
     });
