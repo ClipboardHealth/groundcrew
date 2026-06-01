@@ -221,48 +221,48 @@ describe(setLogFile, () => {
 
   it("tees log() output to the configured file, creating the parent dir", () => {
     const consoleLog = captureConsoleLog();
-    const path = path.join(temporary, "nested", "groundcrew.log");
-    setLogFile(path);
+    const logFile = path.join(temporary, "nested", "groundcrew.log");
+    setLogFile(logFile);
 
     log("hello world");
 
     expect(consoleLog.output()).toMatch(/^\[.+] hello world$/);
-    expect(readFileSync(path, "utf8")).toMatch(/^\[.+] hello world\n$/);
+    expect(readFileSync(logFile, "utf8")).toMatch(/^\[.+] hello world\n$/);
     consoleLog.restore();
   });
 
   it("tees logEvent() output to the configured file", () => {
     const consoleLog = captureConsoleLog();
-    const path = path.join(temporary, "events.log");
-    setLogFile(path);
+    const logFile = path.join(temporary, "events.log");
+    setLogFile(logFile);
 
     logEvent("dispatch", { outcome: "started", ticket: "TEAM-1" });
 
-    expect(readFileSync(path, "utf8")).toBe("event=dispatch outcome=started ticket=TEAM-1\n");
+    expect(readFileSync(logFile, "utf8")).toBe("event=dispatch outcome=started ticket=TEAM-1\n");
     consoleLog.restore();
   });
 
   it("tees debug() output to the configured file even when off the console", () => {
     const consoleLog = captureConsoleLog();
-    const path = path.join(temporary, "debug.log");
-    setLogFile(path);
+    const logFile = path.join(temporary, "debug.log");
+    setLogFile(logFile);
 
     debug("diagnostic detail");
 
     expect(consoleLog.calls).toHaveLength(0);
-    expect(readFileSync(path, "utf8")).toMatch(/^\[.+] diagnostic detail\n$/);
+    expect(readFileSync(logFile, "utf8")).toMatch(/^\[.+] diagnostic detail\n$/);
     consoleLog.restore();
   });
 
   it("appends successive writes to the same file", () => {
     const consoleLog = captureConsoleLog();
-    const path = path.join(temporary, "events.log");
-    setLogFile(path);
+    const logFile = path.join(temporary, "events.log");
+    setLogFile(logFile);
 
     logEvent("dispatch", { outcome: "started" });
     logEvent("cleanup", { outcome: "workspace_closed" });
 
-    expect(readFileSync(path, "utf8")).toBe(
+    expect(readFileSync(logFile, "utf8")).toBe(
       "event=dispatch outcome=started\nevent=cleanup outcome=workspace_closed\n",
     );
     consoleLog.restore();
@@ -270,11 +270,11 @@ describe(setLogFile, () => {
 
   it("does not write to disk when no log file has been set", () => {
     const consoleLog = captureConsoleLog();
-    const path = path.join(temporary, "events.log");
+    const logFile = path.join(temporary, "events.log");
 
     logEvent("dispatch", { outcome: "started" });
 
-    expect(existsSync(path)).toBe(false);
+    expect(existsSync(logFile)).toBe(false);
     consoleLog.restore();
   });
 
@@ -282,17 +282,17 @@ describe(setLogFile, () => {
     const consoleLog = captureConsoleLog();
     const consoleError = captureConsoleError();
     // A path whose parent is an existing regular file — mkdir will throw.
-    const path = path.join(temporary, "events.log");
-    setLogFile(path);
+    const logFile = path.join(temporary, "events.log");
+    setLogFile(logFile);
     logEvent("first", {});
-    setLogFile(path.join(path, "trapped.log"));
+    setLogFile(path.join(logFile, "trapped.log"));
 
     logEvent("second", {});
     logEvent("third", {});
 
     expect(consoleError.output()).toMatch(/disabling file logging/);
     expect(consoleError.calls).toHaveLength(1);
-    expect(readFileSync(path, "utf8")).toBe("event=first\n");
+    expect(readFileSync(logFile, "utf8")).toBe("event=first\n");
     consoleLog.restore();
     consoleError.restore();
   });

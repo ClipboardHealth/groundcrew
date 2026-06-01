@@ -394,14 +394,14 @@ function normalizeOptionalString(value: unknown, path: string): string | undefin
 const ENV_VAR_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 function validatePreLaunchEnv(modelName: string, value: unknown): asserts value is string[] {
-  const path = `models.definitions.${modelName}.preLaunchEnv`;
+  const configPath = `models.definitions.${modelName}.preLaunchEnv`;
   if (!Array.isArray(value)) {
-    fail(`${path} must be an array of env var names (got ${JSON.stringify(value)})`);
+    fail(`${configPath} must be an array of env var names (got ${JSON.stringify(value)})`);
   }
   for (const [index, entry] of value.entries()) {
     if (typeof entry !== "string" || !ENV_VAR_NAME_PATTERN.test(entry)) {
       fail(
-        `${path}[${index}] must be a POSIX env var name matching ${ENV_VAR_NAME_PATTERN.source} (got ${JSON.stringify(entry)})`,
+        `${configPath}[${index}] must be a POSIX env var name matching ${ENV_VAR_NAME_PATTERN.source} (got ${JSON.stringify(entry)})`,
       );
     }
     // Build secrets are sourced into the host launch shell, forwarded only to
@@ -411,7 +411,7 @@ function validatePreLaunchEnv(modelName: string, value: unknown): asserts value 
     // entry) instead of debugging a missing env var at runtime.
     if ((BUILD_SECRET_NAMES as readonly string[]).includes(entry)) {
       fail(
-        `${path}[${index}] cannot be a BUILD_SECRET_NAMES entry (${BUILD_SECRET_NAMES.join(", ")}); ` +
+        `${configPath}[${index}] cannot be a BUILD_SECRET_NAMES entry (${BUILD_SECRET_NAMES.join(", ")}); ` +
           "those are unset on the host before the agent wrap is exec'd, so forwarding them via --env-pass would be a no-op.",
       );
     }
@@ -697,12 +697,12 @@ function normalizeSources(raw: unknown): SourceConfig[] {
   }
   const names = new Map<string, number>();
   for (const [index, entry] of raw.entries()) {
-    const path = `sources[${index}]`;
+    const configPath = `sources[${index}]`;
     if (!isPlainObject(entry)) {
-      fail(`${path} must be an object`);
+      fail(`${configPath} must be an object`);
     }
     const { kind, name } = entry;
-    requireString(kind, `${path}.kind`);
+    requireString(kind, `${configPath}.kind`);
     // Per-adapter Zod validation runs in `buildSources`. Here we check name
     // uniqueness — the Board composer relies on it for writeback routing.
     // When `name` is omitted, the adapter's runtime default is `kind` (the
@@ -710,7 +710,7 @@ function normalizeSources(raw: unknown): SourceConfig[] {
     // dedup on the effective runtime name to catch e.g. two `{kind: "linear"}`
     // entries that would both produce a source named `"linear"`.
     if (name !== undefined) {
-      requireString(name, `${path}.name`);
+      requireString(name, `${configPath}.name`);
     }
     /* v8 ignore next @preserve -- both `name`-set and `name`-unset paths are covered by separate dedup tests; coverage for the fallback's `kind` arm only fires when both entries in the dedup set come from `name`, which the second test already covers */
     const effectiveName = name ?? kind;
@@ -718,7 +718,7 @@ function normalizeSources(raw: unknown): SourceConfig[] {
     if (previous !== undefined) {
       /* v8 ignore next 3 @preserve -- the `name === undefined` ternary arm requires two unnamed entries colliding; we keep the conditional for the better error message but only one path is exercised in tests */
       fail(
-        `${path} would produce a source named "${effectiveName}" (from ${name === undefined ? "default `kind` since `name` is omitted" : "`name`"}), duplicating sources[${previous}]. Configure distinct \`name\` fields.`,
+        `${configPath} would produce a source named "${effectiveName}" (from ${name === undefined ? "default `kind` since `name` is omitted" : "`name`"}), duplicating sources[${previous}]. Configure distinct \`name\` fields.`,
       );
     }
     names.set(effectiveName, index);

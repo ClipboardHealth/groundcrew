@@ -24,9 +24,9 @@ const VALID_WORKSPACE = (projectDir: string) => ({
 });
 
 function writeConfigFile(dir: string, body: string): string {
-  const path = path.join(dir, `config-${Math.random().toString(36).slice(2)}.ts`);
-  writeFileSync(path, body);
-  return path;
+  const configPath = path.join(dir, `config-${Math.random().toString(36).slice(2)}.ts`);
+  writeFileSync(configPath, body);
+  return configPath;
 }
 
 function configSource(config: Config): string {
@@ -62,11 +62,11 @@ describe("loadConfig", () => {
   });
 
   it("loads a minimal config and applies defaults", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       configSource({ workspace: VALID_WORKSPACE(temporary) }),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
 
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
@@ -88,11 +88,11 @@ describe("loadConfig", () => {
   });
 
   it("ships a model-agnostic unattended default prompt", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       configSource({ workspace: VALID_WORKSPACE(temporary) }),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
 
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
@@ -105,7 +105,7 @@ describe("loadConfig", () => {
   });
 
   it("rejects a `linear` config block with a migration message", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       [
         "export default {",
@@ -114,18 +114,18 @@ describe("loadConfig", () => {
         "};",
       ].join("\n"),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
 
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(/The `linear` config block is no longer supported/);
   });
 
   it("caches the resolved config across calls", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       configSource({ workspace: VALID_WORKSPACE(temporary) }),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
 
     const { loadConfig } = await loadFreshConfig();
     const first = await loadConfig();
@@ -135,7 +135,7 @@ describe("loadConfig", () => {
   });
 
   it("merges per-key overrides into the default model definitions", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       configSource({
         workspace: VALID_WORKSPACE(temporary),
@@ -147,7 +147,7 @@ describe("loadConfig", () => {
         },
       }),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
 
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
@@ -164,14 +164,14 @@ describe("loadConfig", () => {
   });
 
   it("falls back to the inherited usage block when override sets `usage: undefined`", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       configSource({
         workspace: VALID_WORKSPACE(temporary),
         models: { definitions: { claude: { cmd: "my-claude", usage: undefined } } },
       }),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
 
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
@@ -182,14 +182,14 @@ describe("loadConfig", () => {
   });
 
   it("strips usage from a default model when override sets `usage: { disabled: true }`", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       configSource({
         workspace: VALID_WORKSPACE(temporary),
         models: { definitions: { claude: { usage: { disabled: true } } } },
       }),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
 
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
@@ -202,7 +202,7 @@ describe("loadConfig", () => {
   });
 
   it("treats `usage: { disabled: true }` on a brand-new model as no gating", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       configSource({
         workspace: VALID_WORKSPACE(temporary),
@@ -213,7 +213,7 @@ describe("loadConfig", () => {
         },
       }),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
 
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
@@ -222,7 +222,7 @@ describe("loadConfig", () => {
   });
 
   it("rejects legacy models.isolation config", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       [
         "export default {",
@@ -231,13 +231,13 @@ describe("loadConfig", () => {
         "};",
       ].join("\n"),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(/models\.isolation is no longer supported/);
   });
 
   it("rejects the legacy remote config block", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       [
         "export default {",
@@ -246,13 +246,13 @@ describe("loadConfig", () => {
         "};",
       ].join("\n"),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(/remote is no longer supported/);
   });
 
   it("rejects non-object model definitions", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       [
         "export default {",
@@ -261,13 +261,13 @@ describe("loadConfig", () => {
         "};",
       ].join("\n"),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(/models\.definitions must be an object/);
   });
 
   it("rejects non-object per-model definitions", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       [
         "export default {",
@@ -276,13 +276,13 @@ describe("loadConfig", () => {
         "};",
       ].join("\n"),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(/models\.definitions\.claude must be an object/);
   });
 
   it("rejects legacy per-model isolation config", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       [
         "export default {",
@@ -291,7 +291,7 @@ describe("loadConfig", () => {
         "};",
       ].join("\n"),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(
       /models\.definitions\.claude\.isolation is no longer supported/,
@@ -299,7 +299,7 @@ describe("loadConfig", () => {
   });
 
   it("accepts a per-model sandbox agent binding and surfaces it on the resolved definition", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       configSource({
         workspace: VALID_WORKSPACE(temporary),
@@ -310,7 +310,7 @@ describe("loadConfig", () => {
         },
       }),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
 
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
@@ -321,7 +321,7 @@ describe("loadConfig", () => {
   });
 
   it("rejects a per-model sandbox config with a whitespace-only agent", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       [
         "export default {",
@@ -330,7 +330,7 @@ describe("loadConfig", () => {
         "};",
       ].join("\n"),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(
       /models\.definitions\.claude\.sandbox\.agent must be a non-empty string/,
@@ -338,7 +338,7 @@ describe("loadConfig", () => {
   });
 
   it("rejects removed per-model sandbox.template with migration guidance", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       [
         "export default {",
@@ -347,7 +347,7 @@ describe("loadConfig", () => {
         "};",
       ].join("\n"),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(
       /models\.definitions\.claude\.sandbox\.template is no longer supported/,
@@ -356,7 +356,7 @@ describe("loadConfig", () => {
   });
 
   it("rejects removed per-model sandbox.kits with migration guidance", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       [
         "export default {",
@@ -365,7 +365,7 @@ describe("loadConfig", () => {
         "};",
       ].join("\n"),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(
       /models\.definitions\.claude\.sandbox\.kits is no longer supported/,
@@ -374,7 +374,7 @@ describe("loadConfig", () => {
   });
 
   it("threads sandbox.setupCommand through to the resolved sandbox definition", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       [
         "export default {",
@@ -383,14 +383,14 @@ describe("loadConfig", () => {
         "};",
       ].join("\n"),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
     expect(actual.models.definitions["claude"]?.sandbox?.setupCommand).toBe("./bootstrap.sh");
   });
 
   it("accepts a brand-new model override that supplies an explicit usage block", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       configSource({
         workspace: VALID_WORKSPACE(temporary),
@@ -401,7 +401,7 @@ describe("loadConfig", () => {
         },
       }),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
     expect(actual.models.definitions["cursor"]?.usage).toStrictEqual({
@@ -410,7 +410,7 @@ describe("loadConfig", () => {
   });
 
   it("rejects a per-model sandbox config that omits agent", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       [
         "export default {",
@@ -419,7 +419,7 @@ describe("loadConfig", () => {
         "};",
       ].join("\n"),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(
       /models\.definitions\.claude\.sandbox\.agent must be a non-empty string/,
@@ -427,7 +427,7 @@ describe("loadConfig", () => {
   });
 
   it("merges preLaunch through overlay without dropping default cmd/color", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       [
         "export const config = {",
@@ -436,7 +436,7 @@ describe("loadConfig", () => {
         "};",
       ].join("\n"),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
 
     const { loadConfig } = await loadFreshConfig();
 
@@ -447,7 +447,7 @@ describe("loadConfig", () => {
   });
 
   it("rejects an empty preLaunch string", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       [
         "export const config = {",
@@ -456,7 +456,7 @@ describe("loadConfig", () => {
         "};",
       ].join("\n"),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
 
     const { loadConfig } = await loadFreshConfig();
 
@@ -466,7 +466,7 @@ describe("loadConfig", () => {
   });
 
   it("rejects a whitespace-only preLaunch string", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       [
         "export const config = {",
@@ -475,7 +475,7 @@ describe("loadConfig", () => {
         "};",
       ].join("\n"),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
 
     const { loadConfig } = await loadFreshConfig();
 
@@ -485,7 +485,7 @@ describe("loadConfig", () => {
   });
 
   it("allows preLaunch on a brand-new model when cmd and color are supplied", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       [
         "export const config = {",
@@ -496,7 +496,7 @@ describe("loadConfig", () => {
         "};",
       ].join("\n"),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
 
     const { loadConfig } = await loadFreshConfig();
 
@@ -505,7 +505,7 @@ describe("loadConfig", () => {
   });
 
   it("merges preLaunchEnv through an override and preserves cmd/color defaults", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       configSource({
         workspace: VALID_WORKSPACE(temporary),
@@ -514,7 +514,7 @@ describe("loadConfig", () => {
         },
       }),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
 
@@ -527,7 +527,7 @@ describe("loadConfig", () => {
   });
 
   it("rejects a non-array preLaunchEnv", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       [
         "export const config = {",
@@ -536,7 +536,7 @@ describe("loadConfig", () => {
         "};",
       ].join("\n"),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(
       /models\.definitions\.claude\.preLaunchEnv must be an array/,
@@ -544,14 +544,14 @@ describe("loadConfig", () => {
   });
 
   it("rejects a preLaunchEnv entry that isn't a valid POSIX env var name", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       configSource({
         workspace: VALID_WORKSPACE(temporary),
         models: { definitions: { claude: { preLaunchEnv: ["SESSION_TOKEN", "1bad"] } } },
       }),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(
       /models\.definitions\.claude\.preLaunchEnv\[1\] must be a POSIX env var name/,
@@ -562,14 +562,14 @@ describe("loadConfig", () => {
     // BUILD_SECRET_NAMES are `unset` on the host between the setup wrap and
     // the agent wrap, so forwarding them via --env-pass would silently never
     // reach the agent. Fail at config-load time.
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       configSource({
         workspace: VALID_WORKSPACE(temporary),
         models: { definitions: { claude: { preLaunchEnv: ["SESSION_TOKEN", "NPM_TOKEN"] } } },
       }),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(
       /models\.definitions\.claude\.preLaunchEnv\[1\] cannot be a BUILD_SECRET_NAMES entry/,
@@ -577,7 +577,7 @@ describe("loadConfig", () => {
   });
 
   it("rejects combining disabled: true with preLaunchEnv", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       [
         "export const config = {",
@@ -586,27 +586,27 @@ describe("loadConfig", () => {
         "};",
       ].join("\n"),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(/cannot combine `disabled: true` with other fields/);
   });
 
   it("trims surrounding whitespace from a per-model sandbox agent", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       configSource({
         workspace: VALID_WORKSPACE(temporary),
         models: { definitions: { claude: { sandbox: { agent: "  claude  " } } } },
       }),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
     expect(actual.models.definitions["claude"]?.sandbox?.agent).toBe("claude");
   });
 
   it("rejects a non-object local block", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       [
         "export default {",
@@ -615,13 +615,13 @@ describe("loadConfig", () => {
         "};",
       ].join("\n"),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(/local must be an object/);
   });
 
   it("rejects a non-object per-model sandbox block", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       [
         "export default {",
@@ -630,7 +630,7 @@ describe("loadConfig", () => {
         "};",
       ].join("\n"),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(
       /models\.definitions\.claude\.sandbox must be an object/,
@@ -638,7 +638,7 @@ describe("loadConfig", () => {
   });
 
   it("rejects a non-object top-level sandbox block", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       [
         "export default {",
@@ -647,13 +647,13 @@ describe("loadConfig", () => {
         "};",
       ].join("\n"),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(/sandbox must be an object/);
   });
 
   it("allows an empty top-level sandbox block during migration", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       [
         "export default {",
@@ -662,14 +662,14 @@ describe("loadConfig", () => {
         "};",
       ].join("\n"),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
     expect(actual.workspace.projectDir).toBe(temporary);
   });
 
   it("rejects removed sandbox.gitDefaults with migration guidance", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       [
         "export default {",
@@ -678,14 +678,14 @@ describe("loadConfig", () => {
         "};",
       ].join("\n"),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(/sandbox\.gitDefaults is no longer supported/);
     await expect(loadConfig()).rejects.toThrow(/no longer seeds git defaults/);
   });
 
   it("rejects removed sandbox.authRecipes with migration guidance", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       [
         "export default {",
@@ -694,14 +694,14 @@ describe("loadConfig", () => {
         "};",
       ].join("\n"),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(/sandbox\.authRecipes is no longer supported/);
     await expect(loadConfig()).rejects.toThrow(/no longer drives in-sandbox auth flows/);
   });
 
   it("rejects an invalid local.runner value", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       [
         "export default {",
@@ -710,38 +710,38 @@ describe("loadConfig", () => {
         "};",
       ].join("\n"),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(/local\.runner must be one of/);
   });
 
   it("defaults local.runner to 'auto' when omitted", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       configSource({ workspace: VALID_WORKSPACE(temporary) }),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
     expect(actual.local.runner).toBe("auto");
   });
 
   it("preserves an explicit local.runner value", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       configSource({
         workspace: VALID_WORKSPACE(temporary),
         local: { runner: "safehouse" },
       }),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
     expect(actual.local.runner).toBe("safehouse");
   });
 
   it("rejects `disabled: false` on a model definition", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       [
         "export default {",
@@ -750,7 +750,7 @@ describe("loadConfig", () => {
         "};",
       ].join("\n"),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(
       /models\.definitions\.claude\.disabled must be exactly `true`/,
@@ -758,7 +758,7 @@ describe("loadConfig", () => {
   });
 
   it("rejects `disabled: true` combined with other fields (cmd / color / usage)", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       [
         "export default {",
@@ -767,7 +767,7 @@ describe("loadConfig", () => {
         "};",
       ].join("\n"),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(
       /models\.definitions\.claude: cannot combine `disabled: true` with other fields/,
@@ -775,28 +775,28 @@ describe("loadConfig", () => {
   });
 
   it("drops a shipped default when `disabled: true` is set", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       configSource({
         workspace: VALID_WORKSPACE(temporary),
         models: { definitions: { codex: { disabled: true } } },
       }),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
     expect(Object.keys(actual.models.definitions).toSorted()).toStrictEqual(["claude"]);
   });
 
   it("rejects `disabled: true` on a key that isn't a shipped default", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       configSource({
         workspace: VALID_WORKSPACE(temporary),
         models: { definitions: { cursor: { disabled: true } } },
       }),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(
       /models\.definitions\.cursor: `disabled: true` is only valid for shipped defaults/,
@@ -804,45 +804,45 @@ describe("loadConfig", () => {
   });
 
   it("rejects disabling the model used as `models.default`", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       configSource({
         workspace: VALID_WORKSPACE(temporary),
         models: { default: "claude", definitions: { claude: { disabled: true } } },
       }),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(/models\.default \("claude"\) is disabled/);
   });
 
   it("defaults workspaceKind to auto when omitted", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       configSource({ workspace: VALID_WORKSPACE(temporary) }),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
     expect(actual.workspaceKind).toBe("auto");
   });
 
   it("accepts a valid workspaceKind override", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       configSource({
         workspace: VALID_WORKSPACE(temporary),
         workspaceKind: "tmux",
       }),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
     expect(actual.workspaceKind).toBe("tmux");
   });
 
   it("rejects an unknown workspaceKind value", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       [
         "export default {",
@@ -851,27 +851,27 @@ describe("loadConfig", () => {
         "};",
       ].join("\n"),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(/workspaceKind must be one of/);
   });
 
   it("respects user-supplied prompts.initial", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       configSource({
         workspace: VALID_WORKSPACE(temporary),
         prompts: { initial: "do {{ticket}} in {{worktree}}" },
       }),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
     expect(actual.prompts.initial).toBe("do {{ticket}} in {{worktree}}");
   });
 
   it("allows known placeholders in prompts.initial", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       configSource({
         workspace: VALID_WORKSPACE(temporary),
@@ -881,7 +881,7 @@ describe("loadConfig", () => {
         },
       }),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
     expect(actual.prompts.initial).toBe(
@@ -890,27 +890,27 @@ describe("loadConfig", () => {
   });
 
   it("fails when prompts.initial contains an unknown placeholder", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       configSource({
         workspace: VALID_WORKSPACE(temporary),
         prompts: { initial: "do {{unknown}}" },
       }),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(/prompts\.initial contains unknown placeholder/);
   });
 
   it("expands a leading ~ in workspace.projectDir", async () => {
     setEnvironmentVariable("HOME", "/fake-home");
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       configSource({
         workspace: { projectDir: "~/work", knownRepositories: ["repo-a"] },
       }),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
     expect(actual.workspace.projectDir).toBe("/fake-home/work");
@@ -918,33 +918,33 @@ describe("loadConfig", () => {
 
   it("expands a bare ~ in workspace.projectDir", async () => {
     setEnvironmentVariable("HOME", "/fake-home");
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       configSource({ workspace: { projectDir: "~", knownRepositories: ["repo-a"] } }),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
     expect(actual.workspace.projectDir).toBe("/fake-home");
   });
 
   it("leaves non-tilde projectDir paths alone", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       configSource({ workspace: { projectDir: "/work/here", knownRepositories: ["repo-a"] } }),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
     expect(actual.workspace.projectDir).toBe("/work/here");
   });
 
   it("defaults logging.file to the XDG state path", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       configSource({ workspace: VALID_WORKSPACE(temporary) }),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
     expect(actual.logging.file).toBe(path.join(temporary, "xdg-state", "groundcrew", "groundcrew.log"));
@@ -953,25 +953,25 @@ describe("loadConfig", () => {
   it("uses HOME when XDG_STATE_HOME is unset", async () => {
     deleteEnvironmentVariable("XDG_STATE_HOME");
     setEnvironmentVariable("HOME", "/fake-home");
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       configSource({ workspace: VALID_WORKSPACE(temporary) }),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
     expect(actual.logging.file).toBe("/fake-home/.local/state/groundcrew/groundcrew.log");
   });
 
   it("respects a user-supplied logging.file", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       configSource({
         workspace: VALID_WORKSPACE(temporary),
         logging: { file: "/var/log/groundcrew.log" },
       }),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
     expect(actual.logging.file).toBe("/var/log/groundcrew.log");
@@ -979,28 +979,28 @@ describe("loadConfig", () => {
 
   it("expands a leading ~ in logging.file", async () => {
     setEnvironmentVariable("HOME", "/fake-home");
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       configSource({
         workspace: VALID_WORKSPACE(temporary),
         logging: { file: "~/groundcrew.log" },
       }),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
     expect(actual.logging.file).toBe("/fake-home/groundcrew.log");
   });
 
   it("rejects an empty logging.file", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       configSource({
         workspace: VALID_WORKSPACE(temporary),
         logging: { file: "  " },
       }),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(/logging\.file must be a non-empty string/);
   });
@@ -1036,25 +1036,25 @@ describe("loadConfig", () => {
   });
 
   it("fails when the config file has no default or `config` export", async () => {
-    const path = writeConfigFile(temporary, "export const notConfig = {};\n");
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    const configPath = writeConfigFile(temporary, "export const notConfig = {};\n");
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(/must export a config object/);
   });
 
   it("fails when workspace is not an object", async () => {
-    const path = writeConfigFile(temporary, `export default { workspace: 5 };\n`);
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    const configPath = writeConfigFile(temporary, `export default { workspace: 5 };\n`);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(/workspace must be an object/);
   });
 
   it("fails when knownRepositories is empty", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       configSource({ workspace: { projectDir: temporary, knownRepositories: [] } }),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(
       /workspace\.knownRepositories must be a non-empty array/,
@@ -1062,14 +1062,14 @@ describe("loadConfig", () => {
   });
 
   it("fails when sessionLimitPercentage is out of range", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       configSource({
         workspace: VALID_WORKSPACE(temporary),
         orchestrator: { sessionLimitPercentage: 0 },
       }),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(
       /orchestrator\.sessionLimitPercentage must be a finite number in \(0, 100]/,
@@ -1077,14 +1077,14 @@ describe("loadConfig", () => {
   });
 
   it("fails when sessionLimitPercentage is greater than 100", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       configSource({
         workspace: VALID_WORKSPACE(temporary),
         orchestrator: { sessionLimitPercentage: 150 },
       }),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(
       /orchestrator\.sessionLimitPercentage must be a finite number in \(0, 100]/,
@@ -1092,7 +1092,7 @@ describe("loadConfig", () => {
   });
 
   it("fails when sessionLimitPercentage is NaN", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       [
         "export default {",
@@ -1101,7 +1101,7 @@ describe("loadConfig", () => {
         "};",
       ].join("\n"),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(
       /orchestrator\.sessionLimitPercentage must be a finite number in \(0, 100]/,
@@ -1109,14 +1109,14 @@ describe("loadConfig", () => {
   });
 
   it("fails when maximumInProgress is not a positive integer", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       configSource({
         workspace: VALID_WORKSPACE(temporary),
         orchestrator: { maximumInProgress: 0 },
       }),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(
       /orchestrator\.maximumInProgress must be an integer ≥ 1/,
@@ -1124,53 +1124,53 @@ describe("loadConfig", () => {
   });
 
   it("fails when an override drops cmd to empty", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       configSource({
         workspace: VALID_WORKSPACE(temporary),
         models: { definitions: { claude: { cmd: "" } } },
       }),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(/models\.definitions\.claude\.cmd/);
   });
 
   it("fails when a brand-new model omits color", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       configSource({
         workspace: VALID_WORKSPACE(temporary),
         models: { definitions: { cursor: { cmd: "cursor" } } },
       }),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(/models\.definitions\.cursor\.color/);
   });
 
   it('fails when models.definitions contains the reserved "any" name', async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       configSource({
         workspace: VALID_WORKSPACE(temporary),
         models: { definitions: { any: { cmd: "any", color: "#000" } } },
       }),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(/models\.definitions cannot contain "any"/);
   });
 
   it("fails when models.default is unknown", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       configSource({
         workspace: VALID_WORKSPACE(temporary),
         models: { default: "unknown" },
       }),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(
       /models\.default \("unknown"\) is not a key in models\.definitions/,
@@ -1244,25 +1244,25 @@ describe("loadConfig", () => {
   });
 
   it("fails when the default export is not an object (e.g. a primitive)", async () => {
-    const path = writeConfigFile(temporary, "export default 42;\n");
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    const configPath = writeConfigFile(temporary, "export default 42;\n");
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(/must export a config object/);
   });
 
   it("defaults sources to an empty array when the field is omitted", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       configSource({ workspace: VALID_WORKSPACE(temporary) }),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
     expect(actual.sources).toStrictEqual([]);
   });
 
   it("preserves a valid sources array through resolution", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       [
         "export default {",
@@ -1271,14 +1271,14 @@ describe("loadConfig", () => {
         "};",
       ].join("\n"),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
     expect(actual.sources).toStrictEqual([{ kind: "shell", name: "jira" }]);
   });
 
   it("rejects sources when it isn't an array", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       [
         "export default {",
@@ -1287,13 +1287,13 @@ describe("loadConfig", () => {
         "};",
       ].join("\n"),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(/sources must be an array/);
   });
 
   it("rejects a source entry that isn't an object", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       [
         "export default {",
@@ -1302,13 +1302,13 @@ describe("loadConfig", () => {
         "};",
       ].join("\n"),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(/sources\[0] must be an object/);
   });
 
   it("rejects a source entry missing a string kind field", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       [
         "export default {",
@@ -1317,13 +1317,13 @@ describe("loadConfig", () => {
         "};",
       ].join("\n"),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(/sources\[0]\.kind/);
   });
 
   it("rejects duplicate source names", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       [
         "export default {",
@@ -1332,13 +1332,13 @@ describe("loadConfig", () => {
         "};",
       ].join("\n"),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(/duplicating sources\[0]/);
   });
 
   it("rejects a source entry where name is set but not a string", async () => {
-    const path = writeConfigFile(
+    const configPath = writeConfigFile(
       temporary,
       [
         "export default {",
@@ -1347,7 +1347,7 @@ describe("loadConfig", () => {
         "};",
       ].join("\n"),
     );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", path);
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(/sources\[0]\.name/);
   });

@@ -18,17 +18,17 @@ interface TempDir {
 }
 
 function makeTempDir(): TempDir {
-  const path = mkdtempSync(path.join(tmpdir(), "shell-factory-test-"));
+  const dirPath = mkdtempSync(path.join(tmpdir(), "shell-factory-test-"));
   return {
-    path,
+    path: dirPath,
     writeScript(name: string, body: string): string {
-      const scriptPath = path.join(path, name);
+      const scriptPath = path.join(dirPath, name);
       writeFileSync(scriptPath, `#!/usr/bin/env bash\n${body}\n`);
       chmodSync(scriptPath, 0o755);
       return scriptPath;
     },
     cleanup(): void {
-      rmSync(path, { recursive: true, force: true });
+      rmSync(dirPath, { recursive: true, force: true });
     },
   };
 }

@@ -154,11 +154,11 @@ function parseRunState(value: unknown): RunState | undefined {
 }
 
 function writeState(config: ResolvedConfig, state: RunState): void {
-  const path = runStatePath(config, state.ticket);
-  mkdirSync(path.dirname(path), { recursive: true });
-  const tmpPath = `${path}.${process.pid}.tmp`;
+  const statePath = runStatePath(config, state.ticket);
+  mkdirSync(path.dirname(statePath), { recursive: true });
+  const tmpPath = `${statePath}.${process.pid}.tmp`;
   writeFileSync(tmpPath, `${JSON.stringify(state, undefined, 2)}\n`, { mode: 0o600 });
-  renameSync(tmpPath, path);
+  renameSync(tmpPath, statePath);
 }
 
 export function readRunState(config: ResolvedConfig, ticket: string): RunState | undefined {
