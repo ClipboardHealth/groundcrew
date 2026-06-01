@@ -22,7 +22,7 @@ import { resolveWorkspaceKind, type WorkspaceResolution } from "../lib/workspace
 // Tokenization stops after this many non-flag tokens. Two is enough to
 // catch wrapper + wrapped CLI commands like `safehouse claude --foo`.
 const MAX_TOKENS_PER_CMD = 2;
-const SHIPPED_DEFAULT_MODEL_NAMES = ["claude", "codex"] as const;
+const BUILT_IN_MODEL_NAMES = ["claude", "codex"] as const;
 
 interface Check {
   name: string;
@@ -144,15 +144,13 @@ function modelCliHint(modelName: string, token: string): string | undefined {
   if (token !== modelName) {
     return undefined;
   }
-  if (!isShippedDefaultModelName(modelName)) {
+  if (!isBuiltInModelName(modelName)) {
     return undefined;
   }
-  return `install ${token} or disable it in crew.config.ts: \`models.definitions.${modelName} = { disabled: true }\``;
+  return `install ${token} or remove \`models.definitions.${modelName}\` from crew.config.ts`;
 }
 
-function isShippedDefaultModelName(
-  value: string,
-): value is (typeof SHIPPED_DEFAULT_MODEL_NAMES)[number] {
+function isBuiltInModelName(value: string): value is (typeof BUILT_IN_MODEL_NAMES)[number] {
   return value === "claude" || value === "codex";
 }
 

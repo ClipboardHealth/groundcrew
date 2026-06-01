@@ -27,7 +27,7 @@ Groundcrew watches assigned tickets, creates isolated worktrees, launches agent 
 - **One worktree per ticket.** Agents work in parallel without stepping on each other.
 - **Pluggable ticket sources.** Linear by default; Jira and local files via [ticket sources](./docs/ticket-sources.md).
 - **Local-first isolation.** Safehouse, Docker Sandboxes, or an explicit `none` escape hatch.
-- **Multi-agent routing.** Ships with `claude` and `codex`; bring your own CLI in config.
+- **Multi-agent routing.** Ships `claude` and `codex` presets; bring your own CLI in config.
 
 ## Prerequisites
 
@@ -59,7 +59,7 @@ crew doctor
 crew run --watch
 ```
 
-`crew init --global` writes config to `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/`. Pass `--repo` more than once for multiple repos. If you only have one CLI installed, pass `--model claude` (or `--model codex`) so Groundcrew disables the other model and `doctor` won't flag it as missing.
+`crew init --global` writes config to `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/`. Pass `--repo` more than once for multiple repos. `--model claude` or `--model codex` chooses the single built-in model preset to enable in the generated config.
 
 ## Ticket Pickup
 
@@ -96,7 +96,7 @@ See [command details](./docs/commands.md) for status output, doctor behavior, an
 
 ## Configuration
 
-Two keys are required; everything else has a default.
+Workspace settings and at least one enabled model are required; everything else has a default.
 
 ```ts
 import type { Config } from "@clipboard-health/groundcrew";
@@ -112,7 +112,7 @@ export default {
   models: {
     default: "claude",
     definitions: {
-      codex: { disabled: true },
+      claude: {},
     },
   },
 } satisfies Config;

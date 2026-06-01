@@ -155,7 +155,8 @@ describe("crew init", () => {
       expect(actual).toContain('knownRepositories: ["OWNER/REPO"]');
       expect(actual).toContain('local: { runner: "none" }');
       expect(actual).toContain('default: "claude"');
-      expect(actual).toContain("codex: { disabled: true }");
+      expect(actual).toContain("claude: {}");
+      expect(actual).not.toContain("disabled: true");
     });
 
     it("fails loudly when a quickstart template anchor is missing", () => {
@@ -220,7 +221,9 @@ describe("crew init", () => {
       expect(actual).toContain('projectDir: "~/dev"');
       expect(actual).toContain('knownRepositories: ["OWNER/REPO"]');
       expect(actual).toContain('local: { runner: "none" }');
-      expect(actual).toContain("codex: { disabled: true }");
+      expect(actual).toContain('default: "claude"');
+      expect(actual).toContain("claude: {}");
+      expect(actual).not.toContain("disabled: true");
       expect(output).toContain('PROJECT_DIR="$HOME/dev"');
       expect(output).toContain('mkdir -p "$PROJECT_DIR/OWNER"');
       expect(output).toContain('git clone git@github.com:OWNER/REPO.git "$PROJECT_DIR/OWNER/REPO"');
@@ -244,7 +247,8 @@ describe("crew init", () => {
       const actual = readFileSync(destination, "utf8");
       const output = consoleLog.output();
       expect(actual).toContain('default: "codex"');
-      expect(actual).toContain("claude: { disabled: true }");
+      expect(actual).toContain("codex: {}");
+      expect(actual).not.toContain("disabled: true");
       expect(output).toContain(String.raw`PROJECT_DIR="$HOME/Dev \$Box"`);
     });
 

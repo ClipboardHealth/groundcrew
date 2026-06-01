@@ -3,7 +3,7 @@
  * issue labels and descriptions. Extracted from boardSource.ts (Task 10).
  */
 
-import { AGENT_ANY_MODEL, isShippedDefaultDisabled, type ResolvedConfig } from "../../config.ts";
+import { AGENT_ANY_MODEL, isBuiltInModelNotEnabled, type ResolvedConfig } from "../../config.ts";
 import { RepositoryResolutionError } from "../../ticketSource.ts";
 
 export const AGENT_LABEL_PREFIX = "agent-";
@@ -14,7 +14,7 @@ export type ModelResolution =
   | { kind: "matched"; model: string }
   | { kind: "no-label" }
   | { kind: "agent-any" }
-  | { kind: "disabled-fallback"; requestedModel: string; fallbackModel: string };
+  | { kind: "not-enabled-fallback"; requestedModel: string; fallbackModel: string };
 
 function escapeRegex(value: string): string {
   return value.replaceAll(/[$()*+.?[\\\]^{|}]/g, String.raw`\$&`);
@@ -152,15 +152,15 @@ export function parseRepository(arguments_: ParseRepositoryArguments): string {
  * and downstream code skips them. An explicit `agent-<unknown>` label still
  * falls back to `models.default` because the user opted in by labeling.
  *
- * `disabledFallback` is set when the label matched a shipped default the user
- * explicitly disabled (e.g. `agent-codex` against `codex: { disabled: true }`).
+ * `notEnabledFallback` is set when the label matched a built-in model the
+ * user has not enabled (e.g. `agent-codex` when only `claude: {}` is listed).
  * Callers warn on this so the user can spot the config/labeling mismatch; we
  * still fall back rather than skip because skipping would block the ticket
  * indefinitely. Unknown labels stay silent — those are likelier to be typos.
  */
 interface ParsedAgentLabels {
   model: string;
-  disabledFallback?: string;
+  notEnabledFallback?: string;
 }
 
 function parseAgentLabels(
@@ -171,7 +171,7 @@ function parseAgentLabels(
   if (agentLabels.length === 0) {
     return undefined;
   }
-  let disabledFallback: string | undefined;
+  let notEnabledFallback: string | undefined;
   for (const label of agentLabels) {
     const name = label.name.slice(AGENT_LABEL_PREFIX.length);
     if (name === AGENT_ANY_MODEL) {
@@ -183,13 +183,13 @@ function parseAgentLabels(
     if (Object.hasOwn(config.models.definitions, name)) {
       return { model: name };
     }
-    if (disabledFallback === undefined && isShippedDefaultDisabled(config, name)) {
-      disabledFallback = name;
+    if (notEnabledFallback === undefined && isBuiltInModelNotEnabled(config, name)) {
+      notEnabledFallback = name;
     }
   }
   const fallback: ParsedAgentLabels = { model: config.models.default };
-  if (disabledFallback !== undefined) {
-    fallback.disabledFallback = disabledFallback;
+  if (notEnabledFallback !== undefined) {
+    fallback.notEnabledFallback = notEnabledFallback;
   }
   return fallback;
 }
@@ -206,10 +206,10 @@ export function resolveModelFor(arguments_: {
   if (parsed.model === AGENT_ANY_MODEL) {
     return { kind: "agent-any" };
   }
-  if (parsed.disabledFallback !== undefined) {
+  if (parsed.notEnabledFallback !== undefined) {
     return {
-      kind: "disabled-fallback",
-      requestedModel: parsed.disabledFallback,
+      kind: "not-enabled-fallback",
+      requestedModel: parsed.notEnabledFallback,
       fallbackModel: parsed.model,
     };
   }

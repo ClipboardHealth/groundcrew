@@ -38,7 +38,7 @@ interface InitConfigOptions {
   repositories?: string[];
   /** Pre-fill local.runner in the generated config. */
   runner?: LocalRunnerSetting;
-  /** Keep one shipped default model enabled and disable the other. */
+  /** Choose the single built-in model preset enabled by the generated config. */
   model?: InitModel;
   /** Override the source template path. */
   examplePath?: string;
@@ -234,8 +234,14 @@ function renderConfig(source: string, options: InitConfigOptions): string {
   if (options.model !== undefined) {
     contents = replaceRequired(
       contents,
-      "  // prompts: {",
-      `${modelBlock(options.model)}\n  // prompts: {`,
+      `    default: "claude",`,
+      `    default: ${tsString(options.model)},`,
+      "--model",
+    );
+    contents = replaceRequired(
+      contents,
+      "      claude: {},",
+      `      ${options.model}: {},`,
       "--model",
     );
   }
@@ -252,19 +258,6 @@ function replaceRequired(
     throw new Error(`crew init ${flag}: template anchor not found in ${EXAMPLE_FILE_NAME}`);
   }
   return contents.replace(search, replacement);
-}
-
-function modelBlock(model: InitModel): string {
-  const disabled = model === "claude" ? "codex" : "claude";
-  return [
-    "  models: {",
-    `    default: ${tsString(model)},`,
-    "    definitions: {",
-    `      ${disabled}: { disabled: true },`,
-    "    },",
-    "  },",
-    "",
-  ].join("\n");
 }
 
 function writeInitGuidance(destination: string, options: InitConfigOptions): void {

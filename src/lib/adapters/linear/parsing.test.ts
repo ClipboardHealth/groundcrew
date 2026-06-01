@@ -212,10 +212,10 @@ describe(resolveModelFor, () => {
     expect(result.kind).toBe("agent-any");
   });
 
-  it("returns disabled-fallback when the label matches a disabled shipped default", () => {
-    // codex is absent from definitions (simulating `disabled: true`) but IS a
-    // shipped default, so isShippedDefaultDisabled returns true for it.
-    const configWithCodexDisabled = makeConfig({
+  it("returns not-enabled-fallback when the label matches a built-in model that is not enabled", () => {
+    // codex is absent from definitions but IS a built-in model, so the label is
+    // recognizable and can produce a targeted warning before fallback.
+    const configWithCodexNotEnabled = makeConfig({
       models: {
         default: "claude",
         definitions: {
@@ -225,10 +225,10 @@ describe(resolveModelFor, () => {
     });
     const result = resolveModelFor({
       labels: [{ name: "agent-codex" }],
-      config: configWithCodexDisabled,
+      config: configWithCodexNotEnabled,
     });
     expect(result).toStrictEqual({
-      kind: "disabled-fallback",
+      kind: "not-enabled-fallback",
       requestedModel: "codex",
       fallbackModel: "claude",
     });

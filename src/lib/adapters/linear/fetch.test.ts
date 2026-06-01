@@ -344,12 +344,11 @@ describe(createBoardSource, () => {
       expect(second?.model).toBe("claude");
     });
 
-    it("falls back to models.default when a Todo's agent-* label refers to a disabled shipped default", async () => {
+    it("falls back to models.default when a Todo's agent-* label refers to a built-in model that is not enabled", async () => {
       const config = makeConfig({
         models: {
           default: "claude",
           definitions: { claude: { cmd: "claude", color: "#fff" } },
-          // codex is a shipped default but absent here = disabled
         },
       });
       const node = issueNode({
@@ -429,7 +428,7 @@ describe(fetchResolvedIssue, () => {
     expect(resolved.model).toBe("codex");
   });
 
-  it("falls back to models.default when the label refers to a disabled shipped default", async () => {
+  it("falls back to models.default when the label refers to a built-in model that is not enabled", async () => {
     const client = {
       client: {
         rawRequest: vi.fn<RawRequest>(async () => ({
@@ -451,7 +450,6 @@ describe(fetchResolvedIssue, () => {
         default: "claude",
         definitions: {
           claude: { cmd: "claude", color: "#fff" },
-          // codex disabled — exists in shipped defaults but not in resolved definitions
         },
       },
     });
@@ -462,7 +460,9 @@ describe(fetchResolvedIssue, () => {
       ticket: "TEAM-1",
     });
     expect(resolved.model).toBe("claude");
-    expect(consoleLog.output()).toContain("agent-codex label refers to a disabled model");
+    expect(consoleLog.output()).toContain(
+      "agent-codex label refers to a model that is not enabled",
+    );
   });
 
   it("throws RepositoryResolutionError when the description has no known repository", async () => {
@@ -705,18 +705,17 @@ describe(resolveModelFor, () => {
     ).toStrictEqual({ kind: "agent-any" });
   });
 
-  it("returns disabled-fallback when the label matches a disabled shipped default", () => {
+  it("returns not-enabled-fallback when the label matches a built-in model that is not enabled", () => {
     const config = makeConfig({
       models: {
         default: "claude",
         definitions: {
           claude: { cmd: "claude", color: "#fff" },
-          // codex is a shipped default but absent here = disabled
         },
       },
     });
     expect(resolveModelFor({ labels: [{ name: "agent-codex" }], config })).toStrictEqual({
-      kind: "disabled-fallback",
+      kind: "not-enabled-fallback",
       requestedModel: "codex",
       fallbackModel: "claude",
     });

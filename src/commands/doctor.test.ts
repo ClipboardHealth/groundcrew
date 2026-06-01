@@ -246,7 +246,7 @@ describe(doctor, () => {
     expect(consoleLog.output()).toContain("[--] git");
   });
 
-  it("explains how to disable a missing shipped default model CLI", async () => {
+  it("explains how to stop probing a missing built-in model CLI", async () => {
     loadConfigMock.mockResolvedValue(
       makeConfig({
         default: "claude",
@@ -262,7 +262,7 @@ describe(doctor, () => {
 
     expect(actual).toBe(false);
     expect(consoleLog.output()).toContain(
-      "[--] codex  — install codex or disable it in crew.config.ts: `models.definitions.codex = { disabled: true }`",
+      "[--] codex  — install codex or remove `models.definitions.codex` from crew.config.ts",
     );
   });
 
@@ -332,9 +332,8 @@ describe(doctor, () => {
     expect(checked).not.toContain("script.ts");
   });
 
-  it("does not probe a disabled shipped default's CLI binary", async () => {
-    // The default makeConfig fixture has only `claude` in `definitions` — the
-    // same shape `mergeDefinitions` produces for `codex: { disabled: true }`.
+  it("does not probe a built-in model that is not enabled", async () => {
+    // The default makeConfig fixture has only `claude` in `definitions`.
     // `gatherToolTokens` iterates `Object.values(definitions)`, so codex is
     // never gathered.
     loadConfigMock.mockResolvedValue(makeConfig());
@@ -545,7 +544,7 @@ describe(doctor, () => {
     await doctor();
 
     expect(consoleLog.output()).toContain(
-      "[--] claude  — install claude or disable it in crew.config.ts: `models.definitions.claude = { disabled: true }`",
+      "[--] claude  — install claude or remove `models.definitions.claude` from crew.config.ts",
     );
   });
 
