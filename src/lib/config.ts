@@ -438,7 +438,10 @@ function isWorkspaceKindSetting(value: unknown): value is WorkspaceKindSetting {
   );
 }
 
-function normalizeWorkspaceKind(value: unknown, configKey: string): WorkspaceKindSetting | undefined {
+function normalizeWorkspaceKind(
+  value: unknown,
+  configKey: string,
+): WorkspaceKindSetting | undefined {
   if (value === undefined) {
     return undefined;
   }
