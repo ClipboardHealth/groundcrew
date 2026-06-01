@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import path from "node:path";
 
 import { BUILD_SECRET_NAMES, type ModelDefinition } from "./config.ts";
 import {
@@ -47,7 +47,7 @@ function runSetupCommand(cwd: string): number | undefined {
 describe(buildLaunchCommand, () => {
   describe(SETUP_COMMAND, () => {
     it("is a successful no-op when the repo setup hook is absent", () => {
-      const worktreeDir = mkdtempSync(join(tmpdir(), "groundcrew-no-setup-"));
+      const worktreeDir = mkdtempSync(path.join(tmpdir(), "groundcrew-no-setup-"));
       try {
         const actual = runSetupCommand(worktreeDir);
 
@@ -58,10 +58,10 @@ describe(buildLaunchCommand, () => {
     });
 
     it("preserves the repo setup hook status when the hook exists", () => {
-      const worktreeDir = mkdtempSync(join(tmpdir(), "groundcrew-failing-setup-"));
+      const worktreeDir = mkdtempSync(path.join(tmpdir(), "groundcrew-failing-setup-"));
       try {
-        mkdirSync(join(worktreeDir, ".groundcrew"));
-        writeFileSync(join(worktreeDir, ".groundcrew", "setup.sh"), "exit 7\n");
+        mkdirSync(path.join(worktreeDir, ".groundcrew"));
+        writeFileSync(path.join(worktreeDir, ".groundcrew", "setup.sh"), "exit 7\n");
 
         const actual = runSetupCommand(worktreeDir);
 
@@ -379,10 +379,10 @@ describe(buildLaunchCommand, () => {
     });
 
     it("wipes promptDir when preLaunch fails before the explicit `rm -rf` would run", () => {
-      const promptDir = mkdtempSync(join(tmpdir(), "groundcrew-trap-cleanup-"));
-      const promptFile = join(promptDir, "prompt.txt");
-      const secretsFile = join(promptDir, "secrets.env");
-      const worktreeDir = mkdtempSync(join(tmpdir(), "groundcrew-trap-worktree-"));
+      const promptDir = mkdtempSync(path.join(tmpdir(), "groundcrew-trap-cleanup-"));
+      const promptFile = path.join(promptDir, "prompt.txt");
+      const secretsFile = path.join(promptDir, "secrets.env");
+      const worktreeDir = mkdtempSync(path.join(tmpdir(), "groundcrew-trap-worktree-"));
       try {
         writeFileSync(promptFile, "the prompt body\n");
         writeFileSync(secretsFile, "NPM_TOKEN='leaked'\n");
@@ -411,9 +411,9 @@ describe(buildLaunchCommand, () => {
     });
 
     it("wipes promptDir under the safehouse runner when preLaunch fails before the wrap exec", () => {
-      const promptDir = mkdtempSync(join(tmpdir(), "groundcrew-trap-safehouse-"));
-      const promptFile = join(promptDir, "prompt.txt");
-      const worktreeDir = mkdtempSync(join(tmpdir(), "groundcrew-trap-safehouse-wt-"));
+      const promptDir = mkdtempSync(path.join(tmpdir(), "groundcrew-trap-safehouse-"));
+      const promptFile = path.join(promptDir, "prompt.txt");
+      const worktreeDir = mkdtempSync(path.join(tmpdir(), "groundcrew-trap-safehouse-wt-"));
       try {
         writeFileSync(promptFile, "the prompt body\n");
 
@@ -443,10 +443,10 @@ describe(buildLaunchCommand, () => {
     });
 
     it("wipes promptDir under the safehouse runner when preLaunch returns non-zero", () => {
-      const promptDir = mkdtempSync(join(tmpdir(), "groundcrew-trap-safehouse-status-"));
-      const promptFile = join(promptDir, "prompt.txt");
-      const secretsFile = join(promptDir, "secrets.env");
-      const worktreeDir = mkdtempSync(join(tmpdir(), "groundcrew-trap-safehouse-status-wt-"));
+      const promptDir = mkdtempSync(path.join(tmpdir(), "groundcrew-trap-safehouse-status-"));
+      const promptFile = path.join(promptDir, "prompt.txt");
+      const secretsFile = path.join(promptDir, "secrets.env");
+      const worktreeDir = mkdtempSync(path.join(tmpdir(), "groundcrew-trap-safehouse-status-wt-"));
       try {
         writeFileSync(promptFile, "the prompt body\n");
         writeFileSync(secretsFile, "NPM_TOKEN='leaked'\n");
@@ -530,10 +530,10 @@ describe(buildLaunchCommand, () => {
       // already in env. Simulate that here by seeding NPM_TOKEN / BUF_TOKEN in
       // the spawn env. preLaunch always aborts before the real wrapper and
       // encodes leak (11) vs clean (22) in its exit code.
-      const promptDir = mkdtempSync(join(tmpdir(), "groundcrew-inherit-"));
-      const promptFile = join(promptDir, "prompt.txt");
-      const secretsFile = join(promptDir, "secrets.env");
-      const worktreeDir = mkdtempSync(join(tmpdir(), "groundcrew-inherit-wt-"));
+      const promptDir = mkdtempSync(path.join(tmpdir(), "groundcrew-inherit-"));
+      const promptFile = path.join(promptDir, "prompt.txt");
+      const secretsFile = path.join(promptDir, "secrets.env");
+      const worktreeDir = mkdtempSync(path.join(tmpdir(), "groundcrew-inherit-wt-"));
       try {
         writeFileSync(promptFile, "the prompt body\n");
         writeFileSync(secretsFile, "NPM_TOKEN='from-file'\nBUF_TOKEN='from-file'\n");
@@ -572,9 +572,9 @@ describe(buildLaunchCommand, () => {
     });
 
     it("scrubs listed preLaunchEnv names before preLaunch so stale ambient values are not forwarded", () => {
-      const promptDir = mkdtempSync(join(tmpdir(), "groundcrew-prelaunch-pass-scrub-"));
-      const promptFile = join(promptDir, "prompt.txt");
-      const worktreeDir = mkdtempSync(join(tmpdir(), "groundcrew-prelaunch-pass-scrub-wt-"));
+      const promptDir = mkdtempSync(path.join(tmpdir(), "groundcrew-prelaunch-pass-scrub-"));
+      const promptFile = path.join(promptDir, "prompt.txt");
+      const worktreeDir = mkdtempSync(path.join(tmpdir(), "groundcrew-prelaunch-pass-scrub-wt-"));
       try {
         writeFileSync(promptFile, "the prompt body\n");
 

@@ -1,5 +1,5 @@
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import path from "node:path";
 
 import type { ResolvedConfig } from "./config.ts";
 
@@ -73,11 +73,11 @@ function ticketKey(ticket: string): string {
 }
 
 export function runStateDirectory(config: Pick<ResolvedConfig, "logging">): string {
-  return resolve(dirname(config.logging.file), RUN_STATE_DIRECTORY_NAME);
+  return path.resolve(path.dirname(config.logging.file), RUN_STATE_DIRECTORY_NAME);
 }
 
 export function runStatePath(config: Pick<ResolvedConfig, "logging">, ticket: string): string {
-  return resolve(runStateDirectory(config), `${ticketKey(ticket)}.json`);
+  return path.resolve(runStateDirectory(config), `${ticketKey(ticket)}.json`);
 }
 
 function nowIso(): string {
@@ -155,7 +155,7 @@ function parseRunState(value: unknown): RunState | undefined {
 
 function writeState(config: ResolvedConfig, state: RunState): void {
   const path = runStatePath(config, state.ticket);
-  mkdirSync(dirname(path), { recursive: true });
+  mkdirSync(path.dirname(path), { recursive: true });
   const tmpPath = `${path}.${process.pid}.tmp`;
   writeFileSync(tmpPath, `${JSON.stringify(state, undefined, 2)}\n`, { mode: 0o600 });
   renameSync(tmpPath, path);

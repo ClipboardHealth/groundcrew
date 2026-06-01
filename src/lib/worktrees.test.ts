@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import type * as nodeOs from "node:os";
 import { tmpdir, userInfo } from "node:os";
-import { join, sep } from "node:path";
+import path from "node:path";
 
 import { probeError } from "../testHelpers/workspaceProbe.ts";
 import type * as commandRunnerModule from "./commandRunner.ts";
@@ -99,8 +99,8 @@ let projectDir: string;
 
 function setupTempProjectDir(): void {
   beforeEach(() => {
-    projectDir = mkdtempSync(join(tmpdir(), "groundcrew-worktrees-"));
-    vi.stubEnv("XDG_STATE_HOME", join(projectDir, "state"));
+    projectDir = mkdtempSync(path.join(tmpdir(), "groundcrew-worktrees-"));
+    vi.stubEnv("XDG_STATE_HOME", path.join(projectDir, "state"));
     userInfoMock.mockReturnValue(makeUserInfo("dev"));
     runCommandMock.mockReturnValue("");
   });
@@ -124,25 +124,25 @@ describe(list, () => {
 
   it("returns an empty list when the project directory cannot be read", () => {
     const config = makeConfig({
-      projectDir: join(projectDir, "does-not-exist"),
+      projectDir: path.join(projectDir, "does-not-exist"),
     });
 
     expect(list(config)).toStrictEqual([]);
   });
 
   it("ignores non-directory entries in the project root", () => {
-    writeFileSync(join(projectDir, "stray-file"), "");
-    mkdirSync(join(projectDir, "repo-a-team-1"));
+    writeFileSync(path.join(projectDir, "stray-file"), "");
+    mkdirSync(path.join(projectDir, "repo-a-team-1"));
     const config = makeConfig({ projectDir });
 
     const actual = list(config);
 
-    expect(actual.map((entry) => entry.dir)).toStrictEqual([join(projectDir, "repo-a-team-1")]);
+    expect(actual.map((entry) => entry.dir)).toStrictEqual([path.join(projectDir, "repo-a-team-1")]);
   });
 
   it("finds host sibling worktrees by their <repo>-<ticket> naming", () => {
-    mkdirSync(join(projectDir, "repo-a"));
-    mkdirSync(join(projectDir, "repo-a-team-1"));
+    mkdirSync(path.join(projectDir, "repo-a"));
+    mkdirSync(path.join(projectDir, "repo-a-team-1"));
     const config = makeConfig({ projectDir });
 
     expect(list(config)).toStrictEqual([
@@ -150,14 +150,14 @@ describe(list, () => {
         repository: "repo-a",
         ticket: "team-1",
         branchName: "dev-team-1",
-        dir: join(projectDir, "repo-a-team-1"),
+        dir: path.join(projectDir, "repo-a-team-1"),
         kind: "host",
       },
     ]);
   });
 
   it("ignores host directories whose <repo> segment is not configured", () => {
-    mkdirSync(join(projectDir, "ghost-team-1"));
+    mkdirSync(path.join(projectDir, "ghost-team-1"));
     const config = makeConfig({ projectDir });
 
     expect(list(config)).toStrictEqual([]);
@@ -168,8 +168,8 @@ describe(list, () => {
     // deeper than `projectDir`, so the worktree lives at
     // `projectDir/owner/repo-team-1`. list() has to scan the parent dir,
     // not the project root, to find it.
-    mkdirSync(join(projectDir, "owner", "repo"), { recursive: true });
-    mkdirSync(join(projectDir, "owner", "repo-team-1"));
+    mkdirSync(path.join(projectDir, "owner", "repo"), { recursive: true });
+    mkdirSync(path.join(projectDir, "owner", "repo-team-1"));
     const config = makeConfig({
       projectDir,
       knownRepositories: ["owner/repo"],
@@ -180,7 +180,7 @@ describe(list, () => {
         repository: "owner/repo",
         ticket: "team-1",
         branchName: "dev-team-1",
-        dir: join(projectDir, "owner", "repo-team-1"),
+        dir: path.join(projectDir, "owner", "repo-team-1"),
         kind: "host",
       },
     ]);
@@ -189,8 +189,8 @@ describe(list, () => {
   it("disambiguates same-basename repos across owners by parent dir", () => {
     // Two owners with a same-named repo. The worktree at
     // owner1/repo-team-1 must resolve to owner1/repo, not owner2/repo.
-    mkdirSync(join(projectDir, "owner1", "repo-team-1"), { recursive: true });
-    mkdirSync(join(projectDir, "owner2", "repo-team-2"), { recursive: true });
+    mkdirSync(path.join(projectDir, "owner1", "repo-team-1"), { recursive: true });
+    mkdirSync(path.join(projectDir, "owner2", "repo-team-2"), { recursive: true });
     const config = makeConfig({
       projectDir,
       knownRepositories: ["owner1/repo", "owner2/repo"],
@@ -201,24 +201,24 @@ describe(list, () => {
         repository: "owner1/repo",
         ticket: "team-1",
         branchName: "dev-team-1",
-        dir: join(projectDir, "owner1", "repo-team-1"),
+        dir: path.join(projectDir, "owner1", "repo-team-1"),
         kind: "host",
       },
       {
         repository: "owner2/repo",
         ticket: "team-2",
         branchName: "dev-team-2",
-        dir: join(projectDir, "owner2", "repo-team-2"),
+        dir: path.join(projectDir, "owner2", "repo-team-2"),
         kind: "host",
       },
     ]);
   });
 
   it("ignores legacy .sbx worktree directories", () => {
-    const repoDir = join(projectDir, "repo-a");
-    const sandboxRoot = join(repoDir, ".sbx", "groundcrew-repo-a-claude-worktrees");
+    const repoDir = path.join(projectDir, "repo-a");
+    const sandboxRoot = path.join(repoDir, ".sbx", "groundcrew-repo-a-claude-worktrees");
     mkdirSync(sandboxRoot, { recursive: true });
-    mkdirSync(join(sandboxRoot, "dev-team-1"));
+    mkdirSync(path.join(sandboxRoot, "dev-team-1"));
     const config = makeConfig({ projectDir });
 
     expect(list(config)).toStrictEqual([]);
@@ -229,8 +229,8 @@ describe(findByTicket, () => {
   setupTempProjectDir();
 
   it("returns every host entry matching the ticket regardless of repo", () => {
-    mkdirSync(join(projectDir, "repo-a-team-1"));
-    mkdirSync(join(projectDir, "repo-b-team-1"));
+    mkdirSync(path.join(projectDir, "repo-a-team-1"));
+    mkdirSync(path.join(projectDir, "repo-b-team-1"));
     const config = makeConfig({
       projectDir,
       knownRepositories: ["repo-a", "repo-b"],
@@ -252,7 +252,7 @@ describe(create, () => {
   setupTempProjectDir();
 
   it("probes origin/HEAD, then fetches and worktree-adds the auto-detected default branch", async () => {
-    mkdirSync(join(projectDir, "repo-a"));
+    mkdirSync(path.join(projectDir, "repo-a"));
     const config = makeConfig({ projectDir });
     runCommandMock.mockImplementation((_command, arguments_) => {
       // oxlint-disable-next-line vitest/no-conditional-in-test -- discriminator picks out the symbolic-ref probe so it returns origin/<branch>
@@ -269,34 +269,34 @@ describe(create, () => {
 
     expect(runCommandMock).toHaveBeenCalledWith(
       "git",
-      ["-C", join(projectDir, "repo-a"), "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+      ["-C", path.join(projectDir, "repo-a"), "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
       {},
     );
     expect(runCommandMock).toHaveBeenCalledWith(
       "git",
-      ["-C", join(projectDir, "repo-a"), "fetch", "origin", "main"],
+      ["-C", path.join(projectDir, "repo-a"), "fetch", "origin", "main"],
       { stdio: "captured", timeoutMs: 0 },
     );
     expect(runCommandMock).toHaveBeenCalledWith(
       "git",
       [
         "-C",
-        join(projectDir, "repo-a"),
+        path.join(projectDir, "repo-a"),
         "worktree",
         "add",
         "-b",
         "dev-team-1",
-        join(projectDir, "repo-a-team-1"),
+        path.join(projectDir, "repo-a-team-1"),
         "origin/main",
       ],
       { stdio: "captured", timeoutMs: 0 },
     );
     expect(actual.kind).toBe("host");
-    expect(actual.dir).toBe(join(projectDir, "repo-a-team-1"));
+    expect(actual.dir).toBe(path.join(projectDir, "repo-a-team-1"));
   });
 
   it("streams git output (stdio inherit) under verbose", async () => {
-    mkdirSync(join(projectDir, "repo-a"));
+    mkdirSync(path.join(projectDir, "repo-a"));
     const config = makeConfig({ projectDir });
     runCommandMock.mockImplementation((_command, arguments_) => {
       // oxlint-disable-next-line vitest/no-conditional-in-test -- discriminator reports an origin/main-backed repo
@@ -311,13 +311,13 @@ describe(create, () => {
 
     expect(runCommandMock).toHaveBeenCalledWith(
       "git",
-      ["-C", join(projectDir, "repo-a"), "fetch", "origin", "main"],
+      ["-C", path.join(projectDir, "repo-a"), "fetch", "origin", "main"],
       { stdio: "inherit", timeoutMs: 0 },
     );
   });
 
   it("uses the per-repo default branch reported by origin/HEAD (e.g. master)", async () => {
-    mkdirSync(join(projectDir, "repo-a"));
+    mkdirSync(path.join(projectDir, "repo-a"));
     const config = makeConfig({ projectDir });
     runCommandMock.mockImplementation((_command, arguments_) => {
       // oxlint-disable-next-line vitest/no-conditional-in-test -- discriminator picks out the symbolic-ref probe so it reports a master-backed repo
@@ -334,19 +334,19 @@ describe(create, () => {
 
     expect(runCommandMock).toHaveBeenCalledWith(
       "git",
-      ["-C", join(projectDir, "repo-a"), "fetch", "origin", "master"],
+      ["-C", path.join(projectDir, "repo-a"), "fetch", "origin", "master"],
       { stdio: "captured", timeoutMs: 0 },
     );
     expect(runCommandMock).toHaveBeenCalledWith(
       "git",
       [
         "-C",
-        join(projectDir, "repo-a"),
+        path.join(projectDir, "repo-a"),
         "worktree",
         "add",
         "-b",
         "dev-team-1",
-        join(projectDir, "repo-a-team-1"),
+        path.join(projectDir, "repo-a-team-1"),
         "origin/master",
       ],
       { stdio: "captured", timeoutMs: 0 },
@@ -354,7 +354,7 @@ describe(create, () => {
   });
 
   it("falls back to config.git.defaultBranch when origin/HEAD is not set", async () => {
-    mkdirSync(join(projectDir, "repo-a"));
+    mkdirSync(path.join(projectDir, "repo-a"));
     const config = makeConfig({
       projectDir,
       git: { remote: "origin", defaultBranch: "trunk" },
@@ -376,24 +376,24 @@ describe(create, () => {
 
     expect(runCommandMock).toHaveBeenCalledWith(
       "git",
-      ["-C", join(projectDir, "repo-a"), "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+      ["-C", path.join(projectDir, "repo-a"), "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
       {},
     );
     expect(runCommandMock).toHaveBeenCalledWith(
       "git",
-      ["-C", join(projectDir, "repo-a"), "fetch", "origin", "trunk"],
+      ["-C", path.join(projectDir, "repo-a"), "fetch", "origin", "trunk"],
       { stdio: "captured", timeoutMs: 0 },
     );
     expect(runCommandMock).toHaveBeenCalledWith(
       "git",
       [
         "-C",
-        join(projectDir, "repo-a"),
+        path.join(projectDir, "repo-a"),
         "worktree",
         "add",
         "-b",
         "dev-team-1",
-        join(projectDir, "repo-a-team-1"),
+        path.join(projectDir, "repo-a-team-1"),
         "origin/trunk",
       ],
       { stdio: "captured", timeoutMs: 0 },
@@ -401,8 +401,8 @@ describe(create, () => {
   });
 
   it("rejects when a host worktree already exists for the same ticket", async () => {
-    mkdirSync(join(projectDir, "repo-a"));
-    mkdirSync(join(projectDir, "repo-a-team-1"));
+    mkdirSync(path.join(projectDir, "repo-a"));
+    mkdirSync(path.join(projectDir, "repo-a-team-1"));
     const config = makeConfig({ projectDir });
 
     await expect(
@@ -442,13 +442,13 @@ describe(create, () => {
     ["forward slash", "team/123"],
     ["backslash", String.raw`team\123`],
     ["embedded ..", "team-..-123"],
-    ["traversal segment", `..${sep}evil`],
+    ["traversal segment", `..${path.sep}evil`],
     ["wrong shape — no digits", "team-abc"],
     ["wrong shape — uppercase", "TEAM-123"],
     ["wrong shape — trailing whitespace", "team-123 "],
     ["wrong shape — plain word", "foo"],
   ])("rejects invalid ticket %s", async (_label, ticket) => {
-    mkdirSync(join(projectDir, "repo-a"));
+    mkdirSync(path.join(projectDir, "repo-a"));
     const config = makeConfig({ projectDir });
 
     await expect(
@@ -460,7 +460,7 @@ describe(create, () => {
   });
 
   it("throws when the OS username is empty", async () => {
-    mkdirSync(join(projectDir, "repo-a"));
+    mkdirSync(path.join(projectDir, "repo-a"));
     userInfoMock.mockReturnValue(makeUserInfo(""));
     const config = makeConfig({ projectDir });
 
@@ -477,26 +477,26 @@ describe(remove, () => {
   setupTempProjectDir();
 
   it("runs git worktree remove for a host entry whose dir exists", async () => {
-    mkdirSync(join(projectDir, "repo-a"));
-    mkdirSync(join(projectDir, "repo-a-team-1"));
+    mkdirSync(path.join(projectDir, "repo-a"));
+    mkdirSync(path.join(projectDir, "repo-a-team-1"));
     const config = makeConfig({ projectDir });
 
     await remove(config, {
       repository: "repo-a",
       ticket: "team-1",
       branchName: "dev-team-1",
-      dir: join(projectDir, "repo-a-team-1"),
+      dir: path.join(projectDir, "repo-a-team-1"),
       kind: "host",
     });
 
     expect(runCommandMock).toHaveBeenCalledWith(
       "git",
-      ["-C", join(projectDir, "repo-a"), "worktree", "remove", join(projectDir, "repo-a-team-1")],
+      ["-C", path.join(projectDir, "repo-a"), "worktree", "remove", path.join(projectDir, "repo-a-team-1")],
       { stdio: "captured", timeoutMs: 0 },
     );
     expect(runCommandMock).toHaveBeenCalledWith("git", [
       "-C",
-      join(projectDir, "repo-a"),
+      path.join(projectDir, "repo-a"),
       "branch",
       "-D",
       "dev-team-1",
@@ -504,8 +504,8 @@ describe(remove, () => {
   });
 
   it("passes --force when force is set on a host entry", async () => {
-    mkdirSync(join(projectDir, "repo-a"));
-    mkdirSync(join(projectDir, "repo-a-team-1"));
+    mkdirSync(path.join(projectDir, "repo-a"));
+    mkdirSync(path.join(projectDir, "repo-a-team-1"));
     const config = makeConfig({ projectDir });
 
     await remove(
@@ -514,7 +514,7 @@ describe(remove, () => {
         repository: "repo-a",
         ticket: "team-1",
         branchName: "dev-team-1",
-        dir: join(projectDir, "repo-a-team-1"),
+        dir: path.join(projectDir, "repo-a-team-1"),
         kind: "host",
       },
       { force: true },
@@ -524,31 +524,31 @@ describe(remove, () => {
       "git",
       [
         "-C",
-        join(projectDir, "repo-a"),
+        path.join(projectDir, "repo-a"),
         "worktree",
         "remove",
         "--force",
-        join(projectDir, "repo-a-team-1"),
+        path.join(projectDir, "repo-a-team-1"),
       ],
       { stdio: "captured", timeoutMs: 0 },
     );
   });
 
   it("prunes when a host entry's directory is missing", async () => {
-    mkdirSync(join(projectDir, "repo-a"));
+    mkdirSync(path.join(projectDir, "repo-a"));
     const config = makeConfig({ projectDir });
 
     await remove(config, {
       repository: "repo-a",
       ticket: "team-1",
       branchName: "dev-team-1",
-      dir: join(projectDir, "repo-a-team-1"),
+      dir: path.join(projectDir, "repo-a-team-1"),
       kind: "host",
     });
 
     expect(runCommandMock).toHaveBeenCalledWith(
       "git",
-      ["-C", join(projectDir, "repo-a"), "worktree", "prune"],
+      ["-C", path.join(projectDir, "repo-a"), "worktree", "prune"],
       { stdio: "captured", timeoutMs: 0 },
     );
     expect(runCommandMock).not.toHaveBeenCalledWith(
@@ -559,8 +559,8 @@ describe(remove, () => {
   });
 
   it("does not throw when host branch deletion fails", async () => {
-    mkdirSync(join(projectDir, "repo-a"));
-    mkdirSync(join(projectDir, "repo-a-team-1"));
+    mkdirSync(path.join(projectDir, "repo-a"));
+    mkdirSync(path.join(projectDir, "repo-a-team-1"));
     const config = makeConfig({ projectDir });
     runCommandMock.mockImplementation((_cmd, arguments_) => {
       // oxlint-disable-next-line jest/no-conditional-in-test -- discriminator selects the branch-D call to fail; mirrors the real branch-D failure shape
@@ -577,7 +577,7 @@ describe(remove, () => {
         repository: "repo-a",
         ticket: "team-1",
         branchName: "dev-team-1",
-        dir: join(projectDir, "repo-a-team-1"),
+        dir: path.join(projectDir, "repo-a-team-1"),
         kind: "host",
       });
     };
@@ -586,8 +586,8 @@ describe(remove, () => {
   });
 
   it("wraps the error with a dirtiness explanation and --force hint when the worktree has modifications", async () => {
-    mkdirSync(join(projectDir, "repo-a"));
-    mkdirSync(join(projectDir, "repo-a-team-1"));
+    mkdirSync(path.join(projectDir, "repo-a"));
+    mkdirSync(path.join(projectDir, "repo-a-team-1"));
     const config = makeConfig({ projectDir });
 
     runCommandMock.mockImplementation((_command, arguments_) => {
@@ -607,7 +607,7 @@ describe(remove, () => {
         repository: "repo-a",
         ticket: "team-1",
         branchName: "dev-team-1",
-        dir: join(projectDir, "repo-a-team-1"),
+        dir: path.join(projectDir, "repo-a-team-1"),
         kind: "host",
       });
     };
@@ -616,14 +616,14 @@ describe(remove, () => {
     await expect(callRemove()).rejects.toThrow(/crew cleanup --force team-1/);
     await expect(callRemove()).rejects.toThrow(
       new RegExp(
-        `commit/stash in ${join(projectDir, "repo-a-team-1").replaceAll("/", String.raw`\/`)}`,
+        `commit/stash in ${path.join(projectDir, "repo-a-team-1").replaceAll("/", String.raw`\/`)}`,
       ),
     );
   });
 
   it("uses singular wording when exactly one modified file is dirty", async () => {
-    mkdirSync(join(projectDir, "repo-a"));
-    mkdirSync(join(projectDir, "repo-a-team-1"));
+    mkdirSync(path.join(projectDir, "repo-a"));
+    mkdirSync(path.join(projectDir, "repo-a-team-1"));
     const config = makeConfig({ projectDir });
 
     runCommandMock.mockImplementation((_command, arguments_) => {
@@ -643,7 +643,7 @@ describe(remove, () => {
         repository: "repo-a",
         ticket: "team-1",
         branchName: "dev-team-1",
-        dir: join(projectDir, "repo-a-team-1"),
+        dir: path.join(projectDir, "repo-a-team-1"),
         kind: "host",
       });
     };
@@ -654,8 +654,8 @@ describe(remove, () => {
   });
 
   it("uses singular wording when exactly one untracked file is dirty", async () => {
-    mkdirSync(join(projectDir, "repo-a"));
-    mkdirSync(join(projectDir, "repo-a-team-1"));
+    mkdirSync(path.join(projectDir, "repo-a"));
+    mkdirSync(path.join(projectDir, "repo-a-team-1"));
     const config = makeConfig({ projectDir });
 
     runCommandMock.mockImplementation((_command, arguments_) => {
@@ -675,7 +675,7 @@ describe(remove, () => {
         repository: "repo-a",
         ticket: "team-1",
         branchName: "dev-team-1",
-        dir: join(projectDir, "repo-a-team-1"),
+        dir: path.join(projectDir, "repo-a-team-1"),
         kind: "host",
       });
     };
@@ -686,8 +686,8 @@ describe(remove, () => {
   });
 
   it("wraps the error with an orphan explanation when the directory is not a registered worktree", async () => {
-    mkdirSync(join(projectDir, "repo-a"));
-    mkdirSync(join(projectDir, "repo-a-team-1"));
+    mkdirSync(path.join(projectDir, "repo-a"));
+    mkdirSync(path.join(projectDir, "repo-a-team-1"));
     const config = makeConfig({ projectDir });
 
     runCommandMock.mockImplementation((_command, arguments_) => {
@@ -701,7 +701,7 @@ describe(remove, () => {
       }
       // oxlint-disable-next-line vitest/no-conditional-in-test -- as above
       if (hasArguments(arguments_, "worktree", "list", "--porcelain")) {
-        return `worktree ${join(projectDir, "repo-a")}\nHEAD abc123\nbranch refs/heads/main\n`;
+        return `worktree ${path.join(projectDir, "repo-a")}\nHEAD abc123\nbranch refs/heads/main\n`;
       }
       return "";
     });
@@ -711,7 +711,7 @@ describe(remove, () => {
         repository: "repo-a",
         ticket: "team-1",
         branchName: "dev-team-1",
-        dir: join(projectDir, "repo-a-team-1"),
+        dir: path.join(projectDir, "repo-a-team-1"),
         kind: "host",
       });
     };
@@ -721,14 +721,14 @@ describe(remove, () => {
     );
     await expect(callRemove()).rejects.toThrow(/crew cleanup --force team-1/);
     await expect(callRemove()).rejects.toThrow(
-      new RegExp(`remove ${join(projectDir, "repo-a-team-1").replaceAll("/", String.raw`\/`)}`),
+      new RegExp(`remove ${path.join(projectDir, "repo-a-team-1").replaceAll("/", String.raw`\/`)}`),
     );
     await expect(callRemove()).rejects.toThrow(/inspect it first/);
   });
 
   it("rethrows the original error when the registration probe itself fails", async () => {
-    mkdirSync(join(projectDir, "repo-a"));
-    mkdirSync(join(projectDir, "repo-a-team-1"));
+    mkdirSync(path.join(projectDir, "repo-a"));
+    mkdirSync(path.join(projectDir, "repo-a-team-1"));
     const config = makeConfig({ projectDir });
 
     runCommandMock.mockImplementation((_command, arguments_) => {
@@ -752,15 +752,15 @@ describe(remove, () => {
         repository: "repo-a",
         ticket: "team-1",
         branchName: "dev-team-1",
-        dir: join(projectDir, "repo-a-team-1"),
+        dir: path.join(projectDir, "repo-a-team-1"),
         kind: "host",
       }),
     ).rejects.toThrow("original remove failure");
   });
 
   it("rethrows the original error when the registration probe confirms the directory is a worktree", async () => {
-    mkdirSync(join(projectDir, "repo-a"));
-    mkdirSync(join(projectDir, "repo-a-team-1"));
+    mkdirSync(path.join(projectDir, "repo-a"));
+    mkdirSync(path.join(projectDir, "repo-a-team-1"));
     const config = makeConfig({ projectDir });
 
     runCommandMock.mockImplementation((_command, arguments_) => {
@@ -774,7 +774,7 @@ describe(remove, () => {
       }
       // oxlint-disable-next-line vitest/no-conditional-in-test -- as above
       if (hasArguments(arguments_, "worktree", "list", "--porcelain")) {
-        return `worktree ${join(projectDir, "repo-a")}\nHEAD abc123\nbranch refs/heads/main\n\nworktree ${join(projectDir, "repo-a-team-1")}\nHEAD def456\nbranch refs/heads/dev-team-1\n`;
+        return `worktree ${path.join(projectDir, "repo-a")}\nHEAD abc123\nbranch refs/heads/main\n\nworktree ${path.join(projectDir, "repo-a-team-1")}\nHEAD def456\nbranch refs/heads/dev-team-1\n`;
       }
       return "";
     });
@@ -784,15 +784,15 @@ describe(remove, () => {
         repository: "repo-a",
         ticket: "team-1",
         branchName: "dev-team-1",
-        dir: join(projectDir, "repo-a-team-1"),
+        dir: path.join(projectDir, "repo-a-team-1"),
         kind: "host",
       }),
     ).rejects.toThrow("registered but still failed");
   });
 
   it("rethrows the original error when removal fails but the worktree is clean", async () => {
-    mkdirSync(join(projectDir, "repo-a"));
-    mkdirSync(join(projectDir, "repo-a-team-1"));
+    mkdirSync(path.join(projectDir, "repo-a"));
+    mkdirSync(path.join(projectDir, "repo-a-team-1"));
     const config = makeConfig({ projectDir });
 
     runCommandMock.mockImplementation((_command, arguments_) => {
@@ -808,16 +808,16 @@ describe(remove, () => {
         repository: "repo-a",
         ticket: "team-1",
         branchName: "dev-team-1",
-        dir: join(projectDir, "repo-a-team-1"),
+        dir: path.join(projectDir, "repo-a-team-1"),
         kind: "host",
       }),
     ).rejects.toThrow("git worktree remove failed for some other reason");
   });
 
   it("force-removes an orphaned leftover directory when Git no longer has the worktree registered", async () => {
-    mkdirSync(join(projectDir, "repo-a"));
-    mkdirSync(join(projectDir, "repo-a-team-1"));
-    writeFileSync(join(projectDir, "repo-a-team-1", "leftover.log"), "leftover");
+    mkdirSync(path.join(projectDir, "repo-a"));
+    mkdirSync(path.join(projectDir, "repo-a-team-1"));
+    writeFileSync(path.join(projectDir, "repo-a-team-1", "leftover.log"), "leftover");
     const config = makeConfig({ projectDir });
 
     runCommandMock.mockImplementation((_command, arguments_) => {
@@ -827,7 +827,7 @@ describe(remove, () => {
       }
       // oxlint-disable-next-line vitest/no-conditional-in-test -- the parent repo no longer lists the leftover path.
       if (hasArguments(arguments_, "worktree", "list", "--porcelain")) {
-        return `worktree ${join(projectDir, "repo-a")}\nHEAD abc123\nbranch refs/heads/main\n`;
+        return `worktree ${path.join(projectDir, "repo-a")}\nHEAD abc123\nbranch refs/heads/main\n`;
       }
       return "";
     });
@@ -838,16 +838,16 @@ describe(remove, () => {
         repository: "repo-a",
         ticket: "team-1",
         branchName: "dev-team-1",
-        dir: join(projectDir, "repo-a-team-1"),
+        dir: path.join(projectDir, "repo-a-team-1"),
         kind: "host",
       },
       { force: true },
     );
 
-    expect(existsSync(join(projectDir, "repo-a-team-1"))).toBe(false);
+    expect(existsSync(path.join(projectDir, "repo-a-team-1"))).toBe(false);
     expect(runCommandMock).toHaveBeenCalledWith("git", [
       "-C",
-      join(projectDir, "repo-a"),
+      path.join(projectDir, "repo-a"),
       "branch",
       "-D",
       "dev-team-1",
@@ -855,9 +855,9 @@ describe(remove, () => {
   });
 
   it("does not force-delete an orphaned directory whose path is not the expected host worktree path", async () => {
-    mkdirSync(join(projectDir, "repo-a"));
-    mkdirSync(join(projectDir, "repo-a-team-1-unexpected"));
-    writeFileSync(join(projectDir, "repo-a-team-1-unexpected", "leftover.log"), "leftover");
+    mkdirSync(path.join(projectDir, "repo-a"));
+    mkdirSync(path.join(projectDir, "repo-a-team-1-unexpected"));
+    writeFileSync(path.join(projectDir, "repo-a-team-1-unexpected", "leftover.log"), "leftover");
     const config = makeConfig({ projectDir });
 
     runCommandMock.mockImplementation((_command, arguments_) => {
@@ -867,7 +867,7 @@ describe(remove, () => {
       }
       // oxlint-disable-next-line vitest/no-conditional-in-test -- the parent repo no longer lists the leftover path.
       if (hasArguments(arguments_, "worktree", "list", "--porcelain")) {
-        return `worktree ${join(projectDir, "repo-a")}\nHEAD abc123\nbranch refs/heads/main\n`;
+        return `worktree ${path.join(projectDir, "repo-a")}\nHEAD abc123\nbranch refs/heads/main\n`;
       }
       return "";
     });
@@ -879,19 +879,19 @@ describe(remove, () => {
           repository: "repo-a",
           ticket: "team-1",
           branchName: "dev-team-1",
-          dir: join(projectDir, "repo-a-team-1-unexpected"),
+          dir: path.join(projectDir, "repo-a-team-1-unexpected"),
           kind: "host",
         },
         { force: true },
       ),
     ).rejects.toThrow(/Refusing to force-delete/);
 
-    expect(existsSync(join(projectDir, "repo-a-team-1-unexpected"))).toBe(true);
+    expect(existsSync(path.join(projectDir, "repo-a-team-1-unexpected"))).toBe(true);
   });
 
   it("skips the dirtiness probe and rethrows when --force fails for a registered worktree", async () => {
-    mkdirSync(join(projectDir, "repo-a"));
-    mkdirSync(join(projectDir, "repo-a-team-1"));
+    mkdirSync(path.join(projectDir, "repo-a"));
+    mkdirSync(path.join(projectDir, "repo-a-team-1"));
     const config = makeConfig({ projectDir });
 
     runCommandMock.mockImplementation((_command, arguments_) => {
@@ -901,7 +901,7 @@ describe(remove, () => {
       }
       // oxlint-disable-next-line vitest/no-conditional-in-test -- the failed forced remove still targets a registered worktree.
       if (hasArguments(arguments_, "worktree", "list", "--porcelain")) {
-        return `worktree ${join(projectDir, "repo-a")}\nHEAD abc123\nbranch refs/heads/main\n\nworktree ${join(projectDir, "repo-a-team-1")}\nHEAD def456\nbranch refs/heads/dev-team-1\n`;
+        return `worktree ${path.join(projectDir, "repo-a")}\nHEAD abc123\nbranch refs/heads/main\n\nworktree ${path.join(projectDir, "repo-a-team-1")}\nHEAD def456\nbranch refs/heads/dev-team-1\n`;
       }
       return "";
     });
@@ -913,7 +913,7 @@ describe(remove, () => {
           repository: "repo-a",
           ticket: "team-1",
           branchName: "dev-team-1",
-          dir: join(projectDir, "repo-a-team-1"),
+          dir: path.join(projectDir, "repo-a-team-1"),
           kind: "host",
         },
         { force: true },
@@ -931,8 +931,8 @@ describe(remove, () => {
   });
 
   it("rethrows branch deletion failures after the shutdown signal fires", async () => {
-    mkdirSync(join(projectDir, "repo-a"));
-    mkdirSync(join(projectDir, "repo-a-team-1"));
+    mkdirSync(path.join(projectDir, "repo-a"));
+    mkdirSync(path.join(projectDir, "repo-a-team-1"));
     const controller = new AbortController();
     controller.abort();
     const config = makeConfig({ projectDir });
@@ -951,7 +951,7 @@ describe(remove, () => {
           repository: "repo-a",
           ticket: "team-1",
           branchName: "dev-team-1",
-          dir: join(projectDir, "repo-a-team-1"),
+          dir: path.join(projectDir, "repo-a-team-1"),
           kind: "host",
         },
         { signal: controller.signal },
@@ -971,13 +971,13 @@ describe(teardown, () => {
   });
 
   function hostEntry(ticket: string): WorktreeEntry {
-    mkdirSync(join(projectDir, `repo-a-${ticket}`), { recursive: true });
-    mkdirSync(join(projectDir, "repo-a"), { recursive: true });
+    mkdirSync(path.join(projectDir, `repo-a-${ticket}`), { recursive: true });
+    mkdirSync(path.join(projectDir, "repo-a"), { recursive: true });
     return {
       repository: "repo-a",
       ticket,
       branchName: `dev-${ticket}`,
-      dir: join(projectDir, `repo-a-${ticket}`),
+      dir: path.join(projectDir, `repo-a-${ticket}`),
       kind: "host",
     };
   }
@@ -1036,15 +1036,15 @@ describe(teardown, () => {
       projectDir,
       knownRepositories: ["repo-a", "repo-b"],
     });
-    mkdirSync(join(projectDir, "repo-b-team-1"), { recursive: true });
-    mkdirSync(join(projectDir, "repo-b"), { recursive: true });
+    mkdirSync(path.join(projectDir, "repo-b-team-1"), { recursive: true });
+    mkdirSync(path.join(projectDir, "repo-b"), { recursive: true });
     const entries = [
       hostEntry("team-1"),
       {
         repository: "repo-b",
         ticket: "team-1",
         branchName: "dev-team-1",
-        dir: join(projectDir, "repo-b-team-1"),
+        dir: path.join(projectDir, "repo-b-team-1"),
         kind: "host" as const,
       },
     ];
@@ -1110,15 +1110,15 @@ describe(teardown, () => {
       projectDir,
       knownRepositories: ["repo-a", "repo-b"],
     });
-    mkdirSync(join(projectDir, "repo-b-team-1"), { recursive: true });
-    mkdirSync(join(projectDir, "repo-b"), { recursive: true });
+    mkdirSync(path.join(projectDir, "repo-b-team-1"), { recursive: true });
+    mkdirSync(path.join(projectDir, "repo-b"), { recursive: true });
     const entries = [
       hostEntry("team-1"),
       {
         repository: "repo-b",
         ticket: "team-1",
         branchName: "dev-team-1",
-        dir: join(projectDir, "repo-b-team-1"),
+        dir: path.join(projectDir, "repo-b-team-1"),
         kind: "host" as const,
       },
     ];
@@ -1254,7 +1254,7 @@ describe("worktrees.probeWorkingTree", () => {
   });
 
   it("returns kind: 'clean' for a worktree with no changes", async () => {
-    const tempDir = mkdtempSync(join(tmpdir(), "groundcrew-probe-"));
+    const tempDir = mkdtempSync(path.join(tmpdir(), "groundcrew-probe-"));
     try {
       await runCommandAsync("git", ["-C", tempDir, "init", "-q"]);
       const probe = await worktrees.probeWorkingTree({ worktreeDir: tempDir });
@@ -1265,10 +1265,10 @@ describe("worktrees.probeWorkingTree", () => {
   });
 
   it("returns kind: 'dirty' with counts for an untracked file", async () => {
-    const tempDir = mkdtempSync(join(tmpdir(), "groundcrew-probe-"));
+    const tempDir = mkdtempSync(path.join(tmpdir(), "groundcrew-probe-"));
     try {
       await runCommandAsync("git", ["-C", tempDir, "init", "-q"]);
-      writeFileSync(join(tempDir, "new.txt"), "x");
+      writeFileSync(path.join(tempDir, "new.txt"), "x");
       const probe = await worktrees.probeWorkingTree({ worktreeDir: tempDir });
       expect(probe).toMatchObject({ kind: "dirty", modified: 0, untracked: 1 });
     } finally {
@@ -1280,7 +1280,7 @@ describe("worktrees.probeWorkingTree", () => {
     // Hits the catch branch in probeWorktreeDirtiness: `git status` against
     // a missing directory exits non-zero, runCommandAsync rejects, the catch
     // swallows it, and the wrapper surfaces the third union member.
-    const tempDir = mkdtempSync(join(tmpdir(), "groundcrew-probe-"));
+    const tempDir = mkdtempSync(path.join(tmpdir(), "groundcrew-probe-"));
     rmSync(tempDir, { recursive: true, force: true });
 
     const probe = await worktrees.probeWorkingTree({ worktreeDir: tempDir });
@@ -1293,7 +1293,7 @@ describe("worktrees.probeWorkingTree", () => {
     // runCommandAsync throws synchronously when options.signal.aborted is true,
     // so dropping `input.signal` from the wrapper would yield "clean" here
     // instead of "unknown" and fail this assertion.
-    const tempDir = mkdtempSync(join(tmpdir(), "groundcrew-probe-"));
+    const tempDir = mkdtempSync(path.join(tmpdir(), "groundcrew-probe-"));
     try {
       await runCommandAsync("git", ["-C", tempDir, "init", "-q"]);
       const controller = new AbortController();

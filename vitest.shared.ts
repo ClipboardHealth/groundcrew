@@ -1,5 +1,5 @@
 import { mkdirSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { coverageConfigDefaults, defineConfig } from "vitest/config";
 
@@ -21,15 +21,15 @@ export function createVitestConfig(
   input: CreateVitestConfigInput,
 ): ReturnType<typeof defineConfig> {
   const { importMetaUrl, name, coverageExclude, coverageThresholds } = input;
-  const packageRoot = dirname(fileURLToPath(importMetaUrl));
+  const packageRoot = path.dirname(fileURLToPath(importMetaUrl));
   const workspaceRoot = packageRoot;
-  const directory = relative(workspaceRoot, packageRoot);
-  const coverageDirectory = join(packageRoot, "test-output", "vitest", "coverage");
+  const directory = path.relative(workspaceRoot, packageRoot);
+  const coverageDirectory = path.join(packageRoot, "test-output", "vitest", "coverage");
 
-  mkdirSync(join(coverageDirectory, ".tmp"), { recursive: true });
+  mkdirSync(path.join(coverageDirectory, ".tmp"), { recursive: true });
 
   return defineConfig({
-    cacheDir: join(workspaceRoot, "node_modules", ".vite", directory),
+    cacheDir: path.join(workspaceRoot, "node_modules", ".vite", directory),
     root: packageRoot,
     test: {
       coverage: {

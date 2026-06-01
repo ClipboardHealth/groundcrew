@@ -2,7 +2,7 @@
 
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import path from "node:path";
 
 import type { AdapterContext } from "../../adapterDefinition.ts";
 import type { ResolvedConfig } from "../../config.ts";
@@ -18,11 +18,11 @@ interface TempDir {
 }
 
 function makeTempDir(): TempDir {
-  const path = mkdtempSync(join(tmpdir(), "shell-factory-test-"));
+  const path = mkdtempSync(path.join(tmpdir(), "shell-factory-test-"));
   return {
     path,
     writeScript(name: string, body: string): string {
-      const scriptPath = join(path, name);
+      const scriptPath = path.join(path, name);
       writeFileSync(scriptPath, `#!/usr/bin/env bash\n${body}\n`);
       chmodSync(scriptPath, 0o755);
       return scriptPath;
@@ -364,7 +364,7 @@ describe(createShellTicketSource, () => {
   });
 
   it("markInProgress() runs the configured command with substituted id and piped sourceRef on stdin", async () => {
-    const stdinCapture = join(dir.path, "stdin-capture.txt");
+    const stdinCapture = path.join(dir.path, "stdin-capture.txt");
     const markScript = dir.writeScript("mark.sh", `cat > "${stdinCapture}"; echo "marked $1"`);
     const source = createShellTicketSource(
       {

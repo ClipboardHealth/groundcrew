@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { resolve } from "node:path";
+import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { cosmiconfig, type CosmiconfigResult, type Loader } from "cosmiconfig";
@@ -341,7 +341,7 @@ function expandHome(p: string): string {
     return homedir();
   }
   if (p.startsWith("~/")) {
-    return resolve(homedir(), p.slice(2));
+    return path.resolve(homedir(), p.slice(2));
   }
   return p;
 }
@@ -962,7 +962,7 @@ function findXdgConfigFile(): string | undefined {
 async function discoverUserConfig(): Promise<DiscoveredConfig> {
   const override = readEnvironmentVariable("GROUNDCREW_CONFIG");
   if (override !== undefined && override.length > 0) {
-    const overridePath = resolve(override);
+    const overridePath = path.resolve(override);
     if (!existsSync(overridePath)) {
       fail(`GROUNDCREW_CONFIG=${overridePath} not found`);
     }

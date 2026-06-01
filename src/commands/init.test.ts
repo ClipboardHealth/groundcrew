@@ -1,12 +1,12 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import path from "node:path";
 
 import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCapture.ts";
 import { deleteEnvironmentVariable, setEnvironmentVariable } from "../testHelpers/env.ts";
 import { initConfig, initConfigCli } from "./init.ts";
 
-const EXAMPLE_PATH = join(import.meta.dirname, "..", "..", "crew.config.example.ts");
+const EXAMPLE_PATH = path.join(import.meta.dirname, "..", "..", "crew.config.example.ts");
 const exampleContents = readFileSync(EXAMPLE_PATH, "utf8");
 
 async function withCwd(directory: string, fn: () => Promise<void>): Promise<void> {
@@ -25,8 +25,8 @@ describe("crew init", () => {
   let consoleLog: ConsoleCapture;
 
   beforeEach(() => {
-    cwd = mkdtempSync(join(tmpdir(), "groundcrew-init-cwd-"));
-    xdgHome = mkdtempSync(join(tmpdir(), "groundcrew-init-xdg-"));
+    cwd = mkdtempSync(path.join(tmpdir(), "groundcrew-init-cwd-"));
+    xdgHome = mkdtempSync(path.join(tmpdir(), "groundcrew-init-xdg-"));
     setEnvironmentVariable("XDG_CONFIG_HOME", xdgHome);
     consoleLog = captureConsoleLog();
     process.exitCode = 0;
@@ -44,7 +44,7 @@ describe("crew init", () => {
     it("writes the example to <cwd>/crew.config.ts by default", () => {
       const result = initConfig({ cwd });
 
-      const destination = join(cwd, "crew.config.ts");
+      const destination = path.join(cwd, "crew.config.ts");
       expect(result.outcome).toBe("wrote");
       expect(result.destination).toBe(destination);
       expect(readFileSync(destination, "utf8")).toBe(exampleContents);
@@ -54,18 +54,18 @@ describe("crew init", () => {
     it("writes to the XDG groundcrew dir when scope is global", () => {
       const result = initConfig({ scope: "global" });
 
-      const destination = join(xdgHome, "groundcrew", "crew.config.ts");
+      const destination = path.join(xdgHome, "groundcrew", "crew.config.ts");
       expect(result.outcome).toBe("wrote");
       expect(result.destination).toBe(destination);
       expect(readFileSync(destination, "utf8")).toBe(exampleContents);
     });
 
     it("creates the groundcrew parent directory under XDG when missing", () => {
-      expect(existsSync(join(xdgHome, "groundcrew"))).toBe(false);
+      expect(existsSync(path.join(xdgHome, "groundcrew"))).toBe(false);
 
       initConfig({ scope: "global" });
 
-      expect(existsSync(join(xdgHome, "groundcrew"))).toBe(true);
+      expect(existsSync(path.join(xdgHome, "groundcrew"))).toBe(true);
     });
 
     it("falls back to ~/.config when XDG_CONFIG_HOME is unset", () => {
@@ -75,7 +75,7 @@ describe("crew init", () => {
       // resolved destination path, not the side effect.
       const result = initConfig({ scope: "global", dryRun: true });
 
-      expect(result.destination).toContain(join(".config", "groundcrew", "crew.config.ts"));
+      expect(result.destination).toContain(path.join(".config", "groundcrew", "crew.config.ts"));
     });
 
     it("ignores a relative XDG_CONFIG_HOME per the XDG spec", () => {
@@ -83,12 +83,12 @@ describe("crew init", () => {
 
       const result = initConfig({ scope: "global", dryRun: true });
 
-      expect(result.destination).toContain(join(".config", "groundcrew", "crew.config.ts"));
+      expect(result.destination).toContain(path.join(".config", "groundcrew", "crew.config.ts"));
       expect(result.destination).not.toContain("relative/path");
     });
 
     it("refuses to overwrite an existing destination without --force", () => {
-      const destination = join(cwd, "crew.config.ts");
+      const destination = path.join(cwd, "crew.config.ts");
       writeFileSync(destination, "existing content");
 
       const result = initConfig({ cwd });
@@ -100,7 +100,7 @@ describe("crew init", () => {
     });
 
     it("overwrites an existing destination when --force is passed", () => {
-      const destination = join(cwd, "crew.config.ts");
+      const destination = path.join(cwd, "crew.config.ts");
       writeFileSync(destination, "existing content");
 
       const result = initConfig({ cwd, force: true });
@@ -110,7 +110,7 @@ describe("crew init", () => {
     });
 
     it("reports the planned write without touching disk in --dry-run", () => {
-      const destination = join(cwd, "crew.config.ts");
+      const destination = path.join(cwd, "crew.config.ts");
 
       const result = initConfig({ cwd, dryRun: true });
 
@@ -120,7 +120,7 @@ describe("crew init", () => {
     });
 
     it("treats an existing destination as exists even in --dry-run without --force", () => {
-      const destination = join(cwd, "crew.config.ts");
+      const destination = path.join(cwd, "crew.config.ts");
       writeFileSync(destination, "existing content");
 
       const result = initConfig({ cwd, dryRun: true });
@@ -130,7 +130,7 @@ describe("crew init", () => {
     });
 
     it("reports the planned overwrite when --dry-run and --force combine", () => {
-      const destination = join(cwd, "crew.config.ts");
+      const destination = path.join(cwd, "crew.config.ts");
       writeFileSync(destination, "existing content");
 
       const result = initConfig({ cwd, dryRun: true, force: true });
@@ -148,7 +148,7 @@ describe("crew init", () => {
         model: "claude",
       });
 
-      const destination = join(cwd, "crew.config.ts");
+      const destination = path.join(cwd, "crew.config.ts");
       const actual = readFileSync(destination, "utf8");
       expect(result.outcome).toBe("wrote");
       expect(actual).toContain('projectDir: "~/dev"');
@@ -159,7 +159,7 @@ describe("crew init", () => {
     });
 
     it("fails loudly when a quickstart template anchor is missing", () => {
-      const template = join(cwd, "crew.config.example.ts");
+      const template = path.join(cwd, "crew.config.example.ts");
       writeFileSync(
         template,
         exampleContents.replace('projectDir: "~/dev/groundcrew"', 'projectDir: "~/elsewhere"'),
@@ -168,7 +168,7 @@ describe("crew init", () => {
       expect(() => initConfig({ cwd, projectDir: "~/dev", examplePath: template })).toThrow(
         /crew init --project-dir: template anchor not found/,
       );
-      expect(existsSync(join(cwd, "crew.config.ts"))).toBe(false);
+      expect(existsSync(path.join(cwd, "crew.config.ts"))).toBe(false);
     });
   });
 
@@ -178,7 +178,7 @@ describe("crew init", () => {
         await initConfigCli([]);
       });
 
-      expect(existsSync(join(cwd, "crew.config.ts"))).toBe(true);
+      expect(existsSync(path.join(cwd, "crew.config.ts"))).toBe(true);
       const output = consoleLog.output();
       expect(output).toContain("Next steps:");
       expect(output).toContain("crew doctor");
@@ -186,7 +186,7 @@ describe("crew init", () => {
     });
 
     it("sets exit code 1 when destination exists and --force is absent", async () => {
-      writeFileSync(join(cwd, "crew.config.ts"), "existing content");
+      writeFileSync(path.join(cwd, "crew.config.ts"), "existing content");
 
       await withCwd(cwd, async () => {
         await initConfigCli([]);
@@ -198,7 +198,7 @@ describe("crew init", () => {
     it("routes --global to the XDG path", async () => {
       await initConfigCli(["--global"]);
 
-      expect(existsSync(join(xdgHome, "groundcrew", "crew.config.ts"))).toBe(true);
+      expect(existsSync(path.join(xdgHome, "groundcrew", "crew.config.ts"))).toBe(true);
     });
 
     it("accepts quickstart flags and prints clone plus Linear guidance", async () => {
@@ -214,7 +214,7 @@ describe("crew init", () => {
         "claude",
       ]);
 
-      const destination = join(xdgHome, "groundcrew", "crew.config.ts");
+      const destination = path.join(xdgHome, "groundcrew", "crew.config.ts");
       const actual = readFileSync(destination, "utf8");
       const output = consoleLog.output();
       expect(actual).toContain('projectDir: "~/dev"');
@@ -240,7 +240,7 @@ describe("crew init", () => {
         "codex",
       ]);
 
-      const destination = join(xdgHome, "groundcrew", "crew.config.ts");
+      const destination = path.join(xdgHome, "groundcrew", "crew.config.ts");
       const actual = readFileSync(destination, "utf8");
       const output = consoleLog.output();
       expect(actual).toContain('default: "codex"');
@@ -274,11 +274,11 @@ describe("crew init", () => {
         await initConfigCli(["--local"]);
       });
 
-      expect(existsSync(join(cwd, "crew.config.ts"))).toBe(true);
+      expect(existsSync(path.join(cwd, "crew.config.ts"))).toBe(true);
     });
 
     it("overwrites an existing config when --force is in argv", async () => {
-      const destination = join(cwd, "crew.config.ts");
+      const destination = path.join(cwd, "crew.config.ts");
       writeFileSync(destination, "existing content");
 
       await withCwd(cwd, async () => {

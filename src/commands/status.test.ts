@@ -1,6 +1,6 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import path from "node:path";
 
 import { buildSources } from "../lib/buildSources.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
@@ -185,7 +185,7 @@ describe(status, () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-05-26T02:14:30.000Z"));
     consoleLog = captureConsoleLog();
-    temporaryDirectory = mkdtempSync(join(tmpdir(), "groundcrew-status-test-"));
+    temporaryDirectory = mkdtempSync(path.join(tmpdir(), "groundcrew-status-test-"));
     readRunStateMock.mockReturnValue(runState({ reason: "manual pause" }));
     workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-1"]) });
     workspaceAccessHintMock.mockReset();
@@ -204,7 +204,7 @@ describe(status, () => {
   });
 
   it("prints the read-only per-ticket status dump", async () => {
-    const logFile = join(temporaryDirectory, "groundcrew.log");
+    const logFile = path.join(temporaryDirectory, "groundcrew.log");
     writeFileSync(
       logFile,
       [
@@ -268,7 +268,7 @@ describe(status, () => {
   });
 
   it("prints unavailable fields without attempting recovery", async () => {
-    const config = makeConfig({ logging: { file: join(temporaryDirectory, "missing.log") } });
+    const config = makeConfig({ logging: { file: path.join(temporaryDirectory, "missing.log") } });
     findByTicketMock.mockReturnValue([]);
     workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set() });
     readRunStateMock.mockReset();

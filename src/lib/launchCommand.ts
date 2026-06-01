@@ -1,5 +1,5 @@
 import { createRequire } from "node:module";
-import { basename, dirname, resolve } from "node:path";
+import path from "node:path";
 
 import {
   BUILD_SECRET_NAMES,
@@ -34,7 +34,7 @@ export function resolveSafehouseClearancePath(baseUrl: string = import.meta.url)
       { cause: error },
     );
   }
-  return resolve(dirname(clearancePackageJson), "safehouse", "safehouse-clearance");
+  return path.resolve(path.dirname(clearancePackageJson), "safehouse", "safehouse-clearance");
 }
 
 const SAFEHOUSE_CLEARANCE_WRAPPER_PATH = resolveSafehouseClearancePath();
@@ -199,7 +199,7 @@ function safehouseProfileCommandName(agentCmd: string): string {
     );
   }
 
-  const commandName = basename(commandToken);
+  const commandName = path.basename(commandToken);
   if (
     commandName === "." ||
     commandName === ".." ||
@@ -295,7 +295,7 @@ function shouldWrapWithSafehouse(arguments_: LaunchCommandArguments): boolean {
  * host shell because there is no groundcrew-managed sandbox to run them inside.
  */
 function buildUnwrappedHostLaunchCommand(arguments_: LaunchCommandArguments): string {
-  const promptDir = dirname(arguments_.promptFile);
+  const promptDir = path.dirname(arguments_.promptFile);
   const agentCmd = renderAgentCommand({
     agentCmd: arguments_.definition.cmd,
     worktreeDir: arguments_.worktreeDir,
@@ -331,7 +331,7 @@ function buildUnwrappedHostLaunchCommand(arguments_: LaunchCommandArguments): st
  *   2. **Agent wrap**: `safehouse-clearance "$shim" -c '<exec agent>' sh "$_p"`
  *      where `$shim` is a `mktemp`-d symlink to `/bin/sh` named after the
  *      agent (e.g. `claude`). Safehouse selects the matching agent profile
- *      from the wrapped command's basename (`claude-code.sb` etc.) without
+ *      from the wrapped command's path.basename (`claude-code.sb` etc.) without
  *      needing every agent profile enabled globally.
  *
  * Host ordering matters: when a `preLaunch` hook is present, inherited
@@ -351,7 +351,7 @@ function buildUnwrappedHostLaunchCommand(arguments_: LaunchCommandArguments): st
  *   reach the profile-neutral setup phase.
  */
 function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string {
-  const promptDir = dirname(arguments_.promptFile);
+  const promptDir = path.dirname(arguments_.promptFile);
   const safehouseCommandName = safehouseProfileCommandName(arguments_.definition.cmd);
   const agentCmd = renderAgentCommand({
     agentCmd: arguments_.definition.cmd,
@@ -422,7 +422,7 @@ function buildSdxLaunchCommand(arguments_: LaunchCommandArguments): string {
       "buildLaunchCommand: runner='sdx' requires sandboxName and a model `sandbox` config block (set sandbox.agent on the model in config.ts).",
     );
   }
-  const promptDir = dirname(arguments_.promptFile);
+  const promptDir = path.dirname(arguments_.promptFile);
   const agentCmd = renderAgentCommand({
     agentCmd: arguments_.definition.cmd,
     worktreeDir: arguments_.worktreeDir,

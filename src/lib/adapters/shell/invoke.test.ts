@@ -2,7 +2,7 @@
 
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import path from "node:path";
 
 import { applySubstitutions, invokeShellCommand, ShellAdapterTimeoutError } from "./invoke.ts";
 
@@ -13,11 +13,11 @@ interface TempDir {
 }
 
 function makeTempDir(): TempDir {
-  const path = mkdtempSync(join(tmpdir(), "shell-invoke-test-"));
+  const path = mkdtempSync(path.join(tmpdir(), "shell-invoke-test-"));
   return {
     path,
     writeScript(name: string, body: string): string {
-      const scriptPath = join(path, name);
+      const scriptPath = path.join(path, name);
       writeFileSync(scriptPath, `#!/usr/bin/env bash\n${body}\n`);
       chmodSync(scriptPath, 0o755);
       return scriptPath;

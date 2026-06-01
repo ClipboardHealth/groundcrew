@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { lstatSync } from "node:fs";
-import { dirname, sep } from "node:path";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 export type InstallKind = "global" | "linked" | "npx" | "project" | "unknown";
@@ -13,13 +13,13 @@ export interface ClassifyInstallOptions {
 
 export function classifyInstall(options: ClassifyInstallOptions): InstallKind {
   const { installPath, npmRootGlobal, isSymlink } = options;
-  if (npmRootGlobal !== undefined && installPath.startsWith(`${npmRootGlobal}${sep}`)) {
+  if (npmRootGlobal !== undefined && installPath.startsWith(`${npmRootGlobal}${path.sep}`)) {
     return isSymlink(installPath) ? "linked" : "global";
   }
-  if (installPath.includes(`${sep}_npx${sep}`)) {
+  if (installPath.includes(`${path.sep}_npx${path.sep}`)) {
     return "npx";
   }
-  if (installPath.includes(`${sep}node_modules${sep}`)) {
+  if (installPath.includes(`${path.sep}node_modules${path.sep}`)) {
     return "project";
   }
   return "unknown";
@@ -56,7 +56,7 @@ export async function runNpmInstallGlobal(options: RunNpmInstallOptions): Promis
 }
 
 export function detectInstallPath(cliMetaUrl: string): string {
-  return dirname(dirname(fileURLToPath(cliMetaUrl)));
+  return path.dirname(path.dirname(fileURLToPath(cliMetaUrl)));
 }
 
 export type NpmRootRunner = (command: string, args: readonly string[]) => string;

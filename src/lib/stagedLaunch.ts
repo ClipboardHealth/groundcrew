@@ -1,6 +1,6 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import path from "node:path";
 
 import { BUILD_SECRET_NAMES, type ResolvedConfig } from "./config.ts";
 import { shellSingleQuote } from "./launchCommand.ts";
@@ -33,8 +33,8 @@ export function stagePromptText(input: {
   ticket: string;
   text: string;
 }): StagedPrompt {
-  const promptDir = mkdtempSync(join(tmpdir(), `${input.prefix}-${input.ticket}-`));
-  const promptFile = join(promptDir, "prompt.txt");
+  const promptDir = mkdtempSync(path.join(tmpdir(), `${input.prefix}-${input.ticket}-`));
+  const promptFile = path.join(promptDir, "prompt.txt");
   writeFileSync(promptFile, input.text);
   return { directory: promptDir, file: promptFile };
 }
@@ -69,13 +69,13 @@ export function stageBuildSecrets(promptDir: string): string | undefined {
   if (lines.length === 0) {
     return undefined;
   }
-  const secretsFile = join(promptDir, "secrets.env");
+  const secretsFile = path.join(promptDir, "secrets.env");
   writeFileSync(secretsFile, `${lines.join("\n")}\n`, { mode: 0o600 });
   return secretsFile;
 }
 
 function stageLaunchScript(promptDir: string, command: string): string {
-  const launcherFile = join(promptDir, "launch.sh");
+  const launcherFile = path.join(promptDir, "launch.sh");
   writeFileSync(launcherFile, `#!/usr/bin/env bash\n${command}\n`, { mode: 0o700 });
   return launcherFile;
 }

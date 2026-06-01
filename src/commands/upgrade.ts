@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import path from "node:path";
 
 import { runCommand } from "../lib/commandRunner.ts";
 import { which } from "../lib/host.ts";
@@ -215,7 +215,7 @@ export async function createDefaultUpgradeCliOptions(
 function readInstalledVersionFromDisk(installPath: string): string | undefined {
   let raw: string;
   try {
-    raw = readFileSync(join(installPath, "package.json"), "utf8");
+    raw = readFileSync(path.join(installPath, "package.json"), "utf8");
   } catch {
     return undefined;
   }

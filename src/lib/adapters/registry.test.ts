@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import path from "node:path";
 
 import { z } from "zod";
 
@@ -96,11 +96,11 @@ describe(buildSourceConfigSchema, () => {
 
 describe(listAdapterDirectories, () => {
   it("returns the names of subdirectories, skipping files", () => {
-    const tempDir = mkdtempSync(join(tmpdir(), "list-adapter-dirs-"));
+    const tempDir = mkdtempSync(path.join(tmpdir(), "list-adapter-dirs-"));
     try {
-      mkdirSync(join(tempDir, "alpha"));
-      mkdirSync(join(tempDir, "beta"));
-      writeFileSync(join(tempDir, "not-a-dir.txt"), "ignored");
+      mkdirSync(path.join(tempDir, "alpha"));
+      mkdirSync(path.join(tempDir, "beta"));
+      writeFileSync(path.join(tempDir, "not-a-dir.txt"), "ignored");
       expect(listAdapterDirectories(tempDir).toSorted()).toStrictEqual(["alpha", "beta"]);
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
@@ -108,7 +108,7 @@ describe(listAdapterDirectories, () => {
   });
 
   it("returns an empty array for a directory with no subdirectories", () => {
-    const tempDir = mkdtempSync(join(tmpdir(), "list-adapter-dirs-empty-"));
+    const tempDir = mkdtempSync(path.join(tmpdir(), "list-adapter-dirs-empty-"));
     try {
       expect(listAdapterDirectories(tempDir)).toStrictEqual([]);
     } finally {

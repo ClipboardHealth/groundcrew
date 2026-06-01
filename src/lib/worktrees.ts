@@ -10,7 +10,7 @@
 
 import { type Dirent, existsSync, readdirSync, rmSync } from "node:fs";
 import { userInfo } from "node:os";
-import { isAbsolute, relative, resolve } from "node:path";
+import path from "node:path";
 
 import { runCommandAsync } from "./commandRunner.ts";
 import type { ResolvedConfig } from "./config.ts";
@@ -72,7 +72,7 @@ function repoDirFor(config: ResolvedConfig, repository: string): string {
       `Repository "${repository}" is not in workspace.knownRepositories: ${config.workspace.knownRepositories.join(", ")}`,
     );
   }
-  const repoDir = resolve(config.workspace.projectDir, repository);
+  const repoDir = path.resolve(config.workspace.projectDir, repository);
   if (!existsSync(repoDir)) {
     throw new Error(`Repository not found: ${repoDir}`);
   }
@@ -91,15 +91,15 @@ interface BasePaths {
 function basePaths(config: ResolvedConfig, repository: string, ticket: string): BasePaths {
   // Tickets must match the same shape the worktree discovery regexes use,
   // so create()/list()/findByTicket() agree on what's a valid worktree.
-  // This also rejects traversal tokens before they reach resolve().
+  // This also rejects traversal tokens before they reach path.resolve().
   if (!TICKET_RE.test(ticket)) {
     throw new Error(`Invalid ticket "${ticket}": must be a plain ticket id`);
   }
 
-  const projectDir = resolve(config.workspace.projectDir);
+  const projectDir = path.resolve(config.workspace.projectDir);
   const repoDir = repoDirFor(config, repository);
   const hostWorktreeName = `${repository}-${ticket}`;
-  const hostWorktreeDir = resolve(projectDir, hostWorktreeName);
+  const hostWorktreeDir = path.resolve(projectDir, hostWorktreeName);
 
   return {
     projectDir,
@@ -185,11 +185,11 @@ async function createWorktree(
 }
 
 function listWorktrees(config: ResolvedConfig): WorktreeEntry[] {
-  const projectDir = resolve(config.workspace.projectDir);
+  const projectDir = path.resolve(config.workspace.projectDir);
   const entries: WorktreeEntry[] = [];
 
   // Worktrees live at `projectDir/<repository>-<ticket>`. When `repository`
-  // contains a slash (e.g. "owner/repo"), `resolve()` nests one level
+  // contains a slash (e.g. "owner/repo"), `path.resolve()` nests one level
   // deeper, so the worktree path is `projectDir/owner/repo-<ticket>`.
   // Scan each known repository's parent directory rather than the project
   // root, so nested worktrees are discovered alongside bare ones.
@@ -197,7 +197,7 @@ function listWorktrees(config: ResolvedConfig): WorktreeEntry[] {
   for (const repository of config.workspace.knownRepositories) {
     const lastSlash = repository.lastIndexOf("/");
     const parentDir =
-      lastSlash === -1 ? projectDir : resolve(projectDir, repository.slice(0, lastSlash));
+      lastSlash === -1 ? projectDir : path.resolve(projectDir, repository.slice(0, lastSlash));
     const basename = lastSlash === -1 ? repository : repository.slice(lastSlash + 1);
     let repoByBasename = reposByParent.get(parentDir);
     if (repoByBasename === undefined) {
@@ -235,7 +235,7 @@ function listWorktrees(config: ResolvedConfig): WorktreeEntry[] {
         repository,
         ticket,
         branchName: branchNameForTicket(ticket),
-        dir: resolve(parentDir, entry.name),
+        dir: path.resolve(parentDir, entry.name),
         kind: "host",
       });
     }
@@ -249,8 +249,8 @@ async function removeWorktree(
   entry: WorktreeEntry,
   options: { force: boolean; signal?: AbortSignal },
 ): Promise<void> {
-  const projectDir = resolve(config.workspace.projectDir);
-  const repoDir = resolve(projectDir, entry.repository);
+  const projectDir = path.resolve(config.workspace.projectDir);
+  const repoDir = path.resolve(projectDir, entry.repository);
 
   if (existsSync(entry.dir)) {
     debug(`Removing worktree ${entry.dir}${options.force ? " (--force)" : ""}...`);
@@ -396,12 +396,12 @@ async function probeWorktreeRegistration(arguments_: {
   } catch {
     return "unknown";
   }
-  const resolvedWorktreeDir = resolve(arguments_.worktreeDir);
+  const resolvedWorktreeDir = path.resolve(arguments_.worktreeDir);
   for (const line of output.split("\n")) {
     if (!line.startsWith(WORKTREE_LIST_PREFIX)) {
       continue;
     }
-    if (resolve(line.slice(WORKTREE_LIST_PREFIX.length)) === resolvedWorktreeDir) {
+    if (path.resolve(line.slice(WORKTREE_LIST_PREFIX.length)) === resolvedWorktreeDir) {
       return "registered";
     }
   }
@@ -414,22 +414,22 @@ function describeOrphanWorktree(arguments_: { ticket: string; dir: string }): st
 }
 
 function expectedHostWorktreeDir(config: ResolvedConfig, entry: WorktreeEntry): string {
-  return resolve(config.workspace.projectDir, `${entry.repository}-${entry.ticket}`);
+  return path.resolve(config.workspace.projectDir, `${entry.repository}-${entry.ticket}`);
 }
 
 function isInsideDirectory(parentDir: string, childDir: string): boolean {
-  const childRelativePath = relative(parentDir, childDir);
+  const childRelativePath = path.relative(parentDir, childDir);
   return (
     childRelativePath.length > 0 &&
     !childRelativePath.startsWith("..") &&
-    !isAbsolute(childRelativePath)
+    !path.isAbsolute(childRelativePath)
   );
 }
 
 function removeOrphanWorktreeDirectory(config: ResolvedConfig, entry: WorktreeEntry): void {
-  const projectDir = resolve(config.workspace.projectDir);
+  const projectDir = path.resolve(config.workspace.projectDir);
   const expectedDir = expectedHostWorktreeDir(config, entry);
-  const targetDir = resolve(entry.dir);
+  const targetDir = path.resolve(entry.dir);
   if (targetDir !== expectedDir || !isInsideDirectory(projectDir, targetDir)) {
     throw new Error(
       `Refusing to force-delete ${entry.dir}: expected groundcrew worktree path ${expectedDir}.`,

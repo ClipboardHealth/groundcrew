@@ -1,6 +1,6 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import path from "node:path";
 
 import { captureConsoleError, captureConsoleLog } from "../testHelpers/consoleCapture.ts";
 import {
@@ -211,7 +211,7 @@ describe(setLogFile, () => {
   let temporary: string;
 
   beforeEach(() => {
-    temporary = mkdtempSync(join(tmpdir(), "groundcrew-log-file-"));
+    temporary = mkdtempSync(path.join(tmpdir(), "groundcrew-log-file-"));
   });
 
   afterEach(() => {
@@ -221,7 +221,7 @@ describe(setLogFile, () => {
 
   it("tees log() output to the configured file, creating the parent dir", () => {
     const consoleLog = captureConsoleLog();
-    const path = join(temporary, "nested", "groundcrew.log");
+    const path = path.join(temporary, "nested", "groundcrew.log");
     setLogFile(path);
 
     log("hello world");
@@ -233,7 +233,7 @@ describe(setLogFile, () => {
 
   it("tees logEvent() output to the configured file", () => {
     const consoleLog = captureConsoleLog();
-    const path = join(temporary, "events.log");
+    const path = path.join(temporary, "events.log");
     setLogFile(path);
 
     logEvent("dispatch", { outcome: "started", ticket: "TEAM-1" });
@@ -244,7 +244,7 @@ describe(setLogFile, () => {
 
   it("tees debug() output to the configured file even when off the console", () => {
     const consoleLog = captureConsoleLog();
-    const path = join(temporary, "debug.log");
+    const path = path.join(temporary, "debug.log");
     setLogFile(path);
 
     debug("diagnostic detail");
@@ -256,7 +256,7 @@ describe(setLogFile, () => {
 
   it("appends successive writes to the same file", () => {
     const consoleLog = captureConsoleLog();
-    const path = join(temporary, "events.log");
+    const path = path.join(temporary, "events.log");
     setLogFile(path);
 
     logEvent("dispatch", { outcome: "started" });
@@ -270,7 +270,7 @@ describe(setLogFile, () => {
 
   it("does not write to disk when no log file has been set", () => {
     const consoleLog = captureConsoleLog();
-    const path = join(temporary, "events.log");
+    const path = path.join(temporary, "events.log");
 
     logEvent("dispatch", { outcome: "started" });
 
@@ -282,10 +282,10 @@ describe(setLogFile, () => {
     const consoleLog = captureConsoleLog();
     const consoleError = captureConsoleError();
     // A path whose parent is an existing regular file — mkdir will throw.
-    const path = join(temporary, "events.log");
+    const path = path.join(temporary, "events.log");
     setLogFile(path);
     logEvent("first", {});
-    setLogFile(join(path, "trapped.log"));
+    setLogFile(path.join(path, "trapped.log"));
 
     logEvent("second", {});
     logEvent("third", {});

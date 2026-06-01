@@ -1,6 +1,6 @@
 import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, sep } from "node:path";
+import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import {
@@ -20,8 +20,8 @@ const IS_SYMLINK = () => true;
 describe(classifyInstall, () => {
   it("returns 'global' when the install path is under npm root -g and is not a symlink", () => {
     const result = classifyInstall({
-      installPath: `${sep}usr${sep}local${sep}lib${sep}node_modules${sep}@scope${sep}pkg`,
-      npmRootGlobal: `${sep}usr${sep}local${sep}lib${sep}node_modules`,
+      installPath: `${path.sep}usr${path.sep}local${path.sep}lib${path.sep}node_modules${path.sep}@scope${path.sep}pkg`,
+      npmRootGlobal: `${path.sep}usr${path.sep}local${path.sep}lib${path.sep}node_modules`,
       isSymlink: NOT_SYMLINK,
     });
     expect(result).toBe("global");
@@ -29,8 +29,8 @@ describe(classifyInstall, () => {
 
   it("returns 'linked' when the install path is under npm root -g and is a symlink", () => {
     const result = classifyInstall({
-      installPath: `${sep}usr${sep}local${sep}lib${sep}node_modules${sep}@scope${sep}pkg`,
-      npmRootGlobal: `${sep}usr${sep}local${sep}lib${sep}node_modules`,
+      installPath: `${path.sep}usr${path.sep}local${path.sep}lib${path.sep}node_modules${path.sep}@scope${path.sep}pkg`,
+      npmRootGlobal: `${path.sep}usr${path.sep}local${path.sep}lib${path.sep}node_modules`,
       isSymlink: IS_SYMLINK,
     });
     expect(result).toBe("linked");
@@ -38,8 +38,8 @@ describe(classifyInstall, () => {
 
   it("returns 'npx' when the install path is under the npm _npx cache", () => {
     const result = classifyInstall({
-      installPath: `${sep}home${sep}u${sep}.npm${sep}_npx${sep}abc${sep}node_modules${sep}@scope${sep}pkg`,
-      npmRootGlobal: `${sep}usr${sep}local${sep}lib${sep}node_modules`,
+      installPath: `${path.sep}home${path.sep}u${path.sep}.npm${path.sep}_npx${path.sep}abc${path.sep}node_modules${path.sep}@scope${path.sep}pkg`,
+      npmRootGlobal: `${path.sep}usr${path.sep}local${path.sep}lib${path.sep}node_modules`,
       isSymlink: NOT_SYMLINK,
     });
     expect(result).toBe("npx");
@@ -47,8 +47,8 @@ describe(classifyInstall, () => {
 
   it("returns 'project' for an arbitrary node_modules outside npm root -g", () => {
     const result = classifyInstall({
-      installPath: `${sep}home${sep}u${sep}proj${sep}node_modules${sep}@scope${sep}pkg`,
-      npmRootGlobal: `${sep}usr${sep}local${sep}lib${sep}node_modules`,
+      installPath: `${path.sep}home${path.sep}u${path.sep}proj${path.sep}node_modules${path.sep}@scope${path.sep}pkg`,
+      npmRootGlobal: `${path.sep}usr${path.sep}local${path.sep}lib${path.sep}node_modules`,
       isSymlink: NOT_SYMLINK,
     });
     expect(result).toBe("project");
@@ -56,8 +56,8 @@ describe(classifyInstall, () => {
 
   it("returns 'unknown' when no path heuristic matches", () => {
     const result = classifyInstall({
-      installPath: `${sep}opt${sep}weird${sep}place${sep}pkg`,
-      npmRootGlobal: `${sep}usr${sep}local${sep}lib${sep}node_modules`,
+      installPath: `${path.sep}opt${path.sep}weird${path.sep}place${path.sep}pkg`,
+      npmRootGlobal: `${path.sep}usr${path.sep}local${path.sep}lib${path.sep}node_modules`,
       isSymlink: NOT_SYMLINK,
     });
     expect(result).toBe("unknown");
@@ -65,7 +65,7 @@ describe(classifyInstall, () => {
 
   it("treats npmRootGlobal=undefined as 'no global match' and falls through", () => {
     const result = classifyInstall({
-      installPath: `${sep}home${sep}u${sep}proj${sep}node_modules${sep}@scope${sep}pkg`,
+      installPath: `${path.sep}home${path.sep}u${path.sep}proj${path.sep}node_modules${path.sep}@scope${path.sep}pkg`,
       npmRootGlobal: undefined,
       isSymlink: NOT_SYMLINK,
     });
@@ -157,7 +157,7 @@ describe(createDefaultNpmSpawner, () => {
 describe(detectInstallPath, () => {
   it("returns the parent of the directory containing the CLI file", () => {
     const fakeUrl = pathToFileURL("/opt/pkg/dist/cli.js").toString();
-    expect(detectInstallPath(fakeUrl)).toBe(`${sep}opt${sep}pkg`);
+    expect(detectInstallPath(fakeUrl)).toBe(`${path.sep}opt${path.sep}pkg`);
   });
 });
 
@@ -180,7 +180,7 @@ describe(detectIsSymlink, () => {
   let tmp: string;
 
   beforeEach(() => {
-    tmp = mkdtempSync(join(tmpdir(), "groundcrew-symlink-"));
+    tmp = mkdtempSync(path.join(tmpdir(), "groundcrew-symlink-"));
   });
 
   afterEach(() => {
@@ -188,20 +188,20 @@ describe(detectIsSymlink, () => {
   });
 
   it("returns true for a symlink", () => {
-    const target = join(tmp, "target");
+    const target = path.join(tmp, "target");
     writeFileSync(target, "");
-    const link = join(tmp, "link");
+    const link = path.join(tmp, "link");
     symlinkSync(target, link);
     expect(detectIsSymlink(link)).toBe(true);
   });
 
   it("returns false for a regular file", () => {
-    const file = join(tmp, "file");
+    const file = path.join(tmp, "file");
     writeFileSync(file, "");
     expect(detectIsSymlink(file)).toBe(false);
   });
 
   it("returns false when the path does not exist", () => {
-    expect(detectIsSymlink(join(tmp, "missing"))).toBe(false);
+    expect(detectIsSymlink(path.join(tmp, "missing"))).toBe(false);
   });
 });

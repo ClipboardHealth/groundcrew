@@ -1,6 +1,6 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { runCommand, type RunCommandOptions } from "../lib/commandRunner.ts";
@@ -370,9 +370,9 @@ describe(createDefaultUpgradeCliOptions, () => {
     whichMock.mockResolvedValue("/usr/local/bin/npm");
     runCommandMock.mockReturnValue("/usr/local/lib/node_modules");
 
-    const tmp = mkdtempSync(join(tmpdir(), "groundcrew-upgrade-"));
+    const tmp = mkdtempSync(path.join(tmpdir(), "groundcrew-upgrade-"));
     try {
-      writeFileSync(join(tmp, "package.json"), JSON.stringify({ version: "4.3.0" }));
+      writeFileSync(path.join(tmp, "package.json"), JSON.stringify({ version: "4.3.0" }));
 
       const options = await createDefaultUpgradeCliOptions({
         packageName: PACKAGE_NAME,
@@ -389,7 +389,7 @@ describe(createDefaultUpgradeCliOptions, () => {
     whichMock.mockResolvedValue("/usr/local/bin/npm");
     runCommandMock.mockReturnValue("/usr/local/lib/node_modules");
 
-    const tmp = mkdtempSync(join(tmpdir(), "groundcrew-upgrade-"));
+    const tmp = mkdtempSync(path.join(tmpdir(), "groundcrew-upgrade-"));
     try {
       const options = await createDefaultUpgradeCliOptions({
         packageName: PACKAGE_NAME,
@@ -406,9 +406,9 @@ describe(createDefaultUpgradeCliOptions, () => {
     whichMock.mockResolvedValue("/usr/local/bin/npm");
     runCommandMock.mockReturnValue("/usr/local/lib/node_modules");
 
-    const tmp = mkdtempSync(join(tmpdir(), "groundcrew-upgrade-"));
+    const tmp = mkdtempSync(path.join(tmpdir(), "groundcrew-upgrade-"));
     try {
-      writeFileSync(join(tmp, "package.json"), "{ this is not valid json");
+      writeFileSync(path.join(tmp, "package.json"), "{ this is not valid json");
 
       const options = await createDefaultUpgradeCliOptions({
         packageName: PACKAGE_NAME,
@@ -425,9 +425,9 @@ describe(createDefaultUpgradeCliOptions, () => {
     whichMock.mockResolvedValue("/usr/local/bin/npm");
     runCommandMock.mockReturnValue("/usr/local/lib/node_modules");
 
-    const tmp = mkdtempSync(join(tmpdir(), "groundcrew-upgrade-"));
+    const tmp = mkdtempSync(path.join(tmpdir(), "groundcrew-upgrade-"));
     try {
-      writeFileSync(join(tmp, "package.json"), JSON.stringify({ name: "no-version" }));
+      writeFileSync(path.join(tmp, "package.json"), JSON.stringify({ name: "no-version" }));
 
       const options = await createDefaultUpgradeCliOptions({
         packageName: PACKAGE_NAME,

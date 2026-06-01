@@ -1,6 +1,6 @@
 import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import path from "node:path";
 
 import type { LinearClient } from "@linear/sdk";
 
@@ -1755,10 +1755,10 @@ describe(orchestrate, () => {
     // Real subprocess: write a small bash script and point a shell source at
     // it. The script touches a marker file to confirm verify() invoked it;
     // failure-path tests live in invoke.test.ts and factory.test.ts.
-    const dir = mkdtempSync(join(tmpdir(), "orchestrate-shell-verify-"));
+    const dir = mkdtempSync(path.join(tmpdir(), "orchestrate-shell-verify-"));
     try {
-      const verifyMarker = join(dir, "verify-ran");
-      const verifyScript = join(dir, "verify.sh");
+      const verifyMarker = path.join(dir, "verify-ran");
+      const verifyScript = path.join(dir, "verify.sh");
       writeFileSync(verifyScript, `#!/usr/bin/env bash\ntouch "${verifyMarker}"\n`);
       chmodSync(verifyScript, 0o755);
 

@@ -11,7 +11,7 @@
  */
 
 import { readdirSync } from "node:fs";
-import { resolve } from "node:path";
+import path from "node:path";
 
 import { z } from "zod";
 
@@ -76,7 +76,7 @@ const here = import.meta.dirname;
 async function defaultImportLoader(directoryName: string): Promise<AdapterDefinition> {
   // Resolve relative to this module's directory. tsx maps `.js` → `.ts` in dev;
   // prod Node ESM resolves the actual `.js` file.
-  const modulePath = resolve(here, directoryName, "index.js");
+  const modulePath = path.resolve(here, directoryName, "index.js");
   // oxlint-disable-next-line typescript/no-unsafe-assignment -- dynamic import return type is `any`; adapter contract is enforced by buildRegistry
   const mod: { default: AdapterDefinition } = await import(modulePath);
   return mod.default;

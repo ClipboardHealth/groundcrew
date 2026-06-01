@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import path from "node:path";
 
 import { run } from "./cli.ts";
 import { cleanupWorkspaceCli } from "./commands/cleanupWorkspace.ts";
@@ -521,7 +521,7 @@ describe(run, () => {
   });
 
   it("does not perform passive upgrade checks before non-upgrade subcommands", async () => {
-    const cacheDir = mkdtempSync(join(tmpdir(), "groundcrew-no-passive-upgrade-"));
+    const cacheDir = mkdtempSync(path.join(tmpdir(), "groundcrew-no-passive-upgrade-"));
     const fetchMock = vi.fn<typeof fetch>();
     vi.stubEnv("XDG_CACHE_HOME", cacheDir);
     vi.stubGlobal("fetch", fetchMock);

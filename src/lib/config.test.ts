@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import path from "node:path";
 
 import {
   deleteEnvironmentVariable,
@@ -24,7 +24,7 @@ const VALID_WORKSPACE = (projectDir: string) => ({
 });
 
 function writeConfigFile(dir: string, body: string): string {
-  const path = join(dir, `config-${Math.random().toString(36).slice(2)}.ts`);
+  const path = path.join(dir, `config-${Math.random().toString(36).slice(2)}.ts`);
   writeFileSync(path, body);
   return path;
 }
@@ -39,12 +39,12 @@ describe("loadConfig", () => {
   let temporary: string;
 
   beforeEach(() => {
-    temporary = mkdtempSync(join(tmpdir(), "groundcrew-config-"));
+    temporary = mkdtempSync(path.join(tmpdir(), "groundcrew-config-"));
     for (const key of ENV_KEYS) {
       deleteEnvironmentVariable(key);
     }
-    setEnvironmentVariable("XDG_CONFIG_HOME", join(temporary, "xdg-config"));
-    setEnvironmentVariable("XDG_STATE_HOME", join(temporary, "xdg-state"));
+    setEnvironmentVariable("XDG_CONFIG_HOME", path.join(temporary, "xdg-config"));
+    setEnvironmentVariable("XDG_STATE_HOME", path.join(temporary, "xdg-state"));
     vi.spyOn(process, "cwd").mockReturnValue(temporary);
   });
 
@@ -947,7 +947,7 @@ describe("loadConfig", () => {
     setEnvironmentVariable("GROUNDCREW_CONFIG", path);
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
-    expect(actual.logging.file).toBe(join(temporary, "xdg-state", "groundcrew", "groundcrew.log"));
+    expect(actual.logging.file).toBe(path.join(temporary, "xdg-state", "groundcrew", "groundcrew.log"));
   });
 
   it("uses HOME when XDG_STATE_HOME is unset", async () => {
@@ -1006,10 +1006,10 @@ describe("loadConfig", () => {
   });
 
   it("falls back to the XDG crew.config.ts when GROUNDCREW_CONFIG is unset", async () => {
-    const xdgDir = join(temporary, "xdg-config", "groundcrew");
+    const xdgDir = path.join(temporary, "xdg-config", "groundcrew");
     mkdirSync(xdgDir, { recursive: true });
     writeFileSync(
-      join(xdgDir, "crew.config.ts"),
+      path.join(xdgDir, "crew.config.ts"),
       configSource({ workspace: VALID_WORKSPACE(temporary) }),
     );
     const { loadConfig } = await loadFreshConfig();
@@ -1018,10 +1018,10 @@ describe("loadConfig", () => {
   });
 
   it("keeps reading legacy XDG ~/.config/groundcrew/config.ts during the back-compat window", async () => {
-    const xdgDir = join(temporary, "xdg-config", "groundcrew");
+    const xdgDir = path.join(temporary, "xdg-config", "groundcrew");
     mkdirSync(xdgDir, { recursive: true });
     writeFileSync(
-      join(xdgDir, "config.ts"),
+      path.join(xdgDir, "config.ts"),
       configSource({ workspace: VALID_WORKSPACE(temporary) }),
     );
     const { loadConfig } = await loadFreshConfig();
@@ -1030,7 +1030,7 @@ describe("loadConfig", () => {
   });
 
   it("fails when the config file does not exist", async () => {
-    setEnvironmentVariable("GROUNDCREW_CONFIG", join(temporary, "missing.ts"));
+    setEnvironmentVariable("GROUNDCREW_CONFIG", path.join(temporary, "missing.ts"));
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(/GROUNDCREW_CONFIG=/);
   });
@@ -1178,10 +1178,10 @@ describe("loadConfig", () => {
   });
 
   it("discovers crew.config.ts via cosmiconfig project-walk from a nested cwd", async () => {
-    const root = join(temporary, "root");
-    const nested = join(root, "nested", "deep");
+    const root = path.join(temporary, "root");
+    const nested = path.join(root, "nested", "deep");
     mkdirSync(nested, { recursive: true });
-    writeFileSync(join(root, "crew.config.ts"), configSource({ workspace: VALID_WORKSPACE(root) }));
+    writeFileSync(path.join(root, "crew.config.ts"), configSource({ workspace: VALID_WORKSPACE(root) }));
     vi.spyOn(process, "cwd").mockReturnValue(nested);
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
@@ -1189,10 +1189,10 @@ describe("loadConfig", () => {
   });
 
   it("loads a JSON config via cosmiconfig", async () => {
-    const root = join(temporary, "root");
+    const root = path.join(temporary, "root");
     mkdirSync(root, { recursive: true });
     writeFileSync(
-      join(root, "crew.config.json"),
+      path.join(root, "crew.config.json"),
       JSON.stringify({ workspace: VALID_WORKSPACE(root) }),
     );
     vi.spyOn(process, "cwd").mockReturnValue(root);
@@ -1202,10 +1202,10 @@ describe("loadConfig", () => {
   });
 
   it("accepts the legacy `export const config = {...}` shape for back-compat", async () => {
-    const root = join(temporary, "root");
+    const root = path.join(temporary, "root");
     mkdirSync(root, { recursive: true });
     writeFileSync(
-      join(root, "crew.config.ts"),
+      path.join(root, "crew.config.ts"),
       `export const config = ${JSON.stringify({ workspace: VALID_WORKSPACE(root) })};\n`,
     );
     vi.spyOn(process, "cwd").mockReturnValue(root);
@@ -1215,23 +1215,23 @@ describe("loadConfig", () => {
   });
 
   it("env-var override wins over both project-walk and XDG fallback", async () => {
-    const projectRoot = join(temporary, "project");
-    const decoyXdg = join(temporary, "xdg-config", "groundcrew");
-    const targetDir = join(temporary, "target");
+    const projectRoot = path.join(temporary, "project");
+    const decoyXdg = path.join(temporary, "xdg-config", "groundcrew");
+    const targetDir = path.join(temporary, "target");
     mkdirSync(projectRoot, { recursive: true });
     mkdirSync(decoyXdg, { recursive: true });
     mkdirSync(targetDir, { recursive: true });
     writeFileSync(
-      join(projectRoot, "crew.config.ts"),
+      path.join(projectRoot, "crew.config.ts"),
       configSource({ workspace: { projectDir: projectRoot, knownRepositories: ["xdg-decoy"] } }),
     );
     writeFileSync(
-      join(decoyXdg, "crew.config.ts"),
+      path.join(decoyXdg, "crew.config.ts"),
       configSource({
         workspace: { projectDir: decoyXdg, knownRepositories: ["project-decoy"] },
       }),
     );
-    const targetPath = join(targetDir, "crew.config.ts");
+    const targetPath = path.join(targetDir, "crew.config.ts");
     writeFileSync(
       targetPath,
       configSource({ workspace: { projectDir: targetDir, knownRepositories: ["repo-a"] } }),

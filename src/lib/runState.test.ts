@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import path from "node:path";
 
 import type { ResolvedConfig } from "./config.ts";
 import {
@@ -33,7 +33,7 @@ function makeConfig(stateRoot: string): ResolvedConfig {
     prompts: { initial: "x" },
     workspaceKind: "auto",
     local: { runner: "auto" },
-    logging: { file: join(stateRoot, "groundcrew.log") },
+    logging: { file: path.join(stateRoot, "groundcrew.log") },
   };
 }
 
@@ -42,7 +42,7 @@ describe("run state store", () => {
   let config: ResolvedConfig;
 
   beforeEach(() => {
-    stateRoot = mkdtempSync(join(tmpdir(), "groundcrew-run-state-"));
+    stateRoot = mkdtempSync(path.join(tmpdir(), "groundcrew-run-state-"));
     config = makeConfig(stateRoot);
   });
 
@@ -64,8 +64,8 @@ describe("run state store", () => {
       },
     });
 
-    expect(runStateDirectory(config)).toBe(join(stateRoot, "runs"));
-    expect(runStatePath(config, "team-1")).toBe(join(stateRoot, "runs", "team-1.json"));
+    expect(runStateDirectory(config)).toBe(path.join(stateRoot, "runs"));
+    expect(runStatePath(config, "team-1")).toBe(path.join(stateRoot, "runs", "team-1.json"));
     expect(actual.ticket).toBe("team-1");
     expect(readRunState(config, "TEAM-1")).toMatchObject({
       ticket: "team-1",
@@ -295,14 +295,14 @@ describe("run state store", () => {
 
   it("returns undefined for missing or malformed state files", () => {
     expect(readRunState(config, "team-1")).toBeUndefined();
-    mkdirSync(dirname(runStatePath(config, "team-1")), { recursive: true });
+    mkdirSync(path.dirname(runStatePath(config, "team-1")), { recursive: true });
     writeFileSync(runStatePath(config, "team-1"), "{not json");
 
     expect(readRunState(config, "team-1")).toBeUndefined();
   });
 
   it("returns undefined for JSON that is not a valid run state object", () => {
-    mkdirSync(dirname(runStatePath(config, "team-1")), { recursive: true });
+    mkdirSync(path.dirname(runStatePath(config, "team-1")), { recursive: true });
     writeFileSync(runStatePath(config, "team-1"), "null");
     expect(readRunState(config, "team-1")).toBeUndefined();
 

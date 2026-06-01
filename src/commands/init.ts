@@ -6,7 +6,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import path from "node:path";
 
 import { LOCAL_RUNNER_SETTINGS, type LocalRunnerSetting } from "../lib/config.ts";
 import { shellSingleQuote } from "../lib/shell.ts";
@@ -67,7 +67,7 @@ export function initConfig(options: InitConfigOptions = {}): InitConfigResult {
     return { destination, outcome: "dry-run-would-write" };
   }
 
-  mkdirSync(dirname(destination), { recursive: true });
+  mkdirSync(path.dirname(destination), { recursive: true });
   writeFileSync(destination, renderConfig(source, options));
   log(`[wrote] ${destination}`);
   return { destination, outcome: "wrote" };
@@ -162,13 +162,13 @@ function destinationFor(args: { scope: InitConfigScope; cwd: string }): string {
   if (args.scope === "global") {
     return xdgConfigPath("groundcrew", CONFIG_FILE_NAME);
   }
-  return resolve(args.cwd, CONFIG_FILE_NAME);
+  return path.resolve(args.cwd, CONFIG_FILE_NAME);
 }
 
 function resolveExamplePath(): string {
   // `init.ts` lives at src/commands/init.ts in source and dist/commands/init.js
   // after build; the example ships at the package root in both cases.
-  return resolve(import.meta.dirname, "..", "..", EXAMPLE_FILE_NAME);
+  return path.resolve(import.meta.dirname, "..", "..", EXAMPLE_FILE_NAME);
 }
 
 function readOptionValue(argv: string[], index: number, flag: string): string {
