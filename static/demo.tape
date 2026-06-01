@@ -10,7 +10,7 @@ Set Shell "bash"
 Set Width 1200
 Set Height 500
 Set FontSize 16
-Set FontFamily "JetBrains Mono"
+Set FontFamily "Menlo"
 Set Padding 0
 Set Margin 24
 Set MarginFill "#1479ff"
