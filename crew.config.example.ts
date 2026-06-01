@@ -20,6 +20,21 @@ export default {
     // tickets to these and refuses unknown repos by default.
     knownRepositories: ["your-org/your-repo"],
   },
+  models: {
+    default: "claude",
+    // `definitions` is the enabled model set. Built-in keys can use `{}` to
+    // opt into the shipped command/color/usage preset. Add `codex: {}` if you
+    // want both shipped agents, or add a custom entry and tag tickets with
+    // `agent-<name>`.
+    definitions: {
+      claude: {},
+      // codex: {},
+      // cursor: {
+      //   cmd: "cursor-agent",
+      //   color: "#929292",
+      // },
+    },
+  },
   // Everything below is optional — defaults shown for reference. Uncomment
   // and edit to override.
   //
@@ -50,31 +65,14 @@ export default {
   //   sessionLimitPercentage: 85,
   // },
   //
-  // models: {
-  //   default: "claude",
-  //   // Additive: defaults for `claude` and `codex` are merged in unless you
-  //   // re-declare those keys here. Add a third agent (e.g. `cursor`) by
-  //   // dropping it in this map and tagging tickets with `agent-cursor`.
-  //   // Groundcrew runs agent commands through Safehouse/clearance unless already Safehouse-wrapped.
-  //   definitions: {
-  //     cursor: {
-  //       cmd: "cursor-agent",
-  //       color: "#929292",
-  //     },
-  //     // Optional: mint a short-lived credential outside Safehouse and
-  //     // forward it into the agent. `preLaunch` runs in the launch shell
-  //     // before the agent exec; `preLaunchEnv` lists the names to add to
-  //     // groundcrew's `safehouse-clearance --env-pass=` flag so the wrap's
-  //     // egress allowlist stays intact. Chain with `&&` so a failed mint
-  //     // aborts launch before `export`.
-  //     // claude: {
-  //     //   preLaunch: "SESSION_TOKEN=$(your-mint-command) && export SESSION_TOKEN",
-  //     //   preLaunchEnv: ["SESSION_TOKEN"],
-  //     // },
-  //     // To run a model under the sdx (Docker Sandboxes) runner, bind it to
-  //     // an sbx agent. Required when `local.runner` resolves to `sdx`.
-  //     // claude: { sandbox: { agent: "claude" } },
-  //   },
+  // To customize an enabled built-in, replace `claude: {}` above with:
+  // claude: {
+  //   // Optional: mint a short-lived credential outside Safehouse and forward
+  //   // it into the agent. Chain with `&&` so a failed mint aborts launch.
+  //   preLaunch: "SESSION_TOKEN=$(your-mint-command) && export SESSION_TOKEN",
+  //   preLaunchEnv: ["SESSION_TOKEN"],
+  //   // Required for this model when `local.runner` resolves to `sdx`.
+  //   sandbox: { agent: "claude" },
   // },
   //
   // // Local isolation backend. Defaults to `"auto"` — macOS → safehouse,

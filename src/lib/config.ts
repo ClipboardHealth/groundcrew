@@ -131,24 +131,19 @@ export interface ModelDefinition {
 }
 
 /**
- * User-facing model entry shape. Discriminated union so the type system
- * mirrors the runtime contract: an entry is either a pure overlay
- * (every concrete field optional, no `disabled` key) or a pure
- * disable directive (`{ disabled: true }` and nothing else).
+ * User-facing model entry shape. Built-in model names (`claude`, `codex`)
+ * accept empty or partial entries because they merge over built-in presets.
+ * Brand-new model names must supply enough fields to satisfy `validate()`.
  *
  * `usage` accepts an extra `{ disabled: true }` sentinel that strips the
  * usage block from the merged definition — the only way to opt a shipped
- * default out of codexbar gating without disabling the model entirely.
+ * preset out of codexbar gating without removing the model entirely.
  */
 type UserUsage = ModelDefinition["usage"] | { disabled: true };
 type EnabledUserModelDefinition = Partial<Omit<ModelDefinition, "usage">> & {
   usage?: UserUsage;
-  disabled?: never;
 };
-interface DisabledUserModelDefinition {
-  disabled: true;
-}
-type UserModelDefinition = EnabledUserModelDefinition | DisabledUserModelDefinition;
+type UserModelDefinition = EnabledUserModelDefinition;
 
 /**
  * Loose user-facing shape — what a `config.ts` file declares.
@@ -188,10 +183,10 @@ export interface Config {
   models?: {
     default?: string;
     /**
-     * Additive: each entry merges over the shipped default for that key.
-     * Override `claude.cmd` only by declaring `{ claude: { cmd: "..." } }` —
-     * the other fields stay at their default values. Brand-new model
-     * names must supply enough fields to satisfy `validate()`.
+     * Explicit enabled model set. Built-in keys (`claude`, `codex`) merge over
+     * their presets, so `{ claude: {} }` enables Claude with the shipped
+     * command/color/usage. Brand-new model names must supply enough fields to
+     * satisfy `validate()`.
      */
     definitions?: Record<string, UserModelDefinition>;
   };
@@ -283,7 +278,7 @@ const DEFAULT_ORCHESTRATOR: ResolvedConfig["orchestrator"] = {
   sessionLimitPercentage: 85,
 };
 
-const DEFAULT_MODEL_DEFINITIONS: Record<string, ModelDefinition> = {
+const BUILT_IN_MODEL_DEFINITIONS: Record<string, ModelDefinition> = {
   claude: {
     cmd: "claude --permission-mode auto",
     color: "#C15F3C",
@@ -295,6 +290,31 @@ const DEFAULT_MODEL_DEFINITIONS: Record<string, ModelDefinition> = {
     usage: { codexbar: { provider: "codex" } },
   },
 };
+
+const MODEL_DEFINITIONS_MIGRATION_MESSAGE = [
+  "configuration migration required: models are no longer enabled by default.",
+  "",
+  "Add the models you want to use:",
+  "",
+  "models: {",
+  '  default: "claude",',
+  "  definitions: {",
+  "    claude: {},",
+  "  },",
+  "},",
+  "",
+  "To keep the previous claude+codex behavior:",
+  "",
+  "models: {",
+  '  default: "claude",',
+  "  definitions: {",
+  "    claude: {},",
+  "    codex: {},",
+  "  },",
+  "},",
+  "",
+  "`disabled: true` is no longer supported; remove disabled model entries instead.",
+].join("\n");
 
 const DEFAULT_PROMPT_INITIAL = [
   "You are working on Linear ticket {{ticket}} ({{title}}) in the {{worktree}} worktree subdirectory.",
@@ -519,34 +539,21 @@ function failIfLegacyModelKeys(
     );
   }
   if (Object.hasOwn(override, "disabled")) {
-    if (override["disabled"] !== true) {
-      fail(
-        `models.definitions.${name}.disabled must be exactly \`true\` when set (got ${JSON.stringify(override["disabled"])})`,
-      );
-    }
-    const conflicting = (
-      ["cmd", "color", "usage", "sandbox", "preLaunch", "preLaunchEnv"] as const
-    ).filter((key) => Object.hasOwn(override, key));
-    if (conflicting.length > 0) {
-      fail(
-        `models.definitions.${name}: cannot combine \`disabled: true\` with other fields (${conflicting.join(", ")}). Either disable the model or override its fields, not both.`,
-      );
-    }
+    fail(MODEL_DEFINITIONS_MIGRATION_MESSAGE);
   }
 }
 
 /**
- * True when `name` is a shipped default the user removed via `disabled: true`.
- * Derived from absence in `definitions` — that's the only path that removes a
- * shipped default, codified in `failIfLegacyModelKeys` + `mergeDefinitions`.
- * Consumers needing to distinguish disabled-by-user from unknown-label use this.
+ * True when `name` is a built-in preset but not present in the enabled
+ * definitions. Consumers use this to distinguish `agent-codex` when codex is
+ * not enabled from an arbitrary unknown label like `agent-typo`.
  */
-export function isShippedDefaultDisabled(
+export function isBuiltInModelNotEnabled(
   config: Pick<ResolvedConfig, "models">,
   name: string,
 ): boolean {
   return (
-    Object.hasOwn(DEFAULT_MODEL_DEFINITIONS, name) &&
+    Object.hasOwn(BUILT_IN_MODEL_DEFINITIONS, name) &&
     !Object.hasOwn(config.models.definitions, name)
   );
 }
@@ -593,33 +600,18 @@ function buildOverrideCandidate(
 function mergeDefinitions(
   user: Record<string, UserModelDefinition> | undefined,
 ): Record<string, ModelDefinition> {
-  if (user !== undefined && !isPlainObject(user)) {
+  if (user === undefined) {
+    fail(MODEL_DEFINITIONS_MIGRATION_MESSAGE);
+  }
+  if (!isPlainObject(user)) {
     fail("models.definitions must be an object");
   }
-  const merged: Record<string, ModelDefinition> = Object.fromEntries(
-    Object.entries(DEFAULT_MODEL_DEFINITIONS).map(([name, definition]) => [
-      name,
-      cloneModelDefinition(definition),
-    ]),
-  );
-  for (const [name, override] of Object.entries(user ?? {})) {
+  const merged: Record<string, ModelDefinition> = {};
+  for (const [name, override] of Object.entries(user)) {
     failIfLegacyModelKeys(name, override);
 
-    if (override.disabled === true) {
-      if (!Object.hasOwn(DEFAULT_MODEL_DEFINITIONS, name)) {
-        fail(
-          `models.definitions.${name}: \`disabled: true\` is only valid for shipped defaults (${Object.keys(DEFAULT_MODEL_DEFINITIONS).join(", ")}). Remove the entry instead.`,
-        );
-      }
-      // Drop the key so downstream iterators (doctor, eligibility, usage) ignore
-      // the model automatically; `isShippedDefaultDisabled` lets the few consumers
-      // that need to distinguish disabled from unknown re-derive the set.
-      // oxlint-disable-next-line typescript/no-dynamic-delete -- `merged` is a fresh function-local clone of DEFAULT_MODEL_DEFINITIONS; no V8 dictionary-mode/pollution concerns
-      delete merged[name];
-      continue;
-    }
-
-    const candidate = buildOverrideCandidate(name, override, merged[name]);
+    const builtIn = BUILT_IN_MODEL_DEFINITIONS[name];
+    const candidate = buildOverrideCandidate(name, override, builtIn);
     const { cmd, color, usage, sandbox, preLaunch, preLaunchEnv } = candidate;
     if (typeof cmd !== "string" || cmd.length === 0) {
       fail(`models.definitions.${name}.cmd must be a non-empty string`);
@@ -818,7 +810,6 @@ function validate(config: ResolvedConfig): void {
   requirePercent(config.orchestrator.sessionLimitPercentage, "orchestrator.sessionLimitPercentage");
 
   const { definitions } = config.models;
-  /* v8 ignore next 3 @preserve -- mergeDefinitions seeds claude+codex defaults, so an empty map is unreachable */
   if (Object.keys(definitions).length === 0) {
     fail("models.definitions must contain at least one model");
   }
@@ -832,12 +823,12 @@ function validate(config: ResolvedConfig): void {
     requireString(definition.color, `models.definitions.${name}.color`);
     if (definition.usage !== undefined) {
       const usagePath = `models.definitions.${name}.usage`;
-      /* v8 ignore next 3 @preserve -- mergeDefinitions only assigns usage from validated overrides or shipped defaults; reaching this guard requires hand-mutating the resolved config */
+      /* v8 ignore next 3 @preserve -- mergeDefinitions only assigns usage from validated overrides or built-in presets; reaching this guard requires hand-mutating the resolved config */
       if (typeof definition.usage !== "object" || definition.usage === null) {
         fail(`${usagePath} must be an object`);
       }
       const { codexbar } = definition.usage;
-      /* v8 ignore next 3 @preserve -- mergeDefinitions only assigns usage from validated overrides or shipped defaults; reaching this guard requires hand-mutating the resolved config */
+      /* v8 ignore next 3 @preserve -- mergeDefinitions only assigns usage from validated overrides or built-in presets; reaching this guard requires hand-mutating the resolved config */
       if (typeof codexbar !== "object" || codexbar === null) {
         fail(`${usagePath}.codexbar must be an object`);
       }
@@ -864,12 +855,12 @@ function validate(config: ResolvedConfig): void {
     );
   }
 
-  // Disabled-default check must run before the generic "not a key" check so
-  // the user gets the specific "is disabled" message instead of a stale-list
-  // message they can't act on without realizing they need to re-enable.
-  if (isShippedDefaultDisabled(config, config.models.default)) {
+  // Built-in-not-enabled check must run before the generic "not a key" check
+  // so the user gets the specific migration-oriented message for `codex`
+  // instead of a stale-list message.
+  if (isBuiltInModelNotEnabled(config, config.models.default)) {
     fail(
-      `models.default ("${config.models.default}") is disabled. Either re-enable it or set models.default to an enabled model.`,
+      `models.default ("${config.models.default}") is not enabled. Add \`models.definitions.${config.models.default}: {}\` or set models.default to an enabled model.`,
     );
   }
   if (!(config.models.default in definitions)) {

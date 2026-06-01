@@ -281,7 +281,7 @@ export function modelForResolution(
   if (resolution.kind === "matched") {
     return resolution.model;
   }
-  if (resolution.kind === "disabled-fallback") {
+  if (resolution.kind === "not-enabled-fallback") {
     return resolution.fallbackModel;
   }
   return "any";
@@ -356,7 +356,7 @@ function buildLinearIssue(input: {
 
 function issueFromNode(node: IssueNode, config: ResolvedConfig): Issue {
   const modelResolution = resolveModelFor({ labels: node.labels.nodes, config });
-  warnIfDisabledFallback(node.identifier, modelResolution, config);
+  warnIfNotEnabledFallback(node.identifier, modelResolution, config);
   const { repository, model } = resolveAgentMetadata({
     ticket: node.identifier,
     /* v8 ignore next @preserve -- BoardIssues query selects description; the ?? guard normalises a null vs undefined edge */
@@ -625,11 +625,11 @@ export async function fetchResolvedIssue(arguments_: {
     });
   }
   const modelResolution = resolveModelFor({ labels: raw.labels, config });
-  warnIfDisabledFallback(ticket, modelResolution, config);
+  warnIfNotEnabledFallback(ticket, modelResolution, config);
   let model = config.models.default;
   if (modelResolution.kind === "matched") {
     ({ model } = modelResolution);
-  } else if (modelResolution.kind === "disabled-fallback") {
+  } else if (modelResolution.kind === "not-enabled-fallback") {
     model = modelResolution.fallbackModel;
   }
   return {
@@ -646,16 +646,16 @@ export async function fetchResolvedIssue(arguments_: {
   };
 }
 
-export function warnIfDisabledFallback(
+export function warnIfNotEnabledFallback(
   ticket: string,
   modelResolution: ModelResolution,
   config: ResolvedConfig,
 ): void {
-  if (modelResolution.kind !== "disabled-fallback") {
+  if (modelResolution.kind !== "not-enabled-fallback") {
     return;
   }
   log(
-    `${ticket.toLowerCase()}: agent-${modelResolution.requestedModel} label refers to a disabled model; falling back to models.default (${config.models.default})`,
+    `${ticket.toLowerCase()}: agent-${modelResolution.requestedModel} label refers to a model that is not enabled; falling back to models.default (${config.models.default})`,
   );
 }
 

@@ -4,18 +4,18 @@ First stop for "what exists locally right now": `crew status <ticket>` shows the
 
 ## Missing Model CLI
 
-`models.definitions` includes both shipped defaults (`claude`, `codex`) by default via additive merge. If you only intend to label tickets `agent-claude` and do not have `codex` installed, initialize with `crew init --model claude` or set:
+`crew doctor` probes every model listed in `models.definitions`. If you do not have `codex` installed, initialize with `crew init --model claude` or leave `codex` out of the enabled model set:
 
 ```ts
 models: {
   default: "claude",
   definitions: {
-    codex: { disabled: true },
+    claude: {},
   },
 },
 ```
 
-Without that, doctor exits non-zero on a missing `codex` binary even though `crew run` would never route to it.
+If `codex: {}` is listed, doctor expects the `codex` CLI to be installed because tickets can route to `agent-codex` and `agent-any` can select it.
 
 ## Safehouse-Wrapped Commands Are Not Re-Wrapped
 
