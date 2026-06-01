@@ -947,7 +947,9 @@ describe("loadConfig", () => {
     setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
-    expect(actual.logging.file).toBe(path.join(temporary, "xdg-state", "groundcrew", "groundcrew.log"));
+    expect(actual.logging.file).toBe(
+      path.join(temporary, "xdg-state", "groundcrew", "groundcrew.log"),
+    );
   });
 
   it("uses HOME when XDG_STATE_HOME is unset", async () => {
@@ -1181,7 +1183,10 @@ describe("loadConfig", () => {
     const root = path.join(temporary, "root");
     const nested = path.join(root, "nested", "deep");
     mkdirSync(nested, { recursive: true });
-    writeFileSync(path.join(root, "crew.config.ts"), configSource({ workspace: VALID_WORKSPACE(root) }));
+    writeFileSync(
+      path.join(root, "crew.config.ts"),
+      configSource({ workspace: VALID_WORKSPACE(root) }),
+    );
     vi.spyOn(process, "cwd").mockReturnValue(nested);
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();

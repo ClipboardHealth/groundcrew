@@ -137,7 +137,9 @@ describe(list, () => {
 
     const actual = list(config);
 
-    expect(actual.map((entry) => entry.dir)).toStrictEqual([path.join(projectDir, "repo-a-team-1")]);
+    expect(actual.map((entry) => entry.dir)).toStrictEqual([
+      path.join(projectDir, "repo-a-team-1"),
+    ]);
   });
 
   it("finds host sibling worktrees by their <repo>-<ticket> naming", () => {
@@ -269,7 +271,13 @@ describe(create, () => {
 
     expect(runCommandMock).toHaveBeenCalledWith(
       "git",
-      ["-C", path.join(projectDir, "repo-a"), "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+      [
+        "-C",
+        path.join(projectDir, "repo-a"),
+        "symbolic-ref",
+        "--short",
+        "refs/remotes/origin/HEAD",
+      ],
       {},
     );
     expect(runCommandMock).toHaveBeenCalledWith(
@@ -376,7 +384,13 @@ describe(create, () => {
 
     expect(runCommandMock).toHaveBeenCalledWith(
       "git",
-      ["-C", path.join(projectDir, "repo-a"), "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+      [
+        "-C",
+        path.join(projectDir, "repo-a"),
+        "symbolic-ref",
+        "--short",
+        "refs/remotes/origin/HEAD",
+      ],
       {},
     );
     expect(runCommandMock).toHaveBeenCalledWith(
@@ -491,7 +505,13 @@ describe(remove, () => {
 
     expect(runCommandMock).toHaveBeenCalledWith(
       "git",
-      ["-C", path.join(projectDir, "repo-a"), "worktree", "remove", path.join(projectDir, "repo-a-team-1")],
+      [
+        "-C",
+        path.join(projectDir, "repo-a"),
+        "worktree",
+        "remove",
+        path.join(projectDir, "repo-a-team-1"),
+      ],
       { stdio: "captured", timeoutMs: 0 },
     );
     expect(runCommandMock).toHaveBeenCalledWith("git", [
@@ -721,7 +741,9 @@ describe(remove, () => {
     );
     await expect(callRemove()).rejects.toThrow(/crew cleanup --force team-1/);
     await expect(callRemove()).rejects.toThrow(
-      new RegExp(`remove ${path.join(projectDir, "repo-a-team-1").replaceAll("/", String.raw`\/`)}`),
+      new RegExp(
+        `remove ${path.join(projectDir, "repo-a-team-1").replaceAll("/", String.raw`\/`)}`,
+      ),
     );
     await expect(callRemove()).rejects.toThrow(/inspect it first/);
   });
