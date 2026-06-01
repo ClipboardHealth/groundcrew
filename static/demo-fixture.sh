@@ -13,7 +13,8 @@ tmux set-option -g remain-on-exit on
 
 printf '\033]2;groundcrew\033\\'
 
-demo_agent_script="${TMPDIR:-/tmp}/groundcrew-vhs-agent"
+demo_agent_script="$(mktemp "${TMPDIR:-/tmp}/groundcrew-vhs-agent.XXXXXX")"
+trap 'rm -f "${demo_agent_script}"' EXIT
 cat >"${demo_agent_script}" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -21,7 +22,7 @@ set -euo pipefail
 ticket="${1}"
 model="${2}"
 title="${3}"
-worktree="groundcrew-${ticket}"
+worktree="${4:-groundcrew-${ticket}}"
 branch="groundcrew/${ticket}"
 
 printf '\033]2;%s %s\033\\' "${model}" "${ticket}"
@@ -73,7 +74,7 @@ crew() {
   sleep 0.5
   pane_one="$(
     tmux split-window -d -h -p 45 -P -F '#{pane_id}' -- \
-      "${demo_agent_script} ENG-184 codex 'Add Jira ticket source docs'"
+      "${demo_agent_script} ENG-184 codex 'Add Jira ticket source docs' web-ENG-184"
   )"
   sleep 0.6
   demo_log 'OK "ENG-184" launched (codex)  worktree web-ENG-184'
@@ -82,7 +83,7 @@ crew() {
   demo_log 'Creating worktree api-ENG-217 (branch groundcrew/ENG-217 from origin/main)...'
   sleep 0.5
   tmux split-window -d -v -p 50 -t "${pane_one}" -P -F '#{pane_id}' -- \
-    "${demo_agent_script} ENG-217 claude 'Fix flaky status output'" >/dev/null
+    "${demo_agent_script} ENG-217 claude 'Fix flaky status output' api-ENG-217" >/dev/null
   sleep 0.6
   demo_log 'OK "ENG-217" launched (claude)  worktree api-ENG-217'
   sleep 0.6

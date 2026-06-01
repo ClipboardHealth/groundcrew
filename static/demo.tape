@@ -35,5 +35,5 @@ Enter
 Sleep 8
 
 Hide
-Type "tmux -L groundcrew-demo kill-session -t groundcrew"
+Type "tmux -f /dev/null -L groundcrew-demo kill-session -t groundcrew"
 Enter
