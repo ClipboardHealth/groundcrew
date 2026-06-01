@@ -69,9 +69,9 @@ export function detectNpmRootGlobal(npmBin: string, runner: NpmRootRunner): stri
   }
 }
 
-export function detectIsSymlink(path: string): boolean {
+export function detectIsSymlink(filePath: string): boolean {
   try {
-    return lstatSync(path).isSymbolicLink();
+    return lstatSync(filePath).isSymbolicLink();
   } catch {
     return false;
   }

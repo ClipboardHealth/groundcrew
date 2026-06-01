@@ -80,8 +80,8 @@ export function styleDim(text: string): string {
 let logFilePath: string | undefined;
 let suppressedLogDepth = 0;
 
-export function setLogFile(path: string | undefined): void {
-  logFilePath = path;
+export function setLogFile(filePath: string | undefined): void {
+  logFilePath = filePath;
 }
 
 export async function withLogOutputSuppressed<T>(operation: () => Promise<T>): Promise<T> {
