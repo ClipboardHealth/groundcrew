@@ -1,14 +1,10 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { BUILD_SECRET_NAMES, type ModelDefinition } from "./config.ts";
-import {
-  buildLaunchCommand,
-  resolveSafehouseClearancePath,
-  SETUP_COMMAND,
-} from "./launchCommand.ts";
+import { buildLaunchCommand, resolveSafehouseClearancePath } from "./launchCommand.ts";
 
 function arguments_(
   overrides: Partial<Parameters<typeof buildLaunchCommand>[0]> = {},
@@ -40,43 +36,12 @@ describe(resolveSafehouseClearancePath, () => {
   });
 });
 
-function runSetupCommand(cwd: string): number | undefined {
-  return spawnSync("sh", ["-c", SETUP_COMMAND], { cwd }).status ?? undefined;
-}
-
 describe(buildLaunchCommand, () => {
-  describe(SETUP_COMMAND, () => {
-    it("is a successful no-op when the repo setup hook is absent", () => {
-      const worktreeDir = mkdtempSync(path.join(tmpdir(), "groundcrew-no-setup-"));
-      try {
-        const actual = runSetupCommand(worktreeDir);
-
-        expect(actual).toBe(0);
-      } finally {
-        rmSync(worktreeDir, { recursive: true, force: true });
-      }
-    });
-
-    it("preserves the repo setup hook status when the hook exists", () => {
-      const worktreeDir = mkdtempSync(path.join(tmpdir(), "groundcrew-failing-setup-"));
-      try {
-        mkdirSync(path.join(worktreeDir, ".groundcrew"));
-        writeFileSync(path.join(worktreeDir, ".groundcrew", "setup.sh"), "exit 7\n");
-
-        const actual = runSetupCommand(worktreeDir);
-
-        expect(actual).toBe(7);
-      } finally {
-        rmSync(worktreeDir, { recursive: true, force: true });
-      }
-    });
-  });
-
-  it("runs setup under plain Safehouse, then runs only the agent through the profile shim", () => {
-    const out = buildLaunchCommand(arguments_());
+  it("runs prepareWorktree under plain Safehouse, then runs only the agent through the profile shim", () => {
+    const out = buildLaunchCommand(arguments_({ prepareWorktreeCommand: "npm ci" }));
 
     const setupWrapIndex = out.indexOf("safehouse-clearance' sh -c");
-    const setupIndex = out.indexOf(SETUP_COMMAND);
+    const setupIndex = out.indexOf("npm ci");
     const shimIndex = out.indexOf("_safehouse_shim_dir=$(mktemp");
     const agentWrapIndex = out.indexOf('"$_safehouse_shim" -c');
     const agentIndex = out.indexOf(`exec claude "$@"`);
@@ -91,7 +56,7 @@ describe(buildLaunchCommand, () => {
       '/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance\' "$_safehouse_shim" -c',
     );
     expect(out).not.toContain("--enable=all-agents");
-    expect(out).toContain(SETUP_COMMAND);
+    expect(out).toContain("npm ci");
     expect(out).toContain(`exec claude "$@"`);
     expect(out).toContain('sh "$_p"; _safehouse_status=$?');
     expect(setupWrapIndex).toBeGreaterThan(-1);
@@ -99,7 +64,16 @@ describe(buildLaunchCommand, () => {
     expect(shimIndex).toBeGreaterThan(setupIndex);
     expect(agentWrapIndex).toBeGreaterThan(shimIndex);
     expect(agentIndex).toBeGreaterThan(agentWrapIndex);
-    expect(out.slice(agentWrapIndex)).not.toContain(SETUP_COMMAND);
+    expect(out.slice(agentWrapIndex)).not.toContain("npm ci");
+  });
+
+  it("skips the prepareWorktree phase when no hook command is configured", () => {
+    const out = buildLaunchCommand(arguments_());
+
+    expect(out).not.toContain("groundcrew prepareWorktree hook exited");
+    expect(out).not.toContain("safehouse-clearance' sh -c");
+    expect(out).not.toContain(".groundcrew/setup.sh");
+    expect(out).toContain('"$_safehouse_shim" -c');
   });
 
   it("uses an agent-named shell shim so Safehouse applies only the matching agent profile", () => {
@@ -109,7 +83,7 @@ describe(buildLaunchCommand, () => {
     expect(out).toContain('/groundcrew-safehouse-XXXXXX")');
     // Combined EXIT trap covers both the shim dir (introduced by main's #128
     // two-wrap design) and promptDir (introduced by this branch's preLaunch
-    // failure-cleanup work). promptDir is wiped explicitly before the setup
+    // failure-cleanup work). promptDir is wiped explicitly before the agent
     // wrap, so its inclusion here is defensive — keeps a single trap covering
     // every failure window between shim creation and the post-wrap cleanup.
     expect(out).toContain(
@@ -261,11 +235,40 @@ describe(buildLaunchCommand, () => {
     expect(out).toContain(String.raw`_p=$(cat '/tmp/it'\''s-fine/prompt.txt')`);
   });
 
-  it("includes a non-zero setup-status warning", () => {
-    const out = buildLaunchCommand(arguments_());
+  it("includes a non-zero prepareWorktree status warning", () => {
+    const out = buildLaunchCommand(arguments_({ prepareWorktreeCommand: "npm ci" }));
 
-    expect(out).toContain("setup_status=$?");
-    expect(out).toContain("groundcrew setup command exited with status $setup_status");
+    expect(out).toContain("prepare_status=$?");
+    expect(out).toContain("groundcrew prepareWorktree hook exited with status $prepare_status");
+  });
+
+  it("keeps prepareWorktree failures advisory even when the hook enables set -e", () => {
+    const promptDir = mkdtempSync(path.join(tmpdir(), "groundcrew-prepare-advisory-"));
+    const promptFile = path.join(promptDir, "prompt.txt");
+    const worktreeDir = mkdtempSync(path.join(tmpdir(), "groundcrew-prepare-advisory-wt-"));
+    try {
+      writeFileSync(promptFile, "the prompt body\n");
+
+      const out = buildLaunchCommand(
+        arguments_({
+          runner: "none",
+          promptFile,
+          worktreeDir,
+          prepareWorktreeCommand: "set -e; false",
+          definition: { cmd: "true", color: "#fff" },
+        }),
+      );
+
+      const result = spawnSync("sh", ["-c", out], { encoding: "utf8" });
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain(
+        "groundcrew prepareWorktree hook exited with status 1; continuing to agent.",
+      );
+      expect(() => statSync(promptDir)).toThrow(/ENOENT/);
+    } finally {
+      rmSync(promptDir, { recursive: true, force: true });
+      rmSync(worktreeDir, { recursive: true, force: true });
+    }
   });
 
   describe("secretsFile (build-time secret shuttling)", () => {
@@ -278,20 +281,25 @@ describe(buildLaunchCommand, () => {
       expect(out).not.toContain("--env-pass");
     });
 
-    it("sources secrets on the host, forwards them only to setup, and clears them before the agent", () => {
-      const out = buildLaunchCommand(arguments_({ secretsFile: "/tmp/prompt-team-1/secrets.env" }));
+    it("sources secrets on the host, forwards them only to prepareWorktree, and clears them before the agent", () => {
+      const out = buildLaunchCommand(
+        arguments_({
+          secretsFile: "/tmp/prompt-team-1/secrets.env",
+          prepareWorktreeCommand: "npm ci",
+        }),
+      );
 
       const sourceIndex = out.indexOf(". '/tmp/prompt-team-1/secrets.env'");
       const setupWrapIndex = out.indexOf(
         "safehouse-clearance' --env-pass=NPM_TOKEN,BUF_TOKEN sh -c",
       );
-      const setupIndex = out.indexOf("setup_status=$?");
+      const setupIndex = out.indexOf("prepare_status=$?");
       const unsetIndex = out.indexOf("unset NPM_TOKEN BUF_TOKEN");
       const agentWrapIndex = out.indexOf('"$_safehouse_shim" -c');
       const agentIndex = out.indexOf(`exec claude "$@"`);
 
       // Secrets are sourced into the host shell before the wrap so Safehouse can
-      // forward them into setup; the agent Safehouse process never gets them.
+      // forward them into prepareWorktree; the agent Safehouse process never gets them.
       expect(sourceIndex).toBeGreaterThan(-1);
       expect(setupWrapIndex).toBeGreaterThan(sourceIndex);
       expect(out).toContain("--env-pass=NPM_TOKEN,BUF_TOKEN");
@@ -328,11 +336,15 @@ describe(buildLaunchCommand, () => {
 
     it("sources and clears build secrets on the host (no sandbox to forward into)", () => {
       const out = buildLaunchCommand(
-        arguments_({ runner: "none", secretsFile: "/tmp/prompt-team-1/secrets.env" }),
+        arguments_({
+          runner: "none",
+          secretsFile: "/tmp/prompt-team-1/secrets.env",
+          prepareWorktreeCommand: "npm ci",
+        }),
       );
 
       const sourceIndex = out.indexOf(". '/tmp/prompt-team-1/secrets.env'");
-      const setupIndex = out.indexOf("setup_status=$?");
+      const setupIndex = out.indexOf("prepare_status=$?");
       const unsetIndex = out.indexOf("unset NPM_TOKEN BUF_TOKEN");
       const execIndex = out.indexOf(`exec claude "$_p"`);
       expect(sourceIndex).toBeGreaterThan(-1);
@@ -350,7 +362,7 @@ describe(buildLaunchCommand, () => {
       expect(out).toContain(String.raw`trap 'rm -rf '\''/tmp/prompt-team-1'\''' EXIT`);
       const trapIndex = out.indexOf("trap 'rm -rf");
       const cdIndex = out.indexOf("cd '/work/repo-a-team-1'");
-      const setupIndex = out.indexOf("setup_status=$?");
+      const setupIndex = out.indexOf('"$_safehouse_shim" -c');
       expect(trapIndex).toBeGreaterThan(-1);
       expect(cdIndex).toBeGreaterThan(trapIndex);
       expect(setupIndex).toBeGreaterThan(cdIndex);
@@ -493,6 +505,7 @@ describe(buildLaunchCommand, () => {
             preLaunch: "export FOO=bar",
           },
           secretsFile: "/tmp/prompt-team-1/secrets.env",
+          prepareWorktreeCommand: "npm ci",
         }),
       );
 
@@ -503,12 +516,12 @@ describe(buildLaunchCommand, () => {
       const setupWrapIndex = out.indexOf("safehouse-clearance");
       // Two `unset NPM_TOKEN BUF_TOKEN` occurrences now: the first scrubs the
       // inherited env before preLaunch, the last clears the file-sourced
-      // values between the setup and agent wraps.
+      // values between the prepareWorktree and agent wraps.
       const scrubUnsetIndex = out.indexOf("unset NPM_TOKEN BUF_TOKEN");
       const betweenWrapsUnsetIndex = out.lastIndexOf("unset NPM_TOKEN BUF_TOKEN");
       const agentWrapIndex = out.indexOf('"$_safehouse_shim" -c');
       // trap → cd → unset (scrub inherited) → preLaunch → source secrets.env →
-      //   read prompt → setup wrap → host-side unset → agent wrap. The scrub
+      //   read prompt → prepareWorktree wrap → host-side unset → agent wrap. The scrub
       // runs before preLaunch so it sees neither inherited nor sourced build
       // secrets; the between-wraps unset keeps them off the agent wrap (#128).
       expect(cdIndex).toBeGreaterThan(-1);
@@ -653,15 +666,16 @@ describe(buildLaunchCommand, () => {
             preLaunch: "export FOO=bar",
           },
           secretsFile: "/tmp/prompt-team-1/secrets.env",
+          prepareWorktreeCommand: "npm ci",
         }),
       );
 
       const sourceIndex = out.indexOf(". '/tmp/prompt-team-1/secrets.env'");
-      const setupIndex = out.indexOf("setup_status=$?");
+      const setupIndex = out.indexOf("prepare_status=$?");
       const unsetIndex = out.indexOf("unset NPM_TOKEN BUF_TOKEN");
       const preLaunchIndex = out.indexOf("export FOO=bar");
       const execIndex = out.indexOf(`exec claude "$_p"`);
-      // Unwrapped host path: source → setup → unset → preLaunch → exec.
+      // Unwrapped host path: source → prepareWorktree → unset → preLaunch → exec.
       // Same "preLaunch sees a clean env" contract as the safehouse path,
       // just enforced via an explicit `unset` instead of source-after-mint.
       expect(sourceIndex).toBeGreaterThan(-1);
@@ -706,10 +720,11 @@ describe(buildLaunchCommand, () => {
   });
 
   describe("preLaunchEnv", () => {
-    it("splits --env-pass per wrap: build secrets to setup, preLaunchEnv to agent (PR #128 isolation)", () => {
+    it("splits --env-pass per wrap: build secrets to prepareWorktree, preLaunchEnv to agent (PR #128 isolation)", () => {
       const out = buildLaunchCommand(
         arguments_({
           secretsFile: "/tmp/prompt-team-1/secrets.env",
+          prepareWorktreeCommand: "npm ci",
           definition: {
             cmd: "claude",
             color: "#fff",
@@ -722,8 +737,8 @@ describe(buildLaunchCommand, () => {
       const agentWrapRe = /safehouse-clearance' (--env-pass=[^ ]+ )?"\$_safehouse_shim"/;
       const setupWrapMatch = setupWrapRe.exec(out);
       const agentWrapMatch = agentWrapRe.exec(out);
-      // Setup wrap: build secrets only — preLaunch credentials must never reach
-      // the profile-neutral setup phase that #128 deliberately walled off.
+      // prepareWorktree wrap: build secrets only — preLaunch credentials must never reach
+      // the profile-neutral prepare phase that #128 deliberately walled off.
       expect(setupWrapMatch?.[1]).toBe(`--env-pass=${BUILD_SECRET_NAMES.join(",")} `);
       // Agent wrap: preLaunchEnv only — build secrets are `unset` on the host
       // between the two wraps, so forwarding them here would silently no-op.
@@ -732,9 +747,10 @@ describe(buildLaunchCommand, () => {
       expect(out).not.toContain(`--env-pass=${BUILD_SECRET_NAMES.join(",")},SESSION_TOKEN`);
     });
 
-    it("emits an agent-wrap --env-pass when no secretsFile is staged (setup wrap unflagged)", () => {
+    it("emits an agent-wrap --env-pass when no secretsFile is staged (prepareWorktree wrap unflagged)", () => {
       const out = buildLaunchCommand(
         arguments_({
+          prepareWorktreeCommand: "npm ci",
           definition: {
             cmd: "claude",
             color: "#fff",
@@ -869,7 +885,7 @@ describe(buildLaunchCommand, () => {
       });
     }
 
-    it("wraps the agent in `sbx exec -it -w <worktree> <sandbox> sh -c <setup; exec agent>`", () => {
+    it("wraps the agent in `sbx exec -it -w <worktree> <sandbox> sh -c <exec agent>`", () => {
       const out = buildLaunchCommand(sdxArguments());
 
       expect(out).toContain("exec sbx exec -it -w '/work/repo-a-team-1' 'groundcrew-claude' sh -c");
@@ -880,26 +896,18 @@ describe(buildLaunchCommand, () => {
       expect(out).not.toContain("--enable=all-agents");
     });
 
-    it("uses the per-model sandbox setupCommand override when configured", () => {
-      const out = buildLaunchCommand(
-        sdxArguments({
-          definition: {
-            cmd: "claude",
-            color: "#fff",
-            sandbox: { agent: "claude", setupCommand: "echo custom-setup" },
-          },
-        }),
-      );
-
-      expect(out).toContain("echo custom-setup");
-    });
-
-    it("defaults to the .groundcrew/setup.sh convention when no sandbox setupCommand override is set", () => {
+    it("skips prepareWorktree when no hook command is configured", () => {
       const out = buildLaunchCommand(sdxArguments());
 
-      expect(out).toContain(SETUP_COMMAND);
-      expect(out).not.toContain(".claude/setup.sh");
-      expect(out).not.toContain("npm clean-install");
+      expect(out).not.toContain("groundcrew prepareWorktree hook exited");
+      expect(out).not.toContain(".groundcrew/setup.sh");
+    });
+
+    it("runs the configured prepareWorktree command inside the sandbox", () => {
+      const out = buildLaunchCommand(sdxArguments({ prepareWorktreeCommand: "npm ci" }));
+
+      expect(out).toContain("npm ci");
+      expect(out).toContain("groundcrew prepareWorktree hook exited with status $prepare_status");
     });
 
     it("substitutes {{sandbox}} in the agent command with the sandbox name", () => {

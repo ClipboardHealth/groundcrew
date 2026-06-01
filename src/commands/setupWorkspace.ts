@@ -4,6 +4,7 @@ import { openAgentWorkspace, prepareAgentLaunch } from "../lib/agentLaunch.ts";
 import { type Board, createBoard } from "../lib/board.ts";
 import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
 import { buildLaunchCommand } from "../lib/launchCommand.ts";
+import { resolvePrepareWorktreeCommand } from "../lib/repositoryHooks.ts";
 import { recordRunState } from "../lib/runState.ts";
 import {
   stageBuildSecrets,
@@ -113,12 +114,18 @@ export async function setupWorkspace(
     });
     promptDir = stagedPrompt.directory;
 
-    const secretsFile = stageBuildSecrets(promptDir);
+    const prepareWorktreeCommand = resolvePrepareWorktreeCommand({
+      worktreeDir: launchDir,
+      defaultHooks: config.defaults.hooks,
+    });
+    const secretsFile =
+      prepareWorktreeCommand === undefined ? undefined : stageBuildSecrets(promptDir);
     const launchCommand = buildLaunchCommand({
       definition,
       promptFile: stagedPrompt.file,
       worktreeDir: launchDir,
       secretsFile,
+      prepareWorktreeCommand,
       runner,
       sandboxName,
     });

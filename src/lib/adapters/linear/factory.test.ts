@@ -13,6 +13,7 @@ import { createLinearTicketSource, toCanonicalIssue } from "./factory.ts";
 function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
   return {
     sources: [],
+    defaults: { hooks: {} },
     git: { remote: "origin", defaultBranch: "main", ...overrides.git },
     workspace: {
       projectDir: "/work",

@@ -4,7 +4,6 @@ import { ensureClearance } from "@clipboard-health/clearance";
 import type { RunCommandOptions } from "../lib/commandRunner.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
-import { SETUP_COMMAND } from "../lib/launchCommand.ts";
 import { recordRunState } from "../lib/runState.ts";
 import { canonicalLinearIssue } from "../lib/testing/canonicalFixtures.ts";
 import { createBoard } from "../lib/board.ts";
@@ -174,6 +173,7 @@ function hostEntry(): WorktreeEntry {
 function makeConfig(overrides: Partial<ResolvedConfig["models"]> = {}): ResolvedConfig {
   return {
     sources: [],
+    defaults: { hooks: {} },
     git: { remote: "origin", defaultBranch: "main" },
     workspace: {
       projectDir: "/work",
@@ -198,6 +198,13 @@ function makeConfig(overrides: Partial<ResolvedConfig["models"]> = {}): Resolved
     workspaceKind: "auto",
     local: { runner: "auto" },
     logging: { file: "/tmp/groundcrew-test.log" },
+  };
+}
+
+function makeConfigWithPrepareWorktree(command = "npm ci"): ResolvedConfig {
+  return {
+    ...makeConfig(),
+    defaults: { hooks: { prepareWorktree: command } },
   };
 }
 
@@ -605,7 +612,54 @@ describe(setupWorkspace, () => {
     expect(writtenFileContent("/tmp/groundcrew-team-1-x/prompt.txt")).toBe("Before\n\nAfter");
   });
 
-  it("wraps the agent command with Safehouse and runs the host setup script for local runs", async () => {
+  it("wraps the agent command with Safehouse and runs the default prepareWorktree hook", async () => {
+    detectHostMock.mockResolvedValue(host());
+    const config = {
+      ...makeConfig({
+        definitions: {
+          claude: {
+            cmd: "claude --permission-mode auto",
+            color: "#fff",
+          },
+        },
+      }),
+      defaults: { hooks: { prepareWorktree: "npm ci" } },
+    };
+    mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
+
+    await setupWorkspace(config, {
+      ticket: "team-1",
+      repository: "repo-a",
+      model: "claude",
+      details: { title: "Test Title", description: "Body" },
+    });
+
+    expect(ensureClearanceMock).toHaveBeenCalledTimes(1);
+    expect(firstInvocationOrder(createMock)).toBeLessThan(
+      firstInvocationOrder(ensureClearanceMock),
+    );
+    const command = lastRunArgumentFromCallWithArgument("new-workspace");
+    const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
+    expect(command).toBe("bash '/tmp/groundcrew-team-1-x/launch.sh'");
+    expect(launchScript).toContain("cd '/work/repo-a-team-1'");
+    expect(launchScript).toContain("npm ci");
+    expect(launchScript).not.toContain(".groundcrew/setup.sh");
+    expect(launchScript).toContain(
+      "/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance' sh -c",
+    );
+    // The agent runs inside the wrap (after prepareWorktree), so the prompt is the sh -c arg.
+    expect(launchScript).toContain(
+      '/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance\' "$_safehouse_shim" -c',
+    );
+    expect(launchScript).toContain('_safehouse_shim="$_safehouse_shim_dir/claude"');
+    expect(launchScript).not.toContain("--enable=all-agents");
+    expect(launchScript).toContain('exec claude --permission-mode auto "$@"');
+    expect(launchScript).toContain('sh "$_p"');
+    // prepareWorktree status guard so a failed install still launches the agent
+    expect(launchScript).toContain('"$prepare_status" -ne 0');
+  });
+
+  it("skips prepareWorktree when neither repo config nor defaults define it", async () => {
     detectHostMock.mockResolvedValue(host());
     const config = makeConfig({
       definitions: {
@@ -624,30 +678,12 @@ describe(setupWorkspace, () => {
       details: { title: "Test Title", description: "Body" },
     });
 
-    expect(ensureClearanceMock).toHaveBeenCalledTimes(1);
-    expect(firstInvocationOrder(createMock)).toBeLessThan(
-      firstInvocationOrder(ensureClearanceMock),
-    );
-    const command = lastRunArgumentFromCallWithArgument("new-workspace");
     const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
-    expect(command).toBe("bash '/tmp/groundcrew-team-1-x/launch.sh'");
-    expect(launchScript).toContain("cd '/work/repo-a-team-1'");
-    expect(launchScript).toContain(SETUP_COMMAND);
-    expect(launchScript).not.toContain(".claude/setup.sh");
-    expect(launchScript).not.toContain("npm clean-install");
-    expect(launchScript).toContain(
-      "/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance' sh -c",
-    );
-    // The agent runs inside the wrap (after setup), so the prompt is the sh -c arg.
+    expect(launchScript).not.toContain("groundcrew prepareWorktree hook exited");
+    expect(launchScript).not.toContain(".groundcrew/setup.sh");
     expect(launchScript).toContain(
       '/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance\' "$_safehouse_shim" -c',
     );
-    expect(launchScript).toContain('_safehouse_shim="$_safehouse_shim_dir/claude"');
-    expect(launchScript).not.toContain("--enable=all-agents");
-    expect(launchScript).toContain('exec claude --permission-mode auto "$@"');
-    expect(launchScript).toContain('sh "$_p"');
-    // setup-status guard so a failed install still launches the agent
-    expect(launchScript).toContain('"$setup_status" -ne 0');
   });
 
   it("wraps the agent in an sbx exec call and skips ensureClearance when runner='sdx'", async () => {
@@ -777,7 +813,7 @@ describe(setupWorkspace, () => {
       deleteEnvironmentVariable("BUF_TOKEN");
       mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:1" }));
 
-      await setupWorkspace(makeConfig(), {
+      await setupWorkspace(makeConfigWithPrepareWorktree(), {
         ticket: "team-1",
         repository: "repo-a",
         model: "claude",
@@ -801,7 +837,7 @@ describe(setupWorkspace, () => {
       deleteEnvironmentVariable("BUF_TOKEN");
       mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:1" }));
 
-      await setupWorkspace(makeConfig(), {
+      await setupWorkspace(makeConfigWithPrepareWorktree(), {
         ticket: "team-1",
         repository: "repo-a",
         model: "claude",
@@ -820,7 +856,7 @@ describe(setupWorkspace, () => {
       setEnvironmentVariable("BUF_TOKEN", "buf_test");
       mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:1" }));
 
-      await setupWorkspace(makeConfig(), {
+      await setupWorkspace(makeConfigWithPrepareWorktree(), {
         ticket: "team-1",
         repository: "repo-a",
         model: "claude",
@@ -855,6 +891,28 @@ describe(setupWorkspace, () => {
       const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
       expect(command).not.toContain("secrets.env");
       expect(command).not.toContain("unset NPM_TOKEN");
+      expect(launchScript).not.toContain("secrets.env");
+      expect(launchScript).not.toContain("unset NPM_TOKEN");
+    });
+
+    it("skips secrets.env when build secrets are set but no prepareWorktree hook is configured", async () => {
+      setEnvironmentVariable("NPM_TOKEN", "npm_test_token");
+      deleteEnvironmentVariable("BUF_TOKEN");
+      mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:1" }));
+
+      await setupWorkspace(makeConfig(), {
+        ticket: "team-1",
+        repository: "repo-a",
+        model: "claude",
+        details: { title: "Test Title", description: "Body" },
+      });
+
+      expect(writeFileMock).not.toHaveBeenCalledWith(
+        expect.stringContaining("secrets.env"),
+        expect.anything(),
+        expect.anything(),
+      );
+      const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
       expect(launchScript).not.toContain("secrets.env");
       expect(launchScript).not.toContain("unset NPM_TOKEN");
     });

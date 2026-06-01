@@ -92,6 +92,7 @@ function stubSource(name: string): TicketSource {
 function makeConfig(overrides: Partial<ResolvedConfig["models"]> = {}): ResolvedConfig {
   return {
     sources: [],
+    defaults: { hooks: {} },
     git: { remote: "origin", defaultBranch: "main" },
     workspace: {
       projectDir: "/work",

@@ -7,7 +7,7 @@ Groundcrew launches agent processes _inside_ an isolation backend (safehouse on 
 ## Considered Options
 
 - **Keep the sdx lifecycle commands** — rejected: they reimplement `sbx run`/`sbx exec` setup flows, and every concept they expose (`authRecipes`, `template`, `kits`, `gitDefaults`) is a sandbox concern, not an orchestration concern.
-- **Generalize the launch wrap to a user-supplied template string** — rejected for now: the build-time-secrets and `.groundcrew/setup.sh` plumbing inside the sdx wrap is awkward to express in a user template. Kept a small `safehouse | sdx | none` WRAP enum in core instead.
+- **Generalize the launch wrap to a user-supplied template string** — rejected for now: the build-time-secrets and `prepareWorktree` plumbing inside the sdx wrap is awkward to express in a user template. Kept a small `safehouse | sdx | none` WRAP enum in core instead.
 
 ## Consequences
 
