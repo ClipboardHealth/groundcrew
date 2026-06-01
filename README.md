@@ -147,6 +147,12 @@ node --run crew:op -- run --watch
 
 Both forms discover config through cosmiconfig. Source edits in `src/**` are picked up on the next invocation. Requires Node >= 24.
 
+Regenerate the README demo with VHS:
+
+```bash
+./static/render-demo.sh
+```
+
 ## License
 
 [MIT](./LICENSE)

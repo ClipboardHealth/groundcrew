@@ -1,9 +1,12 @@
-# cspell:ignore noprofile norc
+# cspell:ignore noprofile norc ttyd
 
 Output static/demo.gif
+Require bash
+Require ffmpeg
 Require tmux
+Require ttyd
 
-Set Shell bash
+Set Shell "bash"
 Set Width 1200
 Set Height 500
 Set FontSize 16
@@ -19,7 +22,7 @@ Set CursorBlink false
 Hide
 Type "tmux -f /dev/null -L groundcrew-demo kill-session -t groundcrew 2>/dev/null || true"
 Enter
-Type "tmux -f /dev/null -L groundcrew-demo new-session -s groundcrew -- bash --noprofile --norc"
+Type "tmux -f /dev/null -L groundcrew-demo new-session -s groundcrew -- /bin/bash --noprofile --norc"
 Enter
 Type "source static/demo-fixture.sh"
 Enter
