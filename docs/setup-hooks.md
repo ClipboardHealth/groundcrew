@@ -59,7 +59,7 @@ Python with uv:
 {
   "version": 1,
   "hooks": {
-    "prepareWorktree": "uv sync --dev"
+    "prepareWorktree": "uv sync --dev --frozen"
   }
 }
 ```
