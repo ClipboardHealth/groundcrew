@@ -4,7 +4,7 @@
 
 `crew status <TICKET>` prints a read-only snapshot for one ticket: cached title and URL when present, recorded run state, live workspace presence, matching worktrees, git dirtiness, PR links for matching branches, recent log lines when present, and the ticket status from the configured ticket source.
 
-`crew status` with no ticket prints the current inventory: known worktrees with cached ticket metadata, workspace/run-state agreement, attach hints, worktree paths, PR links, and stray sessions reported by the configured backend. Local diagnostics are printed before ticket-source fetches complete. When the source fetch succeeds, status also prints slot usage plus Queue/Blocked sections for eligible Todo tickets. If the source fetch fails, Queue shows `unavailable: <reason>` and the slots line is omitted.
+`crew status` with no ticket prints the current inventory: known worktrees with cached ticket metadata, workspace/run-state agreement, attach hints, worktree paths, PR links, and stray sessions reported by the configured backend. Local diagnostics are printed before ticket-source fetches complete. When the source fetch succeeds, status also prints any in-progress source tickets with no local worktree, slot usage, and Queue/Blocked sections for eligible Todo tickets. Worktree-less in-progress rows include the ticket title, URL when the source provides one, and repository when the source resolves one. If the source fetch fails, Queue shows `unavailable: <reason>` and the slots line is omitted.
 
 Status is informational only. Use `crew cleanup <TICKET>` to tear down stale worktrees and `crew resume <TICKET>` to reopen preserved work.
 
