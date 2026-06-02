@@ -13,7 +13,7 @@ for required_command in vhs ttyd tmux ffmpeg; do
   fi
 done
 
-tmux -L groundcrew-demo kill-session -t groundcrew 2>/dev/null || true
+tmux -f /dev/null -L groundcrew-demo kill-session -t groundcrew 2>/dev/null || true
 
 log_file="$(mktemp)"
 trap 'rm -f "${log_file}"' EXIT
@@ -26,7 +26,7 @@ for attempt in 1 2 3; do
   fi
 
   status="${PIPESTATUS[0]}"
-  tmux -L groundcrew-demo kill-session -t groundcrew 2>/dev/null || true
+  tmux -f /dev/null -L groundcrew-demo kill-session -t groundcrew 2>/dev/null || true
 
   if ! grep -Eq 'could not open ttyd|ERR_CONNECTION_REFUSED' "${log_file}"; then
     exit "${status}"
