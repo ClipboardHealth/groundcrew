@@ -16,12 +16,20 @@ tmux rename-window 'crew run --watch'
 tmux set-option -g status off
 tmux set-option -g pane-border-status top
 tmux set-option -g pane-border-format ' #{?#{m:codex*,#{pane_title}},#[fg=#fbbf24],#{?#{m:claude*,#{pane_title}},#[fg=#60a5fa],#[fg=#77d94e]}}#[bold]#{pane_title}#[default] '
-tmux set-option -g pane-border-style 'fg=#3f3f46'
-tmux set-option -g pane-active-border-style 'fg=#77d94e'
+# Use one divider color for active and inactive panes. tmux highlights only the
+# active-adjacent segment of a shared divider, so a distinct active color makes a
+# single divider render two-tone (and the dim half reads as "missing"). A uniform
+# color keeps every divider a clean, continuous line. Accent lives in pane titles.
+tmux set-option -g pane-border-style 'fg=#52525b'
+tmux set-option -g pane-active-border-style 'fg=#52525b'
 tmux set-option -g remain-on-exit on
 
 printf '\033]2;groundcrew\033\\'
 
+# This agent script prints 12 lines into a split pane. The pane heights are set
+# by `Set Height` in demo.tape (see the note there) so all 12 fit without
+# scrolling — a scrolling pane makes its top border drift. If you add or remove
+# output lines here, keep that height in sync.
 demo_agent_script="$(mktemp "${TMPDIR:-/tmp}/groundcrew-vhs-agent.XXXXXX")"
 trap 'rm -f "${demo_agent_script}"' EXIT
 cat >"${demo_agent_script}" <<'SH'
@@ -60,7 +68,10 @@ printf '%sEditing in isolated branch...%s\n' "${dim}" "${reset}"
 sleep 0.5
 printf '%sRunning verification...%s\n' "${dim}" "${reset}"
 sleep 0.5
-printf '%s%s✓ Ready for review.%s\n' "${green}" "${bold}" "${reset}"
+# No trailing newline: keeps the final line flush against the pane bottom so the
+# pane never has to scroll a phantom empty line (which VHS renders as the top
+# border drifting down).
+printf '%s%s✓ Ready for review.%s' "${green}" "${bold}" "${reset}"
 
 while :; do
   sleep 60
@@ -107,5 +118,8 @@ crew() {
   sleep 0.7
 
   demo_log "${c_dim}Queue clear · next poll in 60s${c_reset}"
-  sleep 8
+  tmux refresh-client
+  # Hold the fully-settled layout on screen. Must outlast the tape's trailing
+  # Sleep so the orchestrator pane never drops back to a shell prompt on camera.
+  sleep 20
 }

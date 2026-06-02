@@ -8,7 +8,11 @@ Require ttyd
 
 Set Shell "bash"
 Set Width 1320
-Set Height 560
+# 690px ≈ 28 terminal rows. The right column splits into two stacked agent panes
+# of ~13 content rows each, sized to hold the demo-fixture.sh agent script's
+# 12-line output without scrolling (a scrolling pane makes its top border drift).
+# Grow this if that output grows past ~13 lines.
+Set Height 690
 Set FontSize 16
 Set FontFamily "Menlo"
 Set Padding 16
@@ -35,7 +39,8 @@ Sleep 1.0
 Type "crew run --watch"
 Sleep 0.4
 Enter
-Sleep 9
+# ~8s of action, then hold the settled layout long enough to read all three panes.
+Sleep 15
 
 Hide
 Type "tmux -f /dev/null -L groundcrew-demo kill-session -t groundcrew"
