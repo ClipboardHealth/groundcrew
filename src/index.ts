@@ -9,7 +9,13 @@ export { orchestrate, type OrchestratorOptions } from "./commands/orchestrator.t
 export { resumeWorkspace, type ResumeWorkspaceOptions } from "./commands/resumeWorkspace.ts";
 export { setupWorkspace, type SetupWorkspaceOptions } from "./commands/setupWorkspace.ts";
 export { status, type StatusOptions } from "./commands/status.ts";
-export type { Config, ModelDefinition, ResolvedConfig, SourceConfig } from "./lib/config.ts";
+export type {
+  Config,
+  HookCommands,
+  ModelDefinition,
+  ResolvedConfig,
+  SourceConfig,
+} from "./lib/config.ts";
 export { loadConfig } from "./lib/config.ts";
 export {
   readRunState,

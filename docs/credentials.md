@@ -18,7 +18,7 @@ op run --env-file .env.1password -- crew doctor
 
 ## Build-Time Secrets
 
-Groundcrew forwards a small allowlist of build-time secrets from your shell into the setup phase so package installs can authenticate against private registries. The agent process never inherits these values.
+Groundcrew forwards a small allowlist of build-time secrets from your shell into the `prepareWorktree` phase so package installs can authenticate against private registries. The agent process never inherits these values.
 
 Recognized names, defined in [`BUILD_SECRET_NAMES`](../src/lib/buildSecrets.ts):
 
@@ -32,9 +32,9 @@ Set them in the shell you run `crew` from. Anything not in this list is ignored.
 
 For each ticket:
 
-1. If any recognized var is set and non-empty, groundcrew writes `secrets.env` with mode `0600` into the ticket's temp prompt dir as `KEY='value'` lines.
-2. The launch script sources `secrets.env` with `set -a` so the values are exported into the setup phase only. Under `sdx`, they are forwarded into the sandbox via `-e KEY` flags.
-3. After setup completes, the script removes every name in `BUILD_SECRET_NAMES` from the environment and removes the entire prompt dir before executing the agent.
+1. If a `prepareWorktree` hook is configured and any recognized var is set and non-empty, groundcrew writes `secrets.env` with mode `0600` into the ticket's temp prompt dir as `KEY='value'` lines.
+2. The launch script sources `secrets.env` with `set -a` so the values are exported into the `prepareWorktree` phase only. Under `sdx`, they are forwarded into the sandbox via `-e KEY` flags.
+3. After `prepareWorktree` completes, the script removes every name in `BUILD_SECRET_NAMES` from the environment and removes the entire prompt dir before executing the agent.
 
 Net effect: by the time the agent process exists, the values are gone from the environment and the file is gone from disk.
 
@@ -46,8 +46,8 @@ Net effect: by the time the agent process exists, the values are gone from the e
 
 The "preLaunch never sees build secrets" contract is enforced differently per runner:
 
-- `runner: "safehouse"`: `preLaunch` runs immediately after `cd`, before `secrets.env` is sourced into the launch shell. `.groundcrew/setup.sh` then runs inside its own profile-neutral `safehouse-clearance` wrap with `--env-pass=NPM_TOKEN,BUF_TOKEN`; build secrets are unset on the host before the agent's Safehouse wrap is executed.
-- `runner: "none"`: `secrets.env` is sourced first, `.groundcrew/setup.sh` runs on the host, build-secret names are unset, then `preLaunch` runs against a clean env, then the agent is executed.
+- `runner: "safehouse"`: `preLaunch` runs immediately after `cd`, before `secrets.env` is sourced into the launch shell. `prepareWorktree` then runs inside its own profile-neutral `safehouse-clearance` wrap with `--env-pass=NPM_TOKEN,BUF_TOKEN`; build secrets are unset on the host before the agent's Safehouse wrap is executed.
+- `runner: "none"`: `secrets.env` is sourced first, `prepareWorktree` runs on the host, build-secret names are unset, then `preLaunch` runs against a clean env, then the agent is executed.
 
 Under the default `safehouse` runner, the agent runs under a sanitized env allowlist. Exports from `preLaunch` land in the launch shell but are stripped before reaching the agent unless they are forwarded. `preLaunchEnv` is the supported way to forward them:
 

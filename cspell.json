@@ -2,7 +2,6 @@
   "$schema": "https://raw.githubusercontent.com/streetsidesoftware/cspell/main/cspell.schema.json",
   "ignorePaths": [
     ".claude/setup.sh",
-    ".groundcrew/setup.sh",
     "knip.json",
     "package-lock.json",
     "dist/**",

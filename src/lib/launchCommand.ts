@@ -39,13 +39,6 @@ export function resolveSafehouseClearancePath(baseUrl: string = import.meta.url)
 
 const SAFEHOUSE_CLEARANCE_WRAPPER_PATH = resolveSafehouseClearancePath();
 
-/**
- * Per-repo setup hook: if `.groundcrew/setup.sh` exists, run it with
- * `--deps-only`; otherwise no-op.
- */
-export const SETUP_COMMAND =
-  "if [ -f .groundcrew/setup.sh ]; then bash .groundcrew/setup.sh --deps-only; fi";
-
 function renderAgentCommand(arguments_: {
   agentCmd: string;
   worktreeDir: string;
@@ -60,18 +53,18 @@ function renderPreLaunch(preLaunch: string, worktreeDir: string): string {
   return preLaunch.replaceAll("{{worktree}}", shellSingleQuote(worktreeDir));
 }
 
-function setupWithStatusReporting(setupCommand: string): string {
+function prepareWorktreeWithStatusReporting(prepareWorktreeCommand: string): string {
   return [
-    setupCommand,
-    "setup_status=$?",
-    'if [ "$setup_status" -ne 0 ]; then echo "groundcrew setup command exited with status $setup_status; continuing to agent." >&2; fi',
+    `(${prepareWorktreeCommand})`,
+    "prepare_status=$?",
+    'if [ "$prepare_status" -ne 0 ]; then echo "groundcrew prepareWorktree hook exited with status $prepare_status; continuing to agent." >&2; fi',
   ].join("; ");
 }
 
 /**
  * Source a `KEY='value'` file with auto-export so build-time secrets land
- * in the shell env before setup runs. The `-f` guard keeps it a no-op if
- * the file disappeared between staging and launch.
+ * in the shell env before prepareWorktree runs. The `-f` guard keeps it a
+ * no-op if the file disappeared between staging and launch.
  */
 function sourceSecretsLine(secretsFile: string): string {
   return `if [ -f ${shellSingleQuote(secretsFile)} ]; then set -a && . ${shellSingleQuote(secretsFile)} && set +a; fi`;
@@ -220,11 +213,17 @@ interface LaunchCommandArguments {
   /**
    * Optional path to a `KEY='value'` env file containing build-time
    * secrets (see `BUILD_SECRET_NAMES`). Sourced on the host shell before
-   * setup; for the sdx runner the names are propagated into the sandbox
+   * prepareWorktree; for the sdx runner the names are propagated into the sandbox
    * via `sbx exec -e KEY`. Always unset before exec'ing the agent so the
    * agent process never inherits them.
    */
   secretsFile?: string | undefined;
+  /**
+   * Optional repo-preparation hook resolved by the caller from the freshly
+   * created worktree's `.groundcrew/config.json`, falling back to
+   * `defaults.hooks.prepareWorktree` from crew.config.ts.
+   */
+  prepareWorktreeCommand?: string | undefined;
   /**
    * Concrete local isolation backend chosen for this launch. Resolved
    * from `config.local.runner` via `resolveLocalRunner` before this
@@ -279,8 +278,9 @@ export function buildLaunchCommand(arguments_: LaunchCommandArguments): string {
 /**
  * The Safehouse wrap applies only when `runner === "safehouse"` and `cmd` does
  * not already invoke `safehouse` itself. A `safehouse …` cmd owns its own
- * sandbox flags, and we can't splice setup into a command we don't control, so
- * those (and the `none` runner) fall through to the unwrapped host path.
+ * sandbox flags, and we can't splice prepareWorktree into a command we don't
+ * control, so those (and the `none` runner) fall through to the unwrapped host
+ * path.
  */
 function shouldWrapWithSafehouse(arguments_: LaunchCommandArguments): boolean {
   if (arguments_.runner !== "safehouse") {
@@ -291,8 +291,9 @@ function shouldWrapWithSafehouse(arguments_: LaunchCommandArguments): boolean {
 
 /**
  * Unsandboxed host launch (`runner === "none"`, or a `safehouse …` cmd that
- * brings its own wrap). Setup, secret sourcing, and the agent all run on the
- * host shell because there is no groundcrew-managed sandbox to run them inside.
+ * brings its own wrap). prepareWorktree, secret sourcing, and the agent all run
+ * on the host shell because there is no groundcrew-managed sandbox to run them
+ * inside.
  */
 function buildUnwrappedHostLaunchCommand(arguments_: LaunchCommandArguments): string {
   const promptDir = path.dirname(arguments_.promptFile);
@@ -305,8 +306,10 @@ function buildUnwrappedHostLaunchCommand(arguments_: LaunchCommandArguments): st
   const lines = [
     ...hostTrapAndCd({ worktreeDir: arguments_.worktreeDir, promptDir }),
     ...hostSourceSecrets(arguments_.secretsFile),
-    setupWithStatusReporting(SETUP_COMMAND),
   ];
+  if (arguments_.prepareWorktreeCommand !== undefined) {
+    lines.push(prepareWorktreeWithStatusReporting(arguments_.prepareWorktreeCommand));
+  }
   if (arguments_.secretsFile !== undefined) {
     lines.push(unsetSecretsLine());
   }
@@ -325,9 +328,11 @@ function buildUnwrappedHostLaunchCommand(arguments_: LaunchCommandArguments): st
 /**
  * Safehouse launch. Two Safehouse wraps, by design:
  *
- *   1. **Setup wrap**: plain `safehouse-clearance ... sh -c '<setup>'`. Runs
- *      `.groundcrew/setup.sh --deps-only` filesystem-isolated and
- *      egress-restricted, **without** inheriting agent-profile grants.
+ *   1. **prepareWorktree wrap**: plain
+ *      `safehouse-clearance ... sh -c '<prepareWorktree>'`. Runs the repo
+ *      preparation hook filesystem-isolated and egress-restricted,
+ *      **without** inheriting agent-profile grants. Omitted entirely when no
+ *      hook command is configured.
  *   2. **Agent wrap**: `safehouse-clearance "$shim" -c '<exec agent>' sh "$_p"`
  *      where `$shim` is a `mktemp`-d symlink to `/bin/sh` named after the
  *      agent (e.g. `claude`). Safehouse selects the matching agent profile
@@ -341,14 +346,14 @@ function buildUnwrappedHostLaunchCommand(arguments_: LaunchCommandArguments): st
  * from which `stageBuildSecrets` reads them) nor file-sourced values — and keeps
  * stale same-named ambient credentials from being forwarded. `secrets.env` is
  * then sourced into the host launch shell so Safehouse can forward build secrets
- * into the **setup wrap** via `--env-pass=` (Safehouse's `--env=FILE` mode strips
- * them otherwise). After setup returns, `BUILD_SECRET_NAMES` are `unset` again
+ * into the **prepareWorktree wrap** via `--env-pass=` (Safehouse's `--env=FILE` mode strips
+ * them otherwise). After prepareWorktree returns, `BUILD_SECRET_NAMES` are `unset` again
  * on the host so they cannot reach the agent wrap.
  *
  * `--env-pass` composition is split per wrap (deliberate, post PR #128):
- * - Setup wrap forwards build secrets only.
+ * - prepareWorktree wrap forwards build secrets only.
  * - Agent wrap forwards `preLaunchEnv` names only. preLaunch credentials never
- *   reach the profile-neutral setup phase.
+ *   reach the profile-neutral prepare phase.
  */
 function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string {
   const promptDir = path.dirname(arguments_.promptFile);
@@ -359,16 +364,19 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
     sandboxName: "",
   });
 
-  const setupCommand = setupWithStatusReporting(SETUP_COMMAND);
+  const prepareWorktreeCommand =
+    arguments_.prepareWorktreeCommand === undefined
+      ? undefined
+      : prepareWorktreeWithStatusReporting(arguments_.prepareWorktreeCommand);
   const agentCommand = `exec ${agentCmd} "$@"`;
 
-  // Split --env-pass per wrap: the setup wrap only needs build secrets (so
+  // Split --env-pass per wrap: the prepareWorktree wrap only needs build secrets (so
   // `npm install` etc. can authenticate); the agent wrap only needs the
   // user's preLaunchEnv (build secrets are `unset` on the host between the
   // two wraps, so forwarding them here would silently no-op). Keeps preLaunch
-  // credentials out of the profile-neutral setup phase — see PR #128.
+  // credentials out of the profile-neutral prepare phase — see PR #128.
   // Trailing space keeps each flag separated from the next argv token.
-  const setupEnvPassFlag =
+  const prepareWorktreeEnvPassFlag =
     arguments_.secretsFile === undefined ? "" : `--env-pass=${BUILD_SECRET_NAMES.join(",")} `;
   const preLaunchEnvNames = arguments_.definition.preLaunchEnv ?? [];
   const agentEnvPassFlag =
@@ -396,8 +404,12 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
     ...hostSourceSecrets(arguments_.secretsFile),
     `_p=$(cat ${shellSingleQuote(arguments_.promptFile)})`,
     `rm -rf ${shellSingleQuote(promptDir)}`,
-    `${safehouseWrapper} ${setupEnvPassFlag}sh -c ${shellSingleQuote(setupCommand)}`,
   );
+  if (prepareWorktreeCommand !== undefined) {
+    lines.push(
+      `${safehouseWrapper} ${prepareWorktreeEnvPassFlag}sh -c ${shellSingleQuote(prepareWorktreeCommand)}`,
+    );
+  }
   if (arguments_.secretsFile !== undefined) {
     lines.push(unsetSecretsLine());
   }
@@ -428,8 +440,10 @@ function buildSdxLaunchCommand(arguments_: LaunchCommandArguments): string {
     worktreeDir: arguments_.worktreeDir,
     sandboxName: arguments_.sandboxName,
   });
-  const setupCommand = arguments_.definition.sandbox.setupCommand ?? SETUP_COMMAND;
-  const innerParts = [setupWithStatusReporting(setupCommand)];
+  const innerParts: string[] = [];
+  if (arguments_.prepareWorktreeCommand !== undefined) {
+    innerParts.push(prepareWorktreeWithStatusReporting(arguments_.prepareWorktreeCommand));
+  }
   if (arguments_.secretsFile !== undefined) {
     innerParts.push(unsetSecretsLine());
   }

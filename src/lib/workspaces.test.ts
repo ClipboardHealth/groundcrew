@@ -67,6 +67,7 @@ function makeHost(overrides: Partial<HostCapabilities> = {}): HostCapabilities {
 function makeConfig(workspaceKind: WorkspaceKindSetting = "auto"): ResolvedConfig {
   return {
     sources: [],
+    defaults: { hooks: {} },
     git: { remote: "origin", defaultBranch: "main" },
     workspace: {
       projectDir: "/work",

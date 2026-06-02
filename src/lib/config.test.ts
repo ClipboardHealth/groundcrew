@@ -410,7 +410,7 @@ describe("loadConfig", () => {
     await expect(loadConfig()).rejects.toThrow(/Provision and manage the sandbox yourself/);
   });
 
-  it("threads sandbox.setupCommand through to the resolved sandbox definition", async () => {
+  it("rejects per-model sandbox.setupCommand with prepareWorktree migration guidance", async () => {
     const configPath = writeConfigFile(
       temporary,
       [
@@ -422,8 +422,110 @@ describe("loadConfig", () => {
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(
+      /models\.definitions\.claude\.sandbox\.setupCommand is no longer supported/,
+    );
+    await expect(loadConfig()).rejects.toThrow(/defaults\.hooks\.prepareWorktree/);
+  });
+
+  it("resolves defaults.hooks.prepareWorktree", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      configSource({
+        workspace: VALID_WORKSPACE(temporary),
+        defaults: {
+          hooks: {
+            prepareWorktree: "npm ci",
+          },
+        },
+        models: {
+          definitions: {
+            claude: {},
+          },
+        },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+
     const actual = await loadConfig();
-    expect(actual.models.definitions["claude"]?.sandbox?.setupCommand).toBe("./bootstrap.sh");
+
+    expect(actual.defaults.hooks.prepareWorktree).toBe("npm ci");
+  });
+
+  it("allows defaults without hooks", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      configSource({
+        workspace: VALID_WORKSPACE(temporary),
+        defaults: {},
+        models: {
+          definitions: {
+            claude: {},
+          },
+        },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+
+    const actual = await loadConfig();
+
+    expect(actual.defaults.hooks).toStrictEqual({});
+  });
+
+  it("rejects non-object defaults", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      [
+        "export default {",
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        `  defaults: [],`,
+        `  models: { definitions: { claude: {} } },`,
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(/defaults must be an object/);
+  });
+
+  it("rejects non-object defaults.hooks", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      [
+        "export default {",
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        `  defaults: { hooks: [] },`,
+        `  models: { definitions: { claude: {} } },`,
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(/defaults\.hooks must be an object/);
+  });
+
+  it("rejects empty defaults.hooks.prepareWorktree", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      [
+        "export default {",
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        `  defaults: { hooks: { prepareWorktree: " " } },`,
+        `  models: { definitions: { claude: {} } },`,
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(
+      /defaults\.hooks\.prepareWorktree must be a non-empty string/,
+    );
   });
 
   it("accepts a brand-new model override that supplies an explicit usage block", async () => {
@@ -598,7 +700,7 @@ describe("loadConfig", () => {
   });
 
   it("rejects a preLaunchEnv entry that overlaps BUILD_SECRET_NAMES", async () => {
-    // BUILD_SECRET_NAMES are `unset` on the host between the setup wrap and
+    // BUILD_SECRET_NAMES are `unset` on the host between the prepareWorktree wrap and
     // the agent wrap, so forwarding them via --env-pass would silently never
     // reach the agent. Fail at config-load time.
     const configPath = writeConfigFile(

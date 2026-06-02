@@ -1,46 +1,81 @@
-# Setup Hooks
+# Prepare Worktree Hooks
 
-If `.groundcrew/setup.sh` exists in the repo root, groundcrew runs `bash .groundcrew/setup.sh --deps-only` before each agent launch. Otherwise nothing runs. Same convention applies inside the sdx sandbox, overridable per model via `models.definitions.<name>.sandbox.setupCommand`.
+Groundcrew can run one repo-preparation hook after it creates a ticket worktree
+and before it launches the agent. Add a repo-local `.groundcrew/config.json`:
 
-There is no implicit `npm install`, `uv sync`, or anything else. Groundcrew is language-agnostic, so opt in by adding the script.
+```json
+{
+  "version": 1,
+  "hooks": {
+    "prepareWorktree": "npm ci && npm run codegen:types"
+  }
+}
+```
 
-The `--deps-only` flag tells the script it is being called by an automated system before an agent launches. Skip anything interactive or one-time-only. The same script handles both modes; branch on `$1`:
+If the file or hook is absent, Groundcrew skips this phase. There is no
+implicit `npm install`, `uv sync`, or legacy setup script convention.
 
-- With `--deps-only`: do the cheap recurring work this worktree needs, such as lockfile installs or type generation. No prompts, no global installs, no `nvm` / `pyenv` bootstrap.
-- Without the flag: full interactive bootstrap for first-time onboarding or another tool's SessionStart hook.
+`prepareWorktree` must be non-interactive, idempotent, and limited to recurring
+worktree preparation the agent needs: lockfile installs, dependency downloads,
+or type/code generation required for navigation and tests. Do not put human
+onboarding in this hook: no prompts, global installs, auth setup, runtime
+manager bootstrap (`nvm`, `pyenv`, `rustup`, `mise`, `asdf`), db seeds, husky,
+pre-commit, or local package linking.
 
-Setup failures are advisory. Groundcrew logs the non-zero exit and still launches the agent so a flaky network or stale lockfile does not block the session.
+The hook runs from the repo root under every runner:
+
+- `safehouse`: inside a profile-neutral Safehouse wrap before the agent wrap.
+- `sdx`: inside the Docker Sandbox before the agent command.
+- `none`: on the host shell before the agent command.
+
+Hook failures are advisory. Groundcrew logs the non-zero exit and still launches
+the agent so a flaky package registry or stale lockfile does not block the
+session.
+
+## Defaults
+
+For repos without local config, set a fallback in `crew.config.ts`:
+
+```ts
+export default {
+  defaults: {
+    hooks: {
+      prepareWorktree: "test ! -f package-lock.json || npm ci",
+    },
+  },
+  // ...
+};
+```
+
+Repo-local `.groundcrew/config.json` wins for that hook. A repo-local file
+without `hooks.prepareWorktree` still falls back to the `crew.config.ts`
+default.
 
 ## Examples
 
 Python with uv:
 
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-if [ "${1:-}" = "--deps-only" ]; then
-  uv sync --dev
-else
-  uv sync --dev
-  # Extra one-time bootstrap, such as pre-commit install or db seed.
-fi
+```json
+{
+  "version": 1,
+  "hooks": {
+    "prepareWorktree": "uv sync --dev --frozen"
+  }
+}
 ```
 
 Node with npm:
 
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-if [ "${1:-}" = "--deps-only" ]; then
-  npm clean-install
-else
-  npm clean-install
-  # Extra one-time bootstrap, such as husky install or codegen.
-fi
+```json
+{
+  "version": 1,
+  "hooks": {
+    "prepareWorktree": "npm ci"
+  }
+}
 ```
 
-Docs-only or polyglot repos can omit the script. With nothing at `.groundcrew/setup.sh`, groundcrew skips the hook silently.
+Docs-only or manually prepared repos can omit the file.
 
-For a comprehensive real-world example with nvm bootstrap, hash-based skip-on-no-changes caching, and portable SHA-256 detection, see [this repo's own `.groundcrew/setup.sh`](../.groundcrew/setup.sh). It is also symlinked at `.claude/setup.sh` so the same script doubles as a Claude Code SessionStart hook for this repo; that symlink is local convenience, not part of groundcrew's contract.
-
-To scaffold `.groundcrew/setup.sh` with a coding agent, see [setup-hook-agent-prompt.md](./setup-hook-agent-prompt.md).
+To scaffold `.groundcrew/config.json` with a coding agent, see
+[setup-hook-agent-prompt.md](./setup-hook-agent-prompt.md).

@@ -22,6 +22,10 @@ export { BUILD_SECRET_NAMES } from "./buildSecrets.ts";
  */
 export type SourceConfig = LinearAdapterConfig | ShellAdapterConfig;
 
+export interface HookCommands {
+  prepareWorktree?: string;
+}
+
 /**
  * Reserved model name. A ticket labeled `agent-any` resolves at runtime
  * to the configured model with the most available session capacity, so
@@ -76,12 +80,6 @@ export const LOCAL_RUNNER_SETTINGS: readonly LocalRunnerSetting[] = [
 export interface SandboxDefinition {
   /** sbx agent name (e.g. "claude", "codex"). */
   agent: string;
-  /**
-   * Setup command run **inside** the sandbox before the agent exec.
-   * Defaults to the shared `.groundcrew/setup.sh --deps-only` convention
-   * (see `launchCommand.ts`) when omitted.
-   */
-  setupCommand?: string;
 }
 
 export interface ModelDefinition {
@@ -99,7 +97,7 @@ export interface ModelDefinition {
    * exec'd and **outside** Safehouse/sdx. Use to mint short-lived credentials
    * (e.g. `export SESSION_TOKEN=...`) that the wrapped `cmd` inherits via
    * the process environment. `{{worktree}}` is replaced before launch.
-   * Failures abort launch (unlike deps setup, which logs and continues).
+   * Failures abort launch (unlike prepareWorktree, which logs and continues).
    * Not supported for `local.runner` `sdx` in v1.
    */
   preLaunch?: string;
@@ -175,6 +173,9 @@ export interface Config {
     projectDir: string;
     knownRepositories: string[];
   };
+  defaults?: {
+    hooks?: HookCommands;
+  };
   orchestrator?: {
     maximumInProgress?: number;
     pollIntervalMilliseconds?: number;
@@ -236,6 +237,9 @@ export interface ResolvedConfig {
   workspace: {
     projectDir: string;
     knownRepositories: string[];
+  };
+  defaults: {
+    hooks: HookCommands;
   };
   orchestrator: {
     maximumInProgress: number;
@@ -411,6 +415,36 @@ function normalizeOptionalString(value: unknown, configKey: string): string | un
   return value.trim();
 }
 
+function normalizeHookCommands(value: unknown, configKey: string): HookCommands {
+  if (value === undefined) {
+    return {};
+  }
+  if (!isPlainObject(value)) {
+    fail(`${configKey} must be an object`);
+  }
+  const hooks: HookCommands = {};
+  const prepareWorktree = normalizeOptionalString(
+    value["prepareWorktree"],
+    `${configKey}.prepareWorktree`,
+  );
+  if (prepareWorktree !== undefined) {
+    hooks.prepareWorktree = prepareWorktree;
+  }
+  return hooks;
+}
+
+function normalizeDefaults(value: unknown): ResolvedConfig["defaults"] {
+  if (value === undefined) {
+    return { hooks: {} };
+  }
+  if (!isPlainObject(value)) {
+    fail("defaults must be an object");
+  }
+  return {
+    hooks: normalizeHookCommands(value["hooks"], "defaults.hooks"),
+  };
+}
+
 const ENV_VAR_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 function validatePreLaunchEnv(modelName: string, value: unknown): asserts value is string[] {
@@ -425,7 +459,7 @@ function validatePreLaunchEnv(modelName: string, value: unknown): asserts value 
       );
     }
     // Build secrets are sourced into the host launch shell, forwarded only to
-    // the Safehouse *setup* wrap, and `unset` on the host before the agent
+    // the Safehouse *prepareWorktree* wrap, and `unset` on the host before the agent
     // wrap is exec'd. Listing one here would silently never reach the agent —
     // fail loudly so the operator picks a different name (or removes the
     // entry) instead of debugging a missing env var at runtime.
@@ -505,24 +539,24 @@ function normalizeSandbox(value: unknown, configKey: string): SandboxDefinition 
       "Groundcrew no longer creates sdx sandboxes or applies sandbox kits.",
     );
   }
-  const { agent, setupCommand } = value;
+  if (Object.hasOwn(value, "setupCommand")) {
+    fail(
+      `${configKey}.setupCommand is no longer supported: use repo-local \`.groundcrew/config.json\` \`hooks.prepareWorktree\`, or \`defaults.hooks.prepareWorktree\` in crew.config.ts when you need a fallback for repos without their own hook.`,
+    );
+  }
+  const { agent } = value;
   requireString(agent, `${configKey}.agent`);
   const trimmedAgent = agent.trim();
   if (trimmedAgent.length === 0) {
     fail(`${configKey}.agent must be a non-empty string (got ${JSON.stringify(agent)})`);
   }
-  const sandbox: SandboxDefinition = { agent: trimmedAgent };
-  const normalizedSetup = normalizeOptionalString(setupCommand, `${configKey}.setupCommand`);
-  if (normalizedSetup !== undefined) {
-    sandbox.setupCommand = normalizedSetup;
-  }
-  return sandbox;
+  return { agent: trimmedAgent };
 }
 
 function failRemovedConfigKey(configKey: string, reason: string): never {
   fail(
     `${configKey} is no longer supported: ${reason} ` +
-      "Provision and manage the sandbox yourself with `sbx` (for example `sbx create --name groundcrew-<agent> <agent> <projectDir>`), then keep only `models.definitions.<model>.sandbox.agent` plus optional `setupCommand` in crew.config.ts.",
+      "Provision and manage the sandbox yourself with `sbx` (for example `sbx create --name groundcrew-<agent> <agent> <projectDir>`), then keep only `models.definitions.<model>.sandbox.agent` in crew.config.ts.",
   );
 }
 
@@ -754,6 +788,7 @@ function applyDefaults(user: Config): ResolvedConfig {
       projectDir: expandHome(user.workspace.projectDir),
       knownRepositories: user.workspace.knownRepositories,
     },
+    defaults: normalizeDefaults((user as { defaults?: unknown }).defaults),
     orchestrator: { ...DEFAULT_ORCHESTRATOR, ...user.orchestrator },
     models: {
       default: user.models?.default ?? "claude",

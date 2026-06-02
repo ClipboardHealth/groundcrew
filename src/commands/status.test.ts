@@ -121,6 +121,7 @@ function fakeSource(
 function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
   return {
     sources: overrides.sources ?? [],
+    defaults: { hooks: {} },
     git: { remote: "origin", defaultBranch: "main", ...overrides.git },
     workspace: {
       projectDir: "/work",

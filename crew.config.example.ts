@@ -59,6 +59,14 @@ export default {
   //
   // git: { remote: "origin", defaultBranch: "main" },
   //
+  // // Fallback repo-preparation hook for repos that do not define
+  // // `.groundcrew/config.json` hooks.prepareWorktree. Repo-local config wins.
+  // defaults: {
+  //   hooks: {
+  //     prepareWorktree: "test ! -f package-lock.json || npm ci",
+  //   },
+  // },
+  //
   // orchestrator: {
   //   maximumInProgress: 4,
   //   pollIntervalMilliseconds: 120_000,

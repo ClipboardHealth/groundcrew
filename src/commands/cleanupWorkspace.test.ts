@@ -41,6 +41,7 @@ const hostEntry: WorktreeEntry = {
 
 const config: ResolvedConfig = {
   sources: [],
+  defaults: { hooks: {} },
   git: { remote: "origin", defaultBranch: "main" },
   workspace: {
     projectDir: "/work",
