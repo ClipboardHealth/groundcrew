@@ -1,14 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-export PS1='groundcrew on main $ '
+# Semantic ANSI colors. Actual hues are defined by the VHS theme in demo.tape,
+# so content and chrome stay in sync: green = orchestrator, yellow = codex,
+# blue = claude, bright-black = dim chrome.
+c_reset=$'\033[0m'
+c_dim=$'\033[90m'
+c_green=$'\033[32m'
+c_amber=$'\033[33m'
+c_blue=$'\033[34m'
+
+export PS1="\[${c_green}\]groundcrew\[${c_dim}\] on \[${c_reset}\]main \[${c_green}\]\$\[${c_reset}\] "
 
 tmux rename-window 'crew run --watch'
 tmux set-option -g status off
 tmux set-option -g pane-border-status top
-tmux set-option -g pane-border-format ' #{pane_title} '
-tmux set-option -g pane-border-style 'fg=white'
-tmux set-option -g pane-active-border-style 'fg=green'
+tmux set-option -g pane-border-format ' #{?#{m:codex*,#{pane_title}},#[fg=#fbbf24],#{?#{m:claude*,#{pane_title}},#[fg=#60a5fa],#[fg=#77d94e]}}#[bold]#{pane_title}#[default] '
+tmux set-option -g pane-border-style 'fg=#3f3f46'
+tmux set-option -g pane-active-border-style 'fg=#77d94e'
 tmux set-option -g remain-on-exit on
 
 printf '\033]2;groundcrew\033\\'
@@ -25,24 +34,33 @@ title="${3}"
 worktree="${4:-groundcrew-${ticket}}"
 branch="groundcrew/${ticket}"
 
+reset=$'\033[0m'
+bold=$'\033[1m'
+dim=$'\033[90m'
+green=$'\033[32m'
+case "${model}" in
+  codex) accent=$'\033[33m' ;;
+  claude) accent=$'\033[34m' ;;
+  *) accent=$'\033[32m' ;;
+esac
+
 printf '\033]2;%s %s\033\\' "${model}" "${ticket}"
-printf '%s\n' "${model} ${ticket}"
-printf '%s\n' 'repo: clipboard/groundcrew'
-printf '%s\n\n' "branch: ${branch}"
+printf '%s%s%s    clipboard/groundcrew\n' "${dim}" 'repo' "${reset}"
+printf '%s%s%s  %s\n\n' "${dim}" 'branch' "${reset}" "${branch}"
 sleep 0.4
-printf '$ %s < /tmp/groundcrew/prompts/%s.txt\n\n' "${model}" "${ticket}"
+printf '%s$%s %s%s%s %s< prompts/%s.txt%s\n\n' "${dim}" "${reset}" "${accent}" "${model}" "${reset}" "${dim}" "${ticket}" "${reset}"
 sleep 0.5
-printf 'Ticket: %s\n' "${title}"
+printf '%sTicket%s    %s\n' "${dim}" "${reset}" "${title}"
+sleep 0.4
+printf '%sWorktree%s  %s~/dev/c/%s%s\n\n' "${dim}" "${reset}" "${dim}" "${worktree}" "${reset}"
 sleep 0.5
-printf 'Worktree: ~/dev/c/%s\n' "${worktree}"
+printf '%sReading repo context...%s\n' "${dim}" "${reset}"
 sleep 0.5
-printf 'Reading repo context...\n'
+printf '%sEditing in isolated branch...%s\n' "${dim}" "${reset}"
 sleep 0.5
-printf 'Editing in isolated branch...\n'
+printf '%sRunning verification...%s\n' "${dim}" "${reset}"
 sleep 0.5
-printf 'Running verification...\n'
-sleep 0.5
-printf 'Ready for review.\n'
+printf '%s%s✓ Ready for review.%s\n' "${green}" "${bold}" "${reset}"
 
 while :; do
   sleep 60
@@ -53,7 +71,7 @@ chmod +x "${demo_agent_script}"
 demo_ts_second=18
 
 demo_log() {
-  printf '[3:23:%02d PM] %s\n' "${demo_ts_second}" "${1}"
+  printf '%s[15:23:%02d]%s %s\n' "${c_dim}" "${demo_ts_second}" "${c_reset}" "${1}"
   demo_ts_second=$((demo_ts_second + 1))
 }
 
@@ -65,29 +83,29 @@ crew() {
 
   local pane_one
 
-  demo_log 'Resolved Linear viewer: Rocky Warren'
+  demo_log "${c_dim}Linear viewer ·${c_reset} Rocky Warren"
   sleep 0.5
-  demo_log 'Slots 0/3 used, starting 2 ticket(s): ENG-184(codex), ENG-217(claude)'
-  sleep 0.5
+  demo_log "${c_dim}Slots${c_reset} 0/3 ${c_dim}· dispatching${c_reset} ${c_amber}ENG-184${c_reset}${c_dim},${c_reset} ${c_blue}ENG-217${c_reset}"
+  sleep 0.6
 
-  demo_log 'Creating worktree web-ENG-184 (branch groundcrew/ENG-184 from origin/main)...'
+  demo_log "${c_dim}Worktree${c_reset} web-ENG-184 ${c_dim}→${c_reset} groundcrew/ENG-184"
   sleep 0.5
   pane_one="$(
-    tmux split-window -d -h -p 45 -P -F '#{pane_id}' -- \
+    tmux split-window -d -h -p 42 -P -F '#{pane_id}' -- \
       "${demo_agent_script} ENG-184 codex 'Add Jira ticket source docs' web-ENG-184"
   )"
-  sleep 0.6
-  demo_log 'OK "ENG-184" launched (codex)  worktree web-ENG-184'
-  sleep 0.6
+  sleep 0.7
+  demo_log "${c_green}✓${c_reset} ${c_amber}ENG-184${c_reset} launched ${c_dim}·${c_reset} ${c_amber}codex${c_reset}"
+  sleep 0.7
 
-  demo_log 'Creating worktree api-ENG-217 (branch groundcrew/ENG-217 from origin/main)...'
+  demo_log "${c_dim}Worktree${c_reset} api-ENG-217 ${c_dim}→${c_reset} groundcrew/ENG-217"
   sleep 0.5
   tmux split-window -d -v -p 50 -t "${pane_one}" -P -F '#{pane_id}' -- \
     "${demo_agent_script} ENG-217 claude 'Fix flaky status output' api-ENG-217" >/dev/null
-  sleep 0.6
-  demo_log 'OK "ENG-217" launched (claude)  worktree api-ENG-217'
-  sleep 0.6
+  sleep 0.7
+  demo_log "${c_green}✓${c_reset} ${c_blue}ENG-217${c_reset} launched ${c_dim}·${c_reset} ${c_blue}claude${c_reset}"
+  sleep 0.7
 
-  demo_log 'No Todo tickets to pick up; next poll in 60s'
+  demo_log "${c_dim}Queue clear · next poll in 60s${c_reset}"
   sleep 8
 }
