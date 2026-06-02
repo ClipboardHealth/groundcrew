@@ -89,5 +89,6 @@ jobs:
           GH_TOKEN: ${{ steps.token.outputs.token }}
           NX_PREFER_NODE_STRIP_TYPES: "true"
         run: |
+          git pull --rebase origin main
           package_version="$(node -p "JSON.parse(require('fs').readFileSync('package.json', 'utf8')).version")"
           npx nx release changelog "${package_version}"
