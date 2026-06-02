@@ -89,8 +89,7 @@ crew init [--global | --local] [--force] [--dry-run]     # create a crew.config.
           [--runner <auto|safehouse|sdx|none>] [--model <claude|codex>]
 crew doctor                                              # check setup
 crew status [<TICKET>]                                   # inspect current state or one ticket
-crew run                                                 # one-shot orchestration
-crew run --watch                                         # poll forever
+crew run [--watch]                                       # one-shot or --watch forever
 crew start <TICKET>                                      # provision + launch one ticket now
 crew stop <TICKET> [--reason <text>]                     # stop workspace, keep worktree
 crew resume <TICKET>                                     # reopen a paused ticket
@@ -111,9 +110,6 @@ export default {
   workspace: {
     projectDir: "~/dev",
     knownRepositories: ["OWNER/REPO"],
-  },
-  local: {
-    runner: "auto",
   },
   models: {
     default: "claude",
