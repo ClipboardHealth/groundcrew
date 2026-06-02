@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  Dispatch your ticket backlog to AI coding agents. One git worktree per ticket, sandboxed by default.
+  Dispatch your ticket backlog to local, interactive AI coding agents. One git worktree per ticket, sandboxed by default.
 </p>
 
 <p align="center">
@@ -28,9 +28,11 @@ Groundcrew watches assigned tickets, creates isolated worktrees, launches agent 
 
 ## Why
 
+- **Local.** Agents run on your machine with your tools, shell, and credentials. That makes them more steerable than remote agents, and easy to nudge when they drift.
+- **Interactive.** Each ticket launches the real `claude` or `codex` CLI in its own terminal pane, not a wrapper that approximates it. Watch any session live and take over when you need to.
 - **One worktree per ticket.** Agents work in parallel without stepping on each other.
+- **Sandboxed by default.** Safehouse or Docker Sandboxes isolate each agent on the host; `none` is an explicit escape hatch.
 - **Pluggable ticket sources.** Linear by default; Jira and local files via [ticket sources](./docs/ticket-sources.md).
-- **Local-first isolation.** Safehouse, Docker Sandboxes, or an explicit `none` escape hatch.
 - **Multi-agent routing.** Ships `claude` and `codex` presets; bring your own CLI in config.
 
 ## Prerequisites
@@ -117,6 +119,12 @@ export default {
     default: "claude",
     definitions: {
       claude: {},
+    },
+  },
+  defaults: {
+    hooks: {
+      // No-op placeholder; replace with your repo's setup, e.g. "npm ci".
+      prepareWorktree: "true",
     },
   },
 } satisfies Config;

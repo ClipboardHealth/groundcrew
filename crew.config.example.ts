@@ -35,6 +35,15 @@ export default {
       // },
     },
   },
+  // Repo-preparation hook: runs after each worktree is created and before the
+  // agent launches. The default below is a no-op placeholder. Replace it with
+  // your repo's setup, e.g. "npm ci" or "uv sync --dev --frozen". A repo-local
+  // `.groundcrew/config.json` hooks.prepareWorktree overrides this per repo.
+  defaults: {
+    hooks: {
+      prepareWorktree: "true",
+    },
+  },
   // Everything below is optional — defaults shown for reference. Uncomment
   // and edit to override.
   //
@@ -58,14 +67,6 @@ export default {
   // ],
   //
   // git: { remote: "origin", defaultBranch: "main" },
-  //
-  // // Fallback repo-preparation hook for repos that do not define
-  // // `.groundcrew/config.json` hooks.prepareWorktree. Repo-local config wins.
-  // defaults: {
-  //   hooks: {
-  //     prepareWorktree: "test ! -f package-lock.json || npm ci",
-  //   },
-  // },
   //
   // orchestrator: {
   //   maximumInProgress: 4,
