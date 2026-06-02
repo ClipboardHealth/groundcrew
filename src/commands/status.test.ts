@@ -796,6 +796,81 @@ describe(status, () => {
     expect(consoleLog.output()).toContain("slots: 2/4 used");
   });
 
+  it("lists in-progress tickets with no local worktree so the slot count is explainable", async () => {
+    // team-901 is in-progress AND has a local worktree, so it already shows in
+    // the Worktrees section. team-902 is in-progress with no local worktree
+    // (its worktree was removed or lives outside this config's scope) — it
+    // counts toward the slot total but is otherwise invisible, so it belongs
+    // in the new section.
+    listWorktreesMock.mockReturnValue([worktree({ ticket: "team-901", repository: "repo-a" })]);
+    workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set() });
+    buildSourcesMock.mockResolvedValue([
+      fakeSource([
+        sourceIssue({ id: "linear:team-901", status: "in-progress" }),
+        sourceIssue({
+          id: "linear:team-902",
+          status: "in-progress",
+          title: "Type the boundary",
+          repository: "repo-b",
+          url: "https://linear.app/example/issue/TEAM-902",
+        }),
+        sourceIssue({ id: "linear:team-903", status: "todo" }),
+      ]),
+    ]);
+
+    await status(makeConfig({ sources: [{ kind: "linear", name: "linear" }] }));
+
+    const output = consoleLog.output();
+    expect(output).toContain("In progress (no local worktree)\n-------------------------------");
+    expect(output).toContain("team-902  https://linear.app/example/issue/TEAM-902");
+    expect(output).toContain("  title:     Type the boundary");
+    expect(output).toContain("  repo:      repo-b");
+    expect(output).toContain("slots: 2/4 used");
+    // team-901 has a worktree, so it belongs in the Worktrees section only and
+    // must not be duplicated under the new section (which sits just above the
+    // slots line).
+    const sectionStart = output.indexOf("In progress (no local worktree)");
+    const section = output.slice(sectionStart, output.indexOf("slots:", sectionStart));
+    expect(section).toContain("team-902");
+    expect(section).not.toContain("team-901");
+  });
+
+  it("hides the in-progress-without-worktree section when every in-progress ticket has a worktree", async () => {
+    listWorktreesMock.mockReturnValue([worktree({ ticket: "team-901", repository: "repo-a" })]);
+    workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set() });
+    buildSourcesMock.mockResolvedValue([
+      fakeSource([sourceIssue({ id: "linear:team-901", status: "in-progress" })]),
+    ]);
+
+    await status(makeConfig({ sources: [{ kind: "linear", name: "linear" }] }));
+
+    expect(consoleLog.output()).not.toContain("In progress (no local worktree)");
+  });
+
+  it("omits the repo line for an in-progress ticket with no repository", async () => {
+    listWorktreesMock.mockReturnValue([]);
+    workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set() });
+    buildSourcesMock.mockResolvedValue([
+      fakeSource([
+        sourceIssue({
+          id: "linear:team-905",
+          status: "in-progress",
+          title: "Ticket without a repo",
+          repository: undefined,
+        }),
+      ]),
+    ]);
+
+    await status(makeConfig({ sources: [{ kind: "linear", name: "linear" }] }));
+
+    const output = consoleLog.output();
+    expect(output).toContain("team-905");
+    expect(output).toContain("  title:     Ticket without a repo");
+    const sectionStart = output.indexOf("In progress (no local worktree)");
+    const section = output.slice(sectionStart, output.indexOf("slots:", sectionStart));
+    expect(section).not.toContain("repo:");
+  });
+
   it("omits the slots line when the source fetch fails", async () => {
     listWorktreesMock.mockReturnValue([]);
     workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set() });
@@ -906,9 +981,14 @@ describe(status, () => {
     expect(output).toContain("Blocked\n-------");
     expect(output).toContain("team-102  https://linear.app/example/issue/TEAM-102");
     expect(output).toContain("  blocked by:  team-50 (In Progress)");
-    // Ineligible / non-Todo issues never appear.
+    // team-103 is an ineligible Todo (no repo/model) — surfaced nowhere.
     expect(output).not.toContain("team-103");
-    expect(output).not.toContain("team-104");
+    // team-104 is in-progress, so it's excluded from the Queue but now appears
+    // in the "In progress (no local worktree)" section above the slots line.
+    const queueSection = output.slice(output.indexOf("Queue\n-----"));
+    expect(queueSection).not.toContain("team-104");
+    expect(output).toContain("In progress (no local worktree)");
+    expect(output).toContain("team-104");
   });
 
   it("hides the Queue section when the source has only non-Todo issues", async () => {
@@ -920,7 +1000,11 @@ describe(status, () => {
 
     await status(makeConfig({ sources: [{ kind: "linear", name: "linear" }] }));
 
-    expect(consoleLog.output()).not.toContain("Queue");
+    // No eligible Todos -> no Queue section. (The lone in-progress ticket
+    // surfaces in the "In progress (no local worktree)" section instead, so
+    // match the Queue section header rather than the bare word "Queue", which
+    // also appears in the default "Queued ticket" title.)
+    expect(consoleLog.output()).not.toContain("Queue\n-----");
   });
 
   it("separates multiple Queue and Blocked rows with blank lines", async () => {

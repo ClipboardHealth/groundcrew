@@ -560,6 +560,52 @@ function inProgressCount(issues: readonly SourceIssue[]): number {
   return issues.filter((issue) => issue.status === "in-progress").length;
 }
 
+/**
+ * In-progress board issues that have no local worktree. These count toward the
+ * `slots: N/M used` total but are absent from the Worktrees section (their
+ * worktree was removed, or lives outside this config's projectDir /
+ * knownRepositories), so without this they'd be counted yet invisible. Worktree
+ * tickets are lowercased, so the natural id is lowercased before matching.
+ */
+function inProgressWithoutWorktree(
+  issues: readonly SourceIssue[],
+  worktreeTickets: ReadonlySet<string>,
+): SourceIssue[] {
+  return issues
+    .filter((issue) => issue.status === "in-progress")
+    .filter((issue) => !worktreeTickets.has(naturalIdFromCanonical(issue.id).toLowerCase()))
+    .toSorted((left, right) => left.id.localeCompare(right.id));
+}
+
+function writeInProgressIssue(issue: SourceIssue): void {
+  const naturalId = naturalIdFromCanonical(issue.id);
+  writeOutput(issue.url === undefined ? naturalId : `${naturalId}  ${issue.url}`);
+  writeOutput(inventoryField("title", issue.title));
+  if (issue.repository !== undefined) {
+    writeOutput(inventoryField("repo", issue.repository));
+  }
+}
+
+function writeInProgressWithoutWorktree(
+  boardResult: BoardFetchResult,
+  worktreeTickets: ReadonlySet<string>,
+): void {
+  if (boardResult.kind !== "ok") {
+    return;
+  }
+  const issues = inProgressWithoutWorktree(boardResult.issues, worktreeTickets);
+  if (issues.length === 0) {
+    return;
+  }
+  writeSection("In progress (no local worktree)");
+  for (const [index, issue] of issues.entries()) {
+    if (index > 0) {
+      writeOutput();
+    }
+    writeInProgressIssue(issue);
+  }
+}
+
 async function writeInventoryStatus(config: ResolvedConfig): Promise<void> {
   // Banner ("groundcrew status\n=================") dropped: the command
   // you just ran already tells you what report you're looking at, and the
@@ -571,6 +617,7 @@ async function writeInventoryStatus(config: ResolvedConfig): Promise<void> {
   writeStraySessions(probe, worktreeTickets);
 
   const boardResult = await boardResultPromise;
+  writeInProgressWithoutWorktree(boardResult, worktreeTickets);
   if (boardResult.kind === "ok") {
     const used = inProgressCount(boardResult.issues);
     writeOutput();
