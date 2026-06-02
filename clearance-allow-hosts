@@ -64,8 +64,9 @@ raw.githubusercontent.com
 release-assets.githubusercontent.com
 results-receiver.actions.githubusercontent.com
 
-# npm registry + package website
+# npm/Conda registries + package websites
 api.npmjs.org
+conda.anaconda.org
 registry.npmjs.org
 www.npmjs.com
 
@@ -79,10 +80,14 @@ buf.build
 cdn.playwright.dev
 cloud.nx.app
 fastdl.mongodb.org
+ffmpeg.org
 formulae.brew.sh
 hub.docker.com
 index.docker.io
 json.schemastore.org
+mise-versions.jdx.dev
 nx.dev
+playwright.azureedge.net
+registry.terraform.io
 sourcegraph.com
 vitest.dev
