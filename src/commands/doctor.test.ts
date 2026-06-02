@@ -3,7 +3,12 @@ import { existsSync, statSync } from "node:fs";
 import { type Board, createBoard } from "../lib/board.ts";
 import { buildSources, type sourcesFromConfig } from "../lib/buildSources.ts";
 import type { RunCommandOptions } from "../lib/commandRunner.ts";
-import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
+import {
+  type ConfigSource,
+  type LoadedConfig,
+  loadConfigWithSource,
+  type ResolvedConfig,
+} from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
 import type { TicketSource } from "../lib/ticketSource.ts";
 import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCapture.ts";
@@ -23,7 +28,10 @@ vi.mock(
 );
 vi.mock(import("../lib/config.ts"), async (importOriginal) => {
   const actual = await importOriginal();
-  return { ...actual, loadConfig: vi.fn<typeof loadConfig>() };
+  return {
+    ...actual,
+    loadConfigWithSource: vi.fn<typeof loadConfigWithSource>(),
+  };
 });
 vi.mock(import("../lib/host.ts"), async (importOriginal) => {
   const actual = await importOriginal();
@@ -62,9 +70,10 @@ const existsMock = vi.mocked(existsSync);
 const statMock = vi.mocked(statSync);
 const buildSourcesMock = vi.mocked(buildSources);
 const createBoardMock = vi.mocked(createBoard);
-const loadConfigMock = vi.mocked(loadConfig);
+const loadConfigWithSourceMock = vi.mocked(loadConfigWithSource);
 const detectHostMock = vi.mocked(detectHostCapabilities);
 const boardVerifyMock = vi.fn<Board["verify"]>();
+const DEFAULT_CONFIG_SOURCE: ConfigSource = { kind: "project", filepath: "/work/crew.config.ts" };
 
 /**
  * A minimal Board whose `verify()` is the controllable mock. The other
@@ -116,6 +125,25 @@ function makeConfig(overrides: Partial<ResolvedConfig["models"]> = {}): Resolved
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }
+
+function makeLoadedConfig(
+  config: ResolvedConfig,
+  source: ConfigSource = DEFAULT_CONFIG_SOURCE,
+): LoadedConfig {
+  return {
+    config,
+    source,
+  };
+}
+
+const loadConfigMock = {
+  mockResolvedValue(config: ResolvedConfig): void {
+    loadConfigWithSourceMock.mockResolvedValue(makeLoadedConfig(config));
+  },
+  mockRejectedValue(error: unknown): void {
+    loadConfigWithSourceMock.mockRejectedValue(error);
+  },
+};
 
 function host(overrides: Partial<HostCapabilities> = {}): HostCapabilities {
   return {
@@ -192,13 +220,25 @@ describe(doctor, () => {
     vi.resetAllMocks();
   });
 
+  it("renders the config source with the load verdict", async () => {
+    loadConfigWithSourceMock.mockResolvedValue(
+      makeLoadedConfig(makeConfig(), { kind: "env", filepath: "/work/crew.config.ts" }),
+    );
+
+    const actual = await doctor();
+
+    expect(actual).toBe(true);
+    const output = consoleLog.output();
+    expect(output).toContain("[ok] config loaded — /work/crew.config.ts (GROUNDCREW_CONFIG)");
+  });
+
   it("returns false when config loading fails", async () => {
-    loadConfigMock.mockRejectedValue(new Error("bad config"));
+    loadConfigMock.mockRejectedValue(new Error("GROUNDCREW_CONFIG=/missing.ts not found"));
 
     const actual = await doctor();
 
     expect(actual).toBe(false);
-    expect(consoleLog.output()).toContain("config: bad config");
+    expect(consoleLog.output()).toContain("config: GROUNDCREW_CONFIG=/missing.ts not found");
   });
 
   it("returns false when host-capability probing throws", async () => {

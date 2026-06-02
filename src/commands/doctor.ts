@@ -8,9 +8,10 @@ import { existsSync, statSync } from "node:fs";
 import { type Board, createBoard } from "../lib/board.ts";
 import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
 import {
+  type ConfigSourceKind,
   type LocalRunner,
   type LocalRunnerSetting,
-  loadConfig,
+  loadConfigWithSource,
   type ResolvedConfig,
 } from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities, which } from "../lib/host.ts";
@@ -23,6 +24,12 @@ import { resolveWorkspaceKind, type WorkspaceResolution } from "../lib/workspace
 // catch wrapper + wrapped CLI commands like `safehouse claude --foo`.
 const MAX_TOKENS_PER_CMD = 2;
 const BUILT_IN_MODEL_NAMES = ["claude", "codex"] as const;
+
+const CONFIG_SOURCE_LABELS: Record<ConfigSourceKind, string> = {
+  env: "GROUNDCREW_CONFIG",
+  project: "project",
+  xdg: "global XDG",
+};
 
 interface Check {
   name: string;
@@ -174,8 +181,10 @@ export async function doctor(): Promise<boolean> {
 
   let config: ResolvedConfig;
   try {
-    config = await loadConfig();
-    writeOutput("[ok] config loaded");
+    const { config: loadedConfig, source } = await loadConfigWithSource();
+    config = loadedConfig;
+    const sourceLabel = CONFIG_SOURCE_LABELS[source.kind];
+    writeOutput(`[ok] config loaded — ${source.filepath} (${sourceLabel})`);
   } catch (error) {
     writeOutput(`[--] config: ${errorMessage(error)}`);
     return false;

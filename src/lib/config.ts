@@ -271,6 +271,18 @@ export interface ResolvedConfig {
   };
 }
 
+export type ConfigSourceKind = "env" | "project" | "xdg";
+
+export interface ConfigSource {
+  kind: ConfigSourceKind;
+  filepath: string;
+}
+
+export interface LoadedConfig {
+  config: Readonly<ResolvedConfig>;
+  source: Readonly<ConfigSource>;
+}
+
 const DEFAULT_GIT: ResolvedConfig["git"] = {
   remote: "origin",
   defaultBranch: "main",
@@ -970,9 +982,14 @@ const explorer = cosmiconfig(COSMICONFIG_MODULE_NAME, {
   },
 });
 
-type DiscoveredConfig = NonNullable<CosmiconfigResult>;
+type CosmiconfigDiscovery = NonNullable<CosmiconfigResult>;
 
-async function loadAt(filepath: string): Promise<DiscoveredConfig> {
+interface DiscoveredConfig {
+  result: CosmiconfigDiscovery;
+  source: ConfigSource;
+}
+
+async function loadAt(filepath: string): Promise<CosmiconfigDiscovery> {
   const result = await explorer.load(filepath);
   if (result === null) {
     fail(
@@ -995,17 +1012,19 @@ async function discoverUserConfig(): Promise<DiscoveredConfig> {
     if (!existsSync(overridePath)) {
       fail(`GROUNDCREW_CONFIG=${overridePath} not found`);
     }
-    return await loadAt(overridePath);
+    const result = await loadAt(overridePath);
+    return { result, source: { kind: "env", filepath: result.filepath } };
   }
 
   const project = await explorer.search(process.cwd());
   if (project !== null && project.isEmpty !== true) {
-    return project;
+    return { result: project, source: { kind: "project", filepath: project.filepath } };
   }
 
   const xdgPath = findXdgConfigFile();
   if (xdgPath !== undefined) {
-    return await loadAt(xdgPath);
+    const result = await loadAt(xdgPath);
+    return { result, source: { kind: "xdg", filepath: result.filepath } };
   }
 
   // Throw directly so oxlint's `consistent-return` rule sees a
@@ -1018,14 +1037,14 @@ async function discoverUserConfig(): Promise<DiscoveredConfig> {
   );
 }
 
-let cached: Readonly<ResolvedConfig> | undefined;
+let cached: Readonly<LoadedConfig> | undefined;
 
-export async function loadConfig(): Promise<Readonly<ResolvedConfig>> {
+export async function loadConfigWithSource(): Promise<Readonly<LoadedConfig>> {
   if (cached) {
     return cached;
   }
 
-  const result = await discoverUserConfig();
+  const { result, source } = await discoverUserConfig();
   const { filepath, isEmpty } = result;
   const userConfig: unknown = result.config;
   if (isEmpty === true || !isPlainObject(userConfig)) {
@@ -1042,6 +1061,14 @@ export async function loadConfig(): Promise<Readonly<ResolvedConfig>> {
 
   setLogFile(resolved.logging.file);
 
-  cached = Object.freeze(resolved);
+  cached = Object.freeze({
+    config: Object.freeze(resolved),
+    source: Object.freeze(source),
+  });
   return cached;
+}
+
+export async function loadConfig(): Promise<Readonly<ResolvedConfig>> {
+  const loadedConfig = await loadConfigWithSource();
+  return loadedConfig.config;
 }
