@@ -1,4 +1,5 @@
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
+import { readRunState, removeRunState } from "../lib/runState.ts";
 import { recordCleanedUpRuns } from "../lib/runStateCleanup.ts";
 import { log } from "../lib/util.ts";
 import { worktrees } from "../lib/worktrees.ts";
@@ -40,7 +41,17 @@ export async function cleanupWorkspace(
   const entries = worktrees.findByTicket(config, ticket);
 
   if (entries.length === 0) {
-    log(`No worktree found for ${ticket}; nothing to clean up.`);
+    // No worktree to tear down, but a run-state record can outlive its
+    // worktree (removed out-of-band, or created under a since-changed
+    // projectDir/repo that `findByTicket` no longer scans). Clearing a local
+    // record is low-risk, so do it regardless of `--force` to give a manual
+    // escape hatch for an otherwise-immortal stale run-state.
+    if (readRunState(config, ticket) === undefined) {
+      log(`No worktree found for ${ticket}; nothing to clean up.`);
+      return;
+    }
+    removeRunState(config, ticket);
+    log(`No worktree found for ${ticket}; cleared stale run-state.`);
     return;
   }
 

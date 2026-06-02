@@ -355,6 +355,72 @@ describe(status, () => {
     expect(consoleLog.output()).toContain("spawn failed");
   });
 
+  it("flags the per-ticket run: line as `session dead` when running but no session is live", async () => {
+    readRunStateMock.mockReturnValue(runState({ state: "running" }));
+    workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set() });
+
+    await status(makeConfig(), { ticket: "team-1" });
+
+    expect(consoleLog.output()).toContain(
+      "run: running (session dead); model=claude; updated=2026-05-26T00:01:00.000Z; resumes=0",
+    );
+  });
+
+  it("flags the per-ticket run: line as `session exited` when the kept tmux window has exited", async () => {
+    readRunStateMock.mockReturnValue(runState({ state: "running" }));
+    workspaceProbeMock.mockResolvedValue({
+      kind: "ok",
+      names: new Set(["team-1"]),
+      exitedNames: new Set(["team-1"]),
+    });
+
+    await status(makeConfig(), { ticket: "team-1" });
+
+    expect(consoleLog.output()).toContain(
+      "run: running (session exited); model=claude; updated=2026-05-26T00:01:00.000Z; resumes=0",
+    );
+  });
+
+  it("leaves the per-ticket run: line as bare `running` when the session is live", async () => {
+    readRunStateMock.mockReturnValue(runState({ state: "running" }));
+    workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-1"]) });
+
+    await status(makeConfig(), { ticket: "team-1" });
+
+    const output = consoleLog.output();
+    expect(output).toContain("run: running; model=claude;");
+    expect(output).not.toContain("session dead");
+    expect(output).not.toContain("session exited");
+  });
+
+  it("leaves the per-ticket run: line unflagged when the workspace probe is unavailable", async () => {
+    readRunStateMock.mockReturnValue(runState({ state: "running" }));
+    workspaceProbeMock.mockResolvedValue({ kind: "unavailable" });
+
+    await status(makeConfig(), { ticket: "team-1" });
+
+    const output = consoleLog.output();
+    expect(output).toContain("run: running; model=claude;");
+    expect(output).not.toContain("session dead");
+    expect(output).not.toContain("session exited");
+  });
+
+  it("keeps the per-ticket run: line as `(none)` when a stray session is live but no run-state exists", async () => {
+    // With no run-state, the `run:` line stays `(none)` even though the probe
+    // sees a live session for this ticket. The stray-session disagreement is
+    // surfaced by the `workspace: live` line (and the inventory view's
+    // `hint: crew cleanup`), not by decorating the per-ticket `run:` line.
+    readRunStateMock.mockReset();
+    workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-1"]) });
+
+    await status(makeConfig(), { ticket: "team-1" });
+
+    const output = consoleLog.output();
+    expect(output).toContain("run: (none)");
+    expect(output).not.toContain("stray session");
+    expect(output).toContain("workspace: live");
+  });
+
   it("surfaces the cached ticket title at the top of the per-ticket view", async () => {
     readRunStateMock.mockReturnValue(runState({ title: "Improve crew status command" }));
 

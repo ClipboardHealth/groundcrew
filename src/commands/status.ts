@@ -99,11 +99,14 @@ function isWorkspaceExited(probe: WorkspaceProbe, ticket: string): boolean {
   return probe.kind === "ok" && probe.exitedNames?.has(ticket) === true;
 }
 
-function formatRunState(state: RunState | undefined): string {
+function formatRunState(state: RunState | undefined, flags: readonly string[] = []): string {
   if (state === undefined) {
     return "(none)";
   }
-  const summary = `${state.state}; model=${state.model}; updated=${state.updatedAt}; resumes=${state.resumeCount}`;
+  // Only the leading lifecycle token gains the reconciliation flags; the
+  // `;`-separated detail (model/updated/resumes/reason) is preserved verbatim.
+  const lifecycle = flags.length === 0 ? state.state : `${state.state} (${flags.join(", ")})`;
+  const summary = `${lifecycle}; model=${state.model}; updated=${state.updatedAt}; resumes=${state.resumeCount}`;
   const detail = state.reason ?? state.detail;
   return detail === undefined ? summary : `${summary}; ${detail}`;
 }
@@ -223,7 +226,7 @@ async function writeTicketStatus(config: ResolvedConfig, rawTicket: string): Pro
   const accessHint = await exitedWorkspaceAccessHint(config, workspaceProbe, ticket);
   writeOutput(formatTicketLine(ticket, runState, sourceStatus));
   writeTicketTitle(runState, sourceStatus);
-  writeOutput(`run: ${formatRunState(runState)}`);
+  writeOutput(`run: ${formatRunState(runState, runProbeFlags(runState, workspaceProbe, ticket))}`);
   writeOutput(`workspace: ${ticketWorkspaceText(workspaceProbe, ticket)}`);
   if (accessHint !== undefined) {
     writeOutput(`attach: ${accessHint.command}`);
@@ -275,13 +278,41 @@ function formatDuration(ms: number): string {
 }
 
 /**
+ * Probe-reconciliation flags shared by the inventory row and the per-ticket
+ * `run:` line. Flags the two interesting disagreements between the recorded
+ * RunState lifecycle and the live workspace probe: a running/resumed dispatch
+ * with a missing or exited session, and an idle row with a stray live or
+ * exited session. `probe.kind === "unavailable"` is "we don't know" and yields
+ * no flags. Excludes the duration token, which only the inventory row appends.
+ */
+function runProbeFlags(
+  runState: RunState | undefined,
+  probe: WorkspaceProbe,
+  ticket: string,
+): string[] {
+  if (probe.kind !== "ok") {
+    return [];
+  }
+  const lifecycle = runState?.state ?? "idle";
+  const sessionPresent = probe.names.has(ticket);
+  const sessionExited = isWorkspaceExited(probe, ticket);
+  const flags: string[] = [];
+  if (lifecycle === "idle" && sessionPresent) {
+    flags.push(sessionExited ? "stray exited session" : "stray session");
+  }
+  if ((lifecycle === "running" || lifecycle === "resumed") && sessionExited) {
+    flags.push("session exited");
+  } else if ((lifecycle === "running" || lifecycle === "resumed") && !sessionPresent) {
+    flags.push("session dead");
+  }
+  return flags;
+}
+
+/**
  * Combined human-readable state for the inventory row. Surfaces RunState
  * lifecycle and flags the two interesting disagreements with the workspace
- * probe. A recorded running dispatch can have a missing or exited session;
- * an idle row can have a stray live or exited session. `probe.kind ===
- * "unavailable"` is treated as "we don't know" and never produces a suffix.
- * When the row is actively running, appends the elapsed wall-clock time since
- * dispatch.
+ * probe via `runProbeFlags`. When the row is actively running, appends the
+ * elapsed wall-clock time since dispatch.
  */
 function inventoryStateText(
   runState: RunState | undefined,
@@ -290,20 +321,8 @@ function inventoryStateText(
   now: Date,
 ): string {
   const lifecycle = runState?.state ?? "idle";
+  const flags = runProbeFlags(runState, probe, ticket);
   const duration = runStateDurationMs(runState, now);
-  const flags: string[] = [];
-  if (probe.kind === "ok") {
-    const sessionPresent = probe.names.has(ticket);
-    const sessionExited = isWorkspaceExited(probe, ticket);
-    if (lifecycle === "idle" && sessionPresent) {
-      flags.push(sessionExited ? "stray exited session" : "stray session");
-    }
-    if ((lifecycle === "running" || lifecycle === "resumed") && sessionExited) {
-      flags.push("session exited");
-    } else if ((lifecycle === "running" || lifecycle === "resumed") && !sessionPresent) {
-      flags.push("session dead");
-    }
-  }
   if (duration !== undefined) {
     flags.push(formatDuration(duration));
   }
