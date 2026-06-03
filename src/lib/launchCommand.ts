@@ -538,18 +538,51 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
 }
 
 /**
+ * Benign baseline env the srt wraps run under (via `env -i`). This is an
+ * allowlist on purpose: srt's CLI spawns its child with the *inherited* host
+ * env, so — unlike safehouse (`--env=FILE` sanitized baseline) and sdx (clean
+ * container env) — ambient secrets in the launch shell would otherwise reach
+ * the agent and bypass the filesystem read mask. A denylist can't enumerate
+ * every secret var, so we clear the env and re-add only these known-benign
+ * names plus per-wrap forwarded vars (build secrets / `preLaunchEnv`). Values
+ * are read from the host shell at runtime. Vars unset on the host become empty
+ * (harmless for these). srt injects proxy + TMPDIR vars into the child itself.
+ */
+const SRT_ENV_BASELINE: readonly string[] = [
+  "PATH",
+  "HOME",
+  "USER",
+  "LOGNAME",
+  "SHELL",
+  "TERM",
+  "COLORTERM",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
+  "TZ",
+  "PWD",
+];
+
+/** Render `env -i` forwarded assignments: ` NAME="$NAME"` per name (value taken from the host shell at runtime). */
+function srtForwardedEnv(names: readonly string[]): string {
+  return names.map((name) => ` ${name}="$${name}"`).join("");
+}
+
+/**
  * srt launch. Two srt wraps mirror the safehouse two-wrap design, so the
  * dependency/build phase is sandboxed too — not just the agent:
  *
- *   1. **prepareWorktree wrap**: `srt --settings <file> sh -c '<hook>'`.
- *   2. **Agent wrap**: `srt --settings <file> sh -c 'exec <agent> "$@"' sh "$_p"`.
+ *   1. **prepareWorktree wrap**: `env -i <baseline+secrets> srt --settings <file> sh -c '<hook>'`.
+ *   2. **Agent wrap**: `env -i <baseline+preLaunchEnv> srt --settings <file> sh -c 'exec <agent> "$@"' sh "$_p"`.
  *
  * Unlike safehouse there is no profile-by-basename selection, so no symlink
- * shim is needed — srt takes the policy as an explicit `--settings` file. srt
- * inherits the launch shell's env (it injects only the proxy vars), so the
- * existing source-secrets → `unset` scaffolding scrubs build secrets between
- * the two wraps exactly as it does for safehouse, and `preLaunchEnv` flows in
- * as ordinary inherited env.
+ * shim is needed — srt takes the policy as an explicit `--settings` file. Each
+ * srt invocation runs under `env -i` (see `SRT_ENV_BASELINE`) so the agent gets
+ * a sanitized env instead of the inherited host env: the prepareWorktree wrap
+ * additionally forwards build secrets (for `npm ci` auth) and the agent wrap
+ * forwards the user's opt-in `preLaunchEnv` names — matching safehouse's
+ * sanitized baseline plus explicit pass-list posture. `preLaunch` and secret
+ * sourcing still run on the host shell (full env), exactly as under safehouse.
  *
  * The settings file lives in `srtSettingsDir` (a dedicated temp dir, never the
  * prompt dir, which is wiped before the agent execs). The EXIT trap covers both
@@ -564,7 +597,18 @@ function buildSrtLaunchCommand(arguments_: LaunchCommandArguments): string {
   }
   const promptDir = path.dirname(arguments_.promptFile);
   const { agentCommand, prepareWorktreeCommand } = renderPrepareAndAgentCommand(arguments_);
-  const srtWrap = `${shellSingleQuote(srtBinPath())} --settings ${shellSingleQuote(arguments_.srtSettingsFile)}`;
+  const srtTarget = `${shellSingleQuote(srtBinPath())} --settings ${shellSingleQuote(arguments_.srtSettingsFile)}`;
+
+  // `env -i <baseline>` drops the inherited host env; each wrap re-adds only the
+  // benign baseline plus its forwarded names (`VAR="$VAR"` — value from the host
+  // shell at runtime; the names are safe identifiers, validated for
+  // preLaunchEnv). env -i isolates the agent wrap from build secrets, so no
+  // `unset` dance between wraps is needed.
+  const baseline = SRT_ENV_BASELINE.map((name) => `${name}="$${name}"`).join(" ");
+  const prepareForward =
+    arguments_.secretsFile === undefined ? "" : srtForwardedEnv(BUILD_SECRET_NAMES);
+  const prepareWrap = `env -i ${baseline}${prepareForward} ${srtTarget}`;
+  const agentWrap = `env -i ${baseline}${srtForwardedEnv(arguments_.definition.preLaunchEnv ?? [])} ${srtTarget}`;
 
   // One EXIT trap wipes both the settings dir and the prompt dir, covering
   // every failure window between here and the post-wrap cleanup.
@@ -581,13 +625,10 @@ function buildSrtLaunchCommand(arguments_: LaunchCommandArguments): string {
     }),
   ];
   if (prepareWorktreeCommand !== undefined) {
-    lines.push(`${srtWrap} sh -c ${shellSingleQuote(prepareWorktreeCommand)}`);
-  }
-  if (arguments_.secretsFile !== undefined) {
-    lines.push(unsetSecretsLine());
+    lines.push(`${prepareWrap} sh -c ${shellSingleQuote(prepareWorktreeCommand)}`);
   }
   lines.push(
-    `{ ${srtWrap} sh -c ${shellSingleQuote(agentCommand)} sh "$_p"; _srt_status=$?; rm -rf ${shellSingleQuote(arguments_.srtSettingsDir)}; trap - EXIT; exit "$_srt_status"; }`,
+    `{ ${agentWrap} sh -c ${shellSingleQuote(agentCommand)} sh "$_p"; _srt_status=$?; rm -rf ${shellSingleQuote(arguments_.srtSettingsDir)}; trap - EXIT; exit "$_srt_status"; }`,
   );
   return lines.join(" && ");
 }

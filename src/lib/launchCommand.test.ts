@@ -137,6 +137,35 @@ describe(`${buildLaunchCommand.name} (runner='srt')`, () => {
     expect(out).toContain(`unset ${BUILD_SECRET_NAMES.join(" ")} TOKEN`);
     expect(preLaunchIndex).toBeGreaterThan(-1);
     expect(sourceIndex).toBeGreaterThan(preLaunchIndex);
+    // preLaunchEnv is forwarded into the agent wrap's sanitized env.
+    expect(out).toContain(`TOKEN="$TOKEN"`);
+  });
+
+  it("runs each srt wrap under a sanitized `env -i` baseline, not the inherited host env", () => {
+    const out = buildLaunchCommand(srtArguments());
+
+    expect(out).toContain(`env -i PATH="$PATH" HOME="$HOME"`);
+    expect(out).toContain(`TZ="$TZ" PWD="$PWD"`);
+  });
+
+  it("forwards build secrets into the prepareWorktree wrap only, never the agent wrap", () => {
+    const out = buildLaunchCommand(
+      srtArguments({
+        prepareWorktreeCommand: "npm ci",
+        secretsFile: "/tmp/prompt-team-1/secrets.env",
+      }),
+    );
+    const afterPrepare = out.slice(out.indexOf("npm ci"));
+
+    expect(out).toContain(`NPM_TOKEN="$NPM_TOKEN"`);
+    // The agent wrap (everything from the prepare command onward) never sees it.
+    expect(afterPrepare).not.toContain("NPM_TOKEN");
+  });
+
+  it("omits build-secret forwarding from the prepareWorktree wrap when no secrets are staged", () => {
+    const out = buildLaunchCommand(srtArguments({ prepareWorktreeCommand: "npm ci" }));
+
+    expect(out).not.toContain("NPM_TOKEN");
   });
 });
 

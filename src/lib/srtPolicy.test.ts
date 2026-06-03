@@ -18,10 +18,10 @@ function input(
 }
 
 describe(buildSrtSettings, () => {
-  it("masks the whole home region on Linux and re-opens the workspace + git metadata", () => {
+  it("masks the whole home region and WSL Windows mounts on Linux, re-opening the workspace", () => {
     const actual = buildSrtSettings(input());
 
-    expect(actual.filesystem.denyRead).toStrictEqual(["/home", "/root"]);
+    expect(actual.filesystem.denyRead).toStrictEqual(["/home", "/root", "/mnt"]);
     expect(actual.filesystem.allowRead).toContain("/work/repo-a-team-1");
     expect(actual.filesystem.allowRead).toContain("/work/repo-a/.git");
     expect(actual.filesystem.allowWrite).toContain("/work/repo-a-team-1");
@@ -51,6 +51,20 @@ describe(buildSrtSettings, () => {
     const codex = buildSrtSettings(input({ agent: "codex" }));
     expect(codex.filesystem.allowRead).toContain("/home/dev/.codex");
     expect(codex.filesystem.allowWrite).toContain("/home/dev/.codex");
+  });
+
+  it("denies the agent's executable/config surfaces within its writable state dir", () => {
+    const claude = buildSrtSettings(input({ agent: "claude" }));
+    // The state dir stays writable, but the hooks/commands/plugins surfaces that
+    // would let a prompted agent persist across host runs are carved back out.
+    expect(claude.filesystem.allowWrite).toContain("/home/dev/.claude");
+    expect(claude.filesystem.denyWrite).toContain("/home/dev/.claude/settings.json");
+    expect(claude.filesystem.denyWrite).toContain("/home/dev/.claude/settings.local.json");
+    expect(claude.filesystem.denyWrite).toContain("/home/dev/.claude/plugins");
+    expect(claude.filesystem.denyWrite).toContain("/home/dev/.claude/skills");
+
+    const codex = buildSrtSettings(input({ agent: "codex" }));
+    expect(codex.filesystem.denyWrite).toContain("/home/dev/.codex/config.toml");
   });
 
   it("grants no extra home access for an unknown agent but keeps toolchains", () => {

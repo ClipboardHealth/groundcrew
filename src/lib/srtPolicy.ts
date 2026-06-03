@@ -59,6 +59,15 @@ interface AgentCredentialProfile {
   readPaths: readonly string[];
   /** Home-relative paths the agent must write (session state). */
   writePaths: readonly string[];
+  /**
+   * Home-relative config/executable subtrees carved back OUT of `writePaths`.
+   * These are read by the agent but, if the agent could *write* them, a
+   * prompted agent could persist by planting hooks/commands/plugins that
+   * execute on the user's next host run. srt's mandatory deny only covers
+   * `.claude/commands` and `.claude/agents`, so the rest (hooks-bearing
+   * `settings.json`, plugins, skills, codex config) must be denied explicitly.
+   */
+  denyPaths: readonly string[];
 }
 
 /**
@@ -66,10 +75,30 @@ interface AgentCredentialProfile {
  * Deliberately narrow — no blanket `~/.config`, which would re-expose
  * unrelated apps' secrets. Extend via config in a later phase; an unknown
  * agent gets no extra home access and must be granted paths explicitly.
+ *
+ * `writePaths` keep the agent's mutable state writable (sessions, history,
+ * todos, projects); `denyPaths` re-close the executable/config surfaces within
+ * them. The agent does not need to write those surfaces during a task, so
+ * denying them degrades gracefully rather than breaking the run.
  */
 const AGENT_SRT_PROFILES: Record<string, AgentCredentialProfile> = {
-  claude: { readPaths: [".claude", ".claude.json"], writePaths: [".claude", ".claude.json"] },
-  codex: { readPaths: [".codex"], writePaths: [".codex"] },
+  claude: {
+    readPaths: [".claude", ".claude.json"],
+    writePaths: [".claude", ".claude.json"],
+    denyPaths: [
+      ".claude/settings.json",
+      ".claude/settings.local.json",
+      ".claude/commands",
+      ".claude/agents",
+      ".claude/plugins",
+      ".claude/skills",
+    ],
+  },
+  codex: {
+    readPaths: [".codex"],
+    writePaths: [".codex"],
+    denyPaths: [".codex/config.toml"],
+  },
 };
 
 /**
@@ -123,6 +152,7 @@ export function buildSrtSettings(input: BuildSrtSettingsInput): SandboxRuntimeCo
   const profile = AGENT_SRT_PROFILES[input.agent.toLowerCase()] ?? {
     readPaths: [],
     writePaths: [],
+    denyPaths: [],
   };
 
   const underHome = (relativePath: string): string => path.join(homeDir, relativePath);
@@ -133,7 +163,12 @@ export function buildSrtSettings(input: BuildSrtSettingsInput): SandboxRuntimeCo
   const nodeGlobalModules = path.join(nodePrefix, "lib", "node_modules");
   const nodeBinDir = path.join(nodePrefix, "bin");
 
-  const denyRead = platform === "darwin" ? ["/Users"] : ["/home", "/root"];
+  // `/mnt` masks WSL's Windows drive mounts (e.g. `/mnt/c/Users/<user>/.aws`,
+  // `.ssh`) — the Windows profile is readable from WSL and would otherwise
+  // bypass the home mask on a documented-supported platform. Harmless on native
+  // Linux (the worktree, if it lives under /mnt, is re-allowed below since
+  // allowRead wins over denyRead).
+  const denyRead = platform === "darwin" ? ["/Users"] : ["/home", "/root", "/mnt"];
 
   const allowRead = unique([
     input.worktreeDir,
@@ -155,6 +190,10 @@ export function buildSrtSettings(input: BuildSrtSettingsInput): SandboxRuntimeCo
     nodeGlobalModules,
     nodeBinDir,
     ...TOOLCHAIN_WRITE_DENY.map(underHome),
+    // Carve the agent's executable/config surfaces back out of its writable
+    // state dir so a prompted agent can't plant a hook/command/plugin that runs
+    // on the user's next host invocation (denyWrite wins over allowWrite).
+    ...profile.denyPaths.map(underHome),
     // Narrow the broad gitCommonDir write grant: the agent commits objects and
     // refs but must never rewrite the repo's config or install hooks (a
     // persistence vector). srt's mandatory deny is anchored at the cwd `.git`,

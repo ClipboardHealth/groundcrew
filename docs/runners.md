@@ -45,8 +45,9 @@ crew run --watch  # with local.runner: "srt" in crew.config.ts
 
 Groundcrew generates a per-launch policy itself (Safehouse's `.sb` profiles have no equivalent here):
 
-- **Reads**: the home region (`/Users` on macOS, `/home`+`/root` on Linux) is denied, then the worktree, the repo's git metadata, the language toolchains needed to run the agent, and the agent's own credential dirs (`~/.claude`, `~/.codex`, …) are re-opened. The agent cannot read `~/.ssh`, `~/.aws`, shell history, or unrelated repos.
-- **Writes**: allow-only — the worktree, git metadata, the npm cache, and the agent's state dir. Global toolchain bins (`~/.cargo/bin`, global `node_modules`, …) are never writable, closing the host-CLI persistence vector.
+- **Reads**: the home region (`/Users` on macOS, `/home`+`/root`+`/mnt` on Linux — `/mnt` covers WSL's Windows drive mounts) is denied, then the worktree, the repo's git metadata, the language toolchains needed to run the agent, and the agent's own credential dirs (`~/.claude`, `~/.codex`, …) are re-opened. The agent cannot read `~/.ssh`, `~/.aws`, shell history, or unrelated repos.
+- **Writes**: allow-only — the worktree, git metadata, the npm cache, and the agent's state dir. Global toolchain bins (`~/.cargo/bin`, global `node_modules`, the npx cache, …) are never writable, and the agent's own executable/config surfaces (`~/.claude/settings.json` and its hooks, `commands/`, `agents/`, `plugins/`, `skills/`; `~/.codex/config.toml`) are denied even though the surrounding state dir is writable — both close the host-CLI persistence vector.
+- **Environment**: each `srt` invocation runs under a sanitized env (`env -i` + a benign baseline). Unlike safehouse and sdx, the `srt` CLI inherits the host env, so without this an ambient `AWS_*`, `GITHUB_TOKEN`, etc. would reach the agent and bypass the read mask. Credentials the agent legitimately needs from the environment must be forwarded explicitly via the model's `preLaunchEnv` (the same opt-in pass-list safehouse uses).
 - **Network**: allow-only, **reused from the same Clearance allowlist** (`CLEARANCE_ALLOW_HOSTS` / `CLEARANCE_ALLOW_HOSTS_FILES`, including the shipped `clearance-allow-hosts`) so there is one source of truth. Local binding and unix sockets stay off (never the Docker socket).
 
 ### Linux / WSL prerequisites
