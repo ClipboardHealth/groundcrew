@@ -49,7 +49,7 @@ Groundcrew watches assigned tickets, creates isolated worktrees, launches agent 
 
 ```bash
 # 1. Install groundcrew.
-npm install -g @clipboard-health/groundcrew
+npm install -g @clipboard-health/groundcrew@latest
 
 # 2. Scaffold a global config. Agents are sandboxed by default
 #    (Safehouse/Docker Sandboxes); add --runner none to run unsandboxed on the host.
