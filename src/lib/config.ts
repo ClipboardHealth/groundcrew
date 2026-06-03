@@ -440,8 +440,12 @@ function normalizeOptionalString(value: unknown, configKey: string): string | un
 }
 
 // The worktree branch is `<prefix>-<ticket>` and `WorktreeEntry` promises a
-// slash-free branch name, so the prefix must be a git-ref-safe, slash-free slug.
-const BRANCH_PREFIX_RE = /^[\w.-]+$/;
+// slash-free branch name, so the prefix must be a git-ref-safe, slash-free slug:
+// start with an alphanumeric/underscore (no leading '.' that git rejects, no
+// leading '-' that `git worktree add -b` would parse as a flag) and contain no
+// `..` sequence (also rejected by git). A trailing '.'/'-' is fine since the
+// ticket, not the prefix, is the end of the branch name.
+const BRANCH_PREFIX_RE = /^(?!.*\.\.)\w[\w.-]*$/;
 
 function normalizeBranchPrefix(value: unknown): string | undefined {
   const normalized = normalizeOptionalString(value, "git.branchPrefix");
