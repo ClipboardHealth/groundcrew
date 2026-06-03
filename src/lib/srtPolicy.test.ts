@@ -69,6 +69,7 @@ describe(buildSrtSettings, () => {
     );
     expect(actual.filesystem.denyWrite).toContain("/home/dev/.nvm/versions/node/v24/bin");
     expect(actual.filesystem.denyWrite).toContain("/home/dev/.cargo/bin");
+    expect(actual.filesystem.denyWrite).toContain("/home/dev/.npm/_npx");
     expect(actual.filesystem.denyWrite).toContain("/work/repo-a/.git/config");
     expect(actual.filesystem.denyWrite).toContain("/work/repo-a/.git/hooks");
   });

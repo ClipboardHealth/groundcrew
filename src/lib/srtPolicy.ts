@@ -99,6 +99,11 @@ const GIT_READ_PATHS: readonly string[] = [".gitconfig", ".config/git"];
  * Global toolchain bin/module locations writes are denied to, to close the
  * agent-safehouse#102 persistence vector (modifying a globally-installed CLI
  * that the user later runs outside the sandbox). Home-relative literals.
+ *
+ * `.npm/_npx` is denied even though `~/.npm` is writable for the npm cache:
+ * `npx` stores downloaded tools there as ready-to-run binaries, so an agent
+ * that poisons that cache would get host execution the next time the user runs
+ * `npx <tool>` outside the sandbox — the same vector as the bin dirs above.
  */
 const TOOLCHAIN_WRITE_DENY: readonly string[] = [
   ".cargo/bin",
@@ -107,6 +112,7 @@ const TOOLCHAIN_WRITE_DENY: readonly string[] = [
   ".deno/bin",
   ".local/bin",
   ".npm-global",
+  ".npm/_npx",
   ".npmrc",
 ];
 

@@ -478,7 +478,7 @@ describe(doctor, () => {
     expect(actual).toBe(true);
     expect(consoleLog.output()).toContain("local runner (srt)");
     expect(consoleLog.output()).toContain(
-      "srt runner on Linux requires bubblewrap, socat, ripgrep",
+      "srt runner on Linux requires bubblewrap, socat, ripgrep (rg)",
     );
   });
 
