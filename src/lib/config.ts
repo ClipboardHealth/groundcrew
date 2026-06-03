@@ -168,6 +168,13 @@ export interface Config {
   git?: {
     remote?: string;
     defaultBranch?: string;
+    /**
+     * Overrides the prefix groundcrew puts in front of the ticket id when it
+     * names a worktree branch (`<branchPrefix>-<ticket>`). Defaults to the OS
+     * account username when unset. Must be a git-ref-safe, slash-free slug.
+     * The `GROUNDCREW_BRANCH_PREFIX` env var takes precedence over this value.
+     */
+    branchPrefix?: string;
   };
   workspace: {
     projectDir: string;
@@ -233,6 +240,12 @@ export interface ResolvedConfig {
   git: {
     remote: string;
     defaultBranch: string;
+    /**
+     * Configured branch-name prefix, or `undefined` when unset. The OS-username
+     * fallback is applied at branch-naming time (see `worktrees.branchPrefix`),
+     * so this holds only what the user configured.
+     */
+    branchPrefix?: string;
   };
   workspace: {
     projectDir: string;
@@ -425,6 +438,26 @@ function normalizeOptionalString(value: unknown, configKey: string): string | un
     fail(`${configKey} must be a non-empty string`);
   }
   return value.trim();
+}
+
+// The worktree branch is `<prefix>-<ticket>` and `WorktreeEntry` promises a
+// slash-free branch name, so the prefix must be a git-ref-safe, slash-free slug.
+const BRANCH_PREFIX_RE = /^[\w.-]+$/;
+
+/** Shared between config-file and env-var validation so the rule lives in one place. */
+export const BRANCH_PREFIX_REQUIREMENT =
+  "must be a slash-free slug of letters, digits, '.', '_', or '-'";
+
+export function isGitSafeBranchPrefix(value: string): boolean {
+  return BRANCH_PREFIX_RE.test(value);
+}
+
+function normalizeBranchPrefix(value: unknown): string | undefined {
+  const normalized = normalizeOptionalString(value, "git.branchPrefix");
+  if (normalized !== undefined && !isGitSafeBranchPrefix(normalized)) {
+    fail(`git.branchPrefix ${BRANCH_PREFIX_REQUIREMENT} (got ${JSON.stringify(value)})`);
+  }
+  return normalized;
 }
 
 function normalizeHookCommands(value: unknown, configKey: string): HookCommands {
@@ -793,9 +826,16 @@ function applyDefaults(user: Config): ResolvedConfig {
   }
 
   const sources = normalizeSources((user as { sources?: unknown }).sources);
+  const branchPrefix = normalizeBranchPrefix(user.git?.branchPrefix);
   return {
     sources,
-    git: { ...DEFAULT_GIT, ...user.git },
+    // Validate eagerly, but only carry the key when set so `git.branchPrefix`
+    // stays truly optional under exactOptionalPropertyTypes.
+    git: {
+      ...DEFAULT_GIT,
+      ...user.git,
+      ...(branchPrefix === undefined ? {} : { branchPrefix }),
+    },
     workspace: {
       projectDir: expandHome(user.workspace.projectDir),
       knownRepositories: user.workspace.knownRepositories,

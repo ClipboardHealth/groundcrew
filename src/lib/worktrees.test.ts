@@ -1241,12 +1241,61 @@ describe(teardown, () => {
 });
 
 describe("worktrees.branchNameForTicket", () => {
-  it("returns the same branch name that create() uses", () => {
-    expect(worktrees.branchNameForTicket("ENG-123")).toMatch(/-ENG-123$/);
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.clearAllMocks();
+  });
+
+  it("uses the OS username as the prefix by default", () => {
+    userInfoMock.mockReturnValue(makeUserInfo("dev"));
+    const config = makeConfig({ projectDir: "/tmp" });
+
+    const actual = worktrees.branchNameForTicket(config, "eng-123");
+
+    expect(actual).toBe("dev-eng-123");
   });
 
   it("is case-preserving on the ticket portion", () => {
-    expect(worktrees.branchNameForTicket("eng-123")).toMatch(/-eng-123$/);
+    userInfoMock.mockReturnValue(makeUserInfo("dev"));
+    const config = makeConfig({ projectDir: "/tmp" });
+
+    const actual = worktrees.branchNameForTicket(config, "ENG-123");
+
+    expect(actual).toBe("dev-ENG-123");
+  });
+
+  it("prefers git.branchPrefix over the OS username", () => {
+    userInfoMock.mockReturnValue(makeUserInfo("dev"));
+    const config = makeConfig({
+      projectDir: "/tmp",
+      git: { remote: "origin", defaultBranch: "main", branchPrefix: "groundcrew" },
+    });
+
+    const actual = worktrees.branchNameForTicket(config, "eng-123");
+
+    expect(actual).toBe("groundcrew-eng-123");
+  });
+
+  it("prefers GROUNDCREW_BRANCH_PREFIX over config and the OS username", () => {
+    userInfoMock.mockReturnValue(makeUserInfo("dev"));
+    vi.stubEnv("GROUNDCREW_BRANCH_PREFIX", "qa");
+    const config = makeConfig({
+      projectDir: "/tmp",
+      git: { remote: "origin", defaultBranch: "main", branchPrefix: "groundcrew" },
+    });
+
+    const actual = worktrees.branchNameForTicket(config, "eng-123");
+
+    expect(actual).toBe("qa-eng-123");
+  });
+
+  it("throws when GROUNDCREW_BRANCH_PREFIX is not a git-safe slug", () => {
+    vi.stubEnv("GROUNDCREW_BRANCH_PREFIX", "feature/x");
+    const config = makeConfig({ projectDir: "/tmp" });
+
+    expect(() => worktrees.branchNameForTicket(config, "eng-123")).toThrow(
+      /GROUNDCREW_BRANCH_PREFIX must be/,
+    );
   });
 });
 
