@@ -68,6 +68,8 @@ export default {
   //
   // git: { remote: "origin", defaultBranch: "main" },
   //
+  // pullRequest: { draft: false },
+  //
   // orchestrator: {
   //   maximumInProgress: 4,
   //   pollIntervalMilliseconds: 120_000,

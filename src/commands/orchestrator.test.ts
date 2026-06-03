@@ -89,6 +89,7 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
     sources: overrides.sources ?? [],
     defaults: { hooks: {} },
     git: { remote: "origin", defaultBranch: "main", ...overrides.git },
+    pullRequest: { draft: false, ...overrides.pullRequest },
     workspace: {
       projectDir: "/work",
       knownRepositories: ["repo-a", "repo-b", "api", "api-admin"],

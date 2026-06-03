@@ -97,6 +97,7 @@ describe("loadConfig", () => {
     const actual = await loadConfig();
 
     expect(actual.git).toStrictEqual({ remote: "origin", defaultBranch: "main" });
+    expect(actual.pullRequest).toStrictEqual({ draft: false });
     expect(actual.orchestrator).toStrictEqual({
       maximumInProgress: 4,
       pollIntervalMilliseconds: 120_000,
@@ -122,7 +123,7 @@ describe("loadConfig", () => {
     expect(actual.prompts.initial).toContain("There is no human watching this session");
     expect(actual.prompts.initial).toContain("Ticket description:\n\n{{description}}");
     expect(actual.prompts.initial).toMatch(/documented verification/i);
-    expect(actual.prompts.initial).toMatch(/open a PR/i);
+    expect(actual.prompts.initial).toContain("{{pullRequestInstruction}}");
     expect(actual.prompts.initial).toContain("{{workspaceContinuationInstruction}}");
     expect(actual.prompts.initial).not.toContain("tmux attach -t groundcrew:{{ticket}}");
   });
@@ -232,6 +233,71 @@ describe("loadConfig", () => {
     const { loadConfig } = await loadFreshConfig();
 
     await expect(loadConfig()).rejects.toThrow(/git\.branchPrefix must be a non-empty string/);
+  });
+
+  it("defaults pullRequest.draft to false when omitted", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      validConfigSource({ workspace: VALID_WORKSPACE(temporary) }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+
+    expect(actual.pullRequest.draft).toBe(false);
+  });
+
+  it("preserves an explicit pullRequest.draft value", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      validConfigSource({
+        workspace: VALID_WORKSPACE(temporary),
+        pullRequest: { draft: true },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+
+    expect(actual.pullRequest.draft).toBe(true);
+  });
+
+  it("rejects a non-boolean pullRequest.draft value", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      [
+        "export default {",
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        `  models: { definitions: { claude: {} } },`,
+        `  pullRequest: { draft: 'yes' },`,
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(/pullRequest\.draft must be a boolean/);
+  });
+
+  it("rejects a non-object pullRequest value", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      [
+        "export default {",
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        `  models: { definitions: { claude: {} } },`,
+        `  pullRequest: 'draft',`,
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(/pullRequest must be an object/);
   });
 
   it("rejects a `linear` config block with a migration message", async () => {

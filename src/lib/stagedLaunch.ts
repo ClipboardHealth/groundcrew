@@ -18,6 +18,7 @@ interface PromptTemplateVariables {
   title: string;
   description: string;
   workspaceContinuationInstruction: string;
+  pullRequestInstruction: string;
 }
 
 function renderPromptTemplate(template: string, variables: PromptTemplateVariables): string {
@@ -26,7 +27,8 @@ function renderPromptTemplate(template: string, variables: PromptTemplateVariabl
     .replaceAll("{{worktree}}", variables.worktree)
     .replaceAll("{{title}}", variables.title)
     .replaceAll("{{description}}", variables.description)
-    .replaceAll("{{workspaceContinuationInstruction}}", variables.workspaceContinuationInstruction);
+    .replaceAll("{{workspaceContinuationInstruction}}", variables.workspaceContinuationInstruction)
+    .replaceAll("{{pullRequestInstruction}}", variables.pullRequestInstruction);
 }
 
 export function stagePromptText(input: {

@@ -48,6 +48,7 @@ function makeConfig(
     sources: [],
     defaults: { hooks: {} },
     git: { remote: "origin", defaultBranch: "main" },
+    pullRequest: { draft: false },
     workspace: {
       projectDir: "/work",
       knownRepositories: ["repo-a"],

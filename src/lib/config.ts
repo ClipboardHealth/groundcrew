@@ -178,6 +178,20 @@ export interface Config {
      */
     branchPrefix?: string;
   };
+  /**
+   * Pull-request behavior for the PRs agents open. groundcrew never runs `gh`
+   * itself, so these settings shape the agent prompt rather than calling
+   * GitHub directly.
+   */
+  pullRequest?: {
+    /**
+     * When true, the agent is instructed to open its pull request as a draft
+     * (`gh pr create --draft`). Defaults to false (ready-for-review). Because
+     * this only changes the prompt instruction, custom `prompts.initial`
+     * templates must include `{{pullRequestInstruction}}` to honor it.
+     */
+    draft?: boolean;
+  };
   workspace: {
     projectDir: string;
     knownRepositories: string[];
@@ -244,6 +258,13 @@ export interface ResolvedConfig {
     defaultBranch: string;
     branchPrefix?: string;
   };
+  /**
+   * Resolved pull-request behavior. Always present — `draft` defaults to
+   * `false`.
+   */
+  pullRequest: {
+    draft: boolean;
+  };
   workspace: {
     projectDir: string;
     knownRepositories: string[];
@@ -296,6 +317,10 @@ export interface LoadedConfig {
 const DEFAULT_GIT: ResolvedConfig["git"] = {
   remote: "origin",
   defaultBranch: "main",
+};
+
+const DEFAULT_PULL_REQUEST: ResolvedConfig["pullRequest"] = {
+  draft: false,
 };
 
 const DEFAULT_ORCHESTRATOR: ResolvedConfig["orchestrator"] = {
@@ -359,7 +384,7 @@ const DEFAULT_PROMPT_INITIAL = [
   "1. Inspect the repo instructions and existing patterns before edits.",
   "2. Implement the smallest sensible change that completes the ticket.",
   "3. Run the repo's documented verification command. If no documented command exists, run the smallest relevant test suite you can find and fix failures you introduced before continuing.",
-  "4. Follow the ticket description for output. If no output instructions exist, open a PR with `Closes {{ticket}}` in the description. If you cannot open one, leave the branch ready and record the blocker.",
+  "4. Follow the ticket description for output. If no output instructions exist, {{pullRequestInstruction}} with `Closes {{ticket}}` in the description. If you cannot open one, leave the branch ready and record the blocker.",
 ].join("\n");
 
 const ALLOWED_PROMPT_PLACEHOLDERS = new Set([
@@ -368,6 +393,7 @@ const ALLOWED_PROMPT_PLACEHOLDERS = new Set([
   "{{title}}",
   "{{description}}",
   "{{workspaceContinuationInstruction}}",
+  "{{pullRequestInstruction}}",
 ]);
 const PROMPT_PLACEHOLDER_RE = /{{[^{}]*}}/g;
 
@@ -446,6 +472,27 @@ function normalizeBranchPrefix(value: unknown): string | undefined {
     );
   }
   return normalized;
+}
+
+function normalizeBoolean(value: unknown, configKey: string): boolean | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "boolean") {
+    fail(`${configKey} must be a boolean (got ${JSON.stringify(value)})`);
+  }
+  return value;
+}
+
+function normalizePullRequest(user: Config): ResolvedConfig["pullRequest"] {
+  const userPullRequest = (user as { pullRequest?: { draft?: unknown } }).pullRequest;
+  if (userPullRequest !== undefined && !isPlainObject(userPullRequest)) {
+    fail("pullRequest must be an object");
+  }
+  return {
+    draft:
+      normalizeBoolean(userPullRequest?.draft, "pullRequest.draft") ?? DEFAULT_PULL_REQUEST.draft,
+  };
 }
 
 function normalizeHookCommands(value: unknown, configKey: string): HookCommands {
@@ -824,6 +871,7 @@ function applyDefaults(user: Config): ResolvedConfig {
       ...user.git,
       ...(branchPrefix === undefined ? {} : { branchPrefix }),
     },
+    pullRequest: normalizePullRequest(user),
     workspace: {
       projectDir: expandHome(user.workspace.projectDir),
       knownRepositories: user.workspace.knownRepositories,

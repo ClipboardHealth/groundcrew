@@ -180,6 +180,7 @@ function makeConfig(overrides: Partial<ResolvedConfig["models"]> = {}): Resolved
     sources: [],
     defaults: { hooks: {} },
     git: { remote: "origin", defaultBranch: "main" },
+    pullRequest: { draft: false },
     workspace: {
       projectDir: "/work",
       knownRepositories: ["repo-a"],
@@ -650,6 +651,48 @@ describe(setupWorkspace, () => {
     });
 
     expect(writtenFileContent("/tmp/groundcrew-team-1-x/prompt.txt")).toBe("Before\n\nAfter");
+  });
+
+  it("renders a regular pull request instruction when pullRequest.draft is false", async () => {
+    const config = {
+      ...makeConfig(),
+      pullRequest: { draft: false },
+      prompts: {
+        initial: "Before\n{{pullRequestInstruction}}\nAfter",
+      },
+    };
+    mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
+
+    await setupWorkspace(config, {
+      ticket: "team-1",
+      repository: "repo-a",
+      model: "claude",
+      details: { title: "Test Title", description: "Body" },
+    });
+
+    const prompt = writtenFileContent("/tmp/groundcrew-team-1-x/prompt.txt");
+    expect(prompt).toBe("Before\nopen a PR\nAfter");
+  });
+
+  it("renders a draft pull request instruction when pullRequest.draft is true", async () => {
+    const config = {
+      ...makeConfig(),
+      pullRequest: { draft: true },
+      prompts: {
+        initial: "Before\n{{pullRequestInstruction}}\nAfter",
+      },
+    };
+    mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
+
+    await setupWorkspace(config, {
+      ticket: "team-1",
+      repository: "repo-a",
+      model: "claude",
+      details: { title: "Test Title", description: "Body" },
+    });
+
+    const prompt = writtenFileContent("/tmp/groundcrew-team-1-x/prompt.txt");
+    expect(prompt).toBe("Before\nopen a draft PR (`gh pr create --draft`)\nAfter");
   });
 
   it("wraps the agent command with Safehouse and runs the default prepareWorktree hook", async () => {

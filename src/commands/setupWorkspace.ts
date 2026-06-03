@@ -57,6 +57,7 @@ function stagePrompt(input: {
       title: input.ticketDetails.title,
       description: input.ticketDetails.description,
       workspaceContinuationInstruction: input.workspaceContinuationInstruction,
+      pullRequestInstruction: renderPullRequestInstruction(input.config.pullRequest.draft),
     },
   });
 }
@@ -292,6 +293,13 @@ function renderWorkspaceContinuationInstruction(
     return "";
   }
   return `Include this workspace continuation note in the output: Workspace attach: \`${accessHint.command}\`.`;
+}
+
+// Returns the verb phrase the default prompt's step 4 splices in for opening a
+// PR — `{{pullRequestInstruction}} with \`Closes {{ticket}}\` ...`. Plain text
+// (no markdown) since it is sent to the agent verbatim.
+function renderPullRequestInstruction(draft: boolean): string {
+  return draft ? "open a draft PR (`gh pr create --draft`)" : "open a PR";
 }
 
 function recordRunStateBestEffort(arguments_: {
