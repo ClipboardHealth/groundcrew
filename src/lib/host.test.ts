@@ -40,8 +40,8 @@ describe(detectHostCapabilities, () => {
     Object.defineProperty(process, "platform", { value: originalPlatform });
   });
 
-  it("reports safehouse, sbx, cmux, and tmux as present when all are on PATH", async () => {
-    mockWhich(["safehouse", "sbx", "cmux", "tmux"]);
+  it("reports safehouse, sbx, cmux, tmux, and the srt Linux deps as present when all are on PATH", async () => {
+    mockWhich(["safehouse", "sbx", "cmux", "tmux", "bwrap", "socat", "rg"]);
 
     const actual = await detectHostCapabilities();
 
@@ -49,6 +49,9 @@ describe(detectHostCapabilities, () => {
     expect(actual.hasSbx).toBe(true);
     expect(actual.hasCmux).toBe(true);
     expect(actual.hasTmux).toBe(true);
+    expect(actual.hasBubblewrap).toBe(true);
+    expect(actual.hasSocat).toBe(true);
+    expect(actual.hasRipgrep).toBe(true);
   });
 
   it("reports every probed binary as missing when which throws", async () => {
@@ -60,6 +63,9 @@ describe(detectHostCapabilities, () => {
     expect(actual.hasSbx).toBe(false);
     expect(actual.hasCmux).toBe(false);
     expect(actual.hasTmux).toBe(false);
+    expect(actual.hasBubblewrap).toBe(false);
+    expect(actual.hasSocat).toBe(false);
+    expect(actual.hasRipgrep).toBe(false);
   });
 
   it("derives isMacOS, isLinux, and isSdxSupported from process.platform", async () => {
@@ -67,19 +73,21 @@ describe(detectHostCapabilities, () => {
 
     const actual = await detectHostCapabilities();
 
-    const sdxPlatforms = new Set(["darwin", "linux"]);
+    const dualPlatforms = new Set(["darwin", "linux"]);
     expect({
       isMacOS: actual.isMacOS,
       isLinux: actual.isLinux,
       isSdxSupported: actual.isSdxSupported,
+      isSrtSupported: actual.isSrtSupported,
     }).toStrictEqual({
       isMacOS: platform === "darwin",
       isLinux: platform === "linux",
-      isSdxSupported: sdxPlatforms.has(platform),
+      isSdxSupported: dualPlatforms.has(platform),
+      isSrtSupported: dualPlatforms.has(platform),
     });
   });
 
-  it("flags isLinux and isSdxSupported when process.platform is linux", async () => {
+  it("flags isLinux, isSdxSupported, and isSrtSupported when process.platform is linux", async () => {
     mockWhich([]);
     Object.defineProperty(process, "platform", { value: "linux" });
 
@@ -88,10 +96,11 @@ describe(detectHostCapabilities, () => {
     expect(actual.isMacOS).toBe(false);
     expect(actual.isLinux).toBe(true);
     expect(actual.isSdxSupported).toBe(true);
+    expect(actual.isSrtSupported).toBe(true);
     expect(actual.isSafehouseSupported).toBe(false);
   });
 
-  it("clears isSdxSupported when process.platform is neither macOS nor linux", async () => {
+  it("clears isSdxSupported and isSrtSupported when process.platform is neither macOS nor linux", async () => {
     mockWhich([]);
     Object.defineProperty(process, "platform", { value: "win32" });
 
@@ -100,6 +109,7 @@ describe(detectHostCapabilities, () => {
     expect(actual.isMacOS).toBe(false);
     expect(actual.isLinux).toBe(false);
     expect(actual.isSdxSupported).toBe(false);
+    expect(actual.isSrtSupported).toBe(false);
   });
 
   it("reports a binary missing when which returns whitespace only", async () => {

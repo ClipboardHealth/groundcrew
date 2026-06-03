@@ -1,19 +1,23 @@
 import { rmSync } from "node:fs";
-import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
+import path from "node:path";
+import { loadConfig, type ModelDefinition, type ResolvedConfig } from "../lib/config.ts";
 import { openAgentWorkspace, prepareAgentLaunch } from "../lib/agentLaunch.ts";
 import { type Board, createBoard } from "../lib/board.ts";
 import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
-import { buildLaunchCommand } from "../lib/launchCommand.ts";
+import { collectAllowedDomains } from "../lib/clearanceHosts.ts";
+import { buildLaunchCommand, inferAgentCommandName } from "../lib/launchCommand.ts";
 import { resolvePrepareWorktreeCommand } from "../lib/repositoryHooks.ts";
 import { recordRunState } from "../lib/runState.ts";
+import { buildSrtSettings } from "../lib/srtPolicy.ts";
 import {
   stageBuildSecrets,
   stagePromptFromTemplate,
+  stageSrtSettings,
   stageWorkspaceLaunchCommand,
   type StagedPrompt,
 } from "../lib/stagedLaunch.ts";
 import { naturalIdFromCanonical } from "../lib/ticketSource.ts";
-import { debug, errorMessage, log, okMark } from "../lib/util.ts";
+import { debug, errorMessage, log, okMark, readEnvironmentVariable } from "../lib/util.ts";
 import { type WorkspaceAccessHint, workspaces } from "../lib/workspaces.ts";
 import { isWorktreeAlreadyExistsError, type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 
@@ -54,6 +58,33 @@ function stagePrompt(input: {
       workspaceContinuationInstruction: input.workspaceContinuationInstruction,
     },
   });
+}
+
+/**
+ * Generate the srt policy for this launch and stage it to a temp settings file.
+ * The agent identity comes from the model `cmd`; the git common dir is the
+ * parent clone's `.git` (the worktree lives beside it); the egress allowlist is
+ * translated from the existing clearance env so srt and safehouse share one
+ * source of truth. Only called when `local.runner` resolves to `srt`.
+ */
+function buildAndStageSrtSettings(input: {
+  config: ResolvedConfig;
+  repository: string;
+  ticket: string;
+  worktreeDir: string;
+  definition: ModelDefinition;
+}): StagedPrompt {
+  const repoDir = path.resolve(input.config.workspace.projectDir, input.repository);
+  const settings = buildSrtSettings({
+    worktreeDir: input.worktreeDir,
+    gitCommonDir: path.join(repoDir, ".git"),
+    agent: inferAgentCommandName(input.definition.cmd),
+    allowedDomains: collectAllowedDomains({
+      hosts: readEnvironmentVariable("CLEARANCE_ALLOW_HOSTS"),
+      files: readEnvironmentVariable("CLEARANCE_ALLOW_HOSTS_FILES"),
+    }),
+  });
+  return stageSrtSettings(input.ticket, settings);
 }
 
 export async function setupWorkspace(
@@ -99,6 +130,7 @@ export async function setupWorkspace(
   // Without rollback the next tick hits "Worktree already exists" and
   // the ticket strands forever.
   let promptDir: string | undefined;
+  let srtSettingsDir: string | undefined;
   try {
     await assertLaunchReady(readinessPromise);
 
@@ -120,6 +152,18 @@ export async function setupWorkspace(
     });
     const secretsFile =
       prepareWorktreeCommand === undefined ? undefined : stageBuildSecrets(promptDir);
+    let srtSettingsFile: string | undefined;
+    if (runner === "srt") {
+      const staged = buildAndStageSrtSettings({
+        config,
+        repository,
+        ticket,
+        worktreeDir: launchDir,
+        definition,
+      });
+      srtSettingsFile = staged.file;
+      srtSettingsDir = staged.directory;
+    }
     const launchCommand = buildLaunchCommand({
       definition,
       promptFile: stagedPrompt.file,
@@ -128,6 +172,8 @@ export async function setupWorkspace(
       prepareWorktreeCommand,
       runner,
       sandboxName,
+      srtSettingsFile,
+      srtSettingsDir,
     });
     const launchCmd = stageWorkspaceLaunchCommand(promptDir, launchCommand);
 
@@ -161,7 +207,7 @@ export async function setupWorkspace(
       logAccessHint(accessHint);
     }
   } catch (error) {
-    await rollbackWorktree({ config, entry: created, promptDir });
+    await rollbackWorktree({ config, entry: created, promptDir, srtSettingsDir });
     recordRunStateBestEffort({
       config,
       ticket,
@@ -275,6 +321,7 @@ async function rollbackWorktree(arguments_: {
   config: ResolvedConfig;
   entry: WorktreeEntry;
   promptDir: string | undefined;
+  srtSettingsDir?: string | undefined;
 }): Promise<void> {
   log(
     `Setup failed; rolling back worktree ${arguments_.entry.repository}-${arguments_.entry.ticket}...`,
@@ -285,11 +332,15 @@ async function rollbackWorktree(arguments_: {
   } catch (error) {
     log(`Worktree teardown failed during rollback: ${errorMessage(error)}`);
   } finally {
-    if (arguments_.promptDir !== undefined) {
-      try {
-        rmSync(arguments_.promptDir, { recursive: true, force: true });
-      } catch {
-        // The launch command would have removed this; silent on retry races.
+    // Both temp dirs are normally removed by the launch command; clean them
+    // here for the pre-launch failure path. Silent on retry races.
+    for (const dir of [arguments_.promptDir, arguments_.srtSettingsDir]) {
+      if (dir !== undefined) {
+        try {
+          rmSync(dir, { recursive: true, force: true });
+        } catch {
+          // already gone
+        }
       }
     }
   }

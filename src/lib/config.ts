@@ -51,23 +51,26 @@ export const WORKSPACE_KIND_SETTINGS: readonly WorkspaceKindSetting[] = [
 
 /**
  * Concrete local isolation backend selected for a launch. `safehouse` is
- * macOS-only (clearance HTTP-egress + sandbox profile); `sdx` is Docker
- * Sandboxes (`sbx` CLI) — works on Linux and macOS and is the only known
- * option that lets the agent use Docker safely without exposing the host
- * socket; `none` is an explicit unsandboxed escape hatch.
+ * macOS-only (clearance HTTP-egress + sandbox profile); `srt` is Anthropic's
+ * sandbox-runtime (macOS `sandbox-exec` + Linux `bubblewrap`, with a built-in
+ * network allowlist) — a fast, non-Docker option on both macOS and Linux/WSL;
+ * `sdx` is Docker Sandboxes (`sbx` CLI) — works on Linux and macOS and is the
+ * only known option that lets the agent use Docker safely without exposing the
+ * host socket; `none` is an explicit unsandboxed escape hatch.
  */
-export type LocalRunner = "safehouse" | "sdx" | "none";
+export type LocalRunner = "safehouse" | "srt" | "sdx" | "none";
 
 /**
  * User-facing local runner setting. `auto` resolves at launch time:
- * macOS picks `safehouse`, Linux picks `sdx`. `none` is never picked
- * implicitly.
+ * macOS picks `safehouse`, Linux picks `sdx`. `srt` and `none` are never
+ * picked implicitly — both are opt-in via an explicit `local.runner`.
  */
 export type LocalRunnerSetting = LocalRunner | "auto";
 
 export const LOCAL_RUNNER_SETTINGS: readonly LocalRunnerSetting[] = [
   "auto",
   "safehouse",
+  "srt",
   "sdx",
   "none",
 ] as const;

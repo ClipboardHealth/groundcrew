@@ -68,6 +68,7 @@
     "verify": "node scripts/verifyAll.mts"
   },
   "dependencies": {
+    "@anthropic-ai/sandbox-runtime": "0.0.52",
     "@clipboard-health/clearance": "1.1.13",
     "@linear/sdk": "86.0.0",
     "cosmiconfig": "9.0.1",

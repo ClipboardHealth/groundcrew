@@ -152,9 +152,13 @@ function host(overrides: Partial<HostCapabilities> = {}): HostCapabilities {
     hasSbx: false,
     hasCmux: true,
     hasTmux: false,
+    hasBubblewrap: false,
+    hasSocat: false,
+    hasRipgrep: false,
     isMacOS: true,
     isLinux: false,
     isSafehouseSupported: true,
+    isSrtSupported: true,
     isSdxSupported: true,
     ...overrides,
   };
@@ -447,6 +451,29 @@ describe(setupWorkspace, () => {
     expect(command).not.toContain("prompt.txt");
     expect(launchScript).toContain("safehouse-clearance");
     expect(launchScript).toContain("_p=$(cat '/tmp/groundcrew-team-1-x/prompt.txt')");
+  });
+
+  it("stages an srt settings file and wraps the agent with `srt --settings` when runner=srt", async () => {
+    const config = makeConfig();
+    config.local = { runner: "srt" };
+    mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
+
+    await setupWorkspace(config, {
+      ticket: "team-1",
+      repository: "repo-a",
+      model: "claude",
+      details: { title: "Test Title", description: "Body" },
+    });
+
+    const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
+    const settingsJson = writtenFileContent("/tmp/groundcrew-team-1-x/settings.json");
+
+    expect(launchScript).toContain("--settings '/tmp/groundcrew-team-1-x/settings.json'");
+    expect(launchScript).toMatch(/sandbox-runtime\/dist\/cli\.js/);
+    expect(launchScript).toContain(`exec claude --auto "$@"`);
+    expect(launchScript).not.toContain("safehouse-clearance");
+    expect(settingsJson).toContain(`"denyRead"`);
+    expect(settingsJson).toContain(`"allowPty": true`);
   });
 
   it("passes an AbortSignal into worktree creation and workspace launch", async () => {

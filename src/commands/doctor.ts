@@ -280,6 +280,22 @@ function localCapabilityCheck(host: HostCapabilities, resolved: LocalRunner): Ch
         : "sdx runner requires `sbx` (Docker Sandboxes) on PATH (install from https://docs.docker.com/ai/sandboxes/)",
     };
   }
+  if (resolved === "srt") {
+    const missingLinuxDeps = host.isLinux
+      ? [
+          host.hasBubblewrap ? undefined : "bubblewrap",
+          host.hasSocat ? undefined : "socat",
+          host.hasRipgrep ? undefined : "ripgrep (rg)",
+        ].filter((name): name is string => name !== undefined)
+      : [];
+    const ok = host.isSrtSupported && missingLinuxDeps.length === 0;
+    return {
+      name: "local runner (srt)",
+      ok,
+      required: false,
+      hint: srtRunnerHint(ok, host.isSrtSupported, missingLinuxDeps),
+    };
+  }
   // resolved === "none"
   return {
     name: "local runner (none)",
@@ -287,6 +303,20 @@ function localCapabilityCheck(host: HostCapabilities, resolved: LocalRunner): Ch
     required: false,
     hint: "WARNING: local.runner='none' — agent runs unsandboxed on the host. Only use this when you understand the implications.",
   };
+}
+
+function srtRunnerHint(
+  ok: boolean,
+  isSrtSupported: boolean,
+  missingLinuxDeps: readonly string[],
+): string {
+  if (ok) {
+    return "ready (beta: @anthropic-ai/sandbox-runtime is a research preview)";
+  }
+  if (!isSrtSupported) {
+    return "srt runner requires macOS or Linux/WSL";
+  }
+  return `srt runner on Linux requires ${missingLinuxDeps.join(", ")} on PATH (Debian/Ubuntu: \`apt install bubblewrap socat ripgrep\`; on Ubuntu 24.04+ also \`sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0\`)`;
 }
 
 function reportLocalCapability(arguments_: {

@@ -4,7 +4,12 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { BUILD_SECRET_NAMES, type ModelDefinition } from "./config.ts";
-import { buildLaunchCommand, resolveSafehouseClearancePath } from "./launchCommand.ts";
+import {
+  buildLaunchCommand,
+  resolveSafehouseClearancePath,
+  resolveSrtBinPath,
+  srtBinEntry,
+} from "./launchCommand.ts";
 
 function arguments_(
   overrides: Partial<Parameters<typeof buildLaunchCommand>[0]> = {},
@@ -33,6 +38,105 @@ describe(resolveSafehouseClearancePath, () => {
     expect(() => resolveSafehouseClearancePath("relative/path/that/createRequire/rejects")).toThrow(
       /@clipboard-health\/clearance.*groundcrew/,
     );
+  });
+});
+
+describe(resolveSrtBinPath, () => {
+  it("resolves through Node module resolution to the real srt cli entry point", () => {
+    const binPath = resolveSrtBinPath();
+
+    expect(binPath).toMatch(/sandbox-runtime\/dist\/cli\.js$/);
+    expect(statSync(binPath).isFile()).toBe(true);
+  });
+
+  it("wraps resolution failure in a guidance error naming sandbox-runtime", () => {
+    expect(() => resolveSrtBinPath("relative/path/that/createRequire/rejects")).toThrow(
+      /@anthropic-ai\/sandbox-runtime/,
+    );
+  });
+});
+
+describe(srtBinEntry, () => {
+  it("reads the `srt` entry from a name→path bin map", () => {
+    expect(srtBinEntry({ bin: { srt: "dist/cli.js" } })).toBe("dist/cli.js");
+  });
+
+  it("accepts a bare string bin (single-bin packages)", () => {
+    expect(srtBinEntry({ bin: "dist/cli.js" })).toBe("dist/cli.js");
+  });
+
+  it("throws when no srt bin entry is present", () => {
+    expect(() => srtBinEntry({})).toThrow(/missing the `srt` bin entry/);
+    expect(() => srtBinEntry({ bin: { other: "x" } })).toThrow(/missing the `srt` bin entry/);
+  });
+});
+
+describe(`${buildLaunchCommand.name} (runner='srt')`, () => {
+  function srtArguments(
+    overrides: Partial<Parameters<typeof buildLaunchCommand>[0]> = {},
+  ): Parameters<typeof buildLaunchCommand>[0] {
+    return arguments_({
+      runner: "srt",
+      srtSettingsFile: "/tmp/groundcrew-srt-team-1/settings.json",
+      srtSettingsDir: "/tmp/groundcrew-srt-team-1",
+      ...overrides,
+    });
+  }
+
+  it("wraps both the prepareWorktree hook and the agent with `srt --settings`, no safehouse shim", () => {
+    const out = buildLaunchCommand(srtArguments({ prepareWorktreeCommand: "npm ci" }));
+
+    const settingsFlag = "--settings '/tmp/groundcrew-srt-team-1/settings.json'";
+    const prepareWrapIndex = out.indexOf(`${settingsFlag} sh -c`);
+    const setupIndex = out.indexOf("npm ci");
+    const agentIndex = out.indexOf(`exec claude "$@"`);
+
+    expect(out).toMatch(/sandbox-runtime\/dist\/cli\.js' --settings/);
+    expect(out).toContain("cd '/work/repo-a-team-1'");
+    expect(out).toContain("_p=$(cat '/tmp/prompt-team-1/prompt.txt')");
+    expect(out).toContain("rm -rf '/tmp/prompt-team-1'");
+    expect(out).toContain(`${settingsFlag} sh -c 'exec claude "$@"' sh "$_p"`);
+    expect(out).not.toContain("safehouse-clearance");
+    expect(out).not.toContain("_safehouse_shim");
+    expect(prepareWrapIndex).toBeGreaterThan(-1);
+    expect(setupIndex).toBeGreaterThan(prepareWrapIndex);
+    expect(agentIndex).toBeGreaterThan(setupIndex);
+  });
+
+  it("tears down the settings dir after the agent exits and traps both temp dirs", () => {
+    const out = buildLaunchCommand(srtArguments());
+
+    expect(out).toContain(
+      String.raw`trap 'rm -rf '\''/tmp/groundcrew-srt-team-1'\''; rm -rf '\''/tmp/prompt-team-1'\''' EXIT`,
+    );
+    expect(out).toContain(`sh "$_p"; _srt_status=$?; rm -rf '/tmp/groundcrew-srt-team-1'`);
+    expect(out).toContain('trap - EXIT; exit "$_srt_status"');
+  });
+
+  it("requires the staged settings file and dir", () => {
+    expect(() =>
+      buildLaunchCommand(arguments_({ runner: "srt", srtSettingsFile: undefined })),
+    ).toThrow(/requires srtSettingsFile and srtSettingsDir/);
+  });
+
+  it("supports preLaunch and preLaunchEnv (unlike sdx)", () => {
+    const out = buildLaunchCommand(
+      srtArguments({
+        definition: {
+          cmd: "claude",
+          color: "#fff",
+          preLaunch: "export TOKEN=abc",
+          preLaunchEnv: ["TOKEN"],
+        },
+        secretsFile: "/tmp/prompt-team-1/secrets.env",
+      }),
+    );
+
+    const preLaunchIndex = out.indexOf("export TOKEN=abc");
+    const sourceIndex = out.indexOf("secrets.env");
+    expect(out).toContain(`unset ${BUILD_SECRET_NAMES.join(" ")} TOKEN`);
+    expect(preLaunchIndex).toBeGreaterThan(-1);
+    expect(sourceIndex).toBeGreaterThan(preLaunchIndex);
   });
 });
 
@@ -169,7 +273,7 @@ describe(buildLaunchCommand, () => {
           definition: { cmd: "env ANTHROPIC_MODEL=sonnet", color: "#fff" },
         }),
       ),
-    ).toThrow(/Cannot infer Safehouse agent profile command/);
+    ).toThrow(/Cannot infer the agent command/);
 
     expect(() =>
       buildLaunchCommand(
@@ -177,7 +281,7 @@ describe(buildLaunchCommand, () => {
           definition: { cmd: "   ", color: "#fff" },
         }),
       ),
-    ).toThrow(/Cannot infer Safehouse agent profile command/);
+    ).toThrow(/Cannot infer the agent command/);
   });
 
   it("rejects unsafe inferred Safehouse profile command names", () => {
@@ -187,7 +291,7 @@ describe(buildLaunchCommand, () => {
           definition: { cmd: String.raw`claude\ code --permission-mode auto`, color: "#fff" },
         }),
       ),
-    ).toThrow(/Cannot use "claude code" as a Safehouse agent profile command name/);
+    ).toThrow(/Cannot use "claude code" as an agent command name/);
   });
 
   it("does not double-wrap when cmd already starts with safehouse", () => {

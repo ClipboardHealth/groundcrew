@@ -56,9 +56,13 @@ function makeHost(overrides: Partial<HostCapabilities> = {}): HostCapabilities {
     hasSbx: false,
     hasCmux: true,
     hasTmux: false,
+    hasBubblewrap: false,
+    hasSocat: false,
+    hasRipgrep: false,
     isMacOS: true,
     isLinux: false,
     isSafehouseSupported: true,
+    isSrtSupported: true,
     isSdxSupported: true,
     ...overrides,
   };

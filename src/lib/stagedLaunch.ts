@@ -1,3 +1,4 @@
+import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -72,6 +73,18 @@ export function stageBuildSecrets(promptDir: string): string | undefined {
   const secretsFile = path.join(promptDir, "secrets.env");
   writeFileSync(secretsFile, `${lines.join("\n")}\n`, { mode: 0o600 });
   return secretsFile;
+}
+
+/**
+ * Stage the generated srt settings JSON in its own temp dir, separate from the
+ * prompt dir (which the launch command wipes before the agent execs). The
+ * launch command tears this dir down after srt exits.
+ */
+export function stageSrtSettings(ticket: string, settings: SandboxRuntimeConfig): StagedPrompt {
+  const directory = mkdtempSync(path.join(tmpdir(), `groundcrew-srt-${ticket}-`));
+  const file = path.join(directory, "settings.json");
+  writeFileSync(file, `${JSON.stringify(settings, undefined, 2)}\n`);
+  return { directory, file };
 }
 
 function stageLaunchScript(promptDir: string, command: string): string {

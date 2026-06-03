@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 
@@ -38,6 +39,58 @@ export function resolveSafehouseClearancePath(baseUrl: string = import.meta.url)
 }
 
 const SAFEHOUSE_CLEARANCE_WRAPPER_PATH = resolveSafehouseClearancePath();
+
+/**
+ * Resolve the `srt` CLI shipped by `@anthropic-ai/sandbox-runtime` (a pinned
+ * groundcrew dependency) via Node's module resolution, reading the package's
+ * `bin` field so the path survives version bumps that move the entry point.
+ * The resolved `dist/cli.js` carries a `#!/usr/bin/env node` shebang and npm
+ * marks it executable, so it is exec'd directly like the safehouse wrapper.
+ *
+ * @param baseUrl - **Test-only seam.** Production callers must omit this so the
+ *   helper resolves from this module's URL. Tests pass an invalid value to
+ *   exercise the catch branch.
+ */
+export function resolveSrtBinPath(baseUrl: string = import.meta.url): string {
+  let packageJsonPath: string;
+  try {
+    packageJsonPath = createRequire(baseUrl).resolve("@anthropic-ai/sandbox-runtime/package.json");
+  } catch (error) {
+    throw new Error(
+      "@anthropic-ai/sandbox-runtime is required by @clipboard-health/groundcrew for the srt runner but could not be resolved. " +
+        "Reinstall groundcrew's dependencies (`npm install`), or set local.runner to 'safehouse' or 'sdx'.",
+      { cause: error },
+    );
+  }
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- reading our pinned dependency's well-known `bin` field
+  const manifest = JSON.parse(readFileSync(packageJsonPath, "utf8")) as {
+    bin?: string | Record<string, string>;
+  };
+  return path.resolve(path.dirname(packageJsonPath), srtBinEntry(manifest));
+}
+
+/**
+ * Extract the `srt` entry from a package manifest's `bin` field, which npm
+ * allows as either a bare string (single-bin packages) or a name→path map.
+ */
+export function srtBinEntry(manifest: { bin?: string | Record<string, string> }): string {
+  const binEntry = typeof manifest.bin === "string" ? manifest.bin : manifest.bin?.["srt"];
+  if (binEntry === undefined) {
+    throw new Error("@anthropic-ai/sandbox-runtime package.json is missing the `srt` bin entry.");
+  }
+  return binEntry;
+}
+
+/**
+ * Lazily resolved + memoized srt bin path. Unlike the safehouse wrapper (eager
+ * at module load), this defers the `package.json` read until an srt launch is
+ * actually built — srt is opt-in, so non-srt runs never pay for it.
+ */
+let srtBinPathCache: string | undefined;
+function srtBinPath(): string {
+  srtBinPathCache ??= resolveSrtBinPath();
+  return srtBinPathCache;
+}
 
 function renderAgentCommand(arguments_: {
   agentCmd: string;
@@ -126,6 +179,57 @@ function preLaunchPromptAndExec(arguments_: {
   return lines;
 }
 
+/**
+ * Shared by the safehouse, srt, and sdx builders: render the `exec <agent> "$@"`
+ * inner command and the optional status-reported prepareWorktree hook. The
+ * `{{sandbox}}` template is filled from `sandboxName` (empty for safehouse/srt).
+ */
+function renderPrepareAndAgentCommand(arguments_: LaunchCommandArguments): {
+  agentCommand: string;
+  prepareWorktreeCommand: string | undefined;
+} {
+  const agentCmd = renderAgentCommand({
+    agentCmd: arguments_.definition.cmd,
+    worktreeDir: arguments_.worktreeDir,
+    sandboxName: arguments_.sandboxName ?? "",
+  });
+  return {
+    agentCommand: `exec ${agentCmd} "$@"`,
+    prepareWorktreeCommand:
+      arguments_.prepareWorktreeCommand === undefined
+        ? undefined
+        : prepareWorktreeWithStatusReporting(arguments_.prepareWorktreeCommand),
+  };
+}
+
+/**
+ * Shared host-shell prologue for the in-sandbox runners (safehouse, srt): when a
+ * `preLaunch` hook is present, scrub build-secret and `preLaunchEnv` names so it
+ * cannot see them; then source build secrets, read the staged prompt into `$_p`,
+ * and wipe the prompt dir. The caller arms the EXIT trap and `cd`s first.
+ */
+function hostPreLaunchSourceAndReadPrompt(arguments_: {
+  definition: ModelDefinition;
+  worktreeDir: string;
+  promptFile: string;
+  promptDir: string;
+  secretsFile: string | undefined;
+}): string[] {
+  const lines: string[] = [];
+  if (arguments_.definition.preLaunch !== undefined) {
+    lines.push(
+      unsetEnvironmentLine([...BUILD_SECRET_NAMES, ...(arguments_.definition.preLaunchEnv ?? [])]),
+      renderPreLaunch(arguments_.definition.preLaunch, arguments_.worktreeDir),
+    );
+  }
+  lines.push(
+    ...hostSourceSecrets(arguments_.secretsFile),
+    `_p=$(cat ${shellSingleQuote(arguments_.promptFile)})`,
+    `rm -rf ${shellSingleQuote(arguments_.promptDir)}`,
+  );
+  return lines;
+}
+
 function tokenizeShellPrefix(command: string): string[] {
   const tokens: string[] = [];
   let current = "";
@@ -172,7 +276,12 @@ function isEnvironmentAssignment(token: string): boolean {
   return /^[A-Za-z_][A-Za-z0-9_]*=/.test(token);
 }
 
-function safehouseProfileCommandName(agentCmd: string): string {
+/**
+ * Infer the agent's command basename from a model `cmd` (skipping a leading
+ * `env`/`KEY=val` prefix). Safehouse uses it to pick the matching `.sb`
+ * profile; srt uses it to pick the agent's credential profile in `srtPolicy`.
+ */
+export function inferAgentCommandName(agentCmd: string): string {
   const tokens = tokenizeShellPrefix(agentCmd);
   let tokenIndex = tokens[0] === "env" ? 1 : 0;
   if (tokens[0] === "env" && tokens[tokenIndex] === "--") {
@@ -187,9 +296,7 @@ function safehouseProfileCommandName(agentCmd: string): string {
     break;
   }
   if (commandToken === undefined) {
-    throw new Error(
-      `Cannot infer Safehouse agent profile command from model cmd ${JSON.stringify(agentCmd)}.`,
-    );
+    throw new Error(`Cannot infer the agent command from model cmd ${JSON.stringify(agentCmd)}.`);
   }
 
   const commandName = path.basename(commandToken);
@@ -200,7 +307,7 @@ function safehouseProfileCommandName(agentCmd: string): string {
     !/^[A-Za-z0-9._-]+$/.test(commandName)
   ) {
     throw new Error(
-      `Cannot use ${JSON.stringify(commandName)} as a Safehouse agent profile command name inferred from model cmd ${JSON.stringify(agentCmd)}.`,
+      `Cannot use ${JSON.stringify(commandName)} as an agent command name inferred from model cmd ${JSON.stringify(agentCmd)}.`,
     );
   }
   return commandName;
@@ -237,6 +344,18 @@ interface LaunchCommandArguments {
    * on one host and sdx on another without config edits.
    */
   sandboxName?: string | undefined;
+  /**
+   * Absolute path to the generated srt settings JSON. Required when
+   * `runner === "srt"`. Staged by the caller in a dedicated temp dir
+   * (`srtSettingsDir`) that must outlive the agent process — never inside
+   * the prompt dir, which is wiped before the agent execs.
+   */
+  srtSettingsFile?: string | undefined;
+  /**
+   * Absolute temp dir holding the srt settings file. Required when
+   * `runner === "srt"`; torn down by the launch command after srt exits.
+   */
+  srtSettingsDir?: string | undefined;
 }
 
 /**
@@ -248,6 +367,9 @@ interface LaunchCommandArguments {
  * prompt in hand.
  */
 export function buildLaunchCommand(arguments_: LaunchCommandArguments): string {
+  if (arguments_.runner === "srt") {
+    return buildSrtLaunchCommand(arguments_);
+  }
   if (arguments_.runner === "sdx") {
     if (arguments_.definition.preLaunch !== undefined) {
       throw new Error(
@@ -357,18 +479,8 @@ function buildUnwrappedHostLaunchCommand(arguments_: LaunchCommandArguments): st
  */
 function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string {
   const promptDir = path.dirname(arguments_.promptFile);
-  const safehouseCommandName = safehouseProfileCommandName(arguments_.definition.cmd);
-  const agentCmd = renderAgentCommand({
-    agentCmd: arguments_.definition.cmd,
-    worktreeDir: arguments_.worktreeDir,
-    sandboxName: "",
-  });
-
-  const prepareWorktreeCommand =
-    arguments_.prepareWorktreeCommand === undefined
-      ? undefined
-      : prepareWorktreeWithStatusReporting(arguments_.prepareWorktreeCommand);
-  const agentCommand = `exec ${agentCmd} "$@"`;
+  const safehouseCommandName = inferAgentCommandName(arguments_.definition.cmd);
+  const { agentCommand, prepareWorktreeCommand } = renderPrepareAndAgentCommand(arguments_);
 
   // Split --env-pass per wrap: the prepareWorktree wrap only needs build secrets (so
   // `npm install` etc. can authenticate); the agent wrap only needs the
@@ -391,19 +503,17 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
   const shimAndPromptTrap = `trap ${shellSingleQuote(shimAndPromptCleanup)} EXIT`;
 
   const lines = hostTrapAndCd({ worktreeDir: arguments_.worktreeDir, promptDir });
-  if (arguments_.definition.preLaunch !== undefined) {
-    // Scrub inherited env before preLaunch runs. `stageBuildSecrets` copies
-    // build secrets out of `process.env`, and the launch shell inherits that
-    // env, so source-after-preLaunch is not enough by itself. Clearing
-    // preLaunchEnv names here also prevents stale same-named ambient values
-    // from being forwarded if the hook forgets to overwrite them.
-    lines.push(unsetEnvironmentLine([...BUILD_SECRET_NAMES, ...preLaunchEnvNames]));
-    lines.push(renderPreLaunch(arguments_.definition.preLaunch, arguments_.worktreeDir));
-  }
+  // Scrub inherited env before preLaunch (build secrets are copied out of
+  // `process.env`, which the launch shell inherits), then source secrets and
+  // read the staged prompt. See `hostPreLaunchSourceAndReadPrompt`.
   lines.push(
-    ...hostSourceSecrets(arguments_.secretsFile),
-    `_p=$(cat ${shellSingleQuote(arguments_.promptFile)})`,
-    `rm -rf ${shellSingleQuote(promptDir)}`,
+    ...hostPreLaunchSourceAndReadPrompt({
+      definition: arguments_.definition,
+      worktreeDir: arguments_.worktreeDir,
+      promptFile: arguments_.promptFile,
+      promptDir,
+      secretsFile: arguments_.secretsFile,
+    }),
   );
   if (prepareWorktreeCommand !== undefined) {
     lines.push(
@@ -427,6 +537,61 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
   return lines.join(" && ");
 }
 
+/**
+ * srt launch. Two srt wraps mirror the safehouse two-wrap design, so the
+ * dependency/build phase is sandboxed too — not just the agent:
+ *
+ *   1. **prepareWorktree wrap**: `srt --settings <file> sh -c '<hook>'`.
+ *   2. **Agent wrap**: `srt --settings <file> sh -c 'exec <agent> "$@"' sh "$_p"`.
+ *
+ * Unlike safehouse there is no profile-by-basename selection, so no symlink
+ * shim is needed — srt takes the policy as an explicit `--settings` file. srt
+ * inherits the launch shell's env (it injects only the proxy vars), so the
+ * existing source-secrets → `unset` scaffolding scrubs build secrets between
+ * the two wraps exactly as it does for safehouse, and `preLaunchEnv` flows in
+ * as ordinary inherited env.
+ *
+ * The settings file lives in `srtSettingsDir` (a dedicated temp dir, never the
+ * prompt dir, which is wiped before the agent execs). The EXIT trap covers both
+ * the settings dir and the prompt dir for every failure window; the happy path
+ * removes the prompt dir before the agent wrap and the settings dir after it.
+ */
+function buildSrtLaunchCommand(arguments_: LaunchCommandArguments): string {
+  if (arguments_.srtSettingsFile === undefined || arguments_.srtSettingsDir === undefined) {
+    throw new Error(
+      "buildLaunchCommand: runner='srt' requires srtSettingsFile and srtSettingsDir (generate them with buildSrtSettings + stageSrtSettings before calling).",
+    );
+  }
+  const promptDir = path.dirname(arguments_.promptFile);
+  const { agentCommand, prepareWorktreeCommand } = renderPrepareAndAgentCommand(arguments_);
+  const srtWrap = `${shellSingleQuote(srtBinPath())} --settings ${shellSingleQuote(arguments_.srtSettingsFile)}`;
+
+  // One EXIT trap wipes both the settings dir and the prompt dir, covering
+  // every failure window between here and the post-wrap cleanup.
+  const cleanup = `rm -rf ${shellSingleQuote(arguments_.srtSettingsDir)}; rm -rf ${shellSingleQuote(promptDir)}`;
+  const lines = [
+    `trap ${shellSingleQuote(cleanup)} EXIT`,
+    `cd ${shellSingleQuote(arguments_.worktreeDir)}`,
+    ...hostPreLaunchSourceAndReadPrompt({
+      definition: arguments_.definition,
+      worktreeDir: arguments_.worktreeDir,
+      promptFile: arguments_.promptFile,
+      promptDir,
+      secretsFile: arguments_.secretsFile,
+    }),
+  ];
+  if (prepareWorktreeCommand !== undefined) {
+    lines.push(`${srtWrap} sh -c ${shellSingleQuote(prepareWorktreeCommand)}`);
+  }
+  if (arguments_.secretsFile !== undefined) {
+    lines.push(unsetSecretsLine());
+  }
+  lines.push(
+    `{ ${srtWrap} sh -c ${shellSingleQuote(agentCommand)} sh "$_p"; _srt_status=$?; rm -rf ${shellSingleQuote(arguments_.srtSettingsDir)}; trap - EXIT; exit "$_srt_status"; }`,
+  );
+  return lines.join(" && ");
+}
+
 function buildSdxLaunchCommand(arguments_: LaunchCommandArguments): string {
   /* v8 ignore next 5 @preserve -- setupWorkspace passes sandboxName + sandbox config when picking sdx; missing fields are programmer errors */
   if (arguments_.sandboxName === undefined || arguments_.definition.sandbox === undefined) {
@@ -435,19 +600,15 @@ function buildSdxLaunchCommand(arguments_: LaunchCommandArguments): string {
     );
   }
   const promptDir = path.dirname(arguments_.promptFile);
-  const agentCmd = renderAgentCommand({
-    agentCmd: arguments_.definition.cmd,
-    worktreeDir: arguments_.worktreeDir,
-    sandboxName: arguments_.sandboxName,
-  });
+  const { agentCommand, prepareWorktreeCommand } = renderPrepareAndAgentCommand(arguments_);
   const innerParts: string[] = [];
-  if (arguments_.prepareWorktreeCommand !== undefined) {
-    innerParts.push(prepareWorktreeWithStatusReporting(arguments_.prepareWorktreeCommand));
+  if (prepareWorktreeCommand !== undefined) {
+    innerParts.push(prepareWorktreeCommand);
   }
   if (arguments_.secretsFile !== undefined) {
     innerParts.push(unsetSecretsLine());
   }
-  innerParts.push(`exec ${agentCmd} "$@"`);
+  innerParts.push(agentCommand);
   const innerCommand = innerParts.join("; ");
   // Passthrough form (`-e KEY` without `=VALUE`): sbx reads each value
   // from its own env at invocation time — populated by sourceSecretsLine

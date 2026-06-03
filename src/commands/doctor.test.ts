@@ -151,9 +151,13 @@ function host(overrides: Partial<HostCapabilities> = {}): HostCapabilities {
     hasSbx: false,
     hasCmux: true,
     hasTmux: false,
+    hasBubblewrap: false,
+    hasSocat: false,
+    hasRipgrep: false,
     isMacOS: true,
     isLinux: false,
     isSafehouseSupported: true,
+    isSrtSupported: true,
     isSdxSupported: true,
     ...overrides,
   };
@@ -441,6 +445,80 @@ describe(doctor, () => {
     expect(actual).toBe(true);
     expect(consoleLog.output()).toContain("local runner (sdx)");
     expect(consoleLog.output()).toContain("sdx runner requires `sbx`");
+  });
+
+  it("reports the srt runner as ready on macOS for an explicit local.runner='srt'", async () => {
+    detectHostMock.mockResolvedValue(host());
+    loadConfigMock.mockResolvedValue({ ...makeConfig(), local: { runner: "srt" } });
+
+    const actual = await doctor();
+
+    expect(actual).toBe(true);
+    expect(consoleLog.output()).toContain("requested: srt → resolved: srt");
+    expect(consoleLog.output()).toContain("local runner (srt)");
+    expect(consoleLog.output()).toContain("research preview");
+  });
+
+  it("reports the srt runner as missing Linux deps when bubblewrap/socat/rg are absent", async () => {
+    detectHostMock.mockResolvedValue(
+      host({
+        hasSafehouse: false,
+        isMacOS: false,
+        isLinux: true,
+        isSafehouseSupported: false,
+        hasBubblewrap: false,
+        hasSocat: false,
+        hasRipgrep: false,
+      }),
+    );
+    loadConfigMock.mockResolvedValue({ ...makeConfig(), local: { runner: "srt" } });
+
+    const actual = await doctor();
+
+    expect(actual).toBe(true);
+    expect(consoleLog.output()).toContain("local runner (srt)");
+    expect(consoleLog.output()).toContain(
+      "srt runner on Linux requires bubblewrap, socat, ripgrep",
+    );
+  });
+
+  it("reports the srt runner as ready on Linux when bubblewrap/socat/rg are present", async () => {
+    detectHostMock.mockResolvedValue(
+      host({
+        hasSafehouse: false,
+        isMacOS: false,
+        isLinux: true,
+        isSafehouseSupported: false,
+        hasBubblewrap: true,
+        hasSocat: true,
+        hasRipgrep: true,
+      }),
+    );
+    loadConfigMock.mockResolvedValue({ ...makeConfig(), local: { runner: "srt" } });
+
+    const actual = await doctor();
+
+    expect(actual).toBe(true);
+    expect(consoleLog.output()).toContain("local runner (srt)");
+    expect(consoleLog.output()).not.toContain("srt runner on Linux requires");
+  });
+
+  it("reports the srt runner as unsupported on a non-macOS/Linux platform", async () => {
+    detectHostMock.mockResolvedValue(
+      host({
+        isMacOS: false,
+        isLinux: false,
+        isSafehouseSupported: false,
+        isSrtSupported: false,
+        isSdxSupported: false,
+      }),
+    );
+    loadConfigMock.mockResolvedValue({ ...makeConfig(), local: { runner: "srt" } });
+
+    const actual = await doctor();
+
+    expect(actual).toBe(true);
+    expect(consoleLog.output()).toContain("srt runner requires macOS or Linux/WSL");
   });
 
   it("surfaces a WARNING when local.runner is configured to 'none'", async () => {

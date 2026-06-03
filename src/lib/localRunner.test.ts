@@ -13,9 +13,13 @@ function host(overrides: Partial<HostCapabilities> = {}): HostCapabilities {
     hasSbx: false,
     hasCmux: true,
     hasTmux: false,
+    hasBubblewrap: false,
+    hasSocat: false,
+    hasRipgrep: false,
     isMacOS: true,
     isLinux: false,
     isSafehouseSupported: true,
+    isSrtSupported: true,
     isSdxSupported: true,
     ...overrides,
   };
@@ -37,8 +41,19 @@ describe(resolveLocalRunner, () => {
 
   it("passes through explicit values without consulting host", () => {
     expect(resolveLocalRunner("safehouse", host())).toBe("safehouse");
+    expect(resolveLocalRunner("srt", host())).toBe("srt");
     expect(resolveLocalRunner("sdx", host())).toBe("sdx");
     expect(resolveLocalRunner("none", host())).toBe("none");
+  });
+
+  it("never picks srt from auto — srt is opt-in only", () => {
+    expect(resolveLocalRunner("auto", host())).not.toBe("srt");
+    expect(
+      resolveLocalRunner(
+        "auto",
+        host({ isMacOS: false, isLinux: true, isSafehouseSupported: false }),
+      ),
+    ).not.toBe("srt");
   });
 });
 
@@ -91,6 +106,54 @@ describe(assertLocalRunnerRequirements, () => {
         "sdx",
       );
     }).toThrow(/sdx runner require macOS or Linux/);
+  });
+
+  it("returns silently when srt is requested on macOS (no Linux deps needed)", () => {
+    expect(() => {
+      assertLocalRunnerRequirements(host(), "srt");
+    }).not.toThrow();
+    expect(logMock).not.toHaveBeenCalled();
+  });
+
+  it("returns silently when srt is requested on Linux with all deps present", () => {
+    expect(() => {
+      assertLocalRunnerRequirements(
+        host({
+          isMacOS: false,
+          isLinux: true,
+          isSafehouseSupported: false,
+          hasBubblewrap: true,
+          hasSocat: true,
+          hasRipgrep: true,
+        }),
+        "srt",
+      );
+    }).not.toThrow();
+  });
+
+  it("throws when srt is requested on an unsupported platform", () => {
+    expect(() => {
+      assertLocalRunnerRequirements(
+        host({ isMacOS: false, isLinux: false, isSrtSupported: false }),
+        "srt",
+      );
+    }).toThrow(/srt runner require macOS or Linux/);
+  });
+
+  it("throws listing every missing Linux dep when srt is requested without them", () => {
+    expect(() => {
+      assertLocalRunnerRequirements(
+        host({
+          isMacOS: false,
+          isLinux: true,
+          isSafehouseSupported: false,
+          hasBubblewrap: false,
+          hasSocat: false,
+          hasRipgrep: false,
+        }),
+        "srt",
+      );
+    }).toThrow(/bubblewrap, socat, ripgrep \(rg\)/);
   });
 
   it("logs a warning when local.runner is 'none' instead of throwing", () => {
