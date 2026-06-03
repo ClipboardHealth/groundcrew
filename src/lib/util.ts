@@ -110,7 +110,14 @@ function appendLogLine(line: string): void {
 }
 
 function timestamped(message: string): { plain: string; timestamp: string } {
-  const timestamp = new Date().toLocaleTimeString();
+  // 24-hour, zero-padded fields so stacked log lines align on the colons
+  // (e.g. `13:00:16`, not `1:00:16 PM`).
+  const timestamp = new Date().toLocaleTimeString(undefined, {
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
   return { plain: `[${timestamp}] ${message}`, timestamp };
 }
 

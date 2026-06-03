@@ -79,6 +79,18 @@ describe(log, () => {
     expect(consoleLog.output()).toMatch(/^\[.+] hello world$/);
     consoleLog.restore();
   });
+
+  it("renders the timestamp in zero-padded 24-hour time so lines align", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2020, 0, 1, 13, 0, 16));
+    const consoleLog = captureConsoleLog();
+
+    log("hello world");
+
+    expect(consoleLog.output()).toBe("[13:00:16] hello world");
+    consoleLog.restore();
+    vi.useRealTimers();
+  });
 });
 
 describe(logEvent, () => {
