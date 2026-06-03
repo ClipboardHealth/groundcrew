@@ -822,8 +822,8 @@ function applyDefaults(user: Config): ResolvedConfig {
   const branchPrefix = normalizeBranchPrefix(user.git?.branchPrefix);
   return {
     sources,
-    // Validate eagerly, but only carry the key when set so `git.branchPrefix`
-    // stays truly optional under exactOptionalPropertyTypes.
+    // Only carry the key when set so `git.branchPrefix` stays truly optional
+    // under exactOptionalPropertyTypes.
     git: {
       ...DEFAULT_GIT,
       ...user.git,
