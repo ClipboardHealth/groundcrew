@@ -43,7 +43,7 @@ Groundcrew watches assigned tickets, creates isolated worktrees, launches agent 
 - **git:** e.g., `brew install git`, `apt install git`.
 - **A terminal multiplexer:** [tmux](https://github.com/tmux/tmux/wiki/Installing) (cross-platform) or [cmux](https://cmux.com/) (macOS).
 - **An agent CLI:** [Claude Code](https://code.claude.com/docs/en/quickstart) and/or [Codex](https://developers.openai.com/codex/quickstart?setup=cli).
-- **A sandbox runner:** [Docker Sandboxes](https://docs.docker.com/sandboxes/) (cross-platform) or [Safehouse](https://agent-safehouse.dev/) on macOS. Skip only with `--runner none`.
+- **A sandbox runner:** [Docker Sandboxes](https://docs.docker.com/ai/sandboxes/) (cross-platform) or [Safehouse](https://agent-safehouse.dev/) on macOS. Skip only with `--runner none`.
 
 ## Quickstart
 
