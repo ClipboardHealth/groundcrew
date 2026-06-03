@@ -1242,7 +1242,6 @@ describe(teardown, () => {
 
 describe("worktrees.branchNameForTicket", () => {
   afterEach(() => {
-    vi.unstubAllEnvs();
     vi.clearAllMocks();
   });
 
@@ -1274,28 +1273,6 @@ describe("worktrees.branchNameForTicket", () => {
     const actual = worktrees.branchNameForTicket(config, "eng-123");
 
     expect(actual).toBe("groundcrew-eng-123");
-  });
-
-  it("prefers GROUNDCREW_BRANCH_PREFIX over config and the OS username", () => {
-    userInfoMock.mockReturnValue(makeUserInfo("dev"));
-    vi.stubEnv("GROUNDCREW_BRANCH_PREFIX", "qa");
-    const config = makeConfig({
-      projectDir: "/tmp",
-      git: { remote: "origin", defaultBranch: "main", branchPrefix: "groundcrew" },
-    });
-
-    const actual = worktrees.branchNameForTicket(config, "eng-123");
-
-    expect(actual).toBe("qa-eng-123");
-  });
-
-  it("throws when GROUNDCREW_BRANCH_PREFIX is not a git-safe slug", () => {
-    vi.stubEnv("GROUNDCREW_BRANCH_PREFIX", "feature/x");
-    const config = makeConfig({ projectDir: "/tmp" });
-
-    expect(() => worktrees.branchNameForTicket(config, "eng-123")).toThrow(
-      /GROUNDCREW_BRANCH_PREFIX must be/,
-    );
   });
 });
 

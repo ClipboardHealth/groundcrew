@@ -13,9 +13,9 @@ import { userInfo } from "node:os";
 import path from "node:path";
 
 import { runCommandAsync } from "./commandRunner.ts";
-import { BRANCH_PREFIX_REQUIREMENT, isGitSafeBranchPrefix, type ResolvedConfig } from "./config.ts";
+import type { ResolvedConfig } from "./config.ts";
 import { resolveDefaultBranch } from "./defaultBranch.ts";
-import { debug, errorMessage, isVerbose, readEnvironmentVariable } from "./util.ts";
+import { debug, errorMessage, isVerbose } from "./util.ts";
 import { type WorkspaceProbe, workspaces } from "./workspaces.ts";
 
 const WORKTREE_LIST_PREFIX = "worktree ";
@@ -42,7 +42,7 @@ export interface WorktreeEntry {
   ticket: string;
   /**
    * Slash-free `<prefix>-<ticket>`. The prefix is the OS account username by
-   * default, or an override from `git.branchPrefix` / `GROUNDCREW_BRANCH_PREFIX`.
+   * default, or the configured `git.branchPrefix` override.
    */
   branchName: string;
   dir: string;
@@ -57,25 +57,12 @@ export interface WorktreeSpec {
 const TICKET_RE = /^[a-z][\da-z]*-\d+$/;
 const TICKET_DIR_RE = /^(.+)-([a-z][\da-z]*-\d+)$/;
 
-const BRANCH_PREFIX_ENV = "GROUNDCREW_BRANCH_PREFIX";
-
 /**
- * Resolves the branch-name prefix. Precedence: `GROUNDCREW_BRANCH_PREFIX` env
- * var > `config.git.branchPrefix` > OS account username. The env value bypasses
- * config validation, so it is checked here for the same git-safe shape.
+ * Resolves the branch-name prefix: the configured `git.branchPrefix` when set,
+ * otherwise the OS account username. The config value is already validated and
+ * non-empty by construction.
  */
 function branchPrefix(config: ResolvedConfig): string {
-  const fromEnv = readEnvironmentVariable(BRANCH_PREFIX_ENV)?.trim();
-  if (fromEnv !== undefined && fromEnv.length > 0) {
-    if (!isGitSafeBranchPrefix(fromEnv)) {
-      throw new Error(
-        `${BRANCH_PREFIX_ENV} ${BRANCH_PREFIX_REQUIREMENT} (got ${JSON.stringify(fromEnv)}).`,
-      );
-    }
-    return fromEnv;
-  }
-
-  // config.git.branchPrefix is already validated and non-empty by construction.
   const fromConfig = config.git.branchPrefix;
   if (fromConfig !== undefined) {
     return fromConfig;

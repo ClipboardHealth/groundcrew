@@ -172,7 +172,6 @@ export interface Config {
      * Overrides the prefix groundcrew puts in front of the ticket id when it
      * names a worktree branch (`<branchPrefix>-<ticket>`). Defaults to the OS
      * account username when unset. Must be a git-ref-safe, slash-free slug.
-     * The `GROUNDCREW_BRANCH_PREFIX` env var takes precedence over this value.
      */
     branchPrefix?: string;
   };
@@ -444,18 +443,12 @@ function normalizeOptionalString(value: unknown, configKey: string): string | un
 // slash-free branch name, so the prefix must be a git-ref-safe, slash-free slug.
 const BRANCH_PREFIX_RE = /^[\w.-]+$/;
 
-/** Shared between config-file and env-var validation so the rule lives in one place. */
-export const BRANCH_PREFIX_REQUIREMENT =
-  "must be a slash-free slug of letters, digits, '.', '_', or '-'";
-
-export function isGitSafeBranchPrefix(value: string): boolean {
-  return BRANCH_PREFIX_RE.test(value);
-}
-
 function normalizeBranchPrefix(value: unknown): string | undefined {
   const normalized = normalizeOptionalString(value, "git.branchPrefix");
-  if (normalized !== undefined && !isGitSafeBranchPrefix(normalized)) {
-    fail(`git.branchPrefix ${BRANCH_PREFIX_REQUIREMENT} (got ${JSON.stringify(value)})`);
+  if (normalized !== undefined && !BRANCH_PREFIX_RE.test(normalized)) {
+    fail(
+      `git.branchPrefix must be a slash-free slug of letters, digits, '.', '_', or '-' (got ${JSON.stringify(value)})`,
+    );
   }
   return normalized;
 }
