@@ -43,3 +43,29 @@ export default {
 ```
 
 Allowed `status` values are `todo`, `in-progress`, `in-review`, `done`, and `other`. Use `null` for `repository` or `model` when a ticket should not be groundcrew-eligible. `hasMoreBlockers` is optional and defaults to `false`; `sourceRef` is opaque data that groundcrew passes back to your writeback command.
+
+## The `description` is the agent's prompt
+
+Groundcrew wraps each issue's `description` in its generic unattended-execution prompt and hands it to the agent as the task. It does not pick a different prompt per source or ticket type. Specialized behavior belongs in the `description` your adapter emits, not in groundcrew.
+
+So the adapter classifies, enriches, dedupes, and builds the description; groundcrew runs the result. A Datadog flaky-test source emits a description that says how to classify the flake, where the logs are, and what counts as success. A GitHub CI-failure source emits the PR link, the failing workflow, the logs, and whether to open a PR or leave a comment.
+
+Example `description` for a CI-failure source:
+
+```text
+Investigate the failed CI run for this pull request.
+
+Repository: your-org/your-repo
+Pull request: https://github.com/your-org/your-repo/pull/123
+Failing workflow: backend-tests
+Logs: https://...
+
+Goal:
+- Decide whether this is a real regression, a flaky test, or an infra issue.
+- If it is a real regression, make the smallest fix.
+- If it is flaky, follow the repo's flaky-test triage pattern.
+- If no code change is right, record that conclusion.
+
+Output:
+- Open a PR if a code change is needed; otherwise leave the branch clean and record the conclusion.
+```

@@ -120,6 +120,7 @@ describe("loadConfig", () => {
     const actual = await loadConfig();
 
     expect(actual.prompts.initial).toContain("There is no human watching this session");
+    expect(actual.prompts.initial).toContain("Ticket description:\n\n{{description}}");
     expect(actual.prompts.initial).toMatch(/documented verification/i);
     expect(actual.prompts.initial).toMatch(/open a PR/i);
     expect(actual.prompts.initial).toContain("{{workspaceContinuationInstruction}}");

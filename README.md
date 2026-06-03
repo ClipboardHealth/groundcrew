@@ -81,6 +81,12 @@ Groundcrew scans `workspace.knownRepositories` to infer which repo a ticket belo
 
 A ticket blocked by non-terminal blockers is skipped until those blockers are done.
 
+### The ticket description is the prompt
+
+Groundcrew sends each agent a generic unattended-execution prompt plus the ticket title and description. The prompt says how to work: read the repo instructions, make the smallest sensible change, verify it, and produce the requested output. The ticket description says what to do.
+
+Write tickets as complete agent instructions: the goal, the context and constraints, links to logs or screenshots, how to verify, and the output you want. A vague ticket gets a vague PR.
+
 ## Commands
 
 ```bash
