@@ -20,10 +20,6 @@
   <a href="./static/demo.tape"><img alt="Groundcrew dispatching tickets into tmux panes with coding agents running in parallel" src="./static/demo.gif" width="800"></a>
 </p>
 
-<p align="center">
-  VHS source: <a href="./static/demo.tape">static/demo.tape</a>.
-</p>
-
 Groundcrew watches assigned tickets, creates isolated worktrees, launches agent CLIs in dedicated terminals, and leaves each ticket's work on its own PR-ready branch. For the backstory, read _[Tickets to pull requests while you sleep](https://www.clipboardworks.com/resources/blog/tickets-to-pull-requests-while-you-sleep)_.
 
 ## Why
