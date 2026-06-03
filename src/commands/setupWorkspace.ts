@@ -15,6 +15,7 @@ import {
   stageSrtSettings,
   stageWorkspaceLaunchCommand,
   type StagedPrompt,
+  type StagedSrtSettings,
 } from "../lib/stagedLaunch.ts";
 import { naturalIdFromCanonical } from "../lib/ticketSource.ts";
 import { debug, errorMessage, log, okMark, readEnvironmentVariable } from "../lib/util.ts";
@@ -61,11 +62,16 @@ function stagePrompt(input: {
 }
 
 /**
- * Generate the srt policy for this launch and stage it to a temp settings file.
- * The agent identity comes from the model `cmd`; the git common dir is the
- * parent clone's `.git` (the worktree lives beside it); the egress allowlist is
- * translated from the existing clearance env so srt and safehouse share one
- * source of truth. Only called when `local.runner` resolves to `srt`.
+ * Generate the srt policies for this launch and stage them to temp settings
+ * files. The agent identity comes from the model `cmd`; the git common dir is
+ * the parent clone's `.git` (the worktree lives beside it); the egress
+ * allowlist is translated from the existing clearance env so srt and safehouse
+ * share one source of truth. Only called when `local.runner` resolves to `srt`.
+ *
+ * Two policies: the `prepare` policy is profile-neutral (empty agent → no
+ * `~/.claude`/`~/.codex` grants) so the repo-controlled prepareWorktree hook
+ * can't touch the agent's credentials; the `agent` policy carries the agent's
+ * credential profile.
  */
 function buildAndStageSrtSettings(input: {
   config: ResolvedConfig;
@@ -73,18 +79,20 @@ function buildAndStageSrtSettings(input: {
   ticket: string;
   worktreeDir: string;
   definition: ModelDefinition;
-}): StagedPrompt {
+}): StagedSrtSettings {
   const repoDir = path.resolve(input.config.workspace.projectDir, input.repository);
-  const settings = buildSrtSettings({
+  const base = {
     worktreeDir: input.worktreeDir,
     gitCommonDir: path.join(repoDir, ".git"),
-    agent: inferAgentCommandName(input.definition.cmd),
     allowedDomains: collectAllowedDomains({
       hosts: readEnvironmentVariable("CLEARANCE_ALLOW_HOSTS"),
       files: readEnvironmentVariable("CLEARANCE_ALLOW_HOSTS_FILES"),
     }),
+  };
+  return stageSrtSettings(input.ticket, {
+    prepare: buildSrtSettings({ ...base, agent: "" }),
+    agent: buildSrtSettings({ ...base, agent: inferAgentCommandName(input.definition.cmd) }),
   });
-  return stageSrtSettings(input.ticket, settings);
 }
 
 export async function setupWorkspace(
@@ -152,7 +160,8 @@ export async function setupWorkspace(
     });
     const secretsFile =
       prepareWorktreeCommand === undefined ? undefined : stageBuildSecrets(promptDir);
-    let srtSettingsFile: string | undefined;
+    let srtPrepareSettingsFile: string | undefined;
+    let srtAgentSettingsFile: string | undefined;
     if (runner === "srt") {
       const staged = buildAndStageSrtSettings({
         config,
@@ -161,7 +170,8 @@ export async function setupWorkspace(
         worktreeDir: launchDir,
         definition,
       });
-      srtSettingsFile = staged.file;
+      srtPrepareSettingsFile = staged.prepareFile;
+      srtAgentSettingsFile = staged.agentFile;
       srtSettingsDir = staged.directory;
     }
     const launchCommand = buildLaunchCommand({
@@ -172,7 +182,8 @@ export async function setupWorkspace(
       prepareWorktreeCommand,
       runner,
       sandboxName,
-      srtSettingsFile,
+      srtPrepareSettingsFile,
+      srtAgentSettingsFile,
       srtSettingsDir,
     });
     const launchCmd = stageWorkspaceLaunchCommand(promptDir, launchCommand);

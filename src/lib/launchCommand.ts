@@ -345,14 +345,18 @@ interface LaunchCommandArguments {
    */
   sandboxName?: string | undefined;
   /**
-   * Absolute path to the generated srt settings JSON. Required when
-   * `runner === "srt"`. Staged by the caller in a dedicated temp dir
-   * (`srtSettingsDir`) that must outlive the agent process — never inside
-   * the prompt dir, which is wiped before the agent execs.
+   * Absolute path to the profile-neutral srt settings JSON for the
+   * prepareWorktree wrap (no agent credential grants). Required when
+   * `runner === "srt"`. Staged in `srtSettingsDir`.
    */
-  srtSettingsFile?: string | undefined;
+  srtPrepareSettingsFile?: string | undefined;
   /**
-   * Absolute temp dir holding the srt settings file. Required when
+   * Absolute path to the full agent srt settings JSON for the agent wrap.
+   * Required when `runner === "srt"`. Staged in `srtSettingsDir`.
+   */
+  srtAgentSettingsFile?: string | undefined;
+  /**
+   * Absolute temp dir holding the srt settings files. Required when
    * `runner === "srt"`; torn down by the launch command after srt exits.
    */
   srtSettingsDir?: string | undefined;
@@ -590,14 +594,23 @@ function srtForwardedEnv(names: readonly string[]): string {
  * removes the prompt dir before the agent wrap and the settings dir after it.
  */
 function buildSrtLaunchCommand(arguments_: LaunchCommandArguments): string {
-  if (arguments_.srtSettingsFile === undefined || arguments_.srtSettingsDir === undefined) {
+  if (
+    arguments_.srtPrepareSettingsFile === undefined ||
+    arguments_.srtAgentSettingsFile === undefined ||
+    arguments_.srtSettingsDir === undefined
+  ) {
     throw new Error(
-      "buildLaunchCommand: runner='srt' requires srtSettingsFile and srtSettingsDir (generate them with buildSrtSettings + stageSrtSettings before calling).",
+      "buildLaunchCommand: runner='srt' requires srtPrepareSettingsFile, srtAgentSettingsFile, and srtSettingsDir (generate them with buildSrtSettings + stageSrtSettings before calling).",
     );
   }
   const promptDir = path.dirname(arguments_.promptFile);
   const { agentCommand, prepareWorktreeCommand } = renderPrepareAndAgentCommand(arguments_);
-  const srtTarget = `${shellSingleQuote(srtBinPath())} --settings ${shellSingleQuote(arguments_.srtSettingsFile)}`;
+  const srtBin = shellSingleQuote(srtBinPath());
+  // Distinct policies per wrap: the prepareWorktree hook is repo-controlled, so
+  // it runs under the profile-neutral settings (no agent credential grants);
+  // only the agent wrap gets the full agent policy.
+  const prepareTarget = `${srtBin} --settings ${shellSingleQuote(arguments_.srtPrepareSettingsFile)}`;
+  const agentTarget = `${srtBin} --settings ${shellSingleQuote(arguments_.srtAgentSettingsFile)}`;
 
   // `env -i <baseline>` drops the inherited host env; each wrap re-adds only the
   // benign baseline plus its forwarded names (`VAR="$VAR"` — value from the host
@@ -607,8 +620,8 @@ function buildSrtLaunchCommand(arguments_: LaunchCommandArguments): string {
   const baseline = SRT_ENV_BASELINE.map((name) => `${name}="$${name}"`).join(" ");
   const prepareForward =
     arguments_.secretsFile === undefined ? "" : srtForwardedEnv(BUILD_SECRET_NAMES);
-  const prepareWrap = `env -i ${baseline}${prepareForward} ${srtTarget}`;
-  const agentWrap = `env -i ${baseline}${srtForwardedEnv(arguments_.definition.preLaunchEnv ?? [])} ${srtTarget}`;
+  const prepareWrap = `env -i ${baseline}${prepareForward} ${prepareTarget}`;
+  const agentWrap = `env -i ${baseline}${srtForwardedEnv(arguments_.definition.preLaunchEnv ?? [])} ${agentTarget}`;
 
   // One EXIT trap wipes both the settings dir and the prompt dir, covering
   // every failure window between here and the post-wrap cleanup.

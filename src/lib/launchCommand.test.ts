@@ -77,25 +77,31 @@ describe(`${buildLaunchCommand.name} (runner='srt')`, () => {
   ): Parameters<typeof buildLaunchCommand>[0] {
     return arguments_({
       runner: "srt",
-      srtSettingsFile: "/tmp/groundcrew-srt-team-1/settings.json",
+      srtPrepareSettingsFile: "/tmp/groundcrew-srt-team-1/prepare-settings.json",
+      srtAgentSettingsFile: "/tmp/groundcrew-srt-team-1/agent-settings.json",
       srtSettingsDir: "/tmp/groundcrew-srt-team-1",
       ...overrides,
     });
   }
 
-  it("wraps both the prepareWorktree hook and the agent with `srt --settings`, no safehouse shim", () => {
+  it("runs prepareWorktree under the profile-neutral prepare settings, the agent under the agent settings", () => {
     const out = buildLaunchCommand(srtArguments({ prepareWorktreeCommand: "npm ci" }));
 
-    const settingsFlag = "--settings '/tmp/groundcrew-srt-team-1/settings.json'";
-    const prepareWrapIndex = out.indexOf(`${settingsFlag} sh -c`);
+    const prepareFlag = "--settings '/tmp/groundcrew-srt-team-1/prepare-settings.json'";
+    const agentFlag = "--settings '/tmp/groundcrew-srt-team-1/agent-settings.json'";
+    const prepareWrapIndex = out.indexOf(`${prepareFlag} sh -c`);
     const setupIndex = out.indexOf("npm ci");
-    const agentIndex = out.indexOf(`exec claude "$@"`);
+    const agentIndex = out.indexOf(`${agentFlag} sh -c 'exec claude "$@"' sh "$_p"`);
 
     expect(out).toMatch(/sandbox-runtime\/dist\/cli\.js' --settings/);
     expect(out).toContain("cd '/work/repo-a-team-1'");
     expect(out).toContain("_p=$(cat '/tmp/prompt-team-1/prompt.txt')");
     expect(out).toContain("rm -rf '/tmp/prompt-team-1'");
-    expect(out).toContain(`${settingsFlag} sh -c 'exec claude "$@"' sh "$_p"`);
+    // The repo-controlled prepare hook gets the neutral policy; only the agent
+    // wrap gets the agent policy — they must be different files.
+    expect(out).toContain(`${prepareFlag} sh -c`);
+    expect(out).toContain(`${agentFlag} sh -c 'exec claude "$@"' sh "$_p"`);
+    expect(out.slice(setupIndex)).not.toContain("prepare-settings.json");
     expect(out).not.toContain("safehouse-clearance");
     expect(out).not.toContain("_safehouse_shim");
     expect(prepareWrapIndex).toBeGreaterThan(-1);
@@ -113,10 +119,10 @@ describe(`${buildLaunchCommand.name} (runner='srt')`, () => {
     expect(out).toContain('trap - EXIT; exit "$_srt_status"');
   });
 
-  it("requires the staged settings file and dir", () => {
-    expect(() =>
-      buildLaunchCommand(arguments_({ runner: "srt", srtSettingsFile: undefined })),
-    ).toThrow(/requires srtSettingsFile and srtSettingsDir/);
+  it("requires the staged prepare + agent settings files and dir", () => {
+    expect(() => buildLaunchCommand(arguments_({ runner: "srt" }))).toThrow(
+      /requires srtPrepareSettingsFile, srtAgentSettingsFile, and srtSettingsDir/,
+    );
   });
 
   it("supports preLaunch and preLaunchEnv (unlike sdx)", () => {

@@ -77,9 +77,13 @@ interface AgentCredentialProfile {
  * agent gets no extra home access and must be granted paths explicitly.
  *
  * `writePaths` keep the agent's mutable state writable (sessions, history,
- * todos, projects); `denyPaths` re-close the executable/config surfaces within
- * them. The agent does not need to write those surfaces during a task, so
- * denying them degrades gracefully rather than breaking the run.
+ * todos, projects, caches, sqlite — a large, version-volatile set that an
+ * allowlist would break on the next agent release); `denyPaths` re-close the
+ * small, enumerable executable/instruction surfaces within them. The agent
+ * does not write those during a task, so denying them degrades gracefully. The
+ * lists below were validated against the real `~/.claude` / `~/.codex` layout;
+ * srt's own mandatory deny additionally covers `.claude/commands`/`agents`.
+ * Drift across agent versions is tracked for the live-validation pass.
  */
 const AGENT_SRT_PROFILES: Record<string, AgentCredentialProfile> = {
   claude: {
@@ -92,12 +96,22 @@ const AGENT_SRT_PROFILES: Record<string, AgentCredentialProfile> = {
       ".claude/agents",
       ".claude/plugins",
       ".claude/skills",
+      ".claude/hooks",
+      ".claude/statusline.sh",
+      ".claude/CLAUDE.md",
     ],
   },
   codex: {
     readPaths: [".codex"],
     writePaths: [".codex"],
-    denyPaths: [".codex/config.toml"],
+    denyPaths: [
+      ".codex/config.toml",
+      ".codex/hooks.json",
+      ".codex/AGENTS.md",
+      ".codex/plugins",
+      ".codex/skills",
+      ".codex/rules",
+    ],
   },
 };
 
@@ -201,6 +215,11 @@ export function buildSrtSettings(input: BuildSrtSettingsInput): SandboxRuntimeCo
     // dir's config/hooks explicitly.
     path.join(input.gitCommonDir, "config"),
     path.join(input.gitCommonDir, "hooks"),
+    // The worktree's `.git` is a pointer *file* (`gitdir: …`). Deny writing it
+    // so the agent can't redirect the gitdir to a writable fake with its own
+    // config/hooks (e.g. `core.fsmonitor`) that runs when git next operates in
+    // this worktree on the host. git sets this pointer once at creation.
+    path.join(input.worktreeDir, ".git"),
   ]);
 
   return {

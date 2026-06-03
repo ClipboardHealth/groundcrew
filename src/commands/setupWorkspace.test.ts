@@ -453,7 +453,7 @@ describe(setupWorkspace, () => {
     expect(launchScript).toContain("_p=$(cat '/tmp/groundcrew-team-1-x/prompt.txt')");
   });
 
-  it("stages an srt settings file and wraps the agent with `srt --settings` when runner=srt", async () => {
+  it("stages neutral prepare + full agent srt settings and wraps the agent under the agent policy when runner=srt", async () => {
     const config = makeConfig();
     config.local = { runner: "srt" };
     mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
@@ -466,14 +466,19 @@ describe(setupWorkspace, () => {
     });
 
     const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
-    const settingsJson = writtenFileContent("/tmp/groundcrew-team-1-x/settings.json");
+    const agentSettings = writtenFileContent("/tmp/groundcrew-team-1-x/agent-settings.json");
+    const prepareSettings = writtenFileContent("/tmp/groundcrew-team-1-x/prepare-settings.json");
 
-    expect(launchScript).toContain("--settings '/tmp/groundcrew-team-1-x/settings.json'");
+    expect(launchScript).toContain("--settings '/tmp/groundcrew-team-1-x/agent-settings.json'");
     expect(launchScript).toMatch(/sandbox-runtime\/dist\/cli\.js/);
     expect(launchScript).toContain(`exec claude --auto "$@"`);
     expect(launchScript).not.toContain("safehouse-clearance");
-    expect(settingsJson).toContain(`"denyRead"`);
-    expect(settingsJson).toContain(`"allowPty": true`);
+    // The agent policy carries the claude credential profile; the
+    // profile-neutral prepare policy does not — so a repo-controlled
+    // prepareWorktree hook can't read or mutate agent credentials.
+    expect(agentSettings).toContain(".claude");
+    expect(agentSettings).toContain(`"allowPty": true`);
+    expect(prepareSettings).not.toContain(".claude");
   });
 
   it("passes an AbortSignal into worktree creation and workspace launch", async () => {
