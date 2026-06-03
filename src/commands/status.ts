@@ -64,7 +64,7 @@ async function writeTicketWorktrees(config: ResolvedConfig, ticket: string): Pro
     });
     // oxlint-disable-next-line no-await-in-loop -- one gh lookup per worktree is acceptable; multi-worktree-per-ticket is rare.
     const prs = await findPullRequestsForBranch({
-      repository: entry.repository,
+      cwd: entry.dir,
       branchName: entry.branchName,
     });
     writeOutput(`- ${entry.repository} ${entry.kind}`);
@@ -401,10 +401,10 @@ async function writeInventoryWorktrees(
     }
     const runState = runStates.get(entry.ticket);
     const accessHint = accessHints.get(entry.ticket);
-    // `collectPullRequests` guarantees an entry for every (repo, branch)
-    // pair seen in `entries`; the lookup always returns the array.
+    // `collectPullRequests` guarantees an entry for every worktree dir seen
+    // in `entries`; the lookup always returns the array.
     /* v8 ignore next @preserve -- defensive fallback for a Map key that collectPullRequests always populates */
-    const prs = pullRequests.get(pullRequestKey(entry.repository, entry.branchName)) ?? [];
+    const prs = pullRequests.get(entry.dir) ?? [];
     if (index > 0) {
       writeOutput();
     }
@@ -428,10 +428,6 @@ async function writeInventoryWorktrees(
   }
 }
 
-function pullRequestKey(repository: string, branchName: string): string {
-  return `${repository} ${branchName}`;
-}
-
 async function collectAccessHints(
   config: ResolvedConfig,
   entries: readonly { ticket: string }[],
@@ -449,28 +445,25 @@ async function collectAccessHints(
 }
 
 async function collectPullRequests(
-  entries: readonly { repository: string; branchName: string }[],
+  entries: readonly { dir: string; branchName: string }[],
 ): Promise<Map<string, readonly PullRequestSummary[]>> {
-  // Same-(repo, branch) entries collapse to one lookup; later inserts
-  // overwrite earlier ones with the same identifier, which is fine because
-  // gh would return the same PR list for both.
-  const uniqueKeys = new Map<string, { repository: string; branchName: string }>();
+  // Each worktree dir is unique, so keying by dir collapses nothing in
+  // practice; the Map removes duplicates defensively if the same dir
+  // appears twice.
+  const uniqueByDir = new Map<string, { dir: string; branchName: string }>();
   for (const entry of entries) {
-    uniqueKeys.set(pullRequestKey(entry.repository, entry.branchName), {
-      repository: entry.repository,
-      branchName: entry.branchName,
-    });
+    uniqueByDir.set(entry.dir, { dir: entry.dir, branchName: entry.branchName });
   }
   const results = await Promise.allSettled(
-    [...uniqueKeys.entries()].map(async ([key, { repository, branchName }]) => {
-      const prs = await findPullRequestsForBranch({ repository, branchName });
-      return [key, prs] as const;
+    [...uniqueByDir.entries()].map(async ([dir, { branchName }]) => {
+      const prs = await findPullRequestsForBranch({ cwd: dir, branchName });
+      return [dir, prs] as const;
     }),
   );
   return new Map(
-    [...uniqueKeys.keys()].map((key, index) => {
+    [...uniqueByDir.keys()].map((dir, index) => {
       const result = results[index];
-      return [key, result?.status === "fulfilled" ? result.value[1] : []] as const;
+      return [dir, result?.status === "fulfilled" ? result.value[1] : []] as const;
     }),
   );
 }

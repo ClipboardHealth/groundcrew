@@ -36,7 +36,7 @@ describe(findPullRequestsForBranch, () => {
     );
 
     const prs = await findPullRequestsForBranch({
-      repository: "acme/widgets",
+      cwd: "/work/widgets-team-1",
       branchName: "feature/auth",
     });
 
@@ -48,11 +48,25 @@ describe(findPullRequestsForBranch, () => {
         title: "Wire up auth",
       },
     ]);
+  });
+
+  it("runs gh in the worktree dir and omits --repo so gh resolves the remote", async () => {
+    runCommandMock.mockResolvedValueOnce("[]");
+
+    await findPullRequestsForBranch({
+      cwd: "/work/widgets-team-1",
+      branchName: "feature/auth",
+    });
+
+    expect(runCommandMock).toHaveBeenCalledTimes(1);
     expect(runCommandMock).toHaveBeenCalledWith(
       "gh",
-      expect.arrayContaining(["pr", "list", "--repo", "acme/widgets", "--head", "feature/auth"]),
-      {},
+      expect.arrayContaining(["pr", "list", "--head", "feature/auth"]),
+      { cwd: "/work/widgets-team-1" },
     );
+    expect(runCommandMock).toHaveBeenCalledWith("gh", expect.not.arrayContaining(["--repo"]), {
+      cwd: "/work/widgets-team-1",
+    });
   });
 
   it("normalises MERGED and CLOSED states to lowercase", async () => {
@@ -64,7 +78,7 @@ describe(findPullRequestsForBranch, () => {
     );
 
     const prs = await findPullRequestsForBranch({
-      repository: "acme/widgets",
+      cwd: "/work/widgets-team-1",
       branchName: "x",
     });
 
@@ -75,7 +89,7 @@ describe(findPullRequestsForBranch, () => {
     runCommandMock.mockRejectedValueOnce(new Error("gh: command not found"));
 
     const prs = await findPullRequestsForBranch({
-      repository: "acme/widgets",
+      cwd: "/work/widgets-team-1",
       branchName: "x",
     });
 
@@ -86,7 +100,7 @@ describe(findPullRequestsForBranch, () => {
     runCommandMock.mockResolvedValueOnce("not json at all");
 
     const prs = await findPullRequestsForBranch({
-      repository: "acme/widgets",
+      cwd: "/work/widgets-team-1",
       branchName: "x",
     });
 
@@ -97,7 +111,7 @@ describe(findPullRequestsForBranch, () => {
     runCommandMock.mockResolvedValueOnce("null");
 
     const prs = await findPullRequestsForBranch({
-      repository: "acme/widgets",
+      cwd: "/work/widgets-team-1",
       branchName: "x",
     });
 
@@ -114,24 +128,27 @@ describe(findPullRequestsForBranch, () => {
     );
 
     const prs = await findPullRequestsForBranch({
-      repository: "acme/widgets",
+      cwd: "/work/widgets-team-1",
       branchName: "x",
     });
 
     expect(prs.map((p) => p.number)).toStrictEqual([1]);
   });
 
-  it("forwards the AbortSignal to runCommandAsync when provided", async () => {
+  it("forwards the AbortSignal to runCommandAsync alongside cwd when provided", async () => {
     runCommandMock.mockResolvedValueOnce("[]");
     const { signal } = new AbortController();
 
     await findPullRequestsForBranch({
-      repository: "acme/widgets",
+      cwd: "/work/widgets-team-1",
       branchName: "x",
       signal,
     });
 
-    expect(runCommandMock).toHaveBeenCalledWith("gh", expect.any(Array), { signal });
+    expect(runCommandMock).toHaveBeenCalledWith("gh", expect.any(Array), {
+      cwd: "/work/widgets-team-1",
+      signal,
+    });
   });
 
   it("forwards a lowercased unknown state value verbatim", async () => {
@@ -140,7 +157,7 @@ describe(findPullRequestsForBranch, () => {
     );
 
     const prs = await findPullRequestsForBranch({
-      repository: "acme/widgets",
+      cwd: "/work/widgets-team-1",
       branchName: "x",
     });
 

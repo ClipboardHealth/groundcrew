@@ -562,8 +562,13 @@ describe(status, () => {
 
   it("omits only the failed pull request row when one PR lookup rejects", async () => {
     listWorktreesMock.mockReturnValue([
-      worktree({ ticket: "team-1", repository: "repo-a" }),
-      worktree({ ticket: "team-2", repository: "repo-b", branchName: "dev-team-2" }),
+      worktree({ ticket: "team-1", repository: "repo-a", dir: "/work/repo-a-team-1" }),
+      worktree({
+        ticket: "team-2",
+        repository: "repo-b",
+        dir: "/work/repo-b-team-2",
+        branchName: "dev-team-2",
+      }),
     ]);
     findPullRequestsMock.mockRejectedValueOnce(new Error("gh rate limited")).mockResolvedValueOnce([
       {
@@ -752,7 +757,9 @@ describe(status, () => {
   });
 
   it("renders a `pr:` line in inventory rows when gh finds a pull request", async () => {
-    listWorktreesMock.mockReturnValue([worktree({ ticket: "team-1", repository: "repo-a" })]);
+    listWorktreesMock.mockReturnValue([
+      worktree({ ticket: "team-1", repository: "repo-a", dir: "/work/repo-a-team-1" }),
+    ]);
     findPullRequestsMock.mockResolvedValue([
       {
         url: "https://github.com/acme/widgets/pull/42",
@@ -768,7 +775,7 @@ describe(status, () => {
       "  pr:        https://github.com/acme/widgets/pull/42 (open)",
     );
     expect(findPullRequestsMock).toHaveBeenCalledWith({
-      repository: "repo-a",
+      cwd: "/work/repo-a-team-1",
       branchName: "dev-team-1",
     });
   });
@@ -812,6 +819,10 @@ describe(status, () => {
     await status(makeConfig(), { ticket: "team-1" });
 
     expect(consoleLog.output()).toContain("  pr: https://github.com/acme/widgets/pull/99 (open)");
+    expect(findPullRequestsMock).toHaveBeenCalledWith({
+      cwd: "/work/repo-a-team-1",
+      branchName: "dev-team-1",
+    });
   });
 
   it("renders the cached ticket url next to the inventory ticket id", async () => {

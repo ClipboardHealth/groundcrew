@@ -3,6 +3,11 @@
  * `gh` CLI. `crew status` uses this to surface PR links inline; failures
  * (gh not on PATH, not authenticated, non-GitHub remote) are silent — the
  * caller falls back to omitting the row.
+ *
+ * The lookup runs with `cwd` set to the worktree directory and lets `gh`
+ * resolve the GitHub repo from that checkout's own `origin` remote. This
+ * handles bare config names, full `owner/repo` slugs, forks, and SSH/HTTPS
+ * remotes uniformly — we never reconstruct the slug ourselves.
  */
 
 import { runCommandAsync } from "./commandRunner.ts";
@@ -23,8 +28,8 @@ const STATE_MAP: Record<string, string> = {
 };
 
 interface LookupArgs {
-  /** GitHub `owner/repo` slug. */
-  repository: string;
+  /** Worktree directory; `gh` resolves the GitHub repo from its git remote. */
+  cwd: string;
   /** Branch name to filter PRs by. */
   branchName: string;
   signal?: AbortSignal;
@@ -79,15 +84,13 @@ function isRawPullRequest(value: unknown): value is RawPullRequest {
 export async function findPullRequestsForBranch(
   arguments_: LookupArgs,
 ): Promise<readonly PullRequestSummary[]> {
-  const { repository, branchName, signal } = arguments_;
+  const { cwd, branchName, signal } = arguments_;
   try {
     const output = await runCommandAsync(
       "gh",
       [
         "pr",
         "list",
-        "--repo",
-        repository,
         "--head",
         branchName,
         "--state",
@@ -97,7 +100,7 @@ export async function findPullRequestsForBranch(
         "--json",
         "url,number,state,title",
       ],
-      signal === undefined ? {} : { signal },
+      signal === undefined ? { cwd } : { cwd, signal },
     );
     return parsePullRequests(output);
   } catch {
