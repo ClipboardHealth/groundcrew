@@ -121,7 +121,7 @@ describe("loadConfig", () => {
 
     expect(actual.prompts.initial).toContain("There is no human watching this session");
     expect(actual.prompts.initial).toMatch(/documented verification/i);
-    expect(actual.prompts.initial).toMatch(/open a pull request/i);
+    expect(actual.prompts.initial).toMatch(/open a PR/i);
     expect(actual.prompts.initial).toContain("{{workspaceContinuationInstruction}}");
     expect(actual.prompts.initial).not.toContain("tmux attach -t groundcrew:{{ticket}}");
   });

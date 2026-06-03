@@ -234,7 +234,7 @@ function renderWorkspaceContinuationInstruction(
   if (accessHint === undefined) {
     return "";
   }
-  return `7. Include this workspace continuation note in the PR body: Workspace attach: \`${accessHint.command}\`.`;
+  return `Include this workspace continuation note in the PR body: Workspace attach: \`${accessHint.command}\`.`;
 }
 
 function recordRunStateBestEffort(arguments_: {
