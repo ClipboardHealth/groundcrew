@@ -40,10 +40,7 @@ export interface WorktreeEntry {
   repository: string;
   /** Linear ticket id, lowercased — e.g. "team-220". */
   ticket: string;
-  /**
-   * Slash-free `<prefix>-<ticket>`. The prefix is the OS account username by
-   * default, or the configured `git.branchPrefix` override.
-   */
+  /** Slash-free `<prefix>-<ticket>`. */
   branchName: string;
   dir: string;
   kind: WorktreeKind;
@@ -57,11 +54,6 @@ export interface WorktreeSpec {
 const TICKET_RE = /^[a-z][\da-z]*-\d+$/;
 const TICKET_DIR_RE = /^(.+)-([a-z][\da-z]*-\d+)$/;
 
-/**
- * Resolves the branch-name prefix: the configured `git.branchPrefix` when set,
- * otherwise the OS account username. The config value is already validated and
- * non-empty by construction.
- */
 function branchPrefix(config: ResolvedConfig): string {
   const fromConfig = config.git.branchPrefix;
   if (fromConfig !== undefined) {

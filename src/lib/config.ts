@@ -239,11 +239,6 @@ export interface ResolvedConfig {
   git: {
     remote: string;
     defaultBranch: string;
-    /**
-     * Configured branch-name prefix, or `undefined` when unset. The OS-username
-     * fallback is applied at branch-naming time (see `worktrees.branchPrefix`),
-     * so this holds only what the user configured.
-     */
     branchPrefix?: string;
   };
   workspace: {
@@ -439,12 +434,9 @@ function normalizeOptionalString(value: unknown, configKey: string): string | un
   return value.trim();
 }
 
-// The worktree branch is `<prefix>-<ticket>` and `WorktreeEntry` promises a
-// slash-free branch name, so the prefix must be a git-ref-safe, slash-free slug:
-// start with an alphanumeric/underscore (no leading '.' that git rejects, no
-// leading '-' that `git worktree add -b` would parse as a flag) and contain no
-// `..` sequence (also rejected by git). A trailing '.'/'-' is fine since the
-// ticket, not the prefix, is the end of the branch name.
+// Git-ref-safe, slash-free slug: must start alphanumeric/underscore (git rejects
+// a leading '.', and `git worktree add -b` would read a leading '-' as a flag)
+// and contain no `..` (git rejects it).
 const BRANCH_PREFIX_RE = /^(?!.*\.\.)\w[\w.-]*$/;
 
 function normalizeBranchPrefix(value: unknown): string | undefined {
