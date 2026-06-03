@@ -277,7 +277,7 @@ function localCapabilityCheck(host: HostCapabilities, resolved: LocalRunner): Ch
       required: false,
       hint: ok
         ? "ready"
-        : "sdx runner requires `sbx` (Docker Sandboxes) on PATH (install from https://docs.docker.com/sandboxes/)",
+        : "sdx runner requires `sbx` (Docker Sandboxes) on PATH (install from https://docs.docker.com/ai/sandboxes/)",
     };
   }
   // resolved === "none"
