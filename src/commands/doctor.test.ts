@@ -85,6 +85,7 @@ function stubBoard(): Board {
     fetch: vi.fn<Board["fetch"]>(),
     resolveOne: vi.fn<Board["resolveOne"]>(),
     markInProgress: vi.fn<Board["markInProgress"]>(),
+    markInReview: vi.fn<Board["markInReview"]>(),
   };
 }
 
@@ -95,6 +96,7 @@ function stubSource(name: string): TicketSource {
     fetch: vi.fn<TicketSource["fetch"]>(),
     resolveOne: vi.fn<TicketSource["resolveOne"]>(),
     markInProgress: vi.fn<TicketSource["markInProgress"]>(),
+    markInReview: vi.fn<TicketSource["markInReview"]>(),
   };
 }
 

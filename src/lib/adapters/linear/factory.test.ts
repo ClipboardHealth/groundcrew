@@ -302,6 +302,7 @@ describe(createLinearTicketSource, () => {
     const innerMarkInProgress = vi.fn<(...args: unknown[]) => Promise<void>>().mockResolvedValue();
     vi.spyOn(linearIssueStatus, "createLinearIssueStatusUpdater").mockReturnValue({
       markInProgress: innerMarkInProgress,
+      markInReview: vi.fn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(),
     });
     const source = createLinearTicketSource({ kind: "linear" }, {
       globalConfig: makeConfig(),
@@ -327,6 +328,42 @@ describe(createLinearTicketSource, () => {
       },
     });
     expect(innerMarkInProgress).toHaveBeenCalledWith({
+      id: "linear:team-1",
+      uuid: "uuid-1",
+      teamId: "team-default",
+    });
+  });
+
+  it("markInReview() forwards uuid/teamId from sourceRef", async () => {
+    const innerMarkInReview = vi.fn<(...args: unknown[]) => Promise<void>>().mockResolvedValue();
+    vi.spyOn(linearIssueStatus, "createLinearIssueStatusUpdater").mockReturnValue({
+      markInProgress: vi.fn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(),
+      markInReview: innerMarkInReview,
+    });
+    const source = createLinearTicketSource({ kind: "linear" }, {
+      globalConfig: makeConfig(),
+    } satisfies AdapterContext);
+    await source.markInReview({
+      id: "linear:team-1",
+      source: "linear",
+      title: "x",
+      description: "",
+      status: "in-progress",
+      repository: "repo-a",
+      model: "claude",
+      assignee: "Alice",
+      updatedAt: "2026-01-01T00:00:00Z",
+      blockers: [],
+      hasMoreBlockers: false,
+      sourceRef: {
+        uuid: "uuid-1",
+        statusId: "s",
+        teamId: "team-default",
+        stateType: "started",
+        nativeStatus: "In Progress",
+      },
+    });
+    expect(innerMarkInReview).toHaveBeenCalledWith({
       id: "linear:team-1",
       uuid: "uuid-1",
       teamId: "team-default",

@@ -421,4 +421,56 @@ describe(createShellTicketSource, () => {
     };
     await expect(source.markInProgress(issue)).resolves.toBeUndefined();
   });
+
+  it("markInReview() is a silent no-op when not configured", async () => {
+    const source = createShellTicketSource(
+      { kind: "shell", name: "test", commands: { fetch: "echo '[]'" } },
+      fakeContext,
+    );
+    const issue: CanonicalIssue = {
+      id: "test:x-1",
+      source: "test",
+      title: "",
+      description: "",
+      status: "in-progress",
+      repository: undefined,
+      model: undefined,
+      assignee: "",
+      updatedAt: "",
+      blockers: [],
+      hasMoreBlockers: false,
+      sourceRef: {},
+    };
+    await expect(source.markInReview(issue)).resolves.toBeUndefined();
+  });
+
+  it("markInReview() runs the configured command with substituted id and piped sourceRef on stdin", async () => {
+    const stdinCapture = path.join(dir.path, "review-stdin-capture.txt");
+    const reviewScript = dir.writeScript("review.sh", `cat > "${stdinCapture}"; echo "review $1"`);
+    const source = createShellTicketSource(
+      {
+        kind: "shell",
+        name: "test",
+        commands: { fetch: "echo '[]'", markInReview: `${reviewScript} \${id}` },
+      },
+      fakeContext,
+    );
+    const sourceRef = { path: "/tmp/p.md", extra: { nested: 7 } };
+    const issue: CanonicalIssue = {
+      id: "test:x-1",
+      source: "test",
+      title: "",
+      description: "",
+      status: "in-progress",
+      repository: undefined,
+      model: undefined,
+      assignee: "",
+      updatedAt: "",
+      blockers: [],
+      hasMoreBlockers: false,
+      sourceRef,
+    };
+    await source.markInReview(issue);
+    expect(readFileSync(stdinCapture, "utf8")).toBe(JSON.stringify(sourceRef));
+  });
 });

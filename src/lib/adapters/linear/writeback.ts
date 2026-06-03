@@ -10,6 +10,18 @@ interface LinearIssueReference {
 
 interface LinearIssueStatusUpdater {
   markInProgress(issue: LinearIssueReference): Promise<void>;
+  markInReview(issue: LinearIssueReference): Promise<void>;
+}
+
+// D1: no Linear consumer of the in-review transition exists yet — only the
+// plans (shell) adapter produces it. A logged no-op keeps the TicketSource
+// interface generic; the real impl (resolve the team's "In Review" workflow
+// state and move the card, mirroring getInProgressStateId) is additive
+// whenever a Linear user needs it. Module-scoped because it captures no
+// client/cache state, unlike markInProgress.
+async function markInReviewNoop(issue: LinearIssueReference): Promise<void> {
+  await Promise.resolve();
+  debug(`markInReview is a no-op for ${issue.id} (Linear in-review not yet implemented)`);
 }
 
 export function createLinearIssueStatusUpdater(arguments_: {
@@ -68,5 +80,5 @@ export function createLinearIssueStatusUpdater(arguments_: {
     debug(`Marked ${issue.id} as in progress`);
   }
 
-  return { markInProgress };
+  return { markInProgress, markInReview: markInReviewNoop };
 }

@@ -122,6 +122,14 @@ export interface TicketSource {
   resolveOne(naturalId: string): Promise<Issue | undefined>;
   /** Writeback. The adapter downcasts `issue.sourceRef` internally. */
   markInProgress(issue: Issue): Promise<void>;
+  /**
+   * Writeback: advance a ticket from in-progress to in-review once its
+   * worktree has an open PR. Frees a dispatch slot without tripping the
+   * cleaner's done-only teardown, so the worktree survives for review. The
+   * adapter downcasts `issue.sourceRef` internally. Adapters with no native
+   * in-review concept (or no configured command) MUST no-op rather than throw.
+   */
+  markInReview(issue: Issue): Promise<void>;
 
   /**
    * Optional: return parent tickets that were excluded from `fetch()` because

@@ -1,8 +1,8 @@
 /**
- * Board composer — fans `verify` / `fetch` / `resolveOne` / `markInProgress`
- * across N `TicketSource` adapters. Even a single-source config goes through
- * this; the moment we skip the wrapper we grow Linear assumptions back into
- * consumers.
+ * Board composer — fans `verify` / `fetch` / `resolveOne` / `markInProgress` /
+ * `markInReview` across N `TicketSource` adapters. Even a single-source config
+ * goes through this; the moment we skip the wrapper we grow Linear assumptions
+ * back into consumers.
  */
 
 import {
@@ -23,6 +23,12 @@ export interface Board {
   resolveOne(canonicalOrNaturalId: string): Promise<Issue | undefined>;
   /** Routes to the adapter whose `name` matches `issue.source`. Unknown source throws. */
   markInProgress(issue: Issue): Promise<void>;
+  /**
+   * Advances a ticket to in-review on the adapter whose `name` matches
+   * `issue.source`. Unknown source throws. Adapters with no in-review concept
+   * no-op (see `TicketSource.markInReview`).
+   */
+  markInReview(issue: Issue): Promise<void>;
 }
 
 async function callVerify(source: TicketSource): Promise<void> {
@@ -141,11 +147,24 @@ export function createBoard(sources: readonly TicketSource[]): Board {
     },
 
     async markInProgress(issue: Issue): Promise<void> {
-      const source = byName.get(issue.source);
-      if (!source) {
-        throw new Error(`unknown source "${issue.source}" for issue ${issue.id}`);
-      }
-      await source.markInProgress(issue);
+      await routeWriteback(byName, issue).markInProgress(issue);
+    },
+
+    async markInReview(issue: Issue): Promise<void> {
+      await routeWriteback(byName, issue).markInReview(issue);
     },
   };
+}
+
+/**
+ * Resolve the adapter that owns `issue` for a writeback, by its `source` name.
+ * Shared by `markInProgress` / `markInReview` so both route — and fail —
+ * identically. Throws when no adapter claims the source.
+ */
+function routeWriteback(byName: Map<string, TicketSource>, issue: Issue): TicketSource {
+  const source = byName.get(issue.source);
+  if (!source) {
+    throw new Error(`unknown source "${issue.source}" for issue ${issue.id}`);
+  }
+  return source;
 }

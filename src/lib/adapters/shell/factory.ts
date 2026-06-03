@@ -10,7 +10,7 @@
  *    most CLI use (crew setup is rare) but users with expensive fetch
  *    commands should configure `resolveOne` explicitly. No cross-call cache
  *    in MVP-2.
- *  - `markInProgress` absent → silent no-op.
+ *  - `markInProgress` / `markInReview` absent → silent no-op.
  *  - `fetch` is required by the Zod schema.
  */
 
@@ -35,6 +35,7 @@ interface ResolvedShellTimeouts {
   fetch: number;
   resolveOne: number;
   markInProgress: number;
+  markInReview: number;
 }
 
 const DEFAULT_TIMEOUTS: ResolvedShellTimeouts = {
@@ -42,6 +43,7 @@ const DEFAULT_TIMEOUTS: ResolvedShellTimeouts = {
   fetch: 30_000,
   resolveOne: 10_000,
   markInProgress: 10_000,
+  markInReview: 10_000,
 };
 
 function mergeTimeouts(overrides: ShellAdapterConfig["timeouts"]): ResolvedShellTimeouts {
@@ -50,6 +52,7 @@ function mergeTimeouts(overrides: ShellAdapterConfig["timeouts"]): ResolvedShell
     fetch: overrides?.fetch ?? DEFAULT_TIMEOUTS.fetch,
     resolveOne: overrides?.resolveOne ?? DEFAULT_TIMEOUTS.resolveOne,
     markInProgress: overrides?.markInProgress ?? DEFAULT_TIMEOUTS.markInProgress,
+    markInReview: overrides?.markInReview ?? DEFAULT_TIMEOUTS.markInReview,
   };
 }
 
@@ -97,6 +100,36 @@ export function createShellTicketSource(
     return parsed.map((si) => toCanonicalIssue(si, sourceName));
   }
 
+  // Shared by markInProgress / markInReview: both pipe the canonical issue's
+  // opaque sourceRef to a status-transition script on stdin, with the natural
+  // and canonical ids substituted into the command. A command left unset is a
+  // silent no-op so adapters can adopt either transition independently.
+  async function invokeWriteback(
+    command: string | undefined,
+    timeoutMs: number,
+    issue: CanonicalIssue,
+  ): Promise<void> {
+    if (command === undefined) {
+      return;
+    }
+    const naturalId = issue.id.startsWith(`${sourceName}:`)
+      ? issue.id.slice(sourceName.length + 1)
+      : issue.id;
+    await invokeShellCommand({
+      command,
+      timeoutMs,
+      cwd: config.cwd,
+      env: config.env,
+      substitutions: {
+        id: naturalId,
+        canonicalId: issue.id,
+        name: sourceName,
+      },
+      stdin: JSON.stringify(issue.sourceRef),
+      sourceName,
+    });
+  }
+
   return {
     name: sourceName,
     async verify(): Promise<void> {
@@ -139,26 +172,10 @@ export function createShellTicketSource(
       return toCanonicalIssue(parsed, sourceName);
     },
     async markInProgress(issue: CanonicalIssue): Promise<void> {
-      const markCommand = config.commands.markInProgress;
-      if (markCommand === undefined) {
-        return;
-      }
-      const naturalId = issue.id.startsWith(`${sourceName}:`)
-        ? issue.id.slice(sourceName.length + 1)
-        : issue.id;
-      await invokeShellCommand({
-        command: markCommand,
-        timeoutMs: timeouts.markInProgress,
-        cwd: config.cwd,
-        env: config.env,
-        substitutions: {
-          id: naturalId,
-          canonicalId: issue.id,
-          name: sourceName,
-        },
-        stdin: JSON.stringify(issue.sourceRef),
-        sourceName,
-      });
+      await invokeWriteback(config.commands.markInProgress, timeouts.markInProgress, issue);
+    },
+    async markInReview(issue: CanonicalIssue): Promise<void> {
+      await invokeWriteback(config.commands.markInReview, timeouts.markInReview, issue);
     },
   };
 }

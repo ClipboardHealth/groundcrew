@@ -1,19 +1,21 @@
 /**
  * groundcrew orchestrator — polls Linear projects and spins up workspace +
  * git-worktree pairs for ready tickets. Each tick fetches the board, runs
- * the cleaner, and runs the dispatcher; logging from those modules is the
- * orchestrator's user-facing output.
+ * the cleaner, the reviewer, and the dispatcher; logging from those modules is
+ * the orchestrator's user-facing output.
  */
 
 import { type Board, createBoard } from "../lib/board.ts";
 import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
+import { findPullRequestsForBranch } from "../lib/pullRequests.ts";
 import { type BoardState, RepositoryResolutionError } from "../lib/ticketSource.ts";
 import { getUsageByModel, type UsageByModel } from "../lib/usage.ts";
 import { errorMessage, log, sleep } from "../lib/util.ts";
 import { worktrees } from "../lib/worktrees.ts";
 import { type Cleaner, createCleaner } from "./cleaner.ts";
 import { createDispatcher, type Dispatcher } from "./dispatcher.ts";
+import { createReviewer, type Reviewer } from "./reviewer.ts";
 
 const RATE_LIMIT_DELAY_MS = 60_000;
 const RETRY_BASE_DELAY_MS = 1000;
@@ -91,6 +93,10 @@ export async function orchestrate(options: OrchestratorOptions): Promise<void> {
   await board.verify();
 
   const cleaner: Cleaner = createCleaner({ config });
+  const reviewer: Reviewer = createReviewer({
+    board,
+    findPullRequests: findPullRequestsForBranch,
+  });
   const dispatcher: Dispatcher = createDispatcher({ config, board });
 
   // Folded into the dispatcher's idle log lines in watch mode so each idle
@@ -111,6 +117,8 @@ export async function orchestrate(options: OrchestratorOptions): Promise<void> {
     };
 
     await cleaner.runOnce(tickArguments);
+
+    await reviewer.runOnce(tickArguments);
 
     await dispatcher.runOnce({
       ...tickArguments,

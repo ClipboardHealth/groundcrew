@@ -6,6 +6,7 @@ import type { LinearClient } from "@linear/sdk";
 
 import type * as configModule from "../lib/config.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
+import { findPullRequestsForBranch } from "../lib/pullRequests.ts";
 import { getUsageByModel } from "../lib/usage.ts";
 import type * as utilModule from "../lib/util.ts";
 import { setVerbose, sleep } from "../lib/util.ts";
@@ -65,6 +66,10 @@ vi.mock(import("../lib/usage.ts"), async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, getUsageByModel: vi.fn<typeof getUsageByModel>() };
 });
+vi.mock(import("../lib/pullRequests.ts"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, findPullRequestsForBranch: vi.fn<typeof findPullRequestsForBranch>() };
+});
 vi.mock(import("./setupWorkspace.ts"), async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, setupWorkspace: vi.fn<typeof setupWorkspace>() };
@@ -83,6 +88,7 @@ const teardownMock = vi.mocked(worktrees.teardown);
 const usageMock = vi.mocked(getUsageByModel);
 const setupMock = vi.mocked(setupWorkspace);
 const workspacesProbeMock = vi.mocked(workspaces.probe);
+const findPullRequestsMock = vi.mocked(findPullRequestsForBranch);
 
 function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
   return {
@@ -333,6 +339,7 @@ describe(orchestrate, () => {
     usageMock.mockResolvedValue({});
     setupMock.mockResolvedValue();
     workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set<string>() });
+    findPullRequestsMock.mockResolvedValue([]);
     // Telemetry (event= lines) and teardown sub-steps are diagnostic, surfacing
     // on the console only under verbose — several cases assert that wording.
     setVerbose(true);
@@ -1233,6 +1240,38 @@ describe(orchestrate, () => {
     await orchestrate({ watch: false, dryRun: false });
 
     expect(client.team).toHaveBeenCalledTimes(1);
+  });
+
+  it("advances an in-progress ticket to in-review when its worktree has an open PR", async () => {
+    // The reviewer is wired into the tick between cleaner and dispatcher. An
+    // in-progress ticket whose worktree has an open PR is advanced via
+    // board.markInReview (a no-op for the Linear adapter, but the reviewer's
+    // success log proves the step ran end-to-end through the orchestrator).
+    listMock.mockReturnValue([hostEntryFor("repo-a", "team-1")]);
+    workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-1"]) });
+    findPullRequestsMock.mockResolvedValue([
+      { url: "https://github.com/x/y/pull/3", number: 3, state: "open", title: "PR" },
+    ]);
+    const client = makeClient({
+      pages: [
+        [
+          issue({
+            identifier: "TEAM-1",
+            id: "uuid-1",
+            state: { id: "state-active", name: "In Progress", type: "started" },
+          }),
+        ],
+      ],
+    });
+    mockLinearClient(client);
+
+    await orchestrate({ watch: false, dryRun: false });
+
+    expect(findPullRequestsMock).toHaveBeenCalledWith({
+      cwd: "/work/repo-a-team-1",
+      branchName: "dev-team-1",
+    });
+    expect(consoleLog.output()).toContain("Advanced team-1 to in-review");
   });
 
   it("hands a Done worktree to teardown", async () => {

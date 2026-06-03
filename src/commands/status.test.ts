@@ -115,6 +115,7 @@ function fakeSource(
     fetch,
     resolveOne,
     markInProgress: noop,
+    markInReview: noop,
   };
 }
 

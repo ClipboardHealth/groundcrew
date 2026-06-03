@@ -234,5 +234,14 @@ export function createLinearTicketSource(
         teamId: ref.teamId,
       });
     },
+    async markInReview(issue: CanonicalIssue): Promise<void> {
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- by the Linear adapter's contract, every Issue it produces carries a LinearSourceRef in sourceRef
+      const ref = issue.sourceRef as LinearSourceRef;
+      await getIssueStatusUpdater().markInReview({
+        id: issue.id,
+        uuid: ref.uuid,
+        teamId: ref.teamId,
+      });
+    },
   };
 }

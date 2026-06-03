@@ -187,9 +187,10 @@ describe("shell adapter config schema", () => {
         fetch: "./fetch.sh",
         resolveOne: "./resolve.sh ${id}",
         markInProgress: "jira move ${id} 'In Progress'",
+        markInReview: "jira move ${id} 'In Review'",
       },
       cwd: "/work",
-      timeouts: { fetch: 60_000 },
+      timeouts: { fetch: 60_000, markInReview: 15_000 },
       env: { JIRA_TOKEN: "abc" },
     };
     expect(() => shellAdapterConfigSchema.parse(config)).not.toThrow();

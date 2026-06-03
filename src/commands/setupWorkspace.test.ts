@@ -116,6 +116,7 @@ vi.mock(import("../lib/board.ts"), async (importOriginal) => {
         }),
       ),
       markInProgress: vi.fn<(issue: Issue) => Promise<void>>().mockResolvedValue(),
+      markInReview: vi.fn<(issue: Issue) => Promise<void>>().mockResolvedValue(),
     })),
   };
 });
@@ -1627,6 +1628,7 @@ const buildSourcesMock = vi.mocked(buildSources);
 interface FakeBoard extends ReturnType<typeof createBoard> {
   resolveOne: ReturnType<typeof vi.fn<(id: string) => Promise<Issue | undefined>>>;
   markInProgress: ReturnType<typeof vi.fn<(issue: Issue) => Promise<void>>>;
+  markInReview: ReturnType<typeof vi.fn<(issue: Issue) => Promise<void>>>;
 }
 
 function fakeBoard(resolvedIssue: Issue | undefined): FakeBoard {
@@ -1637,6 +1639,7 @@ function fakeBoard(resolvedIssue: Issue | undefined): FakeBoard {
       .fn<(id: string) => Promise<Issue | undefined>>()
       .mockResolvedValue(resolvedIssue),
     markInProgress: vi.fn<(issue: Issue) => Promise<void>>().mockResolvedValue(),
+    markInReview: vi.fn<(issue: Issue) => Promise<void>>().mockResolvedValue(),
   };
 }
 
