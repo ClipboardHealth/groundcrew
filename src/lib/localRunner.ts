@@ -54,7 +54,7 @@ export function assertLocalRunnerRequirements(host: HostCapabilities, runner: Lo
     }
     if (!host.hasSbx) {
       throw new Error(
-        "Local groundcrew runs with the sdx runner require `sbx` (Docker Sandboxes) on PATH. Install from https://docs.docker.com/sandboxes/ and retry.",
+        "Local groundcrew runs with the sdx runner require `sbx` (Docker Sandboxes) on PATH. Install from https://docs.docker.com/ai/sandboxes/ and retry.",
       );
     }
     return;
