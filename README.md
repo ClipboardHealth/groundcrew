@@ -53,10 +53,13 @@ crew init --global --project-dir ~/dev --repo OWNER/REPO --model claude
 
 # 3. Run the clone commands printed by `crew init`.
 
-# 4. Using Linear? Export your API key. (Jira and other trackers: see Ticket Pickup.)
+# 4. Set the clearance egress proxy allowlist.
+export CLEARANCE_ALLOW_HOSTS_FILES="$(npm root -g)/@clipboard-health/groundcrew/clearance-allow-hosts"
+
+# 5. Using Linear? Export your API key. (Jira and other trackers: see Ticket Pickup.)
 export GROUNDCREW_LINEAR_API_KEY="lin_api_..."
 
-# 5. Verify setup, then dispatch.
+# 6. Verify setup, then dispatch.
 crew doctor
 crew run --watch
 ```
