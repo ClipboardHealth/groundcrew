@@ -609,8 +609,15 @@ function buildSrtLaunchCommand(arguments_: LaunchCommandArguments): string {
   // Distinct policies per wrap: the prepareWorktree hook is repo-controlled, so
   // it runs under the profile-neutral settings (no agent credential grants);
   // only the agent wrap gets the full agent policy.
-  const prepareTarget = `${srtBin} --settings ${shellSingleQuote(arguments_.srtPrepareSettingsFile)}`;
-  const agentTarget = `${srtBin} --settings ${shellSingleQuote(arguments_.srtAgentSettingsFile)}`;
+  //
+  // The trailing `--` is load-bearing: srt's CLI (commander) has its own `-c`,
+  // `--settings`, `--debug`, and `--control-fd` options. Without `--`, srt would
+  // capture the child's `sh -c '<cmd>'` as its OWN `-c` (dropping the trailing
+  // prompt positionals entirely), and an option-looking prompt/hook value could
+  // mutate srt's options (e.g. redirect `--settings`). `--` ends srt option
+  // parsing so everything after is the child argv.
+  const prepareTarget = `${srtBin} --settings ${shellSingleQuote(arguments_.srtPrepareSettingsFile)} --`;
+  const agentTarget = `${srtBin} --settings ${shellSingleQuote(arguments_.srtAgentSettingsFile)} --`;
 
   // `env -i <baseline>` drops the inherited host env; each wrap re-adds only the
   // benign baseline plus its forwarded names (`VAR="$VAR"` — value from the host

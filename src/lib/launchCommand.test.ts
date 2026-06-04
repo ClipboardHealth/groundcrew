@@ -89,9 +89,9 @@ describe(`${buildLaunchCommand.name} (runner='srt')`, () => {
 
     const prepareFlag = "--settings '/tmp/groundcrew-srt-team-1/prepare-settings.json'";
     const agentFlag = "--settings '/tmp/groundcrew-srt-team-1/agent-settings.json'";
-    const prepareWrapIndex = out.indexOf(`${prepareFlag} sh -c`);
+    const prepareWrapIndex = out.indexOf(`${prepareFlag} -- sh -c`);
     const setupIndex = out.indexOf("npm ci");
-    const agentIndex = out.indexOf(`${agentFlag} sh -c 'exec claude "$@"' sh "$_p"`);
+    const agentIndex = out.indexOf(`${agentFlag} -- sh -c 'exec claude "$@"' sh "$_p"`);
 
     expect(out).toMatch(/sandbox-runtime\/dist\/cli\.js' --settings/);
     expect(out).toContain("cd '/work/repo-a-team-1'");
@@ -99,14 +99,27 @@ describe(`${buildLaunchCommand.name} (runner='srt')`, () => {
     expect(out).toContain("rm -rf '/tmp/prompt-team-1'");
     // The repo-controlled prepare hook gets the neutral policy; only the agent
     // wrap gets the agent policy — they must be different files.
-    expect(out).toContain(`${prepareFlag} sh -c`);
-    expect(out).toContain(`${agentFlag} sh -c 'exec claude "$@"' sh "$_p"`);
+    expect(out).toContain(`${prepareFlag} -- sh -c`);
+    expect(out).toContain(`${agentFlag} -- sh -c 'exec claude "$@"' sh "$_p"`);
     expect(out.slice(setupIndex)).not.toContain("prepare-settings.json");
     expect(out).not.toContain("safehouse-clearance");
     expect(out).not.toContain("_safehouse_shim");
     expect(prepareWrapIndex).toBeGreaterThan(-1);
     expect(setupIndex).toBeGreaterThan(prepareWrapIndex);
     expect(agentIndex).toBeGreaterThan(setupIndex);
+  });
+
+  it("separates srt options from the child argv with `--` so option-looking values can't mutate srt flags", () => {
+    const out = buildLaunchCommand(srtArguments({ prepareWorktreeCommand: "--debug ; echo x" }));
+
+    // Both wraps end srt option parsing with `--` before the child `sh -c`...
+    expect(out).toContain("agent-settings.json' -- sh -c");
+    expect(out).toContain("prepare-settings.json' -- sh -c");
+    // ...so srt never sees a bare `--settings <file> sh` (which would let it
+    // swallow the child `-c`), and an option-looking hook value lands inside the
+    // child sh -c rather than mutating srt's own flags.
+    expect(out).not.toMatch(/--settings '[^']*' sh -c/);
+    expect(out).toMatch(/-- sh -c '\(--debug ; echo x\)/);
   });
 
   it("tears down the settings dir after the agent exits and traps both temp dirs", () => {
