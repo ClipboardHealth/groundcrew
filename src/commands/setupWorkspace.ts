@@ -1,24 +1,20 @@
 import { rmSync } from "node:fs";
-import path from "node:path";
-import { loadConfig, type ModelDefinition, type ResolvedConfig } from "../lib/config.ts";
+import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { openAgentWorkspace, prepareAgentLaunch } from "../lib/agentLaunch.ts";
 import { type Board, createBoard } from "../lib/board.ts";
 import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
-import { collectAllowedDomains } from "../lib/clearanceHosts.ts";
-import { buildLaunchCommand, inferAgentCommandName } from "../lib/launchCommand.ts";
+import { buildLaunchCommand } from "../lib/launchCommand.ts";
 import { resolvePrepareWorktreeCommand } from "../lib/repositoryHooks.ts";
 import { recordRunState } from "../lib/runState.ts";
-import { buildSrtSettings } from "../lib/srtPolicy.ts";
+import { buildAndStageSrtLaunch } from "../lib/srtLaunch.ts";
 import {
   stageBuildSecrets,
   stagePromptFromTemplate,
-  stageSrtSettings,
   stageWorkspaceLaunchCommand,
   type StagedPrompt,
-  type StagedSrtSettings,
 } from "../lib/stagedLaunch.ts";
 import { naturalIdFromCanonical } from "../lib/ticketSource.ts";
-import { debug, errorMessage, log, okMark, readEnvironmentVariable } from "../lib/util.ts";
+import { debug, errorMessage, log, okMark } from "../lib/util.ts";
 import { type WorkspaceAccessHint, workspaces } from "../lib/workspaces.ts";
 import { isWorktreeAlreadyExistsError, type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 
@@ -58,40 +54,6 @@ function stagePrompt(input: {
       description: input.ticketDetails.description,
       workspaceContinuationInstruction: input.workspaceContinuationInstruction,
     },
-  });
-}
-
-/**
- * Generate the srt policies for this launch and stage them to temp settings
- * files. The agent identity comes from the model `cmd`; the git common dir is
- * the parent clone's `.git` (the worktree lives beside it); the egress
- * allowlist is translated from the existing clearance env so srt and safehouse
- * share one source of truth. Only called when `local.runner` resolves to `srt`.
- *
- * Two policies: the `prepare` policy is profile-neutral (empty agent → no
- * `~/.claude`/`~/.codex` grants) so the repo-controlled prepareWorktree hook
- * can't touch the agent's credentials; the `agent` policy carries the agent's
- * credential profile.
- */
-function buildAndStageSrtSettings(input: {
-  config: ResolvedConfig;
-  repository: string;
-  ticket: string;
-  worktreeDir: string;
-  definition: ModelDefinition;
-}): StagedSrtSettings {
-  const repoDir = path.resolve(input.config.workspace.projectDir, input.repository);
-  const base = {
-    worktreeDir: input.worktreeDir,
-    gitCommonDir: path.join(repoDir, ".git"),
-    allowedDomains: collectAllowedDomains({
-      hosts: readEnvironmentVariable("CLEARANCE_ALLOW_HOSTS"),
-      files: readEnvironmentVariable("CLEARANCE_ALLOW_HOSTS_FILES"),
-    }),
-  };
-  return stageSrtSettings(input.ticket, {
-    prepare: buildSrtSettings({ ...base, agent: "" }),
-    agent: buildSrtSettings({ ...base, agent: inferAgentCommandName(input.definition.cmd) }),
   });
 }
 
@@ -162,8 +124,9 @@ export async function setupWorkspace(
       prepareWorktreeCommand === undefined ? undefined : stageBuildSecrets(promptDir);
     let srtPrepareSettingsFile: string | undefined;
     let srtAgentSettingsFile: string | undefined;
+    let srtAgentConfigDirEnv: { name: string; value: string } | undefined;
     if (runner === "srt") {
-      const staged = buildAndStageSrtSettings({
+      const staged = buildAndStageSrtLaunch({
         config,
         repository,
         ticket,
@@ -173,6 +136,7 @@ export async function setupWorkspace(
       srtPrepareSettingsFile = staged.prepareFile;
       srtAgentSettingsFile = staged.agentFile;
       srtSettingsDir = staged.directory;
+      srtAgentConfigDirEnv = staged.agentConfigDirEnv;
     }
     const launchCommand = buildLaunchCommand({
       definition,
@@ -185,6 +149,7 @@ export async function setupWorkspace(
       srtPrepareSettingsFile,
       srtAgentSettingsFile,
       srtSettingsDir,
+      srtAgentConfigDirEnv,
     });
     const launchCmd = stageWorkspaceLaunchCommand(promptDir, launchCommand);
 

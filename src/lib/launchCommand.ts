@@ -360,6 +360,15 @@ interface LaunchCommandArguments {
    * `runner === "srt"`; torn down by the launch command after srt exits.
    */
   srtSettingsDir?: string | undefined;
+  /**
+   * Env var that points the agent at its relocated, writable config home
+   * (e.g. `{ name: "CODEX_HOME", value: "<settingsDir>/codex-home" }`).
+   * Injected into the agent wrap's `env -i` (with an explicit value, not a
+   * host-env passthrough) so the agent writes state to the staged dir instead
+   * of its read-only real home. Only the agent wrap gets it — the prepare wrap
+   * runs the repo hook, not the agent. Undefined for read-only agents (claude).
+   */
+  srtAgentConfigDirEnv?: { name: string; value: string } | undefined;
 }
 
 /**
@@ -628,7 +637,15 @@ function buildSrtLaunchCommand(arguments_: LaunchCommandArguments): string {
   const prepareForward =
     arguments_.secretsFile === undefined ? "" : srtForwardedEnv(BUILD_SECRET_NAMES);
   const prepareWrap = `env -i ${baseline}${prepareForward} ${prepareTarget}`;
-  const agentWrap = `env -i ${baseline}${srtForwardedEnv(arguments_.definition.preLaunchEnv ?? [])} ${agentTarget}`;
+  // The relocated config-home env (e.g. CODEX_HOME) is an explicit value, not a
+  // `VAR="$VAR"` host passthrough — groundcrew computed the staged path, it is
+  // not in the launch shell's env. The name is a fixed identifier; the value is
+  // single-quoted. Only the agent wrap gets it.
+  const agentConfigDirAssignment =
+    arguments_.srtAgentConfigDirEnv === undefined
+      ? ""
+      : ` ${arguments_.srtAgentConfigDirEnv.name}=${shellSingleQuote(arguments_.srtAgentConfigDirEnv.value)}`;
+  const agentWrap = `env -i ${baseline}${agentConfigDirAssignment}${srtForwardedEnv(arguments_.definition.preLaunchEnv ?? [])} ${agentTarget}`;
 
   // One EXIT trap wipes both the settings dir and the prompt dir, covering
   // every failure window between here and the post-wrap cleanup.

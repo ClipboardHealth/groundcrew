@@ -480,10 +480,14 @@ describe(setupWorkspace, () => {
     expect(launchScript).toMatch(/sandbox-runtime\/dist\/cli\.js/);
     expect(launchScript).toContain(`exec claude --auto "$@"`);
     expect(launchScript).not.toContain("safehouse-clearance");
-    // The agent policy grants the claude credential dir writable; the
-    // profile-neutral prepare policy does not — so a repo-controlled
-    // prepareWorktree hook can't read or mutate agent credentials.
+    // The agent policy gives claude a writable home but denies the executable
+    // persistence surfaces (work item 1): ~/.claude.json (mcpServers) is denied
+    // even though the surrounding home is writable. The profile-neutral prepare
+    // policy gets neither read nor write, so a repo-controlled prepareWorktree
+    // hook can't touch the agent's config.
+    expect(agent.filesystem.allowRead?.some((p) => p.endsWith("/.claude"))).toBe(true);
     expect(agent.filesystem.allowWrite.some((p) => p.endsWith("/.claude"))).toBe(true);
+    expect(agent.filesystem.denyWrite.some((p) => p.endsWith("/.claude.json"))).toBe(true);
     expect(agent.allowPty).toBe(true);
     expect(prepare.filesystem.allowWrite.some((p) => p.endsWith("/.claude"))).toBe(false);
     expect(prepare.filesystem.allowRead?.some((p) => p.endsWith("/.claude"))).toBe(false);

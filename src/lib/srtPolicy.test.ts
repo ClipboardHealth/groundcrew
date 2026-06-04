@@ -1,6 +1,6 @@
 import { SandboxRuntimeConfigSchema } from "@anthropic-ai/sandbox-runtime";
 
-import { buildSrtSettings } from "./srtPolicy.ts";
+import { agentConfigRelocation, buildSrtSettings } from "./srtPolicy.ts";
 
 function input(
   overrides: Partial<Parameters<typeof buildSrtSettings>[0]> = {},
@@ -25,7 +25,6 @@ describe(buildSrtSettings, () => {
     expect(actual.filesystem.allowRead).toContain("/work/repo-a-team-1");
     expect(actual.filesystem.allowRead).toContain("/work/repo-a/.git");
     expect(actual.filesystem.allowWrite).toContain("/work/repo-a-team-1");
-    expect(actual.filesystem.allowWrite).toContain("/work/repo-a/.git");
   });
 
   it("masks /Users (not /home) on macOS", () => {
@@ -46,81 +45,176 @@ describe(buildSrtSettings, () => {
   it("narrows credential-bearing toolchain homes to runtime subpaths (allowRead wins over denyRead)", () => {
     const actual = buildSrtSettings(input());
 
-    // Re-opened: the runtime/cache subpaths needed to execute toolchains...
     expect(actual.filesystem.allowRead).toContain("/home/dev/.cargo/registry");
     expect(actual.filesystem.allowRead).toContain("/home/dev/.local/bin");
-    // ...but NOT the whole homes, which hold credentials/app state that the
-    // home mask must keep hidden (`~/.cargo/credentials.toml`, `~/.local/share`).
     expect(actual.filesystem.allowRead).not.toContain("/home/dev/.cargo");
     expect(actual.filesystem.allowRead).not.toContain("/home/dev/.local");
   });
 
-  it("re-opens the agent's own credential dirs per profile", () => {
-    const claude = buildSrtSettings(input({ agent: "claude" }));
-    expect(claude.filesystem.allowRead).toContain("/home/dev/.claude");
-    expect(claude.filesystem.allowWrite).toContain("/home/dev/.claude.json");
+  describe("agent state isolation (work item 1)", () => {
+    it("gives claude a writable home but denies every fixed-path executable surface (incl .claude.json + chrome)", () => {
+      const actual = buildSrtSettings(input({ agent: "claude" }));
 
-    const codex = buildSrtSettings(input({ agent: "codex" }));
-    expect(codex.filesystem.allowRead).toContain("/home/dev/.codex");
-    expect(codex.filesystem.allowWrite).toContain("/home/dev/.codex");
+      // Writable home so the Bash tool's session-env / scratch state works...
+      expect(actual.filesystem.allowRead).toContain("/home/dev/.claude");
+      expect(actual.filesystem.allowRead).toContain("/home/dev/.claude.json");
+      expect(actual.filesystem.allowWrite).toContain("/home/dev/.claude");
+      // ...but every surface that would let a prompted agent persist across host
+      // runs is carved back out (denyWrite beats allowWrite).
+      for (const denied of [
+        "/home/dev/.claude.json",
+        "/home/dev/.claude/settings.json",
+        "/home/dev/.claude/settings.local.json",
+        "/home/dev/.claude/commands",
+        "/home/dev/.claude/agents",
+        "/home/dev/.claude/plugins",
+        "/home/dev/.claude/skills",
+        "/home/dev/.claude/hooks",
+        "/home/dev/.claude/statusline.sh",
+        "/home/dev/.claude/CLAUDE.md",
+        "/home/dev/.claude/chrome",
+        "/home/dev/.claude/.git/hooks",
+        "/home/dev/.claude/.git/config",
+      ]) {
+        expect(actual.filesystem.denyWrite).toContain(denied);
+      }
+      // .claude.json is granted read (claude loads its config) but never write.
+      expect(actual.filesystem.allowWrite).not.toContain("/home/dev/.claude.json");
+    });
+
+    it("keeps codex's real home read-only (relocated) — read but never write", () => {
+      const actual = buildSrtSettings(input({ agent: "codex" }));
+
+      expect(actual.filesystem.allowRead).toContain("/home/dev/.codex");
+      expect(actual.filesystem.allowWrite).not.toContain("/home/dev/.codex");
+      expect(actual.filesystem.denyWrite).toContain("/home/dev/.codex");
+    });
+
+    it("denies each agent the home dirs it does not own (cross-agent + srt ~/.claude/debug override)", () => {
+      // claude owns its writable ~/.claude, so it is not self-denied, but it
+      // can't write ~/.codex.
+      const claude = buildSrtSettings(input({ agent: "claude" }));
+      expect(claude.filesystem.denyWrite).toContain("/home/dev/.codex");
+      expect(claude.filesystem.denyWrite).not.toContain("/home/dev/.claude");
+
+      // codex relocates (no writable real home) + the neutral prepare policy and
+      // an unknown agent own neither — all deny both real homes.
+      for (const agent of ["codex", "", "mystery"]) {
+        const actual = buildSrtSettings(input({ agent }));
+        expect(actual.filesystem.denyWrite).toContain("/home/dev/.claude");
+        expect(actual.filesystem.denyWrite).toContain("/home/dev/.codex");
+      }
+    });
+
+    it("grants a relocated, writable config home (read + write) when one is staged, e.g. codex", () => {
+      const actual = buildSrtSettings(
+        input({ agent: "codex", relocatedConfigDir: "/tmp/groundcrew-srt-team-1/codex-home" }),
+      );
+
+      expect(actual.filesystem.allowWrite).toContain("/tmp/groundcrew-srt-team-1/codex-home");
+      expect(actual.filesystem.allowRead).toContain("/tmp/groundcrew-srt-team-1/codex-home");
+      // The real ~/.codex stays read-only even with a relocated home.
+      expect(actual.filesystem.allowWrite).not.toContain("/home/dev/.codex");
+    });
+
+    it("omits the relocated-home grant when none is staged (deny-list agents like claude)", () => {
+      const actual = buildSrtSettings(input({ agent: "claude" }));
+
+      expect(actual.filesystem.allowWrite).not.toContain("/tmp/groundcrew-srt-team-1/codex-home");
+    });
   });
 
-  it("denies the agent's executable/instruction surfaces within its writable state dir", () => {
-    const claude = buildSrtSettings(input({ agent: "claude" }));
-    // The state dir stays writable, but every surface that would let a prompted
-    // agent persist across host runs is carved back out (validated against the
-    // real ~/.claude layout: hooks, statusline script, global instructions, …).
-    expect(claude.filesystem.allowWrite).toContain("/home/dev/.claude");
-    for (const denied of [
-      "/home/dev/.claude/settings.json",
-      "/home/dev/.claude/settings.local.json",
-      "/home/dev/.claude/plugins",
-      "/home/dev/.claude/skills",
-      "/home/dev/.claude/hooks",
-      "/home/dev/.claude/statusline.sh",
-      "/home/dev/.claude/CLAUDE.md",
-      "/home/dev/.claude/.git/hooks",
-      "/home/dev/.claude/.git/config",
-    ]) {
-      expect(claude.filesystem.denyWrite).toContain(denied);
-    }
+  describe("macOS keychain read for keychain-authenticated agents (work item 1)", () => {
+    it("re-opens ~/Library/Keychains for claude on macOS so it can authenticate under the home mask", () => {
+      const actual = buildSrtSettings(
+        input({ agent: "claude", platform: "darwin", homeDir: "/Users/dev" }),
+      );
 
-    const codex = buildSrtSettings(input({ agent: "codex" }));
-    for (const denied of [
-      "/home/dev/.codex/config.toml",
-      "/home/dev/.codex/hooks.json",
-      "/home/dev/.codex/AGENTS.md",
-      "/home/dev/.codex/plugins",
-      "/home/dev/.codex/skills",
-      "/home/dev/.codex/rules",
-      "/home/dev/.codex/.git/hooks",
-      "/home/dev/.codex/.git/config",
-    ]) {
-      expect(codex.filesystem.denyWrite).toContain(denied);
-    }
+      expect(actual.filesystem.allowRead).toContain("/Users/dev/Library/Keychains");
+    });
 
-    // Cross-agent: a profile denies the home dirs it does not own (this also
-    // overrides srt's hardcoded `~/.claude/debug` default write path).
-    expect(claude.filesystem.denyWrite).toContain("/home/dev/.codex");
-    expect(claude.filesystem.denyWrite).not.toContain("/home/dev/.claude");
-    expect(codex.filesystem.denyWrite).toContain("/home/dev/.claude");
-    expect(codex.filesystem.denyWrite).not.toContain("/home/dev/.codex");
+    it("does not re-open the keychain on Linux (file-based creds; the path doesn't exist)", () => {
+      const actual = buildSrtSettings(input({ agent: "claude", platform: "linux" }));
+
+      expect(actual.filesystem.allowRead).not.toContain("/home/dev/Library/Keychains");
+    });
+
+    it("does not re-open the keychain for file-authenticated agents (codex) even on macOS", () => {
+      const actual = buildSrtSettings(
+        input({ agent: "codex", platform: "darwin", homeDir: "/Users/dev" }),
+      );
+
+      expect(actual.filesystem.allowRead).not.toContain("/Users/dev/Library/Keychains");
+    });
   });
 
-  it("grants no agent credential access for a profile-neutral (empty) agent — the prepare policy", () => {
-    const prepare = buildSrtSettings(input({ agent: "" }));
+  describe("git common dir is a narrow write allowlist, never wholesale (work item 2)", () => {
+    it("grants exactly the paths the git workflow + gc write, not the whole common dir", () => {
+      const actual = buildSrtSettings(input());
 
-    // The repo-controlled prepareWorktree hook gets toolchains + worktree + npm
-    // cache, but never the agent's credential dirs...
-    expect(prepare.filesystem.allowRead).not.toContain("/home/dev/.claude");
-    expect(prepare.filesystem.allowWrite).not.toContain("/home/dev/.claude");
-    expect(prepare.filesystem.allowRead).not.toContain("/home/dev/.codex");
-    expect(prepare.filesystem.allowRead).toContain("/home/dev/.nvm");
-    expect(prepare.filesystem.allowWrite).toContain("/home/dev/.npm");
-    // ...and both are denied write, so srt's default `~/.claude/debug` write
-    // path can't re-open Claude state under the neutral policy.
-    expect(prepare.filesystem.denyWrite).toContain("/home/dev/.claude");
-    expect(prepare.filesystem.denyWrite).toContain("/home/dev/.codex");
+      // The whole common dir is readable but NOT writable wholesale.
+      expect(actual.filesystem.allowRead).toContain("/work/repo-a/.git");
+      expect(actual.filesystem.allowWrite).not.toContain("/work/repo-a/.git");
+
+      for (const granted of [
+        "/work/repo-a/.git/objects",
+        "/work/repo-a/.git/refs",
+        "/work/repo-a/.git/logs",
+        "/work/repo-a/.git/info",
+        "/work/repo-a/.git/packed-refs",
+        "/work/repo-a/.git/packed-refs.lock",
+        "/work/repo-a/.git/packed-refs.new",
+        "/work/repo-a/.git/gc.pid",
+        "/work/repo-a/.git/gc.pid.lock",
+        "/work/repo-a/.git/HEAD",
+        "/work/repo-a/.git/HEAD.lock",
+        "/work/repo-a/.git/ORIG_HEAD",
+        "/work/repo-a/.git/FETCH_HEAD",
+        "/work/repo-a/.git/worktrees/repo-a-team-1",
+      ]) {
+        expect(actual.filesystem.allowWrite).toContain(granted);
+      }
+    });
+
+    it("never write-grants config/hooks/modules or sibling worktree gitdirs (closed by omission)", () => {
+      const actual = buildSrtSettings(input());
+
+      for (const closed of [
+        "/work/repo-a/.git/config",
+        "/work/repo-a/.git/hooks",
+        "/work/repo-a/.git/modules",
+        "/work/repo-a/.git/worktrees",
+      ]) {
+        expect(actual.filesystem.allowWrite).not.toContain(closed);
+      }
+    });
+
+    it("carves the per-worktree redirection + config files back out of the granted gitdir", () => {
+      const actual = buildSrtSettings(input());
+
+      expect(actual.filesystem.denyWrite).toContain(
+        "/work/repo-a/.git/worktrees/repo-a-team-1/commondir",
+      );
+      expect(actual.filesystem.denyWrite).toContain(
+        "/work/repo-a/.git/worktrees/repo-a-team-1/gitdir",
+      );
+      expect(actual.filesystem.denyWrite).toContain(
+        "/work/repo-a/.git/worktrees/repo-a-team-1/config.worktree",
+      );
+      // The linked-worktree `.git` pointer file itself — can't be redirected.
+      expect(actual.filesystem.denyWrite).toContain("/work/repo-a-team-1/.git");
+    });
+  });
+
+  it("denies writes to global toolchain bin/module locations", () => {
+    const actual = buildSrtSettings(input());
+
+    expect(actual.filesystem.denyWrite).toContain(
+      "/home/dev/.nvm/versions/node/v24/lib/node_modules",
+    );
+    expect(actual.filesystem.denyWrite).toContain("/home/dev/.nvm/versions/node/v24/bin");
+    expect(actual.filesystem.denyWrite).toContain("/home/dev/.cargo/bin");
+    expect(actual.filesystem.denyWrite).toContain("/home/dev/.npm/_npx");
   });
 
   it("grants no extra home access for an unknown agent but keeps toolchains", () => {
@@ -131,24 +225,15 @@ describe(buildSrtSettings, () => {
     expect(actual.filesystem.allowRead).toContain("/home/dev/.nvm");
   });
 
-  it("denies writes to global toolchain locations, git config/hooks, and the worktree .git pointer", () => {
-    const actual = buildSrtSettings(input());
+  it("grants the prepare policy (empty agent) toolchains + npm cache but no agent config homes", () => {
+    const prepare = buildSrtSettings(input({ agent: "" }));
 
-    expect(actual.filesystem.denyWrite).toContain(
-      "/home/dev/.nvm/versions/node/v24/lib/node_modules",
-    );
-    expect(actual.filesystem.denyWrite).toContain("/home/dev/.nvm/versions/node/v24/bin");
-    expect(actual.filesystem.denyWrite).toContain("/home/dev/.cargo/bin");
-    expect(actual.filesystem.denyWrite).toContain("/home/dev/.npm/_npx");
-    expect(actual.filesystem.denyWrite).toContain("/work/repo-a/.git/config");
-    expect(actual.filesystem.denyWrite).toContain("/work/repo-a/.git/hooks");
-    // Nested git persistence surfaces: submodule gitdirs and per-worktree config.
-    expect(actual.filesystem.denyWrite).toContain("/work/repo-a/.git/modules");
-    expect(actual.filesystem.denyWrite).toContain(
-      "/work/repo-a/.git/worktrees/repo-a-team-1/config.worktree",
-    );
-    // The linked-worktree `.git` pointer file itself — can't be redirected.
-    expect(actual.filesystem.denyWrite).toContain("/work/repo-a-team-1/.git");
+    expect(prepare.filesystem.allowRead).not.toContain("/home/dev/.claude");
+    expect(prepare.filesystem.allowRead).not.toContain("/home/dev/.codex");
+    expect(prepare.filesystem.allowRead).toContain("/home/dev/.nvm");
+    expect(prepare.filesystem.allowWrite).toContain("/home/dev/.npm");
+    expect(prepare.filesystem.denyWrite).toContain("/home/dev/.claude");
+    expect(prepare.filesystem.denyWrite).toContain("/home/dev/.codex");
   });
 
   it("never emits glob patterns in filesystem rules (bubblewrap ignores them on Linux)", () => {
@@ -183,8 +268,6 @@ describe(buildSrtSettings, () => {
   });
 
   it("throws (fails closed) rather than emitting settings srt would reject and run unsandboxed", () => {
-    // A malformed domain (scheme/port/path) makes srt's loadConfig return null,
-    // which silently disables the read mask — so we refuse to stage it.
     expect(() => buildSrtSettings(input({ allowedDomains: ["https://api.github.com"] }))).toThrow(
       /failed validation.*refusing to launch unsandboxed/i,
     );
@@ -198,10 +281,29 @@ describe(buildSrtSettings, () => {
       allowedDomains: [],
     });
 
-    // No injected platform/homeDir/nodeExecPath: the defaults must still yield a
-    // valid, non-empty policy that re-opens the workspace.
     expect(actual.filesystem.denyRead.length).toBeGreaterThan(0);
     expect(actual.filesystem.allowRead).toContain("/work/repo-a-team-1");
     expect(() => SandboxRuntimeConfigSchema.parse(actual)).not.toThrow();
+  });
+});
+
+describe(agentConfigRelocation, () => {
+  it("relocates codex to CODEX_HOME, seeding its file creds + config", () => {
+    const actual = agentConfigRelocation("codex");
+
+    expect(actual).toStrictEqual({
+      configDirEnv: "CODEX_HOME",
+      sourceHomeRelativeDir: ".codex",
+      seedFiles: ["auth.json", "config.toml"],
+    });
+  });
+
+  it("is case-insensitive on the agent name", () => {
+    expect(agentConfigRelocation("CODEX")?.configDirEnv).toBe("CODEX_HOME");
+  });
+
+  it("returns undefined for read-only agents (claude) and unknown agents", () => {
+    expect(agentConfigRelocation("claude")).toBeUndefined();
+    expect(agentConfigRelocation("mystery")).toBeUndefined();
   });
 });

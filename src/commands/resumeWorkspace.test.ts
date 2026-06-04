@@ -114,6 +114,17 @@ function firstFetchResolvedIssueInput(): FetchResolvedIssueInput {
   return input;
 }
 
+function stagedLaunchScript(): string {
+  const call = writeFileMock.mock.calls.find(
+    (args) => args[0] === "/tmp/groundcrew-resume-team-1-x/launch.sh",
+  );
+  const content = call?.[1];
+  if (typeof content !== "string") {
+    throw new TypeError("launch.sh was not staged");
+  }
+  return content;
+}
+
 function host(overrides: Partial<HostCapabilities> = {}): HostCapabilities {
   return {
     hasSafehouse: true,
@@ -304,6 +315,38 @@ describe(resumeWorkspace, () => {
     expect(workspacesOpenMock).toHaveBeenCalledWith(
       config,
       expect.objectContaining({ name: "team-1" }),
+    );
+  });
+
+  it("stages neutral prepare + agent srt settings and wraps the resumed agent under srt", async () => {
+    const srtConfig = { ...makeConfig(), local: { runner: "srt" as const } };
+
+    await resumeWorkspace(srtConfig, { ticket: "team-1" });
+
+    expect(writeFileMock).toHaveBeenCalledWith(
+      "/tmp/groundcrew-resume-team-1-x/agent-settings.json",
+      expect.any(String),
+    );
+    // The staged launch script wraps the resumed agent under srt with the agent
+    // settings, not safehouse.
+    const launchScript = stagedLaunchScript();
+    expect(launchScript).toMatch(
+      /sandbox-runtime\/dist\/cli\.js' --settings .*agent-settings\.json/,
+    );
+    expect(launchScript).not.toContain("safehouse-clearance");
+  });
+
+  it("cleans up the staged srt settings dir when the resumed launch fails to open", async () => {
+    const srtConfig = { ...makeConfig(), local: { runner: "srt" as const } };
+    workspacesOpenMock.mockRejectedValue(new Error("cmux down"));
+
+    await expect(resumeWorkspace(srtConfig, { ticket: "team-1" })).rejects.toThrow("cmux down");
+
+    // The settings dir is torn down on the pre-launch failure path (the launch
+    // command's own teardown never ran).
+    expect(rmSyncMock).toHaveBeenCalledWith(
+      "/tmp/groundcrew-resume-team-1-x",
+      expect.objectContaining({ recursive: true }),
     );
   });
 

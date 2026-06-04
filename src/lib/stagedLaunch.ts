@@ -1,4 +1,3 @@
-import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -73,36 +72,6 @@ export function stageBuildSecrets(promptDir: string): string | undefined {
   const secretsFile = path.join(promptDir, "secrets.env");
   writeFileSync(secretsFile, `${lines.join("\n")}\n`, { mode: 0o600 });
   return secretsFile;
-}
-
-export interface StagedSrtSettings {
-  directory: string;
-  /** Profile-neutral policy for the prepareWorktree wrap (no agent credentials). */
-  prepareFile: string;
-  /** Full agent policy for the agent wrap. */
-  agentFile: string;
-}
-
-/**
- * Stage the generated srt settings JSON in its own temp dir, separate from the
- * prompt dir (which the launch command wipes before the agent execs). The
- * launch command tears this dir down after srt exits.
- *
- * Two files: the repo-controlled prepareWorktree hook runs under the
- * profile-neutral `prepare` policy (no `~/.claude`/`~/.codex` grants), while
- * the agent runs under the full `agent` policy — so a malicious repo hook
- * cannot read or mutate the agent's credentials before the agent starts.
- */
-export function stageSrtSettings(
-  ticket: string,
-  settings: { prepare: SandboxRuntimeConfig; agent: SandboxRuntimeConfig },
-): StagedSrtSettings {
-  const directory = mkdtempSync(path.join(tmpdir(), `groundcrew-srt-${ticket}-`));
-  const prepareFile = path.join(directory, "prepare-settings.json");
-  const agentFile = path.join(directory, "agent-settings.json");
-  writeFileSync(prepareFile, `${JSON.stringify(settings.prepare, undefined, 2)}\n`);
-  writeFileSync(agentFile, `${JSON.stringify(settings.agent, undefined, 2)}\n`);
-  return { directory, prepareFile, agentFile };
 }
 
 function stageLaunchScript(promptDir: string, command: string): string {

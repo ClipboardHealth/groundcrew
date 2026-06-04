@@ -186,6 +186,32 @@ describe(`${buildLaunchCommand.name} (runner='srt')`, () => {
 
     expect(out).not.toContain("NPM_TOKEN");
   });
+
+  it("injects the relocated config-home env into the agent wrap with an explicit value", () => {
+    const out = buildLaunchCommand(
+      srtArguments({
+        prepareWorktreeCommand: "npm ci",
+        srtAgentConfigDirEnv: {
+          name: "CODEX_HOME",
+          value: "/tmp/groundcrew-srt-team-1/codex-home",
+        },
+      }),
+    );
+
+    // Explicit single-quoted value (not a "$CODEX_HOME" host passthrough), in
+    // the agent wrap's env -i right before the agent settings flag.
+    expect(out).toMatch(/CODEX_HOME='[^']*\/codex-home' [^&]*agent-settings\.json/);
+    // The prepareWorktree wrap (everything up to the hook command) never sees it.
+    const prepareSegment = out.slice(0, out.indexOf("npm ci"));
+    expect(prepareSegment).not.toContain("CODEX_HOME");
+  });
+
+  it("omits the config-home env for read-only agents (claude) that don't relocate", () => {
+    const out = buildLaunchCommand(srtArguments());
+
+    expect(out).not.toContain("CODEX_HOME");
+    expect(out).not.toContain("CLAUDE_CONFIG_DIR");
+  });
 });
 
 describe(buildLaunchCommand, () => {

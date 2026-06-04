@@ -4,6 +4,7 @@ import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { openAgentWorkspace, prepareAgentLaunch } from "../lib/agentLaunch.ts";
 import { buildLaunchCommand } from "../lib/launchCommand.ts";
 import { readRunState, recordRunState, type RunState } from "../lib/runState.ts";
+import { buildAndStageSrtLaunch } from "../lib/srtLaunch.ts";
 import {
   removeStagedPrompt,
   stageBuildSecrets,
@@ -167,6 +168,26 @@ export async function resumeWorkspace(
     text: renderResumePrompt(context),
   });
   const secretsFile = stageBuildSecrets(stagedPrompt.directory);
+  // Resume must stage srt settings exactly like setup, or `buildLaunchCommand`
+  // throws under the srt runner — and a relocating agent (codex) needs its
+  // config home re-seeded so it authenticates on the resumed launch.
+  let srtPrepareSettingsFile: string | undefined;
+  let srtAgentSettingsFile: string | undefined;
+  let srtSettingsDir: string | undefined;
+  let srtAgentConfigDirEnv: { name: string; value: string } | undefined;
+  if (runner === "srt") {
+    const staged = buildAndStageSrtLaunch({
+      config,
+      repository: context.repository,
+      ticket,
+      worktreeDir: context.worktree.dir,
+      definition,
+    });
+    srtPrepareSettingsFile = staged.prepareFile;
+    srtAgentSettingsFile = staged.agentFile;
+    srtSettingsDir = staged.directory;
+    srtAgentConfigDirEnv = staged.agentConfigDirEnv;
+  }
   const launchCommand = buildLaunchCommand({
     definition,
     promptFile: stagedPrompt.file,
@@ -174,6 +195,10 @@ export async function resumeWorkspace(
     secretsFile,
     runner,
     sandboxName,
+    srtPrepareSettingsFile,
+    srtAgentSettingsFile,
+    srtSettingsDir,
+    srtAgentConfigDirEnv,
   });
   const launchCmd = stageWorkspaceLaunchCommand(stagedPrompt.directory, launchCommand);
 
@@ -188,6 +213,11 @@ export async function resumeWorkspace(
     });
   } catch (error) {
     removeStagedPrompt(stagedPrompt.directory);
+    // The launch command tears down the settings dir after srt exits; on the
+    // pre-launch failure path it never ran, so clean it up here.
+    if (srtSettingsDir !== undefined) {
+      removeStagedPrompt(srtSettingsDir);
+    }
     throw error;
   }
   recordRunState({
