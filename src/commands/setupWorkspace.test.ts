@@ -1,5 +1,6 @@
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import type * as nodeFs from "node:fs";
+import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 import { ensureClearance } from "@clipboard-health/clearance";
 import type { RunCommandOptions } from "../lib/commandRunner.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
@@ -466,19 +467,26 @@ describe(setupWorkspace, () => {
     });
 
     const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
-    const agentSettings = writtenFileContent("/tmp/groundcrew-team-1-x/agent-settings.json");
-    const prepareSettings = writtenFileContent("/tmp/groundcrew-team-1-x/prepare-settings.json");
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- staged settings are SandboxRuntimeConfig JSON
+    const agent = JSON.parse(
+      writtenFileContent("/tmp/groundcrew-team-1-x/agent-settings.json"),
+    ) as SandboxRuntimeConfig;
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- staged settings are SandboxRuntimeConfig JSON
+    const prepare = JSON.parse(
+      writtenFileContent("/tmp/groundcrew-team-1-x/prepare-settings.json"),
+    ) as SandboxRuntimeConfig;
 
     expect(launchScript).toContain("--settings '/tmp/groundcrew-team-1-x/agent-settings.json'");
     expect(launchScript).toMatch(/sandbox-runtime\/dist\/cli\.js/);
     expect(launchScript).toContain(`exec claude --auto "$@"`);
     expect(launchScript).not.toContain("safehouse-clearance");
-    // The agent policy carries the claude credential profile; the
+    // The agent policy grants the claude credential dir writable; the
     // profile-neutral prepare policy does not — so a repo-controlled
     // prepareWorktree hook can't read or mutate agent credentials.
-    expect(agentSettings).toContain(".claude");
-    expect(agentSettings).toContain(`"allowPty": true`);
-    expect(prepareSettings).not.toContain(".claude");
+    expect(agent.filesystem.allowWrite.some((p) => p.endsWith("/.claude"))).toBe(true);
+    expect(agent.allowPty).toBe(true);
+    expect(prepare.filesystem.allowWrite.some((p) => p.endsWith("/.claude"))).toBe(false);
+    expect(prepare.filesystem.allowRead?.some((p) => p.endsWith("/.claude"))).toBe(false);
   });
 
   it("passes an AbortSignal into worktree creation and workspace launch", async () => {

@@ -39,8 +39,20 @@ describe(buildSrtSettings, () => {
 
     expect(actual.filesystem.allowRead).toContain("/home/dev/.nvm/versions/node/v24");
     expect(actual.filesystem.allowRead).toContain("/home/dev/.nvm");
-    expect(actual.filesystem.allowRead).toContain("/home/dev/.cargo");
+    expect(actual.filesystem.allowRead).toContain("/home/dev/.cargo/bin");
     expect(actual.filesystem.allowRead).toContain("/home/dev/.gitconfig");
+  });
+
+  it("narrows credential-bearing toolchain homes to runtime subpaths (allowRead wins over denyRead)", () => {
+    const actual = buildSrtSettings(input());
+
+    // Re-opened: the runtime/cache subpaths needed to execute toolchains...
+    expect(actual.filesystem.allowRead).toContain("/home/dev/.cargo/registry");
+    expect(actual.filesystem.allowRead).toContain("/home/dev/.local/bin");
+    // ...but NOT the whole homes, which hold credentials/app state that the
+    // home mask must keep hidden (`~/.cargo/credentials.toml`, `~/.local/share`).
+    expect(actual.filesystem.allowRead).not.toContain("/home/dev/.cargo");
+    expect(actual.filesystem.allowRead).not.toContain("/home/dev/.local");
   });
 
   it("re-opens the agent's own credential dirs per profile", () => {
@@ -82,18 +94,29 @@ describe(buildSrtSettings, () => {
     ]) {
       expect(codex.filesystem.denyWrite).toContain(denied);
     }
+
+    // Cross-agent: a profile denies the home dirs it does not own (this also
+    // overrides srt's hardcoded `~/.claude/debug` default write path).
+    expect(claude.filesystem.denyWrite).toContain("/home/dev/.codex");
+    expect(claude.filesystem.denyWrite).not.toContain("/home/dev/.claude");
+    expect(codex.filesystem.denyWrite).toContain("/home/dev/.claude");
+    expect(codex.filesystem.denyWrite).not.toContain("/home/dev/.codex");
   });
 
   it("grants no agent credential access for a profile-neutral (empty) agent — the prepare policy", () => {
     const prepare = buildSrtSettings(input({ agent: "" }));
 
     // The repo-controlled prepareWorktree hook gets toolchains + worktree + npm
-    // cache, but never the agent's credential dirs.
+    // cache, but never the agent's credential dirs...
     expect(prepare.filesystem.allowRead).not.toContain("/home/dev/.claude");
     expect(prepare.filesystem.allowWrite).not.toContain("/home/dev/.claude");
     expect(prepare.filesystem.allowRead).not.toContain("/home/dev/.codex");
     expect(prepare.filesystem.allowRead).toContain("/home/dev/.nvm");
     expect(prepare.filesystem.allowWrite).toContain("/home/dev/.npm");
+    // ...and both are denied write, so srt's default `~/.claude/debug` write
+    // path can't re-open Claude state under the neutral policy.
+    expect(prepare.filesystem.denyWrite).toContain("/home/dev/.claude");
+    expect(prepare.filesystem.denyWrite).toContain("/home/dev/.codex");
   });
 
   it("grants no extra home access for an unknown agent but keeps toolchains", () => {
@@ -115,6 +138,11 @@ describe(buildSrtSettings, () => {
     expect(actual.filesystem.denyWrite).toContain("/home/dev/.npm/_npx");
     expect(actual.filesystem.denyWrite).toContain("/work/repo-a/.git/config");
     expect(actual.filesystem.denyWrite).toContain("/work/repo-a/.git/hooks");
+    // Nested git persistence surfaces: submodule gitdirs and per-worktree config.
+    expect(actual.filesystem.denyWrite).toContain("/work/repo-a/.git/modules");
+    expect(actual.filesystem.denyWrite).toContain(
+      "/work/repo-a/.git/worktrees/repo-a-team-1/config.worktree",
+    );
     // The linked-worktree `.git` pointer file itself — can't be redirected.
     expect(actual.filesystem.denyWrite).toContain("/work/repo-a-team-1/.git");
   });

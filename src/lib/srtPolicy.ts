@@ -118,22 +118,48 @@ const AGENT_SRT_PROFILES: Record<string, AgentCredentialProfile> = {
 /**
  * Language toolchains and version managers re-opened read-only so the agent's
  * runtime (and any installed CLIs) can execute even though they live under the
- * home deny-read mask. Read-only: writes to their bin dirs are denied below.
+ * home deny-read mask.
+ *
+ * srt's `allowRead` takes precedence over `denyRead`, so a credential carve-out
+ * is impossible once a parent is re-opened — the roots themselves must be
+ * narrow. Pure version-manager dirs (no credentials) are kept whole so version
+ * resolution (`nvm use`, etc.) works; multi-purpose homes are narrowed to their
+ * executable + dependency-cache subpaths so credential/config files (e.g.
+ * `~/.cargo/credentials.toml`) and unrelated app state (`~/.local/share`) stay
+ * masked. The node runtime itself is re-opened separately via `nodePrefix`.
+ * (Polyglot coverage is best-effort + user-extensible; validated in STAFF-1305.)
  */
 const TOOLCHAIN_READ_ROOTS: readonly string[] = [
   ".nvm",
-  ".local",
-  ".npm",
-  ".bun",
-  ".cargo",
   ".rustup",
-  ".deno",
-  "go",
   ".asdf",
   ".volta",
   ".pyenv",
   ".rbenv",
+  ".npm", // npm cache; the ~/.npmrc credential file lives at $HOME and stays denied
+  ".local/bin",
+  ".local/lib",
+  ".cargo/bin",
+  ".cargo/registry",
+  ".cargo/git",
+  ".bun/bin",
+  ".bun/install",
+  ".deno/bin",
+  "go/bin",
+  "go/pkg",
 ];
+
+/**
+ * Every agent credential/state home dir. A profile that does NOT own one of
+ * these must deny writes to it — both as cross-agent defense (the codex profile
+ * shouldn't write `~/.claude`) and to override srt's hardcoded default write
+ * path `~/.claude/debug`, which `getDefaultWritePaths()` adds to every policy.
+ * Without this, that default re-opens `~/.claude/debug` (and, on Linux, makes
+ * it readable via the write bind) even under the profile-neutral prepare
+ * policy. `denyWrite` wins over `allowWrite`, so denying the home dir overrides
+ * the default.
+ */
+const ALL_AGENT_HOME_DIRS: readonly string[] = [".claude", ".codex"];
 
 /** Git identity/config the agent reads (never writes — see `allowGitConfig`). */
 const GIT_READ_PATHS: readonly string[] = [".gitconfig", ".config/git"];
@@ -208,6 +234,10 @@ export function buildSrtSettings(input: BuildSrtSettingsInput): SandboxRuntimeCo
     // state dir so a prompted agent can't plant a hook/command/plugin that runs
     // on the user's next host invocation (denyWrite wins over allowWrite).
     ...profile.denyPaths.map(underHome),
+    // Deny agent home dirs this profile does not own — counters srt's default
+    // `~/.claude/debug` write path for the neutral prepare policy and the codex
+    // profile, and keeps profiles from writing each other's credentials.
+    ...ALL_AGENT_HOME_DIRS.filter((dir) => !profile.writePaths.includes(dir)).map(underHome),
     // Narrow the broad gitCommonDir write grant: the agent commits objects and
     // refs but must never rewrite the repo's config or install hooks (a
     // persistence vector). srt's mandatory deny is anchored at the cwd `.git`,
@@ -215,6 +245,13 @@ export function buildSrtSettings(input: BuildSrtSettingsInput): SandboxRuntimeCo
     // dir's config/hooks explicitly.
     path.join(input.gitCommonDir, "config"),
     path.join(input.gitCommonDir, "hooks"),
+    // Nested git persistence surfaces the top-level config/hooks deny misses:
+    // submodule gitdirs (`.git/modules/**/{config,hooks}`) and this worktree's
+    // per-worktree `config.worktree`. Commits never write these. (Cross-worktree
+    // isolation + full git-write scoping are tracked for live validation —
+    // STAFF-1305.)
+    path.join(input.gitCommonDir, "modules"),
+    path.join(input.gitCommonDir, "worktrees", path.basename(input.worktreeDir), "config.worktree"),
     // The worktree's `.git` is a pointer *file* (`gitdir: …`). Deny writing it
     // so the agent can't redirect the gitdir to a writable fake with its own
     // config/hooks (e.g. `core.fsmonitor`) that runs when git next operates in
