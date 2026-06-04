@@ -23,6 +23,8 @@ api.slack.com
 app.incident.io
 developers.notion.com
 linear.app
+mcp-proxy.anthropic.com
+mcp.datadoghq.com
 mcp.incident.io
 mcp.linear.app
 mcp.notion.com
