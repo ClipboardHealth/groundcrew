@@ -109,6 +109,16 @@ function isPlainDomain(value: string): boolean {
   return (
     value.length > 0 &&
     !value.includes("*") &&
+    // Mirror srt's DomainPatternSchema, which rejects scheme/path/port tokens.
+    // This matters for safety, not just correctness: a token srt rejects (e.g.
+    // `https://api.github.com`, `api.github.com:443`, `github.com/path`) fails
+    // the whole settings file's schema validation, and srt's `loadConfig` then
+    // returns null → the CLI silently falls back to a config with no read mask.
+    // Dropping such tokens here keeps the generated settings valid (fail closed
+    // for that host, never fail open for the launch).
+    !value.includes("://") &&
+    !value.includes("/") &&
+    !value.includes(":") &&
     value.includes(".") &&
     !value.startsWith(".") &&
     !value.endsWith(".")

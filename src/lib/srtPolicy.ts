@@ -31,7 +31,10 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 
-import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
+import {
+  SandboxRuntimeConfigSchema,
+  type SandboxRuntimeConfig,
+} from "@anthropic-ai/sandbox-runtime";
 
 export interface BuildSrtSettingsInput {
   /** Absolute worktree directory the agent runs in (read + write). */
@@ -99,6 +102,10 @@ const AGENT_SRT_PROFILES: Record<string, AgentCredentialProfile> = {
       ".claude/hooks",
       ".claude/statusline.sh",
       ".claude/CLAUDE.md",
+      // ~/.claude is itself a git repo; deny the executable surfaces within its
+      // gitdir (commits, if any, still write objects/refs).
+      ".claude/.git/hooks",
+      ".claude/.git/config",
     ],
   },
   codex: {
@@ -111,6 +118,8 @@ const AGENT_SRT_PROFILES: Record<string, AgentCredentialProfile> = {
       ".codex/plugins",
       ".codex/skills",
       ".codex/rules",
+      ".codex/.git/hooks",
+      ".codex/.git/config",
     ],
   },
 };
@@ -259,7 +268,7 @@ export function buildSrtSettings(input: BuildSrtSettingsInput): SandboxRuntimeCo
     path.join(input.worktreeDir, ".git"),
   ]);
 
-  return {
+  const settings: SandboxRuntimeConfig = {
     network: {
       allowedDomains: [...input.allowedDomains],
       deniedDomains: [],
@@ -276,6 +285,24 @@ export function buildSrtSettings(input: BuildSrtSettingsInput): SandboxRuntimeCo
     },
     allowPty: true,
   };
+
+  // Fail closed: validate with srt's own schema before this is staged. srt's
+  // `loadConfig` `safeParse`s the settings file and, on ANY failure, returns
+  // null — at which point the CLI silently falls back to a default config with
+  // `denyRead: []`, disabling the home read mask for the launch. A single
+  // malformed `allowedDomains` entry (e.g. a URL or host:port that slipped
+  // through `collectAllowedDomains`) would otherwise trip that fail-open. Throw
+  // here instead so the launch aborts loudly rather than running unsandboxed.
+  const validation = SandboxRuntimeConfigSchema.safeParse(settings);
+  if (!validation.success) {
+    const detail = validation.error.issues
+      .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+      .join("; ");
+    throw new Error(
+      `Generated srt settings failed validation (refusing to launch unsandboxed): ${detail}`,
+    );
+  }
+  return settings;
 }
 
 function unique(values: readonly string[]): string[] {

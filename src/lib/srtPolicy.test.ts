@@ -79,6 +79,8 @@ describe(buildSrtSettings, () => {
       "/home/dev/.claude/hooks",
       "/home/dev/.claude/statusline.sh",
       "/home/dev/.claude/CLAUDE.md",
+      "/home/dev/.claude/.git/hooks",
+      "/home/dev/.claude/.git/config",
     ]) {
       expect(claude.filesystem.denyWrite).toContain(denied);
     }
@@ -91,6 +93,8 @@ describe(buildSrtSettings, () => {
       "/home/dev/.codex/plugins",
       "/home/dev/.codex/skills",
       "/home/dev/.codex/rules",
+      "/home/dev/.codex/.git/hooks",
+      "/home/dev/.codex/.git/config",
     ]) {
       expect(codex.filesystem.denyWrite).toContain(denied);
     }
@@ -176,6 +180,14 @@ describe(buildSrtSettings, () => {
     const actual = buildSrtSettings(input());
 
     expect(() => SandboxRuntimeConfigSchema.parse(actual)).not.toThrow();
+  });
+
+  it("throws (fails closed) rather than emitting settings srt would reject and run unsandboxed", () => {
+    // A malformed domain (scheme/port/path) makes srt's loadConfig return null,
+    // which silently disables the read mask — so we refuse to stage it.
+    expect(() => buildSrtSettings(input({ allowedDomains: ["https://api.github.com"] }))).toThrow(
+      /failed validation.*refusing to launch unsandboxed/i,
+    );
   });
 
   it("falls back to the current process platform/home/node when not injected", () => {

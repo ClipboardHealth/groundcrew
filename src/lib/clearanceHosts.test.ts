@@ -28,6 +28,16 @@ describe(collectAllowedDomains, () => {
     expect(actual).toStrictEqual(["github.com"]);
   });
 
+  it("drops scheme/port/path tokens that would fail srt validation and disable the sandbox", () => {
+    const actual = collectAllowedDomains({
+      hosts: "https://api.github.com api.github.com:443 github.com/path api.github.com",
+    });
+
+    // Only the bare host survives; the malformed forms are dropped rather than
+    // emitted (a token srt rejects would null its whole settings file → no mask).
+    expect(actual).toStrictEqual(["api.github.com"]);
+  });
+
   it("de-duplicates case-insensitively, preserving first-seen order", () => {
     const actual = collectAllowedDomains({ hosts: "github.com API.GITHUB.COM github.com" });
 
