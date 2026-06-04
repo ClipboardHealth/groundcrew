@@ -171,6 +171,12 @@ export interface Config {
   git?: {
     remote?: string;
     defaultBranch?: string;
+    /**
+     * Overrides the prefix groundcrew puts in front of the ticket id when it
+     * names a worktree branch (`<branchPrefix>-<ticket>`). Defaults to the OS
+     * account username when unset. Must be a git-ref-safe, slash-free slug.
+     */
+    branchPrefix?: string;
   };
   workspace: {
     projectDir: string;
@@ -236,6 +242,7 @@ export interface ResolvedConfig {
   git: {
     remote: string;
     defaultBranch: string;
+    branchPrefix?: string;
   };
   workspace: {
     projectDir: string;
@@ -424,6 +431,21 @@ function normalizeOptionalString(value: unknown, configKey: string): string | un
     fail(`${configKey} must be a non-empty string`);
   }
   return value.trim();
+}
+
+// Git-ref-safe, slash-free slug: must start alphanumeric/underscore (git rejects
+// a leading '.', and `git worktree add -b` would read a leading '-' as a flag)
+// and contain no `..` (git rejects it).
+const BRANCH_PREFIX_RE = /^(?!.*\.\.)\w[\w.-]*$/;
+
+function normalizeBranchPrefix(value: unknown): string | undefined {
+  const normalized = normalizeOptionalString(value, "git.branchPrefix");
+  if (normalized !== undefined && !BRANCH_PREFIX_RE.test(normalized)) {
+    fail(
+      `git.branchPrefix must be a slash-free slug of letters, digits, '.', '_', or '-' (got ${JSON.stringify(value)})`,
+    );
+  }
+  return normalized;
 }
 
 function normalizeHookCommands(value: unknown, configKey: string): HookCommands {
@@ -792,9 +814,16 @@ function applyDefaults(user: Config): ResolvedConfig {
   }
 
   const sources = normalizeSources((user as { sources?: unknown }).sources);
+  const branchPrefix = normalizeBranchPrefix(user.git?.branchPrefix);
   return {
     sources,
-    git: { ...DEFAULT_GIT, ...user.git },
+    // Only carry the key when set so `git.branchPrefix` stays truly optional
+    // under exactOptionalPropertyTypes.
+    git: {
+      ...DEFAULT_GIT,
+      ...user.git,
+      ...(branchPrefix === undefined ? {} : { branchPrefix }),
+    },
     workspace: {
       projectDir: expandHome(user.workspace.projectDir),
       knownRepositories: user.workspace.knownRepositories,

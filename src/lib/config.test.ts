@@ -127,6 +127,113 @@ describe("loadConfig", () => {
     expect(actual.prompts.initial).not.toContain("tmux attach -t groundcrew:{{ticket}}");
   });
 
+  it("resolves a valid git.branchPrefix", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      validConfigSource({
+        workspace: VALID_WORKSPACE(temporary),
+        git: { branchPrefix: "groundcrew" },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+
+    expect(actual.git.branchPrefix).toBe("groundcrew");
+  });
+
+  it("rejects a git.branchPrefix containing a slash", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      validConfigSource({
+        workspace: VALID_WORKSPACE(temporary),
+        git: { branchPrefix: "feature/x" },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(/git\.branchPrefix must be a slash-free slug/);
+  });
+
+  it("accepts a git.branchPrefix with interior dots and dashes", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      validConfigSource({
+        workspace: VALID_WORKSPACE(temporary),
+        git: { branchPrefix: "my-team.v2" },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+
+    expect(actual.git.branchPrefix).toBe("my-team.v2");
+  });
+
+  it("rejects a git.branchPrefix starting with a dash", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      validConfigSource({
+        workspace: VALID_WORKSPACE(temporary),
+        git: { branchPrefix: "-lead" },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(/git\.branchPrefix must be a slash-free slug/);
+  });
+
+  it("rejects a git.branchPrefix starting with a dot", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      validConfigSource({
+        workspace: VALID_WORKSPACE(temporary),
+        git: { branchPrefix: ".lead" },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(/git\.branchPrefix must be a slash-free slug/);
+  });
+
+  it("rejects a git.branchPrefix containing '..'", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      validConfigSource({
+        workspace: VALID_WORKSPACE(temporary),
+        git: { branchPrefix: "a..b" },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(/git\.branchPrefix must be a slash-free slug/);
+  });
+
+  it("rejects an empty git.branchPrefix", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      validConfigSource({
+        workspace: VALID_WORKSPACE(temporary),
+        git: { branchPrefix: "   " },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(/git\.branchPrefix must be a non-empty string/);
+  });
+
   it("rejects a `linear` config block with a migration message", async () => {
     const configPath = writeConfigFile(
       temporary,

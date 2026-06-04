@@ -40,7 +40,7 @@ export interface WorktreeEntry {
   repository: string;
   /** Linear ticket id, lowercased — e.g. "team-220". */
   ticket: string;
-  /** Lowercase, slash-free `<user>-<ticket>`. */
+  /** Slash-free `<prefix>-<ticket>`. */
   branchName: string;
   dir: string;
   kind: WorktreeKind;
@@ -54,7 +54,12 @@ export interface WorktreeSpec {
 const TICKET_RE = /^[a-z][\da-z]*-\d+$/;
 const TICKET_DIR_RE = /^(.+)-([a-z][\da-z]*-\d+)$/;
 
-function branchPrefix(): string {
+function branchPrefix(config: ResolvedConfig): string {
+  const fromConfig = config.git.branchPrefix;
+  if (fromConfig !== undefined) {
+    return fromConfig;
+  }
+
   const name = userInfo().username;
   if (name.length === 0) {
     throw new Error("Could not determine OS username for the branch prefix.");
@@ -62,8 +67,8 @@ function branchPrefix(): string {
   return name;
 }
 
-function branchNameForTicket(ticket: string): string {
-  return `${branchPrefix()}-${ticket}`;
+function branchNameForTicket(config: ResolvedConfig, ticket: string): string {
+  return `${branchPrefix(config)}-${ticket}`;
 }
 
 function repoDirFor(config: ResolvedConfig, repository: string): string {
@@ -105,7 +110,7 @@ function basePaths(config: ResolvedConfig, repository: string, ticket: string): 
     projectDir,
     repoDir,
     ticket,
-    branchName: branchNameForTicket(ticket),
+    branchName: branchNameForTicket(config, ticket),
     hostWorktreeDir,
     hostWorktreeName,
   };
@@ -234,7 +239,7 @@ function listWorktrees(config: ResolvedConfig): WorktreeEntry[] {
       entries.push({
         repository,
         ticket,
-        branchName: branchNameForTicket(ticket),
+        branchName: branchNameForTicket(config, ticket),
         dir: path.resolve(parentDir, entry.name),
         kind: "host",
       });
