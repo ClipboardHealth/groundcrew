@@ -421,7 +421,7 @@ function shouldWrapWithSafehouse(arguments_: LaunchCommandArguments): boolean {
   if (arguments_.runner !== "safehouse") {
     return false;
   }
-  return !/^safehouse(\s|$)/.test(arguments_.definition.cmd);
+  return !/^safehouse(?<sep>\s|$)/.test(arguments_.definition.cmd);
 }
 
 /**

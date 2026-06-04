@@ -101,7 +101,10 @@ describe(createDispatcher, () => {
   beforeEach(() => {
     consoleLog = captureConsoleLog();
     setupMock.mockResolvedValue();
-    workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set<string>() });
+    workspacesProbeMock.mockResolvedValue({
+      kind: "ok",
+      names: new Set<string>(),
+    });
     // Dispatch telemetry (event= lines) is diagnostic, so it only reaches the
     // console under verbose — many cases assert that wording.
     setVerbose(true);
@@ -134,7 +137,7 @@ describe(createDispatcher, () => {
           details: { title: "Title", description: "" },
         }),
       );
-      // oxlint-disable-next-line typescript/unbound-method -- board is a plain vi.fn stub; markInProgress has no `this` binding
+
       expect(board.markInProgress).toHaveBeenCalledWith(
         expect.objectContaining({ id: "linear:team-1" }),
       );
@@ -302,7 +305,7 @@ describe(createDispatcher, () => {
       });
 
       expect(setupMock).not.toHaveBeenCalled();
-      // oxlint-disable-next-line typescript/unbound-method -- board is a plain vi.fn stub; markInProgress has no `this` binding
+
       expect(board.markInProgress).not.toHaveBeenCalled();
       expect(consoleLog.output()).toContain("No Todo tickets");
     });
@@ -463,8 +466,18 @@ describe(createDispatcher, () => {
         state: boardOf([todoIssue({ model: "any" })]),
         worktreeEntries: [],
         usage: async () => ({
-          claude: { session: 0.6, sessionEndDuration: 30, weekly: null, weekEndDuration: null },
-          codex: { session: 0.2, sessionEndDuration: 30, weekly: null, weekEndDuration: null },
+          claude: {
+            session: 0.6,
+            sessionEndDuration: 30,
+            weekly: null,
+            weekEndDuration: null,
+          },
+          codex: {
+            session: 0.2,
+            sessionEndDuration: 30,
+            weekly: null,
+            weekEndDuration: null,
+          },
         }),
         dryRun: false,
       });
@@ -484,8 +497,18 @@ describe(createDispatcher, () => {
         state: boardOf([todoIssue({ model: "any" })]),
         worktreeEntries: [],
         usage: async () => ({
-          claude: { session: 0.95, sessionEndDuration: 30, weekly: null, weekEndDuration: null },
-          codex: { session: 0.95, sessionEndDuration: 30, weekly: null, weekEndDuration: null },
+          claude: {
+            session: 0.95,
+            sessionEndDuration: 30,
+            weekly: null,
+            weekEndDuration: null,
+          },
+          codex: {
+            session: 0.95,
+            sessionEndDuration: 30,
+            weekly: null,
+            weekEndDuration: null,
+          },
         }),
         dryRun: false,
       });
@@ -497,7 +520,10 @@ describe(createDispatcher, () => {
 
   describe("eligibility", () => {
     it("resumes when worktree exists and a matching live workspace is present", async () => {
-      workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-1"]) });
+      workspacesProbeMock.mockResolvedValue({
+        kind: "ok",
+        names: new Set(["team-1"]),
+      });
       const board = makeBoard();
       const dispatcher = createDispatcher({ config: makeConfig(), board });
 
@@ -509,7 +535,7 @@ describe(createDispatcher, () => {
       });
 
       expect(setupMock).not.toHaveBeenCalled();
-      // oxlint-disable-next-line typescript/unbound-method -- board is a plain vi.fn stub; markInProgress has no `this` binding
+
       expect(board.markInProgress).toHaveBeenCalledWith(
         expect.objectContaining({ id: "linear:team-1" }),
       );
@@ -517,7 +543,10 @@ describe(createDispatcher, () => {
     });
 
     it("skips when worktree exists but no live workspace matches", async () => {
-      workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set<string>() });
+      workspacesProbeMock.mockResolvedValue({
+        kind: "ok",
+        names: new Set<string>(),
+      });
       const board = makeBoard();
       const dispatcher = createDispatcher({ config: makeConfig(), board });
 
@@ -529,7 +558,7 @@ describe(createDispatcher, () => {
       });
 
       expect(setupMock).not.toHaveBeenCalled();
-      // oxlint-disable-next-line typescript/unbound-method -- board is a plain vi.fn stub; markInProgress has no `this` binding
+
       expect(board.markInProgress).not.toHaveBeenCalled();
       expect(consoleLog.output()).toContain("Run `crew cleanup");
     });
@@ -594,7 +623,12 @@ describe(createDispatcher, () => {
         state: boardOf([todoIssue()]),
         worktreeEntries: [],
         usage: async () => ({
-          claude: { session: 0.95, sessionEndDuration: 30, weekly: null, weekEndDuration: null },
+          claude: {
+            session: 0.95,
+            sessionEndDuration: 30,
+            weekly: null,
+            weekEndDuration: null,
+          },
         }),
         dryRun: false,
       });
@@ -766,7 +800,12 @@ describe(createDispatcher, () => {
         state: boardOf([todoIssue()]),
         worktreeEntries: [],
         usage: async () => ({
-          claude: { session: 0.1, sessionEndDuration: 30, weekly: null, weekEndDuration: null },
+          claude: {
+            session: 0.1,
+            sessionEndDuration: 30,
+            weekly: null,
+            weekEndDuration: null,
+          },
         }),
         dryRun: false,
       });
@@ -873,7 +912,7 @@ describe(createDispatcher, () => {
       });
 
       expect(setupMock).not.toHaveBeenCalled();
-      // oxlint-disable-next-line typescript/unbound-method -- board is a plain vi.fn stub; markInProgress has no `this` binding
+
       expect(board.markInProgress).not.toHaveBeenCalled();
       expect(consoleLog.output()).toContain("references unknown repository unknown-repo");
     });
@@ -913,7 +952,7 @@ describe(createDispatcher, () => {
         expect.anything(),
         expect.objectContaining({ repository: "repo-b" }),
       );
-      // oxlint-disable-next-line typescript/unbound-method -- board is a plain vi.fn stub; markInProgress has no `this` binding
+
       expect(board.markInProgress).toHaveBeenCalledWith(
         expect.objectContaining({ id: "linear:team-1" }),
       );

@@ -1,7 +1,7 @@
 export interface ConsoleCapture {
   readonly calls: readonly (readonly string[])[];
-  output(): string;
-  restore(): void;
+  output: () => string;
+  restore: () => void;
 }
 
 type ConsoleWriterMethod = "error" | "log";

@@ -32,7 +32,7 @@ export function buildRepositoryRegex(config: ResolvedConfig): RegExp {
     .toSorted((a, b) => b.length - a.length)
     .map(escapeRegex)
     .join("|");
-  return new RegExp(String.raw`\b(${alternation})\b`);
+  return new RegExp(String.raw`\b(?<repo>${alternation})\b`);
 }
 
 // Shared canonicalization for parseRepository (auto-pickup / dispatch path)
@@ -64,7 +64,7 @@ function canonicalizeRepositoryMatch(
   if (config.workspace.knownRepositories.length === 0) {
     return { kind: "missing" };
   }
-  const matched = repositoryRegex.exec(description)?.[1];
+  const matched = repositoryRegex.exec(description)?.groups?.["repo"];
   if (matched === undefined) {
     return { kind: "missing" };
   }

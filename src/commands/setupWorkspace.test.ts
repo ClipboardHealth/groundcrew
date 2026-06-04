@@ -989,7 +989,9 @@ describe(setupWorkspace, () => {
 
     expect(logMock).toHaveBeenCalledWith('✓ "team-1" launched (claude)  worktree repo-a-team-1');
     // The verbose-only detail lines must not reach the important (log) tier.
-    expect(logMock).not.toHaveBeenCalledWith(expect.stringMatching(/^ {2}(Worktree|Branch):/));
+    expect(logMock).not.toHaveBeenCalledWith(
+      expect.stringMatching(/^ {2}(?<label>Worktree|Branch):/),
+    );
     expect(logMock).not.toHaveBeenCalledWith("Opening workspace...");
   });
 

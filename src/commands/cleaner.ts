@@ -16,12 +16,12 @@ interface CleanerDeps {
 }
 
 export interface Cleaner {
-  runOnce(arguments_: {
+  runOnce: (arguments_: {
     state: BoardState;
     worktreeEntries: readonly WorktreeEntry[];
     dryRun: boolean;
     signal?: AbortSignal;
-  }): Promise<void>;
+  }) => Promise<void>;
 }
 
 export function createCleaner(deps: CleanerDeps): Cleaner {

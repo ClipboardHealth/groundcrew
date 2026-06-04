@@ -52,7 +52,7 @@ export interface WorktreeSpec {
 }
 
 const TICKET_RE = /^[a-z][\da-z]*-\d+$/;
-const TICKET_DIR_RE = /^(.+)-([a-z][\da-z]*-\d+)$/;
+const TICKET_DIR_RE = /^(?<repoBasename>.+)-(?<ticket>[a-z][\da-z]*-\d+)$/;
 
 function branchPrefix(config: ResolvedConfig): string {
   const fromConfig = config.git.branchPrefix;
@@ -133,10 +133,18 @@ async function runLongGitCommand(
 ): Promise<void> {
   const signalOption = signal === undefined ? {} : { signal };
   if (isVerbose()) {
-    await runCommandAsync("git", arguments_, { stdio: "inherit", timeoutMs: 0, ...signalOption });
+    await runCommandAsync("git", arguments_, {
+      stdio: "inherit",
+      timeoutMs: 0,
+      ...signalOption,
+    });
     return;
   }
-  await runCommandAsync("git", arguments_, { stdio: "captured", timeoutMs: 0, ...signalOption });
+  await runCommandAsync("git", arguments_, {
+    stdio: "captured",
+    timeoutMs: 0,
+    ...signalOption,
+  });
 }
 
 async function deleteBranchBestEffort(arguments_: {
@@ -148,7 +156,9 @@ async function deleteBranchBestEffort(arguments_: {
   try {
     await (arguments_.signal === undefined
       ? runCommandAsync(arguments_.cmd, arguments_.cmdArgs)
-      : runCommandAsync(arguments_.cmd, arguments_.cmdArgs, { signal: arguments_.signal }));
+      : runCommandAsync(arguments_.cmd, arguments_.cmdArgs, {
+          signal: arguments_.signal,
+        }));
     debug(`Deleted branch ${arguments_.branchName}`);
   } catch (error) {
     if (arguments_.signal?.aborted === true) {
@@ -227,7 +237,8 @@ function listWorktrees(config: ResolvedConfig): WorktreeEntry[] {
       if (!match) {
         continue;
       }
-      const [, repoBasename, ticket] = match;
+      const repoBasename = match.groups?.["repoBasename"];
+      const ticket = match.groups?.["ticket"];
       /* v8 ignore next 3 @preserve -- TICKET_DIR_RE always captures both groups when it matches */
       if (repoBasename === undefined || ticket === undefined) {
         continue;
@@ -560,7 +571,10 @@ async function teardown(
     }
     try {
       // oxlint-disable-next-line no-await-in-loop -- one worktree at a time avoids racing on git
-      await remove(config, entry, { force, ...signalProperty(options?.signal) });
+      await remove(config, entry, {
+        force,
+        ...signalProperty(options?.signal),
+      });
       result.removed.push(entry);
     } catch (error) {
       if (options?.signal?.aborted === true) {

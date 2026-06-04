@@ -911,16 +911,18 @@ describe(buildLaunchCommand, () => {
         }),
       );
 
-      const setupWrapRe = /safehouse-clearance' (--env-pass=[^ ]+ )?sh -c '[^']*'/;
-      const agentWrapRe = /safehouse-clearance' (--env-pass=[^ ]+ )?"\$_safehouse_shim"/;
+      const setupWrapRe = /safehouse-clearance' (?<envPass>--env-pass=[^ ]+ )?sh -c '[^']*'/;
+      const agentWrapRe = /safehouse-clearance' (?<envPass>--env-pass=[^ ]+ )?"\$_safehouse_shim"/;
       const setupWrapMatch = setupWrapRe.exec(out);
       const agentWrapMatch = agentWrapRe.exec(out);
       // prepareWorktree wrap: build secrets only — preLaunch credentials must never reach
       // the profile-neutral prepare phase that #128 deliberately walled off.
-      expect(setupWrapMatch?.[1]).toBe(`--env-pass=${BUILD_SECRET_NAMES.join(",")} `);
+      expect(setupWrapMatch?.groups?.["envPass"]).toBe(
+        `--env-pass=${BUILD_SECRET_NAMES.join(",")} `,
+      );
       // Agent wrap: preLaunchEnv only — build secrets are `unset` on the host
       // between the two wraps, so forwarding them here would silently no-op.
-      expect(agentWrapMatch?.[1]).toBe("--env-pass=SESSION_TOKEN,TEAM_ID ");
+      expect(agentWrapMatch?.groups?.["envPass"]).toBe("--env-pass=SESSION_TOKEN,TEAM_ID ");
       // The old single-wrap composition must NOT reappear anywhere.
       expect(out).not.toContain(`--env-pass=${BUILD_SECRET_NAMES.join(",")},SESSION_TOKEN`);
     });
@@ -937,12 +939,12 @@ describe(buildLaunchCommand, () => {
         }),
       );
 
-      const setupWrapRe = /safehouse-clearance' (--env-pass=[^ ]+ )?sh -c '[^']*'/;
-      const agentWrapRe = /safehouse-clearance' (--env-pass=[^ ]+ )?"\$_safehouse_shim"/;
+      const setupWrapRe = /safehouse-clearance' (?<envPass>--env-pass=[^ ]+ )?sh -c '[^']*'/;
+      const agentWrapRe = /safehouse-clearance' (?<envPass>--env-pass=[^ ]+ )?"\$_safehouse_shim"/;
       const setupWrapMatch = setupWrapRe.exec(out);
       const agentWrapMatch = agentWrapRe.exec(out);
-      expect(setupWrapMatch?.[1]).toBeUndefined();
-      expect(agentWrapMatch?.[1]).toBe("--env-pass=SESSION_TOKEN ");
+      expect(setupWrapMatch?.groups?.["envPass"]).toBeUndefined();
+      expect(agentWrapMatch?.groups?.["envPass"]).toBe("--env-pass=SESSION_TOKEN ");
       // No build-secret names should sneak in (no secretsFile staged).
       for (const name of BUILD_SECRET_NAMES) {
         expect(out).not.toContain(name);

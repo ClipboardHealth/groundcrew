@@ -99,8 +99,8 @@ export interface BoardState {
 }
 
 export interface BoardSource {
-  verify(): Promise<void>;
-  fetch(): Promise<BoardState>;
+  verify: () => Promise<void>;
+  fetch: () => Promise<BoardState>;
 }
 
 interface BoardSourceDeps {
