@@ -22,6 +22,7 @@ interface IssueNodeStub {
   title: string;
   description?: string | undefined;
   updatedAt: string;
+  priority?: number;
   state?: { id: string; name: string; type: string } | null;
   team?: { id: string; key: string } | null;
   assignee?: { name: string } | null;
@@ -78,6 +79,7 @@ function issueNode(overrides: Partial<IssueNodeStub>): IssueNodeStub {
     title: overrides.title ?? "Title",
     description: "description" in overrides ? overrides.description : "Touches repo-a.",
     updatedAt: overrides.updatedAt ?? "2025-01-01T00:00:00.000Z",
+    priority: overrides.priority ?? 0,
     state:
       overrides.state === undefined
         ? { id: "state-todo", name: "Todo", type: "unstarted" }

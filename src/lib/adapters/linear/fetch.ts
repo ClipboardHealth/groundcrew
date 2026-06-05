@@ -69,6 +69,8 @@ export interface Issue {
   hasMoreBlockers: boolean;
   /** Linear `Issue.url` — direct web link to the ticket. */
   url: string;
+  /** Linear priority: 1=Urgent, 2=High, 3=Medium, 4=Low, 0=No priority. */
+  priority: number;
 }
 
 /**
@@ -167,6 +169,7 @@ interface IssueNode {
   description?: string;
   updatedAt: string;
   url: string;
+  priority: number;
   state?: { id: string; name: string; type: string };
   team?: { id: string; key: string };
   assignee?: { name: string } | null;
@@ -218,6 +221,7 @@ async function fetchBoard(client: LinearClient, config: ResolvedConfig): Promise
             description
             updatedAt
             url
+            priority
             state { id name type }
             team { id key }
             assignee { name }
@@ -331,6 +335,7 @@ function buildLinearIssue(input: {
   model: string | undefined;
   teamId: string;
   url: string;
+  priority: number;
   inverseRelations: { nodes: IssueRelationNode[]; pageInfo: { hasNextPage: boolean } } | undefined;
 }): Issue {
   return {
@@ -348,6 +353,7 @@ function buildLinearIssue(input: {
     model: input.model,
     teamId: input.teamId,
     url: input.url,
+    priority: input.priority,
     blockers: blockersFromRelations(input.inverseRelations?.nodes ?? []),
     hasMoreBlockers: input.inverseRelations?.pageInfo.hasNextPage ?? false,
   };
@@ -382,6 +388,7 @@ function issueFromNode(node: IssueNode, config: ResolvedConfig): Issue {
     model,
     teamId: node.team?.id ?? "",
     url: node.url,
+    priority: node.priority,
     inverseRelations: node.inverseRelations,
   });
 }

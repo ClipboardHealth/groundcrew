@@ -131,6 +131,7 @@ export function toCanonicalIssue(
     blockers: linearIssue.blockers.map((b) => toCanonicalBlocker(b, sourceName, statusNames)),
     hasMoreBlockers: linearIssue.hasMoreBlockers,
     url: linearIssue.url,
+    ...(linearIssue.priority === 0 ? {} : { priority: linearIssue.priority }),
     sourceRef,
   };
 }

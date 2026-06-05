@@ -59,6 +59,7 @@ function linearIssue(overrides: Partial<LinearIssue> = {}): LinearIssue {
     blockers: overrides.blockers ?? [],
     hasMoreBlockers: overrides.hasMoreBlockers ?? false,
     url: overrides.url ?? "https://linear.app/example/issue/TEAM-1",
+    priority: overrides.priority ?? 0,
   };
 }
 

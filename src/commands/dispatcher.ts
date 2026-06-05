@@ -172,9 +172,12 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     const slots = config.orchestrator.maximumInProgress - activeCount;
     // Narrow Todo to tickets that opted in via an `agent-*` label.
     // Unlabeled tickets are not groundcrew's concern even when in Todo.
-    const todo: readonly GroundcrewIssue[] = state.issues.filter(
-      (issue): issue is GroundcrewIssue => issue.status === "todo" && isGroundcrewIssue(issue),
-    );
+    // Sort by priority so higher-priority tickets fill slots first.
+    const todo: readonly GroundcrewIssue[] = state.issues
+      .filter(
+        (issue): issue is GroundcrewIssue => issue.status === "todo" && isGroundcrewIssue(issue),
+      )
+      .toSorted((a, b) => prioritySortKey(a.priority) - prioritySortKey(b.priority));
 
     if (slots <= 0) {
       log(
@@ -300,6 +303,11 @@ function formatUsageExhaustion(exhaustion: ModelUsageExhaustion): string {
     return `${exhaustion.model} session at ${exhaustion.usedPercentage.toFixed(0)}% (> ${exhaustion.limitPercentage}%), resets in ${mins}m — skipping its tickets`;
   }
   return `${exhaustion.model} weekly at ${exhaustion.usedPercentage.toFixed(1)}% (> ${exhaustion.allowedPercentage.toFixed(1)}% paced budget), resets in ${exhaustion.resetMinutes}m — skipping its tickets`;
+}
+
+/** Undefined priority sorts last. */
+function prioritySortKey(priority: number | undefined): number {
+  return priority ?? Number.POSITIVE_INFINITY;
 }
 
 export function formatActiveSlotList(active: readonly Issue[]): string {

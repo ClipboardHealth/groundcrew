@@ -329,6 +329,62 @@ describe(createDispatcher, () => {
     });
   });
 
+  describe("priority ordering", () => {
+    let board: ReturnType<typeof makeBoard>;
+    let dispatcher: ReturnType<typeof createDispatcher>;
+
+    beforeEach(() => {
+      board = makeBoard();
+      dispatcher = createDispatcher({
+        config: makeConfig({
+          orchestrator: {
+            maximumInProgress: 1,
+            pollIntervalMilliseconds: 1,
+            sessionLimitPercentage: 85,
+          },
+        }),
+        board,
+      });
+    });
+
+    it("starts the highest-priority ticket first when slots are limited", async () => {
+      const urgent = todoIssue({ id: "linear:team-urgent", priority: 1 });
+      const medium = todoIssue({ id: "linear:team-medium", priority: 3 });
+      const noPriority = todoIssue({ id: "linear:team-none" });
+
+      await dispatcher.runOnce({
+        state: boardOf([noPriority, medium, urgent]),
+        worktreeEntries: [],
+        usage: async () => ({}),
+        dryRun: false,
+      });
+
+      expect(setupMock).toHaveBeenCalledTimes(1);
+      expect(setupMock).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ ticket: "team-urgent" }),
+      );
+    });
+
+    it("treats undefined priority (no priority) as lower than priority=4 (Low)", async () => {
+      const low = todoIssue({ id: "linear:team-low", priority: 4 });
+      const noPriority = todoIssue({ id: "linear:team-none" });
+
+      await dispatcher.runOnce({
+        state: boardOf([noPriority, low]),
+        worktreeEntries: [],
+        usage: async () => ({}),
+        dryRun: false,
+      });
+
+      expect(setupMock).toHaveBeenCalledTimes(1);
+      expect(setupMock).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ ticket: "team-low" }),
+      );
+    });
+  });
+
   describe("blocker classification", () => {
     it("skips a ticket whose blocker is not in a terminal state", async () => {
       const board = makeBoard();

@@ -77,6 +77,12 @@ export interface Issue {
    * branched on.
    */
   url?: string;
+  /**
+   * Source-native priority. Lower values sort first; `undefined` means no
+   * priority and sorts last. Dispatcher uses this to order Todo tickets before
+   * slot assignment.
+   */
+  priority?: number;
   /** Adapter-private. Consumers MUST NOT inspect; only the producing adapter reads it. */
   sourceRef: unknown;
 }
