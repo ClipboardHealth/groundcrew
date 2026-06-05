@@ -422,7 +422,7 @@ describe(createShellTicketSource, () => {
     await expect(source.markInProgress(issue)).resolves.toBeUndefined();
   });
 
-  it("markInReview() is a silent no-op when not configured", async () => {
+  it("markInReview() reports unsupported when not configured", async () => {
     const source = createShellTicketSource(
       { kind: "shell", name: "test", commands: { fetch: "echo '[]'" } },
       fakeContext,
@@ -441,7 +441,10 @@ describe(createShellTicketSource, () => {
       hasMoreBlockers: false,
       sourceRef: {},
     };
-    await expect(source.markInReview(issue)).resolves.toBeUndefined();
+    await expect(source.markInReview(issue)).resolves.toStrictEqual({
+      outcome: "unsupported",
+      reason: 'shell source "test" has no commands.markInReview configured',
+    });
   });
 
   it("markInReview() runs the configured command with substituted id and piped sourceRef on stdin", async () => {
@@ -470,7 +473,7 @@ describe(createShellTicketSource, () => {
       hasMoreBlockers: false,
       sourceRef,
     };
-    await source.markInReview(issue);
+    await expect(source.markInReview(issue)).resolves.toStrictEqual({ outcome: "applied" });
     expect(readFileSync(stdinCapture, "utf8")).toBe(JSON.stringify(sourceRef));
   });
 });

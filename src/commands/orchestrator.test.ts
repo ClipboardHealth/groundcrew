@@ -1242,36 +1242,66 @@ describe(orchestrate, () => {
     expect(client.team).toHaveBeenCalledTimes(1);
   });
 
-  it("advances an in-progress ticket to in-review when its worktree has an open PR", async () => {
-    // The reviewer is wired into the tick between cleaner and dispatcher. An
-    // in-progress ticket whose worktree has an open PR is advanced via
-    // board.markInReview (a no-op for the Linear adapter, but the reviewer's
-    // success log proves the step ran end-to-end through the orchestrator).
-    listMock.mockReturnValue([hostEntryFor("repo-a", "team-1")]);
-    workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-1"]) });
-    findPullRequestsMock.mockResolvedValue([
-      { url: "https://github.com/x/y/pull/3", number: 3, state: "open", title: "PR" },
-    ]);
-    const client = makeClient({
-      pages: [
-        [
-          issue({
-            identifier: "TEAM-1",
-            id: "uuid-1",
-            state: { id: "state-active", name: "In Progress", type: "started" },
-          }),
-        ],
-      ],
-    });
-    mockLinearClient(client);
+  it("advances an in-progress shell ticket to in-review when its worktree has an open PR", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "orchestrate-shell-review-"));
+    try {
+      const reviewMarker = path.join(dir, "review-ran");
+      const fetchScript = path.join(dir, "fetch.sh");
+      const reviewScript = path.join(dir, "review.sh");
+      writeFileSync(
+        fetchScript,
+        `#!/usr/bin/env bash
+cat <<'JSON'
+[
+  {
+    "id": "X-1",
+    "title": "Reviewable shell ticket",
+    "description": "Touches repo-a.",
+    "status": "in-progress",
+    "repository": "repo-a",
+    "model": "claude",
+    "assignee": "Alice",
+    "updatedAt": "2026-01-01T00:00:00Z",
+    "blockers": [],
+    "sourceRef": { "nativeId": "x-1" }
+  }
+]
+JSON
+`,
+      );
+      writeFileSync(reviewScript, `#!/usr/bin/env bash\ncat > "${reviewMarker}"\n`);
+      chmodSync(fetchScript, 0o755);
+      chmodSync(reviewScript, 0o755);
+      loadConfigMock.mockResolvedValue(
+        makeConfig({
+          sources: [
+            {
+              kind: "shell",
+              name: "test-source",
+              commands: { fetch: fetchScript, markInReview: reviewScript },
+            },
+          ],
+        }),
+      );
+      listMock.mockReturnValue([hostEntryFor("repo-a", "x-1")]);
+      workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["x-1"]) });
+      findPullRequestsMock.mockResolvedValue([
+        { url: "https://github.com/x/y/pull/3", number: 3, state: "open", title: "PR" },
+      ]);
+      const client = makeClient({ pages: [[]] });
+      mockLinearClient(client);
 
-    await orchestrate({ watch: false, dryRun: false });
+      await orchestrate({ watch: false, dryRun: false });
 
-    expect(findPullRequestsMock).toHaveBeenCalledWith({
-      cwd: "/work/repo-a-team-1",
-      branchName: "dev-team-1",
-    });
-    expect(consoleLog.output()).toContain("Advanced team-1 to in-review");
+      expect(findPullRequestsMock).toHaveBeenCalledWith({
+        cwd: "/work/repo-a-x-1",
+        branchName: "dev-x-1",
+      });
+      expect(existsSync(reviewMarker)).toBe(true);
+      expect(consoleLog.output()).toContain("Advanced x-1 to in-review");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("hands a Done worktree to teardown", async () => {

@@ -89,6 +89,8 @@ async function noop(): Promise<void> {
   await Promise.resolve();
 }
 
+const markInReview: TicketSource["markInReview"] = async () => ({ outcome: "applied" });
+
 async function flushMicrotasks(count = 10): Promise<void> {
   for (let index = 0; index < count; index += 1) {
     // oxlint-disable-next-line no-await-in-loop -- test helper intentionally drains queued promise work.
@@ -115,7 +117,7 @@ function fakeSource(
     fetch,
     resolveOne,
     markInProgress: noop,
-    markInReview: noop,
+    markInReview,
   };
 }
 

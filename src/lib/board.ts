@@ -9,6 +9,7 @@ import {
   AmbiguousTicketError,
   type BoardState,
   type Issue,
+  type MarkInReviewResult,
   type ParentSkip,
   type TicketSource,
 } from "./ticketSource.ts";
@@ -26,9 +27,9 @@ export interface Board {
   /**
    * Advances a ticket to in-review on the adapter whose `name` matches
    * `issue.source`. Unknown source throws. Adapters with no in-review concept
-   * no-op (see `TicketSource.markInReview`).
+   * return `unsupported` (see `TicketSource.markInReview`).
    */
-  markInReview(issue: Issue): Promise<void>;
+  markInReview(issue: Issue): Promise<MarkInReviewResult>;
 }
 
 async function callVerify(source: TicketSource): Promise<void> {
@@ -150,8 +151,8 @@ export function createBoard(sources: readonly TicketSource[]): Board {
       await routeWriteback(byName, issue).markInProgress(issue);
     },
 
-    async markInReview(issue: Issue): Promise<void> {
-      await routeWriteback(byName, issue).markInReview(issue);
+    async markInReview(issue: Issue): Promise<MarkInReviewResult> {
+      return await routeWriteback(byName, issue).markInReview(issue);
     },
   };
 }

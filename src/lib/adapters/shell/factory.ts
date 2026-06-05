@@ -10,7 +10,8 @@
  *    most CLI use (crew setup is rare) but users with expensive fetch
  *    commands should configure `resolveOne` explicitly. No cross-call cache
  *    in MVP-2.
- *  - `markInProgress` / `markInReview` absent → silent no-op.
+ *  - `markInProgress` absent → silent no-op.
+ *  - `markInReview` absent → reports unsupported.
  *  - `fetch` is required by the Zod schema.
  */
 
@@ -19,6 +20,7 @@ import {
   toCanonicalId,
   type Blocker as CanonicalBlocker,
   type Issue as CanonicalIssue,
+  type MarkInReviewResult,
   type TicketSource,
 } from "../../ticketSource.ts";
 
@@ -102,8 +104,7 @@ export function createShellTicketSource(
 
   // Shared by markInProgress / markInReview: both pipe the canonical issue's
   // opaque sourceRef to a status-transition script on stdin, with the natural
-  // and canonical ids substituted into the command. A command left unset is a
-  // silent no-op so adapters can adopt either transition independently.
+  // and canonical ids substituted into the command.
   async function invokeWriteback(
     command: string | undefined,
     timeoutMs: number,
@@ -174,8 +175,15 @@ export function createShellTicketSource(
     async markInProgress(issue: CanonicalIssue): Promise<void> {
       await invokeWriteback(config.commands.markInProgress, timeouts.markInProgress, issue);
     },
-    async markInReview(issue: CanonicalIssue): Promise<void> {
+    async markInReview(issue: CanonicalIssue): Promise<MarkInReviewResult> {
+      if (config.commands.markInReview === undefined) {
+        return {
+          outcome: "unsupported",
+          reason: `shell source "${sourceName}" has no commands.markInReview configured`,
+        };
+      }
       await invokeWriteback(config.commands.markInReview, timeouts.markInReview, issue);
+      return { outcome: "applied" };
     },
   };
 }

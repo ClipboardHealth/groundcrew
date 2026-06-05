@@ -4,7 +4,7 @@ import { deleteEnvironmentVariable, setEnvironmentVariable } from "../testHelper
 import type { AdapterContext, AdapterDefinition } from "./adapterDefinition.ts";
 import { buildSources, buildSourcesWith, sourcesFromConfig } from "./buildSources.ts";
 import type { ResolvedConfig } from "./config.ts";
-import type { TicketSource } from "./ticketSource.ts";
+import type { MarkInReviewResult, TicketSource } from "./ticketSource.ts";
 import { readEnvironmentVariable } from "./util.ts";
 
 const fakeContext: AdapterContext = {
@@ -21,7 +21,9 @@ function emptySource(name: string): TicketSource {
     // eslint-disable-next-line unicorn/no-useless-undefined -- mockResolvedValue requires a value for non-void return type
     resolveOne: vi.fn<() => Promise<undefined>>().mockResolvedValue(undefined),
     markInProgress: vi.fn<() => Promise<void>>().mockResolvedValue(),
-    markInReview: vi.fn<() => Promise<void>>().mockResolvedValue(),
+    markInReview: vi
+      .fn<() => Promise<MarkInReviewResult>>()
+      .mockResolvedValue({ outcome: "applied" }),
   };
 }
 

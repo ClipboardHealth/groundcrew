@@ -53,13 +53,16 @@ describe(createLinearIssueStatusUpdater, () => {
     vi.clearAllMocks();
   });
 
-  it("markInReview is a no-op stub — no Linear API call (D1)", async () => {
+  it("markInReview reports unsupported without calling Linear", async () => {
     const client = makeClient();
     const updater = createLinearIssueStatusUpdater({ client: asLinearClient(client) });
 
     await expect(
       updater.markInReview({ id: "team-1", uuid: "uuid-1", teamId: "shared" }),
-    ).resolves.toBeUndefined();
+    ).resolves.toStrictEqual({
+      outcome: "unsupported",
+      reason: "Linear in-review writeback is not implemented",
+    });
 
     expect(client.team).not.toHaveBeenCalled();
     expect(client.updateIssue).not.toHaveBeenCalled();

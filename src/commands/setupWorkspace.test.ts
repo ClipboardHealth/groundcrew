@@ -7,7 +7,7 @@ import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
 import { recordRunState } from "../lib/runState.ts";
 import { canonicalLinearIssue } from "../lib/testing/canonicalFixtures.ts";
-import { createBoard } from "../lib/board.ts";
+import { createBoard, type Board } from "../lib/board.ts";
 import type * as boardModule from "../lib/board.ts";
 import { buildSources } from "../lib/buildSources.ts";
 import type * as buildSourcesModule from "../lib/buildSources.ts";
@@ -116,7 +116,7 @@ vi.mock(import("../lib/board.ts"), async (importOriginal) => {
         }),
       ),
       markInProgress: vi.fn<(issue: Issue) => Promise<void>>().mockResolvedValue(),
-      markInReview: vi.fn<(issue: Issue) => Promise<void>>().mockResolvedValue(),
+      markInReview: vi.fn<Board["markInReview"]>().mockResolvedValue({ outcome: "applied" }),
     })),
   };
 });
@@ -1628,7 +1628,7 @@ const buildSourcesMock = vi.mocked(buildSources);
 interface FakeBoard extends ReturnType<typeof createBoard> {
   resolveOne: ReturnType<typeof vi.fn<(id: string) => Promise<Issue | undefined>>>;
   markInProgress: ReturnType<typeof vi.fn<(issue: Issue) => Promise<void>>>;
-  markInReview: ReturnType<typeof vi.fn<(issue: Issue) => Promise<void>>>;
+  markInReview: ReturnType<typeof vi.fn<Board["markInReview"]>>;
 }
 
 function fakeBoard(resolvedIssue: Issue | undefined): FakeBoard {
@@ -1639,7 +1639,7 @@ function fakeBoard(resolvedIssue: Issue | undefined): FakeBoard {
       .fn<(id: string) => Promise<Issue | undefined>>()
       .mockResolvedValue(resolvedIssue),
     markInProgress: vi.fn<(issue: Issue) => Promise<void>>().mockResolvedValue(),
-    markInReview: vi.fn<(issue: Issue) => Promise<void>>().mockResolvedValue(),
+    markInReview: vi.fn<Board["markInReview"]>().mockResolvedValue({ outcome: "applied" }),
   };
 }
 

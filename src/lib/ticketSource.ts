@@ -111,6 +111,10 @@ export interface BoardState {
   parentSkips: readonly ParentSkip[];
 }
 
+export type MarkInReviewResult =
+  | { outcome: "applied" }
+  | { outcome: "unsupported"; reason: string };
+
 export interface TicketSource {
   /** Stable identifier used as the id prefix and in log lines. Equal to the source's config `name`. */
   readonly name: string;
@@ -127,9 +131,10 @@ export interface TicketSource {
    * worktree has an open PR. Frees a dispatch slot without tripping the
    * cleaner's done-only teardown, so the worktree survives for review. The
    * adapter downcasts `issue.sourceRef` internally. Adapters with no native
-   * in-review concept (or no configured command) MUST no-op rather than throw.
+   * in-review concept (or no configured command) MUST report `unsupported`
+   * rather than pretending the transition happened.
    */
-  markInReview(issue: Issue): Promise<void>;
+  markInReview(issue: Issue): Promise<MarkInReviewResult>;
 
   /**
    * Optional: return parent tickets that were excluded from `fetch()` because

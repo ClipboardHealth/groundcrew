@@ -5,7 +5,7 @@ import path from "node:path";
 import { z } from "zod";
 
 import type { AdapterDefinition } from "../adapterDefinition.ts";
-import type { TicketSource } from "../ticketSource.ts";
+import type { MarkInReviewResult, TicketSource } from "../ticketSource.ts";
 import {
   adapterRegistry,
   type AdapterLoader,
@@ -22,7 +22,9 @@ function emptySource(name: string): TicketSource {
     // eslint-disable-next-line unicorn/no-useless-undefined -- mockResolvedValue requires a value for non-void return type
     resolveOne: vi.fn<() => Promise<undefined>>().mockResolvedValue(undefined),
     markInProgress: vi.fn<() => Promise<void>>().mockResolvedValue(),
-    markInReview: vi.fn<() => Promise<void>>().mockResolvedValue(),
+    markInReview: vi
+      .fn<() => Promise<MarkInReviewResult>>()
+      .mockResolvedValue({ outcome: "applied" }),
   };
 }
 

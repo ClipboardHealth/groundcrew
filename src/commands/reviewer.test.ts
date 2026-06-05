@@ -2,7 +2,7 @@ import { setVerbose } from "../lib/util.ts";
 import { canonicalLinearIssue } from "../lib/testing/canonicalFixtures.ts";
 import type { Board } from "../lib/board.ts";
 import type { PullRequestSummary } from "../lib/pullRequests.ts";
-import type { BoardState, Issue } from "../lib/ticketSource.ts";
+import type { BoardState, Issue, MarkInReviewResult } from "../lib/ticketSource.ts";
 import type { WorktreeEntry } from "../lib/worktrees.ts";
 import { makeBoard } from "../testHelpers/boardFixtures.ts";
 import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCapture.ts";
@@ -12,8 +12,13 @@ function boardOf(issues: BoardState["issues"]): BoardState {
   return { timestamp: "2025-01-01T00:00:00.000Z", issues, parentSkips: [] };
 }
 
-function inProgressIssue(naturalId: string): Issue {
-  return canonicalLinearIssue({ naturalId, status: "in-progress" });
+function inProgressIssue(naturalId: string, overrides: Partial<Issue> = {}): Issue {
+  return canonicalLinearIssue({
+    naturalId,
+    status: "in-progress",
+    repository: "repo-a",
+    ...overrides,
+  });
 }
 
 function hostEntryFor(ticket: string, overrides: Partial<WorktreeEntry> = {}): WorktreeEntry {
@@ -42,12 +47,14 @@ function findReturning(prs: readonly PullRequestSummary[]): FindPullRequests {
 
 describe(createReviewer, () => {
   let consoleLog: ConsoleCapture;
-  let markInReviewMock: ReturnType<typeof vi.fn<(issue: Issue) => Promise<void>>>;
+  let markInReviewMock: ReturnType<typeof vi.fn<(issue: Issue) => Promise<MarkInReviewResult>>>;
   let board: Board;
 
   beforeEach(() => {
     consoleLog = captureConsoleLog();
-    markInReviewMock = vi.fn<(issue: Issue) => Promise<void>>().mockResolvedValue();
+    markInReviewMock = vi
+      .fn<(issue: Issue) => Promise<MarkInReviewResult>>()
+      .mockResolvedValue({ outcome: "applied" });
     board = makeBoard({ markInReview: markInReviewMock });
     // review telemetry (event= lines) is diagnostic — verbose echoes it to the
     // console so these cases can assert the wording.
@@ -163,7 +170,9 @@ describe(createReviewer, () => {
   it("keeps advancing other issues when one issue's write-back fails", async () => {
     // Error isolation: a write-back failure on the first issue must not prevent
     // the second qualifying issue from being advanced in the same tick.
-    markInReviewMock.mockRejectedValueOnce(new Error("team-1 shell error")).mockResolvedValueOnce();
+    markInReviewMock
+      .mockRejectedValueOnce(new Error("team-1 shell error"))
+      .mockResolvedValueOnce({ outcome: "applied" });
     const reviewer = createReviewer({
       board,
       findPullRequests: findReturning([pullRequest({ state: "open" })]),
@@ -209,6 +218,34 @@ describe(createReviewer, () => {
     expect(markInReviewMock).not.toHaveBeenCalled();
   });
 
+  it("skips an in-progress ticket that has no repository", async () => {
+    const findPullRequests = findReturning([pullRequest({ state: "open" })]);
+    const reviewer = createReviewer({ board, findPullRequests });
+
+    await reviewer.runOnce({
+      state: boardOf([inProgressIssue("team-1", { repository: undefined })]),
+      worktreeEntries: [hostEntryFor("team-1")],
+      dryRun: false,
+    });
+
+    expect(findPullRequests).not.toHaveBeenCalled();
+    expect(markInReviewMock).not.toHaveBeenCalled();
+  });
+
+  it("matches worktrees by ticket and repository", async () => {
+    const findPullRequests = findReturning([pullRequest({ state: "open" })]);
+    const reviewer = createReviewer({ board, findPullRequests });
+
+    await reviewer.runOnce({
+      state: boardOf([inProgressIssue("team-1", { repository: "repo-a" })]),
+      worktreeEntries: [hostEntryFor("team-1", { repository: "repo-b" })],
+      dryRun: false,
+    });
+
+    expect(findPullRequests).not.toHaveBeenCalled();
+    expect(markInReviewMock).not.toHaveBeenCalled();
+  });
+
   it("dry-run logs the would-advance and does not write back", async () => {
     const reviewer = createReviewer({
       board,
@@ -245,6 +282,30 @@ describe(createReviewer, () => {
     const out = consoleLog.output();
     expect(out).toContain("Failed to advance team-1 to in-review: shell exploded");
     expect(out).toContain("event=review outcome=failed reason=writeback_failed ticket=team-1");
+  });
+
+  it("does not log success when the source does not support in-review writeback", async () => {
+    markInReviewMock.mockResolvedValueOnce({
+      outcome: "unsupported",
+      reason: "source has no in-review transition",
+    });
+    const reviewer = createReviewer({
+      board,
+      findPullRequests: findReturning([pullRequest({ state: "open", url: "https://gh/pr/1" })]),
+    });
+
+    await reviewer.runOnce({
+      state: boardOf([inProgressIssue("team-1")]),
+      worktreeEntries: [hostEntryFor("team-1")],
+      dryRun: false,
+    });
+
+    const out = consoleLog.output();
+    expect(out).toContain(
+      "Skipped advancing team-1 to in-review: source has no in-review transition",
+    );
+    expect(out).toContain("event=review outcome=skipped reason=unsupported ticket=team-1");
+    expect(out).not.toContain("Advanced team-1 to in-review");
   });
 
   it("falls through to a later worktree when the first has no PR", async () => {

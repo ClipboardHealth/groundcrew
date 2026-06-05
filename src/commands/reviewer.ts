@@ -1,9 +1,10 @@
 /**
  * Per-iteration scanner that advances in-progress tickets to in-review once
  * their worktree has an open (or merged) pull request. Sits between the cleaner
- * and the dispatcher in each `orchestrate()` tick. Advancing frees a dispatch
- * slot (the slot math counts only in-progress) while leaving the worktree
- * intact for review, since the cleaner only tears down `done` tickets.
+ * and the dispatcher in each `orchestrate()` tick. A successfully-applied
+ * transition frees a dispatch slot (the slot math counts only in-progress)
+ * while leaving the worktree intact for review, since the cleaner only tears
+ * down `done` tickets.
  *
  * The write-back lands in the ticket source, not the in-memory `BoardState`, so
  * the dispatcher in the SAME tick still sees the ticket as in-progress; the slot
@@ -58,6 +59,20 @@ function isReviewablePullRequest(pr: PullRequestSummary): boolean {
   return pr.state === "open" || pr.state === "merged";
 }
 
+function matchingWorktreeEntries(arguments_: {
+  issue: Issue;
+  worktreeEntries: readonly WorktreeEntry[];
+  ticket: string;
+}): WorktreeEntry[] {
+  const { issue, worktreeEntries, ticket } = arguments_;
+  if (issue.repository === undefined) {
+    return [];
+  }
+  return worktreeEntries.filter(
+    (entry) => entry.ticket === ticket && entry.repository === issue.repository,
+  );
+}
+
 export function createReviewer(deps: ReviewerDeps): Reviewer {
   const { board, findPullRequests } = deps;
 
@@ -80,9 +95,9 @@ export function createReviewer(deps: ReviewerDeps): Reviewer {
     }
   }
 
-  // Idempotent by construction: once advanced, the issue leaves `in-progress`,
-  // so it never reaches this scan again — no oscillation. At most one
-  // transition per issue per tick (we stop at the first reviewable worktree).
+  // Idempotent after an applied transition: once advanced, the issue leaves
+  // `in-progress`, so it never reaches this scan again. Unsupported writebacks
+  // are skipped without claiming success and may retry on later ticks.
   async function advanceIfReviewable(arguments_: {
     issue: Issue;
     worktreeEntries: readonly WorktreeEntry[];
@@ -91,7 +106,7 @@ export function createReviewer(deps: ReviewerDeps): Reviewer {
   }): Promise<void> {
     const { issue, worktreeEntries, dryRun, signal } = arguments_;
     const ticket = naturalIdFromCanonical(issue.id);
-    const entries = worktreeEntries.filter((entry) => entry.ticket === ticket);
+    const entries = matchingWorktreeEntries({ issue, worktreeEntries, ticket });
 
     for (const entry of entries) {
       // The injected lookup is contracted never to reject (failures resolve to
@@ -135,7 +150,16 @@ export function createReviewer(deps: ReviewerDeps): Reviewer {
   }): Promise<void> {
     const { issue, ticket, pullRequest } = arguments_;
     try {
-      await board.markInReview(issue);
+      const result = await board.markInReview(issue);
+      if (result.outcome === "unsupported") {
+        log(`Skipped advancing ${ticket} to in-review: ${result.reason}`);
+        logEvent("review", {
+          outcome: "skipped",
+          reason: "unsupported",
+          ticket,
+        });
+        return;
+      }
       log(`Advanced ${ticket} to in-review (PR ${pullRequest.url})`);
       logEvent("review", {
         outcome: "advanced",

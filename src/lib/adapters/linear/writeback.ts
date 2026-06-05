@@ -1,5 +1,6 @@
 import type { LinearClient } from "@linear/sdk";
 
+import type { MarkInReviewResult } from "../../ticketSource.ts";
 import { debug } from "../../util.ts";
 
 interface LinearIssueReference {
@@ -10,18 +11,18 @@ interface LinearIssueReference {
 
 interface LinearIssueStatusUpdater {
   markInProgress(issue: LinearIssueReference): Promise<void>;
-  markInReview(issue: LinearIssueReference): Promise<void>;
+  markInReview(issue: LinearIssueReference): Promise<MarkInReviewResult>;
 }
 
-// D1: no Linear consumer of the in-review transition exists yet — only the
-// plans (shell) adapter produces it. A logged no-op keeps the TicketSource
-// interface generic; the real impl (resolve the team's "In Review" workflow
-// state and move the card, mirroring getInProgressStateId) is additive
-// whenever a Linear user needs it. Module-scoped because it captures no
-// client/cache state, unlike markInProgress.
-async function markInReviewNoop(issue: LinearIssueReference): Promise<void> {
-  await Promise.resolve();
-  debug(`markInReview is a no-op for ${issue.id} (Linear in-review not yet implemented)`);
+// Linear maps every `started` workflow state to canonical in-progress today,
+// so it cannot prove a successful in-review transition. Report unsupported
+// until read/write sides can distinguish "In Review" from generic started.
+async function markInReviewUnsupported(issue: LinearIssueReference): Promise<MarkInReviewResult> {
+  debug(`markInReview is unsupported for ${issue.id} (Linear in-review not yet implemented)`);
+  return {
+    outcome: "unsupported",
+    reason: "Linear in-review writeback is not implemented",
+  };
 }
 
 export function createLinearIssueStatusUpdater(arguments_: {
@@ -80,5 +81,5 @@ export function createLinearIssueStatusUpdater(arguments_: {
     debug(`Marked ${issue.id} as in progress`);
   }
 
-  return { markInProgress, markInReview: markInReviewNoop };
+  return { markInProgress, markInReview: markInReviewUnsupported };
 }
