@@ -12,12 +12,12 @@
  * Source-neutral status enum every adapter normalises its native vocabulary
  * to. Consumers branch on these values, never on a source's native names.
  *
- * - `todo` / `in-progress` / `done`: the only canonical states the built-in
- *   Linear adapter produces today (mapped from Linear's workflow `state.type`).
- * - `in-review`: produced only by adapters whose schema declares an in-review
- *   mapping. The shell adapter's JSON contract accepts it; the built-in Linear
- *   adapter does not yet map any native state to it. Reserved here so
- *   consumers' branch logic doesn't change when that follow-up lands.
+ * - `todo` / `in-progress` / `done`: broad lifecycle states mapped from each
+ *   source's native vocabulary.
+ * - `in-review`: review-stage work that should no longer consume a dispatch
+ *   slot but should not be cleaned up as terminal. The built-in Linear adapter
+ *   maps default/configured review status names here; the shell adapter's JSON
+ *   contract accepts it directly.
  * - `other`: anything an adapter sees but can't classify (Linear tickets in
  *   `backlog`/`triage`, blockers with no resolvable state).
  */
@@ -37,8 +37,8 @@ export interface Blocker {
    *   (e.g., Linear had no state on the blocker; shell script omitted
    *   the field).
    * - `"unmapped"`: the source returned a status that isn't in the
-   *   source's known mapping (e.g., a Linear column not in
-   *   `linear.projects[*].statuses`, or an unrecognized shell value).
+   *   source's known mapping (e.g., a Linear column not covered by
+   *   `sources[*].statuses`, or an unrecognized shell value).
    *
    * MUST be undefined when `status !== "other"`.
    */

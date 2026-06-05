@@ -5,9 +5,9 @@
  * ./client.ts) and converts Linear-specific shapes into the canonical
  * Issue/Blocker types consumers (via Board) speak.
  *
- * State classification is driven by Linear's workflow `state.type` — never
- * by status name — so workspaces with renamed columns Just Work without
- * per-team config.
+ * Status names disambiguate Linear's multiple `started` states ("In Progress"
+ * vs "In Review"). Unmatched statuses fall back to workflow `state.type` so
+ * renamed or custom columns still preserve the broad lifecycle behavior.
  *
  * Description is populated on both `fetch()` Issues and `resolveOne()` Issues.
  */
@@ -28,10 +28,15 @@ import {
   type Blocker as LinearBlocker,
   createBoardSource,
   fetchResolvedIssue,
-  isTerminalStateType,
   type Issue as LinearIssue,
   type ParentSkip as LinearParentSkip,
 } from "./fetch.ts";
+import {
+  canonicalStatusFromLinearState,
+  DEFAULT_LINEAR_STATUS_NAMES,
+  resolveLinearStatusNames,
+  type LinearStatusNames,
+} from "./statusNames.ts";
 import { createLinearIssueStatusUpdater } from "./writeback.ts";
 
 /**
@@ -48,69 +53,38 @@ export interface LinearSourceRef {
   nativeStatus: string;
 }
 
-function canonicalStatusFromStateType(stateType: string | undefined): CanonicalStatus {
-  /* v8 ignore next 3 @preserve -- LinearIssue.stateType is non-optional; this guard is defensive for the resolveOne path */
-  if (stateType === undefined) {
-    return "other";
-  }
-  switch (stateType) {
-    case "unstarted": {
-      return "todo";
-    }
-    case "started": {
-      return "in-progress";
-    }
-    case "completed":
-    case "canceled":
-    case "duplicate": {
-      return "done";
-    }
-    default: {
-      return "other";
-    }
-  }
-}
-
-function canonicalBlockerStatus(blocker: LinearBlocker): {
+function canonicalBlockerStatus(
+  blocker: LinearBlocker,
+  statusNames: LinearStatusNames,
+): {
   status: CanonicalStatus;
   statusReason?: "missing" | "unmapped";
   nativeStatus?: string;
 } {
-  if (blocker.stateType === undefined) {
+  const status = canonicalStatusFromLinearState({
+    nativeStatus: blocker.status,
+    stateType: blocker.stateType,
+    statusNames,
+  });
+  if (status !== "other") {
     return {
-      status: "other",
-      statusReason: "missing",
+      status,
       ...(blocker.status !== undefined && { nativeStatus: blocker.status }),
     };
   }
-  if (isTerminalStateType(blocker.stateType)) {
-    return {
-      status: "done",
-      ...(blocker.status !== undefined && { nativeStatus: blocker.status }),
-    };
-  }
-  if (blocker.stateType === "started") {
-    return {
-      status: "in-progress",
-      ...(blocker.status !== undefined && { nativeStatus: blocker.status }),
-    };
-  }
-  if (blocker.stateType === "unstarted") {
-    return {
-      status: "todo",
-      ...(blocker.status !== undefined && { nativeStatus: blocker.status }),
-    };
-  }
-  // backlog / triage / anything else falls through as "other"
   return {
-    status: "other",
-    statusReason: "unmapped",
+    status,
+    statusReason: blocker.stateType === undefined ? "missing" : "unmapped",
     ...(blocker.status !== undefined && { nativeStatus: blocker.status }),
   };
 }
 
-function toCanonicalBlocker(blocker: LinearBlocker, sourceName: string): CanonicalBlocker {
-  const { status, statusReason, nativeStatus } = canonicalBlockerStatus(blocker);
+function toCanonicalBlocker(
+  blocker: LinearBlocker,
+  sourceName: string,
+  statusNames: LinearStatusNames,
+): CanonicalBlocker {
+  const { status, statusReason, nativeStatus } = canonicalBlockerStatus(blocker, statusNames);
   return {
     id: toCanonicalId(sourceName, blocker.id),
     title: blocker.title,
@@ -128,7 +102,11 @@ function toCanonicalParentSkip(skip: LinearParentSkip, sourceName: string): Cano
   };
 }
 
-export function toCanonicalIssue(linearIssue: LinearIssue, sourceName: string): CanonicalIssue {
+export function toCanonicalIssue(
+  linearIssue: LinearIssue,
+  sourceName: string,
+  statusNames: LinearStatusNames = DEFAULT_LINEAR_STATUS_NAMES,
+): CanonicalIssue {
   const sourceRef: LinearSourceRef = {
     uuid: linearIssue.uuid,
     statusId: linearIssue.statusId,
@@ -141,12 +119,16 @@ export function toCanonicalIssue(linearIssue: LinearIssue, sourceName: string): 
     source: sourceName,
     title: linearIssue.title,
     description: linearIssue.description,
-    status: canonicalStatusFromStateType(linearIssue.stateType),
+    status: canonicalStatusFromLinearState({
+      nativeStatus: linearIssue.status,
+      stateType: linearIssue.stateType,
+      statusNames,
+    }),
     repository: linearIssue.repository,
     model: linearIssue.model,
     assignee: linearIssue.assignee,
     updatedAt: linearIssue.updatedAt,
-    blockers: linearIssue.blockers.map((b) => toCanonicalBlocker(b, sourceName)),
+    blockers: linearIssue.blockers.map((b) => toCanonicalBlocker(b, sourceName, statusNames)),
     hasMoreBlockers: linearIssue.hasMoreBlockers,
     url: linearIssue.url,
     sourceRef,
@@ -158,6 +140,7 @@ export function createLinearTicketSource(
   context: AdapterContext,
 ): TicketSource {
   const sourceName = config.name ?? "linear";
+  const statusNames = resolveLinearStatusNames(config.statuses);
   const { globalConfig } = context;
   // Lazy: deferring `getLinearClient()` (and the sub-modules that depend on
   // it) until first method use means `createLinearTicketSource` can be
@@ -178,6 +161,7 @@ export function createLinearTicketSource(
   function getIssueStatusUpdater(): ReturnType<typeof createLinearIssueStatusUpdater> {
     cachedIssueStatusUpdater ??= createLinearIssueStatusUpdater({
       client: getClient(),
+      statusNames,
     });
     return cachedIssueStatusUpdater;
   }
@@ -192,7 +176,9 @@ export function createLinearTicketSource(
     async fetch(): Promise<CanonicalIssue[]> {
       const state = await getBoardSource().fetch();
       lastParentSkips = state.parentSkips.map((skip) => toCanonicalParentSkip(skip, sourceName));
-      return state.issues.map((linearIssue) => toCanonicalIssue(linearIssue, sourceName));
+      return state.issues.map((linearIssue) =>
+        toCanonicalIssue(linearIssue, sourceName, statusNames),
+      );
     },
     async fetchParentSkips(): Promise<readonly CanonicalParentSkip[]> {
       return lastParentSkips;
@@ -215,7 +201,11 @@ export function createLinearTicketSource(
         source: sourceName,
         title: resolved.title,
         description: resolved.description,
-        status: canonicalStatusFromStateType(resolved.stateType),
+        status: canonicalStatusFromLinearState({
+          nativeStatus: resolved.status,
+          stateType: resolved.stateType,
+          statusNames,
+        }),
         repository: resolved.repository,
         model: resolved.model,
         assignee: "Unassigned",

@@ -29,7 +29,7 @@ This applies to the tmux backend only.
 
 ## Tickets Stay In-Progress
 
-Groundcrew sets a ticket to `Started`, the first workflow state with `type === "started"` on that team, when it provisions a workspace and never advances it. The next transition, typically "In Review" when a PR opens, is left to your Linear automation rules.
+Groundcrew marks a ticket `In Progress` when it provisions a workspace. When a PR opens on that worktree branch, the reviewer pass attempts to mark the ticket `In Review`. Linear's default `In Review` status works out of the box; if your team renamed it, configure `sources: [{ kind: "linear", statuses: { inReview: ["Code Review"] } }]`.
 
 ## Claude Launches In Auto Mode By Default
 

@@ -97,6 +97,22 @@ describe(toCanonicalIssue, () => {
     expect(result.status).toBe("in-progress");
   });
 
+  it("canonicalizes default Linear In Review as in-review", () => {
+    const result = toCanonicalIssue(
+      linearIssue({ status: "In Review", stateType: "started" }),
+      "linear",
+    );
+    expect(result.status).toBe("in-review");
+  });
+
+  it("does not let a review status name override a terminal state.type", () => {
+    const result = toCanonicalIssue(
+      linearIssue({ status: "In Review", stateType: "completed" }),
+      "linear",
+    );
+    expect(result.status).toBe("done");
+  });
+
   it("maps state.type 'completed' to canonical 'done'", () => {
     const result = toCanonicalIssue(
       linearIssue({ status: "Shipped", stateType: "completed" }),
@@ -139,12 +155,19 @@ describe(toCanonicalIssue, () => {
       blockers: [
         { id: "team-2", title: "Block A", status: "Done", stateType: "completed" },
         { id: "team-3", title: "Block B", status: "Todo", stateType: "unstarted" },
+        { id: "team-4", title: "Block C", status: "In Review", stateType: "started" },
       ],
     });
     const result = toCanonicalIssue(issue, "linear");
     expect(result.blockers).toStrictEqual([
       { id: "linear:team-2", title: "Block A", status: "done", nativeStatus: "Done" },
       { id: "linear:team-3", title: "Block B", status: "todo", nativeStatus: "Todo" },
+      {
+        id: "linear:team-4",
+        title: "Block C",
+        status: "in-review",
+        nativeStatus: "In Review",
+      },
     ]);
   });
 
@@ -161,6 +184,18 @@ describe(toCanonicalIssue, () => {
         statusReason: "missing",
         nativeStatus: "Done",
       },
+    ]);
+  });
+
+  it("falls back to state.type when a started blocker has no native status", () => {
+    const issue = linearIssue({
+      blockers: [{ id: "team-2", title: "Block A", status: undefined, stateType: "started" }],
+    });
+
+    const result = toCanonicalIssue(issue, "linear");
+
+    expect(result.blockers).toStrictEqual([
+      { id: "linear:team-2", title: "Block A", status: "in-progress" },
     ]);
   });
 
@@ -246,6 +281,42 @@ describe(createLinearTicketSource, () => {
     const issues = await source.fetch();
     expect(issues.map((i) => i.id)).toStrictEqual(["linear:team-1", "linear:team-2"]);
     expect(issues[1]?.status).toBe("in-progress");
+  });
+
+  it("uses configured Linear status names before falling back to state.type", async () => {
+    const innerFetch = vi.fn<() => Promise<boardSource.BoardState>>().mockResolvedValue({
+      timestamp: "2026-01-01T00:00:00Z",
+      issues: [
+        linearIssue({ id: "team-1", status: "Doing", stateType: "started" }),
+        linearIssue({ id: "team-2", status: "Code Review", stateType: "started" }),
+        linearIssue({ id: "team-3", status: "Waiting", stateType: "started" }),
+      ],
+      parentSkips: [],
+    });
+    vi.spyOn(boardSource, "createBoardSource").mockReturnValue({
+      verify: vi.fn<() => Promise<void>>(),
+      fetch: innerFetch,
+    });
+    const source = createLinearTicketSource(
+      {
+        kind: "linear",
+        statuses: {
+          inProgress: ["Doing"],
+          inReview: ["Code Review"],
+        },
+      },
+      {
+        globalConfig: makeConfig(),
+      } satisfies AdapterContext,
+    );
+
+    const issues = await source.fetch();
+
+    expect(issues.map((issue) => issue.status)).toStrictEqual([
+      "in-progress",
+      "in-review",
+      "in-progress",
+    ]);
   });
 
   it("fetchParentSkips() returns canonical (source-prefixed) ids", async () => {
@@ -334,6 +405,10 @@ describe(createLinearTicketSource, () => {
       id: "linear:team-1",
       uuid: "uuid-1",
       teamId: "team-default",
+    });
+    expect(linearIssueStatus.createLinearIssueStatusUpdater).toHaveBeenCalledWith({
+      client: fakeClient,
+      statusNames: { inProgress: ["In Progress"], inReview: ["In Review"] },
     });
   });
 

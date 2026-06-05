@@ -152,9 +152,9 @@ type UserModelDefinition = EnabledUserModelDefinition;
  *
  * Groundcrew's built-in Linear adapter is implicit and needs no config:
  * it picks up every Linear issue assigned to the API key's viewer that
- * carries an `agent-*` label. There is no project / view / status
- * configuration — Linear's workflow `state.type` is the source of truth
- * for todo / in-progress / terminal classification.
+ * carries an `agent-*` label. There is no project or view configuration.
+ * Linear's default "In Progress" / "In Review" status names disambiguate
+ * `started` workflow states; unmatched statuses fall back to `state.type`.
  */
 export interface Config {
   /**
@@ -722,7 +722,8 @@ function failOnLegacyLinearShape(user: Record<string, unknown>): void {
     [
       "The `linear` config block is no longer supported.",
       "Groundcrew now picks up every Linear issue assigned to your API key's viewer that carries an `agent-*` label —",
-      "no project / view / status configuration needed. Remove the `linear: { ... }` block from your config.",
+      "remove the `linear: { ... }` block from your config.",
+      'To customize Linear status names, declare `sources: [{ kind: "linear", statuses: { ... } }]` instead.',
       "If you only want a subset of your Linear tickets to be picked up, leave the unwanted tickets unassigned or remove their `agent-*` label.",
     ].join("\n"),
   );

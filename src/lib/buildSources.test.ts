@@ -100,13 +100,13 @@ describe(buildSources, () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// Cross-source independence: a user with `linear.projects=[…]` and an
-// explicit `sources=[{kind:"shell"}]` block must be able to construct
-// both adapters even when no Linear API key is in env. The Linear
-// adapter's eager `getLinearClient()` call used to crash buildSources
-// on the missing key, which broke `crew doctor --ticket <shell-id>`
-// and any other shell-only operation. These tests pin that behavior
-// using the REAL production adapter registry (no spies, no fakes).
+// Cross-source independence: a user with an explicit
+// `sources=[{kind:"shell"}]` block must be able to construct both adapters
+// even when no Linear API key is in env. The Linear adapter's eager
+// `getLinearClient()` call used to crash buildSources on the missing key,
+// which broke `crew doctor --ticket <shell-id>` and any other shell-only
+// operation. These tests pin that behavior using the REAL production adapter
+// registry (no spies, no fakes).
 // ─────────────────────────────────────────────────────────────────────────
 
 function makeMixedConfig(): ResolvedConfig {

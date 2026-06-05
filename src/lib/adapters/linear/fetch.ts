@@ -1,12 +1,11 @@
 /**
  * Linear adapter — GraphQL fetch helpers for board/issue data.
  *
- * There is no project / view / status configuration: the only server-side
- * filter is "assigned to the API key's viewer AND carries an `agent-*`
- * label." State classification is driven by Linear's workflow `state.type`
- * (`unstarted` | `started` | `completed` | `canceled` | `duplicate`) —
- * never by status name — so workspaces with renamed columns (Todo -> To Do,
- * Done -> Shipped, etc.) Just Work without per-team config.
+ * There is no project or view configuration: the only server-side filter is
+ * "assigned to the API key's viewer AND carries an `agent-*` label." This
+ * module returns Linear's native status name plus workflow `state.type`; the
+ * ticket-source factory applies status-name disambiguation and state-type
+ * fallback when building canonical issues.
  */
 
 import type { LinearClient } from "@linear/sdk";
@@ -39,8 +38,8 @@ export interface Blocker {
   status: string | undefined;
   /**
    * Linear workflow `state.type` for the blocker (`unstarted` | `started` |
-   * `completed` | `canceled` | `duplicate` | `backlog` | `triage`). All
-   * canonical classification — todo / in-progress / terminal — keys off this.
+   * `completed` | `canceled` | `duplicate` | `backlog` | `triage`). Canonical
+   * classification uses this as a fallback after configured status names.
    */
   stateType: string | undefined;
 }
@@ -52,7 +51,7 @@ export interface Issue {
   description: string;
   status: string;
   statusId: string;
-  /** Linear workflow `state.type` — the source of truth for canonical classification. */
+  /** Linear workflow `state.type` — canonical classification fallback after status-name matching. */
   stateType: string;
   assignee: string;
   updatedAt: string;

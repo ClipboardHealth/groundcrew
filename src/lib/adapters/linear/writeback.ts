@@ -2,6 +2,13 @@ import type { LinearClient } from "@linear/sdk";
 
 import type { MarkInReviewResult } from "../../ticketSource.ts";
 import { debug } from "../../util.ts";
+import {
+  DEFAULT_LINEAR_STATUS_NAMES,
+  findLinearWorkflowStateByName,
+  formatLinearStatusNames,
+  type LinearStatusNames,
+  type LinearWorkflowState,
+} from "./statusNames.ts";
 
 interface LinearIssueReference {
   id: string;
@@ -14,21 +21,11 @@ interface LinearIssueStatusUpdater {
   markInReview(issue: LinearIssueReference): Promise<MarkInReviewResult>;
 }
 
-// Linear maps every `started` workflow state to canonical in-progress today,
-// so it cannot prove a successful in-review transition. Report unsupported
-// until read/write sides can distinguish "In Review" from generic started.
-async function markInReviewUnsupported(issue: LinearIssueReference): Promise<MarkInReviewResult> {
-  debug(`markInReview is unsupported for ${issue.id} (Linear in-review not yet implemented)`);
-  return {
-    outcome: "unsupported",
-    reason: "Linear in-review writeback is not implemented",
-  };
-}
-
 export function createLinearIssueStatusUpdater(arguments_: {
   client: LinearClient;
+  statusNames?: LinearStatusNames;
 }): LinearIssueStatusUpdater {
-  const { client } = arguments_;
+  const { client, statusNames = DEFAULT_LINEAR_STATUS_NAMES } = arguments_;
   // Positive cache only. Keyed by teamId because the in-progress-state
   // resolution yields a single stateId per team — independent of which
   // project the ticket belongs to. State ids don't change for misconfig
@@ -41,6 +38,13 @@ export function createLinearIssueStatusUpdater(arguments_: {
   // every failing attempt costs at most a handful of extra Linear API calls
   // per tick.
   const inProgressStateByTeam = new Map<string, string>();
+  const inReviewStateByTeam = new Map<string, string>();
+
+  async function fetchWorkflowStates(teamId: string): Promise<readonly LinearWorkflowState[]> {
+    const team = await client.team(teamId);
+    const states = await team.states();
+    return states.nodes;
+  }
 
   async function getInProgressStateId(teamId: string): Promise<string | undefined> {
     if (teamId.length === 0) {
@@ -50,24 +54,39 @@ export function createLinearIssueStatusUpdater(arguments_: {
     if (cached !== undefined) {
       return cached;
     }
-    const team = await client.team(teamId);
-    const states = await team.states();
     // Linear's default workflow has MULTIPLE `started`-type states — both
     // "In Progress" and "In Review" are `started`. `team.states()` orders by
     // updatedAt (the connection has no position ordering), so array order
-    // can't disambiguate them. Prefer the state literally named "In Progress";
-    // otherwise fall back to the lowest-position (leftmost) `started` column,
-    // which by Linear convention is the in-progress one. This survives teams
-    // that rename the column ("Doing", "WIP", ...).
-    const startedStates = states.nodes.filter((state) => state.type === "started");
+    // can't disambiguate them. Prefer configured/default in-progress names;
+    // otherwise fall back to the lowest-position (leftmost) `started` column.
+    const states = await fetchWorkflowStates(teamId);
+    const startedStates = states.filter((state) => state.type === "started");
     const inProgress =
-      startedStates.find((state) => state.name.trim().toLowerCase() === "in progress") ??
+      findLinearWorkflowStateByName(startedStates, statusNames.inProgress) ??
       startedStates.toSorted((a, b) => a.position - b.position).at(0);
     if (inProgress?.id === undefined) {
       return undefined;
     }
     inProgressStateByTeam.set(teamId, inProgress.id);
     return inProgress.id;
+  }
+
+  async function getInReviewStateId(teamId: string): Promise<string | undefined> {
+    if (teamId.length === 0) {
+      return undefined;
+    }
+    const cached = inReviewStateByTeam.get(teamId);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const states = await fetchWorkflowStates(teamId);
+    const startedStates = states.filter((state) => state.type === "started");
+    const inReview = findLinearWorkflowStateByName(startedStates, statusNames.inReview);
+    if (inReview?.id === undefined) {
+      return undefined;
+    }
+    inReviewStateByTeam.set(teamId, inReview.id);
+    return inReview.id;
   }
 
   async function markInProgress(issue: LinearIssueReference): Promise<void> {
@@ -81,5 +100,18 @@ export function createLinearIssueStatusUpdater(arguments_: {
     debug(`Marked ${issue.id} as in progress`);
   }
 
-  return { markInProgress, markInReview: markInReviewUnsupported };
+  async function markInReview(issue: LinearIssueReference): Promise<MarkInReviewResult> {
+    const stateId = await getInReviewStateId(issue.teamId);
+    if (stateId === undefined) {
+      return {
+        outcome: "unsupported",
+        reason: `Could not find a Linear workflow state named ${formatLinearStatusNames(statusNames.inReview)} for team ${issue.teamId.length > 0 ? issue.teamId : "?"}`,
+      };
+    }
+    await client.updateIssue(issue.uuid, { stateId });
+    debug(`Marked ${issue.id} as in review`);
+    return { outcome: "applied" };
+  }
+
+  return { markInProgress, markInReview };
 }

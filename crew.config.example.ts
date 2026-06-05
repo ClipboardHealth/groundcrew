@@ -4,10 +4,11 @@ import type { Config } from "@clipboard-health/groundcrew";
 export default {
   // Groundcrew's built-in Linear adapter is implicit and needs no config:
   // it picks up every Linear issue assigned to your API key's viewer that
-  // carries an `agent-*` label. There is no project / view / status
-  // block — Linear's workflow `state.type` (`unstarted` → todo,
-  // `started` → in progress, `completed`/`canceled`/`duplicate` →
-  // terminal) is the single source of truth, so renamed columns Just Work.
+  // carries an `agent-*` label. There is no project / view block. The default
+  // Linear status names `In Progress` and `In Review` disambiguate Linear's
+  // `started` workflow states; other statuses fall back to workflow
+  // `state.type` (`unstarted` → todo, `started` → in progress,
+  // `completed`/`canceled`/`duplicate` → terminal).
   //
   // Opt a ticket in: assign it to yourself and add an `agent-<model>`
   // label (e.g. `agent-claude`, `agent-any`).
@@ -53,6 +54,15 @@ export default {
   // // See the shell adapter's ShellIssue schema for the JSON contract
   // // `fetch` / `resolveOne` must emit.
   // sources: [
+  //   // Optional: explicitly declare Linear only when you need custom status
+  //   // names. Omitted fields keep their defaults.
+  //   {
+  //     kind: "linear",
+  //     statuses: {
+  //       inProgress: ["Doing"],
+  //       inReview: ["Code Review"],
+  //     },
+  //   },
   //   {
   //     kind: "shell",
   //     name: "jira",

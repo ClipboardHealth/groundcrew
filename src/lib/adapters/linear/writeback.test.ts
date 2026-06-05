@@ -53,19 +53,86 @@ describe(createLinearIssueStatusUpdater, () => {
     vi.clearAllMocks();
   });
 
-  it("markInReview reports unsupported without calling Linear", async () => {
-    const client = makeClient();
+  it("markInReview targets the default 'In Review' state", async () => {
+    const client = makeClient({
+      states: [
+        { id: "state-in-progress", name: "In Progress", type: "started", position: 1 },
+        { id: "state-in-review", name: "In Review", type: "started", position: 2 },
+      ],
+    });
+    const updater = createLinearIssueStatusUpdater({ client: asLinearClient(client) });
+
+    await expect(
+      updater.markInReview({ id: "team-1", uuid: "uuid-1", teamId: "shared" }),
+    ).resolves.toStrictEqual({ outcome: "applied" });
+
+    expect(client.updateIssue).toHaveBeenCalledWith("uuid-1", { stateId: "state-in-review" });
+  });
+
+  it("markInReview targets a configured review state name", async () => {
+    const client = makeClient({
+      states: [
+        { id: "state-doing", name: "Doing", type: "started", position: 1 },
+        { id: "state-code-review", name: "Code Review", type: "started", position: 2 },
+      ],
+    });
+    const updater = createLinearIssueStatusUpdater({
+      client: asLinearClient(client),
+      statusNames: { inProgress: ["Doing"], inReview: ["Code Review"] },
+    });
+
+    await expect(
+      updater.markInReview({ id: "team-1", uuid: "uuid-1", teamId: "shared" }),
+    ).resolves.toStrictEqual({ outcome: "applied" });
+
+    expect(client.updateIssue).toHaveBeenCalledWith("uuid-1", { stateId: "state-code-review" });
+  });
+
+  it("markInReview reports unsupported when no configured review state exists", async () => {
+    const client = makeClient({
+      states: [{ id: "state-in-progress", name: "In Progress", type: "started", position: 1 }],
+    });
     const updater = createLinearIssueStatusUpdater({ client: asLinearClient(client) });
 
     await expect(
       updater.markInReview({ id: "team-1", uuid: "uuid-1", teamId: "shared" }),
     ).resolves.toStrictEqual({
       outcome: "unsupported",
-      reason: "Linear in-review writeback is not implemented",
+      reason: 'Could not find a Linear workflow state named "In Review" for team shared',
+    });
+
+    expect(client.updateIssue).not.toHaveBeenCalled();
+  });
+
+  it("markInReview reports unsupported without fetching states when teamId is missing", async () => {
+    const client = makeClient();
+    const updater = createLinearIssueStatusUpdater({ client: asLinearClient(client) });
+
+    await expect(
+      updater.markInReview({ id: "team-1", uuid: "uuid-1", teamId: "" }),
+    ).resolves.toStrictEqual({
+      outcome: "unsupported",
+      reason: 'Could not find a Linear workflow state named "In Review" for team ?',
     });
 
     expect(client.team).not.toHaveBeenCalled();
     expect(client.updateIssue).not.toHaveBeenCalled();
+  });
+
+  it("caches the review state across multiple tickets in the same team", async () => {
+    const client = makeClient({
+      states: [
+        { id: "state-in-progress", name: "In Progress", type: "started", position: 1 },
+        { id: "state-in-review", name: "In Review", type: "started", position: 2 },
+      ],
+    });
+    const updater = createLinearIssueStatusUpdater({ client: asLinearClient(client) });
+
+    await updater.markInReview({ id: "team-1", uuid: "uuid-1", teamId: "shared" });
+    await updater.markInReview({ id: "team-2", uuid: "uuid-2", teamId: "shared" });
+
+    expect(client.team).toHaveBeenCalledTimes(1);
+    expect(client.updateIssue).toHaveBeenCalledTimes(2);
   });
 
   it("fetches the started-type state once across multiple tickets in the same team", async () => {

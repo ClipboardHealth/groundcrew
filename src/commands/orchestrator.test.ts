@@ -845,7 +845,7 @@ describe(orchestrate, () => {
     expect(setupMock).not.toHaveBeenCalled();
     const out = consoleLog.output();
     expect(out).toContain("event=dispatch outcome=skipped reason=blocked ticket=team-1");
-    // After main's #110: state.type drives classification; "started" maps to "in-progress".
+    // Unmatched started blockers still fall back to canonical in-progress.
     expect(out).toContain("blockers=linear:team-0:in-progress");
   });
 

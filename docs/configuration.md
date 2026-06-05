@@ -8,7 +8,7 @@ Workspace settings and at least one enabled model are required; everything else 
 | `workspace.knownRepositories` | Repos searched for in ticket descriptions to infer where work belongs. |
 | `models.definitions`          | Enabled model set. Built-in presets can be enabled with `{}`.          |
 
-The branch prefix (`<prefix>-<TICKET>`) defaults to `os.userInfo().username`; override it with `git.branchPrefix` (see the full reference below). Changing it only affects newly created worktrees; existing local branches keep their original names until cleaned up. There is no `linear` config block. Groundcrew picks up every issue assigned to your API key's viewer that carries an `agent-*` label across every visible team and project, governed by a single `orchestrator.maximumInProgress` budget.
+The branch prefix (`<prefix>-<TICKET>`) defaults to `os.userInfo().username`; override it with `git.branchPrefix` (see the full reference below). Changing it only affects newly created worktrees; existing local branches keep their original names until cleaned up. Groundcrew picks up every issue assigned to your API key's viewer that carries an `agent-*` label across every visible team and project, governed by a single `orchestrator.maximumInProgress` budget.
 
 ## Repository Layout
 
@@ -48,7 +48,25 @@ The "Loaded config from ..." line at startup tells you which config won.
 - No `agent-*` label is ignored by `crew run`. Dispatch on demand with `crew start <TICKET>`, which falls back to `models.default`.
 - Todo tickets blocked by non-terminal blockers are skipped until their blockers reach a terminal status.
 
-Status classification uses Linear's workflow `state.type` (`unstarted`, `started`, `completed`, `canceled`, `duplicate`), so renamed status columns work without configuration. Parent issues with children are ignored; sub-issues are the work items.
+Status classification uses Linear's default status names `In Progress` and `In Review` to disambiguate multiple `started` workflow states. Statuses that do not match those names fall back to Linear's workflow `state.type` (`unstarted`, `started`, `completed`, `canceled`, `duplicate`), so broad lifecycle classification still works without configuration. Parent issues with children are ignored; sub-issues are the work items.
+
+If your Linear workflow uses different names, explicitly declare the built-in Linear source and override only the names you need:
+
+```ts
+export default {
+  sources: [
+    {
+      kind: "linear",
+      statuses: {
+        inProgress: ["Doing"],
+        inReview: ["Code Review"],
+      },
+    },
+  ],
+};
+```
+
+Configured names replace the default for that status; omitted fields keep their defaults. Matching is case-insensitive and trims surrounding whitespace.
 
 ## Enabling Model Presets
 
@@ -130,7 +148,7 @@ and hook contract.
 
 | Key                                      | Default              | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | ---------------------------------------- | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `sources`                                | `[]`                 | Additional pluggable ticket sources, dispatched alongside the built-in Linear adapter. Built-in kinds: `shell`, `linear`.                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `sources`                                | `[]`                 | Additional pluggable ticket sources, dispatched alongside the built-in Linear adapter. Built-in kinds: `shell`, `linear`. Declare `{ kind: "linear", statuses: { ... } }` only to override Linear status names used for `in-progress` / `in-review` disambiguation.                                                                                                                                                                                                                                                         |
 | `git.remote`                             | `"origin"`           | Remote used for `fetch` and as the worktree base ref.                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `git.defaultBranch`                      | `"main"`             | Branch fetched from `git.remote` and used as the worktree base.                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `git.branchPrefix`                       | OS username          | Prefix groundcrew puts before the ticket id when naming a worktree branch (`<branchPrefix>-<ticket>`). Must be a slash-free slug of letters, digits, `.`, `_`, or `-`. Defaults to the OS account username. Changing it only affects newly created worktrees; existing local branches keep their original names until cleaned up. Prefer a per-user config for personal prefixes — a committed `git.branchPrefix` gives every contributor the same branch prefix.                                                           |
