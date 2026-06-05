@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { collectAllowedDomains } from "./clearanceHosts.ts";
-import type { ModelDefinition, ResolvedConfig } from "./config.ts";
+import { type ModelDefinition, type ResolvedConfig, repositoryBaseDir } from "./config.ts";
 import { inferAgentCommandName } from "./launchCommand.ts";
 import { agentConfigRelocation, buildSrtSettings } from "./srtPolicy.ts";
 import { readEnvironmentVariable } from "./util.ts";
@@ -53,7 +53,7 @@ export function buildAndStageSrtLaunch(input: {
 }): StagedSrtLaunch {
   const agent = inferAgentCommandName(input.definition.cmd);
   const homeDir = input.homeDir ?? os.homedir();
-  const repoDir = path.resolve(input.config.workspace.projectDir, input.repository);
+  const repoDir = path.resolve(repositoryBaseDir(input.config, input.repository), input.repository);
   const base = {
     worktreeDir: input.worktreeDir,
     gitCommonDir: path.join(repoDir, ".git"),

@@ -7,9 +7,14 @@ import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 import type { ModelDefinition, ResolvedConfig } from "./config.ts";
 import { buildAndStageSrtLaunch } from "./srtLaunch.ts";
 
-function config(projectDir: string): ResolvedConfig {
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the helper only reads workspace.projectDir off config
-  return { workspace: { projectDir } } as unknown as ResolvedConfig;
+function config(projectDir: string, repositoryDirs?: Record<string, string>): ResolvedConfig {
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the helper only reads workspace.{projectDir,repositoryDirs} off config
+  return {
+    workspace: {
+      projectDir,
+      ...(repositoryDirs === undefined ? {} : { repositoryDirs }),
+    },
+  } as unknown as ResolvedConfig;
 }
 
 function definition(cmd: string): ModelDefinition {
@@ -100,6 +105,24 @@ describe(buildAndStageSrtLaunch, () => {
     // copying anything out of it.
     expect(result.agentConfigDirEnv).toBeUndefined();
     expect(readSettings(result.agentFile).allowPty).toBe(true);
+  });
+
+  it("resolves gitCommonDir under the repo's per-repo dir override", () => {
+    const other = mkdtempSync(path.join(os.tmpdir(), "srt-launch-other-"));
+    staged.push(other);
+    const result = buildAndStageSrtLaunch({
+      config: config(workspaceRoot, { "owner/repo": other }),
+      repository: "owner/repo",
+      ticket: "team-9",
+      worktreeDir: path.join(workspaceRoot, "owner", "repo-team-9"),
+      definition: definition("claude --permission-mode auto"),
+      homeDir: fakeHome,
+    });
+    staged.push(result.directory);
+
+    // gitCommonDir is <repoDir>/.git == <other>/owner/repo/.git, not under projectDir.
+    const expectedGitDir = path.join(other, "owner", "repo", ".git");
+    expect(JSON.stringify(readSettings(result.agentFile))).toContain(expectedGitDir);
   });
 
   it("skips missing seed files (best-effort) so a not-logged-in agent still stages", () => {
