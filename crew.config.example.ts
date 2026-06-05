@@ -13,12 +13,17 @@ export default {
   // Opt a ticket in: assign it to yourself and add an `agent-<model>`
   // label (e.g. `agent-claude`, `agent-any`).
   workspace: {
-    // Parent directory under which groundcrew clones repositories and
-    // creates per-ticket worktrees.
+    // Parent directory under which groundcrew clones repositories and (by
+    // default) creates per-ticket worktrees.
     projectDir: "~/dev/groundcrew",
+    // Optional: collect ALL worktrees here instead of beside each repo. Useful
+    // when your repos live in more than one place. Defaults to projectDir.
+    // worktreeDir: "~/dev/worktrees",
     // Repositories groundcrew is allowed to set up worktrees in. Add
-    // `<owner>/<repo>` or bare `<repo>` entries; the orchestrator scopes
-    // tickets to these and refuses unknown repos by default.
+    // `<owner>/<repo>` or bare `<repo>` strings; the orchestrator scopes
+    // tickets to these and refuses unknown repos by default. Use the object
+    // form to point a repo at a different parent directory:
+    //   { name: "other-org/other-repo", dir: "~/work" }
     knownRepositories: ["your-org/your-repo"],
   },
   models: {
