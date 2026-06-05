@@ -37,7 +37,7 @@ interface DispatcherDeps {
 }
 
 export interface Dispatcher {
-  runOnce(arguments_: {
+  runOnce: (arguments_: {
     state: BoardState;
     worktreeEntries: readonly WorktreeEntry[];
     /** Lazy so dispatcher can early-return on idle ticks without paying the codexbar shell-out. */
@@ -50,7 +50,7 @@ export interface Dispatcher {
      * printing a second line per tick.
      */
     idleSuffix?: string;
-  }): Promise<void>;
+  }) => Promise<void>;
 }
 
 function logSkip(verdict: SkipVerdict): void {

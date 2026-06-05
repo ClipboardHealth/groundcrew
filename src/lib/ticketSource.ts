@@ -115,13 +115,13 @@ export interface TicketSource {
   /** Stable identifier used as the id prefix and in log lines. Equal to the source's config `name`. */
   readonly name: string;
   /** One-time startup check. Throws with a user-facing message on misconfig. */
-  verify(): Promise<void>;
+  verify: () => Promise<void>;
   /** Per-tick snapshot. `id` on each Issue is already canonical (source-prefixed). */
-  fetch(): Promise<Issue[]>;
+  fetch: () => Promise<Issue[]>;
   /** Per-ticket lookup. `naturalId` is unprefixed (no `<name>:` prefix). */
-  resolveOne(naturalId: string): Promise<Issue | undefined>;
+  resolveOne: (naturalId: string) => Promise<Issue | undefined>;
   /** Writeback. The adapter downcasts `issue.sourceRef` internally. */
-  markInProgress(issue: Issue): Promise<void>;
+  markInProgress: (issue: Issue) => Promise<void>;
 
   /**
    * Optional: return parent tickets that were excluded from `fetch()` because
@@ -129,7 +129,7 @@ export interface TicketSource {
    * a Todo+labelled ticket was skipped (PR #80 behavior). Adapters that
    * don't distinguish parents simply omit this method; Board returns [].
    */
-  fetchParentSkips?(): Promise<readonly ParentSkip[]>;
+  fetchParentSkips?: () => Promise<readonly ParentSkip[]>;
 }
 
 export class RepositoryResolutionError extends Error {

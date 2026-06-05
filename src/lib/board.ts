@@ -14,15 +14,15 @@ import {
 } from "./ticketSource.ts";
 
 export interface Board {
-  verify(): Promise<void>;
-  fetch(): Promise<BoardState>;
+  verify: () => Promise<void>;
+  fetch: () => Promise<BoardState>;
   /**
    * Accepts either canonical (`linear:eng-220`) or natural (`eng-220`) ids.
    * Natural ids fan out across sources; ambiguous matches throw.
    */
-  resolveOne(canonicalOrNaturalId: string): Promise<Issue | undefined>;
+  resolveOne: (canonicalOrNaturalId: string) => Promise<Issue | undefined>;
   /** Routes to the adapter whose `name` matches `issue.source`. Unknown source throws. */
-  markInProgress(issue: Issue): Promise<void>;
+  markInProgress: (issue: Issue) => Promise<void>;
 }
 
 async function callVerify(source: TicketSource): Promise<void> {

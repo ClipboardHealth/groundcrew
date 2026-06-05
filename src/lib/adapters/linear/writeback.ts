@@ -9,7 +9,7 @@ interface LinearIssueReference {
 }
 
 interface LinearIssueStatusUpdater {
-  markInProgress(issue: LinearIssueReference): Promise<void>;
+  markInProgress: (issue: LinearIssueReference) => Promise<void>;
 }
 
 export function createLinearIssueStatusUpdater(arguments_: {
