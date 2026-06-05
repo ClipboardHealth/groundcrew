@@ -27,4 +27,22 @@ describe("Linear adapter config schema", () => {
 
     expect(actual.success).toBe(false);
   });
+
+  it("accepts the explicit opt-out sentinel enabled: false", () => {
+    const actual = linearAdapterConfigSchema.parse({ kind: "linear", enabled: false });
+
+    expect(actual).toStrictEqual({ kind: "linear", enabled: false });
+  });
+
+  it("accepts enabled: true", () => {
+    const actual = linearAdapterConfigSchema.parse({ kind: "linear", enabled: true });
+
+    expect(actual).toStrictEqual({ kind: "linear", enabled: true });
+  });
+
+  it("rejects a non-boolean enabled", () => {
+    const actual = linearAdapterConfigSchema.safeParse({ kind: "linear", enabled: "no" });
+
+    expect(actual.success).toBe(false);
+  });
 });

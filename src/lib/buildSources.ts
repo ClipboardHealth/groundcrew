@@ -53,7 +53,24 @@ export function buildSourcesWith(
 const sourceShape = z.looseObject({
   name: z.string().optional(),
   kind: z.string().optional(),
+  enabled: z.boolean().optional(),
 });
+
+/**
+ * True when `raw` carries the opt-out sentinel `enabled: false`. Used to drop
+ * a source the user explicitly disabled — most importantly a
+ * `{ kind: "linear", enabled: false }` entry — so its adapter is never
+ * constructed. Returns false for malformed entries (rejected downstream by the
+ * per-adapter Zod schema) and for any entry without `enabled: false`.
+ */
+function isSourceDisabled(raw: unknown): boolean {
+  const parsed = sourceShape.safeParse(raw);
+  /* v8 ignore next 3 @preserve -- looseObject() with all-optional fields only fails to parse non-object inputs (null, primitives); those are rejected by the per-adapter Zod schema in buildSourcesWith, so this guard never fires in practice. */
+  if (!parsed.success) {
+    return false;
+  }
+  return parsed.data.enabled === false;
+}
 
 /**
  * True when `raw` is an explicitly-declared Linear source. Matches either a
@@ -85,11 +102,20 @@ function isExplicitLinearSource(raw: unknown): boolean {
  * when the user already declared a Linear source (by `kind` or by runtime
  * name "linear") so they can override its `name` / construction without
  * spawning a duplicate adapter.
+ *
+ * Users opt out of Linear entirely with the sentinel
+ * `{ kind: "linear", enabled: false }`: it still counts as an explicit Linear
+ * declaration (so the implicit source is suppressed) and is itself filtered
+ * out (so no Linear adapter is constructed and no API key is required). Any
+ * other source with `enabled: false` is likewise dropped from the result.
  */
 export function sourcesFromConfig(config: ResolvedConfig): readonly unknown[] {
+  // Order matters: detect explicit Linear on the *unfiltered* list so a
+  // disabled linear entry still suppresses the implicit source, then drop it.
   const hasExplicitLinear = config.sources.some(isExplicitLinearSource);
+  const kept = config.sources.filter((source) => !isSourceDisabled(source));
   if (hasExplicitLinear) {
-    return [...config.sources];
+    return kept;
   }
-  return [{ kind: "linear" }, ...config.sources];
+  return [{ kind: "linear" }, ...kept];
 }

@@ -4,6 +4,7 @@
   "ignore": [
     ".agents",
     ".nx",
+    ".remember",
     ".agents",
     "AGENTS.md",
     "**/vitest.config.mts",

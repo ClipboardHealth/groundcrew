@@ -63,6 +63,9 @@ export default {
   //       inReview: ["Code Review"],
   //     },
   //   },
+  //   // Optional: disable the built-in Linear source entirely for shell-only
+  //   // setups (no Linear API key needed). Replaces the block above.
+  //   // { kind: "linear", enabled: false },
   //   {
   //     kind: "shell",
   //     name: "jira",
