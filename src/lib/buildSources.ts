@@ -57,19 +57,38 @@ const sourceShape = z.looseObject({
 });
 
 /**
+ * Read the structural `name` / `kind` / `enabled` fields off a raw source.
+ * `looseObject()` with all-optional fields only fails to parse non-object
+ * inputs (null, primitives); those are rejected downstream by the per-adapter
+ * Zod schema in buildSourcesWith, so we treat a non-object entry as an empty
+ * field set ("no opinion") rather than branching on it at every call site.
+ */
+function sourceFields(raw: unknown): z.infer<typeof sourceShape> {
+  const parsed = sourceShape.safeParse(raw);
+  /* v8 ignore next 3 @preserve -- non-object inputs never reach here in practice (see above); the guard exists only for type-narrowing. */
+  if (!parsed.success) {
+    return {};
+  }
+  return parsed.data;
+}
+
+/**
  * True when `raw` carries the opt-out sentinel `enabled: false`. Used to drop
  * a source the user explicitly disabled — most importantly a
  * `{ kind: "linear", enabled: false }` entry — so its adapter is never
- * constructed. Returns false for malformed entries (rejected downstream by the
- * per-adapter Zod schema) and for any entry without `enabled: false`.
+ * constructed.
  */
 function isSourceDisabled(raw: unknown): boolean {
-  const parsed = sourceShape.safeParse(raw);
-  /* v8 ignore next 3 @preserve -- looseObject() with all-optional fields only fails to parse non-object inputs (null, primitives); those are rejected by the per-adapter Zod schema in buildSourcesWith, so this guard never fires in practice. */
-  if (!parsed.success) {
-    return false;
-  }
-  return parsed.data.enabled === false;
+  return sourceFields(raw).enabled === false;
+}
+
+/**
+ * True when `raw` declares `kind: "linear"`, regardless of `name` or `enabled`.
+ * This is what lets the `{ kind: "linear", enabled: false }` opt-out suppress
+ * the implicit Linear source even though the entry itself is filtered out.
+ */
+function isLinearKindSource(raw: unknown): boolean {
+  return sourceFields(raw).kind === "linear";
 }
 
 /**
@@ -86,12 +105,8 @@ function isSourceDisabled(raw: unknown): boolean {
  * downstream.
  */
 function isExplicitLinearSource(raw: unknown): boolean {
-  const parsed = sourceShape.safeParse(raw);
-  /* v8 ignore next 3 @preserve -- looseObject() with all-optional fields only fails to parse non-object inputs (null, primitives); the same input would be rejected by the per-adapter Zod schema in buildSourcesWith, so this guard never fires in practice. */
-  if (!parsed.success) {
-    return false;
-  }
-  return parsed.data.kind === "linear" || (parsed.data.name ?? parsed.data.kind) === "linear";
+  const { kind, name } = sourceFields(raw);
+  return kind === "linear" || (name ?? kind) === "linear";
 }
 
 /**
@@ -99,9 +114,9 @@ function isExplicitLinearSource(raw: unknown): boolean {
  * implicit Linear source (Linear is always active under the post-#110
  * model — viewer + agent-* label filtering happens at the GraphQL layer)
  * and appends any user-declared `sources`. The implicit source is omitted
- * when the user already declared a Linear source (by `kind` or by runtime
- * name "linear") so they can override its `name` / construction without
- * spawning a duplicate adapter.
+ * when the user already declared a Linear source — by `kind: "linear"`, or by
+ * a surviving (non-disabled) source whose runtime name is "linear" — so they
+ * can override its `name` / construction without spawning a duplicate adapter.
  *
  * Users opt out of Linear entirely with the sentinel
  * `{ kind: "linear", enabled: false }`: it still counts as an explicit Linear
@@ -110,10 +125,14 @@ function isExplicitLinearSource(raw: unknown): boolean {
  * other source with `enabled: false` is likewise dropped from the result.
  */
 export function sourcesFromConfig(config: ResolvedConfig): readonly unknown[] {
-  // Order matters: detect explicit Linear on the *unfiltered* list so a
-  // disabled linear entry still suppresses the implicit source, then drop it.
-  const hasExplicitLinear = config.sources.some(isExplicitLinearSource);
   const kept = config.sources.filter((source) => !isSourceDisabled(source));
+  // A `kind: "linear"` entry suppresses the implicit source even when it is the
+  // disabled opt-out sentinel — it's removed from `kept` above, leaving Linear
+  // off entirely. A source that's Linear only by *name* (e.g. a shell source
+  // named "linear") suppresses the implicit source only while it survives the
+  // filter, so disabling such an entry doesn't silently drop Linear.
+  const hasExplicitLinear =
+    config.sources.some(isLinearKindSource) || kept.some(isExplicitLinearSource);
   if (hasExplicitLinear) {
     return kept;
   }

@@ -5,7 +5,6 @@
     ".agents",
     ".nx",
     ".remember",
-    ".agents",
     "AGENTS.md",
     "**/vitest.config.mts",
     "**/tsconfig.spec.json",

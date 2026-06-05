@@ -318,4 +318,17 @@ describe(sourcesFromConfig, () => {
       { kind: "shell", name: "jira", command: ["./fetch.sh"] },
     ]);
   });
+
+  it("keeps implicit Linear when a disabled non-linear source is merely named 'linear'", () => {
+    // A source that is Linear only by *name* (e.g. a shell source named
+    // "linear") takes over the Linear slot only while it's enabled. Disabling
+    // it must not suppress the implicit Linear source and leave the queue empty
+    // — only a real `{ kind: "linear" }` sentinel does that.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- sourcesFromConfig only reads sources; unused fields are irrelevant
+    const config = {
+      sources: [{ kind: "shell", name: "linear", enabled: false, command: ["./fetch.sh"] }],
+    } as unknown as ResolvedConfig;
+
+    expect(sourcesFromConfig(config)).toStrictEqual([{ kind: "linear" }]);
+  });
 });
