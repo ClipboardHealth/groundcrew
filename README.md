@@ -73,7 +73,7 @@ crew run --watch
 Linear works out of the box: assign tickets to yourself and add an `agent-*` label.
 
 - `agent-claude`, `agent-codex`, or `agent-<name>` routes to that model.
-- `agent-any` routes to the enabled model with the most available capacity.
+- `agent-any` routes to the enabled model with the most session headroom, after skipping models over their session limit or weekly paced budget.
 - Tickets without an `agent-*` label are ignored by `crew run`; dispatch one manually with `crew start <TICKET>`.
 
 Groundcrew scans `workspace.knownRepositories` to infer which repo a ticket belongs to.
