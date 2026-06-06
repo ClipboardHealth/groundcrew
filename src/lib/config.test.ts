@@ -1520,6 +1520,20 @@ describe("loadConfig", () => {
     expect(actual.sources).toStrictEqual([{ kind: "shell", name: "jira" }]);
   });
 
+  it("preserves the Linear disabled sentinel through resolution", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      validConfigSource({
+        workspace: VALID_WORKSPACE(temporary),
+        sources: [{ kind: "linear", enabled: false }],
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+    expect(actual.sources).toStrictEqual([{ kind: "linear", enabled: false }]);
+  });
+
   it("rejects sources when it isn't an array", async () => {
     const configPath = writeConfigFile(
       temporary,
