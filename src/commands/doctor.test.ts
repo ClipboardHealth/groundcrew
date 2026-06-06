@@ -86,6 +86,7 @@ function stubBoard(): Board {
     resolveOne: vi.fn<Board["resolveOne"]>(),
     markInProgress: vi.fn<Board["markInProgress"]>(),
     markInReview: vi.fn<Board["markInReview"]>(),
+    markDone: vi.fn<Board["markDone"]>(),
   };
 }
 

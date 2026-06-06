@@ -1,5 +1,11 @@
 import { createBoard } from "./board.ts";
-import type { Issue, MarkInReviewResult, ParentSkip, TicketSource } from "./ticketSource.ts";
+import type {
+  Issue,
+  MarkDoneResult,
+  MarkInReviewResult,
+  ParentSkip,
+  TicketSource,
+} from "./ticketSource.ts";
 
 function fakeSource(name: string, overrides: Partial<TicketSource> = {}): TicketSource {
   return {
@@ -255,6 +261,34 @@ describe("Board.markInReview", () => {
   it("throws when issue.source names an unknown source", async () => {
     const board = createBoard([fakeSource("a")]);
     await expect(board.markInReview(fakeIssue("nope:1", "nope"))).rejects.toThrow(
+      /unknown source.*nope/,
+    );
+  });
+});
+
+describe("Board.markDone", () => {
+  it("routes to the adapter named by issue.source", async () => {
+    const aMark = vi
+      .fn<(issue: Issue) => Promise<MarkDoneResult>>()
+      .mockResolvedValue({ outcome: "applied" });
+    const board = createBoard([fakeSource("a", { markDone: aMark }), fakeSource("b")]);
+    await expect(board.markDone(fakeIssue("a:1", "a"))).resolves.toStrictEqual({
+      outcome: "applied",
+    });
+    expect(aMark).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports unsupported when the source does not implement markDone", async () => {
+    const board = createBoard([fakeSource("a")]);
+    await expect(board.markDone(fakeIssue("a:1", "a"))).resolves.toStrictEqual({
+      outcome: "unsupported",
+      reason: 'source "a" does not support markDone',
+    });
+  });
+
+  it("throws when issue.source names an unknown source", async () => {
+    const board = createBoard([fakeSource("a")]);
+    await expect(board.markDone(fakeIssue("nope:1", "nope"))).rejects.toThrow(
       /unknown source.*nope/,
     );
   });

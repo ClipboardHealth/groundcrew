@@ -117,6 +117,7 @@ vi.mock(import("../lib/board.ts"), async (importOriginal) => {
       ),
       markInProgress: vi.fn<(issue: Issue) => Promise<void>>().mockResolvedValue(),
       markInReview: vi.fn<Board["markInReview"]>().mockResolvedValue({ outcome: "applied" }),
+      markDone: vi.fn<Board["markDone"]>().mockResolvedValue({ outcome: "applied" }),
     })),
   };
 });
@@ -1640,6 +1641,7 @@ function fakeBoard(resolvedIssue: Issue | undefined): FakeBoard {
       .mockResolvedValue(resolvedIssue),
     markInProgress: vi.fn<(issue: Issue) => Promise<void>>().mockResolvedValue(),
     markInReview: vi.fn<Board["markInReview"]>().mockResolvedValue({ outcome: "applied" }),
+    markDone: vi.fn<Board["markDone"]>().mockResolvedValue({ outcome: "applied" }),
   };
 }
 

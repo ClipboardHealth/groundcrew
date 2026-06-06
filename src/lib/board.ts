@@ -9,6 +9,7 @@ import {
   AmbiguousTicketError,
   type BoardState,
   type Issue,
+  type MarkDoneResult,
   type MarkInReviewResult,
   type ParentSkip,
   type TicketSource,
@@ -30,6 +31,12 @@ export interface Board {
    * return `unsupported` (see `TicketSource.markInReview`).
    */
   markInReview(issue: Issue): Promise<MarkInReviewResult>;
+  /**
+   * Advances a ticket to done on the adapter whose `name` matches
+   * `issue.source`. Unknown source throws. Sources that don't implement the
+   * optional `markDone` return `unsupported` (see `TicketSource.markDone`).
+   */
+  markDone(issue: Issue): Promise<MarkDoneResult>;
 }
 
 async function callVerify(source: TicketSource): Promise<void> {
@@ -153,6 +160,17 @@ export function createBoard(sources: readonly TicketSource[]): Board {
 
     async markInReview(issue: Issue): Promise<MarkInReviewResult> {
       return await routeWriteback(byName, issue).markInReview(issue);
+    },
+
+    async markDone(issue: Issue): Promise<MarkDoneResult> {
+      const source = routeWriteback(byName, issue);
+      if (source.markDone === undefined) {
+        return {
+          outcome: "unsupported",
+          reason: `source "${source.name}" does not support markDone`,
+        };
+      }
+      return await source.markDone(issue);
     },
   };
 }

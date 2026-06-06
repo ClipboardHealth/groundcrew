@@ -1,5 +1,5 @@
 import type { Board } from "../lib/board.ts";
-import type { BoardState, MarkInReviewResult } from "../lib/ticketSource.ts";
+import type { BoardState, MarkDoneResult, MarkInReviewResult } from "../lib/ticketSource.ts";
 
 export function makeBoard(overrides: Partial<Board> = {}): Board {
   return {
@@ -13,6 +13,7 @@ export function makeBoard(overrides: Partial<Board> = {}): Board {
     markInReview: vi
       .fn<() => Promise<MarkInReviewResult>>()
       .mockResolvedValue({ outcome: "applied" }),
+    markDone: vi.fn<() => Promise<MarkDoneResult>>().mockResolvedValue({ outcome: "applied" }),
     ...overrides,
   };
 }

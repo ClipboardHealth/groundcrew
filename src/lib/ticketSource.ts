@@ -115,6 +115,8 @@ export type MarkInReviewResult =
   | { outcome: "applied" }
   | { outcome: "unsupported"; reason: string };
 
+export type MarkDoneResult = { outcome: "applied" } | { outcome: "unsupported"; reason: string };
+
 export interface TicketSource {
   /** Stable identifier used as the id prefix and in log lines. Equal to the source's config `name`. */
   readonly name: string;
@@ -135,6 +137,17 @@ export interface TicketSource {
    * rather than pretending the transition happened.
    */
   markInReview(issue: Issue): Promise<MarkInReviewResult>;
+
+  /**
+   * Optional writeback: advance a ticket to done once its PR has merged.
+   * Sources without a native/configured done transition omit this method; the
+   * Board treats an absent method as `{ outcome: "unsupported" }` so the
+   * reviewer can log the skip without claiming a transition that never
+   * happened. Linear omits it on purpose: on merge, Linear's own GitHub
+   * integration moves the issue to Done, which groundcrew then observes via
+   * `fetch()` and the cleaner tears down.
+   */
+  markDone?(issue: Issue): Promise<MarkDoneResult>;
 
   /**
    * Optional: return parent tickets that were excluded from `fetch()` because
