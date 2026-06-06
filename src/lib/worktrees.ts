@@ -4,8 +4,8 @@
  * A worktree is a `git worktree add`'d directory at
  * `<worktreeDir>/<repo>-<TICKET>/` (where `worktreeDir` defaults to
  * `projectDir`). The source repo it is cut from may live under a different
- * per-repo `dir`. Callers go through the `worktrees` namespace; the module
- * owns creation, listing, removal, and teardown (workspace-close +
+ * per-repo `projectDirOverride`. Callers go through the `worktrees` namespace;
+ * the module owns creation, listing, removal, and teardown (workspace-close +
  * worktree-remove paired) so callers don't reach into git directly.
  */
 

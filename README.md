@@ -134,6 +134,11 @@ export default {
 } satisfies Config;
 ```
 
+Changing `workspace.worktreeDir` only affects worktrees discovered under the new
+root. Clean up existing worktrees before switching it, or temporarily unset
+`worktreeDir` when you need `crew cleanup` to find worktrees created beside the
+repos.
+
 There is no `linear` config block. Groundcrew reads `GROUNDCREW_LINEAR_API_KEY` first, then falls back to `LINEAR_API_KEY`.
 
 ## Reference

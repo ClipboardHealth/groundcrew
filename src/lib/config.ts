@@ -303,7 +303,7 @@ export interface ResolvedConfig {
 
 /**
  * Parent directory under which a repository's clone lives. The per-repo
- * `dir` override wins; otherwise repos sit under `projectDir`.
+ * `projectDirOverride` wins; otherwise repos sit under `projectDir`.
  */
 export function repositoryBaseDir(config: ResolvedConfig, repository: string): string {
   return config.workspace.repositoryDirs?.[repository] ?? config.workspace.projectDir;
