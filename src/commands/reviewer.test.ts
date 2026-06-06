@@ -86,6 +86,7 @@ describe(createReviewer, () => {
 
     expect(findPullRequests).not.toHaveBeenCalled();
     expect(markInReviewMock).not.toHaveBeenCalled();
+    expect(markDoneMock).not.toHaveBeenCalled();
   });
 
   it("advances an in-progress ticket whose worktree has an open PR", async () => {
