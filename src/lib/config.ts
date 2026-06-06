@@ -863,16 +863,26 @@ function normalizeKnownRepository(
 function normalizeWorkspace(workspace: Config["workspace"]): ResolvedConfig["workspace"] {
   requireObject(workspace, "workspace");
   requireString(workspace.projectDir, "workspace.projectDir");
-  const names: string[] = [];
+  // Track the first index each name was seen at so a duplicate (which would
+  // silently overwrite its `projectDirOverride` in `repositoryDirs`) fails
+  // loudly instead of resolving order-dependently.
+  const seen = new Map<string, number>();
   const repositoryDirs: Record<string, string> = {};
   const entries = Array.isArray(workspace.knownRepositories) ? workspace.knownRepositories : [];
   entries.forEach((entry, index) => {
     const { name, dir } = normalizeKnownRepository(entry, index);
-    names.push(name);
+    const previous = seen.get(name);
+    if (previous !== undefined) {
+      fail(
+        `workspace.knownRepositories[${index}] duplicates ${JSON.stringify(name)} from workspace.knownRepositories[${previous}]. Configure distinct repository names.`,
+      );
+    }
+    seen.set(name, index);
     if (dir !== undefined) {
       repositoryDirs[name] = dir;
     }
   });
+  const names = [...seen.keys()];
   let worktreeDir: string | undefined;
   if (workspace.worktreeDir !== undefined) {
     requireString(workspace.worktreeDir, "workspace.worktreeDir");

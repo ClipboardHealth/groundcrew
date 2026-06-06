@@ -1196,6 +1196,23 @@ describe("loadConfig", () => {
     });
   });
 
+  it("rejects duplicate knownRepositories names instead of overwriting overrides", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      [
+        "export default {",
+        `  workspace: { projectDir: "/dev", knownRepositories: ["owner/dup", { name: "owner/dup", projectDirOverride: "/work" }] },`,
+        `  models: { definitions: { claude: {} } },`,
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(
+      'workspace.knownRepositories[1] duplicates "owner/dup" from workspace.knownRepositories[0]',
+    );
+  });
+
   it("treats an object entry without a projectDirOverride like a bare string", async () => {
     const configPath = writeConfigFile(
       temporary,
