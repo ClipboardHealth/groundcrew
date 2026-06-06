@@ -1171,7 +1171,7 @@ describe("loadConfig", () => {
     expect(actual.workspace.projectDir).toBe("/work/here");
   });
 
-  it("lifts per-repo dir overrides out of knownRepositories", async () => {
+  it("lifts per-repo projectDirOverride out of knownRepositories", async () => {
     setEnvironmentVariable("HOME", "/fake-home");
     const configPath = writeConfigFile(
       temporary,
@@ -1179,7 +1179,10 @@ describe("loadConfig", () => {
         workspace: {
           projectDir: "~/dev",
           worktreeDir: "~/worktrees",
-          knownRepositories: ["owner/flat", { name: "owner/elsewhere", dir: "~/work" }],
+          knownRepositories: [
+            "owner/flat",
+            { name: "owner/elsewhere", projectDirOverride: "~/work" },
+          ],
         },
       }),
     );
@@ -1193,7 +1196,7 @@ describe("loadConfig", () => {
     });
   });
 
-  it("treats an object entry without a dir like a bare string", async () => {
+  it("treats an object entry without a projectDirOverride like a bare string", async () => {
     const configPath = writeConfigFile(
       temporary,
       validConfigSource({
@@ -1224,19 +1227,19 @@ describe("loadConfig", () => {
     expect(config.workspace.repositoryDirs).toBeUndefined();
   });
 
-  it("rejects a knownRepositories object entry with a non-string dir", async () => {
+  it("rejects a knownRepositories object entry with a non-string projectDirOverride", async () => {
     const configPath = writeConfigFile(
       temporary,
       [
         "export default {",
-        `  workspace: { projectDir: "/dev", knownRepositories: [{ name: "owner/x", dir: 5 }] },`,
+        `  workspace: { projectDir: "/dev", knownRepositories: [{ name: "owner/x", projectDirOverride: 5 }] },`,
         `  models: { definitions: { claude: {} } },`,
         "};",
       ].join("\n"),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
-    await expect(loadConfig()).rejects.toThrow("workspace.knownRepositories[0].dir");
+    await expect(loadConfig()).rejects.toThrow("workspace.knownRepositories[0].projectDirOverride");
   });
 
   it("rejects a knownRepositories entry that is neither a string nor an object", async () => {

@@ -116,7 +116,7 @@ export default {
     projectDir: "~/dev",
     // Optional: all worktrees go here regardless of where each repo lives.
     // worktreeDir: "~/dev/worktrees",
-    // Strings live under projectDir; use { name, dir } to override per repo.
+    // Strings live under projectDir; use { name, projectDirOverride } to override per repo.
     knownRepositories: ["OWNER/REPO"],
   },
   models: {

@@ -23,7 +23,7 @@ export default {
     // `<owner>/<repo>` or bare `<repo>` strings; the orchestrator scopes
     // tickets to these and refuses unknown repos by default. Use the object
     // form to point a repo at a different parent directory:
-    //   { name: "other-org/other-repo", dir: "~/work" }
+    //   { name: "other-org/other-repo", projectDirOverride: "~/work" }
     knownRepositories: ["your-org/your-repo"],
   },
   models: {

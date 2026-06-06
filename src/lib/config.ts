@@ -158,12 +158,12 @@ type UserModelDefinition = EnabledUserModelDefinition;
  */
 /**
  * A configured repository. The bare-string form keeps the repo under
- * `workspace.projectDir`; the object form's optional `dir` overrides that
- * parent directory so repos can live in more than one place.
+ * `workspace.projectDir`; the object form's optional `projectDirOverride`
+ * overrides that parent directory so repos can live in more than one place.
  */
 export interface KnownRepository {
   name: string;
-  dir?: string;
+  projectDirOverride?: string;
 }
 
 export interface Config {
@@ -263,7 +263,7 @@ export interface ResolvedConfig {
     projectDir: string;
     /** Resolved worktree root; unset means "use projectDir". */
     worktreeDir?: string;
-    /** Repository names only — the union's `dir` overrides are lifted out. */
+    /** Repository names only — the union's `projectDirOverride`s are lifted out. */
     knownRepositories: string[];
     /** name -> resolved parent dir, only for entries that override projectDir. */
     repositoryDirs?: Record<string, string>;
@@ -829,9 +829,9 @@ function normalizeSources(raw: unknown): SourceConfig[] {
 
 /**
  * Resolve one `knownRepositories` entry to its name and (optional) resolved
- * base dir. Bare strings live under `projectDir`; the object form's `dir`
- * overrides that parent directory. This is the seam later per-repo options
- * hang off — add new `KnownRepository` fields here.
+ * base dir. Bare strings live under `projectDir`; the object form's
+ * `projectDirOverride` overrides that parent directory. This is the seam later
+ * per-repo options hang off — add new `KnownRepository` fields here.
  */
 function normalizeKnownRepository(
   entry: string | KnownRepository,
@@ -842,11 +842,14 @@ function normalizeKnownRepository(
   }
   requireObject(entry, `workspace.knownRepositories[${index}]`);
   requireString(entry.name, `workspace.knownRepositories[${index}].name`);
-  if (entry.dir === undefined) {
+  if (entry.projectDirOverride === undefined) {
     return { name: entry.name };
   }
-  requireString(entry.dir, `workspace.knownRepositories[${index}].dir`);
-  return { name: entry.name, dir: expandHome(entry.dir) };
+  requireString(
+    entry.projectDirOverride,
+    `workspace.knownRepositories[${index}].projectDirOverride`,
+  );
+  return { name: entry.name, dir: expandHome(entry.projectDirOverride) };
 }
 
 /**
