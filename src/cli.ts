@@ -43,7 +43,7 @@ const requireFromCli = createRequire(import.meta.url);
 
 const SETUP_REPOS_REMOVED_MESSAGE = [
   "crew setup repos was removed.",
-  "Clone repositories manually with git clone into workspace.projectDir.",
+  "Clone repositories manually with git clone into workspace.projectDir (or each repo's workspace.knownRepositories `projectDirOverride`).",
   "See README.md#manual-repository-bootstrap for the replacement workflow.",
 ].join(" ");
 

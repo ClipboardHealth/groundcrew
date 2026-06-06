@@ -4,7 +4,8 @@ Workspace settings and at least one enabled model are required; everything else 
 
 | Key                           | What                                                                   |
 | ----------------------------- | ---------------------------------------------------------------------- |
-| `workspace.projectDir`        | Parent dir for cloned repos and sibling ticket worktrees.              |
+| `workspace.projectDir`        | Parent dir for cloned repos and the default ticket worktree root.      |
+| `workspace.worktreeDir`       | Optional parent dir for ticket worktrees.                              |
 | `workspace.knownRepositories` | Repos searched for in ticket descriptions to infer where work belongs. |
 | `models.definitions`          | Enabled model set. Built-in presets can be enabled with `{}`.          |
 
@@ -12,7 +13,10 @@ The branch prefix (`<prefix>-<TICKET>`) defaults to `os.userInfo().username`; ov
 
 ## Repository Layout
 
-Groundcrew never clones repositories for you. `crew init --repo OWNER/REPO` prints the clone command to run. If you are cloning manually, clone each `workspace.knownRepositories` entry into `workspace.projectDir` using the same relative path the config uses.
+Groundcrew never clones repositories for you. `crew init --repo OWNER/REPO`
+prints the clone command to run. If you are cloning manually, clone each string
+`workspace.knownRepositories` entry into `workspace.projectDir` using the same
+relative path the config uses.
 
 ```bash
 PROJECT_DIR="$HOME/dev"
@@ -20,7 +24,18 @@ mkdir -p "$PROJECT_DIR/OWNER"
 git clone git@github.com:OWNER/REPO.git "$PROJECT_DIR/OWNER/REPO"
 ```
 
-Bare-name entries have no owner, so pick the remote URL yourself and clone to `$PROJECT_DIR/<name>`.
+Bare-name entries have no owner, so pick the remote URL yourself and clone to
+`$PROJECT_DIR/<name>`. To keep a repo clone somewhere else, use
+`{ name: "OWNER/REPO", projectDirOverride: "~/other" }` and clone it under that
+parent dir.
+
+By default, ticket worktrees are created beside the repos under
+`workspace.projectDir`. Set `workspace.worktreeDir` to collect worktrees under a
+separate root, regardless of where each source repo clone lives. Changing
+`workspace.worktreeDir` only affects worktrees discovered under the new root.
+Clean up existing worktrees before switching it, or temporarily unset
+`worktreeDir` when you need `crew cleanup` to find worktrees created beside the
+repos.
 
 ## Config Discovery
 
@@ -169,8 +184,9 @@ and hook contract.
 | `git.remote`                             | `"origin"`           | Remote used for `fetch` and as the worktree base ref.                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `git.defaultBranch`                      | `"main"`             | Branch fetched from `git.remote` and used as the worktree base.                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `git.branchPrefix`                       | OS username          | Prefix groundcrew puts before the ticket id when naming a worktree branch (`<branchPrefix>-<ticket>`). Must be a slash-free slug of letters, digits, `.`, `_`, or `-`. Defaults to the OS account username. Changing it only affects newly created worktrees; existing local branches keep their original names until cleaned up. Prefer a per-user config for personal prefixes — a committed `git.branchPrefix` gives every contributor the same branch prefix.                                                           |
-| `workspace.projectDir`                   | **required**         | Parent dir for cloned repos and sibling ticket worktrees.                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `workspace.knownRepositories`            | **required**         | Repos searched for in ticket descriptions to infer where work belongs. A ticket labeled for groundcrew (`agent-*`) fails fast when no known repo appears; unlabeled tickets are ignored.                                                                                                                                                                                                                                                                                                                                    |
+| `workspace.projectDir`                   | **required**         | Parent dir for cloned repos and the default ticket worktree root.                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `workspace.worktreeDir`                  | optional             | Parent dir for ticket worktrees. When unset, worktrees are created under `workspace.projectDir`. Changing this only affects worktrees discovered under the new root; clean up existing worktrees before switching it, or temporarily unset it when you need `crew cleanup` to find old worktrees.                                                                                                                                                                                                                           |
+| `workspace.knownRepositories`            | **required**         | Repos searched for in ticket descriptions to infer where work belongs. Entries can be strings under `workspace.projectDir` or `{ name, projectDirOverride }` objects when a repo clone lives under a different parent dir. A ticket labeled for groundcrew (`agent-*`) fails fast when no known repo appears; unlabeled tickets are ignored.                                                                                                                                                                                |
 | `defaults.hooks.prepareWorktree`         | optional             | Fallback repo-preparation command used only when the worktree does not define `.groundcrew/config.json` `hooks.prepareWorktree`. The hook runs after worktree creation and before the agent starts. Repo-local config wins.                                                                                                                                                                                                                                                                                                 |
 | `orchestrator.maximumInProgress`         | `4`                  | Cap on in-progress tickets at once for this `crew` instance.                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `orchestrator.pollIntervalMilliseconds`  | `120_000`            | Poll interval in `--watch` mode.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |

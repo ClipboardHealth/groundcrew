@@ -7,7 +7,13 @@ import {
   setEnvironmentVariable,
   snapshotEnvironmentVariables,
 } from "../testHelpers/env.ts";
-import type { Config, LoadedConfig, ResolvedConfig } from "./config.ts";
+import {
+  repositoryBaseDir,
+  worktreeBaseDir,
+  type Config,
+  type LoadedConfig,
+  type ResolvedConfig,
+} from "./config.ts";
 
 interface ConfigModule {
   loadConfig: () => Promise<Readonly<ResolvedConfig>>;
@@ -1165,6 +1171,154 @@ describe("loadConfig", () => {
     expect(actual.workspace.projectDir).toBe("/work/here");
   });
 
+  it("lifts per-repo projectDirOverride out of knownRepositories", async () => {
+    setEnvironmentVariable("HOME", "/fake-home");
+    const configPath = writeConfigFile(
+      temporary,
+      validConfigSource({
+        workspace: {
+          projectDir: "~/dev",
+          worktreeDir: "~/worktrees",
+          knownRepositories: [
+            "owner/flat",
+            { name: "owner/elsewhere", projectDirOverride: "~/work" },
+          ],
+        },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    const config = await loadConfig();
+    expect(config.workspace.knownRepositories).toStrictEqual(["owner/flat", "owner/elsewhere"]);
+    expect(config.workspace.worktreeDir).toBe("/fake-home/worktrees");
+    expect(config.workspace.repositoryDirs).toStrictEqual({
+      "owner/elsewhere": "/fake-home/work",
+    });
+  });
+
+  it("rejects duplicate knownRepositories names instead of overwriting overrides", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      [
+        "export default {",
+        `  workspace: { projectDir: "/dev", knownRepositories: ["owner/dup", { name: "owner/dup", projectDirOverride: "/work" }] },`,
+        `  models: { definitions: { claude: {} } },`,
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(
+      'workspace.knownRepositories[1] duplicates "owner/dup" from workspace.knownRepositories[0]',
+    );
+  });
+
+  it("treats an object entry without a projectDirOverride like a bare string", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      validConfigSource({
+        workspace: {
+          projectDir: "/dev",
+          knownRepositories: [{ name: "owner/plain" }],
+        },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    const config = await loadConfig();
+    expect(config.workspace.knownRepositories).toStrictEqual(["owner/plain"]);
+    expect(config.workspace.repositoryDirs).toBeUndefined();
+  });
+
+  it("omits worktreeDir and repositoryDirs when no overrides are given", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      validConfigSource({
+        workspace: { projectDir: "/dev", knownRepositories: ["owner/flat"] },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    const config = await loadConfig();
+    expect(config.workspace.worktreeDir).toBeUndefined();
+    expect(config.workspace.repositoryDirs).toBeUndefined();
+  });
+
+  it("rejects a knownRepositories object entry with a non-string projectDirOverride", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      [
+        "export default {",
+        `  workspace: { projectDir: "/dev", knownRepositories: [{ name: "owner/x", projectDirOverride: 5 }] },`,
+        `  models: { definitions: { claude: {} } },`,
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow("workspace.knownRepositories[0].projectDirOverride");
+  });
+
+  it("rejects a knownRepositories entry that is neither a string nor an object", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      [
+        "export default {",
+        `  workspace: { projectDir: "/dev", knownRepositories: [42] },`,
+        `  models: { definitions: { claude: {} } },`,
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow("workspace.knownRepositories[0] must be an object");
+  });
+
+  it("rejects a knownRepositories object entry with a non-string name", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      [
+        "export default {",
+        `  workspace: { projectDir: "/dev", knownRepositories: [{ name: 5 }] },`,
+        `  models: { definitions: { claude: {} } },`,
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow("workspace.knownRepositories[0].name");
+  });
+
+  it("rejects a non-string projectDir with a clean config error", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      [
+        "export default {",
+        `  workspace: { projectDir: 5, knownRepositories: ["owner/flat"] },`,
+        `  models: { definitions: { claude: {} } },`,
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow("workspace.projectDir must be a non-empty string");
+  });
+
+  it("rejects a worktreeDir that is not a string", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      [
+        "export default {",
+        `  workspace: { projectDir: "/dev", worktreeDir: 5, knownRepositories: ["owner/flat"] },`,
+        `  models: { definitions: { claude: {} } },`,
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow("workspace.worktreeDir");
+  });
+
   it("defaults logging.file to the XDG state path", async () => {
     const configPath = writeConfigFile(
       temporary,
@@ -1275,6 +1429,23 @@ describe("loadConfig", () => {
     setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(/workspace must be an object/);
+  });
+
+  it("fails when knownRepositories is not an array", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      [
+        "export default {",
+        `  workspace: { projectDir: ${JSON.stringify(temporary)}, knownRepositories: "owner/repo" },`,
+        `  models: { definitions: { claude: {} } },`,
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(
+      /workspace\.knownRepositories must be a non-empty array/,
+    );
   });
 
   it("fails when knownRepositories is empty", async () => {
@@ -1678,5 +1849,60 @@ describe("loadConfigWithSource", () => {
 
     expect(actual.source).toStrictEqual({ kind: "xdg", filepath: xdgConfigPath_ });
     expect(actual.config.workspace.projectDir).toBe(temporary);
+  });
+});
+
+function resolvedConfigWithWorkspace(workspace: ResolvedConfig["workspace"]): ResolvedConfig {
+  return {
+    sources: [],
+    git: { remote: "origin", defaultBranch: "main" },
+    workspace,
+    defaults: { hooks: {} },
+    orchestrator: {
+      maximumInProgress: 4,
+      pollIntervalMilliseconds: 1000,
+      sessionLimitPercentage: 85,
+    },
+    models: {
+      default: "claude",
+      definitions: { claude: { cmd: "claude", color: "#fff" } },
+    },
+    prompts: { initial: "x" },
+    workspaceKind: "auto",
+    local: { runner: "auto" },
+    logging: { file: "/tmp/x.log" },
+  };
+}
+
+describe("workspace path accessors", () => {
+  const resolved = resolvedConfigWithWorkspace;
+
+  it("worktreeBaseDir falls back to projectDir when worktreeDir is unset", () => {
+    const config = resolved({ projectDir: "/p", knownRepositories: ["a"] });
+    expect(worktreeBaseDir(config)).toBe("/p");
+  });
+
+  it("worktreeBaseDir prefers worktreeDir when set", () => {
+    const config = resolved({
+      projectDir: "/p",
+      worktreeDir: "/w",
+      knownRepositories: ["a"],
+    });
+    expect(worktreeBaseDir(config)).toBe("/w");
+  });
+
+  it("repositoryBaseDir falls back to projectDir without an override", () => {
+    const config = resolved({ projectDir: "/p", knownRepositories: ["a"] });
+    expect(repositoryBaseDir(config, "a")).toBe("/p");
+  });
+
+  it("repositoryBaseDir uses the per-repo override when present", () => {
+    const config = resolved({
+      projectDir: "/p",
+      knownRepositories: ["a", "b"],
+      repositoryDirs: { b: "/other" },
+    });
+    expect(repositoryBaseDir(config, "b")).toBe("/other");
+    expect(repositoryBaseDir(config, "a")).toBe("/p");
   });
 });

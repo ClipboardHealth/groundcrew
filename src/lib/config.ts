@@ -156,6 +156,16 @@ type UserModelDefinition = EnabledUserModelDefinition;
  * Linear's default "In Progress" / "In Review" status names disambiguate
  * `started` workflow states; unmatched statuses fall back to `state.type`.
  */
+/**
+ * A configured repository. The bare-string form keeps the repo under
+ * `workspace.projectDir`; the object form's optional `projectDirOverride`
+ * overrides that parent directory so repos can live in more than one place.
+ */
+export interface KnownRepository {
+  name: string;
+  projectDirOverride?: string;
+}
+
 export interface Config {
   /**
    * Additional pluggable ticket sources beyond the built-in Linear adapter
@@ -185,7 +195,12 @@ export interface Config {
   };
   workspace: {
     projectDir: string;
-    knownRepositories: string[];
+    /**
+     * Parent directory all per-ticket worktrees are created under. Defaults
+     * to `projectDir` when unset, so single-directory setups are unchanged.
+     */
+    worktreeDir?: string;
+    knownRepositories: (string | KnownRepository)[];
   };
   defaults?: {
     hooks?: HookCommands;
@@ -251,7 +266,12 @@ export interface ResolvedConfig {
   };
   workspace: {
     projectDir: string;
+    /** Resolved worktree root; unset means "use projectDir". */
+    worktreeDir?: string;
+    /** Repository names only — the union's `projectDirOverride`s are lifted out. */
     knownRepositories: string[];
+    /** name -> resolved parent dir, only for entries that override projectDir. */
+    repositoryDirs?: Record<string, string>;
   };
   defaults: {
     hooks: HookCommands;
@@ -284,6 +304,23 @@ export interface ResolvedConfig {
   logging: {
     file: string;
   };
+}
+
+/**
+ * Parent directory under which a repository's clone lives. The per-repo
+ * `projectDirOverride` wins; otherwise repos sit under `projectDir`.
+ */
+export function repositoryBaseDir(config: ResolvedConfig, repository: string): string {
+  return config.workspace.repositoryDirs?.[repository] ?? config.workspace.projectDir;
+}
+
+/**
+ * Parent directory all worktrees are created under, independent of where the
+ * source repositories live. Falls back to `projectDir` when `worktreeDir` is
+ * unset.
+ */
+export function worktreeBaseDir(config: ResolvedConfig): string {
+  return config.workspace.worktreeDir ?? config.workspace.projectDir;
 }
 
 export type ConfigSourceKind = "env" | "project" | "xdg";
@@ -795,6 +832,75 @@ function normalizeSources(raw: unknown): SourceConfig[] {
   return raw as SourceConfig[];
 }
 
+/**
+ * Resolve one `knownRepositories` entry to its name and (optional) resolved
+ * base dir. Bare strings live under `projectDir`; the object form's
+ * `projectDirOverride` overrides that parent directory. This is the seam later
+ * per-repo options hang off — add new `KnownRepository` fields here.
+ */
+function normalizeKnownRepository(
+  entry: string | KnownRepository,
+  index: number,
+): { name: string; projectDirOverride?: string } {
+  if (typeof entry === "string") {
+    return { name: entry };
+  }
+  requireObject(entry, `workspace.knownRepositories[${index}]`);
+  requireString(entry.name, `workspace.knownRepositories[${index}].name`);
+  if (entry.projectDirOverride === undefined) {
+    return { name: entry.name };
+  }
+  requireString(
+    entry.projectDirOverride,
+    `workspace.knownRepositories[${index}].projectDirOverride`,
+  );
+  return { name: entry.name, projectDirOverride: expandHome(entry.projectDirOverride) };
+}
+
+/**
+ * Flatten the loose `(string | KnownRepository)[]` union into the strict
+ * resolved shape: a `string[]` of names every downstream consumer reads, plus
+ * a separate `repositoryDirs` map holding only the entries that override
+ * `projectDir`. Types are validated here, at the resolution edge, before any
+ * `expandHome` runs (which would otherwise throw a raw TypeError on a
+ * non-string `worktreeDir`).
+ */
+function normalizeWorkspace(workspace: Config["workspace"]): ResolvedConfig["workspace"] {
+  requireObject(workspace, "workspace");
+  requireString(workspace.projectDir, "workspace.projectDir");
+  // Track the first index each name was seen at so a duplicate (which would
+  // silently overwrite its `projectDirOverride` in `repositoryDirs`) fails
+  // loudly instead of resolving order-dependently.
+  const seen = new Map<string, number>();
+  const repositoryDirs: Record<string, string> = {};
+  const entries = Array.isArray(workspace.knownRepositories) ? workspace.knownRepositories : [];
+  entries.forEach((entry, index) => {
+    const { name, projectDirOverride } = normalizeKnownRepository(entry, index);
+    const previous = seen.get(name);
+    if (previous !== undefined) {
+      fail(
+        `workspace.knownRepositories[${index}] duplicates ${JSON.stringify(name)} from workspace.knownRepositories[${previous}]. Configure distinct repository names.`,
+      );
+    }
+    seen.set(name, index);
+    if (projectDirOverride !== undefined) {
+      repositoryDirs[name] = projectDirOverride;
+    }
+  });
+  const names = [...seen.keys()];
+  let worktreeDir: string | undefined;
+  if (workspace.worktreeDir !== undefined) {
+    requireString(workspace.worktreeDir, "workspace.worktreeDir");
+    worktreeDir = expandHome(workspace.worktreeDir);
+  }
+  return {
+    projectDir: expandHome(workspace.projectDir),
+    ...(worktreeDir === undefined ? {} : { worktreeDir }),
+    knownRepositories: names,
+    ...(Object.keys(repositoryDirs).length === 0 ? {} : { repositoryDirs }),
+  };
+}
+
 function applyDefaults(user: Config): ResolvedConfig {
   // Guard the top-level shape before reading nested fields, so a
   // malformed runtime config produces a `groundcrew config: ...` error
@@ -830,10 +936,7 @@ function applyDefaults(user: Config): ResolvedConfig {
       ...user.git,
       ...(branchPrefix === undefined ? {} : { branchPrefix }),
     },
-    workspace: {
-      projectDir: expandHome(user.workspace.projectDir),
-      knownRepositories: user.workspace.knownRepositories,
-    },
+    workspace: normalizeWorkspace(user.workspace),
     defaults: normalizeDefaults((user as { defaults?: unknown }).defaults),
     orchestrator: { ...DEFAULT_ORCHESTRATOR, ...user.orchestrator },
     models: {

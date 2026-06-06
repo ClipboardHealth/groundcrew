@@ -1,11 +1,12 @@
 /**
  * Worktree lifecycle — manages host git worktrees for tickets.
  *
- * A worktree is a `git worktree add`'d sibling at
- * `<projectDir>/<repo>-<TICKET>/`. Callers go through the `worktrees`
- * namespace; the module owns creation, listing, removal, and teardown
- * (workspace-close + worktree-remove paired) so callers don't reach into
- * git directly.
+ * A worktree is a `git worktree add`'d directory at
+ * `<worktreeDir>/<repo>-<TICKET>/` (where `worktreeDir` defaults to
+ * `projectDir`). The source repo it is cut from may live under a different
+ * per-repo `projectDirOverride`. Callers go through the `worktrees` namespace;
+ * the module owns creation, listing, removal, and teardown (workspace-close +
+ * worktree-remove paired) so callers don't reach into git directly.
  */
 
 import { type Dirent, existsSync, readdirSync, rmSync } from "node:fs";
@@ -13,7 +14,7 @@ import { userInfo } from "node:os";
 import path from "node:path";
 
 import { runCommandAsync } from "./commandRunner.ts";
-import type { ResolvedConfig } from "./config.ts";
+import { type ResolvedConfig, repositoryBaseDir, worktreeBaseDir } from "./config.ts";
 import { resolveDefaultBranch } from "./defaultBranch.ts";
 import { debug, errorMessage, isVerbose } from "./util.ts";
 import { type WorkspaceProbe, workspaces } from "./workspaces.ts";
@@ -77,7 +78,7 @@ function repoDirFor(config: ResolvedConfig, repository: string): string {
       `Repository "${repository}" is not in workspace.knownRepositories: ${config.workspace.knownRepositories.join(", ")}`,
     );
   }
-  const repoDir = path.resolve(config.workspace.projectDir, repository);
+  const repoDir = path.resolve(repositoryBaseDir(config, repository), repository);
   if (!existsSync(repoDir)) {
     throw new Error(`Repository not found: ${repoDir}`);
   }
@@ -85,7 +86,6 @@ function repoDirFor(config: ResolvedConfig, repository: string): string {
 }
 
 interface BasePaths {
-  projectDir: string;
   repoDir: string;
   ticket: string;
   branchName: string;
@@ -101,13 +101,11 @@ function basePaths(config: ResolvedConfig, repository: string, ticket: string): 
     throw new Error(`Invalid ticket "${ticket}": must be a plain ticket id`);
   }
 
-  const projectDir = path.resolve(config.workspace.projectDir);
   const repoDir = repoDirFor(config, repository);
   const hostWorktreeName = `${repository}-${ticket}`;
-  const hostWorktreeDir = path.resolve(projectDir, hostWorktreeName);
+  const hostWorktreeDir = path.resolve(worktreeBaseDir(config), hostWorktreeName);
 
   return {
-    projectDir,
     repoDir,
     ticket,
     branchName: branchNameForTicket(config, ticket),
@@ -190,19 +188,20 @@ async function createWorktree(
 }
 
 function listWorktrees(config: ResolvedConfig): WorktreeEntry[] {
-  const projectDir = path.resolve(config.workspace.projectDir);
+  const worktreeRoot = path.resolve(worktreeBaseDir(config));
   const entries: WorktreeEntry[] = [];
 
-  // Worktrees live at `projectDir/<repository>-<ticket>`. When `repository`
+  // Worktrees live at `worktreeRoot/<repository>-<ticket>`. When `repository`
   // contains a slash (e.g. "owner/repo"), `path.resolve()` nests one level
-  // deeper, so the worktree path is `projectDir/owner/repo-<ticket>`.
-  // Scan each known repository's parent directory rather than the project
-  // root, so nested worktrees are discovered alongside bare ones.
+  // deeper, so the worktree path is `worktreeRoot/owner/repo-<ticket>`.
+  // Scan each known repository's parent directory under the worktree root
+  // rather than the root itself, so nested worktrees are discovered alongside
+  // bare ones.
   const reposByParent = new Map<string, Map<string, string>>();
   for (const repository of config.workspace.knownRepositories) {
     const lastSlash = repository.lastIndexOf("/");
     const parentDir =
-      lastSlash === -1 ? projectDir : path.resolve(projectDir, repository.slice(0, lastSlash));
+      lastSlash === -1 ? worktreeRoot : path.resolve(worktreeRoot, repository.slice(0, lastSlash));
     const basename = lastSlash === -1 ? repository : repository.slice(lastSlash + 1);
     let repoByBasename = reposByParent.get(parentDir);
     if (repoByBasename === undefined) {
@@ -254,8 +253,7 @@ async function removeWorktree(
   entry: WorktreeEntry,
   options: { force: boolean; signal?: AbortSignal },
 ): Promise<void> {
-  const projectDir = path.resolve(config.workspace.projectDir);
-  const repoDir = path.resolve(projectDir, entry.repository);
+  const repoDir = path.resolve(repositoryBaseDir(config, entry.repository), entry.repository);
 
   if (existsSync(entry.dir)) {
     debug(`Removing worktree ${entry.dir}${options.force ? " (--force)" : ""}...`);
@@ -419,7 +417,7 @@ function describeOrphanWorktree(arguments_: { ticket: string; dir: string }): st
 }
 
 function expectedHostWorktreeDir(config: ResolvedConfig, entry: WorktreeEntry): string {
-  return path.resolve(config.workspace.projectDir, `${entry.repository}-${entry.ticket}`);
+  return path.resolve(worktreeBaseDir(config), `${entry.repository}-${entry.ticket}`);
 }
 
 function isInsideDirectory(parentDir: string, childDir: string): boolean {
@@ -432,10 +430,10 @@ function isInsideDirectory(parentDir: string, childDir: string): boolean {
 }
 
 function removeOrphanWorktreeDirectory(config: ResolvedConfig, entry: WorktreeEntry): void {
-  const projectDir = path.resolve(config.workspace.projectDir);
+  const worktreeRoot = path.resolve(worktreeBaseDir(config));
   const expectedDir = expectedHostWorktreeDir(config, entry);
   const targetDir = path.resolve(entry.dir);
-  if (targetDir !== expectedDir || !isInsideDirectory(projectDir, targetDir)) {
+  if (targetDir !== expectedDir || !isInsideDirectory(worktreeRoot, targetDir)) {
     throw new Error(
       `Refusing to force-delete ${entry.dir}: expected groundcrew worktree path ${expectedDir}.`,
     );

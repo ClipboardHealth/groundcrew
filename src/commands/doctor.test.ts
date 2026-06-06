@@ -352,6 +352,28 @@ describe(doctor, () => {
     expect(actual).toBe(false);
   });
 
+  it("reports a failing worktreeDir check when worktreeDir is configured but missing", async () => {
+    loadConfigMock.mockResolvedValue({
+      ...makeConfig(),
+      workspace: { projectDir: "/work", worktreeDir: "/wt", knownRepositories: ["repo-a"] },
+    });
+    mockMissingPath("/wt");
+
+    const actual = await doctor();
+
+    expect(actual).toBe(false);
+    expect(consoleLog.output()).toContain("workspace.worktreeDir");
+    expect(consoleLog.output()).toContain('mkdir -p "/wt"');
+  });
+
+  it("emits no separate worktreeDir check when worktreeDir is unset", async () => {
+    loadConfigMock.mockResolvedValue(makeConfig());
+
+    await doctor();
+
+    expect(consoleLog.output()).not.toContain("workspace.worktreeDir");
+  });
+
   it("checks both wrapper and wrapped commands when the cmd is `safehouse claude --foo`", async () => {
     loadConfigMock.mockResolvedValue(makeConfig());
 

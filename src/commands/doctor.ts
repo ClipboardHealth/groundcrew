@@ -13,6 +13,7 @@ import {
   type LocalRunnerSetting,
   loadConfigWithSource,
   type ResolvedConfig,
+  worktreeBaseDir,
 } from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities, which } from "../lib/host.ts";
 import { resolveLocalRunner } from "../lib/localRunner.ts";
@@ -213,6 +214,9 @@ export async function doctor(): Promise<boolean> {
     await checkCmd("git", true, "https://git-scm.com/"),
     ...(await workspaceChecks(workspaceOutcome)),
     checkDir(config.workspace.projectDir, "workspace.projectDir"),
+    ...(config.workspace.worktreeDir === undefined
+      ? []
+      : [checkDir(worktreeBaseDir(config), "workspace.worktreeDir")]),
     localCapability,
   ];
 
