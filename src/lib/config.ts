@@ -226,6 +226,19 @@ export interface Config {
      */
     file?: string;
   };
+  /**
+   * macOS idle-sleep prevention. While `crew run --watch` is alive,
+   * groundcrew holds a `PreventUserIdleSystemSleep` assertion via
+   * `caffeinate -i` so the system does not idle-sleep mid-run and drop
+   * agents. Defaults to enabled on macOS; no-op on other platforms.
+   *
+   * Lid-close sleep is enforced at the hardware level and cannot be
+   * prevented in userspace — use clamshell mode for lid-closed remote
+   * access.
+   */
+  power?: {
+    preventIdleSleep?: boolean;
+  };
 }
 
 /**
@@ -279,6 +292,14 @@ export interface ResolvedConfig {
   logging: {
     file: string;
   };
+  /**
+   * Resolved idle-sleep prevention. Always present — defaults to
+   * `{ preventIdleSleep: true }`. The watch loop reads this once on
+   * entry and acquires/releases the assertion around its body.
+   */
+  power: {
+    preventIdleSleep: boolean;
+  };
 }
 
 export type ConfigSourceKind = "env" | "project" | "xdg";
@@ -303,6 +324,24 @@ const DEFAULT_ORCHESTRATOR: ResolvedConfig["orchestrator"] = {
   pollIntervalMilliseconds: 120_000,
   sessionLimitPercentage: 85,
 };
+
+const DEFAULT_POWER: ResolvedConfig["power"] = {
+  preventIdleSleep: true,
+};
+
+function normalizePower(rawUserPower: unknown): ResolvedConfig["power"] {
+  if (rawUserPower !== undefined && !isPlainObject(rawUserPower)) {
+    fail("power must be an object");
+  }
+  const rawPreventIdleSleep = (rawUserPower as { preventIdleSleep?: unknown } | undefined)
+    ?.preventIdleSleep;
+  if (rawPreventIdleSleep !== undefined && typeof rawPreventIdleSleep !== "boolean") {
+    fail("power.preventIdleSleep must be a boolean");
+  }
+  return {
+    preventIdleSleep: rawPreventIdleSleep ?? DEFAULT_POWER.preventIdleSleep,
+  };
+}
 
 const BUILT_IN_MODEL_DEFINITIONS: Record<string, ModelDefinition> = {
   claude: {
@@ -813,6 +852,7 @@ function applyDefaults(user: Config): ResolvedConfig {
   if (userLocal !== undefined && !isPlainObject(userLocal)) {
     fail("local must be an object");
   }
+  const power = normalizePower((user as { power?: unknown }).power);
 
   const sources = normalizeSources((user as { sources?: unknown }).sources);
   const branchPrefix = normalizeBranchPrefix(user.git?.branchPrefix);
@@ -847,6 +887,7 @@ function applyDefaults(user: Config): ResolvedConfig {
         normalizeOptionalString(user.logging?.file, "logging.file") ?? defaultLogFile(),
       ),
     },
+    power,
   };
 }
 

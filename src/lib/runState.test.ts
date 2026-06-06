@@ -35,6 +35,7 @@ function makeConfig(stateRoot: string): ResolvedConfig {
     workspaceKind: "auto",
     local: { runner: "auto" },
     logging: { file: path.join(stateRoot, "groundcrew.log") },
+    power: { preventIdleSleep: true },
   };
 }
 

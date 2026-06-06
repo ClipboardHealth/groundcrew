@@ -125,4 +125,13 @@ export default {
   //   // evidence with it. Default: `${XDG_STATE_HOME:-~/.local/state}/groundcrew/groundcrew.log`.
   //   file: "~/Library/Logs/groundcrew/groundcrew.log",
   // },
+  //
+  // power: {
+  //   // While `crew run --watch` is alive, groundcrew holds a macOS
+  //   // `PreventUserIdleSystemSleep` assertion via `caffeinate -i` so the
+  //   // system does not idle-sleep mid-run and drop agents. Default: true.
+  //   // No-op on non-macOS. Lid-close sleep is enforced at the hardware
+  //   // level and cannot be prevented in userspace — use clamshell mode.
+  //   preventIdleSleep: true,
+  // },
 } satisfies Config;

@@ -92,6 +92,7 @@ function makeConfig(workspaceKind: WorkspaceKindSetting = "auto"): ResolvedConfi
     workspaceKind,
     local: { runner: "auto" },
     logging: { file: "/tmp/groundcrew-test.log" },
+    power: { preventIdleSleep: true },
   };
 }
 

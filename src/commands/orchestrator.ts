@@ -8,6 +8,7 @@
 import { type Board, createBoard } from "../lib/board.ts";
 import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
+import { holdIdleSleep } from "../lib/power.ts";
 import { findPullRequestsForBranch } from "../lib/pullRequests.ts";
 import { type BoardState, RepositoryResolutionError } from "../lib/ticketSource.ts";
 import { getUsageByModel, type UsageByModel } from "../lib/usage.ts";
@@ -148,6 +149,9 @@ async function runWatchLoop(
   tick: (signal: AbortSignal) => Promise<void>,
   config: ResolvedConfig,
 ): Promise<void> {
+  // Hold a macOS idle-sleep assertion so an overnight watch doesn't lose
+  // tickets when the system would otherwise sleep mid-tick.
+  const releaseIdleSleep = holdIdleSleep(config.power.preventIdleSleep);
   const shutdown = new AbortController();
   let forceExitTimer: NodeJS.Timeout | undefined;
   const forceExit = (signal: ShutdownSignal): never => {
@@ -213,5 +217,6 @@ async function runWatchLoop(
     }
     process.off("SIGINT", handleSigint);
     process.off("SIGTERM", handleSigterm);
+    releaseIdleSleep();
   }
 }

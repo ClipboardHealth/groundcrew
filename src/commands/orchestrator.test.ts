@@ -6,6 +6,8 @@ import type { LinearClient } from "@linear/sdk";
 
 import type * as configModule from "../lib/config.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
+import type * as powerModule from "../lib/power.ts";
+import { holdIdleSleep } from "../lib/power.ts";
 import { findPullRequestsForBranch } from "../lib/pullRequests.ts";
 import { getUsageByModel } from "../lib/usage.ts";
 import type * as utilModule from "../lib/util.ts";
@@ -70,6 +72,10 @@ vi.mock(import("../lib/pullRequests.ts"), async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, findPullRequestsForBranch: vi.fn<typeof findPullRequestsForBranch>() };
 });
+vi.mock(import("../lib/power.ts"), async (importOriginal) => {
+  const actual = await importOriginal<typeof powerModule>();
+  return { ...actual, holdIdleSleep: vi.fn<typeof actual.holdIdleSleep>() };
+});
 vi.mock(import("./setupWorkspace.ts"), async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, setupWorkspace: vi.fn<typeof setupWorkspace>() };
@@ -89,6 +95,7 @@ const usageMock = vi.mocked(getUsageByModel);
 const setupMock = vi.mocked(setupWorkspace);
 const workspacesProbeMock = vi.mocked(workspaces.probe);
 const findPullRequestsMock = vi.mocked(findPullRequestsForBranch);
+const holdIdleSleepMock = vi.mocked(holdIdleSleep);
 
 function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
   return {
@@ -118,6 +125,7 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
     workspaceKind: overrides.workspaceKind ?? "auto",
     local: { runner: "auto", ...overrides.local },
     logging: { file: "/tmp/groundcrew-test.log", ...overrides.logging },
+    power: { preventIdleSleep: true, ...overrides.power },
   };
 }
 
@@ -340,6 +348,9 @@ describe(orchestrate, () => {
     setupMock.mockResolvedValue();
     workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set<string>() });
     findPullRequestsMock.mockResolvedValue([]);
+    // Real `holdIdleSleep` would spawn `caffeinate` on the test host — mock it
+    // out by default and let individual tests assert acquire/release behavior.
+    holdIdleSleepMock.mockReturnValue(vi.fn<() => void>());
     // Telemetry (event= lines) and teardown sub-steps are diagnostic, surfacing
     // on the console only under verbose — several cases assert that wording.
     setVerbose(true);
@@ -1688,6 +1699,45 @@ JSON
     await orchestrate({ watch: true, dryRun: false });
 
     expect(consoleLog.output()).toContain("Shutdown requested (SIGTERM)");
+  });
+
+  it("acquires and releases the idle-sleep hold around the watch loop", async () => {
+    const release = vi.fn<() => void>();
+    holdIdleSleepMock.mockReturnValue(release);
+    const client = makeClient({ pages: [[]] });
+    mockLinearClient(client);
+
+    sleepMock.mockImplementation(async () => {
+      process.listeners("SIGTERM").at(-1)?.("SIGTERM");
+    });
+
+    await orchestrate({ watch: true, dryRun: false });
+
+    expect(holdIdleSleepMock).toHaveBeenCalledWith(true);
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes preventIdleSleep=false through to holdIdleSleep when disabled", async () => {
+    loadConfigMock.mockResolvedValue(makeConfig({ power: { preventIdleSleep: false } }));
+    const client = makeClient({ pages: [[]] });
+    mockLinearClient(client);
+
+    sleepMock.mockImplementation(async () => {
+      process.listeners("SIGTERM").at(-1)?.("SIGTERM");
+    });
+
+    await orchestrate({ watch: true, dryRun: false });
+
+    expect(holdIdleSleepMock).toHaveBeenCalledWith(false);
+  });
+
+  it("does not acquire the idle-sleep hold for a one-shot (non-watch) run", async () => {
+    const client = makeClient({ pages: [[]] });
+    mockLinearClient(client);
+
+    await orchestrate({ watch: false, dryRun: false });
+
+    expect(holdIdleSleepMock).not.toHaveBeenCalled();
   });
 
   it("skips the post-tick sleep when SIGINT arrives mid-tick", async () => {

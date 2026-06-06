@@ -149,6 +149,7 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
     workspaceKind: overrides.workspaceKind ?? "auto",
     local: { runner: "auto", ...overrides.local },
     logging: { file: "/tmp/groundcrew-test.log", ...overrides.logging },
+    power: { preventIdleSleep: true, ...overrides.power },
   };
 }
 

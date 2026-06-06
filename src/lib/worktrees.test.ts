@@ -85,6 +85,7 @@ function makeConfig(overrides: {
     workspaceKind: "auto",
     local: { runner: "auto" },
     logging: { file: "/tmp/groundcrew-test.log" },
+    power: { preventIdleSleep: true },
   };
 }
 
