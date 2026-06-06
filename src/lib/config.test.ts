@@ -870,6 +870,36 @@ describe("loadConfig", () => {
     await expect(loadConfig()).rejects.toThrow(/local must be an object/);
   });
 
+  it("rejects a non-object power block", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      [
+        "export default {",
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        `  power: 5,`,
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(/power must be an object/);
+  });
+
+  it("rejects a non-boolean power.preventIdleSleep", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      [
+        "export default {",
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        `  power: { preventIdleSleep: "yes" },`,
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(/power\.preventIdleSleep must be a boolean/);
+  });
+
   it("rejects a non-object per-model sandbox block", async () => {
     const configPath = writeConfigFile(
       temporary,
