@@ -6,6 +6,7 @@ import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { findPullRequestsForBranch, type PullRequestSummary } from "../lib/pullRequests.ts";
 import { readRunState, type RunState } from "../lib/runState.ts";
 import {
+  type CanonicalStatus,
   type GroundcrewIssue,
   isGroundcrewIssue,
   type Issue as SourceIssue,
@@ -379,9 +380,20 @@ function formatPullRequests(prs: readonly PullRequestSummary[]): string {
   return prs.map((pr) => `${pr.url} (${pr.state})`).join(", ");
 }
 
+/**
+ * Inventory `ticket:` value: the worktree's remote canonical status. Slots are
+ * consumed solely by `in-progress` issues (see `inProgressCount`), so that one
+ * status is spelled out as `slot held` to make the otherwise-implicit rule
+ * legible on the row; every other status renders bare.
+ */
+function formatTicketStatus(canonicalStatus: CanonicalStatus): string {
+  return canonicalStatus === "in-progress" ? "in-progress (slot held)" : canonicalStatus;
+}
+
 async function writeInventoryWorktrees(
   config: ResolvedConfig,
   probe: WorkspaceProbe,
+  statusByTicket: ReadonlyMap<string, CanonicalStatus> | undefined,
 ): Promise<void> {
   writeSection("Worktrees");
   const entries = worktrees
@@ -413,6 +425,14 @@ async function writeInventoryWorktrees(
       writeOutput(inventoryField("title", runState.title));
     }
     writeOutput(inventoryField("state", inventoryStateText(runState, probe, entry.ticket, now)));
+    // `state:` is the local run lifecycle; `ticket:` is the remote status that
+    // actually drives the slot count. They're sourced independently and can
+    // legitimately disagree, so they sit adjacent. Omitted when the board fetch
+    // failed (no map) or the ticket isn't in the fetched board.
+    const ticketStatus = statusByTicket?.get(entry.ticket);
+    if (ticketStatus !== undefined) {
+      writeOutput(inventoryField("ticket", formatTicketStatus(ticketStatus)));
+    }
     writeOutput(inventoryField("repo", entry.repository));
     writeOutput(inventoryField("worktree", entry.dir));
     if (accessHint !== undefined) {
@@ -533,6 +553,27 @@ async function fetchBoardForStatus(config: ResolvedConfig): Promise<BoardFetchRe
   }
 }
 
+/**
+ * Maps each fetched issue's lowercased natural id to its canonical status, so
+ * the Worktrees section can show a `ticket:` field per row. The key matches the
+ * lowercased `WorktreeEntry.ticket` (same join as `inProgressWithoutWorktree`).
+ * `undefined` when the board fetch failed — callers then omit the field rather
+ * than guess.
+ */
+function statusByWorktreeTicket(
+  boardResult: BoardFetchResult,
+): ReadonlyMap<string, CanonicalStatus> | undefined {
+  if (boardResult.kind !== "ok") {
+    return undefined;
+  }
+  return new Map(
+    boardResult.issues.map((issue) => [
+      naturalIdFromCanonical(issue.id).toLowerCase(),
+      issue.status,
+    ]),
+  );
+}
+
 function writeQueueSections(boardResult: BoardFetchResult): void {
   if (boardResult.kind === "error") {
     writeSection("Queue");
@@ -593,6 +634,9 @@ function writeInProgressIssue(issue: SourceIssue): void {
   const naturalId = naturalIdFromCanonical(issue.id);
   writeOutput(issue.url === undefined ? naturalId : `${naturalId}  ${issue.url}`);
   writeOutput(inventoryField("title", issue.title));
+  // These are all in-progress by definition, but spell out the slot-held
+  // status so every holder row reads the same whether or not it has a worktree.
+  writeOutput(inventoryField("ticket", formatTicketStatus(issue.status)));
   if (issue.repository !== undefined) {
     writeOutput(inventoryField("repo", issue.repository));
   }
@@ -622,13 +666,17 @@ async function writeInventoryStatus(config: ResolvedConfig): Promise<void> {
   // Banner ("groundcrew status\n=================") dropped: the command
   // you just ran already tells you what report you're looking at, and the
   // section headers (`Worktrees`, `Queue`, etc.) carry the visual anchors.
+  // The board fetch runs concurrently with the probe, but we await it before
+  // rendering: each Worktrees row carries the remote ticket status, so the
+  // inventory can't print until the source resolves. A failed fetch returns
+  // quickly and still renders rows (without the `ticket:` field).
   const boardResultPromise = fetchBoardForStatus(config);
   const probe = await withLogOutputSuppressed(async () => await workspaces.probe(config));
-  await writeInventoryWorktrees(config, probe);
+  const boardResult = await boardResultPromise;
+  await writeInventoryWorktrees(config, probe, statusByWorktreeTicket(boardResult));
   const worktreeTickets = new Set(worktrees.list(config).map((entry) => entry.ticket));
   writeStraySessions(probe, worktreeTickets);
 
-  const boardResult = await boardResultPromise;
   writeInProgressWithoutWorktree(boardResult, worktreeTickets);
   if (boardResult.kind === "ok") {
     const used = inProgressCount(boardResult.issues);

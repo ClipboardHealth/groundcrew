@@ -970,7 +970,10 @@ describe(status, () => {
     expect(output).toContain("unavailable: linear down");
   });
 
-  it("prints local inventory before source fetch completes", async () => {
+  it("waits for the ticket source before rendering the inventory so each row can show its status", async () => {
+    // The inventory intentionally blocks on the board fetch: every Worktrees
+    // row carries the remote ticket status, which isn't known until the source
+    // resolves. So nothing renders while the fetch is pending.
     listWorktreesMock.mockReturnValue([worktree({ ticket: "team-1", repository: "repo-a" })]);
     workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-1"]) });
     let resolveFetch: ((issues: SourceIssue[]) => void) | undefined;
@@ -986,14 +989,103 @@ describe(status, () => {
     const statusPromise = status(makeConfig({ sources: [{ kind: "linear", name: "linear" }] }));
     await flushMicrotasks();
 
+    expect(consoleLog.output()).not.toContain("Worktrees");
+
+    const completeFetch = resolveFetch;
+    expect(completeFetch).toBeTypeOf("function");
+    completeFetch?.([sourceIssue({ id: "linear:team-1", status: "in-progress" })]);
+    await statusPromise;
+
     const output = consoleLog.output();
     expect(output).toContain("Worktrees");
     expect(output).toContain("team-1\n  state:");
-    expect(output).not.toContain("Queue");
-    const completeFetch = resolveFetch;
-    expect(completeFetch).toBeTypeOf("function");
-    completeFetch?.([]);
-    await statusPromise;
+    expect(output).toContain("  ticket:    in-progress (slot held)");
+  });
+
+  it("annotates an in-progress worktree row with the slot-held ticket status", async () => {
+    listWorktreesMock.mockReturnValue([
+      worktree({ ticket: "team-901", repository: "repo-a", dir: "/work/repo-a-team-901" }),
+    ]);
+    workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-901"]) });
+    buildSourcesMock.mockResolvedValue([
+      fakeSource([sourceIssue({ id: "linear:team-901", status: "in-progress" })]),
+    ]);
+
+    await status(makeConfig({ sources: [{ kind: "linear", name: "linear" }] }));
+
+    expect(consoleLog.output()).toContain("  ticket:    in-progress (slot held)");
+  });
+
+  it("shows the bare canonical status for a worktree whose ticket holds no slot", async () => {
+    listWorktreesMock.mockReturnValue([
+      worktree({ ticket: "team-902", repository: "repo-a", dir: "/work/repo-a-team-902" }),
+    ]);
+    workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-902"]) });
+    buildSourcesMock.mockResolvedValue([
+      fakeSource([sourceIssue({ id: "linear:team-902", status: "in-review" })]),
+    ]);
+
+    await status(makeConfig({ sources: [{ kind: "linear", name: "linear" }] }));
+
+    const output = consoleLog.output();
+    expect(output).toContain("  ticket:    in-review");
+    expect(output).not.toContain("slot held");
+  });
+
+  it("omits the ticket field for a worktree whose ticket is absent from the board", async () => {
+    listWorktreesMock.mockReturnValue([
+      worktree({ ticket: "team-903", repository: "repo-a", dir: "/work/repo-a-team-903" }),
+    ]);
+    workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-903"]) });
+    buildSourcesMock.mockResolvedValue([
+      fakeSource([sourceIssue({ id: "linear:team-700", status: "todo" })]),
+    ]);
+
+    await status(makeConfig({ sources: [{ kind: "linear", name: "linear" }] }));
+
+    expect(consoleLog.output()).not.toContain("  ticket:");
+  });
+
+  it("omits the ticket field on worktree rows when the board fetch fails", async () => {
+    listWorktreesMock.mockReturnValue([
+      worktree({ ticket: "team-904", repository: "repo-a", dir: "/work/repo-a-team-904" }),
+    ]);
+    workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-904"]) });
+    buildSourcesMock.mockResolvedValue([
+      fakeSource([], {
+        fetch: async () => {
+          throw new Error("linear down");
+        },
+      }),
+    ]);
+
+    await status(makeConfig({ sources: [{ kind: "linear", name: "linear" }] }));
+
+    const output = consoleLog.output();
+    expect(output).toContain("Worktrees");
+    expect(output).not.toContain("  ticket:");
+  });
+
+  it("annotates in-progress rows with no local worktree as slot holders", async () => {
+    listWorktreesMock.mockReturnValue([]);
+    workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set() });
+    buildSourcesMock.mockResolvedValue([
+      fakeSource([
+        sourceIssue({
+          id: "linear:team-905",
+          status: "in-progress",
+          title: "Type the boundary",
+          repository: "repo-b",
+          url: "https://linear.app/example/issue/TEAM-905",
+        }),
+      ]),
+    ]);
+
+    await status(makeConfig({ sources: [{ kind: "linear", name: "linear" }] }));
+
+    const output = consoleLog.output();
+    expect(output).toContain("In progress (no local worktree)");
+    expect(output).toContain("  ticket:    in-progress (slot held)");
   });
 
   it("hides the Queue section entirely when the source has no eligible Todos", async () => {
