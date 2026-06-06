@@ -26,6 +26,29 @@ export default {
     // form to point a repo at a different parent directory:
     //   { name: "other-org/other-repo", projectDirOverride: "~/work" }
     knownRepositories: ["your-org/your-repo"],
+    // A knownRepositories entry can also be an object that provisions the
+    // worktree with a custom command instead of `git worktree add` — e.g. a
+    // sparse checkout via `graft`. `repo` is a logical name (task token +
+    // worktree dir basename); the physical clone is the command's concern.
+    // Templates interpolate ${branch} ${dir} ${baseRef} ${repo} ${task}.
+    //
+    //   {
+    //     name: "billing",
+    //     provision: {
+    //       create: "graft new ${branch} billing --from ${baseRef} --dir ${dir}",
+    //       remove: "graft rm ${branch} -f",
+    //     },
+    //     // Optional: run the agent, prepareWorktree hook, and
+    //     // .groundcrew/config.json lookup in this subdirectory of the
+    //     // checkout (relative, no ".."). Use it when the checkout is a
+    //     // monorepo whose project lives in a subdir.
+    //     workdir: "services/billing",
+    //   },
+    //
+    // Set up graft once outside groundcrew:
+    //   graft repo add ~/dev/owner/monorepo
+    //   graft alias add billing services/billing libs/common
+    // `crew doctor` then checks `graft` is on the host PATH.
   },
   models: {
     default: "claude",

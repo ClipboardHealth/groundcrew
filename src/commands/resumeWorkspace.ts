@@ -2,10 +2,8 @@ import { fetchResolvedIssue } from "../lib/adapters/linear/fetch.ts";
 import { getLinearClient } from "../lib/adapters/linear/client.ts";
 import { isLinearEnabled } from "../lib/buildSources.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
-import { openAgentWorkspace, prepareAgentLaunch } from "../lib/agentLaunch.ts";
-import { buildLaunchCommand } from "../lib/launchCommand.ts";
+import { composeAgentLaunch, openAgentWorkspace, prepareAgentLaunch } from "../lib/agentLaunch.ts";
 import { readRunState, recordRunState, type RunState } from "../lib/runState.ts";
-import { buildAndStageSrtLaunch } from "../lib/srtLaunch.ts";
 import {
   removeStagedPrompt,
   stageBuildSecrets,
@@ -14,7 +12,7 @@ import {
 } from "../lib/stagedLaunch.ts";
 import { errorMessage, log } from "../lib/util.ts";
 import { workspaces } from "../lib/workspaces.ts";
-import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
+import { resolveLaunchDir, type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 
 export interface ResumeWorkspaceOptions {
   task: string;
@@ -173,43 +171,25 @@ export async function resumeWorkspace(
   });
   await ensureReady();
 
+  const worktreeDir = context.worktree.dir;
+  const launchDir = resolveLaunchDir(config, context.repository, worktreeDir);
   const stagedPrompt = stagePromptText({
     prefix: "groundcrew-resume",
     task,
     text: renderResumePrompt(context),
   });
   const secretsFile = stageBuildSecrets(stagedPrompt.directory);
-  // Resume must stage srt settings exactly like setup, or `buildLaunchCommand`
-  // throws under the srt runner — and a relocating agent (codex) needs its
-  // config home re-seeded so it authenticates on the resumed launch.
-  let srtPrepareSettingsFile: string | undefined;
-  let srtAgentSettingsFile: string | undefined;
-  let srtSettingsDir: string | undefined;
-  let srtAgentConfigDirEnv: { name: string; value: string } | undefined;
-  if (runner === "srt") {
-    const staged = buildAndStageSrtLaunch({
-      config,
-      repository: context.repository,
-      task,
-      worktreeDir: context.worktree.dir,
-      definition,
-    });
-    srtPrepareSettingsFile = staged.prepareFile;
-    srtAgentSettingsFile = staged.agentFile;
-    srtSettingsDir = staged.directory;
-    srtAgentConfigDirEnv = staged.agentConfigDirEnv;
-  }
-  const launchCommand = buildLaunchCommand({
+  // Resume stages srt settings exactly like setup (a relocating agent such as
+  // codex needs its config home re-seeded to authenticate on the resumed launch).
+  const { launchCommand, srtSettingsDir } = composeAgentLaunch({
+    runner,
+    task,
     definition,
     promptFile: stagedPrompt.file,
-    worktreeDir: context.worktree.dir,
+    worktreeDir,
+    workingDir: launchDir,
     secretsFile,
-    runner,
     sandboxName,
-    srtPrepareSettingsFile,
-    srtAgentSettingsFile,
-    srtSettingsDir,
-    srtAgentConfigDirEnv,
   });
   const launchCmd = stageWorkspaceLaunchCommand(stagedPrompt.directory, launchCommand);
 
@@ -217,7 +197,7 @@ export async function resumeWorkspace(
     await openAgentWorkspace({
       config,
       name: task,
-      cwd: context.worktree.dir,
+      cwd: launchDir,
       command: launchCmd,
       agent: context.agent,
       color: definition.color,

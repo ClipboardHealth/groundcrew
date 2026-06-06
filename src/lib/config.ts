@@ -160,13 +160,42 @@ type UserAgentDefinition = EnabledUserAgentDefinition;
  * `started` workflow states; unmatched statuses fall back to `state.type`.
  */
 /**
+ * Scripted provisioning templates for a repository. Both run via `sh -c` in
+ * place of the native git porcelain: `create` replaces `git worktree add`,
+ * `remove` replaces `git worktree remove`. Grouping them in one object makes the
+ * native/scripted split structural — an entry either has `provision` (scripted)
+ * or it doesn't (native) — and removes the need for a both-or-neither check.
+ */
+export interface ProvisionScripts {
+  /** Shell template run in place of `git worktree add`. */
+  create: string;
+  /** Shell template run in place of `git worktree remove`. */
+  remove: string;
+}
+
+/**
  * A configured repository. The bare-string form keeps the repo under
  * `workspace.projectDir`; the object form's optional `projectDirOverride`
- * overrides that parent directory so repos can live in more than one place.
+ * overrides that parent directory so repos can live in more than one place. When
+ * a `provision` block is present (a *scripted* entry), groundcrew runs its
+ * templates via `sh -c` in place of `git worktree add`/`remove`; the `name` is
+ * then a logical handle and the physical clone is the template's concern (e.g.
+ * graft's own registry).
  */
 export interface KnownRepository {
+  /** Logical repo name: the token tickets reference and the worktree dir basename. */
   name: string;
+  /** Overrides the parent directory the source repo lives under (defaults to `projectDir`). */
   projectDirOverride?: string;
+  /** Scripted provisioning templates; presence marks this a scripted entry. Mutually exclusive with `projectDirOverride`. */
+  provision?: ProvisionScripts;
+  /**
+   * Project subdirectory within the worktree. When set, the agent cwd, the
+   * `prepareWorktree` hook, and the `.groundcrew/config.json` lookup re-root to
+   * `<worktree>/<workdir>`. The worktree root itself (identity, sandbox access)
+   * is unchanged. Relative, no `..`.
+   */
+  workdir?: string;
 }
 
 export interface Config {
@@ -271,8 +300,10 @@ export interface ResolvedConfig {
     projectDir: string;
     /** Resolved worktree root; unset means "use projectDir". */
     worktreeDir?: string;
-    /** Repository names only — the union's `projectDirOverride`s are lifted out. */
+    /** Repository names only — derived; what name-matching consumers read. */
     knownRepositories: string[];
+    /** Normalized full entries carrying any `projectDirOverride`/`provision`. */
+    repositories: KnownRepository[];
     /** name -> resolved parent dir, only for entries that override projectDir. */
     repositoryDirs?: Record<string, string>;
   };
@@ -854,56 +885,69 @@ function normalizeSources(raw: unknown): SourceConfig[] {
  * `projectDirOverride` overrides that parent directory. This is the seam later
  * per-repo options hang off — add new `KnownRepository` fields here.
  */
-function normalizeKnownRepository(
-  entry: string | KnownRepository,
-  index: number,
-): { name: string; projectDirOverride?: string } {
+function normalizeKnownRepository(entry: string | KnownRepository, index: number): KnownRepository {
+  const label = `workspace.knownRepositories[${index}]`;
   if (typeof entry === "string") {
+    requireString(entry, label);
     return { name: entry };
   }
-  requireObject(entry, `workspace.knownRepositories[${index}]`);
-  requireString(entry.name, `workspace.knownRepositories[${index}].name`);
-  if (entry.projectDirOverride === undefined) {
-    return { name: entry.name };
+  requireObject(entry, label);
+  requireString(entry.name, `${label}.name`);
+  const recipe: KnownRepository = { name: entry.name };
+  if (entry.projectDirOverride !== undefined) {
+    requireString(entry.projectDirOverride, `${label}.projectDirOverride`);
+    recipe.projectDirOverride = expandHome(entry.projectDirOverride);
   }
-  requireString(
-    entry.projectDirOverride,
-    `workspace.knownRepositories[${index}].projectDirOverride`,
-  );
-  return { name: entry.name, projectDirOverride: expandHome(entry.projectDirOverride) };
+  if (entry.provision !== undefined) {
+    requireObject(entry.provision, `${label}.provision`);
+    const create = normalizeOptionalString(entry.provision.create, `${label}.provision.create`);
+    const remove = normalizeOptionalString(entry.provision.remove, `${label}.provision.remove`);
+    if (create === undefined || remove === undefined) {
+      fail(`${label}.provision must define both \`create\` and \`remove\` templates`);
+    }
+    recipe.provision = { create, remove };
+  }
+  const workdir = normalizeOptionalString(entry.workdir, `${label}.workdir`);
+  if (workdir !== undefined) {
+    recipe.workdir = workdir;
+  }
+  return recipe;
 }
 
 /**
  * Flatten the loose `(string | KnownRepository)[]` union into the strict
  * resolved shape: a `string[]` of names every downstream consumer reads, plus
  * a separate `repositoryDirs` map holding only the entries that override
- * `projectDir`. Types are validated here, at the resolution edge, before any
- * `expandHome` runs (which would otherwise throw a raw TypeError on a
- * non-string `worktreeDir`).
+ * `projectDir`. Types are validated at the resolution edge: every path is
+ * `requireString`-checked before its `expandHome` runs (here for `projectDir`/
+ * `worktreeDir`, and in `normalizeKnownRepository` for `projectDirOverride`),
+ * which would otherwise throw a raw TypeError on a non-string value.
  */
 function normalizeWorkspace(workspace: Config["workspace"]): ResolvedConfig["workspace"] {
   requireObject(workspace, "workspace");
   requireString(workspace.projectDir, "workspace.projectDir");
+  const entries = workspace.knownRepositories;
+  if (!Array.isArray(entries) || entries.length === 0) {
+    fail("workspace.knownRepositories must be a non-empty array");
+  }
+  const repositories = entries.map((entry, index) => normalizeKnownRepository(entry, index));
   // Track the first index each name was seen at so a duplicate (which would
   // silently overwrite its `projectDirOverride` in `repositoryDirs`) fails
   // loudly instead of resolving order-dependently.
   const seen = new Map<string, number>();
   const repositoryDirs: Record<string, string> = {};
-  const entries = Array.isArray(workspace.knownRepositories) ? workspace.knownRepositories : [];
-  entries.forEach((entry, index) => {
-    const { name, projectDirOverride } = normalizeKnownRepository(entry, index);
-    const previous = seen.get(name);
+  repositories.forEach((recipe, index) => {
+    const previous = seen.get(recipe.name);
     if (previous !== undefined) {
       fail(
-        `workspace.knownRepositories[${index}] duplicates ${JSON.stringify(name)} from workspace.knownRepositories[${previous}]. Configure distinct repository names.`,
+        `workspace.knownRepositories[${index}] duplicates ${JSON.stringify(recipe.name)} from workspace.knownRepositories[${previous}]. Configure distinct repository names.`,
       );
     }
-    seen.set(name, index);
-    if (projectDirOverride !== undefined) {
-      repositoryDirs[name] = projectDirOverride;
+    seen.set(recipe.name, index);
+    if (recipe.projectDirOverride !== undefined) {
+      repositoryDirs[recipe.name] = recipe.projectDirOverride;
     }
   });
-  const names = [...seen.keys()];
   let worktreeDir: string | undefined;
   if (workspace.worktreeDir !== undefined) {
     requireString(workspace.worktreeDir, "workspace.worktreeDir");
@@ -912,7 +956,8 @@ function normalizeWorkspace(workspace: Config["workspace"]): ResolvedConfig["wor
   return {
     projectDir: expandHome(workspace.projectDir),
     ...(worktreeDir === undefined ? {} : { worktreeDir }),
-    knownRepositories: names,
+    knownRepositories: repositories.map((recipe) => recipe.name),
+    repositories,
     ...(Object.keys(repositoryDirs).length === 0 ? {} : { repositoryDirs }),
   };
 }
@@ -994,14 +1039,21 @@ function validate(config: ResolvedConfig): void {
 
   requireString(config.workspace.projectDir, "workspace.projectDir");
 
-  if (
-    !Array.isArray(config.workspace.knownRepositories) ||
-    config.workspace.knownRepositories.length === 0
-  ) {
-    fail("workspace.knownRepositories must be a non-empty array");
-  }
-  config.workspace.knownRepositories.forEach((repository, index) => {
-    requireString(repository, `workspace.knownRepositories[${index}]`);
+  config.workspace.repositories.forEach((recipe, index) => {
+    const label = `workspace.knownRepositories[${index}]`;
+    if (recipe.projectDirOverride !== undefined && recipe.provision !== undefined) {
+      fail(
+        `${label}.projectDirOverride cannot be combined with \`provision\`: a scripted entry has no groundcrew-managed clone, so \`projectDirOverride\` would be ignored`,
+      );
+    }
+    if (recipe.workdir !== undefined) {
+      if (path.isAbsolute(recipe.workdir)) {
+        fail(`${label}.workdir must be a relative path`);
+      }
+      if (recipe.workdir.split("/").includes("..")) {
+        fail(`${label}.workdir must not contain '..' segments`);
+      }
+    }
   });
 
   requirePositiveInt(config.orchestrator.maximumInProgress, "orchestrator.maximumInProgress");

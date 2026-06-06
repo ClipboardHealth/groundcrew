@@ -13,6 +13,7 @@ export type {
   Config,
   HookCommands,
   AgentDefinition,
+  KnownRepository,
   ResolvedConfig,
   SourceConfig,
 } from "./lib/config.ts";

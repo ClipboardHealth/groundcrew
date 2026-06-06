@@ -13,8 +13,14 @@ import { type Dirent, existsSync, readdirSync, rmSync } from "node:fs";
 import { userInfo } from "node:os";
 import path from "node:path";
 
+import { applySubstitutions } from "./adapters/shell/invoke.ts";
 import { runCommandAsync } from "./commandRunner.ts";
-import { type ResolvedConfig, repositoryBaseDir, worktreeBaseDir } from "./config.ts";
+import {
+  type KnownRepository,
+  type ResolvedConfig,
+  repositoryBaseDir,
+  worktreeBaseDir,
+} from "./config.ts";
 import { resolveDefaultBranch } from "./defaultBranch.ts";
 import { assertPlainTaskId, isPlainTaskId } from "./taskId.ts";
 import { debug, errorMessage, isVerbose } from "./util.ts";
@@ -70,17 +76,96 @@ function branchNameForTask(config: ResolvedConfig, task: string): string {
   return `${branchPrefix(config)}-${task}`;
 }
 
+// Membership in knownRepositories is enforced by recipeFor (called first in
+// basePaths), so this resolves the clone dir for a repo already known to exist
+// in config and only guards against the clone being absent on disk.
 function repoDirFor(config: ResolvedConfig, repository: string): string {
-  if (!config.workspace.knownRepositories.includes(repository)) {
-    throw new Error(
-      `Repository "${repository}" is not in workspace.knownRepositories: ${config.workspace.knownRepositories.join(", ")}`,
-    );
-  }
   const repoDir = path.resolve(repositoryBaseDir(config, repository), repository);
   if (!existsSync(repoDir)) {
     throw new Error(`Repository not found: ${repoDir}`);
   }
   return repoDir;
+}
+
+function recipeFor(config: ResolvedConfig, repository: string): KnownRepository {
+  const recipe = config.workspace.repositories.find((entry) => entry.name === repository);
+  if (recipe === undefined) {
+    throw new Error(
+      `Repository "${repository}" is not in workspace.knownRepositories: ${config.workspace.knownRepositories.join(", ")}`,
+    );
+  }
+  return recipe;
+}
+
+/**
+ * The directory the agent and its setup hooks actually run in. Equals the
+ * worktree root unless the repo recipe sets a `workdir`, in which case it is
+ * `<worktreeDir>/<workdir>` — a monorepo subproject inside a sparse checkout.
+ * Pure path resolution; existence is enforced at create time by
+ * assertWorkdirPresent.
+ */
+export function resolveLaunchDir(
+  config: ResolvedConfig,
+  repository: string,
+  worktreeDir: string,
+): string {
+  const recipe = recipeFor(config, repository);
+  return recipe.workdir === undefined ? worktreeDir : path.resolve(worktreeDir, recipe.workdir);
+}
+
+function assertWorkdirPresent(config: ResolvedConfig, entry: WorktreeEntry): void {
+  const recipe = recipeFor(config, entry.repository);
+  if (recipe.workdir === undefined) {
+    return;
+  }
+  const launchDir = path.resolve(entry.dir, recipe.workdir);
+  if (!existsSync(launchDir)) {
+    throw new Error(
+      `Configured workdir "${recipe.workdir}" not found in worktree ${entry.dir}; the create template must produce it (looked for ${launchDir}).`,
+    );
+  }
+}
+
+function provisionerSubstitutions(
+  config: ResolvedConfig,
+  arguments_: { branchName: string; dir: string; task: string; repository: string },
+): Record<string, string> {
+  return {
+    branch: arguments_.branchName,
+    dir: arguments_.dir,
+    baseRef: `${config.git.remote}/${config.git.defaultBranch}`,
+    repo: arguments_.repository,
+    task: arguments_.task,
+  };
+}
+
+/**
+ * Runs a provisioner template (`create`/`remove`) with no timeout. Mirrors
+ * runLongGitCommand: under --verbose the child streams live; otherwise it is
+ * captured and discarded on success (failures still carry stderr via the
+ * thrown error).
+ */
+async function runLongShellCommand(
+  command: string,
+  cwd: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  const signalOption = signal === undefined ? {} : { signal };
+  if (isVerbose()) {
+    await runCommandAsync("sh", ["-c", command], {
+      cwd,
+      stdio: "inherit",
+      timeoutMs: 0,
+      ...signalOption,
+    });
+    return;
+  }
+  await runCommandAsync("sh", ["-c", command], {
+    cwd,
+    stdio: "captured",
+    timeoutMs: 0,
+    ...signalOption,
+  });
 }
 
 interface BasePaths {
@@ -97,7 +182,13 @@ function basePaths(config: ResolvedConfig, repository: string, task: string): Ba
   // This also rejects traversal tokens before they reach path.resolve().
   assertPlainTaskId(task);
 
-  const repoDir = repoDirFor(config, repository);
+  const recipe = recipeFor(config, repository);
+  // Scripted entries have no source clone — graft owns the checkout — so run
+  // templates with cwd = the worktree root and never resolve a clone dir.
+  const repoDir =
+    recipe.provision === undefined
+      ? repoDirFor(config, repository)
+      : path.resolve(worktreeBaseDir(config));
   const hostWorktreeName = `${repository}-${task}`;
   const hostWorktreeDir = path.resolve(worktreeBaseDir(config), hostWorktreeName);
 
@@ -178,6 +269,27 @@ async function createWorktree(
   signal?: AbortSignal,
 ): Promise<WorktreeEntry> {
   const base = basePaths(config, spec.repository, spec.task);
+  const recipe = recipeFor(config, spec.repository);
+  if (recipe.provision !== undefined) {
+    const command = applySubstitutions(
+      recipe.provision.create,
+      provisionerSubstitutions(config, {
+        branchName: base.branchName,
+        dir: base.hostWorktreeDir,
+        task: spec.task,
+        repository: spec.repository,
+      }),
+    );
+    debug(`Provisioning worktree ${spec.repository}-${spec.task} via create template...`);
+    await runLongShellCommand(command, base.repoDir, signal);
+    return {
+      repository: spec.repository,
+      task: spec.task,
+      branchName: base.branchName,
+      dir: base.hostWorktreeDir,
+      kind: "host",
+    };
+  }
   const defaultBranch = await resolveDefaultBranch({
     repoDir: base.repoDir,
     remote: config.git.remote,
@@ -263,6 +375,11 @@ async function removeWorktree(
   entry: WorktreeEntry,
   options: { force: boolean; signal?: AbortSignal },
 ): Promise<void> {
+  const recipe = recipeFor(config, entry.repository);
+  if (recipe.provision !== undefined) {
+    await removeScriptedWorktree(config, entry, recipe.provision.remove, options);
+    return;
+  }
   const repoDir = path.resolve(repositoryBaseDir(config, entry.repository), entry.repository);
 
   if (existsSync(entry.dir)) {
@@ -297,18 +414,7 @@ async function removeWorktree(
         }
         removeOrphanWorktreeDirectory(config, entry);
       } else {
-        const dirtiness = await probeWorktreeDirtiness(entry.dir, options.signal);
-        if (dirtiness.kind === "dirty") {
-          throw new Error(
-            describeDirtyWorktree({
-              task: entry.task,
-              dir: entry.dir,
-              modified: dirtiness.modified,
-              untracked: dirtiness.untracked,
-            }),
-            { cause: error },
-          );
-        }
+        const dirtiness = await throwIfWorktreeDirty(entry, options.signal, error);
         if (dirtiness.kind === "unknown") {
           const registration = await probeWorktreeRegistration({
             repoDir,
@@ -334,6 +440,36 @@ async function removeWorktree(
     branchName: entry.branchName,
     ...signalProperty(options.signal),
   });
+}
+
+async function removeScriptedWorktree(
+  config: ResolvedConfig,
+  entry: WorktreeEntry,
+  removeTemplate: string,
+  options: { force: boolean; signal?: AbortSignal },
+): Promise<void> {
+  const worktreeRoot = path.resolve(worktreeBaseDir(config));
+  if (!existsSync(entry.dir)) {
+    debug(`Worktree directory ${entry.dir} not found; skipping remove template.`);
+    return;
+  }
+  // Keep the data-loss guard: a dirty worktree is not removed without --force.
+  // Orphan/branch handling is delegated to the template (e.g. `graft rm`),
+  // since groundcrew does not track the scripted clone.
+  if (!options.force) {
+    await throwIfWorktreeDirty(entry, options.signal);
+  }
+  const command = applySubstitutions(
+    removeTemplate,
+    provisionerSubstitutions(config, {
+      branchName: entry.branchName,
+      dir: entry.dir,
+      task: entry.task,
+      repository: entry.repository,
+    }),
+  );
+  debug(`Removing worktree ${entry.dir} via remove template...`);
+  await runLongShellCommand(command, worktreeRoot, options.signal);
 }
 
 export type WorktreeDirtiness =
@@ -371,6 +507,29 @@ async function probeWorktreeDirtiness(
     return { kind: "clean" };
   }
   return { kind: "dirty", modified, untracked };
+}
+
+/**
+ * Probe a worktree and, when it has uncommitted work, throw the data-loss guard
+ * error. Returns the dirtiness so the git-native path can still branch on
+ * `unknown`. `cause` chains the underlying git failure when called from a catch.
+ */
+async function throwIfWorktreeDirty(
+  entry: WorktreeEntry,
+  signal: AbortSignal | undefined,
+  cause?: unknown,
+): Promise<WorktreeDirtiness> {
+  const dirtiness = await probeWorktreeDirtiness(entry.dir, signal);
+  if (dirtiness.kind === "dirty") {
+    const message = describeDirtyWorktree({
+      task: entry.task,
+      dir: entry.dir,
+      modified: dirtiness.modified,
+      untracked: dirtiness.untracked,
+    });
+    throw cause === undefined ? new Error(message) : new Error(message, { cause });
+  }
+  return dirtiness;
 }
 
 function describeDirtyWorktree(arguments_: {
@@ -471,7 +630,9 @@ async function create(
   if (existing !== undefined) {
     throw new WorktreeAlreadyExistsError(existing.dir);
   }
-  return await createWorktree(config, spec, signal);
+  const entry = await createWorktree(config, spec, signal);
+  assertWorkdirPresent(config, entry);
+  return entry;
 }
 
 async function remove(

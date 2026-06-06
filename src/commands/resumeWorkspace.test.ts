@@ -77,6 +77,24 @@ vi.mock(import("../lib/worktrees.ts"), async (importOriginal) => {
     },
   };
 });
+const runCommandMock = vi.hoisted(() =>
+  vi.fn<(cmd: string, arguments_: readonly string[]) => string>(),
+);
+vi.mock(import("../lib/commandRunner.ts"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, runCommand: runCommandMock };
+});
+
+// buildAndStageSrtLaunch resolves the sandbox's gitCommonDir from the worktree
+// via `git rev-parse --git-common-dir`; the worktree dir here is a fixture path,
+// so stub the probe to a non-empty path and return "" for anything else.
+function stubRunCommand(): void {
+  runCommandMock.mockImplementation((cmd: string, arguments_: readonly string[]) =>
+    cmd === "git" && arguments_.includes("--git-common-dir")
+      ? "/tmp/groundcrew-resume-team-1-x/.git"
+      : "",
+  );
+}
 
 const mkdtempMock = vi.mocked(mkdtempSync);
 const rmSyncMock = vi.mocked(rmSync);
@@ -149,7 +167,11 @@ function makeConfig(): ResolvedConfig {
     sources: [{ kind: "linear" }],
     defaults: { hooks: {} },
     git: { remote: "origin", defaultBranch: "main" },
-    workspace: { projectDir: "/work", knownRepositories: ["repo-a"] },
+    workspace: {
+      projectDir: "/work",
+      knownRepositories: ["repo-a"],
+      repositories: [{ name: "repo-a" }],
+    },
     orchestrator: {
       maximumInProgress: 4,
       pollIntervalMilliseconds: 1000,
@@ -213,6 +235,7 @@ describe(resumeWorkspace, () => {
 
   beforeEach(() => {
     mkdtempMock.mockReturnValue("/tmp/groundcrew-resume-team-1-x");
+    stubRunCommand();
     mockLinearIssue();
     readRunStateMock.mockReturnValue(makeRunState());
     findByTaskMock.mockReturnValue([makeWorktree()]);
@@ -368,6 +391,21 @@ describe(resumeWorkspace, () => {
       /sandbox-runtime\/dist\/cli\.js' --settings .*agent-settings\.json/,
     );
     expect(launchScript).not.toContain("safehouse-clearance");
+  });
+
+  it("cds into the configured workdir subproject on resume", async () => {
+    const cfg = makeConfig();
+    cfg.workspace.repositories = [
+      {
+        name: "repo-a",
+        provision: { create: "graft new x", remove: "graft rm x" },
+        workdir: "services/api",
+      },
+    ];
+
+    await resumeWorkspace(cfg, { task: "team-1" });
+
+    expect(stagedLaunchScript()).toContain("cd '/work/repo-a-team-1/services/api'");
   });
 
   it("cleans up the staged srt settings dir when the resumed launch fails to open", async () => {

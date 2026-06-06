@@ -186,6 +186,7 @@ function makeConfig(overrides: Partial<ResolvedConfig["agents"]> = {}): Resolved
     workspace: {
       projectDir: "/work",
       knownRepositories: ["repo-a"],
+      repositories: [{ name: "repo-a" }],
     },
     orchestrator: {
       maximumInProgress: 4,
@@ -220,10 +221,22 @@ function isCmuxNewWorkspace(cmd: string, arguments_: readonly string[]): boolean
   return cmd === "cmux" && arguments_.includes("new-workspace");
 }
 
+// buildAndStageSrtLaunch resolves the sandbox's gitCommonDir from the worktree
+// via `git rev-parse --git-common-dir`; stub it to a non-empty path so the srt
+// policy validates under the runCommand mock.
+const STUB_GIT_COMMON_DIR = "/tmp/groundcrew-team-1-x/.git";
+
+function isGitCommonDirProbe(cmd: string, arguments_: readonly string[]): boolean {
+  return cmd === "git" && arguments_.includes("--git-common-dir");
+}
+
 function mockCmuxNewWorkspaceOutput(output: string): void {
-  runCommandMock.mockImplementation((cmd, arguments_) =>
-    isCmuxNewWorkspace(cmd, arguments_) ? output : "",
-  );
+  runCommandMock.mockImplementation((cmd, arguments_) => {
+    if (isGitCommonDirProbe(cmd, arguments_)) {
+      return STUB_GIT_COMMON_DIR;
+    }
+    return isCmuxNewWorkspace(cmd, arguments_) ? output : "";
+  });
 }
 
 function mockCmuxFailure(): void {
@@ -455,6 +468,30 @@ describe(setupWorkspace, () => {
     expect(command).not.toContain("prompt.txt");
     expect(launchScript).toContain("safehouse-clearance");
     expect(launchScript).toContain("_p=$(cat '/tmp/groundcrew-team-1-x/prompt.txt')");
+  });
+
+  it("cds into the configured workdir subproject", async () => {
+    const config = makeConfig();
+    config.workspace.repositories = [
+      {
+        name: "repo-a",
+        provision: { create: "graft new x", remove: "graft rm x" },
+        workdir: "services/api",
+      },
+    ];
+    mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
+
+    await setupWorkspace(config, {
+      task: "team-1",
+      repository: "repo-a",
+      agent: "claude",
+      details: { title: "Test Title", description: "Body" },
+    });
+
+    const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
+    expect(launchScript).toContain("cd '/work/repo-a-team-1/services/api'");
+    // Run state records the worktree root, not the workdir subproject.
+    expect(lastRecordedRunState().worktreeDir).toBe("/work/repo-a-team-1");
   });
 
   it("stages neutral prepare + full agent srt settings and wraps the agent under the agent policy when runner=srt", async () => {

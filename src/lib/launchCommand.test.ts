@@ -14,10 +14,12 @@ import {
 function arguments_(
   overrides: Partial<Parameters<typeof buildLaunchCommand>[0]> = {},
 ): Parameters<typeof buildLaunchCommand>[0] {
+  const worktreeDir = overrides.worktreeDir ?? "/work/repo-a-team-1";
   return {
     definition: { cmd: "claude", color: "#fff" } satisfies AgentDefinition,
     promptFile: "/tmp/prompt-team-1/prompt.txt",
-    worktreeDir: "/work/repo-a-team-1",
+    worktreeDir,
+    workingDir: worktreeDir,
     runner: "safehouse",
     ...overrides,
   };
@@ -510,6 +512,23 @@ describe(buildLaunchCommand, () => {
       expect(out).not.toContain("safehouse-clearance");
       expect(out).not.toContain("--enable=all-agents");
       expect(out).toMatch(/exec claude "\$_p"$/);
+    });
+
+    it("cds into workingDir while {{worktree}} still expands to the worktree root", () => {
+      const out = buildLaunchCommand(
+        arguments_({
+          definition: { cmd: "agent --root {{worktree}}", color: "#fff" },
+          worktreeDir: "/work/repo-a-team-1",
+          workingDir: "/work/repo-a-team-1/services/api",
+          runner: "none",
+        }),
+      );
+
+      // cwd is the subproject…
+      expect(out).toContain("cd '/work/repo-a-team-1/services/api'");
+      // …but {{worktree}} substitution stays the checkout root.
+      expect(out).toContain("--root '/work/repo-a-team-1'");
+      expect(out).not.toContain("cd '/work/repo-a-team-1' &&");
     });
 
     it("sources and clears build secrets on the host (no sandbox to forward into)", () => {

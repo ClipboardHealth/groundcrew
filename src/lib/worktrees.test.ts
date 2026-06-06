@@ -1,3 +1,4 @@
+/* eslint-disable no-template-curly-in-string -- ${branch}-style placeholders appear as literal strings in RepoRecipe create/remove command templates; they're NOT JS template literals */
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import type * as nodeOs from "node:os";
 import { tmpdir, userInfo } from "node:os";
@@ -9,7 +10,7 @@ import { runCommandAsync, type RunCommandOptions } from "./commandRunner.ts";
 import type { ResolvedConfig } from "./config.ts";
 import { setVerbose } from "./util.ts";
 import { workspaces } from "./workspaces.ts";
-import { type WorktreeEntry, worktrees } from "./worktrees.ts";
+import { resolveLaunchDir, type WorktreeEntry, worktrees } from "./worktrees.ts";
 
 const { create, findByTask, list, remove, teardown } = worktrees;
 
@@ -64,6 +65,7 @@ function makeConfig(overrides: {
   knownRepositories?: string[];
   repositoryDirs?: Record<string, string>;
   agents?: ResolvedConfig["agents"]["definitions"];
+  repositories?: ResolvedConfig["workspace"]["repositories"];
 }): ResolvedConfig {
   const knownRepositories = overrides.knownRepositories ?? ["repo-a"];
   const agents = overrides.agents ?? {
@@ -77,6 +79,7 @@ function makeConfig(overrides: {
       projectDir: overrides.projectDir,
       ...(overrides.worktreeDir === undefined ? {} : { worktreeDir: overrides.worktreeDir }),
       knownRepositories,
+      repositories: overrides.repositories ?? knownRepositories.map((name) => ({ name })),
       ...(overrides.repositoryDirs === undefined
         ? {}
         : { repositoryDirs: overrides.repositoryDirs }),
@@ -627,10 +630,275 @@ describe(create, () => {
       }),
     ).rejects.toThrow(/Could not determine OS username/);
   });
+
+  it("create runs the create template via sh and skips git fetch/worktree add", async () => {
+    userInfoMock.mockReturnValue(makeUserInfo("paul"));
+    runCommandMock.mockReturnValue("");
+
+    const config = makeConfig({
+      projectDir,
+      knownRepositories: ["billing"],
+      repositories: [
+        {
+          name: "billing",
+          provision: {
+            create: "graft new ${branch} billing --from ${baseRef} --dir ${dir}",
+            remove: "graft rm ${branch} -f",
+          },
+        },
+      ],
+    });
+    const controller = new AbortController();
+
+    const entry = await create(
+      config,
+      { repository: "billing", task: "team-220" },
+      controller.signal,
+    );
+
+    expect(entry.dir).toBe(path.join(projectDir, "billing-team-220"));
+    expect(entry.branchName).toBe("paul-team-220");
+
+    // No git fetch / worktree add — only the sh -c template, with the abort
+    // signal forwarded.
+    const commands = runCommandMock.mock.calls.map((call) => call[0]);
+    expect(commands).not.toContain("git");
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "sh",
+      [
+        "-c",
+        `graft new 'paul-team-220' billing --from 'origin/main' --dir '${path.join(projectDir, "billing-team-220")}'`,
+      ],
+      expect.objectContaining({ cwd: projectDir, timeoutMs: 0, signal: controller.signal }),
+    );
+  });
+
+  it("streams create template output (stdio inherit) under verbose", async () => {
+    userInfoMock.mockReturnValue(makeUserInfo("paul"));
+    runCommandMock.mockReturnValue("");
+    const config = makeConfig({
+      projectDir,
+      knownRepositories: ["billing"],
+      repositories: [
+        {
+          name: "billing",
+          provision: { create: "graft new ${branch}", remove: "graft rm ${branch} -f" },
+        },
+      ],
+    });
+    setVerbose(true);
+
+    await create(config, { repository: "billing", task: "team-220" });
+
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "sh",
+      ["-c", "graft new 'paul-team-220'"],
+      expect.objectContaining({ cwd: projectDir, stdio: "inherit", timeoutMs: 0 }),
+    );
+  });
+
+  it("fails fast when the configured workdir is missing after create", async () => {
+    runCommandMock.mockReturnValue("");
+    const config = makeConfig({
+      projectDir,
+      knownRepositories: ["billing"],
+      repositories: [
+        { name: "billing", provision: { create: "true", remove: "true" }, workdir: "services/api" },
+      ],
+    });
+
+    await expect(create(config, { repository: "billing", task: "team-220" })).rejects.toThrow(
+      /workdir "services\/api" not found/,
+    );
+  });
+
+  it("returns the entry when the configured workdir exists after create", async () => {
+    const config = makeConfig({
+      projectDir,
+      knownRepositories: ["billing"],
+      repositories: [
+        { name: "billing", provision: { create: "true", remove: "true" }, workdir: "services/api" },
+      ],
+    });
+    // The create template materializes the subproject as it runs (after the
+    // worktree-already-exists scan, before the workdir-present assertion).
+    runCommandMock.mockImplementation(() => {
+      mkdirSync(path.join(projectDir, "billing-team-220", "services", "api"), { recursive: true });
+      return "";
+    });
+
+    const entry = await create(config, { repository: "billing", task: "team-220" });
+
+    expect(entry.dir).toBe(path.join(projectDir, "billing-team-220"));
+  });
+});
+
+describe(resolveLaunchDir, () => {
+  setupTempProjectDir();
+
+  it("returns the worktree root when the repo has no workdir", () => {
+    const config = makeConfig({ projectDir });
+    const root = path.join(projectDir, "repo-a-team-1");
+    expect(resolveLaunchDir(config, "repo-a", root)).toBe(root);
+  });
+
+  it("joins the repo's workdir onto the worktree root", () => {
+    const config = makeConfig({
+      projectDir,
+      repositories: [{ name: "repo-a", workdir: "services/api" }],
+    });
+    const root = path.join(projectDir, "repo-a-team-1");
+    expect(resolveLaunchDir(config, "repo-a", root)).toBe(path.join(root, "services", "api"));
+  });
 });
 
 describe(remove, () => {
   setupTempProjectDir();
+
+  it("remove runs the remove template instead of git worktree remove", async () => {
+    const worktreeDir = path.join(projectDir, "billing-team-220");
+    mkdirSync(worktreeDir, { recursive: true });
+    userInfoMock.mockReturnValue(makeUserInfo("paul"));
+    runCommandMock.mockReturnValue(""); // clean dirty-probe + template
+
+    const config = makeConfig({
+      projectDir,
+      knownRepositories: ["billing"],
+      repositories: [
+        {
+          name: "billing",
+          provision: { create: "graft new ${branch}", remove: "graft rm ${branch} -f" },
+        },
+      ],
+    });
+
+    await remove(config, {
+      repository: "billing",
+      task: "team-220",
+      branchName: "paul-team-220",
+      dir: worktreeDir,
+      kind: "host",
+    });
+
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "sh",
+      ["-c", "graft rm 'paul-team-220' -f"],
+      expect.objectContaining({ cwd: projectDir, timeoutMs: 0 }),
+    );
+    // No `git worktree remove` and no `git branch -D`.
+    const gitSubcommands = runCommandMock.mock.calls
+      .filter((call) => call[0] === "git")
+      .map((call) => call[1][2]);
+    expect(gitSubcommands).not.toContain("remove");
+    expect(gitSubcommands).not.toContain("-D");
+  });
+
+  it("remove refuses a dirty scripted worktree without force", async () => {
+    const worktreeDir = path.join(projectDir, "billing-team-220");
+    mkdirSync(worktreeDir, { recursive: true });
+    userInfoMock.mockReturnValue(makeUserInfo("paul"));
+    // git status --porcelain reports one modified file.
+    runCommandMock.mockImplementation((command, arguments_) =>
+      // oxlint-disable-next-line vitest/no-conditional-in-test -- the dirty-probe discriminator reports a modified file
+      command === "git" && arguments_.includes("status") ? " M file.ts" : "",
+    );
+
+    const config = makeConfig({
+      projectDir,
+      knownRepositories: ["billing"],
+      repositories: [
+        {
+          name: "billing",
+          provision: { create: "graft new ${branch}", remove: "graft rm ${branch} -f" },
+        },
+      ],
+    });
+
+    await expect(
+      remove(config, {
+        repository: "billing",
+        task: "team-220",
+        branchName: "paul-team-220",
+        dir: worktreeDir,
+        kind: "host",
+      }),
+    ).rejects.toThrow(/crew cleanup --force team-220/);
+
+    // The remove template never ran.
+    expect(runCommandMock).not.toHaveBeenCalledWith("sh", expect.anything(), expect.anything());
+  });
+
+  it("remove skips the template when the scripted worktree directory is absent", async () => {
+    userInfoMock.mockReturnValue(makeUserInfo("paul"));
+    runCommandMock.mockReturnValue("");
+
+    const config = makeConfig({
+      projectDir,
+      knownRepositories: ["billing"],
+      repositories: [
+        {
+          name: "billing",
+          provision: { create: "graft new ${branch}", remove: "graft rm ${branch} -f" },
+        },
+      ],
+    });
+
+    await remove(config, {
+      repository: "billing",
+      task: "team-220",
+      branchName: "paul-team-220",
+      dir: path.join(projectDir, "billing-team-220"), // never created
+      kind: "host",
+    });
+
+    // No template (and no git) runs for a worktree that is already gone.
+    expect(runCommandMock).not.toHaveBeenCalled();
+  });
+
+  it("remove with --force runs the template without a dirtiness probe", async () => {
+    const worktreeDir = path.join(projectDir, "billing-team-220");
+    mkdirSync(worktreeDir, { recursive: true });
+    userInfoMock.mockReturnValue(makeUserInfo("paul"));
+    // Even if probed, the worktree would read as dirty — --force must skip it.
+    runCommandMock.mockImplementation((command, arguments_) =>
+      // oxlint-disable-next-line vitest/no-conditional-in-test -- guards against an unexpected dirty-probe shell-out
+      command === "git" && arguments_.includes("status") ? " M file.ts" : "",
+    );
+
+    const config = makeConfig({
+      projectDir,
+      knownRepositories: ["billing"],
+      repositories: [
+        {
+          name: "billing",
+          provision: { create: "graft new ${branch}", remove: "graft rm ${branch} -f" },
+        },
+      ],
+    });
+
+    await remove(
+      config,
+      {
+        repository: "billing",
+        task: "team-220",
+        branchName: "paul-team-220",
+        dir: worktreeDir,
+        kind: "host",
+      },
+      { force: true },
+    );
+
+    // The template ran; the dirtiness probe (git status) was skipped.
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "sh",
+      ["-c", "graft rm 'paul-team-220' -f"],
+      expect.objectContaining({ cwd: projectDir, timeoutMs: 0 }),
+    );
+    const gitSubcommands = runCommandMock.mock.calls
+      .filter((call) => call[0] === "git")
+      .map((call) => call[1]);
+    expect(gitSubcommands).toStrictEqual([]);
+  });
 
   it("runs git worktree remove for a host entry whose dir exists", async () => {
     mkdirSync(path.join(projectDir, "repo-a"));

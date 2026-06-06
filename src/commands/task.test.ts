@@ -31,7 +31,11 @@ function makeConfig(): ResolvedConfig {
     sources: [],
     defaults: { hooks: {} },
     git: { remote: "origin", defaultBranch: "main" },
-    workspace: { projectDir: "/work", knownRepositories: ["repo-a"] },
+    workspace: {
+      projectDir: "/work",
+      knownRepositories: ["repo-a"],
+      repositories: [{ name: "repo-a" }],
+    },
     orchestrator: {
       maximumInProgress: 4,
       pollIntervalMilliseconds: 1000,

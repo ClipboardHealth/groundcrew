@@ -4,18 +4,9 @@ import path from "node:path";
 
 import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 
-import type { AgentDefinition, ResolvedConfig } from "./config.ts";
+import { runCommand } from "./commandRunner.ts";
+import type { AgentDefinition } from "./config.ts";
 import { buildAndStageSrtLaunch } from "./srtLaunch.ts";
-
-function config(projectDir: string, repositoryDirs?: Record<string, string>): ResolvedConfig {
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the helper only reads workspace.{projectDir,repositoryDirs} off config
-  return {
-    workspace: {
-      projectDir,
-      ...(repositoryDirs === undefined ? {} : { repositoryDirs }),
-    },
-  } as unknown as ResolvedConfig;
-}
 
 function definition(cmd: string): AgentDefinition {
   return { cmd, color: "#fff" };
@@ -43,12 +34,19 @@ describe(buildAndStageSrtLaunch, () => {
     staged.length = 0;
   });
 
+  // A real git worktree dir — buildAndStageSrtLaunch reads its git common dir
+  // off the checkout itself, so the staged dir must be an actual repo.
+  function initWorktree(name: string): string {
+    const dir = path.join(workspaceRoot, name);
+    mkdirSync(dir, { recursive: true });
+    runCommand("git", ["-C", dir, "init", "-q"]);
+    return dir;
+  }
+
   function stage(cmd: string): ReturnType<typeof buildAndStageSrtLaunch> {
     const result = buildAndStageSrtLaunch({
-      config: config(workspaceRoot),
-      repository: "repo-a",
       task: "team-1",
-      worktreeDir: path.join(workspaceRoot, "repo-a-team-1"),
+      worktreeDir: initWorktree("repo-a-team-1"),
       definition: definition(cmd),
       homeDir: fakeHome,
     });
@@ -93,10 +91,8 @@ describe(buildAndStageSrtLaunch, () => {
 
   it("defaults to the real home dir when none is injected (read-only agent, no seeding side effects)", () => {
     const result = buildAndStageSrtLaunch({
-      config: config(workspaceRoot),
-      repository: "repo-a",
       task: "team-1",
-      worktreeDir: path.join(workspaceRoot, "repo-a-team-1"),
+      worktreeDir: initWorktree("repo-a-team-1"),
       definition: definition("claude --permission-mode auto"),
     });
     staged.push(result.directory);
@@ -107,22 +103,34 @@ describe(buildAndStageSrtLaunch, () => {
     expect(readSettings(result.agentFile).allowPty).toBe(true);
   });
 
-  it("resolves gitCommonDir under the repo's per-repo dir override", () => {
-    const other = mkdtempSync(path.join(os.tmpdir(), "srt-launch-other-"));
-    staged.push(other);
+  it("derives the sandbox gitCommonDir from the worktree, not a <projectDir>/<repo> clone", () => {
+    // A scripted/sparse-checkout worktree: an external provisioner owns the
+    // checkout, it lives at <worktreeDir>/<alias>-<task>, and there is no
+    // <projectDir>/<alias> clone — `name` is just an alias. The sandbox must
+    // fence off the worktree's real git common dir, not a phantom path built
+    // from the alias.
+    const worktreeDir = initWorktree("billing-team-1");
+    const realCommonDir = runCommand("git", [
+      "-C",
+      worktreeDir,
+      "rev-parse",
+      "--path-format=absolute",
+      "--git-common-dir",
+    ]);
+
     const result = buildAndStageSrtLaunch({
-      config: config(workspaceRoot, { "owner/repo": other }),
-      repository: "owner/repo",
-      task: "team-9",
-      worktreeDir: path.join(workspaceRoot, "owner", "repo-team-9"),
+      task: "team-1",
+      worktreeDir,
       definition: definition("claude --permission-mode auto"),
       homeDir: fakeHome,
     });
     staged.push(result.directory);
 
-    // gitCommonDir is <repoDir>/.git == <other>/owner/repo/.git, not under projectDir.
-    const expectedGitDir = path.join(other, "owner", "repo", ".git");
-    expect(JSON.stringify(readSettings(result.agentFile))).toContain(expectedGitDir);
+    const reads = readSettings(result.agentFile).filesystem.allowRead;
+    expect(reads).toContain(realCommonDir);
+    // The old behavior granted <projectDir>/billing/.git — a path that doesn't
+    // exist for a scripted worktree. It must never appear.
+    expect(reads).not.toContain(path.join(workspaceRoot, "billing", ".git"));
   });
 
   it("skips missing seed files (best-effort) so a not-logged-in agent still stages", () => {

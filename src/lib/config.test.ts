@@ -11,6 +11,7 @@ import {
   repositoryBaseDir,
   worktreeBaseDir,
   type Config,
+  type KnownRepository,
   type LoadedConfig,
   type ResolvedConfig,
 } from "./config.ts";
@@ -1477,6 +1478,52 @@ describe("loadConfig", () => {
     );
   });
 
+  it("fails when provision sets create without remove", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      `export default { workspace: { projectDir: ${JSON.stringify(temporary)}, knownRepositories: [{ name: "billing", provision: { create: "graft new x" } }] } };\n`,
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(/must define both `create` and `remove`/);
+  });
+
+  it("normalizes a workdir on a repo entry", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      validConfigSource({
+        workspace: {
+          projectDir: temporary,
+          knownRepositories: [{ name: "billing", provision: scripted, workdir: "sub" }],
+        },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    const config = await loadConfig();
+    const [recipe] = config.workspace.repositories;
+    expect(recipe).toStrictEqual({ name: "billing", provision: scripted, workdir: "sub" });
+  });
+
+  const scripted = { create: "a", remove: "b" };
+  const invalidEntries: [KnownRepository, RegExp][] = [
+    [{ name: "b", provision: scripted, workdir: "/etc" }, /workdir.*must be a relative path/],
+    [{ name: "b", provision: scripted, workdir: ".." }, /workdir.*must not contain '\.\.'/],
+    [{ name: "b", projectDirOverride: "~/d", provision: scripted }, /cannot be combined/],
+  ];
+  it.each(invalidEntries)(
+    "rejects an invalid knownRepositories entry %#",
+    async (entry, expected) => {
+      const configPath = writeConfigFile(
+        temporary,
+        validConfigSource({ workspace: { projectDir: temporary, knownRepositories: [entry] } }),
+      );
+      setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+      const { loadConfig } = await loadFreshConfig();
+      await expect(loadConfig()).rejects.toThrow(expected);
+    },
+  );
+
   it("fails when sessionLimitPercentage is out of range", async () => {
     const configPath = writeConfigFile(
       temporary,
@@ -1890,11 +1937,18 @@ describe("loadConfigWithSource", () => {
   });
 });
 
-function resolvedConfigWithWorkspace(workspace: ResolvedConfig["workspace"]): ResolvedConfig {
+function resolvedConfigWithWorkspace(
+  workspace: Omit<ResolvedConfig["workspace"], "repositories"> & {
+    repositories?: ResolvedConfig["workspace"]["repositories"];
+  },
+): ResolvedConfig {
   return {
     sources: [],
     git: { remote: "origin", defaultBranch: "main" },
-    workspace,
+    workspace: {
+      ...workspace,
+      repositories: workspace.repositories ?? workspace.knownRepositories.map((name) => ({ name })),
+    },
     defaults: { hooks: {} },
     orchestrator: {
       maximumInProgress: 4,

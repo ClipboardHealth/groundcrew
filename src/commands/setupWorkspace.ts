@@ -1,12 +1,10 @@
 import { rmSync } from "node:fs";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
-import { openAgentWorkspace, prepareAgentLaunch } from "../lib/agentLaunch.ts";
+import { composeAgentLaunch, openAgentWorkspace, prepareAgentLaunch } from "../lib/agentLaunch.ts";
 import { type Board, createBoard } from "../lib/board.ts";
 import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
-import { buildLaunchCommand } from "../lib/launchCommand.ts";
 import { resolvePrepareWorktreeCommand } from "../lib/repositoryHooks.ts";
 import { recordRunState } from "../lib/runState.ts";
-import { buildAndStageSrtLaunch } from "../lib/srtLaunch.ts";
 import {
   stageBuildSecrets,
   stagePromptFromTemplate,
@@ -16,7 +14,12 @@ import {
 import { naturalIdFromCanonical } from "../lib/taskSource.ts";
 import { debug, errorMessage, log, okMark } from "../lib/util.ts";
 import { type WorkspaceAccessHint, workspaces } from "../lib/workspaces.ts";
-import { isWorktreeAlreadyExistsError, type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
+import {
+  isWorktreeAlreadyExistsError,
+  resolveLaunchDir,
+  type WorktreeEntry,
+  worktrees,
+} from "../lib/worktrees.ts";
 
 export interface TaskDetails {
   title: string;
@@ -89,7 +92,8 @@ export async function setupWorkspace(
     }
     throw error;
   }
-  const { branchName, dir: launchDir } = created;
+  const { branchName, dir: worktreeDir } = created;
+  const launchDir = resolveLaunchDir(config, repository, worktreeDir);
   const worktreeName = `${repository}-${task}`;
 
   // Anything that fails after the worktree is on disk must roll it back
@@ -117,40 +121,23 @@ export async function setupWorkspace(
     promptDir = stagedPrompt.directory;
 
     const prepareWorktreeCommand = resolvePrepareWorktreeCommand({
-      worktreeDir: launchDir,
+      worktreeDir,
       defaultHooks: config.defaults.hooks,
     });
     const secretsFile =
       prepareWorktreeCommand === undefined ? undefined : stageBuildSecrets(promptDir);
-    let srtPrepareSettingsFile: string | undefined;
-    let srtAgentSettingsFile: string | undefined;
-    let srtAgentConfigDirEnv: { name: string; value: string } | undefined;
-    if (runner === "srt") {
-      const staged = buildAndStageSrtLaunch({
-        config,
-        repository,
-        task,
-        worktreeDir: launchDir,
-        definition,
-      });
-      srtPrepareSettingsFile = staged.prepareFile;
-      srtAgentSettingsFile = staged.agentFile;
-      srtSettingsDir = staged.directory;
-      srtAgentConfigDirEnv = staged.agentConfigDirEnv;
-    }
-    const launchCommand = buildLaunchCommand({
+    const { launchCommand, srtSettingsDir: stagedSrtSettingsDir } = composeAgentLaunch({
+      runner,
+      task,
       definition,
       promptFile: stagedPrompt.file,
-      worktreeDir: launchDir,
+      worktreeDir,
+      workingDir: launchDir,
       secretsFile,
       prepareWorktreeCommand,
-      runner,
       sandboxName,
-      srtPrepareSettingsFile,
-      srtAgentSettingsFile,
-      srtSettingsDir,
-      srtAgentConfigDirEnv,
     });
+    srtSettingsDir = stagedSrtSettingsDir;
     const launchCmd = stageWorkspaceLaunchCommand(promptDir, launchCommand);
 
     debug("Opening workspace...");
@@ -168,7 +155,7 @@ export async function setupWorkspace(
       task,
       repository,
       agent,
-      worktreeDir: launchDir,
+      worktreeDir,
       branchName,
       workspaceName: task,
       state: "running",
@@ -189,7 +176,7 @@ export async function setupWorkspace(
       task,
       repository,
       agent,
-      worktreeDir: launchDir,
+      worktreeDir,
       branchName,
       workspaceName: task,
       state: "failed-to-launch",

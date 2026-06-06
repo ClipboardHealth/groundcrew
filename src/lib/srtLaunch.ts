@@ -3,7 +3,8 @@ import os from "node:os";
 import path from "node:path";
 
 import { collectAllowedDomains } from "./clearanceHosts.ts";
-import { type AgentDefinition, type ResolvedConfig, repositoryBaseDir } from "./config.ts";
+import { runCommand } from "./commandRunner.ts";
+import type { AgentDefinition } from "./config.ts";
 import { inferAgentCommandName } from "./launchCommand.ts";
 import { agentConfigRelocation, buildSrtSettings } from "./srtPolicy.ts";
 import { readEnvironmentVariable } from "./util.ts";
@@ -21,6 +22,27 @@ export interface StagedSrtLaunch {
    * Undefined for read-only agents (claude), which run with a read-only home.
    */
   agentConfigDirEnv?: { name: string; value: string };
+}
+
+/**
+ * Resolve the worktree's real git common dir — the shared `.git` the srt policy
+ * fences off (read-grant + narrow write-allow + write-denies). Derived from the
+ * worktree itself rather than assuming a `<projectDir>/<repo>/.git` clone, so
+ * scripted/sparse-checkout worktrees — whose checkout is owned by an external
+ * provisioner and whose `repo` is just an alias with no clone on disk — get the
+ * correct dir instead of a phantom path that breaks git access and leaves the
+ * real common dir unfenced. For native worktrees this returns the same
+ * `<projectDir>/<repo>/.git` as before. `--path-format=absolute` keeps the path
+ * absolute regardless of git version or cwd.
+ */
+function resolveGitCommonDir(worktreeDir: string): string {
+  return runCommand("git", [
+    "-C",
+    worktreeDir,
+    "rev-parse",
+    "--path-format=absolute",
+    "--git-common-dir",
+  ]);
 }
 
 /**
@@ -43,8 +65,6 @@ export interface StagedSrtLaunch {
  * command tears the whole dir down after srt exits.
  */
 export function buildAndStageSrtLaunch(input: {
-  config: ResolvedConfig;
-  repository: string;
   task: string;
   worktreeDir: string;
   definition: AgentDefinition;
@@ -53,10 +73,9 @@ export function buildAndStageSrtLaunch(input: {
 }): StagedSrtLaunch {
   const agent = inferAgentCommandName(input.definition.cmd);
   const homeDir = input.homeDir ?? os.homedir();
-  const repoDir = path.resolve(repositoryBaseDir(input.config, input.repository), input.repository);
   const base = {
     worktreeDir: input.worktreeDir,
-    gitCommonDir: path.join(repoDir, ".git"),
+    gitCommonDir: resolveGitCommonDir(input.worktreeDir),
     allowedDomains: collectAllowedDomains({
       hosts: readEnvironmentVariable("CLEARANCE_ALLOW_HOSTS"),
       files: readEnvironmentVariable("CLEARANCE_ALLOW_HOSTS_FILES"),

@@ -1,3 +1,4 @@
+/* eslint-disable no-template-curly-in-string -- scripted-repo fixtures use literal `${branch}` templates */
 import { existsSync, statSync } from "node:fs";
 
 import { type Board, createBoard } from "../lib/board.ts";
@@ -111,6 +112,7 @@ function makeConfig(overrides: Partial<ResolvedConfig["agents"]> = {}): Resolved
     workspace: {
       projectDir: "/work",
       knownRepositories: ["repo-a"],
+      repositories: [{ name: "repo-a" }],
     },
     orchestrator: {
       maximumInProgress: 4,
@@ -359,7 +361,12 @@ describe(doctor, () => {
   it("reports a failing worktreeDir check when worktreeDir is configured but missing", async () => {
     loadConfigMock.mockResolvedValue({
       ...makeConfig(),
-      workspace: { projectDir: "/work", worktreeDir: "/wt", knownRepositories: ["repo-a"] },
+      workspace: {
+        projectDir: "/work",
+        worktreeDir: "/wt",
+        knownRepositories: ["repo-a"],
+        repositories: [{ name: "repo-a" }],
+      },
     });
     mockMissingPath("/wt");
 
@@ -773,5 +780,29 @@ describe(doctor, () => {
     const lines = consoleLog.output();
     expect(lines).toMatch(/requested=cmux/);
     expect(lines).toContain("cmux binary is not on PATH");
+  });
+
+  it("fails when a recipe's create binary is missing from PATH", async () => {
+    loadConfigMock.mockResolvedValue({
+      ...makeConfig(),
+      workspace: {
+        projectDir: "/work",
+        knownRepositories: ["billing"],
+        repositories: [
+          {
+            name: "billing",
+            provision: { create: "graft new ${branch}", remove: "graft rm ${branch}" },
+          },
+        ],
+      },
+    });
+    mockWhichEmpty("graft");
+
+    const actual = await doctor();
+
+    expect(actual).toBe(false);
+    expect(consoleLog.output()).toContain(
+      "[--] graft  — required by a workspace.knownRepositories provision.create template",
+    );
   });
 });

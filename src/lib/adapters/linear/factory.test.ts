@@ -28,6 +28,7 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
     workspace: {
       projectDir: "/work",
       knownRepositories: ["repo-a"],
+      repositories: [{ name: "repo-a" }],
       ...overrides.workspace,
     },
     orchestrator: {
@@ -101,6 +102,7 @@ function createConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
     workspace: {
       projectDir: "/work",
       knownRepositories: ["ClipboardHealth/api", "ClipboardHealth/web"],
+      repositories: [{ name: "ClipboardHealth/api" }, { name: "ClipboardHealth/web" }],
       ...overrides.workspace,
     },
     agents: {

@@ -139,12 +139,13 @@ function trapCleanupLine(promptDir: string): string {
 /**
  * Shared head of every host-shell `&&` chain: arm the `EXIT` trap that wipes
  * `promptDir` (must come before any link that can fail, including the `cd`),
- * then `cd` into the worktree. Kept separate from secret sourcing so the
- * safehouse path can splice `preLaunch` between the `cd` and the secrets
- * source — preLaunch must never see build-time secrets in env.
+ * then `cd` into the working directory (the worktree root, or its `workdir`
+ * subproject). Kept separate from secret sourcing so the safehouse path can
+ * splice `preLaunch` between the `cd` and the secrets source — preLaunch must
+ * never see build-time secrets in env.
  */
-function hostTrapAndCd(arguments_: { worktreeDir: string; promptDir: string }): string[] {
-  return [trapCleanupLine(arguments_.promptDir), `cd ${shellSingleQuote(arguments_.worktreeDir)}`];
+function hostTrapAndCd(arguments_: { workingDir: string; promptDir: string }): string[] {
+  return [trapCleanupLine(arguments_.promptDir), `cd ${shellSingleQuote(arguments_.workingDir)}`];
 }
 
 /**
@@ -318,6 +319,13 @@ interface LaunchCommandArguments {
   promptFile: string;
   worktreeDir: string;
   /**
+   * Directory the agent and prepareWorktree hook cwd into (the `cd`/`-w`
+   * target). Equals `worktreeDir` unless the repo recipe sets a `workdir`, in
+   * which case it is the subproject dir. The `{{worktree}}` template and the srt
+   * filesystem grants keep using `worktreeDir` (the whole checkout).
+   */
+  workingDir: string;
+  /**
    * Optional path to a `KEY='value'` env file containing build-time
    * secrets (see `BUILD_SECRET_NAMES`). Sourced on the host shell before
    * prepareWorktree; for the sdx runner the names are propagated into the sandbox
@@ -439,7 +447,7 @@ function buildUnwrappedHostLaunchCommand(arguments_: LaunchCommandArguments): st
   });
 
   const lines = [
-    ...hostTrapAndCd({ worktreeDir: arguments_.worktreeDir, promptDir }),
+    ...hostTrapAndCd({ workingDir: arguments_.workingDir, promptDir }),
     ...hostSourceSecrets(arguments_.secretsFile),
   ];
   if (arguments_.prepareWorktreeCommand !== undefined) {
@@ -515,7 +523,7 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
   const shimAndPromptCleanup = `rm -rf "$_safehouse_shim_dir"; rm -rf ${shellSingleQuote(promptDir)}`;
   const shimAndPromptTrap = `trap ${shellSingleQuote(shimAndPromptCleanup)} EXIT`;
 
-  const lines = hostTrapAndCd({ worktreeDir: arguments_.worktreeDir, promptDir });
+  const lines = hostTrapAndCd({ workingDir: arguments_.workingDir, promptDir });
   // Scrub inherited env before preLaunch (build secrets are copied out of
   // `process.env`, which the launch shell inherits), then source secrets and
   // read the staged prompt. See `hostPreLaunchSourceAndReadPrompt`.
@@ -652,7 +660,7 @@ function buildSrtLaunchCommand(arguments_: LaunchCommandArguments): string {
   const cleanup = `rm -rf ${shellSingleQuote(arguments_.srtSettingsDir)}; rm -rf ${shellSingleQuote(promptDir)}`;
   const lines = [
     `trap ${shellSingleQuote(cleanup)} EXIT`,
-    `cd ${shellSingleQuote(arguments_.worktreeDir)}`,
+    `cd ${shellSingleQuote(arguments_.workingDir)}`,
     ...hostPreLaunchSourceAndReadPrompt({
       definition: arguments_.definition,
       worktreeDir: arguments_.worktreeDir,
@@ -703,7 +711,7 @@ function buildSdxLaunchCommand(arguments_: LaunchCommandArguments): string {
   lines.push(
     `_p=$(cat ${shellSingleQuote(arguments_.promptFile)})`,
     `rm -rf ${shellSingleQuote(promptDir)}`,
-    `exec sbx exec -it ${sbxEnvironmentFlags}-w ${shellSingleQuote(arguments_.worktreeDir)} ${shellSingleQuote(arguments_.sandboxName)} sh -c ${shellSingleQuote(innerCommand)} sh "$_p"`,
+    `exec sbx exec -it ${sbxEnvironmentFlags}-w ${shellSingleQuote(arguments_.workingDir)} ${shellSingleQuote(arguments_.sandboxName)} sh -c ${shellSingleQuote(innerCommand)} sh "$_p"`,
   );
   return lines.join(" && ");
 }

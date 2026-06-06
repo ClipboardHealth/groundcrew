@@ -148,6 +148,22 @@ function gatherToolTargets(config: ResolvedConfig): ToolCheckTarget[] {
   return [...all].map(([token, hint]) => (hint === undefined ? { token } : { token, hint }));
 }
 
+/** First whitespace-delimited token of each distinct `provision.create` template. */
+function provisionerBinaries(config: ResolvedConfig): string[] {
+  const binaries = new Set<string>();
+  for (const recipe of config.workspace.repositories) {
+    if (recipe.provision === undefined) {
+      continue;
+    }
+    const [binary] = recipe.provision.create.trim().split(/\s+/);
+    /* v8 ignore next @preserve -- config normalization guarantees `provision.create` is a trimmed, non-empty string, so the first token is always present and non-empty */
+    if (binary !== undefined && binary.length > 0) {
+      binaries.add(binary);
+    }
+  }
+  return [...binaries];
+}
+
 function agentCliHint(agentName: string, token: string): string | undefined {
   if (token !== agentName) {
     return undefined;
@@ -226,6 +242,17 @@ export async function doctor(): Promise<boolean> {
     // oxlint-disable-next-line no-await-in-loop -- doctor reports tools in deterministic order
     const check = await checkCmd(token, required, required ? hint : "required for local runs");
     checks.push(check);
+  }
+
+  for (const binary of provisionerBinaries(config)) {
+    checks.push(
+      // oxlint-disable-next-line no-await-in-loop -- sequential PATH probes mirror the existing tool-check loop
+      await checkCmd(
+        binary,
+        true,
+        "required by a workspace.knownRepositories provision.create template",
+      ),
+    );
   }
 
   const usageGatedAgents = gatedAgents(config);

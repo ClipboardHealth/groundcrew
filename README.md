@@ -146,7 +146,7 @@ There is no `linear` config block. Groundcrew reads `GROUNDCREW_LINEAR_API_KEY` 
 
 ## Reference
 
-- [Configuration](./docs/configuration.md): discovery order, repo layout, full config table, prompt customization.
+- [Configuration](./docs/configuration.md): discovery order, repo layout, scripted/sparse-checkout (graft) worktrees, full config table, prompt customization.
 - [Runners](./docs/runners.md): Safehouse, Docker Sandboxes, and the `none` escape hatch.
 - [Credentials](./docs/credentials.md): Linear API keys, 1Password, build secrets, and `preLaunch`.
 - [Prepare worktree hooks](./docs/setup-hooks.md): `.groundcrew/config.json` `hooks.prepareWorktree` for per-repo dependency setup.

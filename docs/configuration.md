@@ -37,6 +37,42 @@ Clean up existing worktrees before switching it, or temporarily unset
 `worktreeDir` when you need `crew cleanup` to find worktrees created beside the
 repos.
 
+## Scripted Worktrees (Sparse Checkouts)
+
+A `workspace.knownRepositories` entry can be an **object** instead of a string when you want groundcrew to provision the worktree with a custom command — for example a sparse checkout via `graft` — instead of `git worktree add`:
+
+```ts
+workspace: {
+  projectDir: "~/dev/groundcrew",
+  knownRepositories: [
+    "your-org/your-repo",
+    {
+      name: "billing",
+      provision: {
+        create: "graft new ${branch} billing --from ${baseRef} --dir ${dir}",
+        remove: "graft rm ${branch} -f",
+      },
+      workdir: "services/billing",
+    },
+  ],
+},
+```
+
+- **`name`** is a logical name — it is the token matched in task descriptions and the basename of the per-task worktree directory. The physical clone is the command's concern, so several scripted entries can share one underlying clone.
+- **`provision`** marks the entry as scripted. **`provision.create`** runs in place of `git worktree add`; **`provision.remove`** runs in place of `git worktree remove`. Both are required — a `provision` block missing either is rejected at config load. `projectDirOverride` (the per-repo source-directory override for native entries) cannot be combined with `provision`; a scripted entry has no groundcrew-managed clone, so it is rejected at config load.
+- Both templates run on the host via `sh -c` with the working directory set to the worktree root (`worktreeDir`, defaulting to `projectDir`). They interpolate `${branch}`, `${dir}`, `${baseRef}` (`<remote>/<defaultBranch>`), `${repo}`, and `${task}`; each value is shell-quoted.
+- **`workdir`** (optional) is a relative subdirectory of the worktree. When set, the agent's working directory, the `prepareWorktree` hook, and the `.groundcrew/config.json` lookup all re-root to `<worktree>/<workdir>` — use it when a sparse checkout materializes a monorepo whose project lives in a subdirectory (e.g. `uv sync` must run there). The worktree root is unchanged: it is still what create/remove/list operate on, and a sandboxed agent keeps full read/write access to the whole checkout. `workdir` must be relative with no `..` segments; if it is missing after checkout, `crew` fails fast.
+- A dirty scripted worktree is still protected from data loss: `crew cleanup` refuses to run `remove` unless you pass `--force`. Orphan and branch cleanup are delegated to your `remove` template, since groundcrew does not track the scripted clone.
+
+Set `graft` (or whatever tool your templates call) up once, outside groundcrew:
+
+```bash
+graft repo add ~/dev/owner/monorepo
+graft alias add billing services/billing libs/common
+```
+
+`crew doctor` then verifies the first token of each `provision.create` template (e.g. `graft`) is on the host PATH.
+
 ## Config Discovery
 
 Resolution order:

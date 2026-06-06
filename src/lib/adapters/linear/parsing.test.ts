@@ -15,6 +15,12 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
     workspace: {
       projectDir: "/work",
       knownRepositories: ["repo-a", "repo-b", "api", "api-admin"],
+      repositories: [
+        { name: "repo-a" },
+        { name: "repo-b" },
+        { name: "api" },
+        { name: "api-admin" },
+      ],
       ...overrides.workspace,
     },
     orchestrator: {
@@ -43,7 +49,11 @@ describe(parseRepository, () => {
 
   it("returns the matched known repository when it is in knownRepositories", () => {
     const config = makeConfig({
-      workspace: { projectDir: "/work", knownRepositories: ["org/repo-a", "repo-b"] },
+      workspace: {
+        projectDir: "/work",
+        knownRepositories: ["org/repo-a", "repo-b"],
+        repositories: [{ name: "org/repo-a" }, { name: "repo-b" }],
+      },
     });
     const result = parseRepository({
       description: "fix the org/repo-a bug",
@@ -56,7 +66,11 @@ describe(parseRepository, () => {
 
   it("returns the asserted name as-is when the match is not in knownRepositories", () => {
     const config = makeConfig({
-      workspace: { projectDir: "/work", knownRepositories: ["other-repo"] },
+      workspace: {
+        projectDir: "/work",
+        knownRepositories: ["other-repo"],
+        repositories: [{ name: "other-repo" }],
+      },
     });
     const result = parseRepository({
       description: "touches repo-a somewhere",
@@ -72,6 +86,7 @@ describe(parseRepository, () => {
       workspace: {
         projectDir: "/work",
         knownRepositories: ["org1/repo-a", "org2/repo-a"],
+        repositories: [{ name: "org1/repo-a" }, { name: "org2/repo-a" }],
       },
     });
     expect(() =>
@@ -86,7 +101,11 @@ describe(parseRepository, () => {
 
   it("throws RepositoryResolutionError when the description is empty", () => {
     const config = makeConfig({
-      workspace: { projectDir: "/work", knownRepositories: ["repo-a"] },
+      workspace: {
+        projectDir: "/work",
+        knownRepositories: ["repo-a"],
+        repositories: [{ name: "repo-a" }],
+      },
     });
     expect(() =>
       parseRepository({
@@ -100,7 +119,11 @@ describe(parseRepository, () => {
 
   it("throws RepositoryResolutionError when no repo name appears in the description", () => {
     const config = makeConfig({
-      workspace: { projectDir: "/work", knownRepositories: ["repo-a"] },
+      workspace: {
+        projectDir: "/work",
+        knownRepositories: ["repo-a"],
+        repositories: [{ name: "repo-a" }],
+      },
     });
     expect(() =>
       parseRepository({
@@ -116,7 +139,11 @@ describe(parseRepository, () => {
 describe(resolveRepositoryFor, () => {
   it("returns the repository when the description mentions a known one", () => {
     const config = makeConfig({
-      workspace: { projectDir: "/work", knownRepositories: ["acme/widgets"] },
+      workspace: {
+        projectDir: "/work",
+        knownRepositories: ["acme/widgets"],
+        repositories: [{ name: "acme/widgets" }],
+      },
     });
     const result = resolveRepositoryFor({
       description: "fix the acme/widgets bug",
@@ -127,21 +154,33 @@ describe(resolveRepositoryFor, () => {
 
   it("returns missing when no known repo is in the description", () => {
     const config = makeConfig({
-      workspace: { projectDir: "/work", knownRepositories: ["acme/widgets"] },
+      workspace: {
+        projectDir: "/work",
+        knownRepositories: ["acme/widgets"],
+        repositories: [{ name: "acme/widgets" }],
+      },
     });
     expect(resolveRepositoryFor({ description: "nothing here", config }).kind).toBe("missing");
   });
 
   it("returns missing on empty description", () => {
     const config = makeConfig({
-      workspace: { projectDir: "/work", knownRepositories: ["acme/widgets"] },
+      workspace: {
+        projectDir: "/work",
+        knownRepositories: ["acme/widgets"],
+        repositories: [{ name: "acme/widgets" }],
+      },
     });
     expect(resolveRepositoryFor({ description: "", config }).kind).toBe("missing");
   });
 
   it("returns missing on undefined description", () => {
     const config = makeConfig({
-      workspace: { projectDir: "/work", knownRepositories: ["acme/widgets"] },
+      workspace: {
+        projectDir: "/work",
+        knownRepositories: ["acme/widgets"],
+        repositories: [{ name: "acme/widgets" }],
+      },
     });
     expect(resolveRepositoryFor({ description: undefined, config }).kind).toBe("missing");
   });
@@ -152,7 +191,7 @@ describe(resolveRepositoryFor, () => {
     // dispatch / single-task / doctor paths would all emit a bogus
     // { kind: "ok", repository: "" }.
     const config = makeConfig({
-      workspace: { projectDir: "/work", knownRepositories: [] },
+      workspace: { projectDir: "/work", knownRepositories: [], repositories: [] },
     });
     expect(resolveRepositoryFor({ description: "anything at all", config }).kind).toBe("missing");
   });
@@ -163,7 +202,11 @@ describe(resolveRepositoryFor, () => {
     // launches against the correct worktree path. Without this canonicalization
     // the single-task flow would launch against a bare `repo-a` directory.
     const config = makeConfig({
-      workspace: { projectDir: "/work", knownRepositories: ["org/repo-a"] },
+      workspace: {
+        projectDir: "/work",
+        knownRepositories: ["org/repo-a"],
+        repositories: [{ name: "org/repo-a" }],
+      },
     });
     const result = resolveRepositoryFor({
       description: "fix the repo-a bug",
@@ -180,6 +223,7 @@ describe(resolveRepositoryFor, () => {
       workspace: {
         projectDir: "/work",
         knownRepositories: ["org1/repo-a", "org2/repo-a"],
+        repositories: [{ name: "org1/repo-a" }, { name: "org2/repo-a" }],
       },
     });
     expect(resolveRepositoryFor({ description: "touches repo-a somewhere", config }).kind).toBe(
@@ -246,7 +290,11 @@ describe(buildRepositoryRegex, () => {
 
   it("produces a regex that matches a full org/repo path", () => {
     const config = makeConfig({
-      workspace: { projectDir: "/work", knownRepositories: ["acme/widgets"] },
+      workspace: {
+        projectDir: "/work",
+        knownRepositories: ["acme/widgets"],
+        repositories: [{ name: "acme/widgets" }],
+      },
     });
     const regex = buildRepositoryRegex(config);
     const match = regex.exec("fix the acme/widgets bug");

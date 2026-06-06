@@ -51,6 +51,7 @@ function makeConfig(
     workspace: {
       projectDir: "/work",
       knownRepositories: ["repo-a"],
+      repositories: [{ name: "repo-a" }],
     },
     orchestrator: {
       maximumInProgress: 4,

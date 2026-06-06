@@ -7,10 +7,55 @@ import {
   type ResolvedConfig,
 } from "./config.ts";
 import { detectHostCapabilities } from "./host.ts";
+import { buildLaunchCommand } from "./launchCommand.ts";
 import { assertLocalRunnerRequirements, resolveLocalRunner } from "./localRunner.ts";
 import { sandboxNameFor } from "./sandboxName.ts";
+import { buildAndStageSrtLaunch } from "./srtLaunch.ts";
 import { debug, sleep } from "./util.ts";
 import { workspaces } from "./workspaces.ts";
+
+/**
+ * Stage any srt settings and build the workspace launch command — the assembly
+ * shared verbatim by `setupWorkspace` (fresh runs) and `resumeWorkspace`
+ * (resumes). `worktreeDir` is the checkout root (srt grants + `{{worktree}}`);
+ * `workingDir` is the agent cwd (the worktree root, or its `workdir` subproject).
+ * Returns `srtSettingsDir` so callers can tear it down on a pre-launch failure.
+ */
+export function composeAgentLaunch(input: {
+  runner: LocalRunner;
+  task: string;
+  definition: AgentDefinition;
+  promptFile: string;
+  worktreeDir: string;
+  workingDir: string;
+  secretsFile?: string | undefined;
+  prepareWorktreeCommand?: string | undefined;
+  sandboxName?: string | undefined;
+}): { launchCommand: string; srtSettingsDir: string | undefined } {
+  const staged =
+    input.runner === "srt"
+      ? buildAndStageSrtLaunch({
+          task: input.task,
+          worktreeDir: input.worktreeDir,
+          definition: input.definition,
+        })
+      : undefined;
+  const launchCommand = buildLaunchCommand({
+    definition: input.definition,
+    promptFile: input.promptFile,
+    worktreeDir: input.worktreeDir,
+    workingDir: input.workingDir,
+    secretsFile: input.secretsFile,
+    prepareWorktreeCommand: input.prepareWorktreeCommand,
+    runner: input.runner,
+    sandboxName: input.sandboxName,
+    srtPrepareSettingsFile: staged?.prepareFile,
+    srtAgentSettingsFile: staged?.agentFile,
+    srtSettingsDir: staged?.directory,
+    srtAgentConfigDirEnv: staged?.agentConfigDirEnv,
+  });
+  return { launchCommand, srtSettingsDir: staged?.directory };
+}
 
 interface PreparedAgentLaunch {
   runner: LocalRunner;
