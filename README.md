@@ -90,7 +90,7 @@ Write tickets as complete agent instructions: the goal, the context and constrai
 
 While `crew run --watch` is alive, groundcrew holds a macOS idle-sleep assertion via `caffeinate -i` so your Mac does not doze off mid-run and drop agents. Verify with `pmset -g assertions` — look for `PreventUserIdleSystemSleep`.
 
-Lid-close sleep is enforced at the hardware level and cannot be prevented in userspace. For lid-closed remote access, use [clamshell mode](https://support.apple.com/en-us/102505) (external power + display + input device).
+Lid-close sleep is enforced at the hardware level and cannot be prevented in userspace. For lid-closed remote access, use clamshell mode with external power, display, and input.
 
 Disable with `power: { preventIdleSleep: false }` in `crew.config.ts`. No-op on non-macOS hosts.
 
