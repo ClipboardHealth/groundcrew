@@ -18,6 +18,8 @@ export interface PullRequestSummary {
   /** Lowercased lifecycle: "open" | "merged" | "closed". */
   state: string;
   title: string;
+  /** PR head commit SHA used to ignore historical PRs from reused branch names. */
+  headRefOid: string;
 }
 
 const GH_PR_LIST_LIMIT = 5;
@@ -40,6 +42,7 @@ interface RawPullRequest {
   number: number;
   state: string;
   title: string;
+  headRefOid: string;
 }
 
 function parsePullRequests(output: string): PullRequestSummary[] {
@@ -62,6 +65,7 @@ function parsePullRequests(output: string): PullRequestSummary[] {
       number: entry.number,
       state: STATE_MAP[entry.state] ?? entry.state.toLowerCase(),
       title: entry.title,
+      headRefOid: entry.headRefOid,
     });
   }
   return summaries;
@@ -77,7 +81,8 @@ function isRawPullRequest(value: unknown): value is RawPullRequest {
     typeof record["url"] === "string" &&
     typeof record["number"] === "number" &&
     typeof record["state"] === "string" &&
-    typeof record["title"] === "string"
+    typeof record["title"] === "string" &&
+    typeof record["headRefOid"] === "string"
   );
 }
 
@@ -85,26 +90,30 @@ export async function findPullRequestsForBranch(
   arguments_: LookupArgs,
 ): Promise<readonly PullRequestSummary[]> {
   const { cwd, branchName, signal } = arguments_;
+  const options = signal === undefined ? { cwd } : { cwd, signal };
   try {
-    const output = await runCommandAsync(
-      "gh",
-      [
-        "pr",
-        "list",
-        "--head",
-        branchName,
-        "--state",
-        "all",
-        "--limit",
-        String(GH_PR_LIST_LIMIT),
-        "--json",
-        "url,number,state,title",
-      ],
-      signal === undefined ? { cwd } : { cwd, signal },
-    );
-    return parsePullRequests(output);
+    const [output, currentHeadOid] = await Promise.all([
+      runCommandAsync(
+        "gh",
+        [
+          "pr",
+          "list",
+          "--head",
+          branchName,
+          "--state",
+          "all",
+          "--limit",
+          String(GH_PR_LIST_LIMIT),
+          "--json",
+          "url,number,state,title,headRefOid",
+        ],
+        options,
+      ),
+      runCommandAsync("git", ["rev-parse", "HEAD"], options),
+    ]);
+    return parsePullRequests(output).filter((pr) => pr.headRefOid === currentHeadOid);
   } catch {
-    // gh not installed / not authenticated / non-GitHub remote / network
+    // gh/git not installed / not authenticated / non-GitHub remote / network
     // error / etc. All resolve to "no PR info available" for display.
     return [];
   }

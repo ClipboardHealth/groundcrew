@@ -1286,7 +1286,13 @@ JSON
       listMock.mockReturnValue([hostEntryFor("repo-a", "x-1")]);
       workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["x-1"]) });
       findPullRequestsMock.mockResolvedValue([
-        { url: "https://github.com/x/y/pull/3", number: 3, state: "open", title: "PR" },
+        {
+          url: "https://github.com/x/y/pull/3",
+          number: 3,
+          state: "open",
+          title: "PR",
+          headRefOid: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        },
       ]);
       const client = makeClient({ pages: [[]] });
       mockLinearClient(client);

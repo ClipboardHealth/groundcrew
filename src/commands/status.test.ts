@@ -579,6 +579,7 @@ describe(status, () => {
         number: 42,
         state: "open",
         title: "Wire up auth",
+        headRefOid: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       },
     ]);
 
@@ -769,6 +770,7 @@ describe(status, () => {
         number: 42,
         state: "open",
         title: "Wire up auth",
+        headRefOid: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       },
     ]);
 
@@ -786,8 +788,20 @@ describe(status, () => {
   it("joins multiple PRs on one line in inventory rows", async () => {
     listWorktreesMock.mockReturnValue([worktree({ ticket: "team-1", repository: "repo-a" })]);
     findPullRequestsMock.mockResolvedValue([
-      { url: "https://x/pull/1", number: 1, state: "open", title: "a" },
-      { url: "https://x/pull/2", number: 2, state: "merged", title: "b" },
+      {
+        url: "https://x/pull/1",
+        number: 1,
+        state: "open",
+        title: "a",
+        headRefOid: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      },
+      {
+        url: "https://x/pull/2",
+        number: 2,
+        state: "merged",
+        title: "b",
+        headRefOid: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      },
     ]);
 
     await status(makeConfig());
@@ -816,6 +830,7 @@ describe(status, () => {
         number: 99,
         state: "open",
         title: "Something",
+        headRefOid: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       },
     ]);
 
