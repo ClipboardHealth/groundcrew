@@ -1046,6 +1046,25 @@ describe(status, () => {
     expect(consoleLog.output()).not.toContain("  ticket:");
   });
 
+  it("omits the ticket field when multiple sources return the same natural ticket id", async () => {
+    listWorktreesMock.mockReturnValue([
+      worktree({ ticket: "team-906", repository: "repo-a", dir: "/work/repo-a-team-906" }),
+    ]);
+    workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-906"]) });
+    buildSourcesMock.mockResolvedValue([
+      fakeSource([sourceIssue({ id: "linear:team-906", source: "linear", status: "in-progress" })]),
+      fakeSource([sourceIssue({ id: "shell:team-906", source: "shell", status: "done" })], {
+        name: "shell",
+      }),
+    ]);
+
+    await status(makeConfig({ sources: [{ kind: "linear", name: "linear" }] }));
+
+    const output = consoleLog.output();
+    expect(output).toContain("team-906\n  state:");
+    expect(output).not.toContain("  ticket:");
+  });
+
   it("omits the ticket field on worktree rows when the board fetch fails", async () => {
     listWorktreesMock.mockReturnValue([
       worktree({ ticket: "team-904", repository: "repo-a", dir: "/work/repo-a-team-904" }),

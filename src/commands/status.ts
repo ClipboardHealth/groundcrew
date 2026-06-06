@@ -554,11 +554,12 @@ async function fetchBoardForStatus(config: ResolvedConfig): Promise<BoardFetchRe
 }
 
 /**
- * Maps each fetched issue's lowercased natural id to its canonical status, so
- * the Worktrees section can show a `ticket:` field per row. The key matches the
- * lowercased `WorktreeEntry.ticket` (same join as `inProgressWithoutWorktree`).
- * `undefined` when the board fetch failed — callers then omit the field rather
- * than guess.
+ * Maps each fetched issue's lowercased natural id to its canonical status when
+ * exactly one fetched issue has that natural id, so the Worktrees section can
+ * show a `ticket:` field per row without guessing across sources. The key
+ * matches the lowercased `WorktreeEntry.ticket` (same join as
+ * `inProgressWithoutWorktree`). `undefined` when the board fetch failed —
+ * callers then omit the field rather than guess.
  */
 function statusByWorktreeTicket(
   boardResult: BoardFetchResult,
@@ -566,12 +567,19 @@ function statusByWorktreeTicket(
   if (boardResult.kind !== "ok") {
     return undefined;
   }
-  return new Map(
-    boardResult.issues.map((issue) => [
-      naturalIdFromCanonical(issue.id).toLowerCase(),
-      issue.status,
-    ]),
-  );
+  const statuses = new Map<string, CanonicalStatus>();
+  const matchCounts = new Map<string, number>();
+  for (const issue of boardResult.issues) {
+    const ticket = naturalIdFromCanonical(issue.id).toLowerCase();
+    matchCounts.set(ticket, (matchCounts.get(ticket) ?? 0) + 1);
+    statuses.set(ticket, issue.status);
+  }
+  for (const [ticket, matchCount] of matchCounts) {
+    if (matchCount > 1) {
+      statuses.delete(ticket);
+    }
+  }
+  return statuses;
 }
 
 function writeQueueSections(boardResult: BoardFetchResult): void {
