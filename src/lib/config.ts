@@ -836,7 +836,7 @@ function normalizeSources(raw: unknown): SourceConfig[] {
 function normalizeKnownRepository(
   entry: string | KnownRepository,
   index: number,
-): { name: string; dir?: string } {
+): { name: string; projectDirOverride?: string } {
   if (typeof entry === "string") {
     return { name: entry };
   }
@@ -849,7 +849,7 @@ function normalizeKnownRepository(
     entry.projectDirOverride,
     `workspace.knownRepositories[${index}].projectDirOverride`,
   );
-  return { name: entry.name, dir: expandHome(entry.projectDirOverride) };
+  return { name: entry.name, projectDirOverride: expandHome(entry.projectDirOverride) };
 }
 
 /**
@@ -870,7 +870,7 @@ function normalizeWorkspace(workspace: Config["workspace"]): ResolvedConfig["wor
   const repositoryDirs: Record<string, string> = {};
   const entries = Array.isArray(workspace.knownRepositories) ? workspace.knownRepositories : [];
   entries.forEach((entry, index) => {
-    const { name, dir } = normalizeKnownRepository(entry, index);
+    const { name, projectDirOverride } = normalizeKnownRepository(entry, index);
     const previous = seen.get(name);
     if (previous !== undefined) {
       fail(
@@ -878,8 +878,8 @@ function normalizeWorkspace(workspace: Config["workspace"]): ResolvedConfig["wor
       );
     }
     seen.set(name, index);
-    if (dir !== undefined) {
-      repositoryDirs[name] = dir;
+    if (projectDirOverride !== undefined) {
+      repositoryDirs[name] = projectDirOverride;
     }
   });
   const names = [...seen.keys()];
