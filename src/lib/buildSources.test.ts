@@ -175,6 +175,26 @@ describe(`${buildSources.name} — cross-source independence with no Linear API 
     // oxlint-disable-next-line typescript/no-non-null-assertion -- buildSources asserted above
     await expect(linear!.verify()).rejects.toThrow(/GROUNDCREW_LINEAR_API_KEY or LINEAR_API_KEY/);
   });
+
+  it("builds only the shell source when Linear is disabled via the sentinel, with no key", async () => {
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- test fixture; only the shell source is constructed
+    const config = {
+      sources: [
+        { kind: "linear", enabled: false },
+        { kind: "shell", name: "plans", commands: { fetch: "echo '[]'" } },
+      ],
+      workspace: { projectDir: "/work", knownRepositories: ["repo-a"] },
+    } as unknown as ResolvedConfig;
+
+    const sources = await buildSources(sourcesFromConfig(config), { globalConfig: config });
+
+    // No Linear adapter is built and nothing throws on the missing key.
+    expect(sources.map((s) => s.name)).toStrictEqual(["plans"]);
+
+    const shell = sources.find((s) => s.name === "plans");
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- asserted above
+    await expect(shell!.fetch()).resolves.toStrictEqual([]);
+  });
 });
 
 describe(sourcesFromConfig, () => {
@@ -242,5 +262,73 @@ describe(sourcesFromConfig, () => {
       { kind: "linear" },
       { kind: "shell", name: "jira", command: ["./fetch.sh"] },
     ]);
+  });
+
+  it("drops Linear entirely when the user disables it via { kind: 'linear', enabled: false }", () => {
+    // The disabled linear entry still counts as "explicit linear" (so the
+    // implicit source is suppressed) AND is filtered out of the kept list,
+    // leaving only the shell source — no Linear adapter is ever constructed.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- sourcesFromConfig only reads sources; unused fields are irrelevant
+    const config = {
+      sources: [
+        { kind: "linear", enabled: false },
+        { kind: "shell", name: "plans", command: ["./fetch.sh"] },
+      ],
+    } as unknown as ResolvedConfig;
+
+    expect(sourcesFromConfig(config)).toStrictEqual([
+      { kind: "shell", name: "plans", command: ["./fetch.sh"] },
+    ]);
+  });
+
+  it("keeps an explicit Linear source when enabled: true", () => {
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- sourcesFromConfig only reads sources; unused fields are irrelevant
+    const config = {
+      sources: [{ kind: "linear", enabled: true }],
+    } as unknown as ResolvedConfig;
+
+    expect(sourcesFromConfig(config)).toStrictEqual([{ kind: "linear", enabled: true }]);
+  });
+
+  it("drops a disabled linear entry even when it is the only source, leaving no sources", () => {
+    // No implicit linear is synthesized (the disabled entry is explicit
+    // linear), and the entry itself is filtered out — zero sources remain.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- sourcesFromConfig only reads sources; unused fields are irrelevant
+    const config = {
+      sources: [{ kind: "linear", enabled: false }],
+    } as unknown as ResolvedConfig;
+
+    expect(sourcesFromConfig(config)).toStrictEqual([]);
+  });
+
+  it("drops any disabled non-linear source while still synthesizing implicit linear", () => {
+    // The `enabled: false` opt-out is generic: a disabled shell source is
+    // filtered out, and because no Linear entry is present the implicit Linear
+    // source is still synthesized.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- sourcesFromConfig only reads sources; unused fields are irrelevant
+    const config = {
+      sources: [
+        { kind: "shell", name: "plans", enabled: false, command: ["./fetch.sh"] },
+        { kind: "shell", name: "jira", command: ["./fetch.sh"] },
+      ],
+    } as unknown as ResolvedConfig;
+
+    expect(sourcesFromConfig(config)).toStrictEqual([
+      { kind: "linear" },
+      { kind: "shell", name: "jira", command: ["./fetch.sh"] },
+    ]);
+  });
+
+  it("keeps implicit Linear when a disabled non-linear source is merely named 'linear'", () => {
+    // A source that is Linear only by *name* (e.g. a shell source named
+    // "linear") takes over the Linear slot only while it's enabled. Disabling
+    // it must not suppress the implicit Linear source and leave the queue empty
+    // — only a real `{ kind: "linear" }` sentinel does that.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- sourcesFromConfig only reads sources; unused fields are irrelevant
+    const config = {
+      sources: [{ kind: "shell", name: "linear", enabled: false, command: ["./fetch.sh"] }],
+    } as unknown as ResolvedConfig;
+
+    expect(sourcesFromConfig(config)).toStrictEqual([{ kind: "linear" }]);
   });
 });

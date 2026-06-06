@@ -4,7 +4,7 @@
   "ignore": [
     ".agents",
     ".nx",
-    ".agents",
+    ".remember",
     "AGENTS.md",
     "**/vitest.config.mts",
     "**/tsconfig.spec.json",

@@ -164,6 +164,11 @@ export interface Config {
    * an external system (Jira, plan-keeper, etc.) by pointing at command
    * templates that emit/consume JSON.
    *
+   * The implicit Linear source can be turned off with the opt-out sentinel
+   * `{ kind: "linear", enabled: false }` — useful for shell-only setups with
+   * no Linear API key, where a failing Linear probe would otherwise take down
+   * the whole queue.
+   *
    * Per-source Zod validation runs at `buildSources` time — config.ts only
    * verifies the structural shape (array of objects with a string `kind`).
    */

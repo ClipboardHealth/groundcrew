@@ -68,6 +68,23 @@ export default {
 
 Configured names replace the default for that status; omitted fields keep their defaults. Matching is case-insensitive and trims surrounding whitespace.
 
+Linear is implicit-on, but you can turn it off entirely with the opt-out sentinel `{ kind: "linear", enabled: false }`. This suppresses the built-in Linear source so no adapter is constructed and no API key is required — useful for shell-only setups, where a failing Linear probe would otherwise mark the whole queue unavailable:
+
+```ts
+export default {
+  sources: [
+    { kind: "linear", enabled: false },
+    {
+      kind: "shell",
+      name: "plans",
+      commands: {
+        fetch: "~/.config/groundcrew/plans-fetch.sh",
+      },
+    },
+  ],
+};
+```
+
 ## Enabling Model Presets
 
 Groundcrew ships built-in presets for `claude` and `codex`, but models are not enabled by default. List the models you want in `models.definitions`:
@@ -148,7 +165,7 @@ and hook contract.
 
 | Key                                      | Default              | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | ---------------------------------------- | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `sources`                                | `[]`                 | Additional pluggable ticket sources, dispatched alongside the built-in Linear adapter. Built-in kinds: `shell`, `linear`. Declare `{ kind: "linear", statuses: { ... } }` only to override Linear status names used for `in-progress` / `in-review` disambiguation.                                                                                                                                                                                                                                                         |
+| `sources`                                | `[]`                 | Additional pluggable ticket sources, dispatched alongside the built-in Linear adapter. Built-in kinds: `shell`, `linear`. Declare `{ kind: "linear", statuses: { ... } }` only to override Linear status names used for `in-progress` / `in-review` disambiguation. Disable the implicit Linear source with `{ kind: "linear", enabled: false }` (no API key required) — useful for shell-only setups.                                                                                                                      |
 | `git.remote`                             | `"origin"`           | Remote used for `fetch` and as the worktree base ref.                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `git.defaultBranch`                      | `"main"`             | Branch fetched from `git.remote` and used as the worktree base.                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `git.branchPrefix`                       | OS username          | Prefix groundcrew puts before the ticket id when naming a worktree branch (`<branchPrefix>-<ticket>`). Must be a slash-free slug of letters, digits, `.`, `_`, or `-`. Defaults to the OS account username. Changing it only affects newly created worktrees; existing local branches keep their original names until cleaned up. Prefer a per-user config for personal prefixes — a committed `git.branchPrefix` gives every contributor the same branch prefix.                                                           |
