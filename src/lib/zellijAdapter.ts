@@ -176,11 +176,14 @@ function parseTabId(output: string): number | undefined {
 }
 
 function isZellijMissingError(error: unknown): boolean {
-  const message = errorMessage(error);
+  // zellij phrases a missing/absent session several ways depending on whether
+  // other sessions exist: "Session 'groundcrew' not found", "There is no
+  // active session!", or "No active zellij sessions found".
+  const message = errorMessage(error).toLowerCase();
   return (
     message.includes("not found") ||
-    message.includes("No active zellij sessions") ||
-    message.includes("No more space")
+    message.includes("no active session") ||
+    message.includes("no active zellij sessions")
   );
 }
 
