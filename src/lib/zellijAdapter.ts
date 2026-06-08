@@ -27,7 +27,7 @@ import {
   runWorkspaceCommand,
   type Workspace,
 } from "./workspaceAdapter.ts";
-import { debug, errorMessage } from "./util.ts";
+import { debug, errorMessage, getLogFile } from "./util.ts";
 
 const ZELLIJ_SESSION = "groundcrew";
 // The placeholder first tab; filtered out of `list()` like tmux's idle window.
@@ -200,9 +200,27 @@ function kdlString(value: string): string {
   return value.replaceAll("\\", String.raw`\\`).replaceAll('"', String.raw`\"`);
 }
 
-/** Session layout: bars on every tab via the template, plus the `main` tab. */
+/** Wraps a value in single quotes for a POSIX shell, escaping embedded quotes. */
+function shSingleQuote(value: string): string {
+  return `'${value.replaceAll("'", String.raw`'\''`)}'`;
+}
+
+/**
+ * Session layout: bars on every tab via the template, plus the `main` tab.
+ * `main` tails the groundcrew log so attaching shows the live `crew run`
+ * orchestrator output; it falls back to a shell if the command exits or no
+ * log file is configured.
+ */
 function stageSessionLayout(): string {
   const file = path.join(staging(), "session.kdl");
+  const logFile = getLogFile();
+  const mainPane =
+    logFile === undefined
+      ? "        pane\n"
+      : `        pane command="sh" {
+            args "-c" "${kdlString(`tail -n 200 -F ${shSingleQuote(logFile)} || exec \${SHELL:-sh}`)}"
+        }
+`;
   writeFileSync(
     file,
     `layout {
@@ -211,7 +229,8 @@ function stageSessionLayout(): string {
         children
         pane size=1 borderless=true { plugin location="status-bar"; }
     }
-    tab name="${ZELLIJ_MAIN_TAB}"
+    tab name="${ZELLIJ_MAIN_TAB}" {
+${mainPane}    }
 }
 `,
   );

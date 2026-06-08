@@ -84,6 +84,11 @@ export function setLogFile(filePath: string | undefined): void {
   logFilePath = filePath;
 }
 
+/** The resolved log file path, or undefined before `setLogFile` runs. */
+export function getLogFile(): string | undefined {
+  return logFilePath;
+}
+
 export async function withLogOutputSuppressed<T>(operation: () => Promise<T>): Promise<T> {
   suppressedLogDepth += 1;
   try {
