@@ -32,7 +32,7 @@ The environment that executes the agent command for a task. Groundcrew is cross-
 - **macOS** — uses `safehouse`: requires `safehouse` on `PATH`, starts `clearance`, and launches the model command through `safehouse-clearance` inside the host worktree.
 - **Linux / WSL** — uses `sbx` (cross-platform default): `sbx` must be on `PATH`.
 
-There is no `models.isolation` strategy, Docker Sandboxes runner, or remote runner. Legacy `.sbx` worktrees and persistent Docker Sandboxes state are no longer discovered or cleaned up by groundcrew; users remove old state manually with `sbx` if needed.
+There is no `models.isolation` strategy or remote runner. Legacy `.sbx` worktrees and persistent Docker Sandboxes state are no longer discovered or cleaned up by groundcrew; users remove old state manually with `sbx` if needed.
 
 ## Dispatcher
 
