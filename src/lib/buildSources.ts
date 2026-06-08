@@ -92,51 +92,13 @@ function isLinearKindSource(raw: unknown): boolean {
 }
 
 /**
- * True when `raw` is an explicitly-declared Linear source. Matches either a
- * `kind: "linear"` entry — regardless of any `name` override — or any entry
- * whose resolved runtime name (explicit `name`, else `kind`) is "linear".
- * The latter catches a non-Linear adapter the user named "linear", which
- * would otherwise collide with the implicit Linear source.
- *
- * Used to suppress the synthesized implicit Linear source so a renamed Linear
- * entry like `{ kind: "linear", name: "custom" }` doesn't spawn a duplicate
- * adapter pointed at the same viewer. Returns false for malformed entries
- * (no `kind`/`name`) — those get rejected by the per-adapter Zod schema
- * downstream.
- */
-function isExplicitLinearSource(raw: unknown): boolean {
-  const { kind, name } = sourceFields(raw);
-  return kind === "linear" || (name ?? kind) === "linear";
-}
-
-/**
- * Build the runtime source list from a ResolvedConfig: synthesizes the
- * implicit Linear source (Linear is always active under the post-#110
- * model — viewer + agent-* label filtering happens at the GraphQL layer)
- * and appends any user-declared `sources`. The implicit source is omitted
- * when the user already declared a Linear source — by `kind: "linear"`, or by
- * a surviving (non-disabled) source whose runtime name is "linear" — so they
- * can override its `name` / construction without spawning a duplicate adapter.
- *
- * Users opt out of Linear entirely with the sentinel
- * `{ kind: "linear", enabled: false }`: it still counts as an explicit Linear
- * declaration (so the implicit source is suppressed) and is itself filtered
- * out (so no Linear adapter is constructed and no API key is required). Any
- * other source with `enabled: false` is likewise dropped from the result.
+ * Build the runtime source list from a ResolvedConfig: returns the enabled
+ * entries from `config.sources`. Any source with `enabled: false` is dropped.
+ * Returns an empty array when no sources are configured — callers are
+ * responsible for detecting that state and guiding the user.
  */
 export function sourcesFromConfig(config: ResolvedConfig): readonly unknown[] {
-  const kept = config.sources.filter((source) => !isSourceDisabled(source));
-  // A `kind: "linear"` entry suppresses the implicit source even when it is the
-  // disabled opt-out sentinel — it's removed from `kept` above, leaving Linear
-  // off entirely. A source that's Linear only by *name* (e.g. a shell source
-  // named "linear") suppresses the implicit source only while it survives the
-  // filter, so disabling such an entry doesn't silently drop Linear.
-  const hasExplicitLinear =
-    config.sources.some(isLinearKindSource) || kept.some(isExplicitLinearSource);
-  if (hasExplicitLinear) {
-    return kept;
-  }
-  return [{ kind: "linear" }, ...kept];
+  return config.sources.filter((source) => !isSourceDisabled(source));
 }
 
 /**

@@ -538,10 +538,8 @@ type BoardFetchResult =
 
 /**
  * Single board fetch used by both the slot count header and the
- * Queue/Blocked sections. `sourcesFromConfig` prepends an implicit Linear
- * source when none are configured, so we always attempt; failures
- * (e.g., missing API key) are captured and rendered later as
- * `unavailable: ...` in the Queue section.
+ * Queue/Blocked sections. Failures (e.g., missing API key) are captured
+ * and rendered later as `unavailable: ...` in the Queue section.
  */
 async function fetchBoardForStatus(config: ResolvedConfig): Promise<BoardFetchResult> {
   try {

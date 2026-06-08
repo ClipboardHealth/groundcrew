@@ -296,9 +296,11 @@ function writeInitGuidance(destination: string, options: InitConfigOptions): voi
     writeOutput("  - Set workspace.projectDir and workspace.knownRepositories");
   }
   writeCloneGuidance(options);
-  writeOutput("  - If using Linear, export your API key:");
-  writeOutput('      export GROUNDCREW_LINEAR_API_KEY="lin_api_..."');
-  writeOutput("  - In Linear, assign tasks to yourself and add an agent-* label to opt them in");
+  writeOutput("  - Add a task source to your config (required):");
+  writeOutput("      # Zero credentials — uses a local todo.txt file:");
+  writeOutput('      sources: [{ kind: "todo-txt" }]');
+  writeOutput("      # Or use Linear (requires GROUNDCREW_LINEAR_API_KEY):");
+  writeOutput('      sources: [{ kind: "linear" }]');
   writeOutput("  - Validate and start:");
   writeOutput("      crew doctor");
   writeOutput("      crew run --watch");
