@@ -2,7 +2,12 @@ import { z } from "zod";
 
 import { deleteEnvironmentVariable, setEnvironmentVariable } from "../testHelpers/env.ts";
 import type { AdapterContext, AdapterDefinition } from "./adapterDefinition.ts";
-import { buildSources, buildSourcesWith, sourcesFromConfig } from "./buildSources.ts";
+import {
+  buildSources,
+  buildSourcesWith,
+  isLinearEnabled,
+  sourcesFromConfig,
+} from "./buildSources.ts";
 import type { ResolvedConfig } from "./config.ts";
 import type { MarkInReviewResult, TaskSource } from "./taskSource.ts";
 import { readEnvironmentVariable } from "./util.ts";
@@ -330,5 +335,46 @@ describe(sourcesFromConfig, () => {
     } as unknown as ResolvedConfig;
 
     expect(sourcesFromConfig(config)).toStrictEqual([{ kind: "linear" }]);
+  });
+});
+
+describe(isLinearEnabled, () => {
+  it("is true for the implicit Linear source when no sources are declared", () => {
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- isLinearEnabled only reads sources; unused fields are irrelevant
+    const config = { sources: [] } as unknown as ResolvedConfig;
+
+    expect(isLinearEnabled(config)).toBe(true);
+  });
+
+  it("is false when Linear is opted out via { kind: 'linear', enabled: false }", () => {
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- isLinearEnabled only reads sources; unused fields are irrelevant
+    const config = {
+      sources: [
+        { kind: "linear", enabled: false },
+        { kind: "shell", name: "plans", command: ["./fetch.sh"] },
+      ],
+    } as unknown as ResolvedConfig;
+
+    expect(isLinearEnabled(config)).toBe(false);
+  });
+
+  it("is true for an explicitly declared, enabled Linear source", () => {
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- isLinearEnabled only reads sources; unused fields are irrelevant
+    const config = {
+      sources: [{ kind: "linear", name: "custom-linear" }],
+    } as unknown as ResolvedConfig;
+
+    expect(isLinearEnabled(config)).toBe(true);
+  });
+
+  it("is false when a shell source merely named 'linear' is the only source", () => {
+    // A source that is Linear only by *name* is not a real Linear adapter, so
+    // Linear is not enabled even though it occupies the Linear slot.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- isLinearEnabled only reads sources; unused fields are irrelevant
+    const config = {
+      sources: [{ kind: "shell", name: "linear", command: ["./fetch.sh"] }],
+    } as unknown as ResolvedConfig;
+
+    expect(isLinearEnabled(config)).toBe(false);
   });
 });

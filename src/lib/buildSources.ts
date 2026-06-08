@@ -138,3 +138,14 @@ export function sourcesFromConfig(config: ResolvedConfig): readonly unknown[] {
   }
   return [{ kind: "linear" }, ...kept];
 }
+
+/**
+ * True when the resolved config keeps Linear active — i.e. the user has not
+ * opted out with `{ kind: "linear", enabled: false }`. Callers use this to skip
+ * Linear API calls (and the missing-API-key error they raise) when Linear is
+ * off. Derived from `sourcesFromConfig` so it honors both the explicit opt-out
+ * sentinel and the implicit-source synthesis.
+ */
+export function isLinearEnabled(config: ResolvedConfig): boolean {
+  return sourcesFromConfig(config).some(isLinearKindSource);
+}

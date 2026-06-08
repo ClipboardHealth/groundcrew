@@ -1,5 +1,6 @@
 import { fetchResolvedIssue } from "../lib/adapters/linear/fetch.ts";
 import { getLinearClient } from "../lib/adapters/linear/client.ts";
+import { isLinearEnabled } from "../lib/buildSources.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { openAgentWorkspace, prepareAgentLaunch } from "../lib/agentLaunch.ts";
 import { buildLaunchCommand } from "../lib/launchCommand.ts";
@@ -74,11 +75,15 @@ async function contextFromLinear(
 }
 
 async function contextFromState(
+  config: ResolvedConfig,
   task: string,
   state: RunState,
   worktree: WorktreeEntry,
 ): Promise<ResumeContext> {
-  const details = await fetchTaskDetails(task);
+  // Skip the Linear lookup when Linear is disabled — otherwise the
+  // missing-API-key error logs noisily even though resume only needs it to
+  // enrich the prompt title/description (which falls back to the task id).
+  const details = isLinearEnabled(config) ? await fetchTaskDetails(task) : undefined;
   return {
     task,
     repository: state.repository,
@@ -102,7 +107,13 @@ async function buildResumeContext(config: ResolvedConfig, task: string): Promise
     throw new Error(`No worktree found for ${task}; cannot resume.`);
   }
   if (state !== undefined) {
-    return await contextFromState(task, state, worktree);
+    return await contextFromState(config, task, state, worktree);
+  }
+  // The cold-resume path resolves repository + model from Linear alone, so it
+  // can't proceed when Linear is disabled. Fail with a clear reason instead of
+  // the cryptic missing-API-key error getLinearClient() would otherwise raise.
+  if (!isLinearEnabled(config)) {
+    throw new Error(`Cannot resume ${task}: no run state recorded and Linear is disabled.`);
   }
   return await contextFromLinear(config, task, worktree);
 }

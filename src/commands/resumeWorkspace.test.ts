@@ -276,6 +276,21 @@ describe(resumeWorkspace, () => {
     );
   });
 
+  it("skips the Linear lookup during state resume when Linear is disabled", async () => {
+    const noLinearConfig: ResolvedConfig = {
+      ...makeConfig(),
+      sources: [{ kind: "linear", enabled: false }],
+    };
+
+    await resumeWorkspace(noLinearConfig, { task: "team-1" });
+
+    expect(getLinearClientMock).not.toHaveBeenCalled();
+    expect(writeFileMock).toHaveBeenCalledWith(
+      "/tmp/groundcrew-resume-team-1-x/prompt.txt",
+      expect.stringContaining("task team-1 (TEAM-1)"),
+    );
+  });
+
   it("renders empty task details and no previous reason when state has neither", async () => {
     readRunStateMock.mockReturnValue(makeRunStateWithoutReason());
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- resume tests stub only the issue lookup surface.
@@ -316,6 +331,19 @@ describe(resumeWorkspace, () => {
       config,
       expect.objectContaining({ name: "team-1" }),
     );
+  });
+
+  it("rejects with a clear error when state is missing and Linear is disabled", async () => {
+    readRunStateMock.mockReset();
+    const noLinearConfig: ResolvedConfig = {
+      ...makeConfig(),
+      sources: [{ kind: "linear", enabled: false }],
+    };
+
+    await expect(resumeWorkspace(noLinearConfig, { task: "team-1" })).rejects.toThrow(
+      /no run state recorded and Linear is disabled/,
+    );
+    expect(getLinearClientMock).not.toHaveBeenCalled();
   });
 
   it("stages neutral prepare + agent srt settings and wraps the resumed agent under srt", async () => {
