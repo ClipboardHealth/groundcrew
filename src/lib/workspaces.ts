@@ -50,7 +50,7 @@ export function resolveWorkspaceKind(arguments_: ResolveArguments): WorkspaceRes
   const { config, host } = arguments_;
   const requested = config.workspaceKind;
 
-  if (requested === "cmux" || requested === "tmux") {
+  if (requested !== "auto") {
     failIfBinaryUnavailable(requested, host);
     return { requested, resolved: requested, reason: `workspaceKind set to ${requested}` };
   }
