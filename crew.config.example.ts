@@ -122,9 +122,11 @@ export default {
   // },
   //
   // // Terminal session manager. "auto" picks cmux when on PATH, else tmux.
-  // // Set explicitly to "cmux" or "tmux" to fail loudly when the chosen
-  // // backend is missing. tmux windows live in a dedicated `groundcrew`
-  // // session and lose status-pill painting (cmux-only feature).
+  // // Set explicitly to "cmux", "tmux", or "zellij" to fail loudly when the
+  // // chosen backend is missing. tmux windows / zellij tabs live in a
+  // // dedicated `groundcrew` session and lose status-pill painting (a
+  // // cmux-only feature). "zellij" (Linux/WSL) gives native mouse support and
+  // // one named tab per ticket; attach with `zellij attach groundcrew`.
   // workspaceKind: "auto",
   //
   // logging: {
