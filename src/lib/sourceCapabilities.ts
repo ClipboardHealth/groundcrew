@@ -55,6 +55,16 @@ function shellCapabilities(raw: unknown): SourceCapabilities {
   };
 }
 
+const TODO_TXT_CAPABILITIES: SourceCapabilities = {
+  verify: true,
+  listTasks: true,
+  getTask: true,
+  createTask: false,
+  markInProgress: true,
+  markInReview: true,
+  markDone: true,
+};
+
 export function summarizeSource(raw: unknown): SourceSummary {
   const { kind } = kindShape.parse(raw);
   const { name } = nameShape.parse(raw);
@@ -65,6 +75,8 @@ export function summarizeSource(raw: unknown): SourceSummary {
     capabilities = LINEAR_CAPABILITIES;
   } else if (kind === "shell") {
     capabilities = shellCapabilities(raw);
+  } else if (kind === "todo-txt") {
+    capabilities = TODO_TXT_CAPABILITIES;
   } else {
     capabilities = UNKNOWN_KIND_CAPABILITIES;
   }

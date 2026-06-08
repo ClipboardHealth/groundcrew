@@ -121,11 +121,12 @@ describe(listAdapterDirectories, () => {
 });
 
 describe("adapterRegistry production IIFE", () => {
-  it("loads the built-in linear and shell adapters from src/lib/adapters/", async () => {
+  it("loads the built-in adapters from src/lib/adapters/", async () => {
     const registry = await adapterRegistry;
-    expect(Object.keys(registry).toSorted()).toStrictEqual(["linear", "shell"]);
+    expect(Object.keys(registry).toSorted()).toStrictEqual(["linear", "shell", "todo-txt"]);
     expect(registry["linear"]?.kind).toBe("linear");
     expect(registry["shell"]?.kind).toBe("shell");
+    expect(registry["todo-txt"]?.kind).toBe("todo-txt");
   });
 
   it("each loaded adapter exposes a Zod configSchema and a create function", async () => {

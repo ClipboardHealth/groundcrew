@@ -173,6 +173,25 @@ describe("crew source list", () => {
     expect(output).toContain('"markDone": false');
   });
 
+  it("shows todo-txt source with full capabilities", async () => {
+    sourcesFromConfigMock.mockReturnValue([
+      { kind: "todo-txt", name: "todo", todoPath: "todo.txt", tasksDir: ".tasks", idPrefix: "GC" },
+    ]);
+    const log = captureConsoleLog();
+    try {
+      await sourceCli(["list"]);
+    } finally {
+      log.restore();
+    }
+
+    const lines = log.output().split("\n");
+    const [, dataRow] = lines;
+    expect(dataRow).toContain("todo");
+    expect(dataRow).toContain("todo-txt");
+    // verify=yes, listTasks=yes, getTask=yes, create=no, writeback=yes
+    expect(dataRow).toMatch(/yes\s+yes\s+yes\s+no\s+yes/);
+  });
+
   it("shows an unknown adapter kind with fallback capabilities (listTasks only)", async () => {
     sourcesFromConfigMock.mockReturnValue([{ kind: "custom-plugin", name: "my-plugin" }]);
     const log = captureConsoleLog();
