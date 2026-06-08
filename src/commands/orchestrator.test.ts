@@ -5,7 +5,7 @@ import path from "node:path";
 import type { LinearClient } from "@linear/sdk";
 
 import type * as configModule from "../lib/config.ts";
-import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
+import { loadConfigWithSource, type ResolvedConfig } from "../lib/config.ts";
 import { findPullRequestsForBranch } from "../lib/pullRequests.ts";
 import { getUsageByModel } from "../lib/usage.ts";
 import type * as utilModule from "../lib/util.ts";
@@ -20,7 +20,7 @@ import { setupWorkspace } from "./setupWorkspace.ts";
 
 vi.mock(import("../lib/config.ts"), async (importOriginal) => {
   const actual = await importOriginal<typeof configModule>();
-  return { ...actual, loadConfig: vi.fn<typeof loadConfig>() };
+  return { ...actual, loadConfigWithSource: vi.fn<typeof loadConfigWithSource>() };
 });
 vi.mock(import("../lib/adapters/linear/client.ts"), async (importOriginal) => {
   const actual = await importOriginal();
@@ -79,7 +79,7 @@ type RawRequestMock = ReturnType<
   typeof vi.fn<(query: string, variables?: Record<string, unknown>) => Promise<unknown>>
 >;
 
-const loadConfigMock = vi.mocked(loadConfig);
+const loadConfigMock = vi.mocked(loadConfigWithSource);
 const linearClientMock = vi.mocked(getLinearClient);
 const sleepMock = vi.mocked(sleep);
 const listMock = vi.mocked(worktrees.list);
@@ -92,7 +92,7 @@ const findPullRequestsMock = vi.mocked(findPullRequestsForBranch);
 
 function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
   return {
-    sources: overrides.sources ?? [],
+    sources: overrides.sources ?? [{ kind: "linear" }],
     defaults: { hooks: {} },
     git: { remote: "origin", defaultBranch: "main", ...overrides.git },
     workspace: {
@@ -119,6 +119,13 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
     local: { runner: "auto", ...overrides.local },
     logging: { file: "/tmp/groundcrew-test.log", ...overrides.logging },
   };
+}
+
+function makeLoadedConfig(config: ResolvedConfig = makeConfig()): {
+  config: ResolvedConfig;
+  source: { kind: "xdg"; filepath: string };
+} {
+  return { config, source: { kind: "xdg", filepath: "/tmp/crew.config.ts" } };
 }
 
 interface IssueNodeStub {
@@ -332,7 +339,7 @@ describe(orchestrate, () => {
 
   beforeEach(() => {
     consoleLog = captureConsoleLog();
-    loadConfigMock.mockResolvedValue(makeConfig());
+    loadConfigMock.mockResolvedValue(makeLoadedConfig());
     listMock.mockReturnValue([]);
     teardownMock.mockResolvedValue(emptyTeardownResult());
     sleepMock.mockResolvedValue();
@@ -575,15 +582,17 @@ describe(orchestrate, () => {
     // default to codex. With no usage data both score 0; the tiebreak
     // should hand the slot to codex (the default), not claude.
     loadConfigMock.mockResolvedValue(
-      makeConfig({
-        models: {
-          default: "codex",
-          definitions: {
-            claude: { cmd: "claude", color: "#fff" },
-            codex: { cmd: "codex", color: "#000" },
+      makeLoadedConfig(
+        makeConfig({
+          models: {
+            default: "codex",
+            definitions: {
+              claude: { cmd: "claude", color: "#fff" },
+              codex: { cmd: "codex", color: "#000" },
+            },
           },
-        },
-      }),
+        }),
+      ),
     );
     const client = makeClient({
       pages: [
@@ -744,13 +753,15 @@ describe(orchestrate, () => {
 
   it("respects maximumInProgress and reports capacity", async () => {
     loadConfigMock.mockResolvedValue(
-      makeConfig({
-        orchestrator: {
-          maximumInProgress: 1,
-          pollIntervalMilliseconds: 1,
-          sessionLimitPercentage: 85,
-        },
-      }),
+      makeLoadedConfig(
+        makeConfig({
+          orchestrator: {
+            maximumInProgress: 1,
+            pollIntervalMilliseconds: 1,
+            sessionLimitPercentage: 85,
+          },
+        }),
+      ),
     );
     const client = makeClient({
       pages: [
@@ -983,13 +994,15 @@ describe(orchestrate, () => {
 
   it("does not let blocked Todo tasks consume available slots", async () => {
     loadConfigMock.mockResolvedValue(
-      makeConfig({
-        orchestrator: {
-          maximumInProgress: 1,
-          pollIntervalMilliseconds: 1,
-          sessionLimitPercentage: 85,
-        },
-      }),
+      makeLoadedConfig(
+        makeConfig({
+          orchestrator: {
+            maximumInProgress: 1,
+            pollIntervalMilliseconds: 1,
+            sessionLimitPercentage: 85,
+          },
+        }),
+      ),
     );
     const client = makeClient({
       pages: [
@@ -1273,15 +1286,17 @@ JSON
       chmodSync(fetchScript, 0o755);
       chmodSync(reviewScript, 0o755);
       loadConfigMock.mockResolvedValue(
-        makeConfig({
-          sources: [
-            {
-              kind: "shell",
-              name: "test-source",
-              commands: { fetch: fetchScript, markInReview: reviewScript },
-            },
-          ],
-        }),
+        makeLoadedConfig(
+          makeConfig({
+            sources: [
+              {
+                kind: "shell",
+                name: "test-source",
+                commands: { fetch: fetchScript, markInReview: reviewScript },
+              },
+            ],
+          }),
+        ),
       );
       listMock.mockReturnValue([hostEntryFor("repo-a", "x-1")]);
       workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["x-1"]) });
@@ -1608,13 +1623,15 @@ JSON
 
   it("stops scanning Todo issues once eligible count reaches the slot cap", async () => {
     loadConfigMock.mockResolvedValue(
-      makeConfig({
-        orchestrator: {
-          maximumInProgress: 1,
-          pollIntervalMilliseconds: 1,
-          sessionLimitPercentage: 85,
-        },
-      }),
+      makeLoadedConfig(
+        makeConfig({
+          orchestrator: {
+            maximumInProgress: 1,
+            pollIntervalMilliseconds: 1,
+            sessionLimitPercentage: 85,
+          },
+        }),
+      ),
     );
     const client = makeClient({
       pages: [
@@ -1839,15 +1856,17 @@ JSON
       chmodSync(verifyScript, 0o755);
 
       loadConfigMock.mockResolvedValue(
-        makeConfig({
-          sources: [
-            {
-              kind: "shell",
-              name: "test-source",
-              commands: { verify: verifyScript, fetch: "echo '[]'" },
-            },
-          ],
-        }),
+        makeLoadedConfig(
+          makeConfig({
+            sources: [
+              {
+                kind: "shell",
+                name: "test-source",
+                commands: { verify: verifyScript, fetch: "echo '[]'" },
+              },
+            ],
+          }),
+        ),
       );
       const client = makeClient({ pages: [[]] });
       mockLinearClient(client);

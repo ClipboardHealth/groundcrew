@@ -227,7 +227,7 @@ describe("crew init", () => {
       expect(output).toContain('PROJECT_DIR="$HOME/dev"');
       expect(output).toContain('mkdir -p "$PROJECT_DIR/OWNER"');
       expect(output).toContain('git clone git@github.com:OWNER/REPO.git "$PROJECT_DIR/OWNER/REPO"');
-      expect(output).toContain('export GROUNDCREW_LINEAR_API_KEY="lin_api_..."');
+      expect(output).toContain('sources: [{ kind: "linear" }]');
       expect(output).toContain("crew doctor");
       expect(output).toContain("crew run --watch");
     });

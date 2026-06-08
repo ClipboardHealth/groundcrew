@@ -115,12 +115,11 @@ describe(buildSources, () => {
 // ─────────────────────────────────────────────────────────────────────────
 
 function makeMixedConfig(): ResolvedConfig {
-  // Minimal ResolvedConfig with an explicit shell source. The Linear adapter
-  // is synthesized implicitly by sourcesFromConfig under the post-#110 model
-  // (Linear is always-on, filtered server-side by viewer + agent-* label).
+  // Minimal ResolvedConfig with explicit Linear and shell sources.
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- test fixture; the linear adapter only reads workspace.knownRepositories
   return {
     sources: [
+      { kind: "linear" },
       {
         kind: "shell",
         name: "shell-test",

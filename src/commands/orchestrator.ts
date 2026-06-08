@@ -94,10 +94,10 @@ export async function orchestrate(options: OrchestratorOptions): Promise<void> {
         `  Path: ${configSource.filepath}`,
         "",
         "  # Zero credentials — uses a local todo.txt file:",
-        "  sources: [{ kind: \"todo-txt\" }]",
+        '  sources: [{ kind: "todo-txt" }]',
         "",
         "  # Or use Linear (requires GROUNDCREW_LINEAR_API_KEY):",
-        "  sources: [{ kind: \"linear\" }]",
+        '  sources: [{ kind: "linear" }]',
       ].join("\n"),
     );
     process.exitCode = 1;
