@@ -209,6 +209,7 @@ describe("crew source list", () => {
 
 describe("crew source verify", () => {
   beforeEach(() => {
+    process.exitCode = undefined;
     loadConfigMock.mockResolvedValue(makeConfig());
     sourcesFromConfigMock.mockReturnValue([LINEAR_RAW]);
   });
