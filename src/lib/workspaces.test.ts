@@ -1,3 +1,7 @@
+import { rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
 import { deleteEnvironmentVariable, setEnvironmentVariable } from "../testHelpers/env.ts";
 import { probeError } from "../testHelpers/workspaceProbe.ts";
 import type { RunCommandOptions } from "./commandRunner.ts";
@@ -1056,5 +1060,165 @@ describe(resolveWorkspaceKind, () => {
         host: makeHost({ hasCmux: false, hasTmux: false }),
       });
     }).toThrow(/neither cmux nor tmux is on PATH/);
+  });
+
+  it("returns zellij when explicitly set and zellij is on PATH", () => {
+    const result = resolveWorkspaceKind({
+      config: makeConfig("zellij"),
+      host: makeHost({ hasCmux: true, hasTmux: true, hasZellij: true }),
+    });
+    expect(result.resolved).toBe("zellij");
+    expect(result.requested).toBe("zellij");
+  });
+
+  it("throws when zellij is set but the binary is missing", () => {
+    expect(() => {
+      resolveWorkspaceKind({
+        config: makeConfig("zellij"),
+        host: makeHost({ hasZellij: false }),
+      });
+    }).toThrow(/zellij binary is not on PATH/);
+  });
+});
+
+const ZELLIJ_TAB_MAP = path.join(tmpdir(), "groundcrew-zellij-test-tabs.json");
+
+function makeZellijHost(): HostCapabilities {
+  return makeHost({ hasCmux: false, hasTmux: false, hasZellij: true });
+}
+
+// Module-level mock routers so the per-call branching lives outside test bodies
+// (vitest/no-conditional-in-test).
+function whenArg(needle: string, output: string): RunCommandMock {
+  return (_command, arguments_) => (arguments_.includes(needle) ? output : "");
+}
+function whenArgThrows(needle: string, message: string): RunCommandMock {
+  return (_command, arguments_) => {
+    if (arguments_.includes(needle)) {
+      throw new Error(message);
+    }
+    return "";
+  };
+}
+
+describe("workspaces.open (zellij)", () => {
+  beforeEach(() => {
+    commonBeforeEach();
+    detectHostMock.mockResolvedValue(makeZellijHost());
+    setEnvironmentVariable("GROUNDCREW_ZELLIJ_TAB_MAP", ZELLIJ_TAB_MAP);
+    rmSync(ZELLIJ_TAB_MAP, { force: true });
+  });
+  afterEach(() => {
+    deleteEnvironmentVariable("GROUNDCREW_ZELLIJ_TAB_MAP");
+    rmSync(ZELLIJ_TAB_MAP, { force: true });
+    commonAfterEach();
+  });
+
+  it("ensures the session exists, then opens a named tab in the worktree", async () => {
+    await workspaces.open(makeConfig("zellij"), {
+      name: "team-1",
+      cwd: "/work/repo-a-team-1",
+      command: "exec claude",
+    });
+
+    expect(runMock).toHaveBeenCalledWith("zellij", ["list-sessions", "-s"]);
+    expect(runMock).toHaveBeenCalledWith(
+      "zellij",
+      expect.arrayContaining(["attach", "--create-background", "groundcrew"]),
+    );
+    expect(runMock).toHaveBeenCalledWith(
+      "zellij",
+      expect.arrayContaining([
+        "--session",
+        "groundcrew",
+        "action",
+        "new-tab",
+        "--name",
+        "team-1",
+        "--cwd",
+        "/work/repo-a-team-1",
+      ]),
+    );
+  });
+
+  it("skips session creation when the session already exists", async () => {
+    runMock.mockImplementation(whenArg("list-sessions", "groundcrew\nother"));
+
+    await workspaces.open(makeConfig("zellij"), { name: "team-1", cwd: "/cwd", command: "x" });
+
+    expect(runMock).not.toHaveBeenCalledWith(
+      "zellij",
+      expect.arrayContaining(["attach", "--create-background", "groundcrew"]),
+    );
+    expect(runMock).toHaveBeenCalledWith("zellij", expect.arrayContaining(["new-tab"]));
+  });
+});
+
+describe("workspaces.probe (zellij)", () => {
+  beforeEach(() => {
+    commonBeforeEach();
+    detectHostMock.mockResolvedValue(makeZellijHost());
+  });
+  afterEach(commonAfterEach);
+
+  it("treats an absent session as no workspaces", async () => {
+    runMock.mockImplementation(whenArgThrows("query-tab-names", "There is no active session!"));
+
+    await expect(workspaces.probe(makeConfig("zellij"))).resolves.toStrictEqual({
+      kind: "ok",
+      names: new Set(),
+    });
+  });
+
+  it("lists ticket tabs and drops the main placeholder", async () => {
+    runMock.mockImplementation(whenArg("query-tab-names", "main\ndevop-1\ndevop-2"));
+
+    await expect(workspaces.probe(makeConfig("zellij"))).resolves.toStrictEqual({
+      kind: "ok",
+      names: new Set(["devop-1", "devop-2"]),
+    });
+  });
+
+  it("reports unavailable when the query fails for an unknown reason", async () => {
+    runMock.mockImplementation(whenArgThrows("query-tab-names", "zellij exploded"));
+
+    const probe = await workspaces.probe(makeConfig("zellij"));
+    expect(probe.kind).toBe("unavailable");
+  });
+});
+
+describe("workspaces.close (zellij)", () => {
+  beforeEach(() => {
+    commonBeforeEach();
+    detectHostMock.mockResolvedValue(makeZellijHost());
+    setEnvironmentVariable("GROUNDCREW_ZELLIJ_TAB_MAP", ZELLIJ_TAB_MAP);
+    rmSync(ZELLIJ_TAB_MAP, { force: true });
+  });
+  afterEach(() => {
+    deleteEnvironmentVariable("GROUNDCREW_ZELLIJ_TAB_MAP");
+    rmSync(ZELLIJ_TAB_MAP, { force: true });
+    commonAfterEach();
+  });
+
+  it("closes the tab by the id captured at open", async () => {
+    runMock.mockImplementation(whenArg("new-tab", "5"));
+
+    await workspaces.open(makeConfig("zellij"), { name: "team-1", cwd: "/cwd", command: "x" });
+    const result = await workspaces.close(makeConfig("zellij"), "team-1");
+
+    expect(result).toStrictEqual({ kind: "closed" });
+    expect(runMock).toHaveBeenCalledWith("zellij", [
+      "--session",
+      "groundcrew",
+      "action",
+      "close-tab-by-id",
+      "5",
+    ]);
+  });
+
+  it("returns missing when no tab id was tracked", async () => {
+    await expect(workspaces.close(makeConfig("zellij"), "never-opened")).resolves.toStrictEqual({
+      kind: "missing",
+    });
   });
 });

@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, mkdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { styleText } from "node:util";
 
@@ -78,15 +78,35 @@ export function styleDim(text: string): string {
 // so tests don't write to the host filesystem; the CLI arms it after
 // loadConfig() resolves `logging.file`.
 let logFilePath: string | undefined;
+let logRunStartByte = 0;
 let suppressedLogDepth = 0;
 
 export function setLogFile(filePath: string | undefined): void {
   logFilePath = filePath;
+  // Snapshot the file size at process start so consumers can show only the
+  // current run's output (the log is append-mode and shared across runs).
+  logRunStartByte = 0;
+  if (filePath !== undefined) {
+    try {
+      logRunStartByte = statSync(filePath).size;
+    } catch {
+      logRunStartByte = 0;
+    }
+  }
 }
 
 /** The resolved log file path, or undefined before `setLogFile` runs. */
 export function getLogFile(): string | undefined {
   return logFilePath;
+}
+
+/**
+ * Byte offset in the log file where the current run's output begins (the
+ * file size when `setLogFile` ran). `tail -c +N` from this offset shows only
+ * this run.
+ */
+export function getLogRunStartByte(): number {
+  return logRunStartByte;
 }
 
 export async function withLogOutputSuppressed<T>(operation: () => Promise<T>): Promise<T> {

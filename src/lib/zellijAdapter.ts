@@ -27,7 +27,13 @@ import {
   runWorkspaceCommand,
   type Workspace,
 } from "./workspaceAdapter.ts";
-import { debug, errorMessage, getLogFile } from "./util.ts";
+import {
+  debug,
+  errorMessage,
+  getLogFile,
+  getLogRunStartByte,
+  readEnvironmentVariable,
+} from "./util.ts";
 
 const ZELLIJ_SESSION = "groundcrew";
 // The placeholder first tab; filtered out of `list()` like tmux's idle window.
@@ -35,7 +41,13 @@ const ZELLIJ_MAIN_TAB = "main";
 
 // zellij sessions are per-user and die on reboot, matching tmpdir lifetime —
 // so a tmpdir-backed ticket -> stable-tab-id map stays in sync with reality.
-const TAB_ID_MAP_PATH = path.join(tmpdir(), "groundcrew-zellij-tabs.json");
+// Overridable via env so tests can isolate it.
+function tabIdMapPath(): string {
+  return (
+    readEnvironmentVariable("GROUNDCREW_ZELLIJ_TAB_MAP") ??
+    path.join(tmpdir(), "groundcrew-zellij-tabs.json")
+  );
+}
 
 export const zellijAdapter: Adapter = {
   async open(spec, signal) {
@@ -214,11 +226,14 @@ function shSingleQuote(value: string): string {
 function stageSessionLayout(): string {
   const file = path.join(staging(), "session.kdl");
   const logFile = getLogFile();
+  // `tail -c +N` shows only the current run (the log is shared/append-mode);
+  // N is the byte offset captured at process start, +1 to start just after it.
+  const fromByte = getLogRunStartByte() + 1;
   const mainPane =
     logFile === undefined
       ? "        pane\n"
       : `        pane command="sh" {
-            args "-c" "${kdlString(`tail -n 200 -F ${shSingleQuote(logFile)} || exec \${SHELL:-sh}`)}"
+            args "-c" "${kdlString(`tail -c +${fromByte} -F ${shSingleQuote(logFile)} || exec \${SHELL:-sh}`)}"
         }
 `;
   writeFileSync(
@@ -263,7 +278,7 @@ function stageTabLayout(ticket: string, command: string): string {
 function readTabIdMap(): Record<string, number> {
   try {
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- we wrote this file ourselves
-    const parsed = JSON.parse(readFileSync(TAB_ID_MAP_PATH, "utf8")) as Record<string, number>;
+    const parsed = JSON.parse(readFileSync(tabIdMapPath(), "utf8")) as Record<string, number>;
     return typeof parsed === "object" && parsed !== null ? parsed : {};
   } catch {
     return {};
@@ -272,7 +287,7 @@ function readTabIdMap(): Record<string, number> {
 
 function writeTabIdMap(map: Record<string, number>): void {
   try {
-    writeFileSync(TAB_ID_MAP_PATH, JSON.stringify(map));
+    writeFileSync(tabIdMapPath(), JSON.stringify(map));
   } catch (error) {
     debug(`zellij: failed to persist tab id map: ${errorMessage(error)}`);
   }
