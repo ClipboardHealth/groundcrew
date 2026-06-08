@@ -187,7 +187,7 @@ export interface UpdateOptions {
   now?: Date;
 }
 
-async function withLock<T>(lockPath: string, fn: () => T | Promise<T>): Promise<T> {
+export async function withLock<T>(lockPath: string, fn: () => T | Promise<T>): Promise<T> {
   await acquireLock(lockPath);
   try {
     // return await is required here so the finally block runs while the lock is held

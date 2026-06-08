@@ -105,7 +105,8 @@ function toCanonicalParentSkip(skip: LinearParentSkip, sourceName: string): Cano
 function isLinearNotFoundError(error: unknown, naturalId: string): boolean {
   return (
     error instanceof Error &&
-    error.message === `Task ${naturalId.toUpperCase()} not found in Linear`
+    error.message.startsWith(`Task ${naturalId.toUpperCase()} `) &&
+    error.message.includes("not found")
   );
 }
 
@@ -217,11 +218,12 @@ export function createLinearTaskSource(
       }),
       repository: resolved.repository,
       model: resolved.model,
-      assignee: "Unassigned",
-      updatedAt: new Date().toISOString(),
-      blockers: [],
-      hasMoreBlockers: false,
+      assignee: resolved.assignee,
+      updatedAt: resolved.updatedAt,
+      blockers: resolved.blockers.map((b) => toCanonicalBlocker(b, sourceName, statusNames)),
+      hasMoreBlockers: resolved.hasMoreBlockers,
       url: resolved.url,
+      ...(resolved.priority === 0 ? {} : { priority: resolved.priority }),
       sourceRef,
     };
   }

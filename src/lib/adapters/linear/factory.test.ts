@@ -376,7 +376,12 @@ describe(createLinearTaskSource, () => {
       stateType: "unstarted",
       status: "Todo",
       statusId: "state-todo",
+      assignee: "Alice",
+      updatedAt: "2026-01-01T00:00:00Z",
+      blockers: [],
+      hasMoreBlockers: false,
       url: "https://linear.app/example/issue/TEAM-1",
+      priority: 0,
     });
     const source = createLinearTaskSource({ kind: "linear" }, {
       globalConfig: makeConfig(),
@@ -401,7 +406,12 @@ describe(createLinearTaskSource, () => {
       stateType: "unstarted",
       status: "Todo",
       statusId: "state-todo",
+      assignee: "Alice",
+      updatedAt: "2026-01-01T00:00:00Z",
+      blockers: [{ id: "team-2", title: "Blocking task", status: "Todo", stateType: "unstarted" }],
+      hasMoreBlockers: true,
       url: "https://linear.app/example/issue/TEAM-1",
+      priority: 2,
     });
     const source = createLinearTaskSource({ kind: "linear" }, {
       globalConfig: makeConfig(),
@@ -411,6 +421,18 @@ describe(createLinearTaskSource, () => {
 
     expect(issue?.id).toBe("linear:team-1");
     expect(issue?.description).toBe("Resolved description");
+    expect(issue?.assignee).toBe("Alice");
+    expect(issue?.updatedAt).toBe("2026-01-01T00:00:00Z");
+    expect(issue?.blockers).toStrictEqual([
+      {
+        id: "linear:team-2",
+        title: "Blocking task",
+        status: "todo",
+        nativeStatus: "Todo",
+      },
+    ]);
+    expect(issue?.hasMoreBlockers).toBe(true);
+    expect(issue?.priority).toBe(2);
   });
 
   it("returns null for missing Linear tasks through getTask() and undefined through resolveOne()", async () => {
@@ -432,6 +454,17 @@ describe(createLinearTaskSource, () => {
     } satisfies AdapterContext);
 
     await expect(source.getTask("team-1")).rejects.toThrow("Linear API: timeout");
+  });
+
+  it("does not treat every task-prefixed Linear lookup failure as missing", async () => {
+    vi.spyOn(boardSource, "fetchResolvedIssue").mockRejectedValue(
+      new Error("Task TEAM-1 lookup failed in Linear"),
+    );
+    const source = createLinearTaskSource({ kind: "linear" }, {
+      globalConfig: makeConfig(),
+    } satisfies AdapterContext);
+
+    await expect(source.getTask("team-1")).rejects.toThrow("lookup failed");
   });
 
   it("markInProgress() forwards uuid/teamId from sourceRef", async () => {

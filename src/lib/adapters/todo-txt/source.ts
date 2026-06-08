@@ -15,7 +15,7 @@ import { readEnvironmentVariable } from "../../util.ts";
 import { isActiveForFetch, normalizeToIssue, type TodoTxtSourceRef } from "./normalizer.ts";
 import { getMetadataFirst, parseAllLines } from "./parser.ts";
 import type { TodoTxtAdapterConfig } from "./schema.ts";
-import { copyPromptFile, updateTaskStatus, validateTodoFile } from "./writeback.ts";
+import { copyPromptFile, updateTaskStatus, validateTodoFile, withLock } from "./writeback.ts";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const RECURRENCE_RE = /^\+?\d+[dwmy]$/;
@@ -372,27 +372,29 @@ export function createTodoTxtTaskSource(
     },
 
     async createTask(input: CreateTaskInput): Promise<Issue> {
-      const { parsedAll } = readAndParseTodo(todoPath);
-      const id = input.id ?? nextGeneratedId(config, parsedAll);
-      assertCreateId(id);
-      assertNewId(id, parsedAll);
+      return await withLock(`${todoPath}.lock`, () => {
+        const { parsedAll } = readAndParseTodo(todoPath);
+        const id = input.id ?? nextGeneratedId(config, parsedAll);
+        assertCreateId(id);
+        assertNewId(id, parsedAll);
 
-      const promptPath = path.join(tasksDir, `${id}.md`);
-      const promptContent = promptContentFor(input);
-      const line = buildTodoLine(id, input);
+        const promptPath = path.join(tasksDir, `${id}.md`);
+        const promptContent = promptContentFor(input);
+        const line = buildTodoLine(id, input);
 
-      writePromptFile(promptPath, promptContent);
-      appendTodoLine(todoPath, line);
-      if (input.edit) {
-        openPromptEditor(promptPath);
-      }
+        writePromptFile(promptPath, promptContent);
+        appendTodoLine(todoPath, line);
+        if (input.edit) {
+          openPromptEditor(promptPath);
+        }
 
-      const task = getTask(id);
-      /* v8 ignore next 3 @preserve -- createTask just appended this id and getTask reads the same file */
-      if (task === null) {
-        throw new Error(`todo-txt: created task "${id}" could not be read back`);
-      }
-      return task;
+        const task = getTask(id);
+        /* v8 ignore next 3 @preserve -- createTask just appended this id and getTask reads the same file */
+        if (task === null) {
+          throw new Error(`todo-txt: created task "${id}" could not be read back`);
+        }
+        return task;
+      });
     },
 
     async fetch(): Promise<Issue[]> {

@@ -403,7 +403,12 @@ interface ResolvedIssue {
   stateType: string;
   status: string;
   statusId: string;
+  assignee: string;
+  updatedAt: string;
+  blockers: Blocker[];
+  hasMoreBlockers: boolean;
   url: string;
+  priority: number;
 }
 
 const ISSUE_LABEL_PAGE_SIZE = 50;
@@ -419,6 +424,8 @@ export interface RawLinearIssue {
   stateName: string;
   stateType: string;
   stateId: string;
+  assignee: string;
+  updatedAt: string;
   blockers: Blocker[];
   hasMoreBlockers: boolean;
   /**
@@ -430,6 +437,8 @@ export interface RawLinearIssue {
   hasChildren: boolean;
   /** Linear `Issue.url` — direct web link to the task. */
   url: string;
+  /** Linear priority: 1=Urgent, 2=High, 3=Medium, 4=Low, 0=No priority. */
+  priority: number;
 }
 
 export async function fetchBlockersForTask(arguments_: {
@@ -495,9 +504,12 @@ export async function fetchRawLinearIssue(arguments_: {
         id
         title
         description
+        updatedAt
         url
+        priority
         team { id }
         state { id name type }
+        assignee { name }
         children { nodes { id } }
         labels(first: ${ISSUE_LABEL_PAGE_SIZE}) {
           nodes { name }
@@ -523,9 +535,12 @@ export async function fetchRawLinearIssue(arguments_: {
       id: string;
       title: string;
       description?: string | null;
+      updatedAt: string;
       url: string;
+      priority: number;
       team?: { id: string } | null;
       state?: { id: string; name: string; type: string } | null;
+      assignee?: { name: string } | null;
       children?: { nodes: { id: string }[] } | null;
       labels: { nodes: { name: string }[] };
       inverseRelations?: {
@@ -550,10 +565,13 @@ export async function fetchRawLinearIssue(arguments_: {
     stateType: issue.state?.type ?? "",
     /* v8 ignore next @preserve -- ResolveIssue query selects state; null only if Linear genuinely returns a stateless task */
     stateId: issue.state?.id ?? "",
+    assignee: issue.assignee?.name ?? "Unassigned",
+    updatedAt: issue.updatedAt,
     blockers: blockersFromRelations(issue.inverseRelations?.nodes ?? []),
     hasMoreBlockers: issue.inverseRelations?.pageInfo.hasNextPage ?? false,
     hasChildren: (issue.children?.nodes.length ?? 0) > 0,
     url: issue.url,
+    priority: issue.priority,
   };
 }
 
@@ -648,7 +666,12 @@ export async function fetchResolvedIssue(arguments_: {
     stateType: raw.stateType,
     status: raw.stateName,
     statusId: raw.stateId,
+    assignee: raw.assignee,
+    updatedAt: raw.updatedAt,
+    blockers: raw.blockers,
+    hasMoreBlockers: raw.hasMoreBlockers,
     url: raw.url,
+    priority: raw.priority,
   };
 }
 
