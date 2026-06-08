@@ -359,6 +359,18 @@ describe(orchestrate, () => {
     vi.clearAllMocks();
   });
 
+  it("exits with code 1 and prints guidance when no sources are configured", async () => {
+    loadConfigMock.mockResolvedValue(makeLoadedConfig(makeConfig({ sources: [] })));
+
+    await orchestrate({ watch: false, dryRun: false });
+
+    expect(process.exitCode).toBe(1);
+    expect(consoleLog.output()).toContain("No task sources configured");
+    expect(consoleLog.output()).toContain("/tmp/crew.config.ts");
+    expect(consoleLog.output()).toContain('sources: [{ kind: "todo-txt" }]');
+    expect(consoleLog.output()).toContain('sources: [{ kind: "linear" }]');
+  });
+
   it("rejects when the Linear API key resolves to no viewer", async () => {
     const client = makeClient({ viewerFound: false });
     mockLinearClient(client);
