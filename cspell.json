@@ -115,6 +115,13 @@
     "vitest",
     "wordmark",
     "worktree",
-    "worktrees"
+    "worktrees",
+    "dwmy",
+    "recurrence",
+    "todopath",
+    "todotxt",
+    "nostatus",
+    "norec",
+    "nodone"
   ]
 }

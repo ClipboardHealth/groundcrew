@@ -7,6 +7,7 @@ import { cosmiconfig, type CosmiconfigResult, type Loader } from "cosmiconfig";
 
 import type { LinearAdapterConfig } from "./adapters/linear/schema.ts";
 import type { ShellAdapterConfig } from "./adapters/shell/schema.ts";
+import type { TodoTxtAdapterConfig } from "./adapters/todo-txt/schema.ts";
 import { debug, log, readEnvironmentVariable, setLogFile } from "./util.ts";
 import { xdgConfigPath, xdgStatePath } from "./xdg.ts";
 
@@ -20,7 +21,7 @@ export { BUILD_SECRET_NAMES } from "./buildSecrets.ts";
  * `ResolvedConfig.sources[]`. The runtime Zod validation lives in each
  * adapter's `schema.ts` and runs at `buildSources` time, not here.
  */
-export type SourceConfig = LinearAdapterConfig | ShellAdapterConfig;
+export type SourceConfig = LinearAdapterConfig | ShellAdapterConfig | TodoTxtAdapterConfig;
 
 export interface HookCommands {
   prepareWorktree?: string;
