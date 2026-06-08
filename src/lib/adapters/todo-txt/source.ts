@@ -90,10 +90,11 @@ export function createTodoTxtTaskSource(
   _context: AdapterContext,
 ): TaskSource {
   const sourceName = config.name;
+  const { todoPath, tasksDir } = config;
 
   function buildIssueList(): Issue[] {
-    const updatedAt = fileUpdatedAt(config.todoPath);
-    const { parsedAll } = readAndParseTodo(config.todoPath);
+    const updatedAt = fileUpdatedAt(todoPath);
+    const { parsedAll } = readAndParseTodo(todoPath);
     const issues: Issue[] = [];
 
     for (let i = 0; i < parsedAll.length; i++) {
@@ -109,8 +110,8 @@ export function createTodoTxtTaskSource(
         parsedIndex: i,
         parsedAll,
         sourceName,
-        todoPath: config.todoPath,
-        tasksDir: config.tasksDir,
+        todoPath,
+        tasksDir,
         defaultRepository: config.defaultRepository,
         updatedAt,
       });
@@ -126,7 +127,7 @@ export function createTodoTxtTaskSource(
     name: sourceName,
 
     async verify(): Promise<void> {
-      const errors = validateTodoFile(config.todoPath, config.tasksDir);
+      const errors = validateTodoFile(todoPath, tasksDir);
       if (errors.length > 0) {
         throw new Error(
           `todo-txt source "${sourceName}" verification failed:\n${errors.map((e) => `  - ${e}`).join("\n")}`,
@@ -140,8 +141,8 @@ export function createTodoTxtTaskSource(
 
     async resolveOne(naturalId: string): Promise<Issue | undefined> {
       const canonicalId = toCanonicalId(sourceName, naturalId);
-      const updatedAt = fileUpdatedAt(config.todoPath);
-      const { parsedAll } = readAndParseTodo(config.todoPath);
+      const updatedAt = fileUpdatedAt(todoPath);
+      const { parsedAll } = readAndParseTodo(todoPath);
 
       const index = parsedAll.findIndex(
         (p) =>
@@ -155,8 +156,8 @@ export function createTodoTxtTaskSource(
         parsedIndex: index,
         parsedAll,
         sourceName,
-        todoPath: config.todoPath,
-        tasksDir: config.tasksDir,
+        todoPath,
+        tasksDir,
         defaultRepository: config.defaultRepository,
         updatedAt,
       });
@@ -165,20 +166,20 @@ export function createTodoTxtTaskSource(
     async markInProgress(issue: Issue): Promise<void> {
       // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- TodoTxtTaskSource always writes TodoTxtSourceRef
       const ref = issue.sourceRef as TodoTxtSourceRef;
-      await updateTaskStatus({ todoPath: config.todoPath, ref }, "in-progress");
+      await updateTaskStatus({ todoPath, ref }, "in-progress");
     },
 
     async markInReview(issue: Issue): Promise<MarkInReviewResult> {
       // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- TodoTxtTaskSource always writes TodoTxtSourceRef
       const ref = issue.sourceRef as TodoTxtSourceRef;
-      await updateTaskStatus({ todoPath: config.todoPath, ref }, "in-review");
+      await updateTaskStatus({ todoPath, ref }, "in-review");
       return { outcome: "applied" };
     },
 
     async markDone(issue: Issue): Promise<MarkDoneResult> {
       // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- TodoTxtTaskSource always writes TodoTxtSourceRef
       const ref = issue.sourceRef as TodoTxtSourceRef;
-      const recurResult = await updateTaskStatus({ todoPath: config.todoPath, ref }, "done");
+      const recurResult = await updateTaskStatus({ todoPath, ref }, "done");
       if (recurResult !== undefined) {
         copyPromptFile(recurResult.oldPromptPath, recurResult.newPromptPath);
       }

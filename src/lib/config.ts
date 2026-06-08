@@ -1,5 +1,4 @@
 import { existsSync } from "node:fs";
-import { homedir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -8,6 +7,7 @@ import { cosmiconfig, type CosmiconfigResult, type Loader } from "cosmiconfig";
 import type { LinearAdapterConfig } from "./adapters/linear/schema.ts";
 import type { ShellAdapterConfig } from "./adapters/shell/schema.ts";
 import type { TodoTxtAdapterConfig } from "./adapters/todo-txt/schema.ts";
+import { expandHome } from "./paths.ts";
 import { debug, log, readEnvironmentVariable, setLogFile } from "./util.ts";
 import { xdgConfigPath, xdgStatePath } from "./xdg.ts";
 
@@ -421,16 +421,6 @@ function defaultLogFile(): string {
   return xdgStatePath("groundcrew", "groundcrew.log");
 }
 
-function expandHome(p: string): string {
-  if (p === "~") {
-    return homedir();
-  }
-  if (p.startsWith("~/")) {
-    return path.resolve(homedir(), p.slice(2));
-  }
-  return p;
-}
-
 function fail(message: string): never {
   throw new Error(`groundcrew config: ${message}`);
 }
@@ -802,6 +792,12 @@ function normalizeSources(raw: unknown): SourceConfig[] {
     fail("sources must be an array");
   }
   const names = new Map<string, number>();
+  // Expand ~ in path-typed fields for adapters that accept filesystem paths.
+  // All other path values in ResolvedConfig are expanded at this layer so
+  // downstream adapters receive absolute paths without each having to call
+  // expandHome defensively. isPlainObject() above narrows entry to
+  // Record<string, unknown> so no extra assertion is needed here.
+  const expanded: unknown[] = [];
   for (const [index, entry] of raw.entries()) {
     const configPath = `sources[${index}]`;
     if (!isPlainObject(entry)) {
@@ -828,9 +824,24 @@ function normalizeSources(raw: unknown): SourceConfig[] {
       );
     }
     names.set(effectiveName, index);
+    if (kind === "todo-txt") {
+      expanded.push({
+        ...entry,
+        /* v8 ignore next @preserve -- Zod schema guarantees todoPath/tasksDir are strings; else branch only reachable with a non-string raw value rejected downstream by Zod */
+        ...(typeof entry["todoPath"] === "string"
+          ? { todoPath: expandHome(entry["todoPath"]) }
+          : {}),
+        /* v8 ignore next @preserve -- same as above */
+        ...(typeof entry["tasksDir"] === "string"
+          ? { tasksDir: expandHome(entry["tasksDir"]) }
+          : {}),
+      });
+    } else {
+      expanded.push(entry);
+    }
   }
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- structural validation above guarantees array of {kind: string} entries; per-source Zod validation lives in buildSources
-  return raw as SourceConfig[];
+  return expanded as SourceConfig[];
 }
 
 /**
