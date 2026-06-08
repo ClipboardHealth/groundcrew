@@ -911,8 +911,8 @@ describe(buildLaunchCommand, () => {
         }),
       );
 
-      const setupWrapRe = /safehouse-clearance' (--env-pass=[^ ]+ )?sh -c '[^']*'/;
-      const agentWrapRe = /safehouse-clearance' (--env-pass=[^ ]+ )?"\$_safehouse_shim"/;
+      const setupWrapRe = /safehouse-clearance' (?<envPass>--env-pass=[^ ]+ )?sh -c '[^']*'/;
+      const agentWrapRe = /safehouse-clearance' (?<envPass>--env-pass=[^ ]+ )?"\$_safehouse_shim"/;
       const setupWrapMatch = setupWrapRe.exec(out);
       const agentWrapMatch = agentWrapRe.exec(out);
       // prepareWorktree wrap: build secrets only — preLaunch credentials must never reach
@@ -937,8 +937,8 @@ describe(buildLaunchCommand, () => {
         }),
       );
 
-      const setupWrapRe = /safehouse-clearance' (--env-pass=[^ ]+ )?sh -c '[^']*'/;
-      const agentWrapRe = /safehouse-clearance' (--env-pass=[^ ]+ )?"\$_safehouse_shim"/;
+      const setupWrapRe = /safehouse-clearance' (?<envPass>--env-pass=[^ ]+ )?sh -c '[^']*'/;
+      const agentWrapRe = /safehouse-clearance' (?<envPass>--env-pass=[^ ]+ )?"\$_safehouse_shim"/;
       const setupWrapMatch = setupWrapRe.exec(out);
       const agentWrapMatch = agentWrapRe.exec(out);
       expect(setupWrapMatch?.[1]).toBeUndefined();

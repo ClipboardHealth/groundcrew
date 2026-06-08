@@ -16,27 +16,27 @@ import {
 } from "./ticketSource.ts";
 
 export interface Board {
-  verify(): Promise<void>;
-  fetch(): Promise<BoardState>;
+  verify: () => Promise<void>;
+  fetch: () => Promise<BoardState>;
   /**
    * Accepts either canonical (`linear:eng-220`) or natural (`eng-220`) ids.
    * Natural ids fan out across sources; ambiguous matches throw.
    */
-  resolveOne(canonicalOrNaturalId: string): Promise<Issue | undefined>;
+  resolveOne: (canonicalOrNaturalId: string) => Promise<Issue | undefined>;
   /** Routes to the adapter whose `name` matches `issue.source`. Unknown source throws. */
-  markInProgress(issue: Issue): Promise<void>;
+  markInProgress: (issue: Issue) => Promise<void>;
   /**
    * Advances a ticket to in-review on the adapter whose `name` matches
    * `issue.source`. Unknown source throws. Adapters with no in-review concept
    * return `unsupported` (see `TicketSource.markInReview`).
    */
-  markInReview(issue: Issue): Promise<MarkInReviewResult>;
+  markInReview: (issue: Issue) => Promise<MarkInReviewResult>;
   /**
    * Advances a ticket to done on the adapter whose `name` matches
    * `issue.source`. Unknown source throws. Sources that don't implement the
    * optional `markDone` return `unsupported` (see `TicketSource.markDone`).
    */
-  markDone(issue: Issue): Promise<MarkDoneResult>;
+  markDone: (issue: Issue) => Promise<MarkDoneResult>;
 }
 
 async function callVerify(source: TicketSource): Promise<void> {

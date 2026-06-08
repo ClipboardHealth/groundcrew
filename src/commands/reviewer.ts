@@ -58,7 +58,7 @@ interface ReviewArguments {
 }
 
 export interface Reviewer {
-  runOnce(arguments_: ReviewArguments): Promise<void>;
+  runOnce: (arguments_: ReviewArguments) => Promise<void>;
 }
 
 type Transition = "done" | "in-review";

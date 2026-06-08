@@ -58,7 +58,7 @@ export async function prepareAgentLaunch(input: {
   if (
     runner === "safehouse" &&
     hasPreLaunchEnv(input.definition) &&
-    /^safehouse(\s|$)/.test(input.definition.cmd)
+    /^safehouse(?:\s|$)/.test(input.definition.cmd)
   ) {
     throw new Error(
       `Local groundcrew ${input.purpose} on model '${input.model}' cannot inject preLaunchEnv when 'cmd' already starts with 'safehouse'. ` +

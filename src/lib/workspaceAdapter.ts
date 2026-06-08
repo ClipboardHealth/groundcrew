@@ -59,21 +59,21 @@ export type WorkspaceCloseResult =
   | { kind: "unavailable"; error?: unknown };
 
 export interface Adapter {
-  open(spec: OpenSpec, signal?: AbortSignal): Promise<void>;
+  open: (spec: OpenSpec, signal?: AbortSignal) => Promise<void>;
   /**
    * Known workspaces. Returns:
    * - `Workspace[]` when the adapter probe succeeded (may be empty).
    * - `undefined` when the adapter binary failed in a way that doesn't
    *   distinguish "no live workspaces" from "couldn't ask".
    */
-  list(signal?: AbortSignal): Promise<Workspace[] | undefined>;
+  list: (signal?: AbortSignal) => Promise<Workspace[] | undefined>;
   /** Closes the workspace or confirms it is not present. */
-  close(name: string, signal?: AbortSignal): Promise<WorkspaceCloseResult>;
+  close: (name: string, signal?: AbortSignal) => Promise<WorkspaceCloseResult>;
   /**
    * User-facing way to reach the workspace, or `undefined` when the backend
    * has no concise external hint.
    */
-  accessHint(name: string): WorkspaceAccessHint | undefined;
+  accessHint: (name: string) => WorkspaceAccessHint | undefined;
 }
 
 export async function runWorkspaceCommand(

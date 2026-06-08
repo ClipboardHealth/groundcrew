@@ -53,7 +53,7 @@ export interface WorktreeSpec {
 }
 
 const TICKET_RE = /^[a-z][\da-z]*-\d+$/;
-const TICKET_DIR_RE = /^(.+)-([a-z][\da-z]*-\d+)$/;
+const TICKET_DIR_RE = /^(?<repoBasename>.+)-(?<ticket>[a-z][\da-z]*-\d+)$/;
 
 function branchPrefix(config: ResolvedConfig): string {
   const fromConfig = config.git.branchPrefix;

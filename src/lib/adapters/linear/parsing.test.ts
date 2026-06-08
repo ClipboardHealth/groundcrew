@@ -39,7 +39,7 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
 }
 
 describe(parseRepository, () => {
-  const repositoryRegex = /\b(org\/repo-a|repo-a|repo-b|repo-x\/bare)\b/;
+  const repositoryRegex = /\b(?<repo>org\/repo-a|repo-a|repo-b|repo-x\/bare)\b/;
 
   it("returns the matched known repository when it is in knownRepositories", () => {
     const config = makeConfig({
