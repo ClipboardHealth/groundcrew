@@ -134,7 +134,6 @@ describe(createDispatcher, () => {
           details: { title: "Title", description: "" },
         }),
       );
-      // oxlint-disable-next-line typescript/unbound-method -- board is a plain vi.fn stub; markInProgress has no `this` binding
       expect(board.markInProgress).toHaveBeenCalledWith(
         expect.objectContaining({ id: "linear:team-1" }),
       );
@@ -302,7 +301,6 @@ describe(createDispatcher, () => {
       });
 
       expect(setupMock).not.toHaveBeenCalled();
-      // oxlint-disable-next-line typescript/unbound-method -- board is a plain vi.fn stub; markInProgress has no `this` binding
       expect(board.markInProgress).not.toHaveBeenCalled();
       expect(consoleLog.output()).toContain("No Todo tickets");
     });
@@ -565,7 +563,6 @@ describe(createDispatcher, () => {
       });
 
       expect(setupMock).not.toHaveBeenCalled();
-      // oxlint-disable-next-line typescript/unbound-method -- board is a plain vi.fn stub; markInProgress has no `this` binding
       expect(board.markInProgress).toHaveBeenCalledWith(
         expect.objectContaining({ id: "linear:team-1" }),
       );
@@ -585,7 +582,6 @@ describe(createDispatcher, () => {
       });
 
       expect(setupMock).not.toHaveBeenCalled();
-      // oxlint-disable-next-line typescript/unbound-method -- board is a plain vi.fn stub; markInProgress has no `this` binding
       expect(board.markInProgress).not.toHaveBeenCalled();
       expect(consoleLog.output()).toContain("Run `crew cleanup");
     });
@@ -929,7 +925,6 @@ describe(createDispatcher, () => {
       });
 
       expect(setupMock).not.toHaveBeenCalled();
-      // oxlint-disable-next-line typescript/unbound-method -- board is a plain vi.fn stub; markInProgress has no `this` binding
       expect(board.markInProgress).not.toHaveBeenCalled();
       expect(consoleLog.output()).toContain("references unknown repository unknown-repo");
     });
@@ -969,7 +964,6 @@ describe(createDispatcher, () => {
         expect.anything(),
         expect.objectContaining({ repository: "repo-b" }),
       );
-      // oxlint-disable-next-line typescript/unbound-method -- board is a plain vi.fn stub; markInProgress has no `this` binding
       expect(board.markInProgress).toHaveBeenCalledWith(
         expect.objectContaining({ id: "linear:team-1" }),
       );

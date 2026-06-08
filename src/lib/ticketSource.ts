@@ -127,13 +127,13 @@ export interface TicketSource {
   /** Stable identifier used as the id prefix and in log lines. Equal to the source's config `name`. */
   readonly name: string;
   /** One-time startup check. Throws with a user-facing message on misconfig. */
-  verify(): Promise<void>;
+  verify: () => Promise<void>;
   /** Per-tick snapshot. `id` on each Issue is already canonical (source-prefixed). */
-  fetch(): Promise<Issue[]>;
+  fetch: () => Promise<Issue[]>;
   /** Per-ticket lookup. `naturalId` is unprefixed (no `<name>:` prefix). */
-  resolveOne(naturalId: string): Promise<Issue | undefined>;
+  resolveOne: (naturalId: string) => Promise<Issue | undefined>;
   /** Writeback. The adapter downcasts `issue.sourceRef` internally. */
-  markInProgress(issue: Issue): Promise<void>;
+  markInProgress: (issue: Issue) => Promise<void>;
   /**
    * Writeback: advance a ticket from in-progress to in-review once its
    * worktree has an open PR. Frees a dispatch slot without tripping the
@@ -142,7 +142,7 @@ export interface TicketSource {
    * in-review concept (or no configured command) MUST report `unsupported`
    * rather than pretending the transition happened.
    */
-  markInReview(issue: Issue): Promise<MarkInReviewResult>;
+  markInReview: (issue: Issue) => Promise<MarkInReviewResult>;
 
   /**
    * Optional writeback: advance a ticket to done once its PR has merged.
@@ -153,7 +153,7 @@ export interface TicketSource {
    * integration moves the issue to Done, which groundcrew then observes via
    * `fetch()` and the cleaner tears down.
    */
-  markDone?(issue: Issue): Promise<MarkDoneResult>;
+  markDone?: (issue: Issue) => Promise<MarkDoneResult>;
 
   /**
    * Optional: return parent tickets that were excluded from `fetch()` because
@@ -161,7 +161,7 @@ export interface TicketSource {
    * a Todo+labelled ticket was skipped (PR #80 behavior). Adapters that
    * don't distinguish parents simply omit this method; Board returns [].
    */
-  fetchParentSkips?(): Promise<readonly ParentSkip[]>;
+  fetchParentSkips?: () => Promise<readonly ParentSkip[]>;
 }
 
 export class RepositoryResolutionError extends Error {
