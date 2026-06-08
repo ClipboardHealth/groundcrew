@@ -118,6 +118,8 @@ function parseWorktreeDirectoryName(
   directoryName: string,
   repositoryEntriesByLongestName: readonly (readonly [string, string])[],
 ): { repository: string; task: string } | undefined {
+  // Match the longest repository basename first so overlapping names like
+  // "repo-a" and "repo-a-admin" parse to the intended repository.
   for (const [repositoryBaseName, repository] of repositoryEntriesByLongestName) {
     const worktreePrefix = `${repositoryBaseName}-`;
     if (!directoryName.startsWith(worktreePrefix)) {

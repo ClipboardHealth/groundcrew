@@ -202,9 +202,7 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     // repository. Unlabeled tasks are not groundcrew's concern.
     // Sort by priority so higher-priority tasks fill slots first.
     const todo: readonly GroundcrewIssue[] = rawTodo
-      .filter(
-        (issue): issue is GroundcrewIssue => issue.status === "todo" && isGroundcrewIssue(issue),
-      )
+      .filter((issue): issue is GroundcrewIssue => isGroundcrewIssue(issue))
       .toSorted((a, b) => prioritySortKey(a.priority) - prioritySortKey(b.priority));
 
     if (slots <= 0) {
