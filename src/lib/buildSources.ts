@@ -84,8 +84,7 @@ function isSourceDisabled(raw: unknown): boolean {
 
 /**
  * True when `raw` declares `kind: "linear"`, regardless of `name` or `enabled`.
- * This is what lets the `{ kind: "linear", enabled: false }` opt-out suppress
- * the implicit Linear source even though the entry itself is filtered out.
+ * Used by `isLinearEnabled` to detect explicitly configured Linear sources.
  */
 function isLinearKindSource(raw: unknown): boolean {
   return sourceFields(raw).kind === "linear";
@@ -102,11 +101,9 @@ export function sourcesFromConfig(config: ResolvedConfig): readonly unknown[] {
 }
 
 /**
- * True when the resolved config keeps Linear active — i.e. the user has not
- * opted out with `{ kind: "linear", enabled: false }`. Callers use this to skip
- * Linear API calls (and the missing-API-key error they raise) when Linear is
- * off. Derived from `sourcesFromConfig` so it honors both the explicit opt-out
- * sentinel and the implicit-source synthesis.
+ * True when an enabled source explicitly declares `kind: "linear"`. Callers
+ * use this to skip Linear API calls (and the missing-API-key error they raise)
+ * when Linear is not configured.
  */
 export function isLinearEnabled(config: ResolvedConfig): boolean {
   return sourcesFromConfig(config).some(isLinearKindSource);
