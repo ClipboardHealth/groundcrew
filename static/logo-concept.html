@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>groundcrew — brand</title>
+<style>
+  :root {
+    --orange: #FF6D00;
+    --ink: #0C0F17;
+    --ink-soft: #10141E;
+    --ink-mid: #161B28;
+    --border: #1E2535;
+    --text: #EFEFEF;
+    --text-dim: #5A6380;
+    --slack-sidebar: #350d36;
+    --slack-active: #1164a3;
+    --slack-msg-bg: #1a1d21;
+    --slack-msg-hover: #222529;
+    --slack-text: #d1d2d3;
+    --slack-ts: #ababad;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--ink);
+    color: var(--text);
+    font-family: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+    min-height: 100vh;
+  }
+  .page { max-width: 960px; margin: 0 auto; padding: 80px 40px; }
+  .section { margin-bottom: 72px; }
+  .section-title {
+    font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--orange); margin-bottom: 32px; padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  @keyframes wand-pulse {
+    0%, 100% { opacity: 1.0; }
+    25%      { opacity: 0.38; }
+    50%      { opacity: 1.0; }
+  }
+  .wL { animation: wand-pulse 2.4s ease-in-out infinite; }
+  .wR { animation: wand-pulse 2.4s ease-in-out -1.2s infinite; }
+
+  .sw-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 2px; }
+  .sw { padding: 36px 28px; display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
+  .sw-lbl { font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; opacity: 0.3; }
+
+  .size-row { display: flex; align-items: flex-end; gap: 40px; flex-wrap: wrap; }
+  .size-item { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+  .size-lbl { font-size: 10px; color: var(--text-dim); }
+
+  .slack-window {
+    border-radius: 8px; overflow: hidden;
+    border: 1px solid #06080E;
+    box-shadow: 0 24px 80px rgba(0,0,0,0.7);
+    display: flex; height: 400px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+  .slack-sb { width: 220px; background: var(--slack-sidebar); flex-shrink: 0; display: flex; flex-direction: column; }
+  .slack-wh { padding: 14px 16px 10px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+  .slack-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--orange); flex-shrink: 0; }
+  .slack-wn { font-size: 15px; font-weight: 700; color: #fff; }
+  .slack-nav { padding: 8px 0; flex: 1; }
+  .slack-ni { padding: 4px 16px; font-size: 13px; color: rgba(255,255,255,0.65); display: flex; align-items: center; gap: 8px; }
+  .slack-ni.active { background: var(--slack-active); color: #fff; border-radius: 4px; margin: 0 8px; padding: 4px 8px; }
+  .slack-sl { padding: 12px 16px 4px; font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: rgba(255,255,255,0.4); }
+  .slack-main { flex: 1; background: var(--slack-msg-bg); display: flex; flex-direction: column; overflow: hidden; }
+  .slack-ch { padding: 12px 20px; border-bottom: 1px solid rgba(255,255,255,0.08); display: flex; align-items: center; }
+  .slack-cn { font-size: 15px; font-weight: 700; color: #fff; }
+  .slack-ct { font-size: 12px; color: var(--slack-ts); margin-left: auto; }
+  .slack-msgs { flex: 1; overflow-y: auto; padding: 16px 0; }
+  .slack-msg { display: flex; gap: 12px; padding: 6px 20px; align-items: flex-start; }
+  .slack-msg:hover { background: var(--slack-msg-hover); }
+  .slack-av { width: 36px; height: 36px; border-radius: 4px; flex-shrink: 0; overflow: hidden; }
+  .slack-mb { flex: 1; }
+  .slack-mh { display: flex; align-items: baseline; gap: 8px; margin-bottom: 2px; }
+  .slack-sn { font-size: 14px; font-weight: 700; color: #fff; }
+  .slack-badge { font-size: 9px; font-weight: 700; background: rgba(255,255,255,0.15); color: rgba(255,255,255,0.6); padding: 1px 4px; border-radius: 2px; letter-spacing: 0.06em; text-transform: uppercase; }
+  .slack-ts { font-size: 11px; color: var(--slack-ts); }
+  .slack-txt { font-size: 13px; color: var(--slack-text); line-height: 1.5; }
+  .slack-blk { background: rgba(255,255,255,0.04); border-left: 3px solid var(--orange); border-radius: 0 4px 4px 0; padding: 8px 12px; margin-top: 6px; font-size: 12px; color: var(--slack-text); line-height: 1.9; font-family: ui-monospace, Menlo, monospace; }
+  .slack-div { display: flex; align-items: center; gap: 12px; padding: 8px 20px; font-size: 11px; color: var(--slack-ts); }
+  .slack-div::before, .slack-div::after { content:''; flex:1; height:1px; background: rgba(255,255,255,0.1); }
+  .pr-link { color: #36aaff; text-decoration: none; }
+  .av-ci { border-radius: 50%; overflow: hidden; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- ─── Hero ─────────────────────────────────────────────── -->
+  <div style="margin-bottom: 80px;">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 120" width="700" height="120" role="img" aria-label="groundcrew">
+      <style>.wm{font-family:ui-monospace,'SFMono-Regular',Menlo,Consolas,monospace;font-size:92px;font-weight:700;letter-spacing:-0.04em}</style>
+      <line x1="18" y1="108" x2="88" y2="11" opacity="1" stroke="#FF6D00" stroke-width="20" stroke-linecap="round" class="wL"/>
+      <line x1="102" y1="108" x2="32" y2="11" opacity="1" stroke="#FF6D00" stroke-width="20" stroke-linecap="round" class="wR"/>
+      <text class="wm" x="136" y="92" fill="#EFEFEF">groundcrew</text>
+    </svg>
+  </div>
+
+  <!-- ─── 01 Concept ───────────────────────────────────────── -->
+  <div class="section">
+    <div class="section-title">01 — Concept</div>
+    <div style="display:flex; gap:56px; align-items:flex-start; flex-wrap:wrap;">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="140" height="140" style="flex-shrink:0;">
+        <line x1="18" y1="108" x2="88" y2="11" opacity="1" stroke="#FF6D00" stroke-width="20" stroke-linecap="round" class="wL"/>
+        <line x1="102" y1="108" x2="32" y2="11" opacity="1" stroke="#FF6D00" stroke-width="20" stroke-linecap="round" class="wR"/>
+      </svg>
+      <div style="max-width:400px;">
+        <p style="font-size:13px; color:var(--text); line-height:1.8; margin-bottom:16px;">
+          The all-clear overhead signal: a marshaler with both wands crossed above their head. The name <em>groundcrew</em> is an airport metaphor — the tool dispatches AI agents the way ground crew direct aircraft.
+        </p>
+        <p style="font-size:13px; color:var(--text-dim); line-height:1.8; margin-bottom:16px;">
+          The mark is two thick orange (#FF6D00) batons. Handles spread wide at the bottom, crossing near their tips, short ends extending above the knot. The shape is specific enough to read as marshaling rather than a generic ×.
+        </p>
+        <p style="font-size:13px; color:var(--text-dim); line-height:1.8;">
+          Animation: the wands pulse opposite each other on a 2.4s ease-in-out cycle — one bright as the other dims — simulating active signaling.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── 02 On backgrounds ─────────────────────────────────── -->
+  <div class="section">
+    <div class="section-title">02 — On backgrounds</div>
+    <div class="sw-grid">
+      <div class="sw" style="background:#0C0F17;">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="72" height="72">
+          <line x1="18" y1="108" x2="88" y2="11" opacity="1" stroke="#FF6D00" stroke-width="20" stroke-linecap="round" class="wL"/>
+          <line x1="102" y1="108" x2="32" y2="11" opacity="1" stroke="#FF6D00" stroke-width="20" stroke-linecap="round" class="wR"/>
+        </svg>
+        <span class="sw-lbl" style="color:#2a3050;">Dark</span>
+      </div>
+      <div class="sw" style="background:#FF6D00;">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="72" height="72">
+          <line x1="18" y1="108" x2="88" y2="11" stroke="#0C0F17" stroke-width="20" stroke-linecap="round"/>
+          <line x1="102" y1="108" x2="32" y2="11" stroke="#0C0F17" stroke-width="20" stroke-linecap="round"/>
+        </svg>
+        <span class="sw-lbl" style="color:rgba(0,0,0,0.3);">Orange</span>
+      </div>
+      <div class="sw" style="background:#fafafa;">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="72" height="72">
+          <line x1="18" y1="108" x2="88" y2="11" stroke="#FF6D00" stroke-width="20" stroke-linecap="round"/>
+          <line x1="102" y1="108" x2="32" y2="11" stroke="#FF6D00" stroke-width="20" stroke-linecap="round"/>
+        </svg>
+        <span class="sw-lbl" style="color:#ccc;">Light</span>
+      </div>
+      <div class="sw" style="background:#1C2030;">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="72" height="72">
+          <line x1="18" y1="108" x2="88" y2="11" opacity="1" stroke="#FF6D00" stroke-width="20" stroke-linecap="round" class="wL"/>
+          <line x1="102" y1="108" x2="32" y2="11" opacity="1" stroke="#FF6D00" stroke-width="20" stroke-linecap="round" class="wR"/>
+        </svg>
+        <span class="sw-lbl" style="color:#2a3050;">Navy</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── 03 Scale ──────────────────────────────────────────── -->
+  <div class="section">
+    <div class="section-title">03 — Scale</div>
+    <div class="size-row">
+      <div class="size-item">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="16" height="16">
+          <line x1="18" y1="108" x2="88" y2="11" stroke="#FF6D00" stroke-width="30" stroke-linecap="round"/>
+          <line x1="102" y1="108" x2="32" y2="11" stroke="#FF6D00" stroke-width="30" stroke-linecap="round"/>
+        </svg>
+        <span class="size-lbl">16px</span>
+      </div>
+      <div class="size-item">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="32" height="32">
+          <line x1="18" y1="108" x2="88" y2="11" opacity="1" stroke="#FF6D00" stroke-width="24" stroke-linecap="round" class="wL"/>
+          <line x1="102" y1="108" x2="32" y2="11" opacity="1" stroke="#FF6D00" stroke-width="24" stroke-linecap="round" class="wR"/>
+        </svg>
+        <span class="size-lbl">32px</span>
+      </div>
+      <div class="size-item">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="64" height="64">
+          <line x1="18" y1="108" x2="88" y2="11" opacity="1" stroke="#FF6D00" stroke-width="20" stroke-linecap="round" class="wL"/>
+          <line x1="102" y1="108" x2="32" y2="11" opacity="1" stroke="#FF6D00" stroke-width="20" stroke-linecap="round" class="wR"/>
+        </svg>
+        <span class="size-lbl">64px</span>
+      </div>
+      <div class="size-item">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">
+          <line x1="18" y1="108" x2="88" y2="11" opacity="1" stroke="#FF6D00" stroke-width="20" stroke-linecap="round" class="wL"/>
+          <line x1="102" y1="108" x2="32" y2="11" opacity="1" stroke="#FF6D00" stroke-width="20" stroke-linecap="round" class="wR"/>
+        </svg>
+        <span class="size-lbl">120px</span>
+      </div>
+      <div class="size-item">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="200" height="200">
+          <line x1="18" y1="108" x2="88" y2="11" opacity="1" stroke="#FF6D00" stroke-width="20" stroke-linecap="round" class="wL"/>
+          <line x1="102" y1="108" x2="32" y2="11" opacity="1" stroke="#FF6D00" stroke-width="20" stroke-linecap="round" class="wR"/>
+        </svg>
+        <span class="size-lbl">200px</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── 04 Slack bot avatar ───────────────────────────────── -->
+  <div class="section">
+    <div class="section-title">04 — Slack bot avatar</div>
+
+    <div style="display:flex; align-items:flex-end; gap:32px; flex-wrap:wrap; margin-bottom:48px;">
+      <div class="size-item">
+        <div style="width:36px;height:36px;border-radius:4px;overflow:hidden;background:#0C0F17;">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="36" height="36">
+            <rect width="120" height="120" fill="#0C0F17"/>
+            <line x1="18" y1="108" x2="88" y2="11" stroke="#FF6D00" stroke-width="24" stroke-linecap="round"/>
+            <line x1="102" y1="108" x2="32" y2="11" stroke="#FF6D00" stroke-width="24" stroke-linecap="round"/>
+          </svg>
+        </div>
+        <span class="size-lbl">36px · message</span>
+      </div>
+      <div class="size-item">
+        <div class="av-ci" style="width:36px;height:36px;background:#0C0F17;">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="36" height="36">
+            <rect width="120" height="120" fill="#0C0F17"/>
+            <line x1="18" y1="108" x2="88" y2="11" stroke="#FF6D00" stroke-width="24" stroke-linecap="round"/>
+            <line x1="102" y1="108" x2="32" y2="11" stroke="#FF6D00" stroke-width="24" stroke-linecap="round"/>
+          </svg>
+        </div>
+        <span class="size-lbl">36px · circle</span>
+      </div>
+      <div class="size-item">
+        <div style="width:88px;height:88px;border-radius:8px;overflow:hidden;background:#0C0F17;">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="88" height="88">
+            <rect width="120" height="120" fill="#0C0F17"/>
+            <line x1="18" y1="108" x2="88" y2="11" opacity="1" stroke="#FF6D00" stroke-width="20" stroke-linecap="round" class="wL"/>
+            <line x1="102" y1="108" x2="32" y2="11" opacity="1" stroke="#FF6D00" stroke-width="20" stroke-linecap="round" class="wR"/>
+          </svg>
+        </div>
+        <span class="size-lbl">88px · app home</span>
+      </div>
+      <div class="size-item">
+        <div style="width:192px;height:192px;border-radius:16px;overflow:hidden;background:#0C0F17;">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="192" height="192">
+            <rect width="120" height="120" fill="#0C0F17"/>
+            <line x1="18" y1="108" x2="88" y2="11" opacity="1" stroke="#FF6D00" stroke-width="20" stroke-linecap="round" class="wL"/>
+            <line x1="102" y1="108" x2="32" y2="11" opacity="1" stroke="#FF6D00" stroke-width="20" stroke-linecap="round" class="wR"/>
+          </svg>
+        </div>
+        <span class="size-lbl">192px · profile</span>
+      </div>
+    </div>
+
+    <div class="slack-window">
+      <div class="slack-sb">
+        <div class="slack-wh">
+          <div class="slack-dot"></div>
+          <span class="slack-wn">Clipboard Health</span>
+        </div>
+        <div class="slack-nav">
+          <div class="slack-sl">Channels</div>
+          <div class="slack-ni"><span style="opacity:.5;font-size:15px;">#</span> general</div>
+          <div class="slack-ni"><span style="opacity:.5;font-size:15px;">#</span> engineering</div>
+          <div class="slack-ni active"><span style="font-size:15px;">#</span> eng-agents</div>
+          <div style="margin-top:16px;">
+            <div class="slack-sl">Apps</div>
+            <div class="slack-ni" style="gap:8px;">
+              <div style="width:18px;height:18px;border-radius:3px;overflow:hidden;flex-shrink:0;">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="18" height="18">
+                  <rect width="120" height="120" fill="#0C0F17"/>
+                  <line x1="18" y1="108" x2="88" y2="11" stroke="#FF6D00" stroke-width="24" stroke-linecap="round"/>
+                  <line x1="102" y1="108" x2="32" y2="11" stroke="#FF6D00" stroke-width="24" stroke-linecap="round"/>
+                </svg>
+              </div>
+              groundcrew
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="slack-main">
+        <div class="slack-ch">
+          <span class="slack-cn"><span style="opacity:.5;">#</span> eng-agents</span>
+          <span class="slack-ct">agent dispatch · crew run --watch</span>
+        </div>
+        <div class="slack-msgs">
+          <div class="slack-div">Today</div>
+          <div class="slack-msg">
+            <div class="slack-av" style="background:#0C0F17;">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="36" height="36">
+                <rect width="120" height="120" fill="#0C0F17"/>
+                <line x1="18" y1="108" x2="88" y2="11" stroke="#FF6D00" stroke-width="24" stroke-linecap="round"/>
+                <line x1="102" y1="108" x2="32" y2="11" stroke="#FF6D00" stroke-width="24" stroke-linecap="round"/>
+              </svg>
+            </div>
+            <div class="slack-mb">
+              <div class="slack-mh">
+                <span class="slack-sn">groundcrew</span>
+                <span class="slack-badge">app</span>
+                <span class="slack-ts">9:41 AM</span>
+              </div>
+              <div class="slack-txt">Dispatching 3 tasks
+                <div class="slack-blk">⟳  ENG-1234  agent-claude   worktrees/eng-1234<br>⟳  ENG-1891  agent-codex    worktrees/eng-1891<br>⟳  ENG-2043  agent-claude   worktrees/eng-2043</div>
+              </div>
+            </div>
+          </div>
+          <div class="slack-msg">
+            <div class="slack-av" style="background:#0C0F17;">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="36" height="36">
+                <rect width="120" height="120" fill="#0C0F17"/>
+                <line x1="18" y1="108" x2="88" y2="11" stroke="#FF6D00" stroke-width="24" stroke-linecap="round"/>
+                <line x1="102" y1="108" x2="32" y2="11" stroke="#FF6D00" stroke-width="24" stroke-linecap="round"/>
+              </svg>
+            </div>
+            <div class="slack-mb">
+              <div class="slack-mh">
+                <span class="slack-sn">groundcrew</span>
+                <span class="slack-badge">app</span>
+                <span class="slack-ts">11:03 AM</span>
+              </div>
+              <div class="slack-txt">
+                ENG-1234 complete — <a class="pr-link" href="#">PR #482</a> ready for review<br>
+                <span style="color:var(--slack-ts);font-size:12px;">agent-claude · 82 min · 14 commits</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── 05 Full lockup ────────────────────────────────────── -->
+  <div class="section">
+    <div class="section-title">05 — Full lockup</div>
+    <div style="background:var(--ink-soft);padding:64px;display:flex;justify-content:center;">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 120" width="700" height="120">
+        <style>.wm2{font-family:ui-monospace,'SFMono-Regular',Menlo,Consolas,monospace;font-size:92px;font-weight:700;letter-spacing:-0.04em}</style>
+        <line x1="18" y1="108" x2="88" y2="11" opacity="1" stroke="#FF6D00" stroke-width="20" stroke-linecap="round" class="wL"/>
+        <line x1="102" y1="108" x2="32" y2="11" opacity="1" stroke="#FF6D00" stroke-width="20" stroke-linecap="round" class="wR"/>
+        <text class="wm2" x="136" y="92" fill="#EFEFEF">groundcrew</text>
+      </svg>
+    </div>
+  </div>
+
+  <!-- ─── Spec ───────────────────────────────────────────────── -->
+  <div style="color:var(--text-dim);font-size:11px;line-height:1.9;border-top:1px solid var(--border);padding-top:24px;">
+    <span style="color:var(--text);">Mark</span> — Two lines: (18,108)→(88,11) and (102,108)→(32,11). Cross at (60,50). stroke #FF6D00, width 20, linecap round.<br>
+    <span style="color:var(--text);">Typeface</span> — ui-monospace / SFMono-Regular / Menlo / Consolas. 92px bold, −0.04em tracking.<br>
+    <span style="color:var(--text);">Colors</span> — Mark #FF6D00 · Dark bg #0C0F17 · Light text #EFEFEF · Dark text #18181b.<br>
+    <span style="color:var(--text);">Animation</span> — SMIL wand-pulse, 2.4s ease-in-out, right wand −1.2s offset. Both open fully opaque.
+  </div>
+
+</div>
+</body>
+</html>
