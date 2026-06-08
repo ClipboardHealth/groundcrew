@@ -93,6 +93,9 @@ crew init [--global | --local] [--force] [--dry-run]     # create a crew.config.
           [--project-dir <dir>] [--repo <repo>]...
           [--runner <auto|safehouse|sdx|none>] [--model <claude|codex>]
 crew doctor                                              # check setup
+crew task list [--source <name>]                         # list tasks across sources
+crew task get <TASK> [--source <name>] [--prompt]        # inspect one task or its prompt
+crew task create "Title" --source <name> --agent <name>  # create a source task
 crew status [<TASK>]                                   # inspect current state or one task
 crew run [--watch]                                       # one-shot or --watch forever
 crew start <TASK>                                      # provision + launch one task now

@@ -87,6 +87,8 @@ export interface Issue {
   sourceRef: unknown;
 }
 
+export type Task = Issue;
+
 /** Narrowed form: an Issue confirmed to be groundcrew-eligible. */
 export type GroundcrewIssue = Issue & { model: string; repository: string };
 
@@ -123,11 +125,47 @@ export type MarkInReviewResult =
 
 export type MarkDoneResult = { outcome: "applied" } | { outcome: "unsupported"; reason: string };
 
+/** Source-neutral task creation request parsed from `crew task create`. */
+export interface CreateTaskInput {
+  /** Short task title or summary. Sources should reject blank or multiline titles when unsupported. */
+  title: string;
+  /** Agent/model name requested by the user, for example `any`, `claude`, `codex`, or a custom model. */
+  agent: string;
+  /** Optional repository override in the same format Groundcrew resolves from task descriptions. */
+  repository?: string;
+  /** Optional source-native task id. When omitted, sources may generate one. */
+  id?: string;
+  /** Optional source-native priority token, such as a todo.txt `A`/`B`/`C` priority. */
+  priority?: string;
+  /** Optional project or area markers. Repeated CLI flags preserve order. */
+  projects: readonly string[];
+  /** Optional context, team, or mode markers. Repeated CLI flags preserve order. */
+  contexts: readonly string[];
+  /** Optional source-native dependency or blocker ids. Repeated CLI flags preserve order. */
+  dependencies: readonly string[];
+  /** Optional due date. Sources that support it should expect `YYYY-MM-DD`. */
+  due?: string;
+  /** Optional source-native recurrence expression, such as todo.txt `1w` or `+1m`. */
+  recurrence?: string;
+  /** Optional path to an existing prompt/description file. Mutually exclusive with `description`. */
+  promptFile?: string;
+  /** Optional inline prompt/description text. Mutually exclusive with `promptFile`. */
+  description?: string;
+  /** Whether the source should open the configured editor for the prompt after initial creation. */
+  edit: boolean;
+}
+
 export interface TaskSource {
   /** Stable identifier used as the id prefix and in log lines. Equal to the source's config `name`. */
   readonly name: string;
   /** One-time startup check. Throws with a user-facing message on misconfig. */
   verify: () => Promise<void>;
+  /** Source-neutral task listing. `id` on each Task is already canonical (source-prefixed). */
+  listTasks: () => Promise<Task[]>;
+  /** Source-neutral task lookup. `naturalId` is unprefixed (no `<name>:` prefix). */
+  getTask: (naturalId: string) => Promise<Task | null>;
+  /** Optional source-native task creation. Sources that cannot create tasks omit it. */
+  createTask?: (input: CreateTaskInput) => Promise<Task>;
   /** Per-tick snapshot. `id` on each Issue is already canonical (source-prefixed). */
   fetch: () => Promise<Issue[]>;
   /** Per-task lookup. `naturalId` is unprefixed (no `<name>:` prefix). */

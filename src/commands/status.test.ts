@@ -102,18 +102,28 @@ function fakeSource(
   issues: readonly SourceIssue[],
   overrides: {
     name?: string;
+    listTasks?: TaskSource["listTasks"];
+    getTask?: TaskSource["getTask"];
     fetch?: TaskSource["fetch"];
     resolveOne?: TaskSource["resolveOne"];
   } = {},
 ): TaskSource {
-  const fetch: TaskSource["fetch"] = overrides.fetch ?? (async () => [...issues]);
+  const listTasks: TaskSource["listTasks"] =
+    overrides.listTasks ?? overrides.fetch ?? (async () => [...issues]);
+  const getTask: TaskSource["getTask"] =
+    overrides.getTask ??
+    (overrides.resolveOne === undefined
+      ? async (naturalId) =>
+          issues.find((issue) => issue.id === `${issue.source}:${naturalId.toLowerCase()}`) ?? null
+      : async (naturalId) => (await overrides.resolveOne?.(naturalId)) ?? null);
+  const fetch: TaskSource["fetch"] = overrides.fetch ?? listTasks;
   const resolveOne: TaskSource["resolveOne"] =
-    overrides.resolveOne ??
-    (async (naturalId) =>
-      issues.find((issue) => issue.id === `${issue.source}:${naturalId.toLowerCase()}`));
+    overrides.resolveOne ?? (async (naturalId) => (await getTask(naturalId)) ?? undefined);
   return {
     name: overrides.name ?? "linear",
     verify: noop,
+    listTasks,
+    getTask,
     fetch,
     resolveOne,
     markInProgress: noop,

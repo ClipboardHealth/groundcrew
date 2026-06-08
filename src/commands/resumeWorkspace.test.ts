@@ -318,7 +318,12 @@ describe(resumeWorkspace, () => {
       stateType: "unstarted",
       status: "Todo",
       statusId: "state-todo",
+      assignee: "Alice",
+      updatedAt: "2026-01-01T00:00:00Z",
+      blockers: [],
+      hasMoreBlockers: false,
       url: "https://linear.app/example/issue/TEAM-1",
+      priority: 0,
     });
 
     await resumeWorkspace(config, { task: "team-1" });

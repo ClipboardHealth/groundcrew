@@ -205,6 +205,21 @@ describe(createShellTaskSource, () => {
     expect(issues[0]?.source).toBe("test");
   });
 
+  it("listTasks() parses well-formed JSON and prefixes ids with the source name", async () => {
+    const script = dir.writeScript(
+      "list.sh",
+      `cat <<'JSON'\n${payload(shellIssue({ id: "X-1" }))}\nJSON`,
+    );
+    const source = createShellTaskSource(
+      { kind: "shell", name: "test", commands: { listTasks: script } },
+      fakeContext,
+    );
+
+    const issues = await source.listTasks();
+
+    expect(issues[0]?.id).toBe("test:x-1");
+  });
+
   it("fetch() throws when the script emits malformed JSON", async () => {
     const script = dir.writeScript("bad.sh", 'echo "not json"');
     const source = createShellTaskSource(
@@ -312,6 +327,25 @@ describe(createShellTaskSource, () => {
       fakeContext,
     );
     const issue = await source.resolveOne("X-1");
+    expect(issue?.id).toBe("test:x-1");
+  });
+
+  it("getTask() runs the configured command and applies ${id} substitution", async () => {
+    const getTaskScript = dir.writeScript(
+      "get.sh",
+      `echo "{\\"id\\":\\"$1\\",\\"title\\":\\"t\\",\\"description\\":\\"\\",\\"status\\":\\"todo\\",\\"repository\\":null,\\"model\\":null,\\"assignee\\":\\"u\\",\\"updatedAt\\":\\"2026-01-01T00:00:00Z\\",\\"blockers\\":[],\\"sourceRef\\":null}"`,
+    );
+    const source = createShellTaskSource(
+      {
+        kind: "shell",
+        name: "test",
+        commands: { fetch: "echo '[]'", getTask: `${getTaskScript} \${id}` },
+      },
+      fakeContext,
+    );
+
+    const issue = await source.getTask("X-1");
+
     expect(issue?.id).toBe("test:x-1");
   });
 

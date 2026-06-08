@@ -94,6 +94,8 @@ function stubSource(name: string): TaskSource {
   return {
     name,
     verify: vi.fn<TaskSource["verify"]>(),
+    listTasks: vi.fn<TaskSource["listTasks"]>(),
+    getTask: vi.fn<TaskSource["getTask"]>(),
     fetch: vi.fn<TaskSource["fetch"]>(),
     resolveOne: vi.fn<TaskSource["resolveOne"]>(),
     markInProgress: vi.fn<TaskSource["markInProgress"]>(),

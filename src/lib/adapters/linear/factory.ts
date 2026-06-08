@@ -102,6 +102,14 @@ function toCanonicalParentSkip(skip: LinearParentSkip, sourceName: string): Cano
   };
 }
 
+function isLinearNotFoundError(error: unknown, naturalId: string): boolean {
+  return (
+    error instanceof Error &&
+    error.message.startsWith(`Task ${naturalId.toUpperCase()} `) &&
+    error.message.includes("not found")
+  );
+}
+
 export function toCanonicalIssue(
   linearIssue: LinearIssue,
   sourceName: string,
@@ -169,53 +177,76 @@ export function createLinearTaskSource(
 
   let lastParentSkips: readonly CanonicalParentSkip[] = [];
 
+  async function listTasks(): Promise<CanonicalIssue[]> {
+    const state = await getBoardSource().fetch();
+    lastParentSkips = state.parentSkips.map((skip) => toCanonicalParentSkip(skip, sourceName));
+    return state.issues.map((linearIssue) =>
+      toCanonicalIssue(linearIssue, sourceName, statusNames),
+    );
+  }
+
+  async function getTask(naturalId: string): Promise<CanonicalIssue | null> {
+    let resolved: Awaited<ReturnType<typeof fetchResolvedIssue>>;
+    try {
+      resolved = await fetchResolvedIssue({
+        client: getClient(),
+        config: globalConfig,
+        task: naturalId,
+      });
+    } catch (error: unknown) {
+      if (isLinearNotFoundError(error, naturalId)) {
+        return null;
+      }
+      throw error;
+    }
+    const sourceRef: LinearSourceRef = {
+      uuid: resolved.uuid,
+      statusId: resolved.statusId,
+      teamId: resolved.teamId,
+      stateType: resolved.stateType,
+      nativeStatus: resolved.status,
+    };
+    return {
+      id: toCanonicalId(sourceName, naturalId),
+      source: sourceName,
+      title: resolved.title,
+      description: resolved.description,
+      status: canonicalStatusFromLinearState({
+        nativeStatus: resolved.status,
+        stateType: resolved.stateType,
+        statusNames,
+      }),
+      repository: resolved.repository,
+      model: resolved.model,
+      assignee: resolved.assignee,
+      updatedAt: resolved.updatedAt,
+      blockers: resolved.blockers.map((b) => toCanonicalBlocker(b, sourceName, statusNames)),
+      hasMoreBlockers: resolved.hasMoreBlockers,
+      url: resolved.url,
+      ...(resolved.priority === 0 ? {} : { priority: resolved.priority }),
+      sourceRef,
+    };
+  }
+
   return {
     name: sourceName,
     async verify(): Promise<void> {
       await getBoardSource().verify();
     },
+    async listTasks(): Promise<CanonicalIssue[]> {
+      return await listTasks();
+    },
+    async getTask(naturalId: string): Promise<CanonicalIssue | null> {
+      return await getTask(naturalId);
+    },
     async fetch(): Promise<CanonicalIssue[]> {
-      const state = await getBoardSource().fetch();
-      lastParentSkips = state.parentSkips.map((skip) => toCanonicalParentSkip(skip, sourceName));
-      return state.issues.map((linearIssue) =>
-        toCanonicalIssue(linearIssue, sourceName, statusNames),
-      );
+      return await listTasks();
     },
     async fetchParentSkips(): Promise<readonly CanonicalParentSkip[]> {
       return lastParentSkips;
     },
     async resolveOne(naturalId: string): Promise<CanonicalIssue | undefined> {
-      const resolved = await fetchResolvedIssue({
-        client: getClient(),
-        config: globalConfig,
-        task: naturalId,
-      });
-      const sourceRef: LinearSourceRef = {
-        uuid: resolved.uuid,
-        statusId: resolved.statusId,
-        teamId: resolved.teamId,
-        stateType: resolved.stateType,
-        nativeStatus: resolved.status,
-      };
-      return {
-        id: toCanonicalId(sourceName, naturalId),
-        source: sourceName,
-        title: resolved.title,
-        description: resolved.description,
-        status: canonicalStatusFromLinearState({
-          nativeStatus: resolved.status,
-          stateType: resolved.stateType,
-          statusNames,
-        }),
-        repository: resolved.repository,
-        model: resolved.model,
-        assignee: "Unassigned",
-        updatedAt: new Date().toISOString(),
-        blockers: [],
-        hasMoreBlockers: false,
-        url: resolved.url,
-        sourceRef,
-      };
+      return (await getTask(naturalId)) ?? undefined;
     },
     async markInProgress(issue: CanonicalIssue): Promise<void> {
       // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- by the Linear adapter's contract, every Issue it produces carries a LinearSourceRef in sourceRef

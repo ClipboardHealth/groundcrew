@@ -11,6 +11,7 @@ import { orchestrate } from "./commands/orchestrator.ts";
 import { resumeWorkspaceCli } from "./commands/resumeWorkspace.ts";
 import { setupWorkspaceCli } from "./commands/setupWorkspace.ts";
 import { statusCli } from "./commands/status.ts";
+import { taskCli } from "./commands/task.ts";
 import {
   createDefaultUpgradeCliOptions,
   upgradeCli,
@@ -45,6 +46,9 @@ vi.mock(import("./commands/setupWorkspace.ts"), () => ({
 vi.mock(import("./commands/status.ts"), () => ({
   statusCli: vi.fn<typeof statusCli>(),
 }));
+vi.mock(import("./commands/task.ts"), () => ({
+  taskCli: vi.fn<typeof taskCli>(),
+}));
 vi.mock(import("./commands/upgrade.ts"), () => ({
   upgradeCli: vi.fn<typeof upgradeCli>(),
   createDefaultUpgradeCliOptions: vi.fn<typeof createDefaultUpgradeCliOptions>(),
@@ -57,6 +61,7 @@ const resumeMock = vi.mocked(resumeWorkspaceCli);
 const setupMock = vi.mocked(setupWorkspaceCli);
 const cleanupMock = vi.mocked(cleanupWorkspaceCli);
 const statusMock = vi.mocked(statusCli);
+const taskMock = vi.mocked(taskCli);
 const upgradeCliMock = vi.mocked(upgradeCli);
 const createDefaultUpgradeCliOptionsMock = vi.mocked(createDefaultUpgradeCliOptions);
 const requireFromTest = createRequire(import.meta.url);
@@ -117,6 +122,7 @@ describe(run, () => {
     setupMock.mockResolvedValue();
     cleanupMock.mockResolvedValue();
     statusMock.mockResolvedValue();
+    taskMock.mockResolvedValue();
     upgradeCliMock.mockResolvedValue();
     createDefaultUpgradeCliOptionsMock.mockResolvedValue(makeFakeUpgradeOptions());
   });
@@ -142,8 +148,8 @@ describe(run, () => {
     expect(helpOutput).toContain("[--repo <repo>]...");
     expect(helpOutput).toContain("--runner <runner>");
     expect(helpOutput).toContain("--model <model>");
+    expect(helpOutput).toContain("crew task <list|get|create>");
     expect(helpOutput).not.toContain("sandbox");
-    expect(helpOutput).not.toContain("crew task");
     expect(process.exitCode).toBe(1);
   });
 
@@ -384,6 +390,13 @@ describe(run, () => {
     await run(["status"]);
 
     expect(statusMock).toHaveBeenCalledWith([]);
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it("dispatches task namespace arguments to taskCli", async () => {
+    await run(["task", "list", "--source", "todo"]);
+
+    expect(taskMock).toHaveBeenCalledWith(["list", "--source", "todo"]);
     expect(process.exitCode).toBeUndefined();
   });
 
