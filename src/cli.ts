@@ -7,6 +7,7 @@ import { interruptWorkspaceCli } from "./commands/interruptWorkspace.ts";
 import { orchestrate } from "./commands/orchestrator.ts";
 import { resumeWorkspaceCli } from "./commands/resumeWorkspace.ts";
 import { setupWorkspaceCli } from "./commands/setupWorkspace.ts";
+import { sourceCli } from "./commands/source.ts";
 import { statusCli } from "./commands/status.ts";
 import { createDefaultUpgradeCliOptions, upgradeCli } from "./commands/upgrade.ts";
 import {
@@ -173,6 +174,11 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
     summary: "Verify host prerequisites (PATH tools, config validity, Linear reachability)",
     usage: "",
     invoke: doctorCli,
+  },
+  source: {
+    summary: "Inspect configured task sources",
+    usage: "<list|verify> [...]",
+    invoke: sourceCli,
   },
   status: {
     summary: "Print read-only groundcrew state, or one task's local/Linear status",

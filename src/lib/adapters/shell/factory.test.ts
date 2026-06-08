@@ -4,6 +4,8 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+import { captureConsoleError } from "../../../testHelpers/consoleCapture.ts";
+
 import type { AdapterContext } from "../../adapterDefinition.ts";
 import type { ResolvedConfig } from "../../config.ts";
 import type { Issue as CanonicalIssue } from "../../taskSource.ts";
@@ -530,5 +532,70 @@ describe(createShellTaskSource, () => {
     };
     await expect(source.markDone?.(issue)).resolves.toStrictEqual({ outcome: "applied" });
     expect(readFileSync(stdinCapture, "utf8")).toBe(JSON.stringify(sourceRef));
+  });
+
+  it("fetch() works when commands.listTasks is used instead of commands.fetch", async () => {
+    const script = dir.writeScript(
+      "list.sh",
+      `cat <<'JSON'\n${payload(shellIssue({ id: "X-2" }))}\nJSON`,
+    );
+    const source = createShellTaskSource(
+      { kind: "shell", name: "test", commands: { listTasks: script } },
+      fakeContext,
+    );
+    const issues = await source.fetch();
+    expect(issues).toHaveLength(1);
+    expect(issues[0]?.id).toBe("test:x-2");
+  });
+
+  it("resolveOne() uses commands.getTask when set instead of commands.resolveOne", async () => {
+    const getTaskScript = dir.writeScript(
+      "get.sh",
+      `echo "{\\"id\\":\\"$1\\",\\"title\\":\\"t\\",\\"description\\":\\"\\",\\"status\\":\\"todo\\",\\"repository\\":null,\\"model\\":null,\\"assignee\\":\\"u\\",\\"updatedAt\\":\\"2026-01-01T00:00:00Z\\",\\"blockers\\":[],\\"sourceRef\\":null}"`,
+    );
+    const source = createShellTaskSource(
+      {
+        kind: "shell",
+        name: "test",
+        commands: { fetch: "echo '[]'", getTask: `${getTaskScript} \${id}` },
+      },
+      fakeContext,
+    );
+    const issue = await source.resolveOne("X-2");
+    expect(issue?.id).toBe("test:x-2");
+  });
+
+  it("warns to stderr when both commands.listTasks and commands.fetch are set", () => {
+    const err = captureConsoleError();
+    try {
+      createShellTaskSource(
+        { kind: "shell", name: "test", commands: { listTasks: "echo '[]'", fetch: "echo '[]'" } },
+        fakeContext,
+      );
+    } finally {
+      err.restore();
+    }
+    expect(err.output()).toContain("commands.fetch is ignored");
+  });
+
+  it("warns to stderr when both commands.getTask and commands.resolveOne are set", () => {
+    const err = captureConsoleError();
+    try {
+      createShellTaskSource(
+        {
+          kind: "shell",
+          name: "test",
+          commands: {
+            fetch: "echo '[]'",
+            getTask: "./get.sh",
+            resolveOne: "./resolve.sh",
+          },
+        },
+        fakeContext,
+      );
+    } finally {
+      err.restore();
+    }
+    expect(err.output()).toContain("commands.resolveOne is ignored");
   });
 });

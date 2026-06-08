@@ -25,6 +25,7 @@ import {
   type MarkInReviewResult,
   type TaskSource,
 } from "../../taskSource.ts";
+import { writeError } from "../../util.ts";
 
 import { invokeShellCommand } from "./invoke.ts";
 import {
@@ -36,8 +37,8 @@ import {
 
 interface ResolvedShellTimeouts {
   verify: number;
-  fetch: number;
-  resolveOne: number;
+  listTasks: number;
+  getTask: number;
   markInProgress: number;
   markInReview: number;
   markDone: number;
@@ -45,8 +46,8 @@ interface ResolvedShellTimeouts {
 
 const DEFAULT_TIMEOUTS: ResolvedShellTimeouts = {
   verify: 10_000,
-  fetch: 30_000,
-  resolveOne: 10_000,
+  listTasks: 30_000,
+  getTask: 10_000,
   markInProgress: 10_000,
   markInReview: 10_000,
   markDone: 10_000,
@@ -55,12 +56,47 @@ const DEFAULT_TIMEOUTS: ResolvedShellTimeouts = {
 function mergeTimeouts(overrides: ShellAdapterConfig["timeouts"]): ResolvedShellTimeouts {
   return {
     verify: overrides?.verify ?? DEFAULT_TIMEOUTS.verify,
-    fetch: overrides?.fetch ?? DEFAULT_TIMEOUTS.fetch,
-    resolveOne: overrides?.resolveOne ?? DEFAULT_TIMEOUTS.resolveOne,
+    listTasks: overrides?.listTasks ?? overrides?.fetch ?? DEFAULT_TIMEOUTS.listTasks,
+    getTask: overrides?.getTask ?? overrides?.resolveOne ?? DEFAULT_TIMEOUTS.getTask,
     markInProgress: overrides?.markInProgress ?? DEFAULT_TIMEOUTS.markInProgress,
     markInReview: overrides?.markInReview ?? DEFAULT_TIMEOUTS.markInReview,
     markDone: overrides?.markDone ?? DEFAULT_TIMEOUTS.markDone,
   };
+}
+
+function warnDuplicate(sourceName: string, preferred: string, legacy: string): void {
+  writeError(
+    `shell source "${sourceName}": commands.${preferred} and commands.${legacy} are both set; commands.${legacy} is ignored (use commands.${preferred})`,
+  );
+}
+
+/** Preferred name preferred over legacy alias. Throws if neither is set (Zod schema invariant). */
+function resolveListTasksCommand(
+  commands: ShellAdapterConfig["commands"],
+  sourceName: string,
+): string {
+  const { listTasks, fetch } = commands;
+  if (listTasks !== undefined && fetch !== undefined) {
+    warnDuplicate(sourceName, "listTasks", "fetch");
+  }
+  const resolved = listTasks ?? fetch;
+  /* v8 ignore next @preserve -- Zod superRefine guarantees at least one is set */
+  if (resolved === undefined) {
+    throw new Error(`shell source "${sourceName}": commands.listTasks is required`);
+  }
+  return resolved;
+}
+
+/** Preferred name preferred over legacy alias. Returns undefined when neither is set. */
+function resolveGetTaskCommand(
+  commands: ShellAdapterConfig["commands"],
+  sourceName: string,
+): string | undefined {
+  const { getTask, resolveOne } = commands;
+  if (getTask !== undefined && resolveOne !== undefined) {
+    warnDuplicate(sourceName, "getTask", "resolveOne");
+  }
+  return getTask ?? resolveOne;
 }
 
 export function toCanonicalIssue(shellIssue: ShellIssue, sourceName: string): CanonicalIssue {
@@ -94,11 +130,13 @@ export function createShellTaskSource(
 ): TaskSource {
   const sourceName = config.name;
   const timeouts = mergeTimeouts(config.timeouts);
+  const listTasksCommand = resolveListTasksCommand(config.commands, sourceName);
+  const getTaskCommand = resolveGetTaskCommand(config.commands, sourceName);
 
   async function runFetch(): Promise<CanonicalIssue[]> {
     const { stdout } = await invokeShellCommand({
-      command: config.commands.fetch,
-      timeoutMs: timeouts.fetch,
+      command: listTasksCommand,
+      timeoutMs: timeouts.listTasks,
       cwd: config.cwd,
       env: config.env,
       sourceName,
@@ -154,14 +192,13 @@ export function createShellTaskSource(
     fetch: runFetch,
     async resolveOne(naturalId: string): Promise<CanonicalIssue | undefined> {
       const canonicalId = toCanonicalId(sourceName, naturalId);
-      const resolveCommand = config.commands.resolveOne;
-      if (resolveCommand === undefined) {
+      if (getTaskCommand === undefined) {
         const all = await runFetch();
         return all.find((i) => i.id === canonicalId);
       }
       const result = await invokeShellCommand({
-        command: resolveCommand,
-        timeoutMs: timeouts.resolveOne,
+        command: getTaskCommand,
+        timeoutMs: timeouts.getTask,
         cwd: config.cwd,
         env: config.env,
         substitutions: {

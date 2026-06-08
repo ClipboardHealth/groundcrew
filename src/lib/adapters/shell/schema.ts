@@ -49,14 +49,29 @@ export const shellAdapterConfigSchema = z.object({
   name: z
     .string()
     .regex(/^[a-z][a-z0-9-]*$/, "name must be kebab-case (lowercase letters, digits, hyphens)"),
-  commands: z.object({
-    verify: z.string().optional(),
-    fetch: z.string(),
-    resolveOne: z.string().optional(),
-    markInProgress: z.string().optional(),
-    markInReview: z.string().optional(),
-    markDone: z.string().optional(),
-  }),
+  commands: z
+    .object({
+      verify: z.string().optional(),
+      /** Preferred name. Alias: `fetch`. */
+      listTasks: z.string().optional(),
+      /** Legacy alias for `listTasks`. Prefer `listTasks` in new configs. */
+      fetch: z.string().optional(),
+      /** Preferred name. Alias: `resolveOne`. */
+      getTask: z.string().optional(),
+      /** Legacy alias for `getTask`. Prefer `getTask` in new configs. */
+      resolveOne: z.string().optional(),
+      markInProgress: z.string().optional(),
+      markInReview: z.string().optional(),
+      markDone: z.string().optional(),
+    })
+    .superRefine((commands, ctx) => {
+      if (commands.listTasks === undefined && commands.fetch === undefined) {
+        ctx.addIssue({
+          code: "custom",
+          message: "commands.listTasks (or the legacy alias commands.fetch) is required",
+        });
+      }
+    }),
   cwd: z.string().optional(),
   timeouts: z
     .object({
@@ -64,7 +79,13 @@ export const shellAdapterConfigSchema = z.object({
       // zero, negative, and fractional values would either deadlock or
       // misbehave inside setTimeout.
       verify: z.number().int().positive().optional(),
+      /** Timeout for the listTasks command (preferred). */
+      listTasks: z.number().int().positive().optional(),
+      /** Legacy timeout alias for listTasks. Prefer `listTasks` in new configs. */
       fetch: z.number().int().positive().optional(),
+      /** Timeout for the getTask command (preferred). */
+      getTask: z.number().int().positive().optional(),
+      /** Legacy timeout alias for getTask. Prefer `getTask` in new configs. */
       resolveOne: z.number().int().positive().optional(),
       markInProgress: z.number().int().positive().optional(),
       markInReview: z.number().int().positive().optional(),

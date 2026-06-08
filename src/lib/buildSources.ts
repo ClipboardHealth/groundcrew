@@ -13,7 +13,7 @@ import { adapterRegistry } from "./adapters/registry.ts";
 import type { ResolvedConfig } from "./config.ts";
 import type { TaskSource } from "./taskSource.ts";
 
-const kindShape = z.object({ kind: z.string() });
+export const kindShape = z.object({ kind: z.string() });
 
 /**
  * Production entry point. Awaits the directory-scanned registry, then dispatches.
