@@ -56,6 +56,7 @@ function makeHost(overrides: Partial<HostCapabilities> = {}): HostCapabilities {
     hasSbx: false,
     hasCmux: true,
     hasTmux: false,
+    hasZellij: false,
     hasBubblewrap: false,
     hasSocat: false,
     hasRipgrep: false,

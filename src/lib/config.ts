@@ -40,13 +40,15 @@ export const AGENT_ANY_MODEL = "any";
  * - `auto`: pick the first available — cmux when installed, else tmux.
  * - `cmux`: require the cmux binary; fail loudly if missing.
  * - `tmux`: require the tmux binary; fail loudly if missing.
+ * - `zellij`: require the zellij binary; fail loudly if missing.
  */
-export type WorkspaceKindSetting = "auto" | "cmux" | "tmux";
+export type WorkspaceKindSetting = "auto" | "cmux" | "tmux" | "zellij";
 
 export const WORKSPACE_KIND_SETTINGS: readonly WorkspaceKindSetting[] = [
   "auto",
   "cmux",
   "tmux",
+  "zellij",
 ] as const;
 
 /**

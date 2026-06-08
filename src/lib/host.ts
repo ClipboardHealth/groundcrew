@@ -17,6 +17,8 @@ export interface HostCapabilities {
   hasCmux: boolean;
   /** True when the `tmux` binary is on PATH. */
   hasTmux: boolean;
+  /** True when the `zellij` binary is on PATH. */
+  hasZellij: boolean;
   /** True when the `bubblewrap` binary is on PATH (Linux srt dependency). */
   hasBubblewrap: boolean;
   /** True when the `socat` binary is on PATH (Linux srt dependency). */
@@ -73,11 +75,12 @@ export async function which(cmd: string, signal?: AbortSignal): Promise<string |
 export async function detectHostCapabilities(signal?: AbortSignal): Promise<HostCapabilities> {
   const isMacOS = process.platform === "darwin";
   const isLinux = process.platform === "linux";
-  const [safehouse, sbx, cmux, tmux, bubblewrap, socat, ripgrep] = await Promise.all([
+  const [safehouse, sbx, cmux, tmux, zellij, bubblewrap, socat, ripgrep] = await Promise.all([
     which("safehouse", signal),
     which("sbx", signal),
     which("cmux", signal),
     which("tmux", signal),
+    which("zellij", signal),
     which("bwrap", signal),
     which("socat", signal),
     which("rg", signal),
@@ -87,6 +90,7 @@ export async function detectHostCapabilities(signal?: AbortSignal): Promise<Host
     hasSbx: sbx !== undefined,
     hasCmux: cmux !== undefined,
     hasTmux: tmux !== undefined,
+    hasZellij: zellij !== undefined,
     hasBubblewrap: bubblewrap !== undefined,
     hasSocat: socat !== undefined,
     hasRipgrep: ripgrep !== undefined,

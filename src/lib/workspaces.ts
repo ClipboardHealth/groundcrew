@@ -11,6 +11,7 @@ import { cmuxAdapter } from "./cmuxAdapter.ts";
 import type { ResolvedConfig, WorkspaceKindSetting } from "./config.ts";
 import { detectHostCapabilities, type HostCapabilities } from "./host.ts";
 import { tmuxAdapter } from "./tmuxAdapter.ts";
+import { zellijAdapter } from "./zellijAdapter.ts";
 import {
   type Adapter,
   isSignalAborted,
@@ -77,9 +78,16 @@ function resolveAuto(arguments_: {
   );
 }
 
-const HOST_CAPABILITY_BY_KIND: Record<WorkspaceKind, "hasCmux" | "hasTmux"> = {
+const HOST_CAPABILITY_BY_KIND: Record<WorkspaceKind, "hasCmux" | "hasTmux" | "hasZellij"> = {
   cmux: "hasCmux",
   tmux: "hasTmux",
+  zellij: "hasZellij",
+};
+
+const ADAPTER_BY_KIND: Record<WorkspaceKind, Adapter> = {
+  cmux: cmuxAdapter,
+  tmux: tmuxAdapter,
+  zellij: zellijAdapter,
 };
 
 function failIfBinaryUnavailable(kind: WorkspaceKind, host: HostCapabilities): void {
@@ -104,7 +112,7 @@ async function adapterFor(config: ResolvedConfig, signal?: AbortSignal): Promise
     config,
     host: await detectHostCapabilities(signal),
   });
-  const adapter = resolved === "cmux" ? cmuxAdapter : tmuxAdapter;
+  const adapter = ADAPTER_BY_KIND[resolved];
   adapterCache.set(config, adapter);
   return adapter;
 }

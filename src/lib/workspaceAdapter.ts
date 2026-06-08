@@ -9,7 +9,7 @@
 
 import { runCommandAsync } from "./commandRunner.ts";
 
-export type WorkspaceKind = "cmux" | "tmux";
+export type WorkspaceKind = "cmux" | "tmux" | "zellij";
 
 export interface Workspace {
   /** Ticket id; the join key callers use. */
