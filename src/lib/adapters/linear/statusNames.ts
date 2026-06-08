@@ -1,4 +1,4 @@
-import type { CanonicalStatus } from "../../ticketSource.ts";
+import type { CanonicalStatus } from "../../taskSource.ts";
 import type { LinearAdapterConfig } from "./schema.ts";
 
 export interface LinearStatusNames {

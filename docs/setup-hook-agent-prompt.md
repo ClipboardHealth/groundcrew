@@ -10,7 +10,7 @@ Paste this prompt at the target repo root:
 You're adding Groundcrew's repo-local prepareWorktree hook for this repository.
 Produce `.groundcrew/config.json` and smoke-test the command.
 
-Context: Groundcrew launches each agent in a fresh git worktree per ticket. If
+Context: Groundcrew launches each agent in a fresh git worktree per task. If
 `.groundcrew/config.json` contains `hooks.prepareWorktree`, Groundcrew runs that
 command from the repo root after creating the worktree and before launching the
 agent. The same command runs under Safehouse, sdx, or the host runner.
@@ -31,7 +31,7 @@ Hook requirements:
 - Do NOT include prompts, global installs, auth setup, runtime-version-manager
   bootstrap (`nvm`, `pyenv`, `rustup`, `mise`, `asdf`), db seeds, husky,
   pre-commit, or local package linking.
-- Keep it fast. Each ticket starts from a fresh worktree, so use frozen-lockfile
+- Keep it fast. Each task starts from a fresh worktree, so use frozen-lockfile
   installs (`npm ci`, `pnpm install --frozen-lockfile`, `uv sync --frozen`,
   `cargo fetch`, `go mod download`, etc.) and trust global package-manager
   caches.

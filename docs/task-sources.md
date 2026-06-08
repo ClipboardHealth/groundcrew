@@ -1,6 +1,6 @@
-# Ticket Sources
+# Task Sources
 
-`sources` declares extra ticket-system adapters. They are verified at `crew run` startup and dispatched alongside the built-in Linear adapter, so a shell, Jira, or local-plan integration feeds the same orchestration loop as Linear.
+`sources` declares extra task-system adapters. They are verified at `crew run` startup and dispatched alongside the built-in Linear adapter, so a shell, Jira, or local-plan integration feeds the same orchestration loop as Linear.
 
 The built-in `shell` adapter runs command templates and reads JSON from stdout:
 
@@ -28,13 +28,13 @@ export default {
 set, must print one issue, print nothing for "not found", or exit `3` for "not
 found". `commands.markInProgress`, when set, receives the issue's `sourceRef` as
 JSON on stdin. `commands.markInReview`, when set, receives the same `sourceRef` and is run
-after groundcrew sees an **open** PR on the ticket's worktree branch (in-progress
-tickets only). If omitted, groundcrew treats in-review advancement as unsupported
+after groundcrew sees an **open** PR on the task's worktree branch (in-progress
+tasks only). If omitted, groundcrew treats in-review advancement as unsupported
 for that source and does not claim the transition succeeded. `commands.markDone`,
 when set, receives the same `sourceRef` and is run after groundcrew sees a
-**merged** PR on the ticket's worktree branch (a merged PR never advances to
+**merged** PR on the task's worktree branch (a merged PR never advances to
 in-review). If omitted, groundcrew treats done advancement as unsupported and
-leaves the ticket for the source's own integration to close out. `${id}`,
+leaves the task for the source's own integration to close out. `${id}`,
 `${canonicalId}`, and `${name}` placeholders are shell-quoted before substitution.
 
 ```json
@@ -42,7 +42,7 @@ leaves the ticket for the source's own integration to close out. `${id}`,
   {
     "id": "JIRA-123",
     "title": "Add retry logic",
-    "description": "Ticket body",
+    "description": "Task body",
     "status": "todo",
     "repository": "your-org/your-repo",
     "model": "claude",
@@ -55,11 +55,11 @@ leaves the ticket for the source's own integration to close out. `${id}`,
 ]
 ```
 
-Allowed `status` values are `todo`, `in-progress`, `in-review`, `done`, and `other`. Use `null` for `repository` or `model` when a ticket should not be groundcrew-eligible. `hasMoreBlockers` is optional and defaults to `false`; `sourceRef` is opaque data that groundcrew passes back to your writeback command.
+Allowed `status` values are `todo`, `in-progress`, `in-review`, `done`, and `other`. Use `null` for `repository` or `model` when a task should not be groundcrew-eligible. `hasMoreBlockers` is optional and defaults to `false`; `sourceRef` is opaque data that groundcrew passes back to your writeback command.
 
 ## The `description` is the agent's prompt
 
-Groundcrew wraps each issue's `description` in its generic unattended-execution prompt and hands it to the agent as the task. It does not pick a different prompt per source or ticket type. Specialized behavior belongs in the `description` your adapter emits, not in groundcrew.
+Groundcrew wraps each issue's `description` in its generic unattended-execution prompt and hands it to the agent as the task. It does not pick a different prompt per source or task type. Specialized behavior belongs in the `description` your adapter emits, not in groundcrew.
 
 So the adapter classifies, enriches, dedupes, and builds the description; groundcrew runs the result. A Datadog flaky-test source emits a description that says how to classify the flake, where the logs are, and what counts as success. A GitHub CI-failure source emits the PR link, the failing workflow, the logs, and whether to open a PR or leave a comment.
 

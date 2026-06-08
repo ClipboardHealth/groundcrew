@@ -9,9 +9,9 @@ export function recordCleanedUpRuns(
 ): void {
   for (const entry of entries) {
     try {
-      removeRunState(config, entry.ticket);
+      removeRunState(config, entry.task);
     } catch (error) {
-      debug(`Run state cleanup failed for ${entry.ticket}: ${errorMessage(error)}`);
+      debug(`Run state cleanup failed for ${entry.task}: ${errorMessage(error)}`);
     }
   }
 }

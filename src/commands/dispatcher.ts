@@ -1,5 +1,5 @@
 /**
- * Per-iteration decider that picks Todo tickets to start and acts on the
+ * Per-iteration decider that picks Todo tasks to start and acts on the
  * picks. Stateless across iterations. The Board adapter owns its own writeback
  * caches (e.g., Linear's team-state cache lives in `src/lib/adapters/linear/writeback.ts`).
  *
@@ -16,7 +16,7 @@ import {
   isGroundcrewIssue,
   type Issue,
   naturalIdFromCanonical,
-} from "../lib/ticketSource.ts";
+} from "../lib/taskSource.ts";
 import type { UsageByModel } from "../lib/usage.ts";
 import { errorMessage, failMark, log, logEvent } from "../lib/util.ts";
 import { type WorkspaceProbe, workspaces } from "../lib/workspaces.ts";
@@ -58,7 +58,7 @@ function logSkip(verdict: SkipVerdict): void {
   logEvent("dispatch", {
     outcome: "skipped",
     reason: verdict.eventReason,
-    ticket: naturalIdFromCanonical(verdict.issue.id),
+    task: naturalIdFromCanonical(verdict.issue.id),
     blockers: verdict.blockers,
     model: verdict.model,
   });
@@ -82,20 +82,20 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     signal?: AbortSignal,
   ): Promise<void> {
     const { issue, recovery } = start;
-    const ticketId = naturalIdFromCanonical(issue.id);
+    const taskId = naturalIdFromCanonical(issue.id);
     if (start.resolvedFromAny) {
-      log(`Resolved agent-any for ${ticketId} → ${issue.model}`);
+      log(`Resolved agent-any for ${taskId} → ${issue.model}`);
     }
 
     if (dryRun) {
       log(
         /* v8 ignore next @preserve -- classifyTodo forces recovery=false in dry-run, so the resume branch can't fire here */
-        `[dry-run] Would ${recovery ? "resume" : "start"} ${ticketId} in ${issue.repository} (${issue.model})`,
+        `[dry-run] Would ${recovery ? "resume" : "start"} ${taskId} in ${issue.repository} (${issue.model})`,
       );
       logEvent("dispatch", {
         outcome: "skipped",
         reason: "dry_run",
-        ticket: ticketId,
+        task: taskId,
         model: issue.model,
         repository: issue.repository,
       });
@@ -104,11 +104,11 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
 
     try {
       if (recovery) {
-        log(`Worktree and workspace already exist for ${ticketId}; resuming with markInProgress`);
+        log(`Worktree and workspace already exist for ${taskId}; resuming with markInProgress`);
       } else {
         const setupOptions = {
           repository: issue.repository,
-          ticket: ticketId,
+          task: taskId,
           model: issue.model,
           details: {
             title: issue.title,
@@ -123,15 +123,15 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
       await board.markInProgress(issue);
       logEvent("dispatch", {
         outcome: recovery ? "resumed" : "started",
-        ticket: ticketId,
+        task: taskId,
         model: issue.model,
         repository: issue.repository,
       });
     } catch (error) {
-      log(`${failMark()} Failed to start ${ticketId}: ${errorMessage(error)}`);
+      log(`${failMark()} Failed to start ${taskId}: ${errorMessage(error)}`);
       logEvent("dispatch", {
         outcome: "failed",
-        ticket: ticketId,
+        task: taskId,
         model: issue.model,
         repository: issue.repository,
         error: errorMessage(error),
@@ -149,18 +149,18 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
   }): Promise<void> {
     const { state, worktreeEntries, usage, dryRun, signal, idleSuffix = "" } = arguments_;
 
-    // Surface parent tickets that fetch silently dropped. Without this
-    // an operator sees "No Todo tickets to pick up" with no signal that an
-    // expected Todo+labelled ticket was skipped because it has sub-issues.
+    // Surface parent tasks that fetch silently dropped. Without this
+    // an operator sees "No Todo tasks to pick up" with no signal that an
+    // expected Todo+labelled task was skipped because it has sub-issues.
     for (const skip of state.parentSkips) {
-      const ticket = naturalIdFromCanonical(skip.id);
+      const task = naturalIdFromCanonical(skip.id);
       log(
-        `Skipping ${ticket}: parent ticket with ${skip.childCount} sub-issue(s) — groundcrew works sub-issues, not parents`,
+        `Skipping ${task}: parent task with ${skip.childCount} sub-issue(s) — groundcrew works sub-issues, not parents`,
       );
       logEvent("dispatch", {
         outcome: "skipped",
         reason: "parent_with_children",
-        ticket,
+        task,
         children: skip.childCount,
       });
     }
@@ -170,9 +170,9 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
       .toSorted((a, b) => a.id.localeCompare(b.id));
     const activeCount = active.length;
     const slots = config.orchestrator.maximumInProgress - activeCount;
-    // Narrow Todo to tickets that opted in via an `agent-*` label.
-    // Unlabeled tickets are not groundcrew's concern even when in Todo.
-    // Sort by priority so higher-priority tickets fill slots first.
+    // Narrow Todo to tasks that opted in via an `agent-*` label.
+    // Unlabeled tasks are not groundcrew's concern even when in Todo.
+    // Sort by priority so higher-priority tasks fill slots first.
     const todo: readonly GroundcrewIssue[] = state.issues
       .filter(
         (issue): issue is GroundcrewIssue => issue.status === "todo" && isGroundcrewIssue(issue),
@@ -187,7 +187,7 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     }
 
     if (todo.length === 0) {
-      log(`No Todo tickets to pick up${idleSuffix}`);
+      log(`No Todo tasks to pick up${idleSuffix}`);
       return;
     }
 
@@ -198,23 +198,23 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
       logSkip(skip);
     }
     if (unblocked.length === 0) {
-      log(`No eligible Todo tickets after blocker filtering${idleSuffix}`);
+      log(`No eligible Todo tasks after blocker filtering${idleSuffix}`);
       return;
     }
 
     // Validate repositories BEFORE the expensive probes so a tick whose only
     // candidates have unknown repos short-circuits without paying for the
     // usage() HTTP call or the workspaces.probe shell-out. Doing this filter
-    // here also keeps an unknown-repo ticket at the head of the queue from
+    // here also keeps an unknown-repo task at the head of the queue from
     // consuming a slot in classifyEligibility and starving later valid
-    // tickets. Each unknown repo still emits a WARN via dispatchableRepository.
+    // tasks. Each unknown repo still emits a WARN via dispatchableRepository.
     const dispatchableUnblocked = unblocked.filter((issue) => {
       const repository = dispatchableRepository(issue, config.workspace.knownRepositories, log);
       return repository !== undefined;
     });
 
     if (dispatchableUnblocked.length === 0) {
-      log(`No eligible Todo tickets after repository validation${idleSuffix}`);
+      log(`No eligible Todo tasks after repository validation${idleSuffix}`);
       return;
     }
 
@@ -260,20 +260,18 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     }
 
     if (starts.length === 0) {
-      log(`No eligible Todo tickets after eligibility filtering${idleSuffix}`);
+      log(`No eligible Todo tasks after eligibility filtering${idleSuffix}`);
       return;
     }
 
     const dispatchable = starts;
 
     log(
-      `Slots ${activeCount}/${config.orchestrator.maximumInProgress} used${formatActiveSlotList(active)}, starting ${dispatchable.length} ticket(s): ${dispatchable.map(({ issue }) => `${naturalIdFromCanonical(issue.id)}(${issue.model})`).join(", ")}`,
+      `Slots ${activeCount}/${config.orchestrator.maximumInProgress} used${formatActiveSlotList(active)}, starting ${dispatchable.length} task(s): ${dispatchable.map(({ issue }) => `${naturalIdFromCanonical(issue.id)}(${issue.model})`).join(", ")}`,
     );
     logEvent("dispatch", {
       outcome: "starting",
-      tickets: dispatchable.map(
-        ({ issue }) => `${naturalIdFromCanonical(issue.id)}:${issue.model}`,
-      ),
+      tasks: dispatchable.map(({ issue }) => `${naturalIdFromCanonical(issue.id)}:${issue.model}`),
     });
 
     for (const start of dispatchable) {
@@ -292,7 +290,7 @@ function hasRecoverableCandidate(
   return issues.some((issue) => {
     const naturalId = naturalIdFromCanonical(issue.id);
     return worktreeEntries.some(
-      (entry) => entry.repository === issue.repository && entry.ticket === naturalId,
+      (entry) => entry.repository === issue.repository && entry.task === naturalId,
     );
   });
 }
@@ -300,9 +298,9 @@ function hasRecoverableCandidate(
 function formatUsageExhaustion(exhaustion: ModelUsageExhaustion): string {
   if (exhaustion.kind === "session") {
     const mins = exhaustion.resetMinutes ?? "?";
-    return `${exhaustion.model} session at ${exhaustion.usedPercentage.toFixed(0)}% (> ${exhaustion.limitPercentage}%), resets in ${mins}m — skipping its tickets`;
+    return `${exhaustion.model} session at ${exhaustion.usedPercentage.toFixed(0)}% (> ${exhaustion.limitPercentage}%), resets in ${mins}m — skipping its tasks`;
   }
-  return `${exhaustion.model} weekly at ${exhaustion.usedPercentage.toFixed(1)}% (> ${exhaustion.allowedPercentage.toFixed(1)}% paced budget), resets in ${exhaustion.resetMinutes}m — skipping its tickets`;
+  return `${exhaustion.model} weekly at ${exhaustion.usedPercentage.toFixed(1)}% (> ${exhaustion.allowedPercentage.toFixed(1)}% paced budget), resets in ${exhaustion.resetMinutes}m — skipping its tasks`;
 }
 
 /** Undefined priority sorts last. */

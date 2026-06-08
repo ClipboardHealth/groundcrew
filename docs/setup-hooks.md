@@ -1,6 +1,6 @@
 # Prepare Worktree Hooks
 
-Groundcrew can run one repo-preparation hook after it creates a ticket worktree
+Groundcrew can run one repo-preparation hook after it creates a task worktree
 and before it launches the agent. Add a repo-local `.groundcrew/config.json`:
 
 ```json

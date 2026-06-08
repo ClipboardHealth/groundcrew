@@ -182,15 +182,15 @@ export function readEnvironmentVariable(name: string): string | undefined {
 }
 
 /**
- * Reads the value that follows `--ticket` at `argv[index + 1]`. Throws a
- * uniform "ticket id is required" error if the value is missing, empty, or
+ * Reads the value that follows `--task` at `argv[index + 1]`. Throws a
+ * uniform "task id is required" error if the value is missing, empty, or
  * looks like another flag (starts with `-`). Centralizes the validation so
  * each subcommand's arg parser stays DRY.
  */
-export function readTicketArgument(argv: string[], index: number, command: string): string {
+export function readTaskArgument(argv: string[], index: number, command: string): string {
   const value = argv[index + 1];
   if (value === undefined || value.length === 0 || value.startsWith("-")) {
-    throw new Error(`crew ${command} --ticket: ticket id is required`);
+    throw new Error(`crew ${command} --task: task id is required`);
   }
   return value;
 }

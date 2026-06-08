@@ -2,7 +2,7 @@ import { setVerbose } from "../lib/util.ts";
 import { canonicalLinearIssue } from "../lib/testing/canonicalFixtures.ts";
 import type { Board } from "../lib/board.ts";
 import type { PullRequestSummary } from "../lib/pullRequests.ts";
-import type { BoardState, Issue, MarkDoneResult, MarkInReviewResult } from "../lib/ticketSource.ts";
+import type { BoardState, Issue, MarkDoneResult, MarkInReviewResult } from "../lib/taskSource.ts";
 import type { WorktreeEntry } from "../lib/worktrees.ts";
 import { makeBoard } from "../testHelpers/boardFixtures.ts";
 import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCapture.ts";
@@ -21,12 +21,12 @@ function inProgressIssue(naturalId: string, overrides: Partial<Issue> = {}): Iss
   });
 }
 
-function hostEntryFor(ticket: string, overrides: Partial<WorktreeEntry> = {}): WorktreeEntry {
+function hostEntryFor(task: string, overrides: Partial<WorktreeEntry> = {}): WorktreeEntry {
   return {
     repository: "repo-a",
-    ticket,
-    branchName: `dev-${ticket}`,
-    dir: `/work/repo-a-${ticket}`,
+    task,
+    branchName: `dev-${task}`,
+    dir: `/work/repo-a-${task}`,
     kind: "host",
     ...overrides,
   };
@@ -90,7 +90,7 @@ describe(createReviewer, () => {
     expect(markDoneMock).not.toHaveBeenCalled();
   });
 
-  it("advances an in-progress ticket whose worktree has an open PR", async () => {
+  it("advances an in-progress task whose worktree has an open PR", async () => {
     const issue = inProgressIssue("team-1");
     const findPullRequests = findReturning([
       pullRequest({ state: "open", url: "https://gh/pr/7" }),
@@ -110,7 +110,7 @@ describe(createReviewer, () => {
     expect(markInReviewMock).toHaveBeenCalledWith(issue);
     const out = consoleLog.output();
     expect(out).toContain("Advanced team-1 to in-review (PR https://gh/pr/7)");
-    expect(out).toContain("event=review outcome=advanced ticket=team-1");
+    expect(out).toContain("event=review outcome=advanced task=team-1");
   });
 
   it("advances a merged PR to done (not in-review)", async () => {
@@ -129,11 +129,11 @@ describe(createReviewer, () => {
     expect(markInReviewMock).not.toHaveBeenCalled();
     const out = consoleLog.output();
     expect(out).toContain("Advanced team-1 to done (PR https://gh/pr/3)");
-    expect(out).toContain("event=review outcome=advanced ticket=team-1");
+    expect(out).toContain("event=review outcome=advanced task=team-1");
     expect(out).toContain("to=done");
   });
 
-  it("advances an in-review ticket to done when its PR has merged", async () => {
+  it("advances an in-review task to done when its PR has merged", async () => {
     const issue = inProgressIssue("team-1", { status: "in-review" });
     const reviewer = createReviewer({
       board,
@@ -150,7 +150,7 @@ describe(createReviewer, () => {
     expect(markInReviewMock).not.toHaveBeenCalled();
   });
 
-  it("leaves an in-review ticket alone when it only has an open PR", async () => {
+  it("leaves an in-review task alone when it only has an open PR", async () => {
     const reviewer = createReviewer({
       board,
       findPullRequests: findReturning([pullRequest({ state: "open" })]),
@@ -205,7 +205,7 @@ describe(createReviewer, () => {
     expect(markInReviewMock).not.toHaveBeenCalled();
     const out = consoleLog.output();
     expect(out).toContain("[dry-run] Would advance team-1 to done (PR https://gh/pr/5)");
-    expect(out).toContain("event=review outcome=skipped reason=dry_run ticket=team-1");
+    expect(out).toContain("event=review outcome=skipped reason=dry_run task=team-1");
   });
 
   it("skips when the worktree has no PR (or the lookup failed)", async () => {
@@ -275,9 +275,9 @@ describe(createReviewer, () => {
     expect(out).toContain("Advanced team-2 to in-review");
   });
 
-  it("keeps advancing other merged tickets when one issue's markDone fails", async () => {
+  it("keeps advancing other merged tasks when one issue's markDone fails", async () => {
     // Error isolation on the done path: a markDone failure on the first merged
-    // ticket must not prevent the second merged ticket from advancing this tick.
+    // task must not prevent the second merged task from advancing this tick.
     markDoneMock
       .mockRejectedValueOnce(new Error("team-1 shell error"))
       .mockResolvedValueOnce({ outcome: "applied" });
@@ -299,7 +299,7 @@ describe(createReviewer, () => {
     expect(out).toContain("Advanced team-2 to done");
   });
 
-  it("never looks up PRs for a todo ticket even if it has a worktree", async () => {
+  it("never looks up PRs for a todo task even if it has a worktree", async () => {
     const findPullRequests = findReturning([pullRequest({ state: "open" })]);
     const reviewer = createReviewer({ board, findPullRequests });
 
@@ -313,7 +313,7 @@ describe(createReviewer, () => {
     expect(markInReviewMock).not.toHaveBeenCalled();
   });
 
-  it("skips an in-progress ticket that has no matching worktree", async () => {
+  it("skips an in-progress task that has no matching worktree", async () => {
     const findPullRequests = findReturning([pullRequest({ state: "open" })]);
     const reviewer = createReviewer({ board, findPullRequests });
 
@@ -327,7 +327,7 @@ describe(createReviewer, () => {
     expect(markInReviewMock).not.toHaveBeenCalled();
   });
 
-  it("skips an in-progress ticket that has no repository", async () => {
+  it("skips an in-progress task that has no repository", async () => {
     const findPullRequests = findReturning([pullRequest({ state: "open" })]);
     const reviewer = createReviewer({ board, findPullRequests });
 
@@ -341,7 +341,7 @@ describe(createReviewer, () => {
     expect(markInReviewMock).not.toHaveBeenCalled();
   });
 
-  it("matches worktrees by ticket and repository", async () => {
+  it("matches worktrees by task and repository", async () => {
     const findPullRequests = findReturning([pullRequest({ state: "open" })]);
     const reviewer = createReviewer({ board, findPullRequests });
 
@@ -370,10 +370,10 @@ describe(createReviewer, () => {
     expect(markInReviewMock).not.toHaveBeenCalled();
     const out = consoleLog.output();
     expect(out).toContain("[dry-run] Would advance team-1 to in-review (PR https://gh/pr/9)");
-    expect(out).toContain("event=review outcome=skipped reason=dry_run ticket=team-1");
+    expect(out).toContain("event=review outcome=skipped reason=dry_run task=team-1");
   });
 
-  it("logs and swallows a writeback failure, leaving the ticket for next tick", async () => {
+  it("logs and swallows a writeback failure, leaving the task for next tick", async () => {
     markInReviewMock.mockRejectedValue(new Error("shell exploded"));
     const reviewer = createReviewer({
       board,
@@ -390,7 +390,7 @@ describe(createReviewer, () => {
 
     const out = consoleLog.output();
     expect(out).toContain("Failed to advance team-1 to in-review: shell exploded");
-    expect(out).toContain("event=review outcome=failed reason=writeback_failed ticket=team-1");
+    expect(out).toContain("event=review outcome=failed reason=writeback_failed task=team-1");
   });
 
   it("does not log success when the source does not support in-review writeback", async () => {
@@ -413,7 +413,7 @@ describe(createReviewer, () => {
     expect(out).toContain(
       "Skipped advancing team-1 to in-review: source has no in-review transition",
     );
-    expect(out).toContain("event=review outcome=skipped reason=unsupported ticket=team-1");
+    expect(out).toContain("event=review outcome=skipped reason=unsupported task=team-1");
     expect(out).not.toContain("Advanced team-1 to in-review");
   });
 
@@ -457,7 +457,7 @@ describe(createReviewer, () => {
     expect(markInReviewMock).toHaveBeenCalledTimes(1);
   });
 
-  it("advances every in-progress ticket that qualifies", async () => {
+  it("advances every in-progress task that qualifies", async () => {
     const reviewer = createReviewer({
       board,
       findPullRequests: findReturning([pullRequest({ state: "open" })]),

@@ -1,5 +1,5 @@
 /**
- * Linear `TicketSource` factory. Assembles the adapter from sibling modules
+ * Linear `TaskSource` factory. Assembles the adapter from sibling modules
  * (createBoardSource + fetchResolvedIssue from ./fetch.ts;
  * createLinearIssueStatusUpdater from ./writeback.ts; getLinearClient from
  * ./client.ts) and converts Linear-specific shapes into the canonical
@@ -20,8 +20,8 @@ import {
   type Issue as CanonicalIssue,
   type MarkInReviewResult,
   type ParentSkip as CanonicalParentSkip,
-  type TicketSource,
-} from "../../ticketSource.ts";
+  type TaskSource,
+} from "../../taskSource.ts";
 import type { LinearAdapterConfig } from "./schema.ts";
 import { getLinearClient, lazyLinearClient } from "./client.ts";
 import {
@@ -136,17 +136,17 @@ export function toCanonicalIssue(
   };
 }
 
-export function createLinearTicketSource(
+export function createLinearTaskSource(
   config: LinearAdapterConfig,
   context: AdapterContext,
-): TicketSource {
+): TaskSource {
   const sourceName = config.name ?? "linear";
   const statusNames = resolveLinearStatusNames(config.statuses);
   const { globalConfig } = context;
   // Lazy: deferring `getLinearClient()` (and the sub-modules that depend on
-  // it) until first method use means `createLinearTicketSource` can be
+  // it) until first method use means `createLinearTaskSource` can be
   // constructed without a Linear API key in env. Callers that only ever
-  // touch a sibling source — `crew doctor --ticket <shell-id>`,
+  // touch a sibling source — `crew doctor --task <shell-id>`,
   // `crew run` with the multi-source Board's `Promise.allSettled` fan-out
   // tolerating a Linear-side rejection — no longer crash at config-load
   // time on a missing key.
@@ -188,7 +188,7 @@ export function createLinearTicketSource(
       const resolved = await fetchResolvedIssue({
         client: getClient(),
         config: globalConfig,
-        ticket: naturalId,
+        task: naturalId,
       });
       const sourceRef: LinearSourceRef = {
         uuid: resolved.uuid,

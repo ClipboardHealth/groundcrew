@@ -5,19 +5,19 @@ export function logTeardown(result: TeardownResult): void {
   if (result.workspaceProbe.kind === "unavailable" && result.workspaceProbe.error !== undefined) {
     log(`workspace list failed: ${errorMessage(result.workspaceProbe.error)}`);
   }
-  for (const ticket of result.closed) {
-    debug(`Closed workspace ${ticket}`);
+  for (const task of result.closed) {
+    debug(`Closed workspace ${task}`);
   }
   for (const entry of result.removed) {
-    log(`${okMark()} Cleanup complete for ${entry.ticket} (${entry.kind})`);
+    log(`${okMark()} Cleanup complete for ${entry.task} (${entry.kind})`);
     debug(`  Worktree: ${entry.dir} (removed)`);
   }
   for (const failure of result.failures) {
     const message = errorMessage(failure.error);
     if (failure.step === "workspace_close") {
-      log(`workspace close failed for ${failure.entry.ticket}: ${message}`);
+      log(`workspace close failed for ${failure.entry.task}: ${message}`);
     } else {
-      log(`Cleanup failed for ${failure.entry.ticket} (${failure.entry.kind}): ${message}`);
+      log(`Cleanup failed for ${failure.entry.task} (${failure.entry.kind}): ${message}`);
     }
   }
 }
@@ -32,13 +32,13 @@ export function recordTeardownEvents(result: TeardownResult): void {
         : { error: errorMessage(result.workspaceProbe.error) }),
     });
   }
-  for (const ticket of result.closed) {
-    logEvent("cleanup", { outcome: "workspace_closed", ticket });
+  for (const task of result.closed) {
+    logEvent("cleanup", { outcome: "workspace_closed", task });
   }
   for (const entry of result.removed) {
     logEvent("cleanup", {
       outcome: "cleaned",
-      ticket: entry.ticket,
+      task: entry.task,
       repository: entry.repository,
       kind: entry.kind,
     });
@@ -49,13 +49,13 @@ export function recordTeardownEvents(result: TeardownResult): void {
       logEvent("cleanup", {
         outcome: "failed",
         reason: "workspace_close_failed",
-        ticket: failure.entry.ticket,
+        task: failure.entry.task,
         error: message,
       });
     } else {
       logEvent("cleanup", {
         outcome: "failed",
-        ticket: failure.entry.ticket,
+        task: failure.entry.task,
         repository: failure.entry.repository,
         kind: failure.entry.kind,
         error: message,

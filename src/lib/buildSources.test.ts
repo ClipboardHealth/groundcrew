@@ -4,7 +4,7 @@ import { deleteEnvironmentVariable, setEnvironmentVariable } from "../testHelper
 import type { AdapterContext, AdapterDefinition } from "./adapterDefinition.ts";
 import { buildSources, buildSourcesWith, sourcesFromConfig } from "./buildSources.ts";
 import type { ResolvedConfig } from "./config.ts";
-import type { MarkInReviewResult, TicketSource } from "./ticketSource.ts";
+import type { MarkInReviewResult, TaskSource } from "./taskSource.ts";
 import { readEnvironmentVariable } from "./util.ts";
 
 const fakeContext: AdapterContext = {
@@ -13,7 +13,7 @@ const fakeContext: AdapterContext = {
   globalConfig: {} as ResolvedConfig,
 };
 
-function emptySource(name: string): TicketSource {
+function emptySource(name: string): TaskSource {
   return {
     name,
     verify: vi.fn<() => Promise<void>>().mockResolvedValue(),
@@ -47,7 +47,7 @@ function fakeAdapter(kind: string): AdapterDefinition {
 }
 
 describe(buildSourcesWith, () => {
-  it("dispatches a SourceConfig[] to TicketSource[] via the registry", () => {
+  it("dispatches a SourceConfig[] to TaskSource[] via the registry", () => {
     const registry = { foo: fakeAdapter("foo"), bar: fakeAdapter("bar") };
     const sources = buildSourcesWith(
       registry,
@@ -104,7 +104,7 @@ describe(buildSources, () => {
 // `sources=[{kind:"shell"}]` block must be able to construct both adapters
 // even when no Linear API key is in env. The Linear adapter's eager
 // `getLinearClient()` call used to crash buildSources on the missing key,
-// which broke `crew doctor --ticket <shell-id>` and any other shell-only
+// which broke `crew doctor --task <shell-id>` and any other shell-only
 // operation. These tests pin that behavior using the REAL production adapter
 // registry (no spies, no fakes).
 // ─────────────────────────────────────────────────────────────────────────

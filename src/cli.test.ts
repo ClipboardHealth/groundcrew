@@ -143,7 +143,7 @@ describe(run, () => {
     expect(helpOutput).toContain("--runner <runner>");
     expect(helpOutput).toContain("--model <model>");
     expect(helpOutput).not.toContain("sandbox");
-    expect(helpOutput).not.toContain("crew ticket");
+    expect(helpOutput).not.toContain("crew task");
     expect(process.exitCode).toBe(1);
   });
 
@@ -247,57 +247,57 @@ describe(run, () => {
     expect(consoleLog.output()).toContain("GROUNDCREW_VERBOSE");
   });
 
-  it("dispatches the deprecated `run --ticket <id>` alias to setupWorkspaceCli with a warning", async () => {
-    await run(["run", "--ticket", "team-220"]);
+  it("dispatches the deprecated `run --task <id>` alias to setupWorkspaceCli with a warning", async () => {
+    await run(["run", "--task", "team-220"]);
 
     expect(setupMock).toHaveBeenCalledWith("team-220", { dryRun: false });
     expect(orchestrateMock).not.toHaveBeenCalled();
-    expect(consoleError.output()).toContain("crew run --ticket is deprecated");
+    expect(consoleError.output()).toContain("crew run --task is deprecated");
     expect(consoleError.output()).toContain("use crew start");
     expect(consoleError.output()).toContain("next major");
   });
 
-  it("documents `crew start <TICKET>` as the manual ticket setup command", () => {
-    expect(README_TEXT).toContain("crew start <TICKET>");
-    expect(README_TEXT).not.toContain("crew setup <TICKET>");
+  it("documents `crew start <TASK>` as the manual task setup command", () => {
+    expect(README_TEXT).toContain("crew start <TASK>");
+    expect(README_TEXT).not.toContain("crew setup <TASK>");
   });
 
-  it("forwards --dry-run to setupWorkspaceCli on the --ticket path", async () => {
-    await run(["run", "--ticket", "team-220", "--dry-run"]);
+  it("forwards --dry-run to setupWorkspaceCli on the --task path", async () => {
+    await run(["run", "--task", "team-220", "--dry-run"]);
 
     expect(setupMock).toHaveBeenCalledWith("team-220", { dryRun: true });
     expect(orchestrateMock).not.toHaveBeenCalled();
   });
 
-  it("rejects `run --ticket` combined with --watch", async () => {
-    await run(["run", "--watch", "--ticket", "team-220"]);
+  it("rejects `run --task` combined with --watch", async () => {
+    await run(["run", "--watch", "--task", "team-220"]);
 
-    expect(consoleError.output()).toContain("--watch and --ticket are mutually exclusive");
+    expect(consoleError.output()).toContain("--watch and --task are mutually exclusive");
     expect(process.exitCode).toBe(1);
     expect(setupMock).not.toHaveBeenCalled();
     expect(orchestrateMock).not.toHaveBeenCalled();
   });
 
-  it("rejects `run --ticket` with no value", async () => {
-    await run(["run", "--ticket"]);
+  it("rejects `run --task` with no value", async () => {
+    await run(["run", "--task"]);
 
-    expect(consoleError.output()).toContain("ticket id is required");
+    expect(consoleError.output()).toContain("task id is required");
     expect(process.exitCode).toBe(1);
     expect(setupMock).not.toHaveBeenCalled();
   });
 
-  it("rejects `run --ticket --dry-run` (flag value missing, dash-prefixed value)", async () => {
-    await run(["run", "--ticket", "--dry-run"]);
+  it("rejects `run --task --dry-run` (flag value missing, dash-prefixed value)", async () => {
+    await run(["run", "--task", "--dry-run"]);
 
-    expect(consoleError.output()).toContain("ticket id is required");
+    expect(consoleError.output()).toContain("task id is required");
     expect(process.exitCode).toBe(1);
     expect(setupMock).not.toHaveBeenCalled();
   });
 
-  it("rejects `run --ticket` with an empty-string value", async () => {
-    await run(["run", "--ticket", ""]);
+  it("rejects `run --task` with an empty-string value", async () => {
+    await run(["run", "--task", ""]);
 
-    expect(consoleError.output()).toContain("ticket id is required");
+    expect(consoleError.output()).toContain("task id is required");
     expect(process.exitCode).toBe(1);
     expect(setupMock).not.toHaveBeenCalled();
   });
@@ -311,15 +311,15 @@ describe(run, () => {
     expect(setupMock).not.toHaveBeenCalled();
   });
 
-  it("rejects extra positional args after `run --ticket <id>`", async () => {
-    await run(["run", "--ticket", "team-220", "extra"]);
+  it("rejects extra positional args after `run --task <id>`", async () => {
+    await run(["run", "--task", "team-220", "extra"]);
 
     expect(consoleError.output()).toContain("unknown argument: extra");
     expect(process.exitCode).toBe(1);
     expect(setupMock).not.toHaveBeenCalled();
   });
 
-  it("dispatches `start <ticket>` to setupWorkspaceCli with no deprecation warning", async () => {
+  it("dispatches `start <task>` to setupWorkspaceCli with no deprecation warning", async () => {
     await run(["start", "team-220"]);
 
     expect(setupMock).toHaveBeenCalledWith("team-220", { dryRun: false });
@@ -333,10 +333,10 @@ describe(run, () => {
     expect(setupMock).toHaveBeenCalledWith("team-220", { dryRun: true });
   });
 
-  it("rejects `start` with no ticket", async () => {
+  it("rejects `start` with no task", async () => {
     await run(["start"]);
 
-    expect(consoleError.output()).toContain("Usage: crew start <ticket>");
+    expect(consoleError.output()).toContain("Usage: crew start <task>");
     expect(process.exitCode).toBe(1);
     expect(setupMock).not.toHaveBeenCalled();
   });
@@ -352,7 +352,7 @@ describe(run, () => {
   it("rejects extra positional args under `start`", async () => {
     await run(["start", "team-220", "extra"]);
 
-    expect(consoleError.output()).toContain("Usage: crew start <ticket>");
+    expect(consoleError.output()).toContain("Usage: crew start <task>");
     expect(process.exitCode).toBe(1);
     expect(setupMock).not.toHaveBeenCalled();
   });
@@ -373,42 +373,42 @@ describe(run, () => {
     expect(process.exitCode).toBeUndefined();
   });
 
-  it("dispatches status with a ticket", async () => {
+  it("dispatches status with a task", async () => {
     await run(["status", "team-220"]);
 
     expect(statusMock).toHaveBeenCalledWith(["team-220"]);
     expect(process.exitCode).toBeUndefined();
   });
 
-  it("dispatches status inventory mode with no ticket", async () => {
+  it("dispatches status inventory mode with no task", async () => {
     await run(["status"]);
 
     expect(statusMock).toHaveBeenCalledWith([]);
     expect(process.exitCode).toBeUndefined();
   });
 
-  it("routes the deprecated `doctor --ticket <id>` alias to status with a warning", async () => {
-    await run(["doctor", "--ticket", "team-220"]);
+  it("routes the deprecated `doctor --task <id>` alias to status with a warning", async () => {
+    await run(["doctor", "--task", "team-220"]);
 
     expect(statusMock).toHaveBeenCalledWith(["team-220"]);
     expect(doctorMock).not.toHaveBeenCalled();
-    expect(consoleError.output()).toContain("crew doctor --ticket is deprecated");
+    expect(consoleError.output()).toContain("crew doctor --task is deprecated");
     expect(consoleError.output()).toContain("use crew status");
     expect(consoleError.output()).toContain("next major");
     expect(process.exitCode).toBeUndefined();
   });
 
-  it("rejects `doctor --ticket` with no value", async () => {
-    await run(["doctor", "--ticket"]);
+  it("rejects `doctor --task` with no value", async () => {
+    await run(["doctor", "--task"]);
 
-    expect(consoleError.output()).toContain("ticket id is required");
+    expect(consoleError.output()).toContain("task id is required");
     expect(process.exitCode).toBe(1);
     expect(statusMock).not.toHaveBeenCalled();
     expect(doctorMock).not.toHaveBeenCalled();
   });
 
-  it("rejects extra args after `doctor --ticket <id>`", async () => {
-    await run(["doctor", "--ticket", "team-220", "extra"]);
+  it("rejects extra args after `doctor --task <id>`", async () => {
+    await run(["doctor", "--task", "team-220", "extra"]);
 
     expect(consoleError.output()).toContain("Usage: crew status");
     expect(process.exitCode).toBe(1);
@@ -424,7 +424,7 @@ describe(run, () => {
     expect(doctorMock).not.toHaveBeenCalled();
   });
 
-  it("rejects removed ticket-mode flags under `doctor`", async () => {
+  it("rejects removed task-mode flags under `doctor`", async () => {
     await run(["doctor", "--no-linear"]);
 
     expect(consoleError.output()).toContain("Usage: crew doctor");

@@ -16,16 +16,16 @@ import { workspaces } from "../lib/workspaces.ts";
 import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 
 export interface ResumeWorkspaceOptions {
-  ticket: string;
+  task: string;
 }
 
-interface TicketDetails {
+interface TaskDetails {
   title: string;
   description: string;
 }
 
 interface ResumeContext {
-  ticket: string;
+  task: string;
   repository: string;
   model: string;
   worktree: WorktreeEntry;
@@ -36,34 +36,34 @@ interface ResumeContext {
 }
 
 function parseArguments(argv: string[]): ResumeWorkspaceOptions {
-  const [ticket, ...extras] = argv;
-  if (ticket === undefined || ticket.length === 0 || extras.length > 0 || ticket.startsWith("-")) {
-    throw new Error("Usage: crew resume <ticket>");
+  const [task, ...extras] = argv;
+  if (task === undefined || task.length === 0 || extras.length > 0 || task.startsWith("-")) {
+    throw new Error("Usage: crew resume <task>");
   }
-  return { ticket: ticket.toLowerCase() };
+  return { task: task.toLowerCase() };
 }
 
-async function fetchTicketDetails(ticket: string): Promise<TicketDetails | undefined> {
+async function fetchTaskDetails(task: string): Promise<TaskDetails | undefined> {
   try {
-    const issue = await getLinearClient().issue(ticket.toUpperCase());
+    const issue = await getLinearClient().issue(task.toUpperCase());
     return {
       title: issue.title,
       description: issue.description ?? "",
     };
   } catch (error) {
-    log(`Resume Linear detail lookup failed for ${ticket}: ${errorMessage(error)}`);
+    log(`Resume Linear detail lookup failed for ${task}: ${errorMessage(error)}`);
     return undefined;
   }
 }
 
 async function contextFromLinear(
   config: ResolvedConfig,
-  ticket: string,
+  task: string,
   worktree: WorktreeEntry,
 ): Promise<ResumeContext> {
-  const resolved = await fetchResolvedIssue({ client: getLinearClient(), config, ticket });
+  const resolved = await fetchResolvedIssue({ client: getLinearClient(), config, task });
   return {
-    ticket,
+    task,
     repository: resolved.repository,
     model: resolved.model,
     worktree,
@@ -74,44 +74,44 @@ async function contextFromLinear(
 }
 
 async function contextFromState(
-  ticket: string,
+  task: string,
   state: RunState,
   worktree: WorktreeEntry,
 ): Promise<ResumeContext> {
-  const details = await fetchTicketDetails(ticket);
+  const details = await fetchTaskDetails(task);
   return {
-    ticket,
+    task,
     repository: state.repository,
     model: state.model,
     worktree,
-    title: details?.title ?? ticket.toUpperCase(),
+    title: details?.title ?? task.toUpperCase(),
     description: details?.description ?? "",
     ...(state.reason === undefined ? {} : { reason: state.reason }),
     resumeCount: state.resumeCount,
   };
 }
 
-async function buildResumeContext(config: ResolvedConfig, ticket: string): Promise<ResumeContext> {
-  const state = readRunState(config, ticket);
-  const entries = worktrees.findByTicket(config, ticket);
+async function buildResumeContext(config: ResolvedConfig, task: string): Promise<ResumeContext> {
+  const state = readRunState(config, task);
+  const entries = worktrees.findByTask(config, task);
   const worktree =
     state === undefined
       ? entries[0]
       : (entries.find((entry) => entry.repository === state.repository) ?? entries[0]);
   if (worktree === undefined) {
-    throw new Error(`No worktree found for ${ticket}; cannot resume.`);
+    throw new Error(`No worktree found for ${task}; cannot resume.`);
   }
   if (state !== undefined) {
-    return await contextFromState(ticket, state, worktree);
+    return await contextFromState(task, state, worktree);
   }
-  return await contextFromLinear(config, ticket, worktree);
+  return await contextFromLinear(config, task, worktree);
 }
 
 function renderResumePrompt(context: ResumeContext): string {
   return [
-    `You are resuming Groundcrew ticket ${context.ticket} (${context.title}) in an existing worktree.`,
+    `You are resuming Groundcrew task ${context.task} (${context.title}) in an existing worktree.`,
     "",
-    "Ticket description:",
+    "Task description:",
     "",
     context.description,
     "",
@@ -129,16 +129,16 @@ function renderResumePrompt(context: ResumeContext): string {
   ].join("\n");
 }
 
-async function failIfWorkspaceAlreadyLive(config: ResolvedConfig, ticket: string): Promise<void> {
+async function failIfWorkspaceAlreadyLive(config: ResolvedConfig, task: string): Promise<void> {
   const probe = await workspaces.probe(config);
   if (probe.kind === "unavailable") {
     const detail = probe.error === undefined ? "" : `: ${errorMessage(probe.error)}`;
     throw new Error(
-      `Could not verify whether workspace for ${ticket} is already live${detail}. Retry or inspect the workspace backend manually before resuming.`,
+      `Could not verify whether workspace for ${task} is already live${detail}. Retry or inspect the workspace backend manually before resuming.`,
     );
   }
-  if (probe.names.has(ticket)) {
-    throw new Error(`Workspace for ${ticket} is already live; attach to it instead of resuming.`);
+  if (probe.names.has(task)) {
+    throw new Error(`Workspace for ${task} is already live; attach to it instead of resuming.`);
   }
 }
 
@@ -146,9 +146,9 @@ export async function resumeWorkspace(
   config: ResolvedConfig,
   options: ResumeWorkspaceOptions,
 ): Promise<void> {
-  const ticket = options.ticket.toLowerCase();
-  await failIfWorkspaceAlreadyLive(config, ticket);
-  const context = await buildResumeContext(config, ticket);
+  const task = options.task.toLowerCase();
+  await failIfWorkspaceAlreadyLive(config, task);
+  const context = await buildResumeContext(config, task);
   const definition = config.models.definitions[context.model];
   if (definition === undefined) {
     throw new Error(`Unknown model: ${context.model}`);
@@ -164,7 +164,7 @@ export async function resumeWorkspace(
 
   const stagedPrompt = stagePromptText({
     prefix: "groundcrew-resume",
-    ticket,
+    task,
     text: renderResumePrompt(context),
   });
   const secretsFile = stageBuildSecrets(stagedPrompt.directory);
@@ -179,7 +179,7 @@ export async function resumeWorkspace(
     const staged = buildAndStageSrtLaunch({
       config,
       repository: context.repository,
-      ticket,
+      task,
       worktreeDir: context.worktree.dir,
       definition,
     });
@@ -205,7 +205,7 @@ export async function resumeWorkspace(
   try {
     await openAgentWorkspace({
       config,
-      name: ticket,
+      name: task,
       cwd: context.worktree.dir,
       command: launchCmd,
       model: context.model,
@@ -223,18 +223,18 @@ export async function resumeWorkspace(
   recordRunState({
     config,
     state: {
-      ticket,
+      task,
       repository: context.repository,
       model: context.model,
       worktreeDir: context.worktree.dir,
       branchName: context.worktree.branchName,
-      workspaceName: ticket,
+      workspaceName: task,
       state: "resumed",
       resumeCount: context.resumeCount + 1,
       ...(context.reason === undefined ? {} : { reason: context.reason }),
     },
   });
-  log(`Resumed ${ticket} in ${context.worktree.dir} (${context.model})`);
+  log(`Resumed ${task} in ${context.worktree.dir} (${context.model})`);
 }
 
 export async function resumeWorkspaceCli(argv: string[]): Promise<void> {

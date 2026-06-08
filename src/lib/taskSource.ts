@@ -1,6 +1,6 @@
 /**
- * Pluggable ticket-source interface. Adapters (Linear, shell, future Jira)
- * implement `TicketSource`; the `Board` composer (`./board.ts`) fans calls
+ * Pluggable task-source interface. Adapters (Linear, shell, future Jira)
+ * implement `TaskSource`; the `Board` composer (`./board.ts`) fans calls
  * across N sources and presents a unified `BoardState` to consumers.
  *
  * Canonical Issue type: source-prefixed ids (e.g. `linear:eng-220`), opaque
@@ -18,19 +18,19 @@
  *   slot but should not be cleaned up as terminal. The built-in Linear adapter
  *   maps default/configured review status names here; the shell adapter's JSON
  *   contract accepts it directly.
- * - `other`: anything an adapter sees but can't classify (Linear tickets in
+ * - `other`: anything an adapter sees but can't classify (Linear tasks in
  *   `backlog`/`triage`, blockers with no resolvable state).
  */
 export type CanonicalStatus = "todo" | "in-progress" | "in-review" | "done" | "other";
 
 export interface Blocker {
-  /** Canonical (source-prefixed) id of the blocking ticket. */
+  /** Canonical (source-prefixed) id of the blocking task. */
   id: string;
   title: string;
   status: CanonicalStatus;
   /**
    * When `status === "other"`, adapters MUST set this to explain why
-   * they couldn't classify. Consumers (specifically `ticketDoctor`) render
+   * they couldn't classify. Consumers (specifically `taskDoctor`) render
    * this verbatim to give users an actionable next step.
    *
    * - `"missing"`: the source returned no status for this blocker
@@ -62,16 +62,16 @@ export interface Issue {
   title: string;
   description: string;
   status: CanonicalStatus;
-  /** `undefined` when the ticket is not dispatchable to a repository. */
+  /** `undefined` when the task is not dispatchable to a repository. */
   repository: string | undefined;
-  /** Parsed agent model when the source can resolve one; may be present on non-Todo tickets for logs. */
+  /** Parsed agent model when the source can resolve one; may be present on non-Todo tasks for logs. */
   model: string | undefined;
   assignee: string;
   updatedAt: string;
   blockers: Blocker[];
   hasMoreBlockers: boolean;
   /**
-   * Direct web URL for the ticket on the source system, when the adapter
+   * Direct web URL for the task on the source system, when the adapter
    * knows one. `undefined` when the source can't produce a public URL (e.g.,
    * a shell script that omits the `url` field). Display-only — never
    * branched on.
@@ -79,7 +79,7 @@ export interface Issue {
   url?: string;
   /**
    * Source-native priority. Lower values sort first; `undefined` means no
-   * priority and sorts last. Dispatcher uses this to order Todo tickets before
+   * priority and sorts last. Dispatcher uses this to order Todo tasks before
    * slot assignment.
    */
   priority?: number;
@@ -95,9 +95,9 @@ export function isGroundcrewIssue(issue: Issue): issue is GroundcrewIssue {
 }
 
 /**
- * A parent ticket that was dropped from the fetch result because it has
+ * A parent task that was dropped from the fetch result because it has
  * sub-issues. Surfaced separately so the dispatcher can log WHY a
- * Todo+labelled ticket wasn't picked up (PR #80 behavior).
+ * Todo+labelled task wasn't picked up (PR #80 behavior).
  */
 export interface ParentSkip {
   /**
@@ -113,7 +113,7 @@ export interface ParentSkip {
 export interface BoardState {
   timestamp: string;
   issues: Issue[];
-  /** Parent tickets skipped because they have sub-issues. */
+  /** Parent tasks skipped because they have sub-issues. */
   parentSkips: readonly ParentSkip[];
 }
 
@@ -123,19 +123,19 @@ export type MarkInReviewResult =
 
 export type MarkDoneResult = { outcome: "applied" } | { outcome: "unsupported"; reason: string };
 
-export interface TicketSource {
+export interface TaskSource {
   /** Stable identifier used as the id prefix and in log lines. Equal to the source's config `name`. */
   readonly name: string;
   /** One-time startup check. Throws with a user-facing message on misconfig. */
   verify: () => Promise<void>;
   /** Per-tick snapshot. `id` on each Issue is already canonical (source-prefixed). */
   fetch: () => Promise<Issue[]>;
-  /** Per-ticket lookup. `naturalId` is unprefixed (no `<name>:` prefix). */
+  /** Per-task lookup. `naturalId` is unprefixed (no `<name>:` prefix). */
   resolveOne: (naturalId: string) => Promise<Issue | undefined>;
   /** Writeback. The adapter downcasts `issue.sourceRef` internally. */
   markInProgress: (issue: Issue) => Promise<void>;
   /**
-   * Writeback: advance a ticket from in-progress to in-review once its
+   * Writeback: advance a task from in-progress to in-review once its
    * worktree has an open PR. Frees a dispatch slot without tripping the
    * cleaner's done-only teardown, so the worktree survives for review. The
    * adapter downcasts `issue.sourceRef` internally. Adapters with no native
@@ -145,7 +145,7 @@ export interface TicketSource {
   markInReview: (issue: Issue) => Promise<MarkInReviewResult>;
 
   /**
-   * Optional writeback: advance a ticket to done once its PR has merged.
+   * Optional writeback: advance a task to done once its PR has merged.
    * Sources without a native/configured done transition omit this method; the
    * Board treats an absent method as `{ outcome: "unsupported" }` so the
    * reviewer can log the skip without claiming a transition that never
@@ -156,38 +156,38 @@ export interface TicketSource {
   markDone?: (issue: Issue) => Promise<MarkDoneResult>;
 
   /**
-   * Optional: return parent tickets that were excluded from `fetch()` because
+   * Optional: return parent tasks that were excluded from `fetch()` because
    * they have sub-issues. Board surfaces these so the dispatcher can log WHY
-   * a Todo+labelled ticket was skipped (PR #80 behavior). Adapters that
+   * a Todo+labelled task was skipped (PR #80 behavior). Adapters that
    * don't distinguish parents simply omit this method; Board returns [].
    */
   fetchParentSkips?: () => Promise<readonly ParentSkip[]>;
 }
 
 export class RepositoryResolutionError extends Error {
-  public constructor(arguments_: { ticket: string; repositories: readonly string[] }) {
-    const { ticket, repositories } = arguments_;
+  public constructor(arguments_: { task: string; repositories: readonly string[] }) {
+    const { task, repositories } = arguments_;
     super(
-      `No known repository found in ticket ${ticket} description. Add one of workspace.knownRepositories: ${repositories.join(", ")}`,
+      `No known repository found in task ${task} description. Add one of workspace.knownRepositories: ${repositories.join(", ")}`,
     );
     this.name = "RepositoryResolutionError";
   }
 }
 
-export class AmbiguousTicketError extends Error {
+export class AmbiguousTaskError extends Error {
   public constructor(arguments_: { naturalId: string; matches: readonly string[] }) {
     const { naturalId, matches } = arguments_;
     super(
-      `Ticket id "${naturalId}" is ambiguous; matched in multiple sources: ${matches.join(", ")}. Re-invoke with one of those canonical ids.`,
+      `Task id "${naturalId}" is ambiguous; matched in multiple sources: ${matches.join(", ")}. Re-invoke with one of those canonical ids.`,
     );
-    this.name = "AmbiguousTicketError";
+    this.name = "AmbiguousTaskError";
   }
 }
 
 /**
  * Build a canonical source-prefixed id from a source name and a natural
  * (possibly mixed-case) id. Lower-cases the natural part so the same
- * ticket always produces the same canonical id regardless of which code
+ * task always produces the same canonical id regardless of which code
  * path or adapter constructed it.
  *
  * All adapters MUST use this helper when constructing canonical ids
@@ -203,7 +203,7 @@ export function toCanonicalId(sourceName: string, naturalId: string): string {
  * Strip the source prefix from a canonical id, yielding the natural id
  * the producing adapter exposed. Use at consumer boundaries where you
  * need to compare a canonical id against natural-id artifacts like
- * `WorktreeEntry.ticket` or filesystem directory names.
+ * `WorktreeEntry.task` or filesystem directory names.
  *
  * Canonical ids always carry a `<source>:` prefix; the no-colon branch
  * is a defensive fallback that's unreachable in normal operation.

@@ -4,10 +4,10 @@ import type {
   MarkDoneResult,
   MarkInReviewResult,
   ParentSkip,
-  TicketSource,
-} from "./ticketSource.ts";
+  TaskSource,
+} from "./taskSource.ts";
 
-function fakeSource(name: string, overrides: Partial<TicketSource> = {}): TicketSource {
+function fakeSource(name: string, overrides: Partial<TaskSource> = {}): TaskSource {
   return {
     name,
     verify: vi.fn<() => Promise<void>>().mockResolvedValue(),
@@ -164,7 +164,7 @@ describe("Board.resolveOne", () => {
     await expect(board.resolveOne("missing")).resolves.toBeUndefined();
   });
 
-  it("throws AmbiguousTicketError when multiple sources match a natural id", async () => {
+  it("throws AmbiguousTaskError when multiple sources match a natural id", async () => {
     const aResolve = vi
       .fn<(id: string) => Promise<Issue | undefined>>()
       .mockResolvedValue(fakeIssue("a:x", "a"));
@@ -185,9 +185,9 @@ describe("Board.resolveOne", () => {
 
   // Regression: pre-fix, a single source rejection on resolveOne poisoned
   // the whole Promise.all and masked a sibling source's successful match.
-  // The real-world trigger was `crew doctor --ticket TEST-1`, where the
+  // The real-world trigger was `crew doctor --task TEST-1`, where the
   // Linear adapter throws "Entity not found" while the shell adapter has
-  // the ticket — the user saw "unresolvable: Entity not found" instead of
+  // the task — the user saw "unresolvable: Entity not found" instead of
   // the shell-resolved issue.
   it("treats a source rejection as 'not found here' when another source matches", async () => {
     const aResolve = vi

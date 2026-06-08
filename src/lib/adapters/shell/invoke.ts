@@ -1,10 +1,10 @@
 /**
  * Subprocess execution primitive for the shell adapter. Owns the spawn,
  * timeout, stdin/stdout/stderr handling, and placeholder substitution.
- * Factory wires these together into the four TicketSource operations.
+ * Factory wires these together into the four TaskSource operations.
  *
  * Placeholders (`${id}`, `${canonicalId}`, `${name}`) are shell-quoted before
- * substitution so a ticket id containing shell metacharacters cannot
+ * substitution so a task id containing shell metacharacters cannot
  * inject. The host invokes via `sh -c <substituted-command>` so users can
  * use full shell syntax (pipes, redirection, etc.) in their command strings.
  *
@@ -19,7 +19,7 @@ import { debug } from "../../util.ts";
 /**
  * Hard cap on captured stdout/stderr per stream. Misbehaving scripts that
  * `yes | head -c <huge>` would otherwise exhaust memory. 10 MB is enough for
- * any realistic JSON ticket payload; tests can override via InvokeArgs.maxOutputBytes
+ * any realistic JSON task payload; tests can override via InvokeArgs.maxOutputBytes
  * to exercise the truncation path with a smaller fixture.
  */
 const DEFAULT_MAX_OUTPUT_BYTES = 10 * 1024 * 1024;

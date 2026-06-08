@@ -1,13 +1,13 @@
 /**
- * Per-iteration scanner that advances a ticket based on its worktree's pull
+ * Per-iteration scanner that advances a task based on its worktree's pull
  * request state. Sits between the cleaner and the dispatcher in each
  * `orchestrate()` tick.
  *
- * - An **open** PR on an **in-progress** ticket → `markInReview`: frees a
+ * - An **open** PR on an **in-progress** task → `markInReview`: frees a
  *   dispatch slot (slot math counts only in-progress) while leaving the
  *   worktree intact for review, since the cleaner only tears down `done`.
- * - A **merged** PR (on an in-progress or in-review ticket) → `markDone`:
- *   the work has landed, so the ticket is terminal and the cleaner tears the
+ * - A **merged** PR (on an in-progress or in-review task) → `markDone`:
+ *   the work has landed, so the task is terminal and the cleaner tears the
  *   worktree down on a later tick. `merged` never routes to `in-review`.
  *
  * Sources that don't implement `markDone` (e.g. Linear) return `unsupported`;
@@ -15,7 +15,7 @@
  * fallback. (Linear's own GitHub integration moves merged issues to Done,
  * which groundcrew observes via `fetch()`.)
  *
- * The write-back lands in the ticket source, not the in-memory `BoardState`,
+ * The write-back lands in the task source, not the in-memory `BoardState`,
  * so the dispatcher in the SAME tick still sees prior state; the slot frees on
  * the NEXT tick's `board.fetch()`. That one-tick latency is deliberate. One
  * per `orchestrate()`; stateless across iterations. Mirrors `Cleaner`.
@@ -28,7 +28,7 @@ import {
   type CanonicalStatus,
   type Issue,
   naturalIdFromCanonical,
-} from "../lib/ticketSource.ts";
+} from "../lib/taskSource.ts";
 import { debug, errorMessage, log, logEvent } from "../lib/util.ts";
 import type { WorktreeEntry } from "../lib/worktrees.ts";
 
@@ -63,10 +63,10 @@ export interface Reviewer {
 
 type Transition = "done" | "in-review";
 
-// Maps a worktree's PRs to the transition its ticket should make. A merged PR
-// means the work landed → done; an open PR on an in-progress ticket means it's
+// Maps a worktree's PRs to the transition its task should make. A merged PR
+// means the work landed → done; an open PR on an in-progress task means it's
 // up for review. `merged` wins over `open`. An open PR on an already in-review
-// ticket is a no-op (returns undefined). Closed-only PRs are ignored.
+// task is a no-op (returns undefined). Closed-only PRs are ignored.
 function intendedTransition(
   pullRequests: readonly PullRequestSummary[],
   status: CanonicalStatus,
@@ -95,14 +95,14 @@ function pullRequestForTransition(
 function matchingWorktreeEntries(arguments_: {
   issue: Issue;
   worktreeEntries: readonly WorktreeEntry[];
-  ticket: string;
+  task: string;
 }): WorktreeEntry[] {
-  const { issue, worktreeEntries, ticket } = arguments_;
+  const { issue, worktreeEntries, task } = arguments_;
   if (issue.repository === undefined) {
     return [];
   }
   return worktreeEntries.filter(
-    (entry) => entry.ticket === ticket && entry.repository === issue.repository,
+    (entry) => entry.task === task && entry.repository === issue.repository,
   );
 }
 
@@ -141,8 +141,8 @@ export function createReviewer(deps: ReviewerDeps): Reviewer {
     signal?: AbortSignal;
   }): Promise<void> {
     const { issue, worktreeEntries, dryRun, signal } = arguments_;
-    const ticket = naturalIdFromCanonical(issue.id);
-    const entries = matchingWorktreeEntries({ issue, worktreeEntries, ticket });
+    const task = naturalIdFromCanonical(issue.id);
+    const entries = matchingWorktreeEntries({ issue, worktreeEntries, task });
 
     for (const entry of entries) {
       // The injected lookup is contracted never to reject (failures resolve to
@@ -151,14 +151,14 @@ export function createReviewer(deps: ReviewerDeps): Reviewer {
       // skip this worktree and retry next tick.
       let pullRequests: readonly PullRequestSummary[];
       try {
-        // oxlint-disable-next-line no-await-in-loop -- a ticket almost always has one worktree; sequential lookups are fine.
+        // oxlint-disable-next-line no-await-in-loop -- a task almost always has one worktree; sequential lookups are fine.
         pullRequests = await findPullRequests({
           cwd: entry.dir,
           branchName: entry.branchName,
           ...(signal === undefined ? {} : { signal }),
         });
       } catch (error) {
-        debug(`PR lookup failed for ${ticket} (${entry.branchName}): ${errorMessage(error)}`);
+        debug(`PR lookup failed for ${task} (${entry.branchName}): ${errorMessage(error)}`);
         continue;
       }
       const transition = intendedTransition(pullRequests, issue.status);
@@ -167,59 +167,59 @@ export function createReviewer(deps: ReviewerDeps): Reviewer {
       }
       const pullRequest = pullRequestForTransition(pullRequests, transition);
       if (dryRun) {
-        log(`[dry-run] Would advance ${ticket} to ${transition} (PR ${pullRequest.url})`);
+        log(`[dry-run] Would advance ${task} to ${transition} (PR ${pullRequest.url})`);
         logEvent("review", {
           outcome: "skipped",
           reason: "dry_run",
-          ticket,
+          task,
           pr: pullRequest.url,
           to: transition,
         });
         return;
       }
       // oxlint-disable-next-line no-await-in-loop -- single write-back then return; never iterates past the first actionable worktree.
-      await advance({ issue, ticket, pullRequest, transition });
+      await advance({ issue, task, pullRequest, transition });
       return;
     }
   }
 
   // A writeback failure (shell/Linear error) is logged and swallowed: the
-  // ticket keeps its status and is retried next tick, exactly like a failed
-  // lookup. We never let one ticket's writeback abort the others' reviews.
+  // task keeps its status and is retried next tick, exactly like a failed
+  // lookup. We never let one task's writeback abort the others' reviews.
   async function advance(arguments_: {
     issue: Issue;
-    ticket: string;
+    task: string;
     pullRequest: PullRequestSummary;
     transition: Transition;
   }): Promise<void> {
-    const { issue, ticket, pullRequest, transition } = arguments_;
+    const { issue, task, pullRequest, transition } = arguments_;
     try {
       const result =
         transition === "done" ? await board.markDone(issue) : await board.markInReview(issue);
       if (result.outcome === "unsupported") {
-        log(`Skipped advancing ${ticket} to ${transition}: ${result.reason}`);
+        log(`Skipped advancing ${task} to ${transition}: ${result.reason}`);
         logEvent("review", {
           outcome: "skipped",
           reason: "unsupported",
-          ticket,
+          task,
           to: transition,
         });
         return;
       }
-      log(`Advanced ${ticket} to ${transition} (PR ${pullRequest.url})`);
+      log(`Advanced ${task} to ${transition} (PR ${pullRequest.url})`);
       logEvent("review", {
         outcome: "advanced",
-        ticket,
+        task,
         pr: pullRequest.url,
         state: pullRequest.state,
         to: transition,
       });
     } catch (error) {
-      log(`Failed to advance ${ticket} to ${transition}: ${errorMessage(error)}`);
+      log(`Failed to advance ${task} to ${transition}: ${errorMessage(error)}`);
       logEvent("review", {
         outcome: "failed",
         reason: "writeback_failed",
-        ticket,
+        task,
         to: transition,
       });
     }

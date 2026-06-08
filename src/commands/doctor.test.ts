@@ -10,7 +10,7 @@ import {
   type ResolvedConfig,
 } from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
-import type { TicketSource } from "../lib/ticketSource.ts";
+import type { TaskSource } from "../lib/taskSource.ts";
 import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCapture.ts";
 import { doctor } from "./doctor.ts";
 
@@ -90,14 +90,14 @@ function stubBoard(): Board {
   };
 }
 
-function stubSource(name: string): TicketSource {
+function stubSource(name: string): TaskSource {
   return {
     name,
-    verify: vi.fn<TicketSource["verify"]>(),
-    fetch: vi.fn<TicketSource["fetch"]>(),
-    resolveOne: vi.fn<TicketSource["resolveOne"]>(),
-    markInProgress: vi.fn<TicketSource["markInProgress"]>(),
-    markInReview: vi.fn<TicketSource["markInReview"]>(),
+    verify: vi.fn<TaskSource["verify"]>(),
+    fetch: vi.fn<TaskSource["fetch"]>(),
+    resolveOne: vi.fn<TaskSource["resolveOne"]>(),
+    markInProgress: vi.fn<TaskSource["markInProgress"]>(),
+    markInReview: vi.fn<TaskSource["markInReview"]>(),
   };
 }
 

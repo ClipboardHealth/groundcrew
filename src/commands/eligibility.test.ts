@@ -1,6 +1,6 @@
 import type { ResolvedConfig } from "../lib/config.ts";
 import { canonicalBlocker, canonicalLinearIssue } from "../lib/testing/canonicalFixtures.ts";
-import { isGroundcrewIssue, type GroundcrewIssue } from "../lib/ticketSource.ts";
+import { isGroundcrewIssue, type GroundcrewIssue } from "../lib/taskSource.ts";
 import type { UsageByModel } from "../lib/usage.ts";
 import type { WorktreeEntry } from "../lib/worktrees.ts";
 import {
@@ -63,12 +63,12 @@ function todoIssue(overrides: Partial<GroundcrewIssue> = {}): GroundcrewIssue {
   );
 }
 
-function hostEntryFor(repository: string, ticket: string): WorktreeEntry {
+function hostEntryFor(repository: string, task: string): WorktreeEntry {
   return {
     repository,
-    ticket,
-    branchName: `dev-${ticket.toLowerCase()}`,
-    dir: `/work/${repository}-${ticket}`,
+    task,
+    branchName: `dev-${task.toLowerCase()}`,
+    dir: `/work/${repository}-${task}`,
     kind: "host",
   };
 }
@@ -270,7 +270,7 @@ describe(classifyEligibility, () => {
   });
 
   describe("session exhaustion", () => {
-    it("skips a concrete-model ticket when its model is exhausted", () => {
+    it("skips a concrete-model task when its model is exhausted", () => {
       const verdicts = classifyEligibility(
         defaultArguments({
           unblocked: [todoIssue({ model: "claude" })],

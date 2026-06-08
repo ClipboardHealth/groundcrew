@@ -1,6 +1,6 @@
 import type { LinearClient } from "@linear/sdk";
 
-import type { MarkInReviewResult } from "../../ticketSource.ts";
+import type { MarkInReviewResult } from "../../taskSource.ts";
 import { debug } from "../../util.ts";
 import {
   DEFAULT_LINEAR_STATUS_NAMES,
@@ -28,7 +28,7 @@ export function createLinearIssueStatusUpdater(arguments_: {
   const { client, statusNames = DEFAULT_LINEAR_STATUS_NAMES } = arguments_;
   // Positive cache only. Keyed by teamId because the in-progress-state
   // resolution yields a single stateId per team — independent of which
-  // project the ticket belongs to. State ids don't change for misconfig
+  // project the task belongs to. State ids don't change for misconfig
   // reasons, so caching successful resolutions is safe across the process.
   //
   // No negative cache: a missing "started" workflow state is a Linear-side

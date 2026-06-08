@@ -298,7 +298,7 @@ function writeInitGuidance(destination: string, options: InitConfigOptions): voi
   writeCloneGuidance(options);
   writeOutput("  - If using Linear, export your API key:");
   writeOutput('      export GROUNDCREW_LINEAR_API_KEY="lin_api_..."');
-  writeOutput("  - In Linear, assign tickets to yourself and add an agent-* label to opt them in");
+  writeOutput("  - In Linear, assign tasks to yourself and add an agent-* label to opt them in");
   writeOutput("  - Validate and start:");
   writeOutput("      crew doctor");
   writeOutput("      crew run --watch");

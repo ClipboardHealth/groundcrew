@@ -45,7 +45,7 @@ export interface StagedSrtLaunch {
 export function buildAndStageSrtLaunch(input: {
   config: ResolvedConfig;
   repository: string;
-  ticket: string;
+  task: string;
   worktreeDir: string;
   definition: ModelDefinition;
   /** Defaults to `os.homedir()`. Injected in tests to seed from a fixture home. */
@@ -63,7 +63,7 @@ export function buildAndStageSrtLaunch(input: {
     }),
   };
 
-  const directory = mkdtempSync(path.join(os.tmpdir(), `groundcrew-srt-${input.ticket}-`));
+  const directory = mkdtempSync(path.join(os.tmpdir(), `groundcrew-srt-${input.task}-`));
 
   const relocation = agentConfigRelocation(agent);
   let relocatedConfigDir: string | undefined;

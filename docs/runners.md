@@ -74,7 +74,7 @@ sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
 ## Docker Sandboxes Setup
 
-Each model that runs under `sdx` needs a `sandbox: { agent: "<sbx-agent>" }` block in `crew.config.ts`. Groundcrew addresses the sandbox as `groundcrew-<agent>` and reuses one existing sandbox per agent across repos and tickets.
+Each model that runs under `sdx` needs a `sandbox: { agent: "<sbx-agent>" }` block in `crew.config.ts`. Groundcrew addresses the sandbox as `groundcrew-<agent>` and reuses one existing sandbox per agent across repos and tasks.
 
 First-time setup is manual:
 

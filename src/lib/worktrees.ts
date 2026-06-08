@@ -1,8 +1,8 @@
 /**
- * Worktree lifecycle — manages host git worktrees for tickets.
+ * Worktree lifecycle — manages host git worktrees for tasks.
  *
  * A worktree is a `git worktree add`'d directory at
- * `<worktreeDir>/<repo>-<TICKET>/` (where `worktreeDir` defaults to
+ * `<worktreeDir>/<repo>-<TASK>/` (where `worktreeDir` defaults to
  * `projectDir`). The source repo it is cut from may live under a different
  * per-repo `projectDirOverride`. Callers go through the `worktrees` namespace;
  * the module owns creation, listing, removal, and teardown (workspace-close +
@@ -39,9 +39,9 @@ export function isWorktreeAlreadyExistsError(error: unknown): error is WorktreeA
 
 export interface WorktreeEntry {
   repository: string;
-  /** Linear ticket id, lowercased — e.g. "team-220". */
-  ticket: string;
-  /** Slash-free `<prefix>-<ticket>`. */
+  /** Linear task id, lowercased — e.g. "team-220". */
+  task: string;
+  /** Slash-free `<prefix>-<task>`. */
   branchName: string;
   dir: string;
   kind: WorktreeKind;
@@ -49,11 +49,11 @@ export interface WorktreeEntry {
 
 export interface WorktreeSpec {
   repository: string;
-  ticket: string;
+  task: string;
 }
 
-const TICKET_RE = /^[a-z][\da-z]*-\d+$/;
-const TICKET_DIR_RE = /^(?<repoBasename>.+)-(?<ticket>[a-z][\da-z]*-\d+)$/;
+const TASK_RE = /^[a-z][\da-z]*-\d+$/;
+const TASK_DIR_RE = /^(?<repoBasename>.+)-(?<task>[a-z][\da-z]*-\d+)$/;
 
 function branchPrefix(config: ResolvedConfig): string {
   const fromConfig = config.git.branchPrefix;
@@ -68,8 +68,8 @@ function branchPrefix(config: ResolvedConfig): string {
   return name;
 }
 
-function branchNameForTicket(config: ResolvedConfig, ticket: string): string {
-  return `${branchPrefix(config)}-${ticket}`;
+function branchNameForTask(config: ResolvedConfig, task: string): string {
+  return `${branchPrefix(config)}-${task}`;
 }
 
 function repoDirFor(config: ResolvedConfig, repository: string): string {
@@ -87,28 +87,28 @@ function repoDirFor(config: ResolvedConfig, repository: string): string {
 
 interface BasePaths {
   repoDir: string;
-  ticket: string;
+  task: string;
   branchName: string;
   hostWorktreeDir: string;
   hostWorktreeName: string;
 }
 
-function basePaths(config: ResolvedConfig, repository: string, ticket: string): BasePaths {
-  // Tickets must match the same shape the worktree discovery regexes use,
-  // so create()/list()/findByTicket() agree on what's a valid worktree.
+function basePaths(config: ResolvedConfig, repository: string, task: string): BasePaths {
+  // Tasks must match the same shape the worktree discovery regexes use,
+  // so create()/list()/findByTask() agree on what's a valid worktree.
   // This also rejects traversal tokens before they reach path.resolve().
-  if (!TICKET_RE.test(ticket)) {
-    throw new Error(`Invalid ticket "${ticket}": must be a plain ticket id`);
+  if (!TASK_RE.test(task)) {
+    throw new Error(`Invalid task "${task}": must be a plain task id`);
   }
 
   const repoDir = repoDirFor(config, repository);
-  const hostWorktreeName = `${repository}-${ticket}`;
+  const hostWorktreeName = `${repository}-${task}`;
   const hostWorktreeDir = path.resolve(worktreeBaseDir(config), hostWorktreeName);
 
   return {
     repoDir,
-    ticket,
-    branchName: branchNameForTicket(config, ticket),
+    task,
+    branchName: branchNameForTask(config, task),
     hostWorktreeDir,
     hostWorktreeName,
   };
@@ -161,7 +161,7 @@ async function createWorktree(
   spec: WorktreeSpec,
   signal?: AbortSignal,
 ): Promise<WorktreeEntry> {
-  const base = basePaths(config, spec.repository, spec.ticket);
+  const base = basePaths(config, spec.repository, spec.task);
   const defaultBranch = await resolveDefaultBranch({
     repoDir: base.repoDir,
     remote: config.git.remote,
@@ -172,7 +172,7 @@ async function createWorktree(
   debug(`Fetching ${baseRef} in ${spec.repository}...`);
   await runLongGitCommand(["-C", base.repoDir, "fetch", config.git.remote, defaultBranch], signal);
   debug(
-    `Creating worktree ${spec.repository}-${spec.ticket} (branch ${base.branchName} from ${baseRef})...`,
+    `Creating worktree ${spec.repository}-${spec.task} (branch ${base.branchName} from ${baseRef})...`,
   );
   await runLongGitCommand(
     ["-C", base.repoDir, "worktree", "add", "-b", base.branchName, base.hostWorktreeDir, baseRef],
@@ -180,7 +180,7 @@ async function createWorktree(
   );
   return {
     repository: spec.repository,
-    ticket: spec.ticket,
+    task: spec.task,
     branchName: base.branchName,
     dir: base.hostWorktreeDir,
     kind: "host",
@@ -191,9 +191,9 @@ function listWorktrees(config: ResolvedConfig): WorktreeEntry[] {
   const worktreeRoot = path.resolve(worktreeBaseDir(config));
   const entries: WorktreeEntry[] = [];
 
-  // Worktrees live at `worktreeRoot/<repository>-<ticket>`. When `repository`
+  // Worktrees live at `worktreeRoot/<repository>-<task>`. When `repository`
   // contains a slash (e.g. "owner/repo"), `path.resolve()` nests one level
-  // deeper, so the worktree path is `worktreeRoot/owner/repo-<ticket>`.
+  // deeper, so the worktree path is `worktreeRoot/owner/repo-<task>`.
   // Scan each known repository's parent directory under the worktree root
   // rather than the root itself, so nested worktrees are discovered alongside
   // bare ones.
@@ -222,13 +222,13 @@ function listWorktrees(config: ResolvedConfig): WorktreeEntry[] {
       if (!entry.isDirectory()) {
         continue;
       }
-      const match = TICKET_DIR_RE.exec(entry.name);
+      const match = TASK_DIR_RE.exec(entry.name);
       if (!match) {
         continue;
       }
-      const [, repoBasename, ticket] = match;
-      /* v8 ignore next 3 @preserve -- TICKET_DIR_RE always captures both groups when it matches */
-      if (repoBasename === undefined || ticket === undefined) {
+      const [, repoBasename, task] = match;
+      /* v8 ignore next 3 @preserve -- TASK_DIR_RE always captures both groups when it matches */
+      if (repoBasename === undefined || task === undefined) {
         continue;
       }
       const repository = repoByBasename.get(repoBasename);
@@ -237,8 +237,8 @@ function listWorktrees(config: ResolvedConfig): WorktreeEntry[] {
       }
       entries.push({
         repository,
-        ticket,
-        branchName: branchNameForTicket(config, ticket),
+        task,
+        branchName: branchNameForTask(config, task),
         dir: path.resolve(parentDir, entry.name),
         kind: "host",
       });
@@ -291,7 +291,7 @@ async function removeWorktree(
         if (dirtiness.kind === "dirty") {
           throw new Error(
             describeDirtyWorktree({
-              ticket: entry.ticket,
+              task: entry.task,
               dir: entry.dir,
               modified: dirtiness.modified,
               untracked: dirtiness.untracked,
@@ -306,7 +306,7 @@ async function removeWorktree(
             ...signalProperty(options.signal),
           });
           if (registration === "orphan") {
-            throw new Error(describeOrphanWorktree({ ticket: entry.ticket, dir: entry.dir }), {
+            throw new Error(describeOrphanWorktree({ task: entry.task, dir: entry.dir }), {
               cause: error,
             });
           }
@@ -364,12 +364,12 @@ async function probeWorktreeDirtiness(
 }
 
 function describeDirtyWorktree(arguments_: {
-  ticket: string;
+  task: string;
   dir: string;
   modified: number;
   untracked: number;
 }): string {
-  const { ticket, dir, modified, untracked } = arguments_;
+  const { task, dir, modified, untracked } = arguments_;
   const parts: string[] = [];
   if (modified > 0) {
     parts.push(`${modified} modified file${modified === 1 ? "" : "s"}`);
@@ -379,7 +379,7 @@ function describeDirtyWorktree(arguments_: {
   }
   const summary = parts.join(" and ");
   const pronoun = modified + untracked === 1 ? "it" : "them";
-  return `worktree has ${summary}. Run \`crew cleanup --force ${ticket}\` to discard ${pronoun}, or commit/stash in ${dir} first.`;
+  return `worktree has ${summary}. Run \`crew cleanup --force ${task}\` to discard ${pronoun}, or commit/stash in ${dir} first.`;
 }
 
 type WorktreeRegistration = "registered" | "orphan" | "unknown";
@@ -411,13 +411,13 @@ async function probeWorktreeRegistration(arguments_: {
   return "orphan";
 }
 
-function describeOrphanWorktree(arguments_: { ticket: string; dir: string }): string {
-  const { ticket, dir } = arguments_;
-  return `directory exists but is not a registered git worktree. Run \`crew cleanup --force ${ticket}\` to remove ${dir}, or inspect it first if it may contain valuable files.`;
+function describeOrphanWorktree(arguments_: { task: string; dir: string }): string {
+  const { task, dir } = arguments_;
+  return `directory exists but is not a registered git worktree. Run \`crew cleanup --force ${task}\` to remove ${dir}, or inspect it first if it may contain valuable files.`;
 }
 
 function expectedHostWorktreeDir(config: ResolvedConfig, entry: WorktreeEntry): string {
-  return path.resolve(worktreeBaseDir(config), `${entry.repository}-${entry.ticket}`);
+  return path.resolve(worktreeBaseDir(config), `${entry.repository}-${entry.task}`);
 }
 
 function isInsideDirectory(parentDir: string, childDir: string): boolean {
@@ -446,8 +446,8 @@ function list(config: ResolvedConfig): WorktreeEntry[] {
   return listWorktrees(config);
 }
 
-function findByTicket(config: ResolvedConfig, ticket: string): WorktreeEntry[] {
-  return list(config).filter((entry) => entry.ticket === ticket);
+function findByTask(config: ResolvedConfig, task: string): WorktreeEntry[] {
+  return list(config).filter((entry) => entry.task === task);
 }
 
 async function create(
@@ -455,7 +455,7 @@ async function create(
   spec: WorktreeSpec,
   signal?: AbortSignal,
 ): Promise<WorktreeEntry> {
-  const existing = findByTicket(config, spec.ticket).find(
+  const existing = findByTask(config, spec.task).find(
     (entry) => entry.repository === spec.repository,
   );
   if (existing !== undefined) {
@@ -484,7 +484,7 @@ export interface TeardownFailure {
 }
 
 export interface TeardownResult {
-  /** Tickets whose Workspace was closed (deduped per ticket). */
+  /** Tasks whose Workspace was closed (deduped per task). */
   closed: string[];
   /** Worktrees successfully removed. */
   removed: WorktreeEntry[];
@@ -495,22 +495,20 @@ export interface TeardownResult {
 
 async function closeWorkspaceForTeardown(
   config: ResolvedConfig,
-  ticket: string,
+  task: string,
   signal: AbortSignal | undefined,
 ): Promise<boolean> {
-  const closeResult = await workspaces.close(config, ticket, signal);
+  const closeResult = await workspaces.close(config, task, signal);
   return closeResult.kind === "closed";
 }
 
 function shouldCloseWorkspaceForTeardown(
-  ticket: string,
+  task: string,
   workspaceProbe: WorkspaceProbe,
   liveNames: ReadonlySet<string>,
-  closedTickets: ReadonlySet<string>,
+  closedTasks: ReadonlySet<string>,
 ): boolean {
-  return (
-    !closedTickets.has(ticket) && (workspaceProbe.kind === "unavailable" || liveNames.has(ticket))
-  );
+  return !closedTasks.has(task) && (workspaceProbe.kind === "unavailable" || liveNames.has(task));
 }
 
 // A flaky cmux/tmux must not abort the batch — otherwise every on-disk
@@ -532,7 +530,7 @@ async function teardown(
   const force = options?.force ?? false;
   const workspaceProbe = await workspaces.probe(config, options?.signal);
   const liveNames = workspaceProbe.kind === "ok" ? workspaceProbe.names : new Set<string>();
-  const closedTickets = new Set<string>();
+  const closedTasks = new Set<string>();
   const result: TeardownResult = {
     closed: [],
     removed: [],
@@ -541,12 +539,12 @@ async function teardown(
   };
 
   for (const entry of entries) {
-    if (shouldCloseWorkspaceForTeardown(entry.ticket, workspaceProbe, liveNames, closedTickets)) {
+    if (shouldCloseWorkspaceForTeardown(entry.task, workspaceProbe, liveNames, closedTasks)) {
       try {
-        // oxlint-disable-next-line no-await-in-loop -- teardown is intentionally sequential per ticket
-        const closed = await closeWorkspaceForTeardown(config, entry.ticket, options?.signal);
+        // oxlint-disable-next-line no-await-in-loop -- teardown is intentionally sequential per task
+        const closed = await closeWorkspaceForTeardown(config, entry.task, options?.signal);
         if (closed) {
-          result.closed.push(entry.ticket);
+          result.closed.push(entry.task);
         }
       } catch (error) {
         if (options?.signal?.aborted === true) {
@@ -554,7 +552,7 @@ async function teardown(
         }
         result.failures.push({ entry, step: "workspace_close", error });
       }
-      closedTickets.add(entry.ticket);
+      closedTasks.add(entry.task);
     }
     try {
       // oxlint-disable-next-line no-await-in-loop -- one worktree at a time avoids racing on git
@@ -581,9 +579,9 @@ async function probeWorkingTree(input: {
 export const worktrees = {
   create,
   list,
-  findByTicket,
+  findByTask,
   remove,
   teardown,
-  branchNameForTicket,
+  branchNameForTask,
   probeWorkingTree,
 };

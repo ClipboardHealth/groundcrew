@@ -5,11 +5,11 @@
  * repository is configured for this crew via workspace.knownRepositories.
  *
  * WARN+skip on unknown repo is a deliberate behavior choice (P-refined in
- * the MVP-2 plan): one badly-labelled ticket should not throw and abort
+ * the MVP-2 plan): one badly-labelled task should not throw and abort
  * the tick across N sources.
  */
 
-import type { Issue } from "./ticketSource.ts";
+import type { Issue } from "./taskSource.ts";
 
 export function dispatchableRepository(
   issue: Issue,

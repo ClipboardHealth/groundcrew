@@ -2,14 +2,14 @@ import type { LinearClient } from "@linear/sdk";
 
 import type { AdapterContext } from "../../adapterDefinition.ts";
 import type { ResolvedConfig } from "../../config.ts";
-import type { MarkInReviewResult } from "../../ticketSource.ts";
+import type { MarkInReviewResult } from "../../taskSource.ts";
 import { readEnvironmentVariable } from "../../util.ts";
 import { deleteEnvironmentVariable, setEnvironmentVariable } from "../../../testHelpers/env.ts";
 import * as boardSource from "./fetch.ts";
 import type { Issue as LinearIssue } from "./fetch.ts";
 import * as linearIssueStatus from "./writeback.ts";
 import * as client from "./client.ts";
-import { createLinearTicketSource, toCanonicalIssue } from "./factory.ts";
+import { createLinearTaskSource, toCanonicalIssue } from "./factory.ts";
 
 function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
   return {
@@ -147,8 +147,8 @@ describe(toCanonicalIssue, () => {
   });
 
   it("copies description from the legacy Linear issue onto the canonical Issue", () => {
-    const result = toCanonicalIssue(linearIssue({ description: "Body of the ticket." }), "linear");
-    expect(result.description).toBe("Body of the ticket.");
+    const result = toCanonicalIssue(linearIssue({ description: "Body of the task." }), "linear");
+    expect(result.description).toBe("Body of the task.");
   });
 
   it("source-prefixes blocker ids and canonicalizes their statuses via stateType", () => {
@@ -226,7 +226,7 @@ describe(toCanonicalIssue, () => {
   });
 });
 
-describe(createLinearTicketSource, () => {
+describe(createLinearTaskSource, () => {
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- factory only uses the client when its methods are called; tests that exercise those methods stub the boardSource/linearIssueStatus calls so the client is never actually invoked
   const fakeClient = {} as LinearClient;
   beforeEach(() => {
@@ -236,15 +236,15 @@ describe(createLinearTicketSource, () => {
     vi.restoreAllMocks();
   });
 
-  it("returns a TicketSource whose name defaults to 'linear'", () => {
-    const source = createLinearTicketSource({ kind: "linear" }, {
+  it("returns a TaskSource whose name defaults to 'linear'", () => {
+    const source = createLinearTaskSource({ kind: "linear" }, {
       globalConfig: makeConfig(),
     } satisfies AdapterContext);
     expect(source.name).toBe("linear");
   });
 
   it("respects an explicit name override", () => {
-    const source = createLinearTicketSource({ kind: "linear", name: "work" }, {
+    const source = createLinearTaskSource({ kind: "linear", name: "work" }, {
       globalConfig: makeConfig(),
     } satisfies AdapterContext);
     expect(source.name).toBe("work");
@@ -256,7 +256,7 @@ describe(createLinearTicketSource, () => {
       verify: innerVerify,
       fetch: vi.fn<() => Promise<boardSource.BoardState>>(),
     });
-    const source = createLinearTicketSource({ kind: "linear" }, {
+    const source = createLinearTaskSource({ kind: "linear" }, {
       globalConfig: makeConfig(),
     } satisfies AdapterContext);
     await source.verify();
@@ -276,7 +276,7 @@ describe(createLinearTicketSource, () => {
       verify: vi.fn<() => Promise<void>>(),
       fetch: innerFetch,
     });
-    const source = createLinearTicketSource({ kind: "linear" }, {
+    const source = createLinearTaskSource({ kind: "linear" }, {
       globalConfig: makeConfig(),
     } satisfies AdapterContext);
     const issues = await source.fetch();
@@ -298,7 +298,7 @@ describe(createLinearTicketSource, () => {
       verify: vi.fn<() => Promise<void>>(),
       fetch: innerFetch,
     });
-    const source = createLinearTicketSource(
+    const source = createLinearTaskSource(
       {
         kind: "linear",
         statuses: {
@@ -333,7 +333,7 @@ describe(createLinearTicketSource, () => {
       verify: vi.fn<() => Promise<void>>(),
       fetch: innerFetch,
     });
-    const source = createLinearTicketSource({ kind: "linear", name: "work-linear" }, {
+    const source = createLinearTaskSource({ kind: "linear", name: "work-linear" }, {
       globalConfig: makeConfig(),
     } satisfies AdapterContext);
 
@@ -359,7 +359,7 @@ describe(createLinearTicketSource, () => {
       statusId: "state-todo",
       url: "https://linear.app/example/issue/TEAM-1",
     });
-    const source = createLinearTicketSource({ kind: "linear" }, {
+    const source = createLinearTaskSource({ kind: "linear" }, {
       globalConfig: makeConfig(),
     } satisfies AdapterContext);
     const issue = await source.resolveOne("team-1");
@@ -379,7 +379,7 @@ describe(createLinearTicketSource, () => {
         .fn<(...args: unknown[]) => Promise<MarkInReviewResult>>()
         .mockResolvedValue({ outcome: "unsupported", reason: "not implemented" }),
     });
-    const source = createLinearTicketSource({ kind: "linear" }, {
+    const source = createLinearTaskSource({ kind: "linear" }, {
       globalConfig: makeConfig(),
     } satisfies AdapterContext);
     await source.markInProgress({
@@ -421,7 +421,7 @@ describe(createLinearTicketSource, () => {
       markInProgress: vi.fn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(),
       markInReview: innerMarkInReview,
     });
-    const source = createLinearTicketSource({ kind: "linear" }, {
+    const source = createLinearTaskSource({ kind: "linear" }, {
       globalConfig: makeConfig(),
     } satisfies AdapterContext);
     await expect(
@@ -457,13 +457,13 @@ describe(createLinearTicketSource, () => {
 // ─────────────────────────────────────────────────────────────────────────
 // Lazy client construction — the Linear adapter must be constructible
 // without a Linear API key in env. Callers that only touch a sibling
-// source (multi-source Board fan-out, `crew doctor --ticket <shell-id>`)
+// source (multi-source Board fan-out, `crew doctor --task <shell-id>`)
 // must not crash at adapter-construction time on a missing key. These
 // tests deliberately do NOT stub `getLinearClient` — the point is to
 // exercise the real key-resolution path.
 // ─────────────────────────────────────────────────────────────────────────
 
-describe("createLinearTicketSource — lazy client construction", () => {
+describe("createLinearTaskSource — lazy client construction", () => {
   const originalGroundcrewKey = readEnvironmentVariable("GROUNDCREW_LINEAR_API_KEY");
   const originalLinearKey = readEnvironmentVariable("LINEAR_API_KEY");
 
@@ -487,14 +487,14 @@ describe("createLinearTicketSource — lazy client construction", () => {
 
   it("constructs the adapter without throwing when no Linear API key is set", () => {
     expect(() =>
-      createLinearTicketSource({ kind: "linear" }, {
+      createLinearTaskSource({ kind: "linear" }, {
         globalConfig: makeConfig(),
       } satisfies AdapterContext),
     ).not.toThrow();
   });
 
   it("throws about the missing key only when verify() is invoked", async () => {
-    const source = createLinearTicketSource({ kind: "linear" }, {
+    const source = createLinearTaskSource({ kind: "linear" }, {
       globalConfig: makeConfig(),
     } satisfies AdapterContext);
 
@@ -502,7 +502,7 @@ describe("createLinearTicketSource — lazy client construction", () => {
   });
 
   it("throws about the missing key only when fetch() is invoked", async () => {
-    const source = createLinearTicketSource({ kind: "linear" }, {
+    const source = createLinearTaskSource({ kind: "linear" }, {
       globalConfig: makeConfig(),
     } satisfies AdapterContext);
 

@@ -1,6 +1,6 @@
 /**
- * Shell-adapter `TicketSource` factory. Wires `invokeShellCommand` to the
- * four TicketSource operations and applies the ShellIssue Zod schema for
+ * Shell-adapter `TaskSource` factory. Wires `invokeShellCommand` to the
+ * four TaskSource operations and applies the ShellIssue Zod schema for
  * runtime validation of script stdout.
  *
  * Fallback behavior for omitted commands:
@@ -23,8 +23,8 @@ import {
   type Issue as CanonicalIssue,
   type MarkDoneResult,
   type MarkInReviewResult,
-  type TicketSource,
-} from "../../ticketSource.ts";
+  type TaskSource,
+} from "../../taskSource.ts";
 
 import { invokeShellCommand } from "./invoke.ts";
 import {
@@ -88,10 +88,10 @@ export function toCanonicalIssue(shellIssue: ShellIssue, sourceName: string): Ca
   };
 }
 
-export function createShellTicketSource(
+export function createShellTaskSource(
   config: ShellAdapterConfig,
   _context: AdapterContext,
-): TicketSource {
+): TaskSource {
   const sourceName = config.name;
   const timeouts = mergeTimeouts(config.timeouts);
 

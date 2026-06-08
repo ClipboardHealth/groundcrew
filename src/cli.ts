@@ -13,7 +13,7 @@ import {
   errorMessage,
   parseDryRunPositionals,
   readEnvironmentVariable,
-  readTicketArgument,
+  readTaskArgument,
   setVerbose,
   writeError,
   writeOutput,
@@ -72,7 +72,7 @@ async function setupCli(argv: string[]): Promise<void> {
 async function runCli(argv: string[]): Promise<void> {
   let watch = false;
   let dryRun = false;
-  let ticket: string | undefined;
+  let task: string | undefined;
 
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
@@ -84,35 +84,35 @@ async function runCli(argv: string[]): Promise<void> {
       dryRun = true;
       continue;
     }
-    if (argument === "--ticket") {
-      ticket = readTicketArgument(argv, index, "run");
+    if (argument === "--task") {
+      task = readTaskArgument(argv, index, "run");
       index += 1;
       continue;
     }
     throw new Error(`crew run: unknown argument: ${argument}`);
   }
 
-  if (ticket !== undefined && watch) {
-    throw new Error("crew run: --watch and --ticket are mutually exclusive");
+  if (task !== undefined && watch) {
+    throw new Error("crew run: --watch and --task are mutually exclusive");
   }
 
-  if (ticket === undefined) {
+  if (task === undefined) {
     await orchestrate({ watch, dryRun });
     return;
   }
-  warnDeprecated({ oldForm: "run --ticket", newForm: "start" });
-  await setupWorkspaceCli(ticket, { dryRun });
+  warnDeprecated({ oldForm: "run --task", newForm: "start" });
+  await setupWorkspaceCli(task, { dryRun });
 }
 
-const START_USAGE = "crew start <ticket> [--dry-run]";
+const START_USAGE = "crew start <task> [--dry-run]";
 
 async function startCli(argv: string[]): Promise<void> {
   const { dryRun, positionals } = parseDryRunPositionals(argv, START_USAGE);
-  const [ticket, ...extras] = positionals;
-  if (ticket === undefined || ticket.length === 0 || extras.length > 0) {
+  const [task, ...extras] = positionals;
+  if (task === undefined || task.length === 0 || extras.length > 0) {
     throw new Error(`Usage: ${START_USAGE}`);
   }
-  await setupWorkspaceCli(ticket, { dryRun });
+  await setupWorkspaceCli(task, { dryRun });
 }
 
 async function upgradeCliInvoke(argv: string[]): Promise<void> {
@@ -127,22 +127,22 @@ async function upgradeCliInvoke(argv: string[]): Promise<void> {
   );
 }
 
-function doctorTicketAlias(argv: string[]): string | undefined {
-  if (argv[0] !== "--ticket") {
+function doctorTaskAlias(argv: string[]): string | undefined {
+  if (argv[0] !== "--task") {
     return undefined;
   }
-  const ticket = readTicketArgument(argv, 0, "doctor");
+  const task = readTaskArgument(argv, 0, "doctor");
   if (argv.length > 2) {
-    throw new Error("Usage: crew status [<ticket>]");
+    throw new Error("Usage: crew status [<task>]");
   }
-  return ticket;
+  return task;
 }
 
 async function doctorCli(argv: string[]): Promise<void> {
-  const aliasTicket = doctorTicketAlias(argv);
-  if (aliasTicket !== undefined) {
-    warnDeprecated({ oldForm: "doctor --ticket", newForm: "status" });
-    await statusCli([aliasTicket]);
+  const aliasTask = doctorTaskAlias(argv);
+  if (aliasTask !== undefined) {
+    warnDeprecated({ oldForm: "doctor --task", newForm: "status" });
+    await statusCli([aliasTask]);
     return;
   }
   if (argv.length > 0) {
@@ -160,13 +160,13 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
     invoke: initConfigCli,
   },
   run: {
-    summary: "Run the orchestrator: poll sources and start eligible tickets (one-shot by default)",
+    summary: "Run the orchestrator: poll sources and start eligible tasks (one-shot by default)",
     usage: "[--watch] [--dry-run]",
     invoke: runCli,
   },
   start: {
-    summary: "Launch one ticket immediately, bypassing eligibility",
-    usage: "<ticket> [--dry-run]",
+    summary: "Launch one task immediately, bypassing eligibility",
+    usage: "<task> [--dry-run]",
     invoke: startCli,
   },
   doctor: {
@@ -175,23 +175,23 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
     invoke: doctorCli,
   },
   status: {
-    summary: "Print read-only groundcrew state, or one ticket's local/Linear status",
-    usage: "[<ticket>]",
+    summary: "Print read-only groundcrew state, or one task's local/Linear status",
+    usage: "[<task>]",
     invoke: statusCli,
   },
   cleanup: {
     summary: "Tear down a worktree",
-    usage: "[--force] <ticket>",
+    usage: "[--force] <task>",
     invoke: cleanupWorkspaceCli,
   },
   stop: {
-    summary: "Stop a live ticket workspace while preserving its worktree",
-    usage: "<ticket> [--reason <text>]",
+    summary: "Stop a live task workspace while preserving its worktree",
+    usage: "<task> [--reason <text>]",
     invoke: interruptWorkspaceCli,
   },
   interrupt: {
     summary: "Deprecated alias for `crew stop`",
-    usage: "<ticket> [--reason <text>]",
+    usage: "<task> [--reason <text>]",
     deprecated: true,
     invoke: async (argv) => {
       warnDeprecated({ oldForm: "interrupt", newForm: "stop" });
@@ -199,8 +199,8 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
     },
   },
   resume: {
-    summary: "Reopen an existing ticket worktree with a continuation prompt",
-    usage: "<ticket>",
+    summary: "Reopen an existing task worktree with a continuation prompt",
+    usage: "<task>",
     invoke: resumeWorkspaceCli,
   },
   setup: {

@@ -1,6 +1,6 @@
 /**
  * groundcrew orchestrator — polls Linear projects and spins up workspace +
- * git-worktree pairs for ready tickets. Each tick fetches the board, runs
+ * git-worktree pairs for ready tasks. Each tick fetches the board, runs
  * the cleaner, the reviewer, and the dispatcher; logging from those modules is
  * the orchestrator's user-facing output.
  */
@@ -9,7 +9,7 @@ import { type Board, createBoard } from "../lib/board.ts";
 import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { findPullRequestsForBranch } from "../lib/pullRequests.ts";
-import { type BoardState, RepositoryResolutionError } from "../lib/ticketSource.ts";
+import { type BoardState, RepositoryResolutionError } from "../lib/taskSource.ts";
 import { getUsageByModel, type UsageByModel } from "../lib/usage.ts";
 import { errorMessage, log, sleep } from "../lib/util.ts";
 import { worktrees } from "../lib/worktrees.ts";

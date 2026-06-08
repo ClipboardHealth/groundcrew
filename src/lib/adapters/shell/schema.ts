@@ -33,7 +33,7 @@ export const shellIssueSchema = z.object({
   blockers: z.array(shellBlockerSchema),
   hasMoreBlockers: z.boolean().optional().default(false),
   /**
-   * Direct web URL for the ticket. Optional so scripts can omit it without
+   * Direct web URL for the task. Optional so scripts can omit it without
    * breaking; `crew status` falls back to displaying just the id.
    */
   url: z.url().optional(),

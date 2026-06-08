@@ -11,7 +11,7 @@ import { createBoard, type Board } from "../lib/board.ts";
 import type * as boardModule from "../lib/board.ts";
 import { buildSources } from "../lib/buildSources.ts";
 import type * as buildSourcesModule from "../lib/buildSources.ts";
-import type { BoardState, Issue } from "../lib/ticketSource.ts";
+import type { BoardState, Issue } from "../lib/taskSource.ts";
 import type * as utilModule from "../lib/util.ts";
 import { debug, log } from "../lib/util.ts";
 import { WorktreeAlreadyExistsError, type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
@@ -21,7 +21,7 @@ import {
   setupWorkspace,
   setupWorkspaceCli,
   type SetupWorkspaceOptions,
-  type TicketDetails,
+  type TaskDetails,
 } from "./setupWorkspace.ts";
 
 interface NodeFsMock extends Omit<
@@ -170,7 +170,7 @@ function host(overrides: Partial<HostCapabilities> = {}): HostCapabilities {
 function hostEntry(): WorktreeEntry {
   return {
     repository: "repo-a",
-    ticket: "team-1",
+    task: "team-1",
     branchName: "dev-team-1",
     dir: "/work/repo-a-team-1",
     kind: "host",
@@ -200,7 +200,7 @@ function makeConfig(overrides: Partial<ResolvedConfig["models"]> = {}): Resolved
       ...overrides,
     },
     prompts: {
-      initial: "Begin {{ticket}} ({{title}}) in {{worktree}}\n{{description}}",
+      initial: "Begin {{task}} ({{title}}) in {{worktree}}\n{{description}}",
     },
     workspaceKind: "auto",
     local: { runner: "auto" },
@@ -357,7 +357,7 @@ describe(setupWorkspace, () => {
     mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
 
     await setupWorkspace(config, {
-      ticket: "team-1",
+      task: "team-1",
       repository: "repo-a",
       model: "claude",
       details: { title: "Test Title", description: "Body" },
@@ -365,7 +365,7 @@ describe(setupWorkspace, () => {
 
     expect(createMock).toHaveBeenCalledWith(
       config,
-      expect.objectContaining({ repository: "repo-a", ticket: "team-1" }),
+      expect.objectContaining({ repository: "repo-a", task: "team-1" }),
     );
     expect(writeFileMock).toHaveBeenCalledWith(
       "/tmp/groundcrew-team-1-x/prompt.txt",
@@ -380,7 +380,7 @@ describe(setupWorkspace, () => {
       expect.arrayContaining(["set-status", "model", "claude", "--workspace", "workspace:42"]),
     );
     expect(lastRecordedRunState()).toMatchObject({
-      ticket: "team-1",
+      task: "team-1",
       repository: "repo-a",
       model: "claude",
       worktreeDir: "/work/repo-a-team-1",
@@ -391,12 +391,12 @@ describe(setupWorkspace, () => {
     });
   });
 
-  it("records the ticket url in RunState when the source provides one", async () => {
+  it("records the task url in RunState when the source provides one", async () => {
     const config = makeConfig();
     mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
 
     await setupWorkspace(config, {
-      ticket: "team-1",
+      task: "team-1",
       repository: "repo-a",
       model: "claude",
       details: {
@@ -412,13 +412,13 @@ describe(setupWorkspace, () => {
     });
   });
 
-  it("records the ticket url even on the failed-to-launch rollback path", async () => {
+  it("records the task url even on the failed-to-launch rollback path", async () => {
     const config = makeConfig();
     mockCmuxFailure();
 
     await expect(
       setupWorkspace(config, {
-        ticket: "team-1",
+        task: "team-1",
         repository: "repo-a",
         model: "claude",
         details: {
@@ -440,7 +440,7 @@ describe(setupWorkspace, () => {
     mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
 
     await setupWorkspace(config, {
-      ticket: "team-1",
+      task: "team-1",
       repository: "repo-a",
       model: "claude",
       details: { title: "Test Title", description: "Body" },
@@ -462,7 +462,7 @@ describe(setupWorkspace, () => {
     mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
 
     await setupWorkspace(config, {
-      ticket: "team-1",
+      task: "team-1",
       repository: "repo-a",
       model: "claude",
       details: { title: "Test Title", description: "Body" },
@@ -503,7 +503,7 @@ describe(setupWorkspace, () => {
     await setupWorkspace(
       config,
       {
-        ticket: "team-1",
+        task: "team-1",
         repository: "repo-a",
         model: "claude",
         details: { title: "Test Title", description: "Body" },
@@ -514,7 +514,7 @@ describe(setupWorkspace, () => {
     expect(lastEnsureClearanceSleep()).toStrictEqual(expect.any(Function));
     expect(createMock).toHaveBeenCalledWith(
       config,
-      expect.objectContaining({ repository: "repo-a", ticket: "team-1" }),
+      expect.objectContaining({ repository: "repo-a", task: "team-1" }),
       signal,
     );
     expect(runCommandMock).toHaveBeenCalledWith(
@@ -538,7 +538,7 @@ describe(setupWorkspace, () => {
     const setupPromise = setupWorkspace(
       config,
       {
-        ticket: "team-1",
+        task: "team-1",
         repository: "repo-a",
         model: "claude",
         details: { title: "Test Title", description: "Body" },
@@ -551,7 +551,7 @@ describe(setupWorkspace, () => {
     await expect(setupPromise).rejects.toThrow("stop setup");
     expect(createMock).toHaveBeenCalledWith(
       config,
-      expect.objectContaining({ repository: "repo-a", ticket: "team-1" }),
+      expect.objectContaining({ repository: "repo-a", task: "team-1" }),
       controller.signal,
     );
     expect(teardownMock).toHaveBeenCalledWith(config, [expect.objectContaining(hostEntry())], {
@@ -575,7 +575,7 @@ describe(setupWorkspace, () => {
     });
 
     const setupPromise = setupWorkspace(config, {
-      ticket: "team-1",
+      task: "team-1",
       repository: "repo-a",
       model: "claude",
       details: { title: "Test Title", description: "Body" },
@@ -587,7 +587,7 @@ describe(setupWorkspace, () => {
 
       expect(createMock).toHaveBeenCalledWith(
         config,
-        expect.objectContaining({ repository: "repo-a", ticket: "team-1" }),
+        expect.objectContaining({ repository: "repo-a", task: "team-1" }),
       );
       expect(runCommandMock).not.toHaveBeenCalledWith(
         "cmux",
@@ -601,12 +601,12 @@ describe(setupWorkspace, () => {
     await setupPromise;
   });
 
-  it("uses provided ticket details for prompt rendering", async () => {
+  it("uses provided task details for prompt rendering", async () => {
     const config = makeConfig();
     mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
 
     await setupWorkspace(config, {
-      ticket: "team-1",
+      task: "team-1",
       repository: "repo-a",
       model: "claude",
       details: { title: "Provided Title", description: "Provided Body" },
@@ -628,7 +628,7 @@ describe(setupWorkspace, () => {
     };
 
     await setupWorkspace(config, {
-      ticket: "team-1",
+      task: "team-1",
       repository: "repo-a",
       model: "claude",
       details: { title: "Test Title", description: "Body" },
@@ -649,7 +649,7 @@ describe(setupWorkspace, () => {
     mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
 
     await setupWorkspace(config, {
-      ticket: "team-1",
+      task: "team-1",
       repository: "repo-a",
       model: "claude",
       details: { title: "Test Title", description: "Body" },
@@ -674,7 +674,7 @@ describe(setupWorkspace, () => {
     mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
 
     await setupWorkspace(config, {
-      ticket: "team-1",
+      task: "team-1",
       repository: "repo-a",
       model: "claude",
       details: { title: "Test Title", description: "Body" },
@@ -718,7 +718,7 @@ describe(setupWorkspace, () => {
     mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
 
     await setupWorkspace(config, {
-      ticket: "team-1",
+      task: "team-1",
       repository: "repo-a",
       model: "claude",
       details: { title: "Test Title", description: "Body" },
@@ -757,7 +757,7 @@ describe(setupWorkspace, () => {
     mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
 
     await setupWorkspace(config, {
-      ticket: "team-1",
+      task: "team-1",
       repository: "repo-a",
       model: "claude",
       details: { title: "Test Title", description: "Body" },
@@ -782,7 +782,7 @@ describe(setupWorkspace, () => {
     });
 
     await setupWorkspace(config, {
-      ticket: "team-1",
+      task: "team-1",
       repository: "repo-a",
       model: "claude",
       details: { title: "Test Title", description: "Body" },
@@ -800,7 +800,7 @@ describe(setupWorkspace, () => {
 
     await expect(
       setupWorkspace(config, {
-        ticket: "team-1",
+        task: "team-1",
         repository: "repo-a",
         model: "claude",
         details: { title: "Test Title", description: "Body" },
@@ -809,7 +809,7 @@ describe(setupWorkspace, () => {
 
     expect(createMock).toHaveBeenCalledWith(
       config,
-      expect.objectContaining({ repository: "repo-a", ticket: "team-1" }),
+      expect.objectContaining({ repository: "repo-a", task: "team-1" }),
     );
     expect(teardownMock).toHaveBeenCalledWith(config, [expect.objectContaining(hostEntry())], {
       force: true,
@@ -835,7 +835,7 @@ describe(setupWorkspace, () => {
     mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
 
     await setupWorkspace(config, {
-      ticket: "team-1",
+      task: "team-1",
       repository: "repo-a",
       model: "claude",
       details: { title: "Test Title", description: "Body" },
@@ -860,7 +860,7 @@ describe(setupWorkspace, () => {
       mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:1" }));
 
       await setupWorkspace(makeConfigWithPrepareWorktree(), {
-        ticket: "team-1",
+        task: "team-1",
         repository: "repo-a",
         model: "claude",
         details: { title: "Test Title", description: "Body" },
@@ -884,7 +884,7 @@ describe(setupWorkspace, () => {
       mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:1" }));
 
       await setupWorkspace(makeConfigWithPrepareWorktree(), {
-        ticket: "team-1",
+        task: "team-1",
         repository: "repo-a",
         model: "claude",
         details: { title: "Test Title", description: "Body" },
@@ -903,7 +903,7 @@ describe(setupWorkspace, () => {
       mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:1" }));
 
       await setupWorkspace(makeConfigWithPrepareWorktree(), {
-        ticket: "team-1",
+        task: "team-1",
         repository: "repo-a",
         model: "claude",
         details: { title: "Test Title", description: "Body" },
@@ -922,7 +922,7 @@ describe(setupWorkspace, () => {
       mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:1" }));
 
       await setupWorkspace(makeConfig(), {
-        ticket: "team-1",
+        task: "team-1",
         repository: "repo-a",
         model: "claude",
         details: { title: "Test Title", description: "Body" },
@@ -947,7 +947,7 @@ describe(setupWorkspace, () => {
       mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:1" }));
 
       await setupWorkspace(makeConfig(), {
-        ticket: "team-1",
+        task: "team-1",
         repository: "repo-a",
         model: "claude",
         details: { title: "Test Title", description: "Body" },
@@ -969,7 +969,7 @@ describe(setupWorkspace, () => {
     const config = makeConfig();
 
     await setupWorkspace(config, {
-      ticket: "team-1",
+      task: "team-1",
       repository: "repo-a",
       model: "claude",
       details: { title: "Test Title", description: "Body" },
@@ -983,7 +983,7 @@ describe(setupWorkspace, () => {
     const config = makeConfig();
 
     await setupWorkspace(config, {
-      ticket: "team-1",
+      task: "team-1",
       repository: "repo-a",
       model: "claude",
       details: { title: "Test Title", description: "Body" },
@@ -1000,7 +1000,7 @@ describe(setupWorkspace, () => {
     mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
 
     await setupWorkspace(config, {
-      ticket: "team-1",
+      task: "team-1",
       repository: "repo-a",
       model: "claude",
       details: { title: "Test Title", description: "Body" },
@@ -1025,7 +1025,7 @@ describe(setupWorkspace, () => {
 
     await expect(
       setupWorkspace(config, {
-        ticket: "team-1",
+        task: "team-1",
         repository: "repo-a",
         model: "claude",
         details: { title: "Test Title", description: "Body" },
@@ -1057,7 +1057,7 @@ describe(setupWorkspace, () => {
 
     await expect(
       setupWorkspace(config, {
-        ticket: "team-1",
+        task: "team-1",
         repository: "repo-a",
         model: "claude",
         details: { title: "Test Title", description: "Body" },
@@ -1084,7 +1084,7 @@ describe(setupWorkspace, () => {
 
     await expect(
       setupWorkspace(config, {
-        ticket: "team-1",
+        task: "team-1",
         repository: "repo-a",
         model: "claude",
         details: { title: "Test Title", description: "Body" },
@@ -1121,7 +1121,7 @@ describe(setupWorkspace, () => {
 
     await expect(
       setupWorkspace(config, {
-        ticket: "team-1",
+        task: "team-1",
         repository: "repo-a",
         model: "claude",
         details: { title: "Test Title", description: "Body" },
@@ -1158,7 +1158,7 @@ describe(setupWorkspace, () => {
 
     await expect(
       setupWorkspace(config, {
-        ticket: "team-1",
+        task: "team-1",
         repository: "repo-a",
         model: "claude",
         details: { title: "Test Title", description: "Body" },
@@ -1187,7 +1187,7 @@ describe(setupWorkspace, () => {
     });
 
     await setupWorkspace(config, {
-      ticket: "team-1",
+      task: "team-1",
       repository: "repo-a",
       model: "claude",
       details: { title: "Test Title", description: "Body" },
@@ -1216,7 +1216,7 @@ describe(setupWorkspace, () => {
 
     await expect(
       setupWorkspace(config, {
-        ticket: "team-1",
+        task: "team-1",
         repository: "repo-a",
         model: "claude",
         details: { title: "Test Title", description: "Body" },
@@ -1232,7 +1232,7 @@ describe(setupWorkspace, () => {
 
     await expect(
       setupWorkspace(config, {
-        ticket: "team-1",
+        task: "team-1",
         repository: "repo-a",
         model: "claude",
         details: { title: "Test Title", description: "Body" },
@@ -1248,7 +1248,7 @@ describe(setupWorkspace, () => {
 
     await expect(
       setupWorkspace(makeConfig(), {
-        ticket: "team-1",
+        task: "team-1",
         repository: "repo-a",
         model: "claude",
         details: { title: "Test Title", description: "Body" },
@@ -1267,7 +1267,7 @@ describe(setupWorkspace, () => {
 
     await expect(
       setupWorkspace(makeConfig(), {
-        ticket: "team-1",
+        task: "team-1",
         repository: "repo-a",
         model: "claude",
         details: { title: "Test Title", description: "Body" },
@@ -1284,7 +1284,7 @@ describe(setupWorkspace, () => {
 
     await expect(
       setupWorkspace(makeConfig(), {
-        ticket: "team-1",
+        task: "team-1",
         repository: "repo-a",
         model: "claude",
         details: { title: "Test Title", description: "Body" },
@@ -1299,7 +1299,7 @@ describe(setupWorkspace, () => {
 
     await expect(
       setupWorkspace(makeConfig(), {
-        ticket: "team-1",
+        task: "team-1",
         repository: "repo-a",
         model: "claude",
         details: { title: "Test Title", description: "Body" },
@@ -1313,7 +1313,7 @@ describe(setupWorkspace, () => {
   it("rejects unknown models", async () => {
     await expect(
       setupWorkspace(makeConfig(), {
-        ticket: "team-1",
+        task: "team-1",
         repository: "repo-a",
         model: "ghost",
         details: { title: "Test Title", description: "Body" },
@@ -1327,7 +1327,7 @@ describe(setupWorkspace, () => {
 
     await expect(
       setupWorkspace(config, {
-        ticket: "team-1",
+        task: "team-1",
         repository: "repo-a",
         model: "claude",
         details: { title: "Test Title", description: "Body" },
@@ -1339,7 +1339,7 @@ describe(setupWorkspace, () => {
       [
         expect.objectContaining({
           repository: "repo-a",
-          ticket: "team-1",
+          task: "team-1",
           kind: "host",
           dir: "/work/repo-a-team-1",
           branchName: "dev-team-1",
@@ -1355,7 +1355,7 @@ describe(setupWorkspace, () => {
     mockCmuxNewWorkspaceOutput("Created workspace:99 successfully");
 
     await setupWorkspace(config, {
-      ticket: "team-1",
+      task: "team-1",
       repository: "repo-a",
       model: "claude",
       details: { title: "Test Title", description: "Body" },
@@ -1371,7 +1371,7 @@ describe(setupWorkspace, () => {
     mockCmuxNewWorkspaceOutput(JSON.stringify({ name: "no-ref", info: "see workspace:55" }));
 
     await setupWorkspace(makeConfig(), {
-      ticket: "team-1",
+      task: "team-1",
       repository: "repo-a",
       model: "claude",
       details: { title: "Test Title", description: "Body" },
@@ -1387,7 +1387,7 @@ describe(setupWorkspace, () => {
     mockCmuxNewWorkspaceOutput(JSON.stringify({ id: "workspace:7" }));
 
     await setupWorkspace(makeConfig(), {
-      ticket: "team-1",
+      task: "team-1",
       repository: "repo-a",
       model: "claude",
       details: { title: "Test Title", description: "Body" },
@@ -1411,7 +1411,7 @@ describe(setupWorkspace, () => {
 
     await expect(
       setupWorkspace(config, {
-        ticket: "team-1",
+        task: "team-1",
         repository: "repo-a",
         model: "claude",
         details: { title: "Test Title", description: "Body" },
@@ -1434,7 +1434,7 @@ describe(setupWorkspace, () => {
 
     await expect(
       setupWorkspace(config, {
-        ticket: "team-1",
+        task: "team-1",
         repository: "repo-a",
         model: "claude",
         details: { title: "Test Title", description: "Body" },
@@ -1448,7 +1448,7 @@ describe(setupWorkspace, () => {
 
     await expect(
       setupWorkspace(config, {
-        ticket: "team-1",
+        task: "team-1",
         repository: "repo-a",
         model: "claude",
         details: { title: "Test Title", description: "Body" },
@@ -1456,7 +1456,7 @@ describe(setupWorkspace, () => {
     ).rejects.toThrow(/cmux down/);
 
     expect(lastRecordedRunState()).toMatchObject({
-      ticket: "team-1",
+      task: "team-1",
       repository: "repo-a",
       model: "claude",
       state: "failed-to-launch",
@@ -1473,7 +1473,7 @@ describe(setupWorkspace, () => {
     });
 
     await setupWorkspace(config, {
-      ticket: "team-1",
+      task: "team-1",
       repository: "repo-a",
       model: "claude",
       details: { title: "Test Title", description: "Body" },
@@ -1493,7 +1493,7 @@ describe(setupWorkspace, () => {
 
     await expect(
       setupWorkspace(config, {
-        ticket: "team-1",
+        task: "team-1",
         repository: "repo-a",
         model: "claude",
         details: { title: "Test Title", description: "Body" },
@@ -1508,7 +1508,7 @@ describe(setupWorkspace, () => {
 
     await expect(
       setupWorkspace(config, {
-        ticket: "team-1",
+        task: "team-1",
         repository: "repo-a",
         model: "claude",
         details: { title: "Test Title", description: "Body" },
@@ -1532,7 +1532,7 @@ describe(setupWorkspace, () => {
 
     await expect(
       setupWorkspace(config, {
-        ticket: "team-1",
+        task: "team-1",
         repository: "repo-a",
         model: "claude",
         details: { title: "Test Title", description: "Body" },
@@ -1553,7 +1553,7 @@ describe(setupWorkspace, () => {
 
     await expect(
       setupWorkspace(config, {
-        ticket: "team-1",
+        task: "team-1",
         repository: "repo-a",
         model: "claude",
         details: { title: "Test Title", description: "Body" },
@@ -1569,7 +1569,7 @@ describe(setupWorkspace, () => {
     mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:1" }));
 
     await setupWorkspace(makeConfig(), {
-      ticket: "team-1",
+      task: "team-1",
       repository: "repo-a",
       model: "claude",
       details: { title: "T", description: "" },
@@ -1587,7 +1587,7 @@ describe(setupWorkspace, () => {
 
     await expect(
       setupWorkspace(makeConfig(), {
-        ticket: "team-1",
+        task: "team-1",
         repository: "repo-a",
         model: "claude",
         details: { title: "Test Title", description: "Body" },
@@ -1603,7 +1603,7 @@ describe(setupWorkspace, () => {
     mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:1" }));
 
     await setupWorkspace(makeConfig(), {
-      ticket: "team-1",
+      task: "team-1",
       repository: "repo-a",
       model: "claude",
       details: { title: "Test Title", description: "Body" },
@@ -1617,7 +1617,7 @@ describe(setupWorkspace, () => {
 
   it("requires details from the caller (no Linear re-fetch)", () => {
     // Type-level test: SetupWorkspaceOptions.details is non-optional.
-    type _DetailsRequired = SetupWorkspaceOptions["details"] extends TicketDetails ? true : never;
+    type _DetailsRequired = SetupWorkspaceOptions["details"] extends TaskDetails ? true : never;
     const _check: _DetailsRequired = true;
     expect(_check).toBe(true);
   });
@@ -1671,14 +1671,14 @@ describe(setupWorkspaceCli, () => {
     vi.resetAllMocks();
   });
 
-  it("resolves the ticket via Board and provisions the workspace", async () => {
+  it("resolves the task via Board and provisions the workspace", async () => {
     await setupWorkspaceCli("team-1");
 
     expect(createBoardMock).toHaveBeenCalledTimes(1);
     expect(defaultBoard.resolveOne).toHaveBeenCalledWith("team-1");
     expect(createMock).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ repository: "repo-a", ticket: "team-1" }),
+      expect.objectContaining({ repository: "repo-a", task: "team-1" }),
     );
     expect(runCommandMock).toHaveBeenCalledWith(
       "cmux",
@@ -1686,7 +1686,7 @@ describe(setupWorkspaceCli, () => {
     );
   });
 
-  it("forwards the resolved ticket url into RunState when the source supplied one", async () => {
+  it("forwards the resolved task url into RunState when the source supplied one", async () => {
     const boardWithUrl = fakeBoard(
       canonicalLinearIssue({
         naturalId: "team-1",
@@ -1704,7 +1704,7 @@ describe(setupWorkspaceCli, () => {
     expect(lastRecordedRunState().url).toBe("https://linear.app/example/issue/TEAM-1");
   });
 
-  it("marks the ticket In Progress via board.markInProgress after launching the workspace", async () => {
+  it("marks the task In Progress via board.markInProgress after launching the workspace", async () => {
     await setupWorkspaceCli("team-1");
 
     expect(defaultBoard.markInProgress).toHaveBeenCalledTimes(1);
@@ -1723,7 +1723,7 @@ describe(setupWorkspaceCli, () => {
     expect(logged).toContain("[dry-run] Would launch team-1 in repo-a (claude)");
   });
 
-  it("does not mark the ticket In Progress when workspace setup fails", async () => {
+  it("does not mark the task In Progress when workspace setup fails", async () => {
     createMock.mockRejectedValue(new Error("worktree failed"));
 
     await expect(setupWorkspaceCli("team-1")).rejects.toThrow(/worktree failed/);
@@ -1731,17 +1731,17 @@ describe(setupWorkspaceCli, () => {
     expect(defaultBoard.markInProgress).not.toHaveBeenCalled();
   });
 
-  it("throws a clear error when the ticket is not found", async () => {
+  it("throws a clear error when the task is not found", async () => {
     // oxlint-disable-next-line unicorn/no-useless-undefined -- explicit signal that resolveOne returns no match
     createBoardMock.mockReturnValueOnce(fakeBoard(undefined));
 
     await expect(setupWorkspaceCli("ghost-999")).rejects.toThrow(
-      /Ticket ghost-999 not found across configured sources/,
+      /Task ghost-999 not found across configured sources/,
     );
     expect(createMock).not.toHaveBeenCalled();
   });
 
-  it("throws a clear error when the ticket is not groundcrew-eligible", async () => {
+  it("throws a clear error when the task is not groundcrew-eligible", async () => {
     createBoardMock.mockReturnValueOnce(fakeBoard(canonicalLinearIssue({ naturalId: "team-1" })));
 
     await expect(setupWorkspaceCli("team-1")).rejects.toThrow(/isn't groundcrew-eligible/);
@@ -1752,7 +1752,7 @@ describe(setupWorkspaceCli, () => {
     buildSourcesMock.mockRejectedValueOnce(new Error("unknown source kind 'wat'"));
 
     await expect(setupWorkspaceCli("eng-1")).rejects.toThrow(
-      /Could not initialize ticket sources for 'crew setup eng-1': unknown source kind 'wat'/,
+      /Could not initialize task sources for 'crew setup eng-1': unknown source kind 'wat'/,
     );
   });
 
@@ -1773,7 +1773,7 @@ describe(setupWorkspaceCli, () => {
 
     expect(createMock).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ ticket: "staff-508" }),
+      expect.objectContaining({ task: "staff-508" }),
     );
   });
 
@@ -1798,7 +1798,7 @@ describe(setupWorkspaceCli, () => {
     );
   });
 
-  it("uses the full id as the ticket when there is no colon prefix", async () => {
+  it("uses the full id as the task when there is no colon prefix", async () => {
     createBoardMock.mockReturnValueOnce(
       fakeBoard({
         ...canonicalLinearIssue({
@@ -1816,7 +1816,7 @@ describe(setupWorkspaceCli, () => {
 
     expect(createMock).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ ticket: "team-1" }),
+      expect.objectContaining({ task: "team-1" }),
     );
   });
 });

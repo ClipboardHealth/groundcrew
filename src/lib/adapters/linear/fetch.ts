@@ -4,14 +4,14 @@
  * There is no project or view configuration: the only server-side filter is
  * "assigned to the API key's viewer AND carries an `agent-*` label." This
  * module returns Linear's native status name plus workflow `state.type`; the
- * ticket-source factory applies status-name disambiguation and state-type
+ * task-source factory applies status-name disambiguation and state-type
  * fallback when building canonical issues.
  */
 
 import type { LinearClient } from "@linear/sdk";
 
 import type { ResolvedConfig } from "../../config.ts";
-import { RepositoryResolutionError } from "../../ticketSource.ts";
+import { RepositoryResolutionError } from "../../taskSource.ts";
 import { log, styleWarning } from "../../util.ts";
 import {
   AGENT_LABEL_PREFIX,
@@ -56,26 +56,26 @@ export interface Issue {
   assignee: string;
   updatedAt: string;
   /**
-   * `undefined` unless the ticket is in Todo with a parseable `agent-*` label
+   * `undefined` unless the task is in Todo with a parseable `agent-*` label
    * and a known-repo reference in its description — i.e. the dispatcher would
-   * actually pick it up. Non-Todo tickets do not resolve repositories because
+   * actually pick it up. Non-Todo tasks do not resolve repositories because
    * that would invite tick-spam warnings on already-finished work.
    */
   repository: string | undefined;
-  /** Parsed from the `agent-*` label when present, including non-Todo tickets for slot logs. */
+  /** Parsed from the `agent-*` label when present, including non-Todo tasks for slot logs. */
   model: string | undefined;
   teamId: string;
   blockers: Blocker[];
   hasMoreBlockers: boolean;
-  /** Linear `Issue.url` — direct web link to the ticket. */
+  /** Linear `Issue.url` — direct web link to the task. */
   url: string;
   /** Linear priority: 1=Urgent, 2=High, 3=Medium, 4=Low, 0=No priority. */
   priority: number;
 }
 
 /**
- * `Issue` narrowed to "this ticket is for groundcrew". Consumers operate on
- * the canonical `GroundcrewIssue` from `ticketSource.ts`; this internal
+ * `Issue` narrowed to "this task is for groundcrew". Consumers operate on
+ * the canonical `GroundcrewIssue` from `taskSource.ts`; this internal
  * variant just shapes the adapter's local Linear type.
  */
 export type GroundcrewIssue = Issue & {
@@ -84,7 +84,7 @@ export type GroundcrewIssue = Issue & {
 };
 
 /**
- * Linear ticket that was silently dropped from `issues` because it has at
+ * Linear task that was silently dropped from `issues` because it has at
  * least one sub-issue and groundcrew works sub-issues rather than parents.
  */
 export interface ParentSkip {
@@ -291,13 +291,13 @@ export function modelForResolution(
 }
 
 function resolveAgentMetadata(arguments_: {
-  ticket: string;
+  task: string;
   description: string | undefined;
   modelResolution: ModelResolution;
   config: ResolvedConfig;
   isTodo: boolean;
 }): { repository: string | undefined; model: string | undefined } {
-  const { ticket, description, modelResolution, config, isTodo } = arguments_;
+  const { task, description, modelResolution, config, isTodo } = arguments_;
   let repository: string | undefined;
   let model: string | undefined;
   if (modelResolution.kind === "no-label") {
@@ -313,7 +313,7 @@ function resolveAgentMetadata(arguments_: {
       model = undefined;
       log(
         styleWarning(
-          `WARNING: ${ticket} has an ${AGENT_LABEL_PREFIX}* label but no known repository in its description; skipping dispatch. Add one of workspace.knownRepositories to the description, or remove the ${AGENT_LABEL_PREFIX}* label: ${config.workspace.knownRepositories.join(", ")}`,
+          `WARNING: ${task} has an ${AGENT_LABEL_PREFIX}* label but no known repository in its description; skipping dispatch. Add one of workspace.knownRepositories to the description, or remove the ${AGENT_LABEL_PREFIX}* label: ${config.workspace.knownRepositories.join(", ")}`,
         ),
       );
     }
@@ -363,7 +363,7 @@ function issueFromNode(node: IssueNode, config: ResolvedConfig): Issue {
   const modelResolution = resolveModelFor({ labels: node.labels.nodes, config });
   warnIfNotEnabledFallback(node.identifier, modelResolution, config);
   const { repository, model } = resolveAgentMetadata({
-    ticket: node.identifier,
+    task: node.identifier,
     /* v8 ignore next @preserve -- BoardIssues query selects description; the ?? guard normalises a null vs undefined edge */
     description: node.description ?? undefined,
     modelResolution,
@@ -422,19 +422,19 @@ export interface RawLinearIssue {
   blockers: Blocker[];
   hasMoreBlockers: boolean;
   /**
-   * `true` when the ticket has at least one sub-issue (child). Parent
-   * tickets are filtered out by `fetchBoard` and never dispatched —
+   * `true` when the task has at least one sub-issue (child). Parent
+   * tasks are filtered out by `fetchBoard` and never dispatched —
    * doctor reads this to surface that decision instead of falsely
    * reporting "would dispatch."
    */
   hasChildren: boolean;
-  /** Linear `Issue.url` — direct web link to the ticket. */
+  /** Linear `Issue.url` — direct web link to the task. */
   url: string;
 }
 
-export async function fetchBlockersForTicket(arguments_: {
+export async function fetchBlockersForTask(arguments_: {
   client: LinearClient;
-  ticket: string;
+  task: string;
   uuid: string;
 }): Promise<readonly Blocker[]> {
   const { client, uuid } = arguments_;
@@ -486,9 +486,9 @@ export async function fetchBlockersForTicket(arguments_: {
 
 export async function fetchRawLinearIssue(arguments_: {
   client: LinearClient;
-  ticket: string;
+  task: string;
 }): Promise<RawLinearIssue> {
-  const { client, ticket } = arguments_;
+  const { client, task } = arguments_;
   const response: { data?: unknown } = await client.client.rawRequest(
     `query ResolveIssue($id: String!) {
       issue(id: $id) {
@@ -515,7 +515,7 @@ export async function fetchRawLinearIssue(arguments_: {
         }
       }
     }`,
-    { id: ticket.toUpperCase() },
+    { id: task.toUpperCase() },
   );
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- shape is fixed by our GraphQL query above
   const { issue } = response.data as {
@@ -535,20 +535,20 @@ export async function fetchRawLinearIssue(arguments_: {
     } | null;
   };
   if (issue === null) {
-    throw new Error(`Ticket ${ticket.toUpperCase()} not found in Linear`);
+    throw new Error(`Task ${task.toUpperCase()} not found in Linear`);
   }
   return {
     uuid: issue.id,
     title: issue.title,
     description: issue.description ?? "",
-    /* v8 ignore next @preserve -- ResolveIssue query selects team.id; null only if Linear genuinely returns a teamless ticket */
+    /* v8 ignore next @preserve -- ResolveIssue query selects team.id; null only if Linear genuinely returns a teamless task */
     teamId: issue.team?.id ?? "",
     labels: issue.labels.nodes,
-    /* v8 ignore next @preserve -- ResolveIssue query selects state; null only if Linear genuinely returns a stateless ticket */
+    /* v8 ignore next @preserve -- ResolveIssue query selects state; null only if Linear genuinely returns a stateless task */
     stateName: issue.state?.name ?? "",
-    /* v8 ignore next @preserve -- ResolveIssue query selects state; null only if Linear genuinely returns a stateless ticket */
+    /* v8 ignore next @preserve -- ResolveIssue query selects state; null only if Linear genuinely returns a stateless task */
     stateType: issue.state?.type ?? "",
-    /* v8 ignore next @preserve -- ResolveIssue query selects state; null only if Linear genuinely returns a stateless ticket */
+    /* v8 ignore next @preserve -- ResolveIssue query selects state; null only if Linear genuinely returns a stateless task */
     stateId: issue.state?.id ?? "",
     blockers: blockersFromRelations(issue.inverseRelations?.nodes ?? []),
     hasMoreBlockers: issue.inverseRelations?.pageInfo.hasNextPage ?? false,
@@ -615,23 +615,23 @@ export async function fetchInProgressIssueCount(arguments_: {
 export async function fetchResolvedIssue(arguments_: {
   client: LinearClient;
   config: ResolvedConfig;
-  ticket: string;
+  task: string;
 }): Promise<ResolvedIssue> {
-  const { client, config, ticket } = arguments_;
-  const upper = ticket.toUpperCase();
-  const raw = await fetchRawLinearIssue({ client, ticket });
+  const { client, config, task } = arguments_;
+  const upper = task.toUpperCase();
+  const raw = await fetchRawLinearIssue({ client, task });
   const repositoryResolution = resolveRepositoryFor({
     description: raw.description,
     config,
   });
   if (repositoryResolution.kind === "missing") {
     throw new RepositoryResolutionError({
-      ticket: upper,
+      task: upper,
       repositories: config.workspace.knownRepositories,
     });
   }
   const modelResolution = resolveModelFor({ labels: raw.labels, config });
-  warnIfNotEnabledFallback(ticket, modelResolution, config);
+  warnIfNotEnabledFallback(task, modelResolution, config);
   let model = config.models.default;
   if (modelResolution.kind === "matched") {
     ({ model } = modelResolution);
@@ -653,7 +653,7 @@ export async function fetchResolvedIssue(arguments_: {
 }
 
 export function warnIfNotEnabledFallback(
-  ticket: string,
+  task: string,
   modelResolution: ModelResolution,
   config: ResolvedConfig,
 ): void {
@@ -661,7 +661,7 @@ export function warnIfNotEnabledFallback(
     return;
   }
   log(
-    `${ticket.toLowerCase()}: agent-${modelResolution.requestedModel} label refers to a model that is not enabled; falling back to models.default (${config.models.default})`,
+    `${task.toLowerCase()}: agent-${modelResolution.requestedModel} label refers to a model that is not enabled; falling back to models.default (${config.models.default})`,
   );
 }
 

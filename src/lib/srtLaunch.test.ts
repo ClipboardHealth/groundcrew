@@ -47,7 +47,7 @@ describe(buildAndStageSrtLaunch, () => {
     const result = buildAndStageSrtLaunch({
       config: config(workspaceRoot),
       repository: "repo-a",
-      ticket: "team-1",
+      task: "team-1",
       worktreeDir: path.join(workspaceRoot, "repo-a-team-1"),
       definition: definition(cmd),
       homeDir: fakeHome,
@@ -95,7 +95,7 @@ describe(buildAndStageSrtLaunch, () => {
     const result = buildAndStageSrtLaunch({
       config: config(workspaceRoot),
       repository: "repo-a",
-      ticket: "team-1",
+      task: "team-1",
       worktreeDir: path.join(workspaceRoot, "repo-a-team-1"),
       definition: definition("claude --permission-mode auto"),
     });
@@ -113,7 +113,7 @@ describe(buildAndStageSrtLaunch, () => {
     const result = buildAndStageSrtLaunch({
       config: config(workspaceRoot, { "owner/repo": other }),
       repository: "owner/repo",
-      ticket: "team-9",
+      task: "team-9",
       worktreeDir: path.join(workspaceRoot, "owner", "repo-team-9"),
       definition: definition("claude --permission-mode auto"),
       homeDir: fakeHome,

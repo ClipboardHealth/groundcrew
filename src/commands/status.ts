@@ -11,13 +11,13 @@ import {
   isGroundcrewIssue,
   type Issue as SourceIssue,
   naturalIdFromCanonical,
-} from "../lib/ticketSource.ts";
+} from "../lib/taskSource.ts";
 import { errorMessage, withLogOutputSuppressed, writeOutput } from "../lib/util.ts";
 import { type WorkspaceAccessHint, type WorkspaceProbe, workspaces } from "../lib/workspaces.ts";
 import { type WorktreeDirtiness, worktrees } from "../lib/worktrees.ts";
 
 export interface StatusOptions {
-  ticket?: string;
+  task?: string;
 }
 
 const RECENT_LOG_LINE_COUNT = 10;
@@ -26,16 +26,16 @@ function escapeRegExp(value: string): string {
   return value.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
 }
 
-function ticketLinePattern(ticket: string): RegExp {
-  return new RegExp(`(^|[^a-z0-9])${escapeRegExp(ticket)}([^a-z0-9]|$)`, "i");
+function taskLinePattern(task: string): RegExp {
+  return new RegExp(`(^|[^a-z0-9])${escapeRegExp(task)}([^a-z0-9]|$)`, "i");
 }
 
 function parseArguments(argv: string[]): StatusOptions {
-  const [ticket, ...extras] = argv;
-  if (extras.length > 0 || ticket?.length === 0 || ticket?.startsWith("-") === true) {
-    throw new Error("Usage: crew status [<ticket>]");
+  const [task, ...extras] = argv;
+  if (extras.length > 0 || task?.length === 0 || task?.startsWith("-") === true) {
+    throw new Error("Usage: crew status [<task>]");
   }
-  return ticket === undefined ? {} : { ticket: ticket.toLowerCase() };
+  return task === undefined ? {} : { task: task.toLowerCase() };
 }
 
 function writeSection(title: string): void {
@@ -51,9 +51,9 @@ function formatDirtiness(dirtiness: WorktreeDirtiness): string {
   return dirtiness.kind;
 }
 
-async function writeTicketWorktrees(config: ResolvedConfig, ticket: string): Promise<void> {
+async function writeTaskWorktrees(config: ResolvedConfig, task: string): Promise<void> {
   writeSection("Worktrees");
-  const entries = worktrees.findByTicket(config, ticket);
+  const entries = worktrees.findByTask(config, task);
   if (entries.length === 0) {
     writeOutput("(none)");
     return;
@@ -63,7 +63,7 @@ async function writeTicketWorktrees(config: ResolvedConfig, ticket: string): Pro
     const dirtiness = await worktrees.probeWorkingTree({
       worktreeDir: entry.dir,
     });
-    // oxlint-disable-next-line no-await-in-loop -- one gh lookup per worktree is acceptable; multi-worktree-per-ticket is rare.
+    // oxlint-disable-next-line no-await-in-loop -- one gh lookup per worktree is acceptable; multi-worktree-per-task is rare.
     const prs = await findPullRequestsForBranch({
       cwd: entry.dir,
       branchName: entry.branchName,
@@ -86,18 +86,18 @@ function workspaceProbeUnavailableLine(
     : `Workspace probe unavailable: ${errorMessage(probe.error)}`;
 }
 
-function ticketWorkspaceText(probe: WorkspaceProbe, ticket: string): string {
+function taskWorkspaceText(probe: WorkspaceProbe, task: string): string {
   if (probe.kind === "unavailable") {
     return workspaceProbeUnavailableLine(probe);
   }
-  if (isWorkspaceExited(probe, ticket)) {
+  if (isWorkspaceExited(probe, task)) {
     return "exited";
   }
-  return probe.names.has(ticket) ? "live" : "not live";
+  return probe.names.has(task) ? "live" : "not live";
 }
 
-function isWorkspaceExited(probe: WorkspaceProbe, ticket: string): boolean {
-  return probe.kind === "ok" && probe.exitedNames?.has(ticket) === true;
+function isWorkspaceExited(probe: WorkspaceProbe, task: string): boolean {
+  return probe.kind === "ok" && probe.exitedNames?.has(task) === true;
 }
 
 function formatRunState(state: RunState | undefined, flags: readonly string[] = []): string {
@@ -112,39 +112,39 @@ function formatRunState(state: RunState | undefined, flags: readonly string[] = 
   return detail === undefined ? summary : `${summary}; ${detail}`;
 }
 
-function recentTicketLogLines(config: ResolvedConfig, ticket: string): string[] {
+function recentTaskLogLines(config: ResolvedConfig, task: string): string[] {
   let raw: string;
   try {
     raw = readFileSync(config.logging.file, "utf8");
   } catch {
     return [];
   }
-  const pattern = ticketLinePattern(ticket);
+  const pattern = taskLinePattern(task);
   return raw
     .split("\n")
     .filter((line) => pattern.test(line))
     .slice(-RECENT_LOG_LINE_COUNT);
 }
 
-async function resolveTicketSource(
+async function resolveTaskSource(
   config: ResolvedConfig,
-  ticket: string,
+  task: string,
 ): Promise<SourceIssue | undefined> {
   const board = await buildBoardForStatus(config);
-  return await withLogOutputSuppressed(async () => await board.resolveOne(ticket));
+  return await withLogOutputSuppressed(async () => await board.resolveOne(task));
 }
 
-type TicketSourceStatus =
+type TaskSourceStatus =
   | { kind: "found"; issue: SourceIssue }
   | { kind: "not-found" }
   | { kind: "unavailable"; reason: string };
 
-async function readTicketSourceStatus(
+async function readTaskSourceStatus(
   config: ResolvedConfig,
-  ticket: string,
-): Promise<TicketSourceStatus> {
+  task: string,
+): Promise<TaskSourceStatus> {
   try {
-    const issue = await resolveTicketSource(config, ticket);
+    const issue = await resolveTaskSource(config, task);
     if (issue === undefined) {
       return { kind: "not-found" };
     }
@@ -154,8 +154,8 @@ async function readTicketSourceStatus(
   }
 }
 
-function writeRecentLogs(config: ResolvedConfig, ticket: string): void {
-  const logLines = recentTicketLogLines(config, ticket);
+function writeRecentLogs(config: ResolvedConfig, task: string): void {
+  const logLines = recentTaskLogLines(config, task);
   if (logLines.length === 0) {
     return;
   }
@@ -166,24 +166,24 @@ function writeRecentLogs(config: ResolvedConfig, ticket: string): void {
 async function exitedWorkspaceAccessHint(
   config: ResolvedConfig,
   probe: WorkspaceProbe,
-  ticket: string,
+  task: string,
 ): Promise<WorkspaceAccessHint | undefined> {
-  if (!isWorkspaceExited(probe, ticket)) {
+  if (!isWorkspaceExited(probe, task)) {
     return undefined;
   }
   try {
-    return await withLogOutputSuppressed(async () => await workspaces.accessHint(config, ticket));
+    return await withLogOutputSuppressed(async () => await workspaces.accessHint(config, task));
   } catch {
     return undefined;
   }
 }
 
-function formatTicketLine(
-  ticket: string,
+function formatTaskLine(
+  task: string,
   runState: RunState | undefined,
-  sourceStatus: TicketSourceStatus,
+  sourceStatus: TaskSourceStatus,
 ): string {
-  const parts = [`ticket: ${ticket}`];
+  const parts = [`task: ${task}`];
   if (sourceStatus.kind === "found") {
     parts.push(sourceStatus.issue.status);
   }
@@ -201,7 +201,7 @@ function formatTicketLine(
   return parts.join("  ");
 }
 
-function writeTicketTitle(runState: RunState | undefined, sourceStatus: TicketSourceStatus): void {
+function writeTaskTitle(runState: RunState | undefined, sourceStatus: TaskSourceStatus): void {
   const cachedTitle = runState?.title;
   const sourceTitle = sourceStatus.kind === "found" ? sourceStatus.issue.title : undefined;
   const title = cachedTitle ?? sourceTitle;
@@ -213,28 +213,28 @@ function writeTicketTitle(runState: RunState | undefined, sourceStatus: TicketSo
   }
 }
 
-async function writeTicketStatus(config: ResolvedConfig, rawTicket: string): Promise<void> {
-  const ticket = rawTicket.toLowerCase();
-  const displayTicket = ticket.toUpperCase();
-  writeOutput(`groundcrew status ${displayTicket}`);
-  writeOutput("=".repeat(`groundcrew status ${displayTicket}`.length));
+async function writeTaskStatus(config: ResolvedConfig, rawTask: string): Promise<void> {
+  const task = rawTask.toLowerCase();
+  const displayTask = task.toUpperCase();
+  writeOutput(`groundcrew status ${displayTask}`);
+  writeOutput("=".repeat(`groundcrew status ${displayTask}`.length));
 
-  const runState = readRunState(config, ticket);
+  const runState = readRunState(config, task);
   const [workspaceProbe, sourceStatus] = await Promise.all([
     withLogOutputSuppressed(async () => await workspaces.probe(config)),
-    readTicketSourceStatus(config, ticket),
+    readTaskSourceStatus(config, task),
   ]);
-  const accessHint = await exitedWorkspaceAccessHint(config, workspaceProbe, ticket);
-  writeOutput(formatTicketLine(ticket, runState, sourceStatus));
-  writeTicketTitle(runState, sourceStatus);
-  writeOutput(`run: ${formatRunState(runState, runProbeFlags(runState, workspaceProbe, ticket))}`);
-  writeOutput(`workspace: ${ticketWorkspaceText(workspaceProbe, ticket)}`);
+  const accessHint = await exitedWorkspaceAccessHint(config, workspaceProbe, task);
+  writeOutput(formatTaskLine(task, runState, sourceStatus));
+  writeTaskTitle(runState, sourceStatus);
+  writeOutput(`run: ${formatRunState(runState, runProbeFlags(runState, workspaceProbe, task))}`);
+  writeOutput(`workspace: ${taskWorkspaceText(workspaceProbe, task)}`);
   if (accessHint !== undefined) {
     writeOutput(`attach: ${accessHint.command}`);
   }
 
-  await writeTicketWorktrees(config, ticket);
-  writeRecentLogs(config, ticket);
+  await writeTaskWorktrees(config, task);
+  writeRecentLogs(config, task);
 }
 
 /**
@@ -279,7 +279,7 @@ function formatDuration(ms: number): string {
 }
 
 /**
- * Probe-reconciliation flags shared by the inventory row and the per-ticket
+ * Probe-reconciliation flags shared by the inventory row and the per-task
  * `run:` line. Flags the two interesting disagreements between the recorded
  * RunState lifecycle and the live workspace probe: a running/resumed dispatch
  * with a missing or exited session, and an idle row with a stray live or
@@ -289,14 +289,14 @@ function formatDuration(ms: number): string {
 function runProbeFlags(
   runState: RunState | undefined,
   probe: WorkspaceProbe,
-  ticket: string,
+  task: string,
 ): string[] {
   if (probe.kind !== "ok") {
     return [];
   }
   const lifecycle = runState?.state ?? "idle";
-  const sessionPresent = probe.names.has(ticket);
-  const sessionExited = isWorkspaceExited(probe, ticket);
+  const sessionPresent = probe.names.has(task);
+  const sessionExited = isWorkspaceExited(probe, task);
   const flags: string[] = [];
   if (lifecycle === "idle" && sessionPresent) {
     flags.push(sessionExited ? "stray exited session" : "stray session");
@@ -318,11 +318,11 @@ function runProbeFlags(
 function inventoryStateText(
   runState: RunState | undefined,
   probe: WorkspaceProbe,
-  ticket: string,
+  task: string,
   now: Date,
 ): string {
   const lifecycle = runState?.state ?? "idle";
-  const flags = runProbeFlags(runState, probe, ticket);
+  const flags = runProbeFlags(runState, probe, task);
   const duration = runStateDurationMs(runState, now);
   if (duration !== undefined) {
     flags.push(formatDuration(duration));
@@ -348,24 +348,24 @@ function inventoryStateText(
 function inventoryHint(
   runState: RunState | undefined,
   probe: WorkspaceProbe,
-  ticket: string,
+  task: string,
 ): string | undefined {
   if (probe.kind === "unavailable") {
     return undefined;
   }
   const lifecycle = runState?.state ?? "idle";
-  const sessionPresent = probe.names.has(ticket);
-  const sessionExited = isWorkspaceExited(probe, ticket);
+  const sessionPresent = probe.names.has(task);
+  const sessionExited = isWorkspaceExited(probe, task);
   if (lifecycle === "idle" && sessionPresent) {
     return sessionExited
-      ? `run 'crew cleanup ${ticket}' to clear this stray exited session`
-      : `run 'crew cleanup ${ticket}' to clear this stray session`;
+      ? `run 'crew cleanup ${task}' to clear this stray exited session`
+      : `run 'crew cleanup ${task}' to clear this stray session`;
   }
   if ((lifecycle === "running" || lifecycle === "resumed") && sessionExited) {
-    return `attach to inspect scrollback, then run 'crew resume ${ticket}'`;
+    return `attach to inspect scrollback, then run 'crew resume ${task}'`;
   }
   if ((lifecycle === "running" || lifecycle === "resumed") && !sessionPresent) {
-    return `run 'crew resume ${ticket}' to bring the session back`;
+    return `run 'crew resume ${task}' to bring the session back`;
   }
   return undefined;
 }
@@ -381,24 +381,24 @@ function formatPullRequests(prs: readonly PullRequestSummary[]): string {
 }
 
 /**
- * Inventory `ticket:` value: the worktree's remote canonical status. Slots are
+ * Inventory `task:` value: the worktree's remote canonical status. Slots are
  * consumed solely by `in-progress` issues (see `inProgressCount`), so that one
  * status is spelled out as `slot held` to make the otherwise-implicit rule
  * legible on the row; every other status renders bare.
  */
-function formatTicketStatus(canonicalStatus: CanonicalStatus): string {
+function formatTaskStatus(canonicalStatus: CanonicalStatus): string {
   return canonicalStatus === "in-progress" ? "in-progress (slot held)" : canonicalStatus;
 }
 
 async function writeInventoryWorktrees(
   config: ResolvedConfig,
   probe: WorkspaceProbe,
-  statusByTicket: ReadonlyMap<string, CanonicalStatus> | undefined,
+  statusByTask: ReadonlyMap<string, CanonicalStatus> | undefined,
 ): Promise<void> {
   writeSection("Worktrees");
   const entries = worktrees
     .list(config)
-    .toSorted((left, right) => left.ticket.localeCompare(right.ticket));
+    .toSorted((left, right) => left.task.localeCompare(right.task));
   if (entries.length === 0) {
     writeOutput("(none)");
     return;
@@ -408,11 +408,11 @@ async function writeInventoryWorktrees(
   const runStates = new Map<string, RunState | undefined>();
   const now = new Date();
   for (const [index, entry] of entries.entries()) {
-    if (!runStates.has(entry.ticket)) {
-      runStates.set(entry.ticket, readRunState(config, entry.ticket));
+    if (!runStates.has(entry.task)) {
+      runStates.set(entry.task, readRunState(config, entry.task));
     }
-    const runState = runStates.get(entry.ticket);
-    const accessHint = accessHints.get(entry.ticket);
+    const runState = runStates.get(entry.task);
+    const accessHint = accessHints.get(entry.task);
     // `collectPullRequests` guarantees an entry for every worktree dir seen
     // in `entries`; the lookup always returns the array.
     /* v8 ignore next @preserve -- defensive fallback for a Map key that collectPullRequests always populates */
@@ -420,18 +420,18 @@ async function writeInventoryWorktrees(
     if (index > 0) {
       writeOutput();
     }
-    writeOutput(runState?.url === undefined ? entry.ticket : `${entry.ticket}  ${runState.url}`);
+    writeOutput(runState?.url === undefined ? entry.task : `${entry.task}  ${runState.url}`);
     if (runState?.title !== undefined) {
       writeOutput(inventoryField("title", runState.title));
     }
-    writeOutput(inventoryField("state", inventoryStateText(runState, probe, entry.ticket, now)));
-    // `state:` is the local run lifecycle; `ticket:` is the remote status that
+    writeOutput(inventoryField("state", inventoryStateText(runState, probe, entry.task, now)));
+    // `state:` is the local run lifecycle; `task:` is the remote status that
     // actually drives the slot count. They're sourced independently and can
     // legitimately disagree, so they sit adjacent. Omitted when the board fetch
-    // failed (no map) or the ticket isn't in the fetched board.
-    const ticketStatus = statusByTicket?.get(entry.ticket);
-    if (ticketStatus !== undefined) {
-      writeOutput(inventoryField("ticket", formatTicketStatus(ticketStatus)));
+    // failed (no map) or the task isn't in the fetched board.
+    const taskStatus = statusByTask?.get(entry.task);
+    if (taskStatus !== undefined) {
+      writeOutput(inventoryField("task", formatTaskStatus(taskStatus)));
     }
     writeOutput(inventoryField("repo", entry.repository));
     writeOutput(inventoryField("worktree", entry.dir));
@@ -441,7 +441,7 @@ async function writeInventoryWorktrees(
     if (prs.length > 0) {
       writeOutput(inventoryField("pr", formatPullRequests(prs)));
     }
-    const hint = inventoryHint(runState, probe, entry.ticket);
+    const hint = inventoryHint(runState, probe, entry.task);
     if (hint !== undefined) {
       writeOutput(inventoryField("hint", hint));
     }
@@ -450,16 +450,16 @@ async function writeInventoryWorktrees(
 
 async function collectAccessHints(
   config: ResolvedConfig,
-  entries: readonly { ticket: string }[],
+  entries: readonly { task: string }[],
 ): Promise<Map<string, WorkspaceAccessHint | undefined>> {
-  const uniqueTickets = [...new Set(entries.map((entry) => entry.ticket))];
+  const uniqueTasks = [...new Set(entries.map((entry) => entry.task))];
   const results = await Promise.allSettled(
-    uniqueTickets.map(async (ticket) => await workspaces.accessHint(config, ticket)),
+    uniqueTasks.map(async (task) => await workspaces.accessHint(config, task)),
   );
   return new Map(
-    uniqueTickets.map((ticket, index) => {
+    uniqueTasks.map((task, index) => {
       const result = results[index];
-      return [ticket, result?.status === "fulfilled" ? result.value : undefined] as const;
+      return [task, result?.status === "fulfilled" ? result.value : undefined] as const;
     }),
   );
 }
@@ -488,7 +488,7 @@ async function collectPullRequests(
   );
 }
 
-function writeStraySessions(probe: WorkspaceProbe, worktreeTickets: ReadonlySet<string>): void {
+function writeStraySessions(probe: WorkspaceProbe, worktreeTasks: ReadonlySet<string>): void {
   if (probe.kind === "unavailable") {
     // Surface probe failures so the user knows we couldn't classify strays
     // (silently dropping the section would hide that diagnostic).
@@ -496,7 +496,7 @@ function writeStraySessions(probe: WorkspaceProbe, worktreeTickets: ReadonlySet<
     writeOutput(workspaceProbeUnavailableLine(probe));
     return;
   }
-  const strays = [...probe.names].filter((name) => !worktreeTickets.has(name)).toSorted();
+  const strays = [...probe.names].filter((name) => !worktreeTasks.has(name)).toSorted();
   if (strays.length === 0) {
     return;
   }
@@ -556,12 +556,12 @@ async function fetchBoardForStatus(config: ResolvedConfig): Promise<BoardFetchRe
 /**
  * Maps each fetched issue's lowercased natural id to its canonical status when
  * exactly one fetched issue has that natural id, so the Worktrees section can
- * show a `ticket:` field per row without guessing across sources. The key
- * matches the lowercased `WorktreeEntry.ticket` (same join as
+ * show a `task:` field per row without guessing across sources. The key
+ * matches the lowercased `WorktreeEntry.task` (same join as
  * `inProgressWithoutWorktree`). `undefined` when the board fetch failed —
  * callers then omit the field rather than guess.
  */
-function statusByWorktreeTicket(
+function statusByWorktreeTask(
   boardResult: BoardFetchResult,
 ): ReadonlyMap<string, CanonicalStatus> | undefined {
   if (boardResult.kind !== "ok") {
@@ -570,13 +570,13 @@ function statusByWorktreeTicket(
   const statuses = new Map<string, CanonicalStatus>();
   const matchCounts = new Map<string, number>();
   for (const issue of boardResult.issues) {
-    const ticket = naturalIdFromCanonical(issue.id).toLowerCase();
-    matchCounts.set(ticket, (matchCounts.get(ticket) ?? 0) + 1);
-    statuses.set(ticket, issue.status);
+    const task = naturalIdFromCanonical(issue.id).toLowerCase();
+    matchCounts.set(task, (matchCounts.get(task) ?? 0) + 1);
+    statuses.set(task, issue.status);
   }
-  for (const [ticket, matchCount] of matchCounts) {
+  for (const [task, matchCount] of matchCounts) {
     if (matchCount > 1) {
-      statuses.delete(ticket);
+      statuses.delete(task);
     }
   }
   return statuses;
@@ -626,15 +626,15 @@ function inProgressCount(issues: readonly SourceIssue[]): number {
  * `slots: N/M used` total but are absent from the Worktrees section (their
  * worktree was removed, or lives outside this config's projectDir /
  * knownRepositories), so without this they'd be counted yet invisible. Worktree
- * tickets are lowercased, so the natural id is lowercased before matching.
+ * tasks are lowercased, so the natural id is lowercased before matching.
  */
 function inProgressWithoutWorktree(
   issues: readonly SourceIssue[],
-  worktreeTickets: ReadonlySet<string>,
+  worktreeTasks: ReadonlySet<string>,
 ): SourceIssue[] {
   return issues
     .filter((issue) => issue.status === "in-progress")
-    .filter((issue) => !worktreeTickets.has(naturalIdFromCanonical(issue.id).toLowerCase()))
+    .filter((issue) => !worktreeTasks.has(naturalIdFromCanonical(issue.id).toLowerCase()))
     .toSorted((left, right) => left.id.localeCompare(right.id));
 }
 
@@ -644,7 +644,7 @@ function writeInProgressIssue(issue: SourceIssue): void {
   writeOutput(inventoryField("title", issue.title));
   // These are all in-progress by definition, but spell out the slot-held
   // status so every holder row reads the same whether or not it has a worktree.
-  writeOutput(inventoryField("ticket", formatTicketStatus(issue.status)));
+  writeOutput(inventoryField("task", formatTaskStatus(issue.status)));
   if (issue.repository !== undefined) {
     writeOutput(inventoryField("repo", issue.repository));
   }
@@ -652,12 +652,12 @@ function writeInProgressIssue(issue: SourceIssue): void {
 
 function writeInProgressWithoutWorktree(
   boardResult: BoardFetchResult,
-  worktreeTickets: ReadonlySet<string>,
+  worktreeTasks: ReadonlySet<string>,
 ): void {
   if (boardResult.kind !== "ok") {
     return;
   }
-  const issues = inProgressWithoutWorktree(boardResult.issues, worktreeTickets);
+  const issues = inProgressWithoutWorktree(boardResult.issues, worktreeTasks);
   if (issues.length === 0) {
     return;
   }
@@ -675,17 +675,17 @@ async function writeInventoryStatus(config: ResolvedConfig): Promise<void> {
   // you just ran already tells you what report you're looking at, and the
   // section headers (`Worktrees`, `Queue`, etc.) carry the visual anchors.
   // The board fetch runs concurrently with the probe, but we await it before
-  // rendering: each Worktrees row carries the remote ticket status, so the
+  // rendering: each Worktrees row carries the remote task status, so the
   // inventory can't print until the source resolves. A failed fetch returns
-  // quickly and still renders rows (without the `ticket:` field).
+  // quickly and still renders rows (without the `task:` field).
   const boardResultPromise = fetchBoardForStatus(config);
   const probe = await withLogOutputSuppressed(async () => await workspaces.probe(config));
   const boardResult = await boardResultPromise;
-  await writeInventoryWorktrees(config, probe, statusByWorktreeTicket(boardResult));
-  const worktreeTickets = new Set(worktrees.list(config).map((entry) => entry.ticket));
-  writeStraySessions(probe, worktreeTickets);
+  await writeInventoryWorktrees(config, probe, statusByWorktreeTask(boardResult));
+  const worktreeTasks = new Set(worktrees.list(config).map((entry) => entry.task));
+  writeStraySessions(probe, worktreeTasks);
 
-  writeInProgressWithoutWorktree(boardResult, worktreeTickets);
+  writeInProgressWithoutWorktree(boardResult, worktreeTasks);
   if (boardResult.kind === "ok") {
     const used = inProgressCount(boardResult.issues);
     writeOutput();
@@ -695,15 +695,15 @@ async function writeInventoryStatus(config: ResolvedConfig): Promise<void> {
 }
 
 export async function status(config: ResolvedConfig, options: StatusOptions = {}): Promise<void> {
-  const ticket = options.ticket?.trim();
-  if (ticket === undefined) {
+  const task = options.task?.trim();
+  if (task === undefined) {
     await writeInventoryStatus(config);
     return;
   }
-  if (ticket.length === 0 || ticket.startsWith("-")) {
-    throw new Error("ticket must be a non-empty value");
+  if (task.length === 0 || task.startsWith("-")) {
+    throw new Error("task must be a non-empty value");
   }
-  await writeTicketStatus(config, ticket);
+  await writeTaskStatus(config, task);
 }
 
 export async function statusCli(argv: string[]): Promise<void> {

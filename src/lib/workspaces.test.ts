@@ -964,7 +964,7 @@ describe("workspaces.accessHint (tmux)", () => {
   });
   afterEach(commonAfterEach);
 
-  it("returns an access hint for the ticket window inside the groundcrew tmux session", async () => {
+  it("returns an access hint for the task window inside the groundcrew tmux session", async () => {
     await expect(workspaces.accessHint(makeConfig("tmux"), "TEAM-1")).resolves.toStrictEqual({
       kind: "attachCommand",
       command: "tmux attach -t groundcrew:TEAM-1",

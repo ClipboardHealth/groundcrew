@@ -7,7 +7,7 @@ import { worktrees } from "../lib/worktrees.ts";
 import { logTeardown } from "./teardownReporter.ts";
 
 export interface CleanupWorkspaceOptions {
-  ticket: string;
+  task: string;
   /** Default false. The automated cleanup path keeps in-flight uncommitted work. */
   force?: boolean;
 }
@@ -22,43 +22,41 @@ function parseArguments(argv: string[]): CleanupWorkspaceOptions {
     }
     if (argument.startsWith("-")) {
       throw new Error(
-        `Unknown option: ${argument}\nUsage: crew cleanup [--force] <ticket>\nExample: crew cleanup team-220`,
+        `Unknown option: ${argument}\nUsage: crew cleanup [--force] <task>\nExample: crew cleanup team-220`,
       );
     }
     positionals.push(argument);
   }
-  const [ticket, ...extras] = positionals;
-  if (ticket === undefined || ticket.length === 0 || extras.length > 0) {
-    throw new Error("Usage: crew cleanup [--force] <ticket>\nExample: crew cleanup team-220");
+  const [task, ...extras] = positionals;
+  if (task === undefined || task.length === 0 || extras.length > 0) {
+    throw new Error("Usage: crew cleanup [--force] <task>\nExample: crew cleanup team-220");
   }
-  return { ticket: ticket.toLowerCase(), force };
+  return { task: task.toLowerCase(), force };
 }
 
 export async function cleanupWorkspace(
   config: ResolvedConfig,
   options: CleanupWorkspaceOptions,
 ): Promise<void> {
-  const { ticket, force = false } = options;
-  const entries = worktrees.findByTicket(config, ticket);
+  const { task, force = false } = options;
+  const entries = worktrees.findByTask(config, task);
 
   if (entries.length === 0) {
-    if (readRunState(config, ticket) === undefined) {
-      log(`No worktree found for ${ticket}; nothing to clean up.`);
+    if (readRunState(config, task) === undefined) {
+      log(`No worktree found for ${task}; nothing to clean up.`);
       return;
     }
     const workspaceProbe = await workspaces.probe(config);
     if (workspaceProbe.kind === "unavailable") {
-      log(
-        `No worktree found for ${ticket}; workspace probe unavailable, leaving run-state intact.`,
-      );
+      log(`No worktree found for ${task}; workspace probe unavailable, leaving run-state intact.`);
       return;
     }
-    if (workspaceProbe.names.has(ticket)) {
-      log(`No worktree found for ${ticket}; workspace still present; leaving run-state intact.`);
+    if (workspaceProbe.names.has(task)) {
+      log(`No worktree found for ${task}; workspace still present; leaving run-state intact.`);
       return;
     }
-    removeRunState(config, ticket);
-    log(`No worktree found for ${ticket}; cleared stale run-state.`);
+    removeRunState(config, task);
+    log(`No worktree found for ${task}; cleared stale run-state.`);
     return;
   }
 

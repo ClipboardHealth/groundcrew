@@ -1,6 +1,6 @@
 /**
  * Dispatches a `SourceConfig[]` (typed as `unknown[]` at this boundary because
- * Zod will validate each entry) into `TicketSource[]` via the runtime adapter
+ * Zod will validate each entry) into `TaskSource[]` via the runtime adapter
  * registry. The two-function shape lets tests target `buildSourcesWith` with a
  * fake registry, while production code calls `buildSources` which awaits the
  * directory-scanned `adapterRegistry`.
@@ -11,7 +11,7 @@ import { z } from "zod";
 import type { AdapterContext, AdapterDefinition } from "./adapterDefinition.ts";
 import { adapterRegistry } from "./adapters/registry.ts";
 import type { ResolvedConfig } from "./config.ts";
-import type { TicketSource } from "./ticketSource.ts";
+import type { TaskSource } from "./taskSource.ts";
 
 const kindShape = z.object({ kind: z.string() });
 
@@ -21,7 +21,7 @@ const kindShape = z.object({ kind: z.string() });
 export async function buildSources(
   rawConfigs: readonly unknown[],
   context: AdapterContext,
-): Promise<TicketSource[]> {
+): Promise<TaskSource[]> {
   const registry = await adapterRegistry;
   return buildSourcesWith(registry, rawConfigs, context);
 }
@@ -34,7 +34,7 @@ export function buildSourcesWith(
   registry: Record<string, AdapterDefinition>,
   rawConfigs: readonly unknown[],
   context: AdapterContext,
-): TicketSource[] {
+): TaskSource[] {
   return rawConfigs.map((raw) => {
     // First narrow to extract `kind` so we know which adapter to dispatch to.
     const { kind } = kindShape.parse(raw);

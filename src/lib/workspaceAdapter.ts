@@ -1,7 +1,7 @@
 /**
  * Shared contract for Workspace backends. A Workspace is the host-side
- * terminal session that runs an agent for one ticket; `Workspace.name` is
- * the ticket id callers key on. The cmux and tmux adapters implement this
+ * terminal session that runs an agent for one task; `Workspace.name` is
+ * the task id callers key on. The cmux and tmux adapters implement this
  * interface in their own files (`cmuxAdapter.ts`, `tmuxAdapter.ts`);
  * `workspaces.ts` resolves and fronts them. This is internal cleanup, not a
  * plugin contract — nothing here is a published extension point.
@@ -12,7 +12,7 @@ import { runCommandAsync } from "./commandRunner.ts";
 export type WorkspaceKind = "cmux" | "tmux";
 
 export interface Workspace {
-  /** Ticket id; the join key callers use. */
+  /** Task id; the join key callers use. */
   name: string;
   /** Omitted means live, for backends that do not expose an exited state. */
   state?: "exited";
@@ -30,7 +30,7 @@ export interface WorkspaceAccessHint {
 }
 
 export interface OpenSpec {
-  /** Ticket id; becomes the workspace's name. */
+  /** Task id; becomes the workspace's name. */
   name: string;
   /** Working directory the workspace runs in. */
   cwd: string;

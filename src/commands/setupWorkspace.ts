@@ -13,23 +13,23 @@ import {
   stageWorkspaceLaunchCommand,
   type StagedPrompt,
 } from "../lib/stagedLaunch.ts";
-import { naturalIdFromCanonical } from "../lib/ticketSource.ts";
+import { naturalIdFromCanonical } from "../lib/taskSource.ts";
 import { debug, errorMessage, log, okMark } from "../lib/util.ts";
 import { type WorkspaceAccessHint, workspaces } from "../lib/workspaces.ts";
 import { isWorktreeAlreadyExistsError, type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 
-export interface TicketDetails {
+export interface TaskDetails {
   title: string;
   description: string;
-  /** Direct web URL for the ticket; cached into RunState when present. */
+  /** Direct web URL for the task; cached into RunState when present. */
   url?: string;
 }
 
 export interface SetupWorkspaceOptions {
-  ticket: string;
+  task: string;
   repository: string;
   model: string;
-  details: TicketDetails;
+  details: TaskDetails;
 }
 
 export interface SetupWorkspaceRunOptions {
@@ -38,20 +38,20 @@ export interface SetupWorkspaceRunOptions {
 
 function stagePrompt(input: {
   config: ResolvedConfig;
-  ticket: string;
-  ticketDetails: TicketDetails;
+  task: string;
+  taskDetails: TaskDetails;
   worktreeName: string;
   workspaceContinuationInstruction: string;
 }): StagedPrompt {
   return stagePromptFromTemplate({
     config: input.config,
     prefix: "groundcrew",
-    ticket: input.ticket,
+    task: input.task,
     variables: {
-      ticket: input.ticket,
+      task: input.task,
       worktree: input.worktreeName,
-      title: input.ticketDetails.title,
-      description: input.ticketDetails.description,
+      title: input.taskDetails.title,
+      description: input.taskDetails.description,
       workspaceContinuationInstruction: input.workspaceContinuationInstruction,
     },
   });
@@ -62,7 +62,7 @@ export async function setupWorkspace(
   options: SetupWorkspaceOptions,
   runOptions: SetupWorkspaceRunOptions = {},
 ): Promise<void> {
-  const { ticket, repository, model } = options;
+  const { task, repository, model } = options;
   const { signal } = runOptions;
   const definition = config.models.definitions[model];
   if (!definition) {
@@ -76,7 +76,7 @@ export async function setupWorkspace(
     ...(signal === undefined ? {} : { signal }),
   });
 
-  const spec = { repository, ticket };
+  const spec = { repository, task };
   let created: WorktreeEntry;
   const createdPromise =
     signal === undefined ? worktrees.create(config, spec) : worktrees.create(config, spec, signal);
@@ -85,12 +85,12 @@ export async function setupWorkspace(
     created = await createdPromise;
   } catch (error) {
     if (isWorktreeAlreadyExistsError(error)) {
-      await logAccessHintForExistingWorkspace({ config, ticket, signal });
+      await logAccessHintForExistingWorkspace({ config, task, signal });
     }
     throw error;
   }
   const { branchName, dir: launchDir } = created;
-  const worktreeName = `${repository}-${ticket}`;
+  const worktreeName = `${repository}-${task}`;
 
   // Anything that fails after the worktree is on disk must roll it back
   // (the worktree and the just-created branch). `workspaces.open` cleans
@@ -98,19 +98,19 @@ export async function setupWorkspace(
   // close on unrecognized cmux output — closing by title there could hit
   // a same-named sibling, so we log a hint and accept a rare leak.
   // Without rollback the next tick hits "Worktree already exists" and
-  // the ticket strands forever.
+  // the task strands forever.
   let promptDir: string | undefined;
   let srtSettingsDir: string | undefined;
   try {
     await assertLaunchReady(readinessPromise);
 
-    const ticketDetails = options.details;
-    const accessHint = await workspaces.accessHint(config, ticket, signal);
+    const taskDetails = options.details;
+    const accessHint = await workspaces.accessHint(config, task, signal);
 
     const stagedPrompt = stagePrompt({
       config,
-      ticket,
-      ticketDetails,
+      task,
+      taskDetails,
       worktreeName,
       workspaceContinuationInstruction: renderWorkspaceContinuationInstruction(accessHint),
     });
@@ -129,7 +129,7 @@ export async function setupWorkspace(
       const staged = buildAndStageSrtLaunch({
         config,
         repository,
-        ticket,
+        task,
         worktreeDir: launchDir,
         definition,
       });
@@ -156,7 +156,7 @@ export async function setupWorkspace(
     debug("Opening workspace...");
     await openAgentWorkspace({
       config,
-      name: ticket,
+      name: task,
       cwd: launchDir,
       command: launchCmd,
       model,
@@ -165,18 +165,18 @@ export async function setupWorkspace(
     });
     recordRunStateBestEffort({
       config,
-      ticket,
+      task,
       repository,
       model,
       worktreeDir: launchDir,
       branchName,
-      workspaceName: ticket,
+      workspaceName: task,
       state: "running",
-      title: ticketDetails.title,
-      ...(ticketDetails.url === undefined ? {} : { url: ticketDetails.url }),
+      title: taskDetails.title,
+      ...(taskDetails.url === undefined ? {} : { url: taskDetails.url }),
     });
 
-    log(`${okMark()} "${ticket}" launched (${model})  worktree ${worktreeName}`);
+    log(`${okMark()} "${task}" launched (${model})  worktree ${worktreeName}`);
     debug(`  Worktree: ${launchDir}`);
     debug(`  Branch:   ${branchName}`);
     if (accessHint !== undefined) {
@@ -186,12 +186,12 @@ export async function setupWorkspace(
     await rollbackWorktree({ config, entry: created, promptDir, srtSettingsDir });
     recordRunStateBestEffort({
       config,
-      ticket,
+      task,
       repository,
       model,
       worktreeDir: launchDir,
       branchName,
-      workspaceName: ticket,
+      workspaceName: task,
       state: "failed-to-launch",
       detail: errorMessage(error),
       title: options.details.title,
@@ -222,7 +222,7 @@ async function assertLaunchReady(readinessPromise: Promise<LaunchReadinessResult
 }
 
 /**
- * Probe the workspace backend and, if a workspace for `ticket` is still
+ * Probe the workspace backend and, if a workspace for `task` is still
  * live, log the access hint. Used on the pre-launch error path (e.g. the
  * worktree already exists from a prior run) so the user can find the
  * still-running session instead of being told only that the worktree is
@@ -231,16 +231,16 @@ async function assertLaunchReady(readinessPromise: Promise<LaunchReadinessResult
  */
 async function logAccessHintForExistingWorkspace(arguments_: {
   config: ResolvedConfig;
-  ticket: string;
+  task: string;
   signal: AbortSignal | undefined;
 }): Promise<void> {
-  const { config, ticket, signal } = arguments_;
-  const accessHint = await workspaces.accessHint(config, ticket, signal);
+  const { config, task, signal } = arguments_;
+  const accessHint = await workspaces.accessHint(config, task, signal);
   if (accessHint === undefined) {
     return;
   }
   const probe = await workspaces.probe(config, signal);
-  if (probe.kind !== "ok" || !probe.names.has(ticket)) {
+  if (probe.kind !== "ok" || !probe.names.has(task)) {
     return;
   }
   logAccessHint(accessHint);
@@ -261,7 +261,7 @@ function renderWorkspaceContinuationInstruction(
 
 function recordRunStateBestEffort(arguments_: {
   config: ResolvedConfig;
-  ticket: string;
+  task: string;
   repository: string;
   model: string;
   worktreeDir: string;
@@ -276,7 +276,7 @@ function recordRunStateBestEffort(arguments_: {
     recordRunState({
       config: arguments_.config,
       state: {
-        ticket: arguments_.ticket,
+        task: arguments_.task,
         repository: arguments_.repository,
         model: arguments_.model,
         worktreeDir: arguments_.worktreeDir,
@@ -289,7 +289,7 @@ function recordRunStateBestEffort(arguments_: {
       },
     });
   } catch (error) {
-    log(`Run state update failed for ${arguments_.ticket}: ${errorMessage(error)}`);
+    log(`Run state update failed for ${arguments_.task}: ${errorMessage(error)}`);
   }
 }
 
@@ -300,7 +300,7 @@ async function rollbackWorktree(arguments_: {
   srtSettingsDir?: string | undefined;
 }): Promise<void> {
   log(
-    `Setup failed; rolling back worktree ${arguments_.entry.repository}-${arguments_.entry.ticket}...`,
+    `Setup failed; rolling back worktree ${arguments_.entry.repository}-${arguments_.entry.task}...`,
   );
   let result: Awaited<ReturnType<typeof worktrees.teardown>> | undefined;
   try {
@@ -333,7 +333,7 @@ async function rollbackWorktree(arguments_: {
         ? ""
         : `: ${errorMessage(result.workspaceProbe.error)}`;
     log(
-      `Workspace adapter unavailable during rollback${detail}; close ${arguments_.entry.ticket} by hand if it's still open.`,
+      `Workspace adapter unavailable during rollback${detail}; close ${arguments_.entry.task} by hand if it's still open.`,
     );
   }
   for (const failure of result.failures) {
@@ -342,7 +342,7 @@ async function rollbackWorktree(arguments_: {
 }
 
 export async function setupWorkspaceCli(
-  ticket: string,
+  task: string,
   options: { dryRun?: boolean } = {},
 ): Promise<void> {
   const config = await loadConfig();
@@ -352,33 +352,33 @@ export async function setupWorkspaceCli(
   } catch (error) {
     /* v8 ignore next @preserve -- catch re-throw always receives an Error; String(error) is an unreachable fallback */
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Could not initialize ticket sources for 'crew setup ${ticket}': ${message}`, {
+    throw new Error(`Could not initialize task sources for 'crew setup ${task}': ${message}`, {
       cause: error,
     });
   }
   const board: Board = createBoard(sources);
 
-  const resolved = await board.resolveOne(ticket);
+  const resolved = await board.resolveOne(task);
   if (resolved === undefined) {
-    throw new Error(`Ticket ${ticket} not found across configured sources.`);
+    throw new Error(`Task ${task} not found across configured sources.`);
   }
   if (resolved.repository === undefined || resolved.model === undefined) {
     throw new Error(
-      `Ticket ${ticket} resolved but isn't groundcrew-eligible (missing agent-* label or repository/model).`,
+      `Task ${task} resolved but isn't groundcrew-eligible (missing agent-* label or repository/model).`,
     );
   }
 
-  log(`Resolved ${ticket}: repository=${resolved.repository}, model=${resolved.model}`);
+  log(`Resolved ${task}: repository=${resolved.repository}, model=${resolved.model}`);
 
   if (options.dryRun === true) {
-    log(`[dry-run] Would launch ${ticket} in ${resolved.repository} (${resolved.model})`);
+    log(`[dry-run] Would launch ${task} in ${resolved.repository} (${resolved.model})`);
     return;
   }
 
   const naturalId = naturalIdFromCanonical(resolved.id);
 
   await setupWorkspace(config, {
-    ticket: naturalId,
+    task: naturalId,
     repository: resolved.repository,
     model: resolved.model,
     details: {

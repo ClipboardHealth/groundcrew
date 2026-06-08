@@ -10,18 +10,18 @@ export default {
   // `state.type` (`unstarted` → todo, `started` → in progress,
   // `completed`/`canceled`/`duplicate` → terminal).
   //
-  // Opt a ticket in: assign it to yourself and add an `agent-<model>`
+  // Opt a task in: assign it to yourself and add an `agent-<model>`
   // label (e.g. `agent-claude`, `agent-any`).
   workspace: {
     // Parent directory under which groundcrew clones repositories and (by
-    // default) creates per-ticket worktrees.
+    // default) creates per-task worktrees.
     projectDir: "~/dev/groundcrew",
     // Optional: collect ALL worktrees here instead of beside each repo. Useful
     // when your repos live in more than one place. Defaults to projectDir.
     // worktreeDir: "~/dev/worktrees",
     // Repositories groundcrew is allowed to set up worktrees in. Add
     // `<owner>/<repo>` or bare `<repo>` strings; the orchestrator scopes
-    // tickets to these and refuses unknown repos by default. Use the object
+    // tasks to these and refuses unknown repos by default. Use the object
     // form to point a repo at a different parent directory:
     //   { name: "other-org/other-repo", projectDirOverride: "~/work" }
     knownRepositories: ["your-org/your-repo"],
@@ -30,7 +30,7 @@ export default {
     default: "claude",
     // `definitions` is the enabled model set. Built-in keys can use `{}` to
     // opt into the shipped command/color/usage preset. Add `codex: {}` if you
-    // want both shipped agents, or add a custom entry and tag tickets with
+    // want both shipped agents, or add a custom entry and tag tasks with
     // `agent-<name>`.
     definitions: {
       claude: {},
@@ -53,7 +53,7 @@ export default {
   // Everything below is optional — defaults shown for reference. Uncomment
   // and edit to override.
   //
-  // // Additional pluggable ticket sources beyond the implicit built-in
+  // // Additional pluggable task sources beyond the implicit built-in
   // // Linear adapter. The most common use is `kind: "shell"`, which wires
   // // any external system via command templates that emit/consume JSON.
   // // See the shell adapter's ShellIssue schema for the JSON contract

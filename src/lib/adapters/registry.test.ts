@@ -5,7 +5,7 @@ import path from "node:path";
 import { z } from "zod";
 
 import type { AdapterDefinition } from "../adapterDefinition.ts";
-import type { MarkInReviewResult, TicketSource } from "../ticketSource.ts";
+import type { MarkInReviewResult, TaskSource } from "../taskSource.ts";
 import {
   adapterRegistry,
   type AdapterLoader,
@@ -14,7 +14,7 @@ import {
   listAdapterDirectories,
 } from "./registry.ts";
 
-function emptySource(name: string): TicketSource {
+function emptySource(name: string): TaskSource {
   return {
     name,
     verify: vi.fn<() => Promise<void>>().mockResolvedValue(),

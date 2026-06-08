@@ -1,7 +1,7 @@
 import type { ResolvedConfig } from "../lib/config.ts";
 import { canonicalLinearIssue } from "../lib/testing/canonicalFixtures.ts";
 import { makeBoard } from "../testHelpers/boardFixtures.ts";
-import type { BoardState, Issue } from "../lib/ticketSource.ts";
+import type { BoardState, Issue } from "../lib/taskSource.ts";
 import { EXHAUSTED_USAGE } from "../lib/usage.ts";
 import { workspaces } from "../lib/workspaces.ts";
 import type { WorktreeEntry } from "../lib/worktrees.ts";
@@ -85,12 +85,12 @@ function boardOf(
   return { timestamp: "2025-01-01T00:00:00.000Z", issues, parentSkips };
 }
 
-function hostEntryFor(repository: string, ticket: string): WorktreeEntry {
+function hostEntryFor(repository: string, task: string): WorktreeEntry {
   return {
     repository,
-    ticket,
-    branchName: `dev-${ticket.toLowerCase()}`,
-    dir: `/work/${repository}-${ticket}`,
+    task,
+    branchName: `dev-${task.toLowerCase()}`,
+    dir: `/work/${repository}-${task}`,
     kind: "host",
   };
 }
@@ -114,7 +114,7 @@ describe(createDispatcher, () => {
   });
 
   describe("slot math", () => {
-    it("starts a Todo ticket and marks it In Progress", async () => {
+    it("starts a Todo task and marks it In Progress", async () => {
       const board = makeBoard();
       const dispatcher = createDispatcher({ config: makeConfig(), board });
 
@@ -128,7 +128,7 @@ describe(createDispatcher, () => {
       expect(setupMock).toHaveBeenCalledWith(
         expect.anything(),
         expect.objectContaining({
-          ticket: "team-1",
+          task: "team-1",
           repository: "repo-a",
           model: "claude",
           details: { title: "Title", description: "" },
@@ -139,7 +139,7 @@ describe(createDispatcher, () => {
       );
     });
 
-    it("forwards the ticket url through setupWorkspace details when the source provides one", async () => {
+    it("forwards the task url through setupWorkspace details when the source provides one", async () => {
       const board = makeBoard();
       const dispatcher = createDispatcher({ config: makeConfig(), board });
 
@@ -178,7 +178,7 @@ describe(createDispatcher, () => {
       );
     });
 
-    it("enumerates all in-progress tickets in the `At capacity` line, sorted by id", async () => {
+    it("enumerates all in-progress tasks in the `At capacity` line, sorted by id", async () => {
       const config = makeConfig({
         orchestrator: {
           maximumInProgress: 2,
@@ -216,10 +216,10 @@ describe(createDispatcher, () => {
         dryRun: true,
       });
 
-      expect(consoleLog.output()).toContain("Slots 0/2 used, starting 1 ticket(s): team-1(claude)");
+      expect(consoleLog.output()).toContain("Slots 0/2 used, starting 1 task(s): team-1(claude)");
     });
 
-    it("enumerates already-running tickets when some slots are occupied", async () => {
+    it("enumerates already-running tasks when some slots are occupied", async () => {
       const config = makeConfig({
         orchestrator: {
           maximumInProgress: 3,
@@ -242,7 +242,7 @@ describe(createDispatcher, () => {
       });
 
       expect(consoleLog.output()).toContain(
-        "Slots 2/3 used [team-running-a(claude), team-running-b(codex)], starting 1 ticket(s): team-new(claude)",
+        "Slots 2/3 used [team-running-a(claude), team-running-b(codex)], starting 1 task(s): team-new(claude)",
       );
     });
 
@@ -269,11 +269,11 @@ describe(createDispatcher, () => {
       });
 
       expect(consoleLog.output()).toContain(
-        "Slots 1/2 used [team-stale(?)], starting 1 ticket(s): team-new(claude)",
+        "Slots 1/2 used [team-stale(?)], starting 1 task(s): team-new(claude)",
       );
     });
 
-    it("logs `No Todo tickets` when nothing is queued", async () => {
+    it("logs `No Todo tasks` when nothing is queued", async () => {
       const board = makeBoard();
       const dispatcher = createDispatcher({ config: makeConfig(), board });
 
@@ -284,11 +284,11 @@ describe(createDispatcher, () => {
         dryRun: false,
       });
 
-      expect(consoleLog.output()).toContain("No Todo tickets");
+      expect(consoleLog.output()).toContain("No Todo tasks");
     });
 
-    it("ignores Todo tickets without an agent-* label (model: undefined)", async () => {
-      // Unlabeled Todo tickets reach the dispatcher in the board snapshot
+    it("ignores Todo tasks without an agent-* label (model: undefined)", async () => {
+      // Unlabeled Todo tasks reach the dispatcher in the board snapshot
       // but should be filtered out via isGroundcrewIssue before eligibility.
       const board = makeBoard();
       const dispatcher = createDispatcher({ config: makeConfig(), board });
@@ -302,7 +302,7 @@ describe(createDispatcher, () => {
 
       expect(setupMock).not.toHaveBeenCalled();
       expect(board.markInProgress).not.toHaveBeenCalled();
-      expect(consoleLog.output()).toContain("No Todo tickets");
+      expect(consoleLog.output()).toContain("No Todo tasks");
     });
 
     it("stops scanning Todo issues once eligible count reaches the slot cap", async () => {
@@ -345,7 +345,7 @@ describe(createDispatcher, () => {
       });
     });
 
-    it("starts the highest-priority ticket first when slots are limited", async () => {
+    it("starts the highest-priority task first when slots are limited", async () => {
       const urgent = todoIssue({ id: "linear:team-urgent", priority: 1 });
       const medium = todoIssue({ id: "linear:team-medium", priority: 3 });
       const noPriority = todoIssue({ id: "linear:team-none" });
@@ -360,7 +360,7 @@ describe(createDispatcher, () => {
       expect(setupMock).toHaveBeenCalledTimes(1);
       expect(setupMock).toHaveBeenCalledWith(
         expect.anything(),
-        expect.objectContaining({ ticket: "team-urgent" }),
+        expect.objectContaining({ task: "team-urgent" }),
       );
     });
 
@@ -378,13 +378,13 @@ describe(createDispatcher, () => {
       expect(setupMock).toHaveBeenCalledTimes(1);
       expect(setupMock).toHaveBeenCalledWith(
         expect.anything(),
-        expect.objectContaining({ ticket: "team-low" }),
+        expect.objectContaining({ task: "team-low" }),
       );
     });
   });
 
   describe("blocker classification", () => {
-    it("skips a ticket whose blocker is not in a terminal state", async () => {
+    it("skips a task whose blocker is not in a terminal state", async () => {
       const board = makeBoard();
       const dispatcher = createDispatcher({ config: makeConfig(), board });
 
@@ -407,11 +407,11 @@ describe(createDispatcher, () => {
 
       expect(setupMock).not.toHaveBeenCalled();
       expect(consoleLog.output()).toContain(
-        "event=dispatch outcome=skipped reason=blocked ticket=team-1",
+        "event=dispatch outcome=skipped reason=blocked task=team-1",
       );
     });
 
-    it("dispatches a ticket whose blocker is terminal", async () => {
+    it("dispatches a task whose blocker is terminal", async () => {
       const board = makeBoard();
       const dispatcher = createDispatcher({ config: makeConfig(), board });
 
@@ -428,11 +428,11 @@ describe(createDispatcher, () => {
 
       expect(setupMock).toHaveBeenCalledWith(
         expect.anything(),
-        expect.objectContaining({ ticket: "team-1" }),
+        expect.objectContaining({ task: "team-1" }),
       );
     });
 
-    it("conservatively skips a ticket when blocker pagination overflowed", async () => {
+    it("conservatively skips a task when blocker pagination overflowed", async () => {
       const board = makeBoard();
       const dispatcher = createDispatcher({ config: makeConfig(), board });
 
@@ -448,7 +448,7 @@ describe(createDispatcher, () => {
       );
     });
 
-    it("conservatively skips a ticket when a blocker state is missing", async () => {
+    it("conservatively skips a task when a blocker state is missing", async () => {
       const board = makeBoard();
       const dispatcher = createDispatcher({ config: makeConfig(), board });
 
@@ -504,7 +504,7 @@ describe(createDispatcher, () => {
 
       expect(usageProbe).not.toHaveBeenCalled();
       expect(workspacesProbeMock).not.toHaveBeenCalled();
-      expect(consoleLog.output()).toContain("No eligible Todo tickets after blocker filtering");
+      expect(consoleLog.output()).toContain("No eligible Todo tasks after blocker filtering");
     });
   });
 
@@ -638,7 +638,7 @@ describe(createDispatcher, () => {
   });
 
   describe("session limits", () => {
-    it("skips a Todo ticket whose model is over the session limit", async () => {
+    it("skips a Todo task whose model is over the session limit", async () => {
       const board = makeBoard();
       const dispatcher = createDispatcher({ config: makeConfig(), board });
 
@@ -946,7 +946,7 @@ describe(createDispatcher, () => {
 
       expect(usageMock).not.toHaveBeenCalled();
       expect(workspacesProbeMock).not.toHaveBeenCalled();
-      expect(consoleLog.output()).toContain("No eligible Todo tickets after repository validation");
+      expect(consoleLog.output()).toContain("No eligible Todo tasks after repository validation");
     });
 
     it("dispatches issues whose repository is in knownRepositories", async () => {
@@ -970,16 +970,16 @@ describe(createDispatcher, () => {
     });
   });
 
-  // Parent tickets are silently dropped by board.fetch (children filter).
+  // Parent tasks are silently dropped by board.fetch (children filter).
   // Surfacing each parent skip makes the silent filter visible so operators
-  // see WHY a Todo ticket isn't being picked up (PR #80 behavior).
-  describe("parent ticket logging", () => {
-    it("emits a dispatch skip event for every parent ticket in state.parentSkips", async () => {
+  // see WHY a Todo task isn't being picked up (PR #80 behavior).
+  describe("parent task logging", () => {
+    it("emits a dispatch skip event for every parent task in state.parentSkips", async () => {
       const board = makeBoard();
       const dispatcher = createDispatcher({ config: makeConfig(), board });
 
       // ParentSkip.id is canonical (source-prefixed) per the contract in
-      // ticketSource.ts. The dispatcher strips the prefix before logging so
+      // taskSource.ts. The dispatcher strips the prefix before logging so
       // operator output is uniform with the rest of the dispatcher's log lines.
       await dispatcher.runOnce({
         state: boardOf([], {
@@ -995,12 +995,12 @@ describe(createDispatcher, () => {
 
       const output = consoleLog.output();
       expect(output).toContain(
-        "event=dispatch outcome=skipped reason=parent_with_children ticket=team-9",
+        "event=dispatch outcome=skipped reason=parent_with_children task=team-9",
       );
       expect(output).toContain(
-        "event=dispatch outcome=skipped reason=parent_with_children ticket=team-10",
+        "event=dispatch outcome=skipped reason=parent_with_children task=team-10",
       );
-      expect(output).toMatch(/Skipping team-9: parent ticket with 3 sub-issue/);
+      expect(output).toMatch(/Skipping team-9: parent task with 3 sub-issue/);
       expect(output).not.toContain("linear:team-9");
       expect(output).not.toContain("linear:team-10");
     });
@@ -1026,12 +1026,12 @@ describe(formatActiveSlotList, () => {
     expect(formatActiveSlotList([])).toBe("");
   });
 
-  it("formats a single in-progress ticket as ` [id(model)]`", () => {
+  it("formats a single in-progress task as ` [id(model)]`", () => {
     const issue = activeIssue({ id: "linear:hrd-1", model: "claude" });
     expect(formatActiveSlotList([issue])).toBe(" [hrd-1(claude)]");
   });
 
-  it("joins multiple tickets with `, ` and preserves caller-supplied order", () => {
+  it("joins multiple tasks with `, ` and preserves caller-supplied order", () => {
     const a = activeIssue({ id: "linear:hrd-1", model: "claude" });
     const b = activeIssue({ id: "linear:hrd-2", model: "codex" });
     expect(formatActiveSlotList([a, b])).toBe(" [hrd-1(claude), hrd-2(codex)]");

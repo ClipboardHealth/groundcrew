@@ -28,7 +28,7 @@ export {
   type RunState,
 } from "./lib/runState.ts";
 export {
-  fetchBlockersForTicket,
+  fetchBlockersForTask,
   fetchInProgressIssueCount,
   fetchRawLinearIssue,
   fetchResolvedIssue,
@@ -57,7 +57,7 @@ export {
   listAdapterDirectories,
 } from "./lib/adapters/registry.ts";
 export {
-  AmbiguousTicketError,
+  AmbiguousTaskError,
   type Blocker as CanonicalBlocker,
   type BoardState as CanonicalBoardState,
   type CanonicalStatus,
@@ -65,5 +65,5 @@ export {
   type Issue as CanonicalIssue,
   isGroundcrewIssue as isCanonicalGroundcrewIssue,
   type ParentSkip as CanonicalParentSkip,
-  type TicketSource,
-} from "./lib/ticketSource.ts";
+  type TaskSource,
+} from "./lib/taskSource.ts";

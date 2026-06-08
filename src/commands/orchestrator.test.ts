@@ -160,7 +160,7 @@ function issue(overrides: Partial<IssueNodeStub>): IssueNodeStub {
     assignee: overrides.assignee === undefined ? { name: "Alice" } : overrides.assignee,
     children: overrides.children ?? { nodes: [] },
     // Default to a groundcrew-eligible label. Tests that exercise unlabeled
-    // tickets explicitly override with `labels: { nodes: [] }`.
+    // tasks explicitly override with `labels: { nodes: [] }`.
     labels: overrides.labels ?? { nodes: [{ name: "agent-claude" }] },
     ...(overrides.inverseRelations === undefined
       ? {}
@@ -267,12 +267,12 @@ function mockLinearClient(client: ClientStub): void {
   linearClientMock.mockReturnValue(client as unknown as LinearClient);
 }
 
-function hostEntryFor(repository: string, ticket: string): WorktreeEntry {
+function hostEntryFor(repository: string, task: string): WorktreeEntry {
   return {
     repository,
-    ticket,
-    branchName: `dev-${ticket.toLowerCase()}`,
-    dir: `/work/${repository}-${ticket}`,
+    task,
+    branchName: `dev-${task.toLowerCase()}`,
+    dir: `/work/${repository}-${task}`,
     kind: "host",
   };
 }
@@ -377,10 +377,10 @@ describe(orchestrate, () => {
     await orchestrate({ watch: false, dryRun: false });
 
     const out = consoleLog.output();
-    expect(out).toContain("No Todo tickets to pick up");
+    expect(out).toContain("No Todo tasks to pick up");
   });
 
-  it("starts a Todo ticket and marks it In Progress", async () => {
+  it("starts a Todo task and marks it In Progress", async () => {
     const client = makeClient({
       pages: [
         [
@@ -397,12 +397,12 @@ describe(orchestrate, () => {
 
     expect(setupMock).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ ticket: "team-1", repository: "repo-a", model: "claude" }),
+      expect.objectContaining({ task: "team-1", repository: "repo-a", model: "claude" }),
     );
     expect(client.updateIssue).toHaveBeenCalledWith("uuid-1", { stateId: "state-in-progress" });
   });
 
-  it("skips the workspace probe when all eligible tickets are fresh starts", async () => {
+  it("skips the workspace probe when all eligible tasks are fresh starts", async () => {
     const client = makeClient({
       pages: [
         [
@@ -420,7 +420,7 @@ describe(orchestrate, () => {
     expect(workspacesProbeMock).not.toHaveBeenCalled();
     expect(setupMock).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ ticket: "team-1" }),
+      expect.objectContaining({ task: "team-1" }),
     );
   });
 
@@ -632,7 +632,7 @@ describe(orchestrate, () => {
     );
   });
 
-  it("skips agent-any tickets when every model is exhausted", async () => {
+  it("skips agent-any tasks when every model is exhausted", async () => {
     usageMock.mockResolvedValue({
       claude: { session: 0.95, sessionEndDuration: 30, weekly: null, weekEndDuration: null },
       codex: { session: 0.95, sessionEndDuration: 30, weekly: null, weekEndDuration: null },
@@ -718,7 +718,7 @@ describe(orchestrate, () => {
     expect(setupMock).toHaveBeenCalledTimes(1);
     expect(setupMock).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ ticket: "team-2" }),
+      expect.objectContaining({ task: "team-2" }),
     );
   });
 
@@ -780,7 +780,7 @@ describe(orchestrate, () => {
     expect(out).toContain("At capacity");
   });
 
-  it("logs `no Todo tickets` when nothing is queued", async () => {
+  it("logs `no Todo tasks` when nothing is queued", async () => {
     const client = makeClient({
       pages: [
         [
@@ -796,10 +796,10 @@ describe(orchestrate, () => {
     await orchestrate({ watch: false, dryRun: false });
 
     const out = consoleLog.output();
-    expect(out).toContain("No Todo tickets");
+    expect(out).toContain("No Todo tasks");
   });
 
-  it("skips Todo tickets whose model is over the session limit", async () => {
+  it("skips Todo tasks whose model is over the session limit", async () => {
     usageMock.mockResolvedValue({
       claude: { session: 0.95, sessionEndDuration: 30, weekly: null, weekEndDuration: null },
     });
@@ -822,7 +822,7 @@ describe(orchestrate, () => {
     expect(out).toContain("session at 95%");
   });
 
-  it("skips Todo tickets with non-terminal blockers before usage or agent-any resolution", async () => {
+  it("skips Todo tasks with non-terminal blockers before usage or agent-any resolution", async () => {
     const client = makeClient({
       pages: [
         [
@@ -844,12 +844,12 @@ describe(orchestrate, () => {
 
     expect(setupMock).not.toHaveBeenCalled();
     const out = consoleLog.output();
-    expect(out).toContain("event=dispatch outcome=skipped reason=blocked ticket=team-1");
+    expect(out).toContain("event=dispatch outcome=skipped reason=blocked task=team-1");
     // Unmatched started blockers still fall back to canonical in-progress.
     expect(out).toContain("blockers=linear:team-0:in-progress");
   });
 
-  it("dispatches Todo tickets whose blockers are terminal", async () => {
+  it("dispatches Todo tasks whose blockers are terminal", async () => {
     const client = makeClient({
       pages: [
         [
@@ -870,7 +870,7 @@ describe(orchestrate, () => {
 
     expect(setupMock).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ ticket: "team-1" }),
+      expect.objectContaining({ task: "team-1" }),
     );
   });
 
@@ -894,11 +894,11 @@ describe(orchestrate, () => {
 
     expect(setupMock).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ ticket: "team-1" }),
+      expect.objectContaining({ task: "team-1" }),
     );
   });
 
-  it("conservatively skips Todo tickets when a blocker state is missing", async () => {
+  it("conservatively skips Todo tasks when a blocker state is missing", async () => {
     const client = makeClient({
       pages: [
         [
@@ -956,7 +956,7 @@ describe(orchestrate, () => {
     expect(consoleLog.output()).toContain("blockers=linear:unknown:other");
   });
 
-  it("conservatively skips Todo tickets when blocker relations are paginated", async () => {
+  it("conservatively skips Todo tasks when blocker relations are paginated", async () => {
     const client = makeClient({
       pages: [
         [
@@ -981,7 +981,7 @@ describe(orchestrate, () => {
     expect(out).toContain("event=dispatch outcome=skipped reason=blockers_paginated");
   });
 
-  it("does not let blocked Todo tickets consume available slots", async () => {
+  it("does not let blocked Todo tasks consume available slots", async () => {
     loadConfigMock.mockResolvedValue(
       makeConfig({
         orchestrator: {
@@ -1018,11 +1018,11 @@ describe(orchestrate, () => {
     expect(setupMock).toHaveBeenCalledTimes(1);
     expect(setupMock).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ ticket: "team-2" }),
+      expect.objectContaining({ task: "team-2" }),
     );
   });
 
-  it("ignores usage failures and keeps starting tickets", async () => {
+  it("ignores usage failures and keeps starting tasks", async () => {
     usageMock.mockRejectedValue(new Error("codexbar offline"));
     const client = makeClient({
       pages: [
@@ -1066,7 +1066,7 @@ describe(orchestrate, () => {
     expect(consoleLog.output()).toContain("Shutdown requested");
   });
 
-  it("resumes a ticket whose worktree and workspace already exist", async () => {
+  it("resumes a task whose worktree and workspace already exist", async () => {
     listMock.mockReturnValue([hostEntryFor("repo-a", "team-1")]);
     workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-1"]) });
     const client = makeClient({
@@ -1087,7 +1087,7 @@ describe(orchestrate, () => {
     expect(client.updateIssue).toHaveBeenCalledWith("uuid-1", { stateId: "state-in-progress" });
   });
 
-  it("skips a ticket whose worktree exists but workspace is missing", async () => {
+  it("skips a task whose worktree exists but workspace is missing", async () => {
     listMock.mockReturnValue([hostEntryFor("repo-a", "team-1")]);
     workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set<string>() });
     const client = makeClient({
@@ -1110,7 +1110,7 @@ describe(orchestrate, () => {
     expect(out).toContain("Run `crew cleanup");
   });
 
-  it("skips a ticket when the workspace list is unavailable", async () => {
+  it("skips a task when the workspace list is unavailable", async () => {
     listMock.mockReturnValue([hostEntryFor("repo-a", "team-1")]);
     workspacesProbeMock.mockResolvedValue({ kind: "unavailable" });
     const client = makeClient({
@@ -1132,7 +1132,7 @@ describe(orchestrate, () => {
     expect(out).toContain("will retry next tick");
   });
 
-  it("logs that no eligible tickets remain after filtering", async () => {
+  it("logs that no eligible tasks remain after filtering", async () => {
     listMock.mockReturnValue([hostEntryFor("repo-a", "team-1")]);
     workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set<string>() });
     const client = makeClient({
@@ -1150,7 +1150,7 @@ describe(orchestrate, () => {
     await orchestrate({ watch: false, dryRun: false });
 
     const out = consoleLog.output();
-    expect(out).toContain("No eligible Todo tickets after");
+    expect(out).toContain("No eligible Todo tasks after");
   });
 
   it("logs setup failures without crashing the loop", async () => {
@@ -1215,7 +1215,7 @@ describe(orchestrate, () => {
     expect(out).toContain("team ?");
   });
 
-  it("caches the in-progress state ID across tickets in the same team", async () => {
+  it("caches the in-progress state ID across tasks in the same team", async () => {
     const sharedTeam = { id: "team-shared", key: "TEAM" };
     const client = makeClient({
       pages: [
@@ -1242,7 +1242,7 @@ describe(orchestrate, () => {
     expect(client.team).toHaveBeenCalledTimes(1);
   });
 
-  it("advances an in-progress shell ticket to in-review when its worktree has an open PR", async () => {
+  it("advances an in-progress shell task to in-review when its worktree has an open PR", async () => {
     const dir = mkdtempSync(path.join(tmpdir(), "orchestrate-shell-review-"));
     try {
       const reviewMarker = path.join(dir, "review-ran");
@@ -1255,7 +1255,7 @@ cat <<'JSON'
 [
   {
     "id": "X-1",
-    "title": "Reviewable shell ticket",
+    "title": "Reviewable shell task",
     "description": "Touches repo-a.",
     "status": "in-progress",
     "repository": "repo-a",
@@ -1314,7 +1314,7 @@ JSON
     const entry = hostEntryFor("repo-a", "team-1");
     listMock.mockReturnValue([
       entry,
-      hostEntryFor("repo-a", "OTHER-9"), // unrelated terminal-looking ticket: should be left alone
+      hostEntryFor("repo-a", "OTHER-9"), // unrelated terminal-looking task: should be left alone
     ]);
     teardownMock.mockResolvedValue(emptyTeardownResult({ removed: [entry] }));
     const client = makeClient({
@@ -1335,7 +1335,7 @@ JSON
     expect(teardownMock).toHaveBeenCalledWith(expect.anything(), [entry]);
   });
 
-  it("cleans up worktrees for canceled tickets regardless of status name", async () => {
+  it("cleans up worktrees for canceled tasks regardless of status name", async () => {
     const entry = hostEntryFor("repo-a", "team-1");
     listMock.mockReturnValue([entry]);
     teardownMock.mockResolvedValue(emptyTeardownResult({ removed: [entry] }));
@@ -1405,7 +1405,7 @@ JSON
     await orchestrate({ watch: false, dryRun: false });
 
     expect(teardownMock).toHaveBeenCalledWith(expect.anything(), [
-      expect.objectContaining({ ticket: "team-1" }),
+      expect.objectContaining({ task: "team-1" }),
     ]);
     const out = consoleLog.output();
     expect(out).toContain("event=cleanup outcome=failed reason=workspace_list_failed");
@@ -1462,7 +1462,7 @@ JSON
     expect(out).toContain("worktree(s) due for cleanup");
   });
 
-  it("skips cleanup when there are no Done tickets", async () => {
+  it("skips cleanup when there are no Done tasks", async () => {
     listMock.mockReturnValue([hostEntryFor("repo-a", "team-1")]);
     const client = makeClient({
       pages: [
@@ -1482,7 +1482,7 @@ JSON
     expect(teardownMock).not.toHaveBeenCalled();
   });
 
-  it("skips cleanup when the matching ticket isn't in the project", async () => {
+  it("skips cleanup when the matching task isn't in the project", async () => {
     listMock.mockReturnValue([hostEntryFor("repo-a", "OTHER-1")]);
     const client = makeClient({
       pages: [
@@ -1515,8 +1515,8 @@ JSON
     expect(out).toContain("Error: network down");
   });
 
-  it("keeps polling when a labeled ticket has no parseable repository in watch mode", async () => {
-    // A single broken ticket previously aborted the entire watch loop. Now
+  it("keeps polling when a labeled task has no parseable repository in watch mode", async () => {
+    // A single broken task previously aborted the entire watch loop. Now
     // the orchestrator warns and continues to the next tick so the rest of
     // the board still gets serviced.
     const client = makeClient({

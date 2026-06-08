@@ -1,5 +1,5 @@
 import type { Board } from "../lib/board.ts";
-import type { BoardState, MarkDoneResult, MarkInReviewResult } from "../lib/ticketSource.ts";
+import type { BoardState, MarkDoneResult, MarkInReviewResult } from "../lib/taskSource.ts";
 
 export function makeBoard(overrides: Partial<Board> = {}): Board {
   return {

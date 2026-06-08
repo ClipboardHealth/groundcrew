@@ -1,19 +1,19 @@
 /**
  * Board composer — fans `verify` / `fetch` / `resolveOne` / `markInProgress` /
- * `markInReview` across N `TicketSource` adapters. Even a single-source config
+ * `markInReview` across N `TaskSource` adapters. Even a single-source config
  * goes through this; the moment we skip the wrapper we grow Linear assumptions
  * back into consumers.
  */
 
 import {
-  AmbiguousTicketError,
+  AmbiguousTaskError,
   type BoardState,
   type Issue,
   type MarkDoneResult,
   type MarkInReviewResult,
   type ParentSkip,
-  type TicketSource,
-} from "./ticketSource.ts";
+  type TaskSource,
+} from "./taskSource.ts";
 
 export interface Board {
   verify: () => Promise<void>;
@@ -26,44 +26,44 @@ export interface Board {
   /** Routes to the adapter whose `name` matches `issue.source`. Unknown source throws. */
   markInProgress: (issue: Issue) => Promise<void>;
   /**
-   * Advances a ticket to in-review on the adapter whose `name` matches
+   * Advances a task to in-review on the adapter whose `name` matches
    * `issue.source`. Unknown source throws. Adapters with no in-review concept
-   * return `unsupported` (see `TicketSource.markInReview`).
+   * return `unsupported` (see `TaskSource.markInReview`).
    */
   markInReview: (issue: Issue) => Promise<MarkInReviewResult>;
   /**
-   * Advances a ticket to done on the adapter whose `name` matches
+   * Advances a task to done on the adapter whose `name` matches
    * `issue.source`. Unknown source throws. Sources that don't implement the
-   * optional `markDone` return `unsupported` (see `TicketSource.markDone`).
+   * optional `markDone` return `unsupported` (see `TaskSource.markDone`).
    */
   markDone: (issue: Issue) => Promise<MarkDoneResult>;
 }
 
-async function callVerify(source: TicketSource): Promise<void> {
+async function callVerify(source: TaskSource): Promise<void> {
   await source.verify();
 }
 
-async function callFetch(source: TicketSource): Promise<Issue[]> {
+async function callFetch(source: TaskSource): Promise<Issue[]> {
   return await source.fetch();
 }
 
-async function callFetchParentSkips(source: TicketSource): Promise<readonly ParentSkip[]> {
+async function callFetchParentSkips(source: TaskSource): Promise<readonly ParentSkip[]> {
   if (source.fetchParentSkips !== undefined) {
     return await source.fetchParentSkips();
   }
   return [];
 }
 
-async function callResolveOne(source: TicketSource, naturalId: string): Promise<Issue | undefined> {
+async function callResolveOne(source: TaskSource, naturalId: string): Promise<Issue | undefined> {
   return await source.resolveOne(naturalId);
 }
 
-export function createBoard(sources: readonly TicketSource[]): Board {
-  const byName = new Map<string, TicketSource>();
+export function createBoard(sources: readonly TaskSource[]): Board {
+  const byName = new Map<string, TaskSource>();
   for (const source of sources) {
     if (byName.has(source.name)) {
       throw new Error(
-        `createBoard: duplicate source name "${source.name}". Each TicketSource must have a unique name so writebacks can route correctly. Configure distinct \`name\` fields in your \`sources: [...]\` array.`,
+        `createBoard: duplicate source name "${source.name}". Each TaskSource must have a unique name so writebacks can route correctly. Configure distinct \`name\` fields in your \`sources: [...]\` array.`,
       );
     }
     byName.set(source.name, source);
@@ -119,7 +119,7 @@ export function createBoard(sources: readonly TicketSource[]): Board {
       }
       // Per-source resolveOne errors must not poison sibling resolutions.
       // A source that rejects on a natural-id lookup is treated as "I don't
-      // have this ticket" (or "I can't say"). If any source resolved we use
+      // have this task" (or "I can't say"). If any source resolved we use
       // it; only when none resolved AND at least one rejected do we surface
       // the rejection — so the user sees a real Linear/network error when
       // there's no fallback, but a stray "not found" from one source doesn't
@@ -148,7 +148,7 @@ export function createBoard(sources: readonly TicketSource[]): Board {
         // oxlint-disable-next-line typescript/no-non-null-assertion -- length checked above
         return matches[0]!;
       }
-      throw new AmbiguousTicketError({
+      throw new AmbiguousTaskError({
         naturalId: idArgument,
         matches: matches.map((m) => m.id),
       });
@@ -180,7 +180,7 @@ export function createBoard(sources: readonly TicketSource[]): Board {
  * Shared by `markInProgress` / `markInReview` so both route — and fail —
  * identically. Throws when no adapter claims the source.
  */
-function routeWriteback(byName: Map<string, TicketSource>, issue: Issue): TicketSource {
+function routeWriteback(byName: Map<string, TaskSource>, issue: Issue): TaskSource {
   const source = byName.get(issue.source);
   if (!source) {
     throw new Error(`unknown source "${issue.source}" for issue ${issue.id}`);

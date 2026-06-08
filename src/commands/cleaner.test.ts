@@ -2,7 +2,7 @@ import type { ResolvedConfig } from "../lib/config.ts";
 import { removeRunState } from "../lib/runState.ts";
 import { setVerbose } from "../lib/util.ts";
 import { canonicalLinearIssue } from "../lib/testing/canonicalFixtures.ts";
-import type { BoardState } from "../lib/ticketSource.ts";
+import type { BoardState } from "../lib/taskSource.ts";
 import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCapture.ts";
 import { emptyTeardownResult } from "../testHelpers/teardownResult.ts";
@@ -58,12 +58,12 @@ function boardOf(issues: BoardState["issues"]): BoardState {
   return { timestamp: "2025-01-01T00:00:00.000Z", issues, parentSkips: [] };
 }
 
-function hostEntryFor(repository: string, ticket: string): WorktreeEntry {
+function hostEntryFor(repository: string, task: string): WorktreeEntry {
   return {
     repository,
-    ticket,
-    branchName: `dev-${ticket.toLowerCase()}`,
-    dir: `/work/${repository}-${ticket}`,
+    task,
+    branchName: `dev-${task.toLowerCase()}`,
+    dir: `/work/${repository}-${task}`,
     kind: "host",
   };
 }
@@ -85,7 +85,7 @@ describe(createCleaner, () => {
     vi.clearAllMocks();
   });
 
-  it("calls teardown for a done ticket's worktree", async () => {
+  it("calls teardown for a done task's worktree", async () => {
     const cleaner = createCleaner({ config: makeConfig() });
     const entry = hostEntryFor("repo-a", "team-1");
     teardownMock.mockResolvedValue(emptyTeardownResult({ removed: [entry] }));
@@ -98,10 +98,10 @@ describe(createCleaner, () => {
 
     expect(teardownMock).toHaveBeenCalledWith(expect.anything(), [entry]);
     expect(removeRunStateMock).toHaveBeenCalledWith(expect.anything(), "team-1");
-    expect(consoleLog.output()).toContain("event=cleanup outcome=cleaned ticket=team-1");
+    expect(consoleLog.output()).toContain("event=cleanup outcome=cleaned task=team-1");
   });
 
-  it("ignores worktrees whose ticket is not in the terminal set", async () => {
+  it("ignores worktrees whose task is not in the terminal set", async () => {
     const cleaner = createCleaner({ config: makeConfig() });
 
     await cleaner.runOnce({
@@ -113,7 +113,7 @@ describe(createCleaner, () => {
     expect(teardownMock).not.toHaveBeenCalled();
   });
 
-  it("does not act when there are no terminal tickets", async () => {
+  it("does not act when there are no terminal tasks", async () => {
     const cleaner = createCleaner({ config: makeConfig() });
 
     await cleaner.runOnce({
@@ -125,7 +125,7 @@ describe(createCleaner, () => {
     expect(teardownMock).not.toHaveBeenCalled();
   });
 
-  it("treats in-progress tickets as non-terminal", async () => {
+  it("treats in-progress tasks as non-terminal", async () => {
     const cleaner = createCleaner({ config: makeConfig() });
 
     await cleaner.runOnce({
@@ -137,7 +137,7 @@ describe(createCleaner, () => {
     expect(teardownMock).not.toHaveBeenCalled();
   });
 
-  it("logs workspace_closed events for tickets reported by teardown", async () => {
+  it("logs workspace_closed events for tasks reported by teardown", async () => {
     const cleaner = createCleaner({ config: makeConfig() });
     teardownMock.mockResolvedValue(emptyTeardownResult({ closed: ["team-1"] }));
 
@@ -147,7 +147,7 @@ describe(createCleaner, () => {
       dryRun: false,
     });
 
-    expect(consoleLog.output()).toContain("event=cleanup outcome=workspace_closed ticket=team-1");
+    expect(consoleLog.output()).toContain("event=cleanup outcome=workspace_closed task=team-1");
   });
 
   it("logs workspace_list_failed when teardown reports the adapter unavailable", async () => {

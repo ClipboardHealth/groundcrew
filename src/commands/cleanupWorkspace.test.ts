@@ -17,7 +17,7 @@ vi.mock(import("../lib/worktrees.ts"), async (importOriginal) => {
     ...actual,
     worktrees: {
       ...actual.worktrees,
-      findByTicket: vi.fn<typeof actual.worktrees.findByTicket>(),
+      findByTask: vi.fn<typeof actual.worktrees.findByTask>(),
       teardown: vi.fn<typeof actual.worktrees.teardown>(),
     },
   };
@@ -42,7 +42,7 @@ vi.mock(import("../lib/workspaces.ts"), async (importOriginal) => {
 });
 
 const loadConfigMock = vi.mocked(loadConfig);
-const findByTicketMock = vi.mocked(worktrees.findByTicket);
+const findByTaskMock = vi.mocked(worktrees.findByTask);
 const teardownMock = vi.mocked(worktrees.teardown);
 const readRunStateMock = vi.mocked(readRunState);
 const removeRunStateMock = vi.mocked(removeRunState);
@@ -50,14 +50,14 @@ const workspaceProbeMock = vi.mocked(workspaces.probe);
 
 const hostEntry: WorktreeEntry = {
   repository: "repo-a",
-  ticket: "team-1",
+  task: "team-1",
   branchName: "dev-team-1",
   dir: "/work/repo-a-team-1",
   kind: "host",
 };
 
 const orphanRunState: RunState = {
-  ticket: "team-1",
+  task: "team-1",
   repository: "repo-a",
   model: "claude",
   worktreeDir: "/work/repo-a-team-1",
@@ -114,28 +114,28 @@ describe(cleanupWorkspace, () => {
   });
 
   it("hands the host worktree to teardown", async () => {
-    findByTicketMock.mockReturnValue([hostEntry]);
+    findByTaskMock.mockReturnValue([hostEntry]);
     teardownMock.mockResolvedValue(emptyTeardownResult({ removed: [hostEntry] }));
 
-    await cleanupWorkspace(config, { ticket: "team-1" });
+    await cleanupWorkspace(config, { task: "team-1" });
 
     expect(teardownMock).toHaveBeenCalledWith(config, [hostEntry], { force: false });
     expect(removeRunStateMock).toHaveBeenCalledWith(config, "team-1");
   });
 
   it("passes --force through to teardown", async () => {
-    findByTicketMock.mockReturnValue([hostEntry]);
+    findByTaskMock.mockReturnValue([hostEntry]);
     teardownMock.mockResolvedValue(emptyTeardownResult({ removed: [hostEntry] }));
 
-    await cleanupWorkspace(config, { ticket: "team-1", force: true });
+    await cleanupWorkspace(config, { task: "team-1", force: true });
 
     expect(teardownMock).toHaveBeenCalledWith(config, [hostEntry], { force: true });
   });
 
   it("logs and returns without calling teardown when no worktree is found", async () => {
-    findByTicketMock.mockReturnValue([]);
+    findByTaskMock.mockReturnValue([]);
 
-    await cleanupWorkspace(config, { ticket: "team-1" });
+    await cleanupWorkspace(config, { task: "team-1" });
 
     expect(teardownMock).not.toHaveBeenCalled();
     expect(consoleLog.output()).toContain("nothing to clean up");
@@ -144,10 +144,10 @@ describe(cleanupWorkspace, () => {
   });
 
   it("clears an orphaned run-state when no worktree is found", async () => {
-    findByTicketMock.mockReturnValue([]);
+    findByTaskMock.mockReturnValue([]);
     readRunStateMock.mockReturnValue(orphanRunState);
 
-    await cleanupWorkspace(config, { ticket: "team-1" });
+    await cleanupWorkspace(config, { task: "team-1" });
 
     expect(teardownMock).not.toHaveBeenCalled();
     expect(removeRunStateMock).toHaveBeenCalledWith(config, "team-1");
@@ -156,43 +156,43 @@ describe(cleanupWorkspace, () => {
   });
 
   it("leaves run-state intact when no worktree is found but a workspace is present", async () => {
-    findByTicketMock.mockReturnValue([]);
+    findByTaskMock.mockReturnValue([]);
     readRunStateMock.mockReturnValue(orphanRunState);
     workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-1"]) });
 
-    await cleanupWorkspace(config, { ticket: "team-1" });
+    await cleanupWorkspace(config, { task: "team-1" });
 
     expect(removeRunStateMock).not.toHaveBeenCalled();
     expect(consoleLog.output()).toContain("workspace still present; leaving run-state intact");
   });
 
   it("leaves run-state intact when no worktree is found and workspace probing is unavailable", async () => {
-    findByTicketMock.mockReturnValue([]);
+    findByTaskMock.mockReturnValue([]);
     readRunStateMock.mockReturnValue(orphanRunState);
     workspaceProbeMock.mockResolvedValue({ kind: "unavailable" });
 
-    await cleanupWorkspace(config, { ticket: "team-1" });
+    await cleanupWorkspace(config, { task: "team-1" });
 
     expect(removeRunStateMock).not.toHaveBeenCalled();
     expect(consoleLog.output()).toContain("workspace probe unavailable, leaving run-state intact");
   });
 
   it("clears an orphaned run-state without requiring --force", async () => {
-    findByTicketMock.mockReturnValue([]);
+    findByTaskMock.mockReturnValue([]);
     readRunStateMock.mockReturnValue(orphanRunState);
 
-    await cleanupWorkspace(config, { ticket: "team-1", force: false });
+    await cleanupWorkspace(config, { task: "team-1", force: false });
 
     expect(removeRunStateMock).toHaveBeenCalledWith(config, "team-1");
   });
 
   it("is idempotent: a second cleanup of the same orphan reports nothing to clean up", async () => {
-    findByTicketMock.mockReturnValue([]);
+    findByTaskMock.mockReturnValue([]);
     // Second call falls through to the default undefined return.
     readRunStateMock.mockReturnValueOnce(orphanRunState);
 
-    await cleanupWorkspace(config, { ticket: "team-1" });
-    await cleanupWorkspace(config, { ticket: "team-1" });
+    await cleanupWorkspace(config, { task: "team-1" });
+    await cleanupWorkspace(config, { task: "team-1" });
 
     expect(removeRunStateMock).toHaveBeenCalledTimes(1);
     expect(consoleLog.output()).toContain("cleared stale run-state");
@@ -200,7 +200,7 @@ describe(cleanupWorkspace, () => {
   });
 
   it("logs `workspace list failed: ...` when teardown reports a probe-throw error", async () => {
-    findByTicketMock.mockReturnValue([hostEntry]);
+    findByTaskMock.mockReturnValue([hostEntry]);
     teardownMock.mockResolvedValue(
       emptyTeardownResult({
         workspaceProbe: { kind: "unavailable", error: new Error("cmux exploded") },
@@ -208,25 +208,25 @@ describe(cleanupWorkspace, () => {
       }),
     );
 
-    await cleanupWorkspace(config, { ticket: "team-1" });
+    await cleanupWorkspace(config, { task: "team-1" });
 
     expect(consoleLog.output()).toContain("workspace list failed: cmux exploded");
   });
 
   it("logs and continues when marking removed run state fails", async () => {
-    findByTicketMock.mockReturnValue([hostEntry]);
+    findByTaskMock.mockReturnValue([hostEntry]);
     teardownMock.mockResolvedValue(emptyTeardownResult({ removed: [hostEntry] }));
     removeRunStateMock.mockImplementation(() => {
       throw new Error("state write failed");
     });
 
-    await cleanupWorkspace(config, { ticket: "team-1" });
+    await cleanupWorkspace(config, { task: "team-1" });
 
     expect(consoleLog.output()).toContain("Run state cleanup failed");
   });
 
   it("stays silent on workspaceProbe.unavailable when no underlying error is reported", async () => {
-    findByTicketMock.mockReturnValue([hostEntry]);
+    findByTaskMock.mockReturnValue([hostEntry]);
     teardownMock.mockResolvedValue(
       emptyTeardownResult({
         workspaceProbe: { kind: "unavailable" },
@@ -234,34 +234,34 @@ describe(cleanupWorkspace, () => {
       }),
     );
 
-    await cleanupWorkspace(config, { ticket: "team-1" });
+    await cleanupWorkspace(config, { task: "team-1" });
 
     expect(consoleLog.output()).not.toContain("workspace list failed");
   });
 
-  it("logs Closed workspace lines for each ticket teardown reports closed", async () => {
-    findByTicketMock.mockReturnValue([hostEntry]);
+  it("logs Closed workspace lines for each task teardown reports closed", async () => {
+    findByTaskMock.mockReturnValue([hostEntry]);
     teardownMock.mockResolvedValue(
       emptyTeardownResult({ closed: ["team-1"], removed: [hostEntry] }),
     );
 
-    await cleanupWorkspace(config, { ticket: "team-1" });
+    await cleanupWorkspace(config, { task: "team-1" });
 
     expect(consoleLog.output()).toContain("Closed workspace team-1");
   });
 
   it("logs Cleanup complete with each removed worktree's dir and kind", async () => {
-    findByTicketMock.mockReturnValue([hostEntry]);
+    findByTaskMock.mockReturnValue([hostEntry]);
     teardownMock.mockResolvedValue(emptyTeardownResult({ removed: [hostEntry] }));
 
-    await cleanupWorkspace(config, { ticket: "team-1" });
+    await cleanupWorkspace(config, { task: "team-1" });
 
     expect(consoleLog.output()).toContain("Cleanup complete for team-1 (host)");
     expect(consoleLog.output()).toContain("/work/repo-a-team-1 (removed)");
   });
 
   it("re-throws the first failure reported by teardown", async () => {
-    findByTicketMock.mockReturnValue([hostEntry]);
+    findByTaskMock.mockReturnValue([hostEntry]);
     teardownMock.mockResolvedValue(
       emptyTeardownResult({
         failures: [
@@ -270,30 +270,30 @@ describe(cleanupWorkspace, () => {
       }),
     );
 
-    await expect(cleanupWorkspace(config, { ticket: "team-1" })).rejects.toThrow(/worktree busy/);
+    await expect(cleanupWorkspace(config, { task: "team-1" })).rejects.toThrow(/worktree busy/);
   });
 
   it("logs workspace close failures from teardown", async () => {
-    findByTicketMock.mockReturnValue([hostEntry]);
+    findByTaskMock.mockReturnValue([hostEntry]);
     teardownMock.mockResolvedValue(
       emptyTeardownResult({
         failures: [{ entry: hostEntry, step: "workspace_close", error: new Error("cmux down") }],
       }),
     );
 
-    await expect(cleanupWorkspace(config, { ticket: "team-1" })).rejects.toThrow(/cmux down/);
+    await expect(cleanupWorkspace(config, { task: "team-1" })).rejects.toThrow(/cmux down/);
     expect(consoleLog.output()).toContain("workspace close failed for team-1: cmux down");
   });
 
   it("logs Cleanup failed for a worktree_remove failure", async () => {
-    findByTicketMock.mockReturnValue([hostEntry]);
+    findByTaskMock.mockReturnValue([hostEntry]);
     teardownMock.mockResolvedValue(
       emptyTeardownResult({
         failures: [{ entry: hostEntry, step: "worktree_remove", error: new Error("busy") }],
       }),
     );
 
-    await expect(cleanupWorkspace(config, { ticket: "team-1" })).rejects.toThrow(/busy/);
+    await expect(cleanupWorkspace(config, { task: "team-1" })).rejects.toThrow(/busy/);
     expect(consoleLog.output()).toContain("Cleanup failed for team-1 (host): busy");
   });
 });
@@ -303,7 +303,7 @@ describe(cleanupWorkspaceCli, () => {
 
   beforeEach(() => {
     consoleLog = captureConsoleLog();
-    findByTicketMock.mockReturnValue([hostEntry]);
+    findByTaskMock.mockReturnValue([hostEntry]);
     loadConfigMock.mockResolvedValue(config);
     teardownMock.mockResolvedValue(emptyTeardownResult({ removed: [hostEntry] }));
   });
@@ -313,16 +313,16 @@ describe(cleanupWorkspaceCli, () => {
     vi.resetAllMocks();
   });
 
-  it("parses the ticket from argv", async () => {
+  it("parses the task from argv", async () => {
     await cleanupWorkspaceCli(["team-1"]);
 
-    expect(findByTicketMock).toHaveBeenCalledWith(config, "team-1");
+    expect(findByTaskMock).toHaveBeenCalledWith(config, "team-1");
   });
 
-  it("lowercases an uppercase ticket arg before lookup", async () => {
+  it("lowercases an uppercase task arg before lookup", async () => {
     await cleanupWorkspaceCli(["TEAM-1"]);
 
-    expect(findByTicketMock).toHaveBeenCalledWith(config, "team-1");
+    expect(findByTaskMock).toHaveBeenCalledWith(config, "team-1");
   });
 
   it("recognizes --force anywhere in argv", async () => {
@@ -331,19 +331,19 @@ describe(cleanupWorkspaceCli, () => {
     expect(teardownMock).toHaveBeenCalledWith(config, [hostEntry], { force: true });
   });
 
-  it("throws a usage error when no ticket is provided", async () => {
+  it("throws a usage error when no task is provided", async () => {
     await expect(cleanupWorkspaceCli([])).rejects.toThrow(/Usage: crew cleanup/);
   });
 
-  it("rejects unknown options instead of treating them as the ticket", async () => {
+  it("rejects unknown options instead of treating them as the task", async () => {
     await expect(cleanupWorkspaceCli(["--bogus", "team-1"])).rejects.toThrow(
       /Unknown option: --bogus/,
     );
-    expect(findByTicketMock).not.toHaveBeenCalled();
+    expect(findByTaskMock).not.toHaveBeenCalled();
   });
 
   it("rejects extra positional args", async () => {
     await expect(cleanupWorkspaceCli(["team-1", "extra"])).rejects.toThrow(/Usage: crew cleanup/);
-    expect(findByTicketMock).not.toHaveBeenCalled();
+    expect(findByTaskMock).not.toHaveBeenCalled();
   });
 });

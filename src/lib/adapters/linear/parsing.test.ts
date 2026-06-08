@@ -1,5 +1,5 @@
 import type { ResolvedConfig } from "../../config.ts";
-import { RepositoryResolutionError } from "../../ticketSource.ts";
+import { RepositoryResolutionError } from "../../taskSource.ts";
 import {
   buildRepositoryRegex,
   parseRepository,
@@ -49,7 +49,7 @@ describe(parseRepository, () => {
       description: "fix the org/repo-a bug",
       config,
       repositoryRegex,
-      ticket: "HRD-1",
+      task: "HRD-1",
     });
     expect(result).toBe("org/repo-a");
   });
@@ -62,7 +62,7 @@ describe(parseRepository, () => {
       description: "touches repo-a somewhere",
       config,
       repositoryRegex,
-      ticket: "HRD-2",
+      task: "HRD-2",
     });
     expect(result).toBe("repo-a");
   });
@@ -79,7 +79,7 @@ describe(parseRepository, () => {
         description: "touches repo-a somewhere",
         config,
         repositoryRegex,
-        ticket: "HRD-3",
+        task: "HRD-3",
       }),
     ).toThrow(RepositoryResolutionError);
   });
@@ -93,7 +93,7 @@ describe(parseRepository, () => {
         description: "",
         config,
         repositoryRegex,
-        ticket: "HRD-4",
+        task: "HRD-4",
       }),
     ).toThrow(RepositoryResolutionError);
   });
@@ -107,7 +107,7 @@ describe(parseRepository, () => {
         description: "no repository mentioned here",
         config,
         repositoryRegex,
-        ticket: "HRD-5",
+        task: "HRD-5",
       }),
     ).toThrow(RepositoryResolutionError);
   });
@@ -149,7 +149,7 @@ describe(resolveRepositoryFor, () => {
   it("returns missing when knownRepositories is empty rather than matching the empty string", () => {
     // Pinned because buildRepositoryRegex over [] is /\b()\b/, which matches
     // the empty string at every word boundary — without this guard the
-    // dispatch / single-ticket / doctor paths would all emit a bogus
+    // dispatch / single-task / doctor paths would all emit a bogus
     // { kind: "ok", repository: "" }.
     const config = makeConfig({
       workspace: { projectDir: "/work", knownRepositories: [] },
@@ -159,9 +159,9 @@ describe(resolveRepositoryFor, () => {
 
   it("canonicalizes a bare match back to the configured `owner/repo` entry", async () => {
     // A Linear description that mentions only `repo-a` must resolve to the
-    // exact knownRepositories entry `org/repo-a` so `crew run --ticket ...`
+    // exact knownRepositories entry `org/repo-a` so `crew run --task ...`
     // launches against the correct worktree path. Without this canonicalization
-    // the single-ticket flow would launch against a bare `repo-a` directory.
+    // the single-task flow would launch against a bare `repo-a` directory.
     const config = makeConfig({
       workspace: { projectDir: "/work", knownRepositories: ["org/repo-a"] },
     });
@@ -240,7 +240,7 @@ describe(buildRepositoryRegex, () => {
   it("longer repository names beat shorter ones (api-admin vs api)", () => {
     const config = makeConfig();
     const regex = buildRepositoryRegex(config);
-    const match = regex.exec("ticket about api-admin only");
+    const match = regex.exec("task about api-admin only");
     expect(match?.[1]).toBe("api-admin");
   });
 

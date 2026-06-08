@@ -51,11 +51,11 @@ describe("run state store", () => {
     rmSync(stateRoot, { recursive: true, force: true });
   });
 
-  it("stores one JSON file per ticket next to the configured log file", () => {
+  it("stores one JSON file per task next to the configured log file", () => {
     const actual = recordRunState({
       config,
       state: {
-        ticket: "TEAM-1",
+        task: "TEAM-1",
         repository: "repo-a",
         model: "claude",
         worktreeDir: "/work/repo-a-team-1",
@@ -67,9 +67,9 @@ describe("run state store", () => {
 
     expect(runStateDirectory(config)).toBe(path.join(stateRoot, "runs"));
     expect(runStatePath(config, "team-1")).toBe(path.join(stateRoot, "runs", "team-1.json"));
-    expect(actual.ticket).toBe("team-1");
+    expect(actual.task).toBe("team-1");
     expect(readRunState(config, "TEAM-1")).toMatchObject({
-      ticket: "team-1",
+      task: "team-1",
       repository: "repo-a",
       model: "claude",
       state: "running",
@@ -81,7 +81,7 @@ describe("run state store", () => {
     const actual = recordRunState({
       config,
       state: {
-        ticket: "team-1",
+        task: "team-1",
         repository: "repo-a",
         model: "claude",
         worktreeDir: "/work/repo-a-team-1",
@@ -106,11 +106,11 @@ describe("run state store", () => {
     });
   });
 
-  it("round-trips an optional ticket title", () => {
+  it("round-trips an optional task title", () => {
     recordRunState({
       config,
       state: {
-        ticket: "team-1",
+        task: "team-1",
         repository: "repo-a",
         model: "claude",
         worktreeDir: "/work/repo-a-team-1",
@@ -130,7 +130,7 @@ describe("run state store", () => {
     recordRunState({
       config,
       state: {
-        ticket: "team-1",
+        task: "team-1",
         repository: "repo-a",
         model: "claude",
         worktreeDir: "/work/repo-a-team-1",
@@ -146,7 +146,7 @@ describe("run state store", () => {
     recordRunState({
       config,
       state: {
-        ticket: "team-1",
+        task: "team-1",
         repository: "repo-a",
         model: "claude",
         worktreeDir: "/work/repo-a-team-1",
@@ -163,11 +163,11 @@ describe("run state store", () => {
     });
   });
 
-  it("round-trips an optional ticket url and preserves it across transitions", () => {
+  it("round-trips an optional task url and preserves it across transitions", () => {
     recordRunState({
       config,
       state: {
-        ticket: "team-1",
+        task: "team-1",
         repository: "repo-a",
         model: "claude",
         worktreeDir: "/work/repo-a-team-1",
@@ -186,7 +186,7 @@ describe("run state store", () => {
     recordRunState({
       config,
       state: {
-        ticket: "team-1",
+        task: "team-1",
         repository: "repo-a",
         model: "claude",
         worktreeDir: "/work/repo-a-team-1",
@@ -206,7 +206,7 @@ describe("run state store", () => {
     recordRunState({
       config,
       state: {
-        ticket: "team-1",
+        task: "team-1",
         repository: "repo-a",
         model: "claude",
         worktreeDir: "/work/repo-a-team-1",
@@ -220,7 +220,7 @@ describe("run state store", () => {
     recordRunState({
       config,
       state: {
-        ticket: "team-1",
+        task: "team-1",
         repository: "repo-a",
         model: "claude",
         worktreeDir: "/work/repo-a-team-1",
@@ -241,7 +241,7 @@ describe("run state store", () => {
       recordRunState({
         config,
         state: {
-          ticket: "team-1",
+          task: "team-1",
           repository: "repo-a",
           model: "claude",
           worktreeDir: "/work/repo-a-team-1",
@@ -258,7 +258,7 @@ describe("run state store", () => {
     const first = recordRunState({
       config,
       state: {
-        ticket: "team-1",
+        task: "team-1",
         repository: "repo-a",
         model: "claude",
         worktreeDir: "/work/repo-a-team-1",
@@ -270,7 +270,7 @@ describe("run state store", () => {
 
     const updated = updateRunState({
       config,
-      ticket: "team-1",
+      task: "team-1",
       patch: {
         state: "interrupted",
         reason: "wrong direction",
@@ -285,7 +285,7 @@ describe("run state store", () => {
     expect(
       updateRunState({
         config,
-        ticket: "team-1",
+        task: "team-1",
         patch: {
           state: "interrupted",
           reason: "wrong direction",
@@ -307,19 +307,19 @@ describe("run state store", () => {
     writeFileSync(runStatePath(config, "team-1"), "null");
     expect(readRunState(config, "team-1")).toBeUndefined();
 
-    writeFileSync(runStatePath(config, "team-1"), JSON.stringify({ ticket: "team-1" }));
+    writeFileSync(runStatePath(config, "team-1"), JSON.stringify({ task: "team-1" }));
     expect(readRunState(config, "team-1")).toBeUndefined();
   });
 
-  it("rejects ticket ids that are not plain Linear-style ids", () => {
-    expect(() => runStatePath(config, "../team-1")).toThrow(/plain ticket id/);
+  it("rejects task ids that are not plain Linear-style ids", () => {
+    expect(() => runStatePath(config, "../team-1")).toThrow(/plain task id/);
   });
 
   it("removes a run state file", () => {
     recordRunState({
       config,
       state: {
-        ticket: "team-1",
+        task: "team-1",
         repository: "repo-a",
         model: "claude",
         worktreeDir: "/work/repo-a-team-1",
@@ -338,7 +338,7 @@ describe("run state store", () => {
     recordRunState({
       config,
       state: {
-        ticket: "team-1",
+        task: "team-1",
         repository: "repo-a",
         model: "claude",
         worktreeDir: "/work/repo-a-team-1",
@@ -349,7 +349,7 @@ describe("run state store", () => {
     });
 
     expect(JSON.parse(readFileSync(runStatePath(config, "team-1"), "utf8"))).toMatchObject({
-      ticket: "team-1",
+      task: "team-1",
       state: "running",
     });
   });

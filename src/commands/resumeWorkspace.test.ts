@@ -72,7 +72,7 @@ vi.mock(import("../lib/worktrees.ts"), async (importOriginal) => {
     ...actual,
     worktrees: {
       ...actual.worktrees,
-      findByTicket: vi.fn<typeof actual.worktrees.findByTicket>(),
+      findByTask: vi.fn<typeof actual.worktrees.findByTask>(),
       create: vi.fn<typeof actual.worktrees.create>(),
     },
   };
@@ -91,7 +91,7 @@ const getLinearClientMock = vi.mocked(getLinearClient);
 // oxlint-disable-next-line typescript/unbound-method -- workspaces is mocked to plain vi.fn properties in this file.
 const workspacesOpenMock = vi.mocked(workspaces.open);
 const workspacesProbeMock = vi.mocked(workspaces.probe);
-const findByTicketMock = vi.mocked(worktrees.findByTicket);
+const findByTaskMock = vi.mocked(worktrees.findByTask);
 const createMock = vi.mocked(worktrees.create);
 
 type RecordedRunState = Parameters<typeof recordRunState>[0]["state"];
@@ -168,7 +168,7 @@ function makeConfig(): ResolvedConfig {
 function makeWorktree(): WorktreeEntry {
   return {
     repository: "repo-a",
-    ticket: "team-1",
+    task: "team-1",
     branchName: "dev-team-1",
     dir: "/work/repo-a-team-1",
     kind: "host",
@@ -177,7 +177,7 @@ function makeWorktree(): WorktreeEntry {
 
 function makeRunState(overrides: Partial<RunState> = {}): RunState {
   const state: RunState = {
-    ticket: "team-1",
+    task: "team-1",
     repository: "repo-a",
     model: "claude",
     worktreeDir: "/work/repo-a-team-1",
@@ -214,7 +214,7 @@ describe(resumeWorkspace, () => {
     mkdtempMock.mockReturnValue("/tmp/groundcrew-resume-team-1-x");
     mockLinearIssue();
     readRunStateMock.mockReturnValue(makeRunState());
-    findByTicketMock.mockReturnValue([makeWorktree()]);
+    findByTaskMock.mockReturnValue([makeWorktree()]);
     workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set<string>() });
     workspacesOpenMock.mockResolvedValue();
     detectHostMock.mockResolvedValue(host());
@@ -231,7 +231,7 @@ describe(resumeWorkspace, () => {
   });
 
   it("opens a new workspace in the existing worktree and records a resume", async () => {
-    await resumeWorkspace(config, { ticket: "TEAM-1" });
+    await resumeWorkspace(config, { task: "TEAM-1" });
 
     expect(createMock).not.toHaveBeenCalled();
     expect(workspacesOpenMock).toHaveBeenCalledWith(
@@ -242,7 +242,7 @@ describe(resumeWorkspace, () => {
       }),
     );
     expect(lastRecordedRunState()).toMatchObject({
-      ticket: "team-1",
+      task: "team-1",
       state: "resumed",
       resumeCount: 2,
       reason: "wrong direction",
@@ -250,7 +250,7 @@ describe(resumeWorkspace, () => {
   });
 
   it("includes continuation context in the staged prompt", async () => {
-    await resumeWorkspace(config, { ticket: "team-1" });
+    await resumeWorkspace(config, { task: "team-1" });
 
     expect(writeFileMock).toHaveBeenCalledWith(
       "/tmp/groundcrew-resume-team-1-x/prompt.txt",
@@ -262,28 +262,28 @@ describe(resumeWorkspace, () => {
     );
   });
 
-  it("falls back to the ticket id when Linear detail lookup fails during state resume", async () => {
+  it("falls back to the task id when Linear detail lookup fails during state resume", async () => {
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- resume tests stub only the issue lookup surface.
     getLinearClientMock.mockReturnValue({
       issue: vi.fn<IssueLookup>().mockRejectedValue(new Error("offline")),
     } as unknown as ReturnType<typeof getLinearClient>);
 
-    await resumeWorkspace(config, { ticket: "team-1" });
+    await resumeWorkspace(config, { task: "team-1" });
 
     expect(writeFileMock).toHaveBeenCalledWith(
       "/tmp/groundcrew-resume-team-1-x/prompt.txt",
-      expect.stringContaining("ticket team-1 (TEAM-1)"),
+      expect.stringContaining("task team-1 (TEAM-1)"),
     );
   });
 
-  it("renders empty ticket details and no previous reason when state has neither", async () => {
+  it("renders empty task details and no previous reason when state has neither", async () => {
     readRunStateMock.mockReturnValue(makeRunStateWithoutReason());
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- resume tests stub only the issue lookup surface.
     getLinearClientMock.mockReturnValue({
       issue: vi.fn<IssueLookup>().mockResolvedValue({ title: "Title" }),
     } as unknown as ReturnType<typeof getLinearClient>);
 
-    await resumeWorkspace(config, { ticket: "team-1" });
+    await resumeWorkspace(config, { task: "team-1" });
 
     expect(writeFileMock).toHaveBeenCalledWith(
       "/tmp/groundcrew-resume-team-1-x/prompt.txt",
@@ -306,11 +306,11 @@ describe(resumeWorkspace, () => {
       url: "https://linear.app/example/issue/TEAM-1",
     });
 
-    await resumeWorkspace(config, { ticket: "team-1" });
+    await resumeWorkspace(config, { task: "team-1" });
 
     const fetchInput = firstFetchResolvedIssueInput();
     expect(fetchInput.config).toBe(config);
-    expect(fetchInput.ticket).toBe("team-1");
+    expect(fetchInput.task).toBe("team-1");
     expect(fetchInput.client).toBeDefined();
     expect(workspacesOpenMock).toHaveBeenCalledWith(
       config,
@@ -321,7 +321,7 @@ describe(resumeWorkspace, () => {
   it("stages neutral prepare + agent srt settings and wraps the resumed agent under srt", async () => {
     const srtConfig = { ...makeConfig(), local: { runner: "srt" as const } };
 
-    await resumeWorkspace(srtConfig, { ticket: "team-1" });
+    await resumeWorkspace(srtConfig, { task: "team-1" });
 
     expect(writeFileMock).toHaveBeenCalledWith(
       "/tmp/groundcrew-resume-team-1-x/agent-settings.json",
@@ -340,7 +340,7 @@ describe(resumeWorkspace, () => {
     const srtConfig = { ...makeConfig(), local: { runner: "srt" as const } };
     workspacesOpenMock.mockRejectedValue(new Error("cmux down"));
 
-    await expect(resumeWorkspace(srtConfig, { ticket: "team-1" })).rejects.toThrow("cmux down");
+    await expect(resumeWorkspace(srtConfig, { task: "team-1" })).rejects.toThrow("cmux down");
 
     // The settings dir is torn down on the pre-launch failure path (the launch
     // command's own teardown never ran).
@@ -351,17 +351,15 @@ describe(resumeWorkspace, () => {
   });
 
   it("fails when the worktree is absent", async () => {
-    findByTicketMock.mockReturnValue([]);
+    findByTaskMock.mockReturnValue([]);
 
-    await expect(resumeWorkspace(config, { ticket: "team-1" })).rejects.toThrow(
-      /No worktree found/,
-    );
+    await expect(resumeWorkspace(config, { task: "team-1" })).rejects.toThrow(/No worktree found/);
   });
 
   it("fails when recorded run state refers to an unknown model", async () => {
     readRunStateMock.mockReturnValue(makeRunState({ model: "missing-model" }));
 
-    await expect(resumeWorkspace(config, { ticket: "team-1" })).rejects.toThrow(
+    await expect(resumeWorkspace(config, { task: "team-1" })).rejects.toThrow(
       /Unknown model: missing-model/,
     );
   });
@@ -369,14 +367,14 @@ describe(resumeWorkspace, () => {
   it("fails when the workspace is already live", async () => {
     workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-1"]) });
 
-    await expect(resumeWorkspace(config, { ticket: "team-1" })).rejects.toThrow(/already live/);
+    await expect(resumeWorkspace(config, { task: "team-1" })).rejects.toThrow(/already live/);
     expect(workspacesOpenMock).not.toHaveBeenCalled();
   });
 
   it("fails closed when workspace liveness cannot be verified", async () => {
     workspacesProbeMock.mockResolvedValue({ kind: "unavailable" });
 
-    await expect(resumeWorkspace(config, { ticket: "team-1" })).rejects.toThrow(
+    await expect(resumeWorkspace(config, { task: "team-1" })).rejects.toThrow(
       /Could not verify whether workspace for team-1 is already live/,
     );
     expect(workspacesOpenMock).not.toHaveBeenCalled();
@@ -390,7 +388,7 @@ describe(resumeWorkspace, () => {
       error: new Error("cmux down"),
     });
 
-    await expect(resumeWorkspace(config, { ticket: "team-1" })).rejects.toThrow(
+    await expect(resumeWorkspace(config, { task: "team-1" })).rejects.toThrow(
       /cmux down.*inspect the workspace backend/,
     );
     expect(workspacesOpenMock).not.toHaveBeenCalled();
@@ -400,7 +398,7 @@ describe(resumeWorkspace, () => {
   it("removes the staged prompt directory when opening the workspace fails", async () => {
     workspacesOpenMock.mockRejectedValue(new Error("cmux failed"));
 
-    await expect(resumeWorkspace(config, { ticket: "team-1" })).rejects.toThrow(/cmux failed/);
+    await expect(resumeWorkspace(config, { task: "team-1" })).rejects.toThrow(/cmux failed/);
     expect(rmSyncMock).toHaveBeenCalledWith("/tmp/groundcrew-resume-team-1-x", {
       recursive: true,
       force: true,
@@ -417,7 +415,7 @@ describe(resumeWorkspaceCli, () => {
     mkdtempMock.mockReturnValue("/tmp/groundcrew-resume-team-1-x");
     mockLinearIssue();
     readRunStateMock.mockReturnValue(makeRunState());
-    findByTicketMock.mockReturnValue([makeWorktree()]);
+    findByTaskMock.mockReturnValue([makeWorktree()]);
     workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set<string>() });
     detectHostMock.mockResolvedValue(host());
     ensureClearanceMock.mockResolvedValue({
@@ -432,7 +430,7 @@ describe(resumeWorkspaceCli, () => {
     vi.resetAllMocks();
   });
 
-  it("parses the ticket argument", async () => {
+  it("parses the task argument", async () => {
     await resumeWorkspaceCli(["TEAM-1"]);
 
     expect(loadConfigMock).toHaveBeenCalledTimes(1);
@@ -442,7 +440,7 @@ describe(resumeWorkspaceCli, () => {
     );
   });
 
-  it("rejects missing ticket", async () => {
+  it("rejects missing task", async () => {
     await expect(resumeWorkspaceCli([])).rejects.toThrow(/Usage: crew resume/);
   });
 

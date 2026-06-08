@@ -12,7 +12,7 @@ export interface StagedPrompt {
 }
 
 interface PromptTemplateVariables {
-  ticket: string;
+  task: string;
   worktree: string;
   title: string;
   description: string;
@@ -21,7 +21,7 @@ interface PromptTemplateVariables {
 
 function renderPromptTemplate(template: string, variables: PromptTemplateVariables): string {
   return template
-    .replaceAll("{{ticket}}", variables.ticket)
+    .replaceAll("{{task}}", variables.task)
     .replaceAll("{{worktree}}", variables.worktree)
     .replaceAll("{{title}}", variables.title)
     .replaceAll("{{description}}", variables.description)
@@ -30,10 +30,10 @@ function renderPromptTemplate(template: string, variables: PromptTemplateVariabl
 
 export function stagePromptText(input: {
   prefix: string;
-  ticket: string;
+  task: string;
   text: string;
 }): StagedPrompt {
-  const promptDir = mkdtempSync(path.join(tmpdir(), `${input.prefix}-${input.ticket}-`));
+  const promptDir = mkdtempSync(path.join(tmpdir(), `${input.prefix}-${input.task}-`));
   const promptFile = path.join(promptDir, "prompt.txt");
   writeFileSync(promptFile, input.text);
   return { directory: promptDir, file: promptFile };
@@ -42,12 +42,12 @@ export function stagePromptText(input: {
 export function stagePromptFromTemplate(input: {
   config: ResolvedConfig;
   prefix: string;
-  ticket: string;
+  task: string;
   variables: PromptTemplateVariables;
 }): StagedPrompt {
   return stagePromptText({
     prefix: input.prefix,
-    ticket: input.ticket,
+    task: input.task,
     text: renderPromptTemplate(input.config.prompts.initial, input.variables),
   });
 }

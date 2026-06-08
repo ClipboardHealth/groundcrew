@@ -1,11 +1,11 @@
 import {
-  AmbiguousTicketError,
+  AmbiguousTaskError,
   isGroundcrewIssue,
   type Issue,
   naturalIdFromCanonical,
   RepositoryResolutionError,
   toCanonicalId,
-} from "./ticketSource.ts";
+} from "./taskSource.ts";
 
 function fakeIssue(overrides: Partial<Issue> = {}): Issue {
   return {
@@ -40,7 +40,7 @@ describe(isGroundcrewIssue, () => {
 describe(RepositoryResolutionError, () => {
   it("formats a message listing the known repositories", () => {
     const error = new RepositoryResolutionError({
-      ticket: "ENG-1",
+      task: "ENG-1",
       repositories: ["org/repo-a", "org/repo-b"],
     });
     expect(error.name).toBe("RepositoryResolutionError");
@@ -50,13 +50,13 @@ describe(RepositoryResolutionError, () => {
   });
 });
 
-describe(AmbiguousTicketError, () => {
+describe(AmbiguousTaskError, () => {
   it("formats a message listing the canonical ids that matched", () => {
-    const error = new AmbiguousTicketError({
+    const error = new AmbiguousTaskError({
       naturalId: "x",
       matches: ["linear:x", "shell-jira:x"],
     });
-    expect(error.name).toBe("AmbiguousTicketError");
+    expect(error.name).toBe("AmbiguousTaskError");
     expect(error.message).toContain('"x"');
     expect(error.message).toContain("linear:x");
     expect(error.message).toContain("shell-jira:x");

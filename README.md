@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  Dispatch your ticket backlog to local, interactive AI coding agents. One git worktree per ticket, sandboxed by default.
+  Dispatch your task backlog to local, interactive AI coding agents. One git worktree per task, sandboxed by default.
 </p>
 
 <p align="center">
@@ -17,18 +17,18 @@
 </p>
 
 <p align="center">
-  <a href="./static/demo.tape"><img alt="Groundcrew dispatching tickets into tmux panes with coding agents running in parallel" src="./static/demo.gif" width="800"></a>
+  <a href="./static/demo.tape"><img alt="Groundcrew dispatching tasks into tmux panes with coding agents running in parallel" src="./static/demo.gif" width="800"></a>
 </p>
 
-Groundcrew watches assigned tickets, creates isolated worktrees, launches agent CLIs in dedicated terminals, and leaves each ticket's work on its own PR-ready branch. For the backstory, read _[Tickets to pull requests while you sleep](https://www.clipboardworks.com/resources/blog/tickets-to-pull-requests-while-you-sleep)_.
+Groundcrew watches assigned tasks, creates isolated worktrees, launches agent CLIs in dedicated terminals, and leaves each task's work on its own PR-ready branch. For the backstory, read _[Tasks to pull requests while you sleep](https://www.clipboardworks.com/resources/blog/tasks-to-pull-requests-while-you-sleep)_.
 
 ## Why
 
 - **Local.** Agents run on your machine with your tools, shell, and credentials. That makes them more steerable than remote agents, and easy to nudge when they drift.
-- **Interactive.** Each ticket launches the real `claude` or `codex` CLI in its own terminal pane, not a wrapper that approximates it. Watch any session live and take over when you need to.
-- **One worktree per ticket.** Agents work in parallel without stepping on each other.
+- **Interactive.** Each task launches the real `claude` or `codex` CLI in its own terminal pane, not a wrapper that approximates it. Watch any session live and take over when you need to.
+- **One worktree per task.** Agents work in parallel without stepping on each other.
 - **Sandboxed by default.** Safehouse or Docker Sandboxes isolate each agent on the host; `none` is an explicit escape hatch.
-- **Pluggable ticket sources.** Linear by default; Jira and local files via [ticket sources](./docs/ticket-sources.md).
+- **Pluggable task sources.** Linear by default; Jira and local files via [task sources](./docs/task-sources.md).
 - **Multi-agent routing.** Ships `claude` and `codex` presets; bring your own CLI in config.
 
 ## Prerequisites
@@ -56,7 +56,7 @@ crew init --global --project-dir ~/dev --repo OWNER/REPO --model claude
 # 4. Set the clearance egress proxy allowlist.
 export CLEARANCE_ALLOW_HOSTS_FILES="$(npm root -g)/@clipboard-health/groundcrew/clearance-allow-hosts"
 
-# 5. Using Linear? Export your API key. (Jira and other trackers: see Ticket Pickup.)
+# 5. Using Linear? Export your API key. (Jira and other trackers: see Task Pickup.)
 export GROUNDCREW_LINEAR_API_KEY="lin_api_..."
 
 # 6. Verify setup, then dispatch.
@@ -66,25 +66,25 @@ crew run --watch
 
 `crew init --global` writes config to `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/`. Pass `--repo` more than once for multiple repos. `--model claude` or `--model codex` chooses the single built-in model preset to enable in the generated config.
 
-## Ticket Pickup
+## Task Pickup
 
-**Not on Linear?** Use Jira or local files via [ticket sources](./docs/ticket-sources.md).
+**Not on Linear?** Use Jira or local files via [task sources](./docs/task-sources.md).
 
-Linear works out of the box: assign tickets to yourself and add an `agent-*` label.
+Linear works out of the box: assign tasks to yourself and add an `agent-*` label.
 
 - `agent-claude`, `agent-codex`, or `agent-<name>` routes to that model.
 - `agent-any` routes to the enabled model with the most session headroom, after skipping models over their session limit or weekly paced budget.
-- Tickets without an `agent-*` label are ignored by `crew run`; dispatch one manually with `crew start <TICKET>`.
+- Tasks without an `agent-*` label are ignored by `crew run`; dispatch one manually with `crew start <TASK>`.
 
-Groundcrew scans `workspace.knownRepositories` to infer which repo a ticket belongs to.
+Groundcrew scans `workspace.knownRepositories` to infer which repo a task belongs to.
 
-A ticket blocked by non-terminal blockers is skipped until those blockers are done.
+A task blocked by non-terminal blockers is skipped until those blockers are done.
 
-### The ticket description is the prompt
+### The task description is the prompt
 
-Groundcrew sends each agent a generic unattended-execution prompt plus the ticket title and description. The prompt says how to work: read the repo instructions, make the smallest sensible change, verify it, and produce the requested output. The ticket description says what to do.
+Groundcrew sends each agent a generic unattended-execution prompt plus the task title and description. The prompt says how to work: read the repo instructions, make the smallest sensible change, verify it, and produce the requested output. The task description says what to do.
 
-Write tickets as complete agent instructions: the goal, the context and constraints, links to logs or screenshots, how to verify, and the output you want. A vague ticket gets a vague PR.
+Write tasks as complete agent instructions: the goal, the context and constraints, links to logs or screenshots, how to verify, and the output you want. A vague task gets a vague PR.
 
 ## Commands
 
@@ -93,12 +93,12 @@ crew init [--global | --local] [--force] [--dry-run]     # create a crew.config.
           [--project-dir <dir>] [--repo <repo>]...
           [--runner <auto|safehouse|sdx|none>] [--model <claude|codex>]
 crew doctor                                              # check setup
-crew status [<TICKET>]                                   # inspect current state or one ticket
+crew status [<TASK>]                                   # inspect current state or one task
 crew run [--watch]                                       # one-shot or --watch forever
-crew start <TICKET>                                      # provision + launch one ticket now
-crew stop <TICKET> [--reason <text>]                     # stop workspace, keep worktree
-crew resume <TICKET>                                     # reopen a paused ticket
-crew cleanup <TICKET>                                    # tear down every worktree for a ticket
+crew start <TASK>                                      # provision + launch one task now
+crew stop <TASK> [--reason <text>]                     # stop workspace, keep worktree
+crew resume <TASK>                                     # reopen a paused task
+crew cleanup <TASK>                                    # tear down every worktree for a task
 crew upgrade [<version>]                                 # reinstall crew globally through npm
 ```
 
@@ -147,7 +147,7 @@ There is no `linear` config block. Groundcrew reads `GROUNDCREW_LINEAR_API_KEY` 
 - [Runners](./docs/runners.md): Safehouse, Docker Sandboxes, and the `none` escape hatch.
 - [Credentials](./docs/credentials.md): Linear API keys, 1Password, build secrets, and `preLaunch`.
 - [Prepare worktree hooks](./docs/setup-hooks.md): `.groundcrew/config.json` `hooks.prepareWorktree` for per-repo dependency setup.
-- [Ticket sources](./docs/ticket-sources.md): custom shell/Jira/local-plan adapters.
+- [Task sources](./docs/task-sources.md): custom shell/Jira/local-plan adapters.
 - [Troubleshooting](./docs/troubleshooting.md): common operational pitfalls and fixes.
 
 ## Development

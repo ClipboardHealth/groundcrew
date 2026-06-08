@@ -111,7 +111,7 @@ describe("loadConfig", () => {
     expect(actual.models.default).toBe("claude");
     expect(Object.keys(actual.models.definitions).toSorted()).toStrictEqual(["claude"]);
     expect(actual.models.definitions["claude"]?.cmd).toBe("claude --permission-mode auto");
-    expect(actual.prompts.initial).toContain("{{ticket}}");
+    expect(actual.prompts.initial).toContain("{{task}}");
     expect(actual.sources).toStrictEqual([]);
   });
 
@@ -126,11 +126,11 @@ describe("loadConfig", () => {
     const actual = await loadConfig();
 
     expect(actual.prompts.initial).toContain("There is no human watching this session");
-    expect(actual.prompts.initial).toContain("Ticket description:\n\n{{description}}");
+    expect(actual.prompts.initial).toContain("Task description:\n\n{{description}}");
     expect(actual.prompts.initial).toMatch(/documented verification/i);
     expect(actual.prompts.initial).toMatch(/open a PR/i);
     expect(actual.prompts.initial).toContain("{{workspaceContinuationInstruction}}");
-    expect(actual.prompts.initial).not.toContain("tmux attach -t groundcrew:{{ticket}}");
+    expect(actual.prompts.initial).not.toContain("tmux attach -t groundcrew:{{task}}");
   });
 
   it("resolves a valid git.branchPrefix", async () => {
@@ -1091,13 +1091,13 @@ describe("loadConfig", () => {
       temporary,
       validConfigSource({
         workspace: VALID_WORKSPACE(temporary),
-        prompts: { initial: "do {{ticket}} in {{worktree}}" },
+        prompts: { initial: "do {{task}} in {{worktree}}" },
       }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
-    expect(actual.prompts.initial).toBe("do {{ticket}} in {{worktree}}");
+    expect(actual.prompts.initial).toBe("do {{task}} in {{worktree}}");
   });
 
   it("allows known placeholders in prompts.initial", async () => {
@@ -1107,7 +1107,7 @@ describe("loadConfig", () => {
         workspace: VALID_WORKSPACE(temporary),
         prompts: {
           initial:
-            "{{ticket}} {{worktree}} {{title}} {{description}} {{workspaceContinuationInstruction}}",
+            "{{task}} {{worktree}} {{title}} {{description}} {{workspaceContinuationInstruction}}",
         },
       }),
     );
@@ -1115,7 +1115,7 @@ describe("loadConfig", () => {
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
     expect(actual.prompts.initial).toBe(
-      "{{ticket}} {{worktree}} {{title}} {{description}} {{workspaceContinuationInstruction}}",
+      "{{task}} {{worktree}} {{title}} {{description}} {{workspaceContinuationInstruction}}",
     );
   });
 
