@@ -3,7 +3,6 @@
   "entry": [
     "bin/*.js",
     "crew.config.example.ts",
-    "src/index.ts",
     "src/lib/adapters/*/index.ts",
     "src/main.ts",
     "vitest.shared.ts"
