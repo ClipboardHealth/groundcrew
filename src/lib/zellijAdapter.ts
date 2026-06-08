@@ -7,7 +7,7 @@
  * attach, and enables the mouse by default. zellij can't paint status pills,
  * so `open` silently drops `spec.status`.
  *
- * Two zellij quirks shape this adapter:
+ * zellij quirks shape this adapter:
  *   1. Tab actions that target the *active* tab (`close-tab`, `go-to-tab-name`)
  *      silently no-op on a detached session with no attached client. Only
  *      `close-tab-by-id` works headlessly — so `open` captures the stable id
@@ -15,9 +15,14 @@
  *   2. `new-tab --layout` resolves a *file path* (not an inline string) and a
  *      per-tab layout does not inherit the session's tab-bar/status-bar, so we
  *      stage an absolute-path KDL file that includes the bar plugins itself.
+ *   3. There is no headless way to read a tab's command-exit state, so the
+ *      agent command touches a marker file on exit that `list()` checks.
+ *   4. zellij resurrects serialized sessions on attach; `open` drops a stale
+ *      resurrectable groundcrew session before creating a fresh one so dead
+ *      agent tabs don't reappear.
  */
 
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -49,9 +54,29 @@ function tabIdMapPath(): string {
   );
 }
 
+// zellij exposes no headless way to read a tab's command-exit state (dump-layout
+// doesn't distinguish exited from running, current-tab-info needs a client). So
+// the agent command touches a per-ticket marker when it exits on its own; a
+// groundcrew-issued close kills the process before the marker is written.
+function exitMarkerDir(): string {
+  return (
+    readEnvironmentVariable("GROUNDCREW_ZELLIJ_EXIT_DIR") ??
+    path.join(tmpdir(), "groundcrew-zellij-exited")
+  );
+}
+
+function exitMarkerPath(name: string): string {
+  return path.join(exitMarkerDir(), name.replaceAll(/[^a-zA-Z0-9_-]/g, "_"));
+}
+
+function clearExitMarker(name: string): void {
+  rmSync(exitMarkerPath(name), { force: true });
+}
+
 export const zellijAdapter: Adapter = {
   async open(spec, signal) {
     await ensureZellijSession(signal);
+    clearExitMarker(spec.name);
     const layoutFile = stageTabLayout(spec.name, spec.command);
     const output = await runWorkspaceCommand(
       "zellij",
@@ -97,7 +122,11 @@ export const zellijAdapter: Adapter = {
       // oxlint-disable-next-line unicorn/no-useless-undefined -- undefined marks the workspace backend as unavailable.
       return undefined;
     }
-    return parseTabNames(output);
+    return parseTabNames(output).map((workspace) =>
+      existsSync(exitMarkerPath(workspace.name))
+        ? { name: workspace.name, state: "exited" }
+        : workspace,
+    );
   },
   async close(name, signal) {
     const tabId = lookupTabId(name);
@@ -105,6 +134,7 @@ export const zellijAdapter: Adapter = {
       // Without the stable id we can't `close-tab-by-id`, and the active-tab
       // close paths no-op headlessly. Treat as already gone.
       debug(`zellij close: no tracked tab id for ${name}; treating as missing`);
+      clearExitMarker(name);
       return { kind: "missing" };
     }
     try {
@@ -114,6 +144,7 @@ export const zellijAdapter: Adapter = {
         signal,
       );
       forgetTabId(name);
+      clearExitMarker(name);
       return { kind: "closed" };
     } catch (error) {
       if (isSignalAborted(signal)) {
@@ -121,6 +152,7 @@ export const zellijAdapter: Adapter = {
       }
       if (isZellijMissingError(error)) {
         forgetTabId(name);
+        clearExitMarker(name);
         return { kind: "missing" };
       }
       throw error;
@@ -133,8 +165,22 @@ export const zellijAdapter: Adapter = {
 };
 
 async function ensureZellijSession(signal?: AbortSignal): Promise<void> {
-  if (await zellijSessionExists(signal)) {
+  const state = await zellijSessionState(signal);
+  if (state === "active") {
     return;
+  }
+  if (state === "exited") {
+    // zellij serializes sessions and resurrects them on attach; a stale
+    // resurrectable groundcrew session would replay dead agent tabs. Drop it
+    // so we start clean. (delete-session only acts on non-active sessions.)
+    try {
+      await runWorkspaceCommand("zellij", ["delete-session", ZELLIJ_SESSION], signal);
+    } catch (error) {
+      if (isSignalAborted(signal)) {
+        throw error;
+      }
+      debug(`zellij delete-session (stale) failed: ${errorMessage(error)}`);
+    }
   }
   try {
     await runWorkspaceCommand(
@@ -147,27 +193,36 @@ async function ensureZellijSession(signal?: AbortSignal): Promise<void> {
       throw error;
     }
     // A racing creator may have won; tolerate that.
-    if (await zellijSessionExists(signal)) {
+    if ((await zellijSessionState(signal)) === "active") {
       return;
     }
     throw error;
   }
 }
 
-async function zellijSessionExists(signal?: AbortSignal): Promise<boolean> {
+/**
+ * Whether the groundcrew session is live, resurrectable (serialized but not
+ * running), or absent. Parses `list-sessions -n` (no ANSI); an exited session
+ * is tagged `(EXITED - attach to resurrect)`.
+ */
+async function zellijSessionState(signal?: AbortSignal): Promise<"active" | "exited" | "absent"> {
+  let output: string;
   try {
-    const output = await runWorkspaceCommand("zellij", ["list-sessions", "-s"], signal);
-    return output
-      .split("\n")
-      .map((line) => line.trim())
-      .includes(ZELLIJ_SESSION);
+    output = await runWorkspaceCommand("zellij", ["list-sessions", "-n"], signal);
   } catch (error) {
     if (isSignalAborted(signal)) {
       throw error;
     }
     // `list-sessions` exits non-zero when there are no sessions at all.
-    return false;
+    return "absent";
   }
+  for (const line of output.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed.split(/\s+/)[0] === ZELLIJ_SESSION) {
+      return trimmed.includes("EXITED") ? "exited" : "active";
+    }
+  }
+  return "absent";
 }
 
 function parseTabNames(output: string): Workspace[] {
@@ -259,12 +314,24 @@ ${mainPane}    }
  */
 function stageTabLayout(ticket: string, command: string): string {
   const file = path.join(staging(), `tab-${ticket.replaceAll(/[^a-zA-Z0-9_-]/g, "_")}.kdl`);
+  // Touch the exit marker once the agent exits on its own, so `list()` can
+  // report the tab as exited. A groundcrew close kills the process first, so
+  // the marker is never written in that case.
+  try {
+    mkdirSync(exitMarkerDir(), { recursive: true });
+  } catch (error) {
+    debug(`zellij: could not create exit-marker dir: ${errorMessage(error)}`);
+  }
+  // An EXIT trap fires on any exit (including an explicit `exit` in the agent
+  // command), unlike a trailing `; touch`. The marker path is sanitized to
+  // [A-Za-z0-9_-] under tmpdir, so single-quoting it in the trap is safe.
+  const wrapped = `trap ${shSingleQuote(`touch ${exitMarkerPath(ticket)}`)} EXIT; ${command}`;
   writeFileSync(
     file,
     `layout {
     pane size=1 borderless=true { plugin location="tab-bar"; }
     pane command="sh" {
-        args "-c" "${kdlString(command)}"
+        args "-c" "${kdlString(wrapped)}"
     }
     pane size=1 borderless=true { plugin location="status-bar"; }
 }

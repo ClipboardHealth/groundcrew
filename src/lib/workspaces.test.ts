@@ -1,4 +1,4 @@
-import { rmSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -1082,6 +1082,7 @@ describe(resolveWorkspaceKind, () => {
 });
 
 const ZELLIJ_TAB_MAP = path.join(tmpdir(), "groundcrew-zellij-test-tabs.json");
+const ZELLIJ_EXIT_DIR = path.join(tmpdir(), "groundcrew-zellij-test-exited");
 
 function makeZellijHost(): HostCapabilities {
   return makeHost({ hasCmux: false, hasTmux: false, hasZellij: true });
@@ -1121,7 +1122,7 @@ describe("workspaces.open (zellij)", () => {
       command: "exec claude",
     });
 
-    expect(runMock).toHaveBeenCalledWith("zellij", ["list-sessions", "-s"]);
+    expect(runMock).toHaveBeenCalledWith("zellij", ["list-sessions", "-n"]);
     expect(runMock).toHaveBeenCalledWith(
       "zellij",
       expect.arrayContaining(["attach", "--create-background", "groundcrew"]),
@@ -1141,8 +1142,8 @@ describe("workspaces.open (zellij)", () => {
     );
   });
 
-  it("skips session creation when the session already exists", async () => {
-    runMock.mockImplementation(whenArg("list-sessions", "groundcrew\nother"));
+  it("skips session creation when the session is already active", async () => {
+    runMock.mockImplementation(whenArg("list-sessions", "groundcrew [Created 1s ago]"));
 
     await workspaces.open(makeConfig("zellij"), { name: "team-1", cwd: "/cwd", command: "x" });
 
@@ -1150,7 +1151,22 @@ describe("workspaces.open (zellij)", () => {
       "zellij",
       expect.arrayContaining(["attach", "--create-background", "groundcrew"]),
     );
+    expect(runMock).not.toHaveBeenCalledWith("zellij", ["delete-session", "groundcrew"]);
     expect(runMock).toHaveBeenCalledWith("zellij", expect.arrayContaining(["new-tab"]));
+  });
+
+  it("drops a stale resurrectable session before creating a fresh one", async () => {
+    runMock.mockImplementation(
+      whenArg("list-sessions", "groundcrew [Created 9m ago] (EXITED - attach to resurrect)"),
+    );
+
+    await workspaces.open(makeConfig("zellij"), { name: "team-1", cwd: "/cwd", command: "x" });
+
+    expect(runMock).toHaveBeenCalledWith("zellij", ["delete-session", "groundcrew"]);
+    expect(runMock).toHaveBeenCalledWith(
+      "zellij",
+      expect.arrayContaining(["attach", "--create-background", "groundcrew"]),
+    );
   });
 });
 
@@ -1158,8 +1174,15 @@ describe("workspaces.probe (zellij)", () => {
   beforeEach(() => {
     commonBeforeEach();
     detectHostMock.mockResolvedValue(makeZellijHost());
+    setEnvironmentVariable("GROUNDCREW_ZELLIJ_EXIT_DIR", ZELLIJ_EXIT_DIR);
+    rmSync(ZELLIJ_EXIT_DIR, { recursive: true, force: true });
+    mkdirSync(ZELLIJ_EXIT_DIR, { recursive: true });
   });
-  afterEach(commonAfterEach);
+  afterEach(() => {
+    deleteEnvironmentVariable("GROUNDCREW_ZELLIJ_EXIT_DIR");
+    rmSync(ZELLIJ_EXIT_DIR, { recursive: true, force: true });
+    commonAfterEach();
+  });
 
   it("treats an absent session as no workspaces", async () => {
     runMock.mockImplementation(whenArgThrows("query-tab-names", "There is no active session!"));
@@ -1184,6 +1207,17 @@ describe("workspaces.probe (zellij)", () => {
 
     const probe = await workspaces.probe(makeConfig("zellij"));
     expect(probe.kind).toBe("unavailable");
+  });
+
+  it("marks a tab exited when its exit marker is present", async () => {
+    writeFileSync(path.join(ZELLIJ_EXIT_DIR, "devop-1"), "");
+    runMock.mockImplementation(whenArg("query-tab-names", "main\ndevop-1\ndevop-2"));
+
+    await expect(workspaces.probe(makeConfig("zellij"))).resolves.toStrictEqual({
+      kind: "ok",
+      names: new Set(["devop-1", "devop-2"]),
+      exitedNames: new Set(["devop-1"]),
+    });
   });
 });
 
