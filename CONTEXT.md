@@ -27,9 +27,12 @@ Lifecycle and lookup live in `src/lib/workspaces.ts`. Callers ask `workspaces.op
 
 ## Runner
 
-The environment that executes the agent command for a task. Groundcrew is **macOS-only**: it requires `safehouse` on `PATH`, starts `clearance`, and launches the model command through `safehouse-clearance` inside the host worktree.
+The environment that executes the agent command for a task. Groundcrew is cross-platform; the sandbox binary differs by OS:
 
-There is no `models.isolation` strategy, Docker Sandboxes runner, remote runner, or Linux/WSL support. Legacy `.sbx` worktrees and persistent Docker Sandboxes state are no longer discovered or cleaned up by groundcrew; users remove old state manually with `sbx` if needed.
+- **macOS** — uses `safehouse`: requires `safehouse` on `PATH`, starts `clearance`, and launches the model command through `safehouse-clearance` inside the host worktree.
+- **Linux / WSL** — uses `sbx` (cross-platform default): `sbx` must be on `PATH`.
+
+There is no `models.isolation` strategy, Docker Sandboxes runner, or remote runner. Legacy `.sbx` worktrees and persistent Docker Sandboxes state are no longer discovered or cleaned up by groundcrew; users remove old state manually with `sbx` if needed.
 
 ## Dispatcher
 
