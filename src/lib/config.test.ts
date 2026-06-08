@@ -1691,6 +1691,27 @@ describe("loadConfig", () => {
     expect(actual.sources).toStrictEqual([{ kind: "shell", name: "jira" }]);
   });
 
+  it("expands ~ in todo-txt todoPath and tasksDir", async () => {
+    setEnvironmentVariable("HOME", "/fake-home");
+    const configPath = writeConfigFile(
+      temporary,
+      [
+        "export default {",
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        `  models: { definitions: { claude: {} } },`,
+        `  sources: [{ kind: "todo-txt", name: "todo", todoPath: "~/todo.md", tasksDir: "~/.tasks", idPrefix: "GC", timezone: "UTC" }],`,
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+    expect(actual.sources[0]).toMatchObject({
+      todoPath: "/fake-home/todo.md",
+      tasksDir: "/fake-home/.tasks",
+    });
+  });
+
   it("preserves the Linear disabled sentinel through resolution", async () => {
     const configPath = writeConfigFile(
       temporary,
