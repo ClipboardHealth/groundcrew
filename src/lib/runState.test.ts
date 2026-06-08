@@ -311,7 +311,13 @@ describe("run state store", () => {
     expect(readRunState(config, "team-1")).toBeUndefined();
   });
 
-  it("rejects task ids that are not plain Linear-style ids", () => {
+  it("accepts multi-segment source task ids", () => {
+    expect(runStatePath(config, "gc-20260608-001")).toBe(
+      path.join(stateRoot, "runs", "gc-20260608-001.json"),
+    );
+  });
+
+  it("rejects task ids that are not plain source task ids", () => {
     expect(() => runStatePath(config, "../team-1")).toThrow(/plain task id/);
   });
 

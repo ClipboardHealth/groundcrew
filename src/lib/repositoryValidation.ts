@@ -11,6 +11,10 @@
 
 import type { Issue } from "./taskSource.ts";
 
+export function formatKnownRepositories(knownRepositories: readonly string[]): string {
+  return knownRepositories.join(", ") || "(none)";
+}
+
 export function dispatchableRepository(
   issue: Issue,
   knownRepositories: readonly string[],
@@ -21,7 +25,7 @@ export function dispatchableRepository(
   }
   if (!knownRepositories.includes(issue.repository)) {
     log(
-      `issue ${issue.id} references unknown repository ${issue.repository}; configured workspace.knownRepositories: ${knownRepositories.join(", ") || "(none)"}`,
+      `issue ${issue.id} references unknown repository ${issue.repository}; configured workspace.knownRepositories: ${formatKnownRepositories(knownRepositories)}`,
     );
     return undefined;
   }

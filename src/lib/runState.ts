@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node
 import path from "node:path";
 
 import type { ResolvedConfig } from "./config.ts";
+import { normalizePlainTaskId } from "./taskId.ts";
 
 export type RunLifecycleState = "running" | "interrupted" | "resumed" | "failed-to-launch";
 
@@ -61,15 +62,10 @@ export interface UpdateRunStateInput {
   };
 }
 
-const TASK_RE = /^[a-z][\da-z]*-\d+$/;
 const RUN_STATE_DIRECTORY_NAME = "runs";
 
 function taskKey(task: string): string {
-  const normalized = task.toLowerCase();
-  if (!TASK_RE.test(normalized)) {
-    throw new Error(`Invalid task "${task}": must be a plain task id`);
-  }
-  return normalized;
+  return normalizePlainTaskId(task);
 }
 
 export function runStateDirectory(config: Pick<ResolvedConfig, "logging">): string {
