@@ -1,5 +1,35 @@
 # Commands
 
+## Task
+
+`crew task list` lists normalized tasks across all configured sources. Use `--source <name>` to call only one source's `listTasks()` method. Filters include repeatable `--status <status>`, `--agent <name>`, `--repo <owner/repo>`, `--blocked`, `--unblocked`, and `--limit <n>`. Add `--json` for normalized task JSON.
+
+```bash
+crew task list
+crew task list --source todo --status todo --unblocked
+crew task list --agent codex --repo ClipboardHealth/api --json
+```
+
+`crew task get <task-id>` prints one normalized task. Canonical IDs such as `todo:GC-20260608-001` route directly to the named source. Natural IDs can be resolved with `--source <name>` or, when unique, by searching all configured sources. If more than one source matches, the command fails and asks for a canonical ID or `--source`.
+
+```bash
+crew task get todo:GC-20260608-001
+crew task get GC-20260608-001 --source todo
+crew task get todo:GC-20260608-001 --prompt
+```
+
+`crew task create "Short title" --source <source> --agent <agent>` creates a task in a source that supports creation. Todo.txt creation appends the todo line, defaults to priority `A` unless `--priority` is provided, writes `.tasks/<id>.md`, and leaves `status:todo` as the final meaningful token, so no separate ready command is required.
+
+```bash
+crew task create "Fix cancellation retry race" \
+  --source todo \
+  --agent codex \
+  --repo ClipboardHealth/api \
+  --project marketplace \
+  --context backend \
+  --edit
+```
+
 ## Status
 
 `crew status <TASK>` prints a read-only snapshot for one task: cached title and URL when present, recorded run state, live workspace presence, matching worktrees, git dirtiness, PR links for matching branches, recent log lines when present, and the task status from the configured task source.

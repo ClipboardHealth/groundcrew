@@ -11,6 +11,8 @@ function fakeSource(name: string, overrides: Partial<TaskSource> = {}): TaskSour
   return {
     name,
     verify: vi.fn<() => Promise<void>>().mockResolvedValue(),
+    listTasks: vi.fn<() => Promise<Issue[]>>().mockResolvedValue([]),
+    getTask: vi.fn<(id: string) => Promise<Issue | null>>().mockResolvedValue(null),
     fetch: vi.fn<() => Promise<Issue[]>>().mockResolvedValue([]),
     // eslint-disable-next-line unicorn/no-useless-undefined -- mockResolvedValue requires a value for non-void return type
     resolveOne: vi.fn<(id: string) => Promise<Issue | undefined>>().mockResolvedValue(undefined),
@@ -93,8 +95,8 @@ describe("Board.fetch", () => {
       .fn<() => Promise<Issue[]>>()
       .mockResolvedValue([fakeIssue("b:1", "b"), fakeIssue("b:2", "b")]);
     const board = createBoard([
-      fakeSource("a", { fetch: aFetch }),
-      fakeSource("b", { fetch: bFetch }),
+      fakeSource("a", { listTasks: aFetch }),
+      fakeSource("b", { listTasks: bFetch }),
     ]);
     const state = await board.fetch();
     expect(state.issues.map((i) => i.id).toSorted()).toStrictEqual(["a:1", "b:1", "b:2"]);
@@ -116,7 +118,7 @@ describe("Board.fetch", () => {
     let cache: ParentSkip[] = [];
     const board = createBoard([
       fakeSource("a", {
-        fetch: vi.fn<() => Promise<Issue[]>>().mockImplementation(async () => {
+        listTasks: vi.fn<() => Promise<Issue[]>>().mockImplementation(async () => {
           await Promise.resolve();
           cache = [{ id: "a:parent-1", title: "Parent A", childCount: 2 }];
           return [];
@@ -136,14 +138,14 @@ describe("Board.fetch", () => {
 describe("Board.resolveOne", () => {
   it("routes a canonical id directly to the named source", async () => {
     const aResolve = vi
-      .fn<(id: string) => Promise<Issue | undefined>>()
+      .fn<(id: string) => Promise<Issue | null>>()
       .mockResolvedValue(fakeIssue("a:1", "a"));
     const bResolve = vi
-      .fn<(id: string) => Promise<Issue | undefined>>()
+      .fn<(id: string) => Promise<Issue | null>>()
       .mockRejectedValue(new Error("should not be called"));
     const board = createBoard([
-      fakeSource("a", { resolveOne: aResolve }),
-      fakeSource("b", { resolveOne: bResolve }),
+      fakeSource("a", { getTask: aResolve }),
+      fakeSource("b", { getTask: bResolve }),
     ]);
     const result = await board.resolveOne("a:1");
     expect(result?.id).toBe("a:1");
@@ -152,9 +154,9 @@ describe("Board.resolveOne", () => {
 
   it("fans out a natural id and returns the unique match", async () => {
     const bResolve = vi
-      .fn<(id: string) => Promise<Issue | undefined>>()
+      .fn<(id: string) => Promise<Issue | null>>()
       .mockResolvedValue(fakeIssue("b:x", "b"));
-    const board = createBoard([fakeSource("a"), fakeSource("b", { resolveOne: bResolve })]);
+    const board = createBoard([fakeSource("a"), fakeSource("b", { getTask: bResolve })]);
     const result = await board.resolveOne("x");
     expect(result?.id).toBe("b:x");
   });
@@ -166,14 +168,14 @@ describe("Board.resolveOne", () => {
 
   it("throws AmbiguousTaskError when multiple sources match a natural id", async () => {
     const aResolve = vi
-      .fn<(id: string) => Promise<Issue | undefined>>()
+      .fn<(id: string) => Promise<Issue | null>>()
       .mockResolvedValue(fakeIssue("a:x", "a"));
     const bResolve = vi
-      .fn<(id: string) => Promise<Issue | undefined>>()
+      .fn<(id: string) => Promise<Issue | null>>()
       .mockResolvedValue(fakeIssue("b:x", "b"));
     const board = createBoard([
-      fakeSource("a", { resolveOne: aResolve }),
-      fakeSource("b", { resolveOne: bResolve }),
+      fakeSource("a", { getTask: aResolve }),
+      fakeSource("b", { getTask: bResolve }),
     ]);
     await expect(board.resolveOne("x")).rejects.toThrow(/ambiguous.*a:x.*b:x/i);
   });
@@ -191,14 +193,14 @@ describe("Board.resolveOne", () => {
   // the shell-resolved issue.
   it("treats a source rejection as 'not found here' when another source matches", async () => {
     const aResolve = vi
-      .fn<(id: string) => Promise<Issue | undefined>>()
+      .fn<(id: string) => Promise<Issue | null>>()
       .mockRejectedValue(new Error("Entity not found: Issue"));
     const bResolve = vi
-      .fn<(id: string) => Promise<Issue | undefined>>()
+      .fn<(id: string) => Promise<Issue | null>>()
       .mockResolvedValue(fakeIssue("b:x", "b"));
     const board = createBoard([
-      fakeSource("a", { resolveOne: aResolve }),
-      fakeSource("b", { resolveOne: bResolve }),
+      fakeSource("a", { getTask: aResolve }),
+      fakeSource("b", { getTask: bResolve }),
     ]);
     const result = await board.resolveOne("x");
     expect(result?.id).toBe("b:x");
@@ -206,10 +208,10 @@ describe("Board.resolveOne", () => {
 
   it("surfaces a source rejection when no other source matched", async () => {
     const aResolve = vi
-      .fn<(id: string) => Promise<Issue | undefined>>()
+      .fn<(id: string) => Promise<Issue | null>>()
       .mockRejectedValue(new Error("Linear API: timeout"));
     const board = createBoard([
-      fakeSource("a", { resolveOne: aResolve }),
+      fakeSource("a", { getTask: aResolve }),
       fakeSource("b"), // resolves undefined by default
     ]);
     await expect(board.resolveOne("x")).rejects.toThrow(/Linear API: timeout/);

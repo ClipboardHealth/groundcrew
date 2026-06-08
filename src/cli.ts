@@ -9,6 +9,7 @@ import { resumeWorkspaceCli } from "./commands/resumeWorkspace.ts";
 import { setupWorkspaceCli } from "./commands/setupWorkspace.ts";
 import { sourceCli } from "./commands/source.ts";
 import { statusCli } from "./commands/status.ts";
+import { taskCli } from "./commands/task.ts";
 import { createDefaultUpgradeCliOptions, upgradeCli } from "./commands/upgrade.ts";
 import {
   errorMessage,
@@ -179,6 +180,11 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
     summary: "Inspect configured task sources",
     usage: "<list|verify> [...]",
     invoke: sourceCli,
+  },
+  task: {
+    summary: "List, get, and create tasks across configured sources",
+    usage: "<list|get|create> [...]",
+    invoke: taskCli,
   },
   status: {
     summary: "Print read-only groundcrew state, or one task's local/Linear status",

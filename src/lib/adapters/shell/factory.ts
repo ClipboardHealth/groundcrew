@@ -145,6 +145,31 @@ export function createShellTaskSource(
     return parsed.map((si) => toCanonicalIssue(si, sourceName));
   }
 
+  async function getTask(naturalId: string): Promise<CanonicalIssue | null> {
+    const canonicalId = toCanonicalId(sourceName, naturalId);
+    if (getTaskCommand === undefined) {
+      const all = await runFetch();
+      return all.find((i) => i.id === canonicalId) ?? null;
+    }
+    const result = await invokeShellCommand({
+      command: getTaskCommand,
+      timeoutMs: timeouts.getTask,
+      cwd: config.cwd,
+      env: config.env,
+      substitutions: {
+        id: naturalId,
+        canonicalId,
+        name: sourceName,
+      },
+      sourceName,
+    });
+    if (result.exitCode === 3 || result.stdout.trim().length === 0) {
+      return null;
+    }
+    const parsed = shellIssueSchema.parse(JSON.parse(result.stdout));
+    return toCanonicalIssue(parsed, sourceName);
+  }
+
   // Shared by markInProgress / markInReview: both pipe the canonical issue's
   // opaque sourceRef to a status-transition script on stdin, with the natural
   // and canonical ids substituted into the command.
@@ -189,30 +214,15 @@ export function createShellTaskSource(
         sourceName,
       });
     },
+    async listTasks(): Promise<CanonicalIssue[]> {
+      return await runFetch();
+    },
+    async getTask(naturalId: string): Promise<CanonicalIssue | null> {
+      return await getTask(naturalId);
+    },
     fetch: runFetch,
     async resolveOne(naturalId: string): Promise<CanonicalIssue | undefined> {
-      const canonicalId = toCanonicalId(sourceName, naturalId);
-      if (getTaskCommand === undefined) {
-        const all = await runFetch();
-        return all.find((i) => i.id === canonicalId);
-      }
-      const result = await invokeShellCommand({
-        command: getTaskCommand,
-        timeoutMs: timeouts.getTask,
-        cwd: config.cwd,
-        env: config.env,
-        substitutions: {
-          id: naturalId,
-          canonicalId,
-          name: sourceName,
-        },
-        sourceName,
-      });
-      if (result.exitCode === 3 || result.stdout.trim().length === 0) {
-        return undefined;
-      }
-      const parsed = shellIssueSchema.parse(JSON.parse(result.stdout));
-      return toCanonicalIssue(parsed, sourceName);
+      return (await getTask(naturalId)) ?? undefined;
     },
     async markInProgress(issue: CanonicalIssue): Promise<void> {
       await invokeWriteback(config.commands.markInProgress, timeouts.markInProgress, issue);

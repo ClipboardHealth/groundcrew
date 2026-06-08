@@ -56,6 +56,8 @@ function stubSource(name: string): TaskSource {
   return {
     name,
     verify: vi.fn<TaskSource["verify"]>(),
+    listTasks: vi.fn<TaskSource["listTasks"]>(),
+    getTask: vi.fn<TaskSource["getTask"]>(),
     fetch: vi.fn<TaskSource["fetch"]>(),
     resolveOne: vi.fn<TaskSource["resolveOne"]>(),
     markInProgress: vi.fn<TaskSource["markInProgress"]>(),
@@ -188,8 +190,8 @@ describe("crew source list", () => {
     const [, dataRow] = lines;
     expect(dataRow).toContain("todo");
     expect(dataRow).toContain("todo-txt");
-    // verify=yes, listTasks=yes, getTask=yes, create=no, writeback=yes
-    expect(dataRow).toMatch(/yes\s+yes\s+yes\s+no\s+yes/);
+    // verify=yes, listTasks=yes, getTask=yes, create=yes, writeback=yes
+    expect(dataRow).toMatch(/yes\s+yes\s+yes\s+yes\s+yes/);
   });
 
   it("shows an unknown adapter kind with fallback capabilities (listTasks only)", async () => {

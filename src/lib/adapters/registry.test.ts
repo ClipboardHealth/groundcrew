@@ -18,6 +18,8 @@ function emptySource(name: string): TaskSource {
   return {
     name,
     verify: vi.fn<() => Promise<void>>().mockResolvedValue(),
+    listTasks: vi.fn<() => Promise<never[]>>().mockResolvedValue([]),
+    getTask: vi.fn<() => Promise<null>>().mockResolvedValue(null),
     fetch: vi.fn<() => Promise<never[]>>().mockResolvedValue([]),
     // eslint-disable-next-line unicorn/no-useless-undefined -- mockResolvedValue requires a value for non-void return type
     resolveOne: vi.fn<() => Promise<undefined>>().mockResolvedValue(undefined),

@@ -79,6 +79,8 @@ describe("TodoTxtTaskSource", () => {
 
   afterEach(() => {
     tmp.cleanup();
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
   });
 
   // Test 1: Parse minimal ready task
@@ -97,6 +99,293 @@ describe("TodoTxtTaskSource", () => {
     expect(issue?.title).toBe("Fix cancellation retry race");
     expect(issue?.status).toBe("todo");
     expect(issue?.model).toBe("codex");
+  });
+
+  it("creates a ready todo task with a prompt file", async () => {
+    tmp.writeTodo("");
+
+    const source = makeSource(tmp);
+    const created = await source.createTask?.({
+      title: "Fix cancellation retry race",
+      agent: "codex",
+      repository: "ClipboardHealth/api",
+      id: "GC-20260608-001",
+      projects: ["marketplace"],
+      contexts: ["backend"],
+      dependencies: [],
+      description: "Investigate retry handling.",
+      edit: false,
+    });
+
+    expect(created?.id).toBe("todo:gc-20260608-001");
+    expect(readFileSync(tmp.todoPath, "utf8")).toBe(
+      "(A) Fix cancellation retry race +marketplace @backend id:GC-20260608-001 repo:ClipboardHealth/api agent:codex status:todo\n",
+    );
+    expect(readFileSync(path.join(tmp.tasksDir, "GC-20260608-001.md"), "utf8")).toBe(
+      "Investigate retry handling.\n",
+    );
+  });
+
+  it("generates the next dated id and separates from an unterminated todo file", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-08T12:00:00.000Z"));
+    tmp.writeTodo(
+      "\nTask outside sequence id:OTHER-1 agent:codex status:todo\nNo id task agent:codex status:todo\nNonnumeric sequence id:GC-20260608-ABC agent:codex status:todo\nExisting task id:GC-20260608-001 agent:codex status:todo\nLower sequence id:GC-20260608-000 agent:codex status:todo",
+    );
+
+    const source = makeSource(tmp);
+    const created = await source.createTask?.({
+      title: "Generated task",
+      agent: "codex",
+      projects: [],
+      contexts: [],
+      dependencies: [],
+      edit: false,
+    });
+
+    expect(created?.id).toBe("todo:gc-20260608-002");
+    expect(readFileSync(tmp.todoPath, "utf8")).toContain(
+      "\n(A) Generated task id:GC-20260608-002 agent:codex status:todo\n",
+    );
+    expect(readFileSync(path.join(tmp.tasksDir, "GC-20260608-002.md"), "utf8")).toBe(
+      "Generated task\n",
+    );
+  });
+
+  it("copies prompt-file content and accepts prefixed project/context names", async () => {
+    const promptFile = path.join(tmp.dir, "prompt.md");
+    writeFileSync(promptFile, "Existing prompt.\n", "utf8");
+    tmp.writeTodo("");
+
+    const source = makeSource(tmp);
+    await source.createTask?.({
+      title: "Prompt file task",
+      agent: "claude",
+      id: "PROMPT-1",
+      priority: "C",
+      projects: ["+marketplace"],
+      contexts: ["@backend"],
+      dependencies: ["DEP-1"],
+      due: "2026-06-09",
+      recurrence: "+1w",
+      promptFile,
+      edit: false,
+    });
+
+    expect(readFileSync(tmp.todoPath, "utf8")).toBe(
+      "(C) Prompt file task +marketplace @backend id:PROMPT-1 agent:claude dep:DEP-1 due:2026-06-09 rec:+1w status:todo\n",
+    );
+    expect(readFileSync(path.join(tmp.tasksDir, "PROMPT-1.md"), "utf8")).toBe("Existing prompt.\n");
+  });
+
+  it("creates the todo file when it does not exist", async () => {
+    const source = makeSource(tmp);
+
+    await source.createTask?.({
+      title: "No existing todo",
+      agent: "codex",
+      id: "NO-FILE-1",
+      projects: [],
+      contexts: [],
+      dependencies: [],
+      edit: false,
+    });
+
+    expect(readFileSync(tmp.todoPath, "utf8")).toBe(
+      "(A) No existing todo id:NO-FILE-1 agent:codex status:todo\n",
+    );
+    expect(readFileSync(path.join(tmp.tasksDir, "NO-FILE-1.md"), "utf8")).toBe(
+      "No existing todo\n",
+    );
+  });
+
+  it("rethrows unexpected todo file read errors while creating a task", async () => {
+    mkdirSync(tmp.todoPath);
+    const source = makeSource(tmp);
+
+    await expect(
+      source.createTask?.({
+        title: "Directory todo path",
+        agent: "codex",
+        id: "DIR-TODO",
+        projects: [],
+        contexts: [],
+        dependencies: [],
+        edit: false,
+      }),
+    ).rejects.toThrow(/EISDIR|illegal operation|is a directory/);
+  });
+
+  it.each([
+    {
+      name: "duplicate id",
+      existing: "id:DUP-1 agent:codex status:todo Existing\n",
+      input: { title: "Duplicate", agent: "codex", id: "DUP-1" },
+      message: "already exists",
+    },
+    {
+      name: "empty title",
+      existing: "",
+      input: { title: "   ", agent: "codex", id: "EMPTY-TITLE" },
+      message: "title is required",
+    },
+    {
+      name: "multiline title",
+      existing: "",
+      input: { title: "Line one\nLine two", agent: "codex", id: "MULTILINE-TITLE" },
+      message: "single line",
+    },
+    {
+      name: "path-like id",
+      existing: "",
+      input: { title: "Bad id", agent: "codex", id: "../outside" },
+      message: "filename-safe",
+    },
+    {
+      name: "bad priority",
+      existing: "",
+      input: { title: "Bad priority", agent: "codex", id: "BAD-PRI", priority: "AA" },
+      message: "priority",
+    },
+    {
+      name: "bad project token",
+      existing: "",
+      input: { title: "Bad project", agent: "codex", id: "BAD-PROJ", projects: ["bad token"] },
+      message: "project",
+    },
+    {
+      name: "bad due date",
+      existing: "",
+      input: { title: "Bad due", agent: "codex", id: "BAD-DUE", due: "tomorrow" },
+      message: "due date",
+    },
+    {
+      name: "bad recurrence",
+      existing: "",
+      input: { title: "Bad rec", agent: "codex", id: "BAD-REC", recurrence: "weekly" },
+      message: "recurrence",
+    },
+    {
+      name: "prompt file and description",
+      existing: "",
+      input: {
+        title: "Too many prompts",
+        agent: "codex",
+        id: "PROMPT-CONFLICT",
+        promptFile: "prompt.md",
+        description: "Prompt",
+      },
+      message: "mutually exclusive",
+    },
+  ])("rejects invalid create input: $name", async ({ existing, input, message }) => {
+    tmp.writeTodo(existing);
+    const source = makeSource(tmp);
+
+    await expect(
+      source.createTask?.({
+        projects: [],
+        contexts: [],
+        dependencies: [],
+        edit: false,
+        ...input,
+      }),
+    ).rejects.toThrow(message);
+  });
+
+  it("opens the editor when edit is requested", async () => {
+    vi.stubEnv("VISUAL", "true");
+    vi.stubEnv("EDITOR", "true");
+    tmp.writeTodo("");
+
+    const source = makeSource(tmp);
+    await expect(
+      source.createTask?.({
+        title: "Edit task",
+        agent: "codex",
+        id: "EDIT-1",
+        projects: [],
+        contexts: [],
+        dependencies: [],
+        edit: true,
+      }),
+    ).resolves.toMatchObject({ id: "todo:edit-1" });
+  });
+
+  it("falls back to EDITOR when VISUAL is unset", async () => {
+    vi.stubEnv("VISUAL", "");
+    vi.stubEnv("EDITOR", "true");
+    tmp.writeTodo("");
+
+    const source = makeSource(tmp);
+    await expect(
+      source.createTask?.({
+        title: "Editor fallback",
+        agent: "codex",
+        id: "EDITOR-FALLBACK",
+        projects: [],
+        contexts: [],
+        dependencies: [],
+        edit: true,
+      }),
+    ).resolves.toMatchObject({ id: "todo:editor-fallback" });
+  });
+
+  it("fails edit when no editor is configured", async () => {
+    vi.stubEnv("VISUAL", "");
+    vi.stubEnv("EDITOR", "");
+    tmp.writeTodo("");
+
+    const source = makeSource(tmp);
+    await expect(
+      source.createTask?.({
+        title: "No editor",
+        agent: "codex",
+        id: "NO-EDITOR",
+        projects: [],
+        contexts: [],
+        dependencies: [],
+        edit: true,
+      }),
+    ).rejects.toThrow("requires VISUAL or EDITOR");
+  });
+
+  it("fails edit when the editor exits nonzero", async () => {
+    vi.stubEnv("VISUAL", "false");
+    vi.stubEnv("EDITOR", "false");
+    tmp.writeTodo("");
+
+    const source = makeSource(tmp);
+    await expect(
+      source.createTask?.({
+        title: "Editor fails",
+        agent: "codex",
+        id: "EDITOR-FAIL",
+        projects: [],
+        contexts: [],
+        dependencies: [],
+        edit: true,
+      }),
+    ).rejects.toThrow("editor exited");
+  });
+
+  it("exposes listTasks and getTask task methods", async () => {
+    tmp.writeTodo("Alias task id:ALIAS-1 agent:codex status:todo\n");
+    tmp.writeTask("ALIAS-1", "Alias prompt.");
+
+    const source = makeSource(tmp);
+    const listed = await source.listTasks();
+    const fetched = await source.getTask("ALIAS-1");
+
+    expect(listed[0]?.id).toBe("todo:alias-1");
+    expect(fetched?.description).toBe("Alias prompt.");
+  });
+
+  it("getTask returns null when a no-id line matches an empty natural id defensively", async () => {
+    tmp.writeTodo("No id line agent:codex status:todo\n");
+
+    const source = makeSource(tmp);
+
+    await expect(source.getTask("")).resolves.toBeNull();
   });
 
   // Test 2: Ignore draft task with no status:todo

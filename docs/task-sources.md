@@ -12,21 +12,23 @@ export default {
       name: "jira",
       commands: {
         verify: "jira me",
-        fetch: "~/.config/groundcrew/jira-fetch.sh",
-        resolveOne: "~/.config/groundcrew/jira-resolve.sh ${id}",
+        listTasks: "~/.config/groundcrew/jira-list.sh",
+        getTask: "~/.config/groundcrew/jira-get.sh ${id}",
         markInProgress: "jira issue move ${id} 'In Progress'",
         markInReview: "jira issue move ${id} 'In Review'",
         markDone: "jira issue move ${id} 'Done'",
       },
-      timeouts: { fetch: 60_000, markInReview: 15_000, markDone: 15_000 },
+      timeouts: { listTasks: 60_000, markInReview: 15_000, markDone: 15_000 },
     },
   ],
 };
 ```
 
-`commands.fetch` must print a JSON array of issues. `commands.resolveOne`, when
+`commands.listTasks` must print a JSON array of issues. `commands.getTask`, when
 set, must print one issue, print nothing for "not found", or exit `3` for "not
-found". `commands.markInProgress`, when set, receives the issue's `sourceRef` as
+found". The legacy aliases `commands.fetch` and `commands.resolveOne` still work
+for existing configs, but new configs should use `listTasks` and `getTask`.
+`commands.markInProgress`, when set, receives the issue's `sourceRef` as
 JSON on stdin. `commands.markInReview`, when set, receives the same `sourceRef` and is run
 after groundcrew sees an **open** PR on the task's worktree branch (in-progress
 tasks only). If omitted, groundcrew treats in-review advancement as unsupported
@@ -56,6 +58,41 @@ leaves the task for the source's own integration to close out. `${id}`,
 ```
 
 Allowed `status` values are `todo`, `in-progress`, `in-review`, `done`, and `other`. Use `null` for `repository` or `model` when a task should not be groundcrew-eligible. `hasMoreBlockers` is optional and defaults to `false`; `sourceRef` is opaque data that groundcrew passes back to your writeback command.
+
+## Todo.txt
+
+The built-in `todo-txt` source supports listing, getting, writeback, and task creation through `crew task create`.
+
+```ts
+export default {
+  sources: [
+    {
+      kind: "todo-txt",
+      name: "todo",
+      todoPath: "todo.txt",
+      tasksDir: ".tasks",
+      idPrefix: "GC",
+      timezone: "UTC",
+    },
+  ],
+};
+```
+
+Creating a todo task appends a line with `status:todo` as the final meaningful token and writes the prompt to `.tasks/<id>.md`. New todo tasks default to priority `A`; pass `--priority <letter>` to override it.
+
+```bash
+crew task create "Fix cancellation retry race" \
+  --source todo \
+  --agent codex \
+  --repo ClipboardHealth/api \
+  --project marketplace \
+  --context backend \
+  --edit
+```
+
+```txt
+(A) Fix cancellation retry race +marketplace @backend id:GC-20260608-001 repo:ClipboardHealth/api agent:codex status:todo
+```
 
 ## The `description` is the agent's prompt
 

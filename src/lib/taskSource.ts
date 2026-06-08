@@ -87,6 +87,8 @@ export interface Issue {
   sourceRef: unknown;
 }
 
+export type Task = Issue;
+
 /** Narrowed form: an Issue confirmed to be groundcrew-eligible. */
 export type GroundcrewIssue = Issue & { model: string; repository: string };
 
@@ -123,11 +125,33 @@ export type MarkInReviewResult =
 
 export type MarkDoneResult = { outcome: "applied" } | { outcome: "unsupported"; reason: string };
 
+export interface CreateTaskInput {
+  title: string;
+  agent: string;
+  repository?: string;
+  id?: string;
+  priority?: string;
+  projects: readonly string[];
+  contexts: readonly string[];
+  dependencies: readonly string[];
+  due?: string;
+  recurrence?: string;
+  promptFile?: string;
+  description?: string;
+  edit: boolean;
+}
+
 export interface TaskSource {
   /** Stable identifier used as the id prefix and in log lines. Equal to the source's config `name`. */
   readonly name: string;
   /** One-time startup check. Throws with a user-facing message on misconfig. */
   verify: () => Promise<void>;
+  /** Source-neutral task listing. `id` on each Task is already canonical (source-prefixed). */
+  listTasks: () => Promise<Task[]>;
+  /** Source-neutral task lookup. `naturalId` is unprefixed (no `<name>:` prefix). */
+  getTask: (naturalId: string) => Promise<Task | null>;
+  /** Optional source-native task creation. Sources that cannot create tasks omit it. */
+  createTask?: (input: CreateTaskInput) => Promise<Task>;
   /** Per-tick snapshot. `id` on each Issue is already canonical (source-prefixed). */
   fetch: () => Promise<Issue[]>;
   /** Per-task lookup. `naturalId` is unprefixed (no `<name>:` prefix). */

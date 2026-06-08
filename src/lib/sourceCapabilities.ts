@@ -59,7 +59,7 @@ const TODO_TXT_CAPABILITIES: SourceCapabilities = {
   verify: true,
   listTasks: true,
   getTask: true,
-  createTask: false,
+  createTask: true,
   markInProgress: true,
   markInReview: true,
   markDone: true,

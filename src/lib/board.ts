@@ -1,5 +1,5 @@
 /**
- * Board composer — fans `verify` / `fetch` / `resolveOne` / `markInProgress` /
+ * Board composer — fans `verify` / `listTasks` / `getTask` / `markInProgress` /
  * `markInReview` across N `TaskSource` adapters. Even a single-source config
  * goes through this; the moment we skip the wrapper we grow Linear assumptions
  * back into consumers.
@@ -44,7 +44,7 @@ async function callVerify(source: TaskSource): Promise<void> {
 }
 
 async function callFetch(source: TaskSource): Promise<Issue[]> {
-  return await source.fetch();
+  return await source.listTasks();
 }
 
 async function callFetchParentSkips(source: TaskSource): Promise<readonly ParentSkip[]> {
@@ -55,7 +55,7 @@ async function callFetchParentSkips(source: TaskSource): Promise<readonly Parent
 }
 
 async function callResolveOne(source: TaskSource, naturalId: string): Promise<Issue | undefined> {
-  return await source.resolveOne(naturalId);
+  return (await source.getTask(naturalId)) ?? undefined;
 }
 
 export function createBoard(sources: readonly TaskSource[]): Board {
