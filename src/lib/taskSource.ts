@@ -133,6 +133,8 @@ export interface CreateTaskInput {
   agent: string;
   /** Optional repository override in the same format Groundcrew resolves from task descriptions. */
   repository?: string;
+  /** Optional source-native team selector, such as a Linear team key or id. */
+  team?: string;
   /** Optional source-native task id. When omitted, sources may generate one. */
   id?: string;
   /** Optional source-native priority token, such as a todo.txt `A`/`B`/`C` priority. */

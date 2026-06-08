@@ -94,6 +94,33 @@ crew task create "Fix cancellation retry race" \
 (A) Fix cancellation retry race +marketplace @backend id:GC-20260608-001 repo:ClipboardHealth/api agent:codex status:todo
 ```
 
+## Linear
+
+The built-in Linear source supports listing, getting, writeback, and task creation through `crew task create`.
+
+Linear task creation needs a team because Linear issues are team-scoped. Configure it once on the source, or pass `--team <key-or-id>` for one command:
+
+```ts
+export default {
+  sources: [
+    {
+      kind: "linear",
+      team: "ENG",
+    },
+  ],
+};
+```
+
+```bash
+crew task create "Fix cancellation retry race" \
+  --source linear \
+  --agent codex \
+  --repo ClipboardHealth/api \
+  --description "Investigate retry handling."
+```
+
+Created Linear issues are assigned to the API key's viewer, moved into a Todo workflow state, labeled with exactly one `agent-*` label, and given a description that includes `Repository: <repo>` near the top. Repeated `--dep <ISSUE>` values create Linear blocked-by relations when the dependency is a Linear issue id.
+
 ## The `description` is the agent's prompt
 
 Groundcrew wraps each issue's `description` in its generic unattended-execution prompt and hands it to the agent as the task. It does not pick a different prompt per source or task type. Specialized behavior belongs in the `description` your adapter emits, not in groundcrew.
