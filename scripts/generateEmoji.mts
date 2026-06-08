@@ -126,9 +126,16 @@ process.stdout.write("Generating static PNG avatar...\n");
 const avatarSvg = makeSvgFrame(FULL, FULL, AVATAR_SIZE);
 const avatarSvgPath = path.join(tmpDir, "avatar.svg");
 writeFileSync(avatarSvgPath, avatarSvg);
-spawnSync("sips", ["-s", "format", "png", avatarSvgPath, "--out", "static/groundcrew-avatar.png"], {
-  stdio: "inherit",
-});
+const avatarResult = spawnSync(
+  "sips",
+  ["-s", "format", "png", avatarSvgPath, "--out", "static/groundcrew-avatar.png"],
+  { stdio: "inherit" },
+);
+
+if (avatarResult.status !== 0) {
+  process.stderr.write("sips failed to generate avatar PNG\n");
+  process.exit(1);
+}
 
 rmSync(tmpDir, { recursive: true, force: true });
 
