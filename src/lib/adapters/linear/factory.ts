@@ -31,6 +31,7 @@ import {
   type Issue as LinearIssue,
   type ParentSkip as LinearParentSkip,
 } from "./fetch.ts";
+import { createLinearIssue } from "./create.ts";
 import {
   canonicalStatusFromLinearState,
   DEFAULT_LINEAR_STATUS_NAMES,
@@ -238,6 +239,19 @@ export function createLinearTaskSource(
     },
     async getTask(naturalId: string): Promise<CanonicalIssue | null> {
       return await getTask(naturalId);
+    },
+    async createTask(input): Promise<CanonicalIssue> {
+      return toCanonicalIssue(
+        await createLinearIssue({
+          client: getClient(),
+          config: globalConfig,
+          input,
+          sourceConfig: config,
+          sourceName,
+        }),
+        sourceName,
+        statusNames,
+      );
     },
     async fetch(): Promise<CanonicalIssue[]> {
       return await listTasks();

@@ -77,6 +77,7 @@ interface CreateParseState {
   sourceName?: string;
   agent?: string;
   repository?: string;
+  team?: string;
   id?: string;
   priority?: string;
   projects: string[];
@@ -134,6 +135,9 @@ const CREATE_VALUE_HANDLERS: Readonly<Record<string, CreateValueHandler | undefi
   },
   "--repo": (state, value) => {
     state.repository = value;
+  },
+  "--team": (state, value) => {
+    state.team = value;
   },
   "--id": (state, value) => {
     state.id = value;
@@ -336,6 +340,7 @@ function parseCreateOptions(argv: readonly string[]): CreateOptions {
     dependencies: state.dependencies,
     edit: state.edit,
     ...(state.repository === undefined ? {} : { repository: state.repository }),
+    ...(state.team === undefined ? {} : { team: state.team }),
     ...(state.id === undefined ? {} : { id: state.id }),
     ...(state.priority === undefined ? {} : { priority: state.priority }),
     ...(state.due === undefined ? {} : { due: state.due }),

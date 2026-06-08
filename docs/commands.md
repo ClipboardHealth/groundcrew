@@ -30,6 +30,17 @@ crew task create "Fix cancellation retry race" \
   --edit
 ```
 
+Linear creation creates a Todo issue assigned to the current Linear API viewer, with exactly one `agent-*` label and a `Repository: <repo>` line in the description. Configure `sources: [{ kind: "linear", team: "ENG" }]` or pass `--team ENG`; the CLI option wins when both are present.
+
+```bash
+crew task create "Fix cancellation retry race" \
+  --source linear \
+  --agent codex \
+  --team ENG \
+  --repo ClipboardHealth/api \
+  --description "Investigate retry handling."
+```
+
 ## Status
 
 `crew status <TASK>` prints a read-only snapshot for one task: cached title and URL when present, recorded run state, live workspace presence, matching worktrees, git dirtiness, PR links for matching branches, recent log lines when present, and the task status from the configured task source.

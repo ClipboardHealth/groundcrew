@@ -21,6 +21,8 @@ export const linearAdapterConfigSchema = z.object({
     .string()
     .regex(/^[a-z][a-z0-9-]*$/, "name must be kebab-case (lowercase letters, digits, hyphens)")
     .optional(),
+  /** Team key or id used by `crew task create --source linear` when --team is omitted. */
+  team: z.string().trim().min(1).optional(),
   statuses: z
     .object({
       inProgress: statusNamesSchema.optional(),
