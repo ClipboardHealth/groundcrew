@@ -202,6 +202,13 @@ export interface TaskSource {
    * don't distinguish parents simply omit this method; Board returns [].
    */
   fetchParentSkips?: () => Promise<readonly ParentSkip[]>;
+
+  /**
+   * Optional: validate task content and return human-readable error strings.
+   * Sources that cannot validate task content omit this method.
+   * Unlike `verify()`, this never throws — errors are returned as an array.
+   */
+  validate?: () => Promise<string[]>;
 }
 
 export class RepositoryResolutionError extends Error {

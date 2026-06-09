@@ -3,6 +3,7 @@ import { appendFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from
 import path from "node:path";
 
 import type { AdapterContext } from "../../adapterDefinition.ts";
+import { AGENT_ANY_MODEL } from "../../config.ts";
 import {
   type CreateTaskInput,
   type Issue,
@@ -298,11 +299,19 @@ function openPromptEditor(promptPath: string): void {
 
 export function createTodoTxtTaskSource(
   config: TodoTxtAdapterConfig,
-  _context: AdapterContext,
+  context: AdapterContext,
 ): TaskSource {
   const sourceName = config.name;
   /* v8 ignore next @preserve -- Covered in source tests; full-suite V8 coverage remaps this line inconsistently. */
   const { todoPath, tasksDir } = config;
+
+  const knownAgents =
+    context.globalConfig.models === undefined
+      ? undefined
+      : new Set([
+          AGENT_ANY_MODEL,
+          ...Object.keys(context.globalConfig.models.definitions).map((k) => k.toLowerCase()),
+        ]);
 
   function listTasks(): Issue[] {
     const updatedAt = fileUpdatedAt(todoPath);
@@ -366,12 +375,16 @@ export function createTodoTxtTaskSource(
     name: sourceName,
 
     async verify(): Promise<void> {
-      const errors = validateTodoFile(todoPath, tasksDir);
+      const errors = validateTodoFile(todoPath, tasksDir, knownAgents);
       if (errors.length > 0) {
         throw new Error(
           `todo-txt source "${sourceName}" verification failed:\n${errors.map((e) => `  - ${e}`).join("\n")}`,
         );
       }
+    },
+
+    async validate(): Promise<string[]> {
+      return validateTodoFile(todoPath, tasksDir, knownAgents);
     },
 
     async listTasks(): Promise<Issue[]> {

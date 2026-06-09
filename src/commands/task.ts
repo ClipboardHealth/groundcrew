@@ -7,14 +7,15 @@ import {
   type Task,
   type TaskSource,
 } from "../lib/taskSource.ts";
-import { writeOutput } from "../lib/util.ts";
+import { parseSourceFilterArgs, writeOutput } from "../lib/util.ts";
 
 const TASK_USAGE = `Usage: crew task <subcommand>
 
 Subcommands:
   list [options]                  List tasks across configured sources
   get <task-id> [options]         Get one task
-  create "Short title" [options]  Create one task`;
+  create "Short title" [options]  Create one task
+  validate [source] [options]     Validate task content`;
 
 const LIST_USAGE = `Usage: crew task list [options]
 
@@ -610,6 +611,84 @@ async function taskCreateCli(argv: readonly string[]): Promise<void> {
   writeOutput(created.id);
 }
 
+const VALIDATE_USAGE = `Usage: crew task validate [source]
+
+Options:
+  --json  Print results as JSON.`;
+
+interface ValidateResult {
+  source: string;
+  supported: boolean;
+  errors: string[];
+}
+
+async function taskValidateCli(argv: string[]): Promise<void> {
+  const { targetSource, jsonOutput } = parseSourceFilterArgs(
+    argv,
+    "crew task validate",
+    VALIDATE_USAGE,
+  );
+
+  // jscpd:ignore-start -- shared source-loading boilerplate; extracting to a helper would break vi.mock
+  const config = await loadConfig();
+  const rawSources = sourcesFromConfig(config);
+  const allSources = await buildSources(rawSources, { globalConfig: config });
+
+  let sources = allSources;
+  if (targetSource !== undefined) {
+    sources = allSources.filter((s) => s.name === targetSource);
+    if (sources.length === 0) {
+      throw new Error(`crew task validate: no source named "${targetSource}"`);
+    }
+  }
+  // jscpd:ignore-end
+
+  const results: ValidateResult[] = await Promise.all(
+    sources.map(async (source): Promise<ValidateResult> => {
+      if (source.validate === undefined) {
+        return { source: source.name, supported: false, errors: [] };
+      }
+      const errors = await source.validate();
+      return { source: source.name, supported: true, errors };
+    }),
+  );
+
+  const hasErrors = results.some((r) => r.errors.length > 0);
+
+  if (jsonOutput) {
+    writeOutput(
+      JSON.stringify(
+        results.map(({ source, errors }) => ({ source, errors })),
+        null,
+        2,
+      ),
+    );
+    if (hasErrors) {
+      process.exitCode = 1;
+    }
+    return;
+  }
+
+  const nameWidth = Math.max(...results.map((r) => r.source.length));
+  for (const result of results) {
+    if (!result.supported) {
+      writeOutput(`${result.source.padEnd(nameWidth)}  not supported`);
+      continue;
+    }
+    if (result.errors.length === 0) {
+      writeOutput(`${result.source.padEnd(nameWidth)}  ok`);
+    } else {
+      writeOutput(
+        `${result.source.padEnd(nameWidth)}  ${result.errors.length} error(s)\n${result.errors.map((e) => `  - ${e}`).join("\n")}`,
+      );
+    }
+  }
+
+  if (hasErrors) {
+    process.exitCode = 1;
+  }
+}
+
 export async function taskCli(argv: string[]): Promise<void> {
   const [verb, ...rest] = argv;
   if (verb === "list") {
@@ -622,6 +701,10 @@ export async function taskCli(argv: string[]): Promise<void> {
   }
   if (verb === "create") {
     await taskCreateCli(rest);
+    return;
+  }
+  if (verb === "validate") {
+    await taskValidateCli(rest);
     return;
   }
   throw new Error(TASK_USAGE);

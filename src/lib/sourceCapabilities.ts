@@ -11,6 +11,7 @@ interface SourceCapabilities {
   markInProgress: boolean;
   markInReview: boolean;
   markDone: boolean;
+  validate: boolean;
 }
 
 export interface SourceSummary {
@@ -29,6 +30,7 @@ const LINEAR_CAPABILITIES: SourceCapabilities = {
   markInProgress: true,
   markInReview: true,
   markDone: false,
+  validate: false,
 };
 
 const UNKNOWN_KIND_CAPABILITIES: SourceCapabilities = {
@@ -39,6 +41,7 @@ const UNKNOWN_KIND_CAPABILITIES: SourceCapabilities = {
   markInProgress: false,
   markInReview: false,
   markDone: false,
+  validate: false,
 };
 
 function shellCapabilities(raw: unknown): SourceCapabilities {
@@ -52,6 +55,7 @@ function shellCapabilities(raw: unknown): SourceCapabilities {
     markInProgress: commands.markInProgress !== undefined,
     markInReview: commands.markInReview !== undefined,
     markDone: commands.markDone !== undefined,
+    validate: false,
   };
 }
 
@@ -63,6 +67,7 @@ const TODO_TXT_CAPABILITIES: SourceCapabilities = {
   markInProgress: true,
   markInReview: true,
   markDone: true,
+  validate: true,
 };
 
 export function summarizeSource(raw: unknown): SourceSummary {

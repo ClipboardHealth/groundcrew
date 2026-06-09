@@ -1,7 +1,7 @@
 import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
 import { loadConfig } from "../lib/config.ts";
 import { summarizeSource, type SourceSummary } from "../lib/sourceCapabilities.ts";
-import { errorMessage, writeOutput } from "../lib/util.ts";
+import { errorMessage, parseSourceFilterArgs, writeOutput } from "../lib/util.ts";
 
 const SOURCE_USAGE = `Usage: crew source <subcommand>
 
@@ -51,6 +51,7 @@ function printSourceTable(summaries: SourceSummary[]): void {
     "LIST TASKS".padEnd(10),
     "GET TASK".padEnd(8),
     "CREATE".padEnd(6),
+    "VALIDATE".padEnd(8),
     "WRITEBACK",
   ].join("  ");
   writeOutput(header);
@@ -65,6 +66,7 @@ function printSourceTable(summaries: SourceSummary[]): void {
       yesNo(cap.listTasks).padEnd(10),
       yesNo(cap.getTask).padEnd(8),
       yesNo(cap.createTask).padEnd(6),
+      yesNo(cap.validate).padEnd(8),
       yesNo(writeback),
     ].join("  ");
     writeOutput(row);
@@ -78,26 +80,11 @@ interface VerifyResult {
 }
 
 async function sourceVerifyCli(argv: string[]): Promise<void> {
-  let jsonOutput = false;
-  let targetSource: string | undefined;
-
-  for (const arg of argv) {
-    if (arg === "--json") {
-      jsonOutput = true;
-      continue;
-    }
-    if (arg.startsWith("-")) {
-      throw new Error(
-        `crew source verify: unknown option: ${arg}\nUsage: crew source verify [source] [--json]`,
-      );
-    }
-    if (targetSource !== undefined) {
-      throw new Error(
-        "crew source verify: too many arguments\nUsage: crew source verify [source] [--json]",
-      );
-    }
-    targetSource = arg;
-  }
+  const { targetSource, jsonOutput } = parseSourceFilterArgs(
+    argv,
+    "crew source verify",
+    "Usage: crew source verify [source] [--json]",
+  );
 
   const config = await loadConfig();
   const rawSources = sourcesFromConfig(config);

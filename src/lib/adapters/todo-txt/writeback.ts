@@ -423,11 +423,15 @@ function validateActiveTaskLine(
   id: string,
   prefix: string,
   errors: string[],
+  knownAgents?: ReadonlySet<string>,
 ): void {
   const agent = parsed.metadata["agent"]?.[0];
   /* v8 ignore next @preserve -- parser KEY_VALUE_RE requires \S+, so empty agent values can't be parsed */
   if (agent !== undefined && agent.trim().length === 0) {
     errors.push(`${prefix}: empty agent: value for task "${id}"`);
+  }
+  if (knownAgents !== undefined && agent !== undefined && !knownAgents.has(agent.toLowerCase())) {
+    errors.push(`${prefix}: unknown agent "${agent}" for task "${id}"`);
   }
 
   const statusValue = parsed.metadata["status"]?.[0];
@@ -449,7 +453,11 @@ function validateActiveTaskLine(
   validateDepsAndDates(parsed, parsedAll, id, prefix, errors);
 }
 
-export function validateTodoFile(todoPath: string, tasksDir: string): string[] {
+export function validateTodoFile(
+  todoPath: string,
+  tasksDir: string,
+  knownAgents?: ReadonlySet<string>,
+): string[] {
   const errors: string[] = [];
   let content: string;
   try {
@@ -487,7 +495,7 @@ export function validateTodoFile(todoPath: string, tasksDir: string): string[] {
       continue;
     }
 
-    validateActiveTaskLine(parsed, parsedAll, tasksDir, id, prefix, errors);
+    validateActiveTaskLine(parsed, parsedAll, tasksDir, id, prefix, errors, knownAgents);
   }
 
   return errors;

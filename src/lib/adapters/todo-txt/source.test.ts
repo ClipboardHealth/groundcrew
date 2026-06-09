@@ -11,6 +11,30 @@ import type { TodoTxtSourceRef } from "./normalizer.ts";
 // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests don't need the full config shape
 const fakeContext: AdapterContext = { globalConfig: {} as ResolvedConfig };
 
+const contextWithModels: AdapterContext = {
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- partial config sufficient for agent validation tests
+  globalConfig: {
+    models: {
+      default: "claude",
+      definitions: { claude: { cmd: "claude", color: "#fff" } },
+    },
+  } as unknown as ResolvedConfig,
+};
+
+function makeSourceWithModels(tmp: TempDir): ReturnType<typeof createTodoTxtTaskSource> {
+  return createTodoTxtTaskSource(
+    {
+      kind: "todo-txt",
+      name: "todo",
+      todoPath: tmp.todoPath,
+      tasksDir: tmp.tasksDir,
+      idPrefix: "GC",
+      timezone: "UTC",
+    },
+    contextWithModels,
+  );
+}
+
 interface TempDir {
   dir: string;
   todoPath: string;
@@ -899,6 +923,54 @@ describe("TodoTxtTaskSource", () => {
     tmp.writeTodo("id:GC-IS agent:codex status:wip Task\n");
     const source = makeSource(tmp);
     await expect(source.verify()).rejects.toThrow(/invalid status/);
+  });
+
+  it("validate() returns empty array for a valid file", async () => {
+    tmp.writeTodo("(A) Good task id:GC-V1 agent:any status:todo\n");
+    tmp.writeTask("GC-V1", "Prompt.");
+    const source = makeSource(tmp);
+    await expect(source.validate?.()).resolves.toStrictEqual([]);
+  });
+
+  it("validate() returns errors as an array without throwing", async () => {
+    tmp.writeTodo(
+      "Task A id:DUP agent:any status:in-progress\nTask B id:DUP agent:any status:in-progress\n",
+    );
+    const source = makeSource(tmp);
+    const errors = await source.validate?.();
+    expect(errors).toHaveLength(1);
+    expect(errors?.[0]).toMatch(/duplicate id/);
+  });
+
+  it("validate() flags unknown agent when knownAgents are derived from config", async () => {
+    tmp.writeTodo("Task id:GC-AG1 agent:unknown-bot status:in-progress\n");
+    const source = makeSourceWithModels(tmp);
+    const errors = await source.validate?.();
+    expect(errors).toContainEqual(expect.stringContaining('unknown agent "unknown-bot"'));
+  });
+
+  it("validate() does not flag agent matching a configured model", async () => {
+    tmp.writeTodo("Task id:GC-AG2 agent:claude status:in-progress\n");
+    const source = makeSourceWithModels(tmp);
+    await expect(source.validate?.()).resolves.toStrictEqual([]);
+  });
+
+  it("validate() does not flag agent:any", async () => {
+    tmp.writeTodo("Task id:GC-AG3 agent:any status:in-progress\n");
+    const source = makeSourceWithModels(tmp);
+    await expect(source.validate?.()).resolves.toStrictEqual([]);
+  });
+
+  it("verify() catches unknown agent when knownAgents are derived from config", async () => {
+    tmp.writeTodo("Task id:GC-AV agent:unknown-bot status:in-progress\n");
+    const source = makeSourceWithModels(tmp);
+    await expect(source.verify()).rejects.toThrow(/unknown agent "unknown-bot"/);
+  });
+
+  it("validate() skips agent check when no models config is present", async () => {
+    tmp.writeTodo("Task id:GC-AG4 agent:anything-goes status:in-progress\n");
+    const source = makeSource(tmp); // fakeContext has no models
+    await expect(source.validate?.()).resolves.toStrictEqual([]);
   });
 
   it("markInProgress throws when task status is already in-progress", async () => {

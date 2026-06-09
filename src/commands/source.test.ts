@@ -153,8 +153,8 @@ describe("crew source list", () => {
 
     const lines = log.output().split("\n");
     const [, dataRow] = lines;
-    // verify=yes, writeback=yes (has markInProgress, markInReview, markDone)
-    expect(dataRow).toMatch(/yes\s+yes\s+yes\s+no\s+yes/);
+    // verify=yes, validate=no, writeback=yes (has markInProgress, markInReview, markDone)
+    expect(dataRow).toMatch(/yes\s+yes\s+yes\s+no\s+no\s+yes/);
   });
 
   it("outputs JSON with --json flag", async () => {
@@ -173,6 +173,7 @@ describe("crew source list", () => {
     expect(output).toContain('"listTasks": true');
     expect(output).toContain('"createTask": false');
     expect(output).toContain('"markDone": false');
+    expect(output).toContain('"validate": false');
   });
 
   it("shows todo-txt source with full capabilities", async () => {

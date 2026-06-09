@@ -529,3 +529,133 @@ describe("crew task dispatch", () => {
     await expect(taskCli(["ready"])).rejects.toThrow("Usage: crew task");
   });
 });
+
+describe("crew task validate", () => {
+  beforeEach(() => {
+    process.exitCode = undefined;
+    loadConfigMock.mockResolvedValue(makeConfig());
+    sourcesFromConfigMock.mockReturnValue([{ kind: "todo-txt", name: "todo" }]);
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("shows ok when validate returns no errors", async () => {
+    const validate = vi.fn<NonNullable<TaskSource["validate"]>>().mockResolvedValue([]);
+    buildSourcesMock.mockResolvedValue([stubSource("todo", [], { validate })]);
+
+    const log = captureConsoleLog();
+    try {
+      await taskCli(["validate"]);
+    } finally {
+      log.restore();
+    }
+
+    expect(log.output()).toContain("ok");
+    expect(process.exitCode).not.toBe(1);
+  });
+
+  it("shows errors and sets exit code 1 when validate returns errors", async () => {
+    const validate = vi
+      .fn<NonNullable<TaskSource["validate"]>>()
+      .mockResolvedValue(['line 1: duplicate id "GC-1"', 'line 5: malformed due: date "bad"']);
+    buildSourcesMock.mockResolvedValue([stubSource("todo", [], { validate })]);
+
+    const log = captureConsoleLog();
+    try {
+      await taskCli(["validate"]);
+    } finally {
+      log.restore();
+    }
+
+    expect(log.output()).toContain("2 error(s)");
+    expect(log.output()).toContain('duplicate id "GC-1"');
+    expect(log.output()).toContain('malformed due: date "bad"');
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("shows not supported for sources without validate()", async () => {
+    buildSourcesMock.mockResolvedValue([stubSource("todo", [])]);
+
+    const log = captureConsoleLog();
+    try {
+      await taskCli(["validate"]);
+    } finally {
+      log.restore();
+    }
+
+    expect(log.output()).toContain("not supported");
+    expect(process.exitCode).not.toBe(1);
+  });
+
+  it("outputs JSON with --json flag when no errors", async () => {
+    const validate = vi.fn<NonNullable<TaskSource["validate"]>>().mockResolvedValue([]);
+    buildSourcesMock.mockResolvedValue([stubSource("todo", [], { validate })]);
+
+    const log = captureConsoleLog();
+    try {
+      await taskCli(["validate", "--json"]);
+    } finally {
+      log.restore();
+    }
+
+    const output = log.output();
+    expect(output).toContain('"source": "todo"');
+    expect(output).toContain('"errors": []');
+    expect(process.exitCode).not.toBe(1);
+  });
+
+  it("outputs JSON with --json flag and sets exit code 1 when errors present", async () => {
+    const validate = vi
+      .fn<NonNullable<TaskSource["validate"]>>()
+      .mockResolvedValue(['line 1: duplicate id "X"']);
+    buildSourcesMock.mockResolvedValue([stubSource("todo", [], { validate })]);
+
+    const log = captureConsoleLog();
+    try {
+      await taskCli(["validate", "--json"]);
+    } finally {
+      log.restore();
+    }
+
+    const output = log.output();
+    expect(output).toContain('"source": "todo"');
+    expect(output).toContain("duplicate id");
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("filters to the named source only", async () => {
+    const validateTodo = vi.fn<NonNullable<TaskSource["validate"]>>().mockResolvedValue([]);
+    const validateLinear = vi.fn<NonNullable<TaskSource["validate"]>>().mockResolvedValue([]);
+    buildSourcesMock.mockResolvedValue([
+      stubSource("todo", [], { validate: validateTodo }),
+      stubSource("linear", [], { validate: validateLinear }),
+    ]);
+
+    const log = captureConsoleLog();
+    try {
+      await taskCli(["validate", "todo"]);
+    } finally {
+      log.restore();
+    }
+
+    expect(validateTodo).toHaveBeenCalledTimes(1);
+    expect(validateLinear).not.toHaveBeenCalled();
+    expect(log.output()).toContain("todo");
+    expect(log.output()).not.toContain("linear");
+  });
+
+  it("throws when the named source is not found", async () => {
+    buildSourcesMock.mockResolvedValue([stubSource("todo", [])]);
+
+    await expect(taskCli(["validate", "missing"])).rejects.toThrow('no source named "missing"');
+  });
+
+  it.each([
+    { argv: ["validate", "--bogus"], message: "unknown option: --bogus" },
+    { argv: ["validate", "a", "b"], message: "too many arguments" },
+  ])("rejects invalid validate arguments: $argv", async ({ argv, message }) => {
+    await expect(taskCli(argv)).rejects.toThrow(message);
+  });
+});

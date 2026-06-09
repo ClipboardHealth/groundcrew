@@ -247,6 +247,35 @@ export function parseDryRunPositionals(argv: string[], usage: string): DryRunPos
   return { dryRun, positionals };
 }
 
+interface SourceFilterArgs {
+  targetSource: string | undefined;
+  jsonOutput: boolean;
+}
+
+/** Parse the `[source] [--json]` argument pattern shared by source-scoped subcommands. */
+export function parseSourceFilterArgs(
+  argv: string[],
+  commandName: string,
+  usage: string,
+): SourceFilterArgs {
+  let jsonOutput = false;
+  let targetSource: string | undefined;
+  for (const arg of argv) {
+    if (arg === "--json") {
+      jsonOutput = true;
+      continue;
+    }
+    if (arg.startsWith("-")) {
+      throw new Error(`${commandName}: unknown option: ${arg}\n${usage}`);
+    }
+    if (targetSource !== undefined) {
+      throw new Error(`${commandName}: too many arguments\n${usage}`);
+    }
+    targetSource = arg;
+  }
+  return { targetSource, jsonOutput };
+}
+
 export function errorMessage(error: unknown): string {
   if (error instanceof Error) {
     return error.message;
