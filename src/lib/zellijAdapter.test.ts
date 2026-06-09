@@ -298,6 +298,13 @@ describe("zellij workspace adapter", () => {
       await expect(zellijAdapter.close("team-1")).resolves.toStrictEqual({ kind: "missing" });
     });
 
+    it("ignores an empty id record", async () => {
+      writeTabId("team-1", "");
+
+      await expect(zellijAdapter.close("team-1")).resolves.toStrictEqual({ kind: "missing" });
+      expect(runMock).not.toHaveBeenCalledWith("zellij", expect.arrayContaining([CLOSE_BY_ID]));
+    });
+
     it("falls back to the default tab-id dir when the env override is unset", async () => {
       deleteEnvironmentVariable("GROUNDCREW_ZELLIJ_TAB_DIR");
 

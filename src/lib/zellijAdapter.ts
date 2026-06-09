@@ -362,13 +362,11 @@ function rememberTabId(name: string, id: number): void {
 }
 
 function lookupTabId(name: string): number | undefined {
-  let id: number;
   try {
-    id = Number(readFileSync(tabIdPath(name), "utf8").trim());
+    return parseTabId(readFileSync(tabIdPath(name), "utf8"));
   } catch {
     return undefined;
   }
-  return Number.isInteger(id) ? id : undefined;
 }
 
 function forgetTabId(name: string): void {
