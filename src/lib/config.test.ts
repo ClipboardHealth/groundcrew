@@ -792,6 +792,55 @@ describe("loadConfig", () => {
     expect(actual.agents.definitions["claude"]?.color).toBeTypeOf("string");
   });
 
+  it("merges safehouse.gitRewrite through an override and preserves cmd/color defaults", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      configSource({
+        workspace: VALID_WORKSPACE(temporary),
+        agents: { definitions: { claude: { safehouse: { gitRewrite: "ssh-to-https" } } } },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+    expect(actual.agents.definitions["claude"]?.safehouse?.gitRewrite).toBe("ssh-to-https");
+    expect(actual.agents.definitions["claude"]?.cmd).toBeTypeOf("string");
+    expect(actual.agents.definitions["claude"]?.color).toBeTypeOf("string");
+  });
+
+  it("accepts an empty safehouse block and leaves gitRewrite unset", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      configSource({
+        workspace: VALID_WORKSPACE(temporary),
+        agents: { definitions: { claude: { safehouse: {} } } },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+    expect(actual.agents.definitions["claude"]?.safehouse).toStrictEqual({});
+    expect(actual.agents.definitions["claude"]?.safehouse?.gitRewrite).toBeUndefined();
+  });
+
+  it("rejects an unknown safehouse.gitRewrite value", async () => {
+    const source = `export const config = { workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))}, agents: { definitions: { claude: { safehouse: { gitRewrite: "bogus" } } } } };`;
+    setEnvironmentVariable("GROUNDCREW_CONFIG", writeConfigFile(temporary, source));
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(
+      /agents\.definitions\.claude\.safehouse\.gitRewrite must be one of ssh-to-https/,
+    );
+  });
+
+  it("rejects a non-object safehouse block", async () => {
+    const source = `export const config = { workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))}, agents: { definitions: { claude: { safehouse: "ssh-to-https" } } } };`;
+    setEnvironmentVariable("GROUNDCREW_CONFIG", writeConfigFile(temporary, source));
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(
+      /agents\.definitions\.claude\.safehouse must be an object/,
+    );
+  });
+
   it("rejects a non-array preLaunchEnv", async () => {
     const configPath = writeConfigFile(
       temporary,

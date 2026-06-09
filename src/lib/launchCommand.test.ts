@@ -352,6 +352,54 @@ describe(buildLaunchCommand, () => {
     expect(out).toContain('exec ANTHROPIC_MODEL=sonnet claude --permission-mode auto "$@"');
   });
 
+  it("injects the gitRewrite GIT_CONFIG env prefix into the agent wrap when safehouse.gitRewrite is set", () => {
+    const out = buildLaunchCommand(
+      arguments_({
+        definition: {
+          cmd: "claude --permission-mode bypassPermissions",
+          color: "#fff",
+          safehouse: { gitRewrite: "ssh-to-https" },
+        },
+      }),
+    );
+
+    expect(out).toContain(
+      'exec env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=url.https://github.com/.insteadOf GIT_CONFIG_VALUE_0=git@github.com: claude --permission-mode bypassPermissions "$@"',
+    );
+    // The rewrite rides the groundcrew-composed agent command, so the profile
+    // shim is still keyed on the bare agent name, not `env`.
+    expect(out).toContain('_safehouse_shim="$_safehouse_shim_dir/claude"');
+  });
+
+  it("omits the gitRewrite prefix when safehouse.gitRewrite is unset", () => {
+    const out = buildLaunchCommand(arguments_());
+
+    expect(out).not.toContain("GIT_CONFIG_COUNT");
+    expect(out).toContain('exec claude "$@"');
+  });
+
+  it("emits a launch command byte-identical to the hand-written `env GIT_CONFIG_*` cmd prefix", () => {
+    const declarative = buildLaunchCommand(
+      arguments_({
+        definition: {
+          cmd: "claude --permission-mode bypassPermissions",
+          color: "#fff",
+          safehouse: { gitRewrite: "ssh-to-https" },
+        },
+      }),
+    );
+    const handWritten = buildLaunchCommand(
+      arguments_({
+        definition: {
+          cmd: "env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=url.https://github.com/.insteadOf GIT_CONFIG_VALUE_0=git@github.com: claude --permission-mode bypassPermissions",
+          color: "#fff",
+        },
+      }),
+    );
+
+    expect(declarative).toBe(handWritten);
+  });
+
   it("skips `env` and quoted environment assignments when inferring the Safehouse profile command", () => {
     const out = buildLaunchCommand(
       arguments_({

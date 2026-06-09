@@ -5,6 +5,7 @@ import path from "node:path";
 import {
   BUILD_SECRET_NAMES,
   hasPreLaunchEnv,
+  type GitRewrite,
   type LocalRunner,
   type AgentDefinition,
 } from "./config.ts";
@@ -186,11 +187,40 @@ function preLaunchPromptAndExec(arguments_: {
 }
 
 /**
+ * Additive `env GIT_CONFIG_*` prefix per declarative `safehouse.gitRewrite`.
+ * Additive (GIT_CONFIG_COUNT/KEY/VALUE) rather than `GIT_CONFIG_GLOBAL` so the
+ * agent's own global config and the gh credential helper survive — only the
+ * SSH→HTTPS rewrite is layered on. Each entry is trailing-space-terminated so
+ * it slots directly in front of the agent command. The `Record<GitRewrite, …>`
+ * key set is exhaustiveness-checked, so widening `GIT_REWRITES` forces a new
+ * entry here at compile time.
+ */
+const GIT_REWRITE_ENV_PREFIXES: Record<GitRewrite, string> = {
+  "ssh-to-https":
+    "env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=url.https://github.com/.insteadOf GIT_CONFIG_VALUE_0=git@github.com: ",
+};
+
+/**
+ * Env prefix for a declarative `safehouse.gitRewrite`, or "" when none is
+ * requested. First-class replacement for the previously hand-written `env
+ * GIT_CONFIG_* …` cmd prefix; emits a byte-identical token sequence.
+ */
+function gitRewriteEnvPrefix(gitRewrite: GitRewrite | undefined): string {
+  return gitRewrite === undefined ? "" : GIT_REWRITE_ENV_PREFIXES[gitRewrite];
+}
+
+/**
  * Shared by the safehouse, srt, and sdx builders: render the `exec <agent> "$@"`
  * inner command and the optional status-reported prepareWorktree hook. The
  * `{{sandbox}}` template is filled from `sandboxName` (empty for safehouse/srt).
+ * `agentEnvironmentPrefix` (empty for srt/sdx) is injected verbatim between
+ * `exec` and the agent command — the safehouse builder uses it to layer in the
+ * `gitRewrite` env prefix.
  */
-function renderPrepareAndAgentCommand(arguments_: LaunchCommandArguments): {
+function renderPrepareAndAgentCommand(
+  arguments_: LaunchCommandArguments,
+  agentEnvironmentPrefix = "",
+): {
   agentCommand: string;
   prepareWorktreeCommand: string | undefined;
 } {
@@ -200,7 +230,7 @@ function renderPrepareAndAgentCommand(arguments_: LaunchCommandArguments): {
     sandboxName: arguments_.sandboxName ?? "",
   });
   return {
-    agentCommand: `exec ${agentCmd} "$@"`,
+    agentCommand: `exec ${agentEnvironmentPrefix}${agentCmd} "$@"`,
     prepareWorktreeCommand:
       arguments_.prepareWorktreeCommand === undefined
         ? undefined
@@ -514,7 +544,10 @@ function buildUnwrappedHostLaunchCommand(arguments_: LaunchCommandArguments): st
 function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string {
   const promptDir = path.dirname(arguments_.promptFile);
   const safehouseCommandName = inferAgentCommandName(arguments_.definition.cmd);
-  const { agentCommand, prepareWorktreeCommand } = renderPrepareAndAgentCommand(arguments_);
+  const { agentCommand, prepareWorktreeCommand } = renderPrepareAndAgentCommand(
+    arguments_,
+    gitRewriteEnvPrefix(arguments_.definition.safehouse?.gitRewrite),
+  );
 
   // Split --env-pass per wrap: the prepareWorktree wrap only needs build secrets (so
   // `npm install` etc. can authenticate); the agent wrap only needs the
