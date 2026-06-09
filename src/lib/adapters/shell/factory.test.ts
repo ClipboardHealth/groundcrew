@@ -718,6 +718,28 @@ describe(createShellTaskSource, () => {
     expect(created?.source).toBe("test");
   });
 
+  it("createTask exposes input.repository under both ${repo} and ${repository}", async () => {
+    const capture = path.join(dir.path, "create-repo.txt");
+    const createScript = dir.writeScript(
+      "create-repo.sh",
+      `printf '%s\\n' "$1" "$2" > "${capture}"\ncat <<'JSON'\n${JSON.stringify(
+        shellIssue({ id: "NEW-3" }),
+      )}\nJSON`,
+    );
+    const source = createShellTaskSource(
+      {
+        kind: "shell",
+        name: "test",
+        commands: { fetch: "echo '[]'", createTask: `${createScript} \${repo} \${repository}` },
+      },
+      fakeContext,
+    );
+
+    await source.createTask?.(createInput({ repository: "org/repo" }));
+
+    expect(readFileSync(capture, "utf8")).toBe("org/repo\norg/repo\n");
+  });
+
   it('createTask substitutes edit as the string "true" when input.edit is true', async () => {
     const capture = path.join(dir.path, "create-edit.txt");
     const createScript = dir.writeScript(

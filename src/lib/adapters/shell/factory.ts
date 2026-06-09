@@ -147,7 +147,10 @@ function createTaskSubstitutions(input: CreateTaskInput): Record<string, string>
   return {
     title: input.title,
     agent: input.agent,
+    // Exposed under both `repo` (short form) and `repository` (matches the
+    // CreateTaskInput field name) so either placeholder resolves.
     repo: input.repository ?? "",
+    repository: input.repository ?? "",
     team: input.team ?? "",
     id: input.id ?? "",
     priority: input.priority ?? "",
