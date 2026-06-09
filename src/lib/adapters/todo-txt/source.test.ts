@@ -8,20 +8,33 @@ import type { Issue } from "../../taskSource.ts";
 import { createTodoTxtTaskSource } from "./source.ts";
 import type { TodoTxtSourceRef } from "./normalizer.ts";
 
-// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests don't need the full config shape
-const fakeContext: AdapterContext = { globalConfig: {} as ResolvedConfig };
+function makeAdapterContext(options: {
+  defaultAgent: string;
+  definitions: ResolvedConfig["agents"]["definitions"];
+}): AdapterContext {
+  const { defaultAgent, definitions } = options;
+  return {
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- partial config sufficient for source tests
+    globalConfig: {
+      agents: { default: defaultAgent, definitions },
+    } as unknown as ResolvedConfig,
+  };
+}
 
-const contextWithModels: AdapterContext = {
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- partial config sufficient for agent validation tests
-  globalConfig: {
-    models: {
-      default: "claude",
-      definitions: { claude: { cmd: "claude", color: "#fff" } },
-    },
-  } as unknown as ResolvedConfig,
-};
+const fakeContext = makeAdapterContext({
+  defaultAgent: "codex",
+  definitions: {
+    claude: { cmd: "claude", color: "#fff" },
+    codex: { cmd: "codex", color: "#3267e3" },
+  },
+});
 
-function makeSourceWithModels(tmp: TempDir): ReturnType<typeof createTodoTxtTaskSource> {
+const contextWithAgents = makeAdapterContext({
+  defaultAgent: "claude",
+  definitions: { claude: { cmd: "claude", color: "#fff" } },
+});
+
+function makeSourceWithAgents(tmp: TempDir): ReturnType<typeof createTodoTxtTaskSource> {
   return createTodoTxtTaskSource(
     {
       kind: "todo-txt",
@@ -31,7 +44,7 @@ function makeSourceWithModels(tmp: TempDir): ReturnType<typeof createTodoTxtTask
       idPrefix: "GC",
       timezone: "UTC",
     },
-    contextWithModels,
+    contextWithAgents,
   );
 }
 
@@ -944,33 +957,34 @@ describe("TodoTxtTaskSource", () => {
 
   it("validate() flags unknown agent when knownAgents are derived from config", async () => {
     tmp.writeTodo("Task id:GC-AG1 agent:unknown-bot status:in-progress\n");
-    const source = makeSourceWithModels(tmp);
+    const source = makeSourceWithAgents(tmp);
     const errors = await source.validate?.();
     expect(errors).toContainEqual(expect.stringContaining('unknown agent "unknown-bot"'));
   });
 
-  it("validate() does not flag agent matching a configured model", async () => {
+  it("validate() does not flag agent matching a configured agent", async () => {
     tmp.writeTodo("Task id:GC-AG2 agent:claude status:in-progress\n");
-    const source = makeSourceWithModels(tmp);
+    const source = makeSourceWithAgents(tmp);
     await expect(source.validate?.()).resolves.toStrictEqual([]);
   });
 
   it("validate() does not flag agent:any", async () => {
     tmp.writeTodo("Task id:GC-AG3 agent:any status:in-progress\n");
-    const source = makeSourceWithModels(tmp);
+    const source = makeSourceWithAgents(tmp);
     await expect(source.validate?.()).resolves.toStrictEqual([]);
   });
 
   it("verify() catches unknown agent when knownAgents are derived from config", async () => {
     tmp.writeTodo("Task id:GC-AV agent:unknown-bot status:in-progress\n");
-    const source = makeSourceWithModels(tmp);
+    const source = makeSourceWithAgents(tmp);
     await expect(source.verify()).rejects.toThrow(/unknown agent "unknown-bot"/);
   });
 
-  it("validate() skips agent check when no models config is present", async () => {
+  it("validate() flags unknown agent from the default resolved config context", async () => {
     tmp.writeTodo("Task id:GC-AG4 agent:anything-goes status:in-progress\n");
-    const source = makeSource(tmp); // fakeContext has no models
-    await expect(source.validate?.()).resolves.toStrictEqual([]);
+    const source = makeSource(tmp);
+    const errors = await source.validate?.();
+    expect(errors).toContainEqual(expect.stringContaining('unknown agent "anything-goes"'));
   });
 
   it("markInProgress throws when task status is already in-progress", async () => {
