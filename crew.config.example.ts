@@ -125,8 +125,7 @@ export default {
   // // Set explicitly to "cmux", "tmux", or "zellij" to fail loudly when the
   // // chosen backend is missing. tmux windows / zellij tabs live in a
   // // dedicated `groundcrew` session and lose status-pill painting (a
-  // // cmux-only feature). "zellij" (Linux/WSL) gives native mouse support and
-  // // one named tab per ticket; attach with `zellij attach groundcrew`.
+  // // cmux-only feature).
   // workspaceKind: "auto",
   //
   // logging: {
