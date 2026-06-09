@@ -658,7 +658,7 @@ async function taskValidateCli(argv: string[]): Promise<void> {
   if (jsonOutput) {
     writeOutput(
       JSON.stringify(
-        results.map(({ source, errors }) => ({ source, errors })),
+        results.map(({ source, supported, errors }) => ({ source, supported, errors })),
         null,
         2,
       ),

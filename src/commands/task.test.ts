@@ -589,7 +589,7 @@ describe("crew task validate", () => {
     expect(process.exitCode).not.toBe(1);
   });
 
-  it("outputs JSON with --json flag when no errors", async () => {
+  it("outputs JSON with supported:true and empty errors when validate passes", async () => {
     const validate = vi.fn<NonNullable<TaskSource["validate"]>>().mockResolvedValue([]);
     buildSourcesMock.mockResolvedValue([stubSource("todo", [], { validate })]);
 
@@ -602,6 +602,24 @@ describe("crew task validate", () => {
 
     const output = log.output();
     expect(output).toContain('"source": "todo"');
+    expect(output).toContain('"supported": true');
+    expect(output).toContain('"errors": []');
+    expect(process.exitCode).not.toBe(1);
+  });
+
+  it("outputs JSON with supported:false for sources without validate()", async () => {
+    buildSourcesMock.mockResolvedValue([stubSource("todo", [])]);
+
+    const log = captureConsoleLog();
+    try {
+      await taskCli(["validate", "--json"]);
+    } finally {
+      log.restore();
+    }
+
+    const output = log.output();
+    expect(output).toContain('"source": "todo"');
+    expect(output).toContain('"supported": false');
     expect(output).toContain('"errors": []');
     expect(process.exitCode).not.toBe(1);
   });
@@ -621,6 +639,7 @@ describe("crew task validate", () => {
 
     const output = log.output();
     expect(output).toContain('"source": "todo"');
+    expect(output).toContain('"supported": true');
     expect(output).toContain("duplicate id");
     expect(process.exitCode).toBe(1);
   });
