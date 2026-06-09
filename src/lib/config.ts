@@ -388,9 +388,11 @@ const MODEL_DEFINITIONS_MIGRATION_MESSAGE = [
 const DEFAULT_PROMPT_INITIAL = [
   "You are working on task {{task}} ({{title}}) in the {{worktree}} worktree subdirectory.",
   "",
-  "Task description:",
+  "Ticket description:",
   "",
+  "<ticket_description>",
   "{{description}}",
+  "</ticket_description>",
   "",
   "## Operating mode",
   "",
