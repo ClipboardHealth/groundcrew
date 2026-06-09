@@ -917,7 +917,7 @@ describe(remove, () => {
       ["-c", "graft rm 'paul-team-220' -f"],
       expect.objectContaining({ cwd: projectDir, timeoutMs: 0 }),
     );
-    expect(runCommandMock).not.toHaveBeenCalledWith("git", expect.anything(), expect.anything());
+    expect(runCommandMock.mock.calls.map((call) => call[0])).not.toContain("git");
   });
 
   it("remove with --force runs the template without a dirtiness probe", async () => {
