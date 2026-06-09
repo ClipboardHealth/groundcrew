@@ -20,7 +20,7 @@
   <a href="./static/demo.tape"><img alt="Groundcrew dispatching tasks into tmux panes with coding agents running in parallel" src="./static/demo.gif" width="800"></a>
 </p>
 
-Groundcrew watches assigned tasks, creates isolated worktrees, launches agent CLIs in dedicated terminals, and leaves each task's work on its own PR-ready branch. For the backstory, read _[Tasks to pull requests while you sleep](https://www.clipboardworks.com/resources/blog/tasks-to-pull-requests-while-you-sleep)_.
+Groundcrew watches assigned tasks, creates isolated worktrees, launches agent CLIs in dedicated terminals, and leaves each task's work on its own PR-ready branch. For the backstory, read _[Tickets to pull requests while you sleep](https://www.clipboardworks.com/resources/blog/tickets-to-pull-requests-while-you-sleep)_.
 
 ## Why
 
