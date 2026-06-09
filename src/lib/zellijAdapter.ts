@@ -320,6 +320,7 @@ function stageTabLayout(ticket: string, command: string): string {
   try {
     mkdirSync(exitMarkerDir(), { recursive: true });
   } catch (error) {
+    /* v8 ignore next @preserve -- best-effort: a failed marker dir only disables exit-state detection */
     debug(`zellij: could not create exit-marker dir: ${errorMessage(error)}`);
   }
   // An EXIT trap fires on any exit (including an explicit `exit` in the agent
@@ -372,6 +373,7 @@ function lookupTabId(name: string): number | undefined {
 
 function forgetTabId(name: string): void {
   const map = readTabIdMap();
+  /* v8 ignore else @preserve -- forgetTabId only runs after lookupTabId found the id */
   if (name in map) {
     // oxlint-disable-next-line typescript/no-dynamic-delete -- ticket-keyed map
     delete map[name];
