@@ -17,11 +17,11 @@ const CONFIG_FILE_NAME = "crew.config.ts";
 const EXAMPLE_FILE_NAME = "crew.config.example.ts";
 const DEFAULT_EXAMPLE_PROJECT_DIR = "~/dev/groundcrew";
 const INIT_USAGE =
-  "Usage: crew init [--global | --local] [--force] [--dry-run] [--project-dir <dir>] [--repo <owner/repo>]... [--runner <auto|safehouse|sdx|none>] [--model <claude|codex>]";
-const INIT_MODELS = ["claude", "codex"] as const;
+  "Usage: crew init [--global | --local] [--force] [--dry-run] [--project-dir <dir>] [--repo <owner/repo>]... [--runner <auto|safehouse|sdx|none>] [--agent <claude|codex>]";
+const INIT_AGENTS = ["claude", "codex"] as const;
 
 type InitConfigScope = "global" | "local";
-type InitModel = (typeof INIT_MODELS)[number];
+type InitAgent = (typeof INIT_AGENTS)[number];
 
 interface InitConfigOptions {
   /** Where to write the config. Defaults to "local" (cwd). */
@@ -38,8 +38,8 @@ interface InitConfigOptions {
   repositories?: string[];
   /** Pre-fill local.runner in the generated config. */
   runner?: LocalRunnerSetting;
-  /** Choose the single built-in model preset enabled by the generated config. */
-  model?: InitModel;
+  /** Choose the single built-in agent preset enabled by the generated config. */
+  agent?: InitAgent;
   /** Override the source template path. */
   examplePath?: string;
 }
@@ -93,7 +93,7 @@ function parseArguments(argv: string[]): InitConfigOptions {
   let projectDir: string | undefined;
   const repositories: string[] = [];
   let runner: LocalRunnerSetting | undefined;
-  let model: InitModel | undefined;
+  let agent: InitAgent | undefined;
 
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
@@ -132,8 +132,8 @@ function parseArguments(argv: string[]): InitConfigOptions {
       index += 1;
       continue;
     }
-    if (argument === "--model") {
-      model = parseModel(readOptionValue(argv, index, argument));
+    if (argument === "--agent") {
+      agent = parseAgent(readOptionValue(argv, index, argument));
       index += 1;
       continue;
     }
@@ -152,8 +152,8 @@ function parseArguments(argv: string[]): InitConfigOptions {
   if (runner !== undefined) {
     parsed.runner = runner;
   }
-  if (model !== undefined) {
-    parsed.model = model;
+  if (agent !== undefined) {
+    parsed.agent = agent;
   }
   return parsed;
 }
@@ -186,18 +186,18 @@ function parseRunner(value: string): LocalRunnerSetting {
   throw new Error(`crew init --runner must be one of ${LOCAL_RUNNER_SETTINGS.join(", ")}`);
 }
 
-function parseModel(value: string): InitModel {
-  if (isInitModel(value)) {
+function parseAgent(value: string): InitAgent {
+  if (isInitAgent(value)) {
     return value;
   }
-  throw new Error(`crew init --model must be one of ${INIT_MODELS.join(", ")}`);
+  throw new Error(`crew init --agent must be one of ${INIT_AGENTS.join(", ")}`);
 }
 
 function isLocalRunnerSetting(value: string): value is LocalRunnerSetting {
   return value === "auto" || value === "safehouse" || value === "sdx" || value === "none";
 }
 
-function isInitModel(value: string): value is InitModel {
+function isInitAgent(value: string): value is InitAgent {
   return value === "claude" || value === "codex";
 }
 
@@ -231,26 +231,26 @@ function renderConfig(source: string, options: InitConfigOptions): string {
       "--runner",
     );
   }
-  if (options.model !== undefined) {
+  if (options.agent !== undefined) {
     contents = replaceRequired(
       contents,
       `    default: "claude",`,
-      `    default: ${tsString(options.model)},`,
-      "--model",
+      `    default: ${tsString(options.agent)},`,
+      "--agent",
     );
     contents = replaceRequired(
       contents,
       "      claude: {},",
-      `      ${options.model}: {},`,
-      "--model",
+      `      ${options.agent}: {},`,
+      "--agent",
     );
-    contents = removeDuplicateModelDefinitionLines(contents, options.model);
+    contents = removeDuplicateAgentDefinitionLines(contents, options.agent);
   }
   return contents;
 }
 
-function removeDuplicateModelDefinitionLines(contents: string, model: InitModel): string {
-  const linePattern = new RegExp(`^\\s*(?://\\s*)?${escapeRegExp(model)}:\\s*\\{\\},\\s*$`);
+function removeDuplicateAgentDefinitionLines(contents: string, agent: InitAgent): string {
+  const linePattern = new RegExp(`^\\s*(?://\\s*)?${escapeRegExp(agent)}:\\s*\\{\\},\\s*$`);
   let hasActiveEntry = false;
   return contents
     .split("\n")

@@ -63,10 +63,10 @@ function makeConfig(overrides: {
   git?: ResolvedConfig["git"];
   knownRepositories?: string[];
   repositoryDirs?: Record<string, string>;
-  models?: ResolvedConfig["models"]["definitions"];
+  agents?: ResolvedConfig["agents"]["definitions"];
 }): ResolvedConfig {
   const knownRepositories = overrides.knownRepositories ?? ["repo-a"];
-  const models = overrides.models ?? {
+  const agents = overrides.agents ?? {
     claude: { cmd: "claude", color: "#fff" },
   };
   return {
@@ -86,7 +86,7 @@ function makeConfig(overrides: {
       pollIntervalMilliseconds: 1000,
       sessionLimitPercentage: 85,
     },
-    models: { default: "claude", definitions: models },
+    agents: { default: "claude", definitions: agents },
     prompts: { initial: "x" },
     workspaceKind: "auto",
     local: { runner: "auto" },

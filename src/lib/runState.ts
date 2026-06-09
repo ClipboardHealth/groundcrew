@@ -9,7 +9,7 @@ export type RunLifecycleState = "running" | "interrupted" | "resumed" | "failed-
 export interface RunState {
   task: string;
   repository: string;
-  model: string;
+  agent: string;
   worktreeDir: string;
   branchName: string;
   workspaceName: string;
@@ -37,7 +37,7 @@ export interface RunState {
 export interface RunStateDraft {
   task: string;
   repository: string;
-  model: string;
+  agent: string;
   worktreeDir: string;
   branchName: string;
   workspaceName: string;
@@ -104,7 +104,7 @@ function parseRunState(value: unknown): RunState | undefined {
   }
   const task = stringField(value, "task");
   const repository = stringField(value, "repository");
-  const model = stringField(value, "model");
+  const agent = stringField(value, "agent");
   const worktreeDir = stringField(value, "worktreeDir");
   const branchName = stringField(value, "branchName");
   const workspaceName = stringField(value, "workspaceName");
@@ -118,7 +118,7 @@ function parseRunState(value: unknown): RunState | undefined {
   if (
     task === undefined ||
     repository === undefined ||
-    model === undefined ||
+    agent === undefined ||
     worktreeDir === undefined ||
     branchName === undefined ||
     workspaceName === undefined ||
@@ -134,7 +134,7 @@ function parseRunState(value: unknown): RunState | undefined {
   return {
     task,
     repository,
-    model,
+    agent,
     worktreeDir,
     branchName,
     workspaceName,
@@ -182,7 +182,7 @@ export function recordRunState(input: RecordRunStateInput): RunState {
   const state: RunState = {
     task: taskKey(input.state.task),
     repository: input.state.repository,
-    model: input.state.model,
+    agent: input.state.agent,
     worktreeDir: input.state.worktreeDir,
     branchName: input.state.branchName,
     workspaceName: input.state.workspaceName,

@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { BUILD_SECRET_NAMES, type ModelDefinition } from "./config.ts";
+import { BUILD_SECRET_NAMES, type AgentDefinition } from "./config.ts";
 import {
   buildLaunchCommand,
   resolveSafehouseClearancePath,
@@ -15,7 +15,7 @@ function arguments_(
   overrides: Partial<Parameters<typeof buildLaunchCommand>[0]> = {},
 ): Parameters<typeof buildLaunchCommand>[0] {
   return {
-    definition: { cmd: "claude", color: "#fff" } satisfies ModelDefinition,
+    definition: { cmd: "claude", color: "#fff" } satisfies AgentDefinition,
     promptFile: "/tmp/prompt-team-1/prompt.txt",
     worktreeDir: "/work/repo-a-team-1",
     runner: "safehouse",

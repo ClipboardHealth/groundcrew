@@ -103,7 +103,7 @@ function stubSource(name: string): TaskSource {
   };
 }
 
-function makeConfig(overrides: Partial<ResolvedConfig["models"]> = {}): ResolvedConfig {
+function makeConfig(overrides: Partial<ResolvedConfig["agents"]> = {}): ResolvedConfig {
   return {
     sources: [],
     defaults: { hooks: {} },
@@ -117,7 +117,7 @@ function makeConfig(overrides: Partial<ResolvedConfig["models"]> = {}): Resolved
       pollIntervalMilliseconds: 1000,
       sessionLimitPercentage: 85,
     },
-    models: {
+    agents: {
       default: "claude",
       definitions: {
         claude: { cmd: "safehouse claude --permission-mode auto", color: "#fff" },
@@ -297,7 +297,7 @@ describe(doctor, () => {
     expect(consoleLog.output()).toContain("[--] git");
   });
 
-  it("explains how to stop probing a missing built-in model CLI", async () => {
+  it("explains how to stop probing a missing built-in agent CLI", async () => {
     loadConfigMock.mockResolvedValue(
       makeConfig({
         default: "claude",
@@ -313,7 +313,7 @@ describe(doctor, () => {
 
     expect(actual).toBe(false);
     expect(consoleLog.output()).toContain(
-      "[--] codex  — install codex or remove `models.definitions.codex` from crew.config.ts",
+      "[--] codex  — install codex or remove `agents.definitions.codex` from crew.config.ts",
     );
   });
 
@@ -388,7 +388,7 @@ describe(doctor, () => {
     expect(checked).toContain("claude");
   });
 
-  it("skips flag values when tokenizing model commands", async () => {
+  it("skips flag values when tokenizing agent commands", async () => {
     loadConfigMock.mockResolvedValue(
       makeConfig({
         default: "node-cli",
@@ -405,7 +405,7 @@ describe(doctor, () => {
     expect(checked).not.toContain("script.ts");
   });
 
-  it("does not probe a built-in model that is not enabled", async () => {
+  it("does not probe a built-in agent that is not enabled", async () => {
     // The default makeConfig fixture has only `claude` in `definitions`.
     // `gatherToolTokens` iterates `Object.values(definitions)`, so codex is
     // never gathered.
@@ -572,7 +572,7 @@ describe(doctor, () => {
     expect(consoleLog.output()).toContain("local runner (sdx)");
   });
 
-  it("downgrades model command checks to optional when the local runner is unavailable", async () => {
+  it("downgrades agent command checks to optional when the local runner is unavailable", async () => {
     detectHostMock.mockResolvedValue(
       host({
         hasSafehouse: false,
@@ -599,7 +599,7 @@ describe(doctor, () => {
     expect(consoleLog.output()).toContain("required for local runs");
   });
 
-  it("fails doctor when codexbar is missing and an enabled model has usage configured", async () => {
+  it("fails doctor when codexbar is missing and an enabled agent has usage configured", async () => {
     loadConfigMock.mockResolvedValue(
       makeConfig({
         default: "claude",
@@ -618,7 +618,7 @@ describe(doctor, () => {
 
     expect(actual).toBe(false);
     expect(consoleLog.output()).toContain(
-      "[--] codexbar  — required for usage gating on `claude` — install codexbar, or set `models.definitions.<name>.usage` to disable gating",
+      "[--] codexbar  — required for usage gating on `claude` — install codexbar, or set `agents.definitions.<name>.usage` to disable gating",
     );
   });
 
@@ -660,7 +660,7 @@ describe(doctor, () => {
     expect(consoleLog.output()).toMatch(/\[--] bare-cli\s*$/m);
   });
 
-  it("does not use shipped-default disable guidance for custom model names", async () => {
+  it("does not use shipped-default disable guidance for custom agent names", async () => {
     loadConfigMock.mockResolvedValue(
       makeConfig({
         default: "cursor",
@@ -676,7 +676,7 @@ describe(doctor, () => {
     expect(consoleLog.output()).toMatch(/\[--] cursor\s*$/m);
   });
 
-  it("keeps the first useful hint when multiple models share a command token", async () => {
+  it("keeps the first useful hint when multiple agents share a command token", async () => {
     loadConfigMock.mockResolvedValue(
       makeConfig({
         default: "claude",
@@ -691,7 +691,7 @@ describe(doctor, () => {
     await doctor();
 
     expect(consoleLog.output()).toContain(
-      "[--] claude  — install claude or remove `models.definitions.claude` from crew.config.ts",
+      "[--] claude  — install claude or remove `agents.definitions.claude` from crew.config.ts",
     );
   });
 

@@ -178,7 +178,7 @@ async function applyCmuxStatus(
   status: WorkspaceStatus,
   signal?: AbortSignal,
 ): Promise<void> {
-  const arguments_ = ["set-status", "model", status.text];
+  const arguments_ = ["set-status", "agent", status.text];
   if (status.icon !== undefined) {
     arguments_.push("--icon", status.icon);
   }

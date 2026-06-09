@@ -1,20 +1,20 @@
 /**
- * Linear adapter — parsing helpers for model/repository resolution from
+ * Linear adapter — parsing helpers for agent/repository resolution from
  * issue labels and descriptions. Extracted from boardSource.ts (Task 10).
  */
 
-import { AGENT_ANY_MODEL, isBuiltInModelNotEnabled, type ResolvedConfig } from "../../config.ts";
+import { AGENT_ANY, isBuiltInAgentNotEnabled, type ResolvedConfig } from "../../config.ts";
 import { RepositoryResolutionError } from "../../taskSource.ts";
 
 export const AGENT_LABEL_PREFIX = "agent-";
 
 export type RepositoryResolution = { kind: "ok"; repository: string } | { kind: "missing" };
 
-export type ModelResolution =
-  | { kind: "matched"; model: string }
+export type AgentResolution =
+  | { kind: "matched"; agent: string }
   | { kind: "no-label" }
   | { kind: "agent-any" }
-  | { kind: "not-enabled-fallback"; requestedModel: string; fallbackModel: string };
+  | { kind: "not-enabled-fallback"; requestedAgent: string; fallbackAgent: string };
 
 function escapeRegex(value: string): string {
   return value.replaceAll(/[$()*+.?[\\\]^{|}]/g, String.raw`\$&`);
@@ -150,16 +150,16 @@ export function parseRepository(arguments_: ParseRepositoryArguments): string {
  * Returns the resolved agent metadata for a task, or `undefined` when the
  * task has no `agent-*` label — those tasks are not groundcrew's concern
  * and downstream code skips them. An explicit `agent-<unknown>` label still
- * falls back to `models.default` because the user opted in by labeling.
+ * falls back to `agents.default` because the user opted in by labeling.
  *
- * `notEnabledFallback` is set when the label matched a built-in model the
+ * `notEnabledFallback` is set when the label matched a built-in agent the
  * user has not enabled (e.g. `agent-codex` when only `claude: {}` is listed).
  * Callers warn on this so the user can spot the config/labeling mismatch; we
  * still fall back rather than skip because skipping would block the task
  * indefinitely. Unknown labels stay silent — those are likelier to be typos.
  */
 interface ParsedAgentLabels {
-  model: string;
+  agent: string;
   notEnabledFallback?: string;
 }
 
@@ -174,44 +174,44 @@ function parseAgentLabels(
   let notEnabledFallback: string | undefined;
   for (const label of agentLabels) {
     const name = label.name.slice(AGENT_LABEL_PREFIX.length);
-    if (name === AGENT_ANY_MODEL) {
-      return { model: AGENT_ANY_MODEL };
+    if (name === AGENT_ANY) {
+      return { agent: AGENT_ANY };
     }
     // Own-property check, not `in`: a label like `agent-toString` or
     // `agent-__proto__` would otherwise resolve through the prototype chain
-    // instead of falling back to `models.default`.
-    if (Object.hasOwn(config.models.definitions, name)) {
-      return { model: name };
+    // instead of falling back to `agents.default`.
+    if (Object.hasOwn(config.agents.definitions, name)) {
+      return { agent: name };
     }
-    if (notEnabledFallback === undefined && isBuiltInModelNotEnabled(config, name)) {
+    if (notEnabledFallback === undefined && isBuiltInAgentNotEnabled(config, name)) {
       notEnabledFallback = name;
     }
   }
-  const fallback: ParsedAgentLabels = { model: config.models.default };
+  const fallback: ParsedAgentLabels = { agent: config.agents.default };
   if (notEnabledFallback !== undefined) {
     fallback.notEnabledFallback = notEnabledFallback;
   }
   return fallback;
 }
 
-export function resolveModelFor(arguments_: {
+export function resolveAgentFor(arguments_: {
   labels: { name: string }[];
   config: ResolvedConfig;
-}): ModelResolution {
+}): AgentResolution {
   const { labels, config } = arguments_;
   const parsed = parseAgentLabels(labels, config);
   if (parsed === undefined) {
     return { kind: "no-label" };
   }
-  if (parsed.model === AGENT_ANY_MODEL) {
+  if (parsed.agent === AGENT_ANY) {
     return { kind: "agent-any" };
   }
   if (parsed.notEnabledFallback !== undefined) {
     return {
       kind: "not-enabled-fallback",
-      requestedModel: parsed.notEnabledFallback,
-      fallbackModel: parsed.model,
+      requestedAgent: parsed.notEnabledFallback,
+      fallbackAgent: parsed.agent,
     };
   }
-  return { kind: "matched", model: parsed.model };
+  return { kind: "matched", agent: parsed.agent };
 }

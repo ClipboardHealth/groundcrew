@@ -3,7 +3,7 @@ import { RepositoryResolutionError } from "../../taskSource.ts";
 import {
   buildRepositoryRegex,
   parseRepository,
-  resolveModelFor,
+  resolveAgentFor,
   resolveRepositoryFor,
 } from "./parsing.ts";
 
@@ -23,13 +23,13 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
       sessionLimitPercentage: 85,
       ...overrides.orchestrator,
     },
-    models: {
+    agents: {
       default: "claude",
       definitions: {
         claude: { cmd: "claude", color: "#fff" },
         codex: { cmd: "codex", color: "#000" },
       },
-      ...overrides.models,
+      ...overrides.agents,
     },
     prompts: { initial: "x", ...overrides.prompts },
     workspaceKind: overrides.workspaceKind ?? "auto",
@@ -188,50 +188,50 @@ describe(resolveRepositoryFor, () => {
   });
 });
 
-describe(resolveModelFor, () => {
-  it("returns matched when label corresponds to a known model", () => {
+describe(resolveAgentFor, () => {
+  it("returns matched when label corresponds to a known agent", () => {
     const config = makeConfig();
-    const result = resolveModelFor({ labels: [{ name: "agent-claude" }], config });
-    expect(result).toStrictEqual({ kind: "matched", model: "claude" });
+    const result = resolveAgentFor({ labels: [{ name: "agent-claude" }], config });
+    expect(result).toStrictEqual({ kind: "matched", agent: "claude" });
   });
 
   it("returns no-label when no agent-* label is present", () => {
     const config = makeConfig();
-    const result = resolveModelFor({ labels: [{ name: "feature" }], config });
+    const result = resolveAgentFor({ labels: [{ name: "feature" }], config });
     expect(result.kind).toBe("no-label");
   });
 
   it("returns no-label when the labels array is empty", () => {
     const config = makeConfig();
-    const result = resolveModelFor({ labels: [], config });
+    const result = resolveAgentFor({ labels: [], config });
     expect(result.kind).toBe("no-label");
   });
 
   it("returns agent-any when the label is agent-any", () => {
     const config = makeConfig();
-    const result = resolveModelFor({ labels: [{ name: "agent-any" }], config });
+    const result = resolveAgentFor({ labels: [{ name: "agent-any" }], config });
     expect(result.kind).toBe("agent-any");
   });
 
-  it("returns not-enabled-fallback when the label matches a built-in model that is not enabled", () => {
-    // codex is absent from definitions but IS a built-in model, so the label is
+  it("returns not-enabled-fallback when the label matches a built-in agent that is not enabled", () => {
+    // codex is absent from definitions but IS a built-in agent, so the label is
     // recognizable and can produce a targeted warning before fallback.
     const configWithCodexNotEnabled = makeConfig({
-      models: {
+      agents: {
         default: "claude",
         definitions: {
           claude: { cmd: "claude", color: "#fff" },
         },
       },
     });
-    const result = resolveModelFor({
+    const result = resolveAgentFor({
       labels: [{ name: "agent-codex" }],
       config: configWithCodexNotEnabled,
     });
     expect(result).toStrictEqual({
       kind: "not-enabled-fallback",
-      requestedModel: "codex",
-      fallbackModel: "claude",
+      requestedAgent: "codex",
+      fallbackAgent: "claude",
     });
   });
 });

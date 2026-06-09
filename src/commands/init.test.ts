@@ -145,7 +145,7 @@ describe("crew init", () => {
         projectDir: "~/dev",
         repositories: ["OWNER/REPO"],
         runner: "none",
-        model: "claude",
+        agent: "claude",
       });
 
       const destination = path.join(cwd, "crew.config.ts");
@@ -211,7 +211,7 @@ describe("crew init", () => {
         "OWNER/REPO",
         "--runner",
         "none",
-        "--model",
+        "--agent",
         "claude",
       ]);
 
@@ -239,7 +239,7 @@ describe("crew init", () => {
         "~/Dev $Box",
         "--repo",
         "OWNER/REPO",
-        "--model",
+        "--agent",
         "codex",
       ]);
 
@@ -309,13 +309,13 @@ describe("crew init", () => {
       );
     });
 
-    it("rejects --model without a value", async () => {
-      await expect(initConfigCli(["--model"])).rejects.toThrow(/crew init --model/);
+    it("rejects --agent without a value", async () => {
+      await expect(initConfigCli(["--agent"])).rejects.toThrow(/crew init --agent/);
     });
 
-    it("rejects unsupported model values", async () => {
-      await expect(initConfigCli(["--model", "cursor"])).rejects.toThrow(
-        /--model must be one of claude, codex/,
+    it("rejects unsupported agent values", async () => {
+      await expect(initConfigCli(["--agent", "cursor"])).rejects.toThrow(
+        /--agent must be one of claude, codex/,
       );
     });
 

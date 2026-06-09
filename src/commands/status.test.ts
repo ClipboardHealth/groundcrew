@@ -75,7 +75,7 @@ function sourceIssue(overrides: Partial<SourceIssue> = {}): SourceIssue {
     description: "",
     status: "todo",
     repository: "repo-a",
-    model: "claude",
+    agent: "claude",
     assignee: "me",
     updatedAt: "2026-05-26T00:00:00.000Z",
     blockers: [],
@@ -147,13 +147,13 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
       sessionLimitPercentage: 85,
       ...overrides.orchestrator,
     },
-    models: {
+    agents: {
       default: "claude",
       definitions: {
         claude: { cmd: "claude", color: "#fff" },
         codex: { cmd: "codex", color: "#000" },
       },
-      ...overrides.models,
+      ...overrides.agents,
     },
     prompts: { initial: "x", ...overrides.prompts },
     workspaceKind: overrides.workspaceKind ?? "auto",
@@ -177,7 +177,7 @@ function runState(overrides: Partial<RunState> = {}): RunState {
   return {
     task: "team-1",
     repository: "repo-a",
-    model: "claude",
+    agent: "claude",
     worktreeDir: "/work/repo-a-team-1",
     branchName: "dev-team-1",
     workspaceName: "team-1",
@@ -259,7 +259,7 @@ describe(status, () => {
     expect(output).toContain("groundcrew status TEAM-1");
     expect(output).not.toContain("Config snapshot");
     expect(output).toContain(
-      "run: running; model=claude; updated=2026-05-26T00:01:00.000Z; resumes=0",
+      "run: running; agent=claude; updated=2026-05-26T00:01:00.000Z; resumes=0",
     );
     expect(output).toContain("manual pause");
     expect(output).toContain("workspace: live");
@@ -350,7 +350,7 @@ describe(status, () => {
     await status(makeConfig(), { task: "team-1" });
 
     const output = consoleLog.output();
-    expect(output).toContain("running; model=claude; updated=2026-05-26T00:01:00.000Z; resumes=0");
+    expect(output).toContain("running; agent=claude; updated=2026-05-26T00:01:00.000Z; resumes=0");
     expect(output).toContain("task: team-1  other");
     expect(output).toContain("title: No state type");
   });
@@ -373,7 +373,7 @@ describe(status, () => {
     await status(makeConfig(), { task: "team-1" });
 
     expect(consoleLog.output()).toContain(
-      "run: running (session dead); model=claude; updated=2026-05-26T00:01:00.000Z; resumes=0",
+      "run: running (session dead); agent=claude; updated=2026-05-26T00:01:00.000Z; resumes=0",
     );
   });
 
@@ -388,7 +388,7 @@ describe(status, () => {
     await status(makeConfig(), { task: "team-1" });
 
     expect(consoleLog.output()).toContain(
-      "run: running (session exited); model=claude; updated=2026-05-26T00:01:00.000Z; resumes=0",
+      "run: running (session exited); agent=claude; updated=2026-05-26T00:01:00.000Z; resumes=0",
     );
   });
 
@@ -399,7 +399,7 @@ describe(status, () => {
     await status(makeConfig(), { task: "team-1" });
 
     const output = consoleLog.output();
-    expect(output).toContain("run: running; model=claude;");
+    expect(output).toContain("run: running; agent=claude;");
     expect(output).not.toContain("session dead");
     expect(output).not.toContain("session exited");
   });
@@ -411,7 +411,7 @@ describe(status, () => {
     await status(makeConfig(), { task: "team-1" });
 
     const output = consoleLog.output();
-    expect(output).toContain("run: running; model=claude;");
+    expect(output).toContain("run: running; agent=claude;");
     expect(output).not.toContain("session dead");
     expect(output).not.toContain("session exited");
   });
@@ -1152,7 +1152,7 @@ describe(status, () => {
           title: "Wire up auth",
           url: "https://linear.app/example/issue/TEAM-101",
           repository: "repo-a",
-          model: "claude",
+          agent: "claude",
         }),
         // Eligible Todo blocked by another in-progress task.
         sourceIssue({
@@ -1160,7 +1160,7 @@ describe(status, () => {
           title: "Polish UI",
           url: "https://linear.app/example/issue/TEAM-102",
           repository: "repo-b",
-          model: "codex",
+          agent: "codex",
           blockers: [
             {
               id: "linear:team-50",
@@ -1170,12 +1170,12 @@ describe(status, () => {
             },
           ],
         }),
-        // Ineligible (no model/repo) — excluded from Queue.
+        // Ineligible (no agent/repo) — excluded from Queue.
         sourceIssue({
           id: "linear:team-103",
           title: "No label",
           repository: undefined,
-          model: undefined,
+          agent: undefined,
         }),
         // Not Todo — excluded.
         sourceIssue({ id: "linear:team-104", status: "in-progress" }),
@@ -1189,11 +1189,11 @@ describe(status, () => {
     expect(output).toContain("team-101  https://linear.app/example/issue/TEAM-101");
     expect(output).toContain("  title:     Wire up auth");
     expect(output).toContain("  repo:      repo-a");
-    expect(output).toContain("  model:     claude");
+    expect(output).toContain("  agent:     claude");
     expect(output).toContain("Blocked\n-------");
     expect(output).toContain("team-102  https://linear.app/example/issue/TEAM-102");
     expect(output).toContain("  blocked by:  team-50 (In Progress)");
-    // team-103 is an ineligible Todo (no repo/model) — surfaced nowhere.
+    // team-103 is an ineligible Todo (no repo/agent) — surfaced nowhere.
     expect(output).not.toContain("team-103");
     // team-104 is in-progress, so it's excluded from the Queue but now appears
     // in the "In progress (no local worktree)" section above the slots line.

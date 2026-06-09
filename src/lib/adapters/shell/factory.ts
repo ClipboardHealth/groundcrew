@@ -114,7 +114,7 @@ export function toCanonicalIssue(shellIssue: ShellIssue, sourceName: string): Ca
     description: shellIssue.description,
     status: shellIssue.status,
     repository: shellIssue.repository ?? undefined,
-    model: shellIssue.model ?? undefined,
+    agent: shellIssue.agent ?? undefined,
     assignee: shellIssue.assignee,
     updatedAt: shellIssue.updatedAt,
     blockers,

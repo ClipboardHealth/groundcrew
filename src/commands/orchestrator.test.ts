@@ -7,7 +7,7 @@ import type { LinearClient } from "@linear/sdk";
 import type * as configModule from "../lib/config.ts";
 import { loadConfigWithSource, type ResolvedConfig } from "../lib/config.ts";
 import { findPullRequestsForBranch } from "../lib/pullRequests.ts";
-import { getUsageByModel } from "../lib/usage.ts";
+import { getUsageByAgent } from "../lib/usage.ts";
 import type * as utilModule from "../lib/util.ts";
 import { setVerbose, sleep } from "../lib/util.ts";
 import { getLinearClient } from "../lib/adapters/linear/client.ts";
@@ -64,7 +64,7 @@ vi.mock(import("../lib/worktrees.ts"), async (importOriginal) => {
 });
 vi.mock(import("../lib/usage.ts"), async (importOriginal) => {
   const actual = await importOriginal();
-  return { ...actual, getUsageByModel: vi.fn<typeof getUsageByModel>() };
+  return { ...actual, getUsageByAgent: vi.fn<typeof getUsageByAgent>() };
 });
 vi.mock(import("../lib/pullRequests.ts"), async (importOriginal) => {
   const actual = await importOriginal();
@@ -85,7 +85,7 @@ const sleepMock = vi.mocked(sleep);
 const listMock = vi.mocked(worktrees.list);
 const teardownMock = vi.mocked(worktrees.teardown);
 
-const usageMock = vi.mocked(getUsageByModel);
+const usageMock = vi.mocked(getUsageByAgent);
 const setupMock = vi.mocked(setupWorkspace);
 const workspacesProbeMock = vi.mocked(workspaces.probe);
 const findPullRequestsMock = vi.mocked(findPullRequestsForBranch);
@@ -106,13 +106,13 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
       sessionLimitPercentage: 85,
       ...overrides.orchestrator,
     },
-    models: {
+    agents: {
       default: "claude",
       definitions: {
         claude: { cmd: "claude", color: "#fff" },
         codex: { cmd: "codex", color: "#000" },
       },
-      ...overrides.models,
+      ...overrides.agents,
     },
     prompts: { initial: "x", ...overrides.prompts },
     workspaceKind: overrides.workspaceKind ?? "auto",
@@ -416,7 +416,7 @@ describe(orchestrate, () => {
 
     expect(setupMock).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ task: "team-1", repository: "repo-a", model: "claude" }),
+      expect.objectContaining({ task: "team-1", repository: "repo-a", agent: "claude" }),
     );
     expect(client.updateIssue).toHaveBeenCalledWith("uuid-1", { stateId: "state-in-progress" });
   });
@@ -489,7 +489,7 @@ describe(orchestrate, () => {
     );
   });
 
-  it("resolves the model from an agent-* label", async () => {
+  it("resolves the agent from an agent-* label", async () => {
     const client = makeClient({
       pages: [
         [
@@ -508,11 +508,11 @@ describe(orchestrate, () => {
 
     expect(setupMock).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ model: "codex" }),
+      expect.objectContaining({ agent: "codex" }),
     );
   });
 
-  it("resolves agent-any to the model with the lowest session-used percent", async () => {
+  it("resolves agent-any to the agent with the lowest session-used percent", async () => {
     usageMock.mockResolvedValue({
       claude: { session: 0.6, sessionEndDuration: 30, weekly: null, weekEndDuration: null },
       codex: { session: 0.2, sessionEndDuration: 30, weekly: null, weekEndDuration: null },
@@ -534,13 +534,13 @@ describe(orchestrate, () => {
 
     expect(setupMock).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ model: "codex" }),
+      expect.objectContaining({ agent: "codex" }),
     );
     const out = consoleLog.output();
     expect(out).toContain("Resolved agent-any for team-1 → codex");
   });
 
-  it("resolves agent-any to the default model when no usage data is available", async () => {
+  it("resolves agent-any to the default agent when no usage data is available", async () => {
     usageMock.mockResolvedValue({});
     const client = makeClient({
       pages: [
@@ -559,11 +559,11 @@ describe(orchestrate, () => {
 
     expect(setupMock).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ model: "claude" }),
+      expect.objectContaining({ agent: "claude" }),
     );
   });
 
-  it("agent-any excludes an exhausted model and picks the available one", async () => {
+  it("agent-any excludes an exhausted agent and picks the available one", async () => {
     usageMock.mockResolvedValue({
       claude: { session: 0.95, sessionEndDuration: 30, weekly: null, weekEndDuration: null },
       codex: { session: 0.5, sessionEndDuration: 30, weekly: null, weekEndDuration: null },
@@ -585,18 +585,18 @@ describe(orchestrate, () => {
 
     expect(setupMock).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ model: "codex" }),
+      expect.objectContaining({ agent: "codex" }),
     );
   });
 
-  it("agent-any prefers the default model on a score tie even when iterated last", async () => {
+  it("agent-any prefers the default agent on a score tie even when iterated last", async () => {
     // claude is iterated first by Object.keys, but the user has set the
     // default to codex. With no usage data both score 0; the tiebreak
     // should hand the slot to codex (the default), not claude.
     loadConfigMock.mockResolvedValue(
       makeLoadedConfig(
         makeConfig({
-          models: {
+          agents: {
             default: "codex",
             definitions: {
               claude: { cmd: "claude", color: "#fff" },
@@ -623,7 +623,7 @@ describe(orchestrate, () => {
 
     expect(setupMock).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ model: "codex" }),
+      expect.objectContaining({ agent: "codex" }),
     );
   });
 
@@ -649,11 +649,11 @@ describe(orchestrate, () => {
 
     expect(setupMock).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ model: "claude" }),
+      expect.objectContaining({ agent: "claude" }),
     );
   });
 
-  it("skips agent-any tasks when every model is exhausted", async () => {
+  it("skips agent-any tasks when every agent is exhausted", async () => {
     usageMock.mockResolvedValue({
       claude: { session: 0.95, sessionEndDuration: 30, weekly: null, weekEndDuration: null },
       codex: { session: 0.95, sessionEndDuration: 30, weekly: null, weekEndDuration: null },
@@ -675,10 +675,10 @@ describe(orchestrate, () => {
 
     expect(setupMock).not.toHaveBeenCalled();
     const out = consoleLog.output();
-    expect(out).toContain("no model has available capacity");
+    expect(out).toContain("no agent has available capacity");
   });
 
-  it("falls back to the default model when the agent-* label names an unknown model", async () => {
+  it("falls back to the default agent when the agent-* label names an unknown agent", async () => {
     const client = makeClient({
       pages: [
         [
@@ -697,7 +697,7 @@ describe(orchestrate, () => {
 
     expect(setupMock).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ model: "claude" }),
+      expect.objectContaining({ agent: "claude" }),
     );
   });
 
@@ -822,7 +822,7 @@ describe(orchestrate, () => {
     expect(out).toContain("No Todo tasks");
   });
 
-  it("skips Todo tasks whose model is over the session limit", async () => {
+  it("skips Todo tasks whose agent is over the session limit", async () => {
     usageMock.mockResolvedValue({
       claude: { session: 0.95, sessionEndDuration: 30, weekly: null, weekEndDuration: null },
     });
@@ -1284,7 +1284,7 @@ cat <<'JSON'
     "description": "Touches repo-a.",
     "status": "in-progress",
     "repository": "repo-a",
-    "model": "claude",
+    "agent": "claude",
     "assignee": "Alice",
     "updatedAt": "2026-01-01T00:00:00Z",
     "blockers": [],
@@ -1569,7 +1569,7 @@ JSON
     );
   });
 
-  it("ignores models whose session window is null", async () => {
+  it("ignores agents whose session window is null", async () => {
     usageMock.mockResolvedValue({
       claude: { session: null, sessionEndDuration: null, weekly: null, weekEndDuration: null },
     });
@@ -1590,7 +1590,7 @@ JSON
     expect(setupMock).toHaveBeenCalledWith(expect.anything(), expect.anything());
   });
 
-  it("ignores models below the session limit threshold", async () => {
+  it("ignores agents below the session limit threshold", async () => {
     usageMock.mockResolvedValue({
       claude: { session: 0.5, sessionEndDuration: 30, weekly: null, weekEndDuration: null },
     });
@@ -1611,7 +1611,7 @@ JSON
     expect(setupMock).toHaveBeenCalledWith(expect.anything(), expect.anything());
   });
 
-  it("uses a `?` placeholder when sessionEndDuration is null on an exhausted model", async () => {
+  it("uses a `?` placeholder when sessionEndDuration is null on an exhausted agent", async () => {
     usageMock.mockResolvedValue({
       claude: { session: 0.95, sessionEndDuration: null, weekly: null, weekEndDuration: null },
     });

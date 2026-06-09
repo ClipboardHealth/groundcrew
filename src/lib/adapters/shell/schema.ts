@@ -3,7 +3,7 @@
  *
  * - `ShellIssue` — the JSON shape a `commands.fetch` / `commands.resolveOne`
  *   script must emit on stdout. Mirrors the canonical `Issue` shape but with
- *   nullable `repository`/`model` (scripts use `null` rather than omitting)
+ *   nullable `repository`/`agent` (scripts use `null` rather than omitting)
  *   and an optional `hasMoreBlockers` (defaults to `false`).
  * - `ShellAdapterConfig` — the per-source config block users declare in
  *   `crew.config.ts`'s `sources: [...]` array.
@@ -27,7 +27,7 @@ export const shellIssueSchema = z.object({
   description: z.string(),
   status: canonicalStatusSchema,
   repository: z.string().nullable(),
-  model: z.string().nullable(),
+  agent: z.string().nullable(),
   assignee: z.string(),
   updatedAt: z.string(),
   blockers: z.array(shellBlockerSchema),

@@ -24,7 +24,7 @@ import {
 const REMOVED_SANDBOX_COMMAND_MESSAGE = [
   "`crew sandbox` is no longer supported.",
   "Groundcrew now launches agents inside existing sbx sandboxes but does not list, create, regenerate, authenticate, or remove them.",
-  "Use the manual `sbx` workflow in README.md#docker-sandboxes-sdx-setup, then keep `models.definitions.<model>.sandbox.agent` in crew.config.ts so launches can address the existing sandbox.",
+  "Use the manual `sbx` workflow in README.md#docker-sandboxes-sdx-setup, then keep `agents.definitions.<agent>.sandbox.agent` in crew.config.ts so launches can address the existing sandbox.",
 ].join("\n");
 
 interface PackageMetadata {
@@ -158,7 +158,7 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
   init: {
     summary: "Create a crew.config.ts in the cwd (or --global into the XDG config dir)",
     usage:
-      "[--global | --local] [--force] [--dry-run] [--project-dir <dir>] [--repo <repo>]... [--runner <runner>] [--model <model>]",
+      "[--global | --local] [--force] [--dry-run] [--project-dir <dir>] [--repo <repo>]... [--runner <runner>] [--agent <agent>]",
     invoke: initConfigCli,
   },
   run: {

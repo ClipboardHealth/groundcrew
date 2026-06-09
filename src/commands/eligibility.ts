@@ -7,9 +7,9 @@
  * effects.
  */
 
-import { AGENT_ANY_MODEL, type ResolvedConfig } from "../lib/config.ts";
+import { AGENT_ANY, type ResolvedConfig } from "../lib/config.ts";
 import { naturalIdFromCanonical, type Blocker, type GroundcrewIssue } from "../lib/taskSource.ts";
-import type { UsageByModel } from "../lib/usage.ts";
+import type { UsageByAgent } from "../lib/usage.ts";
 import type { WorkspaceProbe } from "../lib/workspaces.ts";
 import type { WorktreeEntry } from "../lib/worktrees.ts";
 
@@ -30,7 +30,7 @@ export interface StartVerdict {
   kind: "start";
   issue: GroundcrewIssue;
   recovery: boolean;
-  /** Set when the verdict resolved an `agent-any` label to a concrete model. */
+  /** Set when the verdict resolved an `agent-any` label to a concrete agent. */
   resolvedFromAny: boolean;
 }
 
@@ -44,27 +44,27 @@ export interface SkipVerdict {
   /** Set for `blocked` and `blockers_paginated`. */
   blockers?: string[];
   /**
-   * Set when the skip event should carry the resolved model (i.e. the
-   * verdict knew which model would have run). Omitted for blocker skips
-   * and `agent_any_capacity` where the model was either unresolved or
+   * Set when the skip event should carry the resolved agent (i.e. the
+   * verdict knew which agent would have run). Omitted for blocker skips
+   * and `agent_any_capacity` where the agent was either unresolved or
    * irrelevant.
    */
-  model?: string;
+  agent?: string;
 }
 
 type Verdict = StartVerdict | SkipVerdict;
 
-export type ModelUsageExhaustion =
+export type AgentUsageExhaustion =
   | {
       kind: "session";
-      model: string;
+      agent: string;
       usedPercentage: number;
       limitPercentage: number;
       resetMinutes: number | null;
     }
   | {
       kind: "weekly";
-      model: string;
+      agent: string;
       usedPercentage: number;
       allowedPercentage: number;
       resetMinutes: number;
@@ -81,7 +81,7 @@ export interface ClassifyArguments {
   unblocked: readonly GroundcrewIssue[];
   worktreeEntries: readonly WorktreeEntry[];
   workspaceProbe: WorkspaceProbe;
-  usage: UsageByModel;
+  usage: UsageByAgent;
   /** Models flagged over `sessionLimitPercentage`. */
   exhausted: Set<string>;
   /** Maximum number of `start` verdicts to produce. */
@@ -125,19 +125,19 @@ function blockerVerdictFor(issue: GroundcrewIssue): SkipVerdict | undefined {
 }
 
 /**
- * Pick the configured model with the most available session capacity.
+ * Pick the configured agent with the most available session capacity.
  * Models flagged exhausted (over `sessionLimitPercentage`) are excluded.
- * Score is `usage[model].session` with `null`/missing treated as 0
- * (maximum headroom), so when no usage data is available every model
- * ties at 0 and the default model wins the tiebreak — `agent-any` then
+ * Score is `usage[agent].session` with `null`/missing treated as 0
+ * (maximum headroom), so when no usage data is available every agent
+ * ties at 0 and the default agent wins the tiebreak — `agent-any` then
  * falls back to the default predictably.
  */
-export function pickBestModel(
+export function pickBestAgent(
   config: ResolvedConfig,
-  usage: UsageByModel,
+  usage: UsageByAgent,
   exhausted: Set<string>,
 ): string | undefined {
-  const candidates = Object.keys(config.models.definitions).filter((name) => !exhausted.has(name));
+  const candidates = Object.keys(config.agents.definitions).filter((name) => !exhausted.has(name));
   if (candidates.length === 0) {
     return undefined;
   }
@@ -146,7 +146,7 @@ export function pickBestModel(
     if (candidate.score < best.score) {
       return candidate;
     }
-    if (candidate.score === best.score && candidate.name === config.models.default) {
+    if (candidate.score === best.score && candidate.name === config.agents.default) {
       return candidate;
     }
     return best;
@@ -166,15 +166,15 @@ function weeklyPacedBudgetPercentage(weekEndDuration: number): number {
 
 export function classifyUsageExhaustion(
   config: ResolvedConfig,
-  usage: UsageByModel,
-): ModelUsageExhaustion[] {
-  const exhausted: ModelUsageExhaustion[] = [];
+  usage: UsageByAgent,
+): AgentUsageExhaustion[] {
+  const exhausted: AgentUsageExhaustion[] = [];
   const sessionLimit = config.orchestrator.sessionLimitPercentage;
-  for (const [model, snapshot] of Object.entries(usage)) {
+  for (const [agent, snapshot] of Object.entries(usage)) {
     if (snapshot.session !== null && snapshot.session * PERCENT_FRACTION_DIVISOR > sessionLimit) {
       exhausted.push({
         kind: "session",
-        model,
+        agent,
         usedPercentage: snapshot.session * PERCENT_FRACTION_DIVISOR,
         limitPercentage: sessionLimit,
         resetMinutes: snapshot.sessionEndDuration,
@@ -193,7 +193,7 @@ export function classifyUsageExhaustion(
       if (usedPercentage > allowedPercentage) {
         exhausted.push({
           kind: "weekly",
-          model,
+          agent,
           usedPercentage,
           allowedPercentage,
           resetMinutes: snapshot.weekEndDuration,
@@ -290,28 +290,28 @@ export function classifyEligibility(arguments_: ClassifyArguments): Verdict[] {
 
     let resolved = original;
     let resolvedFromAny = false;
-    if (original.model === AGENT_ANY_MODEL) {
-      const picked = pickBestModel(config, usage, exhausted);
+    if (original.agent === AGENT_ANY) {
+      const picked = pickBestAgent(config, usage, exhausted);
       if (picked === undefined) {
         verdicts.push({
           kind: "skip",
           issue: original,
-          message: `Skipping ${original.id}: agent-any but no model has available capacity`,
+          message: `Skipping ${original.id}: agent-any but no agent has available capacity`,
           eventReason: "agent_any_capacity",
         });
         continue;
       }
-      resolved = { ...original, model: picked };
+      resolved = { ...original, agent: picked };
       resolvedFromAny = true;
     }
 
-    if (exhausted.has(resolved.model)) {
+    if (exhausted.has(resolved.agent)) {
       verdicts.push({
         kind: "skip",
         issue: resolved,
-        message: `Skipping ${resolved.id} (${resolved.model} session exhausted)`,
+        message: `Skipping ${resolved.id} (${resolved.agent} session exhausted)`,
         eventReason: "model_exhausted",
-        model: resolved.model,
+        agent: resolved.agent,
       });
       continue;
     }
@@ -323,7 +323,7 @@ export function classifyEligibility(arguments_: ClassifyArguments): Verdict[] {
       dryRun,
     });
     if (recovery.kind === "skip") {
-      verdicts.push({ ...recovery, model: resolved.model });
+      verdicts.push({ ...recovery, agent: resolved.agent });
       continue;
     }
 

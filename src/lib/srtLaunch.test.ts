@@ -4,7 +4,7 @@ import path from "node:path";
 
 import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 
-import type { ModelDefinition, ResolvedConfig } from "./config.ts";
+import type { AgentDefinition, ResolvedConfig } from "./config.ts";
 import { buildAndStageSrtLaunch } from "./srtLaunch.ts";
 
 function config(projectDir: string, repositoryDirs?: Record<string, string>): ResolvedConfig {
@@ -17,7 +17,7 @@ function config(projectDir: string, repositoryDirs?: Record<string, string>): Re
   } as unknown as ResolvedConfig;
 }
 
-function definition(cmd: string): ModelDefinition {
+function definition(cmd: string): AgentDefinition {
   return { cmd, color: "#fff" };
 }
 

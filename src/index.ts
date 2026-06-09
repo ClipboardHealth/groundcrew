@@ -12,7 +12,7 @@ export { status, type StatusOptions } from "./commands/status.ts";
 export type {
   Config,
   HookCommands,
-  ModelDefinition,
+  AgentDefinition,
   ResolvedConfig,
   SourceConfig,
 } from "./lib/config.ts";
@@ -40,12 +40,12 @@ export {
   type RawLinearIssue,
 } from "./lib/adapters/linear/fetch.ts";
 export {
-  resolveModelFor,
+  resolveAgentFor,
   resolveRepositoryFor,
-  type ModelResolution,
+  type AgentResolution,
   type RepositoryResolution,
 } from "./lib/adapters/linear/parsing.ts";
-export { getUsageByModel, type UsageByModel } from "./lib/usage.ts";
+export { getUsageByAgent, type UsageByAgent } from "./lib/usage.ts";
 export { type Board, createBoard } from "./lib/board.ts";
 export { buildSources, buildSourcesWith } from "./lib/buildSources.ts";
 export type { AdapterContext, AdapterDefinition } from "./lib/adapterDefinition.ts";

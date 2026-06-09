@@ -155,7 +155,7 @@ function makeConfig(): ResolvedConfig {
       pollIntervalMilliseconds: 1000,
       sessionLimitPercentage: 85,
     },
-    models: {
+    agents: {
       default: "claude",
       definitions: { claude: { cmd: "claude --auto", color: "#fff" } },
     },
@@ -180,7 +180,7 @@ function makeRunState(overrides: Partial<RunState> = {}): RunState {
   const state: RunState = {
     task: "team-1",
     repository: "repo-a",
-    model: "claude",
+    agent: "claude",
     worktreeDir: "/work/repo-a-team-1",
     branchName: "dev-team-1",
     workspaceName: "team-1",
@@ -314,7 +314,7 @@ describe(resumeWorkspace, () => {
       title: "Resolved title",
       description: "Resolved body for repo-a",
       repository: "repo-a",
-      model: "claude",
+      agent: "claude",
       teamId: "team-1",
       stateType: "unstarted",
       status: "Todo",
@@ -390,11 +390,11 @@ describe(resumeWorkspace, () => {
     await expect(resumeWorkspace(config, { task: "team-1" })).rejects.toThrow(/No worktree found/);
   });
 
-  it("fails when recorded run state refers to an unknown model", async () => {
-    readRunStateMock.mockReturnValue(makeRunState({ model: "missing-model" }));
+  it("fails when recorded run state refers to an unknown agent", async () => {
+    readRunStateMock.mockReturnValue(makeRunState({ agent: "missing-agent" }));
 
     await expect(resumeWorkspace(config, { task: "team-1" })).rejects.toThrow(
-      /Unknown model: missing-model/,
+      /Unknown agent: missing-agent/,
     );
   });
 

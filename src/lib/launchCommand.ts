@@ -6,7 +6,7 @@ import {
   BUILD_SECRET_NAMES,
   hasPreLaunchEnv,
   type LocalRunner,
-  type ModelDefinition,
+  type AgentDefinition,
 } from "./config.ts";
 import { shellSingleQuote } from "./shell.ts";
 
@@ -161,7 +161,7 @@ function hostSourceSecrets(secretsFile: string | undefined): string[] {
  * failure path), and the final `exec` of whatever wraps (or is) the agent.
  */
 function preLaunchPromptAndExec(arguments_: {
-  definition: ModelDefinition;
+  definition: AgentDefinition;
   worktreeDir: string;
   promptFile: string;
   promptDir: string;
@@ -209,7 +209,7 @@ function renderPrepareAndAgentCommand(arguments_: LaunchCommandArguments): {
  * and wipe the prompt dir. The caller arms the EXIT trap and `cd`s first.
  */
 function hostPreLaunchSourceAndReadPrompt(arguments_: {
-  definition: ModelDefinition;
+  definition: AgentDefinition;
   worktreeDir: string;
   promptFile: string;
   promptDir: string;
@@ -277,7 +277,7 @@ function isEnvironmentAssignment(token: string): boolean {
 }
 
 /**
- * Infer the agent's command basename from a model `cmd` (skipping a leading
+ * Infer the agent's command basename from a agent `cmd` (skipping a leading
  * `env`/`KEY=val` prefix). Safehouse uses it to pick the matching `.sb`
  * profile; srt uses it to pick the agent's credential profile in `srtPolicy`.
  */
@@ -296,7 +296,7 @@ export function inferAgentCommandName(agentCmd: string): string {
     break;
   }
   if (commandToken === undefined) {
-    throw new Error(`Cannot infer the agent command from model cmd ${JSON.stringify(agentCmd)}.`);
+    throw new Error(`Cannot infer the agent command from agent cmd ${JSON.stringify(agentCmd)}.`);
   }
 
   const commandName = path.basename(commandToken);
@@ -307,14 +307,14 @@ export function inferAgentCommandName(agentCmd: string): string {
     !/^[A-Za-z0-9._-]+$/.test(commandName)
   ) {
     throw new Error(
-      `Cannot use ${JSON.stringify(commandName)} as an agent command name inferred from model cmd ${JSON.stringify(agentCmd)}.`,
+      `Cannot use ${JSON.stringify(commandName)} as an agent command name inferred from agent cmd ${JSON.stringify(agentCmd)}.`,
     );
   }
   return commandName;
 }
 
 interface LaunchCommandArguments {
-  definition: ModelDefinition;
+  definition: AgentDefinition;
   promptFile: string;
   worktreeDir: string;
   /**
@@ -340,7 +340,7 @@ interface LaunchCommandArguments {
   /**
    * sbx sandbox name when `runner === "sdx"`. Derived by the caller from
    * `sandboxNameFor({ agent })`. Required for sdx; ignored otherwise.
-   * Kept off the model definition so a model can launch under safehouse
+   * Kept off the agent definition so a agent can launch under safehouse
    * on one host and sdx on another without config edits.
    */
   sandboxName?: string | undefined;
@@ -674,7 +674,7 @@ function buildSdxLaunchCommand(arguments_: LaunchCommandArguments): string {
   /* v8 ignore next 5 @preserve -- setupWorkspace passes sandboxName + sandbox config when picking sdx; missing fields are programmer errors */
   if (arguments_.sandboxName === undefined || arguments_.definition.sandbox === undefined) {
     throw new Error(
-      "buildLaunchCommand: runner='sdx' requires sandboxName and a model `sandbox` config block (set sandbox.agent on the model in config.ts).",
+      "buildLaunchCommand: runner='sdx' requires sandboxName and a agent `sandbox` config block (set sandbox.agent on the agent in config.ts).",
     );
   }
   const promptDir = path.dirname(arguments_.promptFile);

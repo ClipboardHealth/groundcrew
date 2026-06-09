@@ -45,7 +45,7 @@ function shellIssue(overrides: Partial<ShellIssue> = {}): ShellIssue {
     description: overrides.description ?? "",
     status: overrides.status ?? "todo",
     repository: overrides.repository ?? null,
-    model: overrides.model ?? null,
+    agent: overrides.agent ?? null,
     assignee: overrides.assignee ?? "u",
     updatedAt: overrides.updatedAt ?? "2026-01-01T00:00:00Z",
     blockers: overrides.blockers ?? [],
@@ -75,19 +75,19 @@ describe(toCanonicalIssue, () => {
     expect(result.status).toBe("in-progress");
   });
 
-  it("converts nullable repository and model to undefined for the canonical type", () => {
-    const result = toCanonicalIssue(shellIssue({ repository: null, model: null }), "jira");
+  it("converts nullable repository and agent to undefined for the canonical type", () => {
+    const result = toCanonicalIssue(shellIssue({ repository: null, agent: null }), "jira");
     expect(result.repository).toBeUndefined();
-    expect(result.model).toBeUndefined();
+    expect(result.agent).toBeUndefined();
   });
 
-  it("keeps repository/model when populated", () => {
+  it("keeps repository/agent when populated", () => {
     const result = toCanonicalIssue(
-      shellIssue({ repository: "org/repo", model: "claude" }),
+      shellIssue({ repository: "org/repo", agent: "claude" }),
       "jira",
     );
     expect(result.repository).toBe("org/repo");
-    expect(result.model).toBe("claude");
+    expect(result.agent).toBe("claude");
   });
 
   it("passes a url through to the canonical Issue when the script provides one", () => {
@@ -316,7 +316,7 @@ describe(createShellTaskSource, () => {
   it("resolveOne() runs the configured command and applies ${id} substitution", async () => {
     const resolveScript = dir.writeScript(
       "resolve.sh",
-      `echo "{\\"id\\":\\"$1\\",\\"title\\":\\"t\\",\\"description\\":\\"\\",\\"status\\":\\"todo\\",\\"repository\\":null,\\"model\\":null,\\"assignee\\":\\"u\\",\\"updatedAt\\":\\"2026-01-01T00:00:00Z\\",\\"blockers\\":[],\\"sourceRef\\":null}"`,
+      `echo "{\\"id\\":\\"$1\\",\\"title\\":\\"t\\",\\"description\\":\\"\\",\\"status\\":\\"todo\\",\\"repository\\":null,\\"agent\\":null,\\"assignee\\":\\"u\\",\\"updatedAt\\":\\"2026-01-01T00:00:00Z\\",\\"blockers\\":[],\\"sourceRef\\":null}"`,
     );
     const source = createShellTaskSource(
       {
@@ -333,7 +333,7 @@ describe(createShellTaskSource, () => {
   it("getTask() runs the configured command and applies ${id} substitution", async () => {
     const getTaskScript = dir.writeScript(
       "get.sh",
-      `echo "{\\"id\\":\\"$1\\",\\"title\\":\\"t\\",\\"description\\":\\"\\",\\"status\\":\\"todo\\",\\"repository\\":null,\\"model\\":null,\\"assignee\\":\\"u\\",\\"updatedAt\\":\\"2026-01-01T00:00:00Z\\",\\"blockers\\":[],\\"sourceRef\\":null}"`,
+      `echo "{\\"id\\":\\"$1\\",\\"title\\":\\"t\\",\\"description\\":\\"\\",\\"status\\":\\"todo\\",\\"repository\\":null,\\"agent\\":null,\\"assignee\\":\\"u\\",\\"updatedAt\\":\\"2026-01-01T00:00:00Z\\",\\"blockers\\":[],\\"sourceRef\\":null}"`,
     );
     const source = createShellTaskSource(
       {
@@ -389,7 +389,7 @@ describe(createShellTaskSource, () => {
       description: "",
       status: "todo",
       repository: undefined,
-      model: undefined,
+      agent: undefined,
       assignee: "",
       updatedAt: "",
       blockers: [],
@@ -418,7 +418,7 @@ describe(createShellTaskSource, () => {
       description: "",
       status: "todo",
       repository: undefined,
-      model: undefined,
+      agent: undefined,
       assignee: "",
       updatedAt: "",
       blockers: [],
@@ -448,7 +448,7 @@ describe(createShellTaskSource, () => {
       description: "",
       status: "todo",
       repository: undefined,
-      model: undefined,
+      agent: undefined,
       assignee: "",
       updatedAt: "",
       blockers: [],
@@ -470,7 +470,7 @@ describe(createShellTaskSource, () => {
       description: "",
       status: "in-progress",
       repository: undefined,
-      model: undefined,
+      agent: undefined,
       assignee: "",
       updatedAt: "",
       blockers: [],
@@ -502,7 +502,7 @@ describe(createShellTaskSource, () => {
       description: "",
       status: "in-progress",
       repository: undefined,
-      model: undefined,
+      agent: undefined,
       assignee: "",
       updatedAt: "",
       blockers: [],
@@ -525,7 +525,7 @@ describe(createShellTaskSource, () => {
       description: "",
       status: "in-review",
       repository: undefined,
-      model: undefined,
+      agent: undefined,
       assignee: "",
       updatedAt: "",
       blockers: [],
@@ -557,7 +557,7 @@ describe(createShellTaskSource, () => {
       description: "",
       status: "in-review",
       repository: undefined,
-      model: undefined,
+      agent: undefined,
       assignee: "",
       updatedAt: "",
       blockers: [],
@@ -585,7 +585,7 @@ describe(createShellTaskSource, () => {
   it("resolveOne() uses commands.getTask when set instead of commands.resolveOne", async () => {
     const getTaskScript = dir.writeScript(
       "get.sh",
-      `echo "{\\"id\\":\\"$1\\",\\"title\\":\\"t\\",\\"description\\":\\"\\",\\"status\\":\\"todo\\",\\"repository\\":null,\\"model\\":null,\\"assignee\\":\\"u\\",\\"updatedAt\\":\\"2026-01-01T00:00:00Z\\",\\"blockers\\":[],\\"sourceRef\\":null}"`,
+      `echo "{\\"id\\":\\"$1\\",\\"title\\":\\"t\\",\\"description\\":\\"\\",\\"status\\":\\"todo\\",\\"repository\\":null,\\"agent\\":null,\\"assignee\\":\\"u\\",\\"updatedAt\\":\\"2026-01-01T00:00:00Z\\",\\"blockers\\":[],\\"sourceRef\\":null}"`,
     );
     const source = createShellTaskSource(
       {

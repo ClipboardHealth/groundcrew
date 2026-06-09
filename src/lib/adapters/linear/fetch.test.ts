@@ -14,7 +14,7 @@ import {
   isTerminalStatusForBlocker,
   isTerminalStatusForIssue,
 } from "./fetch.ts";
-import { resolveModelFor, resolveRepositoryFor } from "./parsing.ts";
+import { resolveAgentFor, resolveRepositoryFor } from "./parsing.ts";
 
 interface IssueNodeStub {
   id: string;
@@ -58,13 +58,13 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
       sessionLimitPercentage: 85,
       ...overrides.orchestrator,
     },
-    models: {
+    agents: {
       default: "claude",
       definitions: {
         claude: { cmd: "claude", color: "#fff" },
         codex: { cmd: "codex", color: "#000" },
       },
-      ...overrides.models,
+      ...overrides.agents,
     },
     prompts: { initial: "x", ...overrides.prompts },
     workspaceKind: overrides.workspaceKind ?? "auto",
@@ -284,7 +284,7 @@ describe(createBoardSource, () => {
       expect(issue?.status).toBe("Todo");
       expect(issue?.stateType).toBe("unstarted");
       expect(issue?.repository).toBe("repo-a");
-      expect(issue?.model).toBe("claude");
+      expect(issue?.agent).toBe("claude");
     });
 
     it("skips parent tasks with children and surfaces them as parentSkips when unstarted", async () => {
@@ -322,7 +322,7 @@ describe(createBoardSource, () => {
       expect(boardCalls).toHaveLength(2);
     });
 
-    it("resolves model on in-progress tasks but only resolves repository on Todo tasks", async () => {
+    it("resolves agent on in-progress tasks but only resolves repository on Todo tasks", async () => {
       const todo = issueNode({
         identifier: "TEAM-1",
         labels: { nodes: [{ name: "agent-claude" }] },
@@ -337,14 +337,14 @@ describe(createBoardSource, () => {
       const state = await source.fetch();
       const [first, second] = state.issues;
       expect(first?.repository).toBe("repo-a");
-      expect(first?.model).toBe("claude");
+      expect(first?.agent).toBe("claude");
       expect(second?.repository).toBeUndefined();
-      expect(second?.model).toBe("claude");
+      expect(second?.agent).toBe("claude");
     });
 
-    it("falls back to models.default when a Todo's agent-* label refers to a built-in model that is not enabled", async () => {
+    it("falls back to agents.default when a Todo's agent-* label refers to a built-in agent that is not enabled", async () => {
       const config = makeConfig({
-        models: {
+        agents: {
           default: "claude",
           definitions: { claude: { cmd: "claude", color: "#fff" } },
         },
@@ -355,7 +355,7 @@ describe(createBoardSource, () => {
       });
       const { source } = makeBoardSource(makeClient({ pages: [[node]] }), config);
       const state = await source.fetch();
-      expect(state.issues[0]?.model).toBe("claude");
+      expect(state.issues[0]?.agent).toBe("claude");
     });
 
     it("captures blockers from inverseRelations with stateType", async () => {
@@ -387,7 +387,7 @@ describe(fetchResolvedIssue, () => {
     vi.clearAllMocks();
   });
 
-  it("returns the resolved repository and model from the issue description and labels", async () => {
+  it("returns the resolved repository and agent from the issue description and labels", async () => {
     const client = makeClient();
     const resolved = await fetchResolvedIssue({
       // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests hit the LinearClient surface consumed by boardSource
@@ -396,7 +396,7 @@ describe(fetchResolvedIssue, () => {
       task: "TEAM-1",
     });
     expect(resolved.repository).toBe("repo-a");
-    expect(resolved.model).toBe("claude");
+    expect(resolved.agent).toBe("claude");
     expect(resolved.teamId).toBe("team-default");
     expect(resolved.assignee).toBe("Alice");
     expect(resolved.updatedAt).toBe("2025-01-01T00:00:00.000Z");
@@ -405,7 +405,7 @@ describe(fetchResolvedIssue, () => {
     expect(resolved.priority).toBe(0);
   });
 
-  it("resolves a matched non-default model from an enabled agent-* label", async () => {
+  it("resolves a matched non-default agent from an enabled agent-* label", async () => {
     const client = {
       client: {
         rawRequest: vi.fn<RawRequest>(async () => ({
@@ -421,10 +421,10 @@ describe(fetchResolvedIssue, () => {
       config: makeConfig(),
       task: "TEAM-1",
     });
-    expect(resolved.model).toBe("codex");
+    expect(resolved.agent).toBe("codex");
   });
 
-  it("falls back to models.default when the label refers to a built-in model that is not enabled", async () => {
+  it("falls back to agents.default when the label refers to a built-in agent that is not enabled", async () => {
     const client = {
       client: {
         rawRequest: vi.fn<RawRequest>(async () => ({
@@ -435,7 +435,7 @@ describe(fetchResolvedIssue, () => {
       },
     };
     const config = makeConfig({
-      models: {
+      agents: {
         default: "claude",
         definitions: {
           claude: { cmd: "claude", color: "#fff" },
@@ -448,9 +448,9 @@ describe(fetchResolvedIssue, () => {
       config,
       task: "TEAM-1",
     });
-    expect(resolved.model).toBe("claude");
+    expect(resolved.agent).toBe("claude");
     expect(consoleLog.output()).toContain(
-      "agent-codex label refers to a model that is not enabled",
+      "agent-codex label refers to an agent that is not enabled",
     );
   });
 
@@ -717,44 +717,44 @@ describe(resolveRepositoryFor, () => {
   });
 });
 
-describe(resolveModelFor, () => {
-  it("returns matched when label corresponds to a known model", () => {
+describe(resolveAgentFor, () => {
+  it("returns matched when label corresponds to a known agent", () => {
     expect(
-      resolveModelFor({ labels: [{ name: "agent-claude" }], config: makeConfig() }),
-    ).toStrictEqual({ kind: "matched", model: "claude" });
+      resolveAgentFor({ labels: [{ name: "agent-claude" }], config: makeConfig() }),
+    ).toStrictEqual({ kind: "matched", agent: "claude" });
   });
 
   it("returns no-label when no agent-* label is present", () => {
-    expect(resolveModelFor({ labels: [{ name: "feature" }], config: makeConfig() })).toStrictEqual({
+    expect(resolveAgentFor({ labels: [{ name: "feature" }], config: makeConfig() })).toStrictEqual({
       kind: "no-label",
     });
   });
 
   it("returns no-label when the labels array is empty", () => {
-    expect(resolveModelFor({ labels: [], config: makeConfig() })).toStrictEqual({
+    expect(resolveAgentFor({ labels: [], config: makeConfig() })).toStrictEqual({
       kind: "no-label",
     });
   });
 
   it("returns agent-any when the label is agent-any", () => {
     expect(
-      resolveModelFor({ labels: [{ name: "agent-any" }], config: makeConfig() }),
+      resolveAgentFor({ labels: [{ name: "agent-any" }], config: makeConfig() }),
     ).toStrictEqual({ kind: "agent-any" });
   });
 
-  it("returns not-enabled-fallback when the label matches a built-in model that is not enabled", () => {
+  it("returns not-enabled-fallback when the label matches a built-in agent that is not enabled", () => {
     const config = makeConfig({
-      models: {
+      agents: {
         default: "claude",
         definitions: {
           claude: { cmd: "claude", color: "#fff" },
         },
       },
     });
-    expect(resolveModelFor({ labels: [{ name: "agent-codex" }], config })).toStrictEqual({
+    expect(resolveAgentFor({ labels: [{ name: "agent-codex" }], config })).toStrictEqual({
       kind: "not-enabled-fallback",
-      requestedModel: "codex",
-      fallbackModel: "claude",
+      requestedAgent: "codex",
+      fallbackAgent: "claude",
     });
   });
 });

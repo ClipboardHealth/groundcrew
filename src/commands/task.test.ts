@@ -37,7 +37,7 @@ function makeConfig(): ResolvedConfig {
       pollIntervalMilliseconds: 1000,
       sessionLimitPercentage: 85,
     },
-    models: {
+    agents: {
       default: "claude",
       definitions: {
         claude: { cmd: "safehouse claude --permission-mode auto", color: "#fff" },
@@ -58,7 +58,7 @@ function makeIssue(overrides: Partial<Issue> = {}): Issue {
     description: "Investigate cancellation retries.",
     status: "todo",
     repository: "ClipboardHealth/api",
-    model: "codex",
+    agent: "codex",
     assignee: "",
     updatedAt: "2026-06-08T12:00:00.000Z",
     blockers: [],
@@ -160,7 +160,7 @@ describe("crew task list", () => {
     const todo = stubSource("todo", [
       makeIssue({
         id: "todo:gc-2",
-        model: undefined,
+        agent: undefined,
         repository: undefined,
         blockers: [{ id: "todo:dep-1", title: "Dependency", status: "todo" }],
       }),
@@ -267,7 +267,7 @@ describe("crew task get", () => {
     const todo = stubSource("todo", [
       makeIssue({
         repository: undefined,
-        model: undefined,
+        agent: undefined,
         description: "",
       }),
     ]);

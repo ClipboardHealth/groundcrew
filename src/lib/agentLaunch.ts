@@ -3,7 +3,7 @@ import { ensureClearance } from "@clipboard-health/clearance";
 import {
   hasPreLaunchEnv,
   type LocalRunner,
-  type ModelDefinition,
+  type AgentDefinition,
   type ResolvedConfig,
 } from "./config.ts";
 import { detectHostCapabilities } from "./host.ts";
@@ -20,8 +20,8 @@ interface PreparedAgentLaunch {
 
 export async function prepareAgentLaunch(input: {
   config: ResolvedConfig;
-  model: string;
-  definition: ModelDefinition;
+  agent: string;
+  definition: AgentDefinition;
   purpose: "runs" | "resumes";
   signal?: AbortSignal;
 }): Promise<PreparedAgentLaunch> {
@@ -37,19 +37,19 @@ export async function prepareAgentLaunch(input: {
 
   if (runner === "sdx" && input.definition.sandbox === undefined) {
     throw new Error(
-      `Local groundcrew ${input.purpose} with the sdx runner require a sandbox config on model '${input.model}'.`,
+      `Local groundcrew ${input.purpose} with the sdx runner require a sandbox config on agent '${input.agent}'.`,
     );
   }
   if (runner === "sdx" && input.definition.preLaunch !== undefined) {
     throw new Error(
-      `Local groundcrew ${input.purpose} with the sdx runner do not support preLaunch on model '${input.model}'. ` +
-        "Use local.runner 'safehouse' or 'none', or remove preLaunch from the model.",
+      `Local groundcrew ${input.purpose} with the sdx runner do not support preLaunch on agent '${input.agent}'. ` +
+        "Use local.runner 'safehouse' or 'none', or remove preLaunch from the agent.",
     );
   }
   if (runner === "sdx" && hasPreLaunchEnv(input.definition)) {
     throw new Error(
-      `Local groundcrew ${input.purpose} with the sdx runner do not support preLaunchEnv on model '${input.model}'. ` +
-        "Use local.runner 'safehouse' or 'none', or remove preLaunchEnv from the model.",
+      `Local groundcrew ${input.purpose} with the sdx runner do not support preLaunchEnv on agent '${input.agent}'. ` +
+        "Use local.runner 'safehouse' or 'none', or remove preLaunchEnv from the agent.",
     );
   }
   // Mirror of buildLaunchCommand's defense — fail at config-resolution time so
@@ -61,7 +61,7 @@ export async function prepareAgentLaunch(input: {
     /^safehouse(?:\s|$)/.test(input.definition.cmd)
   ) {
     throw new Error(
-      `Local groundcrew ${input.purpose} on model '${input.model}' cannot inject preLaunchEnv when 'cmd' already starts with 'safehouse'. ` +
+      `Local groundcrew ${input.purpose} on agent '${input.agent}' cannot inject preLaunchEnv when 'cmd' already starts with 'safehouse'. ` +
         "Your cmd owns the wrap, so add the names to its own '--env-pass=' flag, or drop the 'safehouse' prefix from 'cmd' to let groundcrew compose the flag for you.",
     );
   }
@@ -97,7 +97,7 @@ export async function openAgentWorkspace(input: {
   name: string;
   cwd: string;
   command: string;
-  model: string;
+  agent: string;
   color: string;
   signal?: AbortSignal;
 }): Promise<void> {
@@ -105,7 +105,7 @@ export async function openAgentWorkspace(input: {
     name: input.name,
     cwd: input.cwd,
     command: input.command,
-    status: { text: input.model, color: input.color, icon: "sparkle" },
+    status: { text: input.agent, color: input.color, icon: "sparkle" },
   };
   await (input.signal === undefined
     ? workspaces.open(input.config, spec)

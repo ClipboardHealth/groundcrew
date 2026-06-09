@@ -110,7 +110,7 @@ vi.mock(import("../lib/board.ts"), async (importOriginal) => {
         canonicalLinearIssue({
           naturalId: "team-1",
           repository: "repo-a",
-          model: "claude",
+          agent: "claude",
           title: "Title",
           description: "Body for repo-a",
         }),
@@ -178,7 +178,7 @@ function hostEntry(): WorktreeEntry {
   };
 }
 
-function makeConfig(overrides: Partial<ResolvedConfig["models"]> = {}): ResolvedConfig {
+function makeConfig(overrides: Partial<ResolvedConfig["agents"]> = {}): ResolvedConfig {
   return {
     sources: [],
     defaults: { hooks: {} },
@@ -192,7 +192,7 @@ function makeConfig(overrides: Partial<ResolvedConfig["models"]> = {}): Resolved
       pollIntervalMilliseconds: 1000,
       sessionLimitPercentage: 85,
     },
-    models: {
+    agents: {
       default: "claude",
       definitions: {
         claude: { cmd: "claude --auto", color: "#fff" },
@@ -360,7 +360,7 @@ describe(setupWorkspace, () => {
     await setupWorkspace(config, {
       task: "team-1",
       repository: "repo-a",
-      model: "claude",
+      agent: "claude",
       details: { title: "Test Title", description: "Body" },
     });
 
@@ -378,12 +378,12 @@ describe(setupWorkspace, () => {
     );
     expect(runCommandMock).toHaveBeenCalledWith(
       "cmux",
-      expect.arrayContaining(["set-status", "model", "claude", "--workspace", "workspace:42"]),
+      expect.arrayContaining(["set-status", "agent", "claude", "--workspace", "workspace:42"]),
     );
     expect(lastRecordedRunState()).toMatchObject({
       task: "team-1",
       repository: "repo-a",
-      model: "claude",
+      agent: "claude",
       worktreeDir: "/work/repo-a-team-1",
       branchName: "dev-team-1",
       workspaceName: "team-1",
@@ -399,7 +399,7 @@ describe(setupWorkspace, () => {
     await setupWorkspace(config, {
       task: "team-1",
       repository: "repo-a",
-      model: "claude",
+      agent: "claude",
       details: {
         title: "Test Title",
         description: "Body",
@@ -421,7 +421,7 @@ describe(setupWorkspace, () => {
       setupWorkspace(config, {
         task: "team-1",
         repository: "repo-a",
-        model: "claude",
+        agent: "claude",
         details: {
           title: "Test Title",
           description: "Body",
@@ -443,7 +443,7 @@ describe(setupWorkspace, () => {
     await setupWorkspace(config, {
       task: "team-1",
       repository: "repo-a",
-      model: "claude",
+      agent: "claude",
       details: { title: "Test Title", description: "Body" },
     });
 
@@ -465,7 +465,7 @@ describe(setupWorkspace, () => {
     await setupWorkspace(config, {
       task: "team-1",
       repository: "repo-a",
-      model: "claude",
+      agent: "claude",
       details: { title: "Test Title", description: "Body" },
     });
 
@@ -506,7 +506,7 @@ describe(setupWorkspace, () => {
       {
         task: "team-1",
         repository: "repo-a",
-        model: "claude",
+        agent: "claude",
         details: { title: "Test Title", description: "Body" },
       },
       { signal },
@@ -541,7 +541,7 @@ describe(setupWorkspace, () => {
       {
         task: "team-1",
         repository: "repo-a",
-        model: "claude",
+        agent: "claude",
         details: { title: "Test Title", description: "Body" },
       },
       { signal: controller.signal },
@@ -578,7 +578,7 @@ describe(setupWorkspace, () => {
     const setupPromise = setupWorkspace(config, {
       task: "team-1",
       repository: "repo-a",
-      model: "claude",
+      agent: "claude",
       details: { title: "Test Title", description: "Body" },
     });
 
@@ -609,7 +609,7 @@ describe(setupWorkspace, () => {
     await setupWorkspace(config, {
       task: "team-1",
       repository: "repo-a",
-      model: "claude",
+      agent: "claude",
       details: { title: "Provided Title", description: "Provided Body" },
     });
 
@@ -631,7 +631,7 @@ describe(setupWorkspace, () => {
     await setupWorkspace(config, {
       task: "team-1",
       repository: "repo-a",
-      model: "claude",
+      agent: "claude",
       details: { title: "Test Title", description: "Body" },
     });
 
@@ -652,7 +652,7 @@ describe(setupWorkspace, () => {
     await setupWorkspace(config, {
       task: "team-1",
       repository: "repo-a",
-      model: "claude",
+      agent: "claude",
       details: { title: "Test Title", description: "Body" },
     });
 
@@ -677,7 +677,7 @@ describe(setupWorkspace, () => {
     await setupWorkspace(config, {
       task: "team-1",
       repository: "repo-a",
-      model: "claude",
+      agent: "claude",
       details: { title: "Test Title", description: "Body" },
     });
 
@@ -721,7 +721,7 @@ describe(setupWorkspace, () => {
     await setupWorkspace(config, {
       task: "team-1",
       repository: "repo-a",
-      model: "claude",
+      agent: "claude",
       details: { title: "Test Title", description: "Body" },
     });
 
@@ -760,7 +760,7 @@ describe(setupWorkspace, () => {
     await setupWorkspace(config, {
       task: "team-1",
       repository: "repo-a",
-      model: "claude",
+      agent: "claude",
       details: { title: "Test Title", description: "Body" },
     });
 
@@ -785,7 +785,7 @@ describe(setupWorkspace, () => {
     await setupWorkspace(config, {
       task: "team-1",
       repository: "repo-a",
-      model: "claude",
+      agent: "claude",
       details: { title: "Test Title", description: "Body" },
     });
 
@@ -803,7 +803,7 @@ describe(setupWorkspace, () => {
       setupWorkspace(config, {
         task: "team-1",
         repository: "repo-a",
-        model: "claude",
+        agent: "claude",
         details: { title: "Test Title", description: "Body" },
       }),
     ).rejects.toThrow("proxy unavailable");
@@ -838,7 +838,7 @@ describe(setupWorkspace, () => {
     await setupWorkspace(config, {
       task: "team-1",
       repository: "repo-a",
-      model: "claude",
+      agent: "claude",
       details: { title: "Test Title", description: "Body" },
     });
 
@@ -863,7 +863,7 @@ describe(setupWorkspace, () => {
       await setupWorkspace(makeConfigWithPrepareWorktree(), {
         task: "team-1",
         repository: "repo-a",
-        model: "claude",
+        agent: "claude",
         details: { title: "Test Title", description: "Body" },
       });
 
@@ -887,7 +887,7 @@ describe(setupWorkspace, () => {
       await setupWorkspace(makeConfigWithPrepareWorktree(), {
         task: "team-1",
         repository: "repo-a",
-        model: "claude",
+        agent: "claude",
         details: { title: "Test Title", description: "Body" },
       });
 
@@ -906,7 +906,7 @@ describe(setupWorkspace, () => {
       await setupWorkspace(makeConfigWithPrepareWorktree(), {
         task: "team-1",
         repository: "repo-a",
-        model: "claude",
+        agent: "claude",
         details: { title: "Test Title", description: "Body" },
       });
 
@@ -925,7 +925,7 @@ describe(setupWorkspace, () => {
       await setupWorkspace(makeConfig(), {
         task: "team-1",
         repository: "repo-a",
-        model: "claude",
+        agent: "claude",
         details: { title: "Test Title", description: "Body" },
       });
 
@@ -950,7 +950,7 @@ describe(setupWorkspace, () => {
       await setupWorkspace(makeConfig(), {
         task: "team-1",
         repository: "repo-a",
-        model: "claude",
+        agent: "claude",
         details: { title: "Test Title", description: "Body" },
       });
 
@@ -972,21 +972,21 @@ describe(setupWorkspace, () => {
     await setupWorkspace(config, {
       task: "team-1",
       repository: "repo-a",
-      model: "claude",
+      agent: "claude",
       details: { title: "Test Title", description: "Body" },
     });
 
     expect(debugMock).toHaveBeenCalledWith("  Attach:   tmux attach -t groundcrew:team-1");
   });
 
-  it("collapses the launch into a single success line naming model and worktree", async () => {
+  it("collapses the launch into a single success line naming agent and worktree", async () => {
     mockTmuxHost();
     const config = makeConfig();
 
     await setupWorkspace(config, {
       task: "team-1",
       repository: "repo-a",
-      model: "claude",
+      agent: "claude",
       details: { title: "Test Title", description: "Body" },
     });
 
@@ -1003,7 +1003,7 @@ describe(setupWorkspace, () => {
     await setupWorkspace(config, {
       task: "team-1",
       repository: "repo-a",
-      model: "claude",
+      agent: "claude",
       details: { title: "Test Title", description: "Body" },
     });
 
@@ -1028,7 +1028,7 @@ describe(setupWorkspace, () => {
       setupWorkspace(config, {
         task: "team-1",
         repository: "repo-a",
-        model: "claude",
+        agent: "claude",
         details: { title: "Test Title", description: "Body" },
       }),
     ).rejects.toThrow(/Local groundcrew runs with the safehouse runner require macOS/);
@@ -1060,7 +1060,7 @@ describe(setupWorkspace, () => {
       setupWorkspace(config, {
         task: "team-1",
         repository: "repo-a",
-        model: "claude",
+        agent: "claude",
         details: { title: "Test Title", description: "Body" },
       }),
     ).rejects.toThrow(/sdx runner require `sbx`/);
@@ -1069,7 +1069,7 @@ describe(setupWorkspace, () => {
     expect(ensureClearanceMock).not.toHaveBeenCalled();
   });
 
-  it("fails before creating a worktree when sdx is selected but the model has no sandbox config", async () => {
+  it("fails before creating a worktree when sdx is selected but the agent has no sandbox config", async () => {
     detectHostMock.mockResolvedValue(
       host({
         hasSafehouse: false,
@@ -1087,16 +1087,16 @@ describe(setupWorkspace, () => {
       setupWorkspace(config, {
         task: "team-1",
         repository: "repo-a",
-        model: "claude",
+        agent: "claude",
         details: { title: "Test Title", description: "Body" },
       }),
-    ).rejects.toThrow(/sdx runner require a sandbox config on model 'claude'/);
+    ).rejects.toThrow(/sdx runner require a sandbox config on agent 'claude'/);
 
     expect(createMock).not.toHaveBeenCalled();
     expect(ensureClearanceMock).not.toHaveBeenCalled();
   });
 
-  it("fails before creating a worktree when sdx is selected and the model has preLaunch", async () => {
+  it("fails before creating a worktree when sdx is selected and the agent has preLaunch", async () => {
     detectHostMock.mockResolvedValue(
       host({
         hasSafehouse: false,
@@ -1124,16 +1124,16 @@ describe(setupWorkspace, () => {
       setupWorkspace(config, {
         task: "team-1",
         repository: "repo-a",
-        model: "claude",
+        agent: "claude",
         details: { title: "Test Title", description: "Body" },
       }),
-    ).rejects.toThrow(/sdx runner do not support preLaunch on model 'claude'/);
+    ).rejects.toThrow(/sdx runner do not support preLaunch on agent 'claude'/);
 
     expect(createMock).not.toHaveBeenCalled();
     expect(ensureClearanceMock).not.toHaveBeenCalled();
   });
 
-  it("fails before creating a worktree when sdx is selected and the model has preLaunchEnv", async () => {
+  it("fails before creating a worktree when sdx is selected and the agent has preLaunchEnv", async () => {
     detectHostMock.mockResolvedValue(
       host({
         hasSafehouse: false,
@@ -1161,10 +1161,10 @@ describe(setupWorkspace, () => {
       setupWorkspace(config, {
         task: "team-1",
         repository: "repo-a",
-        model: "claude",
+        agent: "claude",
         details: { title: "Test Title", description: "Body" },
       }),
-    ).rejects.toThrow(/sdx runner do not support preLaunchEnv on model 'claude'/);
+    ).rejects.toThrow(/sdx runner do not support preLaunchEnv on agent 'claude'/);
 
     expect(createMock).not.toHaveBeenCalled();
     expect(ensureClearanceMock).not.toHaveBeenCalled();
@@ -1190,7 +1190,7 @@ describe(setupWorkspace, () => {
     await setupWorkspace(config, {
       task: "team-1",
       repository: "repo-a",
-      model: "claude",
+      agent: "claude",
       details: { title: "Test Title", description: "Body" },
     });
 
@@ -1219,7 +1219,7 @@ describe(setupWorkspace, () => {
       setupWorkspace(config, {
         task: "team-1",
         repository: "repo-a",
-        model: "claude",
+        agent: "claude",
         details: { title: "Test Title", description: "Body" },
       }),
     ).rejects.toThrow(/cannot inject preLaunchEnv when 'cmd' already starts with 'safehouse'/);
@@ -1235,7 +1235,7 @@ describe(setupWorkspace, () => {
       setupWorkspace(config, {
         task: "team-1",
         repository: "repo-a",
-        model: "claude",
+        agent: "claude",
         details: { title: "Test Title", description: "Body" },
       }),
     ).rejects.toThrow(/require `safehouse` on PATH/);
@@ -1251,7 +1251,7 @@ describe(setupWorkspace, () => {
       setupWorkspace(makeConfig(), {
         task: "team-1",
         repository: "repo-a",
-        model: "claude",
+        agent: "claude",
         details: { title: "Test Title", description: "Body" },
       }),
     ).rejects.toThrow(/git fetch failed/);
@@ -1270,7 +1270,7 @@ describe(setupWorkspace, () => {
       setupWorkspace(makeConfig(), {
         task: "team-1",
         repository: "repo-a",
-        model: "claude",
+        agent: "claude",
         details: { title: "Test Title", description: "Body" },
       }),
     ).rejects.toThrow(/Worktree already exists/);
@@ -1287,7 +1287,7 @@ describe(setupWorkspace, () => {
       setupWorkspace(makeConfig(), {
         task: "team-1",
         repository: "repo-a",
-        model: "claude",
+        agent: "claude",
         details: { title: "Test Title", description: "Body" },
       }),
     ).rejects.toThrow(/Worktree already exists/);
@@ -1302,7 +1302,7 @@ describe(setupWorkspace, () => {
       setupWorkspace(makeConfig(), {
         task: "team-1",
         repository: "repo-a",
-        model: "claude",
+        agent: "claude",
         details: { title: "Test Title", description: "Body" },
       }),
     ).rejects.toThrow(/Worktree already exists/);
@@ -1311,15 +1311,15 @@ describe(setupWorkspace, () => {
     expect(debugMock).not.toHaveBeenCalledWith(expect.stringMatching(/^ {2}Attach:/));
   });
 
-  it("rejects unknown models", async () => {
+  it("rejects unknown agents", async () => {
     await expect(
       setupWorkspace(makeConfig(), {
         task: "team-1",
         repository: "repo-a",
-        model: "ghost",
+        agent: "ghost",
         details: { title: "Test Title", description: "Body" },
       }),
-    ).rejects.toThrow(/Unknown model: ghost/);
+    ).rejects.toThrow(/Unknown agent: ghost/);
   });
 
   it("rolls back the worktree, branch, and cmux workspace when cmux launch fails", async () => {
@@ -1330,7 +1330,7 @@ describe(setupWorkspace, () => {
       setupWorkspace(config, {
         task: "team-1",
         repository: "repo-a",
-        model: "claude",
+        agent: "claude",
         details: { title: "Test Title", description: "Body" },
       }),
     ).rejects.toThrow(/Unexpected cmux output/);
@@ -1358,13 +1358,13 @@ describe(setupWorkspace, () => {
     await setupWorkspace(config, {
       task: "team-1",
       repository: "repo-a",
-      model: "claude",
+      agent: "claude",
       details: { title: "Test Title", description: "Body" },
     });
 
     expect(runCommandMock).toHaveBeenCalledWith(
       "cmux",
-      expect.arrayContaining(["set-status", "model", "claude", "--workspace", "workspace:99"]),
+      expect.arrayContaining(["set-status", "agent", "claude", "--workspace", "workspace:99"]),
     );
   });
 
@@ -1374,7 +1374,7 @@ describe(setupWorkspace, () => {
     await setupWorkspace(makeConfig(), {
       task: "team-1",
       repository: "repo-a",
-      model: "claude",
+      agent: "claude",
       details: { title: "Test Title", description: "Body" },
     });
 
@@ -1390,7 +1390,7 @@ describe(setupWorkspace, () => {
     await setupWorkspace(makeConfig(), {
       task: "team-1",
       repository: "repo-a",
-      model: "claude",
+      agent: "claude",
       details: { title: "Test Title", description: "Body" },
     });
 
@@ -1414,7 +1414,7 @@ describe(setupWorkspace, () => {
       setupWorkspace(config, {
         task: "team-1",
         repository: "repo-a",
-        model: "claude",
+        agent: "claude",
         details: { title: "Test Title", description: "Body" },
       }),
     ).resolves.toBeUndefined();
@@ -1437,7 +1437,7 @@ describe(setupWorkspace, () => {
       setupWorkspace(config, {
         task: "team-1",
         repository: "repo-a",
-        model: "claude",
+        agent: "claude",
         details: { title: "Test Title", description: "Body" },
       }),
     ).rejects.toThrow(/cmux down/);
@@ -1451,7 +1451,7 @@ describe(setupWorkspace, () => {
       setupWorkspace(config, {
         task: "team-1",
         repository: "repo-a",
-        model: "claude",
+        agent: "claude",
         details: { title: "Test Title", description: "Body" },
       }),
     ).rejects.toThrow(/cmux down/);
@@ -1459,7 +1459,7 @@ describe(setupWorkspace, () => {
     expect(lastRecordedRunState()).toMatchObject({
       task: "team-1",
       repository: "repo-a",
-      model: "claude",
+      agent: "claude",
       state: "failed-to-launch",
       title: "Test Title",
     });
@@ -1476,7 +1476,7 @@ describe(setupWorkspace, () => {
     await setupWorkspace(config, {
       task: "team-1",
       repository: "repo-a",
-      model: "claude",
+      agent: "claude",
       details: { title: "Test Title", description: "Body" },
     });
 
@@ -1496,7 +1496,7 @@ describe(setupWorkspace, () => {
       setupWorkspace(config, {
         task: "team-1",
         repository: "repo-a",
-        model: "claude",
+        agent: "claude",
         details: { title: "Test Title", description: "Body" },
       }),
     ).rejects.toThrow(/cmux down/);
@@ -1511,7 +1511,7 @@ describe(setupWorkspace, () => {
       setupWorkspace(config, {
         task: "team-1",
         repository: "repo-a",
-        model: "claude",
+        agent: "claude",
         details: { title: "Test Title", description: "Body" },
       }),
     ).rejects.toThrow(/cmux down/);
@@ -1535,7 +1535,7 @@ describe(setupWorkspace, () => {
       setupWorkspace(config, {
         task: "team-1",
         repository: "repo-a",
-        model: "claude",
+        agent: "claude",
         details: { title: "Test Title", description: "Body" },
       }),
     ).rejects.toThrow(/cmux down/);
@@ -1556,7 +1556,7 @@ describe(setupWorkspace, () => {
       setupWorkspace(config, {
         task: "team-1",
         repository: "repo-a",
-        model: "claude",
+        agent: "claude",
         details: { title: "Test Title", description: "Body" },
       }),
     ).rejects.toThrow(/cmux down/);
@@ -1572,7 +1572,7 @@ describe(setupWorkspace, () => {
     await setupWorkspace(makeConfig(), {
       task: "team-1",
       repository: "repo-a",
-      model: "claude",
+      agent: "claude",
       details: { title: "T", description: "" },
     });
 
@@ -1590,7 +1590,7 @@ describe(setupWorkspace, () => {
       setupWorkspace(makeConfig(), {
         task: "team-1",
         repository: "repo-a",
-        model: "claude",
+        agent: "claude",
         details: { title: "Test Title", description: "Body" },
       }),
     ).rejects.toThrow("mkdtemp failed");
@@ -1606,7 +1606,7 @@ describe(setupWorkspace, () => {
     await setupWorkspace(makeConfig(), {
       task: "team-1",
       repository: "repo-a",
-      model: "claude",
+      agent: "claude",
       details: { title: "Test Title", description: "Body" },
     });
 
@@ -1660,7 +1660,7 @@ describe(setupWorkspaceCli, () => {
       canonicalLinearIssue({
         naturalId: "team-1",
         repository: "repo-a",
-        model: "claude",
+        agent: "claude",
         title: "Title",
         description: "Body for repo-a",
       }),
@@ -1683,7 +1683,7 @@ describe(setupWorkspaceCli, () => {
     );
     expect(runCommandMock).toHaveBeenCalledWith(
       "cmux",
-      expect.arrayContaining(["set-status", "model", "claude"]),
+      expect.arrayContaining(["set-status", "agent", "claude"]),
     );
   });
 
@@ -1692,7 +1692,7 @@ describe(setupWorkspaceCli, () => {
       canonicalLinearIssue({
         naturalId: "team-1",
         repository: "repo-a",
-        model: "claude",
+        agent: "claude",
         title: "Title",
         description: "Body for repo-a",
         url: "https://linear.app/example/issue/TEAM-1",
@@ -1763,7 +1763,7 @@ describe(setupWorkspaceCli, () => {
         canonicalLinearIssue({
           naturalId: "staff-508",
           repository: "repo-a",
-          model: "claude",
+          agent: "claude",
           title: "Title",
           description: "Body",
         }),
@@ -1784,7 +1784,7 @@ describe(setupWorkspaceCli, () => {
         canonicalLinearIssue({
           naturalId: "team-1",
           repository: "repo-a",
-          model: "claude",
+          agent: "claude",
           title: "Resolved Title",
           description: "Resolved Body",
         }),
@@ -1805,7 +1805,7 @@ describe(setupWorkspaceCli, () => {
         ...canonicalLinearIssue({
           naturalId: "team-1",
           repository: "repo-a",
-          model: "claude",
+          agent: "claude",
           title: "Title",
           description: "Body",
         }),

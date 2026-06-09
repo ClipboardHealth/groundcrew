@@ -1,7 +1,7 @@
 import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCapture.ts";
 import type { RunCommandOptions } from "./commandRunner.ts";
 import type { ResolvedConfig } from "./config.ts";
-import { EXHAUSTED_USAGE, getUsageByModel } from "./usage.ts";
+import { EXHAUSTED_USAGE, getUsageByAgent } from "./usage.ts";
 import { setVerbose } from "./util.ts";
 
 type RunCommandMock = (
@@ -40,7 +40,7 @@ function restorePlatform(): void {
 function makeConfig(
   options: {
     source?: string;
-    definitions?: ResolvedConfig["models"]["definitions"];
+    definitions?: ResolvedConfig["agents"]["definitions"];
   } = {},
 ): ResolvedConfig {
   const { source, definitions } = options;
@@ -57,7 +57,7 @@ function makeConfig(
       pollIntervalMilliseconds: 1000,
       sessionLimitPercentage: 85,
     },
-    models: {
+    agents: {
       default: "codex",
       definitions: definitions ?? {
         codex: {
@@ -103,13 +103,13 @@ function mockCodexbarResponse(source: string, provider = "codex"): string {
   ]);
 }
 
-describe(getUsageByModel, () => {
+describe(getUsageByAgent, () => {
   let consoleCapture: ConsoleCapture;
 
   beforeEach(() => {
     runCommandMock.mockReturnValue(mockCodexbarResponse("openai-web"));
     consoleCapture = captureConsoleLog();
-    // The per-model "usage check failed" line is diagnostic (debug-tier), so it
+    // The per-agent "usage check failed" line is diagnostic (debug-tier), so it
     // only reaches the console under verbose — these cases assert that wording.
     setVerbose(true);
   });
@@ -125,7 +125,7 @@ describe(getUsageByModel, () => {
     stubPlatform("darwin");
     runCommandMock.mockReturnValue(mockCodexbarResponse("web", "cursor"));
 
-    await getUsageByModel(makeCursorConfig());
+    await getUsageByAgent(makeCursorConfig());
 
     expect(runCommandMock).toHaveBeenCalledWith(
       "codexbar",
@@ -138,7 +138,7 @@ describe(getUsageByModel, () => {
     stubPlatform("darwin");
     runCommandMock.mockReturnValue(mockCodexbarResponse("oauth"));
 
-    await getUsageByModel(makeConfig());
+    await getUsageByAgent(makeConfig());
 
     expect(runCommandMock).toHaveBeenCalledWith(
       "codexbar",
@@ -159,7 +159,7 @@ describe(getUsageByModel, () => {
       ]),
     );
 
-    await getUsageByModel(
+    await getUsageByAgent(
       makeConfig({
         definitions: {
           claude: {
@@ -182,7 +182,7 @@ describe(getUsageByModel, () => {
     stubPlatform("linux");
     runCommandMock.mockReturnValue(mockCodexbarResponse("local"));
 
-    await getUsageByModel(makeConfig());
+    await getUsageByAgent(makeConfig());
 
     expect(runCommandMock).toHaveBeenCalledWith(
       "codexbar",
@@ -195,7 +195,7 @@ describe(getUsageByModel, () => {
     stubPlatform("darwin");
     runCommandMock.mockReturnValue(mockCodexbarResponse("web", "cursor"));
 
-    const actual = await getUsageByModel(makeCursorConfig());
+    const actual = await getUsageByAgent(makeCursorConfig());
 
     expect(actual["cursor"]?.session).toBe(0.25);
   });
@@ -204,7 +204,7 @@ describe(getUsageByModel, () => {
     stubPlatform("linux");
     runCommandMock.mockReturnValue(mockCodexbarResponse("oauth"));
 
-    await getUsageByModel(makeConfig({ source: "oauth" }));
+    await getUsageByAgent(makeConfig({ source: "oauth" }));
 
     expect(runCommandMock).toHaveBeenCalledWith(
       "codexbar",
@@ -213,8 +213,8 @@ describe(getUsageByModel, () => {
     );
   });
 
-  it("returns an empty result when no model has usage configured", async () => {
-    const actual = await getUsageByModel(
+  it("returns an empty result when no agent has usage configured", async () => {
+    const actual = await getUsageByAgent(
       makeConfig({
         definitions: { plain: { cmd: "plain", color: "#fff" } },
       }),
@@ -224,13 +224,13 @@ describe(getUsageByModel, () => {
     expect(runCommandMock).not.toHaveBeenCalled();
   });
 
-  it("fails closed when codexbar throws — marks the model exhausted and logs", async () => {
+  it("fails closed when codexbar throws — marks the agent exhausted and logs", async () => {
     stubPlatform("darwin");
     runCommandMock.mockImplementation(() => {
       throw new Error("codexbar exploded");
     });
 
-    const actual = await getUsageByModel(makeConfig());
+    const actual = await getUsageByAgent(makeConfig());
 
     expect(actual["codex"]).toStrictEqual(EXHAUSTED_USAGE);
     expect(consoleCapture.output()).toContain(
@@ -246,7 +246,7 @@ describe(getUsageByModel, () => {
       throw new Error("codexbar interrupted");
     });
 
-    await expect(getUsageByModel(makeConfig(), controller.signal)).rejects.toThrow(
+    await expect(getUsageByAgent(makeConfig(), controller.signal)).rejects.toThrow(
       "codexbar interrupted",
     );
   });
@@ -267,7 +267,7 @@ describe(getUsageByModel, () => {
       ]),
     );
 
-    const actual = await getUsageByModel(makeConfig());
+    const actual = await getUsageByAgent(makeConfig());
 
     expect(actual["codex"]).toStrictEqual(EXHAUSTED_USAGE);
     expect(consoleCapture.output()).toContain("codex app-server closed stdout");
@@ -277,7 +277,7 @@ describe(getUsageByModel, () => {
     stubPlatform("darwin");
     runCommandMock.mockReturnValue(JSON.stringify([{ provider: "codex", source: "auto" }]));
 
-    const actual = await getUsageByModel(makeConfig());
+    const actual = await getUsageByAgent(makeConfig());
 
     expect(actual["codex"]).toStrictEqual(EXHAUSTED_USAGE);
     expect(consoleCapture.output()).toContain("no usage data");
@@ -301,7 +301,7 @@ describe(getUsageByModel, () => {
       ]),
     );
 
-    const actual = await getUsageByModel(makeConfig());
+    const actual = await getUsageByAgent(makeConfig());
 
     expect(actual["codex"]?.session).toBe(0.5);
     expect(actual["codex"]?.weekly).toBe(0.8);
@@ -323,7 +323,7 @@ describe(getUsageByModel, () => {
       ]),
     );
 
-    const actual = await getUsageByModel(makeConfig());
+    const actual = await getUsageByAgent(makeConfig());
 
     expect(actual["codex"]?.sessionEndDuration).toBeNull();
     expect(actual["codex"]?.weekEndDuration).toBeNull();
@@ -341,7 +341,7 @@ describe(getUsageByModel, () => {
       ]),
     );
 
-    const actual = await getUsageByModel(makeConfig());
+    const actual = await getUsageByAgent(makeConfig());
 
     expect(actual["codex"]?.session).toBeNull();
     expect(actual["codex"]?.weekly).toBeNull();
@@ -361,7 +361,7 @@ describe(getUsageByModel, () => {
       ]),
     );
 
-    const actual = await getUsageByModel(makeConfig());
+    const actual = await getUsageByAgent(makeConfig());
 
     expect(actual["codex"]?.sessionEndDuration).toBe(0);
   });
@@ -372,7 +372,7 @@ describe(getUsageByModel, () => {
       JSON.stringify([{ provider: "claude", source: "auto", usage: {} }]),
     );
 
-    const actual = await getUsageByModel(makeConfig());
+    const actual = await getUsageByAgent(makeConfig());
 
     expect(actual["codex"]).toStrictEqual(EXHAUSTED_USAGE);
     expect(consoleCapture.output()).toContain(
@@ -397,7 +397,7 @@ describe(getUsageByModel, () => {
       ]),
     );
 
-    const actual = await getUsageByModel(makeConfig());
+    const actual = await getUsageByAgent(makeConfig());
 
     expect(actual["codex"]).toStrictEqual(EXHAUSTED_USAGE);
     expect(consoleCapture.output()).toContain(

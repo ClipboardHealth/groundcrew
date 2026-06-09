@@ -43,9 +43,9 @@ function configSource(config: Config): string {
 function validConfigSource(config: Config): string {
   return configSource({
     ...config,
-    models: {
+    agents: {
       definitions: { claude: {} },
-      ...config.models,
+      ...config.agents,
     },
   });
 }
@@ -78,7 +78,7 @@ describe("loadConfig", () => {
     vi.restoreAllMocks();
   });
 
-  it("rejects configs that do not explicitly enable models", async () => {
+  it("rejects configs that do not explicitly enable agents", async () => {
     const configPath = writeConfigFile(
       temporary,
       configSource({ workspace: VALID_WORKSPACE(temporary) }),
@@ -87,12 +87,12 @@ describe("loadConfig", () => {
 
     const { loadConfig } = await loadFreshConfig();
 
-    await expect(loadConfig()).rejects.toThrow(/models are no longer enabled by default/);
+    await expect(loadConfig()).rejects.toThrow(/agents are no longer enabled by default/);
     await expect(loadConfig()).rejects.toThrow(/claude: \{\}/);
     await expect(loadConfig()).rejects.toThrow(/disabled: true` is no longer supported/);
   });
 
-  it("loads an explicit built-in model and applies defaults", async () => {
+  it("loads an explicit built-in agent and applies defaults", async () => {
     const configPath = writeConfigFile(
       temporary,
       validConfigSource({ workspace: VALID_WORKSPACE(temporary) }),
@@ -108,14 +108,14 @@ describe("loadConfig", () => {
       pollIntervalMilliseconds: 120_000,
       sessionLimitPercentage: 85,
     });
-    expect(actual.models.default).toBe("claude");
-    expect(Object.keys(actual.models.definitions).toSorted()).toStrictEqual(["claude"]);
-    expect(actual.models.definitions["claude"]?.cmd).toBe("claude --permission-mode auto");
+    expect(actual.agents.default).toBe("claude");
+    expect(Object.keys(actual.agents.definitions).toSorted()).toStrictEqual(["claude"]);
+    expect(actual.agents.definitions["claude"]?.cmd).toBe("claude --permission-mode auto");
     expect(actual.prompts.initial).toContain("{{task}}");
     expect(actual.sources).toStrictEqual([]);
   });
 
-  it("ships a model-agnostic unattended default prompt", async () => {
+  it("ships a agent-agnostic unattended default prompt", async () => {
     const configPath = writeConfigFile(
       temporary,
       validConfigSource({ workspace: VALID_WORKSPACE(temporary) }),
@@ -272,12 +272,12 @@ describe("loadConfig", () => {
     expect(second).toBe(first);
   });
 
-  it("merges per-key overrides into enabled built-in model definitions", async () => {
+  it("merges per-key overrides into enabled built-in agent definitions", async () => {
     const configPath = writeConfigFile(
       temporary,
       configSource({
         workspace: VALID_WORKSPACE(temporary),
-        models: {
+        agents: {
           definitions: {
             claude: { cmd: "my-claude" },
             cursor: { cmd: "cursor-agent", color: "#929292" },
@@ -290,12 +290,12 @@ describe("loadConfig", () => {
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
 
-    expect(actual.models.definitions["claude"]?.cmd).toBe("my-claude");
-    expect(actual.models.definitions["claude"]?.color).toBe("#C15F3C");
-    expect(actual.models.definitions["claude"]?.usage).toStrictEqual({
+    expect(actual.agents.definitions["claude"]?.cmd).toBe("my-claude");
+    expect(actual.agents.definitions["claude"]?.color).toBe("#C15F3C");
+    expect(actual.agents.definitions["claude"]?.usage).toStrictEqual({
       codexbar: { provider: "claude" },
     });
-    expect(actual.models.definitions["cursor"]).toStrictEqual({
+    expect(actual.agents.definitions["cursor"]).toStrictEqual({
       cmd: "cursor-agent",
       color: "#929292",
     });
@@ -306,7 +306,7 @@ describe("loadConfig", () => {
       temporary,
       configSource({
         workspace: VALID_WORKSPACE(temporary),
-        models: { definitions: { claude: { cmd: "my-claude", usage: undefined } } },
+        agents: { definitions: { claude: { cmd: "my-claude", usage: undefined } } },
       }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
@@ -314,17 +314,17 @@ describe("loadConfig", () => {
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
 
-    const { claude } = actual.models.definitions;
+    const { claude } = actual.agents.definitions;
     expect(claude?.cmd).toBe("my-claude");
     expect(claude?.usage).toStrictEqual({ codexbar: { provider: "claude" } });
   });
 
-  it("strips usage from a built-in model when override sets `usage: { disabled: true }`", async () => {
+  it("strips usage from a built-in agent when override sets `usage: { disabled: true }`", async () => {
     const configPath = writeConfigFile(
       temporary,
       configSource({
         workspace: VALID_WORKSPACE(temporary),
-        models: { definitions: { claude: { usage: { disabled: true } } } },
+        agents: { definitions: { claude: { usage: { disabled: true } } } },
       }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
@@ -332,17 +332,17 @@ describe("loadConfig", () => {
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
 
-    expect(actual.models.definitions["claude"]?.usage).toBeUndefined();
-    expect(actual.models.definitions["claude"]?.cmd).toBe("claude --permission-mode auto");
-    expect(actual.models.definitions["codex"]).toBeUndefined();
+    expect(actual.agents.definitions["claude"]?.usage).toBeUndefined();
+    expect(actual.agents.definitions["claude"]?.cmd).toBe("claude --permission-mode auto");
+    expect(actual.agents.definitions["codex"]).toBeUndefined();
   });
 
-  it("treats `usage: { disabled: true }` on a brand-new model as no gating", async () => {
+  it("treats `usage: { disabled: true }` on a brand-new agent as no gating", async () => {
     const configPath = writeConfigFile(
       temporary,
       configSource({
         workspace: VALID_WORKSPACE(temporary),
-        models: {
+        agents: {
           default: "cursor",
           definitions: {
             cursor: { cmd: "cursor", color: "#abc", usage: { disabled: true } },
@@ -355,22 +355,22 @@ describe("loadConfig", () => {
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
 
-    expect(actual.models.definitions["cursor"]).toStrictEqual({ cmd: "cursor", color: "#abc" });
+    expect(actual.agents.definitions["cursor"]).toStrictEqual({ cmd: "cursor", color: "#abc" });
   });
 
-  it("rejects legacy models.isolation config", async () => {
+  it("rejects legacy agents.isolation config", async () => {
     const configPath = writeConfigFile(
       temporary,
       [
         "export default {",
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        `  models: { isolation: "safehouse" },`,
+        `  agents: { isolation: "safehouse" },`,
         "};",
       ].join("\n"),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
-    await expect(loadConfig()).rejects.toThrow(/models\.isolation is no longer supported/);
+    await expect(loadConfig()).rejects.toThrow(/agents\.isolation is no longer supported/);
   });
 
   it("rejects the legacy remote config block", async () => {
@@ -388,27 +388,27 @@ describe("loadConfig", () => {
     await expect(loadConfig()).rejects.toThrow(/remote is no longer supported/);
   });
 
-  it("rejects non-object model definitions", async () => {
+  it("rejects non-object agent definitions", async () => {
     const configPath = writeConfigFile(
       temporary,
       [
         "export default {",
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        `  models: { definitions: 5 },`,
+        `  agents: { definitions: 5 },`,
         "};",
       ].join("\n"),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
-    await expect(loadConfig()).rejects.toThrow(/models\.definitions must be an object/);
+    await expect(loadConfig()).rejects.toThrow(/agents\.definitions must be an object/);
   });
 
-  it("rejects empty model definitions", async () => {
+  it("rejects empty agent definitions", async () => {
     const configPath = writeConfigFile(
       temporary,
       configSource({
         workspace: VALID_WORKSPACE(temporary),
-        models: { definitions: {} },
+        agents: { definitions: {} },
       }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
@@ -416,48 +416,48 @@ describe("loadConfig", () => {
     const { loadConfig } = await loadFreshConfig();
 
     await expect(loadConfig()).rejects.toThrow(
-      /models\.definitions must contain at least one model/,
+      /agents\.definitions must contain at least one agent/,
     );
   });
 
-  it("rejects non-object per-model definitions", async () => {
+  it("rejects non-object per-agent definitions", async () => {
     const configPath = writeConfigFile(
       temporary,
       [
         "export default {",
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        `  models: { definitions: { claude: 5 } },`,
+        `  agents: { definitions: { claude: 5 } },`,
         "};",
       ].join("\n"),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
-    await expect(loadConfig()).rejects.toThrow(/models\.definitions\.claude must be an object/);
+    await expect(loadConfig()).rejects.toThrow(/agents\.definitions\.claude must be an object/);
   });
 
-  it("rejects legacy per-model isolation config", async () => {
+  it("rejects legacy per-agent isolation config", async () => {
     const configPath = writeConfigFile(
       temporary,
       [
         "export default {",
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        `  models: { definitions: { claude: { isolation: "safehouse" } } },`,
+        `  agents: { definitions: { claude: { isolation: "safehouse" } } },`,
         "};",
       ].join("\n"),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(
-      /models\.definitions\.claude\.isolation is no longer supported/,
+      /agents\.definitions\.claude\.isolation is no longer supported/,
     );
   });
 
-  it("accepts a per-model sandbox agent binding and surfaces it on the resolved definition", async () => {
+  it("accepts a per-agent sandbox agent binding and surfaces it on the resolved definition", async () => {
     const configPath = writeConfigFile(
       temporary,
       configSource({
         workspace: VALID_WORKSPACE(temporary),
-        models: {
+        agents: {
           definitions: {
             claude: { sandbox: { agent: "claude" } },
           },
@@ -469,71 +469,71 @@ describe("loadConfig", () => {
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
 
-    expect(actual.models.definitions["claude"]?.sandbox).toStrictEqual({
+    expect(actual.agents.definitions["claude"]?.sandbox).toStrictEqual({
       agent: "claude",
     });
   });
 
-  it("rejects a per-model sandbox config with a whitespace-only agent", async () => {
+  it("rejects a per-agent sandbox config with a whitespace-only agent", async () => {
     const configPath = writeConfigFile(
       temporary,
       [
         "export default {",
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        `  models: { definitions: { claude: { sandbox: { agent: "   " } } } },`,
+        `  agents: { definitions: { claude: { sandbox: { agent: "   " } } } },`,
         "};",
       ].join("\n"),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(
-      /models\.definitions\.claude\.sandbox\.agent must be a non-empty string/,
+      /agents\.definitions\.claude\.sandbox\.agent must be a non-empty string/,
     );
   });
 
-  it("rejects removed per-model sandbox.template with migration guidance", async () => {
+  it("rejects removed per-agent sandbox.template with migration guidance", async () => {
     const configPath = writeConfigFile(
       temporary,
       [
         "export default {",
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        `  models: { definitions: { claude: { sandbox: { agent: "claude", template: "node-22" } } } },`,
+        `  agents: { definitions: { claude: { sandbox: { agent: "claude", template: "node-22" } } } },`,
         "};",
       ].join("\n"),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(
-      /models\.definitions\.claude\.sandbox\.template is no longer supported/,
+      /agents\.definitions\.claude\.sandbox\.template is no longer supported/,
     );
     await expect(loadConfig()).rejects.toThrow(/sbx create --name groundcrew-<agent>/);
   });
 
-  it("rejects removed per-model sandbox.kits with migration guidance", async () => {
+  it("rejects removed per-agent sandbox.kits with migration guidance", async () => {
     const configPath = writeConfigFile(
       temporary,
       [
         "export default {",
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        `  models: { definitions: { claude: { sandbox: { agent: "claude", kits: ["npm-cache"] } } } },`,
+        `  agents: { definitions: { claude: { sandbox: { agent: "claude", kits: ["npm-cache"] } } } },`,
         "};",
       ].join("\n"),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(
-      /models\.definitions\.claude\.sandbox\.kits is no longer supported/,
+      /agents\.definitions\.claude\.sandbox\.kits is no longer supported/,
     );
     await expect(loadConfig()).rejects.toThrow(/Provision and manage the sandbox yourself/);
   });
 
-  it("rejects per-model sandbox.setupCommand with prepareWorktree migration guidance", async () => {
+  it("rejects per-agent sandbox.setupCommand with prepareWorktree migration guidance", async () => {
     const configPath = writeConfigFile(
       temporary,
       [
         "export default {",
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        `  models: { definitions: { claude: { sandbox: { agent: "claude", setupCommand: "./bootstrap.sh" } } } },`,
+        `  agents: { definitions: { claude: { sandbox: { agent: "claude", setupCommand: "./bootstrap.sh" } } } },`,
         "};",
       ].join("\n"),
     );
@@ -541,7 +541,7 @@ describe("loadConfig", () => {
     const { loadConfig } = await loadFreshConfig();
 
     await expect(loadConfig()).rejects.toThrow(
-      /models\.definitions\.claude\.sandbox\.setupCommand is no longer supported/,
+      /agents\.definitions\.claude\.sandbox\.setupCommand is no longer supported/,
     );
     await expect(loadConfig()).rejects.toThrow(/defaults\.hooks\.prepareWorktree/);
   });
@@ -556,7 +556,7 @@ describe("loadConfig", () => {
             prepareWorktree: "npm ci",
           },
         },
-        models: {
+        agents: {
           definitions: {
             claude: {},
           },
@@ -577,7 +577,7 @@ describe("loadConfig", () => {
       configSource({
         workspace: VALID_WORKSPACE(temporary),
         defaults: {},
-        models: {
+        agents: {
           definitions: {
             claude: {},
           },
@@ -599,7 +599,7 @@ describe("loadConfig", () => {
         "export default {",
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
         `  defaults: [],`,
-        `  models: { definitions: { claude: {} } },`,
+        `  agents: { definitions: { claude: {} } },`,
         "};",
       ].join("\n"),
     );
@@ -616,7 +616,7 @@ describe("loadConfig", () => {
         "export default {",
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
         `  defaults: { hooks: [] },`,
-        `  models: { definitions: { claude: {} } },`,
+        `  agents: { definitions: { claude: {} } },`,
         "};",
       ].join("\n"),
     );
@@ -633,7 +633,7 @@ describe("loadConfig", () => {
         "export default {",
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
         `  defaults: { hooks: { prepareWorktree: " " } },`,
-        `  models: { definitions: { claude: {} } },`,
+        `  agents: { definitions: { claude: {} } },`,
         "};",
       ].join("\n"),
     );
@@ -645,12 +645,12 @@ describe("loadConfig", () => {
     );
   });
 
-  it("accepts a brand-new model override that supplies an explicit usage block", async () => {
+  it("accepts a brand-new agent override that supplies an explicit usage block", async () => {
     const configPath = writeConfigFile(
       temporary,
       configSource({
         workspace: VALID_WORKSPACE(temporary),
-        models: {
+        agents: {
           default: "cursor",
           definitions: {
             cursor: { cmd: "cursor", color: "#abc", usage: { codexbar: { provider: "cursor" } } },
@@ -661,25 +661,25 @@ describe("loadConfig", () => {
     setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
-    expect(actual.models.definitions["cursor"]?.usage).toStrictEqual({
+    expect(actual.agents.definitions["cursor"]?.usage).toStrictEqual({
       codexbar: { provider: "cursor" },
     });
   });
 
-  it("rejects a per-model sandbox config that omits agent", async () => {
+  it("rejects a per-agent sandbox config that omits agent", async () => {
     const configPath = writeConfigFile(
       temporary,
       [
         "export default {",
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        `  models: { definitions: { claude: { sandbox: {} } } },`,
+        `  agents: { definitions: { claude: { sandbox: {} } } },`,
         "};",
       ].join("\n"),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(
-      /models\.definitions\.claude\.sandbox\.agent must be a non-empty string/,
+      /agents\.definitions\.claude\.sandbox\.agent must be a non-empty string/,
     );
   });
 
@@ -689,7 +689,7 @@ describe("loadConfig", () => {
       [
         "export const config = {",
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        '  models: { definitions: { claude: { preLaunch: "export FOO=bar" } } },',
+        '  agents: { definitions: { claude: { preLaunch: "export FOO=bar" } } },',
         "};",
       ].join("\n"),
     );
@@ -698,9 +698,9 @@ describe("loadConfig", () => {
     const { loadConfig } = await loadFreshConfig();
 
     const config = await loadConfig();
-    expect(config.models.definitions["claude"]?.preLaunch).toBe("export FOO=bar");
-    expect(config.models.definitions["claude"]?.cmd).toContain("claude");
-    expect(config.models.definitions["claude"]?.color).toBe("#C15F3C");
+    expect(config.agents.definitions["claude"]?.preLaunch).toBe("export FOO=bar");
+    expect(config.agents.definitions["claude"]?.cmd).toContain("claude");
+    expect(config.agents.definitions["claude"]?.color).toBe("#C15F3C");
   });
 
   it("rejects an empty preLaunch string", async () => {
@@ -709,7 +709,7 @@ describe("loadConfig", () => {
       [
         "export const config = {",
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        '  models: { definitions: { claude: { preLaunch: "" } } },',
+        '  agents: { definitions: { claude: { preLaunch: "" } } },',
         "};",
       ].join("\n"),
     );
@@ -718,7 +718,7 @@ describe("loadConfig", () => {
     const { loadConfig } = await loadFreshConfig();
 
     await expect(loadConfig()).rejects.toThrow(
-      /models\.definitions\.claude\.preLaunch must be a non-empty string/,
+      /agents\.definitions\.claude\.preLaunch must be a non-empty string/,
     );
   });
 
@@ -728,7 +728,7 @@ describe("loadConfig", () => {
       [
         "export const config = {",
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        String.raw`  models: { definitions: { claude: { preLaunch: "   \n\t " } } },`,
+        String.raw`  agents: { definitions: { claude: { preLaunch: "   \n\t " } } },`,
         "};",
       ].join("\n"),
     );
@@ -737,17 +737,17 @@ describe("loadConfig", () => {
     const { loadConfig } = await loadFreshConfig();
 
     await expect(loadConfig()).rejects.toThrow(
-      /models\.definitions\.claude\.preLaunch must contain non-whitespace characters/,
+      /agents\.definitions\.claude\.preLaunch must contain non-whitespace characters/,
     );
   });
 
-  it("allows preLaunch on a brand-new model when cmd and color are supplied", async () => {
+  it("allows preLaunch on a brand-new agent when cmd and color are supplied", async () => {
     const configPath = writeConfigFile(
       temporary,
       [
         "export const config = {",
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        "  models: {",
+        "  agents: {",
         '    default: "cursor",',
         '    definitions: { cursor: { cmd: "cursor-agent", color: "#929292", preLaunch: "export FOO=bar" } },',
         "  },",
@@ -759,7 +759,7 @@ describe("loadConfig", () => {
     const { loadConfig } = await loadFreshConfig();
 
     const config = await loadConfig();
-    expect(config.models.definitions["cursor"]?.preLaunch).toBe("export FOO=bar");
+    expect(config.agents.definitions["cursor"]?.preLaunch).toBe("export FOO=bar");
   });
 
   it("merges preLaunchEnv through an override and preserves cmd/color defaults", async () => {
@@ -767,7 +767,7 @@ describe("loadConfig", () => {
       temporary,
       configSource({
         workspace: VALID_WORKSPACE(temporary),
-        models: {
+        agents: {
           definitions: { claude: { preLaunchEnv: ["SESSION_TOKEN", "TEAM_ID"] } },
         },
       }),
@@ -776,12 +776,12 @@ describe("loadConfig", () => {
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
 
-    expect(actual.models.definitions["claude"]?.preLaunchEnv).toStrictEqual([
+    expect(actual.agents.definitions["claude"]?.preLaunchEnv).toStrictEqual([
       "SESSION_TOKEN",
       "TEAM_ID",
     ]);
-    expect(actual.models.definitions["claude"]?.cmd).toBeTypeOf("string");
-    expect(actual.models.definitions["claude"]?.color).toBeTypeOf("string");
+    expect(actual.agents.definitions["claude"]?.cmd).toBeTypeOf("string");
+    expect(actual.agents.definitions["claude"]?.color).toBeTypeOf("string");
   });
 
   it("rejects a non-array preLaunchEnv", async () => {
@@ -790,14 +790,14 @@ describe("loadConfig", () => {
       [
         "export const config = {",
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        '  models: { definitions: { claude: { preLaunchEnv: "SESSION_TOKEN" } } },',
+        '  agents: { definitions: { claude: { preLaunchEnv: "SESSION_TOKEN" } } },',
         "};",
       ].join("\n"),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(
-      /models\.definitions\.claude\.preLaunchEnv must be an array/,
+      /agents\.definitions\.claude\.preLaunchEnv must be an array/,
     );
   });
 
@@ -806,13 +806,13 @@ describe("loadConfig", () => {
       temporary,
       configSource({
         workspace: VALID_WORKSPACE(temporary),
-        models: { definitions: { claude: { preLaunchEnv: ["SESSION_TOKEN", "1bad"] } } },
+        agents: { definitions: { claude: { preLaunchEnv: ["SESSION_TOKEN", "1bad"] } } },
       }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(
-      /models\.definitions\.claude\.preLaunchEnv\[1\] must be a POSIX env var name/,
+      /agents\.definitions\.claude\.preLaunchEnv\[1\] must be a POSIX env var name/,
     );
   });
 
@@ -824,23 +824,23 @@ describe("loadConfig", () => {
       temporary,
       configSource({
         workspace: VALID_WORKSPACE(temporary),
-        models: { definitions: { claude: { preLaunchEnv: ["SESSION_TOKEN", "NPM_TOKEN"] } } },
+        agents: { definitions: { claude: { preLaunchEnv: ["SESSION_TOKEN", "NPM_TOKEN"] } } },
       }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(
-      /models\.definitions\.claude\.preLaunchEnv\[1\] cannot be a BUILD_SECRET_NAMES entry/,
+      /agents\.definitions\.claude\.preLaunchEnv\[1\] cannot be a BUILD_SECRET_NAMES entry/,
     );
   });
 
-  it("rejects legacy disabled model entries even when combined with other fields", async () => {
+  it("rejects legacy disabled agent entries even when combined with other fields", async () => {
     const configPath = writeConfigFile(
       temporary,
       [
         "export const config = {",
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        '  models: { definitions: { claude: { disabled: true, preLaunchEnv: ["SESSION_TOKEN"] } } },',
+        '  agents: { definitions: { claude: { disabled: true, preLaunchEnv: ["SESSION_TOKEN"] } } },',
         "};",
       ].join("\n"),
     );
@@ -849,18 +849,18 @@ describe("loadConfig", () => {
     await expect(loadConfig()).rejects.toThrow(/disabled: true` is no longer supported/);
   });
 
-  it("trims surrounding whitespace from a per-model sandbox agent", async () => {
+  it("trims surrounding whitespace from a per-agent sandbox agent", async () => {
     const configPath = writeConfigFile(
       temporary,
       configSource({
         workspace: VALID_WORKSPACE(temporary),
-        models: { definitions: { claude: { sandbox: { agent: "  claude  " } } } },
+        agents: { definitions: { claude: { sandbox: { agent: "  claude  " } } } },
       }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
-    expect(actual.models.definitions["claude"]?.sandbox?.agent).toBe("claude");
+    expect(actual.agents.definitions["claude"]?.sandbox?.agent).toBe("claude");
   });
 
   it("rejects a non-object local block", async () => {
@@ -878,20 +878,20 @@ describe("loadConfig", () => {
     await expect(loadConfig()).rejects.toThrow(/local must be an object/);
   });
 
-  it("rejects a non-object per-model sandbox block", async () => {
+  it("rejects a non-object per-agent sandbox block", async () => {
     const configPath = writeConfigFile(
       temporary,
       [
         "export default {",
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        `  models: { definitions: { claude: { sandbox: 5 } } },`,
+        `  agents: { definitions: { claude: { sandbox: 5 } } },`,
         "};",
       ].join("\n"),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(
-      /models\.definitions\.claude\.sandbox must be an object/,
+      /agents\.definitions\.claude\.sandbox must be an object/,
     );
   });
 
@@ -916,7 +916,7 @@ describe("loadConfig", () => {
       [
         "export default {",
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        `  models: { definitions: { claude: {} } },`,
+        `  agents: { definitions: { claude: {} } },`,
         `  sandbox: {},`,
         "};",
       ].join("\n"),
@@ -965,7 +965,7 @@ describe("loadConfig", () => {
       [
         "export default {",
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        `  models: { definitions: { claude: {} } },`,
+        `  agents: { definitions: { claude: {} } },`,
         `  local: { runner: 'nope' },`,
         "};",
       ].join("\n"),
@@ -1000,13 +1000,13 @@ describe("loadConfig", () => {
     expect(actual.local.runner).toBe("safehouse");
   });
 
-  it("rejects legacy disabled model entries with migration guidance", async () => {
+  it("rejects legacy disabled agent entries with migration guidance", async () => {
     const configPath = writeConfigFile(
       temporary,
       [
         "export default {",
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        `  models: { definitions: { codex: { disabled: true } } },`,
+        `  agents: { definitions: { codex: { disabled: true } } },`,
         "};",
       ].join("\n"),
     );
@@ -1016,35 +1016,35 @@ describe("loadConfig", () => {
     await expect(loadConfig()).rejects.toThrow(/claude: \{\}/);
   });
 
-  it("enables both shipped models when both are listed", async () => {
+  it("enables both shipped agents when both are listed", async () => {
     const configPath = writeConfigFile(
       temporary,
       configSource({
         workspace: VALID_WORKSPACE(temporary),
-        models: { definitions: { claude: {}, codex: {} } },
+        agents: { definitions: { claude: {}, codex: {} } },
       }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
 
-    expect(Object.keys(actual.models.definitions).toSorted()).toStrictEqual(["claude", "codex"]);
-    expect(actual.models.definitions["codex"]?.cmd).toBe(
+    expect(Object.keys(actual.agents.definitions).toSorted()).toStrictEqual(["claude", "codex"]);
+    expect(actual.agents.definitions["codex"]?.cmd).toBe(
       "codex --dangerously-bypass-approvals-and-sandbox",
     );
   });
 
-  it("rejects a default model that is not enabled", async () => {
+  it("rejects a default agent that is not enabled", async () => {
     const configPath = writeConfigFile(
       temporary,
       configSource({
         workspace: VALID_WORKSPACE(temporary),
-        models: { default: "codex", definitions: { claude: {} } },
+        agents: { default: "codex", definitions: { claude: {} } },
       }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
-    await expect(loadConfig()).rejects.toThrow(/models\.default \("codex"\) is not enabled/);
+    await expect(loadConfig()).rejects.toThrow(/agents\.default \("codex"\) is not enabled/);
   });
 
   it("defaults workspaceKind to auto when omitted", async () => {
@@ -1078,7 +1078,7 @@ describe("loadConfig", () => {
       [
         "export default {",
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        `  models: { definitions: { claude: {} } },`,
+        `  agents: { definitions: { claude: {} } },`,
         `  workspaceKind: "screen",`,
         "};",
       ].join("\n"),
@@ -1204,7 +1204,7 @@ describe("loadConfig", () => {
       [
         "export default {",
         `  workspace: { projectDir: "/dev", knownRepositories: ["owner/dup", { name: "owner/dup", projectDirOverride: "/work" }] },`,
-        `  models: { definitions: { claude: {} } },`,
+        `  agents: { definitions: { claude: {} } },`,
         "};",
       ].join("\n"),
     );
@@ -1252,7 +1252,7 @@ describe("loadConfig", () => {
       [
         "export default {",
         `  workspace: { projectDir: "/dev", knownRepositories: [{ name: "owner/x", projectDirOverride: 5 }] },`,
-        `  models: { definitions: { claude: {} } },`,
+        `  agents: { definitions: { claude: {} } },`,
         "};",
       ].join("\n"),
     );
@@ -1267,7 +1267,7 @@ describe("loadConfig", () => {
       [
         "export default {",
         `  workspace: { projectDir: "/dev", knownRepositories: [42] },`,
-        `  models: { definitions: { claude: {} } },`,
+        `  agents: { definitions: { claude: {} } },`,
         "};",
       ].join("\n"),
     );
@@ -1282,7 +1282,7 @@ describe("loadConfig", () => {
       [
         "export default {",
         `  workspace: { projectDir: "/dev", knownRepositories: [{ name: 5 }] },`,
-        `  models: { definitions: { claude: {} } },`,
+        `  agents: { definitions: { claude: {} } },`,
         "};",
       ].join("\n"),
     );
@@ -1297,7 +1297,7 @@ describe("loadConfig", () => {
       [
         "export default {",
         `  workspace: { projectDir: 5, knownRepositories: ["owner/flat"] },`,
-        `  models: { definitions: { claude: {} } },`,
+        `  agents: { definitions: { claude: {} } },`,
         "};",
       ].join("\n"),
     );
@@ -1312,7 +1312,7 @@ describe("loadConfig", () => {
       [
         "export default {",
         `  workspace: { projectDir: "/dev", worktreeDir: 5, knownRepositories: ["owner/flat"] },`,
-        `  models: { definitions: { claude: {} } },`,
+        `  agents: { definitions: { claude: {} } },`,
         "};",
       ].join("\n"),
     );
@@ -1439,7 +1439,7 @@ describe("loadConfig", () => {
       [
         "export default {",
         `  workspace: { projectDir: ${JSON.stringify(temporary)}, knownRepositories: "owner/repo" },`,
-        `  models: { definitions: { claude: {} } },`,
+        `  agents: { definitions: { claude: {} } },`,
         "};",
       ].join("\n"),
     );
@@ -1498,7 +1498,7 @@ describe("loadConfig", () => {
       [
         "export default {",
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        `  models: { definitions: { claude: {} } },`,
+        `  agents: { definitions: { claude: {} } },`,
         `  orchestrator: { sessionLimitPercentage: Number.NaN },`,
         "};",
       ].join("\n"),
@@ -1530,52 +1530,52 @@ describe("loadConfig", () => {
       temporary,
       configSource({
         workspace: VALID_WORKSPACE(temporary),
-        models: { definitions: { claude: { cmd: "" } } },
+        agents: { definitions: { claude: { cmd: "" } } },
       }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
-    await expect(loadConfig()).rejects.toThrow(/models\.definitions\.claude\.cmd/);
+    await expect(loadConfig()).rejects.toThrow(/agents\.definitions\.claude\.cmd/);
   });
 
-  it("fails when a brand-new model omits color", async () => {
+  it("fails when a brand-new agent omits color", async () => {
     const configPath = writeConfigFile(
       temporary,
       configSource({
         workspace: VALID_WORKSPACE(temporary),
-        models: { definitions: { cursor: { cmd: "cursor" } } },
+        agents: { definitions: { cursor: { cmd: "cursor" } } },
       }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
-    await expect(loadConfig()).rejects.toThrow(/models\.definitions\.cursor\.color/);
+    await expect(loadConfig()).rejects.toThrow(/agents\.definitions\.cursor\.color/);
   });
 
-  it('fails when models.definitions contains the reserved "any" name', async () => {
+  it('fails when agents.definitions contains the reserved "any" name', async () => {
     const configPath = writeConfigFile(
       temporary,
       configSource({
         workspace: VALID_WORKSPACE(temporary),
-        models: { definitions: { any: { cmd: "any", color: "#000" } } },
+        agents: { definitions: { any: { cmd: "any", color: "#000" } } },
       }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
-    await expect(loadConfig()).rejects.toThrow(/models\.definitions cannot contain "any"/);
+    await expect(loadConfig()).rejects.toThrow(/agents\.definitions cannot contain "any"/);
   });
 
-  it("fails when models.default is unknown", async () => {
+  it("fails when agents.default is unknown", async () => {
     const configPath = writeConfigFile(
       temporary,
       configSource({
         workspace: VALID_WORKSPACE(temporary),
-        models: { default: "unknown", definitions: { claude: {} } },
+        agents: { default: "unknown", definitions: { claude: {} } },
       }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(
-      /models\.default \("unknown"\) is not a key in models\.definitions/,
+      /agents\.default \("unknown"\) is not a key in agents\.definitions/,
     );
   });
 
@@ -1600,7 +1600,7 @@ describe("loadConfig", () => {
       path.join(root, "crew.config.json"),
       JSON.stringify({
         workspace: VALID_WORKSPACE(root),
-        models: { definitions: { claude: {} } },
+        agents: { definitions: { claude: {} } },
       }),
     );
     vi.spyOn(process, "cwd").mockReturnValue(root);
@@ -1616,7 +1616,7 @@ describe("loadConfig", () => {
       path.join(root, "crew.config.ts"),
       `export const config = ${JSON.stringify({
         workspace: VALID_WORKSPACE(root),
-        models: { definitions: { claude: {} } },
+        agents: { definitions: { claude: {} } },
       })};\n`,
     );
     vi.spyOn(process, "cwd").mockReturnValue(root);
@@ -1682,7 +1682,7 @@ describe("loadConfig", () => {
       [
         "export default {",
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        `  models: { definitions: { claude: {} } },`,
+        `  agents: { definitions: { claude: {} } },`,
         `  sources: [{ kind: "shell", name: "jira" }],`,
         "};",
       ].join("\n"),
@@ -1700,7 +1700,7 @@ describe("loadConfig", () => {
       [
         "export default {",
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        `  models: { definitions: { claude: {} } },`,
+        `  agents: { definitions: { claude: {} } },`,
         `  sources: [{ kind: "todo-txt", name: "todo", todoPath: "~/todo.md", tasksDir: "~/.tasks", idPrefix: "GC", timezone: "UTC" }],`,
         "};",
       ].join("\n"),
@@ -1886,7 +1886,7 @@ function resolvedConfigWithWorkspace(workspace: ResolvedConfig["workspace"]): Re
       pollIntervalMilliseconds: 1000,
       sessionLimitPercentage: 85,
     },
-    models: {
+    agents: {
       default: "claude",
       definitions: { claude: { cmd: "claude", color: "#fff" } },
     },

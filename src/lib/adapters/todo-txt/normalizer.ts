@@ -1,6 +1,6 @@
 import path from "node:path";
 
-import { AGENT_ANY_MODEL } from "../../config.ts";
+import { AGENT_ANY } from "../../config.ts";
 import { type Blocker, type CanonicalStatus, type Issue, toCanonicalId } from "../../taskSource.ts";
 import { getMetadataAll, getMetadataFirst, hashLine, type ParsedTodoLine } from "./parser.ts";
 
@@ -105,7 +105,7 @@ export function normalizeToIssue(options: NormalizeOptions): Issue | undefined {
     return undefined;
   }
 
-  const agent = getMetadataFirst(parsed, "agent") ?? AGENT_ANY_MODEL;
+  const agent = getMetadataFirst(parsed, "agent") ?? AGENT_ANY;
   const status = derivedCanonicalStatus(parsed);
   const repository = getMetadataFirst(parsed, "repo") ?? defaultRepository;
 
@@ -132,7 +132,7 @@ export function normalizeToIssue(options: NormalizeOptions): Issue | undefined {
     description,
     status,
     repository,
-    model: agent,
+    agent,
     assignee: "",
     updatedAt,
     blockers,

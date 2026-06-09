@@ -27,7 +27,7 @@ function makeConfig(stateRoot: string): ResolvedConfig {
       pollIntervalMilliseconds: 1000,
       sessionLimitPercentage: 85,
     },
-    models: {
+    agents: {
       default: "claude",
       definitions: { claude: { cmd: "claude", color: "#fff" } },
     },
@@ -57,7 +57,7 @@ describe("run state store", () => {
       state: {
         task: "TEAM-1",
         repository: "repo-a",
-        model: "claude",
+        agent: "claude",
         worktreeDir: "/work/repo-a-team-1",
         branchName: "dev-team-1",
         workspaceName: "team-1",
@@ -71,7 +71,7 @@ describe("run state store", () => {
     expect(readRunState(config, "TEAM-1")).toMatchObject({
       task: "team-1",
       repository: "repo-a",
-      model: "claude",
+      agent: "claude",
       state: "running",
       resumeCount: 0,
     });
@@ -83,7 +83,7 @@ describe("run state store", () => {
       state: {
         task: "team-1",
         repository: "repo-a",
-        model: "claude",
+        agent: "claude",
         worktreeDir: "/work/repo-a-team-1",
         branchName: "dev-team-1",
         workspaceName: "team-1",
@@ -112,7 +112,7 @@ describe("run state store", () => {
       state: {
         task: "team-1",
         repository: "repo-a",
-        model: "claude",
+        agent: "claude",
         worktreeDir: "/work/repo-a-team-1",
         branchName: "dev-team-1",
         workspaceName: "team-1",
@@ -132,7 +132,7 @@ describe("run state store", () => {
       state: {
         task: "team-1",
         repository: "repo-a",
-        model: "claude",
+        agent: "claude",
         worktreeDir: "/work/repo-a-team-1",
         branchName: "dev-team-1",
         workspaceName: "team-1",
@@ -148,7 +148,7 @@ describe("run state store", () => {
       state: {
         task: "team-1",
         repository: "repo-a",
-        model: "claude",
+        agent: "claude",
         worktreeDir: "/work/repo-a-team-1",
         branchName: "dev-team-1",
         workspaceName: "team-1",
@@ -169,7 +169,7 @@ describe("run state store", () => {
       state: {
         task: "team-1",
         repository: "repo-a",
-        model: "claude",
+        agent: "claude",
         worktreeDir: "/work/repo-a-team-1",
         branchName: "dev-team-1",
         workspaceName: "team-1",
@@ -188,7 +188,7 @@ describe("run state store", () => {
       state: {
         task: "team-1",
         repository: "repo-a",
-        model: "claude",
+        agent: "claude",
         worktreeDir: "/work/repo-a-team-1",
         branchName: "dev-team-1",
         workspaceName: "team-1",
@@ -208,7 +208,7 @@ describe("run state store", () => {
       state: {
         task: "team-1",
         repository: "repo-a",
-        model: "claude",
+        agent: "claude",
         worktreeDir: "/work/repo-a-team-1",
         branchName: "dev-team-1",
         workspaceName: "team-1",
@@ -222,7 +222,7 @@ describe("run state store", () => {
       state: {
         task: "team-1",
         repository: "repo-a",
-        model: "claude",
+        agent: "claude",
         worktreeDir: "/work/repo-a-team-1",
         branchName: "dev-team-1",
         workspaceName: "team-1",
@@ -243,7 +243,7 @@ describe("run state store", () => {
         state: {
           task: "team-1",
           repository: "repo-a",
-          model: "claude",
+          agent: "claude",
           worktreeDir: "/work/repo-a-team-1",
           branchName: "dev-team-1",
           workspaceName: "team-1",
@@ -260,7 +260,7 @@ describe("run state store", () => {
       state: {
         task: "team-1",
         repository: "repo-a",
-        model: "claude",
+        agent: "claude",
         worktreeDir: "/work/repo-a-team-1",
         branchName: "dev-team-1",
         workspaceName: "team-1",
@@ -327,7 +327,7 @@ describe("run state store", () => {
       state: {
         task: "team-1",
         repository: "repo-a",
-        model: "claude",
+        agent: "claude",
         worktreeDir: "/work/repo-a-team-1",
         branchName: "dev-team-1",
         workspaceName: "team-1",
@@ -346,7 +346,7 @@ describe("run state store", () => {
       state: {
         task: "team-1",
         repository: "repo-a",
-        model: "claude",
+        agent: "claude",
         worktreeDir: "/work/repo-a-team-1",
         branchName: "dev-team-1",
         workspaceName: "team-1",

@@ -42,10 +42,10 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
       sessionLimitPercentage: 85,
       ...overrides.orchestrator,
     },
-    models: {
+    agents: {
       default: "claude",
       definitions: { claude: { cmd: "claude", color: "#fff" } },
-      ...overrides.models,
+      ...overrides.agents,
     },
     prompts: { initial: "x", ...overrides.prompts },
     workspaceKind: overrides.workspaceKind ?? "auto",

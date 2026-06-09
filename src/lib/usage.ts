@@ -1,13 +1,13 @@
 /**
- * Usage data — wraps `codexbar usage` for every model in
- * `config.models.definitions` that has a `usage` block configured. The
- * orchestrator's dispatcher consumes the per-model snapshot to gate work by
+ * Usage data — wraps `codexbar usage` for every agent in
+ * `config.agents.definitions` that has a `usage` block configured. The
+ * orchestrator's dispatcher consumes the per-agent snapshot to gate work by
  * `orchestrator.sessionLimitPercentage`. There is no CLI surface for usage —
  * `codexbar` itself is the user-facing inspection tool.
  */
 
 import { runCommandAsync } from "./commandRunner.ts";
-import type { ModelDefinition, ResolvedConfig } from "./config.ts";
+import type { AgentDefinition, ResolvedConfig } from "./config.ts";
 import { debug, errorMessage } from "./util.ts";
 
 interface UsageWindow {
@@ -45,10 +45,10 @@ interface NormalizedUsage {
   weekEndDuration: number | null;
 }
 
-export type UsageByModel = Record<string, NormalizedUsage>;
+export type UsageByAgent = Record<string, NormalizedUsage>;
 
 /**
- * Synthetic snapshot used when codexbar can't be read for a model. Both
+ * Synthetic snapshot used when codexbar can't be read for a agent. Both
  * window fractions are pinned to Infinity so the dispatcher's
  * `session * 100 > sessionLimitPercentage` check fires at every legal
  * threshold — `sessionLimitPercentage: 100` would otherwise accept
@@ -79,10 +79,10 @@ function defaultCodexbarSource(provider: string): string {
   return "auto";
 }
 
-async function codexbarUsage(definition: ModelDefinition, signal?: AbortSignal): Promise<Usage> {
+async function codexbarUsage(definition: AgentDefinition, signal?: AbortSignal): Promise<Usage> {
   /* v8 ignore next 3 @preserve -- callers filter to definitions with usage; this is a defensive guard */
   if (!definition.usage) {
-    throw new Error("model has no usage configured");
+    throw new Error("agent has no usage configured");
   }
   const { provider } = definition.usage.codexbar;
   const configuredSource = definition.usage.codexbar.source;
@@ -131,7 +131,7 @@ async function codexbarUsage(definition: ModelDefinition, signal?: AbortSignal):
   if (!match.usage) {
     // codexbar can return `{error: ...}` instead of `{usage: ...}` when
     // the underlying provider failed (e.g. codex app-server crashed). The
-    // outer catch in getUsageByModel turns this into a fail-closed
+    // outer catch in getUsageByAgent turns this into a fail-closed
     // exhausted entry; surface codexbar's error message so the operator
     // can fix the underlying CLI.
     const detail = match.error?.message ?? "no usage data";
@@ -167,43 +167,43 @@ function normalize(usage: Usage): NormalizedUsage {
   };
 }
 
-export function gatedModels(config: ResolvedConfig): string[] {
-  return Object.entries(config.models.definitions)
+export function gatedAgents(config: ResolvedConfig): string[] {
+  return Object.entries(config.agents.definitions)
     .filter(([, definition]) => definition.usage !== undefined)
     .map(([name]) => name);
 }
 
-export async function getUsageByModel(
+export async function getUsageByAgent(
   config: ResolvedConfig,
   signal?: AbortSignal,
-): Promise<UsageByModel> {
-  const models = gatedModels(config);
-  if (models.length === 0) {
+): Promise<UsageByAgent> {
+  const agents = gatedAgents(config);
+  if (agents.length === 0) {
     return {};
   }
-  const out: UsageByModel = {};
-  for (const model of models) {
-    const definition = config.models.definitions[model];
-    /* v8 ignore next 3 @preserve -- gatedModels only emits names that exist in definitions */
+  const out: UsageByAgent = {};
+  for (const agent of agents) {
+    const definition = config.agents.definitions[agent];
+    /* v8 ignore next 3 @preserve -- gatedAgents only emits names that exist in definitions */
     if (!definition) {
       continue;
     }
     try {
       // oxlint-disable-next-line no-await-in-loop -- codexbar probes are intentionally sequential to avoid launching multiple CLI probes at once
-      out[model] = normalize(await codexbarUsage(definition, signal));
+      out[agent] = normalize(await codexbarUsage(definition, signal));
     } catch (error) {
       if (signal?.aborted === true) {
         throw error;
       }
-      // Per-model failure: fail closed. A silent skip would let the
-      // dispatcher spawn agents on a model whose quota we can't see —
+      // Per-agent failure: fail closed. A silent skip would let the
+      // dispatcher spawn agents on a agent whose quota we can't see —
       // the exact bug a usage gate is supposed to prevent. Record the
       // failure (debug-tier — always in the log file, console under
       // --verbose) so operators can fix the underlying CLI, and return a
-      // fully-exhausted snapshot so the dispatcher gates the model. The
+      // fully-exhausted snapshot so the dispatcher gates the agent. The
       // gate itself surfaces a visible skip line via formatUsageExhaustion.
-      debug(`Usage check failed for ${model} (treating as exhausted): ${errorMessage(error)}`);
-      out[model] = EXHAUSTED_USAGE;
+      debug(`Usage check failed for ${agent} (treating as exhausted): ${errorMessage(error)}`);
+      out[agent] = EXHAUSTED_USAGE;
     }
   }
   return out;

@@ -39,7 +39,7 @@ function makeConfig(): ResolvedConfig {
       pollIntervalMilliseconds: 1000,
       sessionLimitPercentage: 85,
     },
-    models: {
+    agents: {
       default: "claude",
       definitions: {
         claude: { cmd: "safehouse claude --permission-mode auto", color: "#fff" },

@@ -47,13 +47,13 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
       sessionLimitPercentage: 85,
       ...overrides.orchestrator,
     },
-    models: {
+    agents: {
       default: "claude",
       definitions: {
         claude: { cmd: "claude", color: "#fff" },
         codex: { cmd: "codex", color: "#000" },
       },
-      ...overrides.models,
+      ...overrides.agents,
     },
     prompts: { initial: "x", ...overrides.prompts },
     workspaceKind: overrides.workspaceKind ?? "auto",
@@ -67,7 +67,7 @@ function todoIssue(overrides: Partial<Issue> = {}): Issue {
     naturalId: "team-1",
     status: "todo",
     repository: "repo-a",
-    model: "claude",
+    agent: "claude",
     title: "Title",
     description: "",
     ...overrides,
@@ -130,7 +130,7 @@ describe(createDispatcher, () => {
         expect.objectContaining({
           task: "team-1",
           repository: "repo-a",
-          model: "claude",
+          agent: "claude",
           details: { title: "Title", description: "" },
         }),
       );
@@ -192,8 +192,8 @@ describe(createDispatcher, () => {
       await dispatcher.runOnce({
         // Deliberately reverse-ordered to prove the dispatcher sorts.
         state: boardOf([
-          activeIssue({ id: "linear:team-b", model: "codex" }),
-          activeIssue({ id: "linear:team-a", model: "claude" }),
+          activeIssue({ id: "linear:team-b", agent: "codex" }),
+          activeIssue({ id: "linear:team-a", agent: "claude" }),
         ]),
         worktreeEntries: [],
         usage: async () => ({}),
@@ -232,8 +232,8 @@ describe(createDispatcher, () => {
 
       await dispatcher.runOnce({
         state: boardOf([
-          activeIssue({ id: "linear:team-running-b", model: "codex" }),
-          activeIssue({ id: "linear:team-running-a", model: "claude" }),
+          activeIssue({ id: "linear:team-running-b", agent: "codex" }),
+          activeIssue({ id: "linear:team-running-a", agent: "claude" }),
           todoIssue({ id: "linear:team-new" }),
         ]),
         worktreeEntries: [],
@@ -246,7 +246,7 @@ describe(createDispatcher, () => {
       );
     });
 
-    it("includes in-progress issues with undefined model in the slot list as `id(?)`", async () => {
+    it("includes in-progress issues with undefined agent in the slot list as `id(?)`", async () => {
       const config = makeConfig({
         orchestrator: {
           maximumInProgress: 2,
@@ -259,8 +259,8 @@ describe(createDispatcher, () => {
 
       await dispatcher.runOnce({
         state: boardOf([
-          // Defensive fallback for a source that cannot resolve model metadata.
-          activeIssue({ id: "linear:team-stale", model: undefined }),
+          // Defensive fallback for a source that cannot resolve agent metadata.
+          activeIssue({ id: "linear:team-stale", agent: undefined }),
           todoIssue({ id: "linear:team-new" }),
         ]),
         worktreeEntries: [],
@@ -287,14 +287,14 @@ describe(createDispatcher, () => {
       expect(consoleLog.output()).toContain("No Todo tasks");
     });
 
-    it("ignores Todo tasks without an agent-* label (model: undefined)", async () => {
+    it("ignores Todo tasks without an agent-* label (agent: undefined)", async () => {
       // Unlabeled Todo tasks reach the dispatcher in the board snapshot
       // but should be filtered out via isGroundcrewIssue before eligibility.
       const board = makeBoard();
       const dispatcher = createDispatcher({ config: makeConfig(), board });
 
       await dispatcher.runOnce({
-        state: boardOf([todoIssue({ model: undefined, repository: undefined })]),
+        state: boardOf([todoIssue({ agent: undefined, repository: undefined })]),
         worktreeEntries: [],
         usage: async () => ({}),
         dryRun: false,
@@ -317,7 +317,7 @@ describe(createDispatcher, () => {
           canonicalShellIssue({
             naturalId: "GC-1",
             sourceName: "t",
-            model: "any",
+            agent: "any",
             repository: undefined,
           }),
         ]),
@@ -334,7 +334,7 @@ describe(createDispatcher, () => {
       expect(out).toContain('set defaultRepository on source "t"');
       expect(out).toContain("Known repositories: repo-a, repo-b");
       expect(out).toContain(
-        "event=dispatch outcome=skipped reason=missing_repository task=gc-1 source=t model=any",
+        "event=dispatch outcome=skipped reason=missing_repository task=gc-1 source=t agent=any",
       );
       expect(out).toContain("No eligible Todo tasks after agent/repository filtering");
     });
@@ -351,7 +351,7 @@ describe(createDispatcher, () => {
           canonicalShellIssue({
             naturalId: "GC-1",
             sourceName: "t",
-            model: "any",
+            agent: "any",
             repository: undefined,
           }),
         ]),
@@ -567,12 +567,12 @@ describe(createDispatcher, () => {
   });
 
   describe("agent-any resolution", () => {
-    it("picks the model with the lowest session-used percent", async () => {
+    it("picks the agent with the lowest session-used percent", async () => {
       const board = makeBoard();
       const dispatcher = createDispatcher({ config: makeConfig(), board });
 
       await dispatcher.runOnce({
-        state: boardOf([todoIssue({ model: "any" })]),
+        state: boardOf([todoIssue({ agent: "any" })]),
         worktreeEntries: [],
         usage: async () => ({
           claude: { session: 0.6, sessionEndDuration: 30, weekly: null, weekEndDuration: null },
@@ -583,17 +583,17 @@ describe(createDispatcher, () => {
 
       expect(setupMock).toHaveBeenCalledWith(
         expect.anything(),
-        expect.objectContaining({ model: "codex" }),
+        expect.objectContaining({ agent: "codex" }),
       );
       expect(consoleLog.output()).toContain("Resolved agent-any for team-1 → codex");
     });
 
-    it("skips agent-any when every model is exhausted", async () => {
+    it("skips agent-any when every agent is exhausted", async () => {
       const board = makeBoard();
       const dispatcher = createDispatcher({ config: makeConfig(), board });
 
       await dispatcher.runOnce({
-        state: boardOf([todoIssue({ model: "any" })]),
+        state: boardOf([todoIssue({ agent: "any" })]),
         worktreeEntries: [],
         usage: async () => ({
           claude: { session: 0.95, sessionEndDuration: 30, weekly: null, weekEndDuration: null },
@@ -603,7 +603,7 @@ describe(createDispatcher, () => {
       });
 
       expect(setupMock).not.toHaveBeenCalled();
-      expect(consoleLog.output()).toContain("no model has available capacity");
+      expect(consoleLog.output()).toContain("no agent has available capacity");
     });
   });
 
@@ -696,7 +696,7 @@ describe(createDispatcher, () => {
   });
 
   describe("session limits", () => {
-    it("skips a Todo task whose model is over the session limit", async () => {
+    it("skips a Todo task whose agent is over the session limit", async () => {
       const board = makeBoard();
       const dispatcher = createDispatcher({ config: makeConfig(), board });
 
@@ -774,7 +774,7 @@ describe(createDispatcher, () => {
       const dispatcher = createDispatcher({ config: makeConfig(), board });
 
       await dispatcher.runOnce({
-        state: boardOf([todoIssue({ model: "codex" })]),
+        state: boardOf([todoIssue({ agent: "codex" })]),
         worktreeEntries: [],
         usage: async () => ({
           codex: {
@@ -819,7 +819,7 @@ describe(createDispatcher, () => {
     });
 
     // The contract is strict `>`. Pin the equality case so a future
-    // refactor to `>=` can't silently start benching models early.
+    // refactor to `>=` can't silently start benching agents early.
     it("does not gate when weekly usage exactly equals the current day budget", async () => {
       // Mid-week (3.5 days in) is day 4's bucket, and used exactly 4/7.
       const board = makeBoard();
@@ -1084,19 +1084,19 @@ describe(formatActiveSlotList, () => {
     expect(formatActiveSlotList([])).toBe("");
   });
 
-  it("formats a single in-progress task as ` [id(model)]`", () => {
-    const issue = activeIssue({ id: "linear:hrd-1", model: "claude" });
+  it("formats a single in-progress task as ` [id(agent)]`", () => {
+    const issue = activeIssue({ id: "linear:hrd-1", agent: "claude" });
     expect(formatActiveSlotList([issue])).toBe(" [hrd-1(claude)]");
   });
 
   it("joins multiple tasks with `, ` and preserves caller-supplied order", () => {
-    const a = activeIssue({ id: "linear:hrd-1", model: "claude" });
-    const b = activeIssue({ id: "linear:hrd-2", model: "codex" });
+    const a = activeIssue({ id: "linear:hrd-1", agent: "claude" });
+    const b = activeIssue({ id: "linear:hrd-2", agent: "codex" });
     expect(formatActiveSlotList([a, b])).toBe(" [hrd-1(claude), hrd-2(codex)]");
   });
 
-  it("renders an undefined model as `?`", () => {
-    const issue = activeIssue({ id: "linear:hrd-9", model: undefined });
+  it("renders an undefined agent as `?`", () => {
+    const issue = activeIssue({ id: "linear:hrd-9", agent: undefined });
     expect(formatActiveSlotList([issue])).toBe(" [hrd-9(?)]");
   });
 });

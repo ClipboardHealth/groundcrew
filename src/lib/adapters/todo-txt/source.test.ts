@@ -98,7 +98,7 @@ describe("TodoTxtTaskSource", () => {
     expect(issue?.id).toBe("todo:gc-001");
     expect(issue?.title).toBe("Fix cancellation retry race");
     expect(issue?.status).toBe("todo");
-    expect(issue?.model).toBe("codex");
+    expect(issue?.agent).toBe("codex");
   });
 
   it("creates a ready todo task with a prompt file", async () => {
@@ -420,24 +420,24 @@ describe("TodoTxtTaskSource", () => {
     expect(issues[0]?.description).toBe("# Detailed description\n\nDo the thing.\n");
   });
 
-  // Test 5: Map agent:codex → model:"codex"
-  it("maps agent:codex to model codex", async () => {
+  // Test 5: Map agent:codex → agent:"codex"
+  it("maps agent:codex to agent codex", async () => {
     tmp.writeTodo("id:GC-005 agent:codex status:todo Task five\n");
 
     const source = makeSource(tmp);
     const issues = await source.fetch();
 
-    expect(issues[0]?.model).toBe("codex");
+    expect(issues[0]?.agent).toBe("codex");
   });
 
-  // Test 6: Map agent:claude → model:"claude"
-  it("maps agent:claude to model claude", async () => {
+  // Test 6: Map agent:claude → agent:"claude"
+  it("maps agent:claude to agent claude", async () => {
     tmp.writeTodo("id:GC-006 agent:claude status:todo Task six\n");
 
     const source = makeSource(tmp);
     const issues = await source.fetch();
 
-    expect(issues[0]?.model).toBe("claude");
+    expect(issues[0]?.agent).toBe("claude");
   });
 
   // Test 7: Handle agent:any
@@ -447,7 +447,7 @@ describe("TodoTxtTaskSource", () => {
     const source = makeSource(tmp);
     const issues = await source.fetch();
 
-    expect(issues[0]?.model).toBe("any");
+    expect(issues[0]?.agent).toBe("any");
   });
 
   it("defaults missing agent metadata to agent-any", async () => {
@@ -456,7 +456,7 @@ describe("TodoTxtTaskSource", () => {
     const source = makeSource(tmp);
     const issues = await source.fetch();
 
-    expect(issues[0]?.model).toBe("any");
+    expect(issues[0]?.agent).toBe("any");
   });
 
   // Test 8: Default repository from config when no repo:
@@ -648,7 +648,7 @@ describe("TodoTxtTaskSource", () => {
     expect(resolvedIssue?.title).toBe(fetchedIssue?.title);
     expect(resolvedIssue?.description).toBe(fetchedIssue?.description);
     expect(resolvedIssue?.status).toBe(fetchedIssue?.status);
-    expect(resolvedIssue?.model).toBe(fetchedIssue?.model);
+    expect(resolvedIssue?.agent).toBe(fetchedIssue?.agent);
     expect(resolvedIssue?.repository).toBe(fetchedIssue?.repository);
     expect(resolvedIssue?.priority).toBe(fetchedIssue?.priority);
     expect(resolvedIssue?.blockers).toStrictEqual(fetchedIssue?.blockers);
@@ -985,7 +985,7 @@ describe("TodoTxtTaskSource", () => {
     const source = makeSource(tmp);
     const issues = await source.fetch();
 
-    expect(issues.find((i) => i.id === "todo:no-agent-001")?.model).toBe("any");
+    expect(issues.find((i) => i.id === "todo:no-agent-001")?.agent).toBe("any");
   });
 
   it("blocker resolution skips null and no-id lines in file", async () => {

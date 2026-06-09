@@ -1,21 +1,21 @@
 import type { ResolvedConfig } from "../lib/config.ts";
 import { canonicalBlocker, canonicalLinearIssue } from "../lib/testing/canonicalFixtures.ts";
 import { isGroundcrewIssue, type GroundcrewIssue } from "../lib/taskSource.ts";
-import type { UsageByModel } from "../lib/usage.ts";
+import type { UsageByAgent } from "../lib/usage.ts";
 import type { WorktreeEntry } from "../lib/worktrees.ts";
 import {
   type ClassifyArguments,
   classifyBlockers,
   classifyEligibility,
   classifyUsageExhaustion,
-  pickBestModel,
+  pickBestAgent,
   type SkipVerdict,
 } from "./eligibility.ts";
 
-/** Assert an Issue is groundcrew-eligible (model + repository defined) and narrow the type. */
+/** Assert an Issue is groundcrew-eligible (agent + repository defined) and narrow the type. */
 function asGroundcrewIssue(issue: ReturnType<typeof canonicalLinearIssue>): GroundcrewIssue {
   if (!isGroundcrewIssue(issue)) {
-    throw new Error("Expected a GroundcrewIssue (model and repository must be defined)");
+    throw new Error("Expected a GroundcrewIssue (agent and repository must be defined)");
   }
   return issue;
 }
@@ -36,13 +36,13 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
       sessionLimitPercentage: 85,
       ...overrides.orchestrator,
     },
-    models: {
+    agents: {
       default: "claude",
       definitions: {
         claude: { cmd: "claude", color: "#fff" },
         codex: { cmd: "codex", color: "#000" },
       },
-      ...overrides.models,
+      ...overrides.agents,
     },
     prompts: { initial: "x", ...overrides.prompts },
     workspaceKind: overrides.workspaceKind ?? "auto",
@@ -57,7 +57,7 @@ function todoIssue(overrides: Partial<GroundcrewIssue> = {}): GroundcrewIssue {
       naturalId: "team-1",
       status: "todo",
       repository: "repo-a",
-      model: "claude",
+      agent: "claude",
       ...overrides,
     }),
   );
@@ -155,7 +155,7 @@ describe(classifyBlockers, () => {
         naturalId: "eng-100",
         blockers: [canonicalBlocker({ naturalId: "eng-90", status: "done" })],
         repository: "repo-a",
-        model: "claude",
+        agent: "claude",
       }),
     );
     const { unblocked, skips } = classifyBlockers([issue]);
@@ -170,7 +170,7 @@ describe(classifyBlockers, () => {
         naturalId: "eng-100",
         blockers: [canonicalBlocker({ naturalId: "eng-90", status: "in-progress" })],
         repository: "repo-a",
-        model: "claude",
+        agent: "claude",
       }),
     );
     const { unblocked, skips } = classifyBlockers([issue]);
@@ -186,7 +186,7 @@ describe(classifyBlockers, () => {
         naturalId: "eng-100",
         blockers: [canonicalBlocker({ naturalId: "eng-90", status: "other" })],
         repository: "repo-a",
-        model: "claude",
+        agent: "claude",
       }),
     );
     const { unblocked, skips } = classifyBlockers([issue]);
@@ -201,7 +201,7 @@ describe(classifyBlockers, () => {
         naturalId: "eng-100",
         blockers: [canonicalBlocker({ naturalId: "eng-90", status: "todo" })],
         repository: "acme/web",
-        model: "claude",
+        agent: "claude",
       }),
     );
     const { unblocked, skips } = classifyBlockers([issue]);
@@ -213,10 +213,10 @@ describe(classifyBlockers, () => {
 
 describe(classifyEligibility, () => {
   describe("agent-any resolution", () => {
-    it("resolves agent-any to the model with the most session capacity", () => {
+    it("resolves agent-any to the agent with the most session capacity", () => {
       const verdicts = classifyEligibility(
         defaultArguments({
-          unblocked: [todoIssue({ model: "any" })],
+          unblocked: [todoIssue({ agent: "any" })],
           usage: {
             claude: { session: 0.6, sessionEndDuration: 30, weekly: null, weekEndDuration: null },
             codex: { session: 0.2, sessionEndDuration: 30, weekly: null, weekEndDuration: null },
@@ -227,14 +227,14 @@ describe(classifyEligibility, () => {
       expect(verdicts[0]).toMatchObject({
         kind: "start",
         resolvedFromAny: true,
-        issue: { model: "codex" },
+        issue: { agent: "codex" },
       });
     });
 
-    it("emits `agent_any_capacity` when every model is exhausted", () => {
+    it("emits `agent_any_capacity` when every agent is exhausted", () => {
       const verdicts = classifyEligibility(
         defaultArguments({
-          unblocked: [todoIssue({ model: "any" })],
+          unblocked: [todoIssue({ agent: "any" })],
           exhausted: new Set(["claude", "codex"]),
         }),
       );
@@ -242,10 +242,10 @@ describe(classifyEligibility, () => {
       expect(verdicts[0]).toMatchObject({ kind: "skip", eventReason: "agent_any_capacity" });
     });
 
-    it("excludes exhausted models from agent-any resolution", () => {
+    it("excludes exhausted agents from agent-any resolution", () => {
       const verdicts = classifyEligibility(
         defaultArguments({
-          unblocked: [todoIssue({ model: "any" })],
+          unblocked: [todoIssue({ agent: "any" })],
           exhausted: new Set(["claude"]),
           usage: {
             claude: { session: 0.1, sessionEndDuration: 30, weekly: null, weekEndDuration: null },
@@ -256,13 +256,13 @@ describe(classifyEligibility, () => {
 
       expect(verdicts[0]).toMatchObject({
         kind: "start",
-        issue: { model: "codex" },
+        issue: { agent: "codex" },
       });
     });
 
-    it("does not flag resolvedFromAny when the model was already concrete", () => {
+    it("does not flag resolvedFromAny when the agent was already concrete", () => {
       const verdicts = classifyEligibility(
-        defaultArguments({ unblocked: [todoIssue({ model: "claude" })] }),
+        defaultArguments({ unblocked: [todoIssue({ agent: "claude" })] }),
       );
 
       expect(verdicts[0]).toMatchObject({ kind: "start", resolvedFromAny: false });
@@ -270,10 +270,10 @@ describe(classifyEligibility, () => {
   });
 
   describe("session exhaustion", () => {
-    it("skips a concrete-model task when its model is exhausted", () => {
+    it("skips a concrete-agent task when its agent is exhausted", () => {
       const verdicts = classifyEligibility(
         defaultArguments({
-          unblocked: [todoIssue({ model: "claude" })],
+          unblocked: [todoIssue({ agent: "claude" })],
           exhausted: new Set(["claude"]),
         }),
       );
@@ -362,29 +362,29 @@ describe(classifyEligibility, () => {
   });
 });
 
-describe(pickBestModel, () => {
-  it("returns undefined when every model is exhausted", () => {
-    expect(pickBestModel(makeConfig(), {}, new Set(["claude", "codex"]))).toBeUndefined();
+describe(pickBestAgent, () => {
+  it("returns undefined when every agent is exhausted", () => {
+    expect(pickBestAgent(makeConfig(), {}, new Set(["claude", "codex"]))).toBeUndefined();
   });
 
-  it("falls back to the default model when no usage data is available", () => {
-    expect(pickBestModel(makeConfig(), {}, new Set())).toBe("claude");
+  it("falls back to the default agent when no usage data is available", () => {
+    expect(pickBestAgent(makeConfig(), {}, new Set())).toBe("claude");
   });
 
-  it("breaks ties in favor of the default model", () => {
-    const usage: UsageByModel = {
+  it("breaks ties in favor of the default agent", () => {
+    const usage: UsageByAgent = {
       claude: { session: 0.5, sessionEndDuration: 30, weekly: null, weekEndDuration: null },
       codex: { session: 0.5, sessionEndDuration: 30, weekly: null, weekEndDuration: null },
     };
-    expect(pickBestModel(makeConfig(), usage, new Set())).toBe("claude");
+    expect(pickBestAgent(makeConfig(), usage, new Set())).toBe("claude");
   });
 
-  it("picks the model with the lowest session score", () => {
-    const usage: UsageByModel = {
+  it("picks the agent with the lowest session score", () => {
+    const usage: UsageByAgent = {
       claude: { session: 0.7, sessionEndDuration: 30, weekly: null, weekEndDuration: null },
       codex: { session: 0.3, sessionEndDuration: 30, weekly: null, weekEndDuration: null },
     };
-    expect(pickBestModel(makeConfig(), usage, new Set())).toBe("codex");
+    expect(pickBestAgent(makeConfig(), usage, new Set())).toBe("codex");
   });
 });
 
@@ -400,7 +400,7 @@ describe(classifyUsageExhaustion, () => {
     ).toStrictEqual([
       {
         kind: "session",
-        model: "claude",
+        agent: "claude",
         usedPercentage: 95,
         limitPercentage: 85,
         resetMinutes: 30,
@@ -421,7 +421,7 @@ describe(classifyUsageExhaustion, () => {
     ).toStrictEqual([
       {
         kind: "weekly",
-        model: "claude",
+        agent: "claude",
         usedPercentage: 20,
         allowedPercentage: (1 / 7) * 100,
         resetMinutes: MINUTES_PER_WEEK - MINUTES_PER_DAY,

@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { collectAllowedDomains } from "./clearanceHosts.ts";
-import { type ModelDefinition, type ResolvedConfig, repositoryBaseDir } from "./config.ts";
+import { type AgentDefinition, type ResolvedConfig, repositoryBaseDir } from "./config.ts";
 import { inferAgentCommandName } from "./launchCommand.ts";
 import { agentConfigRelocation, buildSrtSettings } from "./srtPolicy.ts";
 import { readEnvironmentVariable } from "./util.ts";
@@ -47,7 +47,7 @@ export function buildAndStageSrtLaunch(input: {
   repository: string;
   task: string;
   worktreeDir: string;
-  definition: ModelDefinition;
+  definition: AgentDefinition;
   /** Defaults to `os.homedir()`. Injected in tests to seed from a fixture home. */
   homeDir?: string;
 }): StagedSrtLaunch {

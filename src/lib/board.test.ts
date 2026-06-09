@@ -32,7 +32,7 @@ function fakeIssue(id: string, source: string): Issue {
     description: "",
     status: "todo",
     repository: "org/repo",
-    model: "claude",
+    agent: "claude",
     assignee: "x",
     updatedAt: "2026-01-01T00:00:00Z",
     blockers: [],

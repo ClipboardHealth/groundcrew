@@ -70,10 +70,10 @@ describe(canonicalShellIssue, () => {
       naturalId: "x-1",
       status: "in-progress",
       repository: "acme/web",
-      model: "claude",
+      agent: "claude",
     });
     expect(issue.status).toBe("in-progress");
     expect(issue.repository).toBe("acme/web");
-    expect(issue.model).toBe("claude");
+    expect(issue.agent).toBe("claude");
   });
 });

@@ -6,7 +6,7 @@ describe(dispatchableRepository, () => {
     const issue = canonicalLinearIssue({
       naturalId: "team-1",
       repository: "repo-a",
-      model: "claude",
+      agent: "claude",
     });
     const log = vi.fn<(message: string) => void>();
 
@@ -20,7 +20,7 @@ describe(dispatchableRepository, () => {
     const issue = canonicalLinearIssue({
       naturalId: "team-2",
       repository: "unknown-repo",
-      model: "claude",
+      agent: "claude",
     });
     const log = vi.fn<(message: string) => void>();
 
@@ -36,7 +36,7 @@ describe(dispatchableRepository, () => {
     const issue = canonicalLinearIssue({
       naturalId: "team-3",
       repository: undefined,
-      model: undefined,
+      agent: undefined,
     });
     const log = vi.fn<(message: string) => void>();
 
@@ -50,7 +50,7 @@ describe(dispatchableRepository, () => {
     const issue = canonicalLinearIssue({
       naturalId: "team-4",
       repository: "some-repo",
-      model: "claude",
+      agent: "claude",
     });
     const log = vi.fn<(message: string) => void>();
 

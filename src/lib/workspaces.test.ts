@@ -87,7 +87,7 @@ function makeConfig(workspaceKind: WorkspaceKindSetting = "auto"): ResolvedConfi
       pollIntervalMilliseconds: 1000,
       sessionLimitPercentage: 85,
     },
-    models: {
+    agents: {
       default: "claude",
       definitions: {
         claude: { cmd: "claude", color: "#fff" },
@@ -161,7 +161,7 @@ describe("workspaces.open (cmux)", () => {
 
     expect(runMock).toHaveBeenCalledWith("cmux", [
       "set-status",
-      "model",
+      "agent",
       "claude",
       "--icon",
       "sparkle",
@@ -262,7 +262,7 @@ describe("workspaces.open (cmux)", () => {
       .mockReturnValueOnce(JSON.stringify({ ref: "workspace:42" }))
       .mockImplementationOnce(() => {
         throw new Error(
-          'Command failed: cmux set-status model claude\nExit status: 2\nStderr:\ncmux: unknown command "set-status"\nCause: Command exited unsuccessfully',
+          'Command failed: cmux set-status agent claude\nExit status: 2\nStderr:\ncmux: unknown command "set-status"\nCause: Command exited unsuccessfully',
         );
       })
       .mockReturnValue("");

@@ -105,9 +105,9 @@ function formatRunState(state: RunState | undefined, flags: readonly string[] = 
     return "(none)";
   }
   // Only the leading lifecycle token gains the reconciliation flags; the
-  // `;`-separated detail (model/updated/resumes/reason) is preserved verbatim.
+  // `;`-separated detail (agent/updated/resumes/reason) is preserved verbatim.
   const lifecycle = flags.length === 0 ? state.state : `${state.state} (${flags.join(", ")})`;
-  const summary = `${lifecycle}; model=${state.model}; updated=${state.updatedAt}; resumes=${state.resumeCount}`;
+  const summary = `${lifecycle}; agent=${state.agent}; updated=${state.updatedAt}; resumes=${state.resumeCount}`;
   const detail = state.reason ?? state.detail;
   return detail === undefined ? summary : `${summary}; ${detail}`;
 }
@@ -524,7 +524,7 @@ function writeQueueIssue(issue: GroundcrewIssue): void {
   writeOutput(issue.url === undefined ? naturalId : `${naturalId}  ${issue.url}`);
   writeOutput(inventoryField("title", issue.title));
   writeOutput(inventoryField("repo", issue.repository));
-  writeOutput(inventoryField("model", issue.model));
+  writeOutput(inventoryField("agent", issue.agent));
 }
 
 async function buildBoardForStatus(config: ResolvedConfig): Promise<Board> {
@@ -587,7 +587,7 @@ function writeQueueSections(boardResult: BoardFetchResult): void {
     return;
   }
   // Only groundcrew-eligible Todos are dispatchable; non-eligible ones lack
-  // a repo or model, so `crew run` would skip them.
+  // a repo or agent, so `crew run` would skip them.
   const todos = boardResult.issues.filter(isTodoSourceIssue).filter(isGroundcrewIssue);
   const ready = todos.filter((i) => !hasOpenBlocker(i));
   const blocked = todos.filter(hasOpenBlocker);

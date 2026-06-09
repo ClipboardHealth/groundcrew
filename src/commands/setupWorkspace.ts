@@ -28,7 +28,7 @@ export interface TaskDetails {
 export interface SetupWorkspaceOptions {
   task: string;
   repository: string;
-  model: string;
+  agent: string;
   details: TaskDetails;
 }
 
@@ -62,15 +62,15 @@ export async function setupWorkspace(
   options: SetupWorkspaceOptions,
   runOptions: SetupWorkspaceRunOptions = {},
 ): Promise<void> {
-  const { task, repository, model } = options;
+  const { task, repository, agent } = options;
   const { signal } = runOptions;
-  const definition = config.models.definitions[model];
+  const definition = config.agents.definitions[agent];
   if (!definition) {
-    throw new Error(`Unknown model: ${model}`);
+    throw new Error(`Unknown agent: ${agent}`);
   }
   const { runner, sandboxName, ensureReady } = await prepareAgentLaunch({
     config,
-    model,
+    agent,
     definition,
     purpose: "runs",
     ...(signal === undefined ? {} : { signal }),
@@ -159,7 +159,7 @@ export async function setupWorkspace(
       name: task,
       cwd: launchDir,
       command: launchCmd,
-      model,
+      agent,
       color: definition.color,
       ...(signal === undefined ? {} : { signal }),
     });
@@ -167,7 +167,7 @@ export async function setupWorkspace(
       config,
       task,
       repository,
-      model,
+      agent,
       worktreeDir: launchDir,
       branchName,
       workspaceName: task,
@@ -176,7 +176,7 @@ export async function setupWorkspace(
       ...(taskDetails.url === undefined ? {} : { url: taskDetails.url }),
     });
 
-    log(`${okMark()} "${task}" launched (${model})  worktree ${worktreeName}`);
+    log(`${okMark()} "${task}" launched (${agent})  worktree ${worktreeName}`);
     debug(`  Worktree: ${launchDir}`);
     debug(`  Branch:   ${branchName}`);
     if (accessHint !== undefined) {
@@ -188,7 +188,7 @@ export async function setupWorkspace(
       config,
       task,
       repository,
-      model,
+      agent,
       worktreeDir: launchDir,
       branchName,
       workspaceName: task,
@@ -263,7 +263,7 @@ function recordRunStateBestEffort(arguments_: {
   config: ResolvedConfig;
   task: string;
   repository: string;
-  model: string;
+  agent: string;
   worktreeDir: string;
   branchName: string;
   workspaceName: string;
@@ -278,7 +278,7 @@ function recordRunStateBestEffort(arguments_: {
       state: {
         task: arguments_.task,
         repository: arguments_.repository,
-        model: arguments_.model,
+        agent: arguments_.agent,
         worktreeDir: arguments_.worktreeDir,
         branchName: arguments_.branchName,
         workspaceName: arguments_.workspaceName,
@@ -362,16 +362,16 @@ export async function setupWorkspaceCli(
   if (resolved === undefined) {
     throw new Error(`Task ${task} not found across configured sources.`);
   }
-  if (resolved.repository === undefined || resolved.model === undefined) {
+  if (resolved.repository === undefined || resolved.agent === undefined) {
     throw new Error(
-      `Task ${task} resolved but isn't groundcrew-eligible (missing agent-* label or repository/model).`,
+      `Task ${task} resolved but isn't groundcrew-eligible (missing agent-* label or repository/agent).`,
     );
   }
 
-  log(`Resolved ${task}: repository=${resolved.repository}, model=${resolved.model}`);
+  log(`Resolved ${task}: repository=${resolved.repository}, agent=${resolved.agent}`);
 
   if (options.dryRun === true) {
-    log(`[dry-run] Would launch ${task} in ${resolved.repository} (${resolved.model})`);
+    log(`[dry-run] Would launch ${task} in ${resolved.repository} (${resolved.agent})`);
     return;
   }
 
@@ -380,7 +380,7 @@ export async function setupWorkspaceCli(
   await setupWorkspace(config, {
     task: naturalId,
     repository: resolved.repository,
-    model: resolved.model,
+    agent: resolved.agent,
     details: {
       title: resolved.title,
       description: resolved.description,

@@ -64,8 +64,8 @@ export interface Issue {
   status: CanonicalStatus;
   /** `undefined` when the task is not dispatchable to a repository. */
   repository: string | undefined;
-  /** Parsed agent model when the source can resolve one; may be present on non-Todo tasks for logs. */
-  model: string | undefined;
+  /** Parsed agent name when the source can resolve one; may be present on non-Todo tasks for logs. */
+  agent: string | undefined;
   assignee: string;
   updatedAt: string;
   blockers: Blocker[];
@@ -90,10 +90,10 @@ export interface Issue {
 export type Task = Issue;
 
 /** Narrowed form: an Issue confirmed to be groundcrew-eligible. */
-export type GroundcrewIssue = Issue & { model: string; repository: string };
+export type GroundcrewIssue = Issue & { agent: string; repository: string };
 
 export function isGroundcrewIssue(issue: Issue): issue is GroundcrewIssue {
-  return issue.model !== undefined && issue.repository !== undefined;
+  return issue.agent !== undefined && issue.repository !== undefined;
 }
 
 /**
@@ -129,7 +129,7 @@ export type MarkDoneResult = { outcome: "applied" } | { outcome: "unsupported"; 
 export interface CreateTaskInput {
   /** Short task title or summary. Sources should reject blank or multiline titles when unsupported. */
   title: string;
-  /** Agent/model name requested by the user, for example `any`, `claude`, `codex`, or a custom model. */
+  /** Agent/agent name requested by the user, for example `any`, `claude`, `codex`, or a custom agent. */
   agent: string;
   /** Optional repository override in the same format Groundcrew resolves from task descriptions. */
   repository?: string;

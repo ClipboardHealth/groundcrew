@@ -67,7 +67,7 @@ function makeConfig(): ResolvedConfig {
       pollIntervalMilliseconds: 1000,
       sessionLimitPercentage: 85,
     },
-    models: {
+    agents: {
       default: "claude",
       definitions: { claude: { cmd: "claude", color: "#fff" } },
     },
@@ -82,7 +82,7 @@ function makeRunState(overrides: Partial<RunState> = {}): RunState {
   return {
     task: "team-1",
     repository: "repo-a",
-    model: "claude",
+    agent: "claude",
     worktreeDir: "/work/repo-a-team-1",
     branchName: "dev-team-1",
     workspaceName: "team-1",
@@ -140,7 +140,7 @@ describe(interruptWorkspace, () => {
     await interruptWorkspace(config, { task: "team-1" });
 
     expect(lastRecordedRunState()).toMatchObject({
-      model: "claude",
+      agent: "claude",
       repository: "repo-a",
       state: "interrupted",
     });

@@ -99,7 +99,7 @@ export async function createLinearIssue(
     assignee: resolved.assignee,
     updatedAt: resolved.updatedAt,
     repository: resolved.repository,
-    model: resolved.model,
+    agent: resolved.agent,
     teamId: resolved.teamId,
     blockers: resolved.blockers,
     hasMoreBlockers: resolved.hasMoreBlockers,

@@ -147,7 +147,7 @@ describe(run, () => {
     expect(helpOutput).toContain("--project-dir <dir>");
     expect(helpOutput).toContain("[--repo <repo>]...");
     expect(helpOutput).toContain("--runner <runner>");
-    expect(helpOutput).toContain("--model <model>");
+    expect(helpOutput).toContain("--agent <agent>");
     expect(helpOutput).toContain("crew task <list|get|create>");
     expect(helpOutput).not.toContain("sandbox");
     expect(process.exitCode).toBe(1);
@@ -195,7 +195,7 @@ describe(run, () => {
 
     expect(consoleError.output()).toContain("`crew sandbox` is no longer supported");
     expect(consoleError.output()).toContain("manual `sbx` workflow");
-    expect(consoleError.output()).toContain("models.definitions.<model>.sandbox.agent");
+    expect(consoleError.output()).toContain("agents.definitions.<agent>.sandbox.agent");
     expect(process.exitCode).toBe(1);
   });
 

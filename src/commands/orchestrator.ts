@@ -10,7 +10,7 @@ import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
 import { loadConfigWithSource, type ResolvedConfig } from "../lib/config.ts";
 import { findPullRequestsForBranch } from "../lib/pullRequests.ts";
 import { type BoardState, RepositoryResolutionError } from "../lib/taskSource.ts";
-import { getUsageByModel, type UsageByModel } from "../lib/usage.ts";
+import { getUsageByAgent, type UsageByAgent } from "../lib/usage.ts";
 import { errorMessage, log, sleep, writeOutput } from "../lib/util.ts";
 import { worktrees } from "../lib/worktrees.ts";
 import { type Cleaner, createCleaner } from "./cleaner.ts";
@@ -70,9 +70,9 @@ export interface OrchestratorOptions {
 async function fetchUsageOrEmpty(
   config: ResolvedConfig,
   signal?: AbortSignal,
-): Promise<UsageByModel> {
+): Promise<UsageByAgent> {
   try {
-    return await getUsageByModel(config, signal);
+    return await getUsageByAgent(config, signal);
   } catch (error) {
     if (signal?.aborted === true) {
       throw error;

@@ -36,13 +36,13 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
       sessionLimitPercentage: 85,
       ...overrides.orchestrator,
     },
-    models: {
+    agents: {
       default: "claude",
       definitions: {
         claude: { cmd: "claude", color: "#fff" },
         codex: { cmd: "codex", color: "#000" },
       },
-      ...overrides.models,
+      ...overrides.agents,
     },
     prompts: { initial: "x", ...overrides.prompts },
     workspaceKind: overrides.workspaceKind ?? "auto",
@@ -63,7 +63,7 @@ function linearIssue(overrides: Partial<LinearIssue> = {}): LinearIssue {
     assignee: overrides.assignee ?? "Alice",
     updatedAt: overrides.updatedAt ?? "2026-01-01T00:00:00Z",
     repository: overrides.repository,
-    model: overrides.model,
+    agent: overrides.agent,
     teamId: overrides.teamId ?? "team-default",
     blockers: overrides.blockers ?? [],
     hasMoreBlockers: overrides.hasMoreBlockers ?? false,
@@ -103,13 +103,13 @@ function createConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
       knownRepositories: ["ClipboardHealth/api", "ClipboardHealth/web"],
       ...overrides.workspace,
     },
-    models: {
+    agents: {
       default: "claude",
       definitions: {
         claude: { cmd: "claude", color: "#fff" },
         codex: { cmd: "codex", color: "#000" },
       },
-      ...overrides.models,
+      ...overrides.agents,
     },
     ...overrides,
   });
@@ -563,7 +563,7 @@ describe(createLinearTaskSource, () => {
       title: "Resolved title",
       description: "Resolved description",
       repository: "repo-a",
-      model: "claude",
+      agent: "claude",
       teamId: "team-xyz",
       stateType: "unstarted",
       status: "Todo",
@@ -583,7 +583,7 @@ describe(createLinearTaskSource, () => {
     expect(issue?.title).toBe("Resolved title");
     expect(issue?.description).toBe("Resolved description");
     expect(issue?.repository).toBe("repo-a");
-    expect(issue?.model).toBe("claude");
+    expect(issue?.agent).toBe("claude");
     expect(issue?.status).toBe("todo");
   });
 
@@ -593,7 +593,7 @@ describe(createLinearTaskSource, () => {
       title: "Resolved title",
       description: "Resolved description",
       repository: "repo-a",
-      model: "claude",
+      agent: "claude",
       teamId: "team-xyz",
       stateType: "unstarted",
       status: "Todo",
@@ -729,7 +729,7 @@ describe(createLinearTaskSource, () => {
       source: "linear",
       status: "todo",
       repository: "ClipboardHealth/api",
-      model: "codex",
+      agent: "codex",
       priority: 2,
       blockers: [
         {
@@ -943,7 +943,7 @@ describe(createLinearTaskSource, () => {
       description: "",
       status: "todo",
       repository: "repo-a",
-      model: "claude",
+      agent: "claude",
       assignee: "Alice",
       updatedAt: "2026-01-01T00:00:00Z",
       blockers: [],
@@ -986,7 +986,7 @@ describe(createLinearTaskSource, () => {
         description: "",
         status: "in-progress",
         repository: "repo-a",
-        model: "claude",
+        agent: "claude",
         assignee: "Alice",
         updatedAt: "2026-01-01T00:00:00Z",
         blockers: [],

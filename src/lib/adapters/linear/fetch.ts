@@ -15,9 +15,9 @@ import { RepositoryResolutionError } from "../../taskSource.ts";
 import { log, styleWarning } from "../../util.ts";
 import {
   AGENT_LABEL_PREFIX,
-  resolveModelFor,
+  resolveAgentFor,
   resolveRepositoryFor,
-  type ModelResolution,
+  type AgentResolution,
 } from "./parsing.ts";
 
 export const ISSUES_PAGE_SIZE = 250;
@@ -63,7 +63,7 @@ export interface Issue {
    */
   repository: string | undefined;
   /** Parsed from the `agent-*` label when present, including non-Todo tasks for slot logs. */
-  model: string | undefined;
+  agent: string | undefined;
   teamId: string;
   blockers: Blocker[];
   hasMoreBlockers: boolean;
@@ -79,7 +79,7 @@ export interface Issue {
  * variant just shapes the adapter's local Linear type.
  */
 export type GroundcrewIssue = Issue & {
-  model: string;
+  agent: string;
   repository: string;
 };
 
@@ -278,14 +278,14 @@ async function fetchBoard(client: LinearClient, config: ResolvedConfig): Promise
   return { timestamp: new Date().toISOString(), issues, parentSkips };
 }
 
-export function modelForResolution(
-  resolution: Exclude<ModelResolution, { kind: "no-label" }>,
+export function agentForResolution(
+  resolution: Exclude<AgentResolution, { kind: "no-label" }>,
 ): string {
   if (resolution.kind === "matched") {
-    return resolution.model;
+    return resolution.agent;
   }
   if (resolution.kind === "not-enabled-fallback") {
-    return resolution.fallbackModel;
+    return resolution.fallbackAgent;
   }
   return "any";
 }
@@ -293,24 +293,24 @@ export function modelForResolution(
 function resolveAgentMetadata(arguments_: {
   task: string;
   description: string | undefined;
-  modelResolution: ModelResolution;
+  agentResolution: AgentResolution;
   config: ResolvedConfig;
   isTodo: boolean;
-}): { repository: string | undefined; model: string | undefined } {
-  const { task, description, modelResolution, config, isTodo } = arguments_;
+}): { repository: string | undefined; agent: string | undefined } {
+  const { task, description, agentResolution, config, isTodo } = arguments_;
   let repository: string | undefined;
-  let model: string | undefined;
-  if (modelResolution.kind === "no-label") {
-    return { repository, model };
+  let agent: string | undefined;
+  if (agentResolution.kind === "no-label") {
+    return { repository, agent };
   }
 
-  model = modelForResolution(modelResolution);
+  agent = agentForResolution(agentResolution);
   if (isTodo) {
     const resolution = resolveRepositoryFor({ description, config });
     if (resolution.kind === "ok") {
       ({ repository } = resolution);
     } else {
-      model = undefined;
+      agent = undefined;
       log(
         styleWarning(
           `WARNING: ${task} has an ${AGENT_LABEL_PREFIX}* label but no known repository in its description; skipping dispatch. Add one of workspace.knownRepositories to the description, or remove the ${AGENT_LABEL_PREFIX}* label: ${config.workspace.knownRepositories.join(", ")}`,
@@ -318,7 +318,7 @@ function resolveAgentMetadata(arguments_: {
       );
     }
   }
-  return { repository, model };
+  return { repository, agent };
 }
 
 function buildLinearIssue(input: {
@@ -332,7 +332,7 @@ function buildLinearIssue(input: {
   assigneeName: string | undefined;
   updatedAt: string;
   repository: string | undefined;
-  model: string | undefined;
+  agent: string | undefined;
   teamId: string;
   url: string;
   priority: number;
@@ -350,7 +350,7 @@ function buildLinearIssue(input: {
     assignee: input.assigneeName ?? "Unassigned",
     updatedAt: input.updatedAt,
     repository: input.repository,
-    model: input.model,
+    agent: input.agent,
     teamId: input.teamId,
     url: input.url,
     priority: input.priority,
@@ -360,13 +360,13 @@ function buildLinearIssue(input: {
 }
 
 function issueFromNode(node: IssueNode, config: ResolvedConfig): Issue {
-  const modelResolution = resolveModelFor({ labels: node.labels.nodes, config });
-  warnIfNotEnabledFallback(node.identifier, modelResolution, config);
-  const { repository, model } = resolveAgentMetadata({
+  const agentResolution = resolveAgentFor({ labels: node.labels.nodes, config });
+  warnIfNotEnabledFallback(node.identifier, agentResolution, config);
+  const { repository, agent } = resolveAgentMetadata({
     task: node.identifier,
     /* v8 ignore next @preserve -- BoardIssues query selects description; the ?? guard normalises a null vs undefined edge */
     description: node.description ?? undefined,
-    modelResolution,
+    agentResolution,
     config,
     isTodo: node.state?.type === "unstarted",
   });
@@ -385,7 +385,7 @@ function issueFromNode(node: IssueNode, config: ResolvedConfig): Issue {
     assigneeName: node.assignee?.name,
     updatedAt: node.updatedAt,
     repository,
-    model,
+    agent,
     teamId: node.team?.id ?? "",
     url: node.url,
     priority: node.priority,
@@ -398,7 +398,7 @@ interface ResolvedIssue {
   title: string;
   description: string;
   repository: string;
-  model: string;
+  agent: string;
   teamId: string;
   stateType: string;
   status: string;
@@ -648,20 +648,20 @@ export async function fetchResolvedIssue(arguments_: {
       repositories: config.workspace.knownRepositories,
     });
   }
-  const modelResolution = resolveModelFor({ labels: raw.labels, config });
-  warnIfNotEnabledFallback(task, modelResolution, config);
-  let model = config.models.default;
-  if (modelResolution.kind === "matched") {
-    ({ model } = modelResolution);
-  } else if (modelResolution.kind === "not-enabled-fallback") {
-    model = modelResolution.fallbackModel;
+  const agentResolution = resolveAgentFor({ labels: raw.labels, config });
+  warnIfNotEnabledFallback(task, agentResolution, config);
+  let agent = config.agents.default;
+  if (agentResolution.kind === "matched") {
+    ({ agent } = agentResolution);
+  } else if (agentResolution.kind === "not-enabled-fallback") {
+    agent = agentResolution.fallbackAgent;
   }
   return {
     uuid: raw.uuid,
     title: raw.title,
     description: raw.description,
     repository: repositoryResolution.repository,
-    model,
+    agent,
     teamId: raw.teamId,
     stateType: raw.stateType,
     status: raw.stateName,
@@ -677,14 +677,14 @@ export async function fetchResolvedIssue(arguments_: {
 
 export function warnIfNotEnabledFallback(
   task: string,
-  modelResolution: ModelResolution,
+  agentResolution: AgentResolution,
   config: ResolvedConfig,
 ): void {
-  if (modelResolution.kind !== "not-enabled-fallback") {
+  if (agentResolution.kind !== "not-enabled-fallback") {
     return;
   }
   log(
-    `${task.toLowerCase()}: agent-${modelResolution.requestedModel} label refers to a model that is not enabled; falling back to models.default (${config.models.default})`,
+    `${task.toLowerCase()}: agent-${agentResolution.requestedAgent} label refers to an agent that is not enabled; falling back to agents.default (${config.agents.default})`,
   );
 }
 

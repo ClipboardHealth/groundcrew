@@ -1,5 +1,5 @@
 import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
-import { AGENT_ANY_MODEL, loadConfig, type ResolvedConfig } from "../lib/config.ts";
+import { AGENT_ANY, loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import {
   type CanonicalStatus,
   type CreateTaskInput,
@@ -21,7 +21,7 @@ const LIST_USAGE = `Usage: crew task list [options]
 Options:
   --source <name>      Limit to one source.
   --status <status>    Filter by status. Repeatable.
-  --agent <name>       Filter by agent/model.
+  --agent <name>       Filter by agent name.
   --repo <owner/repo>  Filter by repository.
   --blocked            Show only blocked tasks.
   --unblocked          Show only unblocked tasks.
@@ -98,7 +98,7 @@ interface PrintableTask {
   description: string;
   status: CanonicalStatus;
   repository: string | undefined;
-  model: string | undefined;
+  agent: string | undefined;
   assignee: string;
   updatedAt: string;
   blockers: Task["blockers"];
@@ -330,7 +330,7 @@ function parseCreateOptions(argv: readonly string[]): CreateOptions {
   }
   const input: CreateTaskInput = {
     title,
-    agent: state.agent ?? AGENT_ANY_MODEL,
+    agent: state.agent ?? AGENT_ANY,
     projects: state.projects,
     contexts: state.contexts,
     dependencies: state.dependencies,
@@ -371,7 +371,7 @@ function filterTasks(tasks: readonly Task[], options: ListOptions): Task[] {
     filtered = filtered.filter((task) => options.statuses.includes(task.status));
   }
   if (options.agent !== undefined) {
-    filtered = filtered.filter((task) => task.model === options.agent);
+    filtered = filtered.filter((task) => task.agent === options.agent);
   }
   if (options.repository !== undefined) {
     filtered = filtered.filter((task) => task.repository === options.repository);
@@ -396,7 +396,7 @@ function printableTask(task: Task): PrintableTask {
     description: task.description,
     status: task.status,
     repository: task.repository,
-    model: task.model,
+    agent: task.agent,
     assignee: task.assignee,
     updatedAt: task.updatedAt,
     blockers: task.blockers,
@@ -423,7 +423,7 @@ function writeTaskTable(tasks: readonly Task[]): void {
   const rows = tasks.map((task) => ({
     id: task.id,
     status: task.status,
-    agent: task.model ?? "-",
+    agent: task.agent ?? "-",
     repository: task.repository ?? "-",
     blocked: taskIsBlocked(task) ? "yes" : "no",
     title: task.title,
@@ -544,8 +544,8 @@ function writeTaskDetails(task: Task): void {
   if (task.repository !== undefined) {
     writeOutput(`repo: ${task.repository}`);
   }
-  if (task.model !== undefined) {
-    writeOutput(`agent: ${task.model}`);
+  if (task.agent !== undefined) {
+    writeOutput(`agent: ${task.agent}`);
   }
   if (task.url !== undefined) {
     writeOutput(`url: ${task.url}`);

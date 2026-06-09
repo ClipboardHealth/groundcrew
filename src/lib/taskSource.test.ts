@@ -15,7 +15,7 @@ function fakeIssue(overrides: Partial<Issue> = {}): Issue {
     description: "",
     status: "todo",
     repository: undefined,
-    model: undefined,
+    agent: undefined,
     assignee: "Unassigned",
     updatedAt: "2026-01-01T00:00:00Z",
     blockers: [],
@@ -26,14 +26,14 @@ function fakeIssue(overrides: Partial<Issue> = {}): Issue {
 }
 
 describe(isGroundcrewIssue, () => {
-  it("returns true when both model and repository are defined", () => {
-    expect(isGroundcrewIssue(fakeIssue({ model: "claude", repository: "org/repo" }))).toBe(true);
+  it("returns true when both agent and repository are defined", () => {
+    expect(isGroundcrewIssue(fakeIssue({ agent: "claude", repository: "org/repo" }))).toBe(true);
   });
-  it("returns false when model is undefined", () => {
+  it("returns false when agent is undefined", () => {
     expect(isGroundcrewIssue(fakeIssue({ repository: "org/repo" }))).toBe(false);
   });
   it("returns false when repository is undefined", () => {
-    expect(isGroundcrewIssue(fakeIssue({ model: "claude" }))).toBe(false);
+    expect(isGroundcrewIssue(fakeIssue({ agent: "claude" }))).toBe(false);
   });
 });
 

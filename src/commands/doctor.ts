@@ -17,14 +17,14 @@ import {
 } from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities, which } from "../lib/host.ts";
 import { resolveLocalRunner } from "../lib/localRunner.ts";
-import { gatedModels } from "../lib/usage.ts";
+import { gatedAgents } from "../lib/usage.ts";
 import { errorMessage, writeOutput } from "../lib/util.ts";
 import { resolveWorkspaceKind, type WorkspaceResolution } from "../lib/workspaces.ts";
 
 // Tokenization stops after this many non-flag tokens. Two is enough to
 // catch wrapper + wrapped CLI commands like `safehouse claude --foo`.
 const MAX_TOKENS_PER_CMD = 2;
-const BUILT_IN_MODEL_NAMES = ["claude", "codex"] as const;
+const BUILT_IN_AGENT_NAMES = ["claude", "codex"] as const;
 
 const CONFIG_SOURCE_LABELS: Record<ConfigSourceKind, string> = {
   env: "GROUNDCREW_CONFIG",
@@ -94,7 +94,7 @@ function checkDir(path: string, label: string): Check {
 }
 
 /**
- * Tokens worth checking against PATH from a model's `cmd`:
+ * Tokens worth checking against PATH from a agent's `cmd`:
  * the executable name (first non-flag token), and any subsequent
  * non-flag, non-flag-value token until a flag is hit. Flag tokens are
  * dropped along with the token immediately following them (treated as
@@ -137,9 +137,9 @@ interface ToolCheckTarget {
 
 function gatherToolTargets(config: ResolvedConfig): ToolCheckTarget[] {
   const all = new Map<string, string | undefined>();
-  for (const [modelName, definition] of Object.entries(config.models.definitions)) {
+  for (const [agentName, definition] of Object.entries(config.agents.definitions)) {
     for (const token of commandTokensToCheck(definition.cmd)) {
-      const hint = modelCliHint(modelName, token);
+      const hint = agentCliHint(agentName, token);
       if (!all.has(token) || all.get(token) === undefined) {
         all.set(token, hint);
       }
@@ -148,17 +148,17 @@ function gatherToolTargets(config: ResolvedConfig): ToolCheckTarget[] {
   return [...all].map(([token, hint]) => (hint === undefined ? { token } : { token, hint }));
 }
 
-function modelCliHint(modelName: string, token: string): string | undefined {
-  if (token !== modelName) {
+function agentCliHint(agentName: string, token: string): string | undefined {
+  if (token !== agentName) {
     return undefined;
   }
-  if (!isBuiltInModelName(modelName)) {
+  if (!isBuiltInAgentName(agentName)) {
     return undefined;
   }
-  return `install ${token} or remove \`models.definitions.${modelName}\` from crew.config.ts`;
+  return `install ${token} or remove \`agents.definitions.${agentName}\` from crew.config.ts`;
 }
 
-function isBuiltInModelName(value: string): value is (typeof BUILT_IN_MODEL_NAMES)[number] {
+function isBuiltInAgentName(value: string): value is (typeof BUILT_IN_AGENT_NAMES)[number] {
   return value === "claude" || value === "codex";
 }
 
@@ -228,16 +228,16 @@ export async function doctor(): Promise<boolean> {
     checks.push(check);
   }
 
-  const usageGatedModels = gatedModels(config);
-  if (usageGatedModels.length > 0) {
+  const usageGatedAgents = gatedAgents(config);
+  if (usageGatedAgents.length > 0) {
     const codexbarPath = await which("codexbar");
     if (codexbarPath === undefined) {
-      const modelList = usageGatedModels.map((name) => `\`${name}\``).join(", ");
+      const modelList = usageGatedAgents.map((name) => `\`${name}\``).join(", ");
       checks.push({
         name: "codexbar",
         ok: false,
         required: true,
-        hint: `required for usage gating on ${modelList} — install codexbar, or set \`models.definitions.<name>.usage\` to disable gating`,
+        hint: `required for usage gating on ${modelList} — install codexbar, or set \`agents.definitions.<name>.usage\` to disable gating`,
       });
     } else {
       checks.push({ name: "codexbar", ok: true, required: true, hint: codexbarPath });

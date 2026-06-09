@@ -12,7 +12,7 @@ export interface InterruptWorkspaceOptions {
 interface InterruptSource {
   task: string;
   repository: string;
-  model: string;
+  agent: string;
   worktreeDir: string;
   branchName: string;
   workspaceName: string;
@@ -53,7 +53,7 @@ function sourceFromState(state: RunState): InterruptSource {
   return {
     task: state.task,
     repository: state.repository,
-    model: state.model,
+    agent: state.agent,
     worktreeDir: state.worktreeDir,
     branchName: state.branchName,
     workspaceName: state.workspaceName,
@@ -69,7 +69,7 @@ function sourceFromWorktree(
   return {
     task,
     repository: entry.repository,
-    model: config.models.default,
+    agent: config.agents.default,
     worktreeDir: entry.dir,
     branchName: entry.branchName,
     workspaceName: task,
@@ -124,7 +124,7 @@ export async function interruptWorkspace(
     state: {
       task,
       repository: source.repository,
-      model: source.model,
+      agent: source.agent,
       worktreeDir: source.worktreeDir,
       branchName: source.branchName,
       workspaceName: source.workspaceName,

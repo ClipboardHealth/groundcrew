@@ -28,12 +28,12 @@ export interface HookCommands {
 }
 
 /**
- * Reserved model name. A task labeled `agent-any` resolves at runtime
- * to the configured model with the most available session capacity, so
- * `any` cannot itself be a model. orchestrator.ts imports this constant
+ * Reserved agent name. A task labeled `agent-any` resolves at runtime
+ * to the configured agent with the most available session capacity, so
+ * `any` cannot itself be a agent. orchestrator.ts imports this constant
  * so the reserved name lives in one place.
  */
-export const AGENT_ANY_MODEL = "any";
+export const AGENT_ANY = "any";
 
 /**
  * Which terminal session manager hosts the agent process:
@@ -79,7 +79,7 @@ export const LOCAL_RUNNER_SETTINGS: readonly LocalRunnerSetting[] = [
 ] as const;
 
 /**
- * Per-model Docker Sandboxes (sdx) binding. Required at launch when
+ * Per-agent Docker Sandboxes (sdx) binding. Required at launch when
  * `local.runner` resolves to `sdx` so groundcrew knows which existing
  * sbx sandbox to address.
  */
@@ -88,9 +88,9 @@ export interface SandboxDefinition {
   agent: string;
 }
 
-export interface ModelDefinition {
+export interface AgentDefinition {
   /**
-   * Shell command launched for the model. Wrapped with Safehouse/clearance
+   * Shell command launched for the agent. Wrapped with Safehouse/clearance
    * for execution. The rendered prompt is appended as a single quoted
    * positional argument. `{{worktree}}` is replaced before launch.
    *
@@ -128,26 +128,26 @@ export interface ModelDefinition {
   };
   /**
    * Docker Sandboxes binding. Required when `local.runner` resolves to
-   * `sdx` — pure additive: omitted models can still run under `safehouse`
+   * `sdx` — pure additive: omitted agents can still run under `safehouse`
    * or `none` without surprise.
    */
   sandbox?: SandboxDefinition;
 }
 
 /**
- * User-facing model entry shape. Built-in model names (`claude`, `codex`)
+ * User-facing agent entry shape. Built-in agent names (`claude`, `codex`)
  * accept empty or partial entries because they merge over built-in presets.
- * Brand-new model names must supply enough fields to satisfy `validate()`.
+ * Brand-new agent names must supply enough fields to satisfy `validate()`.
  *
  * `usage` accepts an extra `{ disabled: true }` sentinel that strips the
  * usage block from the merged definition — the only way to opt a shipped
- * preset out of codexbar gating without removing the model entirely.
+ * preset out of codexbar gating without removing the agent entirely.
  */
-type UserUsage = ModelDefinition["usage"] | { disabled: true };
-type EnabledUserModelDefinition = Partial<Omit<ModelDefinition, "usage">> & {
+type UserUsage = AgentDefinition["usage"] | { disabled: true };
+type EnabledUserAgentDefinition = Partial<Omit<AgentDefinition, "usage">> & {
   usage?: UserUsage;
 };
-type UserModelDefinition = EnabledUserModelDefinition;
+type UserAgentDefinition = EnabledUserAgentDefinition;
 
 /**
  * Loose user-facing shape — what a `config.ts` file declares.
@@ -213,15 +213,15 @@ export interface Config {
     pollIntervalMilliseconds?: number;
     sessionLimitPercentage?: number;
   };
-  models?: {
+  agents?: {
     default?: string;
     /**
-     * Explicit enabled model set. Built-in keys (`claude`, `codex`) merge over
+     * Explicit enabled agent set. Built-in keys (`claude`, `codex`) merge over
      * their presets, so `{ claude: {} }` enables Claude with the shipped
-     * command/color/usage. Brand-new model names must supply enough fields to
+     * command/color/usage. Brand-new agent names must supply enough fields to
      * satisfy `validate()`.
      */
-    definitions?: Record<string, UserModelDefinition>;
+    definitions?: Record<string, UserAgentDefinition>;
   };
   prompts?: {
     initial?: string;
@@ -284,9 +284,9 @@ export interface ResolvedConfig {
     pollIntervalMilliseconds: number;
     sessionLimitPercentage: number;
   };
-  models: {
+  agents: {
     default: string;
-    definitions: Record<string, ModelDefinition>;
+    definitions: Record<string, AgentDefinition>;
   };
   prompts: {
     initial: string;
@@ -349,7 +349,7 @@ const DEFAULT_ORCHESTRATOR: ResolvedConfig["orchestrator"] = {
   sessionLimitPercentage: 85,
 };
 
-const BUILT_IN_MODEL_DEFINITIONS: Record<string, ModelDefinition> = {
+const BUILT_IN_AGENT_DEFINITIONS: Record<string, AgentDefinition> = {
   claude: {
     cmd: "claude --permission-mode auto",
     color: "#C15F3C",
@@ -363,11 +363,11 @@ const BUILT_IN_MODEL_DEFINITIONS: Record<string, ModelDefinition> = {
 };
 
 const MODEL_DEFINITIONS_MIGRATION_MESSAGE = [
-  "configuration migration required: models are no longer enabled by default.",
+  "configuration migration required: agents are no longer enabled by default.",
   "",
-  "Add the models you want to use:",
+  "Add the agents you want to use:",
   "",
-  "models: {",
+  "agents: {",
   '  default: "claude",',
   "  definitions: {",
   "    claude: {},",
@@ -376,7 +376,7 @@ const MODEL_DEFINITIONS_MIGRATION_MESSAGE = [
   "",
   "To keep the previous claude+codex behavior:",
   "",
-  "models: {",
+  "agents: {",
   '  default: "claude",',
   "  definitions: {",
   "    claude: {},",
@@ -384,7 +384,7 @@ const MODEL_DEFINITIONS_MIGRATION_MESSAGE = [
   "  },",
   "},",
   "",
-  "`disabled: true` is no longer supported; remove disabled model entries instead.",
+  "`disabled: true` is no longer supported; remove disabled agent entries instead.",
 ].join("\n");
 
 const DEFAULT_PROMPT_INITIAL = [
@@ -456,7 +456,7 @@ function requirePercent(value: unknown, configKey: string): asserts value is num
   }
 }
 
-function cloneModelDefinition(definition: ModelDefinition): ModelDefinition {
+function cloneAgentDefinition(definition: AgentDefinition): AgentDefinition {
   return structuredClone(definition);
 }
 
@@ -517,8 +517,8 @@ function normalizeDefaults(value: unknown): ResolvedConfig["defaults"] {
 
 const ENV_VAR_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
-function validatePreLaunchEnv(modelName: string, value: unknown): asserts value is string[] {
-  const configPath = `models.definitions.${modelName}.preLaunchEnv`;
+function validatePreLaunchEnv(agentName: string, value: unknown): asserts value is string[] {
+  const configPath = `agents.definitions.${agentName}.preLaunchEnv`;
   if (!Array.isArray(value)) {
     fail(`${configPath} must be an array of env var names (got ${JSON.stringify(value)})`);
   }
@@ -552,7 +552,7 @@ function validatePreLaunchEnv(modelName: string, value: unknown): asserts value 
  * but fatal elsewhere, which is a worse asymmetry than what the helper
  * collapses. Centralized so all four call sites stay in lockstep.
  */
-export function hasPreLaunchEnv(definition: Pick<ModelDefinition, "preLaunchEnv">): boolean {
+export function hasPreLaunchEnv(definition: Pick<AgentDefinition, "preLaunchEnv">): boolean {
   return definition.preLaunchEnv !== undefined && definition.preLaunchEnv.length > 0;
 }
 
@@ -626,20 +626,20 @@ function normalizeSandbox(value: unknown, configKey: string): SandboxDefinition 
 function failRemovedConfigKey(configKey: string, reason: string): never {
   fail(
     `${configKey} is no longer supported: ${reason} ` +
-      "Provision and manage the sandbox yourself with `sbx` (for example `sbx create --name groundcrew-<agent> <agent> <projectDir>`), then keep only `models.definitions.<model>.sandbox.agent` in crew.config.ts.",
+      "Provision and manage the sandbox yourself with `sbx` (for example `sbx create --name groundcrew-<agent> <agent> <projectDir>`), then keep only `agents.definitions.<agent>.sandbox.agent` in crew.config.ts.",
   );
 }
 
 function failIfLegacyModelKeys(
   name: string,
   override: unknown,
-): asserts override is UserModelDefinition {
+): asserts override is UserAgentDefinition {
   if (!isPlainObject(override)) {
-    fail(`models.definitions.${name} must be an object`);
+    fail(`agents.definitions.${name} must be an object`);
   }
   if (Object.hasOwn(override, "isolation")) {
     fail(
-      `models.definitions.${name}.isolation is no longer supported: per-model isolation is no longer supported`,
+      `agents.definitions.${name}.isolation is no longer supported: per-agent isolation is no longer supported`,
     );
   }
   if (Object.hasOwn(override, "disabled")) {
@@ -652,13 +652,13 @@ function failIfLegacyModelKeys(
  * definitions. Consumers use this to distinguish `agent-codex` when codex is
  * not enabled from an arbitrary unknown label like `agent-typo`.
  */
-export function isBuiltInModelNotEnabled(
-  config: Pick<ResolvedConfig, "models">,
+export function isBuiltInAgentNotEnabled(
+  config: Pick<ResolvedConfig, "agents">,
   name: string,
 ): boolean {
   return (
-    Object.hasOwn(BUILT_IN_MODEL_DEFINITIONS, name) &&
-    !Object.hasOwn(config.models.definitions, name)
+    Object.hasOwn(BUILT_IN_AGENT_DEFINITIONS, name) &&
+    !Object.hasOwn(config.agents.definitions, name)
   );
 }
 
@@ -668,14 +668,14 @@ function isUsageDisableSentinel(usage: UserUsage): usage is { disabled: true } {
 
 function buildOverrideCandidate(
   name: string,
-  override: EnabledUserModelDefinition,
-  existing: ModelDefinition | undefined,
-): Partial<ModelDefinition> {
-  const base: Partial<ModelDefinition> =
-    existing === undefined ? {} : cloneModelDefinition(existing);
+  override: EnabledUserAgentDefinition,
+  existing: AgentDefinition | undefined,
+): Partial<AgentDefinition> {
+  const base: Partial<AgentDefinition> =
+    existing === undefined ? {} : cloneAgentDefinition(existing);
   // Per-key spread so overriding `cmd` alone preserves the default
   // `color` / `usage`. Brand-new entries must supply both required fields.
-  const candidate: Partial<ModelDefinition> = { ...base };
+  const candidate: Partial<AgentDefinition> = { ...base };
   if (override.cmd !== undefined) {
     candidate.cmd = override.cmd;
   }
@@ -690,7 +690,7 @@ function buildOverrideCandidate(
     }
   }
   if (override.sandbox !== undefined) {
-    candidate.sandbox = normalizeSandbox(override.sandbox, `models.definitions.${name}.sandbox`);
+    candidate.sandbox = normalizeSandbox(override.sandbox, `agents.definitions.${name}.sandbox`);
   }
   if (override.preLaunch !== undefined) {
     candidate.preLaunch = override.preLaunch;
@@ -702,28 +702,28 @@ function buildOverrideCandidate(
 }
 
 function mergeDefinitions(
-  user: Record<string, UserModelDefinition> | undefined,
-): Record<string, ModelDefinition> {
+  user: Record<string, UserAgentDefinition> | undefined,
+): Record<string, AgentDefinition> {
   if (user === undefined) {
     fail(MODEL_DEFINITIONS_MIGRATION_MESSAGE);
   }
   if (!isPlainObject(user)) {
-    fail("models.definitions must be an object");
+    fail("agents.definitions must be an object");
   }
-  const merged: Record<string, ModelDefinition> = {};
+  const merged: Record<string, AgentDefinition> = {};
   for (const [name, override] of Object.entries(user)) {
     failIfLegacyModelKeys(name, override);
 
-    const builtIn = BUILT_IN_MODEL_DEFINITIONS[name];
+    const builtIn = BUILT_IN_AGENT_DEFINITIONS[name];
     const candidate = buildOverrideCandidate(name, override, builtIn);
     const { cmd, color, usage, sandbox, preLaunch, preLaunchEnv } = candidate;
     if (typeof cmd !== "string" || cmd.length === 0) {
-      fail(`models.definitions.${name}.cmd must be a non-empty string`);
+      fail(`agents.definitions.${name}.cmd must be a non-empty string`);
     }
     if (typeof color !== "string" || color.length === 0) {
-      fail(`models.definitions.${name}.color must be a non-empty string`);
+      fail(`agents.definitions.${name}.color must be a non-empty string`);
     }
-    const definition: ModelDefinition = { cmd, color };
+    const definition: AgentDefinition = { cmd, color };
     if (usage !== undefined) {
       definition.usage = usage;
     }
@@ -926,9 +926,9 @@ function applyDefaults(user: Config): ResolvedConfig {
   failOnLegacyLinearShape(rawUser);
   failOnRemovedSandboxSettings(rawUser);
   requireObject(user.workspace, "workspace");
-  if (isPlainObject(user.models) && Object.hasOwn(user.models, "isolation")) {
+  if (isPlainObject(user.agents) && Object.hasOwn(user.agents, "isolation")) {
     fail(
-      "models.isolation is no longer supported: set `local.runner` ('safehouse' | 'sdx' | 'none' | 'auto') instead",
+      "agents.isolation is no longer supported: set `local.runner` ('safehouse' | 'sdx' | 'none' | 'auto') instead",
     );
   }
   if (Object.hasOwn(user, "remote")) {
@@ -955,9 +955,9 @@ function applyDefaults(user: Config): ResolvedConfig {
     workspace: normalizeWorkspace(user.workspace),
     defaults: normalizeDefaults((user as { defaults?: unknown }).defaults),
     orchestrator: { ...DEFAULT_ORCHESTRATOR, ...user.orchestrator },
-    models: {
-      default: user.models?.default ?? "claude",
-      definitions: mergeDefinitions(user.models?.definitions),
+    agents: {
+      default: user.agents?.default ?? "claude",
+      definitions: mergeDefinitions(user.agents?.definitions),
     },
     prompts: {
       initial: user.prompts?.initial ?? DEFAULT_PROMPT_INITIAL,
@@ -1009,20 +1009,20 @@ function validate(config: ResolvedConfig): void {
 
   requirePercent(config.orchestrator.sessionLimitPercentage, "orchestrator.sessionLimitPercentage");
 
-  const { definitions } = config.models;
+  const { definitions } = config.agents;
   if (Object.keys(definitions).length === 0) {
-    fail("models.definitions must contain at least one model");
+    fail("agents.definitions must contain at least one agent");
   }
-  if (AGENT_ANY_MODEL in definitions) {
+  if (AGENT_ANY in definitions) {
     fail(
-      `models.definitions cannot contain "${AGENT_ANY_MODEL}" — it is reserved for the agent-any label, which routes to the model with the most available session capacity`,
+      `agents.definitions cannot contain "${AGENT_ANY}" — it is reserved for the agent-any label, which routes to the agent with the most available session capacity`,
     );
   }
   for (const [name, definition] of Object.entries(definitions)) {
-    requireString(definition.cmd, `models.definitions.${name}.cmd`);
-    requireString(definition.color, `models.definitions.${name}.color`);
+    requireString(definition.cmd, `agents.definitions.${name}.cmd`);
+    requireString(definition.color, `agents.definitions.${name}.color`);
     if (definition.usage !== undefined) {
-      const usagePath = `models.definitions.${name}.usage`;
+      const usagePath = `agents.definitions.${name}.usage`;
       /* v8 ignore next 3 @preserve -- mergeDefinitions only assigns usage from validated overrides or built-in presets; reaching this guard requires hand-mutating the resolved config */
       if (typeof definition.usage !== "object" || definition.usage === null) {
         fail(`${usagePath} must be an object`);
@@ -1035,12 +1035,12 @@ function validate(config: ResolvedConfig): void {
       requireString(codexbar.provider, `${usagePath}.codexbar.provider`);
     }
     if (definition.sandbox !== undefined) {
-      requireString(definition.sandbox.agent, `models.definitions.${name}.sandbox.agent`);
+      requireString(definition.sandbox.agent, `agents.definitions.${name}.sandbox.agent`);
     }
     if (definition.preLaunch !== undefined) {
-      requireString(definition.preLaunch, `models.definitions.${name}.preLaunch`);
+      requireString(definition.preLaunch, `agents.definitions.${name}.preLaunch`);
       if (definition.preLaunch.trim().length === 0) {
-        fail(`models.definitions.${name}.preLaunch must contain non-whitespace characters`);
+        fail(`agents.definitions.${name}.preLaunch must contain non-whitespace characters`);
       }
     }
     if (definition.preLaunchEnv !== undefined) {
@@ -1058,14 +1058,14 @@ function validate(config: ResolvedConfig): void {
   // Built-in-not-enabled check must run before the generic "not a key" check
   // so the user gets the specific migration-oriented message for `codex`
   // instead of a stale-list message.
-  if (isBuiltInModelNotEnabled(config, config.models.default)) {
+  if (isBuiltInAgentNotEnabled(config, config.agents.default)) {
     fail(
-      `models.default ("${config.models.default}") is not enabled. Add \`models.definitions.${config.models.default}: {}\` or set models.default to an enabled model.`,
+      `agents.default ("${config.agents.default}") is not enabled. Add \`agents.definitions.${config.agents.default}: {}\` or set agents.default to an enabled agent.`,
     );
   }
-  if (!(config.models.default in definitions)) {
+  if (!(config.agents.default in definitions)) {
     fail(
-      `models.default ("${config.models.default}") is not a key in models.definitions (have: ${Object.keys(definitions).join(", ")})`,
+      `agents.default ("${config.agents.default}") is not a key in agents.definitions (have: ${Object.keys(definitions).join(", ")})`,
     );
   }
 

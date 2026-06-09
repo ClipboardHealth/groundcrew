@@ -13,7 +13,7 @@ import type { TaskSource } from "./taskSource.ts";
 /**
  * Cross-cutting context every adapter receives at construction time. Holds
  * the global resolved config so adapters can read shared concerns (the
- * `workspace.knownRepositories` list, `models.*` definitions, etc.) without
+ * `workspace.knownRepositories` list, `agents.*` definitions, etc.) without
  * each one duplicating them in its per-source config block.
  */
 export interface AdapterContext {

@@ -17,7 +17,7 @@ import {
   type Issue,
   naturalIdFromCanonical,
 } from "../lib/taskSource.ts";
-import type { UsageByModel } from "../lib/usage.ts";
+import type { UsageByAgent } from "../lib/usage.ts";
 import { errorMessage, failMark, log, logEvent, styleWarning } from "../lib/util.ts";
 import { type WorkspaceProbe, workspaces } from "../lib/workspaces.ts";
 import type { WorktreeEntry } from "../lib/worktrees.ts";
@@ -25,7 +25,7 @@ import {
   classifyBlockers,
   classifyEligibility,
   classifyUsageExhaustion,
-  type ModelUsageExhaustion,
+  type AgentUsageExhaustion,
   type SkipVerdict,
   type StartVerdict,
 } from "./eligibility.ts";
@@ -41,7 +41,7 @@ export interface Dispatcher {
     state: BoardState;
     worktreeEntries: readonly WorktreeEntry[];
     /** Lazy so dispatcher can early-return on idle ticks without paying the codexbar shell-out. */
-    usage: (signal?: AbortSignal) => Promise<UsageByModel>;
+    usage: (signal?: AbortSignal) => Promise<UsageByAgent>;
     dryRun: boolean;
     signal?: AbortSignal;
     /**
@@ -60,19 +60,19 @@ function logSkip(verdict: SkipVerdict): void {
     reason: verdict.eventReason,
     task: naturalIdFromCanonical(verdict.issue.id),
     blockers: verdict.blockers,
-    model: verdict.model,
+    agent: verdict.agent,
   });
 }
 
 function logMissingRepositorySkip(
   issue: Issue,
-  model: string,
+  agent: string,
   knownRepositories: readonly string[],
 ): void {
   const task = naturalIdFromCanonical(issue.id);
   log(
     styleWarning(
-      `WARNING: ${issue.id} has agent "${model}" but no repository; skipping dispatch. Add --repo <repo> when creating the task, add repo:<repo> to the task line, or set defaultRepository on source "${issue.source}". Known repositories: ${formatKnownRepositories(knownRepositories)}`,
+      `WARNING: ${issue.id} has agent "${agent}" but no repository; skipping dispatch. Add --repo <repo> when creating the task, add repo:<repo> to the task line, or set defaultRepository on source "${issue.source}". Known repositories: ${formatKnownRepositories(knownRepositories)}`,
     ),
   );
   logEvent("dispatch", {
@@ -80,17 +80,17 @@ function logMissingRepositorySkip(
     reason: "missing_repository",
     task,
     source: issue.source,
-    model,
+    agent,
   });
 }
 
 export function createDispatcher(deps: DispatcherDeps): Dispatcher {
   const { config, board } = deps;
 
-  function buildExhaustedSet(usage: UsageByModel): Set<string> {
+  function buildExhaustedSet(usage: UsageByAgent): Set<string> {
     const exhausted = new Set<string>();
     for (const exhaustion of classifyUsageExhaustion(config, usage)) {
-      exhausted.add(exhaustion.model);
+      exhausted.add(exhaustion.agent);
       log(formatUsageExhaustion(exhaustion));
     }
     return exhausted;
@@ -104,19 +104,19 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     const { issue, recovery } = start;
     const taskId = naturalIdFromCanonical(issue.id);
     if (start.resolvedFromAny) {
-      log(`Resolved agent-any for ${taskId} → ${issue.model}`);
+      log(`Resolved agent-any for ${taskId} → ${issue.agent}`);
     }
 
     if (dryRun) {
       log(
         /* v8 ignore next @preserve -- classifyTodo forces recovery=false in dry-run, so the resume branch can't fire here */
-        `[dry-run] Would ${recovery ? "resume" : "start"} ${taskId} in ${issue.repository} (${issue.model})`,
+        `[dry-run] Would ${recovery ? "resume" : "start"} ${taskId} in ${issue.repository} (${issue.agent})`,
       );
       logEvent("dispatch", {
         outcome: "skipped",
         reason: "dry_run",
         task: taskId,
-        model: issue.model,
+        agent: issue.agent,
         repository: issue.repository,
       });
       return;
@@ -129,7 +129,7 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
         const setupOptions = {
           repository: issue.repository,
           task: taskId,
-          model: issue.model,
+          agent: issue.agent,
           details: {
             title: issue.title,
             description: issue.description,
@@ -144,7 +144,7 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
       logEvent("dispatch", {
         outcome: recovery ? "resumed" : "started",
         task: taskId,
-        model: issue.model,
+        agent: issue.agent,
         repository: issue.repository,
       });
     } catch (error) {
@@ -152,7 +152,7 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
       logEvent("dispatch", {
         outcome: "failed",
         task: taskId,
-        model: issue.model,
+        agent: issue.agent,
         repository: issue.repository,
         error: errorMessage(error),
       });
@@ -162,7 +162,7 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
   async function runOnce(arguments_: {
     state: BoardState;
     worktreeEntries: readonly WorktreeEntry[];
-    usage: (signal?: AbortSignal) => Promise<UsageByModel>;
+    usage: (signal?: AbortSignal) => Promise<UsageByAgent>;
     dryRun: boolean;
     signal?: AbortSignal;
     idleSuffix?: string;
@@ -192,9 +192,9 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     const slots = config.orchestrator.maximumInProgress - activeCount;
     const rawTodo = state.issues.filter((issue) => issue.status === "todo");
     for (const issue of rawTodo) {
-      const { model, repository } = issue;
-      if (model !== undefined && repository === undefined) {
-        logMissingRepositorySkip(issue, model, config.workspace.knownRepositories);
+      const { agent, repository } = issue;
+      if (agent !== undefined && repository === undefined) {
+        logMissingRepositorySkip(issue, agent, config.workspace.knownRepositories);
       }
     }
 
@@ -297,11 +297,11 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     const dispatchable = starts;
 
     log(
-      `Slots ${activeCount}/${config.orchestrator.maximumInProgress} used${formatActiveSlotList(active)}, starting ${dispatchable.length} task(s): ${dispatchable.map(({ issue }) => `${naturalIdFromCanonical(issue.id)}(${issue.model})`).join(", ")}`,
+      `Slots ${activeCount}/${config.orchestrator.maximumInProgress} used${formatActiveSlotList(active)}, starting ${dispatchable.length} task(s): ${dispatchable.map(({ issue }) => `${naturalIdFromCanonical(issue.id)}(${issue.agent})`).join(", ")}`,
     );
     logEvent("dispatch", {
       outcome: "starting",
-      tasks: dispatchable.map(({ issue }) => `${naturalIdFromCanonical(issue.id)}:${issue.model}`),
+      tasks: dispatchable.map(({ issue }) => `${naturalIdFromCanonical(issue.id)}:${issue.agent}`),
     });
 
     for (const start of dispatchable) {
@@ -325,12 +325,12 @@ function hasRecoverableCandidate(
   });
 }
 
-function formatUsageExhaustion(exhaustion: ModelUsageExhaustion): string {
+function formatUsageExhaustion(exhaustion: AgentUsageExhaustion): string {
   if (exhaustion.kind === "session") {
     const mins = exhaustion.resetMinutes ?? "?";
-    return `${exhaustion.model} session at ${exhaustion.usedPercentage.toFixed(0)}% (> ${exhaustion.limitPercentage}%), resets in ${mins}m — skipping its tasks`;
+    return `${exhaustion.agent} session at ${exhaustion.usedPercentage.toFixed(0)}% (> ${exhaustion.limitPercentage}%), resets in ${mins}m — skipping its tasks`;
   }
-  return `${exhaustion.model} weekly at ${exhaustion.usedPercentage.toFixed(1)}% (> ${exhaustion.allowedPercentage.toFixed(1)}% paced budget), resets in ${exhaustion.resetMinutes}m — skipping its tasks`;
+  return `${exhaustion.agent} weekly at ${exhaustion.usedPercentage.toFixed(1)}% (> ${exhaustion.allowedPercentage.toFixed(1)}% paced budget), resets in ${exhaustion.resetMinutes}m — skipping its tasks`;
 }
 
 /** Undefined priority sorts last. */
@@ -343,7 +343,7 @@ export function formatActiveSlotList(active: readonly Issue[]): string {
     return "";
   }
   const entries = active
-    .map((issue) => `${naturalIdFromCanonical(issue.id)}(${issue.model ?? "?"})`)
+    .map((issue) => `${naturalIdFromCanonical(issue.id)}(${issue.agent ?? "?"})`)
     .join(", ");
   return ` [${entries}]`;
 }

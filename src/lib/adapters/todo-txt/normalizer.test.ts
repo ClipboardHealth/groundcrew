@@ -56,7 +56,7 @@ describe(normalizeToIssue, () => {
   });
 
   it("defaults missing agent metadata to agent-any", () => {
-    expect(normalize("No agent id:NO-AGENT-1 status:todo")?.model).toBe("any");
+    expect(normalize("No agent id:NO-AGENT-1 status:todo")?.agent).toBe("any");
   });
 });
 

@@ -28,7 +28,7 @@ interface TaskDetails {
 interface ResumeContext {
   task: string;
   repository: string;
-  model: string;
+  agent: string;
   worktree: WorktreeEntry;
   title: string;
   description: string;
@@ -66,7 +66,7 @@ async function contextFromLinear(
   return {
     task,
     repository: resolved.repository,
-    model: resolved.model,
+    agent: resolved.agent,
     worktree,
     title: resolved.title,
     description: resolved.description,
@@ -87,7 +87,7 @@ async function contextFromState(
   return {
     task,
     repository: state.repository,
-    model: state.model,
+    agent: state.agent,
     worktree,
     title: details?.title ?? task.toUpperCase(),
     description: details?.description ?? "",
@@ -109,7 +109,7 @@ async function buildResumeContext(config: ResolvedConfig, task: string): Promise
   if (state !== undefined) {
     return await contextFromState(config, task, state, worktree);
   }
-  // The cold-resume path resolves repository + model from Linear alone, so it
+  // The cold-resume path resolves repository + agent from Linear alone, so it
   // can't proceed when Linear is disabled. Fail with a clear reason instead of
   // the cryptic missing-API-key error getLinearClient() would otherwise raise.
   if (!isLinearEnabled(config)) {
@@ -160,14 +160,14 @@ export async function resumeWorkspace(
   const task = options.task.toLowerCase();
   await failIfWorkspaceAlreadyLive(config, task);
   const context = await buildResumeContext(config, task);
-  const definition = config.models.definitions[context.model];
+  const definition = config.agents.definitions[context.agent];
   if (definition === undefined) {
-    throw new Error(`Unknown model: ${context.model}`);
+    throw new Error(`Unknown agent: ${context.agent}`);
   }
 
   const { runner, sandboxName, ensureReady } = await prepareAgentLaunch({
     config,
-    model: context.model,
+    agent: context.agent,
     definition,
     purpose: "resumes",
   });
@@ -219,7 +219,7 @@ export async function resumeWorkspace(
       name: task,
       cwd: context.worktree.dir,
       command: launchCmd,
-      model: context.model,
+      agent: context.agent,
       color: definition.color,
     });
   } catch (error) {
@@ -236,7 +236,7 @@ export async function resumeWorkspace(
     state: {
       task,
       repository: context.repository,
-      model: context.model,
+      agent: context.agent,
       worktreeDir: context.worktree.dir,
       branchName: context.worktree.branchName,
       workspaceName: task,
@@ -245,7 +245,7 @@ export async function resumeWorkspace(
       ...(context.reason === undefined ? {} : { reason: context.reason }),
     },
   });
-  log(`Resumed ${task} in ${context.worktree.dir} (${context.model})`);
+  log(`Resumed ${task} in ${context.worktree.dir} (${context.agent})`);
 }
 
 export async function resumeWorkspaceCli(argv: string[]): Promise<void> {
