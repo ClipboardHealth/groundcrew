@@ -1,13 +1,13 @@
 /**
- * zellij Workspace backend. Workspaces live as named tabs inside one
+ * Zellij Workspace backend. Workspaces live as named tabs inside one
  * dedicated `groundcrew` zellij session; the tab name is the ticket id and
  * the first tab (`main`) is a placeholder that keeps the session alive. This
  * is a Linux/WSL alternative to tmux: zellij is a stateful multiplexer, so it
  * restores screen + terminal modes (mouse reporting, alt-screen) on every
- * attach, and enables the mouse by default. zellij can't paint status pills,
+ * attach, and enables the mouse by default. Zellij can't paint status pills,
  * so `open` silently drops `spec.status`.
  *
- * zellij quirks shape this adapter:
+ * Zellij quirks shape this adapter:
  *   1. Tab actions that target the *active* tab (`close-tab`, `go-to-tab-name`)
  *      silently no-op on a detached session with no attached client. Only
  *      `close-tab-by-id` works headlessly — so `open` captures the stable id
@@ -17,7 +17,7 @@
  *      stage an absolute-path KDL file that includes the bar plugins itself.
  *   3. There is no headless way to read a tab's command-exit state, so the
  *      agent command touches a marker file on exit that `list()` checks.
- *   4. zellij resurrects serialized sessions on attach; `open` drops a stale
+ *   4. Zellij resurrects serialized sessions on attach; `open` drops a stale
  *      resurrectable groundcrew session before creating a fresh one so dead
  *      agent tabs don't reappear.
  */
@@ -44,7 +44,7 @@ const ZELLIJ_SESSION = "groundcrew";
 // The placeholder first tab; filtered out of `list()` like tmux's idle window.
 const ZELLIJ_MAIN_TAB = "main";
 
-// zellij sessions are per-user and die on reboot, matching tmpdir lifetime —
+// Zellij sessions are per-user and die on reboot, matching tmpdir lifetime —
 // so a tmpdir-backed ticket -> stable-tab-id record stays in sync with reality.
 // One file per ticket (rather than a shared JSON map) avoids a read-modify-write
 // that concurrent open/close calls could lose or truncate. Overridable via env
@@ -60,7 +60,7 @@ function tabIdPath(name: string): string {
   return path.join(tabIdDir(), name.replaceAll(/[^a-zA-Z0-9_-]/g, "_"));
 }
 
-// zellij exposes no headless way to read a tab's command-exit state (dump-layout
+// Zellij exposes no headless way to read a tab's command-exit state (dump-layout
 // doesn't distinguish exited from running, current-tab-info needs a client). So
 // the agent command touches a per-ticket marker when it exits on its own; a
 // groundcrew-issued close kills the process before the marker is written.
@@ -106,7 +106,7 @@ export const zellijAdapter: Adapter = {
     } else {
       rememberTabId(spec.name, tabId);
     }
-    // zellij can't paint status pills; spec.status is silently dropped.
+    // Zellij can't paint status pills; spec.status is silently dropped.
   },
   async list(signal) {
     let output: string;
@@ -165,7 +165,7 @@ export const zellijAdapter: Adapter = {
     }
   },
   accessHint(_name) {
-    // zellij attaches at the session level; the user clicks the ticket's tab.
+    // Zellij attaches at the session level; the user clicks the ticket's tab.
     return { kind: "attachCommand", command: `zellij attach ${ZELLIJ_SESSION}` };
   },
 };
@@ -176,7 +176,7 @@ async function ensureZellijSession(signal?: AbortSignal): Promise<void> {
     return;
   }
   if (state === "exited") {
-    // zellij serializes sessions and resurrects them on attach; a stale
+    // Zellij serializes sessions and resurrects them on attach; a stale
     // resurrectable groundcrew session would replay dead agent tabs. Drop it
     // so we start clean. (delete-session only acts on non-active sessions.)
     try {
@@ -251,7 +251,7 @@ function parseTabId(output: string): number | undefined {
 }
 
 function isZellijMissingError(error: unknown): boolean {
-  // zellij phrases a missing/absent session several ways depending on whether
+  // Zellij phrases a missing/absent session several ways depending on whether
   // other sessions exist: "Session 'groundcrew' not found", "There is no
   // active session!", or "No active zellij sessions found". Scope the generic
   // "not found" to our session so unrelated zellij errors aren't swallowed.
