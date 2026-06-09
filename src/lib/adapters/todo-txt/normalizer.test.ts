@@ -81,6 +81,16 @@ describe(isActiveForFetch, () => {
     { name: "past threshold", line: "Ready id:T-3 t:2026-06-01 status:todo", active: true },
     { name: "malformed threshold", line: "Ready id:T-4 t:next-week status:todo", active: true },
     {
+      name: "non-calendar threshold matching the date format",
+      line: "Ready id:T-7 t:2026-99-99 status:todo",
+      active: true,
+    },
+    {
+      name: "non-calendar day overflow threshold",
+      line: "Ready id:T-8 t:2026-12-32 status:todo",
+      active: true,
+    },
+    {
       name: "future threshold but already in-progress",
       line: "Started early id:T-5 t:2026-06-09 status:in-progress",
       active: true,

@@ -168,9 +168,18 @@ export function isActiveForFetch(parsed: ParsedTodoLine, todayIsoDate: string): 
 // surfaced by validate() and do not block dispatch.
 function isDeferredByThreshold(parsed: ParsedTodoLine, todayIsoDate: string): boolean {
   const threshold = getMetadataFirst(parsed, "t");
-  if (threshold === undefined || !DATE_RE.test(threshold)) {
+  if (threshold === undefined || !DATE_RE.test(threshold) || !isCalendarDate(threshold)) {
     return false;
   }
   // ISO YYYY-MM-DD dates order lexicographically
   return threshold > todayIsoDate;
+}
+
+// DATE_RE is format-only; non-calendar values like 2026-99-99 would compare
+// greater than any real date and defer the task forever.
+function isCalendarDate(value: string): boolean {
+  const monthIndex = Number(value.slice(5, 7)) - 1;
+  const day = Number(value.slice(8, 10));
+  const date = new Date(Date.UTC(Number(value.slice(0, 4)), monthIndex, day));
+  return date.getUTCMonth() === monthIndex && date.getUTCDate() === day;
 }
