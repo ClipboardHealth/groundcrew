@@ -731,6 +731,26 @@ describe(create, () => {
 
     expect(entry.dir).toBe(path.join(projectDir, "billing-team-220"));
   });
+
+  it("fails fast when the configured workdir is a file after create", async () => {
+    const config = makeConfig({
+      projectDir,
+      knownRepositories: ["billing"],
+      repositories: [
+        { name: "billing", provision: { create: "true", remove: "true" }, workdir: "services/api" },
+      ],
+    });
+    // The create template leaves a file (not a directory) at the workdir path.
+    runCommandMock.mockImplementation(() => {
+      mkdirSync(path.join(projectDir, "billing-team-220", "services"), { recursive: true });
+      writeFileSync(path.join(projectDir, "billing-team-220", "services", "api"), "");
+      return "";
+    });
+
+    await expect(create(config, { repository: "billing", task: "team-220" })).rejects.toThrow(
+      /workdir "services\/api" not found/,
+    );
+  });
 });
 
 describe(resolveLaunchDir, () => {
@@ -823,6 +843,44 @@ describe(remove, () => {
         kind: "host",
       }),
     ).rejects.toThrow(/crew cleanup --force team-220/);
+
+    // The remove template never ran.
+    expect(runCommandMock).not.toHaveBeenCalledWith("sh", expect.anything(), expect.anything());
+  });
+
+  it("remove fails closed when scripted worktree dirtiness cannot be determined", async () => {
+    const worktreeDir = path.join(projectDir, "billing-team-220");
+    mkdirSync(worktreeDir, { recursive: true });
+    userInfoMock.mockReturnValue(makeUserInfo("paul"));
+    // The dirtiness probe (git status) fails, so cleanliness is unknown.
+    runCommandMock.mockImplementation((command, arguments_) => {
+      // oxlint-disable-next-line vitest/no-conditional-in-test -- the status probe throws to force an "unknown" dirtiness
+      if (command === "git" && arguments_.includes("status")) {
+        throw new Error("git status failed");
+      }
+      return "";
+    });
+
+    const config = makeConfig({
+      projectDir,
+      knownRepositories: ["billing"],
+      repositories: [
+        {
+          name: "billing",
+          provision: { create: "graft new ${branch}", remove: "graft rm ${branch} -f" },
+        },
+      ],
+    });
+
+    await expect(
+      remove(config, {
+        repository: "billing",
+        task: "team-220",
+        branchName: "paul-team-220",
+        dir: worktreeDir,
+        kind: "host",
+      }),
+    ).rejects.toThrow(/Could not verify .* is clean/);
 
     // The remove template never ran.
     expect(runCommandMock).not.toHaveBeenCalledWith("sh", expect.anything(), expect.anything());

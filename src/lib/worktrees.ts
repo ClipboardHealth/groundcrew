@@ -9,7 +9,7 @@
  * worktree-remove paired) so callers don't reach into git directly.
  */
 
-import { type Dirent, existsSync, readdirSync, rmSync } from "node:fs";
+import { type Dirent, existsSync, readdirSync, rmSync, statSync } from "node:fs";
 import { userInfo } from "node:os";
 import path from "node:path";
 
@@ -119,7 +119,7 @@ function assertWorkdirPresent(config: ResolvedConfig, entry: WorktreeEntry): voi
     return;
   }
   const launchDir = path.resolve(entry.dir, recipe.workdir);
-  if (!existsSync(launchDir)) {
+  if (!existsSync(launchDir) || !statSync(launchDir).isDirectory()) {
     throw new Error(
       `Configured workdir "${recipe.workdir}" not found in worktree ${entry.dir}; the create template must produce it (looked for ${launchDir}).`,
     );
@@ -457,7 +457,14 @@ async function removeScriptedWorktree(
   // Orphan/branch handling is delegated to the template (e.g. `graft rm`),
   // since groundcrew does not track the scripted clone.
   if (!options.force) {
-    await throwIfWorktreeDirty(entry, options.signal);
+    // Fail closed: if the dirtiness probe can't confirm the worktree is clean,
+    // do not let the remove template run — that would bypass the data-loss guard.
+    const dirtiness = await throwIfWorktreeDirty(entry, options.signal);
+    if (dirtiness.kind !== "clean") {
+      throw new Error(
+        `Could not verify ${entry.dir} is clean; rerun with --force after manual inspection.`,
+      );
+    }
   }
   const command = applySubstitutions(
     removeTemplate,

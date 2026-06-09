@@ -121,7 +121,7 @@ export async function setupWorkspace(
     promptDir = stagedPrompt.directory;
 
     const prepareWorktreeCommand = resolvePrepareWorktreeCommand({
-      worktreeDir,
+      worktreeDir: launchDir,
       defaultHooks: config.defaults.hooks,
     });
     const secretsFile =

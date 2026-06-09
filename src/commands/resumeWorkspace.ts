@@ -181,19 +181,22 @@ export async function resumeWorkspace(
   const secretsFile = stageBuildSecrets(stagedPrompt.directory);
   // Resume stages srt settings exactly like setup (a relocating agent such as
   // codex needs its config home re-seeded to authenticate on the resumed launch).
-  const { launchCommand, srtSettingsDir } = composeAgentLaunch({
-    runner,
-    task,
-    definition,
-    promptFile: stagedPrompt.file,
-    worktreeDir,
-    workingDir: launchDir,
-    secretsFile,
-    sandboxName,
-  });
-  const launchCmd = stageWorkspaceLaunchCommand(stagedPrompt.directory, launchCommand);
-
+  // Composition runs inside the try so a pre-launch failure still cleans up the
+  // staged prompt (and any srt settings) dir.
+  let srtSettingsDir: string | undefined;
   try {
+    let launchCommand: string;
+    ({ launchCommand, srtSettingsDir } = composeAgentLaunch({
+      runner,
+      task,
+      definition,
+      promptFile: stagedPrompt.file,
+      worktreeDir,
+      workingDir: launchDir,
+      secretsFile,
+      sandboxName,
+    }));
+    const launchCmd = stageWorkspaceLaunchCommand(stagedPrompt.directory, launchCommand);
     await openAgentWorkspace({
       config,
       name: task,
