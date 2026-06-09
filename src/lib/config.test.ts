@@ -358,6 +358,21 @@ describe("loadConfig", () => {
     expect(actual.agents.definitions["cursor"]).toStrictEqual({ cmd: "cursor", color: "#abc" });
   });
 
+  it("rejects a config that still uses the old `models` key", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      [
+        "export default {",
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        `  models: { default: "claude", definitions: { claude: { cmd: "claude", color: "#fff" } } },`,
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(/rename `models` to `agents`/);
+  });
+
   it("rejects legacy agents.isolation config", async () => {
     const configPath = writeConfigFile(
       temporary,

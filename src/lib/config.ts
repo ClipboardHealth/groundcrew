@@ -926,6 +926,9 @@ function applyDefaults(user: Config): ResolvedConfig {
   failOnLegacyLinearShape(rawUser);
   failOnRemovedSandboxSettings(rawUser);
   requireObject(user.workspace, "workspace");
+  if (Object.hasOwn(rawUser, "models")) {
+    fail("configuration migration required: rename `models` to `agents` in crew.config.ts");
+  }
   if (isPlainObject(user.agents) && Object.hasOwn(user.agents, "isolation")) {
     fail(
       "agents.isolation is no longer supported: set `local.runner` ('safehouse' | 'sdx' | 'none' | 'auto') instead",
