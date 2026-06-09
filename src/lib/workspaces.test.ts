@@ -1081,7 +1081,7 @@ describe(resolveWorkspaceKind, () => {
   });
 });
 
-const ZELLIJ_TAB_MAP = path.join(tmpdir(), "groundcrew-zellij-test-tabs.json");
+const ZELLIJ_TAB_DIR = path.join(tmpdir(), "groundcrew-zellij-test-tabs");
 const ZELLIJ_EXIT_DIR = path.join(tmpdir(), "groundcrew-zellij-test-exited");
 
 function makeZellijHost(): HostCapabilities {
@@ -1106,12 +1106,12 @@ describe("workspaces.open (zellij)", () => {
   beforeEach(() => {
     commonBeforeEach();
     detectHostMock.mockResolvedValue(makeZellijHost());
-    setEnvironmentVariable("GROUNDCREW_ZELLIJ_TAB_MAP", ZELLIJ_TAB_MAP);
-    rmSync(ZELLIJ_TAB_MAP, { force: true });
+    setEnvironmentVariable("GROUNDCREW_ZELLIJ_TAB_DIR", ZELLIJ_TAB_DIR);
+    rmSync(ZELLIJ_TAB_DIR, { recursive: true, force: true });
   });
   afterEach(() => {
-    deleteEnvironmentVariable("GROUNDCREW_ZELLIJ_TAB_MAP");
-    rmSync(ZELLIJ_TAB_MAP, { force: true });
+    deleteEnvironmentVariable("GROUNDCREW_ZELLIJ_TAB_DIR");
+    rmSync(ZELLIJ_TAB_DIR, { recursive: true, force: true });
     commonAfterEach();
   });
 
@@ -1225,12 +1225,12 @@ describe("workspaces.close (zellij)", () => {
   beforeEach(() => {
     commonBeforeEach();
     detectHostMock.mockResolvedValue(makeZellijHost());
-    setEnvironmentVariable("GROUNDCREW_ZELLIJ_TAB_MAP", ZELLIJ_TAB_MAP);
-    rmSync(ZELLIJ_TAB_MAP, { force: true });
+    setEnvironmentVariable("GROUNDCREW_ZELLIJ_TAB_DIR", ZELLIJ_TAB_DIR);
+    rmSync(ZELLIJ_TAB_DIR, { recursive: true, force: true });
   });
   afterEach(() => {
-    deleteEnvironmentVariable("GROUNDCREW_ZELLIJ_TAB_MAP");
-    rmSync(ZELLIJ_TAB_MAP, { force: true });
+    deleteEnvironmentVariable("GROUNDCREW_ZELLIJ_TAB_DIR");
+    rmSync(ZELLIJ_TAB_DIR, { recursive: true, force: true });
     commonAfterEach();
   });
 

@@ -45,13 +45,19 @@ const ZELLIJ_SESSION = "groundcrew";
 const ZELLIJ_MAIN_TAB = "main";
 
 // zellij sessions are per-user and die on reboot, matching tmpdir lifetime —
-// so a tmpdir-backed ticket -> stable-tab-id map stays in sync with reality.
-// Overridable via env so tests can isolate it.
-function tabIdMapPath(): string {
+// so a tmpdir-backed ticket -> stable-tab-id record stays in sync with reality.
+// One file per ticket (rather than a shared JSON map) avoids a read-modify-write
+// that concurrent open/close calls could lose or truncate. Overridable via env
+// so tests can isolate it.
+function tabIdDir(): string {
   return (
-    readEnvironmentVariable("GROUNDCREW_ZELLIJ_TAB_MAP") ??
-    path.join(tmpdir(), "groundcrew-zellij-tabs.json")
+    readEnvironmentVariable("GROUNDCREW_ZELLIJ_TAB_DIR") ??
+    path.join(tmpdir(), "groundcrew-zellij-tabs")
   );
+}
+
+function tabIdPath(name: string): string {
+  return path.join(tabIdDir(), name.replaceAll(/[^a-zA-Z0-9_-]/g, "_"));
 }
 
 // zellij exposes no headless way to read a tab's command-exit state (dump-layout
@@ -238,19 +244,22 @@ function parseTabNames(output: string): Workspace[] {
 }
 
 function parseTabId(output: string): number | undefined {
-  const match = /\d+/.exec(output);
-  return match ? Number(match[0]) : undefined;
+  // `new-tab` prints just the stable id; require the whole output to be that
+  // integer so we never latch onto a stray number from an unexpected message.
+  const trimmed = output.trim();
+  return /^\d+$/.test(trimmed) ? Number(trimmed) : undefined;
 }
 
 function isZellijMissingError(error: unknown): boolean {
   // zellij phrases a missing/absent session several ways depending on whether
   // other sessions exist: "Session 'groundcrew' not found", "There is no
-  // active session!", or "No active zellij sessions found".
+  // active session!", or "No active zellij sessions found". Scope the generic
+  // "not found" to our session so unrelated zellij errors aren't swallowed.
   const message = errorMessage(error).toLowerCase();
   return (
-    message.includes("not found") ||
     message.includes("no active session") ||
-    message.includes("no active zellij sessions")
+    message.includes("no active zellij sessions") ||
+    (message.includes("not found") && message.includes(ZELLIJ_SESSION))
   );
 }
 
@@ -341,42 +350,27 @@ function stageTabLayout(ticket: string, command: string): string {
   return file;
 }
 
-// --- ticket -> stable tab id map (sidecar; see file header) ------------------
-
-function readTabIdMap(): Record<string, number> {
-  try {
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- we wrote this file ourselves
-    const parsed = JSON.parse(readFileSync(tabIdMapPath(), "utf8")) as Record<string, number>;
-    return typeof parsed === "object" && parsed !== null ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function writeTabIdMap(map: Record<string, number>): void {
-  try {
-    writeFileSync(tabIdMapPath(), JSON.stringify(map));
-  } catch (error) {
-    debug(`zellij: failed to persist tab id map: ${errorMessage(error)}`);
-  }
-}
+// --- ticket -> stable tab id (one file per ticket; see tabIdDir) -------------
 
 function rememberTabId(name: string, id: number): void {
-  const map = readTabIdMap();
-  map[name] = id;
-  writeTabIdMap(map);
+  try {
+    mkdirSync(tabIdDir(), { recursive: true });
+    writeFileSync(tabIdPath(name), String(id));
+  } catch (error) {
+    debug(`zellij: failed to persist tab id for ${name}: ${errorMessage(error)}`);
+  }
 }
 
 function lookupTabId(name: string): number | undefined {
-  return readTabIdMap()[name];
+  let id: number;
+  try {
+    id = Number(readFileSync(tabIdPath(name), "utf8").trim());
+  } catch {
+    return undefined;
+  }
+  return Number.isInteger(id) ? id : undefined;
 }
 
 function forgetTabId(name: string): void {
-  const map = readTabIdMap();
-  /* v8 ignore else @preserve -- forgetTabId only runs after lookupTabId found the id */
-  if (name in map) {
-    // oxlint-disable-next-line typescript/no-dynamic-delete -- ticket-keyed map
-    delete map[name];
-    writeTabIdMap(map);
-  }
+  rmSync(tabIdPath(name), { force: true });
 }

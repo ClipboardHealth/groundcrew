@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -96,26 +96,31 @@ const spec = { name: "team-1", cwd: "/work/repo-a-team-1", command: "exec claude
 
 describe("zellij workspace adapter", () => {
   let work: string;
-  let mapFile: string;
+  let tabDir: string;
   let exitDir: string;
 
   beforeEach(() => {
     runMock.mockReset().mockReturnValue("");
     work = mkdtempSync(path.join(tmpdir(), "zellij-adapter-test-"));
-    mapFile = path.join(work, "tabs.json");
+    tabDir = path.join(work, "tabs");
     exitDir = path.join(work, "exited");
-    setEnvironmentVariable("GROUNDCREW_ZELLIJ_TAB_MAP", mapFile);
+    setEnvironmentVariable("GROUNDCREW_ZELLIJ_TAB_DIR", tabDir);
     setEnvironmentVariable("GROUNDCREW_ZELLIJ_EXIT_DIR", exitDir);
     setLogFile(undefined);
   });
 
   afterEach(() => {
-    deleteEnvironmentVariable("GROUNDCREW_ZELLIJ_TAB_MAP");
+    deleteEnvironmentVariable("GROUNDCREW_ZELLIJ_TAB_DIR");
     deleteEnvironmentVariable("GROUNDCREW_ZELLIJ_EXIT_DIR");
     setLogFile(undefined);
     rmSync(work, { recursive: true, force: true });
     vi.resetAllMocks();
   });
+
+  function writeTabId(name: string, id: string): void {
+    mkdirSync(tabDir, { recursive: true });
+    writeFileSync(path.join(tabDir, name), id);
+  }
 
   describe("accessHint", () => {
     it("returns the session attach command", () => {
@@ -225,10 +230,10 @@ describe("zellij workspace adapter", () => {
       expect(runMock).toHaveBeenCalledWith("zellij", expect.arrayContaining([ATTACH]));
     });
 
-    it("swallows a failure to persist the tab id map", async () => {
-      // Point the map at a path under a regular file so the write throws.
+    it("swallows a failure to persist the tab id", async () => {
+      // Point the tab-id dir under a regular file so the write throws.
       writeFileSync(path.join(work, "blocker"), "");
-      setEnvironmentVariable("GROUNDCREW_ZELLIJ_TAB_MAP", path.join(work, "blocker", "tabs.json"));
+      setEnvironmentVariable("GROUNDCREW_ZELLIJ_TAB_DIR", path.join(work, "blocker", "tabs"));
       runMock.mockImplementation(
         routeOk({ [LIST_SESSIONS]: "groundcrew [Created]", [NEW_TAB]: "9" }),
       );
@@ -240,8 +245,8 @@ describe("zellij workspace adapter", () => {
   describe("list", () => {
     it("returns ticket tabs and marks the ones with exit markers", async () => {
       runMock.mockImplementation(routeOk({ [QUERY]: "main\ndevop-1\ndevop-2" }));
-      // Open devop-1 first so its tab + a manual exit marker exist.
       await zellijAdapter.open({ ...spec, name: "devop-1" });
+      mkdirSync(exitDir, { recursive: true });
       writeFileSync(path.join(exitDir, "devop-1"), "");
 
       await expect(zellijAdapter.list()).resolves.toStrictEqual([
@@ -271,7 +276,7 @@ describe("zellij workspace adapter", () => {
 
   describe("close", () => {
     it("closes the tab by its tracked id", async () => {
-      writeFileSync(mapFile, '{"team-1":5}');
+      writeTabId("team-1", "5");
 
       await expect(zellijAdapter.close("team-1")).resolves.toStrictEqual({ kind: "closed" });
       expect(runMock).toHaveBeenCalledWith("zellij", [
@@ -284,27 +289,25 @@ describe("zellij workspace adapter", () => {
     });
 
     it("returns missing when no tab id is tracked", async () => {
-      writeFileSync(mapFile, "{}");
+      await expect(zellijAdapter.close("team-1")).resolves.toStrictEqual({ kind: "missing" });
+    });
+
+    it("ignores a non-integer id record", async () => {
+      writeTabId("team-1", "not-a-number");
 
       await expect(zellijAdapter.close("team-1")).resolves.toStrictEqual({ kind: "missing" });
     });
 
-    it("falls back to the default tab-id map path when the env override is unset", async () => {
-      deleteEnvironmentVariable("GROUNDCREW_ZELLIJ_TAB_MAP");
+    it("falls back to the default tab-id dir when the env override is unset", async () => {
+      deleteEnvironmentVariable("GROUNDCREW_ZELLIJ_TAB_DIR");
 
       await expect(zellijAdapter.close("unopened-ticket-xyz")).resolves.toStrictEqual({
         kind: "missing",
       });
     });
 
-    it("treats a non-object map as empty", async () => {
-      writeFileSync(mapFile, "null");
-
-      await expect(zellijAdapter.close("team-1")).resolves.toStrictEqual({ kind: "missing" });
-    });
-
     it("returns missing when close-tab-by-id reports the session is gone", async () => {
-      writeFileSync(mapFile, '{"team-1":5}');
+      writeTabId("team-1", "5");
       runMock.mockImplementation(
         routeThrow(CLOSE_BY_ID, new Error("Session 'groundcrew' not found")),
       );
@@ -313,14 +316,14 @@ describe("zellij workspace adapter", () => {
     });
 
     it("rethrows an unknown close failure", async () => {
-      writeFileSync(mapFile, '{"team-1":5}');
+      writeTabId("team-1", "5");
       runMock.mockImplementation(routeThrow(CLOSE_BY_ID, new Error("boom")));
 
       await expect(zellijAdapter.close("team-1")).rejects.toThrow("boom");
     });
 
     it("rethrows when the close is aborted", async () => {
-      writeFileSync(mapFile, '{"team-1":5}');
+      writeTabId("team-1", "5");
       runMock.mockImplementation(routeThrow(CLOSE_BY_ID, new Error("interrupted")));
 
       await expect(zellijAdapter.close("team-1", aborted())).rejects.toThrow("interrupted");
