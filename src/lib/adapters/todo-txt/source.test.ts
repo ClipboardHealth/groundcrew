@@ -14,7 +14,7 @@ const fakeContext: AdapterContext = { globalConfig: {} as ResolvedConfig };
 const contextWithModels: AdapterContext = {
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- partial config sufficient for agent validation tests
   globalConfig: {
-    models: {
+    agents: {
       default: "claude",
       definitions: { claude: { cmd: "claude", color: "#fff" } },
     },

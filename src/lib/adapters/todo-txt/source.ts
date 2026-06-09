@@ -3,7 +3,7 @@ import { appendFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from
 import path from "node:path";
 
 import type { AdapterContext } from "../../adapterDefinition.ts";
-import { AGENT_ANY_MODEL } from "../../config.ts";
+import { AGENT_ANY } from "../../config.ts";
 import {
   type CreateTaskInput,
   type Issue,
@@ -306,11 +306,11 @@ export function createTodoTxtTaskSource(
   const { todoPath, tasksDir } = config;
 
   const knownAgents =
-    context.globalConfig.models === undefined
+    context.globalConfig.agents === undefined
       ? undefined
       : new Set([
-          AGENT_ANY_MODEL,
-          ...Object.keys(context.globalConfig.models.definitions).map((k) => k.toLowerCase()),
+          AGENT_ANY,
+          ...Object.keys(context.globalConfig.agents.definitions).map((k) => k.toLowerCase()),
         ]);
 
   function listTasks(): Issue[] {
