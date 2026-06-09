@@ -278,7 +278,7 @@ describe(classifyEligibility, () => {
         }),
       );
 
-      expect(verdicts[0]).toMatchObject({ kind: "skip", eventReason: "model_exhausted" });
+      expect(verdicts[0]).toMatchObject({ kind: "skip", eventReason: "agent_exhausted" });
     });
   });
 

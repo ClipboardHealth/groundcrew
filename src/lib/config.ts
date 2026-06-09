@@ -1016,7 +1016,7 @@ function validate(config: ResolvedConfig): void {
   if (Object.keys(definitions).length === 0) {
     fail("agents.definitions must contain at least one agent");
   }
-  if (AGENT_ANY in definitions) {
+  if (Object.hasOwn(definitions, AGENT_ANY)) {
     fail(
       `agents.definitions cannot contain "${AGENT_ANY}" — it is reserved for the agent-any label, which routes to the agent with the most available session capacity`,
     );
@@ -1066,7 +1066,7 @@ function validate(config: ResolvedConfig): void {
       `agents.default ("${config.agents.default}") is not enabled. Add \`agents.definitions.${config.agents.default}: {}\` or set agents.default to an enabled agent.`,
     );
   }
-  if (!(config.agents.default in definitions)) {
+  if (!Object.hasOwn(definitions, config.agents.default)) {
     fail(
       `agents.default ("${config.agents.default}") is not a key in agents.definitions (have: ${Object.keys(definitions).join(", ")})`,
     );

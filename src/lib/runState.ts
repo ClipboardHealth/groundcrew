@@ -84,7 +84,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function stringField(value: Record<string, unknown>, key: keyof RunState): string | undefined {
+function stringField(value: Record<string, unknown>, key: string): string | undefined {
   const field = value[key];
   return typeof field === "string" && field.length > 0 ? field : undefined;
 }
@@ -104,7 +104,7 @@ function parseRunState(value: unknown): RunState | undefined {
   }
   const task = stringField(value, "task");
   const repository = stringField(value, "repository");
-  const agent = stringField(value, "agent");
+  const agent = stringField(value, "agent") ?? stringField(value, "model");
   const worktreeDir = stringField(value, "worktreeDir");
   const branchName = stringField(value, "branchName");
   const workspaceName = stringField(value, "workspaceName");

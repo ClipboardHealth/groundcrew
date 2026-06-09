@@ -22,7 +22,7 @@ type SkipReason =
   | "blocked"
   | "blockers_paginated"
   | "agent_any_capacity"
-  | "model_exhausted"
+  | "agent_exhausted"
   | "workspace_list_unavailable"
   | "workspace_missing";
 
@@ -82,7 +82,7 @@ export interface ClassifyArguments {
   worktreeEntries: readonly WorktreeEntry[];
   workspaceProbe: WorkspaceProbe;
   usage: UsageByAgent;
-  /** Models flagged over `sessionLimitPercentage`. */
+  /** Agents flagged over `sessionLimitPercentage`. */
   exhausted: Set<string>;
   /** Maximum number of `start` verdicts to produce. */
   slots: number;
@@ -126,7 +126,7 @@ function blockerVerdictFor(issue: GroundcrewIssue): SkipVerdict | undefined {
 
 /**
  * Pick the configured agent with the most available session capacity.
- * Models flagged exhausted (over `sessionLimitPercentage`) are excluded.
+ * Agents flagged exhausted (over `sessionLimitPercentage`) are excluded.
  * Score is `usage[agent].session` with `null`/missing treated as 0
  * (maximum headroom), so when no usage data is available every agent
  * ties at 0 and the default agent wins the tiebreak — `agent-any` then
@@ -310,7 +310,7 @@ export function classifyEligibility(arguments_: ClassifyArguments): Verdict[] {
         kind: "skip",
         issue: resolved,
         message: `Skipping ${resolved.id} (${resolved.agent} session exhausted)`,
-        eventReason: "model_exhausted",
+        eventReason: "agent_exhausted",
         agent: resolved.agent,
       });
       continue;

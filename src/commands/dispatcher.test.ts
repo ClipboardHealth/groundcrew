@@ -814,7 +814,7 @@ describe(createDispatcher, () => {
       expect(consoleLog.output()).toContain("claude weekly at 20.0% (> 14.3% paced budget)");
       expect(consoleLog.output()).toContain(`resets in ${dayEnd(1)}m`);
       expect(consoleLog.output()).toContain(
-        "event=dispatch outcome=skipped reason=model_exhausted",
+        "event=dispatch outcome=skipped reason=agent_exhausted",
       );
     });
 

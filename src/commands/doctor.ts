@@ -94,7 +94,7 @@ function checkDir(path: string, label: string): Check {
 }
 
 /**
- * Tokens worth checking against PATH from a agent's `cmd`:
+ * Tokens worth checking against PATH from an agent's `cmd`:
  * the executable name (first non-flag token), and any subsequent
  * non-flag, non-flag-value token until a flag is hit. Flag tokens are
  * dropped along with the token immediately following them (treated as
@@ -232,12 +232,12 @@ export async function doctor(): Promise<boolean> {
   if (usageGatedAgents.length > 0) {
     const codexbarPath = await which("codexbar");
     if (codexbarPath === undefined) {
-      const modelList = usageGatedAgents.map((name) => `\`${name}\``).join(", ");
+      const agentList = usageGatedAgents.map((name) => `\`${name}\``).join(", ");
       checks.push({
         name: "codexbar",
         ok: false,
         required: true,
-        hint: `required for usage gating on ${modelList} — install codexbar, or set \`agents.definitions.<name>.usage\` to disable gating`,
+        hint: `required for usage gating on ${agentList} — install codexbar, or set \`agents.definitions.<name>.usage\` to disable gating`,
       });
     } else {
       checks.push({ name: "codexbar", ok: true, required: true, hint: codexbarPath });

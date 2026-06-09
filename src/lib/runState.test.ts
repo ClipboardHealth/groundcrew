@@ -311,6 +311,26 @@ describe("run state store", () => {
     expect(readRunState(config, "team-1")).toBeUndefined();
   });
 
+  it("reads the legacy `model` field when `agent` is absent", () => {
+    mkdirSync(path.dirname(runStatePath(config, "team-1")), { recursive: true });
+    writeFileSync(
+      runStatePath(config, "team-1"),
+      JSON.stringify({
+        task: "team-1",
+        repository: "repo-a",
+        model: "claude",
+        worktreeDir: "/work/repo-a-team-1",
+        branchName: "dev-team-1",
+        workspaceName: "team-1",
+        state: "running",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        resumeCount: 0,
+      }),
+    );
+    expect(readRunState(config, "team-1")).toMatchObject({ agent: "claude" });
+  });
+
   it("accepts multi-segment source task ids", () => {
     expect(runStatePath(config, "gc-20260608-001")).toBe(
       path.join(stateRoot, "runs", "gc-20260608-001.json"),
