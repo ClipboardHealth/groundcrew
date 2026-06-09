@@ -18,7 +18,7 @@ crew task get GC-20260608-001 --source todo
 crew task get todo:GC-20260608-001 --prompt
 ```
 
-`crew task create "Short title" --source <source> --agent <agent>` creates a task in a source that supports creation. Todo.txt creation appends the todo line, defaults to priority `A` unless `--priority` is provided, writes `.tasks/<id>.md`, and leaves `status:todo` as the final meaningful token, so no separate ready command is required.
+`crew task create "Short title" --source <source> [--agent <agent>]` creates a task in a source that supports creation. When `--agent` is omitted, it defaults to `any`. Todo.txt creation appends the todo line, defaults to priority `A` unless `--priority` is provided, writes `.tasks/<id>.md`, and leaves `status:todo` as the final meaningful token, so no separate ready command is required. Hand-written todo-txt lines can omit `.tasks/<id>.md` when the line has a non-empty title; that title becomes the prompt text.
 
 ```bash
 crew task create "Fix cancellation retry race" \

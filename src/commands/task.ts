@@ -1,5 +1,5 @@
 import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
-import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
+import { AGENT_ANY_MODEL, loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import {
   type CanonicalStatus,
   type CreateTaskInput,
@@ -35,7 +35,7 @@ Options:
   --json           Print normalized task JSON.
   --prompt         Print only the task description/prompt.`;
 
-const CREATE_USAGE = `Usage: crew task create "Short title" --source <source> --agent <agent> [options]`;
+const CREATE_USAGE = `Usage: crew task create "Short title" --source <source> [--agent <agent>] [options]`;
 
 const CANONICAL_STATUSES: readonly CanonicalStatus[] = [
   "todo",
@@ -328,13 +328,9 @@ function parseCreateOptions(argv: readonly string[]): CreateOptions {
   if (state.sourceName === undefined) {
     throw new Error("crew task create: --source is required");
   }
-  if (state.agent === undefined) {
-    throw new Error("crew task create: --agent is required");
-  }
-
   const input: CreateTaskInput = {
     title,
-    agent: state.agent,
+    agent: state.agent ?? AGENT_ANY_MODEL,
     projects: state.projects,
     contexts: state.contexts,
     dependencies: state.dependencies,

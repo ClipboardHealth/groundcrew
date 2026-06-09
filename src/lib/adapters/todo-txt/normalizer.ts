@@ -1,5 +1,6 @@
 import path from "node:path";
 
+import { AGENT_ANY_MODEL } from "../../config.ts";
 import { type Blocker, type CanonicalStatus, type Issue, toCanonicalId } from "../../taskSource.ts";
 import { getMetadataAll, getMetadataFirst, hashLine, type ParsedTodoLine } from "./parser.ts";
 
@@ -104,7 +105,7 @@ export function normalizeToIssue(options: NormalizeOptions): Issue | undefined {
     return undefined;
   }
 
-  const agent = getMetadataFirst(parsed, "agent");
+  const agent = getMetadataFirst(parsed, "agent") ?? AGENT_ANY_MODEL;
   const status = derivedCanonicalStatus(parsed);
   const repository = getMetadataFirst(parsed, "repo") ?? defaultRepository;
 
@@ -146,9 +147,6 @@ export function isActiveForFetch(parsed: ParsedTodoLine): boolean {
     return false;
   }
   if (getMetadataFirst(parsed, "id") === undefined) {
-    return false;
-  }
-  if (getMetadataFirst(parsed, "agent") === undefined) {
     return false;
   }
   const statusValue = getMetadataFirst(parsed, "status");

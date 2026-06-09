@@ -450,6 +450,15 @@ describe("TodoTxtTaskSource", () => {
     expect(issues[0]?.model).toBe("any");
   });
 
+  it("defaults missing agent metadata to agent-any", async () => {
+    tmp.writeTodo("Task seven id:GC-007 status:todo\n");
+
+    const source = makeSource(tmp);
+    const issues = await source.fetch();
+
+    expect(issues[0]?.model).toBe("any");
+  });
+
   // Test 8: Default repository from config when no repo:
   it("defaults repository from config when no repo: field", async () => {
     tmp.writeTodo("id:GC-008 agent:codex status:todo Task eight\n");
@@ -686,13 +695,13 @@ describe("TodoTxtTaskSource", () => {
     expect(issues[0]?.priority).toBe(1);
   });
 
-  it("sets description to empty string when no prompt file exists", async () => {
-    tmp.writeTodo("id:NO-PROMPT agent:codex status:todo No prompt task\n");
+  it("uses title as description when no prompt file exists", async () => {
+    tmp.writeTodo("No prompt task id:NO-PROMPT agent:codex status:todo\n");
 
     const source = makeSource(tmp);
     const issues = await source.fetch();
 
-    expect(issues[0]?.description).toBe("");
+    expect(issues[0]?.description).toBe("No prompt task\n");
   });
 
   it("canonicalId is todo:<lowercased-id>", async () => {
@@ -861,8 +870,13 @@ describe("TodoTxtTaskSource", () => {
     );
   });
 
-  it("verify() catches missing prompt file for ready task", async () => {
-    // Ready task (status:todo final token) with no .tasks/<id>.md
+  it("verify() allows a title-only ready task without a prompt file", async () => {
+    tmp.writeTodo("Say goodbye repo:groundcrew id:rrr agent:any status:todo\n");
+    const source = makeSource(tmp);
+    await expect(source.verify()).resolves.toBeUndefined();
+  });
+
+  it("verify() catches missing prompt file for ready task without a title", async () => {
     tmp.writeTodo("id:GC-MP agent:codex status:todo\n"); // no task file created
     const source = makeSource(tmp);
     await expect(source.verify()).rejects.toThrow(/missing prompt file/);
@@ -965,13 +979,13 @@ describe("TodoTxtTaskSource", () => {
     expect(hasDep?.blockers[0]?.title).toBe("NO-TITLE-DEP");
   });
 
-  it("isActiveForFetch returns false for task with id but no agent", async () => {
-    tmp.writeTodo("id:NO-AGENT-001 status:todo Task with no agent\n");
+  it("fetch defaults a task with id but no agent to agent-any", async () => {
+    tmp.writeTodo("Task with no agent id:NO-AGENT-001 status:todo\n");
 
     const source = makeSource(tmp);
     const issues = await source.fetch();
 
-    expect(issues.find((i) => i.id === "todo:no-agent-001")).toBeUndefined();
+    expect(issues.find((i) => i.id === "todo:no-agent-001")?.model).toBe("any");
   });
 
   it("blocker resolution skips null and no-id lines in file", async () => {

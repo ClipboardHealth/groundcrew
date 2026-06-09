@@ -363,17 +363,21 @@ function validatePromptFile(
   tasksDir: string,
   id: string,
   promptOverride: string | undefined,
+  title: string,
   prefix: string,
   errors: string[],
 ): void {
   const promptPath = promptOverride ?? path.join(tasksDir, `${id}.md`);
+  const shouldRequirePrompt = promptOverride !== undefined || title.trim().length === 0;
   try {
     const desc = readFileSync(promptPath, "utf8");
-    if (desc.trim().length === 0) {
+    if (desc.trim().length === 0 && shouldRequirePrompt) {
       errors.push(`${prefix}: empty prompt file "${promptPath}" for ready task "${id}"`);
     }
   } catch {
-    errors.push(`${prefix}: missing prompt file "${promptPath}" for ready task "${id}"`);
+    if (shouldRequirePrompt) {
+      errors.push(`${prefix}: missing prompt file "${promptPath}" for ready task "${id}"`);
+    }
   }
 }
 
@@ -439,7 +443,7 @@ function validateActiveTaskLine(
   }
 
   if (statusValue === "todo" && parsed.isStatusFinalToken) {
-    validatePromptFile(tasksDir, id, parsed.metadata["prompt"]?.[0], prefix, errors);
+    validatePromptFile(tasksDir, id, parsed.metadata["prompt"]?.[0], parsed.title, prefix, errors);
   }
 
   validateDepsAndDates(parsed, parsedAll, id, prefix, errors);
@@ -476,7 +480,7 @@ export function validateTodoFile(todoPath: string, tasksDir: string): string[] {
       }
     }
 
-    if (id === undefined || parsed.metadata["agent"] === undefined) {
+    if (id === undefined) {
       continue;
     }
     if (parsed.completed) {

@@ -13,19 +13,30 @@ import {
 } from "../../taskSource.ts";
 import { readEnvironmentVariable } from "../../util.ts";
 import { isActiveForFetch, normalizeToIssue, type TodoTxtSourceRef } from "./normalizer.ts";
-import { getMetadataFirst, parseAllLines } from "./parser.ts";
+import { getMetadataFirst, parseAllLines, type ParsedTodoLine } from "./parser.ts";
 import type { TodoTxtAdapterConfig } from "./schema.ts";
 import { copyPromptFile, updateTaskStatus, validateTodoFile, withLock } from "./writeback.ts";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const RECURRENCE_RE = /^\+?\d+[dwmy]$/;
 
-function readDescription(promptPath: string): string {
+function readPromptFile(promptPath: string): string | undefined {
   try {
     return readFileSync(promptPath, "utf8");
   } catch {
-    return "";
+    return undefined;
   }
+}
+
+function descriptionFor(parsed: ParsedTodoLine, promptPath: string): string {
+  const promptContent = readPromptFile(promptPath);
+  if (promptContent !== undefined && promptContent.trim().length > 0) {
+    return promptContent;
+  }
+  if (parsed.title.trim().length > 0) {
+    return `${parsed.title}\n`;
+  }
+  return promptContent ?? "";
 }
 
 function fileUpdatedAt(filePath: string): string {
@@ -76,7 +87,7 @@ function buildIssue(options: {
 
   const promptOverride = getMetadataFirst(parsed, "prompt");
   const promptPath = promptOverride ?? `${tasksDir}/${id}.md`;
-  const description = readDescription(promptPath);
+  const description = descriptionFor(parsed, promptPath);
 
   return normalizeToIssue({
     parsed,

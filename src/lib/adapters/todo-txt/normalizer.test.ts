@@ -54,6 +54,10 @@ describe(normalizeToIssue, () => {
   it("leaves repository undefined when neither task nor source provides one", () => {
     expect(normalize("No repo id:NO-REPO-1 agent:codex status:todo")?.repository).toBeUndefined();
   });
+
+  it("defaults missing agent metadata to agent-any", () => {
+    expect(normalize("No agent id:NO-AGENT-1 status:todo")?.model).toBe("any");
+  });
 });
 
 describe(isActiveForFetch, () => {
@@ -63,7 +67,7 @@ describe(isActiveForFetch, () => {
     { line: "Active review id:ACTIVE-3 agent:codex status:in-review", active: true },
     { line: "x 2026-06-08 Done id:DONE-1 agent:codex status:done", active: false },
     { line: "No id agent:codex status:todo", active: false },
-    { line: "No agent id:NO-AGENT-1 status:todo", active: false },
+    { line: "No agent id:NO-AGENT-1 status:todo", active: true },
     { line: "Unknown status id:UNKNOWN-1 agent:codex status:waiting", active: false },
   ])("returns $active for $line", ({ line, active }) => {
     expect(isActiveForFetch(parseOne(line))).toBe(active);

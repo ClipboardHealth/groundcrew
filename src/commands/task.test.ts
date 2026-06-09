@@ -476,6 +476,30 @@ describe("crew task create", () => {
     expect(log.output()).not.toContain("sourceRef");
   });
 
+  it("defaults omitted create agent to any", async () => {
+    const created = makeIssue({ id: "todo:any-1" });
+    const createTask = vi.fn<NonNullable<TaskSource["createTask"]>>().mockResolvedValue(created);
+    const todo = stubSource("todo", [], { createTask });
+    buildSourcesMock.mockResolvedValue([todo]);
+
+    const log = captureConsoleLog();
+    try {
+      await taskCli(["create", "Default agent", "--source", "todo"]);
+    } finally {
+      log.restore();
+    }
+
+    expect(createTask).toHaveBeenCalledWith({
+      title: "Default agent",
+      agent: "any",
+      projects: [],
+      contexts: [],
+      dependencies: [],
+      edit: false,
+    });
+    expect(log.output()).toBe("todo:any-1");
+  });
+
   it("fails when the source does not support creation", async () => {
     buildSourcesMock.mockResolvedValue([stubSource("todo", [])]);
 
@@ -487,7 +511,6 @@ describe("crew task create", () => {
   it.each([
     { argv: ["create"], message: "Quote multi-word titles" },
     { argv: ["create", "Missing source", "--agent", "codex"], message: "--source is required" },
-    { argv: ["create", "Missing agent", "--source", "todo"], message: "--agent is required" },
     {
       argv: ["create", "Unknown option", "--source", "todo", "--agent", "codex", "--bogus"],
       message: "unknown option",
