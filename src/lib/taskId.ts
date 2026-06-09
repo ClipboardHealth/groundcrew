@@ -1,4 +1,4 @@
-const PLAIN_TASK_ID_RE = /^[a-z][\da-z]*(?:-[\da-z]+)*-\d+$/;
+const PLAIN_TASK_ID_RE = /^[\da-z]+(?:-[\da-z]+)*$/;
 
 function invalidPlainTaskIdError(task: string): Error {
   return new Error(`Invalid task "${task}": must be a plain task id`);

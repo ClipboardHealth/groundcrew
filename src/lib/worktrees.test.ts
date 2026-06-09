@@ -181,6 +181,22 @@ describe(list, () => {
     ]);
   });
 
+  it("finds host sibling worktrees with single-segment todo-txt task ids", () => {
+    mkdirSync(path.join(projectDir, "repo-a"));
+    mkdirSync(path.join(projectDir, "repo-a-rrr"));
+    const config = makeConfig({ projectDir });
+
+    expect(list(config)).toStrictEqual([
+      {
+        repository: "repo-a",
+        task: "rrr",
+        branchName: "dev-rrr",
+        dir: path.join(projectDir, "repo-a-rrr"),
+        kind: "host",
+      },
+    ]);
+  });
+
   it("prefers the longest configured repository basename when names overlap", () => {
     mkdirSync(path.join(projectDir, "repo-a-admin-gc-20260608-001"));
     const config = makeConfig({
@@ -207,7 +223,7 @@ describe(list, () => {
   });
 
   it("ignores configured repository directories whose task segment is invalid", () => {
-    mkdirSync(path.join(projectDir, "repo-a-not-a-task"));
+    mkdirSync(path.join(projectDir, "repo-a-rrr-"));
     const config = makeConfig({ projectDir });
 
     expect(list(config)).toStrictEqual([]);
@@ -390,6 +406,45 @@ describe(create, () => {
     });
   });
 
+  it("creates worktrees for single-segment todo-txt task ids", async () => {
+    mkdirSync(path.join(projectDir, "repo-a"));
+    const config = makeConfig({ projectDir });
+    runCommandMock.mockImplementation((_command, arguments_) => {
+      // oxlint-disable-next-line vitest/no-conditional-in-test -- discriminator picks out the symbolic-ref probe so it returns origin/<branch>
+      if (hasArguments(arguments_, "symbolic-ref", "refs/remotes/origin/HEAD")) {
+        return "origin/main\n";
+      }
+      return "";
+    });
+
+    const actual = await create(config, {
+      repository: "repo-a",
+      task: "rrr",
+    });
+
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "git",
+      [
+        "-C",
+        path.join(projectDir, "repo-a"),
+        "worktree",
+        "add",
+        "-b",
+        "dev-rrr",
+        path.join(projectDir, "repo-a-rrr"),
+        "origin/main",
+      ],
+      { stdio: "captured", timeoutMs: 0 },
+    );
+    expect(actual).toMatchObject({
+      repository: "repo-a",
+      task: "rrr",
+      branchName: "dev-rrr",
+      dir: path.join(projectDir, "repo-a-rrr"),
+      kind: "host",
+    });
+  });
+
   it("streams git output (stdio inherit) under verbose", async () => {
     mkdirSync(path.join(projectDir, "repo-a"));
     const config = makeConfig({ projectDir });
@@ -544,10 +599,10 @@ describe(create, () => {
     ["backslash", String.raw`team\123`],
     ["embedded ..", "team-..-123"],
     ["traversal segment", `..${path.sep}evil`],
-    ["wrong shape — no digits", "team-abc"],
     ["wrong shape — uppercase", "TEAM-123"],
     ["wrong shape — trailing whitespace", "team-123 "],
-    ["wrong shape — plain word", "foo"],
+    ["wrong shape — leading hyphen", "-rrr"],
+    ["wrong shape — trailing hyphen", "rrr-"],
   ])("rejects invalid task %s", async (_label, task) => {
     mkdirSync(path.join(projectDir, "repo-a"));
     const config = makeConfig({ projectDir });
