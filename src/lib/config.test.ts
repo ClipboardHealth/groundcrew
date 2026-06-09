@@ -127,7 +127,7 @@ describe("loadConfig", () => {
 
     expect(actual.prompts.initial).toContain("There is no human watching this session");
     expect(actual.prompts.initial).toContain(
-      "Ticket description:\n\n<ticket_description>\n{{description}}\n</ticket_description>",
+      "## Task description\n\n<task_description>\n{{description}}\n</task_description>",
     );
     expect(actual.prompts.initial).toMatch(/documented verification/i);
     expect(actual.prompts.initial).toMatch(/open a PR/i);
