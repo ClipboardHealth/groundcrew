@@ -61,6 +61,8 @@ describe(normalizeToIssue, () => {
 });
 
 describe(isActiveForFetch, () => {
+  const today = "2026-06-08";
+
   it.each([
     { line: "Active todo id:ACTIVE-1 agent:codex status:todo", active: true },
     { line: "Active progress id:ACTIVE-2 agent:codex status:in-progress", active: true },
@@ -70,6 +72,35 @@ describe(isActiveForFetch, () => {
     { line: "No agent id:NO-AGENT-1 status:todo", active: true },
     { line: "Unknown status id:UNKNOWN-1 agent:codex status:waiting", active: false },
   ])("returns $active for $line", ({ line, active }) => {
-    expect(isActiveForFetch(parseOne(line))).toBe(active);
+    expect(isActiveForFetch(parseOne(line), today)).toBe(active);
+  });
+
+  it.each([
+    { name: "future threshold", line: "Deferred id:T-1 t:2026-06-09 status:todo", active: false },
+    { name: "threshold today", line: "Ready id:T-2 t:2026-06-08 status:todo", active: true },
+    { name: "past threshold", line: "Ready id:T-3 t:2026-06-01 status:todo", active: true },
+    { name: "malformed threshold", line: "Ready id:T-4 t:next-week status:todo", active: true },
+    {
+      name: "non-calendar threshold matching the date format",
+      line: "Ready id:T-7 t:2026-99-99 status:todo",
+      active: true,
+    },
+    {
+      name: "non-calendar day overflow threshold",
+      line: "Ready id:T-8 t:2026-12-32 status:todo",
+      active: true,
+    },
+    {
+      name: "future threshold but already in-progress",
+      line: "Started early id:T-5 t:2026-06-09 status:in-progress",
+      active: true,
+    },
+    {
+      name: "future threshold but already in-review",
+      line: "Reviewed early id:T-6 t:2026-06-09 status:in-review",
+      active: true,
+    },
+  ])("returns $active for $name", ({ line, active }) => {
+    expect(isActiveForFetch(parseOne(line), today)).toBe(active);
   });
 });

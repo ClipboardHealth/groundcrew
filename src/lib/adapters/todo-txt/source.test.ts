@@ -1124,6 +1124,68 @@ describe("TodoTxtTaskSource", () => {
     expect(recurResult?.newId).toBe("cleanup-20260608-002");
   });
 
+  it("fetch defers status:todo tasks whose t: threshold is in the future", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-08T12:00:00.000Z"));
+    tmp.writeTodo(
+      "Deferred task id:DEFER-1 agent:codex t:2026-06-09 status:todo\nReady task id:READY-1 agent:codex t:2026-06-08 status:todo\nPast threshold id:READY-2 agent:codex t:2026-06-01 status:todo\n",
+    );
+    tmp.writeTask("DEFER-1", "Deferred prompt.");
+    tmp.writeTask("READY-1", "Ready prompt.");
+    tmp.writeTask("READY-2", "Past prompt.");
+
+    const source = makeSource(tmp);
+    const issues = await source.fetch();
+
+    expect(issues.map((issue) => issue.id)).toStrictEqual(["todo:ready-1", "todo:ready-2"]);
+  });
+
+  it("fetch computes today in the configured timezone when deferring on t:", async () => {
+    // 2026-06-09T03:00Z is still 2026-06-08 in America/Chicago (UTC-5),
+    // so a t:2026-06-09 task is deferred there but ready in UTC.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-09T03:00:00.000Z"));
+    tmp.writeTodo("Deferred task id:TZ-1 agent:codex t:2026-06-09 status:todo\n");
+    tmp.writeTask("TZ-1", "Timezone prompt.");
+
+    const chicagoSource = createTodoTxtTaskSource(
+      {
+        kind: "todo-txt",
+        name: "todo",
+        todoPath: tmp.todoPath,
+        tasksDir: tmp.tasksDir,
+        idPrefix: "GC",
+        timezone: "America/Chicago",
+      },
+      fakeContext,
+    );
+    const utcSource = makeSource(tmp);
+
+    await expect(chicagoSource.fetch()).resolves.toHaveLength(0);
+    await expect(utcSource.fetch()).resolves.toHaveLength(1);
+  });
+
+  it("markDone with rec:+1w and t: but no due: advances the id using the new t:", async () => {
+    tmp.writeTodo(
+      "Weekly status id:status-20260601 agent:any t:2026-06-01 rec:+1w status:in-progress\n",
+    );
+    tmp.writeTask("status-20260601", "Status prompt.");
+
+    const source = makeSource(tmp);
+    const task = await source.resolveOne("status-20260601");
+
+    const { updateTaskStatus } = await import("./writeback.ts");
+    const now = new Date("2026-06-01T00:00:00Z");
+    const recurResult = await updateTaskStatus(
+      { todoPath: tmp.todoPath, ref: sourceRef(assertDefined(task, "task")), now },
+      "done",
+    );
+
+    const updated = readFileSync(tmp.todoPath, "utf8");
+    expect(updated).toContain("t:2026-06-08"); // t: advanced 1w from 2026-06-01
+    expect(recurResult?.newId).toBe("status-20260608");
+  });
+
   it("markDone with rec: task having t: threshold date advances it too", async () => {
     // rec:+1w strict: due advances from 2026-06-01 → 2026-06-08; t: advances from 2026-05-25 → 2026-06-01
     tmp.writeTodo(

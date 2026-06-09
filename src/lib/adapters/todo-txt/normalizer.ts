@@ -2,7 +2,13 @@ import path from "node:path";
 
 import { AGENT_ANY } from "../../config.ts";
 import { type Blocker, type CanonicalStatus, type Issue, toCanonicalId } from "../../taskSource.ts";
-import { getMetadataAll, getMetadataFirst, hashLine, type ParsedTodoLine } from "./parser.ts";
+import {
+  DATE_RE,
+  getMetadataAll,
+  getMetadataFirst,
+  hashLine,
+  type ParsedTodoLine,
+} from "./parser.ts";
 
 export interface TodoTxtSourceRef {
   sourceName: string;
@@ -142,7 +148,7 @@ export function normalizeToIssue(options: NormalizeOptions): Issue | undefined {
   };
 }
 
-export function isActiveForFetch(parsed: ParsedTodoLine): boolean {
+export function isActiveForFetch(parsed: ParsedTodoLine, todayIsoDate: string): boolean {
   if (parsed.completed) {
     return false;
   }
@@ -150,5 +156,30 @@ export function isActiveForFetch(parsed: ParsedTodoLine): boolean {
     return false;
   }
   const statusValue = getMetadataFirst(parsed, "status");
-  return statusValue === "todo" || statusValue === "in-progress" || statusValue === "in-review";
+  if (statusValue === "todo") {
+    return !isDeferredByThreshold(parsed, todayIsoDate);
+  }
+  return statusValue === "in-progress" || statusValue === "in-review";
+}
+
+// Per todo.txt convention, t: (threshold) hides a task until that date.
+// Only not-yet-started tasks defer; in-progress/in-review work must stay
+// visible so the orchestrator keeps tracking it. Malformed t: values are
+// surfaced by validate() and do not block dispatch.
+function isDeferredByThreshold(parsed: ParsedTodoLine, todayIsoDate: string): boolean {
+  const threshold = getMetadataFirst(parsed, "t");
+  if (threshold === undefined || !DATE_RE.test(threshold) || !isCalendarDate(threshold)) {
+    return false;
+  }
+  // ISO YYYY-MM-DD dates order lexicographically
+  return threshold > todayIsoDate;
+}
+
+// DATE_RE is format-only; non-calendar values like 2026-99-99 would compare
+// greater than any real date and defer the task forever.
+function isCalendarDate(value: string): boolean {
+  const monthIndex = Number(value.slice(5, 7)) - 1;
+  const day = Number(value.slice(8, 10));
+  const date = new Date(Date.UTC(Number(value.slice(0, 4)), monthIndex, day));
+  return date.getUTCMonth() === monthIndex && date.getUTCDate() === day;
 }

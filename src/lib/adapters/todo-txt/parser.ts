@@ -16,7 +16,7 @@ export interface ParsedTodoLine {
   readonly isStatusFinalToken: boolean;
 }
 
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+export const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const KEY_VALUE_RE = /^(?<key>[a-zA-Z][a-zA-Z0-9-]*):(?<value>\S+)$/;
 const PRIORITY_RE = /^\((?<priority>[A-Z])\) /;
 const PROJECT_RE = /^\+\S+$/;
