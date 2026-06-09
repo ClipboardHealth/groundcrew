@@ -9,7 +9,7 @@
 
 import type { Board } from "../lib/board.ts";
 import type { ResolvedConfig } from "../lib/config.ts";
-import { dispatchableRepository } from "../lib/repositoryValidation.ts";
+import { dispatchableRepository, formatKnownRepositories } from "../lib/repositoryValidation.ts";
 import {
   type BoardState,
   type GroundcrewIssue,
@@ -18,7 +18,7 @@ import {
   naturalIdFromCanonical,
 } from "../lib/taskSource.ts";
 import type { UsageByModel } from "../lib/usage.ts";
-import { errorMessage, failMark, log, logEvent } from "../lib/util.ts";
+import { errorMessage, failMark, log, logEvent, styleWarning } from "../lib/util.ts";
 import { type WorkspaceProbe, workspaces } from "../lib/workspaces.ts";
 import type { WorktreeEntry } from "../lib/worktrees.ts";
 import {
@@ -61,6 +61,26 @@ function logSkip(verdict: SkipVerdict): void {
     task: naturalIdFromCanonical(verdict.issue.id),
     blockers: verdict.blockers,
     model: verdict.model,
+  });
+}
+
+function logMissingRepositorySkip(
+  issue: Issue,
+  model: string,
+  knownRepositories: readonly string[],
+): void {
+  const task = naturalIdFromCanonical(issue.id);
+  log(
+    styleWarning(
+      `WARNING: ${issue.id} has agent "${model}" but no repository; skipping dispatch. Add --repo <repo> when creating the task, add repo:<repo> to the task line, or set defaultRepository on source "${issue.source}". Known repositories: ${formatKnownRepositories(knownRepositories)}`,
+    ),
+  );
+  logEvent("dispatch", {
+    outcome: "skipped",
+    reason: "missing_repository",
+    task,
+    source: issue.source,
+    model,
   });
 }
 
@@ -170,13 +190,19 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
       .toSorted((a, b) => a.id.localeCompare(b.id));
     const activeCount = active.length;
     const slots = config.orchestrator.maximumInProgress - activeCount;
-    // Narrow Todo to tasks that opted in via an `agent-*` label.
-    // Unlabeled tasks are not groundcrew's concern even when in Todo.
+    const rawTodo = state.issues.filter((issue) => issue.status === "todo");
+    for (const issue of rawTodo) {
+      const { model, repository } = issue;
+      if (model !== undefined && repository === undefined) {
+        logMissingRepositorySkip(issue, model, config.workspace.knownRepositories);
+      }
+    }
+
+    // Narrow queued work to tasks that opted in with an agent and resolved a
+    // repository. Unlabeled tasks are not groundcrew's concern.
     // Sort by priority so higher-priority tasks fill slots first.
-    const todo: readonly GroundcrewIssue[] = state.issues
-      .filter(
-        (issue): issue is GroundcrewIssue => issue.status === "todo" && isGroundcrewIssue(issue),
-      )
+    const todo: readonly GroundcrewIssue[] = rawTodo
+      .filter((issue): issue is GroundcrewIssue => isGroundcrewIssue(issue))
       .toSorted((a, b) => prioritySortKey(a.priority) - prioritySortKey(b.priority));
 
     if (slots <= 0) {
@@ -186,8 +212,12 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
       return;
     }
 
-    if (todo.length === 0) {
+    if (rawTodo.length === 0) {
       log(`No Todo tasks to pick up${idleSuffix}`);
+      return;
+    }
+    if (todo.length === 0) {
+      log(`No eligible Todo tasks after agent/repository filtering${idleSuffix}`);
       return;
     }
 

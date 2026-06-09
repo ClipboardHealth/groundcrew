@@ -16,6 +16,7 @@ import path from "node:path";
 import { runCommandAsync } from "./commandRunner.ts";
 import { type ResolvedConfig, repositoryBaseDir, worktreeBaseDir } from "./config.ts";
 import { resolveDefaultBranch } from "./defaultBranch.ts";
+import { assertPlainTaskId, isPlainTaskId } from "./taskId.ts";
 import { debug, errorMessage, isVerbose } from "./util.ts";
 import { type WorkspaceProbe, workspaces } from "./workspaces.ts";
 
@@ -39,7 +40,7 @@ export function isWorktreeAlreadyExistsError(error: unknown): error is WorktreeA
 
 export interface WorktreeEntry {
   repository: string;
-  /** Linear task id, lowercased — e.g. "team-220". */
+  /** Source task id, lowercased — e.g. "team-220" or "gc-20260608-001". */
   task: string;
   /** Slash-free `<prefix>-<task>`. */
   branchName: string;
@@ -51,9 +52,6 @@ export interface WorktreeSpec {
   repository: string;
   task: string;
 }
-
-const TASK_RE = /^[a-z][\da-z]*-\d+$/;
-const TASK_DIR_RE = /^(?<repoBasename>.+)-(?<task>[a-z][\da-z]*-\d+)$/;
 
 function branchPrefix(config: ResolvedConfig): string {
   const fromConfig = config.git.branchPrefix;
@@ -97,9 +95,7 @@ function basePaths(config: ResolvedConfig, repository: string, task: string): Ba
   // Tasks must match the same shape the worktree discovery regexes use,
   // so create()/list()/findByTask() agree on what's a valid worktree.
   // This also rejects traversal tokens before they reach path.resolve().
-  if (!TASK_RE.test(task)) {
-    throw new Error(`Invalid task "${task}": must be a plain task id`);
-  }
+  assertPlainTaskId(task);
 
   const repoDir = repoDirFor(config, repository);
   const hostWorktreeName = `${repository}-${task}`;
@@ -116,6 +112,26 @@ function basePaths(config: ResolvedConfig, repository: string, task: string): Ba
 
 function signalProperty(signal?: AbortSignal): { signal: AbortSignal } | Record<never, never> {
   return signal === undefined ? {} : { signal };
+}
+
+function parseWorktreeDirectoryName(
+  directoryName: string,
+  repositoryEntriesByLongestName: readonly (readonly [string, string])[],
+): { repository: string; task: string } | undefined {
+  // Match the longest repository basename first so overlapping names like
+  // "repo-a" and "repo-a-admin" parse to the intended repository.
+  for (const [repositoryBaseName, repository] of repositoryEntriesByLongestName) {
+    const worktreePrefix = `${repositoryBaseName}-`;
+    if (!directoryName.startsWith(worktreePrefix)) {
+      continue;
+    }
+    const task = directoryName.slice(worktreePrefix.length);
+    if (!isPlainTaskId(task)) {
+      continue;
+    }
+    return { repository, task };
+  }
+  return undefined;
 }
 
 /**
@@ -212,6 +228,9 @@ function listWorktrees(config: ResolvedConfig): WorktreeEntry[] {
   }
 
   for (const [parentDir, repoByBasename] of reposByParent) {
+    const repositoryEntriesByLongestName = [...repoByBasename.entries()].toSorted(
+      ([nameA], [nameB]) => nameB.length - nameA.length,
+    );
     let children: Dirent[];
     try {
       children = readdirSync(parentDir, { withFileTypes: true });
@@ -222,23 +241,14 @@ function listWorktrees(config: ResolvedConfig): WorktreeEntry[] {
       if (!entry.isDirectory()) {
         continue;
       }
-      const match = TASK_DIR_RE.exec(entry.name);
-      if (!match) {
-        continue;
-      }
-      const [, repoBasename, task] = match;
-      /* v8 ignore next 3 @preserve -- TASK_DIR_RE always captures both groups when it matches */
-      if (repoBasename === undefined || task === undefined) {
-        continue;
-      }
-      const repository = repoByBasename.get(repoBasename);
-      if (repository === undefined) {
+      const parsed = parseWorktreeDirectoryName(entry.name, repositoryEntriesByLongestName);
+      if (parsed === undefined) {
         continue;
       }
       entries.push({
-        repository,
-        task,
-        branchName: branchNameForTask(config, task),
+        repository: parsed.repository,
+        task: parsed.task,
+        branchName: branchNameForTask(config, parsed.task),
         dir: path.resolve(parentDir, entry.name),
         kind: "host",
       });

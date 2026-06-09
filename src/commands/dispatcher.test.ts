@@ -1,5 +1,5 @@
 import type { ResolvedConfig } from "../lib/config.ts";
-import { canonicalLinearIssue } from "../lib/testing/canonicalFixtures.ts";
+import { canonicalLinearIssue, canonicalShellIssue } from "../lib/testing/canonicalFixtures.ts";
 import { makeBoard } from "../testHelpers/boardFixtures.ts";
 import type { BoardState, Issue } from "../lib/taskSource.ts";
 import { EXHAUSTED_USAGE } from "../lib/usage.ts";
@@ -302,7 +302,65 @@ describe(createDispatcher, () => {
 
       expect(setupMock).not.toHaveBeenCalled();
       expect(board.markInProgress).not.toHaveBeenCalled();
-      expect(consoleLog.output()).toContain("No Todo tasks");
+      expect(consoleLog.output()).toContain(
+        "No eligible Todo tasks after agent/repository filtering",
+      );
+    });
+
+    it("warns and skips Todo tasks with an agent but no repository", async () => {
+      const board = makeBoard();
+      const dispatcher = createDispatcher({ config: makeConfig(), board });
+      const usageProbe = vi.fn<() => Promise<Record<string, never>>>().mockResolvedValue({});
+
+      await dispatcher.runOnce({
+        state: boardOf([
+          canonicalShellIssue({
+            naturalId: "GC-1",
+            sourceName: "t",
+            model: "any",
+            repository: undefined,
+          }),
+        ]),
+        worktreeEntries: [],
+        usage: usageProbe,
+        dryRun: false,
+      });
+
+      expect(setupMock).not.toHaveBeenCalled();
+      expect(board.markInProgress).not.toHaveBeenCalled();
+      expect(usageProbe).not.toHaveBeenCalled();
+      const out = consoleLog.output();
+      expect(out).toContain('WARNING: t:gc-1 has agent "any" but no repository');
+      expect(out).toContain('set defaultRepository on source "t"');
+      expect(out).toContain("Known repositories: repo-a, repo-b");
+      expect(out).toContain(
+        "event=dispatch outcome=skipped reason=missing_repository task=gc-1 source=t model=any",
+      );
+      expect(out).toContain("No eligible Todo tasks after agent/repository filtering");
+    });
+
+    it("renders empty known repositories in the missing repository warning", async () => {
+      const board = makeBoard();
+      const dispatcher = createDispatcher({
+        config: makeConfig({ workspace: { projectDir: "/work", knownRepositories: [] } }),
+        board,
+      });
+
+      await dispatcher.runOnce({
+        state: boardOf([
+          canonicalShellIssue({
+            naturalId: "GC-1",
+            sourceName: "t",
+            model: "any",
+            repository: undefined,
+          }),
+        ]),
+        worktreeEntries: [],
+        usage: async () => ({}),
+        dryRun: false,
+      });
+
+      expect(consoleLog.output()).toContain("Known repositories: (none)");
     });
 
     it("stops scanning Todo issues once eligible count reaches the slot cap", async () => {

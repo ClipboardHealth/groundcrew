@@ -165,8 +165,49 @@ describe(list, () => {
     ]);
   });
 
+  it("finds host sibling worktrees with multi-segment source task ids", () => {
+    mkdirSync(path.join(projectDir, "repo-a"));
+    mkdirSync(path.join(projectDir, "repo-a-gc-20260608-001"));
+    const config = makeConfig({ projectDir });
+
+    expect(list(config)).toStrictEqual([
+      {
+        repository: "repo-a",
+        task: "gc-20260608-001",
+        branchName: "dev-gc-20260608-001",
+        dir: path.join(projectDir, "repo-a-gc-20260608-001"),
+        kind: "host",
+      },
+    ]);
+  });
+
+  it("prefers the longest configured repository basename when names overlap", () => {
+    mkdirSync(path.join(projectDir, "repo-a-admin-gc-20260608-001"));
+    const config = makeConfig({
+      projectDir,
+      knownRepositories: ["repo-a", "repo-a-admin"],
+    });
+
+    expect(list(config)).toStrictEqual([
+      {
+        repository: "repo-a-admin",
+        task: "gc-20260608-001",
+        branchName: "dev-gc-20260608-001",
+        dir: path.join(projectDir, "repo-a-admin-gc-20260608-001"),
+        kind: "host",
+      },
+    ]);
+  });
+
   it("ignores host directories whose <repo> segment is not configured", () => {
     mkdirSync(path.join(projectDir, "ghost-team-1"));
+    const config = makeConfig({ projectDir });
+
+    expect(list(config)).toStrictEqual([]);
+  });
+
+  it("ignores configured repository directories whose task segment is invalid", () => {
+    mkdirSync(path.join(projectDir, "repo-a-not-a-task"));
     const config = makeConfig({ projectDir });
 
     expect(list(config)).toStrictEqual([]);
@@ -308,6 +349,45 @@ describe(create, () => {
     );
     expect(actual.kind).toBe("host");
     expect(actual.dir).toBe(path.join(projectDir, "repo-a-team-1"));
+  });
+
+  it("creates worktrees for multi-segment source task ids", async () => {
+    mkdirSync(path.join(projectDir, "repo-a"));
+    const config = makeConfig({ projectDir });
+    runCommandMock.mockImplementation((_command, arguments_) => {
+      // oxlint-disable-next-line vitest/no-conditional-in-test -- discriminator picks out the symbolic-ref probe so it returns origin/<branch>
+      if (hasArguments(arguments_, "symbolic-ref", "refs/remotes/origin/HEAD")) {
+        return "origin/main\n";
+      }
+      return "";
+    });
+
+    const actual = await create(config, {
+      repository: "repo-a",
+      task: "gc-20260608-001",
+    });
+
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "git",
+      [
+        "-C",
+        path.join(projectDir, "repo-a"),
+        "worktree",
+        "add",
+        "-b",
+        "dev-gc-20260608-001",
+        path.join(projectDir, "repo-a-gc-20260608-001"),
+        "origin/main",
+      ],
+      { stdio: "captured", timeoutMs: 0 },
+    );
+    expect(actual).toMatchObject({
+      repository: "repo-a",
+      task: "gc-20260608-001",
+      branchName: "dev-gc-20260608-001",
+      dir: path.join(projectDir, "repo-a-gc-20260608-001"),
+      kind: "host",
+    });
   });
 
   it("streams git output (stdio inherit) under verbose", async () => {
