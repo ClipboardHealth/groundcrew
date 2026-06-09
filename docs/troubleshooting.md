@@ -47,6 +47,8 @@ Set `workspaceKind: "tmux"` to force the tmux backend when cmux's CLI/socket bri
 
 Set `workspaceKind: "zellij"` to run agents as tabs in a shared `groundcrew` zellij session — handy on WSL/Windows Terminal, where it has native mouse support out of the box (tmux needs `set -g mouse on`). Each ticket is a named tab; `main` tails the live `crew run` log. Attach with `zellij attach groundcrew` (the session is created on first dispatch, so it does not exist until a ticket runs). When an agent exits on its own its tab stays and `crew status` reports it as `exited`; a groundcrew-issued close removes the tab. groundcrew also drops a stale resurrectable `groundcrew` session on launch so dead agent tabs from a previous run are not replayed on attach.
 
+![A groundcrew agent running in a zellij tab](../static/zellij.png)
+
 ## Agent CLI Must Accept A Positional Prompt
 
 The handoff is `<your cmd> "<prompt>"`. `claude`, `codex`, and `cursor-agent` all support this.
