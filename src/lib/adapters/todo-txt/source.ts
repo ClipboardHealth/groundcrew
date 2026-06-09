@@ -14,11 +14,10 @@ import {
 } from "../../taskSource.ts";
 import { readEnvironmentVariable } from "../../util.ts";
 import { isActiveForFetch, normalizeToIssue, type TodoTxtSourceRef } from "./normalizer.ts";
-import { getMetadataFirst, parseAllLines, type ParsedTodoLine } from "./parser.ts";
+import { DATE_RE, getMetadataFirst, parseAllLines, type ParsedTodoLine } from "./parser.ts";
 import type { TodoTxtAdapterConfig } from "./schema.ts";
 import { copyPromptFile, updateTaskStatus, validateTodoFile, withLock } from "./writeback.ts";
 
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const RECURRENCE_RE = /^\+?\d+[dwmy]$/;
 
 function readPromptFile(promptPath: string): string | undefined {
@@ -128,7 +127,7 @@ function metadataToken(key: string, value: string): string {
   return `${key}:${value}`;
 }
 
-function datePartFor(timeZone: string, now: Date): string {
+function isoDateFor(timeZone: string, now: Date): string {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone,
     year: "numeric",
@@ -142,7 +141,11 @@ function datePartFor(timeZone: string, now: Date): string {
   if (year === undefined || month === undefined || day === undefined) {
     throw new Error(`todo-txt: could not format date in timezone "${timeZone}"`);
   }
-  return `${year}${month}${day}`;
+  return `${year}-${month}-${day}`;
+}
+
+function datePartFor(timeZone: string, now: Date): string {
+  return isoDateFor(timeZone, now).replaceAll("-", "");
 }
 
 /* v8 ignore next @preserve -- Covered in source tests; full-suite V8 coverage remaps this helper inconsistently. */
@@ -312,6 +315,7 @@ export function createTodoTxtTaskSource(
 
   function listTasks(): Issue[] {
     const updatedAt = fileUpdatedAt(todoPath);
+    const todayIsoDate = isoDateFor(config.timezone, new Date());
     const { parsedAll } = readAndParseTodo(todoPath);
     const issues: Issue[] = [];
 
@@ -320,7 +324,7 @@ export function createTodoTxtTaskSource(
       if (parsed === null || parsed === undefined) {
         continue;
       }
-      if (!isActiveForFetch(parsed)) {
+      if (!isActiveForFetch(parsed, todayIsoDate)) {
         continue;
       }
 

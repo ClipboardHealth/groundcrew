@@ -9,7 +9,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 
-import { hashLine, parseAllLines, type ParsedTodoLine } from "./parser.ts";
+import { DATE_RE, hashLine, parseAllLines, type ParsedTodoLine } from "./parser.ts";
 import type { TodoTxtSourceRef } from "./normalizer.ts";
 
 export interface RecurResult {
@@ -18,8 +18,6 @@ export interface RecurResult {
   oldPromptPath: string;
   newPromptPath: string;
 }
-
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 function isoDate(date: Date): string {
   return date.toISOString().slice(0, 10);
@@ -261,9 +259,12 @@ function buildRecurResult(
   // t: always advances from its own current value by the same period
   const newT = oldT === undefined ? undefined : advanceDate(oldT, rec);
 
-  // Compute new date for id advancement
-  /* v8 ignore next @preserve -- newDue undefined when no due: field; rare edge case */
-  const newDateForId = newDue === undefined ? now : new Date(`${newDue}T00:00:00Z`);
+  // Compute new date for id advancement: prefer due:, then t:, so ids stay
+  // schedule-aligned for t:-only recurring tasks
+  const newScheduleDate = newDue ?? newT;
+  /* v8 ignore next @preserve -- rec: without due: or t: is unusual; id falls back to completion date */
+  const newDateForId =
+    newScheduleDate === undefined ? now : new Date(`${newScheduleDate}T00:00:00Z`);
   const baseNewId = advanceId(ref.id, newDateForId);
   const newId = buildUniqueId(baseNewId, existingIds);
 
