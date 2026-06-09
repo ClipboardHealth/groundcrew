@@ -59,7 +59,7 @@ crew status ENG-123
 crew resume ENG-123
 ```
 
-The command closes the cmux/tmux workspace if present, records local run state, and never tears down the worktree. If the workspace was already gone but the worktree is still present, stop records that fact so status can show the preserved branch.
+The command closes the cmux/tmux/zellij workspace if present, records local run state, and never tears down the worktree. If the workspace was already gone but the worktree is still present, stop records that fact so status can show the preserved branch.
 
 ## Resume
 
