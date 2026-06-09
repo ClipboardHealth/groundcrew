@@ -159,6 +159,14 @@ describe("crew init", () => {
       expect(actual).not.toContain("disabled: true");
     });
 
+    it("generates a config that uses the `agents` key, not the rejected `models` key", () => {
+      const result = initConfig({ cwd });
+
+      const actual = readFileSync(result.destination, "utf8");
+      expect(actual).toContain("agents: {");
+      expect(actual).not.toMatch(/^\s*models:/m);
+    });
+
     it("fails loudly when a quickstart template anchor is missing", () => {
       const template = path.join(cwd, "crew.config.example.ts");
       writeFileSync(

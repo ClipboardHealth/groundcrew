@@ -49,7 +49,7 @@ npm install -g @clipboard-health/groundcrew@latest
 
 # 2. Scaffold a global config. Agents are sandboxed by default
 #    (Safehouse/Docker Sandboxes); add --runner none to run unsandboxed on the host.
-crew init --global --project-dir ~/dev --repo OWNER/REPO --model claude
+crew init --global --project-dir ~/dev --repo OWNER/REPO --agent claude
 
 # 3. Run the clone commands printed by `crew init`.
 
@@ -64,7 +64,7 @@ crew doctor
 crew run --watch
 ```
 
-`crew init --global` writes config to `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/`. Pass `--repo` more than once for multiple repos. `--model claude` or `--model codex` chooses the single built-in model preset to enable in the generated config.
+`crew init --global` writes config to `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/`. Pass `--repo` more than once for multiple repos. `--agent claude` or `--agent codex` chooses the single built-in agent preset to enable in the generated config.
 
 ## Task Pickup
 
@@ -72,8 +72,8 @@ crew run --watch
 
 Linear works out of the box: assign tasks to yourself and add an `agent-*` label.
 
-- `agent-claude`, `agent-codex`, or `agent-<name>` routes to that model.
-- `agent-any` routes to the enabled model with the most session headroom, after skipping models over their session limit or weekly paced budget.
+- `agent-claude`, `agent-codex`, or `agent-<name>` routes to that agent.
+- `agent-any` routes to the enabled agent with the most session headroom, after skipping agents over their session limit or weekly paced budget.
 - Tasks without an `agent-*` label are ignored by `crew run`; dispatch one manually with `crew start <TASK>`.
 
 Groundcrew scans `workspace.knownRepositories` to infer which repo a task belongs to.
@@ -91,17 +91,19 @@ Write tasks as complete agent instructions: the goal, the context and constraint
 ```bash
 crew init [--global | --local] [--force] [--dry-run]     # create a crew.config.ts
           [--project-dir <dir>] [--repo <repo>]...
-          [--runner <auto|safehouse|sdx|none>] [--model <claude|codex>]
+          [--runner <auto|safehouse|sdx|none>] [--agent <claude|codex>]
 crew doctor                                              # check setup
+crew source list|verify [<source>]                       # inspect configured task sources
 crew task list [--source <name>]                         # list tasks across sources
 crew task get <TASK> [--source <name>] [--prompt]        # inspect one task or its prompt
 crew task create "Title" --source <name> [--agent <name>] # create a source task
+crew task validate [<source>]                            # validate task content
 crew status [<TASK>]                                   # inspect current state or one task
 crew run [--watch]                                       # one-shot or --watch forever
 crew start <TASK>                                      # provision + launch one task now
 crew stop <TASK> [--reason <text>]                     # stop workspace, keep worktree
 crew resume <TASK>                                     # reopen a paused task
-crew cleanup <TASK>                                    # tear down every worktree for a task
+crew cleanup [--force] <TASK>                          # tear down every worktree for a task
 crew upgrade [<version>]                                 # reinstall crew globally through npm
 ```
 
@@ -109,7 +111,7 @@ See [command details](./docs/commands.md) for status output, doctor behavior, an
 
 ## Configuration
 
-Workspace settings and at least one enabled model are required; everything else has a default.
+Workspace settings and at least one enabled agent are required; everything else has a default.
 
 ```ts
 import type { Config } from "@clipboard-health/groundcrew";
@@ -122,7 +124,7 @@ export default {
     // Strings live under projectDir; use { name, projectDirOverride } to override per repo.
     knownRepositories: ["OWNER/REPO"],
   },
-  models: {
+  agents: {
     default: "claude",
     definitions: {
       claude: {},

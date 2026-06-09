@@ -27,9 +27,9 @@ export default {
     //   { name: "other-org/other-repo", projectDirOverride: "~/work" }
     knownRepositories: ["your-org/your-repo"],
   },
-  models: {
+  agents: {
     default: "claude",
-    // `definitions` is the enabled model set. Built-in keys can use `{}` to
+    // `definitions` is the enabled agent set. Built-in keys can use `{}` to
     // opt into the shipped command/color/usage preset. Add `codex: {}` if you
     // want both shipped agents, or add a custom entry and tag tasks with
     // `agent-<name>`.
@@ -99,7 +99,7 @@ export default {
   //   // it into the agent. Chain with `&&` so a failed mint aborts launch.
   //   preLaunch: "SESSION_TOKEN=$(your-mint-command) && export SESSION_TOKEN",
   //   preLaunchEnv: ["SESSION_TOKEN"],
-  //   // Required for this model when `local.runner` resolves to `sdx`.
+  //   // Required for this agent when `local.runner` resolves to `sdx`.
   //   sandbox: { agent: "claude" },
   // },
   //
@@ -110,7 +110,7 @@ export default {
   // local: { runner: "auto" },
   //
   // // Groundcrew does not create or authenticate sdx sandboxes. For an sdx
-  // // model, create the matching sandbox yourself before first launch:
+  // // agent, create the matching sandbox yourself before first launch:
   // //   sbx create --name groundcrew-claude claude ~/dev/groundcrew
   // //   sbx exec -it groundcrew-claude claude auth login
   // //   sbx exec -it groundcrew-claude gh auth login
