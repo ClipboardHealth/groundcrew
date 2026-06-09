@@ -1,15 +1,24 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
 import type { LinearClient } from "@linear/sdk";
 
 import type { AdapterContext } from "../../adapterDefinition.ts";
 import type { ResolvedConfig } from "../../config.ts";
-import type { MarkInReviewResult } from "../../ticketSource.ts";
+import type {
+  CreateTaskInput,
+  Issue as CanonicalIssue,
+  MarkInReviewResult,
+  TaskSource,
+} from "../../taskSource.ts";
 import { readEnvironmentVariable } from "../../util.ts";
 import { deleteEnvironmentVariable, setEnvironmentVariable } from "../../../testHelpers/env.ts";
 import * as boardSource from "./fetch.ts";
 import type { Issue as LinearIssue } from "./fetch.ts";
 import * as linearIssueStatus from "./writeback.ts";
 import * as client from "./client.ts";
-import { createLinearTicketSource, toCanonicalIssue } from "./factory.ts";
+import { createLinearTaskSource, toCanonicalIssue } from "./factory.ts";
 
 function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
   return {
@@ -61,6 +70,186 @@ function linearIssue(overrides: Partial<LinearIssue> = {}): LinearIssue {
     url: overrides.url ?? "https://linear.app/example/issue/TEAM-1",
     priority: overrides.priority ?? 0,
   };
+}
+
+function createInput(overrides: Partial<CreateTaskInput> = {}): CreateTaskInput {
+  return {
+    title: "Fix cancellation retry race",
+    agent: "codex",
+    repository: "ClipboardHealth/api",
+    projects: [],
+    contexts: [],
+    dependencies: [],
+    edit: false,
+    ...overrides,
+  };
+}
+
+function createInputWithoutRepository(): CreateTaskInput {
+  return {
+    title: "Fix cancellation retry race",
+    agent: "codex",
+    projects: [],
+    contexts: [],
+    dependencies: [],
+    edit: false,
+  };
+}
+
+function createConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
+  return makeConfig({
+    workspace: {
+      projectDir: "/work",
+      knownRepositories: ["ClipboardHealth/api", "ClipboardHealth/web"],
+      ...overrides.workspace,
+    },
+    models: {
+      default: "claude",
+      definitions: {
+        claude: { cmd: "claude", color: "#fff" },
+        codex: { cmd: "codex", color: "#000" },
+      },
+      ...overrides.models,
+    },
+    ...overrides,
+  });
+}
+
+function createContextResponse(
+  overrides: {
+    labels?: { id: string; name: string }[];
+    states?: { id: string; name: string; type: string; position: number }[];
+    teams?: {
+      id: string;
+      key: string;
+      name: string;
+      labels: { nodes: { id: string; name: string }[] };
+      states: { nodes: { id: string; name: string; type: string; position: number }[] };
+    }[];
+    viewer?: { id: string; name: string } | null;
+  } = {},
+): { data: unknown } {
+  const labels = overrides.labels ?? [{ id: "label-codex", name: "agent-codex" }];
+  const states = overrides.states ?? [
+    { id: "state-todo", name: "Todo", type: "unstarted", position: 1 },
+    { id: "state-started", name: "In Progress", type: "started", position: 2 },
+  ];
+  return {
+    data: {
+      viewer: overrides.viewer === undefined ? { id: "user-1", name: "Alice" } : overrides.viewer,
+      teams: {
+        nodes: overrides.teams ?? [
+          {
+            id: "team-1",
+            key: "ENG",
+            name: "Engineering",
+            labels: { nodes: labels },
+            states: { nodes: states },
+          },
+        ],
+      },
+    },
+  };
+}
+
+function createIssueResponse(identifier = "ENG-123"): { data: unknown } {
+  return {
+    data: {
+      issueCreate: {
+        success: true,
+        issue: { identifier },
+      },
+    },
+  };
+}
+
+function createIssueFailureResponse(): { data: unknown } {
+  return {
+    data: {
+      issueCreate: {
+        success: false,
+        issue: null,
+      },
+    },
+  };
+}
+
+function createRelationResponse(success = true): { data: unknown } {
+  return {
+    data: {
+      issueRelationCreate: { success },
+    },
+  };
+}
+
+function resolvedIssueResponse(
+  overrides: {
+    description?: string;
+    labels?: { name: string }[];
+    inverseRelations?: {
+      nodes: boardSource.IssueRelationNode[];
+      pageInfo: { hasNextPage: boolean };
+    };
+  } = {},
+): { data: unknown } {
+  return {
+    data: {
+      issue: {
+        id: "uuid-created",
+        title: "Fix cancellation retry race",
+        description:
+          overrides.description ??
+          [
+            "## Groundcrew",
+            "",
+            "Repository: ClipboardHealth/api",
+            "",
+            "## Task",
+            "",
+            "Investigate retry handling.",
+          ].join("\n"),
+        updatedAt: "2026-06-08T12:00:00.000Z",
+        url: "https://linear.app/example/issue/ENG-123",
+        priority: 2,
+        team: { id: "team-1" },
+        state: { id: "state-todo", name: "Todo", type: "unstarted" },
+        assignee: { name: "Alice" },
+        children: { nodes: [] },
+        labels: { nodes: overrides.labels ?? [{ name: "agent-codex" }] },
+        inverseRelations: overrides.inverseRelations ?? {
+          nodes: [],
+          pageInfo: { hasNextPage: false },
+        },
+      },
+    },
+  };
+}
+
+async function createTask(source: TaskSource, input: CreateTaskInput): Promise<CanonicalIssue> {
+  if (source.createTask === undefined) {
+    throw new Error("source.createTask is missing");
+  }
+  return await source.createTask(input);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function issueCreateInput(calls: readonly (readonly unknown[])[]): Record<string, unknown> {
+  const [, call] = calls;
+  if (call === undefined) {
+    throw new Error("missing issueCreate call");
+  }
+  const [, variables] = call;
+  if (!isRecord(variables)) {
+    throw new Error("missing issueCreate variables");
+  }
+  const { input } = variables;
+  if (!isRecord(input)) {
+    throw new Error("missing issueCreate input");
+  }
+  return input;
 }
 
 describe(toCanonicalIssue, () => {
@@ -147,8 +336,8 @@ describe(toCanonicalIssue, () => {
   });
 
   it("copies description from the legacy Linear issue onto the canonical Issue", () => {
-    const result = toCanonicalIssue(linearIssue({ description: "Body of the ticket." }), "linear");
-    expect(result.description).toBe("Body of the ticket.");
+    const result = toCanonicalIssue(linearIssue({ description: "Body of the task." }), "linear");
+    expect(result.description).toBe("Body of the task.");
   });
 
   it("source-prefixes blocker ids and canonicalizes their statuses via stateType", () => {
@@ -226,25 +415,28 @@ describe(toCanonicalIssue, () => {
   });
 });
 
-describe(createLinearTicketSource, () => {
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- factory only uses the client when its methods are called; tests that exercise those methods stub the boardSource/linearIssueStatus calls so the client is never actually invoked
-  const fakeClient = {} as LinearClient;
+describe(createLinearTaskSource, () => {
+  const rawRequest =
+    vi.fn<(query: string, variables?: Record<string, unknown>) => Promise<{ data?: unknown }>>();
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests provide the subset of LinearClient used by the methods they exercise
+  const fakeClient = { client: { rawRequest } } as unknown as LinearClient;
   beforeEach(() => {
+    rawRequest.mockReset();
     vi.spyOn(client, "getLinearClient").mockReturnValue(fakeClient);
   });
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it("returns a TicketSource whose name defaults to 'linear'", () => {
-    const source = createLinearTicketSource({ kind: "linear" }, {
+  it("returns a TaskSource whose name defaults to 'linear'", () => {
+    const source = createLinearTaskSource({ kind: "linear" }, {
       globalConfig: makeConfig(),
     } satisfies AdapterContext);
     expect(source.name).toBe("linear");
   });
 
   it("respects an explicit name override", () => {
-    const source = createLinearTicketSource({ kind: "linear", name: "work" }, {
+    const source = createLinearTaskSource({ kind: "linear", name: "work" }, {
       globalConfig: makeConfig(),
     } satisfies AdapterContext);
     expect(source.name).toBe("work");
@@ -256,7 +448,7 @@ describe(createLinearTicketSource, () => {
       verify: innerVerify,
       fetch: vi.fn<() => Promise<boardSource.BoardState>>(),
     });
-    const source = createLinearTicketSource({ kind: "linear" }, {
+    const source = createLinearTaskSource({ kind: "linear" }, {
       globalConfig: makeConfig(),
     } satisfies AdapterContext);
     await source.verify();
@@ -276,12 +468,31 @@ describe(createLinearTicketSource, () => {
       verify: vi.fn<() => Promise<void>>(),
       fetch: innerFetch,
     });
-    const source = createLinearTicketSource({ kind: "linear" }, {
+    const source = createLinearTaskSource({ kind: "linear" }, {
       globalConfig: makeConfig(),
     } satisfies AdapterContext);
     const issues = await source.fetch();
     expect(issues.map((i) => i.id)).toStrictEqual(["linear:team-1", "linear:team-2"]);
     expect(issues[1]?.status).toBe("in-progress");
+  });
+
+  it("listTasks() converts each LinearIssue into a canonical Issue", async () => {
+    const innerFetch = vi.fn<() => Promise<boardSource.BoardState>>().mockResolvedValue({
+      timestamp: "2026-01-01T00:00:00Z",
+      issues: [linearIssue({ id: "team-1" })],
+      parentSkips: [],
+    });
+    vi.spyOn(boardSource, "createBoardSource").mockReturnValue({
+      verify: vi.fn<() => Promise<void>>(),
+      fetch: innerFetch,
+    });
+    const source = createLinearTaskSource({ kind: "linear" }, {
+      globalConfig: makeConfig(),
+    } satisfies AdapterContext);
+
+    const issues = await source.listTasks();
+
+    expect(issues.map((issue) => issue.id)).toStrictEqual(["linear:team-1"]);
   });
 
   it("uses configured Linear status names before falling back to state.type", async () => {
@@ -298,7 +509,7 @@ describe(createLinearTicketSource, () => {
       verify: vi.fn<() => Promise<void>>(),
       fetch: innerFetch,
     });
-    const source = createLinearTicketSource(
+    const source = createLinearTaskSource(
       {
         kind: "linear",
         statuses: {
@@ -333,7 +544,7 @@ describe(createLinearTicketSource, () => {
       verify: vi.fn<() => Promise<void>>(),
       fetch: innerFetch,
     });
-    const source = createLinearTicketSource({ kind: "linear", name: "work-linear" }, {
+    const source = createLinearTaskSource({ kind: "linear", name: "work-linear" }, {
       globalConfig: makeConfig(),
     } satisfies AdapterContext);
 
@@ -357,9 +568,14 @@ describe(createLinearTicketSource, () => {
       stateType: "unstarted",
       status: "Todo",
       statusId: "state-todo",
+      assignee: "Alice",
+      updatedAt: "2026-01-01T00:00:00Z",
+      blockers: [],
+      hasMoreBlockers: false,
       url: "https://linear.app/example/issue/TEAM-1",
+      priority: 0,
     });
-    const source = createLinearTicketSource({ kind: "linear" }, {
+    const source = createLinearTaskSource({ kind: "linear" }, {
       globalConfig: makeConfig(),
     } satisfies AdapterContext);
     const issue = await source.resolveOne("team-1");
@@ -371,6 +587,344 @@ describe(createLinearTicketSource, () => {
     expect(issue?.status).toBe("todo");
   });
 
+  it("getTask() returns a canonical Issue with description populated from fetchResolvedIssue", async () => {
+    vi.spyOn(boardSource, "fetchResolvedIssue").mockResolvedValue({
+      uuid: "uuid-abc",
+      title: "Resolved title",
+      description: "Resolved description",
+      repository: "repo-a",
+      model: "claude",
+      teamId: "team-xyz",
+      stateType: "unstarted",
+      status: "Todo",
+      statusId: "state-todo",
+      assignee: "Alice",
+      updatedAt: "2026-01-01T00:00:00Z",
+      blockers: [{ id: "team-2", title: "Blocking task", status: "Todo", stateType: "unstarted" }],
+      hasMoreBlockers: true,
+      url: "https://linear.app/example/issue/TEAM-1",
+      priority: 2,
+    });
+    const source = createLinearTaskSource({ kind: "linear" }, {
+      globalConfig: makeConfig(),
+    } satisfies AdapterContext);
+
+    const issue = await source.getTask("team-1");
+
+    expect(issue?.id).toBe("linear:team-1");
+    expect(issue?.description).toBe("Resolved description");
+    expect(issue?.assignee).toBe("Alice");
+    expect(issue?.updatedAt).toBe("2026-01-01T00:00:00Z");
+    expect(issue?.blockers).toStrictEqual([
+      {
+        id: "linear:team-2",
+        title: "Blocking task",
+        status: "todo",
+        nativeStatus: "Todo",
+      },
+    ]);
+    expect(issue?.hasMoreBlockers).toBe(true);
+    expect(issue?.priority).toBe(2);
+  });
+
+  it("returns null for missing Linear tasks through getTask() and undefined through resolveOne()", async () => {
+    vi.spyOn(boardSource, "fetchResolvedIssue")
+      .mockRejectedValueOnce(new Error("Task TEAM-404 not found in Linear"))
+      .mockRejectedValueOnce(new Error("Task TEAM-404 not found in Linear"));
+    const source = createLinearTaskSource({ kind: "linear" }, {
+      globalConfig: makeConfig(),
+    } satisfies AdapterContext);
+
+    await expect(source.getTask("team-404")).resolves.toBeNull();
+    await expect(source.resolveOne("team-404")).resolves.toBeUndefined();
+  });
+
+  it("preserves non-missing Linear lookup failures", async () => {
+    vi.spyOn(boardSource, "fetchResolvedIssue").mockRejectedValue(new Error("Linear API: timeout"));
+    const source = createLinearTaskSource({ kind: "linear" }, {
+      globalConfig: makeConfig(),
+    } satisfies AdapterContext);
+
+    await expect(source.getTask("team-1")).rejects.toThrow("Linear API: timeout");
+  });
+
+  it("does not treat every task-prefixed Linear lookup failure as missing", async () => {
+    vi.spyOn(boardSource, "fetchResolvedIssue").mockRejectedValue(
+      new Error("Task TEAM-1 lookup failed in Linear"),
+    );
+    const source = createLinearTaskSource({ kind: "linear" }, {
+      globalConfig: makeConfig(),
+    } satisfies AdapterContext);
+
+    await expect(source.getTask("team-1")).rejects.toThrow("lookup failed");
+  });
+
+  it("createTask() creates a Groundcrew-eligible Linear issue and blocked-by relation", async () => {
+    rawRequest
+      .mockResolvedValueOnce(createContextResponse())
+      .mockResolvedValueOnce(createIssueResponse("ENG-123"))
+      .mockResolvedValueOnce(createRelationResponse())
+      .mockResolvedValueOnce(
+        resolvedIssueResponse({
+          inverseRelations: {
+            nodes: [
+              {
+                type: "blocks",
+                issue: {
+                  identifier: "ENG-99",
+                  title: "Blocking task",
+                  state: { name: "Todo", type: "unstarted" },
+                },
+              },
+            ],
+            pageInfo: { hasNextPage: false },
+          },
+        }),
+      );
+    const source = createLinearTaskSource({ kind: "linear", team: "DEFAULT" }, {
+      globalConfig: createConfig(),
+    } satisfies AdapterContext);
+
+    const issue = await createTask(
+      source,
+      createInput({
+        team: "ENG",
+        description: "Investigate retry handling.",
+        priority: "2",
+        due: "2026-06-09",
+        projects: ["marketplace"],
+        contexts: ["backend"],
+        dependencies: ["linear:ENG-99"],
+      }),
+    );
+
+    expect(rawRequest.mock.calls[0]?.[1]).toStrictEqual({
+      teamSelector: "ENG",
+      teamSelectorId: "ENG",
+      agentLabelName: "agent-codex",
+    });
+    expect(rawRequest.mock.calls[1]?.[1]).toMatchObject({
+      input: {
+        assigneeId: "user-1",
+        dueDate: "2026-06-09",
+        labelIds: ["label-codex"],
+        priority: 2,
+        stateId: "state-todo",
+        teamId: "team-1",
+        title: "Fix cancellation retry race",
+      },
+    });
+    const createdInput = issueCreateInput(rawRequest.mock.calls);
+    expect(createdInput["description"]).toContain("Repository: ClipboardHealth/api");
+    expect(createdInput["description"]).toContain("Projects: marketplace\nContexts: backend");
+    expect(rawRequest.mock.calls[2]?.[1]).toStrictEqual({
+      input: {
+        issueId: "ENG-99",
+        relatedIssueId: "ENG-123",
+        type: "blocks",
+      },
+    });
+    expect(issue).toMatchObject({
+      id: "linear:eng-123",
+      source: "linear",
+      status: "todo",
+      repository: "ClipboardHealth/api",
+      model: "codex",
+      priority: 2,
+      blockers: [
+        {
+          id: "linear:eng-99",
+          title: "Blocking task",
+          status: "todo",
+          nativeStatus: "Todo",
+        },
+      ],
+    });
+  });
+
+  it("createTask() uses configured team, fallback prompt text, no optional issue fields, and the first unstarted state", async () => {
+    rawRequest
+      .mockResolvedValueOnce(
+        createContextResponse({
+          states: [
+            { id: "state-later", name: "Queued", type: "unstarted", position: 5 },
+            { id: "state-first", name: "Ready", type: "unstarted", position: 1 },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(createIssueResponse("ENG-123"))
+      .mockResolvedValueOnce(resolvedIssueResponse());
+    const source = createLinearTaskSource({ kind: "linear", team: "ENG" }, {
+      globalConfig: createConfig(),
+    } satisfies AdapterContext);
+
+    await createTask(source, createInput());
+
+    expect(rawRequest.mock.calls[0]?.[1]).toStrictEqual({
+      teamSelector: "ENG",
+      teamSelectorId: "ENG",
+      agentLabelName: "agent-codex",
+    });
+    const createdInput = issueCreateInput(rawRequest.mock.calls);
+    expect(createdInput["stateId"]).toBe("state-first");
+    expect(createdInput["description"]).toContain("## Notes\n\nNone");
+    expect(createdInput["dueDate"]).toBeUndefined();
+    expect(createdInput["priority"]).toBeUndefined();
+  });
+
+  it("createTask() reads prompt body from --prompt-file", async () => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "groundcrew-linear-create-"));
+    const promptFile = path.join(tempDir, "prompt.md");
+    writeFileSync(promptFile, "Prompt from disk\n", "utf8");
+    rawRequest
+      .mockResolvedValueOnce(createContextResponse())
+      .mockResolvedValueOnce(createIssueResponse("ENG-123"))
+      .mockResolvedValueOnce(resolvedIssueResponse());
+    const source = createLinearTaskSource({ kind: "linear", team: "ENG" }, {
+      globalConfig: createConfig(),
+    } satisfies AdapterContext);
+
+    try {
+      await createTask(source, createInput({ promptFile }));
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+
+    expect(issueCreateInput(rawRequest.mock.calls)["description"]).toContain("Prompt from disk");
+  });
+
+  it.each([
+    {
+      input: createInput({ id: "ENG-123" }),
+      message: "--id is not supported",
+    },
+    {
+      input: createInput({ recurrence: "+1w" }),
+      message: "--rec is not supported",
+    },
+    {
+      input: createInput({ edit: true }),
+      message: "--edit is not supported",
+    },
+    {
+      input: createInput({ title: "   " }),
+      message: "title is required",
+    },
+    {
+      input: createInput({ title: "Line one\nLine two" }),
+      message: "title must be a single line",
+    },
+    {
+      input: createInput({ agent: "   " }),
+      message: "--agent must be a non-empty string",
+    },
+    {
+      input: createInputWithoutRepository(),
+      message: "--repo is required",
+    },
+    {
+      input: createInput({ repository: "ClipboardHealth/missing" }),
+      message: "workspace.knownRepositories",
+    },
+    {
+      input: createInput({ team: "   " }),
+      message: "team must be a non-empty string",
+    },
+    {
+      input: createInput({ priority: "5" }),
+      message: "--priority must be an integer from 0 to 4",
+    },
+    {
+      input: createInput({ description: "Prompt", promptFile: "/tmp/prompt.md" }),
+      message: "mutually exclusive",
+    },
+  ])("createTask() rejects invalid Linear create input: $message", async ({ input, message }) => {
+    const source = createLinearTaskSource({ kind: "linear", team: "ENG" }, {
+      globalConfig: createConfig(),
+    } satisfies AdapterContext);
+
+    await expect(createTask(source, input)).rejects.toThrow(message);
+  });
+
+  it("createTask() rejects missing Linear team configuration", async () => {
+    const source = createLinearTaskSource({ kind: "linear" }, {
+      globalConfig: createConfig(),
+    } satisfies AdapterContext);
+
+    await expect(createTask(source, createInput())).rejects.toThrow("team is required");
+  });
+
+  it.each([
+    {
+      response: createContextResponse({ viewer: null }),
+      message: "did not return a viewer",
+    },
+    {
+      response: createContextResponse({ teams: [] }),
+      message: 'expected exactly one Linear team "ENG"',
+    },
+    {
+      response: createContextResponse({ labels: [] }),
+      message: 'expected exactly one Linear label "agent-codex"',
+    },
+    {
+      response: createContextResponse({
+        states: [{ id: "state-started", name: "In Progress", type: "started", position: 1 }],
+      }),
+      message: "could not find a Todo workflow state",
+    },
+  ])(
+    "createTask() surfaces Linear create context errors: $message",
+    async ({ response, message }) => {
+      rawRequest.mockResolvedValueOnce(response);
+      const source = createLinearTaskSource({ kind: "linear", team: "ENG" }, {
+        globalConfig: createConfig(),
+      } satisfies AdapterContext);
+
+      await expect(createTask(source, createInput())).rejects.toThrow(message);
+    },
+  );
+
+  it("createTask() rejects a failed Linear issueCreate mutation", async () => {
+    rawRequest
+      .mockResolvedValueOnce(createContextResponse())
+      .mockResolvedValueOnce(createIssueFailureResponse());
+    const source = createLinearTaskSource({ kind: "linear", team: "ENG" }, {
+      globalConfig: createConfig(),
+    } satisfies AdapterContext);
+
+    await expect(createTask(source, createInput())).rejects.toThrow(
+      "issueCreate did not return a created issue",
+    );
+  });
+
+  it("createTask() rejects dependencies that target another source", async () => {
+    rawRequest
+      .mockResolvedValueOnce(createContextResponse())
+      .mockResolvedValueOnce(createIssueResponse("ENG-123"));
+    const source = createLinearTaskSource({ kind: "linear", team: "ENG" }, {
+      globalConfig: createConfig(),
+    } satisfies AdapterContext);
+
+    await expect(createTask(source, createInput({ dependencies: ["todo:GC-1"] }))).rejects.toThrow(
+      "is not a Linear task id",
+    );
+  });
+
+  it("createTask() rejects failed blocked-by relation creation", async () => {
+    rawRequest
+      .mockResolvedValueOnce(createContextResponse())
+      .mockResolvedValueOnce(createIssueResponse("ENG-123"))
+      .mockResolvedValueOnce(createRelationResponse(false));
+    const source = createLinearTaskSource({ kind: "linear", team: "ENG" }, {
+      globalConfig: createConfig(),
+    } satisfies AdapterContext);
+
+    await expect(createTask(source, createInput({ dependencies: ["ENG-99"] }))).rejects.toThrow(
+      "could not create blocked-by relation",
+    );
+  });
+
   it("markInProgress() forwards uuid/teamId from sourceRef", async () => {
     const innerMarkInProgress = vi.fn<(...args: unknown[]) => Promise<void>>().mockResolvedValue();
     vi.spyOn(linearIssueStatus, "createLinearIssueStatusUpdater").mockReturnValue({
@@ -379,7 +933,7 @@ describe(createLinearTicketSource, () => {
         .fn<(...args: unknown[]) => Promise<MarkInReviewResult>>()
         .mockResolvedValue({ outcome: "unsupported", reason: "not implemented" }),
     });
-    const source = createLinearTicketSource({ kind: "linear" }, {
+    const source = createLinearTaskSource({ kind: "linear" }, {
       globalConfig: makeConfig(),
     } satisfies AdapterContext);
     await source.markInProgress({
@@ -421,7 +975,7 @@ describe(createLinearTicketSource, () => {
       markInProgress: vi.fn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(),
       markInReview: innerMarkInReview,
     });
-    const source = createLinearTicketSource({ kind: "linear" }, {
+    const source = createLinearTaskSource({ kind: "linear" }, {
       globalConfig: makeConfig(),
     } satisfies AdapterContext);
     await expect(
@@ -457,13 +1011,13 @@ describe(createLinearTicketSource, () => {
 // ─────────────────────────────────────────────────────────────────────────
 // Lazy client construction — the Linear adapter must be constructible
 // without a Linear API key in env. Callers that only touch a sibling
-// source (multi-source Board fan-out, `crew doctor --ticket <shell-id>`)
+// source (multi-source Board fan-out, `crew doctor --task <shell-id>`)
 // must not crash at adapter-construction time on a missing key. These
 // tests deliberately do NOT stub `getLinearClient` — the point is to
 // exercise the real key-resolution path.
 // ─────────────────────────────────────────────────────────────────────────
 
-describe("createLinearTicketSource — lazy client construction", () => {
+describe("createLinearTaskSource — lazy client construction", () => {
   const originalGroundcrewKey = readEnvironmentVariable("GROUNDCREW_LINEAR_API_KEY");
   const originalLinearKey = readEnvironmentVariable("LINEAR_API_KEY");
 
@@ -487,14 +1041,14 @@ describe("createLinearTicketSource — lazy client construction", () => {
 
   it("constructs the adapter without throwing when no Linear API key is set", () => {
     expect(() =>
-      createLinearTicketSource({ kind: "linear" }, {
+      createLinearTaskSource({ kind: "linear" }, {
         globalConfig: makeConfig(),
       } satisfies AdapterContext),
     ).not.toThrow();
   });
 
   it("throws about the missing key only when verify() is invoked", async () => {
-    const source = createLinearTicketSource({ kind: "linear" }, {
+    const source = createLinearTaskSource({ kind: "linear" }, {
       globalConfig: makeConfig(),
     } satisfies AdapterContext);
 
@@ -502,7 +1056,7 @@ describe("createLinearTicketSource — lazy client construction", () => {
   });
 
   it("throws about the missing key only when fetch() is invoked", async () => {
-    const source = createLinearTicketSource({ kind: "linear" }, {
+    const source = createLinearTaskSource({ kind: "linear" }, {
       globalConfig: makeConfig(),
     } satisfies AdapterContext);
 

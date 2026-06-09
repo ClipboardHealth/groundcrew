@@ -55,7 +55,7 @@
     "dedup",
     "dispatchable",
     "misconfig",
-    "ticketsource",
+    "tasksource",
     "writeback",
     "writebacks",
     "Groundcrew",
@@ -113,6 +113,13 @@
     "unstub",
     "venv",
     "vitest",
+    "linecap",
+    "palettegen",
+    "paletteuse",
+    "rasterizing",
+    "Logomark",
+    "logomark",
+    "SMIL",
     "wordmark",
     "worktree",
     "worktrees",
@@ -128,6 +135,13 @@
     "keybinds",
     "resurrectable",
     "sdlc",
-    "tspan"
+    "tspan",
+    "dwmy",
+    "recurrence",
+    "todopath",
+    "todotxt",
+    "nostatus",
+    "norec",
+    "nodone"
   ]
 }

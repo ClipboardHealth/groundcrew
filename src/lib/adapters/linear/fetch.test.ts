@@ -5,7 +5,7 @@ import type { ResolvedConfig } from "../../config.ts";
 import {
   blockersFromRelations,
   createBoardSource,
-  fetchBlockersForTicket,
+  fetchBlockersForTask,
   fetchInProgressIssueCount,
   fetchRawLinearIssue,
   fetchResolvedIssue,
@@ -20,8 +20,9 @@ interface IssueNodeStub {
   id: string;
   identifier: string;
   title: string;
-  description?: string | undefined;
+  description?: string | null | undefined;
   updatedAt: string;
+  url: string;
   priority?: number;
   state?: { id: string; name: string; type: string } | null;
   team?: { id: string; key: string } | null;
@@ -79,6 +80,7 @@ function issueNode(overrides: Partial<IssueNodeStub>): IssueNodeStub {
     title: overrides.title ?? "Title",
     description: "description" in overrides ? overrides.description : "Touches repo-a.",
     updatedAt: overrides.updatedAt ?? "2025-01-01T00:00:00.000Z",
+    url: overrides.url ?? "https://linear.app/example/issue/TEAM-1",
     priority: overrides.priority ?? 0,
     state:
       overrides.state === undefined
@@ -197,14 +199,7 @@ function makeClient(options: ClientStubOptions = {}): ClientStub {
     if (query.includes("ResolveIssue")) {
       return {
         data: {
-          issue: {
-            id: "uuid-1",
-            title: "Title",
-            description: "Touches repo-a.",
-            team: { id: "team-default" },
-            labels: { nodes: [] },
-            state: { name: "Todo", type: "unstarted" },
-          },
+          issue: issueNode({ labels: { nodes: [] } }),
         },
       };
     }
@@ -292,7 +287,7 @@ describe(createBoardSource, () => {
       expect(issue?.model).toBe("claude");
     });
 
-    it("skips parent tickets with children and surfaces them as parentSkips when unstarted", async () => {
+    it("skips parent tasks with children and surfaces them as parentSkips when unstarted", async () => {
       const parent = issueNode({
         identifier: "TEAM-1",
         children: { nodes: [{ id: "child-1" }] },
@@ -305,7 +300,7 @@ describe(createBoardSource, () => {
       expect(state.parentSkips[0]).toMatchObject({ id: "team-1", childCount: 1 });
     });
 
-    it("does not surface parent tickets in non-Todo states as parentSkips", async () => {
+    it("does not surface parent tasks in non-Todo states as parentSkips", async () => {
       const parent = issueNode({
         identifier: "TEAM-1",
         state: { id: "state-active", name: "In Progress", type: "started" },
@@ -327,7 +322,7 @@ describe(createBoardSource, () => {
       expect(boardCalls).toHaveLength(2);
     });
 
-    it("resolves model on in-progress tickets but only resolves repository on Todo tickets", async () => {
+    it("resolves model on in-progress tasks but only resolves repository on Todo tasks", async () => {
       const todo = issueNode({
         identifier: "TEAM-1",
         labels: { nodes: [{ name: "agent-claude" }] },
@@ -398,11 +393,16 @@ describe(fetchResolvedIssue, () => {
       // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests hit the LinearClient surface consumed by boardSource
       client: client as unknown as LinearClient,
       config: makeConfig(),
-      ticket: "TEAM-1",
+      task: "TEAM-1",
     });
     expect(resolved.repository).toBe("repo-a");
     expect(resolved.model).toBe("claude");
     expect(resolved.teamId).toBe("team-default");
+    expect(resolved.assignee).toBe("Alice");
+    expect(resolved.updatedAt).toBe("2025-01-01T00:00:00.000Z");
+    expect(resolved.blockers).toStrictEqual([]);
+    expect(resolved.hasMoreBlockers).toBe(false);
+    expect(resolved.priority).toBe(0);
   });
 
   it("resolves a matched non-default model from an enabled agent-* label", async () => {
@@ -410,14 +410,7 @@ describe(fetchResolvedIssue, () => {
       client: {
         rawRequest: vi.fn<RawRequest>(async () => ({
           data: {
-            issue: {
-              id: "uuid-1",
-              title: "Title",
-              description: "Touches repo-a.",
-              team: { id: "team-default" },
-              labels: { nodes: [{ name: "agent-codex" }] },
-              state: { name: "Todo", type: "unstarted" },
-            },
+            issue: issueNode({ labels: { nodes: [{ name: "agent-codex" }] } }),
           },
         })),
       },
@@ -426,7 +419,7 @@ describe(fetchResolvedIssue, () => {
       // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests hit the LinearClient surface consumed by boardSource
       client: client as unknown as LinearClient,
       config: makeConfig(),
-      ticket: "TEAM-1",
+      task: "TEAM-1",
     });
     expect(resolved.model).toBe("codex");
   });
@@ -436,14 +429,7 @@ describe(fetchResolvedIssue, () => {
       client: {
         rawRequest: vi.fn<RawRequest>(async () => ({
           data: {
-            issue: {
-              id: "uuid-1",
-              title: "Title",
-              description: "Touches repo-a.",
-              team: { id: "team-default" },
-              labels: { nodes: [{ name: "agent-codex" }] },
-              state: { name: "Todo", type: "unstarted" },
-            },
+            issue: issueNode({ labels: { nodes: [{ name: "agent-codex" }] } }),
           },
         })),
       },
@@ -460,7 +446,7 @@ describe(fetchResolvedIssue, () => {
       // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests hit the LinearClient surface consumed by boardSource
       client: client as unknown as LinearClient,
       config,
-      ticket: "TEAM-1",
+      task: "TEAM-1",
     });
     expect(resolved.model).toBe("claude");
     expect(consoleLog.output()).toContain(
@@ -473,14 +459,10 @@ describe(fetchResolvedIssue, () => {
       client: {
         rawRequest: vi.fn<RawRequest>(async () => ({
           data: {
-            issue: {
-              id: "uuid-1",
-              title: "Title",
+            issue: issueNode({
               description: "No matching repository.",
-              team: { id: "team-default" },
               labels: { nodes: [{ name: "agent-claude" }] },
-              state: { name: "Todo", type: "unstarted" },
-            },
+            }),
           },
         })),
       },
@@ -490,7 +472,7 @@ describe(fetchResolvedIssue, () => {
         // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests hit the LinearClient surface consumed by boardSource
         client: client as unknown as LinearClient,
         config: makeConfig(),
-        ticket: "TEAM-1",
+        task: "TEAM-1",
       }),
     ).rejects.toThrow(/No known repository/);
   });
@@ -554,18 +536,21 @@ describe(isTerminalStatusForBlocker, () => {
 });
 
 describe(fetchRawLinearIssue, () => {
-  it("returns the raw fields when the ticket exists", async () => {
+  it("returns the raw fields when the task exists", async () => {
     const client = makeClient();
     const raw = await fetchRawLinearIssue({
       // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests hit the LinearClient surface consumed by boardSource
       client: client as unknown as LinearClient,
-      ticket: "team-1",
+      task: "team-1",
     });
     expect(raw.title).toBe("Title");
     expect(raw.stateName).toBe("Todo");
     expect(raw.stateType).toBe("unstarted");
     expect(raw.teamId).toBe("team-default");
     expect(raw.hasChildren).toBe(false);
+    expect(raw.assignee).toBe("Alice");
+    expect(raw.updatedAt).toBe("2025-01-01T00:00:00.000Z");
+    expect(raw.priority).toBe(0);
   });
 
   it("coerces a null description to an empty string", async () => {
@@ -573,14 +558,7 @@ describe(fetchRawLinearIssue, () => {
       client: {
         rawRequest: vi.fn<RawRequest>(async () => ({
           data: {
-            issue: {
-              id: "uuid-1",
-              title: "Title",
-              description: null,
-              team: { id: "team-default" },
-              labels: { nodes: [] },
-              state: { name: "Todo", type: "unstarted" },
-            },
+            issue: issueNode({ description: null, labels: { nodes: [] } }),
           },
         })),
       },
@@ -588,9 +566,65 @@ describe(fetchRawLinearIssue, () => {
     const raw = await fetchRawLinearIssue({
       // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests hit the LinearClient surface consumed by boardSource
       client: client as unknown as LinearClient,
-      ticket: "team-1",
+      task: "team-1",
     });
     expect(raw.description).toBe("");
+  });
+
+  it("defaults missing assignee and children fields in raw lookup", async () => {
+    const { children: _children, ...issueWithoutChildren } = issueNode({
+      assignee: null,
+      labels: { nodes: [] },
+    });
+    const client = {
+      client: {
+        rawRequest: vi.fn<RawRequest>(async () => ({
+          data: {
+            issue: issueWithoutChildren,
+          },
+        })),
+      },
+    };
+
+    const raw = await fetchRawLinearIssue({
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests hit the LinearClient surface consumed by boardSource
+      client: client as unknown as LinearClient,
+      task: "team-1",
+    });
+
+    expect(raw.assignee).toBe("Unassigned");
+    expect(raw.hasChildren).toBe(false);
+  });
+
+  it("returns raw blockers and child presence from single issue lookup", async () => {
+    const client = {
+      client: {
+        rawRequest: vi.fn<RawRequest>(async () => ({
+          data: {
+            issue: issueNode({
+              children: { nodes: [{ id: "child-1" }] },
+              labels: { nodes: [] },
+              inverseRelations: {
+                nodes: [blockingRelation("TEAM-9", "Todo", "unstarted")],
+                pageInfo: { hasNextPage: true },
+              },
+            }),
+          },
+        })),
+      },
+    };
+
+    const raw = await fetchRawLinearIssue({
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests hit the LinearClient surface consumed by boardSource
+      client: client as unknown as LinearClient,
+      task: "team-1",
+    });
+
+    expect(raw.blockers).toStrictEqual([
+      { id: "team-9", title: "Blocker", status: "Todo", stateType: "unstarted" },
+    ]);
+    expect(raw.hasMoreBlockers).toBe(true);
+    expect(raw.hasChildren).toBe(true);
   });
 
   it("throws a not-found error when the issue is null", async () => {
@@ -603,14 +637,14 @@ describe(fetchRawLinearIssue, () => {
       fetchRawLinearIssue({
         // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests hit the LinearClient surface consumed by boardSource
         client: client as unknown as LinearClient,
-        ticket: "team-9999",
+        task: "team-9999",
       }),
     ).rejects.toThrow(/TEAM-9999 not found in Linear/);
   });
 });
 
 describe(fetchInProgressIssueCount, () => {
-  it("counts matching in-progress tickets across all pages", async () => {
+  it("counts matching in-progress tasks across all pages", async () => {
     const client = makeClient({ activePages: [2, 3] });
     const count = await fetchInProgressIssueCount({
       // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests hit the LinearClient surface consumed by boardSource
@@ -725,7 +759,7 @@ describe(resolveModelFor, () => {
   });
 });
 
-describe(fetchBlockersForTicket, () => {
+describe(fetchBlockersForTask, () => {
   function makeBlockerClient(pages: { nodes: unknown[]; hasNextPage: boolean }[]): ClientStub {
     let callIndex = 0;
     return {
@@ -758,10 +792,10 @@ describe(fetchBlockersForTicket, () => {
         hasNextPage: false,
       },
     ]);
-    const blockers = await fetchBlockersForTicket({
+    const blockers = await fetchBlockersForTask({
       // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests hit the LinearClient surface consumed by boardSource
       client: client as unknown as LinearClient,
-      ticket: "TEAM-1",
+      task: "TEAM-1",
       uuid: "uuid-1",
     });
     expect(blockers).toStrictEqual([
@@ -774,10 +808,10 @@ describe(fetchBlockersForTicket, () => {
       { nodes: [blockingRelation("TEAM-9", "Todo", "unstarted")], hasNextPage: true },
       { nodes: [blockingRelation("TEAM-10", "Done", "completed")], hasNextPage: false },
     ]);
-    const blockers = await fetchBlockersForTicket({
+    const blockers = await fetchBlockersForTask({
       // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests hit the LinearClient surface consumed by boardSource
       client: client as unknown as LinearClient,
-      ticket: "TEAM-1",
+      task: "TEAM-1",
       uuid: "uuid-1",
     });
     expect(blockers.map((b) => b.id)).toStrictEqual(["team-9", "team-10"]);
@@ -789,10 +823,10 @@ describe(fetchBlockersForTicket, () => {
         rawRequest: vi.fn<RawRequest>(async () => ({ data: { issue: null } })),
       },
     };
-    const blockers = await fetchBlockersForTicket({
+    const blockers = await fetchBlockersForTask({
       // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests hit the LinearClient surface consumed by boardSource
       client: client as unknown as LinearClient,
-      ticket: "TEAM-1",
+      task: "TEAM-1",
       uuid: "uuid-1",
     });
     expect(blockers).toStrictEqual([]);

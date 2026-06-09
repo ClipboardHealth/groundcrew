@@ -1,5 +1,4 @@
 import { existsSync } from "node:fs";
-import { homedir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -7,6 +6,8 @@ import { cosmiconfig, type CosmiconfigResult, type Loader } from "cosmiconfig";
 
 import type { LinearAdapterConfig } from "./adapters/linear/schema.ts";
 import type { ShellAdapterConfig } from "./adapters/shell/schema.ts";
+import type { TodoTxtAdapterConfig } from "./adapters/todo-txt/schema.ts";
+import { expandHome } from "./paths.ts";
 import { debug, log, readEnvironmentVariable, setLogFile } from "./util.ts";
 import { xdgConfigPath, xdgStatePath } from "./xdg.ts";
 
@@ -20,14 +21,14 @@ export { BUILD_SECRET_NAMES } from "./buildSecrets.ts";
  * `ResolvedConfig.sources[]`. The runtime Zod validation lives in each
  * adapter's `schema.ts` and runs at `buildSources` time, not here.
  */
-export type SourceConfig = LinearAdapterConfig | ShellAdapterConfig;
+export type SourceConfig = LinearAdapterConfig | ShellAdapterConfig | TodoTxtAdapterConfig;
 
 export interface HookCommands {
   prepareWorktree?: string;
 }
 
 /**
- * Reserved model name. A ticket labeled `agent-any` resolves at runtime
+ * Reserved model name. A task labeled `agent-any` resolves at runtime
  * to the configured model with the most available session capacity, so
  * `any` cannot itself be a model. orchestrator.ts imports this constant
  * so the reserved name lives in one place.
@@ -170,7 +171,7 @@ export interface KnownRepository {
 
 export interface Config {
   /**
-   * Additional pluggable ticket sources beyond the built-in Linear adapter
+   * Additional pluggable task sources beyond the built-in Linear adapter
    * (which is always implicit). Each entry is a `SourceConfig` discriminated
    * by `kind`. The most common use is a `kind: "shell"` adapter that wires
    * an external system (Jira, plan-keeper, etc.) by pointing at command
@@ -189,8 +190,8 @@ export interface Config {
     remote?: string;
     defaultBranch?: string;
     /**
-     * Overrides the prefix groundcrew puts in front of the ticket id when it
-     * names a worktree branch (`<branchPrefix>-<ticket>`). Defaults to the OS
+     * Overrides the prefix groundcrew puts in front of the task id when it
+     * names a worktree branch (`<branchPrefix>-<task>`). Defaults to the OS
      * account username when unset. Must be a git-ref-safe, slash-free slug.
      */
     branchPrefix?: string;
@@ -198,7 +199,7 @@ export interface Config {
   workspace: {
     projectDir: string;
     /**
-     * Parent directory all per-ticket worktrees are created under. Defaults
+     * Parent directory all per-task worktrees are created under. Defaults
      * to `projectDir` when unset, so single-directory setups are unchanged.
      */
     worktreeDir?: string;
@@ -255,7 +256,7 @@ export interface Config {
  */
 export interface ResolvedConfig {
   /**
-   * Resolved list of additional ticket sources beyond the built-in Linear
+   * Resolved list of additional task sources beyond the built-in Linear
    * adapter. Defaults to `[]` when the user omits `sources` in their config.
    * Each entry's per-adapter validation is the responsibility of `buildSources`,
    * not the config loader.
@@ -387,27 +388,27 @@ const MODEL_DEFINITIONS_MIGRATION_MESSAGE = [
 ].join("\n");
 
 const DEFAULT_PROMPT_INITIAL = [
-  "You are working on ticket {{ticket}} ({{title}}) in the {{worktree}} worktree subdirectory.",
+  "You are working on task {{task}} ({{title}}) in the {{worktree}} worktree subdirectory.",
   "",
-  "Ticket description:",
+  "Task description:",
   "",
   "{{description}}",
   "",
   "## Operating mode",
   "",
-  "There is no human watching this session. Do not stop to ask clarifying questions. When the ticket is ambiguous or incomplete, choose the simplest reasonable interpretation consistent with the ticket and the codebase, then document that choice in the output.",
+  "There is no human watching this session. Do not stop to ask clarifying questions. When the task is ambiguous or incomplete, choose the simplest reasonable interpretation consistent with the task and the codebase, then document that choice in the output.",
   "{{workspaceContinuationInstruction}}",
   "",
   "## Workflow",
   "",
   "1. Inspect the repo instructions and existing patterns before edits.",
-  "2. Implement the smallest sensible change that completes the ticket.",
+  "2. Implement the smallest sensible change that completes the task.",
   "3. Run the repo's documented verification command. If no documented command exists, run the smallest relevant test suite you can find and fix failures you introduced before continuing.",
-  "4. Follow the ticket description for output. If no output instructions exist, open a PR with `Closes {{ticket}}` in the description. If you cannot open one, leave the branch ready and record the blocker.",
+  "4. Follow the task description for output. If no output instructions exist, open a PR with `Closes {{task}}` in the description. If you cannot open one, leave the branch ready and record the blocker.",
 ].join("\n");
 
 const ALLOWED_PROMPT_PLACEHOLDERS = new Set([
-  "{{ticket}}",
+  "{{task}}",
   "{{worktree}}",
   "{{title}}",
   "{{description}}",
@@ -420,16 +421,6 @@ const PERCENT_MAX = 100;
 
 function defaultLogFile(): string {
   return xdgStatePath("groundcrew", "groundcrew.log");
-}
-
-function expandHome(p: string): string {
-  if (p === "~") {
-    return homedir();
-  }
-  if (p.startsWith("~/")) {
-    return path.resolve(homedir(), p.slice(2));
-  }
-  return p;
 }
 
 function fail(message: string): never {
@@ -768,7 +759,7 @@ function failOnLegacyLinearShape(user: Record<string, unknown>): void {
       "Groundcrew now picks up every Linear issue assigned to your API key's viewer that carries an `agent-*` label —",
       "remove the `linear: { ... }` block from your config.",
       'To customize Linear status names, declare `sources: [{ kind: "linear", statuses: { ... } }]` instead.',
-      "If you only want a subset of your Linear tickets to be picked up, leave the unwanted tickets unassigned or remove their `agent-*` label.",
+      "If you only want a subset of your Linear tasks to be picked up, leave the unwanted tasks unassigned or remove their `agent-*` label.",
     ].join("\n"),
   );
 }
@@ -803,6 +794,12 @@ function normalizeSources(raw: unknown): SourceConfig[] {
     fail("sources must be an array");
   }
   const names = new Map<string, number>();
+  // Expand ~ in path-typed fields for adapters that accept filesystem paths.
+  // All other path values in ResolvedConfig are expanded at this layer so
+  // downstream adapters receive absolute paths without each having to call
+  // expandHome defensively. isPlainObject() above narrows entry to
+  // Record<string, unknown> so no extra assertion is needed here.
+  const expanded: unknown[] = [];
   for (const [index, entry] of raw.entries()) {
     const configPath = `sources[${index}]`;
     if (!isPlainObject(entry)) {
@@ -829,9 +826,24 @@ function normalizeSources(raw: unknown): SourceConfig[] {
       );
     }
     names.set(effectiveName, index);
+    if (kind === "todo-txt") {
+      expanded.push({
+        ...entry,
+        /* v8 ignore next @preserve -- Zod schema guarantees todoPath/tasksDir are strings; else branch only reachable with a non-string raw value rejected downstream by Zod */
+        ...(typeof entry["todoPath"] === "string"
+          ? { todoPath: expandHome(entry["todoPath"]) }
+          : {}),
+        /* v8 ignore next @preserve -- same as above */
+        ...(typeof entry["tasksDir"] === "string"
+          ? { tasksDir: expandHome(entry["tasksDir"]) }
+          : {}),
+      });
+    } else {
+      expanded.push(entry);
+    }
   }
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- structural validation above guarantees array of {kind: string} entries; per-source Zod validation lives in buildSources
-  return raw as SourceConfig[];
+  return expanded as SourceConfig[];
 }
 
 /**

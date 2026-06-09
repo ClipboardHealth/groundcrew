@@ -5,7 +5,7 @@ import path from "node:path";
 import { z } from "zod";
 
 import type { AdapterDefinition } from "../adapterDefinition.ts";
-import type { MarkInReviewResult, TicketSource } from "../ticketSource.ts";
+import type { MarkInReviewResult, TaskSource } from "../taskSource.ts";
 import {
   adapterRegistry,
   type AdapterLoader,
@@ -14,10 +14,12 @@ import {
   listAdapterDirectories,
 } from "./registry.ts";
 
-function emptySource(name: string): TicketSource {
+function emptySource(name: string): TaskSource {
   return {
     name,
     verify: vi.fn<() => Promise<void>>().mockResolvedValue(),
+    listTasks: vi.fn<() => Promise<never[]>>().mockResolvedValue([]),
+    getTask: vi.fn<() => Promise<null>>().mockResolvedValue(null),
     fetch: vi.fn<() => Promise<never[]>>().mockResolvedValue([]),
     // eslint-disable-next-line unicorn/no-useless-undefined -- mockResolvedValue requires a value for non-void return type
     resolveOne: vi.fn<() => Promise<undefined>>().mockResolvedValue(undefined),
@@ -121,11 +123,12 @@ describe(listAdapterDirectories, () => {
 });
 
 describe("adapterRegistry production IIFE", () => {
-  it("loads the built-in linear and shell adapters from src/lib/adapters/", async () => {
+  it("loads the built-in adapters from src/lib/adapters/", async () => {
     const registry = await adapterRegistry;
-    expect(Object.keys(registry).toSorted()).toStrictEqual(["linear", "shell"]);
+    expect(Object.keys(registry).toSorted()).toStrictEqual(["linear", "shell", "todo-txt"]);
     expect(registry["linear"]?.kind).toBe("linear");
     expect(registry["shell"]?.kind).toBe("shell");
+    expect(registry["todo-txt"]?.kind).toBe("todo-txt");
   });
 
   it("each loaded adapter exposes a Zod configSchema and a create function", async () => {

@@ -169,6 +169,43 @@ describe("shell adapter config schema", () => {
     expect(() => shellAdapterConfigSchema.parse(config)).not.toThrow();
   });
 
+  it("accepts commands.listTasks as the preferred name for fetch", () => {
+    const config = {
+      kind: "shell",
+      name: "jira",
+      commands: { listTasks: "echo '[]'" },
+    };
+    expect(() => shellAdapterConfigSchema.parse(config)).not.toThrow();
+  });
+
+  it("accepts commands.getTask as the preferred name for resolveOne", () => {
+    const config = {
+      kind: "shell",
+      name: "jira",
+      commands: { fetch: "echo '[]'", getTask: "./get.sh ${id}" },
+    };
+    expect(() => shellAdapterConfigSchema.parse(config)).not.toThrow();
+  });
+
+  it("rejects config with neither fetch nor listTasks", () => {
+    const config = {
+      kind: "shell",
+      name: "jira",
+      commands: { verify: "echo ok" },
+    };
+    expect(() => shellAdapterConfigSchema.parse(config)).toThrow(/listTasks.*required/i);
+  });
+
+  it("accepts timeouts.listTasks and timeouts.getTask", () => {
+    const config = {
+      kind: "shell",
+      name: "jira",
+      commands: { listTasks: "echo '[]'" },
+      timeouts: { listTasks: 60_000, getTask: 15_000 },
+    };
+    expect(() => shellAdapterConfigSchema.parse(config)).not.toThrow();
+  });
+
   it("requires kebab-case names", () => {
     const config = {
       kind: "shell",

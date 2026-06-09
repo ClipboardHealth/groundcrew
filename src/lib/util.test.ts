@@ -254,9 +254,9 @@ describe(setLogFile, () => {
     const logFile = path.join(temporary, "events.log");
     setLogFile(logFile);
 
-    logEvent("dispatch", { outcome: "started", ticket: "TEAM-1" });
+    logEvent("dispatch", { outcome: "started", task: "TEAM-1" });
 
-    expect(readFileSync(logFile, "utf8")).toBe("event=dispatch outcome=started ticket=TEAM-1\n");
+    expect(readFileSync(logFile, "utf8")).toBe("event=dispatch outcome=started task=TEAM-1\n");
     consoleLog.restore();
   });
 

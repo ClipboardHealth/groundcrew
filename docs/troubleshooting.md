@@ -1,6 +1,6 @@
 # Troubleshooting
 
-First stop for "what exists locally right now": `crew status <ticket>` shows the ticket's worktrees, workspace presence, run state, logs, and ticket-source status. Use `crew doctor` when you need to verify host setup.
+First stop for "what exists locally right now": `crew status <task>` shows the task's worktrees, workspace presence, run state, logs, and task-source status. Use `crew doctor` when you need to verify host setup.
 
 ## Missing Model CLI
 
@@ -15,7 +15,7 @@ models: {
 },
 ```
 
-If `codex: {}` is listed, doctor expects the `codex` CLI to be installed because tickets can route to `agent-codex` and `agent-any` can select it.
+If `codex: {}` is listed, doctor expects the `codex` CLI to be installed because tasks can route to `agent-codex` and `agent-any` can select it.
 
 ## Safehouse-Wrapped Commands Are Not Re-Wrapped
 
@@ -27,13 +27,13 @@ When a wrapped agent command fails, the tmux window closes immediately and the e
 
 This applies to the tmux backend only.
 
-## Tickets Stay In-Progress
+## Tasks Stay In-Progress
 
-Groundcrew marks a ticket `In Progress` when it provisions a workspace. When a PR opens on that worktree branch, the reviewer pass attempts to mark the ticket `In Review`. Linear's default `In Review` status works out of the box; if your team renamed it, configure `sources: [{ kind: "linear", statuses: { inReview: ["Code Review"] } }]`.
+Groundcrew marks a task `In Progress` when it provisions a workspace. When a PR opens on that worktree branch, the reviewer pass attempts to mark the task `In Review`. Linear's default `In Review` status works out of the box; if your team renamed it, configure `sources: [{ kind: "linear", statuses: { inReview: ["Code Review"] } }]`.
 
 ## Claude Launches In Auto Mode By Default
 
-Groundcrew creates isolated per-ticket worktrees for unattended runs, so the shipped `claude` command is `claude --permission-mode auto` to let Claude proceed without stopping for clarifying questions while keeping its built-in safety prompts intact. Override `models.definitions.claude.cmd` for `bypassPermissions` if you need to suppress tool-permission prompts entirely, or for a stricter mode.
+Groundcrew creates isolated per-task worktrees for unattended runs, so the shipped `claude` command is `claude --permission-mode auto` to let Claude proceed without stopping for clarifying questions while keeping its built-in safety prompts intact. Override `models.definitions.claude.cmd` for `bypassPermissions` if you need to suppress tool-permission prompts entirely, or for a stricter mode.
 
 ## Doctor's Command Introspection Is Shallow
 

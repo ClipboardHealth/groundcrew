@@ -1,12 +1,12 @@
 /**
  * Per-iteration scanner that closes workspaces and removes worktrees for
- * tickets that have reached a terminal status. One per `orchestrate()`
+ * tasks that have reached a terminal status. One per `orchestrate()`
  * invocation; stateless across iterations. Mirrors `Dispatcher`.
  */
 
 import type { ResolvedConfig } from "../lib/config.ts";
 import { recordCleanedUpRuns } from "../lib/runStateCleanup.ts";
-import { naturalIdFromCanonical, type BoardState } from "../lib/ticketSource.ts";
+import { naturalIdFromCanonical, type BoardState } from "../lib/taskSource.ts";
 import { log, logEvent } from "../lib/util.ts";
 import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 import { logTeardown, recordTeardownEvents } from "./teardownReporter.ts";
@@ -35,16 +35,16 @@ export function createCleaner(deps: CleanerDeps): Cleaner {
   }): Promise<void> {
     const { state, worktreeEntries, dryRun, signal } = arguments_;
 
-    const terminalTickets = new Set(
+    const terminalTasks = new Set(
       state.issues
         .filter((issue) => issue.status === "done")
         .map((issue) => naturalIdFromCanonical(issue.id)),
     );
-    if (terminalTickets.size === 0) {
+    if (terminalTasks.size === 0) {
       return;
     }
 
-    const stale = worktreeEntries.filter((entry) => terminalTickets.has(entry.ticket));
+    const stale = worktreeEntries.filter((entry) => terminalTasks.has(entry.task));
 
     if (stale.length === 0) {
       return;
@@ -53,11 +53,11 @@ export function createCleaner(deps: CleanerDeps): Cleaner {
     if (dryRun) {
       log(`[dry-run] ${stale.length} worktree(s) due for cleanup:`);
       for (const entry of stale) {
-        log(`  - ${entry.repository}-${entry.ticket} (${entry.kind})`);
+        log(`  - ${entry.repository}-${entry.task} (${entry.kind})`);
         logEvent("cleanup", {
           outcome: "skipped",
           reason: "dry_run",
-          ticket: entry.ticket,
+          task: entry.task,
           repository: entry.repository,
           kind: entry.kind,
         });

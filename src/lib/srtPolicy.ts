@@ -246,7 +246,7 @@ const TOOLCHAIN_READ_ROOTS: readonly string[] = [
  * (macOS Seatbelt is deny-beats-allow, so a denied parent cannot be re-allowed
  * for a child — the allowlist is the only correct shape). Closed by not being
  * listed: `config`, `hooks`, `modules`, and **sibling** worktree gitdirs under
- * `worktrees/<other>` (cross-ticket tamper). This worktree's own gitdir is
+ * `worktrees/<other>` (cross-task tamper). This worktree's own gitdir is
  * granted separately and its redirection files carved back out (see
  * `gitCommonWriteDenies`).
  *

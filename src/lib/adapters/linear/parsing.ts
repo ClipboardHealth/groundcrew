@@ -4,7 +4,7 @@
  */
 
 import { AGENT_ANY_MODEL, isBuiltInModelNotEnabled, type ResolvedConfig } from "../../config.ts";
-import { RepositoryResolutionError } from "../../ticketSource.ts";
+import { RepositoryResolutionError } from "../../taskSource.ts";
 
 export const AGENT_LABEL_PREFIX = "agent-";
 
@@ -36,7 +36,7 @@ export function buildRepositoryRegex(config: ResolvedConfig): RegExp {
 }
 
 // Shared canonicalization for parseRepository (auto-pickup / dispatch path)
-// and resolveRepositoryFor (manual setup / single-ticket path). The regex
+// and resolveRepositoryFor (manual setup / single-task path). The regex
 // can capture either a full `owner/repo` or a bare `repo` when only that
 // appears in the description; canonicalization resolves a bare match back
 // to its full `owner/repo` entry in knownRepositories, and rejects bare
@@ -93,7 +93,7 @@ export function resolveRepositoryFor(arguments_: {
     case "ambiguous": {
       // Ambiguous matches surface as "missing" so fetchResolvedIssue throws
       // RepositoryResolutionError — same conflation parseRepository uses,
-      // and the right call for single-ticket flows: the launcher can't
+      // and the right call for single-task flows: the launcher can't
       // disambiguate "matched N known repos" any more than the dispatcher can.
       return { kind: "missing" };
     }
@@ -114,17 +114,17 @@ interface ParseRepositoryArguments {
   description: string | undefined;
   config: ResolvedConfig;
   repositoryRegex: RegExp;
-  ticket: string;
+  task: string;
 }
 
 export function parseRepository(arguments_: ParseRepositoryArguments): string {
-  const { description, config, repositoryRegex, ticket } = arguments_;
+  const { description, config, repositoryRegex, task } = arguments_;
   const match = canonicalizeRepositoryMatch(description, config, repositoryRegex);
   switch (match.kind) {
     case "missing":
     case "ambiguous": {
       throw new RepositoryResolutionError({
-        ticket,
+        task,
         repositories: config.workspace.knownRepositories,
       });
     }
@@ -147,15 +147,15 @@ export function parseRepository(arguments_: ParseRepositoryArguments): string {
 }
 
 /**
- * Returns the resolved agent metadata for a ticket, or `undefined` when the
- * ticket has no `agent-*` label — those tickets are not groundcrew's concern
+ * Returns the resolved agent metadata for a task, or `undefined` when the
+ * task has no `agent-*` label — those tasks are not groundcrew's concern
  * and downstream code skips them. An explicit `agent-<unknown>` label still
  * falls back to `models.default` because the user opted in by labeling.
  *
  * `notEnabledFallback` is set when the label matched a built-in model the
  * user has not enabled (e.g. `agent-codex` when only `claude: {}` is listed).
  * Callers warn on this so the user can spot the config/labeling mismatch; we
- * still fall back rather than skip because skipping would block the ticket
+ * still fall back rather than skip because skipping would block the task
  * indefinitely. Unknown labels stay silent — those are likelier to be typos.
  */
 interface ParsedAgentLabels {

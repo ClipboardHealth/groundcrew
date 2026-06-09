@@ -4,11 +4,13 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+import { captureConsoleError } from "../../../testHelpers/consoleCapture.ts";
+
 import type { AdapterContext } from "../../adapterDefinition.ts";
 import type { ResolvedConfig } from "../../config.ts";
-import type { Issue as CanonicalIssue } from "../../ticketSource.ts";
+import type { Issue as CanonicalIssue } from "../../taskSource.ts";
 
-import { createShellTicketSource, toCanonicalIssue } from "./factory.ts";
+import { createShellTaskSource, toCanonicalIssue } from "./factory.ts";
 import type { ShellIssue } from "./schema.ts";
 
 interface TempDir {
@@ -56,7 +58,7 @@ function shellIssue(overrides: Partial<ShellIssue> = {}): ShellIssue {
 describe(toCanonicalIssue, () => {
   it("prefixes the canonical id with the source name and lowercases the natural part", () => {
     // The natural id is lowercased via the shared toCanonicalId helper so the
-    // same ticket always produces the same canonical id regardless of which
+    // same task always produces the same canonical id regardless of which
     // casing the source emitted — Board.resolveOne lowercases its input
     // before comparing, so adapters MUST lowercase on the storage side too.
     const result = toCanonicalIssue(shellIssue({ id: "X-1" }), "jira");
@@ -171,7 +173,7 @@ function payload(issue: ShellIssue): string {
   return JSON.stringify([issue]);
 }
 
-describe(createShellTicketSource, () => {
+describe(createShellTaskSource, () => {
   let dir: TempDir;
   beforeEach(() => {
     dir = makeTempDir();
@@ -181,7 +183,7 @@ describe(createShellTicketSource, () => {
   });
 
   it("name comes from the config (no default)", () => {
-    const source = createShellTicketSource(
+    const source = createShellTaskSource(
       { kind: "shell", name: "jira", commands: { fetch: "echo '[]'" } },
       fakeContext,
     );
@@ -193,7 +195,7 @@ describe(createShellTicketSource, () => {
       "fetch.sh",
       `cat <<'JSON'\n${payload(shellIssue({ id: "X-1" }))}\nJSON`,
     );
-    const source = createShellTicketSource(
+    const source = createShellTaskSource(
       { kind: "shell", name: "test", commands: { fetch: script } },
       fakeContext,
     );
@@ -203,9 +205,24 @@ describe(createShellTicketSource, () => {
     expect(issues[0]?.source).toBe("test");
   });
 
+  it("listTasks() parses well-formed JSON and prefixes ids with the source name", async () => {
+    const script = dir.writeScript(
+      "list.sh",
+      `cat <<'JSON'\n${payload(shellIssue({ id: "X-1" }))}\nJSON`,
+    );
+    const source = createShellTaskSource(
+      { kind: "shell", name: "test", commands: { listTasks: script } },
+      fakeContext,
+    );
+
+    const issues = await source.listTasks();
+
+    expect(issues[0]?.id).toBe("test:x-1");
+  });
+
   it("fetch() throws when the script emits malformed JSON", async () => {
     const script = dir.writeScript("bad.sh", 'echo "not json"');
-    const source = createShellTicketSource(
+    const source = createShellTaskSource(
       { kind: "shell", name: "test", commands: { fetch: script } },
       fakeContext,
     );
@@ -214,7 +231,7 @@ describe(createShellTicketSource, () => {
 
   it("fetch() throws when JSON doesn't match the ShellIssue schema", async () => {
     const script = dir.writeScript("bad-shape.sh", `echo '[{"id": 123}]'`);
-    const source = createShellTicketSource(
+    const source = createShellTaskSource(
       { kind: "shell", name: "test", commands: { fetch: script } },
       fakeContext,
     );
@@ -222,7 +239,7 @@ describe(createShellTicketSource, () => {
   });
 
   it("verify() is a silent no-op when not configured", async () => {
-    const source = createShellTicketSource(
+    const source = createShellTaskSource(
       { kind: "shell", name: "test", commands: { fetch: "echo '[]'" } },
       fakeContext,
     );
@@ -231,7 +248,7 @@ describe(createShellTicketSource, () => {
 
   it("verify() runs the configured command", async () => {
     const verifyScript = dir.writeScript("verify.sh", "exit 0");
-    const source = createShellTicketSource(
+    const source = createShellTaskSource(
       {
         kind: "shell",
         name: "test",
@@ -244,7 +261,7 @@ describe(createShellTicketSource, () => {
 
   it("verify() surfaces failures from the configured command", async () => {
     const verifyScript = dir.writeScript("fail-verify.sh", 'echo "auth failed" >&2; exit 1');
-    const source = createShellTicketSource(
+    const source = createShellTaskSource(
       {
         kind: "shell",
         name: "test",
@@ -260,7 +277,7 @@ describe(createShellTicketSource, () => {
       "fetch.sh",
       `cat <<'JSON'\n${payload(shellIssue({ id: "X-1" }))}\nJSON`,
     );
-    const source = createShellTicketSource(
+    const source = createShellTaskSource(
       { kind: "shell", name: "test", commands: { fetch: script } },
       fakeContext,
     );
@@ -278,7 +295,7 @@ describe(createShellTicketSource, () => {
       "fetch.sh",
       `cat <<'JSON'\n${payload(shellIssue({ id: "TEST-1" }))}\nJSON`,
     );
-    const source = createShellTicketSource(
+    const source = createShellTaskSource(
       { kind: "shell", name: "test", commands: { fetch: script } },
       fakeContext,
     );
@@ -288,7 +305,7 @@ describe(createShellTicketSource, () => {
 
   it("resolveOne() fallback returns undefined when fetch has no matching id", async () => {
     const script = dir.writeScript("fetch.sh", "echo '[]'");
-    const source = createShellTicketSource(
+    const source = createShellTaskSource(
       { kind: "shell", name: "test", commands: { fetch: script } },
       fakeContext,
     );
@@ -301,7 +318,7 @@ describe(createShellTicketSource, () => {
       "resolve.sh",
       `echo "{\\"id\\":\\"$1\\",\\"title\\":\\"t\\",\\"description\\":\\"\\",\\"status\\":\\"todo\\",\\"repository\\":null,\\"model\\":null,\\"assignee\\":\\"u\\",\\"updatedAt\\":\\"2026-01-01T00:00:00Z\\",\\"blockers\\":[],\\"sourceRef\\":null}"`,
     );
-    const source = createShellTicketSource(
+    const source = createShellTaskSource(
       {
         kind: "shell",
         name: "test",
@@ -313,9 +330,28 @@ describe(createShellTicketSource, () => {
     expect(issue?.id).toBe("test:x-1");
   });
 
+  it("getTask() runs the configured command and applies ${id} substitution", async () => {
+    const getTaskScript = dir.writeScript(
+      "get.sh",
+      `echo "{\\"id\\":\\"$1\\",\\"title\\":\\"t\\",\\"description\\":\\"\\",\\"status\\":\\"todo\\",\\"repository\\":null,\\"model\\":null,\\"assignee\\":\\"u\\",\\"updatedAt\\":\\"2026-01-01T00:00:00Z\\",\\"blockers\\":[],\\"sourceRef\\":null}"`,
+    );
+    const source = createShellTaskSource(
+      {
+        kind: "shell",
+        name: "test",
+        commands: { fetch: "echo '[]'", getTask: `${getTaskScript} \${id}` },
+      },
+      fakeContext,
+    );
+
+    const issue = await source.getTask("X-1");
+
+    expect(issue?.id).toBe("test:x-1");
+  });
+
   it("resolveOne() returns undefined on exit code 3", async () => {
     const resolveScript = dir.writeScript("nf.sh", "exit 3");
-    const source = createShellTicketSource(
+    const source = createShellTaskSource(
       {
         kind: "shell",
         name: "test",
@@ -329,7 +365,7 @@ describe(createShellTicketSource, () => {
 
   it("resolveOne() returns undefined when the script's stdout is empty", async () => {
     const resolveScript = dir.writeScript("empty.sh", "exit 0");
-    const source = createShellTicketSource(
+    const source = createShellTaskSource(
       {
         kind: "shell",
         name: "test",
@@ -342,7 +378,7 @@ describe(createShellTicketSource, () => {
   });
 
   it("markInProgress() is a silent no-op when not configured", async () => {
-    const source = createShellTicketSource(
+    const source = createShellTaskSource(
       { kind: "shell", name: "test", commands: { fetch: "echo '[]'" } },
       fakeContext,
     );
@@ -366,7 +402,7 @@ describe(createShellTicketSource, () => {
   it("markInProgress() runs the configured command with substituted id and piped sourceRef on stdin", async () => {
     const stdinCapture = path.join(dir.path, "stdin-capture.txt");
     const markScript = dir.writeScript("mark.sh", `cat > "${stdinCapture}"; echo "marked $1"`);
-    const source = createShellTicketSource(
+    const source = createShellTaskSource(
       {
         kind: "shell",
         name: "test",
@@ -397,7 +433,7 @@ describe(createShellTicketSource, () => {
 
   it("markInProgress() handles an id that does not have the source prefix", async () => {
     const markScript = dir.writeScript("mark.sh", "exit 0");
-    const source = createShellTicketSource(
+    const source = createShellTaskSource(
       {
         kind: "shell",
         name: "test",
@@ -423,7 +459,7 @@ describe(createShellTicketSource, () => {
   });
 
   it("markInReview() reports unsupported when not configured", async () => {
-    const source = createShellTicketSource(
+    const source = createShellTaskSource(
       { kind: "shell", name: "test", commands: { fetch: "echo '[]'" } },
       fakeContext,
     );
@@ -450,7 +486,7 @@ describe(createShellTicketSource, () => {
   it("markInReview() runs the configured command with substituted id and piped sourceRef on stdin", async () => {
     const stdinCapture = path.join(dir.path, "review-stdin-capture.txt");
     const reviewScript = dir.writeScript("review.sh", `cat > "${stdinCapture}"; echo "review $1"`);
-    const source = createShellTicketSource(
+    const source = createShellTaskSource(
       {
         kind: "shell",
         name: "test",
@@ -478,7 +514,7 @@ describe(createShellTicketSource, () => {
   });
 
   it("markDone() reports unsupported when not configured", async () => {
-    const source = createShellTicketSource(
+    const source = createShellTaskSource(
       { kind: "shell", name: "test", commands: { fetch: "echo '[]'" } },
       fakeContext,
     );
@@ -505,7 +541,7 @@ describe(createShellTicketSource, () => {
   it("markDone() runs the configured command with substituted id and piped sourceRef on stdin", async () => {
     const stdinCapture = path.join(dir.path, "done-stdin-capture.txt");
     const doneScript = dir.writeScript("done.sh", `cat > "${stdinCapture}"; echo "done $1"`);
-    const source = createShellTicketSource(
+    const source = createShellTaskSource(
       {
         kind: "shell",
         name: "test",
@@ -530,5 +566,70 @@ describe(createShellTicketSource, () => {
     };
     await expect(source.markDone?.(issue)).resolves.toStrictEqual({ outcome: "applied" });
     expect(readFileSync(stdinCapture, "utf8")).toBe(JSON.stringify(sourceRef));
+  });
+
+  it("fetch() works when commands.listTasks is used instead of commands.fetch", async () => {
+    const script = dir.writeScript(
+      "list.sh",
+      `cat <<'JSON'\n${payload(shellIssue({ id: "X-2" }))}\nJSON`,
+    );
+    const source = createShellTaskSource(
+      { kind: "shell", name: "test", commands: { listTasks: script } },
+      fakeContext,
+    );
+    const issues = await source.fetch();
+    expect(issues).toHaveLength(1);
+    expect(issues[0]?.id).toBe("test:x-2");
+  });
+
+  it("resolveOne() uses commands.getTask when set instead of commands.resolveOne", async () => {
+    const getTaskScript = dir.writeScript(
+      "get.sh",
+      `echo "{\\"id\\":\\"$1\\",\\"title\\":\\"t\\",\\"description\\":\\"\\",\\"status\\":\\"todo\\",\\"repository\\":null,\\"model\\":null,\\"assignee\\":\\"u\\",\\"updatedAt\\":\\"2026-01-01T00:00:00Z\\",\\"blockers\\":[],\\"sourceRef\\":null}"`,
+    );
+    const source = createShellTaskSource(
+      {
+        kind: "shell",
+        name: "test",
+        commands: { fetch: "echo '[]'", getTask: `${getTaskScript} \${id}` },
+      },
+      fakeContext,
+    );
+    const issue = await source.resolveOne("X-2");
+    expect(issue?.id).toBe("test:x-2");
+  });
+
+  it("warns to stderr when both commands.listTasks and commands.fetch are set", () => {
+    const err = captureConsoleError();
+    try {
+      createShellTaskSource(
+        { kind: "shell", name: "test", commands: { listTasks: "echo '[]'", fetch: "echo '[]'" } },
+        fakeContext,
+      );
+    } finally {
+      err.restore();
+    }
+    expect(err.output()).toContain("commands.fetch is ignored");
+  });
+
+  it("warns to stderr when both commands.getTask and commands.resolveOne are set", () => {
+    const err = captureConsoleError();
+    try {
+      createShellTaskSource(
+        {
+          kind: "shell",
+          name: "test",
+          commands: {
+            fetch: "echo '[]'",
+            getTask: "./get.sh",
+            resolveOne: "./resolve.sh",
+          },
+        },
+        fakeContext,
+      );
+    } finally {
+      err.restore();
+    }
+    expect(err.output()).toContain("commands.resolveOne is ignored");
   });
 });

@@ -119,7 +119,7 @@ describe(createLinearIssueStatusUpdater, () => {
     expect(client.updateIssue).not.toHaveBeenCalled();
   });
 
-  it("caches the review state across multiple tickets in the same team", async () => {
+  it("caches the review state across multiple tasks in the same team", async () => {
     const client = makeClient({
       states: [
         { id: "state-in-progress", name: "In Progress", type: "started", position: 1 },
@@ -135,7 +135,7 @@ describe(createLinearIssueStatusUpdater, () => {
     expect(client.updateIssue).toHaveBeenCalledTimes(2);
   });
 
-  it("fetches the started-type state once across multiple tickets in the same team", async () => {
+  it("fetches the started-type state once across multiple tasks in the same team", async () => {
     const client = makeClient();
     const updater = createLinearIssueStatusUpdater({
       client: asLinearClient(client),
@@ -160,7 +160,7 @@ describe(createLinearIssueStatusUpdater, () => {
     // Linear's default workflow has TWO started-type states: In Progress and
     // In Review. team.states() orders by updatedAt, not board position, so the
     // In Review state can come first — the old `.find(type === "started")`
-    // parked tickets in In Review on launch.
+    // parked tasks in In Review on launch.
     const client = makeClient({
       states: [
         { id: "state-in-review", name: "In Review", type: "started", position: 2 },

@@ -7,12 +7,12 @@ import { logTeardown, recordTeardownEvents } from "./teardownReporter.ts";
 // The teardown reporter's telemetry (logEvent) and sub-step lines (debug) are
 // diagnostic, so they only reach the console under verbose. These cases assert
 // that exact wording reaches the console, so each describe opts in.
-function hostEntry(ticket: string): WorktreeEntry {
+function hostEntry(task: string): WorktreeEntry {
   return {
     repository: "repo-a",
-    ticket,
-    branchName: `dev-${ticket}`,
-    dir: `/work/repo-a-${ticket}`,
+    task,
+    branchName: `dev-${task}`,
+    dir: `/work/repo-a-${task}`,
     kind: "host",
   };
 }
@@ -52,7 +52,7 @@ describe(logTeardown, () => {
     expect(consoleLog.output()).not.toContain("workspace list failed");
   });
 
-  it("logs `Closed workspace <ticket>` for each ticket the result reports closed", () => {
+  it("logs `Closed workspace <task>` for each task the result reports closed", () => {
     logTeardown(emptyTeardownResult({ closed: ["team-1", "team-2"] }));
 
     const out = consoleLog.output();
@@ -134,12 +134,12 @@ describe(recordTeardownEvents, () => {
     expect(out).toContain("cmux exploded");
   });
 
-  it("emits workspace_closed events for each closed ticket", () => {
+  it("emits workspace_closed events for each closed task", () => {
     recordTeardownEvents(emptyTeardownResult({ closed: ["team-1", "team-2"] }));
 
     const out = consoleLog.output();
-    expect(out).toContain("event=cleanup outcome=workspace_closed ticket=team-1");
-    expect(out).toContain("event=cleanup outcome=workspace_closed ticket=team-2");
+    expect(out).toContain("event=cleanup outcome=workspace_closed task=team-1");
+    expect(out).toContain("event=cleanup outcome=workspace_closed task=team-2");
   });
 
   it("emits cleaned events for each removed entry with repository and kind", () => {
@@ -148,12 +148,8 @@ describe(recordTeardownEvents, () => {
     );
 
     const out = consoleLog.output();
-    expect(out).toContain(
-      "event=cleanup outcome=cleaned ticket=team-1 repository=repo-a kind=host",
-    );
-    expect(out).toContain(
-      "event=cleanup outcome=cleaned ticket=team-2 repository=repo-a kind=host",
-    );
+    expect(out).toContain("event=cleanup outcome=cleaned task=team-1 repository=repo-a kind=host");
+    expect(out).toContain("event=cleanup outcome=cleaned task=team-2 repository=repo-a kind=host");
   });
 
   it("emits workspace_close_failed for workspace_close failures", () => {
@@ -167,7 +163,7 @@ describe(recordTeardownEvents, () => {
 
     const out = consoleLog.output();
     expect(out).toContain("event=cleanup outcome=failed reason=workspace_close_failed");
-    expect(out).toContain("ticket=team-1");
+    expect(out).toContain("task=team-1");
     expect(out).toContain("close down");
   });
 
@@ -182,7 +178,7 @@ describe(recordTeardownEvents, () => {
 
     const out = consoleLog.output();
     expect(out).toContain("event=cleanup outcome=failed");
-    expect(out).toContain("ticket=team-1");
+    expect(out).toContain("task=team-1");
     expect(out).toContain("repository=repo-a");
     expect(out).toContain("kind=host");
     expect(out).toContain("busy");

@@ -11,7 +11,7 @@ import { setVerbose } from "./util.ts";
 import { workspaces } from "./workspaces.ts";
 import { type WorktreeEntry, worktrees } from "./worktrees.ts";
 
-const { create, findByTicket, list, remove, teardown } = worktrees;
+const { create, findByTask, list, remove, teardown } = worktrees;
 
 type NodeOsMock = Omit<typeof nodeOs, "userInfo"> & {
   userInfo: ReturnType<typeof vi.fn<typeof userInfo>>;
@@ -149,7 +149,7 @@ describe(list, () => {
     ]);
   });
 
-  it("finds host sibling worktrees by their <repo>-<ticket> naming", () => {
+  it("finds host sibling worktrees by their <repo>-<task> naming", () => {
     mkdirSync(path.join(projectDir, "repo-a"));
     mkdirSync(path.join(projectDir, "repo-a-team-1"));
     const config = makeConfig({ projectDir });
@@ -157,7 +157,7 @@ describe(list, () => {
     expect(list(config)).toStrictEqual([
       {
         repository: "repo-a",
-        ticket: "team-1",
+        task: "team-1",
         branchName: "dev-team-1",
         dir: path.join(projectDir, "repo-a-team-1"),
         kind: "host",
@@ -165,8 +165,49 @@ describe(list, () => {
     ]);
   });
 
+  it("finds host sibling worktrees with multi-segment source task ids", () => {
+    mkdirSync(path.join(projectDir, "repo-a"));
+    mkdirSync(path.join(projectDir, "repo-a-gc-20260608-001"));
+    const config = makeConfig({ projectDir });
+
+    expect(list(config)).toStrictEqual([
+      {
+        repository: "repo-a",
+        task: "gc-20260608-001",
+        branchName: "dev-gc-20260608-001",
+        dir: path.join(projectDir, "repo-a-gc-20260608-001"),
+        kind: "host",
+      },
+    ]);
+  });
+
+  it("prefers the longest configured repository basename when names overlap", () => {
+    mkdirSync(path.join(projectDir, "repo-a-admin-gc-20260608-001"));
+    const config = makeConfig({
+      projectDir,
+      knownRepositories: ["repo-a", "repo-a-admin"],
+    });
+
+    expect(list(config)).toStrictEqual([
+      {
+        repository: "repo-a-admin",
+        task: "gc-20260608-001",
+        branchName: "dev-gc-20260608-001",
+        dir: path.join(projectDir, "repo-a-admin-gc-20260608-001"),
+        kind: "host",
+      },
+    ]);
+  });
+
   it("ignores host directories whose <repo> segment is not configured", () => {
     mkdirSync(path.join(projectDir, "ghost-team-1"));
+    const config = makeConfig({ projectDir });
+
+    expect(list(config)).toStrictEqual([]);
+  });
+
+  it("ignores configured repository directories whose task segment is invalid", () => {
+    mkdirSync(path.join(projectDir, "repo-a-not-a-task"));
     const config = makeConfig({ projectDir });
 
     expect(list(config)).toStrictEqual([]);
@@ -187,7 +228,7 @@ describe(list, () => {
     expect(list(config)).toStrictEqual([
       {
         repository: "owner/repo",
-        ticket: "team-1",
+        task: "team-1",
         branchName: "dev-team-1",
         dir: path.join(projectDir, "owner", "repo-team-1"),
         kind: "host",
@@ -205,17 +246,17 @@ describe(list, () => {
       knownRepositories: ["owner1/repo", "owner2/repo"],
     });
 
-    expect(list(config).toSorted((a, b) => a.ticket.localeCompare(b.ticket))).toStrictEqual([
+    expect(list(config).toSorted((a, b) => a.task.localeCompare(b.task))).toStrictEqual([
       {
         repository: "owner1/repo",
-        ticket: "team-1",
+        task: "team-1",
         branchName: "dev-team-1",
         dir: path.join(projectDir, "owner1", "repo-team-1"),
         kind: "host",
       },
       {
         repository: "owner2/repo",
-        ticket: "team-2",
+        task: "team-2",
         branchName: "dev-team-2",
         dir: path.join(projectDir, "owner2", "repo-team-2"),
         kind: "host",
@@ -234,10 +275,10 @@ describe(list, () => {
   });
 });
 
-describe(findByTicket, () => {
+describe(findByTask, () => {
   setupTempProjectDir();
 
-  it("returns every host entry matching the ticket regardless of repo", () => {
+  it("returns every host entry matching the task regardless of repo", () => {
     mkdirSync(path.join(projectDir, "repo-a-team-1"));
     mkdirSync(path.join(projectDir, "repo-b-team-1"));
     const config = makeConfig({
@@ -245,15 +286,15 @@ describe(findByTicket, () => {
       knownRepositories: ["repo-a", "repo-b"],
     });
 
-    const actual = findByTicket(config, "team-1");
+    const actual = findByTask(config, "team-1");
 
     expect(actual).toHaveLength(2);
   });
 
-  it("returns an empty array when the ticket has no worktree", () => {
+  it("returns an empty array when the task has no worktree", () => {
     const config = makeConfig({ projectDir });
 
-    expect(findByTicket(config, "team-99")).toStrictEqual([]);
+    expect(findByTask(config, "team-99")).toStrictEqual([]);
   });
 });
 
@@ -273,7 +314,7 @@ describe(create, () => {
 
     const actual = await create(config, {
       repository: "repo-a",
-      ticket: "team-1",
+      task: "team-1",
     });
 
     expect(runCommandMock).toHaveBeenCalledWith(
@@ -310,6 +351,45 @@ describe(create, () => {
     expect(actual.dir).toBe(path.join(projectDir, "repo-a-team-1"));
   });
 
+  it("creates worktrees for multi-segment source task ids", async () => {
+    mkdirSync(path.join(projectDir, "repo-a"));
+    const config = makeConfig({ projectDir });
+    runCommandMock.mockImplementation((_command, arguments_) => {
+      // oxlint-disable-next-line vitest/no-conditional-in-test -- discriminator picks out the symbolic-ref probe so it returns origin/<branch>
+      if (hasArguments(arguments_, "symbolic-ref", "refs/remotes/origin/HEAD")) {
+        return "origin/main\n";
+      }
+      return "";
+    });
+
+    const actual = await create(config, {
+      repository: "repo-a",
+      task: "gc-20260608-001",
+    });
+
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "git",
+      [
+        "-C",
+        path.join(projectDir, "repo-a"),
+        "worktree",
+        "add",
+        "-b",
+        "dev-gc-20260608-001",
+        path.join(projectDir, "repo-a-gc-20260608-001"),
+        "origin/main",
+      ],
+      { stdio: "captured", timeoutMs: 0 },
+    );
+    expect(actual).toMatchObject({
+      repository: "repo-a",
+      task: "gc-20260608-001",
+      branchName: "dev-gc-20260608-001",
+      dir: path.join(projectDir, "repo-a-gc-20260608-001"),
+      kind: "host",
+    });
+  });
+
   it("streams git output (stdio inherit) under verbose", async () => {
     mkdirSync(path.join(projectDir, "repo-a"));
     const config = makeConfig({ projectDir });
@@ -322,7 +402,7 @@ describe(create, () => {
     });
     setVerbose(true);
 
-    await create(config, { repository: "repo-a", ticket: "team-1" });
+    await create(config, { repository: "repo-a", task: "team-1" });
 
     expect(runCommandMock).toHaveBeenCalledWith(
       "git",
@@ -344,7 +424,7 @@ describe(create, () => {
 
     await create(config, {
       repository: "repo-a",
-      ticket: "team-1",
+      task: "team-1",
     });
 
     expect(runCommandMock).toHaveBeenCalledWith(
@@ -386,7 +466,7 @@ describe(create, () => {
 
     await create(config, {
       repository: "repo-a",
-      ticket: "team-1",
+      task: "team-1",
     });
 
     expect(runCommandMock).toHaveBeenCalledWith(
@@ -421,7 +501,7 @@ describe(create, () => {
     );
   });
 
-  it("rejects when a host worktree already exists for the same ticket", async () => {
+  it("rejects when a host worktree already exists for the same task", async () => {
     mkdirSync(path.join(projectDir, "repo-a"));
     mkdirSync(path.join(projectDir, "repo-a-team-1"));
     const config = makeConfig({ projectDir });
@@ -429,7 +509,7 @@ describe(create, () => {
     await expect(
       create(config, {
         repository: "repo-a",
-        ticket: "team-1",
+        task: "team-1",
       }),
     ).rejects.toThrow(/already exists/);
   });
@@ -440,7 +520,7 @@ describe(create, () => {
     await expect(
       create(config, {
         repository: "ghost",
-        ticket: "team-1",
+        task: "team-1",
       }),
     ).rejects.toThrow(/not in workspace.knownRepositories/);
   });
@@ -451,7 +531,7 @@ describe(create, () => {
     await expect(
       create(config, {
         repository: "repo-a",
-        ticket: "team-1",
+        task: "team-1",
       }),
     ).rejects.toThrow(/Repository not found/);
   });
@@ -468,16 +548,16 @@ describe(create, () => {
     ["wrong shape — uppercase", "TEAM-123"],
     ["wrong shape — trailing whitespace", "team-123 "],
     ["wrong shape — plain word", "foo"],
-  ])("rejects invalid ticket %s", async (_label, ticket) => {
+  ])("rejects invalid task %s", async (_label, task) => {
     mkdirSync(path.join(projectDir, "repo-a"));
     const config = makeConfig({ projectDir });
 
     await expect(
       create(config, {
         repository: "repo-a",
-        ticket,
+        task,
       }),
-    ).rejects.toThrow(/must be a plain ticket id/);
+    ).rejects.toThrow(/must be a plain task id/);
   });
 
   it("throws when the OS username is empty", async () => {
@@ -488,7 +568,7 @@ describe(create, () => {
     await expect(
       create(config, {
         repository: "repo-a",
-        ticket: "team-1",
+        task: "team-1",
       }),
     ).rejects.toThrow(/Could not determine OS username/);
   });
@@ -504,7 +584,7 @@ describe(remove, () => {
 
     await remove(config, {
       repository: "repo-a",
-      ticket: "team-1",
+      task: "team-1",
       branchName: "dev-team-1",
       dir: path.join(projectDir, "repo-a-team-1"),
       kind: "host",
@@ -539,7 +619,7 @@ describe(remove, () => {
       config,
       {
         repository: "repo-a",
-        ticket: "team-1",
+        task: "team-1",
         branchName: "dev-team-1",
         dir: path.join(projectDir, "repo-a-team-1"),
         kind: "host",
@@ -567,7 +647,7 @@ describe(remove, () => {
 
     await remove(config, {
       repository: "repo-a",
-      ticket: "team-1",
+      task: "team-1",
       branchName: "dev-team-1",
       dir: path.join(projectDir, "repo-a-team-1"),
       kind: "host",
@@ -602,7 +682,7 @@ describe(remove, () => {
     const callRemove = async (): Promise<void> => {
       await remove(config, {
         repository: "repo-a",
-        ticket: "team-1",
+        task: "team-1",
         branchName: "dev-team-1",
         dir: path.join(projectDir, "repo-a-team-1"),
         kind: "host",
@@ -632,7 +712,7 @@ describe(remove, () => {
     const callRemove = async (): Promise<void> => {
       await remove(config, {
         repository: "repo-a",
-        ticket: "team-1",
+        task: "team-1",
         branchName: "dev-team-1",
         dir: path.join(projectDir, "repo-a-team-1"),
         kind: "host",
@@ -668,7 +748,7 @@ describe(remove, () => {
     const callRemove = async (): Promise<void> => {
       await remove(config, {
         repository: "repo-a",
-        ticket: "team-1",
+        task: "team-1",
         branchName: "dev-team-1",
         dir: path.join(projectDir, "repo-a-team-1"),
         kind: "host",
@@ -700,7 +780,7 @@ describe(remove, () => {
     const callRemove = async (): Promise<void> => {
       await remove(config, {
         repository: "repo-a",
-        ticket: "team-1",
+        task: "team-1",
         branchName: "dev-team-1",
         dir: path.join(projectDir, "repo-a-team-1"),
         kind: "host",
@@ -736,7 +816,7 @@ describe(remove, () => {
     const callRemove = async (): Promise<void> => {
       await remove(config, {
         repository: "repo-a",
-        ticket: "team-1",
+        task: "team-1",
         branchName: "dev-team-1",
         dir: path.join(projectDir, "repo-a-team-1"),
         kind: "host",
@@ -779,7 +859,7 @@ describe(remove, () => {
     await expect(
       remove(config, {
         repository: "repo-a",
-        ticket: "team-1",
+        task: "team-1",
         branchName: "dev-team-1",
         dir: path.join(projectDir, "repo-a-team-1"),
         kind: "host",
@@ -811,7 +891,7 @@ describe(remove, () => {
     await expect(
       remove(config, {
         repository: "repo-a",
-        ticket: "team-1",
+        task: "team-1",
         branchName: "dev-team-1",
         dir: path.join(projectDir, "repo-a-team-1"),
         kind: "host",
@@ -835,7 +915,7 @@ describe(remove, () => {
     await expect(
       remove(config, {
         repository: "repo-a",
-        ticket: "team-1",
+        task: "team-1",
         branchName: "dev-team-1",
         dir: path.join(projectDir, "repo-a-team-1"),
         kind: "host",
@@ -865,7 +945,7 @@ describe(remove, () => {
       config,
       {
         repository: "repo-a",
-        ticket: "team-1",
+        task: "team-1",
         branchName: "dev-team-1",
         dir: path.join(projectDir, "repo-a-team-1"),
         kind: "host",
@@ -906,7 +986,7 @@ describe(remove, () => {
         config,
         {
           repository: "repo-a",
-          ticket: "team-1",
+          task: "team-1",
           branchName: "dev-team-1",
           dir: path.join(projectDir, "repo-a-team-1-unexpected"),
           kind: "host",
@@ -940,7 +1020,7 @@ describe(remove, () => {
         config,
         {
           repository: "repo-a",
-          ticket: "team-1",
+          task: "team-1",
           branchName: "dev-team-1",
           dir: path.join(projectDir, "repo-a-team-1"),
           kind: "host",
@@ -978,7 +1058,7 @@ describe(remove, () => {
         config,
         {
           repository: "repo-a",
-          ticket: "team-1",
+          task: "team-1",
           branchName: "dev-team-1",
           dir: path.join(projectDir, "repo-a-team-1"),
           kind: "host",
@@ -999,14 +1079,14 @@ describe(teardown, () => {
     workspacesCloseMock.mockResolvedValue({ kind: "closed" });
   });
 
-  function hostEntry(ticket: string): WorktreeEntry {
-    mkdirSync(path.join(projectDir, `repo-a-${ticket}`), { recursive: true });
+  function hostEntry(task: string): WorktreeEntry {
+    mkdirSync(path.join(projectDir, `repo-a-${task}`), { recursive: true });
     mkdirSync(path.join(projectDir, "repo-a"), { recursive: true });
     return {
       repository: "repo-a",
-      ticket,
-      branchName: `dev-${ticket}`,
-      dir: path.join(projectDir, `repo-a-${ticket}`),
+      task,
+      branchName: `dev-${task}`,
+      dir: path.join(projectDir, `repo-a-${task}`),
       kind: "host",
     };
   }
@@ -1056,7 +1136,7 @@ describe(teardown, () => {
     expect(result.removed).toHaveLength(1);
   });
 
-  it("dedupes the workspace close across duplicate host entries for one ticket", async () => {
+  it("dedupes the workspace close across duplicate host entries for one task", async () => {
     workspacesProbeMock.mockResolvedValue({
       kind: "ok",
       names: new Set(["team-1"]),
@@ -1071,7 +1151,7 @@ describe(teardown, () => {
       hostEntry("team-1"),
       {
         repository: "repo-b",
-        ticket: "team-1",
+        task: "team-1",
         branchName: "dev-team-1",
         dir: path.join(projectDir, "repo-b-team-1"),
         kind: "host" as const,
@@ -1085,7 +1165,7 @@ describe(teardown, () => {
     expect(result.removed).toHaveLength(2);
   });
 
-  it("skips workspace close when the ticket is not in the live name set", async () => {
+  it("skips workspace close when the task is not in the live name set", async () => {
     workspacesProbeMock.mockResolvedValue({
       kind: "ok",
       names: new Set<string>(),
@@ -1133,7 +1213,7 @@ describe(teardown, () => {
     expect(result.removed).toHaveLength(2);
   });
 
-  it("only best-effort closes a ticket once when duplicate entries exist and probe is unavailable", async () => {
+  it("only best-effort closes a task once when duplicate entries exist and probe is unavailable", async () => {
     workspacesProbeMock.mockResolvedValue({ kind: "unavailable" });
     const config = makeConfig({
       projectDir,
@@ -1145,7 +1225,7 @@ describe(teardown, () => {
       hostEntry("team-1"),
       {
         repository: "repo-b",
-        ticket: "team-1",
+        task: "team-1",
         branchName: "dev-team-1",
         dir: path.join(projectDir, "repo-b-team-1"),
         kind: "host" as const,
@@ -1246,7 +1326,7 @@ describe(teardown, () => {
   });
 });
 
-describe("worktrees.branchNameForTicket", () => {
+describe("worktrees.branchNameForTask", () => {
   afterEach(() => {
     vi.clearAllMocks();
   });
@@ -1255,16 +1335,16 @@ describe("worktrees.branchNameForTicket", () => {
     userInfoMock.mockReturnValue(makeUserInfo("dev"));
     const config = makeConfig({ projectDir: "/tmp" });
 
-    const actual = worktrees.branchNameForTicket(config, "eng-123");
+    const actual = worktrees.branchNameForTask(config, "eng-123");
 
     expect(actual).toBe("dev-eng-123");
   });
 
-  it("is case-preserving on the ticket portion", () => {
+  it("is case-preserving on the task portion", () => {
     userInfoMock.mockReturnValue(makeUserInfo("dev"));
     const config = makeConfig({ projectDir: "/tmp" });
 
-    const actual = worktrees.branchNameForTicket(config, "ENG-123");
+    const actual = worktrees.branchNameForTask(config, "ENG-123");
 
     expect(actual).toBe("dev-ENG-123");
   });
@@ -1276,7 +1356,7 @@ describe("worktrees.branchNameForTicket", () => {
       git: { remote: "origin", defaultBranch: "main", branchPrefix: "groundcrew" },
     });
 
-    const actual = worktrees.branchNameForTicket(config, "eng-123");
+    const actual = worktrees.branchNameForTask(config, "eng-123");
 
     expect(actual).toBe("groundcrew-eng-123");
   });
@@ -1403,7 +1483,7 @@ describe("multi-directory worktrees", () => {
       knownRepositories: ["owner/repo"],
     });
 
-    const entry = await create(config, { repository: "owner/repo", ticket: "team-1" });
+    const entry = await create(config, { repository: "owner/repo", task: "team-1" });
 
     expect(entry.dir).toBe(path.join(worktreeDir, "owner", "repo-team-1"));
     const addArguments = findAddCall();
@@ -1426,7 +1506,7 @@ describe("multi-directory worktrees", () => {
       repositoryDirs: { "owner/repo": other },
     });
 
-    await create(config, { repository: "owner/repo", ticket: "team-2" });
+    await create(config, { repository: "owner/repo", task: "team-2" });
 
     expect(findAddCall()).toStrictEqual(
       expect.arrayContaining(["-C", path.join(other, "owner", "repo")]),
@@ -1451,7 +1531,7 @@ describe("multi-directory worktrees", () => {
     expect(entries).toStrictEqual([
       expect.objectContaining({
         repository: "owner/repo",
-        ticket: "team-3",
+        task: "team-3",
         dir: path.join(worktreeDir, "owner", "repo-team-3"),
       }),
     ]);
@@ -1489,7 +1569,7 @@ describe("multi-directory worktrees", () => {
       config,
       {
         repository: "owner/repo",
-        ticket: "team-4",
+        task: "team-4",
         branchName: "tester-team-4",
         dir: orphanDir,
         kind: "host",

@@ -1,6 +1,6 @@
 /**
  * Workspace facade — opens/lists/closes the host-side terminal session
- * that runs an agent for one ticket. `Workspace.name` is the ticket id;
+ * that runs an agent for one task. `Workspace.name` is the task id;
  * callers key on it. The cmux and tmux backends live in their own files
  * (`cmuxAdapter.ts`, `tmuxAdapter.ts`) behind the shared `Adapter`
  * interface in `workspaceAdapter.ts`; this module resolves which one to

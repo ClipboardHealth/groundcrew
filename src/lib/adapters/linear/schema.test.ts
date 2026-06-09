@@ -28,6 +28,18 @@ describe("Linear adapter config schema", () => {
     expect(actual.success).toBe(false);
   });
 
+  it("accepts a configured Linear task creation team", () => {
+    const actual = linearAdapterConfigSchema.parse({ kind: "linear", team: " ENG " });
+
+    expect(actual).toStrictEqual({ kind: "linear", team: "ENG" });
+  });
+
+  it("rejects an empty configured Linear task creation team", () => {
+    const actual = linearAdapterConfigSchema.safeParse({ kind: "linear", team: " " });
+
+    expect(actual.success).toBe(false);
+  });
+
   it("accepts the explicit opt-out sentinel enabled: false", () => {
     const actual = linearAdapterConfigSchema.parse({ kind: "linear", enabled: false });
 

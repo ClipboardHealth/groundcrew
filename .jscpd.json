@@ -15,7 +15,8 @@
     "**/*.test.ts",
     "**/*.spec.ts",
     "**/examples/**",
-    "static/groundcrew-wordmark-*.svg"
+    "static/groundcrew-*.svg",
+    "static/logo-concept.html"
   ],
   "absolute": false,
   "gitignore": true

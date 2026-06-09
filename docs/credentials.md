@@ -30,9 +30,9 @@ Set them in the shell you run `crew` from. Anything not in this list is ignored.
 <details>
 <summary>How the secret shuttle works</summary>
 
-For each ticket:
+For each task:
 
-1. If a `prepareWorktree` hook is configured and any recognized var is set and non-empty, groundcrew writes `secrets.env` with mode `0600` into the ticket's temp prompt dir as `KEY='value'` lines.
+1. If a `prepareWorktree` hook is configured and any recognized var is set and non-empty, groundcrew writes `secrets.env` with mode `0600` into the task's temp prompt dir as `KEY='value'` lines.
 2. The launch script sources `secrets.env` with `set -a` so the values are exported into the `prepareWorktree` phase only. Under `sdx`, they are forwarded into the sandbox via `-e KEY` flags.
 3. After `prepareWorktree` completes, the script removes every name in `BUILD_SECRET_NAMES` from the environment and removes the entire prompt dir before executing the agent.
 

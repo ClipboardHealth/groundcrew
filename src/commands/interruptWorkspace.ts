@@ -5,12 +5,12 @@ import { workspaces, type WorkspaceInterruptResult } from "../lib/workspaces.ts"
 import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 
 export interface InterruptWorkspaceOptions {
-  ticket: string;
+  task: string;
   reason?: string;
 }
 
 interface InterruptSource {
-  ticket: string;
+  task: string;
   repository: string;
   model: string;
   worktreeDir: string;
@@ -38,20 +38,20 @@ function parseArguments(argv: string[]): InterruptWorkspaceOptions {
       continue;
     }
     if (argument.startsWith("-")) {
-      throw new Error(`Unknown option: ${argument}\nUsage: crew stop <ticket> [--reason <text>]`);
+      throw new Error(`Unknown option: ${argument}\nUsage: crew stop <task> [--reason <text>]`);
     }
     positionals.push(argument);
   }
-  const [ticket, ...extras] = positionals;
-  if (ticket === undefined || ticket.length === 0 || extras.length > 0) {
-    throw new Error("Usage: crew stop <ticket> [--reason <text>]");
+  const [task, ...extras] = positionals;
+  if (task === undefined || task.length === 0 || extras.length > 0) {
+    throw new Error("Usage: crew stop <task> [--reason <text>]");
   }
-  return { ticket: ticket.toLowerCase(), ...(reason === undefined ? {} : { reason }) };
+  return { task: task.toLowerCase(), ...(reason === undefined ? {} : { reason }) };
 }
 
 function sourceFromState(state: RunState): InterruptSource {
   return {
-    ticket: state.ticket,
+    task: state.task,
     repository: state.repository,
     model: state.model,
     worktreeDir: state.worktreeDir,
@@ -63,23 +63,23 @@ function sourceFromState(state: RunState): InterruptSource {
 
 function sourceFromWorktree(
   config: ResolvedConfig,
-  ticket: string,
+  task: string,
   entry: WorktreeEntry,
 ): InterruptSource {
   return {
-    ticket,
+    task,
     repository: entry.repository,
     model: config.models.default,
     worktreeDir: entry.dir,
     branchName: entry.branchName,
-    workspaceName: ticket,
+    workspaceName: task,
     resumeCount: 0,
   };
 }
 
 function resolveInterruptSource(arguments_: {
   config: ResolvedConfig;
-  ticket: string;
+  task: string;
   state: RunState | undefined;
   entry: WorktreeEntry | undefined;
 }): InterruptSource {
@@ -87,9 +87,9 @@ function resolveInterruptSource(arguments_: {
     return sourceFromState(arguments_.state);
   }
   if (arguments_.entry !== undefined) {
-    return sourceFromWorktree(arguments_.config, arguments_.ticket, arguments_.entry);
+    return sourceFromWorktree(arguments_.config, arguments_.task, arguments_.entry);
   }
-  throw new Error(`No run state or worktree found for ${arguments_.ticket}; nothing to interrupt.`);
+  throw new Error(`No run state or worktree found for ${arguments_.task}; nothing to interrupt.`);
 }
 
 function interruptDetail(result: WorkspaceInterruptResult): string | undefined {
@@ -112,17 +112,17 @@ export async function interruptWorkspace(
   config: ResolvedConfig,
   options: InterruptWorkspaceOptions,
 ): Promise<void> {
-  const ticket = options.ticket.toLowerCase();
-  const state = readRunState(config, ticket);
-  const [entry] = worktrees.findByTicket(config, ticket);
-  const source = resolveInterruptSource({ config, ticket, state, entry });
+  const task = options.task.toLowerCase();
+  const state = readRunState(config, task);
+  const [entry] = worktrees.findByTask(config, task);
+  const source = resolveInterruptSource({ config, task, state, entry });
   const result = await workspaces.interrupt(config, source.workspaceName);
   failOnUnavailable(result);
   const detail = interruptDetail(result);
   recordRunState({
     config,
     state: {
-      ticket,
+      task,
       repository: source.repository,
       model: source.model,
       worktreeDir: source.worktreeDir,
@@ -134,8 +134,8 @@ export async function interruptWorkspace(
       ...(detail === undefined ? {} : { detail }),
     },
   });
-  log(`Interrupted ${ticket}; worktree preserved at ${source.worktreeDir}`);
-  log(`Next: crew status ${ticket}`);
+  log(`Interrupted ${task}; worktree preserved at ${source.worktreeDir}`);
+  log(`Next: crew status ${task}`);
 }
 
 export async function interruptWorkspaceCli(argv: string[]): Promise<void> {

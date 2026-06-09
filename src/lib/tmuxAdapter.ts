@@ -1,6 +1,6 @@
 /**
  * tmux Workspace backend. Workspaces live as windows inside one dedicated
- * `groundcrew` tmux session; the window name is the ticket id. tmux can't
+ * `groundcrew` tmux session; the window name is the task id. tmux can't
  * paint status pills, so `open` silently drops `spec.status`. This is the
  * Linux/WSL path where cmux is unavailable.
  */
@@ -19,7 +19,7 @@ const TMUX_SESSION = "groundcrew";
 // `-n`, that window is named after the running shell (e.g. "0" / "zsh") and
 // would surface from `list()` as a phantom workspace. We name it with this
 // sentinel and filter it out — it stays around as a placeholder so the
-// session doesn't collapse when the last ticket window closes.
+// session doesn't collapse when the last task window closes.
 const TMUX_IDLE_WINDOW = "_groundcrew_idle";
 
 export const tmuxAdapter: Adapter = {

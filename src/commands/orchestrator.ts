@@ -1,17 +1,17 @@
 /**
  * groundcrew orchestrator — polls Linear projects and spins up workspace +
- * git-worktree pairs for ready tickets. Each tick fetches the board, runs
+ * git-worktree pairs for ready tasks. Each tick fetches the board, runs
  * the cleaner, the reviewer, and the dispatcher; logging from those modules is
  * the orchestrator's user-facing output.
  */
 
 import { type Board, createBoard } from "../lib/board.ts";
 import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
-import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
+import { loadConfigWithSource, type ResolvedConfig } from "../lib/config.ts";
 import { findPullRequestsForBranch } from "../lib/pullRequests.ts";
-import { type BoardState, RepositoryResolutionError } from "../lib/ticketSource.ts";
+import { type BoardState, RepositoryResolutionError } from "../lib/taskSource.ts";
 import { getUsageByModel, type UsageByModel } from "../lib/usage.ts";
-import { errorMessage, log, sleep } from "../lib/util.ts";
+import { errorMessage, log, sleep, writeOutput } from "../lib/util.ts";
 import { worktrees } from "../lib/worktrees.ts";
 import { type Cleaner, createCleaner } from "./cleaner.ts";
 import { createDispatcher, type Dispatcher } from "./dispatcher.ts";
@@ -83,12 +83,28 @@ async function fetchUsageOrEmpty(
 }
 
 export async function orchestrate(options: OrchestratorOptions): Promise<void> {
-  const config = await loadConfig();
+  const { config, source: configSource } = await loadConfigWithSource();
 
-  // Build all sources (Linear implicit + any user-declared shell adapters).
-  // sourcesFromConfig synthesizes the implicit linear source from the config;
-  // this ensures the Linear adapter's markInProgress is reachable via board.
-  const allSources = await buildSources(sourcesFromConfig(config), { globalConfig: config });
+  const rawSources = sourcesFromConfig(config);
+  if (rawSources.length === 0) {
+    writeOutput(
+      [
+        "No task sources configured. Add a sources array to your config:",
+        "",
+        `  Path: ${configSource.filepath}`,
+        "",
+        "  # Zero credentials — uses a local todo.txt file:",
+        '  sources: [{ kind: "todo-txt" }]',
+        "",
+        "  # Or use Linear (requires GROUNDCREW_LINEAR_API_KEY):",
+        '  sources: [{ kind: "linear" }]',
+      ].join("\n"),
+    );
+    process.exitCode = 1;
+    return;
+  }
+
+  const allSources = await buildSources(rawSources, { globalConfig: config });
   const board: Board = createBoard(allSources);
   await board.verify();
 

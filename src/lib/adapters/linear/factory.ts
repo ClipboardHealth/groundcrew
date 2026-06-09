@@ -1,5 +1,5 @@
 /**
- * Linear `TicketSource` factory. Assembles the adapter from sibling modules
+ * Linear `TaskSource` factory. Assembles the adapter from sibling modules
  * (createBoardSource + fetchResolvedIssue from ./fetch.ts;
  * createLinearIssueStatusUpdater from ./writeback.ts; getLinearClient from
  * ./client.ts) and converts Linear-specific shapes into the canonical
@@ -20,8 +20,8 @@ import {
   type Issue as CanonicalIssue,
   type MarkInReviewResult,
   type ParentSkip as CanonicalParentSkip,
-  type TicketSource,
-} from "../../ticketSource.ts";
+  type TaskSource,
+} from "../../taskSource.ts";
 import type { LinearAdapterConfig } from "./schema.ts";
 import { getLinearClient, lazyLinearClient } from "./client.ts";
 import {
@@ -31,6 +31,7 @@ import {
   type Issue as LinearIssue,
   type ParentSkip as LinearParentSkip,
 } from "./fetch.ts";
+import { createLinearIssue } from "./create.ts";
 import {
   canonicalStatusFromLinearState,
   DEFAULT_LINEAR_STATUS_NAMES,
@@ -102,6 +103,14 @@ function toCanonicalParentSkip(skip: LinearParentSkip, sourceName: string): Cano
   };
 }
 
+function isLinearNotFoundError(error: unknown, naturalId: string): boolean {
+  return (
+    error instanceof Error &&
+    error.message.startsWith(`Task ${naturalId.toUpperCase()} `) &&
+    error.message.includes("not found")
+  );
+}
+
 export function toCanonicalIssue(
   linearIssue: LinearIssue,
   sourceName: string,
@@ -136,17 +145,17 @@ export function toCanonicalIssue(
   };
 }
 
-export function createLinearTicketSource(
+export function createLinearTaskSource(
   config: LinearAdapterConfig,
   context: AdapterContext,
-): TicketSource {
+): TaskSource {
   const sourceName = config.name ?? "linear";
   const statusNames = resolveLinearStatusNames(config.statuses);
   const { globalConfig } = context;
   // Lazy: deferring `getLinearClient()` (and the sub-modules that depend on
-  // it) until first method use means `createLinearTicketSource` can be
+  // it) until first method use means `createLinearTaskSource` can be
   // constructed without a Linear API key in env. Callers that only ever
-  // touch a sibling source — `crew doctor --ticket <shell-id>`,
+  // touch a sibling source — `crew doctor --task <shell-id>`,
   // `crew run` with the multi-source Board's `Promise.allSettled` fan-out
   // tolerating a Linear-side rejection — no longer crash at config-load
   // time on a missing key.
@@ -169,53 +178,89 @@ export function createLinearTicketSource(
 
   let lastParentSkips: readonly CanonicalParentSkip[] = [];
 
+  async function listTasks(): Promise<CanonicalIssue[]> {
+    const state = await getBoardSource().fetch();
+    lastParentSkips = state.parentSkips.map((skip) => toCanonicalParentSkip(skip, sourceName));
+    return state.issues.map((linearIssue) =>
+      toCanonicalIssue(linearIssue, sourceName, statusNames),
+    );
+  }
+
+  async function getTask(naturalId: string): Promise<CanonicalIssue | null> {
+    let resolved: Awaited<ReturnType<typeof fetchResolvedIssue>>;
+    try {
+      resolved = await fetchResolvedIssue({
+        client: getClient(),
+        config: globalConfig,
+        task: naturalId,
+      });
+    } catch (error: unknown) {
+      if (isLinearNotFoundError(error, naturalId)) {
+        return null;
+      }
+      throw error;
+    }
+    const sourceRef: LinearSourceRef = {
+      uuid: resolved.uuid,
+      statusId: resolved.statusId,
+      teamId: resolved.teamId,
+      stateType: resolved.stateType,
+      nativeStatus: resolved.status,
+    };
+    return {
+      id: toCanonicalId(sourceName, naturalId),
+      source: sourceName,
+      title: resolved.title,
+      description: resolved.description,
+      status: canonicalStatusFromLinearState({
+        nativeStatus: resolved.status,
+        stateType: resolved.stateType,
+        statusNames,
+      }),
+      repository: resolved.repository,
+      model: resolved.model,
+      assignee: resolved.assignee,
+      updatedAt: resolved.updatedAt,
+      blockers: resolved.blockers.map((b) => toCanonicalBlocker(b, sourceName, statusNames)),
+      hasMoreBlockers: resolved.hasMoreBlockers,
+      url: resolved.url,
+      ...(resolved.priority === 0 ? {} : { priority: resolved.priority }),
+      sourceRef,
+    };
+  }
+
   return {
     name: sourceName,
     async verify(): Promise<void> {
       await getBoardSource().verify();
     },
-    async fetch(): Promise<CanonicalIssue[]> {
-      const state = await getBoardSource().fetch();
-      lastParentSkips = state.parentSkips.map((skip) => toCanonicalParentSkip(skip, sourceName));
-      return state.issues.map((linearIssue) =>
-        toCanonicalIssue(linearIssue, sourceName, statusNames),
+    async listTasks(): Promise<CanonicalIssue[]> {
+      return await listTasks();
+    },
+    async getTask(naturalId: string): Promise<CanonicalIssue | null> {
+      return await getTask(naturalId);
+    },
+    async createTask(input): Promise<CanonicalIssue> {
+      return toCanonicalIssue(
+        await createLinearIssue({
+          client: getClient(),
+          config: globalConfig,
+          input,
+          sourceConfig: config,
+          sourceName,
+        }),
+        sourceName,
+        statusNames,
       );
+    },
+    async fetch(): Promise<CanonicalIssue[]> {
+      return await listTasks();
     },
     async fetchParentSkips(): Promise<readonly CanonicalParentSkip[]> {
       return lastParentSkips;
     },
     async resolveOne(naturalId: string): Promise<CanonicalIssue | undefined> {
-      const resolved = await fetchResolvedIssue({
-        client: getClient(),
-        config: globalConfig,
-        ticket: naturalId,
-      });
-      const sourceRef: LinearSourceRef = {
-        uuid: resolved.uuid,
-        statusId: resolved.statusId,
-        teamId: resolved.teamId,
-        stateType: resolved.stateType,
-        nativeStatus: resolved.status,
-      };
-      return {
-        id: toCanonicalId(sourceName, naturalId),
-        source: sourceName,
-        title: resolved.title,
-        description: resolved.description,
-        status: canonicalStatusFromLinearState({
-          nativeStatus: resolved.status,
-          stateType: resolved.stateType,
-          statusNames,
-        }),
-        repository: resolved.repository,
-        model: resolved.model,
-        assignee: "Unassigned",
-        updatedAt: new Date().toISOString(),
-        blockers: [],
-        hasMoreBlockers: false,
-        url: resolved.url,
-        sourceRef,
-      };
+      return (await getTask(naturalId)) ?? undefined;
     },
     async markInProgress(issue: CanonicalIssue): Promise<void> {
       // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- by the Linear adapter's contract, every Issue it produces carries a LinearSourceRef in sourceRef

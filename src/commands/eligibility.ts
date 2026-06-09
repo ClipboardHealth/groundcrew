@@ -1,14 +1,14 @@
 /**
  * Pure eligibility classifier — takes the per-iteration board snapshot plus
  * derived state (worktrees, live workspaces, usage, slot count) and returns
- * a verdict per Todo ticket. No logging, no Linear calls, no shell-outs.
+ * a verdict per Todo task. No logging, no Linear calls, no shell-outs.
  *
  * The Dispatcher consumes the verdict list to drive logging and side
  * effects.
  */
 
 import { AGENT_ANY_MODEL, type ResolvedConfig } from "../lib/config.ts";
-import { naturalIdFromCanonical, type Blocker, type GroundcrewIssue } from "../lib/ticketSource.ts";
+import { naturalIdFromCanonical, type Blocker, type GroundcrewIssue } from "../lib/taskSource.ts";
 import type { UsageByModel } from "../lib/usage.ts";
 import type { WorkspaceProbe } from "../lib/workspaces.ts";
 import type { WorktreeEntry } from "../lib/worktrees.ts";
@@ -212,7 +212,7 @@ interface RecoveryArguments {
 }
 
 // Stale worktrees with no matching live workspace are filtered out here so
-// they don't permanently block later tickets in the Todo queue.
+// they don't permanently block later tasks in the Todo queue.
 function classifyRecovery(
   arguments_: RecoveryArguments,
 ): { kind: "go"; recovery: boolean } | SkipVerdict {
@@ -223,7 +223,7 @@ function classifyRecovery(
 
   const naturalId = naturalIdFromCanonical(issue.id);
   const exists = worktreeEntries.some(
-    (entry) => entry.repository === issue.repository && entry.ticket === naturalId,
+    (entry) => entry.repository === issue.repository && entry.task === naturalId,
   );
   if (!exists) {
     return { kind: "go", recovery: false };

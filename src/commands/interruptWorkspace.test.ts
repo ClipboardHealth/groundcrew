@@ -33,7 +33,7 @@ vi.mock(import("../lib/worktrees.ts"), async (importOriginal) => {
     ...actual,
     worktrees: {
       ...actual.worktrees,
-      findByTicket: vi.fn<typeof actual.worktrees.findByTicket>(),
+      findByTask: vi.fn<typeof actual.worktrees.findByTask>(),
       teardown: vi.fn<typeof actual.worktrees.teardown>(),
     },
   };
@@ -43,7 +43,7 @@ const loadConfigMock = vi.mocked(loadConfig);
 const readRunStateMock = vi.mocked(readRunState);
 const recordRunStateMock = vi.mocked(recordRunState);
 const interruptMock = vi.mocked(workspaces.interrupt);
-const findByTicketMock = vi.mocked(worktrees.findByTicket);
+const findByTaskMock = vi.mocked(worktrees.findByTask);
 const teardownMock = vi.mocked(worktrees.teardown);
 
 type RecordedRunState = Parameters<typeof recordRunState>[0]["state"];
@@ -80,7 +80,7 @@ function makeConfig(): ResolvedConfig {
 
 function makeRunState(overrides: Partial<RunState> = {}): RunState {
   return {
-    ticket: "team-1",
+    task: "team-1",
     repository: "repo-a",
     model: "claude",
     worktreeDir: "/work/repo-a-team-1",
@@ -97,7 +97,7 @@ function makeRunState(overrides: Partial<RunState> = {}): RunState {
 function makeWorktree(): WorktreeEntry {
   return {
     repository: "repo-a",
-    ticket: "team-1",
+    task: "team-1",
     branchName: "dev-team-1",
     dir: "/work/repo-a-team-1",
     kind: "host",
@@ -111,7 +111,7 @@ describe(interruptWorkspace, () => {
   beforeEach(() => {
     consoleLog = captureConsoleLog();
     readRunStateMock.mockReturnValue(makeRunState());
-    findByTicketMock.mockReturnValue([makeWorktree()]);
+    findByTaskMock.mockReturnValue([makeWorktree()]);
     interruptMock.mockResolvedValue({ kind: "interrupted" });
   });
 
@@ -121,11 +121,11 @@ describe(interruptWorkspace, () => {
   });
 
   it("interrupts the recorded workspace and preserves the worktree", async () => {
-    await interruptWorkspace(config, { ticket: "TEAM-1", reason: "wrong direction" });
+    await interruptWorkspace(config, { task: "TEAM-1", reason: "wrong direction" });
 
     expect(interruptMock).toHaveBeenCalledWith(config, "team-1");
     expect(lastRecordedRunState()).toMatchObject({
-      ticket: "team-1",
+      task: "team-1",
       state: "interrupted",
       reason: "wrong direction",
       worktreeDir: "/work/repo-a-team-1",
@@ -137,7 +137,7 @@ describe(interruptWorkspace, () => {
   it("records an interrupted state from a worktree when state is missing", async () => {
     readRunStateMock.mockReset();
 
-    await interruptWorkspace(config, { ticket: "team-1" });
+    await interruptWorkspace(config, { task: "team-1" });
 
     expect(lastRecordedRunState()).toMatchObject({
       model: "claude",
@@ -149,7 +149,7 @@ describe(interruptWorkspace, () => {
   it("records workspace missing detail without failing", async () => {
     interruptMock.mockResolvedValue({ kind: "missing" });
 
-    await interruptWorkspace(config, { ticket: "team-1" });
+    await interruptWorkspace(config, { task: "team-1" });
 
     expect(lastRecordedRunState()).toMatchObject({
       state: "interrupted",
@@ -159,9 +159,9 @@ describe(interruptWorkspace, () => {
 
   it("fails when there is no run state or worktree", async () => {
     readRunStateMock.mockReset();
-    findByTicketMock.mockReturnValue([]);
+    findByTaskMock.mockReturnValue([]);
 
-    await expect(interruptWorkspace(config, { ticket: "team-1" })).rejects.toThrow(
+    await expect(interruptWorkspace(config, { task: "team-1" })).rejects.toThrow(
       /nothing to interrupt/,
     );
   });
@@ -169,14 +169,14 @@ describe(interruptWorkspace, () => {
   it("fails when the workspace backend is unavailable", async () => {
     interruptMock.mockResolvedValue({ kind: "unavailable", error: new Error("cmux down") });
 
-    await expect(interruptWorkspace(config, { ticket: "team-1" })).rejects.toThrow(/cmux down/);
+    await expect(interruptWorkspace(config, { task: "team-1" })).rejects.toThrow(/cmux down/);
     expect(recordRunStateMock).not.toHaveBeenCalled();
   });
 
   it("uses a generic error when the workspace backend is unavailable without details", async () => {
     interruptMock.mockResolvedValue({ kind: "unavailable" });
 
-    await expect(interruptWorkspace(config, { ticket: "team-1" })).rejects.toThrow(
+    await expect(interruptWorkspace(config, { task: "team-1" })).rejects.toThrow(
       /workspace adapter unavailable/,
     );
   });
@@ -188,7 +188,7 @@ describe(interruptWorkspaceCli, () => {
   beforeEach(() => {
     loadConfigMock.mockResolvedValue(config);
     readRunStateMock.mockReturnValue(makeRunState());
-    findByTicketMock.mockReturnValue([makeWorktree()]);
+    findByTaskMock.mockReturnValue([makeWorktree()]);
     interruptMock.mockResolvedValue({ kind: "interrupted" });
   });
 
@@ -196,23 +196,23 @@ describe(interruptWorkspaceCli, () => {
     vi.resetAllMocks();
   });
 
-  it("parses ticket and reason", async () => {
+  it("parses task and reason", async () => {
     await interruptWorkspaceCli(["TEAM-1", "--reason", "wrong direction"]);
 
     expect(lastRecordedRunState()).toMatchObject({
-      ticket: "team-1",
+      task: "team-1",
       reason: "wrong direction",
     });
   });
 
-  it("parses a ticket without a reason", async () => {
+  it("parses a task without a reason", async () => {
     await interruptWorkspaceCli(["TEAM-1"]);
 
-    expect(lastRecordedRunState()).toMatchObject({ ticket: "team-1", state: "interrupted" });
+    expect(lastRecordedRunState()).toMatchObject({ task: "team-1", state: "interrupted" });
     expect(lastRecordedRunState().reason).toBeUndefined();
   });
 
-  it("rejects missing ticket", async () => {
+  it("rejects missing task", async () => {
     await expect(interruptWorkspaceCli([])).rejects.toThrow(/Usage: crew stop/);
   });
 

@@ -1,5 +1,5 @@
 import type { LinearSourceRef } from "../adapters/linear/index.ts";
-import { type Blocker, type Issue, toCanonicalId } from "../ticketSource.ts";
+import { type Blocker, type Issue, toCanonicalId } from "../taskSource.ts";
 
 export function canonicalLinearIssue(overrides: Partial<Issue> & { naturalId: string }): Issue {
   const { naturalId, sourceRef: refOverride, ...rest } = overrides;

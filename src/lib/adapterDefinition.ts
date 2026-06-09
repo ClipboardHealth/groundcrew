@@ -8,7 +8,7 @@
 import type { z } from "zod";
 
 import type { ResolvedConfig } from "./config.ts";
-import type { TicketSource } from "./ticketSource.ts";
+import type { TaskSource } from "./taskSource.ts";
 
 /**
  * Cross-cutting context every adapter receives at construction time. Holds
@@ -25,6 +25,6 @@ export interface AdapterDefinition<TSchema extends z.ZodType = z.ZodType> {
   readonly kind: string;
   /** Zod schema for this adapter's config block. The `kind` field must be `z.literal(kind)`. */
   readonly configSchema: TSchema;
-  /** Builds a TicketSource from a validated config and the shared adapter context. */
-  readonly create: (config: z.infer<TSchema>, context: AdapterContext) => TicketSource;
+  /** Builds a TaskSource from a validated config and the shared adapter context. */
+  readonly create: (config: z.infer<TSchema>, context: AdapterContext) => TaskSource;
 }
