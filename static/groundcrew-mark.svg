@@ -8,6 +8,11 @@
     (92.2,29) and (92.2,91) with chevron heads. Stroke 11, round caps/joins.
     At 16px (favicon), drop the inscription border and bump the fork stroke
     to 16.
+
+    Regenerate groundcrew-avatar.png (Slack bot avatar; also fine as the
+    emoji upload; Slack scales it down) by bumping width/height to 512 in a
+    copy of this file, then:
+      sips -s format png mark512.svg --out static/groundcrew-avatar.png
   -->
   <!-- rounded rectangles as explicit paths: the macOS renderers (sips and
        qlmanage) that cut the PNG avatar mishandle rx on rect -->

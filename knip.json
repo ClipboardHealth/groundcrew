@@ -7,7 +7,6 @@
     "src/main.ts",
     "vitest.shared.ts"
   ],
-  "ignore": ["scripts/generateEmoji.mts"],
   "ignoreBinaries": ["op"],
   "ignoreDependencies": ["@nx/js"]
 }

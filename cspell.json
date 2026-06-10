@@ -115,8 +115,6 @@
     "venv",
     "vitest",
     "linecap",
-    "palettegen",
-    "paletteuse",
     "rasterizing",
     "Logomark",
     "logomark",
