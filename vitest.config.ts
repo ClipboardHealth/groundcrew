@@ -1,4 +1,4 @@
-import { createVitestConfig } from "./vitest.shared.ts";
+import { createVitestConfig } from "./config/vitestShared.ts";
 
 export default createVitestConfig({
   importMetaUrl: import.meta.url,

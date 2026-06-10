@@ -1,9 +1,10 @@
 {
   "$schema": "https://raw.githubusercontent.com/streetsidesoftware/cspell/main/cspell.schema.json",
+  "globRoot": "..",
   "useGitignore": true,
   "ignorePaths": [
     ".claude/setup.sh",
-    "knip.json",
+    "config/knip.json",
     "package-lock.json",
     "dist/**",
     "dist",

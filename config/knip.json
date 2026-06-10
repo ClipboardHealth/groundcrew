@@ -2,10 +2,12 @@
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "entry": [
     "bin/*.js",
+    "config/lintStaged.config.js",
+    "config/syncpack.config.ts",
+    "config/vitestShared.ts",
     "crew.config.example.ts",
     "src/lib/adapters/*/index.ts",
-    "src/main.ts",
-    "vitest.shared.ts"
+    "src/main.ts"
   ],
   "ignoreBinaries": ["op"],
   "ignoreDependencies": ["@nx/js"]
