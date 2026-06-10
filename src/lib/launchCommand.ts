@@ -8,6 +8,7 @@ import {
   type LocalRunner,
   type AgentDefinition,
 } from "./config.ts";
+import { clearanceAllowHostsFilesFromEnvironment } from "./clearanceAllowlist.ts";
 import { shellSingleQuote } from "./shell.ts";
 
 export { shellSingleQuote } from "./shell.ts";
@@ -129,6 +130,10 @@ function unsetEnvironmentLine(names: readonly string[]): string {
 
 function unsetSecretsLine(): string {
   return unsetEnvironmentLine(BUILD_SECRET_NAMES);
+}
+
+function safehouseClearanceWrapperCommand(): string {
+  return `CLEARANCE_ALLOW_HOSTS_FILES=${shellSingleQuote(clearanceAllowHostsFilesFromEnvironment())} ${shellSingleQuote(SAFEHOUSE_CLEARANCE_WRAPPER_PATH)}`;
 }
 
 function trapCleanupLine(promptDir: string): string {
@@ -514,7 +519,7 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
   const preLaunchEnvNames = arguments_.definition.preLaunchEnv ?? [];
   const agentEnvPassFlag =
     preLaunchEnvNames.length === 0 ? "" : `--env-pass=${preLaunchEnvNames.join(",")} `;
-  const safehouseWrapper = shellSingleQuote(SAFEHOUSE_CLEARANCE_WRAPPER_PATH);
+  const safehouseWrapper = safehouseClearanceWrapperCommand();
 
   // Defensive shim+promptDir trap: by the time we arm it, `rm -rf <promptDir>`
   // has already run (line below) so the promptDir wipe is a no-op on the happy

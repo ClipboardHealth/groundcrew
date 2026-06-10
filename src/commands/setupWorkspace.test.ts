@@ -1,5 +1,6 @@
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import type * as nodeFs from "node:fs";
+import path from "node:path";
 import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 import { ensureClearance } from "@clipboard-health/clearance";
 import type { RunCommandOptions } from "../lib/commandRunner.ts";
@@ -279,8 +280,8 @@ function lastRunArgumentFromCallWithArgument(argument: string): string {
   return typeof lastArgument === "string" ? lastArgument : "";
 }
 
-function writtenFileContent(path: string): string {
-  const call = writeFileMock.mock.calls.find(([candidate]) => String(candidate) === path);
+function writtenFileContent(filePath: string): string {
+  const call = writeFileMock.mock.calls.find(([candidate]) => String(candidate) === filePath);
   const content = call?.[1];
   return typeof content === "string" ? content : "";
 }
@@ -339,6 +340,10 @@ function clearanceResult(): Awaited<ReturnType<typeof ensureClearance>> {
     port: 19_999,
     status: "already-running",
   };
+}
+
+function bundledClearanceAllowHostsFile(): string {
+  return path.resolve(import.meta.dirname, "..", "..", "clearance-allow-hosts");
 }
 
 async function waitForClearanceSleep(input: Parameters<typeof ensureClearance>[0]): Promise<void> {
@@ -741,6 +746,58 @@ describe(setupWorkspace, () => {
     expect(launchScript).toContain('sh "$_p"');
     // prepareWorktree status guard so a failed install still launches the agent
     expect(launchScript).toContain('"$prepare_status" -ne 0');
+  });
+
+  it("passes groundcrew's bundled clearance allowlist to Safehouse without requiring an export", async () => {
+    vi.stubEnv("CLEARANCE_ALLOW_HOSTS_FILES", "");
+    detectHostMock.mockResolvedValue(host());
+    const config = makeConfig();
+    mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
+
+    try {
+      await setupWorkspace(config, {
+        task: "team-1",
+        repository: "repo-a",
+        agent: "claude",
+        details: { title: "Test Title", description: "Body" },
+      });
+
+      const allowHostsFile = bundledClearanceAllowHostsFile();
+      const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
+      expect(lastEnsureClearanceInput().envOverrides?.["CLEARANCE_ALLOW_HOSTS_FILES"]).toBe(
+        allowHostsFile,
+      );
+      expect(launchScript).toContain(`CLEARANCE_ALLOW_HOSTS_FILES='${allowHostsFile}'`);
+      expect(launchScript).toContain("safehouse-clearance");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("keeps user-configured clearance allowlist files in addition to the bundled file", async () => {
+    const personalAllowHostsFile = "/tmp/personal-allow-hosts";
+    vi.stubEnv("CLEARANCE_ALLOW_HOSTS_FILES", personalAllowHostsFile);
+    detectHostMock.mockResolvedValue(host());
+    const config = makeConfig();
+    mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
+
+    try {
+      await setupWorkspace(config, {
+        task: "team-1",
+        repository: "repo-a",
+        agent: "claude",
+        details: { title: "Test Title", description: "Body" },
+      });
+
+      const expectedFiles = `${bundledClearanceAllowHostsFile()}${path.delimiter}${personalAllowHostsFile}`;
+      const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
+      expect(lastEnsureClearanceInput().envOverrides?.["CLEARANCE_ALLOW_HOSTS_FILES"]).toBe(
+        expectedFiles,
+      );
+      expect(launchScript).toContain(`CLEARANCE_ALLOW_HOSTS_FILES='${expectedFiles}'`);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("skips prepareWorktree when neither repo config nor defaults define it", async () => {

@@ -1,5 +1,6 @@
 import { ensureClearance } from "@clipboard-health/clearance";
 
+import { clearanceAllowHostsFilesFromEnvironment } from "./clearanceAllowlist.ts";
 import {
   hasPreLaunchEnv,
   type LocalRunner,
@@ -124,6 +125,9 @@ async function alreadyReady(): Promise<void> {
 
 async function ensureSafehouseClearance(signal?: AbortSignal): Promise<void> {
   await ensureClearance({
+    envOverrides: {
+      CLEARANCE_ALLOW_HOSTS_FILES: clearanceAllowHostsFilesFromEnvironment(),
+    },
     logger: debug,
     ...(signal === undefined
       ? {}

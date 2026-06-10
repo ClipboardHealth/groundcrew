@@ -2,6 +2,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from 
 import os from "node:os";
 import path from "node:path";
 
+import { clearanceAllowHostsFilesFromEnvironment } from "./clearanceAllowlist.ts";
 import { collectAllowedDomains } from "./clearanceHosts.ts";
 import { runCommand } from "./commandRunner.ts";
 import type { AgentDefinition } from "./config.ts";
@@ -78,7 +79,7 @@ export function buildAndStageSrtLaunch(input: {
     gitCommonDir: resolveGitCommonDir(input.worktreeDir),
     allowedDomains: collectAllowedDomains({
       hosts: readEnvironmentVariable("CLEARANCE_ALLOW_HOSTS"),
-      files: readEnvironmentVariable("CLEARANCE_ALLOW_HOSTS_FILES"),
+      files: clearanceAllowHostsFilesFromEnvironment(),
     }),
   };
 

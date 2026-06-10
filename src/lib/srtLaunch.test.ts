@@ -133,6 +133,42 @@ describe(buildAndStageSrtLaunch, () => {
     expect(reads).not.toContain(path.join(workspaceRoot, "billing", ".git"));
   });
 
+  it("uses groundcrew's shipped clearance allowlist for network policy when no env files are exported", () => {
+    vi.stubEnv("CLEARANCE_ALLOW_HOSTS", "");
+    vi.stubEnv("CLEARANCE_ALLOW_HOSTS_FILES", "");
+
+    try {
+      const result = stage("claude --permission-mode auto");
+
+      expect(readSettings(result.agentFile).network.allowedDomains).toContain("api.openai.com");
+      expect(readSettings(result.prepareFile).network.allowedDomains).toContain("api.openai.com");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("preserves user clearance allowlist files in addition to the shipped file for srt", () => {
+    const personalDir = mkdtempSync(path.join(os.tmpdir(), "srt-launch-personal-hosts-"));
+    staged.push(personalDir);
+    const personalFile = path.join(personalDir, "allow-hosts");
+    writeFileSync(personalFile, "personal.example.com\n");
+    vi.stubEnv("CLEARANCE_ALLOW_HOSTS", "");
+    vi.stubEnv("CLEARANCE_ALLOW_HOSTS_FILES", personalFile);
+
+    try {
+      const result = stage("claude --permission-mode auto");
+      const agentDomains = readSettings(result.agentFile).network.allowedDomains;
+      const prepareDomains = readSettings(result.prepareFile).network.allowedDomains;
+
+      expect(agentDomains).toContain("api.openai.com");
+      expect(agentDomains).toContain("personal.example.com");
+      expect(prepareDomains).toContain("api.openai.com");
+      expect(prepareDomains).toContain("personal.example.com");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("skips missing seed files (best-effort) so a not-logged-in agent still stages", () => {
     const realCodex = path.join(fakeHome, ".codex");
     mkdirSync(realCodex, { recursive: true });
