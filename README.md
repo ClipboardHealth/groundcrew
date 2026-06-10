@@ -172,6 +172,13 @@ Regenerate the README demo with VHS:
 ./static/render-demo.sh
 ```
 
+Regenerate the Slack bot avatar (also used as the emoji upload; Slack scales it down) after editing the mark:
+
+```bash
+sed 's/width="120" height="120"/width="512" height="512"/' static/groundcrew-mark.svg > /tmp/mark512.svg
+sips -s format png /tmp/mark512.svg --out static/groundcrew-avatar.png
+```
+
 ## License
 
 [MIT](./LICENSE)

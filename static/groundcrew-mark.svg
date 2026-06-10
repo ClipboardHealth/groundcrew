@@ -10,9 +10,9 @@
     to 16.
 
     Regenerate groundcrew-avatar.png (Slack bot avatar; also fine as the
-    emoji upload; Slack scales it down) by bumping width/height to 512 in a
-    copy of this file, then:
-      sips -s format png mark512.svg --out static/groundcrew-avatar.png
+    emoji upload; Slack scales it down) with the sips commands in the
+    README's Development section. The exact command can't live here: it
+    needs a double-hyphen flag, which is illegal inside an XML comment.
   -->
   <!-- rounded rectangles as explicit paths: the macOS renderers (sips and
        qlmanage) that cut the PNG avatar mishandle rx on rect -->
