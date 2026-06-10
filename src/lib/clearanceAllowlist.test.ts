@@ -3,7 +3,6 @@ import path from "node:path";
 import {
   clearanceAllowHostsFilesFromEnvironment,
   clearanceAllowHostsFilesValue,
-  clearanceProxyEnv,
 } from "./clearanceAllowlist.ts";
 
 function bundledClearanceAllowHostsFile(): string {
@@ -53,27 +52,5 @@ describe(clearanceAllowHostsFilesFromEnvironment, () => {
     const actual = clearanceAllowHostsFilesFromEnvironment();
 
     expect(actual).toBe(`${bundledClearanceAllowHostsFile()}${path.delimiter}/tmp/personal-hosts`);
-  });
-});
-
-describe(clearanceProxyEnv, () => {
-  afterEach(() => {
-    vi.unstubAllEnvs();
-  });
-
-  it("returns clearance's forwarded env plus the bundled allowlist, without unrelated env vars", () => {
-    vi.stubEnv("AWS_SECRET_ACCESS_KEY", "not-forwarded");
-    vi.stubEnv("CLEARANCE_ALLOW_HOSTS", "api.example.com");
-    vi.stubEnv("CLEARANCE_ALLOW_HOSTS_FILES", "/tmp/personal-hosts");
-    vi.stubEnv("CLEARANCE_ALLOW_PORTS", "443,8443");
-
-    const actual = clearanceProxyEnv();
-
-    expect(actual["AWS_SECRET_ACCESS_KEY"]).toBeUndefined();
-    expect(actual["CLEARANCE_ALLOW_HOSTS"]).toBe("api.example.com");
-    expect(actual["CLEARANCE_ALLOW_PORTS"]).toBe("443,8443");
-    expect(actual["CLEARANCE_ALLOW_HOSTS_FILES"]).toBe(
-      `${bundledClearanceAllowHostsFile()}${path.delimiter}/tmp/personal-hosts`,
-    );
   });
 });

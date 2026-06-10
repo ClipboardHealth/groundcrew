@@ -727,7 +727,9 @@ describe(setupWorkspace, () => {
 
       const allowHostsFile = bundledClearanceAllowHostsFile();
       const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
-      expect(lastEnsureClearanceInput().env?.["CLEARANCE_ALLOW_HOSTS_FILES"]).toBe(allowHostsFile);
+      expect(lastEnsureClearanceInput().envOverrides?.["CLEARANCE_ALLOW_HOSTS_FILES"]).toBe(
+        allowHostsFile,
+      );
       expect(launchScript).toContain(`CLEARANCE_ALLOW_HOSTS_FILES='${allowHostsFile}'`);
       expect(launchScript).toContain("safehouse-clearance");
     } finally {
@@ -752,7 +754,9 @@ describe(setupWorkspace, () => {
 
       const expectedFiles = `${bundledClearanceAllowHostsFile()}${path.delimiter}${personalAllowHostsFile}`;
       const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
-      expect(lastEnsureClearanceInput().env?.["CLEARANCE_ALLOW_HOSTS_FILES"]).toBe(expectedFiles);
+      expect(lastEnsureClearanceInput().envOverrides?.["CLEARANCE_ALLOW_HOSTS_FILES"]).toBe(
+        expectedFiles,
+      );
       expect(launchScript).toContain(`CLEARANCE_ALLOW_HOSTS_FILES='${expectedFiles}'`);
     } finally {
       vi.unstubAllEnvs();
