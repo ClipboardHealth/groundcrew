@@ -114,6 +114,10 @@ describe(createDispatcher, () => {
     vi.clearAllMocks();
   });
 
+  afterAll(() => {
+    vi.restoreAllMocks();
+  });
+
   describe("slot math", () => {
     it("starts a Todo task and marks it In Progress", async () => {
       const board = makeBoard();
