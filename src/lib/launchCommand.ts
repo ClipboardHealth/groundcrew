@@ -194,6 +194,11 @@ function preLaunchPromptAndExec(arguments_: {
  * it slots directly in front of the agent command. The `Record<GitRewrite, …>`
  * key set is exhaustiveness-checked, so widening `GIT_REWRITES` forces a new
  * entry here at compile time.
+ *
+ * `insteadOf` is a prefix-match, so injecting this on a repo whose remote is
+ * already HTTPS is a no-op: the HTTPS URL does not start with `git@github.com:`,
+ * so only scp-like SSH remotes are rewritten and everything else passes through
+ * untouched. (It matches the `git@github.com:` form, not `ssh://git@github.com/`.)
  */
 const GIT_REWRITE_ENV_PREFIXES: Record<GitRewrite, string> = {
   "ssh-to-https":
