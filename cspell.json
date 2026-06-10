@@ -1,5 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/streetsidesoftware/cspell/main/cspell.schema.json",
+  "useGitignore": true,
   "ignorePaths": [
     ".claude/setup.sh",
     "knip.json",
@@ -142,6 +143,9 @@
     "unparseable",
     "nostatus",
     "norec",
-    "nodone"
+    "nodone",
+    "linejoin",
+    "Neue",
+    "qlmanage"
   ]
 }

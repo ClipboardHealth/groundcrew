@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 730 128" width="730" height="128" role="img" aria-label="groundcrew">
+  <title>groundcrew</title>
+  <style>
+    .wordmark {
+      font-family: Overpass, "Helvetica Neue", Helvetica, Arial, sans-serif;
+      font-size: 68px;
+      font-weight: 800;
+    }
+  </style>
+  <!--
+    Airport taxiway sign lockup, self-contained on light and dark pages.
+    Location panel (yellow-on-black, flush inscription border) names the
+    tool; direction panel (black-on-yellow) carries the fork arrow - one
+    task stream splitting onto parallel worktrees.
+    Field #F7C600, ink #111111. textLength normalizes the wordmark width
+    across font fallbacks.
+  -->
+  <rect width="730" height="128" rx="14" fill="#F7C600"/>
+  <path d="M570 0 H14 A14 14 0 0 0 0 14 V114 A14 14 0 0 0 14 128 H570 Z" fill="#111111"/>
+  <path d="M568 2 H14 A12 12 0 0 0 2 14 V114 A12 12 0 0 0 14 126 H568 Z" fill="none" stroke="#F7C600" stroke-width="4"/>
+  <text class="wordmark" x="285" y="89" text-anchor="middle" textLength="490" lengthAdjust="spacingAndGlyphs" fill="#F7C600">GROUNDCREW</text>
+  <g transform="translate(593,4)">
+    <path
+      d="M22 60 H48
+         M48 60 L92.2 29 M75.3 27.5 L92.2 29 L87.8 45.4
+         M48 60 L92.2 91 M75.3 92.5 L92.2 91 L87.8 74.6"
+      fill="none" stroke="#111111" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>
