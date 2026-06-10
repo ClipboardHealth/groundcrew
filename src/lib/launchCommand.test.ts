@@ -256,15 +256,15 @@ describe(buildLaunchCommand, () => {
     expect(out).toContain('"$_safehouse_shim" -c');
   });
 
-  it("grants the worktree root, git common dir, and project dir to both safehouse wraps via --add-dirs", () => {
+  it("grants the worktree root and git common dir to both safehouse wraps via --add-dirs", () => {
     const out = buildLaunchCommand(
       arguments_({
         prepareWorktreeCommand: "npm ci",
-        safehouseAddDirs: ["/work/repo-a-team-1", "/src/carrot/.git", "/src/dev"],
+        safehouseAddDirs: ["/work/repo-a-team-1", "/src/carrot/.git"],
       }),
     );
 
-    const addDirsFlag = "--add-dirs='/work/repo-a-team-1:/src/carrot/.git:/src/dev'";
+    const addDirsFlag = "--add-dirs='/work/repo-a-team-1:/src/carrot/.git'";
     // One grant per wrap: the prepareWorktree wrap (so the hook's git/npm can
     // reach the checkout) and the agent wrap (so git works inside a graft /
     // sparse-checkout worktree whose real `.git` lives outside the worktree

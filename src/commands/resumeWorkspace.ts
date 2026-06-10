@@ -193,7 +193,6 @@ export async function resumeWorkspace(
       promptFile: stagedPrompt.file,
       worktreeDir,
       workingDir: launchDir,
-      projectDir: config.workspace.projectDir,
       secretsFile,
       sandboxName,
     }));

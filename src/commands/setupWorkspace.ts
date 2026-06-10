@@ -133,7 +133,6 @@ export async function setupWorkspace(
       promptFile: stagedPrompt.file,
       worktreeDir,
       workingDir: launchDir,
-      projectDir: config.workspace.projectDir,
       secretsFile,
       prepareWorktreeCommand,
       sandboxName,
