@@ -249,6 +249,24 @@ function mockCmuxFailure(): void {
   });
 }
 
+// new-workspace succeeds, the git common dir probe stubs cleanly, but cmux
+// set-status throws. Matched by command (not call order) since the safehouse
+// launch probes the git common dir via `runCommand` before the workspace opens.
+function mockCmuxSetStatusFailure(): void {
+  runCommandMock.mockImplementation((cmd, arguments_) => {
+    if (isGitCommonDirProbe(cmd, arguments_)) {
+      return STUB_GIT_COMMON_DIR;
+    }
+    if (isCmuxNewWorkspace(cmd, arguments_)) {
+      return JSON.stringify({ ref: "workspace:42" });
+    }
+    if (cmd === "cmux" && arguments_.includes("set-status")) {
+      throw new Error("set-status failed");
+    }
+    return "";
+  });
+}
+
 function sdxHost(): HostCapabilities {
   return host({
     hasSafehouse: false,
@@ -733,12 +751,17 @@ describe(setupWorkspace, () => {
     expect(launchScript).toContain("cd '/work/repo-a-team-1'");
     expect(launchScript).toContain("npm ci");
     expect(launchScript).not.toContain(".groundcrew/setup.sh");
+    // Both wraps grant the worktree root, git common dir, and projectDir so git
+    // works in the prepareWorktree hook and the agent. The grant flag precedes
+    // the wrapped command (no build secrets are set in this test, so no
+    // --env-pass follows it).
+    const addDirsFlag = "--add-dirs='/work/repo-a-team-1:/tmp/groundcrew-team-1-x/.git:/work'";
     expect(launchScript).toContain(
-      "/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance' sh -c",
+      `/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance' ${addDirsFlag} sh -c`,
     );
     // The agent runs inside the wrap (after prepareWorktree), so the prompt is the sh -c arg.
     expect(launchScript).toContain(
-      '/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance\' "$_safehouse_shim" -c',
+      `/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance' ${addDirsFlag} "$_safehouse_shim" -c`,
     );
     expect(launchScript).toContain('_safehouse_shim="$_safehouse_shim_dir/claude"');
     expect(launchScript).not.toContain("--enable=all-agents");
@@ -823,7 +846,7 @@ describe(setupWorkspace, () => {
     expect(launchScript).not.toContain("groundcrew prepareWorktree hook exited");
     expect(launchScript).not.toContain(".groundcrew/setup.sh");
     expect(launchScript).toContain(
-      '/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance\' "$_safehouse_shim" -c',
+      "/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance' --add-dirs='/work/repo-a-team-1:/tmp/groundcrew-team-1-x/.git:/work' \"$_safehouse_shim\" -c",
     );
   });
 
@@ -1496,13 +1519,9 @@ describe(setupWorkspace, () => {
 
   it("treats cmux set-status failure as non-fatal (status painting is best-effort)", async () => {
     const config = makeConfig();
-    // new-workspace returns ref, set-status throws — the workspace stays
-    // up, no worktree rollback, and setupWorkspace resolves cleanly.
-    runCommandMock
-      .mockReturnValueOnce(JSON.stringify({ ref: "workspace:42" }))
-      .mockImplementationOnce(() => {
-        throw new Error("set-status failed");
-      });
+    // The workspace stays up, no worktree rollback, and setupWorkspace resolves
+    // cleanly even though set-status throws.
+    mockCmuxSetStatusFailure();
 
     await expect(
       setupWorkspace(config, {

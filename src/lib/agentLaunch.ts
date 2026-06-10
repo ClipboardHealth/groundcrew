@@ -11,7 +11,7 @@ import { detectHostCapabilities } from "./host.ts";
 import { buildLaunchCommand } from "./launchCommand.ts";
 import { assertLocalRunnerRequirements, resolveLocalRunner } from "./localRunner.ts";
 import { sandboxNameFor } from "./sandboxName.ts";
-import { buildAndStageSrtLaunch } from "./srtLaunch.ts";
+import { buildAndStageSrtLaunch, resolveGitCommonDir } from "./srtLaunch.ts";
 import { debug, sleep } from "./util.ts";
 import { workspaces } from "./workspaces.ts";
 
@@ -19,8 +19,10 @@ import { workspaces } from "./workspaces.ts";
  * Stage any srt settings and build the workspace launch command — the assembly
  * shared verbatim by `setupWorkspace` (fresh runs) and `resumeWorkspace`
  * (resumes). `worktreeDir` is the checkout root (srt grants + `{{worktree}}`);
- * `workingDir` is the agent cwd (the worktree root, or its `workdir` subproject).
- * Returns `srtSettingsDir` so callers can tear it down on a pre-launch failure.
+ * `workingDir` is the agent cwd (the worktree root, or its `workdir` subproject);
+ * `projectDir` is the parent dir repos live under (granted to safehouse so
+ * non-graft worktrees stay reachable). Returns `srtSettingsDir` so callers can
+ * tear it down on a pre-launch failure.
  */
 export function composeAgentLaunch(input: {
   runner: LocalRunner;
@@ -29,6 +31,7 @@ export function composeAgentLaunch(input: {
   promptFile: string;
   worktreeDir: string;
   workingDir: string;
+  projectDir: string;
   secretsFile?: string | undefined;
   prepareWorktreeCommand?: string | undefined;
   sandboxName?: string | undefined;
@@ -54,8 +57,40 @@ export function composeAgentLaunch(input: {
     srtAgentSettingsFile: staged?.agentFile,
     srtSettingsDir: staged?.directory,
     srtAgentConfigDirEnv: staged?.agentConfigDirEnv,
+    safehouseAddDirs:
+      input.runner === "safehouse"
+        ? resolveSafehouseAddDirs({ worktreeDir: input.worktreeDir, projectDir: input.projectDir })
+        : undefined,
   });
   return { launchCommand, srtSettingsDir: staged?.directory };
+}
+
+/**
+ * Filesystem paths the safehouse sandbox must be granted (read/write) beyond
+ * its automatic cwd grant, so git works for every worktree shape:
+ *
+ * - `worktreeDir` — the checkout root. A `workdir` subproject cwd's into a
+ *   subdir, so without this the worktree-root `.git` gitfile is unreachable.
+ * - the **git common dir** — resolved from the worktree itself (not assumed to
+ *   be `<projectDir>/<repo>/.git`), so a scripted/sparse-checkout worktree
+ *   whose store lives outside the worktree tree (e.g. graft's `~/carrot/.git`)
+ *   gets git access. This is the path the bare cwd grant fundamentally cannot
+ *   cover, and the reason this resolution exists.
+ * - `projectDir` — the parent dir repos live under; harmless extra coverage for
+ *   native worktrees.
+ *
+ * Gated to the safehouse runner at the call site (srt fences its own equivalent
+ * surface — worktree root + git common dir — through its settings file; sdx/none
+ * don't use it). Deduped, since the git common dir or projectDir can coincide
+ * for native checkouts.
+ */
+function resolveSafehouseAddDirs(input: {
+  worktreeDir: string;
+  projectDir: string;
+}): readonly string[] {
+  return [
+    ...new Set([input.worktreeDir, resolveGitCommonDir(input.worktreeDir), input.projectDir]),
+  ];
 }
 
 interface PreparedAgentLaunch {
