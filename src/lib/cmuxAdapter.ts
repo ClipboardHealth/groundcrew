@@ -2,15 +2,31 @@
  * cmux Workspace backend. cmux is the macOS TUI; workspaces surface in its
  * own app, so `accessHint` has nothing concise to emit. cmux can paint a
  * per-workspace status pill, which `open` applies best-effort.
+ *
+ * Reboot liveness: cmux persists and restores workspace tabs across a reboot,
+ * but the agent process inside a restored tab is dead. `cmux list-workspaces`
+ * has no per-workspace local-liveness field (`remote.active_terminal_sessions`
+ * covers SSH sessions only), so it would report every restored tab as live and
+ * wrongly block `crew resume`. To distinguish a live workspace from a
+ * restored-empty one, `open` stamps a per-workspace marker with the host boot
+ * epoch and `list` compares it: a marker that predates the current boot means
+ * the machine rebooted since the agent launched, so the workspace is reported
+ * `exited` (see WorkspaceProbe in `workspaceAdapter.ts`). This mirrors the
+ * zellij exit-marker approach, keyed to boot identity rather than command exit.
  */
+
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir, uptime } from "node:os";
+import path from "node:path";
 
 import {
   type Adapter,
   isSignalAborted,
   runWorkspaceCommand,
+  type Workspace,
   type WorkspaceStatus,
 } from "./workspaceAdapter.ts";
-import { debug, errorMessage, log } from "./util.ts";
+import { debug, errorMessage, log, readEnvironmentVariable } from "./util.ts";
 
 export const cmuxAdapter: Adapter = {
   async open(spec, signal) {
@@ -35,6 +51,7 @@ export const cmuxAdapter: Adapter = {
       );
       throw new Error(`Unexpected cmux output: ${output}`);
     }
+    recordLiveness(spec.name);
     if (spec.status !== undefined) {
       try {
         await applyCmuxStatus(workspaceId, spec.status, signal);
@@ -50,7 +67,10 @@ export const cmuxAdapter: Adapter = {
   },
   async list(signal) {
     const raw = await listCmuxRaw(signal);
-    return raw?.map((ws) => ({ name: ws.title }));
+    return raw?.map(
+      (ws): Workspace =>
+        isRestoredAfterReboot(ws.title) ? { name: ws.title, state: "exited" } : { name: ws.title },
+    );
   },
   async close(name, signal) {
     const raw = await listCmuxRaw(signal);
@@ -67,6 +87,7 @@ export const cmuxAdapter: Adapter = {
     }
     try {
       await closeCmuxWorkspace(match.id, signal);
+      clearLiveness(name);
       return { kind: "closed" };
     } catch (error) {
       if (isSignalAborted(signal)) {
@@ -78,6 +99,7 @@ export const cmuxAdapter: Adapter = {
       }
       const isStillPresent = remaining.some((ws) => ws.title === name);
       if (!isStillPresent) {
+        clearLiveness(name);
         return { kind: "closed" };
       }
       throw error;
@@ -195,4 +217,66 @@ async function closeCmuxWorkspace(workspaceId: string, signal?: AbortSignal): Pr
 
 function isCmuxSetStatusUnsupported(error: unknown): boolean {
   return errorMessage(error).includes('unknown command "set-status"');
+}
+
+// --- reboot liveness markers -------------------------------------------------
+
+// A reboot shifts the boot epoch by far more than this; the only drift within a
+// single boot is sub-second Date.now()/uptime rounding jitter, so the tolerance
+// just prevents a 1s rounding difference from flagging a live workspace as dead.
+const BOOT_EPOCH_TOLERANCE_SECONDS = 5;
+
+// One marker file per workspace title, under a tmpdir the macOS launchd cleaner
+// leaves intact across a reboot (so the pre-reboot boot epoch survives to be
+// compared). Overridable via env so tests can isolate it.
+function livenessDir(): string {
+  return (
+    readEnvironmentVariable("GROUNDCREW_CMUX_LIVENESS_DIR") ??
+    path.join(tmpdir(), "groundcrew-cmux-liveness")
+  );
+}
+
+function livenessPath(name: string): string {
+  return path.join(livenessDir(), name.replaceAll(/[^a-zA-Z0-9_-]/g, "_"));
+}
+
+// Host boot time in whole seconds, derived from uptime to stay cross-platform
+// and subprocess-free.
+function hostBootEpochSeconds(): number {
+  return Math.round(Date.now() / 1000 - uptime());
+}
+
+function recordLiveness(name: string): void {
+  try {
+    mkdirSync(livenessDir(), { recursive: true });
+    writeFileSync(livenessPath(name), String(hostBootEpochSeconds()));
+  } catch (error) {
+    // Best-effort: a failed marker only disables reboot detection, leaving the
+    // prior "every restored workspace counts as live" behavior intact.
+    debug(`cmux: failed to record liveness for ${name}: ${errorMessage(error)}`);
+  }
+}
+
+function clearLiveness(name: string): void {
+  rmSync(livenessPath(name), { force: true });
+}
+
+/**
+ * Whether the workspace's recorded boot epoch predates the current boot — i.e.
+ * cmux restored the tab after a reboot and the agent inside it is dead. A
+ * missing or unparseable marker means we have no liveness record (the workspace
+ * wasn't opened by this groundcrew, or the marker was lost): treat it as live
+ * so a running agent's slot is never wrongly freed.
+ */
+function isRestoredAfterReboot(name: string): boolean {
+  let recorded: number;
+  try {
+    recorded = Number(readFileSync(livenessPath(name), "utf8").trim());
+  } catch {
+    return false;
+  }
+  if (!Number.isFinite(recorded)) {
+    return false;
+  }
+  return Math.abs(hostBootEpochSeconds() - recorded) > BOOT_EPOCH_TOLERANCE_SECONDS;
 }

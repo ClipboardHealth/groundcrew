@@ -146,7 +146,11 @@ async function failIfWorkspaceAlreadyLive(config: ResolvedConfig, task: string):
       `Could not verify whether workspace for ${task} is already live${detail}. Retry or inspect the workspace backend manually before resuming.`,
     );
   }
-  if (probe.names.has(task)) {
+  // `names` includes restored-but-dead workspaces the backend reports as
+  // exited (e.g. a cmux tab cmux re-painted after a reboot with no agent
+  // inside). Those must not block resume — only a workspace with a live agent
+  // session should, so we never spawn a duplicate alongside a running one.
+  if (probe.names.has(task) && probe.exitedNames?.has(task) !== true) {
     throw new Error(`Workspace for ${task} is already live; attach to it instead of resuming.`);
   }
 }

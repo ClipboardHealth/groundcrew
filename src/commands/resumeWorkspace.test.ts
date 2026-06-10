@@ -443,6 +443,24 @@ describe(resumeWorkspace, () => {
     expect(workspacesOpenMock).not.toHaveBeenCalled();
   });
 
+  it("proceeds when the workspace was restored after a reboot and reports as exited", async () => {
+    // A cmux tab cmux re-painted after a reboot: present in `names` but flagged
+    // exited because no agent is running inside it. Resume must relaunch.
+    workspacesProbeMock.mockResolvedValue({
+      kind: "ok",
+      names: new Set(["team-1"]),
+      exitedNames: new Set(["team-1"]),
+    });
+
+    await resumeWorkspace(config, { task: "team-1" });
+
+    expect(workspacesOpenMock).toHaveBeenCalledWith(
+      config,
+      expect.objectContaining({ name: "team-1" }),
+    );
+    expect(lastRecordedRunState()).toMatchObject({ task: "team-1", state: "resumed" });
+  });
+
   it("fails closed when workspace liveness cannot be verified", async () => {
     workspacesProbeMock.mockResolvedValue({ kind: "unavailable" });
 
