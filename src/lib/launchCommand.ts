@@ -278,7 +278,7 @@ function tokenizeShellPrefix(command: string): string[] {
   return tokens;
 }
 
-function isEnvironmentAssignment(token: string): boolean {
+export function isEnvironmentAssignment(token: string): boolean {
   return /^[A-Za-z_][A-Za-z0-9_]*=/.test(token);
 }
 
@@ -382,6 +382,14 @@ interface LaunchCommandArguments {
    * runs the repo hook, not the agent. Undefined for read-only agents (claude).
    */
   srtAgentConfigDirEnv?: { name: string; value: string } | undefined;
+  /**
+   * Extra filesystem paths granted read/write to the safehouse sandbox via
+   * `--add-dirs`, beyond safehouse's automatic cwd grant. Resolved (and deduped)
+   * by `composeAgentLaunch`'s `resolveSafehouseAddDirs` — see there for which
+   * paths and why git needs them. Empty/undefined → no `--add-dirs` flag (the
+   * pre-existing behavior). Only consumed by the safehouse wrap.
+   */
+  safehouseAddDirs?: readonly string[] | undefined;
 }
 
 /**
@@ -519,6 +527,14 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
   const preLaunchEnvNames = arguments_.definition.preLaunchEnv ?? [];
   const agentEnvPassFlag =
     preLaunchEnvNames.length === 0 ? "" : `--env-pass=${preLaunchEnvNames.join(",")} `;
+  // safehouse reads colon-separated paths from `--add-dirs`; both wraps get the
+  // same grant so the prepareWorktree hook and the agent can each reach git.
+  // Quote the whole value so shell-special chars survive; the trailing space
+  // separates it from the next argv token. See `resolveSafehouseAddDirs` for
+  // which paths these are and why.
+  const addDirs = arguments_.safehouseAddDirs ?? [];
+  const safehouseAddDirsFlag =
+    addDirs.length === 0 ? "" : `--add-dirs=${shellSingleQuote(addDirs.join(":"))} `;
   const safehouseWrapper = safehouseClearanceWrapperCommand();
 
   // Defensive shim+promptDir trap: by the time we arm it, `rm -rf <promptDir>`
@@ -543,7 +559,7 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
   );
   if (prepareWorktreeCommand !== undefined) {
     lines.push(
-      `${safehouseWrapper} ${prepareWorktreeEnvPassFlag}sh -c ${shellSingleQuote(prepareWorktreeCommand)}`,
+      `${safehouseWrapper} ${safehouseAddDirsFlag}${prepareWorktreeEnvPassFlag}sh -c ${shellSingleQuote(prepareWorktreeCommand)}`,
     );
   }
   if (arguments_.secretsFile !== undefined) {
@@ -558,7 +574,7 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
     // Running the real launch chain as `sh -c` would make it see `sh`, so use
     // an agent-named symlink to /bin/sh. This preserves per-agent profile
     // selection without enabling every agent profile.
-    `{ ${safehouseWrapper} ${agentEnvPassFlag}"$_safehouse_shim" -c ${shellSingleQuote(agentCommand)} sh "$_p"; _safehouse_status=$?; rm -rf "$_safehouse_shim_dir"; trap - EXIT; exit "$_safehouse_status"; }`,
+    `{ ${safehouseWrapper} ${safehouseAddDirsFlag}${agentEnvPassFlag}"$_safehouse_shim" -c ${shellSingleQuote(agentCommand)} sh "$_p"; _safehouse_status=$?; rm -rf "$_safehouse_shim_dir"; trap - EXIT; exit "$_safehouse_status"; }`,
   );
   return lines.join(" && ");
 }

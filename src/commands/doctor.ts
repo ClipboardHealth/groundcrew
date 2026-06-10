@@ -16,6 +16,7 @@ import {
   worktreeBaseDir,
 } from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities, which } from "../lib/host.ts";
+import { isEnvironmentAssignment } from "../lib/launchCommand.ts";
 import { resolveLocalRunner } from "../lib/localRunner.ts";
 import { gatedAgents } from "../lib/usage.ts";
 import { errorMessage, writeOutput } from "../lib/util.ts";
@@ -98,12 +99,14 @@ function checkDir(path: string, label: string): Check {
  * the executable name (first non-flag token), and any subsequent
  * non-flag, non-flag-value token until a flag is hit. Flag tokens are
  * dropped along with the token immediately following them (treated as
- * the flag's value).
+ * the flag's value). `env VAR=val` assignments are skipped (they are not
+ * binaries), so the wrapped command is still found.
  *
  * Examples:
  *   "safehouse claude --permission-mode auto" → ["safehouse", "claude"]
  *   "claude"                                  → ["claude"]
  *   "node --inspect script.ts"                → ["node"]  (script.ts skipped — flag value)
+ *   "env GIT_CONFIG_COUNT=1 claude --foo"     → ["env", "claude"]  (assignment skipped)
  */
 function commandTokensToCheck(cmd: string): string[] {
   const parts = cmd.trim().split(/\s+/);
@@ -119,6 +122,13 @@ function commandTokensToCheck(cmd: string): string[] {
     if (token.startsWith("-")) {
       // Skip the flag and its value (next token), if any.
       index += 2;
+      continue;
+    }
+    if (isEnvironmentAssignment(token)) {
+      // An `env VAR=val …` prefix: the assignment is not a binary, so don't
+      // probe it on PATH. Mirrors the launch path's inferAgentCommandName,
+      // which skips assignments to find the real agent command.
+      index += 1;
       continue;
     }
     result.push(token);

@@ -11,7 +11,7 @@ import { detectHostCapabilities } from "./host.ts";
 import { buildLaunchCommand } from "./launchCommand.ts";
 import { assertLocalRunnerRequirements, resolveLocalRunner } from "./localRunner.ts";
 import { sandboxNameFor } from "./sandboxName.ts";
-import { buildAndStageSrtLaunch } from "./srtLaunch.ts";
+import { buildAndStageSrtLaunch, resolveGitCommonDir } from "./srtLaunch.ts";
 import { debug, sleep } from "./util.ts";
 import { workspaces } from "./workspaces.ts";
 
@@ -54,8 +54,30 @@ export function composeAgentLaunch(input: {
     srtAgentSettingsFile: staged?.agentFile,
     srtSettingsDir: staged?.directory,
     srtAgentConfigDirEnv: staged?.agentConfigDirEnv,
+    safehouseAddDirs:
+      input.runner === "safehouse" ? resolveSafehouseAddDirs(input.worktreeDir) : undefined,
   });
   return { launchCommand, srtSettingsDir: staged?.directory };
+}
+
+/**
+ * Filesystem paths the safehouse sandbox must be granted (read/write) beyond
+ * its automatic cwd grant, so git works for every worktree shape:
+ *
+ * - `worktreeDir` — the checkout root. A `workdir` subproject cwd's into a
+ *   subdir, so without this the worktree-root `.git` gitfile is unreachable.
+ * - the **git common dir** — resolved from the worktree itself (not assumed to
+ *   be `<projectDir>/<repo>/.git`), so a scripted/sparse-checkout worktree
+ *   whose store lives outside the worktree tree (e.g. graft's `~/carrot/.git`)
+ *   gets git access. This is the path the bare cwd grant fundamentally cannot
+ *   cover, and the reason this resolution exists.
+ * Gated to the safehouse runner at the call site (srt fences its own equivalent
+ * surface — worktree root + git common dir — through its settings file; sdx/none
+ * don't use it). Deduped defensively in case git resolves either path to the
+ * same directory in an unusual checkout shape.
+ */
+function resolveSafehouseAddDirs(worktreeDir: string): readonly string[] {
+  return [...new Set([worktreeDir, resolveGitCommonDir(worktreeDir)])];
 }
 
 interface PreparedAgentLaunch {

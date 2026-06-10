@@ -411,6 +411,30 @@ describe(doctor, () => {
     expect(checked).not.toContain("script.ts");
   });
 
+  it("skips `env KEY=val` assignments and checks the wrapped command", async () => {
+    loadConfigMock.mockResolvedValue(
+      makeConfig({
+        default: "env-cli",
+        definitions: {
+          // An `env VAR=val …` prefix (e.g. the safehouse SSH→HTTPS git rewrite)
+          // must not make doctor probe the assignment as a PATH binary. Mirrors
+          // the launch path's inferAgentCommandName, which skips assignments.
+          "env-cli": {
+            cmd: "env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=url.https://github.com/.insteadOf claude --permission-mode auto",
+            color: "#fff",
+          },
+        },
+      }),
+    );
+
+    await doctor();
+
+    const checked = checkedCommands();
+    expect(checked).toContain("env");
+    expect(checked).toContain("claude");
+    expect(checked).not.toContain("GIT_CONFIG_COUNT=1");
+  });
+
   it("does not probe a built-in agent that is not enabled", async () => {
     // The default makeConfig fixture has only `claude` in `definitions`.
     // `gatherToolTokens` iterates `Object.values(definitions)`, so codex is

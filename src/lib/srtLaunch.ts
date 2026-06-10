@@ -36,7 +36,7 @@ export interface StagedSrtLaunch {
  * `<projectDir>/<repo>/.git` as before. `--path-format=absolute` keeps the path
  * absolute regardless of git version or cwd.
  */
-function resolveGitCommonDir(worktreeDir: string): string {
+export function resolveGitCommonDir(worktreeDir: string): string {
   return runCommand("git", [
     "-C",
     worktreeDir,

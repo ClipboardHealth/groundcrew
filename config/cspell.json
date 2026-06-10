@@ -50,6 +50,7 @@
     "fsmonitor",
     "gitdir",
     "gitdirs",
+    "gitfile",
     "groundcrew",
     "defence",
     "discriminable",
