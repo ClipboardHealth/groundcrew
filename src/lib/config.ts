@@ -89,15 +89,15 @@ export interface SandboxDefinition {
 }
 
 /**
- * Closed set of declarative git URL-rewrites groundcrew knows how to inject
- * for a safehouse-wrapped agent. Kept a closed enum (not free key/value) on
- * purpose — see the design doc trade-offs: an open rewrite surface would just
- * re-create the opaque `env GIT_CONFIG_*` cmd-string problem with extra steps.
+ * Closed toggle for serving a safehouse-wrapped agent's git SSH remotes over
+ * HTTPS. Kept a closed string enum (not a bare boolean) to match the config's
+ * `auto`/enum house style and to leave room for future modes (e.g. "disabled"
+ * or "auto") without a breaking rename.
  *
- *   "ssh-to-https" → url.https://github.com/.insteadOf git@github.com:
+ *   "enabled" → url.https://github.com/.insteadOf git@github.com:
  */
-export const GIT_REWRITES = ["ssh-to-https"] as const;
-export type GitRewrite = (typeof GIT_REWRITES)[number];
+export const GIT_SSH_TO_HTTPS_SETTINGS = ["enabled"] as const;
+export type GitSshToHttps = (typeof GIT_SSH_TO_HTTPS_SETTINGS)[number];
 
 /**
  * First-class per-launch safehouse sandbox parameters for an agent. Replaces
@@ -106,19 +106,19 @@ export type GitRewrite = (typeof GIT_REWRITES)[number];
  */
 export interface SafehouseAgentConfig {
   /**
-   * git URL-rewrite to inject for the agent, emitted as an additive
-   * GIT_CONFIG layer (GIT_CONFIG_COUNT/KEY/VALUE — preserves the agent's
-   * global config + gh credential helper, unlike GIT_CONFIG_GLOBAL which
-   * replaces it). Needed whenever the sandbox blocks SSH egress but the
+   * When `"enabled"`, serve the agent's git SSH remotes over HTTPS, emitted as
+   * an additive GIT_CONFIG layer (GIT_CONFIG_COUNT/KEY/VALUE — preserves the
+   * agent's global config + gh credential helper, unlike GIT_CONFIG_GLOBAL
+   * which replaces it). Needed whenever the sandbox blocks SSH egress but the
    * worktree carries SSH remotes (e.g. graft sparse-checkouts of an SSH
-   * monorepo).
+   * monorepo). Omit to leave git untouched (the default).
    *
    * Self-contained: setting this also auto-forwards GITHUB_TOKEN into the
    * agent wrap, because the HTTPS remotes it produces only authenticate if the
    * agent's gh credential helper can read the token. No separate
    * `preLaunchEnv: ["GITHUB_TOKEN"]` pairing is required.
    */
-  gitRewrite?: GitRewrite;
+  gitSshToHttps?: GitSshToHttps;
 }
 
 export interface AgentDefinition {
@@ -700,8 +700,10 @@ function normalizeSandbox(value: unknown, configKey: string): SandboxDefinition 
   return { agent: trimmedAgent };
 }
 
-function isGitRewrite(value: unknown): value is GitRewrite {
-  return typeof value === "string" && (GIT_REWRITES as readonly string[]).includes(value);
+function isGitSshToHttps(value: unknown): value is GitSshToHttps {
+  return (
+    typeof value === "string" && (GIT_SSH_TO_HTTPS_SETTINGS as readonly string[]).includes(value)
+  );
 }
 
 function normalizeSafehouse(value: unknown, configKey: string): SafehouseAgentConfig {
@@ -709,14 +711,14 @@ function normalizeSafehouse(value: unknown, configKey: string): SafehouseAgentCo
     fail(`${configKey} must be an object`);
   }
   const safehouse: SafehouseAgentConfig = {};
-  const { gitRewrite } = value;
-  if (gitRewrite !== undefined) {
-    if (!isGitRewrite(gitRewrite)) {
+  const { gitSshToHttps } = value;
+  if (gitSshToHttps !== undefined) {
+    if (!isGitSshToHttps(gitSshToHttps)) {
       fail(
-        `${configKey}.gitRewrite must be one of ${GIT_REWRITES.join(", ")} (got ${JSON.stringify(gitRewrite)})`,
+        `${configKey}.gitSshToHttps must be one of ${GIT_SSH_TO_HTTPS_SETTINGS.join(", ")} (got ${JSON.stringify(gitSshToHttps)})`,
       );
     }
-    safehouse.gitRewrite = gitRewrite;
+    safehouse.gitSshToHttps = gitSshToHttps;
   }
   return safehouse;
 }
@@ -1204,15 +1206,15 @@ function validate(config: ResolvedConfig): void {
     if (definition.preLaunchEnv !== undefined) {
       validatePreLaunchEnv(name, definition.preLaunchEnv);
     }
-    if (definition.safehouse?.gitRewrite !== undefined) {
-      // The SSH→HTTPS rewrite only authenticates if the agent's gh credential
-      // helper can read GITHUB_TOKEN inside the sandbox (groundcrew forwards it
-      // automatically). Fail loudly at load time rather than letting pushes
-      // silently fail inside the sandbox once the agent is already running.
+    if (definition.safehouse?.gitSshToHttps !== undefined) {
+      // Serving SSH remotes over HTTPS only authenticates if the agent's gh
+      // credential helper can read GITHUB_TOKEN inside the sandbox (groundcrew
+      // forwards it automatically). Fail loudly at load time rather than letting
+      // pushes silently fail inside the sandbox once the agent is already running.
       const token = readEnvironmentVariable("GITHUB_TOKEN");
       if (token === undefined || token.trim().length === 0) {
         fail(
-          `agents.definitions.${name}.safehouse.gitRewrite is set to ${JSON.stringify(definition.safehouse.gitRewrite)} but GITHUB_TOKEN is not set in the environment; the rewritten HTTPS remotes only authenticate via the agent's gh credential helper, which reads GITHUB_TOKEN`,
+          `agents.definitions.${name}.safehouse.gitSshToHttps is set to ${JSON.stringify(definition.safehouse.gitSshToHttps)} but GITHUB_TOKEN is not set in the environment; the HTTPS remotes only authenticate via the agent's gh credential helper, which reads GITHUB_TOKEN`,
         );
       }
     }

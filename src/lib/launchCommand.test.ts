@@ -352,13 +352,13 @@ describe(buildLaunchCommand, () => {
     expect(out).toContain('exec ANTHROPIC_MODEL=sonnet claude --permission-mode auto "$@"');
   });
 
-  it("injects the gitRewrite GIT_CONFIG env prefix into the agent wrap when safehouse.gitRewrite is set", () => {
+  it("injects the gitSshToHttps GIT_CONFIG env prefix into the agent wrap when safehouse.gitSshToHttps is set", () => {
     const out = buildLaunchCommand(
       arguments_({
         definition: {
           cmd: "claude --permission-mode bypassPermissions",
           color: "#fff",
-          safehouse: { gitRewrite: "ssh-to-https" },
+          safehouse: { gitSshToHttps: "enabled" },
         },
       }),
     );
@@ -366,12 +366,12 @@ describe(buildLaunchCommand, () => {
     expect(out).toContain(
       'exec env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=url.https://github.com/.insteadOf GIT_CONFIG_VALUE_0=git@github.com: claude --permission-mode bypassPermissions "$@"',
     );
-    // The rewrite rides the groundcrew-composed agent command, so the profile
+    // The prefix rides the groundcrew-composed agent command, so the profile
     // shim is still keyed on the bare agent name, not `env`.
     expect(out).toContain('_safehouse_shim="$_safehouse_shim_dir/claude"');
   });
 
-  it("omits the gitRewrite prefix when safehouse.gitRewrite is unset", () => {
+  it("omits the gitSshToHttps prefix when safehouse.gitSshToHttps is unset", () => {
     const out = buildLaunchCommand(arguments_());
 
     expect(out).not.toContain("GIT_CONFIG_COUNT");
@@ -384,7 +384,7 @@ describe(buildLaunchCommand, () => {
         definition: {
           cmd: "claude --permission-mode bypassPermissions",
           color: "#fff",
-          safehouse: { gitRewrite: "ssh-to-https" },
+          safehouse: { gitSshToHttps: "enabled" },
         },
       }),
     );
@@ -403,31 +403,31 @@ describe(buildLaunchCommand, () => {
     expect(declarative).toBe(handWritten);
   });
 
-  it("auto-forwards GITHUB_TOKEN into the agent wrap when safehouse.gitRewrite is set", () => {
+  it("auto-forwards GITHUB_TOKEN into the agent wrap when safehouse.gitSshToHttps is set", () => {
     const out = buildLaunchCommand(
       arguments_({
         definition: {
           cmd: "claude --permission-mode bypassPermissions",
           color: "#fff",
-          safehouse: { gitRewrite: "ssh-to-https" },
+          safehouse: { gitSshToHttps: "enabled" },
         },
       }),
     );
 
-    // The rewrite points remotes at HTTPS, which only authenticates if the
-    // agent's gh credential helper can read GITHUB_TOKEN — so the setting
-    // forwards it itself instead of relying on a manual preLaunchEnv pairing.
+    // Serving remotes over HTTPS only authenticates if the agent's gh
+    // credential helper can read GITHUB_TOKEN — so the setting forwards it
+    // itself instead of relying on a manual preLaunchEnv pairing.
     expect(out).toContain('--env-pass=GITHUB_TOKEN "$_safehouse_shim"');
   });
 
-  it("merges GITHUB_TOKEN with explicit preLaunchEnv and dedupes when gitRewrite is set", () => {
+  it("merges GITHUB_TOKEN with explicit preLaunchEnv and dedupes when gitSshToHttps is set", () => {
     const merged = buildLaunchCommand(
       arguments_({
         definition: {
           cmd: "claude",
           color: "#fff",
           preLaunchEnv: ["FOO"],
-          safehouse: { gitRewrite: "ssh-to-https" },
+          safehouse: { gitSshToHttps: "enabled" },
         },
       }),
     );
@@ -439,7 +439,7 @@ describe(buildLaunchCommand, () => {
           cmd: "claude",
           color: "#fff",
           preLaunchEnv: ["GITHUB_TOKEN"],
-          safehouse: { gitRewrite: "ssh-to-https" },
+          safehouse: { gitSshToHttps: "enabled" },
         },
       }),
     );
@@ -447,7 +447,7 @@ describe(buildLaunchCommand, () => {
     expect(deduped).not.toContain("GITHUB_TOKEN,GITHUB_TOKEN");
   });
 
-  it("does not forward GITHUB_TOKEN when safehouse.gitRewrite is unset", () => {
+  it("does not forward GITHUB_TOKEN when safehouse.gitSshToHttps is unset", () => {
     const out = buildLaunchCommand(arguments_());
 
     expect(out).not.toContain("GITHUB_TOKEN");
