@@ -393,11 +393,64 @@ describe(buildLaunchCommand, () => {
         definition: {
           cmd: "env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=url.https://github.com/.insteadOf GIT_CONFIG_VALUE_0=git@github.com: claude --permission-mode bypassPermissions",
           color: "#fff",
+          // The declarative form auto-forwards GITHUB_TOKEN; the hand-written
+          // prefix needed it spelled out as preLaunchEnv to authenticate pushes.
+          preLaunchEnv: ["GITHUB_TOKEN"],
         },
       }),
     );
 
     expect(declarative).toBe(handWritten);
+  });
+
+  it("auto-forwards GITHUB_TOKEN into the agent wrap when safehouse.gitRewrite is set", () => {
+    const out = buildLaunchCommand(
+      arguments_({
+        definition: {
+          cmd: "claude --permission-mode bypassPermissions",
+          color: "#fff",
+          safehouse: { gitRewrite: "ssh-to-https" },
+        },
+      }),
+    );
+
+    // The rewrite points remotes at HTTPS, which only authenticates if the
+    // agent's gh credential helper can read GITHUB_TOKEN — so the setting
+    // forwards it itself instead of relying on a manual preLaunchEnv pairing.
+    expect(out).toContain('--env-pass=GITHUB_TOKEN "$_safehouse_shim"');
+  });
+
+  it("merges GITHUB_TOKEN with explicit preLaunchEnv and dedupes when gitRewrite is set", () => {
+    const merged = buildLaunchCommand(
+      arguments_({
+        definition: {
+          cmd: "claude",
+          color: "#fff",
+          preLaunchEnv: ["FOO"],
+          safehouse: { gitRewrite: "ssh-to-https" },
+        },
+      }),
+    );
+    expect(merged).toContain('--env-pass=FOO,GITHUB_TOKEN "$_safehouse_shim"');
+
+    const deduped = buildLaunchCommand(
+      arguments_({
+        definition: {
+          cmd: "claude",
+          color: "#fff",
+          preLaunchEnv: ["GITHUB_TOKEN"],
+          safehouse: { gitRewrite: "ssh-to-https" },
+        },
+      }),
+    );
+    expect(deduped).toContain('--env-pass=GITHUB_TOKEN "$_safehouse_shim"');
+    expect(deduped).not.toContain("GITHUB_TOKEN,GITHUB_TOKEN");
+  });
+
+  it("does not forward GITHUB_TOKEN when safehouse.gitRewrite is unset", () => {
+    const out = buildLaunchCommand(arguments_());
+
+    expect(out).not.toContain("GITHUB_TOKEN");
   });
 
   it("skips `env` and quoted environment assignments when inferring the Safehouse profile command", () => {

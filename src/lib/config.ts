@@ -112,6 +112,11 @@ export interface SafehouseAgentConfig {
    * replaces it). Needed whenever the sandbox blocks SSH egress but the
    * worktree carries SSH remotes (e.g. graft sparse-checkouts of an SSH
    * monorepo).
+   *
+   * Self-contained: setting this also auto-forwards GITHUB_TOKEN into the
+   * agent wrap, because the HTTPS remotes it produces only authenticate if the
+   * agent's gh credential helper can read the token. No separate
+   * `preLaunchEnv: ["GITHUB_TOKEN"]` pairing is required.
    */
   gitRewrite?: GitRewrite;
 }

@@ -543,8 +543,10 @@ function buildUnwrappedHostLaunchCommand(arguments_: LaunchCommandArguments): st
  *
  * `--env-pass` composition is split per wrap (deliberate, post PR #128):
  * - prepareWorktree wrap forwards build secrets only.
- * - Agent wrap forwards `preLaunchEnv` names only. preLaunch credentials never
- *   reach the profile-neutral prepare phase.
+ * - Agent wrap forwards `preLaunchEnv` names, plus GITHUB_TOKEN when
+ *   `safehouse.gitRewrite` is set (the HTTPS remotes that rewrite produces only
+ *   authenticate via the agent's gh credential helper). preLaunch credentials
+ *   never reach the profile-neutral prepare phase.
  */
 function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string {
   const promptDir = path.dirname(arguments_.promptFile);
@@ -562,9 +564,16 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
   // Trailing space keeps each flag separated from the next argv token.
   const prepareWorktreeEnvPassFlag =
     arguments_.secretsFile === undefined ? "" : `--env-pass=${BUILD_SECRET_NAMES.join(",")} `;
+  // `gitRewrite` rewrites SSH remotes to HTTPS, which only authenticates if the
+  // agent's gh credential helper can read GITHUB_TOKEN inside the sandbox. Forward
+  // it automatically so the setting is self-contained — no manual preLaunchEnv
+  // pairing to remember. Deduped so an explicit GITHUB_TOKEN entry isn't doubled.
   const preLaunchEnvNames = arguments_.definition.preLaunchEnv ?? [];
+  const agentEnvNames = arguments_.definition.safehouse?.gitRewrite
+    ? [...new Set([...preLaunchEnvNames, "GITHUB_TOKEN"])]
+    : preLaunchEnvNames;
   const agentEnvPassFlag =
-    preLaunchEnvNames.length === 0 ? "" : `--env-pass=${preLaunchEnvNames.join(",")} `;
+    agentEnvNames.length === 0 ? "" : `--env-pass=${agentEnvNames.join(",")} `;
   // safehouse reads colon-separated paths from `--add-dirs`; both wraps get the
   // same grant so the prepareWorktree hook and the agent can each reach git.
   // Quote the whole value so shell-special chars survive; the trailing space
