@@ -7,17 +7,10 @@ import {
   setEnvironmentVariable,
   snapshotEnvironmentVariables,
 } from "../testHelpers/env.ts";
-import {
-  repositoryBaseDir,
-  worktreeBaseDir,
-  type Config,
-  type LoadedConfig,
-  type ResolvedConfig,
-} from "./config.ts";
+import type { Config, ResolvedConfig } from "./config.ts";
 
 interface ConfigModule {
   loadConfig: () => Promise<Readonly<ResolvedConfig>>;
-  loadConfigWithSource: () => Promise<Readonly<LoadedConfig>>;
 }
 
 async function loadFreshConfig(): Promise<ConfigModule> {
@@ -1821,119 +1814,5 @@ describe("loadConfig", () => {
   it("fails with a discovery error when no config exists anywhere", async () => {
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(/no crew config found/);
-  });
-});
-
-describe("loadConfigWithSource", () => {
-  const originalEnvironment = snapshotEnvironmentVariables();
-  const ENV_KEYS = ["GROUNDCREW_CONFIG", "HOME", "XDG_CONFIG_HOME"] as const;
-  let temporary: string;
-
-  beforeEach(() => {
-    temporary = mkdtempSync(path.join(tmpdir(), "groundcrew-resolve-"));
-    for (const key of ENV_KEYS) {
-      deleteEnvironmentVariable(key);
-    }
-    setEnvironmentVariable("XDG_CONFIG_HOME", path.join(temporary, "xdg-config"));
-    vi.spyOn(process, "cwd").mockReturnValue(temporary);
-  });
-
-  afterEach(() => {
-    rmSync(temporary, { recursive: true, force: true });
-    for (const key of ENV_KEYS) {
-      const original = originalEnvironment[key];
-      if (original === undefined) {
-        deleteEnvironmentVariable(key);
-      } else {
-        setEnvironmentVariable(key, original);
-      }
-    }
-    vi.restoreAllMocks();
-  });
-
-  it("reports an env-override source", async () => {
-    const configPath = writeConfigFile(
-      temporary,
-      validConfigSource({ workspace: VALID_WORKSPACE(temporary) }),
-    );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
-
-    const { loadConfigWithSource } = await loadFreshConfig();
-    const actual = await loadConfigWithSource();
-
-    expect(actual.source).toStrictEqual({ kind: "env", filepath: path.resolve(configPath) });
-    expect(actual.config.workspace.projectDir).toBe(temporary);
-  });
-
-  it("reports a project-search source", async () => {
-    const projectConfigPath = path.join(temporary, "crew.config.ts");
-    writeFileSync(projectConfigPath, validConfigSource({ workspace: VALID_WORKSPACE(temporary) }));
-
-    const { loadConfigWithSource } = await loadFreshConfig();
-    const actual = await loadConfigWithSource();
-
-    expect(actual.source).toStrictEqual({ kind: "project", filepath: projectConfigPath });
-    expect(actual.config.workspace.projectDir).toBe(temporary);
-  });
-
-  it("reports an XDG fallback source", async () => {
-    const xdgDir = path.join(temporary, "xdg-config", "groundcrew");
-    mkdirSync(xdgDir, { recursive: true });
-    const xdgConfigPath_ = path.join(xdgDir, "crew.config.ts");
-    writeFileSync(xdgConfigPath_, validConfigSource({ workspace: VALID_WORKSPACE(temporary) }));
-
-    const { loadConfigWithSource } = await loadFreshConfig();
-    const actual = await loadConfigWithSource();
-
-    expect(actual.source).toStrictEqual({ kind: "xdg", filepath: xdgConfigPath_ });
-    expect(actual.config.workspace.projectDir).toBe(temporary);
-  });
-});
-
-function resolvedConfigWithWorkspace(workspace: ResolvedConfig["workspace"]): ResolvedConfig {
-  return {
-    sources: [],
-    git: { remote: "origin", defaultBranch: "main" },
-    workspace,
-    defaults: { hooks: {} },
-    orchestrator: {
-      maximumInProgress: 4,
-      pollIntervalMilliseconds: 1000,
-      sessionLimitPercentage: 85,
-    },
-    agents: { default: "claude", definitions: { claude: { cmd: "claude", color: "#fff" } } },
-    prompts: { initial: "x" },
-    workspaceKind: "auto",
-    local: { runner: "auto" },
-    logging: { file: "/tmp/x.log" },
-  };
-}
-
-describe("workspace path accessors", () => {
-  const resolved = resolvedConfigWithWorkspace;
-
-  it("worktreeBaseDir falls back to projectDir when worktreeDir is unset", () => {
-    const config = resolved({ projectDir: "/p", knownRepositories: ["a"] });
-    expect(worktreeBaseDir(config)).toBe("/p");
-  });
-
-  it("worktreeBaseDir prefers worktreeDir when set", () => {
-    const config = resolved({ projectDir: "/p", worktreeDir: "/w", knownRepositories: ["a"] });
-    expect(worktreeBaseDir(config)).toBe("/w");
-  });
-
-  it("repositoryBaseDir falls back to projectDir without an override", () => {
-    const config = resolved({ projectDir: "/p", knownRepositories: ["a"] });
-    expect(repositoryBaseDir(config, "a")).toBe("/p");
-  });
-
-  it("repositoryBaseDir uses the per-repo override when present", () => {
-    const config = resolved({
-      projectDir: "/p",
-      knownRepositories: ["a", "b"],
-      repositoryDirs: { b: "/other" },
-    });
-    expect(repositoryBaseDir(config, "b")).toBe("/other");
-    expect(repositoryBaseDir(config, "a")).toBe("/p");
   });
 });
