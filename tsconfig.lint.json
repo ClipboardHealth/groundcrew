@@ -13,6 +13,8 @@
   "include": [
     "*.ts",
     "bin/**/*.js",
+    "config/**/*.js",
+    "config/**/*.ts",
     "crew.config.example.ts",
     "scripts/**/*.mts",
     "scripts/**/*.ts",

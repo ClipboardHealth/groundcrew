@@ -9,7 +9,7 @@
     "types": ["vitest/globals", "vitest/importMeta", "vite/client", "node", "vitest"]
   },
   "include": [
-    "vitest.shared.ts",
+    "config/vitestShared.ts",
     "vitest.config.ts",
     "src/testHelpers/**/*.ts",
     "src/**/*.test.ts",
