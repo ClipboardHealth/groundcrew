@@ -1204,6 +1204,18 @@ function validate(config: ResolvedConfig): void {
     if (definition.preLaunchEnv !== undefined) {
       validatePreLaunchEnv(name, definition.preLaunchEnv);
     }
+    if (definition.safehouse?.gitRewrite !== undefined) {
+      // The SSH→HTTPS rewrite only authenticates if the agent's gh credential
+      // helper can read GITHUB_TOKEN inside the sandbox (groundcrew forwards it
+      // automatically). Fail loudly at load time rather than letting pushes
+      // silently fail inside the sandbox once the agent is already running.
+      const token = readEnvironmentVariable("GITHUB_TOKEN");
+      if (token === undefined || token.trim().length === 0) {
+        fail(
+          `agents.definitions.${name}.safehouse.gitRewrite is set to ${JSON.stringify(definition.safehouse.gitRewrite)} but GITHUB_TOKEN is not set in the environment; the rewritten HTTPS remotes only authenticate via the agent's gh credential helper, which reads GITHUB_TOKEN`,
+        );
+      }
+    }
   }
 
   /* v8 ignore next 5 @preserve -- normalizeLocalRunner rejects invalid strings before validate() runs; this is a belt-and-suspenders guard */

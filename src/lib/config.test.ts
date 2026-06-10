@@ -45,7 +45,13 @@ function validConfigSource(config: Config): string {
 
 describe("loadConfig", () => {
   const originalEnvironment = snapshotEnvironmentVariables();
-  const ENV_KEYS = ["GROUNDCREW_CONFIG", "HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME"] as const;
+  const ENV_KEYS = [
+    "GROUNDCREW_CONFIG",
+    "HOME",
+    "XDG_CONFIG_HOME",
+    "XDG_STATE_HOME",
+    "GITHUB_TOKEN",
+  ] as const;
   let temporary: string;
 
   beforeEach(() => {
@@ -801,6 +807,7 @@ describe("loadConfig", () => {
       }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    setEnvironmentVariable("GITHUB_TOKEN", "ghp_test_token");
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
     expect(actual.agents.definitions["claude"]?.safehouse?.gitRewrite).toBe("ssh-to-https");
@@ -838,6 +845,38 @@ describe("loadConfig", () => {
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(
       /agents\.definitions\.claude\.safehouse must be an object/,
+    );
+  });
+
+  it("rejects safehouse.gitRewrite when GITHUB_TOKEN is unset", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      configSource({
+        workspace: VALID_WORKSPACE(temporary),
+        agents: { definitions: { claude: { safehouse: { gitRewrite: "ssh-to-https" } } } },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    deleteEnvironmentVariable("GITHUB_TOKEN");
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(
+      /agents\.definitions\.claude\.safehouse\.gitRewrite is set to "ssh-to-https" but GITHUB_TOKEN is not set/,
+    );
+  });
+
+  it("rejects safehouse.gitRewrite when GITHUB_TOKEN is empty", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      configSource({
+        workspace: VALID_WORKSPACE(temporary),
+        agents: { definitions: { claude: { safehouse: { gitRewrite: "ssh-to-https" } } } },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    setEnvironmentVariable("GITHUB_TOKEN", "   ");
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(
+      /agents\.definitions\.claude\.safehouse\.gitRewrite is set to "ssh-to-https" but GITHUB_TOKEN is not set/,
     );
   });
 
