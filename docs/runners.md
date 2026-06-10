@@ -13,19 +13,21 @@
 
 ## Safehouse Clearance Allowlist
 
-Only applies when `local.runner` resolves to `safehouse`. Groundcrew starts `clearance` on `http://127.0.0.1:19999` and runs the agent through the bundled `safehouse-clearance` wrapper. Clearance refuses to start without an allowlist.
+Only applies when `local.runner` resolves to `safehouse`. Groundcrew starts `clearance` on `http://127.0.0.1:19999` and runs the agent through the bundled `safehouse-clearance` wrapper. Groundcrew automatically points clearance at its shipped starter allowlist, so a fresh install does not need a `CLEARANCE_ALLOW_HOSTS_FILES` export.
 
-Shortest path:
+Groundcrew ships that starter file at `$(npm root -g)/@clipboard-health/groundcrew/clearance-allow-hosts`, covering model APIs, Linear, Notion, Slack, Datadog, GitHub, npm, and common dev tooling.
+
+To add ad hoc hosts for one run, use `CLEARANCE_ALLOW_HOSTS`:
 
 ```bash
 CLEARANCE_ALLOW_HOSTS="api.openai.com,auth.openai.com,api.anthropic.com,mcp.linear.app,api.linear.app" \
 crew run --watch
 ```
 
-Groundcrew ships a starter file covering model APIs, Linear, Notion, Slack, Datadog, GitHub, npm, and common dev tooling at `$(npm root -g)/@clipboard-health/groundcrew/clearance-allow-hosts`. Point clearance at it, optionally with a personal file:
+To keep personal hosts in a file, set `CLEARANCE_ALLOW_HOSTS_FILES` to only the additional files. Groundcrew prepends its shipped file automatically:
 
 ```bash
-CLEARANCE_ALLOW_HOSTS_FILES="$(npm root -g)/@clipboard-health/groundcrew/clearance-allow-hosts:$HOME/.config/clearance/personal-allow-hosts" \
+CLEARANCE_ALLOW_HOSTS_FILES="$HOME/.config/clearance/personal-allow-hosts" \
 crew run --watch
 ```
 

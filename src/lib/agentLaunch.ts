@@ -1,5 +1,6 @@
 import { ensureClearance } from "@clipboard-health/clearance";
 
+import { clearanceProxyEnv } from "./clearanceAllowlist.ts";
 import {
   hasPreLaunchEnv,
   type LocalRunner,
@@ -79,6 +80,7 @@ async function alreadyReady(): Promise<void> {
 
 async function ensureSafehouseClearance(signal?: AbortSignal): Promise<void> {
   await ensureClearance({
+    env: clearanceProxyEnv(),
     logger: debug,
     ...(signal === undefined
       ? {}

@@ -50,8 +50,8 @@ crew init --global --project-dir ~/dev --repo OWNER/REPO --agent claude
 
 # 3. Run the clone commands printed by `crew init`.
 
-# 4. Set the clearance egress proxy allowlist.
-export CLEARANCE_ALLOW_HOSTS_FILES="$(npm root -g)/@clipboard-health/groundcrew/clearance-allow-hosts"
+# 4. Safehouse runs use groundcrew's bundled clearance allowlist automatically.
+#    Add extra hosts later via CLEARANCE_ALLOW_HOSTS or CLEARANCE_ALLOW_HOSTS_FILES.
 
 # 5. Using Linear? Export your API key. (Jira and other trackers: see Task Pickup.)
 export GROUNDCREW_LINEAR_API_KEY="lin_api_..."

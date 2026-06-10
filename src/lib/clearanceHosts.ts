@@ -15,8 +15,8 @@
  */
 
 import { readFileSync } from "node:fs";
-import path from "node:path";
 
+import { splitPathList } from "./pathList.ts";
 import { debug } from "./util.ts";
 
 export interface CollectAllowedDomainsInput {
@@ -64,16 +64,6 @@ export function collectAllowedDomains(input: CollectAllowedDomainsInput): string
     }
   }
   return domains;
-}
-
-function splitPathList(value: string | undefined): string[] {
-  if (value === undefined || value.length === 0) {
-    return [];
-  }
-  return value
-    .split(path.delimiter)
-    .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0);
 }
 
 /**
