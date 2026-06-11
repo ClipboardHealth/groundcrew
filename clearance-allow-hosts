@@ -11,11 +11,14 @@
 ab.chatgpt.com
 api.anthropic.com
 api.openai.com
+api2.cursor.sh
 chatgpt.com
 docs.anthropic.com
 docs.claude.com
 downloads.claude.ai
 platform.claude.com
+repo42.cursor.sh
+www.cursor.com
 
 # Hosted MCP servers + their auth/web hosts
 api.linear.app
