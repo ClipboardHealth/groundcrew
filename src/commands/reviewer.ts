@@ -1,6 +1,6 @@
 /**
  * Per-iteration scanner that advances a task based on its worktree's pull
- * request state. Sits between the cleaner and the dispatcher in each
+ * request state. Sits after the dispatcher and before the cleaner in each
  * `orchestrate()` tick.
  *
  * - An **open** PR on an **in-progress** task → `markInReview`: frees a
@@ -15,10 +15,11 @@
  * fallback. (Linear's own GitHub integration moves merged issues to Done,
  * which groundcrew observes via `fetch()`.)
  *
- * The write-back lands in the task source, not the in-memory `BoardState`,
- * so the dispatcher in the SAME tick still sees prior state; the slot frees on
- * the NEXT tick's `board.fetch()`. That one-tick latency is deliberate. One
- * per `orchestrate()`; stateless across iterations. Mirrors `Cleaner`.
+ * The write-back lands in the task source, not the in-memory `BoardState`, and
+ * the dispatcher has already made the current tick's start decisions; the slot
+ * frees on the NEXT tick's `board.fetch()`. That one-tick latency is
+ * deliberate. One per `orchestrate()`; stateless across iterations. Mirrors
+ * `Cleaner`.
  */
 
 import type { Board } from "../lib/board.ts";
