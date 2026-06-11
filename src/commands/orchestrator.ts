@@ -1,7 +1,7 @@
 /**
  * groundcrew orchestrator — polls Linear projects and spins up workspace +
  * git-worktree pairs for ready tasks. Each tick fetches the board, runs
- * the cleaner, the reviewer, and the dispatcher; logging from those modules is
+ * the dispatcher, the reviewer, and the cleaner; logging from those modules is
  * the orchestrator's user-facing output.
  */
 
@@ -132,10 +132,6 @@ export async function orchestrate(options: OrchestratorOptions): Promise<void> {
       ...(signal === undefined ? {} : { signal }),
     };
 
-    await cleaner.runOnce(tickArguments);
-
-    await reviewer.runOnce(tickArguments);
-
     await dispatcher.runOnce({
       ...tickArguments,
       // Lazy: dispatcher only invokes this after its own early-returns, so
@@ -143,6 +139,10 @@ export async function orchestrate(options: OrchestratorOptions): Promise<void> {
       usage: async (usageSignal) => await fetchUsageOrEmpty(config, usageSignal),
       ...(idleSuffix === undefined ? {} : { idleSuffix }),
     });
+
+    await reviewer.runOnce(tickArguments);
+
+    await cleaner.runOnce(tickArguments);
   };
 
   await (options.watch ? runWatchLoop(tick, config) : tick());

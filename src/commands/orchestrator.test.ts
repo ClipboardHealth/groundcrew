@@ -290,6 +290,18 @@ function hostEntryFor(repository: string, task: string): WorktreeEntry {
   };
 }
 
+interface InvocationOrderRecorder {
+  mock: { invocationCallOrder: readonly number[] };
+}
+
+function firstInvocationOrder(recorder: InvocationOrderRecorder): number {
+  const [order] = recorder.mock.invocationCallOrder;
+  if (order === undefined) {
+    throw new Error("expected invocation order");
+  }
+  return order;
+}
+
 function verifyViewerResponse(): unknown {
   return {
     data: {
@@ -1366,6 +1378,33 @@ JSON
     await orchestrate({ watch: false, dryRun: false });
 
     expect(teardownMock).toHaveBeenCalledWith(expect.anything(), [entry]);
+  });
+
+  it("starts eligible work before cleaning terminal worktrees", async () => {
+    const entry = hostEntryFor("repo-a", "team-1");
+    listMock.mockReturnValue([entry]);
+    teardownMock.mockResolvedValue(emptyTeardownResult({ removed: [entry] }));
+    const client = makeClient({
+      pages: [
+        [
+          issue({
+            identifier: "TEAM-1",
+            id: "uuid-1",
+            state: { id: "state-done", name: "Done", type: "completed" },
+          }),
+          issue({
+            identifier: "TEAM-2",
+            id: "uuid-2",
+            state: { id: "state-todo", name: "Todo", type: "unstarted" },
+          }),
+        ],
+      ],
+    });
+    mockLinearClient(client);
+
+    await orchestrate({ watch: false, dryRun: false });
+
+    expect(firstInvocationOrder(setupMock)).toBeLessThan(firstInvocationOrder(teardownMock));
   });
 
   it("cleans up worktrees for canceled tasks regardless of status name", async () => {
