@@ -3,14 +3,19 @@
 /**
  * Fixture-driven test for the committed JIRA shell-source example
  * (`examples/jira/jira.sh`). It does NOT hit a live JIRA: a fake `jira`
- * executable on PATH emits canned `--raw` REST payloads, the real script runs
- * via bash + jq, and its stdout is validated against the same Zod schemas the
- * shell adapter applies at runtime. This pins the jq transform (status mapping,
- * label decoding, ADF flattening, URL synthesis) that `list` and `get` share.
+ * executable on PATH emits canned payloads, the real script runs via bash + jq,
+ * and its stdout is validated against the same Zod schemas the shell adapter
+ * applies at runtime. This pins the jq transform (status mapping, label
+ * decoding, ADF flattening, URL synthesis) that `list` and `get` share.
+ *
+ * The fake mirrors jira-cli 1.7.0's two distinct shapes: `issue list --raw`
+ * returns a reduced top-level array (key + a trimmed `fields`, no id/self/
+ * statusCategory), while `issue view <KEY> --raw` returns the full REST issue.
+ * The `list` path therefore enriches each listed key via `view`.
  */
 
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -20,105 +25,111 @@ import { shellFetchOutputSchema, shellIssueSchema } from "./schema.ts";
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../../../");
 const SCRIPT = path.join(REPO_ROOT, "examples/jira/jira.sh");
 
-/** One JIRA Cloud REST issue, trimmed to the fields the transform reads. */
-function issue(overrides: Record<string, unknown>): Record<string, unknown> {
-  return {
-    id: "10000",
-    key: "ENG-0",
-    self: "https://acme.atlassian.net/rest/api/3/issue/10000",
-    fields: {
-      summary: "Summary",
-      description: "Body",
-      status: { name: "To Do", statusCategory: { key: "new", name: "To Do" } },
-      labels: [],
-      assignee: { displayName: "Alice" },
-      updated: "2026-05-22T15:00:00.000+0000",
-    },
-    ...overrides,
+/** A full JIRA Cloud REST issue, as `jira issue view --raw` returns it. */
+interface JiraIssue {
+  id: string;
+  key: string;
+  self: string;
+  fields: {
+    summary: string;
+    description?: string | Record<string, unknown>;
+    status: { name: string; statusCategory: { key: string; name: string } };
+    labels: string[];
+    assignee: { displayName: string } | null;
+    updated: string;
   };
 }
 
-const LIST_FIXTURE = {
-  issues: [
-    issue({
-      id: "10001",
-      key: "ENG-1",
-      self: "https://acme.atlassian.net/rest/api/3/issue/10001",
-      fields: {
-        summary: "First",
-        description: "Do the thing",
-        status: { name: "To Do", statusCategory: { key: "new", name: "To Do" } },
-        labels: ["repo:ClipboardHealth__api", "agent:codex"],
-        assignee: { displayName: "Alice" },
-        updated: "2026-05-22T15:00:00.000+0000",
+/** The full issues `view` returns, keyed for the `list` enrichment lookup. */
+const ISSUES: JiraIssue[] = [
+  {
+    id: "10001",
+    key: "ENG-1",
+    self: "https://acme.atlassian.net/rest/api/3/issue/10001",
+    fields: {
+      summary: "First",
+      description: "Do the thing",
+      status: { name: "To Do", statusCategory: { key: "new", name: "To Do" } },
+      labels: ["repo:ClipboardHealth__api", "agent:codex"],
+      assignee: { displayName: "Alice" },
+      updated: "2026-05-22T15:00:00.000+0000",
+    },
+  },
+  {
+    id: "10002",
+    key: "ENG-2",
+    self: "https://acme.atlassian.net/rest/api/3/issue/10002",
+    fields: {
+      summary: "Second",
+      // ADF (rich text) description, as JIRA Cloud returns it.
+      description: {
+        type: "doc",
+        version: 1,
+        content: [
+          {
+            type: "paragraph",
+            content: [
+              { type: "text", text: "Investigate" },
+              { type: "text", text: "the bug" },
+            ],
+          },
+        ],
       },
-    }),
-    issue({
-      id: "10002",
-      key: "ENG-2",
-      self: "https://acme.atlassian.net/rest/api/3/issue/10002",
-      fields: {
-        summary: "Second",
-        // ADF (rich text) description, as JIRA Cloud returns it.
-        description: {
-          type: "doc",
-          version: 1,
-          content: [
-            {
-              type: "paragraph",
-              content: [
-                { type: "text", text: "Investigate" },
-                { type: "text", text: "the bug" },
-              ],
-            },
-          ],
-        },
-        status: {
-          name: "In Review",
-          statusCategory: { key: "indeterminate", name: "In Progress" },
-        },
-        labels: ["repo:org__repo"],
-        assignee: { displayName: "Bob" },
-        updated: "2026-05-21T10:00:00.000+0000",
+      status: {
+        name: "In Review",
+        statusCategory: { key: "indeterminate", name: "In Progress" },
       },
-    }),
-    issue({
-      id: "10003",
-      key: "ENG-3",
-      self: "https://acme.atlassian.net/rest/api/3/issue/10003",
-      fields: {
-        summary: "Third",
-        status: {
-          name: "In Progress",
-          statusCategory: { key: "indeterminate", name: "In Progress" },
-        },
-        labels: [],
-        assignee: null,
-        updated: "2026-05-20T09:00:00.000+0000",
+      labels: ["repo:org__repo"],
+      assignee: { displayName: "Bob" },
+      updated: "2026-05-21T10:00:00.000+0000",
+    },
+  },
+  {
+    id: "10003",
+    key: "ENG-3",
+    self: "https://acme.atlassian.net/rest/api/3/issue/10003",
+    fields: {
+      summary: "Third",
+      status: {
+        name: "In Progress",
+        statusCategory: { key: "indeterminate", name: "In Progress" },
       },
-    }),
-    issue({
-      id: "10004",
-      key: "ENG-4",
-      self: "https://acme.atlassian.net/rest/api/3/issue/10004",
-      fields: {
-        summary: "Fourth",
-        description: "done body",
-        status: { name: "Done", statusCategory: { key: "done", name: "Done" } },
-        labels: ["repo:a__b", "agent:claude"],
-        assignee: { displayName: "Carol" },
-        updated: "2026-05-19T08:00:00.000+0000",
-      },
-    }),
-  ],
-};
+      labels: [],
+      assignee: null,
+      updated: "2026-05-20T09:00:00.000+0000",
+    },
+  },
+  {
+    id: "10004",
+    key: "ENG-4",
+    self: "https://acme.atlassian.net/rest/api/3/issue/10004",
+    fields: {
+      summary: "Fourth",
+      description: "done body",
+      status: { name: "Done", statusCategory: { key: "done", name: "Done" } },
+      labels: ["repo:a__b", "agent:claude"],
+      assignee: { displayName: "Carol" },
+      updated: "2026-05-19T08:00:00.000+0000",
+    },
+  },
+];
+
+/**
+ * What `jira issue list --raw` actually returns: a top-level array of reduced
+ * issues — only `key` plus a trimmed `fields` (no id, self, or statusCategory).
+ * The script reads just the keys from this and enriches each via `view`.
+ */
+const LIST_OUTPUT = ISSUES.map((i) => ({
+  key: i.key,
+  fields: { summary: i.fields.summary, status: { name: i.fields.status.name } },
+}));
 
 interface Harness {
   dir: string;
   tokenFile: string;
   tokenEcho: string;
   listFixture: string;
-  getFixture: string;
+  viewDir: string;
   cleanup: () => void;
 }
 
@@ -128,12 +139,19 @@ function setup(): Harness {
   writeFileSync(tokenFile, "fake-token");
 
   const listFixture = path.join(dir, "list.json");
-  const getFixture = path.join(dir, "get.json");
   const tokenEcho = path.join(dir, "token.echo");
-  writeFileSync(listFixture, JSON.stringify(LIST_FIXTURE));
+  writeFileSync(listFixture, JSON.stringify(LIST_OUTPUT));
 
-  // Fake `jira` CLI: dispatches on the subcommand and echoes fixtures. The `me`
-  // branch records the exported JIRA_API_TOKEN so a test can assert trimming.
+  // One full-issue file per key, named <KEY>.json, for the `view` lookup.
+  const viewDir = path.join(dir, "views");
+  mkdirSync(viewDir);
+  for (const i of ISSUES) {
+    writeFileSync(path.join(viewDir, `${i.key}.json`), JSON.stringify(i));
+  }
+
+  // Fake `jira` CLI: `list` echoes the reduced array; `view <KEY>` returns the
+  // full issue file (exit 1 when absent, the not-found signal); `me` records the
+  // exported JIRA_API_TOKEN so a test can assert trimming.
   const fakeJira = path.join(dir, "jira");
   writeFileSync(
     fakeJira,
@@ -143,8 +161,9 @@ function setup(): Harness {
       'if [[ "${1:-}" == "me" ]]; then printf "%s" "${JIRA_API_TOKEN:-}" > "$TOKEN_ECHO"; exit 0; fi',
       'if [[ "${1:-}" == "issue" && "${2:-}" == "list" ]]; then cat "$FIXTURE_LIST"; exit 0; fi',
       'if [[ "${1:-}" == "issue" && "${2:-}" == "view" ]]; then',
-      '  if [[ "${3:-}" == MISSING* ]]; then exit 1; fi',
-      '  cat "$FIXTURE_GET"; exit 0',
+      '  f="$VIEW_DIR/${3:-}.json"',
+      '  [[ -f "$f" ]] || exit 1',
+      '  cat "$f"; exit 0',
       "fi",
       'if [[ "${1:-}" == "issue" && "${2:-}" == "move" ]]; then exit 0; fi',
       "exit 0",
@@ -158,7 +177,7 @@ function setup(): Harness {
     tokenFile,
     tokenEcho,
     listFixture,
-    getFixture,
+    viewDir,
     cleanup: () => {
       rmSync(dir, { recursive: true, force: true });
     },
@@ -180,7 +199,7 @@ function run(
       JIRA_REVIEW_PATTERN: "review",
       JIRA_DEFAULT_AGENT: "claude",
       FIXTURE_LIST: h.listFixture,
-      FIXTURE_GET: h.getFixture,
+      VIEW_DIR: h.viewDir,
       TOKEN_ECHO: h.tokenEcho,
       ...extraEnv,
     },
@@ -250,7 +269,6 @@ describe("jira.sh example source", () => {
   });
 
   it("get emits one ShellIssue for a known key", () => {
-    writeFileSync(h.getFixture, JSON.stringify(LIST_FIXTURE.issues[0]));
     const { status, stdout } = run(h, ["get", "ENG-1"]);
     expect(status).toBe(0);
 

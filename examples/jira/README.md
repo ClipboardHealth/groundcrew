@@ -62,7 +62,7 @@ calls with a subcommand per operation:
        "markDone": "~/.config/groundcrew/jira.sh move ${id} \"$JIRA_STATE_DONE\""
      },
      "env": {
-       "JIRA_GROUNDCREW_JQL": "statusCategory != Done ORDER BY updated DESC",
+       "JIRA_GROUNDCREW_JQL": "statusCategory != Done",
        "JIRA_REVIEW_PATTERN": "review",
        "JIRA_DEFAULT_AGENT": "claude",
        "JIRA_STATE_IN_PROGRESS": "In Progress",
@@ -81,13 +81,13 @@ calls with a subcommand per operation:
 
 The script reads these from the source's `env` block:
 
-| Variable              | Default                                        | Purpose                                                                |
-| --------------------- | ---------------------------------------------- | ---------------------------------------------------------------------- |
-| `JIRA_GROUNDCREW_JQL` | `statusCategory != Done ORDER BY updated DESC` | Which issues `list` returns.                                           |
-| `JIRA_REVIEW_PATTERN` | `review`                                       | Case-insensitive regex; matching status names map to `in-review`.      |
-| `JIRA_DEFAULT_AGENT`  | _(empty -> `null`)_                            | Agent used when an issue has no `agent:` label.                        |
-| `JIRA_TOKEN_FILE`     | `~/.config/groundcrew/jira.token`              | Token file path.                                                       |
-| `JIRA_STATE_*`        | `In Progress` / `In Review` / `Done`           | Native JIRA state names used by `move`. Match your project's workflow. |
+| Variable              | Default                              | Purpose                                                                |
+| --------------------- | ------------------------------------ | ---------------------------------------------------------------------- |
+| `JIRA_GROUNDCREW_JQL` | `statusCategory != Done`             | Which issues `list` returns. Omit `ORDER BY` (jira-cli adds its own).  |
+| `JIRA_REVIEW_PATTERN` | `review`                             | Case-insensitive regex; matching status names map to `in-review`.      |
+| `JIRA_DEFAULT_AGENT`  | _(empty -> `null`)_                  | Agent used when an issue has no `agent:` label.                        |
+| `JIRA_TOKEN_FILE`     | `~/.config/groundcrew/jira.token`    | Token file path.                                                       |
+| `JIRA_STATE_*`        | `In Progress` / `In Review` / `Done` | Native JIRA state names used by `move`. Match your project's workflow. |
 
 ## Status mapping
 
@@ -105,6 +105,11 @@ five. There is no "in-review" category, so review is detected by status _name_:
 
 - `list` returns at most 100 issues (the `jira` CLI's per-page maximum). Narrow
   `JIRA_GROUNDCREW_JQL` if you have more eligible issues than that.
+- `jira issue list --raw` returns a reduced shape (no `id`, `self`, or
+  `statusCategory`), so `list` reads the matching keys and then enriches each one
+  with `jira issue view <key> --raw` — the full REST issue the transform needs.
+  That means one extra API call per listed issue, so a tighter
+  `JIRA_GROUNDCREW_JQL` keeps `list` fast.
 - Cloud descriptions are rich text (ADF); the script flattens their text nodes
   into a plain description and prepends a `Repository:`/issue-URL header, since
   groundcrew uses the description as the agent's prompt.
