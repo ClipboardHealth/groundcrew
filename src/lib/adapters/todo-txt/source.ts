@@ -148,6 +148,24 @@ function datePartFor(timeZone: string, now: Date): string {
   return isoDateFor(timeZone, now).replaceAll("-", "");
 }
 
+function isoDateTimeFor(timeZone: string, now: Date): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(now);
+  const hour = parts.find((part) => part.type === "hour")?.value;
+  const minute = parts.find((part) => part.type === "minute")?.value;
+  const second = parts.find((part) => part.type === "second")?.value;
+  /* v8 ignore next 3 @preserve -- Intl.DateTimeFormat with hour/minute/second always returns these parts */
+  if (hour === undefined || minute === undefined || second === undefined) {
+    throw new Error(`todo-txt: could not format time in timezone "${timeZone}"`);
+  }
+  return `${isoDateFor(timeZone, now)}T${hour}:${minute}:${second}`;
+}
+
 /* v8 ignore next @preserve -- Covered in source tests; full-suite V8 coverage remaps this helper inconsistently. */
 function nextGeneratedId(
   config: TodoTxtAdapterConfig,
@@ -315,7 +333,7 @@ export function createTodoTxtTaskSource(
 
   function listTasks(): Issue[] {
     const updatedAt = fileUpdatedAt(todoPath);
-    const todayIsoDate = isoDateFor(config.timezone, new Date());
+    const nowIsoLocal = isoDateTimeFor(config.timezone, new Date());
     const { parsedAll } = readAndParseTodo(todoPath);
     const issues: Issue[] = [];
 
@@ -324,7 +342,7 @@ export function createTodoTxtTaskSource(
       if (parsed === null || parsed === undefined) {
         continue;
       }
-      if (!isActiveForFetch(parsed, todayIsoDate)) {
+      if (!isActiveForFetch(parsed, nowIsoLocal)) {
         continue;
       }
 

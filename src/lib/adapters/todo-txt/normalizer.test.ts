@@ -103,4 +103,70 @@ describe(isActiveForFetch, () => {
   ])("returns $active for $name", ({ line, active }) => {
     expect(isActiveForFetch(parseOne(line), today)).toBe(active);
   });
+
+  describe("datetime thresholds", () => {
+    const now = "2026-06-08T12:00:00";
+
+    it.each([
+      {
+        name: "future same-day time",
+        line: "Deferred id:DT-1 t:2026-06-08T13:00 status:todo",
+        active: false,
+      },
+      {
+        name: "past same-day time",
+        line: "Ready id:DT-2 t:2026-06-08T11:30 status:todo",
+        active: true,
+      },
+      {
+        name: "time equal to now",
+        line: "Ready id:DT-3 t:2026-06-08T12:00:00 status:todo",
+        active: true,
+      },
+      {
+        name: "future time with seconds",
+        line: "Deferred id:DT-4 t:2026-06-08T12:00:01 status:todo",
+        active: false,
+      },
+      {
+        name: "future date with time",
+        line: "Deferred id:DT-5 t:2026-06-09T00:00 status:todo",
+        active: false,
+      },
+      { name: "invalid hour", line: "Ready id:DT-6 t:2026-06-08T25:00 status:todo", active: true },
+      {
+        name: "invalid minute",
+        line: "Ready id:DT-7 t:2026-06-08T12:61 status:todo",
+        active: true,
+      },
+      {
+        name: "non-calendar date with time",
+        line: "Ready id:DT-8 t:2026-99-99T13:00 status:todo",
+        active: true,
+      },
+      {
+        name: "future time but already in-progress",
+        line: "Started id:DT-9 t:2026-06-08T13:00 status:in-progress",
+        active: true,
+      },
+      {
+        name: "date-only future still defers",
+        line: "Deferred id:DT-10 t:2026-06-09 status:todo",
+        active: false,
+      },
+      {
+        name: "date-only today still active",
+        line: "Ready id:DT-11 t:2026-06-08 status:todo",
+        active: true,
+      },
+    ])("returns $active for $name", ({ line, active }) => {
+      expect(isActiveForFetch(parseOne(line), now)).toBe(active);
+    });
+
+    it("treats a date-only now as midnight for datetime thresholds", () => {
+      expect(
+        isActiveForFetch(parseOne("Deferred id:DT-12 t:2026-06-08T00:01 status:todo"), today),
+      ).toBe(false);
+    });
+  });
 });

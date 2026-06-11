@@ -819,6 +819,24 @@ describe("TodoTxtTaskSource", () => {
     await expect(source.verify()).rejects.toThrow(/malformed due/);
   });
 
+  it("verify() rejects datetime due: (due stays date-only)", async () => {
+    tmp.writeTodo("id:GC-V4B agent:codex due:2026-06-09T10:00 status:in-progress\n");
+    const source = makeSource(tmp);
+    await expect(source.verify()).rejects.toThrow(/malformed due/);
+  });
+
+  it("verify() accepts datetime t: thresholds", async () => {
+    tmp.writeTodo("id:GC-V4C agent:codex t:2026-06-09T10:00 status:in-progress\n");
+    const source = makeSource(tmp);
+    await expect(source.verify()).resolves.toBeUndefined();
+  });
+
+  it("verify() catches malformed datetime t:", async () => {
+    tmp.writeTodo("id:GC-V4D agent:codex t:2026-06-09T25:00 status:in-progress\n");
+    const source = makeSource(tmp);
+    await expect(source.verify()).rejects.toThrow(/malformed t/);
+  });
+
   it("verify() catches malformed rec:", async () => {
     tmp.writeTodo("id:GC-V5 agent:codex rec:bad-recurrence status:in-progress\n");
     const source = makeSource(tmp);

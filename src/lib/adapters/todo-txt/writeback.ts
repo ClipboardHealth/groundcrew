@@ -10,7 +10,7 @@ import {
 import path from "node:path";
 
 import { DATE_RE, hashLine, parseAllLines, type ParsedTodoLine } from "./parser.ts";
-import type { TodoTxtSourceRef } from "./normalizer.ts";
+import { isValidDatetimeThreshold, type TodoTxtSourceRef } from "./normalizer.ts";
 
 export interface RecurResult {
   newId: string;
@@ -400,13 +400,19 @@ function validateDepsAndDates(
     }
   }
 
-  for (const dateField of ["due", "t"]) {
-    const dateVal = parsed.metadata[dateField]?.[0];
-    if (dateVal !== undefined && !DATE_RE.test(dateVal)) {
-      errors.push(
-        `${prefix}: malformed ${dateField}: date "${dateVal}" for task "${id}" (expected YYYY-MM-DD)`,
-      );
-    }
+  const dueVal = parsed.metadata["due"]?.[0];
+  if (dueVal !== undefined && !DATE_RE.test(dueVal)) {
+    errors.push(
+      `${prefix}: malformed due: date "${dueVal}" for task "${id}" (expected YYYY-MM-DD)`,
+    );
+  }
+
+  // t: also accepts a datetime threshold for sub-day recurring tasks.
+  const tVal = parsed.metadata["t"]?.[0];
+  if (tVal !== undefined && !DATE_RE.test(tVal) && !isValidDatetimeThreshold(tVal)) {
+    errors.push(
+      `${prefix}: malformed t: date "${tVal}" for task "${id}" (expected YYYY-MM-DD or YYYY-MM-DDTHH:MM[:SS])`,
+    );
   }
 
   const recVal = parsed.metadata["rec"]?.[0];
