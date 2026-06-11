@@ -512,6 +512,16 @@ describe(resumeWorkspaceCli, () => {
     );
   });
 
+  it("strips a source prefix so the canonical id resumes the natural-id worktree", async () => {
+    await resumeWorkspaceCli(["linear:TEAM-1"]);
+
+    expect(findByTaskMock).toHaveBeenCalledWith(config, "team-1");
+    expect(workspacesOpenMock).toHaveBeenCalledWith(
+      config,
+      expect.objectContaining({ name: "team-1" }),
+    );
+  });
+
   it("rejects missing task", async () => {
     await expect(resumeWorkspaceCli([])).rejects.toThrow(/Usage: crew resume/);
   });

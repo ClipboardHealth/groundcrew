@@ -10,6 +10,7 @@ import {
   stagePromptText,
   stageWorkspaceLaunchCommand,
 } from "../lib/stagedLaunch.ts";
+import { naturalIdFromCanonical } from "../lib/taskSource.ts";
 import { errorMessage, log } from "../lib/util.ts";
 import { workspaces } from "../lib/workspaces.ts";
 import { resolveLaunchDir, type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
@@ -39,7 +40,7 @@ function parseArguments(argv: string[]): ResumeWorkspaceOptions {
   if (task === undefined || task.length === 0 || extras.length > 0 || task.startsWith("-")) {
     throw new Error("Usage: crew resume <task>");
   }
-  return { task: task.toLowerCase() };
+  return { task: naturalIdFromCanonical(task).toLowerCase() };
 }
 
 async function fetchTaskDetails(task: string): Promise<TaskDetails | undefined> {
