@@ -49,7 +49,7 @@ Groundcrew generates a per-launch policy itself (Safehouse's `.sb` profiles have
 
 - **Reads**: the home region (`/Users` on macOS, `/home`+`/root`+`/mnt` on Linux — `/mnt` covers WSL's Windows drive mounts) is denied, then the worktree, the repo's git metadata, the language toolchains needed to run the agent, and the agent's own config dirs (`~/.claude`, `~/.codex`, …) are re-opened. On macOS the user keychain dir (`~/Library/Keychains`) is also re-opened read-only so keychain-authenticated agents (claude) can sign in under the home mask. The agent cannot read `~/.ssh`, `~/.aws`, shell history, or unrelated repos.
 - **Writes**: allow-only, and the host-CLI persistence vector (planting hooks, `mcpServers`, `commands/`, `plugins/`, … that run on the user's next host invocation) is closed per agent. **claude** keeps a writable `~/.claude` (its Bash tool needs scratch/session state there) but every fixed-path executable/instruction surface — `~/.claude.json` (`mcpServers`), `settings.json` and its hooks, `commands/`, `agents/`, `plugins/`, `skills/`, `statusline.sh`, `CLAUDE.md`, the bundled `chrome` binary, `.git/{hooks,config}` — is denied; claude tolerates those write denials. **codex** hard-fails with a read-only home, so it is pointed at a per-launch relocated config dir (`CODEX_HOME`) seeded with its credentials, leaving the real `~/.codex` entirely unwritten. The git common dir is granted as a **narrow allowlist** of only what `status/diff/add/commit/push/gc` write (`objects`, `refs`, `logs`, `packed-refs`, this worktree's gitdir, …) — never wholesale, so the repo `config`/`hooks`, the per-worktree gitdir redirection files, and **sibling worktree gitdirs** stay unwritable. Global toolchain bins (`~/.cargo/bin`, global `node_modules`, the npx cache, …) are never writable either.
-- **Environment**: each `srt` invocation runs under a sanitized env (`env -i` + a benign baseline). Unlike safehouse and sdx, the `srt` CLI inherits the host env, so without this an ambient `AWS_*`, `GITHUB_TOKEN`, etc. would reach the agent and bypass the read mask. Credentials the agent legitimately needs from the environment must be forwarded explicitly via the model's `preLaunchEnv` (the same opt-in pass-list safehouse uses).
+- **Environment**: each `srt` invocation runs under a sanitized env (`env -i` + a benign baseline). Unlike safehouse and sdx, the `srt` CLI inherits the host env, so without this an ambient `AWS_*`, `GITHUB_TOKEN`, etc. would reach the agent and bypass the read mask. Credentials the agent legitimately needs from the environment must be forwarded explicitly via the agent's `preLaunchEnv` (the same opt-in pass-list safehouse uses).
 - **Network**: allow-only, **reused from the same Clearance allowlist** (`CLEARANCE_ALLOW_HOSTS` / `CLEARANCE_ALLOW_HOSTS_FILES`, including the shipped `clearance-allow-hosts`) so there is one source of truth. Local binding and unix sockets stay off (never the Docker socket).
 
 ### Linux / WSL prerequisites
@@ -76,7 +76,7 @@ sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
 ## Docker Sandboxes Setup
 
-Each model that runs under `sdx` needs a `sandbox: { agent: "<sbx-agent>" }` block in `crew.config.ts`. Groundcrew addresses the sandbox as `groundcrew-<agent>` and reuses one existing sandbox per agent across repos and tasks.
+Each agent that runs under `sdx` needs a `sandbox: { agent: "<sbx-agent>" }` block in `crew.config.ts`. Groundcrew addresses the sandbox as `groundcrew-<agent>` and reuses one existing sandbox per agent across repos and tasks.
 
 First-time setup is manual:
 
@@ -86,4 +86,4 @@ sbx exec -it groundcrew-claude claude auth login
 sbx exec -it groundcrew-claude gh auth login
 ```
 
-Replace `claude` with the sbx agent for the model and `<projectDir>` with `workspace.projectDir` from `crew.config.ts`. Manage lifecycle and auth with `sbx` directly (`sbx ls`, `sbx exec`, `sbx rm`). Groundcrew does not create, authenticate, regenerate, list, or remove sandboxes.
+Replace `claude` with the sbx agent name for your agent and `<projectDir>` with `workspace.projectDir` from `crew.config.ts`. Manage lifecycle and auth with `sbx` directly (`sbx ls`, `sbx exec`, `sbx rm`). Groundcrew does not create, authenticate, regenerate, list, or remove sandboxes.

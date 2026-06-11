@@ -32,7 +32,7 @@ The environment that executes the agent command for a task. Groundcrew is cross-
 - **macOS** — uses `safehouse`: requires `safehouse` on `PATH`, starts `clearance`, and launches the model command through `safehouse-clearance` inside the host worktree.
 - **Linux / WSL** — uses `sbx` (cross-platform default): `sbx` must be on `PATH`.
 
-There is no `models.isolation` strategy or remote runner. Legacy `.sbx` worktrees and persistent Docker Sandboxes state are no longer discovered or cleaned up by groundcrew; users remove old state manually with `sbx` if needed.
+There is no `agents.isolation` strategy or remote runner. Legacy `.sbx` worktrees and persistent Docker Sandboxes state are no longer discovered or cleaned up by groundcrew; users remove old state manually with `sbx` if needed.
 
 ## Dispatcher
 
@@ -56,6 +56,6 @@ The Linear adapter that turns the project's GraphQL state into a `BoardState` sn
 
 Lifecycle lives in `src/lib/boardSource.ts`. Callers ask `boardSource.verify()` once at startup (fail-fast on a missing project) and `boardSource.fetch()` per tick; nothing else in the package reaches Linear's GraphQL API. The module owns label-based model parsing (`agent-*` labels) and description-based repository parsing — callers consume a typed `Issue[]`.
 
-The `BoardIssues` GraphQL filter is scoped server-side on two axes: state name (Todo / In-Progress / Done / extra terminal states) and labels (`labels.some.name.startsWith: "agent-"`). Unlabeled tasks are filtered out by Linear's API and never appear in the board snapshot, so dashboard counts, blocker accounting, and dispatcher selection are all already scoped to groundcrew-eligible work. `fetchResolvedIssue` (manual `crew setup`) does not apply the label filter — it's an explicit per-task opt-in and keeps the historic default to `models.default` when the task has no `agent-*` label.
+The `BoardIssues` GraphQL filter is scoped server-side on two axes: state name (Todo / In-Progress / Done / extra terminal states) and labels (`labels.some.name.startsWith: "agent-"`). Unlabeled tasks are filtered out by Linear's API and never appear in the board snapshot, so dashboard counts, blocker accounting, and dispatcher selection are all already scoped to groundcrew-eligible work. `fetchResolvedIssue` (manual `crew setup`) does not apply the label filter — it's an explicit per-task opt-in and keeps the historic default to `agents.default` when the task has no `agent-*` label.
 
 The client-side narrowing (`parseModel` returning `undefined`, `Issue.model`/`Issue.repository` typed as `string | undefined`, `GroundcrewIssue` + `isGroundcrewIssue`, the dispatcher's predicate filter) is retained as defense-in-depth against query drift — if the GraphQL filter is ever loosened, the dispatcher still won't pick up unlabeled tasks. In normal operation the narrowing is a no-op.

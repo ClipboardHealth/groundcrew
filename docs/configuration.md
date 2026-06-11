@@ -1,13 +1,13 @@
 # Configuration
 
-Workspace settings and at least one enabled model are required; everything else has a default.
+Workspace settings and at least one enabled agent are required; everything else has a default.
 
 | Key                           | What                                                                 |
 | ----------------------------- | -------------------------------------------------------------------- |
 | `workspace.projectDir`        | Parent dir for cloned repos and the default task worktree root.      |
 | `workspace.worktreeDir`       | Optional parent dir for task worktrees.                              |
 | `workspace.knownRepositories` | Repos searched for in task descriptions to infer where work belongs. |
-| `models.definitions`          | Enabled model set. Built-in presets can be enabled with `{}`.        |
+| `agents.definitions`          | Enabled agent set. Built-in presets can be enabled with `{}`.        |
 
 The branch prefix (`<prefix>-<TASK>`) defaults to `os.userInfo().username`; override it with `git.branchPrefix` (see the full reference below). Changing it only affects newly created worktrees; existing local branches keep their original names until cleaned up. Groundcrew picks up every issue assigned to your API key's viewer that carries an `agent-*` label across every visible team and project, governed by a single `orchestrator.maximumInProgress` budget.
 
@@ -92,11 +92,11 @@ The "Loaded config from ..." line at startup tells you which config won.
 
 ## Agent Label Routing
 
-- `agent-claude`, `agent-codex`, `agent-<name>` routes to that enabled model.
-- `agent-any` routes to the model with the most session headroom, after skipping models over their session limit or weekly paced budget.
-- Unknown `agent-<name>` falls back to `models.default`.
-- A built-in `agent-<name>` label whose model is not enabled falls back to `models.default` with a warning.
-- No `agent-*` label is ignored by `crew run`. Dispatch on demand with `crew start <TASK>`, which falls back to `models.default`.
+- `agent-claude`, `agent-codex`, `agent-<name>` routes to that enabled agent.
+- `agent-any` routes to the agent with the most session headroom, after skipping agents over their session limit or weekly paced budget.
+- Unknown `agent-<name>` falls back to `agents.default`.
+- A built-in `agent-<name>` label whose agent is not enabled falls back to `agents.default` with a warning.
+- No `agent-*` label is ignored by `crew run`. Dispatch on demand with `crew start <TASK>`, which falls back to `agents.default`.
 - Todo tasks blocked by non-terminal blockers are skipped until their blockers reach a terminal status.
 
 Status classification uses Linear's default status names `In Progress` and `In Review` to disambiguate multiple `started` workflow states. Statuses that do not match those names fall back to Linear's workflow `state.type` (`unstarted`, `started`, `completed`, `canceled`, `duplicate`), so broad lifecycle classification still works without configuration. Parent issues with children are ignored; sub-issues are the work items.
@@ -136,13 +136,13 @@ export default {
 };
 ```
 
-## Enabling Model Presets
+## Enabling Agent Presets
 
-Groundcrew ships built-in presets for `claude` and `codex`, but models are not enabled by default. List the models you want in `models.definitions`:
+Groundcrew ships built-in presets for `claude` and `codex`, but agents are not enabled by default. List the agents you want in `agents.definitions`:
 
 ```ts
 export default {
-  models: {
+  agents: {
     default: "claude",
     definitions: {
       claude: {},
@@ -155,7 +155,7 @@ To keep both shipped presets enabled:
 
 ```ts
 export default {
-  models: {
+  agents: {
     default: "claude",
     definitions: {
       claude: {},
@@ -167,15 +167,15 @@ export default {
 
 Rules:
 
-- `models.definitions` is the enabled model set; `crew doctor` only probes listed models.
+- `agents.definitions` is the enabled agent set; `crew doctor` only probes listed agents.
 - Built-in entries can be `{}` or partial overrides such as `{ cmd: "..." }`.
-- Custom model names must provide `cmd` and `color`.
-- `models.default` must point at an enabled model.
-- Legacy model entries like `codex: { disabled: true }` are rejected with migration guidance; remove unwanted entries instead.
+- Custom agent names must provide `cmd` and `color`.
+- `agents.default` must point at an enabled agent.
+- Legacy agent entries like `codex: { disabled: true }` are rejected with migration guidance; remove unwanted entries instead.
 
 ## Prompt Customization
 
-Groundcrew ships one model-agnostic unattended prompt by default. It tells the agent to make reasonable assumptions, follow repository instructions, run documented verification, review its diff, open a PR when GitHub/`gh` is available, and include a workspace continuation hint when known.
+Groundcrew ships one agent-agnostic unattended prompt by default. It tells the agent to make reasonable assumptions, follow repository instructions, run documented verification, review its diff, open a PR when GitHub/`gh` is available, and include a workspace continuation hint when known.
 
 This prompt describes how the agent works, not what it does. The task is the task description, which groundcrew passes through unchanged. Keep source-specific instructions, acceptance criteria, links, and output requirements in the task body. Override `prompts.initial` only to change the execution contract for every dispatched task — team-wide review rules, required verification, local tool conventions — not to encode behavior for a single task type.
 
@@ -242,15 +242,15 @@ and hook contract.
 | `defaults.hooks.prepareWorktree`         | optional             | Fallback repo-preparation command used only when the worktree does not define `.groundcrew/config.json` `hooks.prepareWorktree`. The hook runs after worktree creation and before the agent starts. Repo-local config wins.                                                                                                                                                                                                                                                                                                 |
 | `orchestrator.maximumInProgress`         | `4`                  | Cap on in-progress tasks at once for this `crew` instance.                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `orchestrator.pollIntervalMilliseconds`  | `120_000`            | Poll interval in `--watch` mode.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| `orchestrator.sessionLimitPercentage`    | `85`                 | Number in `(0, 100]`. A model whose codexbar session window exceeds this percentage is skipped that tick. Models are also skipped when codexbar reports weekly usage over the current weekly paced budget.                                                                                                                                                                                                                                                                                                                  |
-| `models.default`                         | `"claude"`           | Tiebreak for `agent-any` resolution and fallback for explicit but unknown `agent-*` labels. Also used by `crew start <TASK>` for unlabeled tasks. `crew run` ignores unlabeled tasks and does not apply this default. Must exist in `models.definitions`. If you enable only `codex`, set `default: "codex"`.                                                                                                                                                                                                               |
-| `models.definitions`                     | **required**         | Enabled model set. Built-in keys (`claude`, `codex`) can use `{}` to opt into the shipped preset. Custom model names must provide `cmd` and `color`.                                                                                                                                                                                                                                                                                                                                                                        |
-| `models.definitions.<name>.cmd`          | preset for built-ins | Shell command launched for the model. Required for custom models. Runs in the worktree through the resolved `local.runner`. `{{worktree}}` is replaced before launch; `{{sandbox}}` expands to the sbx sandbox name under the sdx runner and an empty string otherwise.                                                                                                                                                                                                                                                     |
-| `models.definitions.<name>.color`        | preset for built-ins | Color for the workspace status pill (cmux only; tmux and zellij silently drop it). Required for custom models.                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `models.definitions.<name>.usage`        | preset for built-ins | If set, codexbar usage is fetched for this model and gated by `sessionLimitPercentage` plus the weekly paced budget when codexbar exposes a weekly window. When `usage.codexbar.source` is omitted, groundcrew uses `oauth` for Codex/Claude on macOS, `auto` for other macOS providers, and `cli` elsewhere. Set to `{ disabled: true }` to disable usage gating while keeping the model enabled.                                                                                                                          |
-| `models.definitions.<name>.sandbox`      | optional             | Docker Sandboxes binding for the model. Required at launch when `local.runner` resolves to `sdx`. Field: `agent` (required sbx agent name). Groundcrew assumes the `groundcrew-<agent>` sandbox already exists.                                                                                                                                                                                                                                                                                                             |
-| `models.definitions.<name>.preLaunch`    | optional             | Host-only shell snippet run before the agent exec and outside Safehouse/sdx. Exports survive into the launch shell; under the default `safehouse` runner they are only forwarded to the agent when listed via `preLaunchEnv` or when `cmd` includes its own `safehouse --env-pass=NAMES`. `{{worktree}}` is substituted. A non-zero exit aborts launch. Not supported when `local.runner` resolves to `sdx` in v1.                                                                                                          |
-| `models.definitions.<name>.preLaunchEnv` | optional             | Companion to `preLaunch`: list of env var names to append to groundcrew's `safehouse-clearance` `--env-pass=` flag, so `preLaunch` exports reach the agent without overriding `cmd` and losing the project's egress allowlist. Each entry must match `[A-Za-z_][A-Za-z0-9_]*`. Under `runner: "none"` exports already inherit and `preLaunchEnv` is a no-op. An empty array is a uniform no-op in every runner; a non-empty list is rejected when `cmd` already starts with `safehouse` or when `runner` resolves to `sdx`. |
+| `orchestrator.sessionLimitPercentage`    | `85`                 | Number in `(0, 100]`. An agent whose codexbar session window exceeds this percentage is skipped that tick. Agents are also skipped when codexbar reports weekly usage over the current weekly paced budget.                                                                                                                                                                                                                                                                                                                 |
+| `agents.default`                         | `"claude"`           | Tiebreak for `agent-any` resolution and fallback for explicit but unknown `agent-*` labels. Also used by `crew start <TASK>` for unlabeled tasks. `crew run` ignores unlabeled tasks and does not apply this default. Must exist in `agents.definitions`. If you enable only `codex`, set `default: "codex"`.                                                                                                                                                                                                               |
+| `agents.definitions`                     | **required**         | Enabled agent set. Built-in keys (`claude`, `codex`) can use `{}` to opt into the shipped preset. Custom agent names must provide `cmd` and `color`.                                                                                                                                                                                                                                                                                                                                                                        |
+| `agents.definitions.<name>.cmd`          | preset for built-ins | Shell command launched for the agent. Required for custom agents. Runs in the worktree through the resolved `local.runner`. `{{worktree}}` is replaced before launch; `{{sandbox}}` expands to the sbx sandbox name under the sdx runner and an empty string otherwise.                                                                                                                                                                                                                                                     |
+| `agents.definitions.<name>.color`        | preset for built-ins | Color for the workspace status pill (cmux only; tmux and zellij silently drop it). Required for custom agents.                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `agents.definitions.<name>.usage`        | preset for built-ins | If set, codexbar usage is fetched for this agent and gated by `sessionLimitPercentage` plus the weekly paced budget when codexbar exposes a weekly window. When `usage.codexbar.source` is omitted, groundcrew uses `oauth` for Codex/Claude on macOS, `auto` for other macOS providers, and `cli` elsewhere. Set to `{ disabled: true }` to disable usage gating while keeping the agent enabled.                                                                                                                          |
+| `agents.definitions.<name>.sandbox`      | optional             | Docker Sandboxes binding for the agent. Required at launch when `local.runner` resolves to `sdx`. Field: `agent` (required sbx agent name). Groundcrew assumes the `groundcrew-<agent>` sandbox already exists.                                                                                                                                                                                                                                                                                                             |
+| `agents.definitions.<name>.preLaunch`    | optional             | Host-only shell snippet run before the agent exec and outside Safehouse/sdx. Exports survive into the launch shell; under the default `safehouse` runner they are only forwarded to the agent when listed via `preLaunchEnv` or when `cmd` includes its own `safehouse --env-pass=NAMES`. `{{worktree}}` is substituted. A non-zero exit aborts launch. Not supported when `local.runner` resolves to `sdx` in v1.                                                                                                          |
+| `agents.definitions.<name>.preLaunchEnv` | optional             | Companion to `preLaunch`: list of env var names to append to groundcrew's `safehouse-clearance` `--env-pass=` flag, so `preLaunch` exports reach the agent without overriding `cmd` and losing the project's egress allowlist. Each entry must match `[A-Za-z_][A-Za-z0-9_]*`. Under `runner: "none"` exports already inherit and `preLaunchEnv` is a no-op. An empty array is a uniform no-op in every runner; a non-empty list is rejected when `cmd` already starts with `safehouse` or when `runner` resolves to `sdx`. |
 | `prompts.initial`                        | unattended template  | First message sent to the agent: the execution wrapper around each task. The task description is the task-specific prompt. Placeholders: `{{task}}`, `{{worktree}}`, `{{title}}`, `{{description}}`. Override only to change the execution contract for every task, such as team-wide review rules or tool conventions. Mutually exclusive with `prompts.promptFile`.                                                                                                                                                       |
 | `prompts.promptFile`                     | optional             | Path to a UTF-8 file whose contents become `prompts.initial`, read at load time. Resolved relative to the config file's directory; `~` is expanded and absolute paths are used as-is. The JSON-friendly alternative to inlining a large prompt or `readFileSync`. Mutually exclusive with `prompts.initial`.                                                                                                                                                                                                                |
 | `workspaceKind`                          | `"auto"`             | Terminal session manager. `"auto"` picks `cmux` when on PATH, else `tmux`. Set to `"cmux"`, `"tmux"`, or `"zellij"` to fail loudly when the chosen backend is missing.                                                                                                                                                                                                                                                                                                                                                      |
