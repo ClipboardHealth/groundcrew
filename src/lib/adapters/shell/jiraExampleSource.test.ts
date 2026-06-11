@@ -10,7 +10,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -116,6 +116,7 @@ const LIST_FIXTURE = {
 interface Harness {
   dir: string;
   tokenFile: string;
+  tokenEcho: string;
   listFixture: string;
   getFixture: string;
   cleanup: () => void;
@@ -128,16 +129,18 @@ function setup(): Harness {
 
   const listFixture = path.join(dir, "list.json");
   const getFixture = path.join(dir, "get.json");
+  const tokenEcho = path.join(dir, "token.echo");
   writeFileSync(listFixture, JSON.stringify(LIST_FIXTURE));
 
-  // Fake `jira` CLI: dispatches on the subcommand and echoes fixtures.
+  // Fake `jira` CLI: dispatches on the subcommand and echoes fixtures. The `me`
+  // branch records the exported JIRA_API_TOKEN so a test can assert trimming.
   const fakeJira = path.join(dir, "jira");
   writeFileSync(
     fakeJira,
     [
       "#!/usr/bin/env bash",
       "set -euo pipefail",
-      'if [[ "${1:-}" == "me" ]]; then exit 0; fi',
+      'if [[ "${1:-}" == "me" ]]; then printf "%s" "${JIRA_API_TOKEN:-}" > "$TOKEN_ECHO"; exit 0; fi',
       'if [[ "${1:-}" == "issue" && "${2:-}" == "list" ]]; then cat "$FIXTURE_LIST"; exit 0; fi',
       'if [[ "${1:-}" == "issue" && "${2:-}" == "view" ]]; then',
       '  if [[ "${3:-}" == MISSING* ]]; then exit 1; fi',
@@ -153,6 +156,7 @@ function setup(): Harness {
   return {
     dir,
     tokenFile,
+    tokenEcho,
     listFixture,
     getFixture,
     cleanup: () => {
@@ -177,6 +181,7 @@ function run(
       JIRA_DEFAULT_AGENT: "claude",
       FIXTURE_LIST: h.listFixture,
       FIXTURE_GET: h.getFixture,
+      TOKEN_ECHO: h.tokenEcho,
       ...extraEnv,
     },
   });
@@ -260,5 +265,13 @@ describe("jira.sh example source", () => {
 
   it("verify exits 0 when the token file is present", () => {
     expect(run(h, ["verify"]).status).toBe(0);
+  });
+
+  it("trims surrounding whitespace from the token before exporting it", () => {
+    // A file saved with `echo`, CRLF line endings, or stray spaces must still
+    // authenticate; the script exports the trimmed value as JIRA_API_TOKEN.
+    writeFileSync(h.tokenFile, "  fake-token \r\n");
+    expect(run(h, ["verify"]).status).toBe(0);
+    expect(readFileSync(h.tokenEcho, "utf8")).toBe("fake-token");
   });
 });

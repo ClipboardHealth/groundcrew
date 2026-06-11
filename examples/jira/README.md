@@ -31,12 +31,13 @@ calls with a subcommand per operation:
    source instead of your global environment ([create one here](https://id.atlassian.com/manage-profile/security/api-tokens)):
 
    ```bash
-   printf '%s' '<your-token>' > ~/.config/groundcrew/jira.token
+   echo '<your-token>' > ~/.config/groundcrew/jira.token
    chmod 600 ~/.config/groundcrew/jira.token
    ```
 
-   The script reads the token from this file and exports `JIRA_API_TOKEN` only
-   into its own process — nothing global, and no secret in your config file.
+   The script reads the token from this file, trims surrounding whitespace (so a
+   trailing newline or CRLF is fine), and exports `JIRA_API_TOKEN` only into its
+   own process — nothing global, and no secret in your config file.
 
 3. **Label your issues** so groundcrew knows where to dispatch them. JIRA labels
    cannot contain `/`, so the repository slash is encoded as `__`:
