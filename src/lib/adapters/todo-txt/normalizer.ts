@@ -186,7 +186,7 @@ function isDeferredByThreshold(parsed: ParsedTodoLine, nowIsoLocal: string): boo
     isClockTime(threshold.slice(11))
   ) {
     const nowDateTime = nowIsoLocal.length > 10 ? nowIsoLocal : `${nowIsoLocal}T00:00:00`;
-    // Equal-length ISO datetimes order lexicographically
+    // Equal-length ISO datetime strings order lexicographically
     return padSeconds(threshold) > padSeconds(nowDateTime);
   }
   return false;
