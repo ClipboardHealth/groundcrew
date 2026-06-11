@@ -58,6 +58,7 @@
     "dedup",
     "dispatchable",
     "misconfig",
+    "taskkill",
     "tasksource",
     "writeback",
     "writebacks",

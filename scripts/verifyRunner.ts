@@ -1,4 +1,10 @@
-import { exec, spawn, type ExecException } from "node:child_process";
+import {
+  exec,
+  execFileSync,
+  spawn,
+  type ChildProcess,
+  type ExecException,
+} from "node:child_process";
 
 const EXEC_TIMEOUT_MS = 10 * 60_000;
 const EXEC_MAX_BUFFER_BYTES = 10 * 1024 * 1024;
@@ -125,12 +131,14 @@ async function runInheritedCommand(cmd: string, timeoutMs: number): Promise<stri
     let settled = false;
     let timedOut = false;
     const child = spawn(cmd, {
+      /* v8 ignore next @preserve -- Windows uses taskkill fallback instead of POSIX process groups */
+      detached: process.platform !== "win32",
       shell: true,
       stdio: "inherit",
     });
     const timeout = setTimeout(() => {
       timedOut = true;
-      child.kill("SIGTERM");
+      terminateInheritedProcessTree(child);
     }, timeoutMs);
 
     function settle(settleResult: () => void): void {
@@ -164,6 +172,32 @@ async function runInheritedCommand(cmd: string, timeoutMs: number): Promise<stri
       });
     });
   });
+}
+
+function terminateInheritedProcessTree(child: ChildProcess): void {
+  /* v8 ignore next 4 @preserve -- spawn normally provides pid; fallback is defensive */
+  if (child.pid === undefined) {
+    child.kill("SIGTERM");
+    return;
+  }
+
+  /* v8 ignore next 8 @preserve -- defensive local Windows fallback; CI runs on POSIX */
+  if (process.platform === "win32") {
+    try {
+      execFileSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore" });
+      return;
+    } catch {
+      child.kill("SIGTERM");
+      return;
+    }
+  }
+
+  try {
+    process.kill(-child.pid, "SIGTERM");
+  } catch {
+    /* v8 ignore next @preserve -- fallback for rare process-group signal failures */
+    child.kill("SIGTERM");
+  }
 }
 
 async function execCommand(cmd: string, timeoutMs: number): Promise<string> {
