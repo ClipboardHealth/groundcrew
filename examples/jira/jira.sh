@@ -28,6 +28,10 @@ DEFAULT_AGENT="${JIRA_DEFAULT_AGENT:-}"
 
 if [[ -r "${TOKEN_FILE}" ]]; then
   JIRA_API_TOKEN="$(cat "${TOKEN_FILE}")"
+  # Trim surrounding whitespace so a token written with `echo`, saved with a
+  # trailing newline, CRLF line endings, or stray spaces still authenticates.
+  JIRA_API_TOKEN="${JIRA_API_TOKEN#"${JIRA_API_TOKEN%%[![:space:]]*}"}"
+  JIRA_API_TOKEN="${JIRA_API_TOKEN%"${JIRA_API_TOKEN##*[![:space:]]}"}"
   export JIRA_API_TOKEN
 fi
 
