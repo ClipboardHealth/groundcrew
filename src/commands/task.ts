@@ -1,13 +1,17 @@
+import { type Board, createBoard } from "../lib/board.ts";
 import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
 import { AGENT_ANY, loadConfig, type ResolvedConfig } from "../lib/config.ts";
+import { findPullRequestsForBranch } from "../lib/pullRequests.ts";
 import {
   type CanonicalStatus,
   type CreateTaskInput,
+  type Issue,
   naturalIdFromCanonical,
   type Task,
   type TaskSource,
 } from "../lib/taskSource.ts";
 import { parseSourceFilterArgs, writeOutput } from "../lib/util.ts";
+import { type WorktreeDirtiness, type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 
 const TASK_USAGE = `Usage: crew task <subcommand>
 
@@ -15,6 +19,7 @@ Subcommands:
   list [options]                  List tasks across configured sources
   get <task-id> [options]         Get one task
   create "Short title" [options]  Create one task
+  done <task-id> [options]        Mark one task done
   validate [source] [options]     Validate task content`;
 
 const LIST_USAGE = `Usage: crew task list [options]
@@ -37,6 +42,8 @@ Options:
   --prompt         Print only the task description/prompt.`;
 
 const CREATE_USAGE = `Usage: crew task create "Short title" --source <source> [--agent <agent>] [options]`;
+
+const DONE_USAGE = `Usage: crew task done <task-id> [--allow-dirty]`;
 
 const CANONICAL_STATUSES: readonly CanonicalStatus[] = [
   "todo",
@@ -71,6 +78,11 @@ interface CreateOptions {
   sourceName: string;
   input: CreateTaskInput;
   json: boolean;
+}
+
+interface DoneOptions {
+  taskId: string;
+  allowDirty: boolean;
 }
 
 interface CreateParseState {
@@ -349,9 +361,37 @@ function parseCreateOptions(argv: readonly string[]): CreateOptions {
   return { title, sourceName: state.sourceName, input, json: state.json };
 }
 
+function parseDoneOptions(argv: readonly string[]): DoneOptions {
+  const positionals: string[] = [];
+  let allowDirty = false;
+
+  for (const argument of argv) {
+    if (argument === "--allow-dirty") {
+      allowDirty = true;
+      continue;
+    }
+    if (argument.startsWith("-")) {
+      throw new Error(`crew task done: unknown option: ${argument}\n${DONE_USAGE}`);
+    }
+    positionals.push(argument);
+  }
+
+  const [taskId, ...extras] = positionals;
+  if (taskId === undefined || taskId.length === 0 || extras.length > 0) {
+    throw new Error(DONE_USAGE);
+  }
+  return { taskId, allowDirty };
+}
+
 async function loadTaskSources(): Promise<TaskSource[]> {
   const config: ResolvedConfig = await loadConfig();
   return await buildSources(sourcesFromConfig(config), { globalConfig: config });
+}
+
+async function loadTaskBoard(): Promise<{ config: ResolvedConfig; board: Board }> {
+  const config: ResolvedConfig = await loadConfig();
+  const sources = await buildSources(sourcesFromConfig(config), { globalConfig: config });
+  return { config, board: createBoard(sources) };
 }
 
 function findSource(sources: readonly TaskSource[], sourceName: string): TaskSource {
@@ -611,6 +651,79 @@ async function taskCreateCli(argv: readonly string[]): Promise<void> {
   writeOutput(created.id);
 }
 
+function matchingWorktreeEntries(arguments_: {
+  config: ResolvedConfig;
+  issue: Issue;
+}): WorktreeEntry[] {
+  const task = naturalIdFromCanonical(arguments_.issue.id);
+  return worktrees
+    .findByTask(arguments_.config, task)
+    .filter(
+      (entry) =>
+        arguments_.issue.repository === undefined ||
+        entry.repository === arguments_.issue.repository,
+    );
+}
+
+function describeDirtiness(dirtiness: WorktreeDirtiness): string {
+  if (dirtiness.kind === "dirty") {
+    return `${dirtiness.modified} modified, ${dirtiness.untracked} untracked`;
+  }
+  return "unknown git status";
+}
+
+async function worktreeHasPullRequest(entry: WorktreeEntry): Promise<boolean> {
+  const pullRequests = await findPullRequestsForBranch({
+    cwd: entry.dir,
+    branchName: entry.branchName,
+  });
+  return pullRequests.length > 0;
+}
+
+async function assertCanMarkDone(arguments_: {
+  config: ResolvedConfig;
+  issue: Issue;
+  allowDirty: boolean;
+}): Promise<void> {
+  if (arguments_.allowDirty) {
+    return;
+  }
+
+  for (const entry of matchingWorktreeEntries({
+    config: arguments_.config,
+    issue: arguments_.issue,
+  })) {
+    // oxlint-disable-next-line no-await-in-loop -- one git status per matching worktree keeps diagnostics deterministic.
+    const dirtiness = await worktrees.probeWorkingTree({ worktreeDir: entry.dir });
+    if (dirtiness.kind === "clean") {
+      continue;
+    }
+    // oxlint-disable-next-line no-await-in-loop -- only dirty/unknown worktrees need the PR lookup.
+    if (dirtiness.kind === "dirty" && (await worktreeHasPullRequest(entry))) {
+      continue;
+    }
+    throw new Error(
+      `crew task done: refusing to mark ${arguments_.issue.id} done because ${entry.dir} has ${describeDirtiness(dirtiness)} and no matching PR. Commit or stash the work, open a PR, or rerun with --allow-dirty.`,
+    );
+  }
+}
+
+async function taskDoneCli(argv: readonly string[]): Promise<void> {
+  const options = parseDoneOptions(argv);
+  const { config, board } = await loadTaskBoard();
+  const issue = await board.resolveOne(options.taskId);
+  if (issue === undefined) {
+    throw new Error(`Task ${options.taskId} not found across configured sources.`);
+  }
+
+  await assertCanMarkDone({ config, issue, allowDirty: options.allowDirty });
+  const result = await board.markDone(issue);
+  if (result.outcome === "unsupported") {
+    throw new Error(`crew task done: ${result.reason}`);
+  }
+  writeOutput(`Marked ${issue.id} done.`);
+}
+
 const VALIDATE_USAGE = `Usage: crew task validate [source]
 
 Options:
@@ -701,6 +814,10 @@ export async function taskCli(argv: string[]): Promise<void> {
   }
   if (verb === "create") {
     await taskCreateCli(rest);
+    return;
+  }
+  if (verb === "done") {
+    await taskDoneCli(rest);
     return;
   }
   if (verb === "validate") {

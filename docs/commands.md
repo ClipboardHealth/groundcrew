@@ -41,6 +41,44 @@ crew task create "Fix cancellation retry race" \
   --description "Investigate retry handling."
 ```
 
+`crew task done <task-id>` marks one task done through its source adapter. Use
+it for completed work that intentionally does not produce a PR. The command
+resolves canonical IDs such as `todo:flaky-triage-1` directly, or natural IDs
+when they match exactly one configured source. Sources without a done writeback
+return an unsupported error.
+
+Groundcrew checks matching local worktrees before marking a task done. Clean
+worktrees, and tasks with no local worktree, are allowed. A dirty worktree with
+no matching PR is refused by default so later cleanup does not discard
+uncommitted work; pass `--allow-dirty` only when that dirty state is expected.
+
+```bash
+# PR-producing tasks usually complete automatically:
+# open PR -> in-review, merged PR -> done.
+
+# Manual completion for no-PR operational work:
+crew task done todo:flaky-triage-1
+
+# Explicit override when a no-PR task intentionally leaves local changes:
+crew task done todo:docs-refresh-1 --allow-dirty
+```
+
+For recurring no-PR tasks, keep recurrence in the source and complete the
+current task with `crew task done`. The todo-txt source marks the current line
+done and schedules the next `status:todo` recurrence itself.
+
+```bash
+crew task create "Run flaky triage sweep" \
+  --source todo \
+  --agent codex \
+  --repo ClipboardHealth/groundcrew \
+  --id flaky-triage-1 \
+  --rec 2h \
+  --description "Triage the flaky queue. No PR is needed when the queue is updated."
+
+crew task done todo:flaky-triage-1
+```
+
 ## Status
 
 `crew status <TASK>` prints a read-only snapshot for one task: cached title and URL when present, recorded run state, live workspace presence, matching worktrees, git dirtiness, PR links for matching branches, recent log lines when present, and the task status from the configured task source.

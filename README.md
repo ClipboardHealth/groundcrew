@@ -94,6 +94,7 @@ crew source list|verify [<source>]                       # inspect configured ta
 crew task list [--source <name>]                         # list tasks across sources
 crew task get <TASK> [--source <name>] [--prompt]        # inspect one task or its prompt
 crew task create "Title" --source <name> [--agent <name>] # create a source task
+crew task done <TASK> [--allow-dirty]                    # mark a no-PR task done
 crew task validate [<source>]                            # validate task content
 crew status [<TASK>]                                   # inspect current state or one task
 crew run [--watch]                                       # one-shot or --watch forever

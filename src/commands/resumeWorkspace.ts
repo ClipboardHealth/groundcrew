@@ -196,6 +196,10 @@ export async function resumeWorkspace(
       workingDir: launchDir,
       secretsFile,
       sandboxName,
+      workerEnvironment: {
+        GROUNDCREW_TASK_ID: task,
+        GROUNDCREW_COMPLETE: `crew task done ${task}`,
+      },
     }));
     const launchCmd = stageWorkspaceLaunchCommand(stagedPrompt.directory, launchCommand);
     await openAgentWorkspace({

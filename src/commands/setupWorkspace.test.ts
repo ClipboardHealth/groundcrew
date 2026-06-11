@@ -844,7 +844,7 @@ describe(setupWorkspace, () => {
     expect(launchScript).not.toContain("groundcrew prepareWorktree hook exited");
     expect(launchScript).not.toContain(".groundcrew/setup.sh");
     expect(launchScript).toContain(
-      "/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance' --add-dirs='/work/repo-a-team-1:/tmp/groundcrew-team-1-x/.git' \"$_safehouse_shim\" -c",
+      "/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance' --add-dirs='/work/repo-a-team-1:/tmp/groundcrew-team-1-x/.git' --env-pass=GROUNDCREW_TASK_ID,GROUNDCREW_COMPLETE \"$_safehouse_shim\" -c",
     );
   });
 
@@ -1887,6 +1887,14 @@ describe(setupWorkspaceCli, () => {
       expect.anything(),
       expect.objectContaining({ task: "staff-508" }),
     );
+  });
+
+  it("sets worker self-completion env from the resolved canonical task id", async () => {
+    await setupWorkspaceCli("team-1");
+
+    const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
+    expect(launchScript).toContain("export GROUNDCREW_TASK_ID='linear:team-1'");
+    expect(launchScript).toContain("export GROUNDCREW_COMPLETE='crew task done linear:team-1'");
   });
 
   it("passes title and description from the resolved issue as details", async () => {

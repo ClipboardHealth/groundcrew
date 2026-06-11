@@ -35,9 +35,15 @@ tasks only). If omitted, groundcrew treats in-review advancement as unsupported
 for that source and does not claim the transition succeeded. `commands.markDone`,
 when set, receives the same `sourceRef` and is run after groundcrew sees a
 **merged** PR on the task's worktree branch (a merged PR never advances to
-in-review). If omitted, groundcrew treats done advancement as unsupported and
-leaves the task for the source's own integration to close out. `${id}`,
-`${canonicalId}`, and `${name}` placeholders are shell-quoted before substitution.
+in-review), or when a human or worker runs `crew task done <task-id>` for
+completed no-PR work. If omitted, groundcrew treats done advancement as
+unsupported and leaves the task for the source's own integration to close out.
+`${id}`, `${canonicalId}`, and `${name}` placeholders are shell-quoted before substitution.
+
+Workers receive `GROUNDCREW_TASK_ID` and `GROUNDCREW_COMPLETE` in their launch
+environment. The default prompt tells them to run `GROUNDCREW_COMPLETE` only
+when the requested work is complete, no PR is needed, and any dirty worktree
+state is expected or explicitly allowed.
 
 ```json
 [

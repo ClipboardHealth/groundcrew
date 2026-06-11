@@ -11,6 +11,11 @@ import {
   srtBinEntry,
 } from "./launchCommand.ts";
 
+const WORKER_ENVIRONMENT = {
+  GROUNDCREW_TASK_ID: "todo:gc-1",
+  GROUNDCREW_COMPLETE: "crew task done todo:gc-1",
+} as const;
+
 function arguments_(
   overrides: Partial<Parameters<typeof buildLaunchCommand>[0]> = {},
 ): Parameters<typeof buildLaunchCommand>[0] {
@@ -208,6 +213,23 @@ describe(`${buildLaunchCommand.name} (runner='srt')`, () => {
     expect(prepareSegment).not.toContain("CODEX_HOME");
   });
 
+  it("forwards worker completion env into the agent wrap only", () => {
+    const out = buildLaunchCommand(
+      srtArguments({
+        prepareWorktreeCommand: "npm ci",
+        workerEnvironment: WORKER_ENVIRONMENT,
+      }),
+    );
+
+    const prepareSegment = out.slice(0, out.indexOf("npm ci"));
+    const afterPrepare = out.slice(out.indexOf("npm ci"));
+    expect(out).toContain("export GROUNDCREW_TASK_ID='todo:gc-1'");
+    expect(out).toContain("export GROUNDCREW_COMPLETE='crew task done todo:gc-1'");
+    expect(afterPrepare).toContain(`GROUNDCREW_TASK_ID="$GROUNDCREW_TASK_ID"`);
+    expect(afterPrepare).toContain(`GROUNDCREW_COMPLETE="$GROUNDCREW_COMPLETE"`);
+    expect(prepareSegment).not.toContain("GROUNDCREW_COMPLETE");
+  });
+
   it("omits the config-home env for read-only agents (claude) that don't relocate", () => {
     const out = buildLaunchCommand(srtArguments());
 
@@ -272,6 +294,27 @@ describe(buildLaunchCommand, () => {
     expect(out.split(addDirsFlag).length - 1).toBe(2);
     expect(out).toContain(`${addDirsFlag} sh -c`);
     expect(out).toContain(`${addDirsFlag} "$_safehouse_shim" -c`);
+  });
+
+  it("forwards worker completion env into the Safehouse agent wrap only", () => {
+    const out = buildLaunchCommand(
+      arguments_({
+        prepareWorktreeCommand: "npm ci",
+        workerEnvironment: WORKER_ENVIRONMENT,
+      }),
+    );
+
+    const setupWrapIndex = out.indexOf("safehouse-clearance' sh -c");
+    const setupIndex = out.indexOf("npm ci");
+    const exportIndex = out.indexOf("export GROUNDCREW_TASK_ID='todo:gc-1'");
+    const agentWrapIndex = out.indexOf('"$_safehouse_shim" -c');
+    expect(exportIndex).toBeGreaterThan(setupIndex);
+    expect(exportIndex).toBeLessThan(agentWrapIndex);
+    expect(out).toContain("export GROUNDCREW_COMPLETE='crew task done todo:gc-1'");
+    expect(out.slice(setupWrapIndex, setupIndex)).not.toContain("GROUNDCREW_COMPLETE");
+    expect(out.slice(agentWrapIndex - 100, agentWrapIndex)).toContain(
+      "--env-pass=GROUNDCREW_TASK_ID,GROUNDCREW_COMPLETE ",
+    );
   });
 
   it("omits --add-dirs when no extra filesystem grants are requested", () => {
@@ -536,6 +579,21 @@ describe(buildLaunchCommand, () => {
       expect(out).not.toContain("safehouse-clearance");
       expect(out).not.toContain("--enable=all-agents");
       expect(out).toMatch(/exec claude "\$_p"$/);
+    });
+
+    it("exports worker completion env before executing the agent", () => {
+      const out = buildLaunchCommand(
+        arguments_({
+          runner: "none",
+          workerEnvironment: WORKER_ENVIRONMENT,
+        }),
+      );
+
+      const exportIndex = out.indexOf("export GROUNDCREW_TASK_ID='todo:gc-1'");
+      const execIndex = out.indexOf('exec claude "$_p"');
+      expect(exportIndex).toBeGreaterThan(-1);
+      expect(exportIndex).toBeLessThan(execIndex);
+      expect(out).toContain("export GROUNDCREW_COMPLETE='crew task done todo:gc-1'");
     });
 
     it("cds into workingDir while {{worktree}} still expands to the worktree root", () => {
@@ -1159,6 +1217,24 @@ describe(buildLaunchCommand, () => {
       expect(out).toContain(". '/tmp/prompt-team-1/secrets.env'");
       expect(out).toContain("-e NPM_TOKEN -e BUF_TOKEN");
       expect(out).toContain("unset NPM_TOKEN BUF_TOKEN");
+    });
+
+    it("exports worker completion env inside the sandbox after prepareWorktree", () => {
+      const out = buildLaunchCommand(
+        sdxArguments({
+          prepareWorktreeCommand: "npm ci",
+          workerEnvironment: WORKER_ENVIRONMENT,
+        }),
+      );
+
+      const prepareIndex = out.indexOf("npm ci");
+      const exportIndex = out.indexOf("export GROUNDCREW_TASK_ID=");
+      const agentIndex = out.indexOf("exec claude");
+      expect(exportIndex).toBeGreaterThan(prepareIndex);
+      expect(exportIndex).toBeLessThan(agentIndex);
+      expect(out).toContain("export GROUNDCREW_COMPLETE=");
+      expect(out).not.toContain("-e GROUNDCREW_TASK_ID");
+      expect(out).not.toContain("-e GROUNDCREW_COMPLETE");
     });
 
     it("omits -e KEY flags when no secretsFile is staged", () => {

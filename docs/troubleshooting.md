@@ -31,6 +31,8 @@ This applies to the tmux backend only.
 
 Groundcrew marks a task `In Progress` when it provisions a workspace. When a PR opens on that worktree branch, the reviewer pass attempts to mark the task `In Review`. Linear's default `In Review` status works out of the box; if your team renamed it, configure `sources: [{ kind: "linear", statuses: { inReview: ["Code Review"] } }]`.
 
+If the task intentionally has no PR, mark it complete with `crew task done <task-id>`. Groundcrew refuses dirty matching worktrees with no PR unless you pass `--allow-dirty`, so inspect or commit/stash unexpected changes first. For todo-txt tasks with `rec:`, this completion path also lets the source schedule the next recurrence.
+
 ## Claude Launches In Auto Mode By Default
 
 Groundcrew creates isolated per-task worktrees for unattended runs, so the shipped `claude` command is `claude --permission-mode auto` to let Claude proceed without stopping for clarifying questions while keeping its built-in safety prompts intact. Override `agents.definitions.claude.cmd` for `bypassPermissions` if you need to suppress tool-permission prompts entirely, or for a stricter mode.

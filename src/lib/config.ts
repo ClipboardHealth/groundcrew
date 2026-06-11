@@ -445,6 +445,7 @@ const DEFAULT_PROMPT_INITIAL = [
   "2. Implement the smallest sensible change that completes the task.",
   "3. Run the repo's documented verification command. If no documented command exists, run the smallest relevant test suite you can find and fix failures you introduced before continuing.",
   "4. Follow the task description for output. If no output instructions exist, open a PR with `Closes {{task}}` in the description. If you cannot open one, leave the branch ready and record the blocker.",
+  "5. If the requested work is complete, no PR is needed, and any dirty worktree state is expected or explicitly allowed, run the command in `GROUNDCREW_COMPLETE` to mark the task done.",
 ].join("\n");
 
 const ALLOWED_PROMPT_PLACEHOLDERS = new Set([

@@ -3,6 +3,7 @@ import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { composeAgentLaunch, openAgentWorkspace, prepareAgentLaunch } from "../lib/agentLaunch.ts";
 import { type Board, createBoard } from "../lib/board.ts";
 import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
+import type { WorkerEnvironment } from "../lib/launchCommand.ts";
 import { resolvePrepareWorktreeCommand } from "../lib/repositoryHooks.ts";
 import { recordRunState } from "../lib/runState.ts";
 import {
@@ -30,6 +31,8 @@ export interface TaskDetails {
 
 export interface SetupWorkspaceOptions {
   task: string;
+  /** Canonical source id for worker self-completion; falls back to `task`. */
+  completionTaskId?: string;
   repository: string;
   agent: string;
   details: TaskDetails;
@@ -58,6 +61,13 @@ function stagePrompt(input: {
       workspaceContinuationInstruction: input.workspaceContinuationInstruction,
     },
   });
+}
+
+function workerEnvironmentForTask(taskId: string): WorkerEnvironment {
+  return {
+    GROUNDCREW_TASK_ID: taskId,
+    GROUNDCREW_COMPLETE: `crew task done ${taskId}`,
+  };
 }
 
 export async function setupWorkspace(
@@ -136,6 +146,7 @@ export async function setupWorkspace(
       secretsFile,
       prepareWorktreeCommand,
       sandboxName,
+      workerEnvironment: workerEnvironmentForTask(options.completionTaskId ?? task),
     });
     srtSettingsDir = stagedSrtSettingsDir;
     const launchCmd = stageWorkspaceLaunchCommand(promptDir, launchCommand);
@@ -366,6 +377,7 @@ export async function setupWorkspaceCli(
 
   await setupWorkspace(config, {
     task: naturalId,
+    completionTaskId: resolved.id,
     repository: resolved.repository,
     agent: resolved.agent,
     details: {

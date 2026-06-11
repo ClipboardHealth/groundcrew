@@ -8,7 +8,7 @@ import {
   type ResolvedConfig,
 } from "./config.ts";
 import { detectHostCapabilities } from "./host.ts";
-import { buildLaunchCommand } from "./launchCommand.ts";
+import { buildLaunchCommand, type WorkerEnvironment } from "./launchCommand.ts";
 import { assertLocalRunnerRequirements, resolveLocalRunner } from "./localRunner.ts";
 import { sandboxNameFor } from "./sandboxName.ts";
 import { buildAndStageSrtLaunch, resolveGitCommonDir } from "./srtLaunch.ts";
@@ -32,6 +32,7 @@ export function composeAgentLaunch(input: {
   secretsFile?: string | undefined;
   prepareWorktreeCommand?: string | undefined;
   sandboxName?: string | undefined;
+  workerEnvironment?: WorkerEnvironment | undefined;
 }): { launchCommand: string; srtSettingsDir: string | undefined } {
   const staged =
     input.runner === "srt"
@@ -54,6 +55,7 @@ export function composeAgentLaunch(input: {
     srtAgentSettingsFile: staged?.agentFile,
     srtSettingsDir: staged?.directory,
     srtAgentConfigDirEnv: staged?.agentConfigDirEnv,
+    workerEnvironment: input.workerEnvironment,
     safehouseAddDirs:
       input.runner === "safehouse" ? resolveSafehouseAddDirs(input.worktreeDir) : undefined,
   });
