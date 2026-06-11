@@ -11,14 +11,19 @@
 ab.chatgpt.com
 api.anthropic.com
 api.openai.com
-api2.cursor.sh
 chatgpt.com
 docs.anthropic.com
 docs.claude.com
 downloads.claude.ai
 platform.claude.com
-repo42.cursor.sh
 www.cursor.com
+
+# Cursor CLI API + agent stream + repo indexing. Wildcard because the agent
+# stream connects to rotating load-balanced subdomains several labels deep,
+# so enumerating named hosts breaks on rotation. downloads.cursor.com stays
+# blocked on purpose: in-sandbox self-update is not needed for tasks and
+# keeps the pinned CLI version running.
+*.cursor.sh
 
 # Hosted MCP servers + their auth/web hosts
 api.linear.app
