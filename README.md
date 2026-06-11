@@ -22,11 +22,11 @@ Groundcrew watches assigned tasks, creates isolated worktrees, launches agent CL
 ## Why
 
 - **Local.** Agents run on your machine with your tools, shell, and credentials. That makes them more steerable than remote agents, and easy to nudge when they drift.
-- **Interactive.** Each task launches the real `claude` or `codex` CLI in its own terminal pane, not a wrapper that approximates it. Watch any session live and take over when you need to.
+- **Interactive.** Each task launches the real `claude`, `codex`, or `cursor-agent` CLI in its own terminal pane, not a wrapper that approximates it. Watch any session live and take over when you need to.
 - **One worktree per task.** Agents work in parallel without stepping on each other.
 - **Sandboxed by default.** Safehouse or Docker Sandboxes isolate each agent on the host; `none` is an explicit escape hatch.
 - **Pluggable task sources.** Linear by default; Jira and local files via [task sources](./docs/task-sources.md).
-- **Multi-agent routing.** Ships `claude` and `codex` presets; bring your own CLI in config.
+- **Multi-agent routing.** Ships `claude`, `codex`, and `cursor` presets; bring your own CLI in config.
 
 ## Prerequisites
 
@@ -35,7 +35,7 @@ Groundcrew watches assigned tasks, creates isolated worktrees, launches agent CL
 - **Node >= 24:** [nvm](https://github.com/nvm-sh/nvm): `nvm install 24`.
 - **git:** e.g., `brew install git`, `apt install git`.
 - **A terminal multiplexer:** [tmux](https://github.com/tmux/tmux/wiki/Installing) (cross-platform), [cmux](https://cmux.com/) (macOS), or [zellij](https://zellij.dev/).
-- **An agent CLI:** [Claude Code](https://code.claude.com/docs/en/quickstart) and/or [Codex](https://developers.openai.com/codex/quickstart?setup=cli).
+- **An agent CLI:** [Claude Code](https://code.claude.com/docs/en/quickstart), [Codex](https://developers.openai.com/codex/quickstart?setup=cli), and/or [Cursor CLI](https://cursor.com/cli).
 - **A sandbox runner:** [Docker Sandboxes](https://docs.docker.com/ai/sandboxes/) (cross-platform) or [Safehouse](https://agent-safehouse.dev/) on macOS. Skip only with `--runner none`.
 
 ## Quickstart
@@ -61,7 +61,7 @@ crew doctor
 crew run --watch
 ```
 
-`crew init --global` writes config to `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/`. Pass `--repo` more than once for multiple repos. `--agent claude` or `--agent codex` chooses the single built-in agent preset to enable in the generated config.
+`crew init --global` writes config to `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/`. Pass `--repo` more than once for multiple repos. `--agent claude`, `--agent codex`, or `--agent cursor` chooses the single built-in agent preset to enable in the generated config.
 
 ## Task Pickup
 
@@ -69,7 +69,7 @@ crew run --watch
 
 Linear works out of the box: assign tasks to yourself and add an `agent-*` label.
 
-- `agent-claude`, `agent-codex`, or `agent-<name>` routes to that agent.
+- `agent-claude`, `agent-codex`, `agent-cursor`, or `agent-<name>` routes to that agent.
 - `agent-any` routes to the enabled agent with the most session headroom, after skipping agents over their session limit or weekly paced budget.
 - Tasks without an `agent-*` label are ignored by `crew run`; dispatch one manually with `crew start <TASK>`.
 
@@ -88,7 +88,7 @@ Write tasks as complete agent instructions: the goal, the context and constraint
 ```bash
 crew init [--global | --local] [--force] [--dry-run]     # create a crew.config.ts
           [--project-dir <dir>] [--repo <repo>]...
-          [--runner <auto|safehouse|sdx|none>] [--agent <claude|codex>]
+          [--runner <auto|safehouse|sdx|none>] [--agent <claude|codex|cursor>]
 crew doctor                                              # check setup
 crew source list|verify [<source>]                       # inspect configured task sources
 crew task list [--source <name>]                         # list tasks across sources

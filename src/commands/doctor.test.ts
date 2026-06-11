@@ -318,6 +318,25 @@ describe(doctor, () => {
     );
   });
 
+  it("explains how to stop probing a missing cursor-agent CLI", async () => {
+    loadConfigMock.mockResolvedValue(
+      makeConfig({
+        default: "cursor",
+        definitions: {
+          cursor: { cmd: "cursor-agent --sandbox disabled --force", color: "#fff" },
+        },
+      }),
+    );
+    mockWhichFailure("cursor-agent", "not installed");
+
+    const actual = await doctor();
+
+    expect(actual).toBe(false);
+    expect(consoleLog.output()).toContain(
+      "[--] cursor-agent  — install cursor-agent or remove `agents.definitions.cursor` from crew.config.ts",
+    );
+  });
+
   it("treats an empty `which` result as missing", async () => {
     loadConfigMock.mockResolvedValue(makeConfig());
     mockWhichEmpty("cmux");
@@ -693,6 +712,22 @@ describe(doctor, () => {
   it("does not use shipped-default disable guidance for custom agent names", async () => {
     loadConfigMock.mockResolvedValue(
       makeConfig({
+        default: "mycli",
+        definitions: {
+          mycli: { cmd: "mycli", color: "#fff" },
+        },
+      }),
+    );
+    mockWhichFailure("mycli", "missing");
+
+    await doctor();
+
+    expect(consoleLog.output()).toMatch(/\[--] mycli\s*$/m);
+  });
+
+  it("does not hint when a cursor agent's cmd does not invoke the cursor-agent CLI", async () => {
+    loadConfigMock.mockResolvedValue(
+      makeConfig({
         default: "cursor",
         definitions: {
           cursor: { cmd: "cursor", color: "#fff" },
@@ -704,6 +739,25 @@ describe(doctor, () => {
     await doctor();
 
     expect(consoleLog.output()).toMatch(/\[--] cursor\s*$/m);
+  });
+
+  it("probes only the executable when flags precede their values in the cursor preset cmd", async () => {
+    loadConfigMock.mockResolvedValue(
+      makeConfig({
+        default: "cursor",
+        definitions: {
+          cursor: { cmd: "cursor-agent --sandbox disabled --force", color: "#fff" },
+        },
+      }),
+    );
+
+    await doctor();
+
+    const checked = checkedCommands();
+    expect(checked).toContain("cursor-agent");
+    expect(checked).not.toContain("disabled");
+    expect(checked).not.toContain("--sandbox");
+    expect(checked).not.toContain("--force");
   });
 
   it("keeps the first useful hint when multiple agents share a command token", async () => {

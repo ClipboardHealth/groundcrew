@@ -89,6 +89,31 @@ describe(buildAndStageSrtLaunch, () => {
     expect(agent.filesystem.allowWrite.some((p) => p.endsWith("/.codex"))).toBe(false);
   });
 
+  it("relocates a writable config home for cursor-agent, seeding only cli-config.json and exposing CURSOR_CONFIG_DIR", () => {
+    const realCursor = path.join(fakeHome, ".cursor");
+    mkdirSync(realCursor, { recursive: true });
+    writeFileSync(path.join(realCursor, "cli-config.json"), '{"authInfo":{"token":"x"}}');
+    // Present in the real home but never seeded — spawn/exec surfaces.
+    writeFileSync(path.join(realCursor, "mcp.json"), '{"mcpServers":{}}');
+    writeFileSync(path.join(realCursor, "hooks.json"), "{}");
+
+    const result = stage("cursor-agent --sandbox disabled --force");
+
+    const relocated = path.join(result.directory, "cursor-agent-home");
+    expect(result.agentConfigDirEnv).toStrictEqual({ name: "CURSOR_CONFIG_DIR", value: relocated });
+    expect(readFileSync(path.join(relocated, "cli-config.json"), "utf8")).toBe(
+      '{"authInfo":{"token":"x"}}',
+    );
+    expect(() => readFileSync(path.join(relocated, "mcp.json"), "utf8")).toThrow(/ENOENT/);
+    expect(() => readFileSync(path.join(relocated, "hooks.json"), "utf8")).toThrow(/ENOENT/);
+    // The agent policy grants the relocated home write but never the real
+    // ~/.cursor — not even read, since its mcp.json holds third-party secrets.
+    const agent = readSettings(result.agentFile);
+    expect(agent.filesystem.allowWrite).toContain(relocated);
+    expect(agent.filesystem.allowWrite.some((p) => p.endsWith("/.cursor"))).toBe(false);
+    expect(agent.filesystem.allowRead?.some((p) => p.endsWith("/.cursor"))).toBe(false);
+  });
+
   it("defaults to the real home dir when none is injected (read-only agent, no seeding side effects)", () => {
     const result = buildAndStageSrtLaunch({
       task: "team-1",

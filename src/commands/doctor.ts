@@ -25,7 +25,13 @@ import { resolveWorkspaceKind, type WorkspaceResolution } from "../lib/workspace
 // Tokenization stops after this many non-flag tokens. Two is enough to
 // catch wrapper + wrapped CLI commands like `safehouse claude --foo`.
 const MAX_TOKENS_PER_CMD = 2;
-const BUILT_IN_AGENT_NAMES = ["claude", "codex"] as const;
+const BUILT_IN_AGENT_CLI_TOKENS = {
+  claude: "claude",
+  codex: "codex",
+  cursor: "cursor-agent",
+} as const;
+
+type BuiltInAgentName = keyof typeof BUILT_IN_AGENT_CLI_TOKENS;
 
 const CONFIG_SOURCE_LABELS: Record<ConfigSourceKind, string> = {
   env: "GROUNDCREW_CONFIG",
@@ -159,17 +165,17 @@ function gatherToolTargets(config: ResolvedConfig): ToolCheckTarget[] {
 }
 
 function agentCliHint(agentName: string, token: string): string | undefined {
-  if (token !== agentName) {
+  if (!isBuiltInAgentName(agentName)) {
     return undefined;
   }
-  if (!isBuiltInAgentName(agentName)) {
+  if (token !== BUILT_IN_AGENT_CLI_TOKENS[agentName]) {
     return undefined;
   }
   return `install ${token} or remove \`agents.definitions.${agentName}\` from crew.config.ts`;
 }
 
-function isBuiltInAgentName(value: string): value is (typeof BUILT_IN_AGENT_NAMES)[number] {
-  return value === "claude" || value === "codex";
+function isBuiltInAgentName(value: string): value is BuiltInAgentName {
+  return value in BUILT_IN_AGENT_CLI_TOKENS;
 }
 
 function format(check: Check): string {

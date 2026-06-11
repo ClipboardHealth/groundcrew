@@ -253,6 +253,17 @@ describe("crew init", () => {
       expect(output).toContain(String.raw`PROJECT_DIR="$HOME/Dev \$Box"`);
     });
 
+    it("supports cursor-only quickstart config and removes the commented preset line", async () => {
+      await initConfigCli(["--global", "--agent", "cursor"]);
+
+      const destination = path.join(xdgHome, "groundcrew", "crew.config.ts");
+      const actual = readFileSync(destination, "utf8");
+      expect(actual).toContain('default: "cursor"');
+      expect(actual).toContain("cursor: {}");
+      expect(actual).not.toContain("// cursor: {}");
+      expect(actual).not.toContain("disabled: true");
+    });
+
     it("prints clone guidance for a bare repo and shell-quotes an absolute project dir", async () => {
       await initConfigCli(["--global", "--project-dir", "/tmp/ground crew's", "--repo", "repo-a"]);
 
@@ -314,8 +325,8 @@ describe("crew init", () => {
     });
 
     it("rejects unsupported agent values", async () => {
-      await expect(initConfigCli(["--agent", "cursor"])).rejects.toThrow(
-        /--agent must be one of claude, codex/,
+      await expect(initConfigCli(["--agent", "copilot"])).rejects.toThrow(
+        /--agent must be one of claude, codex, cursor/,
       );
     });
 

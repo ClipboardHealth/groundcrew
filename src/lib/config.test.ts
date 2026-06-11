@@ -273,7 +273,7 @@ describe("loadConfig", () => {
         agents: {
           definitions: {
             claude: { cmd: "my-claude" },
-            cursor: { cmd: "cursor-agent", color: "#929292" },
+            myagent: { cmd: "my-agent", color: "#929292" },
           },
         },
       }),
@@ -288,8 +288,8 @@ describe("loadConfig", () => {
     expect(actual.agents.definitions["claude"]?.usage).toStrictEqual({
       codexbar: { provider: "claude" },
     });
-    expect(actual.agents.definitions["cursor"]).toStrictEqual({
-      cmd: "cursor-agent",
+    expect(actual.agents.definitions["myagent"]).toStrictEqual({
+      cmd: "my-agent",
       color: "#929292",
     });
   });
@@ -336,9 +336,9 @@ describe("loadConfig", () => {
       configSource({
         workspace: VALID_WORKSPACE(temporary),
         agents: {
-          default: "cursor",
+          default: "myagent",
           definitions: {
-            cursor: { cmd: "cursor", color: "#abc", usage: { disabled: true } },
+            myagent: { cmd: "my-agent", color: "#abc", usage: { disabled: true } },
           },
         },
       }),
@@ -348,7 +348,7 @@ describe("loadConfig", () => {
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
 
-    expect(actual.agents.definitions["cursor"]).toStrictEqual({ cmd: "cursor", color: "#abc" });
+    expect(actual.agents.definitions["myagent"]).toStrictEqual({ cmd: "my-agent", color: "#abc" });
   });
 
   it("rejects a config that still uses the old `models` key", async () => {
@@ -659,9 +659,13 @@ describe("loadConfig", () => {
       configSource({
         workspace: VALID_WORKSPACE(temporary),
         agents: {
-          default: "cursor",
+          default: "myagent",
           definitions: {
-            cursor: { cmd: "cursor", color: "#abc", usage: { codexbar: { provider: "cursor" } } },
+            myagent: {
+              cmd: "my-agent",
+              color: "#abc",
+              usage: { codexbar: { provider: "myagent" } },
+            },
           },
         },
       }),
@@ -669,8 +673,8 @@ describe("loadConfig", () => {
     setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
-    expect(actual.agents.definitions["cursor"]?.usage).toStrictEqual({
-      codexbar: { provider: "cursor" },
+    expect(actual.agents.definitions["myagent"]?.usage).toStrictEqual({
+      codexbar: { provider: "myagent" },
     });
   });
 
@@ -756,8 +760,8 @@ describe("loadConfig", () => {
         "export const config = {",
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
         "  agents: {",
-        '    default: "cursor",',
-        '    definitions: { cursor: { cmd: "cursor-agent", color: "#929292", preLaunch: "export FOO=bar" } },',
+        '    default: "myagent",',
+        '    definitions: { myagent: { cmd: "my-agent", color: "#929292", preLaunch: "export FOO=bar" } },',
         "  },",
         "};",
       ].join("\n"),
@@ -767,7 +771,7 @@ describe("loadConfig", () => {
     const { loadConfig } = await loadFreshConfig();
 
     const config = await loadConfig();
-    expect(config.agents.definitions["cursor"]?.preLaunch).toBe("export FOO=bar");
+    expect(config.agents.definitions["myagent"]?.preLaunch).toBe("export FOO=bar");
   });
 
   it("merges preLaunchEnv through an override and preserves cmd/color defaults", async () => {
@@ -1040,6 +1044,48 @@ describe("loadConfig", () => {
     expect(actual.agents.definitions["codex"]?.cmd).toBe(
       "codex --dangerously-bypass-approvals-and-sandbox",
     );
+  });
+
+  it("enables the cursor preset with `cursor: {}` and applies its defaults", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      configSource({
+        workspace: VALID_WORKSPACE(temporary),
+        agents: { default: "cursor", definitions: { cursor: {} } },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+
+    // `--sandbox disabled` because groundcrew sandboxes externally (nested
+    // macOS Seatbelt fails; mirrors codex's bypass flag); the boolean
+    // `--force` must come last or doctor's tokenizer would read `disabled`
+    // as its value and check `which disabled`.
+    expect(actual.agents.definitions["cursor"]).toStrictEqual({
+      cmd: "cursor-agent --sandbox disabled --force",
+      color: "#929292",
+      usage: { codexbar: { provider: "cursor" } },
+    });
+  });
+
+  it("merges per-key overrides into the cursor preset", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      configSource({
+        workspace: VALID_WORKSPACE(temporary),
+        agents: { default: "cursor", definitions: { cursor: { cmd: "my-cursor" } } },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+
+    expect(actual.agents.definitions["cursor"]).toStrictEqual({
+      cmd: "my-cursor",
+      color: "#929292",
+      usage: { codexbar: { provider: "cursor" } },
+    });
   });
 
   it("rejects a default agent that is not enabled", async () => {
@@ -1597,12 +1643,12 @@ describe("loadConfig", () => {
       temporary,
       configSource({
         workspace: VALID_WORKSPACE(temporary),
-        agents: { definitions: { cursor: { cmd: "cursor" } } },
+        agents: { definitions: { myagent: { cmd: "my-agent" } } },
       }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
-    await expect(loadConfig()).rejects.toThrow(/agents\.definitions\.cursor\.color/);
+    await expect(loadConfig()).rejects.toThrow(/agents\.definitions\.myagent\.color/);
   });
 
   it('fails when agents.definitions contains the reserved "any" name', async () => {

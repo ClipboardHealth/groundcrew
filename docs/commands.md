@@ -57,7 +57,7 @@ crew status ENG-123
 ===================
 task: eng-123  in-progress  https://linear.app/example/issue/ENG-123
 title: Multi-event extractor: year inference can produce date_start > date_end
-run: running; model=claude; updated=2026-05-26T00:01:00.000Z; resumes=0
+run: running; agent=claude; updated=2026-05-26T00:01:00.000Z; resumes=0
 workspace: live
 
 Worktrees
@@ -77,9 +77,9 @@ Recent logs
 
 ## Doctor
 
-`crew doctor` checks host prerequisites only: config validity, task-source reachability, required binaries on PATH, workspace backend availability, `workspace.projectDir`, local runner capability, and enabled model commands.
+`crew doctor` checks host prerequisites only: config validity, task-source reachability, required binaries on PATH, workspace backend availability, `workspace.projectDir`, local runner capability, and enabled agent commands.
 
-Doctor's command introspection is intentionally shallow. It reports the resolved local runner and tokenizes each model `cmd`, then checks the first two non-flag tokens against PATH. Boolean flags without values, env-var assignments, shell pipelines, and subshells are not parsed.
+Doctor's command introspection is intentionally shallow. It reports the resolved local runner and tokenizes each agent `cmd`, then checks the first two non-flag tokens against PATH. Boolean flags without values, env-var assignments, shell pipelines, and subshells are not parsed.
 
 ## Start
 
@@ -106,4 +106,4 @@ The command closes the cmux/tmux/zellij workspace if present, records local run 
 
 `crew resume <TASK>` reopens an existing task worktree with a continuation prompt. Resume never creates a new worktree; if none exists it fails and leaves re-dispatch to `crew start <task>`.
 
-The resume prompt tells the agent to inspect git status and diff before editing, includes the previous interrupt reason when recorded, and reuses the recorded model, repository, branch, runner, sandbox, and workspace backend. When no run-state file exists but a worktree does, resume falls back to Linear resolution for the model and task context.
+The resume prompt tells the agent to inspect git status and diff before editing, includes the previous interrupt reason when recorded, and reuses the recorded agent, repository, branch, runner, sandbox, and workspace backend. When no run-state file exists but a worktree does, resume falls back to Linear resolution for the agent and task context.

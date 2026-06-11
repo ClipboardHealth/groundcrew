@@ -190,6 +190,29 @@ const AGENT_SRT_PROFILES: Record<string, AgentCredentialProfile> = {
     writePaths: [],
     denyPaths: [],
   },
+  "cursor-agent": {
+    // The real ~/.cursor is never granted — not even read. cursor-agent
+    // relocates its writable home (CURSOR_CONFIG_DIR, same shape as codex) and
+    // runs fully off the relocated dir (validated live: `cursor-agent status`
+    // reports logged-in with only the seeded cli-config.json), so the real home
+    // is not needed at runtime. It also holds live third-party secrets
+    // (mcp.json server `env` blocks carry API keys/passwords), and srt's
+    // allowRead-beats-denyRead precedence makes a carve-out impossible once the
+    // root is re-opened — granting it would be a gratuitous exfiltration
+    // surface. `.local/share/cursor-agent` is the real versioned install the
+    // `~/.local/bin/cursor-agent` shim execs into; it is re-opened here rather
+    // than in TOOLCHAIN_READ_ROOTS because those roots feed every policy
+    // (including the profile-neutral prepare policy) and must stay narrow —
+    // `.local/share` is deliberately masked as unrelated app state, and the
+    // binary is only needed when cursor runs.
+    readPaths: [".local/share/cursor-agent"],
+    writePaths: [],
+    denyPaths: [],
+    // The CLI stores its bearer token in the macOS user keychain (mirrors
+    // claude); cli-config.json carries only identity + settings, no
+    // token-sized value.
+    usesMacosKeychain: true,
+  },
 };
 
 const AGENT_CONFIG_RELOCATIONS: Record<string, AgentConfigRelocation> = {
@@ -199,6 +222,19 @@ const AGENT_CONFIG_RELOCATIONS: Record<string, AgentConfigRelocation> = {
     // auth.json carries the ChatGPT OAuth tokens (codex reads creds from a file,
     // not the keychain); config.toml preserves the user's codex configuration.
     seedFiles: ["auth.json", "config.toml"],
+  },
+  "cursor-agent": {
+    configDirEnv: "CURSOR_CONFIG_DIR",
+    sourceHomeRelativeDir: ".cursor",
+    // cli-config.json is cursor's auth.json + config.toml in one file: its
+    // `authInfo` block carries the login identity (the bearer token itself
+    // lives in the macOS user keychain — see the profile's usesMacosKeychain)
+    // alongside the user's CLI configuration. mcp.json and hooks.json are
+    // deliberately NOT seeded — both are spawn/exec surfaces (mcp servers and
+    // hooks are commands cursor runs), mirroring the claude profile's
+    // denied-mcpServers posture: the relocated home starts with no executable
+    // instructions.
+    seedFiles: ["cli-config.json"],
   },
 };
 
@@ -285,7 +321,7 @@ const GIT_COMMON_WRITE_PATHS: readonly string[] = [
  * profile. `denyWrite` wins over `allowWrite`, so denying the home dir overrides
  * the default.
  */
-const ALL_AGENT_HOME_DIRS: readonly string[] = [".claude", ".codex"];
+const ALL_AGENT_HOME_DIRS: readonly string[] = [".claude", ".codex", ".cursor"];
 
 /** Git identity/config the agent reads (never writes — see `allowGitConfig`). */
 const GIT_READ_PATHS: readonly string[] = [".gitconfig", ".config/git"];
@@ -306,6 +342,11 @@ const TOOLCHAIN_WRITE_DENY: readonly string[] = [
   ".bun/install/global",
   ".deno/bin",
   ".local/bin",
+  // `.local/bin` covers only the cursor-agent *shim*; the real versioned
+  // binary it execs into lives here. A poisoned install would run the next
+  // time the user launches cursor-agent outside the sandbox — the same vector
+  // as the bin dirs above.
+  ".local/share/cursor-agent",
   ".npm-global",
   ".npm/_npx",
   ".npmrc",

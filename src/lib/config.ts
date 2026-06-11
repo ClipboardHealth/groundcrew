@@ -135,8 +135,9 @@ export interface AgentDefinition {
 }
 
 /**
- * User-facing agent entry shape. Built-in agent names (`claude`, `codex`)
- * accept empty or partial entries because they merge over built-in presets.
+ * User-facing agent entry shape. Built-in agent names (`claude`, `codex`,
+ * `cursor`) accept empty or partial entries because they merge over built-in
+ * presets.
  * Brand-new agent names must supply enough fields to satisfy `validate()`.
  *
  * `usage` accepts an extra `{ disabled: true }` sentinel that strips the
@@ -245,10 +246,10 @@ export interface Config {
   agents?: {
     default?: string;
     /**
-     * Explicit enabled agent set. Built-in keys (`claude`, `codex`) merge over
-     * their presets, so `{ claude: {} }` enables Claude with the shipped
-     * command/color/usage. Brand-new agent names must supply enough fields to
-     * satisfy `validate()`.
+     * Explicit enabled agent set. Built-in keys (`claude`, `codex`, `cursor`)
+     * merge over their presets, so `{ claude: {} }` enables Claude with the
+     * shipped command/color/usage. Brand-new agent names must supply enough
+     * fields to satisfy `validate()`.
      */
     definitions?: Record<string, UserAgentDefinition>;
   };
@@ -397,6 +398,15 @@ const BUILT_IN_AGENT_DEFINITIONS: Record<string, AgentDefinition> = {
     cmd: "codex --dangerously-bypass-approvals-and-sandbox",
     color: "#3267e3",
     usage: { codexbar: { provider: "codex" } },
+  },
+  cursor: {
+    // `--sandbox disabled` because groundcrew sandboxes externally — nested
+    // macOS Seatbelt fails (mirrors codex's bypass flag). The boolean
+    // `--force` must stay last: doctor's tokenizer treats the token after a
+    // `-` flag as its value, so any other order would check `which disabled`.
+    cmd: "cursor-agent --sandbox disabled --force",
+    color: "#929292",
+    usage: { codexbar: { provider: "cursor" } },
   },
 };
 

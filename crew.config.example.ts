@@ -53,16 +53,13 @@ export default {
   agents: {
     default: "claude",
     // `definitions` is the enabled agent set. Built-in keys can use `{}` to
-    // opt into the shipped command/color/usage preset. Add `codex: {}` if you
-    // want both shipped agents, or add a custom entry and tag tasks with
-    // `agent-<name>`.
+    // opt into the shipped command/color/usage preset. Uncomment `codex: {}`
+    // or `cursor: {}` for the other shipped agents, or add a custom entry and
+    // tag tasks with `agent-<name>`.
     definitions: {
       claude: {},
       // codex: {},
-      // cursor: {
-      //   cmd: "cursor-agent",
-      //   color: "#929292",
-      // },
+      // cursor: {},
     },
   },
   // Repo-preparation hook: runs after each worktree is created and before the

@@ -97,12 +97,40 @@ describe(buildSrtSettings, () => {
       expect(claude.filesystem.denyWrite).toContain("/home/dev/.codex");
       expect(claude.filesystem.denyWrite).not.toContain("/home/dev/.claude");
 
-      // codex relocates (no writable real home) + the neutral prepare policy and
-      // an unknown agent own neither — all deny both real homes.
-      for (const agent of ["codex", "", "mystery"]) {
+      // codex/cursor-agent relocate (no writable real home) + the neutral
+      // prepare policy and an unknown agent own none — all deny every real home.
+      for (const agent of ["codex", "cursor-agent", "", "mystery"]) {
         const actual = buildSrtSettings(input({ agent }));
         expect(actual.filesystem.denyWrite).toContain("/home/dev/.claude");
         expect(actual.filesystem.denyWrite).toContain("/home/dev/.codex");
+        expect(actual.filesystem.denyWrite).toContain("/home/dev/.cursor");
+      }
+    });
+
+    it("never grants the real ~/.cursor at all — not even read (mcp.json holds third-party secrets)", () => {
+      const actual = buildSrtSettings(input({ agent: "cursor-agent" }));
+
+      expect(actual.filesystem.allowRead).not.toContain("/home/dev/.cursor");
+      expect(actual.filesystem.allowWrite).not.toContain("/home/dev/.cursor");
+      expect(actual.filesystem.denyWrite).toContain("/home/dev/.cursor");
+    });
+
+    it("keeps ~/.cursor masked for every other policy too (cross-profile read isolation)", () => {
+      for (const agent of ["claude", "codex", "", "mystery"]) {
+        const actual = buildSrtSettings(input({ agent }));
+        expect(actual.filesystem.allowRead).not.toContain("/home/dev/.cursor");
+      }
+    });
+
+    it("re-opens the cursor-agent versioned install for cursor-agent only, not via the shared toolchain roots", () => {
+      const cursor = buildSrtSettings(input({ agent: "cursor-agent" }));
+      expect(cursor.filesystem.allowRead).toContain("/home/dev/.local/share/cursor-agent");
+
+      // .local/share stays masked as unrelated app state for everyone else —
+      // the carve-out lives in the cursor-agent profile, not TOOLCHAIN_READ_ROOTS.
+      for (const agent of ["claude", "codex", ""]) {
+        const actual = buildSrtSettings(input({ agent }));
+        expect(actual.filesystem.allowRead).not.toContain("/home/dev/.local/share/cursor-agent");
       }
     });
 
@@ -145,6 +173,14 @@ describe(buildSrtSettings, () => {
       );
 
       expect(actual.filesystem.allowRead).not.toContain("/Users/dev/Library/Keychains");
+    });
+
+    it("re-opens ~/Library/Keychains for cursor-agent on macOS (its bearer token lives in the keychain)", () => {
+      const actual = buildSrtSettings(
+        input({ agent: "cursor-agent", platform: "darwin", homeDir: "/Users/dev" }),
+      );
+
+      expect(actual.filesystem.allowRead).toContain("/Users/dev/Library/Keychains");
     });
   });
 
@@ -215,6 +251,10 @@ describe(buildSrtSettings, () => {
     expect(actual.filesystem.denyWrite).toContain("/home/dev/.nvm/versions/node/v24/bin");
     expect(actual.filesystem.denyWrite).toContain("/home/dev/.cargo/bin");
     expect(actual.filesystem.denyWrite).toContain("/home/dev/.npm/_npx");
+    // The cursor-agent shim under .local/bin is covered by the .local/bin deny;
+    // the real versioned binary lives under .local/share/cursor-agent and needs
+    // its own deny.
+    expect(actual.filesystem.denyWrite).toContain("/home/dev/.local/share/cursor-agent");
   });
 
   it("grants no extra home access for an unknown agent but keeps toolchains", () => {
@@ -295,6 +335,16 @@ describe(agentConfigRelocation, () => {
       configDirEnv: "CODEX_HOME",
       sourceHomeRelativeDir: ".codex",
       seedFiles: ["auth.json", "config.toml"],
+    });
+  });
+
+  it("relocates cursor-agent to CURSOR_CONFIG_DIR, seeding only its combined auth+config file", () => {
+    const actual = agentConfigRelocation("cursor-agent");
+
+    expect(actual).toStrictEqual({
+      configDirEnv: "CURSOR_CONFIG_DIR",
+      sourceHomeRelativeDir: ".cursor",
+      seedFiles: ["cli-config.json"],
     });
   });
 

@@ -52,7 +52,7 @@ The "preLaunch never sees build secrets" contract is enforced differently per ru
 Under the default `safehouse` runner, the agent runs under a sanitized env allowlist. Exports from `preLaunch` land in the launch shell but are stripped before reaching the agent unless they are forwarded. `preLaunchEnv` is the supported way to forward them:
 
 ```ts
-models: {
+agents: {
   definitions: {
     claude: {
       preLaunch: "SESSION_TOKEN=$(your-mint-command) && export SESSION_TOKEN",
@@ -69,7 +69,7 @@ Under `runner: "none"`, exports flow through unchanged and `preLaunchEnv` is a n
 <details>
 <summary>Manual fallback when <code>cmd</code> brings its own <code>safehouse</code> wrap</summary>
 
-If your `cmd` already starts with `safehouse`, groundcrew will not auto-compose `--env-pass=` for you and a non-empty `preLaunchEnv` is rejected at launch. Add the names to your own `cmd` instead. This opts the model out of groundcrew's default `safehouse-clearance` wrap, so re-supply `--append-profile` / `--env` yourself if you need it:
+If your `cmd` already starts with `safehouse`, groundcrew will not auto-compose `--env-pass=` for you and a non-empty `preLaunchEnv` is rejected at launch. Add the names to your own `cmd` instead. This opts the agent out of groundcrew's default `safehouse-clearance` wrap, so re-supply `--append-profile` / `--env` yourself if you need it:
 
 ```ts
 claude: {
