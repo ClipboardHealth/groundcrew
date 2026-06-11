@@ -720,6 +720,8 @@ describe(setupWorkspace, () => {
   });
 
   it("wraps the agent command with Safehouse and runs the default prepareWorktree hook", async () => {
+    vi.stubEnv("NPM_TOKEN", "");
+    vi.stubEnv("BUF_TOKEN", "");
     detectHostMock.mockResolvedValue(host());
     const config = {
       ...makeConfig({
