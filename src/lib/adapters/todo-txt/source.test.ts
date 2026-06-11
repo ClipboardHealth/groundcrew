@@ -215,6 +215,24 @@ describe("TodoTxtTaskSource", () => {
     expect(readFileSync(path.join(tmp.tasksDir, "PROMPT-1.md"), "utf8")).toBe("Existing prompt.\n");
   });
 
+  it("createTask accepts hourly recurrence", async () => {
+    tmp.writeTodo("");
+
+    const source = makeSource(tmp);
+    await source.createTask?.({
+      title: "Hourly sweep",
+      agent: "claude",
+      id: "SWEEP-1",
+      projects: [],
+      contexts: [],
+      dependencies: [],
+      edit: false,
+      recurrence: "2h",
+    });
+
+    expect(readFileSync(tmp.todoPath, "utf8")).toContain("rec:2h status:todo");
+  });
+
   it("creates the todo file when it does not exist", async () => {
     const source = makeSource(tmp);
 

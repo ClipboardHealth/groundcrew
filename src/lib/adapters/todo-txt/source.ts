@@ -18,7 +18,7 @@ import { DATE_RE, getMetadataFirst, parseAllLines, type ParsedTodoLine } from ".
 import type { TodoTxtAdapterConfig } from "./schema.ts";
 import { copyPromptFile, updateTaskStatus, validateTodoFile, withLock } from "./writeback.ts";
 
-const RECURRENCE_RE = /^\+?\d+[dwmy]$/;
+const RECURRENCE_RE = /^\+?\d+[dwmyh]$/;
 
 function readPromptFile(promptPath: string): string | undefined {
   try {
@@ -244,7 +244,7 @@ function buildTodoLine(id: string, input: CreateTaskInput): string {
   }
   if (input.recurrence !== undefined) {
     if (!RECURRENCE_RE.test(input.recurrence)) {
-      throw new Error("todo-txt: recurrence must look like 1d, 1w, 1m, 1y, or +1m");
+      throw new Error("todo-txt: recurrence must look like 1d, 1w, 1m, 1y, 2h, or +1m");
     }
     tokens.push(metadataToken("rec", input.recurrence));
   }
