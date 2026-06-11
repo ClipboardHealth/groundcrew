@@ -15,14 +15,16 @@
 #   chmod 600 ~/.config/groundcrew/jira.token
 #
 # Knobs (set via the source's `env` block in crew.config):
-#   JIRA_GROUNDCREW_JQL  JQL for `list`  (default: statusCategory != Done ORDER BY updated DESC)
+#   JIRA_GROUNDCREW_JQL  JQL for `list`  (default: statusCategory != Done; no ORDER BY — see below)
 #   JIRA_REVIEW_PATTERN  case-insensitive regex; matching status names -> in-review (default: review)
 #   JIRA_DEFAULT_AGENT   agent when an issue has no agent:<x> label (default: empty -> null)
 #   JIRA_TOKEN_FILE      token path (default: ~/.config/groundcrew/jira.token)
 set -euo pipefail
 
 TOKEN_FILE="${JIRA_TOKEN_FILE:-${HOME}/.config/groundcrew/jira.token}"
-LIST_JQL="${JIRA_GROUNDCREW_JQL:-statusCategory != Done ORDER BY updated DESC}"
+# No ORDER BY here: jira-cli appends its own (see --order-by below), and a
+# second ORDER BY in the JQL makes JIRA reject the query with a 400.
+LIST_JQL="${JIRA_GROUNDCREW_JQL:-statusCategory != Done}"
 REVIEW_PATTERN="${JIRA_REVIEW_PATTERN:-review}"
 DEFAULT_AGENT="${JIRA_DEFAULT_AGENT:-}"
 
@@ -95,9 +97,18 @@ case "${cmd}" in
     ;;
   list)
     require_token
-    jira issue list -q "${LIST_JQL}" --raw --paginate 0:100 \
-      | jq -c --arg rp "${REVIEW_PATTERN}" --arg da "${DEFAULT_AGENT}" \
-            "${JQ_TRANSFORM} [ (.issues // [])[] | toShellIssue(\$rp; \$da) ]"
+    # jira-cli's `issue list --raw` returns a reduced array (no id/self/
+    # statusCategory), so we read just the keys and enrich each via `issue view`,
+    # whose `--raw` is the full REST issue the transform needs. `jq -s` slurps
+    # the stream of per-issue objects into one array.
+    jira issue list -q "${LIST_JQL}" --order-by updated --reverse --raw --paginate 0:100 \
+      | jq -r '.[].key' \
+      | while IFS= read -r key; do
+          [[ -n "${key}" ]] || continue
+          jira issue view "${key}" --raw 2>/dev/null || true
+        done \
+      | jq -s -c --arg rp "${REVIEW_PATTERN}" --arg da "${DEFAULT_AGENT}" \
+            "${JQ_TRANSFORM} [ .[] | toShellIssue(\$rp; \$da) ]"
     ;;
   get)
     require_token
