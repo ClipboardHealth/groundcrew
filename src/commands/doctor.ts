@@ -115,6 +115,11 @@ async function probeSource(source: TaskSource, shell: boolean): Promise<Check> {
       if (resolved === null) {
         throw new Error(`getTask("${naturalId}") returned nothing, but listTasks emitted it`);
       }
+      if (resolved.id !== first.id) {
+        throw new Error(
+          `getTask("${naturalId}") resolved "${resolved.id}", but listTasks emitted "${first.id}"`,
+        );
+      }
       parts.push("getTask round-trips");
     }
     return { name, ok: true, required: true, hint: `verified; ${parts.join("; ")}` };

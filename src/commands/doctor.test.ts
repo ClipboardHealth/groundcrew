@@ -369,6 +369,22 @@ describe(doctor, () => {
     );
   });
 
+  it("fails the shell source when getTask resolves a different task than listTasks emitted", async () => {
+    loadConfigMock.mockResolvedValue(makeConfig());
+    sourcesFromConfigMock.mockReturnValue([{ kind: "shell", name: "plankeeper" }]);
+    const shellSource = stubSource("plankeeper");
+    vi.mocked(shellSource.listTasks).mockResolvedValue([taskStub("plankeeper:p-1")]);
+    vi.mocked(shellSource.getTask).mockResolvedValue(taskStub("plankeeper:p-2"));
+    buildSourcesMock.mockResolvedValue([shellSource]);
+
+    const actual = await doctor();
+
+    expect(actual).toBe(false);
+    const output = consoleLog.output();
+    expect(output).toContain("[--] source: plankeeper");
+    expect(output).toContain('resolved "plankeeper:p-2", but listTasks emitted "plankeeper:p-1"');
+  });
+
   it("fails the shell source when a fetched id does not resolve via getTask", async () => {
     loadConfigMock.mockResolvedValue(makeConfig());
     sourcesFromConfigMock.mockReturnValue([{ kind: "shell", name: "plankeeper" }]);
