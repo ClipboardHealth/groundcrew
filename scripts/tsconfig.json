@@ -3,6 +3,7 @@
   "compilerOptions": {
     "composite": true,
     "emitDeclarationOnly": true,
+    "allowImportingTsExtensions": true,
     "noEmit": false,
     "outDir": "../dist/scripts",
     "types": ["node"]
