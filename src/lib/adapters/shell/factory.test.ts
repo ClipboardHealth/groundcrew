@@ -262,7 +262,7 @@ describe(createShellTaskSource, () => {
     );
 
     await expect(source.listTasks()).rejects.toThrow(
-      /source "plankeeper"[\s\S]*missing the required "agent" field[\s\S]*rename it to "agent"/,
+      /source "plankeeper"[\s\S]*missing the required "agent" field/,
     );
   });
 

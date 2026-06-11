@@ -81,16 +81,8 @@ function formatSchemaError(error: z.ZodError, context: ShellParseContext): strin
     counts.set(description, (counts.get(description) ?? 0) + 1);
   }
   const lines = [...counts].map(([description, count]) => `  • ${count} issue(s) ${description}`);
-  const missingAgent = [...counts.keys()].some(
-    (description) => description.includes('"agent"') && description.includes("missing"),
-  );
-  const hint = missingAgent
-    ? '\n  Hint: if your script emits the agent under a different field name (e.g. "model"), rename it to "agent".'
-    : "";
   return [
     `source "${context.sourceName}": the ${context.command} command returned task JSON that doesn't match the expected shape:`,
     ...lines,
-  ]
-    .join("\n")
-    .concat(hint);
+  ].join("\n");
 }

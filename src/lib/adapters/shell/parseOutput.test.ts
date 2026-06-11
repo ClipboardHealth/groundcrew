@@ -54,7 +54,7 @@ describe(parseShellJson, () => {
     expect(run).toThrow(/source "plankeeper": the listTasks command did not return valid JSON/);
   });
 
-  it("collapses N issues missing `agent` into one counted line with a rename hint", () => {
+  it("collapses N issues missing `agent` into one counted line", () => {
     const withoutAgent = [issueWithModelNotAgent("P-1"), issueWithModelNotAgent("P-2")];
     const message = messageFromThrow(() =>
       parseShellJson(shellFetchOutputSchema, JSON.stringify(withoutAgent), context),
@@ -62,7 +62,6 @@ describe(parseShellJson, () => {
 
     expect(message).toContain('source "plankeeper"');
     expect(message).toContain('2 issue(s) are missing the required "agent" field');
-    expect(message).toContain('rename it to "agent"');
     // The collapse means the field name appears once, not once per issue.
     expect(message.match(/missing the required "agent"/g)).toHaveLength(1);
   });
@@ -88,12 +87,11 @@ describe(parseShellJson, () => {
     expect(message).toContain('"blockers"');
   });
 
-  it("omits the agent rename hint for unrelated schema failures", () => {
-    // `agent` is present (null); a different field is wrong, so no hint.
+  it("names the invalid field for a wrong-value (non-missing) failure", () => {
     const payload = JSON.stringify({ ...wellFormed(), status: "nope" });
     const message = messageFromThrow(() => parseShellJson(shellIssueSchema, payload, context));
 
     expect(message).toContain('source "plankeeper"');
-    expect(message).not.toContain("rename it to");
+    expect(message).toContain('"status"');
   });
 });
