@@ -1331,6 +1331,27 @@ describe("TodoTxtTaskSource", () => {
     expect(updated).toContain("due:2026-06-09");
   });
 
+  it("markDone with rec:1d advances a datetime t: preserving the time component", async () => {
+    tmp.writeTodo(
+      "id:sweep-20260608 agent:any t:2026-06-08T10:30 rec:1d status:in-progress Recurring sweep\n",
+    );
+    tmp.writeTask("sweep-20260608", "Sweep prompt.");
+
+    const source = makeSource(tmp);
+    const task = await source.resolveOne("sweep-20260608");
+
+    const { updateTaskStatus } = await import("./writeback.ts");
+    const now = new Date("2026-06-08T15:00:00Z");
+    const recurResult = await updateTaskStatus(
+      { todoPath: tmp.todoPath, ref: sourceRef(assertDefined(task, "task")), now },
+      "done",
+    );
+
+    expect(recurResult?.newId).toBe("sweep-20260609");
+    const updated = readFileSync(tmp.todoPath, "utf8");
+    expect(updated).toContain("t:2026-06-09T10:30");
+  });
+
   it("verify() passes on file with resolved dep", async () => {
     tmp.writeTodo(
       "id:DEP-V1 agent:codex status:in-progress\nid:WAITER-V1 agent:codex dep:DEP-V1 status:todo\n",
