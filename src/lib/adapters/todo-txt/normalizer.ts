@@ -196,9 +196,14 @@ function padSeconds(dateTime: string): string {
   return dateTime.length === 16 ? `${dateTime}:00` : dateTime;
 }
 
-// Format + calendar + clock validity for the datetime threshold form. Shared
-// with writeback's validate() so verify() flags what fetch would ignore.
-export function isValidDatetimeThreshold(value: string): boolean {
+// Format + calendar (+ clock) validity for both threshold forms. Shared with
+// writeback's validate() so verify() flags what fetch would ignore — and what
+// would otherwise crash rec: advancement (a non-calendar date survives the
+// format-only regex but produces an Invalid Date in advanceDate).
+export function isValidThresholdValue(value: string): boolean {
+  if (DATE_RE.test(value)) {
+    return isCalendarDate(value);
+  }
   return (
     DATETIME_RE.test(value) && isCalendarDate(value.slice(0, 10)) && isClockTime(value.slice(11))
   );

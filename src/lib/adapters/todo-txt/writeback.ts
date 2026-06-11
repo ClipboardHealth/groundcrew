@@ -10,7 +10,7 @@ import {
 import path from "node:path";
 
 import { DATE_RE, hashLine, parseAllLines, type ParsedTodoLine } from "./parser.ts";
-import { isValidDatetimeThreshold, type TodoTxtSourceRef } from "./normalizer.ts";
+import { isValidThresholdValue, type TodoTxtSourceRef } from "./normalizer.ts";
 
 export interface RecurResult {
   newId: string;
@@ -418,8 +418,10 @@ function validateDepsAndDates(
   }
 
   // t: also accepts a datetime threshold for sub-day recurring tasks.
+  // Calendar/clock validity is enforced for both forms — a non-calendar value
+  // would otherwise crash rec: advancement during markDone.
   const tVal = parsed.metadata["t"]?.[0];
-  if (tVal !== undefined && !DATE_RE.test(tVal) && !isValidDatetimeThreshold(tVal)) {
+  if (tVal !== undefined && !isValidThresholdValue(tVal)) {
     errors.push(
       `${prefix}: malformed t: date "${tVal}" for task "${id}" (expected YYYY-MM-DD or YYYY-MM-DDTHH:MM[:SS])`,
     );

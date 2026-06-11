@@ -837,6 +837,12 @@ describe("TodoTxtTaskSource", () => {
     await expect(source.verify()).rejects.toThrow(/malformed t/);
   });
 
+  it("verify() catches non-calendar date-only t:", async () => {
+    tmp.writeTodo("id:GC-V4E agent:codex t:2026-99-99 status:in-progress\n");
+    const source = makeSource(tmp);
+    await expect(source.verify()).rejects.toThrow(/malformed t/);
+  });
+
   it("verify() catches malformed rec:", async () => {
     tmp.writeTodo("id:GC-V5 agent:codex rec:bad-recurrence status:in-progress\n");
     const source = makeSource(tmp);
