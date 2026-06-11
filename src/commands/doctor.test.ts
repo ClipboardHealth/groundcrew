@@ -9,7 +9,7 @@ import {
   type ResolvedConfig,
 } from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
-import type { TaskSource } from "../lib/taskSource.ts";
+import type { Task, TaskSource } from "../lib/taskSource.ts";
 import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCapture.ts";
 import { doctor } from "./doctor.ts";
 
@@ -69,6 +69,23 @@ const sourcesFromConfigMock = vi.mocked(sourcesFromConfig);
 const loadConfigWithSourceMock = vi.mocked(loadConfigWithSource);
 const detectHostMock = vi.mocked(detectHostCapabilities);
 const DEFAULT_CONFIG_SOURCE: ConfigSource = { kind: "project", filepath: "/work/crew.config.ts" };
+
+function taskStub(id: string): Task {
+  return {
+    id,
+    source: "plankeeper",
+    title: "T",
+    description: "",
+    status: "todo",
+    repository: undefined,
+    agent: undefined,
+    assignee: "",
+    updatedAt: "2026-01-01T00:00:00Z",
+    blockers: [],
+    hasMoreBlockers: false,
+    sourceRef: undefined,
+  };
+}
 
 function stubSource(name: string): TaskSource {
   return {
@@ -332,6 +349,40 @@ describe(doctor, () => {
 
     expect(actual).toBe(true);
     expect(consoleLog.output()).toContain("[ok] source: plankeeper  — verified; fetched 0 task(s)");
+  });
+
+  it("round-trips a fetched id through getTask for a healthy shell source", async () => {
+    loadConfigMock.mockResolvedValue(makeConfig());
+    sourcesFromConfigMock.mockReturnValue([{ kind: "shell", name: "plankeeper" }]);
+    const shellSource = stubSource("plankeeper");
+    vi.mocked(shellSource.listTasks).mockResolvedValue([taskStub("plankeeper:p-1")]);
+    vi.mocked(shellSource.getTask).mockResolvedValue(taskStub("plankeeper:p-1"));
+    buildSourcesMock.mockResolvedValue([shellSource]);
+
+    const actual = await doctor();
+
+    expect(actual).toBe(true);
+    // getTask receives the natural (unprefixed) id.
+    expect(vi.mocked(shellSource.getTask)).toHaveBeenCalledWith("p-1");
+    expect(consoleLog.output()).toContain(
+      "[ok] source: plankeeper  — verified; fetched 1 task(s); getTask round-trips",
+    );
+  });
+
+  it("fails the shell source when a fetched id does not resolve via getTask", async () => {
+    loadConfigMock.mockResolvedValue(makeConfig());
+    sourcesFromConfigMock.mockReturnValue([{ kind: "shell", name: "plankeeper" }]);
+    const shellSource = stubSource("plankeeper");
+    vi.mocked(shellSource.listTasks).mockResolvedValue([taskStub("plankeeper:p-1")]);
+    vi.mocked(shellSource.getTask).mockResolvedValue(null);
+    buildSourcesMock.mockResolvedValue([shellSource]);
+
+    const actual = await doctor();
+
+    expect(actual).toBe(false);
+    const output = consoleLog.output();
+    expect(output).toContain("[--] source: plankeeper");
+    expect(output).toContain('getTask("p-1") returned nothing');
   });
 
   it("returns false when a required CLI tool is missing", async () => {

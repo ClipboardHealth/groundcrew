@@ -17,7 +17,7 @@ import {
 import { detectHostCapabilities, type HostCapabilities, which } from "../lib/host.ts";
 import { isEnvironmentAssignment } from "../lib/launchCommand.ts";
 import { resolveLocalRunner } from "../lib/localRunner.ts";
-import type { TaskSource } from "../lib/taskSource.ts";
+import { naturalIdFromCanonical, type TaskSource } from "../lib/taskSource.ts";
 import { gatedAgents } from "../lib/usage.ts";
 import { errorMessage, writeOutput } from "../lib/util.ts";
 import { resolveWorkspaceKind, type WorkspaceResolution } from "../lib/workspaces.ts";
@@ -104,11 +104,23 @@ async function probeSource(source: TaskSource, shell: boolean): Promise<Check> {
   const name = `source: ${source.name}`;
   try {
     await source.verify();
-    if (shell) {
-      const tasks = await source.listTasks();
-      return { name, ok: true, required: true, hint: `verified; fetched ${tasks.length} task(s)` };
+    if (!shell) {
+      return { name, ok: true, required: true, hint: "verified" };
     }
-    return { name, ok: true, required: true, hint: "verified" };
+    const tasks = await source.listTasks();
+    const parts = [`fetched ${tasks.length} task(s)`];
+    // Read-path symmetry: an id listTasks emitted must resolve via getTask.
+    // Skipped on an empty board — there's nothing to round-trip.
+    const [first] = tasks;
+    if (first !== undefined) {
+      const naturalId = naturalIdFromCanonical(first.id);
+      const resolved = await source.getTask(naturalId);
+      if (resolved === null) {
+        throw new Error(`getTask("${naturalId}") returned nothing, but listTasks emitted it`);
+      }
+      parts.push("getTask round-trips");
+    }
+    return { name, ok: true, required: true, hint: `verified; ${parts.join("; ")}` };
   } catch (error) {
     return { name, ok: false, required: true, hint: errorMessage(error) };
   }
