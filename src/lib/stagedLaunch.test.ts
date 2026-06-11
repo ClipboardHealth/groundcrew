@@ -16,6 +16,7 @@ describe(stageBuildSecrets, () => {
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     rmSync(promptDir, { recursive: true, force: true });
   });
 
