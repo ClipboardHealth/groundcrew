@@ -464,7 +464,10 @@ export function createTodoTxtTaskSource(
     async markDone(issue: Issue): Promise<MarkDoneResult> {
       // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- TodoTxtTaskSource always writes TodoTxtSourceRef
       const ref = issue.sourceRef as TodoTxtSourceRef;
-      const recurResult = await updateTaskStatus({ todoPath, ref }, "done");
+      const recurResult = await updateTaskStatus(
+        { todoPath, ref, timezone: config.timezone },
+        "done",
+      );
       if (recurResult !== undefined) {
         copyPromptFile(recurResult.oldPromptPath, recurResult.newPromptPath);
       }

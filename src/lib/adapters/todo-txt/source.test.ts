@@ -1337,6 +1337,178 @@ describe("TodoTxtTaskSource", () => {
     expect(updated).toContain("due:2026-06-09");
   });
 
+  it("markDone with rec:2h advances t: from the completion instant (non-strict)", async () => {
+    tmp.writeTodo(
+      "id:sweep-20260608 agent:any t:2026-06-08T10:30 rec:2h status:in-progress Hourly sweep\n",
+    );
+    tmp.writeTask("sweep-20260608", "Sweep prompt.");
+
+    const source = makeSource(tmp);
+    const task = await source.resolveOne("sweep-20260608");
+
+    const { updateTaskStatus } = await import("./writeback.ts");
+    const now = new Date("2026-06-08T15:47:00Z");
+    const recurResult = await updateTaskStatus(
+      { todoPath: tmp.todoPath, ref: sourceRef(assertDefined(task, "task")), now },
+      "done",
+    );
+
+    // Non-strict hourly recurrence advances from completion, not the stale
+    // t:10:30, so daemon downtime cannot cause a catch-up stampede.
+    expect(recurResult?.newId).toBe("sweep-20260608-002");
+    const updated = readFileSync(tmp.todoPath, "utf8");
+    expect(updated).toContain("t:2026-06-08T17:47");
+  });
+
+  it("markDone with strict rec:+2h accepts a seconds-bearing t:", async () => {
+    tmp.writeTodo(
+      "id:sweep-20260608 agent:any t:2026-06-08T10:30:15 rec:+2h status:in-progress Hourly sweep\n",
+    );
+    tmp.writeTask("sweep-20260608", "Sweep prompt.");
+
+    const source = makeSource(tmp);
+    const task = await source.resolveOne("sweep-20260608");
+
+    const { updateTaskStatus } = await import("./writeback.ts");
+    const now = new Date("2026-06-08T15:47:00Z");
+    await updateTaskStatus(
+      { todoPath: tmp.todoPath, ref: sourceRef(assertDefined(task, "task")), now },
+      "done",
+    );
+
+    const updated = readFileSync(tmp.todoPath, "utf8");
+    expect(updated).toContain("t:2026-06-08T12:30");
+  });
+
+  it("markDone with strict rec:+2h treats a date-only t: as midnight", async () => {
+    tmp.writeTodo(
+      "id:sweep-20260608 agent:any t:2026-06-08 rec:+2h status:in-progress Hourly sweep\n",
+    );
+    tmp.writeTask("sweep-20260608", "Sweep prompt.");
+
+    const source = makeSource(tmp);
+    const task = await source.resolveOne("sweep-20260608");
+
+    const { updateTaskStatus } = await import("./writeback.ts");
+    const now = new Date("2026-06-08T15:47:00Z");
+    await updateTaskStatus(
+      { todoPath: tmp.todoPath, ref: sourceRef(assertDefined(task, "task")), now },
+      "done",
+    );
+
+    const updated = readFileSync(tmp.todoPath, "utf8");
+    expect(updated).toContain("t:2026-06-08T02:00");
+  });
+
+  it("markDone with rec:2h carries a verify-rejected due: forward unchanged", async () => {
+    tmp.writeTodo(
+      "id:sweep-20260608 agent:any t:2026-06-08T10:30 due:2026-06-20 rec:2h status:in-progress Hourly sweep\n",
+    );
+    tmp.writeTask("sweep-20260608", "Sweep prompt.");
+
+    const source = makeSource(tmp);
+    const task = await source.resolveOne("sweep-20260608");
+
+    const { updateTaskStatus } = await import("./writeback.ts");
+    const now = new Date("2026-06-08T15:47:00Z");
+    await updateTaskStatus(
+      { todoPath: tmp.todoPath, ref: sourceRef(assertDefined(task, "task")), now },
+      "done",
+    );
+
+    // Hour units never feed due: into date-only advancement; the (verify-
+    // rejected) combination degrades to carrying due: forward unchanged.
+    const updated = readFileSync(tmp.todoPath, "utf8");
+    expect(updated).toContain("t:2026-06-08T17:47");
+    expect(updated.match(/due:2026-06-20/g)).toHaveLength(2);
+  });
+
+  it("markDone with strict rec:+2h advances t: from its previous value", async () => {
+    tmp.writeTodo(
+      "id:sweep-20260608 agent:any t:2026-06-08T10:30 rec:+2h status:in-progress Hourly sweep\n",
+    );
+    tmp.writeTask("sweep-20260608", "Sweep prompt.");
+
+    const source = makeSource(tmp);
+    const task = await source.resolveOne("sweep-20260608");
+
+    const { updateTaskStatus } = await import("./writeback.ts");
+    const now = new Date("2026-06-08T15:47:00Z");
+    await updateTaskStatus(
+      { todoPath: tmp.todoPath, ref: sourceRef(assertDefined(task, "task")), now },
+      "done",
+    );
+
+    const updated = readFileSync(tmp.todoPath, "utf8");
+    expect(updated).toContain("t:2026-06-08T12:30");
+  });
+
+  it("markDone with rec:2h crossing midnight advances the id date", async () => {
+    tmp.writeTodo(
+      "id:sweep-20260608 agent:any t:2026-06-08T21:00 rec:2h status:in-progress Hourly sweep\n",
+    );
+    tmp.writeTask("sweep-20260608", "Sweep prompt.");
+
+    const source = makeSource(tmp);
+    const task = await source.resolveOne("sweep-20260608");
+
+    const { updateTaskStatus } = await import("./writeback.ts");
+    const now = new Date("2026-06-08T23:30:00Z");
+    const recurResult = await updateTaskStatus(
+      { todoPath: tmp.todoPath, ref: sourceRef(assertDefined(task, "task")), now },
+      "done",
+    );
+
+    expect(recurResult?.newId).toBe("sweep-20260609");
+    const updated = readFileSync(tmp.todoPath, "utf8");
+    expect(updated).toContain("t:2026-06-09T01:30");
+  });
+
+  it("markDone with rec:2h computes the completion instant in the source timezone", async () => {
+    tmp.writeTodo(
+      "id:sweep-20260608 agent:any t:2026-06-08T05:00 rec:2h status:in-progress Hourly sweep\n",
+    );
+    tmp.writeTask("sweep-20260608", "Sweep prompt.");
+
+    const source = makeSource(tmp);
+    const task = await source.resolveOne("sweep-20260608");
+
+    const { updateTaskStatus } = await import("./writeback.ts");
+    const now = new Date("2026-06-08T15:47:00Z"); // 10:47 in Chicago (CDT)
+    await updateTaskStatus(
+      {
+        todoPath: tmp.todoPath,
+        ref: sourceRef(assertDefined(task, "task")),
+        now,
+        timezone: "America/Chicago",
+      },
+      "done",
+    );
+
+    const updated = readFileSync(tmp.todoPath, "utf8");
+    expect(updated).toContain("t:2026-06-08T12:47");
+  });
+
+  it("verify() accepts hourly rec: with a t: threshold", async () => {
+    tmp.writeTodo("id:GC-H1 agent:codex t:2026-06-09T10:00 rec:2h status:in-progress\n");
+    const source = makeSource(tmp);
+    await expect(source.verify()).resolves.toBeUndefined();
+  });
+
+  it("verify() rejects hourly rec: without t:", async () => {
+    tmp.writeTodo("id:GC-H2 agent:codex rec:2h status:in-progress\n");
+    const source = makeSource(tmp);
+    await expect(source.verify()).rejects.toThrow(/hourly rec/);
+  });
+
+  it("verify() rejects hourly rec: combined with due:", async () => {
+    tmp.writeTodo(
+      "id:GC-H3 agent:codex t:2026-06-09T10:00 due:2026-06-09 rec:2h status:in-progress\n",
+    );
+    const source = makeSource(tmp);
+    await expect(source.verify()).rejects.toThrow(/hourly rec/);
+  });
+
   it("markDone with rec:1d advances a datetime t: preserving the time component", async () => {
     tmp.writeTodo(
       "id:sweep-20260608 agent:any t:2026-06-08T10:30 rec:1d status:in-progress Recurring sweep\n",

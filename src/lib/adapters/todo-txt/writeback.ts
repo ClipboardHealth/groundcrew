@@ -46,11 +46,11 @@ function addMonths(dateStr: string, months: number): string {
 
 interface Recurrence {
   amount: number;
-  unit: "d" | "w" | "m" | "y";
+  unit: "d" | "w" | "m" | "y" | "h";
   strict: boolean;
 }
 
-const REC_RE = /^(?<strict>\+?)(?<amount>\d+)(?<unit>[dwmy])$/;
+const REC_RE = /^(?<strict>\+?)(?<amount>\d+)(?<unit>[dwmyh])$/;
 
 function parseRecurrence(rec: string): Recurrence | undefined {
   const m = REC_RE.exec(rec);
@@ -58,8 +58,8 @@ function parseRecurrence(rec: string): Recurrence | undefined {
     return undefined;
   }
   const [, strictStr, amountStr, unit] = m;
-  /* v8 ignore next @preserve -- regex [dwmy] guarantees unit is always one of d/w/m/y */
-  if (unit !== "d" && unit !== "w" && unit !== "m" && unit !== "y") {
+  /* v8 ignore next @preserve -- regex [dwmyh] guarantees unit is always one of d/w/m/y/h */
+  if (unit !== "d" && unit !== "w" && unit !== "m" && unit !== "y" && unit !== "h") {
     return undefined;
   }
   return {
@@ -84,20 +84,78 @@ function advanceDate(dateStr: string, rec: Recurrence): string {
   return addMonths(dateStr, amount * 12);
 }
 
+// Add hours to a (timezone-naive wall-clock) datetime, minute precision.
+function addHours(dateTime: string, hours: number): string {
+  const padded = dateTime.length === 16 ? `${dateTime}:00` : dateTime;
+  const ms = Date.parse(`${padded}Z`);
+  return new Date(ms + hours * 60 * 60 * 1000).toISOString().slice(0, 16);
+}
+
 // t: may carry a datetime threshold; advance its date part and keep the time
 // component so a recurring task stays scheduled at the same instant of day.
-function advanceThreshold(threshold: string, rec: Recurrence): string {
+//
+// Hour units advance differently: non-strict rec:Nh advances from the
+// completion instant (the source-timezone wall clock), so a task that sat
+// through daemon downtime re-arms N hours from now instead of stampeding
+// through every missed slot. Strict rec:+Nh keeps schedule-aligned
+// advancement from the previous threshold, matching due:'s strict semantics.
+function advanceThreshold(threshold: string, rec: Recurrence, completionWall: string): string {
+  if (rec.unit === "h") {
+    let base = completionWall;
+    if (rec.strict) {
+      base = threshold.length === 10 ? `${threshold}T00:00` : threshold;
+    }
+    return addHours(base, rec.amount);
+  }
   const [datePart, timePart] = threshold.split("T");
   /* v8 ignore next @preserve -- split always yields a first element */
   const nextDate = advanceDate(datePart ?? threshold, rec);
   return timePart === undefined ? nextDate : `${nextDate}T${timePart}`;
 }
 
+// "YYYY-MM-DDTHH:MM" wall-clock time for `now` in the given timezone.
+function wallClockDateTime(timeZone: string, now: Date): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(now);
+  const get = (type: string): string | undefined => parts.find((part) => part.type === type)?.value;
+  const year = get("year");
+  const month = get("month");
+  const day = get("day");
+  const hour = get("hour");
+  const minute = get("minute");
+  /* v8 ignore next 3 @preserve -- Intl.DateTimeFormat with these options always returns the parts */
+  if (
+    year === undefined ||
+    month === undefined ||
+    day === undefined ||
+    hour === undefined ||
+    minute === undefined
+  ) {
+    throw new Error(`todo-txt: could not format datetime in timezone "${timeZone}"`);
+  }
+  return `${year}-${month}-${day}T${hour}:${minute}`;
+}
+
 function advanceId(id: string, newDate: Date): string {
   const dateCompact = compactDate(newDate);
   // Replace the first 8-digit run (compact date) in the id
   const replaced = id.replace(/\d{8}/, dateCompact);
-  return replaced === id ? `${id}-${dateCompact}` : replaced;
+  if (replaced !== id) {
+    return replaced;
+  }
+  // Unchanged: either the id has no date run (append one), or the date run
+  // already equals the new date — same-day hourly recurrence. For the latter,
+  // strip any prior collision suffixes and let buildUniqueId number this
+  // cycle (-002, -003, …) instead of growing a suffix chain.
+  const base = id.replace(/(?:-\d{3})+$/, "");
+  return base.includes(dateCompact) ? base : `${id}-${dateCompact}`;
 }
 
 function buildUniqueId(baseNewId: string, existingIds: Set<string>): string {
@@ -192,6 +250,8 @@ export interface UpdateOptions {
   todoPath: string;
   ref: TodoTxtSourceRef;
   now?: Date;
+  /** Source timezone for hour-unit recurrence wall-clock math. Defaults to UTC. */
+  timezone?: string;
 }
 
 export async function withLock<T>(lockPath: string, fn: () => T | Promise<T>): Promise<T> {
@@ -238,6 +298,7 @@ function buildRecurResult(
   originalLine: string,
   ref: TodoTxtSourceRef,
   completionDateStr: string,
+  completionWallStr: string,
   now: Date,
 ): RecurResult | undefined {
   const recStr = parsed.metadata["rec"]?.[0];
@@ -260,13 +321,19 @@ function buildRecurResult(
   const oldDue = parsed.metadata["due"]?.[0];
   const oldT = parsed.metadata["t"]?.[0];
 
-  // due: advances from old due (strict) or completion date (normal)
+  // due: advances from old due (strict) or completion date (normal). Hour
+  // units never advance due: — validate() rejects the combination, and a line
+  // that bypassed verify carries its due forward unchanged rather than
+  // feeding an hour recurrence into date-only math.
   /* v8 ignore next @preserve -- oldDue undefined with rec: is unusual; callers typically pair rec: with due: */
   const dueBase = rec.strict ? (oldDue ?? completionDateStr) : completionDateStr;
-  /* v8 ignore next @preserve -- oldDue undefined means skip due advancement */
-  const newDue = oldDue === undefined ? undefined : advanceDate(dueBase, rec);
-  // t: always advances from its own current value by the same period
-  const newT = oldT === undefined ? undefined : advanceThreshold(oldT, rec);
+  let newDue: string | undefined;
+  if (oldDue !== undefined) {
+    newDue = rec.unit === "h" ? oldDue : advanceDate(dueBase, rec);
+  }
+  // t: advances from its own current value by the same period (hour units:
+  // see advanceThreshold for strict vs non-strict base)
+  const newT = oldT === undefined ? undefined : advanceThreshold(oldT, rec, completionWallStr);
 
   // Compute new date for id advancement: prefer due:, then t:, so ids stay
   // schedule-aligned for t:-only recurring tasks. Slice to the date part —
@@ -341,8 +408,17 @@ export async function updateTaskStatus(
 
     if (newStatus === "done") {
       const completionDateStr = isoDate(now);
+      const completionWallStr = wallClockDateTime(options.timezone ?? "UTC", now);
       updatedLine = buildDoneLine(originalLine, completionDateStr);
-      recurResult = buildRecurResult(parsed, parsedAll, originalLine, ref, completionDateStr, now);
+      recurResult = buildRecurResult(
+        parsed,
+        parsedAll,
+        originalLine,
+        ref,
+        completionDateStr,
+        completionWallStr,
+        now,
+      );
     } else {
       updatedLine = replaceStatusToken(originalLine, newStatus);
     }
@@ -428,9 +504,15 @@ function validateDepsAndDates(
   }
 
   const recVal = parsed.metadata["rec"]?.[0];
-  if (recVal !== undefined && parseRecurrence(recVal) === undefined) {
+  const recParsed = recVal === undefined ? undefined : parseRecurrence(recVal);
+  if (recParsed?.unit === "h" && (tVal === undefined || dueVal !== undefined)) {
     errors.push(
-      `${prefix}: malformed rec: "${recVal}" for task "${id}" (expected e.g. 1d, 1w, +1m)`,
+      `${prefix}: hourly rec: "${recVal}" for task "${id}" requires a t: threshold and is incompatible with due:`,
+    );
+  }
+  if (recVal !== undefined && recParsed === undefined) {
+    errors.push(
+      `${prefix}: malformed rec: "${recVal}" for task "${id}" (expected e.g. 1d, 1w, +1m, 2h)`,
     );
   }
 }
