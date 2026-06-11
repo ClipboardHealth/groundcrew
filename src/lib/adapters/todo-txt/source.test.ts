@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -11,12 +11,14 @@ import type { TodoTxtSourceRef } from "./normalizer.ts";
 function makeAdapterContext(options: {
   defaultAgent: string;
   definitions: ResolvedConfig["agents"]["definitions"];
+  knownRepositories?: string[];
 }): AdapterContext {
-  const { defaultAgent, definitions } = options;
+  const { defaultAgent, definitions, knownRepositories = ["ClipboardHealth/api"] } = options;
   return {
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- partial config sufficient for source tests
     globalConfig: {
       agents: { default: defaultAgent, definitions },
+      workspace: { knownRepositories },
     } as unknown as ResolvedConfig,
   };
 }
@@ -156,7 +158,7 @@ describe("TodoTxtTaskSource", () => {
 
     expect(created?.id).toBe("todo:gc-20260608-001");
     expect(readFileSync(tmp.todoPath, "utf8")).toBe(
-      "(A) Fix cancellation retry race +marketplace @backend id:GC-20260608-001 repo:ClipboardHealth/api agent:codex status:todo\n",
+      "Fix cancellation retry race +marketplace @backend id:GC-20260608-001 repo:ClipboardHealth/api agent:codex status:todo\n",
     );
     expect(readFileSync(path.join(tmp.tasksDir, "GC-20260608-001.md"), "utf8")).toBe(
       "Investigate retry handling.\n",
@@ -170,7 +172,7 @@ describe("TodoTxtTaskSource", () => {
       "\nTask outside sequence id:OTHER-1 agent:codex status:todo\nNo id task agent:codex status:todo\nNonnumeric sequence id:GC-20260608-ABC agent:codex status:todo\nExisting task id:GC-20260608-001 agent:codex status:todo\nLower sequence id:GC-20260608-000 agent:codex status:todo",
     );
 
-    const source = makeSource(tmp);
+    const source = makeSource(tmp, "ClipboardHealth/api");
     const created = await source.createTask?.({
       title: "Generated task",
       agent: "codex",
@@ -181,8 +183,9 @@ describe("TodoTxtTaskSource", () => {
     });
 
     expect(created?.id).toBe("todo:gc-20260608-002");
+    expect(created?.repository).toBe("ClipboardHealth/api");
     expect(readFileSync(tmp.todoPath, "utf8")).toContain(
-      "\n(A) Generated task id:GC-20260608-002 agent:codex status:todo\n",
+      "\nGenerated task id:GC-20260608-002 agent:codex status:todo\n",
     );
     expect(readFileSync(path.join(tmp.tasksDir, "GC-20260608-002.md"), "utf8")).toBe(
       "Generated task\n",
@@ -194,7 +197,7 @@ describe("TodoTxtTaskSource", () => {
     writeFileSync(promptFile, "Existing prompt.\n", "utf8");
     tmp.writeTodo("");
 
-    const source = makeSource(tmp);
+    const source = makeSource(tmp, "ClipboardHealth/api");
     await source.createTask?.({
       title: "Prompt file task",
       agent: "claude",
@@ -218,7 +221,7 @@ describe("TodoTxtTaskSource", () => {
   it("createTask accepts hourly recurrence", async () => {
     tmp.writeTodo("");
 
-    const source = makeSource(tmp);
+    const source = makeSource(tmp, "ClipboardHealth/api");
     await source.createTask?.({
       title: "Hourly sweep",
       agent: "claude",
@@ -234,7 +237,7 @@ describe("TodoTxtTaskSource", () => {
   });
 
   it("creates the todo file when it does not exist", async () => {
-    const source = makeSource(tmp);
+    const source = makeSource(tmp, "ClipboardHealth/api");
 
     await source.createTask?.({
       title: "No existing todo",
@@ -247,11 +250,72 @@ describe("TodoTxtTaskSource", () => {
     });
 
     expect(readFileSync(tmp.todoPath, "utf8")).toBe(
-      "(A) No existing todo id:NO-FILE-1 agent:codex status:todo\n",
+      "No existing todo id:NO-FILE-1 agent:codex status:todo\n",
     );
     expect(readFileSync(path.join(tmp.tasksDir, "NO-FILE-1.md"), "utf8")).toBe(
       "No existing todo\n",
     );
+  });
+
+  it("rejects task creation without a repository or defaultRepository", async () => {
+    tmp.writeTodo("");
+    const source = makeSource(tmp);
+
+    await expect(
+      source.createTask?.({
+        title: "No repository",
+        agent: "codex",
+        id: "NO-REPO",
+        projects: [],
+        contexts: [],
+        dependencies: [],
+        edit: false,
+      }),
+    ).rejects.toThrow("--repo is required");
+
+    expect(readFileSync(tmp.todoPath, "utf8")).toBe("");
+    expect(existsSync(path.join(tmp.tasksDir, "NO-REPO.md"))).toBe(false);
+  });
+
+  it("rejects task creation when the repository is not known", async () => {
+    tmp.writeTodo("");
+    const source = makeSource(tmp);
+
+    await expect(
+      source.createTask?.({
+        title: "Unknown repository",
+        agent: "codex",
+        repository: "unknown/repo",
+        id: "UNKNOWN-REPO",
+        projects: [],
+        contexts: [],
+        dependencies: [],
+        edit: false,
+      }),
+    ).rejects.toThrow('repository "unknown/repo" is not in workspace.knownRepositories');
+
+    expect(readFileSync(tmp.todoPath, "utf8")).toBe("");
+    expect(existsSync(path.join(tmp.tasksDir, "UNKNOWN-REPO.md"))).toBe(false);
+  });
+
+  it("rejects task creation when the defaultRepository is not known", async () => {
+    tmp.writeTodo("");
+    const source = makeSource(tmp, "unknown/repo");
+
+    await expect(
+      source.createTask?.({
+        title: "Unknown default repository",
+        agent: "codex",
+        id: "UNKNOWN-DEFAULT-REPO",
+        projects: [],
+        contexts: [],
+        dependencies: [],
+        edit: false,
+      }),
+    ).rejects.toThrow('repository "unknown/repo" is not in workspace.knownRepositories');
+
+    expect(readFileSync(tmp.todoPath, "utf8")).toBe("");
+    expect(existsSync(path.join(tmp.tasksDir, "UNKNOWN-DEFAULT-REPO.md"))).toBe(false);
   });
 
   it("rethrows unexpected todo file read errors while creating a task", async () => {
@@ -262,6 +326,7 @@ describe("TodoTxtTaskSource", () => {
       source.createTask?.({
         title: "Directory todo path",
         agent: "codex",
+        repository: "ClipboardHealth/api",
         id: "DIR-TODO",
         projects: [],
         contexts: [],
@@ -275,49 +340,83 @@ describe("TodoTxtTaskSource", () => {
     {
       name: "duplicate id",
       existing: "id:DUP-1 agent:codex status:todo Existing\n",
-      input: { title: "Duplicate", agent: "codex", id: "DUP-1" },
+      input: { title: "Duplicate", agent: "codex", repository: "ClipboardHealth/api", id: "DUP-1" },
       message: "already exists",
     },
     {
       name: "empty title",
       existing: "",
-      input: { title: "   ", agent: "codex", id: "EMPTY-TITLE" },
+      input: { title: "   ", agent: "codex", repository: "ClipboardHealth/api", id: "EMPTY-TITLE" },
       message: "title is required",
     },
     {
       name: "multiline title",
       existing: "",
-      input: { title: "Line one\nLine two", agent: "codex", id: "MULTILINE-TITLE" },
+      input: {
+        title: "Line one\nLine two",
+        agent: "codex",
+        repository: "ClipboardHealth/api",
+        id: "MULTILINE-TITLE",
+      },
       message: "single line",
     },
     {
       name: "path-like id",
       existing: "",
-      input: { title: "Bad id", agent: "codex", id: "../outside" },
+      input: {
+        title: "Bad id",
+        agent: "codex",
+        repository: "ClipboardHealth/api",
+        id: "../outside",
+      },
       message: "filename-safe",
     },
     {
       name: "bad priority",
       existing: "",
-      input: { title: "Bad priority", agent: "codex", id: "BAD-PRI", priority: "AA" },
+      input: {
+        title: "Bad priority",
+        agent: "codex",
+        repository: "ClipboardHealth/api",
+        id: "BAD-PRI",
+        priority: "AA",
+      },
       message: "priority",
     },
     {
       name: "bad project token",
       existing: "",
-      input: { title: "Bad project", agent: "codex", id: "BAD-PROJ", projects: ["bad token"] },
+      input: {
+        title: "Bad project",
+        agent: "codex",
+        repository: "ClipboardHealth/api",
+        id: "BAD-PROJ",
+        projects: ["bad token"],
+      },
       message: "project",
     },
     {
       name: "bad due date",
       existing: "",
-      input: { title: "Bad due", agent: "codex", id: "BAD-DUE", due: "tomorrow" },
+      input: {
+        title: "Bad due",
+        agent: "codex",
+        repository: "ClipboardHealth/api",
+        id: "BAD-DUE",
+        due: "tomorrow",
+      },
       message: "due date",
     },
     {
       name: "bad recurrence",
       existing: "",
-      input: { title: "Bad rec", agent: "codex", id: "BAD-REC", recurrence: "weekly" },
+      input: {
+        title: "Bad rec",
+        agent: "codex",
+        repository: "ClipboardHealth/api",
+        id: "BAD-REC",
+        recurrence: "weekly",
+      },
       message: "recurrence",
     },
     {
@@ -326,6 +425,7 @@ describe("TodoTxtTaskSource", () => {
       input: {
         title: "Too many prompts",
         agent: "codex",
+        repository: "ClipboardHealth/api",
         id: "PROMPT-CONFLICT",
         promptFile: "prompt.md",
         description: "Prompt",
@@ -357,6 +457,7 @@ describe("TodoTxtTaskSource", () => {
       source.createTask?.({
         title: "Edit task",
         agent: "codex",
+        repository: "ClipboardHealth/api",
         id: "EDIT-1",
         projects: [],
         contexts: [],
@@ -376,6 +477,7 @@ describe("TodoTxtTaskSource", () => {
       source.createTask?.({
         title: "Editor fallback",
         agent: "codex",
+        repository: "ClipboardHealth/api",
         id: "EDITOR-FALLBACK",
         projects: [],
         contexts: [],
@@ -395,6 +497,7 @@ describe("TodoTxtTaskSource", () => {
       source.createTask?.({
         title: "No editor",
         agent: "codex",
+        repository: "ClipboardHealth/api",
         id: "NO-EDITOR",
         projects: [],
         contexts: [],
@@ -414,6 +517,7 @@ describe("TodoTxtTaskSource", () => {
       source.createTask?.({
         title: "Editor fails",
         agent: "codex",
+        repository: "ClipboardHealth/api",
         id: "EDITOR-FAIL",
         projects: [],
         contexts: [],

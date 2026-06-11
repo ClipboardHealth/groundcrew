@@ -12,6 +12,7 @@ import {
   type TaskSource,
   toCanonicalId,
 } from "../../taskSource.ts";
+import { formatKnownRepositories } from "../../repositoryValidation.ts";
 import { readEnvironmentVariable } from "../../util.ts";
 import { isActiveForFetch, normalizeToIssue, type TodoTxtSourceRef } from "./normalizer.ts";
 import { DATE_RE, getMetadataFirst, parseAllLines, type ParsedTodoLine } from "./parser.ts";
@@ -19,6 +20,13 @@ import type { TodoTxtAdapterConfig } from "./schema.ts";
 import { copyPromptFile, updateTaskStatus, validateTodoFile, withLock } from "./writeback.ts";
 
 const RECURRENCE_RE = /^\+?\d+[dwmyh]$/;
+
+interface AssertCreateRepositoryArguments {
+  defaultRepository: string | undefined;
+  input: CreateTaskInput;
+  knownRepositories: readonly string[];
+  sourceName: string;
+}
 
 function readPromptFile(promptPath: string): string | undefined {
   try {
@@ -205,6 +213,23 @@ function assertNewId(id: string, parsedAll: ReturnType<typeof parseAllLines>): v
   }
 }
 
+function assertCreateRepository(arguments_: AssertCreateRepositoryArguments): void {
+  const { defaultRepository, input, knownRepositories, sourceName } = arguments_;
+  const repository = input.repository ?? defaultRepository;
+  /* v8 ignore else @preserve -- both missing and resolved repository paths are covered; full-suite V8 coverage remaps the synthetic else inconsistently. */
+  if (repository === undefined) {
+    throw new Error(
+      `todo-txt: --repo is required unless source "${sourceName}" configures defaultRepository. Known repositories: ${formatKnownRepositories(knownRepositories)}`,
+    );
+  }
+  /* v8 ignore else @preserve -- both known and unknown repository paths are covered; full-suite V8 coverage remaps the synthetic else inconsistently. */
+  if (!knownRepositories.includes(repository)) {
+    throw new Error(
+      `todo-txt: repository "${repository}" is not in workspace.knownRepositories: ${formatKnownRepositories(knownRepositories)}`,
+    );
+  }
+}
+
 function buildTodoLine(id: string, input: CreateTaskInput): string {
   const title = input.title.trim();
   /* v8 ignore else @preserve -- no explicit else branch; full-suite V8 coverage remaps the synthetic else inconsistently. */
@@ -217,12 +242,14 @@ function buildTodoLine(id: string, input: CreateTaskInput): string {
   }
 
   const tokens: string[] = [];
-  const priority = input.priority ?? "A";
-  /* v8 ignore else @preserve -- no explicit else branch; full-suite V8 coverage remaps the synthetic else inconsistently. */
-  if (!/^[A-Z]$/.test(priority)) {
-    throw new Error("todo-txt: priority must be a single uppercase letter");
+  /* v8 ignore else @preserve -- both priority-present and priority-absent creation paths are covered; full-suite V8 coverage remaps the synthetic else inconsistently. */
+  if (input.priority !== undefined) {
+    /* v8 ignore else @preserve -- no explicit else branch; full-suite V8 coverage remaps the synthetic else inconsistently. */
+    if (!/^[A-Z]$/.test(input.priority)) {
+      throw new Error("todo-txt: priority must be a single uppercase letter");
+    }
+    tokens.push(`(${input.priority})`);
   }
-  tokens.push(`(${priority})`);
   tokens.push(title);
 
   for (const rawProject of input.projects) {
@@ -445,6 +472,12 @@ export function createTodoTxtTaskSource(
         const id = input.id ?? nextGeneratedId(config, parsedAll);
         assertCreateId(id);
         assertNewId(id, parsedAll);
+        assertCreateRepository({
+          defaultRepository: config.defaultRepository,
+          input,
+          knownRepositories: context.globalConfig.workspace.knownRepositories,
+          sourceName,
+        });
 
         const promptPath = path.join(tasksDir, `${id}.md`);
         const promptContent = promptContentFor(input);

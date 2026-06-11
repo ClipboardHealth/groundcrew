@@ -78,7 +78,7 @@ export default {
 };
 ```
 
-Creating a todo task appends a line with `status:todo` as the final meaningful token and writes the prompt to `.tasks/<id>.md`. New todo tasks default to priority `A`; pass `--priority <letter>` to override it. If `--agent` is omitted, the task uses `agent:any`.
+Creating a todo task appends a line with `status:todo` as the final meaningful token and writes the prompt to `.tasks/<id>.md`. Pass `--repo <repo>` unless the source configures `defaultRepository`. Pass `--priority <letter>` to add a todo.txt priority marker. If `--agent` is omitted, the task uses `agent:any`.
 
 ```bash
 crew task create "Fix cancellation retry race" \
@@ -91,7 +91,7 @@ crew task create "Fix cancellation retry race" \
 ```
 
 ```txt
-(A) Fix cancellation retry race +marketplace @backend id:GC-20260608-001 repo:ClipboardHealth/api agent:codex status:todo
+Fix cancellation retry race +marketplace @backend id:GC-20260608-001 repo:ClipboardHealth/api agent:codex status:todo
 ```
 
 For hand-written todo lines, a non-empty title is enough prompt text when `.tasks/<id>.md` is absent. Omit `agent:` to default to `agent:any`:
