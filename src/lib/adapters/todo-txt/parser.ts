@@ -17,6 +17,8 @@ export interface ParsedTodoLine {
 }
 
 export const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+/** Local datetime threshold form for `t:`, seconds optional. */
+export const DATETIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?$/;
 const KEY_VALUE_RE = /^(?<key>[a-zA-Z][a-zA-Z0-9-]*):(?<value>\S+)$/;
 const PRIORITY_RE = /^\((?<priority>[A-Z])\) /;
 const PROJECT_RE = /^\+\S+$/;

@@ -10,7 +10,7 @@ import {
 import path from "node:path";
 
 import { DATE_RE, hashLine, parseAllLines, type ParsedTodoLine } from "./parser.ts";
-import type { TodoTxtSourceRef } from "./normalizer.ts";
+import { isValidThresholdValue, type TodoTxtSourceRef } from "./normalizer.ts";
 
 export interface RecurResult {
   newId: string;
@@ -82,6 +82,15 @@ function advanceDate(dateStr: string, rec: Recurrence): string {
     return addMonths(dateStr, amount);
   }
   return addMonths(dateStr, amount * 12);
+}
+
+// t: may carry a datetime threshold; advance its date part and keep the time
+// component so a recurring task stays scheduled at the same instant of day.
+function advanceThreshold(threshold: string, rec: Recurrence): string {
+  const [datePart, timePart] = threshold.split("T");
+  /* v8 ignore next @preserve -- split always yields a first element */
+  const nextDate = advanceDate(datePart ?? threshold, rec);
+  return timePart === undefined ? nextDate : `${nextDate}T${timePart}`;
 }
 
 function advanceId(id: string, newDate: Date): string {
@@ -257,14 +266,15 @@ function buildRecurResult(
   /* v8 ignore next @preserve -- oldDue undefined means skip due advancement */
   const newDue = oldDue === undefined ? undefined : advanceDate(dueBase, rec);
   // t: always advances from its own current value by the same period
-  const newT = oldT === undefined ? undefined : advanceDate(oldT, rec);
+  const newT = oldT === undefined ? undefined : advanceThreshold(oldT, rec);
 
   // Compute new date for id advancement: prefer due:, then t:, so ids stay
-  // schedule-aligned for t:-only recurring tasks
+  // schedule-aligned for t:-only recurring tasks. Slice to the date part —
+  // t: may carry a datetime.
   const newScheduleDate = newDue ?? newT;
   /* v8 ignore next @preserve -- rec: without due: or t: is unusual; id falls back to completion date */
   const newDateForId =
-    newScheduleDate === undefined ? now : new Date(`${newScheduleDate}T00:00:00Z`);
+    newScheduleDate === undefined ? now : new Date(`${newScheduleDate.slice(0, 10)}T00:00:00Z`);
   const baseNewId = advanceId(ref.id, newDateForId);
   const newId = buildUniqueId(baseNewId, existingIds);
 
@@ -400,13 +410,21 @@ function validateDepsAndDates(
     }
   }
 
-  for (const dateField of ["due", "t"]) {
-    const dateVal = parsed.metadata[dateField]?.[0];
-    if (dateVal !== undefined && !DATE_RE.test(dateVal)) {
-      errors.push(
-        `${prefix}: malformed ${dateField}: date "${dateVal}" for task "${id}" (expected YYYY-MM-DD)`,
-      );
-    }
+  const dueVal = parsed.metadata["due"]?.[0];
+  if (dueVal !== undefined && !DATE_RE.test(dueVal)) {
+    errors.push(
+      `${prefix}: malformed due: date "${dueVal}" for task "${id}" (expected YYYY-MM-DD)`,
+    );
+  }
+
+  // t: also accepts a datetime threshold for sub-day recurring tasks.
+  // Calendar/clock validity is enforced for both forms — a non-calendar value
+  // would otherwise crash rec: advancement during markDone.
+  const tVal = parsed.metadata["t"]?.[0];
+  if (tVal !== undefined && !isValidThresholdValue(tVal)) {
+    errors.push(
+      `${prefix}: malformed t: date "${tVal}" for task "${id}" (expected YYYY-MM-DD or YYYY-MM-DDTHH:MM[:SS])`,
+    );
   }
 
   const recVal = parsed.metadata["rec"]?.[0];

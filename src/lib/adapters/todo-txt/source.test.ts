@@ -819,6 +819,30 @@ describe("TodoTxtTaskSource", () => {
     await expect(source.verify()).rejects.toThrow(/malformed due/);
   });
 
+  it("verify() rejects datetime due: (due stays date-only)", async () => {
+    tmp.writeTodo("id:GC-V4B agent:codex due:2026-06-09T10:00 status:in-progress\n");
+    const source = makeSource(tmp);
+    await expect(source.verify()).rejects.toThrow(/malformed due/);
+  });
+
+  it("verify() accepts datetime t: thresholds", async () => {
+    tmp.writeTodo("id:GC-V4C agent:codex t:2026-06-09T10:00 status:in-progress\n");
+    const source = makeSource(tmp);
+    await expect(source.verify()).resolves.toBeUndefined();
+  });
+
+  it("verify() catches malformed datetime t:", async () => {
+    tmp.writeTodo("id:GC-V4D agent:codex t:2026-06-09T25:00 status:in-progress\n");
+    const source = makeSource(tmp);
+    await expect(source.verify()).rejects.toThrow(/malformed t/);
+  });
+
+  it("verify() catches non-calendar date-only t:", async () => {
+    tmp.writeTodo("id:GC-V4E agent:codex t:2026-99-99 status:in-progress\n");
+    const source = makeSource(tmp);
+    await expect(source.verify()).rejects.toThrow(/malformed t/);
+  });
+
   it("verify() catches malformed rec:", async () => {
     tmp.writeTodo("id:GC-V5 agent:codex rec:bad-recurrence status:in-progress\n");
     const source = makeSource(tmp);
@@ -1311,6 +1335,27 @@ describe("TodoTxtTaskSource", () => {
     expect(recurResult?.newId).toBe("daily-20260609");
     const updated = readFileSync(tmp.todoPath, "utf8");
     expect(updated).toContain("due:2026-06-09");
+  });
+
+  it("markDone with rec:1d advances a datetime t: preserving the time component", async () => {
+    tmp.writeTodo(
+      "id:sweep-20260608 agent:any t:2026-06-08T10:30 rec:1d status:in-progress Recurring sweep\n",
+    );
+    tmp.writeTask("sweep-20260608", "Sweep prompt.");
+
+    const source = makeSource(tmp);
+    const task = await source.resolveOne("sweep-20260608");
+
+    const { updateTaskStatus } = await import("./writeback.ts");
+    const now = new Date("2026-06-08T15:00:00Z");
+    const recurResult = await updateTaskStatus(
+      { todoPath: tmp.todoPath, ref: sourceRef(assertDefined(task, "task")), now },
+      "done",
+    );
+
+    expect(recurResult?.newId).toBe("sweep-20260609");
+    const updated = readFileSync(tmp.todoPath, "utf8");
+    expect(updated).toContain("t:2026-06-09T10:30");
   });
 
   it("verify() passes on file with resolved dep", async () => {

@@ -4,6 +4,7 @@ import { AGENT_ANY } from "../../config.ts";
 import { type Blocker, type CanonicalStatus, type Issue, toCanonicalId } from "../../taskSource.ts";
 import {
   DATE_RE,
+  DATETIME_RE,
   getMetadataAll,
   getMetadataFirst,
   hashLine,
@@ -148,7 +149,9 @@ export function normalizeToIssue(options: NormalizeOptions): Issue | undefined {
   };
 }
 
-export function isActiveForFetch(parsed: ParsedTodoLine, todayIsoDate: string): boolean {
+// `nowIsoLocal` is either `YYYY-MM-DD` (treated as that day's midnight) or
+// `YYYY-MM-DDTHH:MM:SS`, both in the source's configured timezone.
+export function isActiveForFetch(parsed: ParsedTodoLine, nowIsoLocal: string): boolean {
   if (parsed.completed) {
     return false;
   }
@@ -157,22 +160,60 @@ export function isActiveForFetch(parsed: ParsedTodoLine, todayIsoDate: string): 
   }
   const statusValue = getMetadataFirst(parsed, "status");
   if (statusValue === "todo") {
-    return !isDeferredByThreshold(parsed, todayIsoDate);
+    return !isDeferredByThreshold(parsed, nowIsoLocal);
   }
   return statusValue === "in-progress" || statusValue === "in-review";
 }
 
-// Per todo.txt convention, t: (threshold) hides a task until that date.
-// Only not-yet-started tasks defer; in-progress/in-review work must stay
-// visible so the orchestrator keeps tracking it. Malformed t: values are
-// surfaced by validate() and do not block dispatch.
-function isDeferredByThreshold(parsed: ParsedTodoLine, todayIsoDate: string): boolean {
+// Per todo.txt convention, t: (threshold) hides a task until that date — or,
+// with a `YYYY-MM-DDTHH:MM[:SS]` value, until that instant, enabling sub-day
+// cadences for self-rearming recurring tasks. Only not-yet-started tasks
+// defer; in-progress/in-review work must stay visible so the orchestrator
+// keeps tracking it. Malformed t: values are surfaced by validate() and do
+// not block dispatch.
+function isDeferredByThreshold(parsed: ParsedTodoLine, nowIsoLocal: string): boolean {
   const threshold = getMetadataFirst(parsed, "t");
-  if (threshold === undefined || !DATE_RE.test(threshold) || !isCalendarDate(threshold)) {
+  if (threshold === undefined) {
     return false;
   }
-  // ISO YYYY-MM-DD dates order lexicographically
-  return threshold > todayIsoDate;
+  if (DATE_RE.test(threshold) && isCalendarDate(threshold)) {
+    // ISO YYYY-MM-DD dates order lexicographically
+    return threshold > nowIsoLocal.slice(0, 10);
+  }
+  if (
+    DATETIME_RE.test(threshold) &&
+    isCalendarDate(threshold.slice(0, 10)) &&
+    isClockTime(threshold.slice(11))
+  ) {
+    const nowDateTime = nowIsoLocal.length > 10 ? nowIsoLocal : `${nowIsoLocal}T00:00:00`;
+    // Equal-length ISO datetime strings order lexicographically
+    return padSeconds(threshold) > padSeconds(nowDateTime);
+  }
+  return false;
+}
+
+function padSeconds(dateTime: string): string {
+  return dateTime.length === 16 ? `${dateTime}:00` : dateTime;
+}
+
+// Format + calendar (+ clock) validity for both threshold forms. Shared with
+// writeback's validate() so verify() flags what fetch would ignore — and what
+// would otherwise crash rec: advancement (a non-calendar date survives the
+// format-only regex but produces an Invalid Date in advanceDate).
+export function isValidThresholdValue(value: string): boolean {
+  if (DATE_RE.test(value)) {
+    return isCalendarDate(value);
+  }
+  return (
+    DATETIME_RE.test(value) && isCalendarDate(value.slice(0, 10)) && isClockTime(value.slice(11))
+  );
+}
+
+// DATETIME_RE is format-only; reject impossible clock values like 25:00 so
+// they surface as malformed (visible) instead of deferring forever.
+function isClockTime(value: string): boolean {
+  const [hours, minutes, seconds = "00"] = value.split(":");
+  return Number(hours) <= 23 && Number(minutes) <= 59 && Number(seconds) <= 59;
 }
 
 // DATE_RE is format-only; non-calendar values like 2026-99-99 would compare
