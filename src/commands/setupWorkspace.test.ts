@@ -720,8 +720,6 @@ describe(setupWorkspace, () => {
   });
 
   it("wraps the agent command with Safehouse and runs the default prepareWorktree hook", async () => {
-    vi.stubEnv("NPM_TOKEN", "");
-    vi.stubEnv("BUF_TOKEN", "");
     detectHostMock.mockResolvedValue(host());
     const config = {
       ...makeConfig({
@@ -754,15 +752,14 @@ describe(setupWorkspace, () => {
     expect(launchScript).toContain("npm ci");
     expect(launchScript).not.toContain(".groundcrew/setup.sh");
     // Both wraps grant the worktree root and git common dir so git works in the
-    // prepareWorktree hook and the agent. The grant flag precedes the wrapped
-    // command (no build secrets are set in this test, so no --env-pass follows it).
-    const addDirsFlag = "--add-dirs='/work/repo-a-team-1:/tmp/groundcrew-team-1-x/.git'";
-    expect(launchScript).toContain(
-      `/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance' ${addDirsFlag} sh -c`,
-    );
+    // prepareWorktree hook and the agent. The grant flag precedes the wrapped command;
+    // optional flags (e.g. --env-pass from ambient build secrets) may appear between them.
+    const addDirsPattern = `--add-dirs='/work/repo-a-team-1:/tmp/groundcrew-team-1-x/\\.git'`;
+    const safehouseWithDirs = `safehouse-clearance' ${addDirsPattern}`;
+    expect(launchScript).toMatch(new RegExp(`${safehouseWithDirs}(?: --\\S+)* sh -c`));
     // The agent runs inside the wrap (after prepareWorktree), so the prompt is the sh -c arg.
-    expect(launchScript).toContain(
-      `/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance' ${addDirsFlag} "$_safehouse_shim" -c`,
+    expect(launchScript).toMatch(
+      new RegExp(`${safehouseWithDirs}(?: --\\S+)* "\\$_safehouse_shim" -c`),
     );
     expect(launchScript).toContain('_safehouse_shim="$_safehouse_shim_dir/claude"');
     expect(launchScript).not.toContain("--enable=all-agents");
