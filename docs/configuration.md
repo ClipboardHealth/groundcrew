@@ -92,12 +92,39 @@ The "Loaded config from ..." line at startup tells you which config won.
 
 ## Agent Label Routing
 
-- `agent-claude`, `agent-codex`, `agent-<name>` routes to that enabled agent.
+- `agent-claude`, `agent-codex`, `agent-<name>` routes to that enabled launch profile.
 - `agent-any` routes to the agent with the most session headroom, after skipping agents over their session limit or weekly paced budget.
 - Unknown `agent-<name>` falls back to `agents.default`.
 - A built-in `agent-<name>` label whose agent is not enabled falls back to `agents.default` with a warning.
 - No `agent-*` label is ignored by `crew run`. Dispatch on demand with `crew start <TASK>`, which falls back to `agents.default`.
 - Todo tasks blocked by non-terminal blockers are skipped until their blockers reach a terminal status.
+
+Agent names are launch profiles, not just vendor names. To choose a model per
+task, define model-specific profiles and route tasks to them:
+
+```ts
+export default {
+  agents: {
+    default: "claude-fable",
+    definitions: {
+      "claude-fable": {
+        cmd: "claude --model claude-fable-5 --permission-mode auto",
+        color: "#C15F3C",
+        usage: { codexbar: { provider: "claude" } },
+      },
+      "claude-opus": {
+        cmd: "claude --model claude-opus-4-8 --permission-mode auto",
+        color: "#8A4FFF",
+        usage: { codexbar: { provider: "claude" } },
+      },
+    },
+  },
+};
+```
+
+Use the same profile name in every source: Linear label `agent-claude-fable`,
+todo.txt token `agent:claude-fable`, shell JSON `"agent": "claude-fable"`,
+or `crew task create ... --agent claude-fable`.
 
 Status classification uses Linear's default status names `In Progress` and `In Review` to disambiguate multiple `started` workflow states. Statuses that do not match those names fall back to Linear's workflow `state.type` (`unstarted`, `started`, `completed`, `canceled`, `duplicate`), so broad lifecycle classification still works without configuration. Parent issues with children are ignored; sub-issues are the work items.
 
@@ -167,9 +194,9 @@ export default {
 
 Rules:
 
-- `agents.definitions` is the enabled agent set; `crew doctor` only probes listed agents.
+- `agents.definitions` is the enabled launch profile set; `crew doctor` only probes listed profiles.
 - Built-in entries can be `{}` or partial overrides such as `{ cmd: "..." }`.
-- Custom agent names must provide `cmd` and `color`.
+- Custom launch profile names must provide `cmd` and `color`.
 - `agents.default` must point at an enabled agent.
 - Legacy agent entries like `codex: { disabled: true }` are rejected with migration guidance; remove unwanted entries instead.
 
@@ -244,9 +271,9 @@ and hook contract.
 | `orchestrator.pollIntervalMilliseconds`  | `120_000`            | Poll interval in `--watch` mode.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `orchestrator.sessionLimitPercentage`    | `85`                 | Number in `(0, 100]`. An agent whose codexbar session window exceeds this percentage is skipped that tick. Agents are also skipped when codexbar reports weekly usage over the current weekly paced budget.                                                                                                                                                                                                                                                                                                                 |
 | `agents.default`                         | `"claude"`           | Tiebreak for `agent-any` resolution and fallback for explicit but unknown `agent-*` labels. Also used by `crew start <TASK>` for unlabeled tasks. `crew run` ignores unlabeled tasks and does not apply this default. Must exist in `agents.definitions`. If you enable only `codex`, set `default: "codex"`.                                                                                                                                                                                                               |
-| `agents.definitions`                     | **required**         | Enabled agent set. Built-in keys (`claude`, `codex`) can use `{}` to opt into the shipped preset. Custom agent names must provide `cmd` and `color`.                                                                                                                                                                                                                                                                                                                                                                        |
-| `agents.definitions.<name>.cmd`          | preset for built-ins | Shell command launched for the agent. Required for custom agents. Runs in the worktree through the resolved `local.runner`. `{{worktree}}` is replaced before launch; `{{sandbox}}` expands to the sbx sandbox name under the sdx runner and an empty string otherwise.                                                                                                                                                                                                                                                     |
-| `agents.definitions.<name>.color`        | preset for built-ins | Color for the workspace status pill (cmux only; tmux and zellij silently drop it). Required for custom agents.                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `agents.definitions`                     | **required**         | Enabled launch profile set. Built-in keys (`claude`, `codex`) can use `{}` to opt into the shipped preset. Custom profile names must provide `cmd` and `color`; use custom profiles such as `claude-fable` and `claude-opus` to select model-specific commands per task.                                                                                                                                                                                                                                                    |
+| `agents.definitions.<name>.cmd`          | preset for built-ins | Shell command launched for the agent. Required for custom profiles. Runs in the worktree through the resolved `local.runner`. `{{worktree}}` is replaced before launch; `{{sandbox}}` expands to the sbx sandbox name under the sdx runner and an empty string otherwise.                                                                                                                                                                                                                                                   |
+| `agents.definitions.<name>.color`        | preset for built-ins | Color for the workspace status pill (cmux only; tmux and zellij silently drop it). Required for custom profiles.                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `agents.definitions.<name>.usage`        | preset for built-ins | If set, codexbar usage is fetched for this agent and gated by `sessionLimitPercentage` plus the weekly paced budget when codexbar exposes a weekly window. When `usage.codexbar.source` is omitted, groundcrew uses `oauth` for Codex/Claude on macOS, `auto` for other macOS providers, and `cli` elsewhere. Set to `{ disabled: true }` to disable usage gating while keeping the agent enabled.                                                                                                                          |
 | `agents.definitions.<name>.sandbox`      | optional             | Docker Sandboxes binding for the agent. Required at launch when `local.runner` resolves to `sdx`. Field: `agent` (required sbx agent name). Groundcrew assumes the `groundcrew-<agent>` sandbox already exists.                                                                                                                                                                                                                                                                                                             |
 | `agents.definitions.<name>.preLaunch`    | optional             | Host-only shell snippet run before the agent exec and outside Safehouse/sdx. Exports survive into the launch shell; under the default `safehouse` runner they are only forwarded to the agent when listed via `preLaunchEnv` or when `cmd` includes its own `safehouse --env-pass=NAMES`. `{{worktree}}` is substituted. A non-zero exit aborts launch. Not supported when `local.runner` resolves to `sdx` in v1.                                                                                                          |

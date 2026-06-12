@@ -7,7 +7,7 @@
 ```bash
 crew task list
 crew task list --source todo --status todo --unblocked
-crew task list --agent codex --repo ClipboardHealth/api --json
+crew task list --agent claude-fable --repo ClipboardHealth/api --json
 ```
 
 `crew task get <task-id>` prints one normalized task. Canonical IDs such as `todo:GC-20260608-001` route directly to the named source. Natural IDs can be resolved with `--source <name>` or, when unique, by searching all configured sources. If more than one source matches, the command fails and asks for a canonical ID or `--source`.
@@ -23,7 +23,7 @@ crew task get todo:GC-20260608-001 --prompt
 ```bash
 crew task create "Fix cancellation retry race" \
   --source todo \
-  --agent codex \
+  --agent claude-fable \
   --repo ClipboardHealth/api \
   --project marketplace \
   --context backend \
@@ -35,7 +35,7 @@ Linear creation creates a Todo issue assigned to the current Linear API viewer, 
 ```bash
 crew task create "Fix cancellation retry race" \
   --source linear \
-  --agent codex \
+  --agent claude-fable \
   --team ENG \
   --repo ClipboardHealth/api \
   --description "Investigate retry handling."
@@ -70,7 +70,7 @@ done and schedules the next `status:todo` recurrence itself.
 ```bash
 crew task create "Run flaky triage sweep" \
   --source todo \
-  --agent codex \
+  --agent claude-fable \
   --repo ClipboardHealth/groundcrew \
   --id flaky-triage-1 \
   --rec 2h \
