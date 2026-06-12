@@ -17,6 +17,28 @@ calls with a subcommand per operation:
 - [`jira` CLI](https://github.com/ankitpokhrel/jira-cli) — `brew install ankitpokhrel/jira-cli/jira-cli`, then `jira init`.
 - [`jq`](https://jqlang.github.io/jq/) — `brew install jq`.
 
+### What `jira init` sets up
+
+`jira init` is a one-time wizard that writes `~/.config/.jira/.config.yml` — the
+non-secret connection details every `jira` command (and therefore `jira.sh`)
+relies on. It prompts for:
+
+- **Installation** (`Cloud` vs. on-prem Server/Data Center) and the **server
+  URL** the CLI talks to.
+- Your **login** email and **auth type** (`basic` = email + API token on Cloud).
+- A **default project** and **board**. The default project matters here: the
+  `list` JQL has no `project = …` clause, so it implicitly scopes to whatever
+  project `jira init` selected.
+
+It also introspects your instance and caches every custom-field definition, so
+the config file can be large (hundreds of KB) — that is expected.
+
+Note that `jira init` does **not** store the API token. jira-cli reads the token
+from the OS keyring or the `JIRA_API_TOKEN` environment variable; this source
+supplies it via the latter from a gitignored file (see [Setup](#setup) step 2).
+So `jira init` owns the connection (server, login, project) and `jira.sh` layers
+the token on per invocation.
+
 ## Setup
 
 1. **Install the script** where your config references it:
