@@ -45,7 +45,7 @@ the token on per invocation.
 
    ```bash
    mkdir -p ~/.config/groundcrew
-   cp examples/jira/jira.sh ~/.config/groundcrew/jira.sh
+   cp task-sources/jira/jira.sh ~/.config/groundcrew/jira.sh
    chmod +x ~/.config/groundcrew/jira.sh
    ```
 
