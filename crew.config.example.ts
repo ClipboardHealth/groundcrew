@@ -52,13 +52,24 @@ export default {
   },
   agents: {
     default: "claude",
-    // `definitions` is the enabled agent set. Built-in keys can use `{}` to
-    // opt into the shipped command/color/usage preset. Add `codex: {}` if you
-    // want both shipped agents, or add a custom entry and tag tasks with
-    // `agent-<name>`.
+    // `definitions` is the enabled launch profile set. Built-in keys can use
+    // `{}` to opt into the shipped command/color/usage preset. Add
+    // `codex: {}` if you want both shipped agents. Agent names are launch
+    // profiles: add custom entries such as `claude-fable` or `claude-opus` to
+    // pin a model per task, then tag tasks with `agent-<name>`.
     definitions: {
       claude: {},
       // codex: {},
+      // "claude-fable": {
+      //   cmd: "claude --model claude-fable-5 --permission-mode auto",
+      //   color: "#C15F3C",
+      //   usage: { codexbar: { provider: "claude" } },
+      // },
+      // "claude-opus": {
+      //   cmd: "claude --model claude-opus-4-8 --permission-mode auto",
+      //   color: "#8A4FFF",
+      //   usage: { codexbar: { provider: "claude" } },
+      // },
       // cursor: {
       //   cmd: "cursor-agent",
       //   color: "#929292",

@@ -69,9 +69,14 @@ crew run --watch
 
 Linear works out of the box: assign tasks to yourself and add an `agent-*` label.
 
-- `agent-claude`, `agent-codex`, or `agent-<name>` routes to that agent.
+- `agent-claude`, `agent-codex`, or `agent-<name>` routes to that enabled launch profile.
 - `agent-any` routes to the enabled agent with the most session headroom, after skipping agents over their session limit or weekly paced budget.
 - Tasks without an `agent-*` label are ignored by `crew run`; dispatch one manually with `crew start <TASK>`.
+
+Agent names are launch profiles, so you can use them to pick model tiers. For example,
+define `claude-fable` with `claude --model claude-fable-5 --permission-mode auto`
+and `claude-opus` with `claude --model claude-opus-4-8 --permission-mode auto`,
+then label tasks with `agent-claude-fable` or `agent-claude-opus`.
 
 Groundcrew scans `workspace.knownRepositories` to infer which repo a task belongs to.
 

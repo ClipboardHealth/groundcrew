@@ -53,7 +53,7 @@ state is expected or explicitly allowed.
     "description": "Task body",
     "status": "todo",
     "repository": "your-org/your-repo",
-    "model": "claude",
+    "agent": "claude-fable",
     "assignee": "Alice",
     "updatedAt": "2026-05-22T15:00:00Z",
     "blockers": [{ "id": "JIRA-122", "title": "Schema migration", "status": "done" }],
@@ -63,7 +63,7 @@ state is expected or explicitly allowed.
 ]
 ```
 
-Allowed `status` values are `todo`, `in-progress`, `in-review`, `done`, and `other`. Use `null` for `repository` or `model` when a task should not be groundcrew-eligible. `hasMoreBlockers` is optional and defaults to `false`; `sourceRef` is opaque data that groundcrew passes back to your writeback command.
+Allowed `status` values are `todo`, `in-progress`, `in-review`, `done`, and `other`. Omit `repository` or `agent` when a task should not be groundcrew-eligible. `hasMoreBlockers` is optional and defaults to `false`; `sourceRef` is opaque data that groundcrew passes back to your writeback command.
 
 ## Todo.txt
 
@@ -89,7 +89,7 @@ Creating a todo task appends a line with `status:todo` as the final meaningful t
 ```bash
 crew task create "Fix cancellation retry race" \
   --source todo \
-  --agent codex \
+  --agent claude-fable \
   --repo ClipboardHealth/api \
   --project marketplace \
   --context backend \
@@ -97,7 +97,7 @@ crew task create "Fix cancellation retry race" \
 ```
 
 ```txt
-Fix cancellation retry race +marketplace @backend id:GC-20260608-001 repo:ClipboardHealth/api agent:codex status:todo
+Fix cancellation retry race +marketplace @backend id:GC-20260608-001 repo:ClipboardHealth/api agent:claude-fable status:todo
 ```
 
 For hand-written todo lines, a non-empty title is enough prompt text when `.tasks/<id>.md` is absent. Omit `agent:` to default to `agent:any`:
@@ -126,7 +126,7 @@ export default {
 ```bash
 crew task create "Fix cancellation retry race" \
   --source linear \
-  --agent codex \
+  --agent claude-fable \
   --repo ClipboardHealth/api \
   --description "Investigate retry handling."
 ```

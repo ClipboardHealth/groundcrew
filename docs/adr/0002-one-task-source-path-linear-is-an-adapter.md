@@ -10,8 +10,8 @@ There is a single path from board state to dispatch: `Source[] → Board → Dis
 
 ## Consequences
 
-- The canonical seam is the `Issue` contract: a source emits `model` and `repository`, or the task is ignored (`isGroundcrewIssue` keys off exactly that). Consumers branch on the canonical `CanonicalStatus` enum, never on a source's native status names.
+- The canonical seam is the `Issue` contract: a source emits `agent` and `repository`, or the task is ignored (`isGroundcrewIssue` keys off exactly that). Consumers branch on the canonical `CanonicalStatus` enum, never on a source's native status names.
 - **Linear-specific** concepts live in the adapter: `agent-*` label parsing, `agent-any` routing, sub-issue/parent detection, assigned-to-viewer + label selection policy.
-- **Canonical** concepts stay in eligibility so every source benefits: blocker classification (sources populate `blockers[]`) and exhausted-model gating (sources pick a `model`).
+- **Canonical** concepts stay in eligibility so every source benefits: blocker classification (sources populate `blockers[]`) and exhausted-agent gating (sources pick an `agent`).
 - This was a pure internal refactor with no user-visible change — Linear keeps working identically — so it carried no migration cost and landed before the breaking v5 cuts.
 - Changing the Linear selection mechanism (assigned + labeled) is now an adapter-local change that does not touch the engine.
