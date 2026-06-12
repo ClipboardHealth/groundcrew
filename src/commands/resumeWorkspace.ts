@@ -168,7 +168,7 @@ export async function resumeWorkspace(
     throw new Error(`Unknown agent: ${context.agent}`);
   }
 
-  const { runner, sandboxName, ensureReady } = await prepareAgentLaunch({
+  const { runner, sandboxName, workspaceKind, ensureReady } = await prepareAgentLaunch({
     config,
     agent: context.agent,
     definition,
@@ -200,6 +200,7 @@ export async function resumeWorkspace(
       workingDir: launchDir,
       secretsFile,
       sandboxName,
+      workspaceKind,
       workerEnvironment: workerEnvironmentForTask(context.completionTaskId),
     }));
     const launchCmd = stageWorkspaceLaunchCommand(stagedPrompt.directory, launchCommand);

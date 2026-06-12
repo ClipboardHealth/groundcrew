@@ -352,6 +352,12 @@ function envPassFlag(names: readonly string[]): string {
   return uniqueNames.length === 0 ? "" : `--env-pass=${uniqueNames.join(",")} `;
 }
 
+export interface SafehouseAgentIntegration {
+  addDirsReadOnly: readonly string[];
+  envPass: readonly string[];
+  commandPreludes: readonly string[];
+}
+
 interface LaunchCommandArguments {
   definition: AgentDefinition;
   promptFile: string;
@@ -423,6 +429,13 @@ interface LaunchCommandArguments {
    * pre-existing behavior). Only consumed by the safehouse wrap.
    */
   safehouseAddDirs?: readonly string[] | undefined;
+  /**
+   * Extra host-terminal integration surface granted only to the Safehouse agent
+   * wrap. The agent may need to execute host shims and reach their sockets
+   * while repo-controlled prepareWorktree hooks should not inherit those paths
+   * or env vars.
+   */
+  safehouseAgentIntegration?: SafehouseAgentIntegration | undefined;
   /**
    * Groundcrew-managed task metadata exposed to the launched worker. Forwarded
    * to the agent process, not the prepareWorktree hook.
@@ -558,7 +571,13 @@ function buildUnwrappedHostLaunchCommand(arguments_: LaunchCommandArguments): st
 function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string {
   const promptDir = path.dirname(arguments_.promptFile);
   const safehouseCommandName = inferAgentCommandName(arguments_.definition.cmd);
-  const { agentCommand, prepareWorktreeCommand } = renderPrepareAndAgentCommand(arguments_);
+  const { agentCommand: rawAgentCommand, prepareWorktreeCommand } =
+    renderPrepareAndAgentCommand(arguments_);
+  const { safehouseAgentIntegration } = arguments_;
+  const agentCommand = [
+    ...(safehouseAgentIntegration?.commandPreludes ?? []),
+    rawAgentCommand,
+  ].join("; ");
 
   // Split --env-pass per wrap: the prepareWorktree wrap only needs build secrets (so
   // `npm install` etc. can authenticate); the agent wrap only needs the
@@ -571,15 +590,21 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
   const agentEnvPassFlag = envPassFlag([
     ...(arguments_.definition.preLaunchEnv ?? []),
     ...workerEnvironmentNames(arguments_.workerEnvironment),
+    ...(safehouseAgentIntegration?.envPass ?? []),
   ]);
   // safehouse reads colon-separated paths from `--add-dirs`; both wraps get the
   // same grant so the prepareWorktree hook and the agent can each reach git.
   // Quote the whole value so shell-special chars survive; the trailing space
   // separates it from the next argv token. See `resolveSafehouseAddDirs` for
   // which paths these are and why.
-  const addDirs = arguments_.safehouseAddDirs ?? [];
-  const safehouseAddDirsFlag =
-    addDirs.length === 0 ? "" : `--add-dirs=${shellSingleQuote(addDirs.join(":"))} `;
+  const safehouseAddDirsFlag = safehousePathListFlag(
+    "--add-dirs",
+    arguments_.safehouseAddDirs ?? [],
+  );
+  const safehouseAgentAddDirsReadOnlyFlag = safehousePathListFlag(
+    "--add-dirs-ro",
+    safehouseAgentIntegration?.addDirsReadOnly ?? [],
+  );
   const safehouseWrapper = safehouseClearanceWrapperCommand();
 
   // Defensive shim+promptDir trap: by the time we arm it, `rm -rf <promptDir>`
@@ -620,9 +645,16 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
     // Running the real launch chain as `sh -c` would make it see `sh`, so use
     // an agent-named symlink to /bin/sh. This preserves per-agent profile
     // selection without enabling every agent profile.
-    `{ ${safehouseWrapper} ${safehouseAddDirsFlag}${agentEnvPassFlag}"$_safehouse_shim" -c ${shellSingleQuote(agentCommand)} sh "$_p"; _safehouse_status=$?; rm -rf "$_safehouse_shim_dir"; trap - EXIT; exit "$_safehouse_status"; }`,
+    `{ ${safehouseWrapper} ${safehouseAddDirsFlag}${safehouseAgentAddDirsReadOnlyFlag}${agentEnvPassFlag}"$_safehouse_shim" -c ${shellSingleQuote(agentCommand)} sh "$_p"; _safehouse_status=$?; rm -rf "$_safehouse_shim_dir"; trap - EXIT; exit "$_safehouse_status"; }`,
   );
   return lines.join(" && ");
+}
+
+function safehousePathListFlag(
+  flagName: "--add-dirs" | "--add-dirs-ro",
+  paths: readonly string[],
+): string {
+  return paths.length === 0 ? "" : `${flagName}=${shellSingleQuote(paths.join(":"))} `;
 }
 
 /**

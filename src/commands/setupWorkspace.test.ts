@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import type * as nodeFs from "node:fs";
 import path from "node:path";
 import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
-import { ensureClearance } from "@clipboard-health/clearance";
+import { ensureClearance, type SafehouseCmuxIntegration } from "@clipboard-health/clearance";
 import type { RunCommandOptions } from "../lib/commandRunner.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
@@ -17,6 +17,7 @@ import type * as utilModule from "../lib/util.ts";
 import { debug, log } from "../lib/util.ts";
 import { WorktreeAlreadyExistsError, type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 import { deleteEnvironmentVariable, setEnvironmentVariable } from "../testHelpers/env.ts";
+import { safehouseCmuxIntegrationFixture } from "../testHelpers/safehouseCmuxIntegration.ts";
 import { emptyTeardownResult } from "../testHelpers/teardownResult.ts";
 import {
   setupWorkspace,
@@ -34,6 +35,10 @@ interface NodeFsMock extends Omit<
   rmSync: ReturnType<typeof vi.fn<typeof rmSync>>;
   writeFileSync: ReturnType<typeof vi.fn<typeof writeFileSync>>;
 }
+
+const resolveSafehouseCmuxIntegrationMock = vi.hoisted(() =>
+  vi.fn<() => SafehouseCmuxIntegration>(),
+);
 
 vi.mock("node:fs", async (importOriginal): Promise<NodeFsMock> => {
   const actual = await importOriginal<typeof nodeFs>();
@@ -58,6 +63,7 @@ vi.mock(import("@clipboard-health/clearance"), async (importOriginal) => {
   return {
     ...actual,
     ensureClearance: vi.fn<typeof ensureClearance>(),
+    resolveSafehouseCmuxIntegration: resolveSafehouseCmuxIntegrationMock,
   };
 });
 type RunCommandMock = (
@@ -378,6 +384,7 @@ describe(setupWorkspace, () => {
     detectHostMock.mockResolvedValue(host());
     createMock.mockImplementation(async () => hostEntry());
     ensureClearanceMock.mockResolvedValue(clearanceResult());
+    resolveSafehouseCmuxIntegrationMock.mockReturnValue(safehouseCmuxIntegrationFixture());
     mkdtempMock.mockReturnValue("/tmp/groundcrew-team-1-x");
     runCommandMock.mockReturnValue("");
     teardownMock.mockResolvedValue(emptyTeardownResult());
@@ -844,8 +851,14 @@ describe(setupWorkspace, () => {
     expect(launchScript).not.toContain("groundcrew prepareWorktree hook exited");
     expect(launchScript).not.toContain(".groundcrew/setup.sh");
     expect(launchScript).toContain(
-      "/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance' --add-dirs='/work/repo-a-team-1:/tmp/groundcrew-team-1-x/.git' --env-pass=GROUNDCREW_TASK_ID,GROUNDCREW_COMPLETE \"$_safehouse_shim\" -c",
+      "/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance' --add-dirs='/work/repo-a-team-1:/tmp/groundcrew-team-1-x/.git'",
     );
+    expect(launchScript).toContain("--add-dirs-ro='/Applications/cmux.app:");
+    expect(launchScript).toContain(
+      "--env-pass=GROUNDCREW_TASK_ID,GROUNDCREW_COMPLETE,CMUX_SURFACE_ID,CMUX_SOCKET_PATH",
+    );
+    expect(launchScript).toContain("export CMUX_CUSTOM_CLAUDE_PATH=/Users/dev/.local/bin/claude");
+    expect(launchScript).toContain('"$_safehouse_shim" -c');
   });
 
   it("wraps the agent in an sbx exec call and skips ensureClearance when runner='sdx'", async () => {
@@ -1762,6 +1775,7 @@ describe(setupWorkspaceCli, () => {
     mkdtempMock.mockReturnValue("/tmp/groundcrew-team-1-x");
     runCommandMock.mockReturnValue(JSON.stringify({ ref: "workspace:1" }));
     loadConfigMock.mockResolvedValue(makeConfig());
+    resolveSafehouseCmuxIntegrationMock.mockReturnValue(safehouseCmuxIntegrationFixture());
     defaultBoard = fakeBoard(
       canonicalLinearIssue({
         naturalId: "team-1",
