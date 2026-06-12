@@ -147,6 +147,12 @@ five. There is no "in-review" category, so review is detected by status _name_:
 - Cloud descriptions are rich text (ADF); the script flattens their text nodes
   into a plain description and prepends a `Repository:`/issue-URL header, since
   groundcrew uses the description as the agent's prompt.
+- Issue comments are appended to that description under a `--- Comments ---`
+  heading (oldest first, each headed by author and timestamp), since `ShellIssue`
+  has no comments field and the description is what the agent sees. Comment text
+  is flattened the same way as the description, so `@mentions` come through as
+  their display text. jira-cli returns only the first page of comments, so a
+  heavily-commented issue may be truncated.
 - Writeback (`move`) uses the native state names from `JIRA_STATE_*`; if a
   transition name does not exist in your workflow, `jira issue move` fails and
   groundcrew surfaces the error.
