@@ -297,6 +297,17 @@ describe(resumeWorkspace, () => {
     expect(lastRecordedRunState().completionTaskId).toBe("linear:team-1");
   });
 
+  it("uses the task id for worker self-completion env when old state lacks a completion task id", async () => {
+    readRunStateMock.mockReturnValue(makeRunState());
+
+    await resumeWorkspace(config, { task: "team-1" });
+
+    const launchScript = stagedLaunchScript();
+    expect(launchScript).toContain("export GROUNDCREW_TASK_ID='team-1'");
+    expect(launchScript).toContain("export GROUNDCREW_COMPLETE='crew task done team-1'");
+    expect(lastRecordedRunState().completionTaskId).toBe("team-1");
+  });
+
   it("falls back to the task id when Linear detail lookup fails during state resume", async () => {
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- resume tests stub only the issue lookup surface.
     getLinearClientMock.mockReturnValue({
