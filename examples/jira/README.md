@@ -61,8 +61,13 @@ the token on per invocation.
    trailing newline or CRLF is fine), and exports `JIRA_API_TOKEN` only into its
    own process — nothing global, and no secret in your config file.
 
-3. **Label your issues** so groundcrew knows where to dispatch them. JIRA labels
-   cannot contain `/`, so the repository slash is encoded as `__`:
+3. **Label your issues** so groundcrew knows what to pick up and where to
+   dispatch it. JIRA labels cannot contain `/`, so the repository slash is
+   encoded as `__`:
+   - `groundcrew` -> opts the issue in. The default JQL fetches only issues
+     carrying this label, so work is dispatched explicitly rather than every
+     open issue being swept up. The label name is just a JQL convention — change
+     the `labels = …` clause in `JIRA_GROUNDCREW_JQL` to use a different name.
    - `repo:Owner__name` -> `repository: "Owner/name"`
    - `agent:<name>` -> `agent: "<name>"`
 
@@ -84,7 +89,7 @@ the token on per invocation.
        "markDone": "~/.config/groundcrew/jira.sh move ${id} \"$JIRA_STATE_DONE\""
      },
      "env": {
-       "JIRA_GROUNDCREW_JQL": "statusCategory != Done",
+       "JIRA_GROUNDCREW_JQL": "statusCategory != Done AND labels = groundcrew",
        "JIRA_REVIEW_PATTERN": "review",
        "JIRA_DEFAULT_AGENT": "claude",
        "JIRA_STATE_IN_PROGRESS": "In Progress",
@@ -103,13 +108,13 @@ the token on per invocation.
 
 The script reads these from the source's `env` block:
 
-| Variable              | Default                              | Purpose                                                                |
-| --------------------- | ------------------------------------ | ---------------------------------------------------------------------- |
-| `JIRA_GROUNDCREW_JQL` | `statusCategory != Done`             | Which issues `list` returns. Omit `ORDER BY` (jira-cli adds its own).  |
-| `JIRA_REVIEW_PATTERN` | `review`                             | Case-insensitive regex; matching status names map to `in-review`.      |
-| `JIRA_DEFAULT_AGENT`  | _(empty -> `null`)_                  | Agent used when an issue has no `agent:` label.                        |
-| `JIRA_TOKEN_FILE`     | `~/.config/groundcrew/jira.token`    | Token file path.                                                       |
-| `JIRA_STATE_*`        | `In Progress` / `In Review` / `Done` | Native JIRA state names used by `move`. Match your project's workflow. |
+| Variable              | Default                                          | Purpose                                                                |
+| --------------------- | ------------------------------------------------ | ---------------------------------------------------------------------- |
+| `JIRA_GROUNDCREW_JQL` | `statusCategory != Done AND labels = groundcrew` | Which issues `list` returns. Omit `ORDER BY` (jira-cli adds its own).  |
+| `JIRA_REVIEW_PATTERN` | `review`                                         | Case-insensitive regex; matching status names map to `in-review`.      |
+| `JIRA_DEFAULT_AGENT`  | _(empty -> `null`)_                              | Agent used when an issue has no `agent:` label.                        |
+| `JIRA_TOKEN_FILE`     | `~/.config/groundcrew/jira.token`                | Token file path.                                                       |
+| `JIRA_STATE_*`        | `In Progress` / `In Review` / `Done`             | Native JIRA state names used by `move`. Match your project's workflow. |
 
 ## Status mapping
 
@@ -125,8 +130,9 @@ five. There is no "in-review" category, so review is detected by status _name_:
 
 ## Notes
 
-- `list` returns at most 100 issues (the `jira` CLI's per-page maximum). Narrow
-  `JIRA_GROUNDCREW_JQL` if you have more eligible issues than that.
+- `list` returns at most 20 issues (the `--paginate 0:20` bound in `jira.sh`).
+  Raise that bound or narrow `JIRA_GROUNDCREW_JQL` if you have more eligible
+  issues than that.
 - A query that matches nothing is the steady state (no issue is ready to
   dispatch). jira-cli treats "no results" as an error and exits non-zero, but
   `list` folds that into an empty array and exits `0`, so the shell adapter sees
