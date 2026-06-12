@@ -273,6 +273,19 @@ describe(resumeWorkspace, () => {
     });
   });
 
+  it("prefers the run-state branch over the task-derived worktree branch", async () => {
+    readRunStateMock.mockReturnValue(makeRunState({ branchName: "jdoe/fix-thing" }));
+    findByTaskMock.mockReturnValue([makeWorktree()]);
+
+    await resumeWorkspace(config, { task: "team-1" });
+
+    expect(writeFileMock).toHaveBeenCalledWith(
+      "/tmp/groundcrew-resume-team-1-x/prompt.txt",
+      expect.stringContaining("Branch: jdoe/fix-thing"),
+    );
+    expect(lastRecordedRunState().branchName).toBe("jdoe/fix-thing");
+  });
+
   it("includes continuation context in the staged prompt", async () => {
     await resumeWorkspace(config, { task: "team-1" });
 

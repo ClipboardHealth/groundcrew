@@ -33,6 +33,7 @@ export function composeAgentLaunch(input: {
   prepareWorktreeCommand?: string | undefined;
   sandboxName?: string | undefined;
   workerEnvironment?: WorkerEnvironment | undefined;
+  omitPromptArgument?: boolean | undefined;
 }): { launchCommand: string; srtSettingsDir: string | undefined } {
   const staged =
     input.runner === "srt"
@@ -56,6 +57,7 @@ export function composeAgentLaunch(input: {
     srtSettingsDir: staged?.directory,
     srtAgentConfigDirEnv: staged?.agentConfigDirEnv,
     workerEnvironment: input.workerEnvironment,
+    omitPromptArgument: input.omitPromptArgument,
     safehouseAddDirs:
       input.runner === "safehouse" ? resolveSafehouseAddDirs(input.worktreeDir) : undefined,
   });
