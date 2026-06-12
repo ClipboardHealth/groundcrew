@@ -121,16 +121,18 @@ export default {
   //   {
   //     kind: "shell",
   //     name: "jira",
+  //     // Install via task-sources/jira (see task-sources/jira/README.md):
+  //     //   cp task-sources/jira/jira.sh ~/.config/groundcrew/jira.sh
   //     // Open local task-store directories for read/write inside the
   //     // safehouse/srt sandbox when this source owns the launched task.
   //     sandboxWritePaths: ["~/plans"],
   //     commands: {
-  //       verify: "jira me",
-  //       fetch: "~/.config/groundcrew/jira-fetch.sh",
-  //       resolveOne: "~/.config/groundcrew/jira-resolve.sh ${id}",
-  //       markInProgress: "jira issue move ${id} 'In Progress'",
+  //       verify: "~/.config/groundcrew/jira.sh verify",
+  //       listTasks: "~/.config/groundcrew/jira.sh list",
+  //       getTask: "~/.config/groundcrew/jira.sh get ${id}",
+  //       markInProgress: "~/.config/groundcrew/jira.sh move ${id} \"$JIRA_STATE_IN_PROGRESS\"",
   //     },
-  //     timeouts: { fetch: 60_000 },
+  //     timeouts: { listTasks: 60_000 },
   //   },
   // ],
   //
