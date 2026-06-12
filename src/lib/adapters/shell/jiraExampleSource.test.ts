@@ -159,7 +159,14 @@ function setup(): Harness {
       "#!/usr/bin/env bash",
       "set -euo pipefail",
       'if [[ "${1:-}" == "me" ]]; then printf "%s" "${JIRA_API_TOKEN:-}" > "$TOKEN_ECHO"; exit 0; fi',
-      'if [[ "${1:-}" == "issue" && "${2:-}" == "list" ]]; then cat "$FIXTURE_LIST"; exit 0; fi',
+      // jira-cli exits non-zero (printing to stderr) when `list` matches nothing
+      // OR on a real error (auth/network). FAKE_LIST_FAIL replays that: its value
+      // is the stderr message, and the fake exits 1 — letting tests drive both
+      // the "no result" and the genuine-failure branches of the script.
+      'if [[ "${1:-}" == "issue" && "${2:-}" == "list" ]]; then',
+      '  if [[ -n "${FAKE_LIST_FAIL:-}" ]]; then echo "$FAKE_LIST_FAIL" >&2; exit 1; fi',
+      '  cat "$FIXTURE_LIST"; exit 0',
+      "fi",
       'if [[ "${1:-}" == "issue" && "${2:-}" == "view" ]]; then',
       '  f="$VIEW_DIR/${3:-}.json"',
       '  [[ -f "$f" ]] || exit 1',
@@ -266,6 +273,25 @@ describe("jira.sh example source", () => {
     expect(eng2?.sourceRef).toStrictEqual({ key: "ENG-2", nativeId: "10002" });
     expect(eng2?.title).toBe("Second");
     expect(eng2?.assignee).toBe("Bob");
+  });
+
+  it("folds jira's no-result exit into an empty array (exit 0)", () => {
+    // The steady state when no issue carries the dispatch label: jira-cli exits
+    // non-zero, but the script must report "no tasks" (empty array, exit 0), not
+    // a fetch failure — otherwise the shell adapter throws on every poll.
+    const { status, stdout } = run(h, ["list"], {
+      FAKE_LIST_FAIL: '✗ No result found for given query in project "ENG"',
+    });
+    expect(status).toBe(0);
+    expect(shellFetchOutputSchema.parse(JSON.parse(stdout))).toStrictEqual([]);
+  });
+
+  it("propagates a real list failure instead of masking it as no tasks", () => {
+    const { status, stderr } = run(h, ["list"], {
+      FAKE_LIST_FAIL: "✗ Received unexpected response: 401 Unauthorized",
+    });
+    expect(status).toBe(1);
+    expect(stderr).toContain("401 Unauthorized");
   });
 
   it("get emits one ShellIssue for a known key", () => {

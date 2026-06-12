@@ -101,8 +101,25 @@ case "${cmd}" in
     # statusCategory), so we read just the keys and enrich each via `issue view`,
     # whose `--raw` is the full REST issue the transform needs. `jq -s` slurps
     # the stream of per-issue objects into one array.
-    jira issue list -q "${LIST_JQL}" --order-by updated --reverse --raw --paginate 0:100 \
-      | jq -r '.[].key' \
+    #
+    # jira-cli exits non-zero (and prints to stderr) when a query matches
+    # nothing. groundcrew's shell adapter treats any non-zero `listTasks` exit
+    # as a fetch failure, so a no-match query (the steady state when no issue
+    # carries the dispatch label) must NOT propagate that exit. Capture the list
+    # separately: fold "no results" into an empty array, but still surface real
+    # failures (auth, network) instead of masking them as "no tasks".
+    list_err="$(mktemp)"
+    trap 'rm -f "${list_err}"' EXIT
+    if ! list_raw="$(jira issue list -q "${LIST_JQL}" --order-by updated --reverse --raw --paginate 0:100 2>"${list_err}")"; then
+      if grep -qiE "no result|no issues" "${list_err}"; then
+        list_raw="[]"
+      else
+        cat "${list_err}" >&2
+        exit 1
+      fi
+    fi
+    printf '%s' "${list_raw:-[]}" \
+      | jq -r 'if type == "array" then .[].key else empty end' \
       | while IFS= read -r key; do
           [[ -n "${key}" ]] || continue
           jira issue view "${key}" --raw 2>/dev/null || true
