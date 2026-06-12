@@ -1890,6 +1890,7 @@ describe(setupWorkspaceCli, () => {
     const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
     expect(launchScript).toContain("export GROUNDCREW_TASK_ID='linear:team-1'");
     expect(launchScript).toContain("export GROUNDCREW_COMPLETE='crew task done linear:team-1'");
+    expect(lastRecordedRunState().completionTaskId).toBe("linear:team-1");
   });
 
   it("passes title and description from the resolved issue as details", async () => {

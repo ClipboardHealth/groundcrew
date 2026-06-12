@@ -286,6 +286,17 @@ describe(resumeWorkspace, () => {
     );
   });
 
+  it("uses the recorded canonical completion task id for worker self-completion env", async () => {
+    readRunStateMock.mockReturnValue(makeRunState({ completionTaskId: "linear:team-1" }));
+
+    await resumeWorkspace(config, { task: "team-1" });
+
+    const launchScript = stagedLaunchScript();
+    expect(launchScript).toContain("export GROUNDCREW_TASK_ID='linear:team-1'");
+    expect(launchScript).toContain("export GROUNDCREW_COMPLETE='crew task done linear:team-1'");
+    expect(lastRecordedRunState().completionTaskId).toBe("linear:team-1");
+  });
+
   it("falls back to the task id when Linear detail lookup fails during state resume", async () => {
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- resume tests stub only the issue lookup surface.
     getLinearClientMock.mockReturnValue({

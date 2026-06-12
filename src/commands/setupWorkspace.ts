@@ -129,6 +129,7 @@ export async function setupWorkspace(
     });
     const secretsFile =
       prepareWorktreeCommand === undefined ? undefined : stageBuildSecrets(promptDir);
+    const completionTaskId = options.completionTaskId ?? task;
     const { launchCommand, srtSettingsDir: stagedSrtSettingsDir } = composeAgentLaunch({
       runner,
       task,
@@ -139,7 +140,7 @@ export async function setupWorkspace(
       secretsFile,
       prepareWorktreeCommand,
       sandboxName,
-      workerEnvironment: workerEnvironmentForTask(options.completionTaskId ?? task),
+      workerEnvironment: workerEnvironmentForTask(completionTaskId),
     });
     srtSettingsDir = stagedSrtSettingsDir;
     const launchCmd = stageWorkspaceLaunchCommand(promptDir, launchCommand);
@@ -164,6 +165,7 @@ export async function setupWorkspace(
       workspaceName: task,
       state: "running",
       title: taskDetails.title,
+      completionTaskId,
       ...(taskDetails.url === undefined ? {} : { url: taskDetails.url }),
     });
 
@@ -186,6 +188,7 @@ export async function setupWorkspace(
       state: "failed-to-launch",
       detail: errorMessage(error),
       title: options.details.title,
+      completionTaskId: options.completionTaskId ?? task,
       ...(options.details.url === undefined ? {} : { url: options.details.url }),
     });
     throw error;
@@ -262,6 +265,7 @@ function recordRunStateBestEffort(arguments_: {
   title: string;
   detail?: string;
   url?: string;
+  completionTaskId: string;
 }): void {
   try {
     recordRunState({
@@ -275,6 +279,7 @@ function recordRunStateBestEffort(arguments_: {
         workspaceName: arguments_.workspaceName,
         state: arguments_.state,
         title: arguments_.title,
+        completionTaskId: arguments_.completionTaskId,
         ...(arguments_.detail === undefined ? {} : { detail: arguments_.detail }),
         ...(arguments_.url === undefined ? {} : { url: arguments_.url }),
       },
