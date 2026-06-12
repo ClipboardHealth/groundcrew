@@ -101,13 +101,19 @@ function makeConfig(workspaceKind: WorkspaceKindSetting = "auto"): ResolvedConfi
   };
 }
 
+const CMUX_LIVENESS_DIR = path.join(tmpdir(), "groundcrew-cmux-liveness-test");
+
 function commonBeforeEach(): void {
   runMock.mockReturnValue("");
   detectHostMock.mockResolvedValue(makeHost());
+  setEnvironmentVariable("GROUNDCREW_CMUX_LIVENESS_DIR", CMUX_LIVENESS_DIR);
+  rmSync(CMUX_LIVENESS_DIR, { recursive: true, force: true });
 }
 
 function commonAfterEach(): void {
   deleteEnvironmentVariable("GROUNDCREW_KEEP_DEAD_WINDOWS");
+  deleteEnvironmentVariable("GROUNDCREW_CMUX_LIVENESS_DIR");
+  rmSync(CMUX_LIVENESS_DIR, { recursive: true, force: true });
   vi.resetAllMocks();
 }
 
@@ -291,6 +297,21 @@ describe("workspaces.open (cmux)", () => {
 
     expect(detectHostMock).toHaveBeenCalledTimes(1);
   });
+
+  it("opens the workspace even when the liveness marker cannot be written (best-effort)", async () => {
+    // A path under /dev/null can't be created, so the marker write fails — open
+    // must still succeed and only log the miss; reboot detection is disabled.
+    setEnvironmentVariable("GROUNDCREW_CMUX_LIVENESS_DIR", "/dev/null/cmux-liveness");
+    runMock.mockReturnValue(JSON.stringify({ ref: "workspace:42" }));
+
+    await expect(
+      workspaces.open(makeConfig(), { name: "TEAM-1", cwd: "/cwd", command: "x" }),
+    ).resolves.toBeUndefined();
+
+    expect(debugMock).toHaveBeenCalledWith(
+      expect.stringContaining("failed to record liveness for TEAM-1"),
+    );
+  });
 });
 
 describe("workspaces.probe (cmux)", () => {
@@ -359,6 +380,53 @@ describe("workspaces.probe (cmux)", () => {
         workspaces: [{ title: "TEAM-1", id: "id-1" }, { title: "TEAM-2" }],
       }),
     );
+    await expect(workspaces.probe(makeConfig())).resolves.toStrictEqual({
+      kind: "ok",
+      names: new Set(["TEAM-1"]),
+    });
+  });
+
+  it("reports a restored cmux workspace as exited when its liveness marker predates the current boot", async () => {
+    // A boot epoch of 0 is decades before any real boot, so it always reads as
+    // "rebooted since open" — the restored-but-empty case `crew resume` must allow.
+    mkdirSync(CMUX_LIVENESS_DIR, { recursive: true });
+    writeFileSync(path.join(CMUX_LIVENESS_DIR, "TEAM-1"), "0");
+    runMock.mockReturnValue(JSON.stringify({ workspaces: [{ title: "TEAM-1", id: "id-1" }] }));
+
+    await expect(workspaces.probe(makeConfig())).resolves.toStrictEqual({
+      kind: "ok",
+      names: new Set(["TEAM-1"]),
+      exitedNames: new Set(["TEAM-1"]),
+    });
+  });
+
+  it("keeps a cmux workspace live when its liveness marker matches the current boot", async () => {
+    const config = makeConfig();
+    // open() stamps the marker with the current boot epoch.
+    runMock.mockReturnValue(JSON.stringify({ ref: "workspace:1" }));
+    await workspaces.open(config, { name: "TEAM-1", cwd: "/cwd", command: "x" });
+
+    runMock.mockReturnValue(JSON.stringify({ workspaces: [{ title: "TEAM-1", id: "id-1" }] }));
+    await expect(workspaces.probe(config)).resolves.toStrictEqual({
+      kind: "ok",
+      names: new Set(["TEAM-1"]),
+    });
+  });
+
+  it("treats a cmux workspace with no liveness marker as live (no record to prove a reboot)", async () => {
+    runMock.mockReturnValue(JSON.stringify({ workspaces: [{ title: "TEAM-9", id: "id-9" }] }));
+
+    await expect(workspaces.probe(makeConfig())).resolves.toStrictEqual({
+      kind: "ok",
+      names: new Set(["TEAM-9"]),
+    });
+  });
+
+  it("treats a cmux workspace with a corrupt liveness marker as live", async () => {
+    mkdirSync(CMUX_LIVENESS_DIR, { recursive: true });
+    writeFileSync(path.join(CMUX_LIVENESS_DIR, "TEAM-1"), "not-a-number");
+    runMock.mockReturnValue(JSON.stringify({ workspaces: [{ title: "TEAM-1", id: "id-1" }] }));
+
     await expect(workspaces.probe(makeConfig())).resolves.toStrictEqual({
       kind: "ok",
       names: new Set(["TEAM-1"]),
