@@ -104,7 +104,7 @@ export default {
   // // Linear adapter. The most common use is `kind: "shell"`, which wires
   // // any external system via command templates that emit/consume JSON.
   // // See the shell adapter's ShellIssue schema for the JSON contract
-  // // `fetch` / `resolveOne` must emit.
+  // // `listTasks` / `getTask` must emit.
   // sources: [
   //   // Optional: explicitly declare Linear only when you need custom status
   //   // names. Omitted fields keep their defaults.
@@ -131,6 +131,7 @@ export default {
   //       listTasks: "~/.config/groundcrew/jira.sh list",
   //       getTask: "~/.config/groundcrew/jira.sh get ${id}",
   //       markInProgress: "~/.config/groundcrew/jira.sh move ${id} \"$JIRA_STATE_IN_PROGRESS\"",
+  //       // Full wiring (markInReview/markDone, env, timeouts): see task-sources/jira/README.md
   //     },
   //     timeouts: { listTasks: 60_000 },
   //   },

@@ -25,7 +25,7 @@
   ],
   "env": {
     "JIRA_STATE_IN_PROGRESS": "In Progress",
-    "JIRA_STATE_IN_REVIEW": "Code Review",
+    "JIRA_STATE_IN_REVIEW": "In Review",
     "JIRA_STATE_DONE": "Done"
   },
   "commands": {
