@@ -2,7 +2,7 @@
 
 /**
  * Fixture-driven test for the committed JIRA shell-source example
- * (`examples/jira/jira.sh`). It does NOT hit a live JIRA: a fake `jira`
+ * (`task-sources/jira/jira.sh`). It does NOT hit a live JIRA: a fake `jira`
  * executable on PATH emits canned payloads, the real script runs via bash + jq,
  * and its stdout is validated against the same Zod schemas the shell adapter
  * applies at runtime. This pins the jq transform (status mapping, label
@@ -23,7 +23,7 @@ import { snapshotEnvironmentVariables } from "../../../testHelpers/env.ts";
 import { shellFetchOutputSchema, shellIssueSchema } from "./schema.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../../../");
-const SCRIPT = path.join(REPO_ROOT, "examples/jira/jira.sh");
+const SCRIPT = path.join(REPO_ROOT, "task-sources/jira/jira.sh");
 
 /** A full JIRA Cloud REST issue, as `jira issue view --raw` returns it. */
 interface JiraIssue {
