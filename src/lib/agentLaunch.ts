@@ -1,5 +1,4 @@
-import { ensureClearance } from "@clipboard-health/clearance";
-import path from "node:path";
+import * as clearance from "@clipboard-health/clearance";
 
 import { clearanceAllowHostsFilesFromEnvironment } from "./clearanceAllowlist.ts";
 import {
@@ -18,10 +17,9 @@ import {
 import { assertLocalRunnerRequirements, resolveLocalRunner } from "./localRunner.ts";
 import { sandboxNameFor } from "./sandboxName.ts";
 import { buildAndStageSrtLaunch, resolveGitCommonDir } from "./srtLaunch.ts";
-import { debug, readEnvironmentVariable, sleep } from "./util.ts";
+import { debug, sleep, writeError } from "./util.ts";
 import { resolveWorkspaceKind, workspaces } from "./workspaces.ts";
 import type { WorkspaceKind } from "./workspaceAdapter.ts";
-import { xdgStatePath } from "./xdg.ts";
 
 /**
  * Stage any srt settings and build the workspace launch command — the assembly
@@ -96,32 +94,6 @@ function resolveSafehouseAddDirs(worktreeDir: string): readonly string[] {
   return [...new Set([worktreeDir, resolveGitCommonDir(worktreeDir)])];
 }
 
-const CMUX_AGENT_ENV_PASS: readonly string[] = [
-  "CMUX_BUNDLED_CLI_PATH",
-  "CMUX_CLAUDE_HOOKS_DISABLED",
-  "CMUX_CLAUDE_WRAPPER_SHIM",
-  "CMUX_CLAUDE_WRAPPER_SHIM_ROOT",
-  "CMUX_CUSTOM_CLAUDE_PATH",
-  "CMUX_PANEL_ID",
-  "CMUX_PRESERVE_CLAUDE_AUTH_SELECTION_ENV",
-  "CMUX_PRESERVE_CLAUDE_AUTH_SELECTION_ENV_KEYS",
-  "CMUX_SOCKET_PATH",
-  "CMUX_SUPPRESS_SUBAGENT_NOTIFICATIONS",
-  "CMUX_SURFACE_ID",
-  "CMUX_TAB_ID",
-  "CMUX_WORKSPACE_ID",
-];
-
-const CMUX_CLAUDE_WRAPPER_PRELUDE = [
-  `if [ -n "\${CMUX_SURFACE_ID:-}" ] && [ -z "\${CMUX_CUSTOM_CLAUDE_PATH:-}" ]; then`,
-  "_groundcrew_cmux_path=;",
-  "_groundcrew_cmux_remaining_path=$PATH:;",
-  `while [ -n "$_groundcrew_cmux_remaining_path" ]; do _groundcrew_cmux_path_entry=\${_groundcrew_cmux_remaining_path%%:*}; _groundcrew_cmux_remaining_path=\${_groundcrew_cmux_remaining_path#*:}; case "$_groundcrew_cmux_path_entry" in */cmux-cli-shims/*|*/cmux-cli-shims) ;; *) _groundcrew_cmux_path="\${_groundcrew_cmux_path:+$_groundcrew_cmux_path:}$_groundcrew_cmux_path_entry" ;; esac; done;`,
-  'if _groundcrew_cmux_real_claude=$(PATH="$_groundcrew_cmux_path" command -v claude 2>/dev/null); then case "$_groundcrew_cmux_real_claude" in */cmux-cli-shims/*|*/cmux-cli-shims/claude) ;; *) export CMUX_CUSTOM_CLAUDE_PATH="$_groundcrew_cmux_real_claude" ;; esac; fi;',
-  "unset _groundcrew_cmux_path _groundcrew_cmux_remaining_path _groundcrew_cmux_path_entry _groundcrew_cmux_real_claude;",
-  "fi",
-].join(" ");
-
 function safehouseAgentIntegrationFor(
   workspaceKind: WorkspaceKind,
   definition: AgentDefinition,
@@ -130,22 +102,87 @@ function safehouseAgentIntegrationFor(
     return undefined;
   }
   const isClaudeAgent = inferAgentCommandName(definition.cmd) === "claude";
+  const cmuxIntegration = resolveClearanceSafehouseCmuxIntegration();
+  if (isClaudeAgent) {
+    warnOnCmuxIntegrationDrift({ unreviewedEnvNames: cmuxIntegration.unreviewedEnvNames });
+  }
+
   return {
-    addDirsReadOnly: resolveCmuxSafehouseReadOnlyDirs(),
-    envPass: CMUX_AGENT_ENV_PASS,
-    commandPreludes: isClaudeAgent ? [CMUX_CLAUDE_WRAPPER_PRELUDE] : [],
+    addDirsReadOnly: cmuxIntegration.addDirsReadOnly,
+    envPass: cmuxIntegration.envPass,
+    commandPreludes: isClaudeAgent ? [cmuxIntegration.claudeCommandPrelude] : [],
   };
 }
 
-function resolveCmuxSafehouseReadOnlyDirs(): readonly string[] {
-  const socketPath = readEnvironmentVariable("CMUX_SOCKET_PATH");
-  return [
-    ...new Set([
-      "/Applications/cmux.app",
-      xdgStatePath("cmux"),
-      ...(socketPath === undefined ? [] : [path.dirname(socketPath)]),
-    ]),
-  ];
+function warnOnCmuxIntegrationDrift(input: { unreviewedEnvNames: readonly string[] }): void {
+  if (input.unreviewedEnvNames.length === 0) {
+    return;
+  }
+
+  writeError(
+    `groundcrew: cmux Claude wrapper references unreviewed env vars: ${input.unreviewedEnvNames.join(", ")}`,
+  );
+  writeError("groundcrew: update @clipboard-health/clearance after reviewing the cmux change.");
+}
+
+interface ClearanceSafehouseCmuxIntegration {
+  addDirsReadOnly: readonly string[];
+  claudeCommandPrelude: string;
+  envPass: readonly string[];
+  unreviewedEnvNames: readonly string[];
+}
+
+type ClearanceSafehouseCmuxResolver = () => unknown;
+
+function resolveClearanceSafehouseCmuxIntegration(): ClearanceSafehouseCmuxIntegration {
+  const resolveSafehouseCmuxIntegration = clearanceSafehouseCmuxResolver();
+  /* v8 ignore next 4 @preserve -- Runtime guard for older clearance versions before the cmux helper exists. */
+  if (resolveSafehouseCmuxIntegration === undefined) {
+    throw new Error(
+      "cmux Safehouse integration requires @clipboard-health/clearance with resolveSafehouseCmuxIntegration. Update @clipboard-health/clearance before using workspaceKind='cmux' with local.runner='safehouse'.",
+    );
+  }
+
+  const integration = resolveSafehouseCmuxIntegration();
+  if (!isClearanceSafehouseCmuxIntegration(integration)) {
+    throw new TypeError(
+      "@clipboard-health/clearance returned an invalid cmux Safehouse integration.",
+    );
+  }
+  return integration;
+}
+
+function clearanceSafehouseCmuxResolver(): ClearanceSafehouseCmuxResolver | undefined {
+  const maybeResolver: unknown = Reflect.get(clearance, "resolveSafehouseCmuxIntegration");
+  /* v8 ignore next 3 @preserve -- Runtime guard for older clearance versions before the cmux helper exists. */
+  if (typeof maybeResolver !== "function") {
+    return undefined;
+  }
+
+  return (): unknown => Reflect.apply(maybeResolver, undefined, []);
+}
+
+function isClearanceSafehouseCmuxIntegration(
+  value: unknown,
+): value is ClearanceSafehouseCmuxIntegration {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const addDirsReadOnly: unknown = Reflect.get(value, "addDirsReadOnly");
+  const claudeCommandPrelude: unknown = Reflect.get(value, "claudeCommandPrelude");
+  const envPass: unknown = Reflect.get(value, "envPass");
+  const unreviewedEnvNames: unknown = Reflect.get(value, "unreviewedEnvNames");
+  return (
+    isStringList(addDirsReadOnly) &&
+    typeof claudeCommandPrelude === "string" &&
+    isStringList(envPass) &&
+    isStringList(unreviewedEnvNames)
+  );
+}
+
+function isStringList(value: unknown): value is readonly string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 
 interface PreparedAgentLaunch {
@@ -222,7 +259,7 @@ async function alreadyReady(): Promise<void> {
 }
 
 async function ensureSafehouseClearance(signal?: AbortSignal): Promise<void> {
-  await ensureClearance({
+  await clearance.ensureClearance({
     envOverrides: {
       CLEARANCE_ALLOW_HOSTS_FILES: clearanceAllowHostsFilesFromEnvironment(),
     },

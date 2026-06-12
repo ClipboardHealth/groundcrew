@@ -17,6 +17,10 @@ import type * as utilModule from "../lib/util.ts";
 import { debug, log } from "../lib/util.ts";
 import { WorktreeAlreadyExistsError, type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 import { deleteEnvironmentVariable, setEnvironmentVariable } from "../testHelpers/env.ts";
+import {
+  safehouseCmuxIntegrationFixture,
+  type SafehouseCmuxIntegrationFixture,
+} from "../testHelpers/safehouseCmuxIntegration.ts";
 import { emptyTeardownResult } from "../testHelpers/teardownResult.ts";
 import {
   setupWorkspace,
@@ -34,6 +38,10 @@ interface NodeFsMock extends Omit<
   rmSync: ReturnType<typeof vi.fn<typeof rmSync>>;
   writeFileSync: ReturnType<typeof vi.fn<typeof writeFileSync>>;
 }
+
+const resolveSafehouseCmuxIntegrationMock = vi.hoisted(() =>
+  vi.fn<() => SafehouseCmuxIntegrationFixture>(),
+);
 
 vi.mock("node:fs", async (importOriginal): Promise<NodeFsMock> => {
   const actual = await importOriginal<typeof nodeFs>();
@@ -58,6 +66,7 @@ vi.mock(import("@clipboard-health/clearance"), async (importOriginal) => {
   return {
     ...actual,
     ensureClearance: vi.fn<typeof ensureClearance>(),
+    resolveSafehouseCmuxIntegration: resolveSafehouseCmuxIntegrationMock,
   };
 });
 type RunCommandMock = (
@@ -378,6 +387,7 @@ describe(setupWorkspace, () => {
     detectHostMock.mockResolvedValue(host());
     createMock.mockImplementation(async () => hostEntry());
     ensureClearanceMock.mockResolvedValue(clearanceResult());
+    resolveSafehouseCmuxIntegrationMock.mockReturnValue(safehouseCmuxIntegrationFixture());
     mkdtempMock.mockReturnValue("/tmp/groundcrew-team-1-x");
     runCommandMock.mockReturnValue("");
     teardownMock.mockResolvedValue(emptyTeardownResult());
@@ -848,12 +858,9 @@ describe(setupWorkspace, () => {
     );
     expect(launchScript).toContain("--add-dirs-ro='/Applications/cmux.app:");
     expect(launchScript).toContain(
-      "--env-pass=GROUNDCREW_TASK_ID,GROUNDCREW_COMPLETE,CMUX_BUNDLED_CLI_PATH",
+      "--env-pass=GROUNDCREW_TASK_ID,GROUNDCREW_COMPLETE,CMUX_SURFACE_ID,CMUX_SOCKET_PATH",
     );
-    expect(launchScript).toContain("CMUX_CLAUDE_WRAPPER_SHIM_ROOT");
-    expect(launchScript).toContain(
-      'export CMUX_CUSTOM_CLAUDE_PATH="$_groundcrew_cmux_real_claude"',
-    );
+    expect(launchScript).toContain("export CMUX_CUSTOM_CLAUDE_PATH=/Users/dev/.local/bin/claude");
     expect(launchScript).toContain('"$_safehouse_shim" -c');
   });
 
@@ -1771,6 +1778,7 @@ describe(setupWorkspaceCli, () => {
     mkdtempMock.mockReturnValue("/tmp/groundcrew-team-1-x");
     runCommandMock.mockReturnValue(JSON.stringify({ ref: "workspace:1" }));
     loadConfigMock.mockResolvedValue(makeConfig());
+    resolveSafehouseCmuxIntegrationMock.mockReturnValue(safehouseCmuxIntegrationFixture());
     defaultBoard = fakeBoard(
       canonicalLinearIssue({
         naturalId: "team-1",
