@@ -36,6 +36,12 @@ if [[ -r "${TOKEN_FILE}" ]]; then
   # trailing newline, CRLF line endings, or stray spaces still authenticates.
   JIRA_API_TOKEN="${JIRA_API_TOKEN#"${JIRA_API_TOKEN%%[![:space:]]*}"}"
   JIRA_API_TOKEN="${JIRA_API_TOKEN%"${JIRA_API_TOKEN##*[![:space:]]}"}"
+  # An empty (or whitespace-only) file would export a blank token and surface a
+  # cryptic auth failure deep in a `jira` call; reject it up front instead.
+  if [[ -z "${JIRA_API_TOKEN}" ]]; then
+    echo "jira token file is empty: ${TOKEN_FILE}" >&2
+    exit 1
+  fi
   export JIRA_API_TOKEN
 fi
 

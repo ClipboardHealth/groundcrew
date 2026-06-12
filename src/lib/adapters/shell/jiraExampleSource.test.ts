@@ -361,4 +361,14 @@ describe("jira.sh example source", () => {
     expect(run(h, ["verify"]).status).toBe(0);
     expect(readFileSync(h.tokenEcho, "utf8")).toBe("fake-token");
   });
+
+  it("fails fast when the token file is present but empty", () => {
+    // A readable-but-empty (or whitespace-only) token file would otherwise
+    // export an empty JIRA_API_TOKEN and surface a cryptic auth failure deep in
+    // a `jira` call; reject it up front with a clear message instead.
+    writeFileSync(h.tokenFile, "  \r\n");
+    const { status, stderr } = run(h, ["verify"]);
+    expect(status).toBe(1);
+    expect(stderr).toContain("empty");
+  });
 });
