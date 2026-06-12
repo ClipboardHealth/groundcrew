@@ -17,7 +17,7 @@ Branch name is `<os-username>-<task-lowercased>`. One task can have at most one 
 The host-side terminal session that runs an agent for one task. Two kinds, one concept:
 
 - **cmux workspace** — a pane/tab in [cmux](https://github.com/clayton-cole/cmux).
-- **tmux workspace** — a window inside a dedicated `groundcrew` tmux session.
+- **tmux workspace** — by default a window inside a shared `groundcrew` tmux session; set `tmux.perTaskMode: "session"` (or the `GROUNDCREW_TMUX_SESSION_PER_TASK=1` env override) for a dedicated session per task (tagged `@groundcrew_managed`) so each task isolates its own windows/panes.
 
 Every provisioned task gets one workspace, named with the task id (`TEAM-220`). Tracked by task — one workspace per task.
 

@@ -27,6 +27,14 @@ When a wrapped agent command fails, the tmux window closes immediately and the e
 
 This applies to the tmux backend only.
 
+## Tmux Workspaces Share One Session By Default
+
+By default the tmux backend runs every task as a window inside one shared `groundcrew` session, so opening your own extra window or split while attached lands it next to every other task. Set `tmux: { perTaskMode: "session" }` in `crew.config.ts` to give each task its own dedicated tmux session named after the task id (cmux-style): attach with `tmux attach -t <task>`, then add windows (tabs) and panes (splits) freely without touching other tasks. Sessions groundcrew creates are tagged with the `@groundcrew_managed` tmux option so `crew status` and cleanup ignore — and never kill — a session of yours that happens to share a task's name. For a one-off run, the `GROUNDCREW_TMUX_SESSION_PER_TASK` env var overrides the config setting (`1` → session, anything else → window).
+
+In this mode a finished task's session disappears once its command exits; combine with `GROUNDCREW_KEEP_DEAD_WINDOWS=1` to keep the dead pane (and therefore the session) around so `crew status` still reports it as `exited` and you can inspect scrollback.
+
+This applies to the tmux backend only.
+
 ## Tasks Stay In-Progress
 
 Groundcrew marks a task `In Progress` when it provisions a workspace. When a PR opens on that worktree branch, the reviewer pass attempts to mark the task `In Review`. Linear's default `In Review` status works out of the box; if your team renamed it, configure `sources: [{ kind: "linear", statuses: { inReview: ["Code Review"] } }]`.

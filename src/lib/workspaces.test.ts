@@ -5,7 +5,7 @@ import path from "node:path";
 import { deleteEnvironmentVariable, setEnvironmentVariable } from "../testHelpers/env.ts";
 import { probeError } from "../testHelpers/workspaceProbe.ts";
 import type { RunCommandOptions } from "./commandRunner.ts";
-import type { ResolvedConfig, WorkspaceKindSetting } from "./config.ts";
+import type { ResolvedConfig, TmuxPerTaskMode, WorkspaceKindSetting } from "./config.ts";
 import type * as hostModule from "./host.ts";
 import { detectHostCapabilities, type HostCapabilities } from "./host.ts";
 import { debug } from "./util.ts";
@@ -73,7 +73,10 @@ function makeHost(overrides: Partial<HostCapabilities> = {}): HostCapabilities {
   };
 }
 
-function makeConfig(workspaceKind: WorkspaceKindSetting = "auto"): ResolvedConfig {
+function makeConfig(
+  workspaceKind: WorkspaceKindSetting = "auto",
+  perTaskMode: TmuxPerTaskMode = "window",
+): ResolvedConfig {
   return {
     sources: [],
     defaults: { hooks: {} },
@@ -97,6 +100,7 @@ function makeConfig(workspaceKind: WorkspaceKindSetting = "auto"): ResolvedConfi
     prompts: { initial: "x" },
     workspaceKind,
     local: { runner: "auto" },
+    tmux: { perTaskMode },
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }
@@ -975,6 +979,429 @@ describe("workspaces.accessHint (tmux)", () => {
       kind: "attachCommand",
       command: "tmux attach -t groundcrew:TEAM-1",
     });
+  });
+});
+
+const SESSION_PROBE_ARGS = [
+  "list-windows",
+  "-a",
+  "-F",
+  "#{session_name}\t#{@groundcrew_managed}\t#{pane_dead}",
+];
+
+function sessionBeforeEach(): void {
+  commonBeforeEach();
+  detectHostMock.mockResolvedValue(makeHost({ hasCmux: false, hasTmux: true }));
+  setEnvironmentVariable("GROUNDCREW_TMUX_SESSION_PER_TASK", "1");
+}
+
+function sessionAfterEach(): void {
+  deleteEnvironmentVariable("GROUNDCREW_TMUX_SESSION_PER_TASK");
+  commonAfterEach();
+}
+
+describe("workspaces.open (tmux session-per-task)", () => {
+  beforeEach(sessionBeforeEach);
+  afterEach(sessionAfterEach);
+
+  it("creates a dedicated session tagged @groundcrew_managed with remain-on-exit off by default", async () => {
+    await workspaces.open(makeConfig("tmux"), {
+      name: "TEAM-1",
+      cwd: "/work/repo-a-TEAM-1",
+      command: "exec claude",
+    });
+
+    expect(runMock).toHaveBeenCalledWith("tmux", [
+      "new-session",
+      "-d",
+      "-s",
+      "TEAM-1",
+      "-c",
+      "/work/repo-a-TEAM-1",
+      "exec claude",
+      ";",
+      "set-option",
+      "-t",
+      "TEAM-1",
+      "@groundcrew_managed",
+      "1",
+      ";",
+      "set-window-option",
+      "-t",
+      "TEAM-1",
+      "remain-on-exit",
+      "off",
+      ";",
+      "set-window-option",
+      "-t",
+      "TEAM-1",
+      "allow-rename",
+      "off",
+    ]);
+  });
+
+  it("sets remain-on-exit on when GROUNDCREW_KEEP_DEAD_WINDOWS is set", async () => {
+    setEnvironmentVariable("GROUNDCREW_KEEP_DEAD_WINDOWS", "1");
+
+    await workspaces.open(makeConfig("tmux"), { name: "TEAM-1", cwd: "/cwd", command: "x" });
+
+    expect(runMock).toHaveBeenCalledWith(
+      "tmux",
+      expect.arrayContaining(["set-window-option", "-t", "TEAM-1", "remain-on-exit", "on"]),
+    );
+  });
+
+  it("recreates an existing session when it is one of ours", async () => {
+    runMock
+      .mockImplementationOnce(() => {
+        throw new Error("duplicate session: TEAM-1");
+      })
+      .mockReturnValueOnce("TEAM-1\t1\t0\n")
+      .mockReturnValue("");
+
+    await workspaces.open(makeConfig("tmux"), { name: "TEAM-1", cwd: "/cwd", command: "x" });
+
+    expect(runMock).toHaveBeenCalledWith("tmux", ["kill-session", "-t", "TEAM-1"]);
+    expect(runMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("surfaces a clear error when the session reappears after the kill", async () => {
+    runMock
+      .mockImplementationOnce(() => {
+        throw new Error("duplicate session: TEAM-1");
+      })
+      .mockReturnValueOnce("TEAM-1\t1\t0\n")
+      .mockReturnValueOnce("")
+      .mockImplementationOnce(() => {
+        throw new Error("duplicate session: TEAM-1");
+      });
+
+    await expect(
+      workspaces.open(makeConfig("tmux"), { name: "TEAM-1", cwd: "/cwd", command: "x" }),
+    ).rejects.toThrow(/Failed to recreate tmux session "TEAM-1" after killing a stale copy/);
+  });
+
+  it("rethrows a recreate failure after the shutdown signal fires", async () => {
+    const controller = new AbortController();
+    runMock
+      .mockImplementationOnce(() => {
+        throw new Error("duplicate session: TEAM-1");
+      })
+      .mockReturnValueOnce("TEAM-1\t1\t0\n")
+      .mockReturnValueOnce("")
+      .mockImplementationOnce(() => {
+        controller.abort();
+        throw new Error("recreate interrupted");
+      });
+
+    await expect(
+      workspaces.open(
+        makeConfig("tmux"),
+        { name: "TEAM-1", cwd: "/cwd", command: "x" },
+        controller.signal,
+      ),
+    ).rejects.toThrow("recreate interrupted");
+  });
+
+  it("does not clobber a same-named session the user opened (untagged)", async () => {
+    runMock
+      .mockImplementationOnce(() => {
+        throw new Error("duplicate session: TEAM-1");
+      })
+      .mockReturnValueOnce("TEAM-1\t\t0\n");
+
+    await expect(
+      workspaces.open(makeConfig("tmux"), { name: "TEAM-1", cwd: "/cwd", command: "x" }),
+    ).rejects.toThrow("duplicate session: TEAM-1");
+    expect(runMock).not.toHaveBeenCalledWith("tmux", expect.arrayContaining(["kill-session"]));
+  });
+
+  it("rethrows the duplicate error when ownership cannot be confirmed", async () => {
+    runMock
+      .mockImplementationOnce(() => {
+        throw new Error("duplicate session: TEAM-1");
+      })
+      .mockImplementationOnce(() => {
+        throw new Error("permission denied");
+      });
+
+    await expect(
+      workspaces.open(makeConfig("tmux"), { name: "TEAM-1", cwd: "/cwd", command: "x" }),
+    ).rejects.toThrow("duplicate session: TEAM-1");
+    expect(runMock).not.toHaveBeenCalledWith("tmux", expect.arrayContaining(["kill-session"]));
+  });
+
+  it("rethrows non-duplicate session creation failures", async () => {
+    runMock.mockImplementation(() => {
+      throw new Error("permission denied");
+    });
+
+    await expect(
+      workspaces.open(makeConfig("tmux"), { name: "TEAM-1", cwd: "/cwd", command: "x" }),
+    ).rejects.toThrow("permission denied");
+  });
+
+  it("rethrows session creation failures after the shutdown signal fires", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    runMock.mockImplementation(() => {
+      throw new Error("create interrupted");
+    });
+
+    await expect(
+      workspaces.open(
+        makeConfig("tmux"),
+        { name: "TEAM-1", cwd: "/cwd", command: "x" },
+        controller.signal,
+      ),
+    ).rejects.toThrow("create interrupted");
+  });
+
+  it("silently drops the status field (tmux can't paint pills)", async () => {
+    await workspaces.open(makeConfig("tmux"), {
+      name: "TEAM-1",
+      cwd: "/cwd",
+      command: "x",
+      status: { text: "claude" },
+    });
+
+    expect(runMock).not.toHaveBeenCalledWith("tmux", expect.arrayContaining(["set-status"]));
+  });
+});
+
+describe("workspaces.probe (tmux session-per-task)", () => {
+  beforeEach(sessionBeforeEach);
+  afterEach(sessionAfterEach);
+
+  it("returns only @groundcrew_managed sessions, ignoring the user's own", async () => {
+    runMock.mockReturnValue("TEAM-1\t1\t0\npersonal\t\t0\nTEAM-2\t1\t0\n");
+
+    await expect(workspaces.probe(makeConfig("tmux"))).resolves.toStrictEqual({
+      kind: "ok",
+      names: new Set(["TEAM-1", "TEAM-2"]),
+    });
+    expect(runMock).toHaveBeenCalledWith("tmux", SESSION_PROBE_ARGS);
+  });
+
+  it("treats a session as live when any of its windows still has a live pane", async () => {
+    runMock.mockReturnValue("TEAM-1\t1\t1\nTEAM-1\t1\t0\n");
+
+    await expect(workspaces.probe(makeConfig("tmux"))).resolves.toStrictEqual({
+      kind: "ok",
+      names: new Set(["TEAM-1"]),
+    });
+  });
+
+  it("treats a managed row with a missing pane_dead field as live, not exited", async () => {
+    runMock.mockReturnValue("TEAM-1\t1\n");
+
+    await expect(workspaces.probe(makeConfig("tmux"))).resolves.toStrictEqual({
+      kind: "ok",
+      names: new Set(["TEAM-1"]),
+    });
+  });
+
+  it("includes exited sessions when GROUNDCREW_KEEP_DEAD_WINDOWS is set", async () => {
+    setEnvironmentVariable("GROUNDCREW_KEEP_DEAD_WINDOWS", "1");
+    runMock.mockReturnValue("TEAM-1\t1\t0\nTEAM-2\t1\t1\n");
+
+    await expect(workspaces.probe(makeConfig("tmux"))).resolves.toStrictEqual({
+      kind: "ok",
+      names: new Set(["TEAM-1", "TEAM-2"]),
+      exitedNames: new Set(["TEAM-2"]),
+    });
+  });
+
+  it("filters exited sessions when GROUNDCREW_KEEP_DEAD_WINDOWS is not set", async () => {
+    runMock.mockReturnValue("TEAM-1\t1\t0\nTEAM-2\t1\t1\n");
+
+    await expect(workspaces.probe(makeConfig("tmux"))).resolves.toStrictEqual({
+      kind: "ok",
+      names: new Set(["TEAM-1"]),
+    });
+  });
+
+  it("returns kind=ok with empty names when the tmux server is down", async () => {
+    runMock.mockImplementation(() => {
+      throw new Error("no server running on /tmp/tmux-501/default");
+    });
+
+    await expect(workspaces.probe(makeConfig("tmux"))).resolves.toStrictEqual({
+      kind: "ok",
+      names: new Set(),
+    });
+  });
+
+  it("returns kind=unavailable when tmux fails for an unknown reason", async () => {
+    runMock.mockImplementation(() => {
+      throw new Error("permission denied or whatever");
+    });
+
+    await expect(workspaces.probe(makeConfig("tmux"))).resolves.toStrictEqual({
+      kind: "unavailable",
+    });
+  });
+
+  it("rethrows tmux list failures after the shutdown signal fires", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    runMock.mockImplementation(() => {
+      throw new Error("tmux list interrupted");
+    });
+
+    await expect(workspaces.probe(makeConfig("tmux"), controller.signal)).rejects.toThrow(
+      "tmux list interrupted",
+    );
+  });
+});
+
+describe("workspaces.close (tmux session-per-task)", () => {
+  beforeEach(sessionBeforeEach);
+  afterEach(sessionAfterEach);
+
+  it("kills a managed session", async () => {
+    runMock.mockReturnValueOnce("TEAM-1\t1\t0\n").mockReturnValue("");
+
+    await expect(workspaces.close(makeConfig("tmux"), "TEAM-1")).resolves.toStrictEqual({
+      kind: "closed",
+    });
+    expect(runMock).toHaveBeenCalledWith("tmux", ["kill-session", "-t", "TEAM-1"]);
+  });
+
+  it("refuses to kill a same-named session the user owns (untagged)", async () => {
+    runMock.mockReturnValue("TEAM-1\t\t0\n");
+
+    await expect(workspaces.close(makeConfig("tmux"), "TEAM-1")).resolves.toStrictEqual({
+      kind: "missing",
+    });
+    expect(runMock).not.toHaveBeenCalledWith("tmux", expect.arrayContaining(["kill-session"]));
+  });
+
+  it("is a no-op when the tmux server is down", async () => {
+    runMock.mockImplementation(() => {
+      throw new Error("no server running");
+    });
+
+    await expect(workspaces.close(makeConfig("tmux"), "TEAM-1")).resolves.toStrictEqual({
+      kind: "missing",
+    });
+  });
+
+  it("returns unavailable when ownership cannot be confirmed", async () => {
+    runMock.mockImplementation(() => {
+      throw new Error("permission denied");
+    });
+
+    await expect(workspaces.close(makeConfig("tmux"), "TEAM-1")).resolves.toStrictEqual({
+      kind: "unavailable",
+    });
+  });
+
+  it("is a no-op when kill-session reports the session is gone", async () => {
+    runMock.mockReturnValueOnce("TEAM-1\t1\t0\n").mockImplementationOnce(() => {
+      throw new Error("can't find session: TEAM-1");
+    });
+
+    await expect(workspaces.close(makeConfig("tmux"), "TEAM-1")).resolves.toStrictEqual({
+      kind: "missing",
+    });
+  });
+
+  it("propagates unexpected kill-session errors", async () => {
+    runMock.mockReturnValueOnce("TEAM-1\t1\t0\n").mockImplementationOnce(() => {
+      throw new Error("permission denied");
+    });
+
+    await expect(workspaces.close(makeConfig("tmux"), "TEAM-1")).rejects.toThrow(
+      /permission denied/,
+    );
+  });
+
+  it("rethrows kill-session failures after the shutdown signal fires", async () => {
+    const controller = new AbortController();
+    runMock.mockReturnValueOnce("TEAM-1\t1\t0\n").mockImplementationOnce(() => {
+      controller.abort();
+      throw new Error("kill interrupted");
+    });
+
+    await expect(workspaces.close(makeConfig("tmux"), "TEAM-1", controller.signal)).rejects.toThrow(
+      "kill interrupted",
+    );
+  });
+});
+
+describe("workspaces.accessHint (tmux session-per-task)", () => {
+  beforeEach(sessionBeforeEach);
+  afterEach(sessionAfterEach);
+
+  it("returns a bare-session attach command (no groundcrew: prefix)", async () => {
+    await expect(workspaces.accessHint(makeConfig("tmux"), "TEAM-1")).resolves.toStrictEqual({
+      kind: "attachCommand",
+      command: "tmux attach -t TEAM-1",
+    });
+  });
+});
+
+describe("workspaces tmux perTaskMode (config-driven)", () => {
+  beforeEach(() => {
+    commonBeforeEach();
+    detectHostMock.mockResolvedValue(makeHost({ hasCmux: false, hasTmux: true }));
+  });
+  afterEach(sessionAfterEach);
+
+  it("uses the session model when tmux.perTaskMode is 'session'", async () => {
+    await workspaces.open(makeConfig("tmux", "session"), {
+      name: "TEAM-1",
+      cwd: "/cwd",
+      command: "x",
+    });
+
+    expect(runMock).toHaveBeenCalledWith(
+      "tmux",
+      expect.arrayContaining(["new-session", "-s", "TEAM-1"]),
+    );
+    expect(runMock).not.toHaveBeenCalledWith("tmux", expect.arrayContaining(["new-window"]));
+  });
+
+  it("uses the window model when tmux.perTaskMode is 'window'", async () => {
+    await workspaces.open(makeConfig("tmux", "window"), {
+      name: "TEAM-1",
+      cwd: "/cwd",
+      command: "x",
+    });
+
+    expect(runMock).toHaveBeenCalledWith("tmux", expect.arrayContaining(["new-window"]));
+    expect(runMock).not.toHaveBeenCalledWith(
+      "tmux",
+      expect.arrayContaining(["new-session", "-s", "TEAM-1"]),
+    );
+  });
+
+  it("env GROUNDCREW_TMUX_SESSION_PER_TASK=1 overrides config window to session", async () => {
+    setEnvironmentVariable("GROUNDCREW_TMUX_SESSION_PER_TASK", "1");
+
+    await workspaces.open(makeConfig("tmux", "window"), {
+      name: "TEAM-1",
+      cwd: "/cwd",
+      command: "x",
+    });
+
+    expect(runMock).toHaveBeenCalledWith(
+      "tmux",
+      expect.arrayContaining(["new-session", "-s", "TEAM-1"]),
+    );
+  });
+
+  it("env GROUNDCREW_TMUX_SESSION_PER_TASK=0 overrides config session to window", async () => {
+    setEnvironmentVariable("GROUNDCREW_TMUX_SESSION_PER_TASK", "0");
+
+    await workspaces.open(makeConfig("tmux", "session"), {
+      name: "TEAM-1",
+      cwd: "/cwd",
+      command: "x",
+    });
+
+    expect(runMock).toHaveBeenCalledWith("tmux", expect.arrayContaining(["new-window"]));
   });
 });
 
