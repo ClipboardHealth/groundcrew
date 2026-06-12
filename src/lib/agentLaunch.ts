@@ -1,4 +1,5 @@
 import { ensureClearance } from "@clipboard-health/clearance";
+import path from "node:path";
 
 import { clearanceAllowHostsFilesFromEnvironment } from "./clearanceAllowlist.ts";
 import {
@@ -8,12 +9,19 @@ import {
   type ResolvedConfig,
 } from "./config.ts";
 import { detectHostCapabilities } from "./host.ts";
-import { buildLaunchCommand, type WorkerEnvironment } from "./launchCommand.ts";
+import {
+  buildLaunchCommand,
+  inferAgentCommandName,
+  type SafehouseAgentIntegration,
+  type WorkerEnvironment,
+} from "./launchCommand.ts";
 import { assertLocalRunnerRequirements, resolveLocalRunner } from "./localRunner.ts";
 import { sandboxNameFor } from "./sandboxName.ts";
 import { buildAndStageSrtLaunch, resolveGitCommonDir } from "./srtLaunch.ts";
-import { debug, sleep } from "./util.ts";
-import { workspaces } from "./workspaces.ts";
+import { debug, readEnvironmentVariable, sleep } from "./util.ts";
+import { resolveWorkspaceKind, workspaces } from "./workspaces.ts";
+import type { WorkspaceKind } from "./workspaceAdapter.ts";
+import { xdgStatePath } from "./xdg.ts";
 
 /**
  * Stage any srt settings and build the workspace launch command — the assembly
@@ -32,6 +40,7 @@ export function composeAgentLaunch(input: {
   secretsFile?: string | undefined;
   prepareWorktreeCommand?: string | undefined;
   sandboxName?: string | undefined;
+  workspaceKind: WorkspaceKind;
   workerEnvironment?: WorkerEnvironment | undefined;
 }): { launchCommand: string; srtSettingsDir: string | undefined } {
   const staged =
@@ -41,6 +50,10 @@ export function composeAgentLaunch(input: {
           worktreeDir: input.worktreeDir,
           definition: input.definition,
         })
+      : undefined;
+  const safehouseAgentIntegration =
+    input.runner === "safehouse"
+      ? safehouseAgentIntegrationFor(input.workspaceKind, input.definition)
       : undefined;
   const launchCommand = buildLaunchCommand({
     definition: input.definition,
@@ -58,6 +71,7 @@ export function composeAgentLaunch(input: {
     workerEnvironment: input.workerEnvironment,
     safehouseAddDirs:
       input.runner === "safehouse" ? resolveSafehouseAddDirs(input.worktreeDir) : undefined,
+    safehouseAgentIntegration,
   });
   return { launchCommand, srtSettingsDir: staged?.directory };
 }
@@ -82,9 +96,62 @@ function resolveSafehouseAddDirs(worktreeDir: string): readonly string[] {
   return [...new Set([worktreeDir, resolveGitCommonDir(worktreeDir)])];
 }
 
+const CMUX_AGENT_ENV_PASS: readonly string[] = [
+  "CMUX_BUNDLED_CLI_PATH",
+  "CMUX_CLAUDE_HOOKS_DISABLED",
+  "CMUX_CLAUDE_WRAPPER_SHIM",
+  "CMUX_CLAUDE_WRAPPER_SHIM_ROOT",
+  "CMUX_CUSTOM_CLAUDE_PATH",
+  "CMUX_PANEL_ID",
+  "CMUX_PRESERVE_CLAUDE_AUTH_SELECTION_ENV",
+  "CMUX_PRESERVE_CLAUDE_AUTH_SELECTION_ENV_KEYS",
+  "CMUX_SOCKET_PATH",
+  "CMUX_SUPPRESS_SUBAGENT_NOTIFICATIONS",
+  "CMUX_SURFACE_ID",
+  "CMUX_TAB_ID",
+  "CMUX_WORKSPACE_ID",
+];
+
+const CMUX_CLAUDE_WRAPPER_PRELUDE = [
+  `if [ -n "\${CMUX_SURFACE_ID:-}" ] && [ -z "\${CMUX_CUSTOM_CLAUDE_PATH:-}" ]; then`,
+  "_groundcrew_cmux_path=;",
+  "_groundcrew_cmux_remaining_path=$PATH:;",
+  `while [ -n "$_groundcrew_cmux_remaining_path" ]; do _groundcrew_cmux_path_entry=\${_groundcrew_cmux_remaining_path%%:*}; _groundcrew_cmux_remaining_path=\${_groundcrew_cmux_remaining_path#*:}; case "$_groundcrew_cmux_path_entry" in */cmux-cli-shims/*|*/cmux-cli-shims) ;; *) _groundcrew_cmux_path="\${_groundcrew_cmux_path:+$_groundcrew_cmux_path:}$_groundcrew_cmux_path_entry" ;; esac; done;`,
+  'if _groundcrew_cmux_real_claude=$(PATH="$_groundcrew_cmux_path" command -v claude 2>/dev/null); then case "$_groundcrew_cmux_real_claude" in */cmux-cli-shims/*|*/cmux-cli-shims/claude) ;; *) export CMUX_CUSTOM_CLAUDE_PATH="$_groundcrew_cmux_real_claude" ;; esac; fi;',
+  "unset _groundcrew_cmux_path _groundcrew_cmux_remaining_path _groundcrew_cmux_path_entry _groundcrew_cmux_real_claude;",
+  "fi",
+].join(" ");
+
+function safehouseAgentIntegrationFor(
+  workspaceKind: WorkspaceKind,
+  definition: AgentDefinition,
+): SafehouseAgentIntegration | undefined {
+  if (workspaceKind !== "cmux") {
+    return undefined;
+  }
+  const isClaudeAgent = inferAgentCommandName(definition.cmd) === "claude";
+  return {
+    addDirsReadOnly: resolveCmuxSafehouseReadOnlyDirs(),
+    envPass: CMUX_AGENT_ENV_PASS,
+    commandPreludes: isClaudeAgent ? [CMUX_CLAUDE_WRAPPER_PRELUDE] : [],
+  };
+}
+
+function resolveCmuxSafehouseReadOnlyDirs(): readonly string[] {
+  const socketPath = readEnvironmentVariable("CMUX_SOCKET_PATH");
+  return [
+    ...new Set([
+      "/Applications/cmux.app",
+      xdgStatePath("cmux"),
+      ...(socketPath === undefined ? [] : [path.dirname(socketPath)]),
+    ]),
+  ];
+}
+
 interface PreparedAgentLaunch {
   runner: LocalRunner;
   sandboxName: string | undefined;
+  workspaceKind: WorkspaceKind;
   ensureReady: () => Promise<void>;
 }
 
@@ -97,6 +164,7 @@ export async function prepareAgentLaunch(input: {
 }): Promise<PreparedAgentLaunch> {
   const host = await detectHostCapabilities(input.signal);
   const runner = resolveLocalRunner(input.config.local.runner, host);
+  const workspaceKind = resolveWorkspaceKind({ config: input.config, host }).resolved;
   assertLocalRunnerRequirements(host, runner);
   const ensureReady =
     runner === "safehouse"
@@ -146,7 +214,7 @@ export async function prepareAgentLaunch(input: {
     runner === "sdx" && input.definition.sandbox !== undefined
       ? sandboxNameFor({ agent: input.definition.sandbox.agent })
       : undefined;
-  return { runner, sandboxName, ensureReady };
+  return { runner, sandboxName, workspaceKind, ensureReady };
 }
 
 async function alreadyReady(): Promise<void> {

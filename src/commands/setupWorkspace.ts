@@ -74,7 +74,7 @@ export async function setupWorkspace(
   if (!definition) {
     throw new Error(`Unknown agent: ${agent}`);
   }
-  const { runner, sandboxName, ensureReady } = await prepareAgentLaunch({
+  const { runner, sandboxName, workspaceKind, ensureReady } = await prepareAgentLaunch({
     config,
     agent,
     definition,
@@ -140,6 +140,7 @@ export async function setupWorkspace(
       secretsFile,
       prepareWorktreeCommand,
       sandboxName,
+      workspaceKind,
       workerEnvironment: workerEnvironmentForTask(completionTaskId),
     });
     srtSettingsDir = stagedSrtSettingsDir;

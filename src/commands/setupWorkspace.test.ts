@@ -844,8 +844,17 @@ describe(setupWorkspace, () => {
     expect(launchScript).not.toContain("groundcrew prepareWorktree hook exited");
     expect(launchScript).not.toContain(".groundcrew/setup.sh");
     expect(launchScript).toContain(
-      "/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance' --add-dirs='/work/repo-a-team-1:/tmp/groundcrew-team-1-x/.git' --env-pass=GROUNDCREW_TASK_ID,GROUNDCREW_COMPLETE \"$_safehouse_shim\" -c",
+      "/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance' --add-dirs='/work/repo-a-team-1:/tmp/groundcrew-team-1-x/.git'",
     );
+    expect(launchScript).toContain("--add-dirs-ro='/Applications/cmux.app:");
+    expect(launchScript).toContain(
+      "--env-pass=GROUNDCREW_TASK_ID,GROUNDCREW_COMPLETE,CMUX_BUNDLED_CLI_PATH",
+    );
+    expect(launchScript).toContain("CMUX_CLAUDE_WRAPPER_SHIM_ROOT");
+    expect(launchScript).toContain(
+      'export CMUX_CUSTOM_CLAUDE_PATH="$_groundcrew_cmux_real_claude"',
+    );
+    expect(launchScript).toContain('"$_safehouse_shim" -c');
   });
 
   it("wraps the agent in an sbx exec call and skips ensureClearance when runner='sdx'", async () => {

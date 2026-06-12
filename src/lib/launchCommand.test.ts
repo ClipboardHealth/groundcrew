@@ -342,6 +342,51 @@ describe(buildLaunchCommand, () => {
     expect(out).not.toContain("--enable=all-agents");
   });
 
+  it("can grant a workspace shim integration to the Safehouse agent without stripping PATH", () => {
+    const out = buildLaunchCommand(
+      arguments_({
+        definition: { cmd: "claude --permission-mode auto", color: "#fff" },
+        prepareWorktreeCommand: "npm ci",
+        safehouseAgentIntegration: {
+          addDirsReadOnly: ["/Applications/cmux.app", "/Users/dev/.local/state/cmux"],
+          envPass: [
+            "CMUX_SURFACE_ID",
+            "CMUX_SOCKET_PATH",
+            "CMUX_CLAUDE_WRAPPER_SHIM",
+            "CMUX_CLAUDE_WRAPPER_SHIM_ROOT",
+            "CMUX_CUSTOM_CLAUDE_PATH",
+          ],
+          commandPreludes: ["export CMUX_CUSTOM_CLAUDE_PATH=/Users/dev/.local/bin/claude"],
+        },
+      }),
+    );
+
+    const prepareWrapIndex = out.indexOf("safehouse-clearance' sh -c");
+    const agentWrapIndex = out.indexOf('"$_safehouse_shim" -c');
+    const readOnlyGrantIndex = out.indexOf(
+      "--add-dirs-ro='/Applications/cmux.app:/Users/dev/.local/state/cmux'",
+    );
+    const envPassIndex = out.indexOf(
+      "--env-pass=CMUX_SURFACE_ID,CMUX_SOCKET_PATH,CMUX_CLAUDE_WRAPPER_SHIM,CMUX_CLAUDE_WRAPPER_SHIM_ROOT,CMUX_CUSTOM_CLAUDE_PATH",
+    );
+    const shimSetupIndex = out.indexOf("_safehouse_shim_dir=", prepareWrapIndex);
+    const preludeIndex = out.indexOf("export CMUX_CUSTOM_CLAUDE_PATH=/Users/dev/.local/bin/claude");
+    const execIndex = out.indexOf('exec claude --permission-mode auto "$@"');
+    expect(prepareWrapIndex).toBeGreaterThan(-1);
+    expect(readOnlyGrantIndex).toBeGreaterThan(prepareWrapIndex);
+    expect(readOnlyGrantIndex).toBeLessThan(agentWrapIndex);
+    expect(envPassIndex).toBeGreaterThan(prepareWrapIndex);
+    expect(envPassIndex).toBeLessThan(agentWrapIndex);
+    expect(preludeIndex).toBeGreaterThan(agentWrapIndex);
+    expect(execIndex).toBeGreaterThan(preludeIndex);
+    expect(shimSetupIndex).toBeGreaterThan(prepareWrapIndex);
+    const prepareWrap = out.slice(prepareWrapIndex, shimSetupIndex);
+    expect(prepareWrap).not.toContain("--add-dirs-ro");
+    expect(prepareWrap).not.toContain("CMUX_SURFACE_ID");
+    expect(prepareWrap).not.toContain("CMUX_SOCKET_PATH");
+    expect(out).not.toContain("_groundcrew_path_without_cmux");
+  });
+
   it("infers the Safehouse profile command from an absolute agent path", () => {
     const out = buildLaunchCommand(
       arguments_({
