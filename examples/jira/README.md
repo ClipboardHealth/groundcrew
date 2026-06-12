@@ -105,6 +105,11 @@ five. There is no "in-review" category, so review is detected by status _name_:
 
 - `list` returns at most 100 issues (the `jira` CLI's per-page maximum). Narrow
   `JIRA_GROUNDCREW_JQL` if you have more eligible issues than that.
+- A query that matches nothing is the steady state (no issue is ready to
+  dispatch). jira-cli treats "no results" as an error and exits non-zero, but
+  `list` folds that into an empty array and exits `0`, so the shell adapter sees
+  "no tasks" instead of throwing a fetch failure on every poll. Genuine failures
+  (auth, network) still print to stderr and propagate as a non-zero exit.
 - `jira issue list --raw` returns a reduced shape (no `id`, `self`, or
   `statusCategory`), so `list` reads the matching keys and then enriches each one
   with `jira issue view <key> --raw` — the full REST issue the transform needs.
