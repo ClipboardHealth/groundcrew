@@ -45,6 +45,9 @@ fi
 #   agent:<name>     -> agent "<name>"
 read -r -d '' JQ_TRANSFORM <<'JQ' || true
 def adfText: [.. | .text? // empty] | join(" ");
+# A rich-text field is either a plain string (REST v2) or an ADF object (v3);
+# flatten both to text. Shared by the description and each comment body.
+def bodyText: if type == "string" then . elif type == "object" then adfText else "" end;
 def labelValue($p):
   ((.fields.labels // []) | map(select(startswith($p))) | .[0] // null)
   | if . == null then null else ltrimstr($p) end;
@@ -58,19 +61,30 @@ def canonStatus($rp):
     elif $c == "new"           then "todo"
     elif $c == "indeterminate" then (if ($n | test($rp; "i")) then "in-review" else "in-progress" end)
     else "other" end;
+# Render the issue's comments (oldest first) as one text block, each headed by
+# author and timestamp. groundcrew feeds `description` to the agent as its
+# prompt, and ShellIssue has no comments field, so the discussion is folded in
+# here. NOTE: jira-cli returns only the first page of comments (the REST view
+# endpoint paginates), so heavily-commented issues may be truncated.
+def commentsText:
+  ((.fields.comment.comments // [])
+   | map("[" + (.author.displayName // "Unknown")
+         + (if (.created // "") == "" then "" else " (" + .created + ")" end)
+         + "]\n" + (.body | bodyText))
+   | join("\n\n"));
 def toShellIssue($rp; $da):
   (labelValue("repo:")  | if . == null then null else gsub("__"; "/") end) as $repo
   | (labelValue("agent:") // (if $da == "" then null else $da end)) as $agent
-  | (.fields.description) as $d
-  | (if   ($d | type) == "string" then $d
-     elif ($d | type) == "object" then ($d | adfText)
-     else "" end) as $body
+  | (.fields.description | bodyText) as $body
+  | commentsText as $comments
+  | ([ (if $body == "" then empty else $body end),
+       (if $comments == "" then empty else "--- Comments ---\n\n" + $comments end) ] | join("\n\n")) as $content
   | browseUrl as $url
   | ([ (if $repo != null then "Repository: " + $repo else empty end),
        (if $url  != null then "Issue: " + $url       else empty end) ] | join("\n")) as $hdr
   | { id: .key,
       title: (.fields.summary // .key),
-      description: (if $hdr == "" then $body else $hdr + "\n\n" + $body end),
+      description: (if $hdr == "" then $content else $hdr + "\n\n" + $content end),
       status: canonStatus($rp),
       repository: $repo,
       agent: $agent,

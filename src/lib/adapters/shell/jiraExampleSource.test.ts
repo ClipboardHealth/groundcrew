@@ -25,6 +25,13 @@ import { shellFetchOutputSchema, shellIssueSchema } from "./schema.ts";
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../../../");
 const SCRIPT = path.join(REPO_ROOT, "task-sources/jira/jira.sh");
 
+/** One JIRA comment; `body` is a plain string (REST v2) or ADF object (v3). */
+interface JiraComment {
+  author: { displayName: string };
+  created: string;
+  body: string | Record<string, unknown>;
+}
+
 /** A full JIRA Cloud REST issue, as `jira issue view --raw` returns it. */
 interface JiraIssue {
   id: string;
@@ -37,6 +44,7 @@ interface JiraIssue {
     labels: string[];
     assignee: { displayName: string } | null;
     updated: string;
+    comment?: { comments: JiraComment[] };
   };
 }
 
@@ -53,6 +61,25 @@ const ISSUES: JiraIssue[] = [
       labels: ["repo:ClipboardHealth__api", "agent:codex"],
       assignee: { displayName: "Alice" },
       updated: "2026-05-22T15:00:00.000+0000",
+      comment: {
+        comments: [
+          {
+            author: { displayName: "Dana" },
+            created: "2026-05-22T16:00:00.000+0000",
+            body: "looks good",
+          },
+          {
+            author: { displayName: "Eli" },
+            created: "2026-05-22T17:00:00.000+0000",
+            // ADF comment body, as JIRA Cloud returns it.
+            body: {
+              type: "doc",
+              version: 1,
+              content: [{ type: "paragraph", content: [{ type: "text", text: "ship it" }] }],
+            },
+          },
+        ],
+      },
     },
   },
   {
@@ -301,6 +328,22 @@ describe("jira.sh example source", () => {
     const parsed = shellIssueSchema.parse(JSON.parse(stdout));
     expect(parsed.id).toBe("ENG-1");
     expect(parsed.repository).toBe("ClipboardHealth/api");
+  });
+
+  it("appends issue comments (string and ADF bodies) to the description", () => {
+    const parsed = shellIssueSchema.parse(JSON.parse(run(h, ["get", "ENG-1"]).stdout));
+
+    expect(parsed.description).toContain("Do the thing"); // original body still present
+    expect(parsed.description).toContain("--- Comments ---");
+    expect(parsed.description).toContain("Dana"); // first comment author
+    expect(parsed.description).toContain("looks good"); // string-body comment
+    expect(parsed.description).toContain("Eli"); // second comment author
+    expect(parsed.description).toContain("ship it"); // ADF-body comment, flattened
+  });
+
+  it("omits the comments section when an issue has none", () => {
+    const parsed = shellIssueSchema.parse(JSON.parse(run(h, ["get", "ENG-3"]).stdout));
+    expect(parsed.description).not.toContain("--- Comments ---");
   });
 
   it("get exits 3 (not-found sentinel) when jira cannot find the key", () => {
