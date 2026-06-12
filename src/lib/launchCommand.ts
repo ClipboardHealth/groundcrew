@@ -5,6 +5,7 @@ import path from "node:path";
 import {
   BUILD_SECRET_NAMES,
   hasPreLaunchEnv,
+  type GitSshToHttps,
   type LocalRunner,
   type AgentDefinition,
 } from "./config.ts";
@@ -186,11 +187,42 @@ function preLaunchPromptAndExec(arguments_: {
 }
 
 /**
+ * Additive `env GIT_CONFIG_*` prefix that serves git SSH remotes over HTTPS,
+ * injected when `safehouse.gitSshToHttps` is `"enabled"`. Additive
+ * (GIT_CONFIG_COUNT/KEY/VALUE) rather than `GIT_CONFIG_GLOBAL` so the agent's
+ * own global config and the gh credential helper survive — only the SSH→HTTPS
+ * mapping is layered on. Trailing-space-terminated so it slots directly in
+ * front of the agent command.
+ *
+ * `insteadOf` is a prefix-match, so injecting this on a repo whose remote is
+ * already HTTPS is a no-op: the HTTPS URL does not start with `git@github.com:`,
+ * so only scp-like SSH remotes are rewritten and everything else passes through
+ * untouched. (It matches the `git@github.com:` form, not `ssh://git@github.com/`.)
+ */
+const GIT_SSH_TO_HTTPS_ENV_PREFIX =
+  "env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=url.https://github.com/.insteadOf GIT_CONFIG_VALUE_0=git@github.com: ";
+
+/**
+ * Env prefix that serves git SSH remotes over HTTPS, or "" when the toggle is
+ * unset. First-class replacement for the previously hand-written `env
+ * GIT_CONFIG_* …` cmd prefix; emits a byte-identical token sequence.
+ */
+function gitSshToHttpsEnvPrefix(gitSshToHttps: GitSshToHttps | undefined): string {
+  return gitSshToHttps === "enabled" ? GIT_SSH_TO_HTTPS_ENV_PREFIX : "";
+}
+
+/**
  * Shared by the safehouse, srt, and sdx builders: render the `exec <agent> "$@"`
  * inner command and the optional status-reported prepareWorktree hook. The
  * `{{sandbox}}` template is filled from `sandboxName` (empty for safehouse/srt).
+ * `agentEnvironmentPrefix` (empty for srt/sdx) is injected verbatim between
+ * `exec` and the agent command — the safehouse builder uses it to layer in the
+ * `gitSshToHttps` env prefix.
  */
-function renderPrepareAndAgentCommand(arguments_: LaunchCommandArguments): {
+function renderPrepareAndAgentCommand(
+  arguments_: LaunchCommandArguments,
+  agentEnvironmentPrefix = "",
+): {
   agentCommand: string;
   prepareWorktreeCommand: string | undefined;
 } {
@@ -200,7 +232,7 @@ function renderPrepareAndAgentCommand(arguments_: LaunchCommandArguments): {
     sandboxName: arguments_.sandboxName ?? "",
   });
   return {
-    agentCommand: `exec ${agentCmd} "$@"`,
+    agentCommand: `exec ${agentEnvironmentPrefix}${agentCmd} "$@"`,
     prepareWorktreeCommand:
       arguments_.prepareWorktreeCommand === undefined
         ? undefined
@@ -508,13 +540,18 @@ function buildUnwrappedHostLaunchCommand(arguments_: LaunchCommandArguments): st
  *
  * `--env-pass` composition is split per wrap (deliberate, post PR #128):
  * - prepareWorktree wrap forwards build secrets only.
- * - Agent wrap forwards `preLaunchEnv` names only. preLaunch credentials never
- *   reach the profile-neutral prepare phase.
+ * - Agent wrap forwards `preLaunchEnv` names, plus GITHUB_TOKEN when
+ *   `safehouse.gitSshToHttps` is set (the HTTPS remotes only authenticate via
+ *   the agent's gh credential helper). preLaunch credentials never reach the
+ *   profile-neutral prepare phase.
  */
 function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string {
   const promptDir = path.dirname(arguments_.promptFile);
   const safehouseCommandName = inferAgentCommandName(arguments_.definition.cmd);
-  const { agentCommand, prepareWorktreeCommand } = renderPrepareAndAgentCommand(arguments_);
+  const { agentCommand, prepareWorktreeCommand } = renderPrepareAndAgentCommand(
+    arguments_,
+    gitSshToHttpsEnvPrefix(arguments_.definition.safehouse?.gitSshToHttps),
+  );
 
   // Split --env-pass per wrap: the prepareWorktree wrap only needs build secrets (so
   // `npm install` etc. can authenticate); the agent wrap only needs the
@@ -524,9 +561,16 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
   // Trailing space keeps each flag separated from the next argv token.
   const prepareWorktreeEnvPassFlag =
     arguments_.secretsFile === undefined ? "" : `--env-pass=${BUILD_SECRET_NAMES.join(",")} `;
+  // `gitSshToHttps` serves SSH remotes over HTTPS, which only authenticates if the
+  // agent's gh credential helper can read GITHUB_TOKEN inside the sandbox. Forward
+  // it automatically so the setting is self-contained — no manual preLaunchEnv
+  // pairing to remember. Deduped so an explicit GITHUB_TOKEN entry isn't doubled.
   const preLaunchEnvNames = arguments_.definition.preLaunchEnv ?? [];
+  const agentEnvNames = arguments_.definition.safehouse?.gitSshToHttps
+    ? [...new Set([...preLaunchEnvNames, "GITHUB_TOKEN"])]
+    : preLaunchEnvNames;
   const agentEnvPassFlag =
-    preLaunchEnvNames.length === 0 ? "" : `--env-pass=${preLaunchEnvNames.join(",")} `;
+    agentEnvNames.length === 0 ? "" : `--env-pass=${agentEnvNames.join(",")} `;
   // safehouse reads colon-separated paths from `--add-dirs`; both wraps get the
   // same grant so the prepareWorktree hook and the agent can each reach git.
   // Quote the whole value so shell-special chars survive; the trailing space

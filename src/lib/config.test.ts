@@ -45,7 +45,13 @@ function validConfigSource(config: Config): string {
 
 describe("loadConfig", () => {
   const originalEnvironment = snapshotEnvironmentVariables();
-  const ENV_KEYS = ["GROUNDCREW_CONFIG", "HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME"] as const;
+  const ENV_KEYS = [
+    "GROUNDCREW_CONFIG",
+    "HOME",
+    "XDG_CONFIG_HOME",
+    "XDG_STATE_HOME",
+    "GITHUB_TOKEN",
+  ] as const;
   let temporary: string;
 
   beforeEach(() => {
@@ -790,6 +796,88 @@ describe("loadConfig", () => {
     ]);
     expect(actual.agents.definitions["claude"]?.cmd).toBeTypeOf("string");
     expect(actual.agents.definitions["claude"]?.color).toBeTypeOf("string");
+  });
+
+  it("merges safehouse.gitSshToHttps through an override and preserves cmd/color defaults", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      configSource({
+        workspace: VALID_WORKSPACE(temporary),
+        agents: { definitions: { claude: { safehouse: { gitSshToHttps: "enabled" } } } },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    setEnvironmentVariable("GITHUB_TOKEN", "ghp_test_token");
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+    expect(actual.agents.definitions["claude"]?.safehouse?.gitSshToHttps).toBe("enabled");
+    expect(actual.agents.definitions["claude"]?.cmd).toBeTypeOf("string");
+    expect(actual.agents.definitions["claude"]?.color).toBeTypeOf("string");
+  });
+
+  it("accepts an empty safehouse block and leaves gitSshToHttps unset", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      configSource({
+        workspace: VALID_WORKSPACE(temporary),
+        agents: { definitions: { claude: { safehouse: {} } } },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+    expect(actual.agents.definitions["claude"]?.safehouse).toStrictEqual({});
+    expect(actual.agents.definitions["claude"]?.safehouse?.gitSshToHttps).toBeUndefined();
+  });
+
+  it("rejects an unknown safehouse.gitSshToHttps value", async () => {
+    const source = `export const config = { workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))}, agents: { definitions: { claude: { safehouse: { gitSshToHttps: "bogus" } } } } };`;
+    setEnvironmentVariable("GROUNDCREW_CONFIG", writeConfigFile(temporary, source));
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(
+      /agents\.definitions\.claude\.safehouse\.gitSshToHttps must be one of enabled/,
+    );
+  });
+
+  it("rejects a non-object safehouse block", async () => {
+    const source = `export const config = { workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))}, agents: { definitions: { claude: { safehouse: "enabled" } } } };`;
+    setEnvironmentVariable("GROUNDCREW_CONFIG", writeConfigFile(temporary, source));
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(
+      /agents\.definitions\.claude\.safehouse must be an object/,
+    );
+  });
+
+  it("rejects safehouse.gitSshToHttps when GITHUB_TOKEN is unset", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      configSource({
+        workspace: VALID_WORKSPACE(temporary),
+        agents: { definitions: { claude: { safehouse: { gitSshToHttps: "enabled" } } } },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    deleteEnvironmentVariable("GITHUB_TOKEN");
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(
+      /agents\.definitions\.claude\.safehouse\.gitSshToHttps is set to "enabled" but GITHUB_TOKEN is not set/,
+    );
+  });
+
+  it("rejects safehouse.gitSshToHttps when GITHUB_TOKEN is empty", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      configSource({
+        workspace: VALID_WORKSPACE(temporary),
+        agents: { definitions: { claude: { safehouse: { gitSshToHttps: "enabled" } } } },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    setEnvironmentVariable("GITHUB_TOKEN", "   ");
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(
+      /agents\.definitions\.claude\.safehouse\.gitSshToHttps is set to "enabled" but GITHUB_TOKEN is not set/,
+    );
   });
 
   it("rejects a non-array preLaunchEnv", async () => {
