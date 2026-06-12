@@ -1716,6 +1716,30 @@ JSON
     expect(out).toContain("Retrying in");
   });
 
+  it("does not retry a deterministic source-output error (no backoff spam)", async () => {
+    // A shell source whose fetch emits issues missing required fields throws a
+    // TaskSourceOutputError. Re-running yields the same bad output, so withRetry
+    // must surface it immediately rather than burning three backoff attempts.
+    loadConfigMock.mockResolvedValue(
+      makeLoadedConfig(
+        makeConfig({
+          sources: [
+            {
+              kind: "shell",
+              name: "plankeeper",
+              commands: { fetch: `printf '%s' '[{"id":"a"}]'` },
+            },
+          ],
+        }),
+      ),
+    );
+
+    await expect(orchestrate({ watch: false, dryRun: false })).rejects.toThrow(
+      /source "plankeeper"[\s\S]*missing the required/,
+    );
+    expect(consoleLog.output()).not.toContain("Retrying in");
+  });
+
   it("exits the watch loop when SIGINT arrives during retry backoff", async () => {
     const client = makeClient({});
     mockBoardFailuresThenEmpty(client, 1, "Rate limit exceeded");

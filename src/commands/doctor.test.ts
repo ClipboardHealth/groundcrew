@@ -1,7 +1,6 @@
 import { existsSync, statSync } from "node:fs";
 
-import { type Board, createBoard } from "../lib/board.ts";
-import { buildSources, type sourcesFromConfig } from "../lib/buildSources.ts";
+import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
 import type { RunCommandOptions } from "../lib/commandRunner.ts";
 import {
   type ConfigSource,
@@ -10,7 +9,7 @@ import {
   type ResolvedConfig,
 } from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
-import type { TaskSource } from "../lib/taskSource.ts";
+import type { Task, TaskSource } from "../lib/taskSource.ts";
 import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCapture.ts";
 import { doctor } from "./doctor.ts";
 
@@ -37,16 +36,13 @@ vi.mock(import("../lib/host.ts"), async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, detectHostCapabilities: vi.fn<typeof detectHostCapabilities>() };
 });
-// Full replacements (no importOriginal): pulling in the real buildSources/board
+// Full replacement (no importOriginal): pulling in the real buildSources
 // would load the adapter registry, which scans the adapters directory and
 // imports each adapter — dragging the real config module into the graph and
 // defeating the config.ts mock when this suite runs alongside others.
 vi.mock(import("../lib/buildSources.ts"), () => ({
   buildSources: vi.fn<typeof buildSources>(),
   sourcesFromConfig: vi.fn<typeof sourcesFromConfig>(() => []),
-}));
-vi.mock(import("../lib/board.ts"), () => ({
-  createBoard: vi.fn<typeof createBoard>(),
 }));
 type RunCommandMock = (
   command: string,
@@ -69,24 +65,25 @@ vi.mock(import("../lib/commandRunner.ts"), async (importOriginal) => {
 const existsMock = vi.mocked(existsSync);
 const statMock = vi.mocked(statSync);
 const buildSourcesMock = vi.mocked(buildSources);
-const createBoardMock = vi.mocked(createBoard);
+const sourcesFromConfigMock = vi.mocked(sourcesFromConfig);
 const loadConfigWithSourceMock = vi.mocked(loadConfigWithSource);
 const detectHostMock = vi.mocked(detectHostCapabilities);
-const boardVerifyMock = vi.fn<Board["verify"]>();
 const DEFAULT_CONFIG_SOURCE: ConfigSource = { kind: "project", filepath: "/work/crew.config.ts" };
 
-/**
- * A minimal Board whose `verify()` is the controllable mock. The other
- * Board methods are unused by the source-probe check, so they're stubbed.
- */
-function stubBoard(): Board {
+function taskStub(id: string): Task {
   return {
-    verify: boardVerifyMock,
-    fetch: vi.fn<Board["fetch"]>(),
-    resolveOne: vi.fn<Board["resolveOne"]>(),
-    markInProgress: vi.fn<Board["markInProgress"]>(),
-    markInReview: vi.fn<Board["markInReview"]>(),
-    markDone: vi.fn<Board["markDone"]>(),
+    id,
+    source: "plankeeper",
+    title: "T",
+    description: "",
+    status: "todo",
+    repository: undefined,
+    agent: undefined,
+    assignee: "",
+    updatedAt: "2026-01-01T00:00:00Z",
+    blockers: [],
+    hasMoreBlockers: false,
+    sourceRef: undefined,
   };
 }
 
@@ -217,9 +214,8 @@ describe(doctor, () => {
     existsMock.mockReturnValue(true);
     statMock.mockReturnValue(statsWithDirectoryValue(true));
     detectHostMock.mockResolvedValue(host());
+    sourcesFromConfigMock.mockReturnValue([]);
     buildSourcesMock.mockResolvedValue([stubSource("linear")]);
-    createBoardMock.mockReturnValue(stubBoard());
-    boardVerifyMock.mockResolvedValue();
     runCommandMock.mockImplementation((_cmd, arguments_) => {
       const target = firstArgument(arguments_);
       return `/usr/bin/${target}\n`;
@@ -269,23 +265,166 @@ describe(doctor, () => {
 
     expect(actual).toBe(true);
     expect(buildSourcesMock).toHaveBeenCalledTimes(1);
-    expect(boardVerifyMock).toHaveBeenCalledTimes(1);
     const output = consoleLog.output();
-    expect(output).toContain("[ok] source probe");
-    expect(output).toContain("1 source(s) verified");
+    expect(output).toContain("[ok] source: linear  — verified");
     expect(output).toContain("All required checks passed");
   });
 
-  it("reports a source probe failure when board verification throws", async () => {
+  it("enumerates each configured source with its own status line", async () => {
     loadConfigMock.mockResolvedValue(makeConfig());
-    boardVerifyMock.mockRejectedValue(new Error("viewer lookup failed"));
+    buildSourcesMock.mockResolvedValue([stubSource("plankeeper"), stubSource("linear")]);
+
+    const actual = await doctor();
+
+    expect(actual).toBe(true);
+    const output = consoleLog.output();
+    expect(output).toContain("[ok] source: plankeeper");
+    expect(output).toContain("[ok] source: linear");
+  });
+
+  it("reports a failed source when its verify throws, leaving siblings green", async () => {
+    loadConfigMock.mockResolvedValue(makeConfig());
+    const failing = stubSource("linear");
+    vi.mocked(failing.verify).mockRejectedValue(new Error("viewer lookup failed"));
+    const healthy = stubSource("plankeeper");
+    buildSourcesMock.mockResolvedValue([healthy, failing]);
 
     const actual = await doctor();
 
     expect(actual).toBe(false);
     const output = consoleLog.output();
-    expect(output).toContain("[--] source probe");
+    expect(output).toContain("[ok] source: plankeeper");
+    expect(output).toContain("[--] source: linear");
     expect(output).toContain("viewer lookup failed");
+  });
+
+  it("deep-probes shell sources via listTasks so malformed task output fails doctor", async () => {
+    loadConfigMock.mockResolvedValue(makeConfig());
+    sourcesFromConfigMock.mockReturnValue([
+      { kind: "shell", name: "plankeeper", commands: { fetch: "./list.sh" } },
+    ]);
+    const shellSource = stubSource("plankeeper");
+    vi.mocked(shellSource.listTasks).mockRejectedValue(
+      new Error('source "plankeeper": the listTasks command returned task JSON …'),
+    );
+    buildSourcesMock.mockResolvedValue([shellSource]);
+
+    const actual = await doctor();
+
+    expect(actual).toBe(false);
+    expect(vi.mocked(shellSource.verify)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(shellSource.listTasks)).toHaveBeenCalledTimes(1);
+    const output = consoleLog.output();
+    expect(output).toContain("[--] source: plankeeper");
+    expect(output).toContain("returned task JSON");
+  });
+
+  it("reports a fatal source build failure as a single check", async () => {
+    loadConfigMock.mockResolvedValue(makeConfig());
+    buildSourcesMock.mockRejectedValue(new Error('Unknown source kind "bogus"'));
+
+    const actual = await doctor();
+
+    expect(actual).toBe(false);
+    const output = consoleLog.output();
+    expect(output).toContain('[--] sources  — Unknown source kind "bogus"');
+  });
+
+  it("fails with a single check when no sources are configured", async () => {
+    loadConfigMock.mockResolvedValue(makeConfig());
+    buildSourcesMock.mockResolvedValue([]);
+
+    const actual = await doctor();
+
+    expect(actual).toBe(false);
+    expect(consoleLog.output()).toContain("[--] sources  — no task sources configured");
+  });
+
+  it("reports the fetched task count for a healthy shell source", async () => {
+    loadConfigMock.mockResolvedValue(makeConfig());
+    sourcesFromConfigMock.mockReturnValue([{ kind: "shell", name: "plankeeper" }]);
+    const shellSource = stubSource("plankeeper");
+    vi.mocked(shellSource.listTasks).mockResolvedValue([]);
+    buildSourcesMock.mockResolvedValue([shellSource]);
+
+    const actual = await doctor();
+
+    expect(actual).toBe(true);
+    expect(consoleLog.output()).toContain("[ok] source: plankeeper  — verified; fetched 0 task(s)");
+  });
+
+  it("does not round-trip through fallback getTask when a shell source has no explicit getTask command", async () => {
+    loadConfigMock.mockResolvedValue(makeConfig());
+    sourcesFromConfigMock.mockReturnValue([
+      { kind: "shell", name: "plankeeper", commands: { fetch: "./list.sh" } },
+    ]);
+    const shellSource = stubSource("plankeeper");
+    vi.mocked(shellSource.listTasks).mockResolvedValue([taskStub("plankeeper:p-1")]);
+    buildSourcesMock.mockResolvedValue([shellSource]);
+
+    const actual = await doctor();
+
+    expect(actual).toBe(true);
+    expect(vi.mocked(shellSource.getTask)).not.toHaveBeenCalled();
+    const output = consoleLog.output();
+    expect(output).toContain("[ok] source: plankeeper  — verified; fetched 1 task(s)");
+    expect(output).not.toContain("getTask round-trips");
+  });
+
+  it("round-trips a fetched id through getTask for a healthy shell source", async () => {
+    loadConfigMock.mockResolvedValue(makeConfig());
+    sourcesFromConfigMock.mockReturnValue([
+      { kind: "shell", name: "plankeeper", commands: { getTask: `./get.sh \${id}` } },
+    ]);
+    const shellSource = stubSource("plankeeper");
+    vi.mocked(shellSource.listTasks).mockResolvedValue([taskStub("plankeeper:p-1")]);
+    vi.mocked(shellSource.getTask).mockResolvedValue(taskStub("plankeeper:p-1"));
+    buildSourcesMock.mockResolvedValue([shellSource]);
+
+    const actual = await doctor();
+
+    expect(actual).toBe(true);
+    // getTask receives the natural (unprefixed) id.
+    expect(vi.mocked(shellSource.getTask)).toHaveBeenCalledWith("p-1");
+    expect(consoleLog.output()).toContain(
+      "[ok] source: plankeeper  — verified; fetched 1 task(s); getTask round-trips",
+    );
+  });
+
+  it("fails the shell source when getTask resolves a different task than listTasks emitted", async () => {
+    loadConfigMock.mockResolvedValue(makeConfig());
+    sourcesFromConfigMock.mockReturnValue([
+      { kind: "shell", name: "plankeeper", commands: { resolveOne: `./resolve.sh \${id}` } },
+    ]);
+    const shellSource = stubSource("plankeeper");
+    vi.mocked(shellSource.listTasks).mockResolvedValue([taskStub("plankeeper:p-1")]);
+    vi.mocked(shellSource.getTask).mockResolvedValue(taskStub("plankeeper:p-2"));
+    buildSourcesMock.mockResolvedValue([shellSource]);
+
+    const actual = await doctor();
+
+    expect(actual).toBe(false);
+    const output = consoleLog.output();
+    expect(output).toContain("[--] source: plankeeper");
+    expect(output).toContain('resolved "plankeeper:p-2", but listTasks emitted "plankeeper:p-1"');
+  });
+
+  it("fails the shell source when a fetched id does not resolve via getTask", async () => {
+    loadConfigMock.mockResolvedValue(makeConfig());
+    sourcesFromConfigMock.mockReturnValue([
+      { kind: "shell", name: "plankeeper", commands: { getTask: `./get.sh \${id}` } },
+    ]);
+    const shellSource = stubSource("plankeeper");
+    vi.mocked(shellSource.listTasks).mockResolvedValue([taskStub("plankeeper:p-1")]);
+    vi.mocked(shellSource.getTask).mockResolvedValue(null);
+    buildSourcesMock.mockResolvedValue([shellSource]);
+
+    const actual = await doctor();
+
+    expect(actual).toBe(false);
+    const output = consoleLog.output();
+    expect(output).toContain("[--] source: plankeeper");
+    expect(output).toContain('getTask("p-1") returned nothing');
   });
 
   it("returns false when a required CLI tool is missing", async () => {

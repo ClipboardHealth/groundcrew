@@ -221,6 +221,23 @@ export class RepositoryResolutionError extends Error {
   }
 }
 
+/**
+ * A task source returned output that groundcrew could not parse — non-JSON
+ * stdout, or JSON that doesn't match the source's contract (e.g. a shell
+ * script's `listTasks` payload missing the required `agent` field). Carries a
+ * user-facing message that names the source and what was wrong.
+ *
+ * Marked deterministic: re-running the same command yields the same bad
+ * output, so the orchestrator's `withRetry` must NOT retry it (retrying only
+ * delays a guaranteed failure behind confusing "Retrying in Ns" lines).
+ */
+export class TaskSourceOutputError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = "TaskSourceOutputError";
+  }
+}
+
 export class AmbiguousTaskError extends Error {
   public constructor(arguments_: { naturalId: string; matches: readonly string[] }) {
     const { naturalId, matches } = arguments_;

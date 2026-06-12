@@ -5,7 +5,6 @@
 
 import { existsSync, statSync } from "node:fs";
 
-import { type Board, createBoard } from "../lib/board.ts";
 import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
 import {
   type ConfigSourceKind,
@@ -18,6 +17,7 @@ import {
 import { detectHostCapabilities, type HostCapabilities, which } from "../lib/host.ts";
 import { isEnvironmentAssignment } from "../lib/launchCommand.ts";
 import { resolveLocalRunner } from "../lib/localRunner.ts";
+import { naturalIdFromCanonical, type TaskSource } from "../lib/taskSource.ts";
 import { gatedAgents } from "../lib/usage.ts";
 import { errorMessage, writeOutput } from "../lib/util.ts";
 import { resolveWorkspaceKind, type WorkspaceResolution } from "../lib/workspaces.ts";
@@ -40,6 +40,8 @@ interface Check {
   hint?: string;
 }
 
+type ShellReadProbe = "none" | "listTasks" | "listTasksAndGetTask";
+
 async function checkCmd(cmd: string, required: boolean, hint?: string): Promise<Check> {
   const path = await which(cmd);
   const resolvedHint = path ?? hint;
@@ -54,26 +56,102 @@ async function checkCmd(cmd: string, required: boolean, hint?: string): Promise<
   return result;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
 /**
- * Source-agnostic reachability check: build every configured task source
- * and run the Board's `verify()` fan-out. Replaces the old Linear-only
- * "api key + reachability" probe so a misconfigured shell (or future Jira)
- * source surfaces here too. A missing Linear API key still fails verify with
- * its own user-facing message, so the prior behavior is preserved.
+ * True when a raw source config entry declares `kind: "shell"`. Gates the
+ * shell-only read probe.
  */
-async function checkSourceProbe(config: ResolvedConfig): Promise<Check> {
+function isShellSource(raw: unknown): raw is Record<string, unknown> & { kind: "shell" } {
+  if (!isRecord(raw)) {
+    return false;
+  }
+  const { kind } = raw;
+  return kind === "shell";
+}
+
+function hasExplicitGetTaskCommand(raw: Record<string, unknown>): boolean {
+  const { commands } = raw;
+  if (!isRecord(commands)) {
+    return false;
+  }
+  const { getTask, resolveOne } = commands;
+  return typeof getTask === "string" || typeof resolveOne === "string";
+}
+
+function shellReadProbeFor(raw: unknown): ShellReadProbe {
+  if (!isShellSource(raw)) {
+    return "none";
+  }
+  return hasExplicitGetTaskCommand(raw) ? "listTasksAndGetTask" : "listTasks";
+}
+
+/**
+ * Probe each configured task source independently and emit one `Check` per
+ * source (named `source: <name>`), so a single broken source is attributable
+ * instead of hidden behind an aggregate "N source(s) verified" line.
+ *
+ * Every source runs its `verify()`. Shell sources are additionally deep-probed
+ * via `listTasks()`: their `verify` command can discard stdout (e.g.
+ * `... fetch >/dev/null`), so a malformed task payload sails through verify and
+ * only blows up later in `crew run`. Running listTasks here surfaces a
+ * wrong-shape payload (a `TaskSourceOutputError` with a readable message) at
+ * doctor time. Non-shell sources (Linear) are left to `verify()` alone — their
+ * fetch is an expensive network call that verify already exercises.
+ */
+async function checkSourceProbes(config: ResolvedConfig): Promise<Check[]> {
+  const rawSources = sourcesFromConfig(config);
+  let sources: TaskSource[];
   try {
-    const sources = await buildSources(sourcesFromConfig(config), { globalConfig: config });
-    const board: Board = createBoard(sources);
-    await board.verify();
-    return {
-      name: "source probe",
-      ok: true,
-      required: true,
-      hint: `${sources.length} source(s) verified`,
-    };
+    sources = await buildSources(rawSources, { globalConfig: config });
   } catch (error) {
-    return { name: "source probe", ok: false, required: true, hint: errorMessage(error) };
+    // Building sources failed before any individual probe (bad config / unknown
+    // kind). Surface it as a single failed check rather than per-source.
+    return [{ name: "sources", ok: false, required: true, hint: errorMessage(error) }];
+  }
+  if (sources.length === 0) {
+    return [{ name: "sources", ok: false, required: true, hint: "no task sources configured" }];
+  }
+  const checks: Check[] = [];
+  for (const [index, source] of sources.entries()) {
+    const shellReadProbe = shellReadProbeFor(rawSources[index]);
+    // oxlint-disable-next-line no-await-in-loop -- sequential keeps each verdict attributable to one source
+    checks.push(await probeSource(source, shellReadProbe));
+  }
+  return checks;
+}
+
+async function probeSource(source: TaskSource, shellReadProbe: ShellReadProbe): Promise<Check> {
+  const name = `source: ${source.name}`;
+  try {
+    await source.verify();
+    if (shellReadProbe === "none") {
+      return { name, ok: true, required: true, hint: "verified" };
+    }
+    const tasks = await source.listTasks();
+    const parts = [`fetched ${tasks.length} task(s)`];
+    // Read-path symmetry: an id listTasks emitted must resolve via getTask.
+    // Skipped when getTask is only the adapter's listTasks fallback, since that
+    // would just re-run listTasks and can race changing source output.
+    const [first] = tasks;
+    if (first !== undefined && shellReadProbe === "listTasksAndGetTask") {
+      const naturalId = naturalIdFromCanonical(first.id);
+      const resolved = await source.getTask(naturalId);
+      if (resolved === null) {
+        throw new Error(`getTask("${naturalId}") returned nothing, but listTasks emitted it`);
+      }
+      if (resolved.id !== first.id) {
+        throw new Error(
+          `getTask("${naturalId}") resolved "${resolved.id}", but listTasks emitted "${first.id}"`,
+        );
+      }
+      parts.push("getTask round-trips");
+    }
+    return { name, ok: true, required: true, hint: `verified; ${parts.join("; ")}` };
+  } catch (error) {
+    return { name, ok: false, required: true, hint: errorMessage(error) };
   }
 }
 
@@ -220,7 +298,7 @@ export async function doctor(): Promise<boolean> {
   reportWorkspaceKind(config, workspaceOutcome);
 
   const checks: Check[] = [
-    await checkSourceProbe(config),
+    ...(await checkSourceProbes(config)),
     await checkCmd("git", true, "https://git-scm.com/"),
     ...(await workspaceChecks(workspaceOutcome)),
     checkDir(config.workspace.projectDir, "workspace.projectDir"),

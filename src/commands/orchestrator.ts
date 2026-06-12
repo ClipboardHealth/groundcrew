@@ -9,7 +9,11 @@ import { type Board, createBoard } from "../lib/board.ts";
 import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
 import { loadConfigWithSource, type ResolvedConfig } from "../lib/config.ts";
 import { findPullRequestsForBranch } from "../lib/pullRequests.ts";
-import { type BoardState, RepositoryResolutionError } from "../lib/taskSource.ts";
+import {
+  type BoardState,
+  RepositoryResolutionError,
+  TaskSourceOutputError,
+} from "../lib/taskSource.ts";
 import { getUsageByAgent, type UsageByAgent } from "../lib/usage.ts";
 import { errorMessage, log, sleep, writeOutput } from "../lib/util.ts";
 import { worktrees } from "../lib/worktrees.ts";
@@ -35,6 +39,11 @@ async function withRetry<T>(
     } catch (error) {
       /* v8 ignore next 2 @preserve -- fetch() warns-and-skips since PR#88; guard is a defensive no-op in practice */
       if (error instanceof RepositoryResolutionError) {
+        throw error;
+      }
+      // A source returned unparseable output — deterministic, so retrying just
+      // delays a guaranteed failure behind confusing "Retrying in Ns" lines.
+      if (error instanceof TaskSourceOutputError) {
         throw error;
       }
       if (attempt === maxRetries) {
