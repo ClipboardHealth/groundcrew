@@ -62,17 +62,18 @@ the token on per invocation.
    own process — nothing global, and no secret in your config file.
 
 3. **Label your issues** so groundcrew knows what to pick up and where to
-   dispatch it. JIRA labels cannot contain `/`, so the repository slash is
-   encoded as `__`:
-   - `groundcrew` -> opts the issue in. The default JQL fetches only issues
-     carrying this label, so work is dispatched explicitly rather than every
-     open issue being swept up. The label name is just a JQL convention — change
-     the `labels = …` clause in `JIRA_GROUNDCREW_JQL` to use a different name.
-   - `repo:Owner__name` -> `repository: "Owner/name"`
-   - `agent:<name>` -> `agent: "<name>"`
+   dispatch it:
 
-   An issue without a `repo:` label is listed but not dispatchable. An issue
-   without an `agent:` label falls back to `JIRA_DEFAULT_AGENT` (or `null`).
+   | Label                  | Example                            | Effect                                                                                                                                                                                                                                                                              |
+   | ---------------------- | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+   | `groundcrew`           | `groundcrew`                       | Opts the issue in. The default JQL fetches only issues carrying this label, so work is dispatched explicitly rather than every open issue being swept up. The label name is just a JQL convention — change the `labels = …` clause in `JIRA_GROUNDCREW_JQL` to use a different one. |
+   | `repo:<name>`          | `repo:wild-horses`                 | Sets `repository: "wild-horses"`. Use a bare repository name when your config's `knownRepositories` lists it by name — no owner needed.                                                                                                                                             |
+   | `repo:<Owner>__<name>` | `repo:ClipboardHealth__groundcrew` | Sets `repository: "ClipboardHealth/groundcrew"`. JIRA labels cannot contain `/`, so the slash is encoded as exactly **two** underscores (`__`).                                                                                                                                     |
+   | `agent:<name>`         | `agent:claude`                     | **Optional** — omit it to use `JIRA_DEFAULT_AGENT` (`claude` in the sample config). Only add this label to override the default for a specific issue.                                                                                                                               |
+
+   So a typical dispatchable issue carries just `groundcrew` + a `repo:` label.
+   An issue without a `repo:` label is listed but not dispatchable (and with no
+   `agent:` label and no `JIRA_DEFAULT_AGENT`, its agent is `null`).
 
 4. **Add the source** to your `crew.config.json` (or `crew.config.ts`):
 
