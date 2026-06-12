@@ -40,6 +40,8 @@ interface Check {
   hint?: string;
 }
 
+type ShellReadProbe = "none" | "listTasks" | "listTasksAndGetTask";
+
 async function checkCmd(cmd: string, required: boolean, hint?: string): Promise<Check> {
   const path = await which(cmd);
   const resolvedHint = path ?? hint;
@@ -54,12 +56,36 @@ async function checkCmd(cmd: string, required: boolean, hint?: string): Promise<
   return result;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
 /**
  * True when a raw source config entry declares `kind: "shell"`. Gates the
- * shell-only deep probe (listTasks output validation + getTask round-trip).
+ * shell-only read probe.
  */
-function isShellSource(raw: unknown): boolean {
-  return typeof raw === "object" && raw !== null && (raw as { kind?: unknown }).kind === "shell";
+function isShellSource(raw: unknown): raw is Record<string, unknown> & { kind: "shell" } {
+  if (!isRecord(raw)) {
+    return false;
+  }
+  const { kind } = raw;
+  return kind === "shell";
+}
+
+function hasExplicitGetTaskCommand(raw: Record<string, unknown>): boolean {
+  const { commands } = raw;
+  if (!isRecord(commands)) {
+    return false;
+  }
+  const { getTask, resolveOne } = commands;
+  return typeof getTask === "string" || typeof resolveOne === "string";
+}
+
+function shellReadProbeFor(raw: unknown): ShellReadProbe {
+  if (!isShellSource(raw)) {
+    return "none";
+  }
+  return hasExplicitGetTaskCommand(raw) ? "listTasksAndGetTask" : "listTasks";
 }
 
 /**
@@ -90,26 +116,27 @@ async function checkSourceProbes(config: ResolvedConfig): Promise<Check[]> {
   }
   const checks: Check[] = [];
   for (const [index, source] of sources.entries()) {
-    const shell = isShellSource(rawSources[index]);
+    const shellReadProbe = shellReadProbeFor(rawSources[index]);
     // oxlint-disable-next-line no-await-in-loop -- sequential keeps each verdict attributable to one source
-    checks.push(await probeSource(source, shell));
+    checks.push(await probeSource(source, shellReadProbe));
   }
   return checks;
 }
 
-async function probeSource(source: TaskSource, shell: boolean): Promise<Check> {
+async function probeSource(source: TaskSource, shellReadProbe: ShellReadProbe): Promise<Check> {
   const name = `source: ${source.name}`;
   try {
     await source.verify();
-    if (!shell) {
+    if (shellReadProbe === "none") {
       return { name, ok: true, required: true, hint: "verified" };
     }
     const tasks = await source.listTasks();
     const parts = [`fetched ${tasks.length} task(s)`];
     // Read-path symmetry: an id listTasks emitted must resolve via getTask.
-    // Skipped on an empty board — there's nothing to round-trip.
+    // Skipped when getTask is only the adapter's listTasks fallback, since that
+    // would just re-run listTasks and can race changing source output.
     const [first] = tasks;
-    if (first !== undefined) {
+    if (first !== undefined && shellReadProbe === "listTasksAndGetTask") {
       const naturalId = naturalIdFromCanonical(first.id);
       const resolved = await source.getTask(naturalId);
       if (resolved === null) {

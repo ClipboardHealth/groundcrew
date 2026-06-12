@@ -300,7 +300,9 @@ describe(doctor, () => {
 
   it("deep-probes shell sources via listTasks so malformed task output fails doctor", async () => {
     loadConfigMock.mockResolvedValue(makeConfig());
-    sourcesFromConfigMock.mockReturnValue([{ kind: "shell", name: "plankeeper" }]);
+    sourcesFromConfigMock.mockReturnValue([
+      { kind: "shell", name: "plankeeper", commands: { fetch: "./list.sh" } },
+    ]);
     const shellSource = stubSource("plankeeper");
     vi.mocked(shellSource.listTasks).mockRejectedValue(
       new Error('source "plankeeper": the listTasks command returned task JSON …'),
@@ -351,9 +353,29 @@ describe(doctor, () => {
     expect(consoleLog.output()).toContain("[ok] source: plankeeper  — verified; fetched 0 task(s)");
   });
 
+  it("does not round-trip through fallback getTask when a shell source has no explicit getTask command", async () => {
+    loadConfigMock.mockResolvedValue(makeConfig());
+    sourcesFromConfigMock.mockReturnValue([
+      { kind: "shell", name: "plankeeper", commands: { fetch: "./list.sh" } },
+    ]);
+    const shellSource = stubSource("plankeeper");
+    vi.mocked(shellSource.listTasks).mockResolvedValue([taskStub("plankeeper:p-1")]);
+    buildSourcesMock.mockResolvedValue([shellSource]);
+
+    const actual = await doctor();
+
+    expect(actual).toBe(true);
+    expect(vi.mocked(shellSource.getTask)).not.toHaveBeenCalled();
+    const output = consoleLog.output();
+    expect(output).toContain("[ok] source: plankeeper  — verified; fetched 1 task(s)");
+    expect(output).not.toContain("getTask round-trips");
+  });
+
   it("round-trips a fetched id through getTask for a healthy shell source", async () => {
     loadConfigMock.mockResolvedValue(makeConfig());
-    sourcesFromConfigMock.mockReturnValue([{ kind: "shell", name: "plankeeper" }]);
+    sourcesFromConfigMock.mockReturnValue([
+      { kind: "shell", name: "plankeeper", commands: { getTask: `./get.sh \${id}` } },
+    ]);
     const shellSource = stubSource("plankeeper");
     vi.mocked(shellSource.listTasks).mockResolvedValue([taskStub("plankeeper:p-1")]);
     vi.mocked(shellSource.getTask).mockResolvedValue(taskStub("plankeeper:p-1"));
@@ -371,7 +393,9 @@ describe(doctor, () => {
 
   it("fails the shell source when getTask resolves a different task than listTasks emitted", async () => {
     loadConfigMock.mockResolvedValue(makeConfig());
-    sourcesFromConfigMock.mockReturnValue([{ kind: "shell", name: "plankeeper" }]);
+    sourcesFromConfigMock.mockReturnValue([
+      { kind: "shell", name: "plankeeper", commands: { resolveOne: `./resolve.sh \${id}` } },
+    ]);
     const shellSource = stubSource("plankeeper");
     vi.mocked(shellSource.listTasks).mockResolvedValue([taskStub("plankeeper:p-1")]);
     vi.mocked(shellSource.getTask).mockResolvedValue(taskStub("plankeeper:p-2"));
@@ -387,7 +411,9 @@ describe(doctor, () => {
 
   it("fails the shell source when a fetched id does not resolve via getTask", async () => {
     loadConfigMock.mockResolvedValue(makeConfig());
-    sourcesFromConfigMock.mockReturnValue([{ kind: "shell", name: "plankeeper" }]);
+    sourcesFromConfigMock.mockReturnValue([
+      { kind: "shell", name: "plankeeper", commands: { getTask: `./get.sh \${id}` } },
+    ]);
     const shellSource = stubSource("plankeeper");
     vi.mocked(shellSource.listTasks).mockResolvedValue([taskStub("plankeeper:p-1")]);
     vi.mocked(shellSource.getTask).mockResolvedValue(null);
