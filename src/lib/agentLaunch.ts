@@ -1,4 +1,8 @@
-import * as clearance from "@clipboard-health/clearance";
+import {
+  ensureClearance,
+  resolveSafehouseCmuxIntegration,
+  safehouseCmuxIntegrationWarningLines,
+} from "@clipboard-health/clearance";
 
 import { clearanceAllowHostsFilesFromEnvironment } from "./clearanceAllowlist.ts";
 import {
@@ -102,7 +106,7 @@ function safehouseAgentIntegrationFor(
     return undefined;
   }
   const isClaudeAgent = inferAgentCommandName(definition.cmd) === "claude";
-  const cmuxIntegration = resolveClearanceSafehouseCmuxIntegration();
+  const cmuxIntegration = resolveSafehouseCmuxIntegration();
   if (isClaudeAgent) {
     warnOnCmuxIntegrationDrift({ unreviewedEnvNames: cmuxIntegration.unreviewedEnvNames });
   }
@@ -115,74 +119,12 @@ function safehouseAgentIntegrationFor(
 }
 
 function warnOnCmuxIntegrationDrift(input: { unreviewedEnvNames: readonly string[] }): void {
-  if (input.unreviewedEnvNames.length === 0) {
-    return;
+  for (const warningLine of safehouseCmuxIntegrationWarningLines({
+    commandName: "groundcrew",
+    unreviewedEnvNames: input.unreviewedEnvNames,
+  })) {
+    writeError(warningLine);
   }
-
-  writeError(
-    `groundcrew: cmux Claude wrapper references unreviewed env vars: ${input.unreviewedEnvNames.join(", ")}`,
-  );
-  writeError("groundcrew: update @clipboard-health/clearance after reviewing the cmux change.");
-}
-
-interface ClearanceSafehouseCmuxIntegration {
-  addDirsReadOnly: readonly string[];
-  claudeCommandPrelude: string;
-  envPass: readonly string[];
-  unreviewedEnvNames: readonly string[];
-}
-
-type ClearanceSafehouseCmuxResolver = () => unknown;
-
-function resolveClearanceSafehouseCmuxIntegration(): ClearanceSafehouseCmuxIntegration {
-  const resolveSafehouseCmuxIntegration = clearanceSafehouseCmuxResolver();
-  /* v8 ignore next 4 @preserve -- Runtime guard for older clearance versions before the cmux helper exists. */
-  if (resolveSafehouseCmuxIntegration === undefined) {
-    throw new Error(
-      "cmux Safehouse integration requires @clipboard-health/clearance with resolveSafehouseCmuxIntegration. Update @clipboard-health/clearance before using workspaceKind='cmux' with local.runner='safehouse'.",
-    );
-  }
-
-  const integration = resolveSafehouseCmuxIntegration();
-  if (!isClearanceSafehouseCmuxIntegration(integration)) {
-    throw new TypeError(
-      "@clipboard-health/clearance returned an invalid cmux Safehouse integration.",
-    );
-  }
-  return integration;
-}
-
-function clearanceSafehouseCmuxResolver(): ClearanceSafehouseCmuxResolver | undefined {
-  const maybeResolver: unknown = Reflect.get(clearance, "resolveSafehouseCmuxIntegration");
-  /* v8 ignore next 3 @preserve -- Runtime guard for older clearance versions before the cmux helper exists. */
-  if (typeof maybeResolver !== "function") {
-    return undefined;
-  }
-
-  return (): unknown => Reflect.apply(maybeResolver, undefined, []);
-}
-
-function isClearanceSafehouseCmuxIntegration(
-  value: unknown,
-): value is ClearanceSafehouseCmuxIntegration {
-  if (typeof value !== "object" || value === null) {
-    return false;
-  }
-
-  const addDirsReadOnly: unknown = Reflect.get(value, "addDirsReadOnly");
-  const claudeCommandPrelude: unknown = Reflect.get(value, "claudeCommandPrelude");
-  const envPass: unknown = Reflect.get(value, "envPass");
-  const unreviewedEnvNames: unknown = Reflect.get(value, "unreviewedEnvNames");
-  return (
-    isStringList(addDirsReadOnly) &&
-    typeof claudeCommandPrelude === "string" &&
-    isStringList(envPass) &&
-    isStringList(unreviewedEnvNames)
-  );
-}
-
-function isStringList(value: unknown): value is readonly string[] {
-  return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 
 interface PreparedAgentLaunch {
@@ -259,7 +201,7 @@ async function alreadyReady(): Promise<void> {
 }
 
 async function ensureSafehouseClearance(signal?: AbortSignal): Promise<void> {
-  await clearance.ensureClearance({
+  await ensureClearance({
     envOverrides: {
       CLEARANCE_ALLOW_HOSTS_FILES: clearanceAllowHostsFilesFromEnvironment(),
     },

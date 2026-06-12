@@ -1,17 +1,14 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import type * as nodeFs from "node:fs";
 
-import { ensureClearance } from "@clipboard-health/clearance";
+import { ensureClearance, type SafehouseCmuxIntegration } from "@clipboard-health/clearance";
 
 import { fetchResolvedIssue } from "../lib/adapters/linear/fetch.ts";
 import { getLinearClient } from "../lib/adapters/linear/client.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
 import { readRunState, recordRunState, type RunState } from "../lib/runState.ts";
-import {
-  safehouseCmuxIntegrationFixture,
-  type SafehouseCmuxIntegrationFixture,
-} from "../testHelpers/safehouseCmuxIntegration.ts";
+import { safehouseCmuxIntegrationFixture } from "../testHelpers/safehouseCmuxIntegration.ts";
 import { workspaces } from "../lib/workspaces.ts";
 import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 import { resumeWorkspace, resumeWorkspaceCli } from "./resumeWorkspace.ts";
@@ -23,7 +20,7 @@ interface NodeFsMock extends Omit<typeof nodeFs, "mkdtempSync" | "rmSync" | "wri
 }
 
 const resolveSafehouseCmuxIntegrationMock = vi.hoisted(() =>
-  vi.fn<() => SafehouseCmuxIntegrationFixture>(),
+  vi.fn<() => SafehouseCmuxIntegration>(),
 );
 
 vi.mock("node:fs", async (importOriginal): Promise<NodeFsMock> => {

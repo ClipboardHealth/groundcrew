@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import type * as nodeFs from "node:fs";
 import path from "node:path";
 import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
-import { ensureClearance } from "@clipboard-health/clearance";
+import { ensureClearance, type SafehouseCmuxIntegration } from "@clipboard-health/clearance";
 import type { RunCommandOptions } from "../lib/commandRunner.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
@@ -17,10 +17,7 @@ import type * as utilModule from "../lib/util.ts";
 import { debug, log } from "../lib/util.ts";
 import { WorktreeAlreadyExistsError, type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 import { deleteEnvironmentVariable, setEnvironmentVariable } from "../testHelpers/env.ts";
-import {
-  safehouseCmuxIntegrationFixture,
-  type SafehouseCmuxIntegrationFixture,
-} from "../testHelpers/safehouseCmuxIntegration.ts";
+import { safehouseCmuxIntegrationFixture } from "../testHelpers/safehouseCmuxIntegration.ts";
 import { emptyTeardownResult } from "../testHelpers/teardownResult.ts";
 import {
   setupWorkspace,
@@ -40,7 +37,7 @@ interface NodeFsMock extends Omit<
 }
 
 const resolveSafehouseCmuxIntegrationMock = vi.hoisted(() =>
-  vi.fn<() => SafehouseCmuxIntegrationFixture>(),
+  vi.fn<() => SafehouseCmuxIntegration>(),
 );
 
 vi.mock("node:fs", async (importOriginal): Promise<NodeFsMock> => {

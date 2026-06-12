@@ -1,3 +1,5 @@
+import type { SafehouseCmuxIntegration } from "@clipboard-health/clearance";
+
 import type { AgentDefinition } from "./config.ts";
 import { composeAgentLaunch } from "./agentLaunch.ts";
 import { readEnvironmentVariable } from "./util.ts";
@@ -7,7 +9,14 @@ import { safehouseCmuxIntegrationFixture } from "../testHelpers/safehouseCmuxInt
 const runCommandMock = vi.hoisted(() =>
   vi.fn<(command: string, arguments_: readonly string[]) => string>(),
 );
-const resolveSafehouseCmuxIntegrationMock = vi.hoisted(() => vi.fn<() => unknown>());
+const resolveSafehouseCmuxIntegrationMock = vi.hoisted(() =>
+  vi.fn<() => SafehouseCmuxIntegration>(),
+);
+const safehouseCmuxIntegrationWarningLinesMock = vi.hoisted(() =>
+  vi.fn<
+    (input: { commandName: string; unreviewedEnvNames: readonly string[] }) => readonly string[]
+  >(),
+);
 const writeErrorMock = vi.hoisted(() => vi.fn<(message: string) => void>());
 
 vi.mock(import("./commandRunner.ts"), async (importOriginal) => {
@@ -22,6 +31,7 @@ vi.mock(import("@clipboard-health/clearance"), async (importOriginal) => {
   return {
     ...actual,
     resolveSafehouseCmuxIntegration: resolveSafehouseCmuxIntegrationMock,
+    safehouseCmuxIntegrationWarningLines: safehouseCmuxIntegrationWarningLinesMock,
   };
 });
 vi.mock(import("./util.ts"), async (importOriginal) => {
@@ -77,6 +87,7 @@ describe(composeAgentLaunch, () => {
         ],
       }),
     );
+    safehouseCmuxIntegrationWarningLinesMock.mockReturnValue([]);
     writeErrorMock.mockReset();
     deleteEnvironmentVariable("CMUX_SOCKET_PATH");
   });
@@ -102,6 +113,10 @@ describe(composeAgentLaunch, () => {
   });
 
   it("warns when clearance reports unreviewed cmux Claude wrapper env names", () => {
+    safehouseCmuxIntegrationWarningLinesMock.mockReturnValue([
+      "groundcrew: clearance-owned warning one",
+      "groundcrew: clearance-owned warning two",
+    ]);
     resolveSafehouseCmuxIntegrationMock.mockReturnValue(
       safehouseCmuxIntegrationFixture({
         addDirsReadOnly: ["/Applications/cmux.app"],
@@ -113,20 +128,14 @@ describe(composeAgentLaunch, () => {
 
     compose();
 
-    expect(writeErrorMock).toHaveBeenCalledWith(
-      "groundcrew: cmux Claude wrapper references unreviewed env vars: CMUX_NEW_REQUIRED_SETTING",
-    );
-    expect(writeErrorMock).toHaveBeenCalledWith(
-      "groundcrew: update @clipboard-health/clearance after reviewing the cmux change.",
-    );
-  });
-
-  it("fails clearly when clearance returns an invalid cmux Safehouse integration", () => {
-    resolveSafehouseCmuxIntegrationMock.mockReturnValue(null);
-
-    expect(() => compose()).toThrow(
-      "@clipboard-health/clearance returned an invalid cmux Safehouse integration.",
-    );
+    expect(safehouseCmuxIntegrationWarningLinesMock).toHaveBeenCalledWith({
+      commandName: "groundcrew",
+      unreviewedEnvNames: ["CMUX_NEW_REQUIRED_SETTING"],
+    });
+    expect(writeErrorMock.mock.calls.map((call) => call[0])).toStrictEqual([
+      "groundcrew: clearance-owned warning one",
+      "groundcrew: clearance-owned warning two",
+    ]);
   });
 
   it("adds the runtime cmux socket directory when the launch environment provides it", () => {
