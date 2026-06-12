@@ -459,13 +459,28 @@ const PROMPT_PLACEHOLDER_RE = /{{[^{}]*}}/g;
 
 const PERCENT_MIN_EXCLUSIVE = 0;
 const PERCENT_MAX = 100;
+const CONFIG_ERROR_PREFIX = "groundcrew config: ";
 
 function defaultLogFile(): string {
   return xdgStatePath("groundcrew", "groundcrew.log");
 }
 
 function fail(message: string): never {
-  throw new Error(`groundcrew config: ${message}`);
+  throw new Error(`${CONFIG_ERROR_PREFIX}${message}`);
+}
+
+interface ConfigErrorContext {
+  error: unknown;
+  filepath: string;
+}
+
+function rethrowWithConfigPath({ error, filepath }: ConfigErrorContext): never {
+  if (error instanceof Error && error.message.startsWith(CONFIG_ERROR_PREFIX)) {
+    const message = error.message.slice(CONFIG_ERROR_PREFIX.length);
+    throw new Error(`${CONFIG_ERROR_PREFIX}${filepath}: ${message}`, { cause: error });
+  }
+
+  throw error;
 }
 
 function isNonEmptyString(value: unknown): value is string {
@@ -1297,10 +1312,14 @@ export async function loadConfigWithSource(): Promise<Readonly<LoadedConfig>> {
   }
   debug(`Loaded config from ${filepath}`);
 
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- runtime fields are validated by applyDefaults/validate
-  const resolved = applyDefaults(userConfig as unknown as Config, path.dirname(filepath));
-
-  validate(resolved);
+  let resolved: ResolvedConfig;
+  try {
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- runtime fields are validated by applyDefaults/validate
+    resolved = applyDefaults(userConfig as unknown as Config, path.dirname(filepath));
+    validate(resolved);
+  } catch (error) {
+    rethrowWithConfigPath({ error, filepath });
+  }
 
   setLogFile(resolved.logging.file);
 
