@@ -135,6 +135,12 @@ export async function prepareAgentLaunch(input: {
         "Your cmd owns the wrap, so add the names to its own '--env-pass=' flag, or drop the 'safehouse' prefix from 'cmd' to let groundcrew compose the flag for you.",
     );
   }
+  if (runner === "safehouse" && /^safehouse(?:\s|$)/.test(input.definition.cmd)) {
+    throw new Error(
+      `Local groundcrew ${input.purpose} on agent '${input.agent}' cannot inject worker self-completion env when 'cmd' already starts with 'safehouse'. ` +
+        "Your cmd owns the wrap, so add GROUNDCREW_TASK_ID,GROUNDCREW_COMPLETE to its own '--env-pass=' flag, or drop the 'safehouse' prefix from 'cmd' to let groundcrew compose the flag for you.",
+    );
+  }
 
   const sandboxName =
     runner === "sdx" && input.definition.sandbox !== undefined

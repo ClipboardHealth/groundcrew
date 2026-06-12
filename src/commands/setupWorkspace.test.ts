@@ -936,32 +936,27 @@ describe(setupWorkspace, () => {
     );
   });
 
-  it("does not double-wrap when the cmd already starts with safehouse", async () => {
+  it("fails before creating a worktree when worker env is required with a safehouse-prefixed cmd", async () => {
     detectHostMock.mockResolvedValue(host());
     const config = makeConfig({
       definitions: {
         claude: {
-          // A user upgrading from main has `safehouse` baked into their cmd;
-          // local wrapping must not produce `safehouse safehouse claude ...`.
           cmd: "safehouse claude --permission-mode auto",
           color: "#fff",
         },
       },
     });
-    mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
 
-    await setupWorkspace(config, {
-      task: "team-1",
-      repository: "repo-a",
-      agent: "claude",
-      details: { title: "Test Title", description: "Body" },
-    });
+    await expect(
+      setupWorkspace(config, {
+        task: "team-1",
+        repository: "repo-a",
+        agent: "claude",
+        details: { title: "Test Title", description: "Body" },
+      }),
+    ).rejects.toThrow(/cannot inject worker self-completion env when 'cmd' already starts/);
 
-    const command = lastRunArgumentFromCallWithArgument("new-workspace");
-    const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
-    expect(command).toBe("bash '/tmp/groundcrew-team-1-x/launch.sh'");
-    expect(launchScript).toContain('exec safehouse claude --permission-mode auto "$_p"');
-    expect(launchScript).not.toContain("safehouse safehouse");
+    expect(createMock).not.toHaveBeenCalled();
   });
 
   describe("build-time secret shuttling", () => {

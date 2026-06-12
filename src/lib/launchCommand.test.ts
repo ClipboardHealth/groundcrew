@@ -1112,6 +1112,20 @@ describe(buildLaunchCommand, () => {
       ).toThrow(/preLaunchEnv cannot be injected when `cmd` starts with `safehouse`/);
     });
 
+    it("throws when workerEnvironment is set with a cmd that already starts with safehouse", () => {
+      expect(() =>
+        buildLaunchCommand(
+          arguments_({
+            definition: {
+              cmd: "safehouse --env-pass=OTHER my-agent",
+              color: "#fff",
+            },
+            workerEnvironment: WORKER_ENVIRONMENT,
+          }),
+        ),
+      ).toThrow(/workerEnvironment cannot be injected when `cmd` starts with `safehouse`/);
+    });
+
     it("treats preLaunchEnv: [] as a no-op when cmd already starts with safehouse", () => {
       // Same contract on the safehouse-prefixed-cmd path: an empty list has
       // nothing to inject, so the user-owns-the-wrap guard must not fire,

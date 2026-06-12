@@ -325,6 +325,13 @@ type WorkerEnvironmentName = (typeof WORKER_ENVIRONMENT_NAMES)[number];
 
 export type WorkerEnvironment = Readonly<Record<WorkerEnvironmentName, string>>;
 
+export function workerEnvironmentForTask(taskId: string): WorkerEnvironment {
+  return {
+    GROUNDCREW_TASK_ID: taskId,
+    GROUNDCREW_COMPLETE: `crew task done ${taskId}`,
+  };
+}
+
 function workerEnvironmentNames(
   workerEnvironment: WorkerEnvironment | undefined,
 ): readonly WorkerEnvironmentName[] {
@@ -457,6 +464,11 @@ export function buildLaunchCommand(arguments_: LaunchCommandArguments): string {
     // inject into. Fail loudly instead of silently dropping the contract.
     throw new Error(
       "preLaunchEnv cannot be injected when `cmd` starts with `safehouse` — your cmd owns the wrap, so add the names to its own `--env-pass=` flag, or drop the `safehouse` prefix from `cmd` to let groundcrew compose the flag for you.",
+    );
+  }
+  if (arguments_.workerEnvironment !== undefined && arguments_.runner === "safehouse") {
+    throw new Error(
+      "workerEnvironment cannot be injected when `cmd` starts with `safehouse` — your cmd owns the wrap, so add GROUNDCREW_TASK_ID,GROUNDCREW_COMPLETE to its own `--env-pass=` flag, or drop the `safehouse` prefix from `cmd` to let groundcrew compose the flag for you.",
     );
   }
   return buildUnwrappedHostLaunchCommand(arguments_);

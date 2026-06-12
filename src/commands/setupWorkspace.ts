@@ -3,7 +3,7 @@ import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { composeAgentLaunch, openAgentWorkspace, prepareAgentLaunch } from "../lib/agentLaunch.ts";
 import { type Board, createBoard } from "../lib/board.ts";
 import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
-import type { WorkerEnvironment } from "../lib/launchCommand.ts";
+import { workerEnvironmentForTask } from "../lib/launchCommand.ts";
 import { resolvePrepareWorktreeCommand } from "../lib/repositoryHooks.ts";
 import { recordRunState } from "../lib/runState.ts";
 import {
@@ -61,13 +61,6 @@ function stagePrompt(input: {
       workspaceContinuationInstruction: input.workspaceContinuationInstruction,
     },
   });
-}
-
-function workerEnvironmentForTask(taskId: string): WorkerEnvironment {
-  return {
-    GROUNDCREW_TASK_ID: taskId,
-    GROUNDCREW_COMPLETE: `crew task done ${taskId}`,
-  };
 }
 
 export async function setupWorkspace(

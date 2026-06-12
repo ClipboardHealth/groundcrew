@@ -183,7 +183,7 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
   },
   task: {
     summary: "List, get, create, and complete tasks across configured sources",
-    usage: "<list|get|create|done> [...]",
+    usage: "<list|get|create|done|validate> [...]",
     invoke: taskCli,
   },
   status: {

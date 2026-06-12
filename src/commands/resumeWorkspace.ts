@@ -3,6 +3,7 @@ import { getLinearClient } from "../lib/adapters/linear/client.ts";
 import { isLinearEnabled } from "../lib/buildSources.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { composeAgentLaunch, openAgentWorkspace, prepareAgentLaunch } from "../lib/agentLaunch.ts";
+import { workerEnvironmentForTask } from "../lib/launchCommand.ts";
 import { readRunState, recordRunState, type RunState } from "../lib/runState.ts";
 import {
   removeStagedPrompt,
@@ -196,10 +197,7 @@ export async function resumeWorkspace(
       workingDir: launchDir,
       secretsFile,
       sandboxName,
-      workerEnvironment: {
-        GROUNDCREW_TASK_ID: task,
-        GROUNDCREW_COMPLETE: `crew task done ${task}`,
-      },
+      workerEnvironment: workerEnvironmentForTask(task),
     }));
     const launchCmd = stageWorkspaceLaunchCommand(stagedPrompt.directory, launchCommand);
     await openAgentWorkspace({
