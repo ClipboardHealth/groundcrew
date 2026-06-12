@@ -4,6 +4,7 @@ import { cleanupWorkspaceCli } from "./commands/cleanupWorkspace.ts";
 import { doctor } from "./commands/doctor.ts";
 import { initConfigCli } from "./commands/init.ts";
 import { interruptWorkspaceCli } from "./commands/interruptWorkspace.ts";
+import { openWorkspaceCli } from "./commands/openWorkspace.ts";
 import { orchestrate } from "./commands/orchestrator.ts";
 import { resumeWorkspaceCli } from "./commands/resumeWorkspace.ts";
 import { setupWorkspaceCli } from "./commands/setupWorkspace.ts";
@@ -214,6 +215,12 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
     summary: "Reopen an existing task worktree with a continuation prompt",
     usage: "<task>",
     invoke: resumeWorkspaceCli,
+  },
+  open: {
+    summary: "Open an existing PR or branch in a new worktree and launch a session",
+    usage:
+      "<pr> | --branch <name> [--repo <owner/repo>] [--agent <agent>] [--prompt <text> | --prompt-file <path>] [--task <id>] [--dry-run]",
+    invoke: openWorkspaceCli,
   },
   setup: {
     summary: "Removed repository bootstrap command",
