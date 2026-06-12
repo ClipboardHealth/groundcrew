@@ -250,6 +250,22 @@ describe(createShellTaskSource, () => {
     await expect(source.fetch()).rejects.toThrow(/.+/);
   });
 
+  it("listTasks() surfaces a readable error (not a Zod blob) when issues omit `agent`", async () => {
+    // Reproduces the plan-keeper mismatch: the script emits `model` instead of
+    // the contract's `agent`, so the key is absent and the schema rejects it.
+    const issue = { ...shellIssue({ id: "P-1" }), model: "claude" };
+    delete (issue as { agent?: unknown }).agent;
+    const script = dir.writeScript("no-agent.sh", `cat <<'JSON'\n${JSON.stringify([issue])}\nJSON`);
+    const source = createShellTaskSource(
+      { kind: "shell", name: "plankeeper", commands: { listTasks: script } },
+      fakeContext,
+    );
+
+    await expect(source.listTasks()).rejects.toThrow(
+      /source "plankeeper"[\s\S]*missing the required "agent" field/,
+    );
+  });
+
   it("verify() is a silent no-op when not configured", async () => {
     const source = createShellTaskSource(
       { kind: "shell", name: "test", commands: { fetch: "echo '[]'" } },

@@ -129,6 +129,7 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
         const setupOptions = {
           repository: issue.repository,
           task: taskId,
+          completionTaskId: issue.id,
           agent: issue.agent,
           details: {
             title: issue.title,

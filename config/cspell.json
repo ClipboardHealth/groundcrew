@@ -62,6 +62,7 @@
     "dedup",
     "dispatchable",
     "misconfig",
+    "taskkill",
     "tasksource",
     "writeback",
     "writebacks",
@@ -88,6 +89,7 @@
     "pipefail",
     "Pipfile",
     "pipenv",
+    "plankeeper",
     "pmem",
     "prereqs",
     "productionresultssa",
@@ -149,6 +151,7 @@
     "nostatus",
     "norec",
     "nodone",
+    "unreviewed",
     "linejoin",
     "Neue",
     "qlmanage"

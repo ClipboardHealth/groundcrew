@@ -319,6 +319,45 @@ export function inferAgentCommandName(agentCmd: string): string {
   return commandName;
 }
 
+const WORKER_ENVIRONMENT_NAMES = ["GROUNDCREW_TASK_ID", "GROUNDCREW_COMPLETE"] as const;
+
+type WorkerEnvironmentName = (typeof WORKER_ENVIRONMENT_NAMES)[number];
+
+export type WorkerEnvironment = Readonly<Record<WorkerEnvironmentName, string>>;
+
+export function workerEnvironmentForTask(taskId: string): WorkerEnvironment {
+  return {
+    GROUNDCREW_TASK_ID: taskId,
+    GROUNDCREW_COMPLETE: `crew task done ${taskId}`,
+  };
+}
+
+function workerEnvironmentNames(
+  workerEnvironment: WorkerEnvironment | undefined,
+): readonly WorkerEnvironmentName[] {
+  return workerEnvironment === undefined ? [] : WORKER_ENVIRONMENT_NAMES;
+}
+
+function workerEnvironmentExports(workerEnvironment: WorkerEnvironment | undefined): string[] {
+  if (workerEnvironment === undefined) {
+    return [];
+  }
+  return WORKER_ENVIRONMENT_NAMES.map(
+    (name) => `export ${name}=${shellSingleQuote(workerEnvironment[name])}`,
+  );
+}
+
+function envPassFlag(names: readonly string[]): string {
+  const uniqueNames = [...new Set(names)];
+  return uniqueNames.length === 0 ? "" : `--env-pass=${uniqueNames.join(",")} `;
+}
+
+export interface SafehouseAgentIntegration {
+  addDirsReadOnly: readonly string[];
+  envPass: readonly string[];
+  commandPreludes: readonly string[];
+}
+
 interface LaunchCommandArguments {
   definition: AgentDefinition;
   promptFile: string;
@@ -390,6 +429,18 @@ interface LaunchCommandArguments {
    * pre-existing behavior). Only consumed by the safehouse wrap.
    */
   safehouseAddDirs?: readonly string[] | undefined;
+  /**
+   * Extra host-terminal integration surface granted only to the Safehouse agent
+   * wrap. The agent may need to execute host shims and reach their sockets
+   * while repo-controlled prepareWorktree hooks should not inherit those paths
+   * or env vars.
+   */
+  safehouseAgentIntegration?: SafehouseAgentIntegration | undefined;
+  /**
+   * Groundcrew-managed task metadata exposed to the launched worker. Forwarded
+   * to the agent process, not the prepareWorktree hook.
+   */
+  workerEnvironment?: WorkerEnvironment | undefined;
 }
 
 /**
@@ -426,6 +477,11 @@ export function buildLaunchCommand(arguments_: LaunchCommandArguments): string {
     // inject into. Fail loudly instead of silently dropping the contract.
     throw new Error(
       "preLaunchEnv cannot be injected when `cmd` starts with `safehouse` — your cmd owns the wrap, so add the names to its own `--env-pass=` flag, or drop the `safehouse` prefix from `cmd` to let groundcrew compose the flag for you.",
+    );
+  }
+  if (arguments_.workerEnvironment !== undefined && arguments_.runner === "safehouse") {
+    throw new Error(
+      "workerEnvironment cannot be injected when `cmd` starts with `safehouse` — your cmd owns the wrap, so add GROUNDCREW_TASK_ID,GROUNDCREW_COMPLETE to its own `--env-pass=` flag, or drop the `safehouse` prefix from `cmd` to let groundcrew compose the flag for you.",
     );
   }
   return buildUnwrappedHostLaunchCommand(arguments_);
@@ -469,6 +525,7 @@ function buildUnwrappedHostLaunchCommand(arguments_: LaunchCommandArguments): st
   if (arguments_.secretsFile !== undefined) {
     lines.push(unsetSecretsLine());
   }
+  lines.push(...workerEnvironmentExports(arguments_.workerEnvironment));
   lines.push(
     ...preLaunchPromptAndExec({
       definition: arguments_.definition,
@@ -514,7 +571,13 @@ function buildUnwrappedHostLaunchCommand(arguments_: LaunchCommandArguments): st
 function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string {
   const promptDir = path.dirname(arguments_.promptFile);
   const safehouseCommandName = inferAgentCommandName(arguments_.definition.cmd);
-  const { agentCommand, prepareWorktreeCommand } = renderPrepareAndAgentCommand(arguments_);
+  const { agentCommand: rawAgentCommand, prepareWorktreeCommand } =
+    renderPrepareAndAgentCommand(arguments_);
+  const { safehouseAgentIntegration } = arguments_;
+  const agentCommand = [
+    ...(safehouseAgentIntegration?.commandPreludes ?? []),
+    rawAgentCommand,
+  ].join("; ");
 
   // Split --env-pass per wrap: the prepareWorktree wrap only needs build secrets (so
   // `npm install` etc. can authenticate); the agent wrap only needs the
@@ -524,17 +587,24 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
   // Trailing space keeps each flag separated from the next argv token.
   const prepareWorktreeEnvPassFlag =
     arguments_.secretsFile === undefined ? "" : `--env-pass=${BUILD_SECRET_NAMES.join(",")} `;
-  const preLaunchEnvNames = arguments_.definition.preLaunchEnv ?? [];
-  const agentEnvPassFlag =
-    preLaunchEnvNames.length === 0 ? "" : `--env-pass=${preLaunchEnvNames.join(",")} `;
+  const agentEnvPassFlag = envPassFlag([
+    ...(arguments_.definition.preLaunchEnv ?? []),
+    ...workerEnvironmentNames(arguments_.workerEnvironment),
+    ...(safehouseAgentIntegration?.envPass ?? []),
+  ]);
   // safehouse reads colon-separated paths from `--add-dirs`; both wraps get the
   // same grant so the prepareWorktree hook and the agent can each reach git.
   // Quote the whole value so shell-special chars survive; the trailing space
   // separates it from the next argv token. See `resolveSafehouseAddDirs` for
   // which paths these are and why.
-  const addDirs = arguments_.safehouseAddDirs ?? [];
-  const safehouseAddDirsFlag =
-    addDirs.length === 0 ? "" : `--add-dirs=${shellSingleQuote(addDirs.join(":"))} `;
+  const safehouseAddDirsFlag = safehousePathListFlag(
+    "--add-dirs",
+    arguments_.safehouseAddDirs ?? [],
+  );
+  const safehouseAgentAddDirsReadOnlyFlag = safehousePathListFlag(
+    "--add-dirs-ro",
+    safehouseAgentIntegration?.addDirsReadOnly ?? [],
+  );
   const safehouseWrapper = safehouseClearanceWrapperCommand();
 
   // Defensive shim+promptDir trap: by the time we arm it, `rm -rf <promptDir>`
@@ -566,6 +636,7 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
     lines.push(unsetSecretsLine());
   }
   lines.push(
+    ...workerEnvironmentExports(arguments_.workerEnvironment),
     `_safehouse_shim_dir=$(mktemp -d "\${TMPDIR:-/tmp}/groundcrew-safehouse-XXXXXX")`,
     shimAndPromptTrap,
     `_safehouse_shim="$_safehouse_shim_dir/${safehouseCommandName}"`,
@@ -574,9 +645,16 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
     // Running the real launch chain as `sh -c` would make it see `sh`, so use
     // an agent-named symlink to /bin/sh. This preserves per-agent profile
     // selection without enabling every agent profile.
-    `{ ${safehouseWrapper} ${safehouseAddDirsFlag}${agentEnvPassFlag}"$_safehouse_shim" -c ${shellSingleQuote(agentCommand)} sh "$_p"; _safehouse_status=$?; rm -rf "$_safehouse_shim_dir"; trap - EXIT; exit "$_safehouse_status"; }`,
+    `{ ${safehouseWrapper} ${safehouseAddDirsFlag}${safehouseAgentAddDirsReadOnlyFlag}${agentEnvPassFlag}"$_safehouse_shim" -c ${shellSingleQuote(agentCommand)} sh "$_p"; _safehouse_status=$?; rm -rf "$_safehouse_shim_dir"; trap - EXIT; exit "$_safehouse_status"; }`,
   );
   return lines.join(" && ");
+}
+
+function safehousePathListFlag(
+  flagName: "--add-dirs" | "--add-dirs-ro",
+  paths: readonly string[],
+): string {
+  return paths.length === 0 ? "" : `${flagName}=${shellSingleQuote(paths.join(":"))} `;
 }
 
 /**
@@ -674,7 +752,10 @@ function buildSrtLaunchCommand(arguments_: LaunchCommandArguments): string {
     arguments_.srtAgentConfigDirEnv === undefined
       ? ""
       : ` ${arguments_.srtAgentConfigDirEnv.name}=${shellSingleQuote(arguments_.srtAgentConfigDirEnv.value)}`;
-  const agentWrap = `env -i ${baseline}${agentConfigDirAssignment}${srtForwardedEnv(arguments_.definition.preLaunchEnv ?? [])} ${agentTarget}`;
+  const agentWrap = `env -i ${baseline}${agentConfigDirAssignment}${srtForwardedEnv([
+    ...(arguments_.definition.preLaunchEnv ?? []),
+    ...workerEnvironmentNames(arguments_.workerEnvironment),
+  ])} ${agentTarget}`;
 
   // One EXIT trap wipes both the settings dir and the prompt dir, covering
   // every failure window between here and the post-wrap cleanup.
@@ -694,6 +775,7 @@ function buildSrtLaunchCommand(arguments_: LaunchCommandArguments): string {
     lines.push(`${prepareWrap} sh -c ${shellSingleQuote(prepareWorktreeCommand)}`);
   }
   lines.push(
+    ...workerEnvironmentExports(arguments_.workerEnvironment),
     `{ ${agentWrap} sh -c ${shellSingleQuote(agentCommand)} sh "$_p"; _srt_status=$?; rm -rf ${shellSingleQuote(arguments_.srtSettingsDir)}; trap - EXIT; exit "$_srt_status"; }`,
   );
   return lines.join(" && ");
@@ -715,16 +797,18 @@ function buildSdxLaunchCommand(arguments_: LaunchCommandArguments): string {
   if (arguments_.secretsFile !== undefined) {
     innerParts.push(unsetSecretsLine());
   }
+  innerParts.push(...workerEnvironmentExports(arguments_.workerEnvironment));
   innerParts.push(agentCommand);
   const innerCommand = innerParts.join("; ");
   // Passthrough form (`-e KEY` without `=VALUE`): sbx reads each value
   // from its own env at invocation time — populated by sourceSecretsLine
   // a few lines up. Avoids `-e KEY="$KEY"`, which would embed the value
   // in argv and break on `"`, `$`, or backticks in the token.
+  const sbxEnvironmentNames = arguments_.secretsFile === undefined ? [] : BUILD_SECRET_NAMES;
   const sbxEnvironmentFlags =
-    arguments_.secretsFile === undefined
+    sbxEnvironmentNames.length === 0
       ? ""
-      : `${BUILD_SECRET_NAMES.map((name) => `-e ${name}`).join(" ")} `;
+      : `${sbxEnvironmentNames.map((name) => `-e ${name}`).join(" ")} `;
   const lines: string[] = [trapCleanupLine(promptDir)];
   if (arguments_.secretsFile !== undefined) {
     lines.push(sourceSecretsLine(arguments_.secretsFile));

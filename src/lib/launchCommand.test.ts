@@ -11,6 +11,11 @@ import {
   srtBinEntry,
 } from "./launchCommand.ts";
 
+const WORKER_ENVIRONMENT = {
+  GROUNDCREW_TASK_ID: "todo:gc-1",
+  GROUNDCREW_COMPLETE: "crew task done todo:gc-1",
+} as const;
+
 function arguments_(
   overrides: Partial<Parameters<typeof buildLaunchCommand>[0]> = {},
 ): Parameters<typeof buildLaunchCommand>[0] {
@@ -208,6 +213,23 @@ describe(`${buildLaunchCommand.name} (runner='srt')`, () => {
     expect(prepareSegment).not.toContain("CODEX_HOME");
   });
 
+  it("forwards worker completion env into the agent wrap only", () => {
+    const out = buildLaunchCommand(
+      srtArguments({
+        prepareWorktreeCommand: "npm ci",
+        workerEnvironment: WORKER_ENVIRONMENT,
+      }),
+    );
+
+    const prepareSegment = out.slice(0, out.indexOf("npm ci"));
+    const afterPrepare = out.slice(out.indexOf("npm ci"));
+    expect(out).toContain("export GROUNDCREW_TASK_ID='todo:gc-1'");
+    expect(out).toContain("export GROUNDCREW_COMPLETE='crew task done todo:gc-1'");
+    expect(afterPrepare).toContain(`GROUNDCREW_TASK_ID="$GROUNDCREW_TASK_ID"`);
+    expect(afterPrepare).toContain(`GROUNDCREW_COMPLETE="$GROUNDCREW_COMPLETE"`);
+    expect(prepareSegment).not.toContain("GROUNDCREW_COMPLETE");
+  });
+
   it("omits the config-home env for read-only agents (claude) that don't relocate", () => {
     const out = buildLaunchCommand(srtArguments());
 
@@ -274,6 +296,27 @@ describe(buildLaunchCommand, () => {
     expect(out).toContain(`${addDirsFlag} "$_safehouse_shim" -c`);
   });
 
+  it("forwards worker completion env into the Safehouse agent wrap only", () => {
+    const out = buildLaunchCommand(
+      arguments_({
+        prepareWorktreeCommand: "npm ci",
+        workerEnvironment: WORKER_ENVIRONMENT,
+      }),
+    );
+
+    const setupWrapIndex = out.indexOf("safehouse-clearance' sh -c");
+    const setupIndex = out.indexOf("npm ci");
+    const exportIndex = out.indexOf("export GROUNDCREW_TASK_ID='todo:gc-1'");
+    const agentWrapIndex = out.indexOf('"$_safehouse_shim" -c');
+    expect(exportIndex).toBeGreaterThan(setupIndex);
+    expect(exportIndex).toBeLessThan(agentWrapIndex);
+    expect(out).toContain("export GROUNDCREW_COMPLETE='crew task done todo:gc-1'");
+    expect(out.slice(setupWrapIndex, setupIndex)).not.toContain("GROUNDCREW_COMPLETE");
+    expect(out.slice(agentWrapIndex - 100, agentWrapIndex)).toContain(
+      "--env-pass=GROUNDCREW_TASK_ID,GROUNDCREW_COMPLETE ",
+    );
+  });
+
   it("omits --add-dirs when no extra filesystem grants are requested", () => {
     const out = buildLaunchCommand(arguments_({ prepareWorktreeCommand: "npm ci" }));
 
@@ -297,6 +340,51 @@ describe(buildLaunchCommand, () => {
     expect(out).toContain('ln -s /bin/sh "$_safehouse_shim"');
     expect(out).toContain('"$_safehouse_shim" -c');
     expect(out).not.toContain("--enable=all-agents");
+  });
+
+  it("can grant a workspace shim integration to the Safehouse agent without stripping PATH", () => {
+    const out = buildLaunchCommand(
+      arguments_({
+        definition: { cmd: "claude --permission-mode auto", color: "#fff" },
+        prepareWorktreeCommand: "npm ci",
+        safehouseAgentIntegration: {
+          addDirsReadOnly: ["/Applications/cmux.app", "/Users/dev/.local/state/cmux"],
+          envPass: [
+            "CMUX_SURFACE_ID",
+            "CMUX_SOCKET_PATH",
+            "CMUX_CLAUDE_WRAPPER_SHIM",
+            "CMUX_CLAUDE_WRAPPER_SHIM_ROOT",
+            "CMUX_CUSTOM_CLAUDE_PATH",
+          ],
+          commandPreludes: ["export CMUX_CUSTOM_CLAUDE_PATH=/Users/dev/.local/bin/claude"],
+        },
+      }),
+    );
+
+    const prepareWrapIndex = out.indexOf("safehouse-clearance' sh -c");
+    const agentWrapIndex = out.indexOf('"$_safehouse_shim" -c');
+    const readOnlyGrantIndex = out.indexOf(
+      "--add-dirs-ro='/Applications/cmux.app:/Users/dev/.local/state/cmux'",
+    );
+    const envPassIndex = out.indexOf(
+      "--env-pass=CMUX_SURFACE_ID,CMUX_SOCKET_PATH,CMUX_CLAUDE_WRAPPER_SHIM,CMUX_CLAUDE_WRAPPER_SHIM_ROOT,CMUX_CUSTOM_CLAUDE_PATH",
+    );
+    const shimSetupIndex = out.indexOf("_safehouse_shim_dir=", prepareWrapIndex);
+    const preludeIndex = out.indexOf("export CMUX_CUSTOM_CLAUDE_PATH=/Users/dev/.local/bin/claude");
+    const execIndex = out.indexOf('exec claude --permission-mode auto "$@"');
+    expect(prepareWrapIndex).toBeGreaterThan(-1);
+    expect(readOnlyGrantIndex).toBeGreaterThan(prepareWrapIndex);
+    expect(readOnlyGrantIndex).toBeLessThan(agentWrapIndex);
+    expect(envPassIndex).toBeGreaterThan(prepareWrapIndex);
+    expect(envPassIndex).toBeLessThan(agentWrapIndex);
+    expect(preludeIndex).toBeGreaterThan(agentWrapIndex);
+    expect(execIndex).toBeGreaterThan(preludeIndex);
+    expect(shimSetupIndex).toBeGreaterThan(prepareWrapIndex);
+    const prepareWrap = out.slice(prepareWrapIndex, shimSetupIndex);
+    expect(prepareWrap).not.toContain("--add-dirs-ro");
+    expect(prepareWrap).not.toContain("CMUX_SURFACE_ID");
+    expect(prepareWrap).not.toContain("CMUX_SOCKET_PATH");
+    expect(out).not.toContain("_groundcrew_path_without_cmux");
   });
 
   it("infers the Safehouse profile command from an absolute agent path", () => {
@@ -536,6 +624,21 @@ describe(buildLaunchCommand, () => {
       expect(out).not.toContain("safehouse-clearance");
       expect(out).not.toContain("--enable=all-agents");
       expect(out).toMatch(/exec claude "\$_p"$/);
+    });
+
+    it("exports worker completion env before executing the agent", () => {
+      const out = buildLaunchCommand(
+        arguments_({
+          runner: "none",
+          workerEnvironment: WORKER_ENVIRONMENT,
+        }),
+      );
+
+      const exportIndex = out.indexOf("export GROUNDCREW_TASK_ID='todo:gc-1'");
+      const execIndex = out.indexOf('exec claude "$_p"');
+      expect(exportIndex).toBeGreaterThan(-1);
+      expect(exportIndex).toBeLessThan(execIndex);
+      expect(out).toContain("export GROUNDCREW_COMPLETE='crew task done todo:gc-1'");
     });
 
     it("cds into workingDir while {{worktree}} still expands to the worktree root", () => {
@@ -1054,6 +1157,20 @@ describe(buildLaunchCommand, () => {
       ).toThrow(/preLaunchEnv cannot be injected when `cmd` starts with `safehouse`/);
     });
 
+    it("throws when workerEnvironment is set with a cmd that already starts with safehouse", () => {
+      expect(() =>
+        buildLaunchCommand(
+          arguments_({
+            definition: {
+              cmd: "safehouse --env-pass=OTHER my-agent",
+              color: "#fff",
+            },
+            workerEnvironment: WORKER_ENVIRONMENT,
+          }),
+        ),
+      ).toThrow(/workerEnvironment cannot be injected when `cmd` starts with `safehouse`/);
+    });
+
     it("treats preLaunchEnv: [] as a no-op when cmd already starts with safehouse", () => {
       // Same contract on the safehouse-prefixed-cmd path: an empty list has
       // nothing to inject, so the user-owns-the-wrap guard must not fire,
@@ -1159,6 +1276,24 @@ describe(buildLaunchCommand, () => {
       expect(out).toContain(". '/tmp/prompt-team-1/secrets.env'");
       expect(out).toContain("-e NPM_TOKEN -e BUF_TOKEN");
       expect(out).toContain("unset NPM_TOKEN BUF_TOKEN");
+    });
+
+    it("exports worker completion env inside the sandbox after prepareWorktree", () => {
+      const out = buildLaunchCommand(
+        sdxArguments({
+          prepareWorktreeCommand: "npm ci",
+          workerEnvironment: WORKER_ENVIRONMENT,
+        }),
+      );
+
+      const prepareIndex = out.indexOf("npm ci");
+      const exportIndex = out.indexOf("export GROUNDCREW_TASK_ID=");
+      const agentIndex = out.indexOf("exec claude");
+      expect(exportIndex).toBeGreaterThan(prepareIndex);
+      expect(exportIndex).toBeLessThan(agentIndex);
+      expect(out).toContain("export GROUNDCREW_COMPLETE=");
+      expect(out).not.toContain("-e GROUNDCREW_TASK_ID");
+      expect(out).not.toContain("-e GROUNDCREW_COMPLETE");
     });
 
     it("omits -e KEY flags when no secretsFile is staged", () => {

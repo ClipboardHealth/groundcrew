@@ -10,6 +10,7 @@
   },
   "include": [
     "config/vitestShared.ts",
+    "scripts/verifyRunner.ts",
     "vitest.config.ts",
     "src/testHelpers/**/*.ts",
     "src/**/*.test.ts",

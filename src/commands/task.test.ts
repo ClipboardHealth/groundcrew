@@ -1,6 +1,14 @@
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
+import type { AdapterContext } from "../lib/adapterDefinition.ts";
+import { createTodoTxtTaskSource } from "../lib/adapters/todo-txt/source.ts";
 import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
+import { findPullRequestsForBranch, type PullRequestSummary } from "../lib/pullRequests.ts";
 import { naturalIdFromCanonical, type TaskSource, type Issue } from "../lib/taskSource.ts";
+import { worktrees, type WorktreeEntry } from "../lib/worktrees.ts";
 import { captureConsoleLog } from "../testHelpers/consoleCapture.ts";
 
 import { taskCli } from "./task.ts";
@@ -22,9 +30,34 @@ vi.mock(import("../lib/buildSources.ts"), async (importOriginal) => {
   };
 });
 
+vi.mock(import("../lib/worktrees.ts"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    worktrees: {
+      ...actual.worktrees,
+      findByTask: vi.fn<typeof actual.worktrees.findByTask>().mockReturnValue([]),
+      probeWorkingTree: vi
+        .fn<typeof actual.worktrees.probeWorkingTree>()
+        .mockResolvedValue({ kind: "clean" }),
+    },
+  };
+});
+
+vi.mock(import("../lib/pullRequests.ts"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    findPullRequestsForBranch: vi.fn<typeof findPullRequestsForBranch>().mockResolvedValue([]),
+  };
+});
+
 const loadConfigMock = vi.mocked(loadConfig);
 const buildSourcesMock = vi.mocked(buildSources);
 const sourcesFromConfigMock = vi.mocked(sourcesFromConfig);
+const findWorktreesByTaskMock = vi.mocked(worktrees.findByTask);
+const probeWorkingTreeMock = vi.mocked(worktrees.probeWorkingTree);
+const findPullRequestsForBranchMock = vi.mocked(findPullRequestsForBranch);
 
 function makeConfig(): ResolvedConfig {
   return {
@@ -94,6 +127,31 @@ function stubSource(
     markInReview: vi.fn<TaskSource["markInReview"]>(),
     ...overrides,
   };
+}
+
+function hostEntryFor(task: string, overrides: Partial<WorktreeEntry> = {}): WorktreeEntry {
+  return {
+    repository: "ClipboardHealth/api",
+    task,
+    branchName: `dev-${task}`,
+    dir: `/work/ClipboardHealth/api-${task}`,
+    kind: "host",
+    ...overrides,
+  };
+}
+
+function pullRequest(overrides: Partial<PullRequestSummary> = {}): PullRequestSummary {
+  return {
+    url: overrides.url ?? "https://github.com/ClipboardHealth/api/pull/1",
+    number: overrides.number ?? 1,
+    state: overrides.state ?? "open",
+    title: overrides.title ?? "Ready",
+    headRefOid: overrides.headRefOid ?? "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  };
+}
+
+function makeAdapterContext(config: ResolvedConfig): AdapterContext {
+  return { globalConfig: config };
 }
 
 describe("crew task list", () => {
@@ -524,6 +582,195 @@ describe("crew task create", () => {
       message: "requires a value",
     },
   ])("rejects invalid create arguments: $argv", async ({ argv, message }) => {
+    await expect(taskCli(argv)).rejects.toThrow(message);
+  });
+});
+
+describe("crew task done", () => {
+  beforeEach(() => {
+    loadConfigMock.mockResolvedValue(makeConfig());
+    sourcesFromConfigMock.mockReturnValue([{ kind: "todo-txt", name: "todo" }]);
+    findWorktreesByTaskMock.mockReturnValue([]);
+    probeWorkingTreeMock.mockResolvedValue({ kind: "clean" });
+    findPullRequestsForBranchMock.mockResolvedValue([]);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.clearAllMocks();
+  });
+
+  it("resolves the task and marks it done when no matching worktree exists", async () => {
+    const issue = makeIssue({ id: "todo:gc-1", status: "in-progress" });
+    const markDone = vi.fn<NonNullable<TaskSource["markDone"]>>().mockResolvedValue({
+      outcome: "applied",
+    });
+    const todo = stubSource("todo", [issue], { markDone });
+    buildSourcesMock.mockResolvedValue([todo]);
+
+    const log = captureConsoleLog();
+    try {
+      await taskCli(["done", "todo:GC-1"]);
+    } finally {
+      log.restore();
+    }
+
+    expect(todo.getTask).toHaveBeenCalledWith("GC-1");
+    expect(findWorktreesByTaskMock).toHaveBeenCalledWith(expect.anything(), "gc-1");
+    expect(markDone).toHaveBeenCalledWith(issue);
+    expect(log.output()).toBe("Marked todo:gc-1 done.");
+  });
+
+  it("allows a clean matching worktree without checking PRs", async () => {
+    const issue = makeIssue({ id: "todo:gc-1", status: "in-progress" });
+    const markDone = vi.fn<NonNullable<TaskSource["markDone"]>>().mockResolvedValue({
+      outcome: "applied",
+    });
+    buildSourcesMock.mockResolvedValue([stubSource("todo", [issue], { markDone })]);
+    findWorktreesByTaskMock.mockReturnValue([hostEntryFor("gc-1")]);
+    probeWorkingTreeMock.mockResolvedValue({ kind: "clean" });
+
+    const log = captureConsoleLog();
+    try {
+      await taskCli(["done", "todo:GC-1"]);
+    } finally {
+      log.restore();
+    }
+
+    expect(findPullRequestsForBranchMock).not.toHaveBeenCalled();
+    expect(markDone).toHaveBeenCalledWith(issue);
+  });
+
+  it("fails when the task cannot be resolved", async () => {
+    buildSourcesMock.mockResolvedValue([stubSource("todo", [])]);
+
+    await expect(taskCli(["done", "todo:GC-404"])).rejects.toThrow(
+      "Task todo:GC-404 not found across configured sources.",
+    );
+  });
+
+  it("surfaces unsupported done writeback from the owning source", async () => {
+    const todo = stubSource("todo", [makeIssue({ id: "todo:gc-1" })]);
+    buildSourcesMock.mockResolvedValue([todo]);
+
+    await expect(taskCli(["done", "todo:GC-1"])).rejects.toThrow(
+      'crew task done: source "todo" does not support markDone',
+    );
+  });
+
+  it("refuses a dirty matching worktree when there is no matching PR", async () => {
+    const issue = makeIssue({ id: "todo:gc-1", status: "in-progress" });
+    const markDone = vi.fn<NonNullable<TaskSource["markDone"]>>().mockResolvedValue({
+      outcome: "applied",
+    });
+    buildSourcesMock.mockResolvedValue([stubSource("todo", [issue], { markDone })]);
+    findWorktreesByTaskMock.mockReturnValue([hostEntryFor("gc-1")]);
+    probeWorkingTreeMock.mockResolvedValue({ kind: "dirty", modified: 1, untracked: 2 });
+    findPullRequestsForBranchMock.mockResolvedValue([]);
+
+    await expect(taskCli(["done", "todo:GC-1"])).rejects.toThrow(
+      /refusing to mark todo:gc-1 done.*1 modified, 2 untracked.*--allow-dirty/,
+    );
+    expect(findPullRequestsForBranchMock).toHaveBeenCalledWith({
+      cwd: "/work/ClipboardHealth/api-gc-1",
+      branchName: "dev-gc-1",
+    });
+    expect(markDone).not.toHaveBeenCalled();
+  });
+
+  it("refuses a worktree when git status cannot be verified", async () => {
+    const issue = makeIssue({ id: "todo:gc-1", status: "in-progress" });
+    const markDone = vi.fn<NonNullable<TaskSource["markDone"]>>().mockResolvedValue({
+      outcome: "applied",
+    });
+    buildSourcesMock.mockResolvedValue([stubSource("todo", [issue], { markDone })]);
+    findWorktreesByTaskMock.mockReturnValue([hostEntryFor("gc-1")]);
+    probeWorkingTreeMock.mockResolvedValue({ kind: "unknown" });
+
+    await expect(taskCli(["done", "todo:GC-1"])).rejects.toThrow(/unknown git status/);
+    expect(findPullRequestsForBranchMock).not.toHaveBeenCalled();
+    expect(markDone).not.toHaveBeenCalled();
+  });
+
+  it("allows a dirty matching worktree when the current branch has a PR", async () => {
+    const issue = makeIssue({ id: "todo:gc-1", status: "in-progress" });
+    const markDone = vi.fn<NonNullable<TaskSource["markDone"]>>().mockResolvedValue({
+      outcome: "applied",
+    });
+    buildSourcesMock.mockResolvedValue([stubSource("todo", [issue], { markDone })]);
+    findWorktreesByTaskMock.mockReturnValue([hostEntryFor("gc-1")]);
+    probeWorkingTreeMock.mockResolvedValue({ kind: "dirty", modified: 1, untracked: 0 });
+    findPullRequestsForBranchMock.mockResolvedValue([pullRequest()]);
+
+    await taskCli(["done", "todo:GC-1"]);
+
+    expect(markDone).toHaveBeenCalledWith(issue);
+  });
+
+  it("allows --allow-dirty to mark done without checking PRs", async () => {
+    const issue = makeIssue({ id: "todo:gc-1", status: "in-progress" });
+    const markDone = vi.fn<NonNullable<TaskSource["markDone"]>>().mockResolvedValue({
+      outcome: "applied",
+    });
+    buildSourcesMock.mockResolvedValue([stubSource("todo", [issue], { markDone })]);
+    findWorktreesByTaskMock.mockReturnValue([hostEntryFor("gc-1")]);
+
+    await taskCli(["done", "todo:GC-1", "--allow-dirty"]);
+
+    expect(probeWorkingTreeMock).not.toHaveBeenCalled();
+    expect(findPullRequestsForBranchMock).not.toHaveBeenCalled();
+    expect(markDone).toHaveBeenCalledWith(issue);
+  });
+
+  it("completes a recurring todo-txt task through source-owned markDone", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-08T15:47:00.000Z"));
+    const temporary = mkdtempSync(path.join(tmpdir(), "groundcrew-task-done-"));
+    const todoPath = path.join(temporary, "todo.txt");
+    const tasksDir = path.join(temporary, ".tasks");
+    mkdirSync(tasksDir);
+    writeFileSync(
+      todoPath,
+      "id:sweep-20260608 agent:codex repo:ClipboardHealth/api t:2026-06-08T10:30 rec:2h status:in-progress Hourly sweep\n",
+      "utf8",
+    );
+    writeFileSync(path.join(tasksDir, "sweep-20260608.md"), "Sweep prompt.", "utf8");
+    const source = createTodoTxtTaskSource(
+      {
+        kind: "todo-txt",
+        name: "todo",
+        todoPath,
+        tasksDir,
+        idPrefix: "GC",
+        timezone: "UTC",
+      },
+      makeAdapterContext(makeConfig()),
+    );
+    buildSourcesMock.mockResolvedValue([source]);
+
+    try {
+      await taskCli(["done", "todo:sweep-20260608"]);
+
+      const updated = readFileSync(todoPath, "utf8");
+      expect(updated).toContain("x 2026-06-08");
+      expect(updated).toContain("id:sweep-20260608");
+      expect(updated).toContain("status:done");
+      expect(updated).toContain("id:sweep-20260608-002");
+      expect(updated).toContain("t:2026-06-08T17:47");
+      expect(updated).toMatch(/id:sweep-20260608-002.*rec:2h.*status:todo/);
+      expect(readFileSync(path.join(tasksDir, "sweep-20260608-002.md"), "utf8")).toBe(
+        "Sweep prompt.",
+      );
+    } finally {
+      rmSync(temporary, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    { argv: ["done"], message: "Usage: crew task done" },
+    { argv: ["done", "GC-1", "--bogus"], message: "unknown option" },
+    { argv: ["done", "GC-1", "extra"], message: "Usage: crew task done" },
+  ])("rejects invalid done arguments: $argv", async ({ argv, message }) => {
     await expect(taskCli(argv)).rejects.toThrow(message);
   });
 });

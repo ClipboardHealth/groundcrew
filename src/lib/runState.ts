@@ -32,6 +32,11 @@ export interface RunState {
    * just the task id.
    */
   url?: string;
+  /**
+   * Canonical source-prefixed id used for no-PR self-completion. Cached so
+   * resumed workers keep the same completion target as the original launch.
+   */
+  completionTaskId?: string;
 }
 
 export interface RunStateDraft {
@@ -47,6 +52,7 @@ export interface RunStateDraft {
   resumeCount?: number;
   title?: string;
   url?: string;
+  completionTaskId?: string;
 }
 
 export interface RecordRunStateInput {
@@ -115,6 +121,7 @@ function parseRunState(value: unknown): RunState | undefined {
   const detail = stringField(value, "detail");
   const title = stringField(value, "title");
   const url = stringField(value, "url");
+  const completionTaskId = stringField(value, "completionTaskId");
   if (
     task === undefined ||
     repository === undefined ||
@@ -146,6 +153,7 @@ function parseRunState(value: unknown): RunState | undefined {
     ...(detail === undefined ? {} : { detail }),
     ...(title === undefined ? {} : { title }),
     ...(url === undefined ? {} : { url }),
+    ...(completionTaskId === undefined ? {} : { completionTaskId }),
   };
 }
 
@@ -179,6 +187,7 @@ export function recordRunState(input: RecordRunStateInput): RunState {
   // transitions.
   const title = input.state.title ?? existing?.title;
   const url = input.state.url ?? existing?.url;
+  const completionTaskId = input.state.completionTaskId ?? existing?.completionTaskId;
   const state: RunState = {
     task: taskKey(input.state.task),
     repository: input.state.repository,
@@ -194,6 +203,7 @@ export function recordRunState(input: RecordRunStateInput): RunState {
     ...(input.state.detail === undefined ? {} : { detail: input.state.detail }),
     ...(title === undefined ? {} : { title }),
     ...(url === undefined ? {} : { url }),
+    ...(completionTaskId === undefined ? {} : { completionTaskId }),
   };
   writeState(input.config, state);
   return state;

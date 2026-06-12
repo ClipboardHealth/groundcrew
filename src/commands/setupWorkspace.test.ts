@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import type * as nodeFs from "node:fs";
 import path from "node:path";
 import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
-import { ensureClearance } from "@clipboard-health/clearance";
+import { ensureClearance, type SafehouseCmuxIntegration } from "@clipboard-health/clearance";
 import type { RunCommandOptions } from "../lib/commandRunner.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
@@ -17,6 +17,7 @@ import type * as utilModule from "../lib/util.ts";
 import { debug, log } from "../lib/util.ts";
 import { WorktreeAlreadyExistsError, type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 import { deleteEnvironmentVariable, setEnvironmentVariable } from "../testHelpers/env.ts";
+import { safehouseCmuxIntegrationFixture } from "../testHelpers/safehouseCmuxIntegration.ts";
 import { emptyTeardownResult } from "../testHelpers/teardownResult.ts";
 import {
   setupWorkspace,
@@ -34,6 +35,10 @@ interface NodeFsMock extends Omit<
   rmSync: ReturnType<typeof vi.fn<typeof rmSync>>;
   writeFileSync: ReturnType<typeof vi.fn<typeof writeFileSync>>;
 }
+
+const resolveSafehouseCmuxIntegrationMock = vi.hoisted(() =>
+  vi.fn<() => SafehouseCmuxIntegration>(),
+);
 
 vi.mock("node:fs", async (importOriginal): Promise<NodeFsMock> => {
   const actual = await importOriginal<typeof nodeFs>();
@@ -58,6 +63,7 @@ vi.mock(import("@clipboard-health/clearance"), async (importOriginal) => {
   return {
     ...actual,
     ensureClearance: vi.fn<typeof ensureClearance>(),
+    resolveSafehouseCmuxIntegration: resolveSafehouseCmuxIntegrationMock,
   };
 });
 type RunCommandMock = (
@@ -378,6 +384,7 @@ describe(setupWorkspace, () => {
     detectHostMock.mockResolvedValue(host());
     createMock.mockImplementation(async () => hostEntry());
     ensureClearanceMock.mockResolvedValue(clearanceResult());
+    resolveSafehouseCmuxIntegrationMock.mockReturnValue(safehouseCmuxIntegrationFixture());
     mkdtempMock.mockReturnValue("/tmp/groundcrew-team-1-x");
     runCommandMock.mockReturnValue("");
     teardownMock.mockResolvedValue(emptyTeardownResult());
@@ -752,15 +759,14 @@ describe(setupWorkspace, () => {
     expect(launchScript).toContain("npm ci");
     expect(launchScript).not.toContain(".groundcrew/setup.sh");
     // Both wraps grant the worktree root and git common dir so git works in the
-    // prepareWorktree hook and the agent. The grant flag precedes the wrapped
-    // command (no build secrets are set in this test, so no --env-pass follows it).
-    const addDirsFlag = "--add-dirs='/work/repo-a-team-1:/tmp/groundcrew-team-1-x/.git'";
-    expect(launchScript).toContain(
-      `/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance' ${addDirsFlag} sh -c`,
-    );
+    // prepareWorktree hook and the agent. The grant flag precedes the wrapped command;
+    // optional flags (e.g. --env-pass from ambient build secrets) may appear between them.
+    const addDirsPattern = `--add-dirs='/work/repo-a-team-1:/tmp/groundcrew-team-1-x/\\.git'`;
+    const safehouseWithDirs = `safehouse-clearance' ${addDirsPattern}`;
+    expect(launchScript).toMatch(new RegExp(`${safehouseWithDirs}(?: --\\S+)* sh -c`));
     // The agent runs inside the wrap (after prepareWorktree), so the prompt is the sh -c arg.
-    expect(launchScript).toContain(
-      `/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance' ${addDirsFlag} "$_safehouse_shim" -c`,
+    expect(launchScript).toMatch(
+      new RegExp(`${safehouseWithDirs}(?: --\\S+)* "\\$_safehouse_shim" -c`),
     );
     expect(launchScript).toContain('_safehouse_shim="$_safehouse_shim_dir/claude"');
     expect(launchScript).not.toContain("--enable=all-agents");
@@ -845,8 +851,14 @@ describe(setupWorkspace, () => {
     expect(launchScript).not.toContain("groundcrew prepareWorktree hook exited");
     expect(launchScript).not.toContain(".groundcrew/setup.sh");
     expect(launchScript).toContain(
-      "/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance' --add-dirs='/work/repo-a-team-1:/tmp/groundcrew-team-1-x/.git' \"$_safehouse_shim\" -c",
+      "/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance' --add-dirs='/work/repo-a-team-1:/tmp/groundcrew-team-1-x/.git'",
     );
+    expect(launchScript).toContain("--add-dirs-ro='/Applications/cmux.app:");
+    expect(launchScript).toContain(
+      "--env-pass=GROUNDCREW_TASK_ID,GROUNDCREW_COMPLETE,CMUX_SURFACE_ID,CMUX_SOCKET_PATH",
+    );
+    expect(launchScript).toContain("export CMUX_CUSTOM_CLAUDE_PATH=/Users/dev/.local/bin/claude");
+    expect(launchScript).toContain('"$_safehouse_shim" -c');
   });
 
   it("wraps the agent in an sbx exec call and skips ensureClearance when runner='sdx'", async () => {
@@ -937,32 +949,27 @@ describe(setupWorkspace, () => {
     );
   });
 
-  it("does not double-wrap when the cmd already starts with safehouse", async () => {
+  it("fails before creating a worktree when worker env is required with a safehouse-prefixed cmd", async () => {
     detectHostMock.mockResolvedValue(host());
     const config = makeConfig({
       definitions: {
         claude: {
-          // A user upgrading from main has `safehouse` baked into their cmd;
-          // local wrapping must not produce `safehouse safehouse claude ...`.
           cmd: "safehouse claude --permission-mode auto",
           color: "#fff",
         },
       },
     });
-    mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
 
-    await setupWorkspace(config, {
-      task: "team-1",
-      repository: "repo-a",
-      agent: "claude",
-      details: { title: "Test Title", description: "Body" },
-    });
+    await expect(
+      setupWorkspace(config, {
+        task: "team-1",
+        repository: "repo-a",
+        agent: "claude",
+        details: { title: "Test Title", description: "Body" },
+      }),
+    ).rejects.toThrow(/cannot inject worker self-completion env when 'cmd' already starts/);
 
-    const command = lastRunArgumentFromCallWithArgument("new-workspace");
-    const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
-    expect(command).toBe("bash '/tmp/groundcrew-team-1-x/launch.sh'");
-    expect(launchScript).toContain('exec safehouse claude --permission-mode auto "$_p"');
-    expect(launchScript).not.toContain("safehouse safehouse");
+    expect(createMock).not.toHaveBeenCalled();
   });
 
   describe("build-time secret shuttling", () => {
@@ -1768,6 +1775,7 @@ describe(setupWorkspaceCli, () => {
     mkdtempMock.mockReturnValue("/tmp/groundcrew-team-1-x");
     runCommandMock.mockReturnValue(JSON.stringify({ ref: "workspace:1" }));
     loadConfigMock.mockResolvedValue(makeConfig());
+    resolveSafehouseCmuxIntegrationMock.mockReturnValue(safehouseCmuxIntegrationFixture());
     defaultBoard = fakeBoard(
       canonicalLinearIssue({
         naturalId: "team-1",
@@ -1888,6 +1896,15 @@ describe(setupWorkspaceCli, () => {
       expect.anything(),
       expect.objectContaining({ task: "staff-508" }),
     );
+  });
+
+  it("sets worker self-completion env from the resolved canonical task id", async () => {
+    await setupWorkspaceCli("team-1");
+
+    const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
+    expect(launchScript).toContain("export GROUNDCREW_TASK_ID='linear:team-1'");
+    expect(launchScript).toContain("export GROUNDCREW_COMPLETE='crew task done linear:team-1'");
+    expect(lastRecordedRunState().completionTaskId).toBe("linear:team-1");
   });
 
   it("passes title and description from the resolved issue as details", async () => {

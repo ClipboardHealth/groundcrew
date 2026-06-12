@@ -7,7 +7,7 @@
 ```bash
 crew task list
 crew task list --source todo --status todo --unblocked
-crew task list --agent codex --repo ClipboardHealth/api --json
+crew task list --agent claude-fable --repo ClipboardHealth/api --json
 ```
 
 `crew task get <task-id>` prints one normalized task. Canonical IDs such as `todo:GC-20260608-001` route directly to the named source. Natural IDs can be resolved with `--source <name>` or, when unique, by searching all configured sources. If more than one source matches, the command fails and asks for a canonical ID or `--source`.
@@ -18,12 +18,12 @@ crew task get GC-20260608-001 --source todo
 crew task get todo:GC-20260608-001 --prompt
 ```
 
-`crew task create "Short title" --source <source> [--agent <agent>]` creates a task in a source that supports creation. When `--agent` is omitted, it defaults to `any`. Todo.txt creation appends the todo line, defaults to priority `A` unless `--priority` is provided, writes `.tasks/<id>.md`, and leaves `status:todo` as the final meaningful token, so no separate ready command is required. Hand-written todo-txt lines can omit `.tasks/<id>.md` when the line has a non-empty title; that title becomes the prompt text.
+`crew task create "Short title" --source <source> [--agent <agent>]` creates a task in a source that supports creation. When `--agent` is omitted, it defaults to `any`. Todo.txt creation requires `--repo <repo>` unless the source configures `defaultRepository`, appends the todo line, writes `.tasks/<id>.md`, and leaves `status:todo` as the final meaningful token, so no separate ready command is required. Pass `--priority <letter>` to add a todo.txt priority marker. Hand-written todo-txt lines can omit `.tasks/<id>.md` when the line has a non-empty title; that title becomes the prompt text.
 
 ```bash
 crew task create "Fix cancellation retry race" \
   --source todo \
-  --agent codex \
+  --agent claude-fable \
   --repo ClipboardHealth/api \
   --project marketplace \
   --context backend \
@@ -35,10 +35,48 @@ Linear creation creates a Todo issue assigned to the current Linear API viewer, 
 ```bash
 crew task create "Fix cancellation retry race" \
   --source linear \
-  --agent codex \
+  --agent claude-fable \
   --team ENG \
   --repo ClipboardHealth/api \
   --description "Investigate retry handling."
+```
+
+`crew task done <task-id>` marks one task done through its source adapter. Use
+it for completed work that intentionally does not produce a PR. The command
+resolves canonical IDs such as `todo:flaky-triage-1` directly, or natural IDs
+when they match exactly one configured source. Sources without a done writeback
+return an unsupported error.
+
+Groundcrew checks matching local worktrees before marking a task done. Clean
+worktrees, and tasks with no local worktree, are allowed. A dirty worktree with
+no matching PR is refused by default so later cleanup does not discard
+uncommitted work; pass `--allow-dirty` only when that dirty state is expected.
+
+```bash
+# PR-producing tasks usually complete automatically:
+# open PR -> in-review, merged PR -> done.
+
+# Manual completion for no-PR operational work:
+crew task done todo:flaky-triage-1
+
+# Explicit override when a no-PR task intentionally leaves local changes:
+crew task done todo:docs-refresh-1 --allow-dirty
+```
+
+For recurring no-PR tasks, keep recurrence in the source and complete the
+current task with `crew task done`. The todo-txt source marks the current line
+done and schedules the next `status:todo` recurrence itself.
+
+```bash
+crew task create "Run flaky triage sweep" \
+  --source todo \
+  --agent claude-fable \
+  --repo ClipboardHealth/groundcrew \
+  --id flaky-triage-1 \
+  --rec 2h \
+  --description "Triage the flaky queue. No PR is needed when the queue is updated."
+
+crew task done todo:flaky-triage-1
 ```
 
 ## Status
@@ -57,7 +95,7 @@ crew status ENG-123
 ===================
 task: eng-123  in-progress  https://linear.app/example/issue/ENG-123
 title: Multi-event extractor: year inference can produce date_start > date_end
-run: running; model=claude; updated=2026-05-26T00:01:00.000Z; resumes=0
+run: running; agent=claude; updated=2026-05-26T00:01:00.000Z; resumes=0
 workspace: live
 
 Worktrees
@@ -77,9 +115,9 @@ Recent logs
 
 ## Doctor
 
-`crew doctor` checks host prerequisites only: config validity, task-source reachability, required binaries on PATH, workspace backend availability, `workspace.projectDir`, local runner capability, and enabled model commands.
+`crew doctor` checks host prerequisites only: config validity, task-source reachability, required binaries on PATH, workspace backend availability, `workspace.projectDir`, local runner capability, and enabled agent commands.
 
-Doctor's command introspection is intentionally shallow. It reports the resolved local runner and tokenizes each model `cmd`, then checks the first two non-flag tokens against PATH. Boolean flags without values, env-var assignments, shell pipelines, and subshells are not parsed.
+Doctor's command introspection is intentionally shallow. It reports the resolved local runner and tokenizes each agent `cmd`, then checks the first two non-flag tokens against PATH. Boolean flags without values, env-var assignments, shell pipelines, and subshells are not parsed.
 
 ## Start
 
@@ -106,4 +144,4 @@ The command closes the cmux/tmux/zellij workspace if present, records local run 
 
 `crew resume <TASK>` reopens an existing task worktree with a continuation prompt. Resume never creates a new worktree; if none exists it fails and leaves re-dispatch to `crew start <task>`.
 
-The resume prompt tells the agent to inspect git status and diff before editing, includes the previous interrupt reason when recorded, and reuses the recorded model, repository, branch, runner, sandbox, and workspace backend. When no run-state file exists but a worktree does, resume falls back to Linear resolution for the model and task context.
+The resume prompt tells the agent to inspect git status and diff before editing, includes the previous interrupt reason when recorded, and reuses the recorded agent, repository, branch, runner, sandbox, and workspace backend. When no run-state file exists but a worktree does, resume falls back to Linear resolution for the agent and task context.

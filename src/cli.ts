@@ -182,8 +182,8 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
     invoke: sourceCli,
   },
   task: {
-    summary: "List, get, and create tasks across configured sources",
-    usage: "<list|get|create> [...]",
+    summary: "List, get, create, and complete tasks across configured sources",
+    usage: "<list|get|create|done|validate> [...]",
     invoke: taskCli,
   },
   status: {

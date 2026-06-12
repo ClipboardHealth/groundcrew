@@ -148,7 +148,7 @@ describe(run, () => {
     expect(helpOutput).toContain("[--repo <repo>]...");
     expect(helpOutput).toContain("--runner <runner>");
     expect(helpOutput).toContain("--agent <agent>");
-    expect(helpOutput).toContain("crew task <list|get|create>");
+    expect(helpOutput).toContain("crew task <list|get|create|done|validate>");
     expect(helpOutput).not.toContain("sandbox");
     expect(process.exitCode).toBe(1);
   });

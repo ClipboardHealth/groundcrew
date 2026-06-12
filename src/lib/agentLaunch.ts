@@ -1,4 +1,8 @@
-import { ensureClearance } from "@clipboard-health/clearance";
+import {
+  ensureClearance,
+  resolveSafehouseCmuxIntegration,
+  safehouseCmuxIntegrationWarningLines,
+} from "@clipboard-health/clearance";
 
 import { clearanceAllowHostsFilesFromEnvironment } from "./clearanceAllowlist.ts";
 import {
@@ -8,12 +12,18 @@ import {
   type ResolvedConfig,
 } from "./config.ts";
 import { detectHostCapabilities } from "./host.ts";
-import { buildLaunchCommand } from "./launchCommand.ts";
+import {
+  buildLaunchCommand,
+  inferAgentCommandName,
+  type SafehouseAgentIntegration,
+  type WorkerEnvironment,
+} from "./launchCommand.ts";
 import { assertLocalRunnerRequirements, resolveLocalRunner } from "./localRunner.ts";
 import { sandboxNameFor } from "./sandboxName.ts";
 import { buildAndStageSrtLaunch, resolveGitCommonDir } from "./srtLaunch.ts";
-import { debug, sleep } from "./util.ts";
-import { workspaces } from "./workspaces.ts";
+import { debug, sleep, writeError } from "./util.ts";
+import { resolveWorkspaceKind, workspaces } from "./workspaces.ts";
+import type { WorkspaceKind } from "./workspaceAdapter.ts";
 
 /**
  * Stage any srt settings and build the workspace launch command — the assembly
@@ -32,6 +42,8 @@ export function composeAgentLaunch(input: {
   secretsFile?: string | undefined;
   prepareWorktreeCommand?: string | undefined;
   sandboxName?: string | undefined;
+  workspaceKind: WorkspaceKind;
+  workerEnvironment?: WorkerEnvironment | undefined;
 }): { launchCommand: string; srtSettingsDir: string | undefined } {
   const staged =
     input.runner === "srt"
@@ -40,6 +52,10 @@ export function composeAgentLaunch(input: {
           worktreeDir: input.worktreeDir,
           definition: input.definition,
         })
+      : undefined;
+  const safehouseAgentIntegration =
+    input.runner === "safehouse"
+      ? safehouseAgentIntegrationFor(input.workspaceKind, input.definition)
       : undefined;
   const launchCommand = buildLaunchCommand({
     definition: input.definition,
@@ -54,8 +70,10 @@ export function composeAgentLaunch(input: {
     srtAgentSettingsFile: staged?.agentFile,
     srtSettingsDir: staged?.directory,
     srtAgentConfigDirEnv: staged?.agentConfigDirEnv,
+    workerEnvironment: input.workerEnvironment,
     safehouseAddDirs:
       input.runner === "safehouse" ? resolveSafehouseAddDirs(input.worktreeDir) : undefined,
+    safehouseAgentIntegration,
   });
   return { launchCommand, srtSettingsDir: staged?.directory };
 }
@@ -80,9 +98,39 @@ function resolveSafehouseAddDirs(worktreeDir: string): readonly string[] {
   return [...new Set([worktreeDir, resolveGitCommonDir(worktreeDir)])];
 }
 
+function safehouseAgentIntegrationFor(
+  workspaceKind: WorkspaceKind,
+  definition: AgentDefinition,
+): SafehouseAgentIntegration | undefined {
+  if (workspaceKind !== "cmux") {
+    return undefined;
+  }
+  const isClaudeAgent = inferAgentCommandName(definition.cmd) === "claude";
+  const cmuxIntegration = resolveSafehouseCmuxIntegration();
+  if (isClaudeAgent) {
+    warnOnCmuxIntegrationDrift({ unreviewedEnvNames: cmuxIntegration.unreviewedEnvNames });
+  }
+
+  return {
+    addDirsReadOnly: cmuxIntegration.addDirsReadOnly,
+    envPass: cmuxIntegration.envPass,
+    commandPreludes: isClaudeAgent ? [cmuxIntegration.claudeCommandPrelude] : [],
+  };
+}
+
+function warnOnCmuxIntegrationDrift(input: { unreviewedEnvNames: readonly string[] }): void {
+  for (const warningLine of safehouseCmuxIntegrationWarningLines({
+    commandName: "groundcrew",
+    unreviewedEnvNames: input.unreviewedEnvNames,
+  })) {
+    writeError(warningLine);
+  }
+}
+
 interface PreparedAgentLaunch {
   runner: LocalRunner;
   sandboxName: string | undefined;
+  workspaceKind: WorkspaceKind;
   ensureReady: () => Promise<void>;
 }
 
@@ -95,6 +143,7 @@ export async function prepareAgentLaunch(input: {
 }): Promise<PreparedAgentLaunch> {
   const host = await detectHostCapabilities(input.signal);
   const runner = resolveLocalRunner(input.config.local.runner, host);
+  const workspaceKind = resolveWorkspaceKind({ config: input.config, host }).resolved;
   assertLocalRunnerRequirements(host, runner);
   const ensureReady =
     runner === "safehouse"
@@ -133,12 +182,18 @@ export async function prepareAgentLaunch(input: {
         "Your cmd owns the wrap, so add the names to its own '--env-pass=' flag, or drop the 'safehouse' prefix from 'cmd' to let groundcrew compose the flag for you.",
     );
   }
+  if (runner === "safehouse" && /^safehouse(?:\s|$)/.test(input.definition.cmd)) {
+    throw new Error(
+      `Local groundcrew ${input.purpose} on agent '${input.agent}' cannot inject worker self-completion env when 'cmd' already starts with 'safehouse'. ` +
+        "Your cmd owns the wrap, so add GROUNDCREW_TASK_ID,GROUNDCREW_COMPLETE to its own '--env-pass=' flag, or drop the 'safehouse' prefix from 'cmd' to let groundcrew compose the flag for you.",
+    );
+  }
 
   const sandboxName =
     runner === "sdx" && input.definition.sandbox !== undefined
       ? sandboxNameFor({ agent: input.definition.sandbox.agent })
       : undefined;
-  return { runner, sandboxName, ensureReady };
+  return { runner, sandboxName, workspaceKind, ensureReady };
 }
 
 async function alreadyReady(): Promise<void> {

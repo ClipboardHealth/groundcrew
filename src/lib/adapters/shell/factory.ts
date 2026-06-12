@@ -33,6 +33,7 @@ import {
 import { errorMessage, writeError } from "../../util.ts";
 
 import { invokeShellCommand } from "./invoke.ts";
+import { parseShellJson } from "./parseOutput.ts";
 import {
   type ShellAdapterConfig,
   shellFetchOutputSchema,
@@ -182,7 +183,10 @@ export function createShellTaskSource(
       env: config.env,
       sourceName,
     });
-    const parsed = shellFetchOutputSchema.parse(JSON.parse(stdout));
+    const parsed = parseShellJson(shellFetchOutputSchema, stdout, {
+      sourceName,
+      command: "listTasks",
+    });
     return parsed.map((si) => toCanonicalIssue(si, sourceName));
   }
 
@@ -207,7 +211,10 @@ export function createShellTaskSource(
     if (result.exitCode === 3 || result.stdout.trim().length === 0) {
       return null;
     }
-    const parsed = shellIssueSchema.parse(JSON.parse(result.stdout));
+    const parsed = parseShellJson(shellIssueSchema, result.stdout, {
+      sourceName,
+      command: "getTask",
+    });
     return toCanonicalIssue(parsed, sourceName);
   }
 
@@ -319,7 +326,10 @@ export function createShellTaskSource(
           `shell source "${sourceName}" createTask command produced no output (expected one ShellIssue JSON)`,
         );
       }
-      const parsed = shellIssueSchema.parse(JSON.parse(trimmed));
+      const parsed = parseShellJson(shellIssueSchema, trimmed, {
+        sourceName,
+        command: "createTask",
+      });
       return toCanonicalIssue(parsed, sourceName);
     };
   }

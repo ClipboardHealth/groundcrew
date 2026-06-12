@@ -1,13 +1,14 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import type * as nodeFs from "node:fs";
 
-import { ensureClearance } from "@clipboard-health/clearance";
+import { ensureClearance, type SafehouseCmuxIntegration } from "@clipboard-health/clearance";
 
 import { fetchResolvedIssue } from "../lib/adapters/linear/fetch.ts";
 import { getLinearClient } from "../lib/adapters/linear/client.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
 import { readRunState, recordRunState, type RunState } from "../lib/runState.ts";
+import { safehouseCmuxIntegrationFixture } from "../testHelpers/safehouseCmuxIntegration.ts";
 import { workspaces } from "../lib/workspaces.ts";
 import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 import { resumeWorkspace, resumeWorkspaceCli } from "./resumeWorkspace.ts";
@@ -17,6 +18,10 @@ interface NodeFsMock extends Omit<typeof nodeFs, "mkdtempSync" | "rmSync" | "wri
   rmSync: ReturnType<typeof vi.fn<typeof rmSync>>;
   writeFileSync: ReturnType<typeof vi.fn<typeof writeFileSync>>;
 }
+
+const resolveSafehouseCmuxIntegrationMock = vi.hoisted(() =>
+  vi.fn<() => SafehouseCmuxIntegration>(),
+);
 
 vi.mock("node:fs", async (importOriginal): Promise<NodeFsMock> => {
   const actual = await importOriginal<typeof nodeFs>();
@@ -29,7 +34,11 @@ vi.mock("node:fs", async (importOriginal): Promise<NodeFsMock> => {
 });
 vi.mock(import("@clipboard-health/clearance"), async (importOriginal) => {
   const actual = await importOriginal();
-  return { ...actual, ensureClearance: vi.fn<typeof ensureClearance>() };
+  return {
+    ...actual,
+    ensureClearance: vi.fn<typeof ensureClearance>(),
+    resolveSafehouseCmuxIntegration: resolveSafehouseCmuxIntegrationMock,
+  };
 });
 vi.mock(import("../lib/adapters/linear/fetch.ts"), async (importOriginal) => {
   const actual = await importOriginal();
@@ -248,6 +257,7 @@ describe(resumeWorkspace, () => {
       port: 19_999,
       status: "already-running",
     });
+    resolveSafehouseCmuxIntegrationMock.mockReturnValue(safehouseCmuxIntegrationFixture());
   });
 
   afterEach(() => {
@@ -284,6 +294,28 @@ describe(resumeWorkspace, () => {
       "/tmp/groundcrew-resume-team-1-x/prompt.txt",
       expect.stringContaining("inspect the current git status and diff"),
     );
+  });
+
+  it("uses the recorded canonical completion task id for worker self-completion env", async () => {
+    readRunStateMock.mockReturnValue(makeRunState({ completionTaskId: "linear:team-1" }));
+
+    await resumeWorkspace(config, { task: "team-1" });
+
+    const launchScript = stagedLaunchScript();
+    expect(launchScript).toContain("export GROUNDCREW_TASK_ID='linear:team-1'");
+    expect(launchScript).toContain("export GROUNDCREW_COMPLETE='crew task done linear:team-1'");
+    expect(lastRecordedRunState().completionTaskId).toBe("linear:team-1");
+  });
+
+  it("uses the task id for worker self-completion env when old state lacks a completion task id", async () => {
+    readRunStateMock.mockReturnValue(makeRunState());
+
+    await resumeWorkspace(config, { task: "team-1" });
+
+    const launchScript = stagedLaunchScript();
+    expect(launchScript).toContain("export GROUNDCREW_TASK_ID='team-1'");
+    expect(launchScript).toContain("export GROUNDCREW_COMPLETE='crew task done team-1'");
+    expect(lastRecordedRunState().completionTaskId).toBe("team-1");
   });
 
   it("falls back to the task id when Linear detail lookup fails during state resume", async () => {
@@ -496,6 +528,7 @@ describe(resumeWorkspaceCli, () => {
       port: 19_999,
       status: "already-running",
     });
+    resolveSafehouseCmuxIntegrationMock.mockReturnValue(safehouseCmuxIntegrationFixture());
   });
 
   afterEach(() => {
@@ -506,6 +539,16 @@ describe(resumeWorkspaceCli, () => {
     await resumeWorkspaceCli(["TEAM-1"]);
 
     expect(loadConfigMock).toHaveBeenCalledTimes(1);
+    expect(workspacesOpenMock).toHaveBeenCalledWith(
+      config,
+      expect.objectContaining({ name: "team-1" }),
+    );
+  });
+
+  it("strips a source prefix so the canonical id resumes the natural-id worktree", async () => {
+    await resumeWorkspaceCli(["linear:TEAM-1"]);
+
+    expect(findByTaskMock).toHaveBeenCalledWith(config, "team-1");
     expect(workspacesOpenMock).toHaveBeenCalledWith(
       config,
       expect.objectContaining({ name: "team-1" }),

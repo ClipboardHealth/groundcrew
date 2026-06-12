@@ -3,6 +3,7 @@ import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { composeAgentLaunch, openAgentWorkspace, prepareAgentLaunch } from "../lib/agentLaunch.ts";
 import { type Board, createBoard } from "../lib/board.ts";
 import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
+import { workerEnvironmentForTask } from "../lib/launchCommand.ts";
 import { resolvePrepareWorktreeCommand } from "../lib/repositoryHooks.ts";
 import { recordRunState } from "../lib/runState.ts";
 import {
@@ -30,6 +31,8 @@ export interface TaskDetails {
 
 export interface SetupWorkspaceOptions {
   task: string;
+  /** Canonical source id for worker self-completion; falls back to `task`. */
+  completionTaskId?: string;
   repository: string;
   agent: string;
   details: TaskDetails;
@@ -71,7 +74,7 @@ export async function setupWorkspace(
   if (!definition) {
     throw new Error(`Unknown agent: ${agent}`);
   }
-  const { runner, sandboxName, ensureReady } = await prepareAgentLaunch({
+  const { runner, sandboxName, workspaceKind, ensureReady } = await prepareAgentLaunch({
     config,
     agent,
     definition,
@@ -126,6 +129,7 @@ export async function setupWorkspace(
     });
     const secretsFile =
       prepareWorktreeCommand === undefined ? undefined : stageBuildSecrets(promptDir);
+    const completionTaskId = options.completionTaskId ?? task;
     const { launchCommand, srtSettingsDir: stagedSrtSettingsDir } = composeAgentLaunch({
       runner,
       task,
@@ -136,6 +140,8 @@ export async function setupWorkspace(
       secretsFile,
       prepareWorktreeCommand,
       sandboxName,
+      workspaceKind,
+      workerEnvironment: workerEnvironmentForTask(completionTaskId),
     });
     srtSettingsDir = stagedSrtSettingsDir;
     const launchCmd = stageWorkspaceLaunchCommand(promptDir, launchCommand);
@@ -160,6 +166,7 @@ export async function setupWorkspace(
       workspaceName: task,
       state: "running",
       title: taskDetails.title,
+      completionTaskId,
       ...(taskDetails.url === undefined ? {} : { url: taskDetails.url }),
     });
 
@@ -182,6 +189,7 @@ export async function setupWorkspace(
       state: "failed-to-launch",
       detail: errorMessage(error),
       title: options.details.title,
+      completionTaskId: options.completionTaskId ?? task,
       ...(options.details.url === undefined ? {} : { url: options.details.url }),
     });
     throw error;
@@ -258,6 +266,7 @@ function recordRunStateBestEffort(arguments_: {
   title: string;
   detail?: string;
   url?: string;
+  completionTaskId: string;
 }): void {
   try {
     recordRunState({
@@ -271,6 +280,7 @@ function recordRunStateBestEffort(arguments_: {
         workspaceName: arguments_.workspaceName,
         state: arguments_.state,
         title: arguments_.title,
+        completionTaskId: arguments_.completionTaskId,
         ...(arguments_.detail === undefined ? {} : { detail: arguments_.detail }),
         ...(arguments_.url === undefined ? {} : { url: arguments_.url }),
       },
@@ -366,6 +376,7 @@ export async function setupWorkspaceCli(
 
   await setupWorkspace(config, {
     task: naturalId,
+    completionTaskId: resolved.id,
     repository: resolved.repository,
     agent: resolved.agent,
     details: {

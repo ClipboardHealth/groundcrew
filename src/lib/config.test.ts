@@ -85,6 +85,19 @@ describe("loadConfig", () => {
     await expect(loadConfig()).rejects.toThrow(/disabled: true` is no longer supported/);
   });
 
+  it("includes the config filepath in migration errors", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      configSource({ workspace: VALID_WORKSPACE(temporary) }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(`groundcrew config: ${configPath}:`);
+    await expect(loadConfig()).rejects.toThrow(/configuration migration required/);
+  });
+
   it("loads an explicit built-in agent and applies defaults", async () => {
     const configPath = writeConfigFile(
       temporary,
@@ -124,6 +137,8 @@ describe("loadConfig", () => {
     );
     expect(actual.prompts.initial).toMatch(/documented verification/i);
     expect(actual.prompts.initial).toMatch(/open a PR/i);
+    expect(actual.prompts.initial).toContain("GROUNDCREW_COMPLETE");
+    expect(actual.prompts.initial).toMatch(/no PR is needed/i);
     expect(actual.prompts.initial).toContain("{{workspaceContinuationInstruction}}");
     expect(actual.prompts.initial).not.toContain("tmux attach -t groundcrew:{{task}}");
   });
@@ -1439,6 +1454,25 @@ describe("loadConfig", () => {
     setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(/workspace must be an object/);
+  });
+
+  it("does not rewrite unexpected loader errors as config validation errors", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      [
+        "export default {",
+        "  get workspace() {",
+        '    throw new Error("workspace getter exploded");',
+        "  },",
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow("workspace getter exploded");
+    await expect(loadConfig()).rejects.not.toThrow(configPath);
   });
 
   it("fails when knownRepositories is not an array", async () => {

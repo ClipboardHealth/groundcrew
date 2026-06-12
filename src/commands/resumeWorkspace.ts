@@ -3,6 +3,7 @@ import { getLinearClient } from "../lib/adapters/linear/client.ts";
 import { isLinearEnabled } from "../lib/buildSources.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { composeAgentLaunch, openAgentWorkspace, prepareAgentLaunch } from "../lib/agentLaunch.ts";
+import { workerEnvironmentForTask } from "../lib/launchCommand.ts";
 import { readRunState, recordRunState, type RunState } from "../lib/runState.ts";
 import {
   removeStagedPrompt,
@@ -10,6 +11,7 @@ import {
   stagePromptText,
   stageWorkspaceLaunchCommand,
 } from "../lib/stagedLaunch.ts";
+import { naturalIdFromCanonical, toCanonicalId } from "../lib/taskSource.ts";
 import { errorMessage, log } from "../lib/util.ts";
 import { workspaces } from "../lib/workspaces.ts";
 import { resolveLaunchDir, type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
@@ -30,6 +32,7 @@ interface ResumeContext {
   worktree: WorktreeEntry;
   title: string;
   description: string;
+  completionTaskId: string;
   reason?: string;
   resumeCount: number;
 }
@@ -39,7 +42,7 @@ function parseArguments(argv: string[]): ResumeWorkspaceOptions {
   if (task === undefined || task.length === 0 || extras.length > 0 || task.startsWith("-")) {
     throw new Error("Usage: crew resume <task>");
   }
-  return { task: task.toLowerCase() };
+  return { task: naturalIdFromCanonical(task).toLowerCase() };
 }
 
 async function fetchTaskDetails(task: string): Promise<TaskDetails | undefined> {
@@ -68,6 +71,7 @@ async function contextFromLinear(
     worktree,
     title: resolved.title,
     description: resolved.description,
+    completionTaskId: toCanonicalId("linear", task),
     resumeCount: 0,
   };
 }
@@ -89,6 +93,7 @@ async function contextFromState(
     worktree,
     title: details?.title ?? task.toUpperCase(),
     description: details?.description ?? "",
+    completionTaskId: state.completionTaskId ?? task,
     ...(state.reason === undefined ? {} : { reason: state.reason }),
     resumeCount: state.resumeCount,
   };
@@ -163,7 +168,7 @@ export async function resumeWorkspace(
     throw new Error(`Unknown agent: ${context.agent}`);
   }
 
-  const { runner, sandboxName, ensureReady } = await prepareAgentLaunch({
+  const { runner, sandboxName, workspaceKind, ensureReady } = await prepareAgentLaunch({
     config,
     agent: context.agent,
     definition,
@@ -195,6 +200,8 @@ export async function resumeWorkspace(
       workingDir: launchDir,
       secretsFile,
       sandboxName,
+      workspaceKind,
+      workerEnvironment: workerEnvironmentForTask(context.completionTaskId),
     }));
     const launchCmd = stageWorkspaceLaunchCommand(stagedPrompt.directory, launchCommand);
     await openAgentWorkspace({
@@ -225,6 +232,7 @@ export async function resumeWorkspace(
       workspaceName: task,
       state: "resumed",
       resumeCount: context.resumeCount + 1,
+      completionTaskId: context.completionTaskId,
       ...(context.reason === undefined ? {} : { reason: context.reason }),
     },
   });

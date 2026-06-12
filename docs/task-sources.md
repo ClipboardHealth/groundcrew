@@ -37,9 +37,15 @@ tasks only). If omitted, groundcrew treats in-review advancement as unsupported
 for that source and does not claim the transition succeeded. `commands.markDone`,
 when set, receives the same `sourceRef` and is run after groundcrew sees a
 **merged** PR on the task's worktree branch (a merged PR never advances to
-in-review). If omitted, groundcrew treats done advancement as unsupported and
-leaves the task for the source's own integration to close out. `${id}`,
-`${canonicalId}`, and `${name}` placeholders are shell-quoted before substitution.
+in-review), or when a human or worker runs `crew task done <task-id>` for
+completed no-PR work. If omitted, groundcrew treats done advancement as
+unsupported and leaves the task for the source's own integration to close out.
+`${id}`, `${canonicalId}`, and `${name}` placeholders are shell-quoted before substitution.
+
+Workers receive `GROUNDCREW_TASK_ID` and `GROUNDCREW_COMPLETE` in their launch
+environment. The default prompt tells them to run `GROUNDCREW_COMPLETE` only
+when the requested work is complete, no PR is needed, and any dirty worktree
+state is expected or explicitly allowed.
 
 ```json
 [
@@ -49,7 +55,7 @@ leaves the task for the source's own integration to close out. `${id}`,
     "description": "Task body",
     "status": "todo",
     "repository": "your-org/your-repo",
-    "agent": "claude",
+    "agent": "claude-fable",
     "assignee": "Alice",
     "updatedAt": "2026-05-22T15:00:00Z",
     "blockers": [{ "id": "JIRA-122", "title": "Schema migration", "status": "done" }],
@@ -80,12 +86,12 @@ export default {
 };
 ```
 
-Creating a todo task appends a line with `status:todo` as the final meaningful token and writes the prompt to `.tasks/<id>.md`. New todo tasks default to priority `A`; pass `--priority <letter>` to override it. If `--agent` is omitted, the task uses `agent:any`.
+Creating a todo task appends a line with `status:todo` as the final meaningful token and writes the prompt to `.tasks/<id>.md`. Pass `--repo <repo>` unless the source configures `defaultRepository`. Pass `--priority <letter>` to add a todo.txt priority marker. If `--agent` is omitted, the task uses `agent:any`.
 
 ```bash
 crew task create "Fix cancellation retry race" \
   --source todo \
-  --agent codex \
+  --agent claude-fable \
   --repo ClipboardHealth/api \
   --project marketplace \
   --context backend \
@@ -93,7 +99,7 @@ crew task create "Fix cancellation retry race" \
 ```
 
 ```txt
-(A) Fix cancellation retry race +marketplace @backend id:GC-20260608-001 repo:ClipboardHealth/api agent:codex status:todo
+Fix cancellation retry race +marketplace @backend id:GC-20260608-001 repo:ClipboardHealth/api agent:claude-fable status:todo
 ```
 
 For hand-written todo lines, a non-empty title is enough prompt text when `.tasks/<id>.md` is absent. Omit `agent:` to default to `agent:any`:
@@ -122,7 +128,7 @@ export default {
 ```bash
 crew task create "Fix cancellation retry race" \
   --source linear \
-  --agent codex \
+  --agent claude-fable \
   --repo ClipboardHealth/api \
   --description "Investigate retry handling."
 ```

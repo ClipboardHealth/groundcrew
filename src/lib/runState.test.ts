@@ -203,6 +203,44 @@ describe("run state store", () => {
     });
   });
 
+  it("round-trips the canonical completion task id and preserves it across transitions", () => {
+    recordRunState({
+      config,
+      state: {
+        task: "team-1",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-1",
+        branchName: "dev-team-1",
+        workspaceName: "team-1",
+        state: "running",
+        completionTaskId: "linear:team-1",
+      },
+    });
+
+    expect(readRunState(config, "team-1")).toMatchObject({
+      completionTaskId: "linear:team-1",
+    });
+
+    recordRunState({
+      config,
+      state: {
+        task: "team-1",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-1",
+        branchName: "dev-team-1",
+        workspaceName: "team-1",
+        state: "interrupted",
+      },
+    });
+
+    expect(readRunState(config, "team-1")).toMatchObject({
+      state: "interrupted",
+      completionTaskId: "linear:team-1",
+    });
+  });
+
   it("prefers a freshly provided title over the previously-recorded one", () => {
     recordRunState({
       config,
