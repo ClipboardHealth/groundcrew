@@ -318,6 +318,43 @@ describe(resumeWorkspace, () => {
     expect(lastRecordedRunState().completionTaskId).toBe("team-1");
   });
 
+  it("omits worker self-completion command for old state when no source can be inferred", async () => {
+    const noSourceConfig: ResolvedConfig = { ...config, sources: [] };
+    readRunStateMock.mockReturnValue(makeRunState());
+
+    await resumeWorkspace(noSourceConfig, { task: "team-1" });
+
+    const launchScript = stagedLaunchScript();
+    expect(launchScript).toContain("export GROUNDCREW_TASK_ID='team-1'");
+    expect(launchScript).not.toContain("GROUNDCREW_COMPLETE");
+    expect(lastRecordedRunState().completionTaskId).toBe("team-1");
+  });
+
+  it("omits worker self-completion command for old state when multiple sources are possible", async () => {
+    const multiSourceConfig: ResolvedConfig = {
+      ...config,
+      sources: [
+        { kind: "linear" },
+        {
+          kind: "todo-txt",
+          name: "todo",
+          todoPath: "todo.txt",
+          tasksDir: ".tasks",
+          idPrefix: "GC",
+          timezone: "UTC",
+        },
+      ],
+    };
+    readRunStateMock.mockReturnValue(makeRunState());
+
+    await resumeWorkspace(multiSourceConfig, { task: "team-1" });
+
+    const launchScript = stagedLaunchScript();
+    expect(launchScript).toContain("export GROUNDCREW_TASK_ID='team-1'");
+    expect(launchScript).not.toContain("GROUNDCREW_COMPLETE");
+    expect(lastRecordedRunState().completionTaskId).toBe("team-1");
+  });
+
   it("sets worker self-completion command when the recorded source can mark done", async () => {
     const todoConfig: ResolvedConfig = {
       ...config,

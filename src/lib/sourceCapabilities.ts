@@ -114,7 +114,7 @@ export function taskSupportsCompletionCommand(arguments_: {
     if (rawSources.length === 1 && singleSource !== undefined) {
       return summarizeSource(singleSource).capabilities.markDone;
     }
-    return true;
+    return false;
   }
   return sourceSupportsMarkDone({
     rawSources,
