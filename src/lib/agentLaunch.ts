@@ -44,6 +44,7 @@ export function composeAgentLaunch(input: {
   sandboxName?: string | undefined;
   workspaceKind: WorkspaceKind;
   workerEnvironment?: WorkerEnvironment | undefined;
+  taskSourceWritePaths?: readonly string[] | undefined;
 }): { launchCommand: string; srtSettingsDir: string | undefined } {
   const staged =
     input.runner === "srt"
@@ -51,6 +52,7 @@ export function composeAgentLaunch(input: {
           task: input.task,
           worktreeDir: input.worktreeDir,
           definition: input.definition,
+          taskSourceWritePaths: input.taskSourceWritePaths,
         })
       : undefined;
   const safehouseAgentIntegration =
@@ -73,6 +75,8 @@ export function composeAgentLaunch(input: {
     workerEnvironment: input.workerEnvironment,
     safehouseAddDirs:
       input.runner === "safehouse" ? resolveSafehouseAddDirs(input.worktreeDir) : undefined,
+    safehouseAgentAddDirs:
+      input.runner === "safehouse" ? (input.taskSourceWritePaths ?? []) : undefined,
     safehouseAgentIntegration,
   });
   return { launchCommand, srtSettingsDir: staged?.directory };

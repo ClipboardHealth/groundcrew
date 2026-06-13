@@ -425,6 +425,29 @@ describe(resumeWorkspace, () => {
     expect(launchScript).not.toContain("safehouse-clearance");
   });
 
+  it("does not add task source sandbox grants for unsandboxed resume runners", async () => {
+    const noneConfig: ResolvedConfig = {
+      ...makeConfig(),
+      local: { runner: "none" },
+      sources: [
+        { kind: "linear" },
+        {
+          kind: "todo-txt",
+          name: "todo",
+          todoPath: "/Users/dev/v/todo.md",
+          tasksDir: "/Users/dev/v/.tasks",
+          idPrefix: "GC",
+          timezone: "UTC",
+        },
+      ],
+    };
+    readRunStateMock.mockReturnValue(makeRunState({ completionTaskId: "todo:gc-1" }));
+
+    await resumeWorkspace(noneConfig, { task: "team-1" });
+
+    expect(stagedLaunchScript()).not.toContain("/Users/dev/v");
+  });
+
   it("cds into the configured workdir subproject on resume", async () => {
     const cfg = makeConfig();
     cfg.workspace.repositories = [

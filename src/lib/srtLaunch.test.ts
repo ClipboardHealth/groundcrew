@@ -133,6 +133,24 @@ describe(buildAndStageSrtLaunch, () => {
     expect(reads).not.toContain(path.join(workspaceRoot, "billing", ".git"));
   });
 
+  it("adds task source write paths to the agent settings only", () => {
+    const result = buildAndStageSrtLaunch({
+      task: "team-1",
+      worktreeDir: initWorktree("repo-a-team-1"),
+      definition: definition("claude --permission-mode auto"),
+      homeDir: fakeHome,
+      taskSourceWritePaths: ["/Users/dev/v"],
+    });
+    staged.push(result.directory);
+
+    const agent = readSettings(result.agentFile);
+    const prepare = readSettings(result.prepareFile);
+    expect(agent.filesystem.allowRead).toContain("/Users/dev/v");
+    expect(agent.filesystem.allowWrite).toContain("/Users/dev/v");
+    expect(prepare.filesystem.allowRead).not.toContain("/Users/dev/v");
+    expect(prepare.filesystem.allowWrite).not.toContain("/Users/dev/v");
+  });
+
   it("uses groundcrew's shipped clearance allowlist for network policy when no env files are exported", () => {
     vi.stubEnv("CLEARANCE_ALLOW_HOSTS", "");
     vi.stubEnv("CLEARANCE_ALLOW_HOSTS_FILES", "");

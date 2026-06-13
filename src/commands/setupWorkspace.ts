@@ -12,6 +12,7 @@ import {
   stageWorkspaceLaunchCommand,
   type StagedPrompt,
 } from "../lib/stagedLaunch.ts";
+import { taskSourceWritePathsForCompletion } from "../lib/taskSourceFilesystem.ts";
 import { naturalIdFromCanonical } from "../lib/taskSource.ts";
 import { debug, errorMessage, log, okMark } from "../lib/util.ts";
 import { type WorkspaceAccessHint, workspaces } from "../lib/workspaces.ts";
@@ -130,6 +131,14 @@ export async function setupWorkspace(
     const secretsFile =
       prepareWorktreeCommand === undefined ? undefined : stageBuildSecrets(promptDir);
     const completionTaskId = options.completionTaskId ?? task;
+    const taskSourceWritePaths =
+      runner === "safehouse" || runner === "srt"
+        ? taskSourceWritePathsForCompletion({
+            config,
+            taskId: completionTaskId,
+            workingDir: launchDir,
+          })
+        : undefined;
     const { launchCommand, srtSettingsDir: stagedSrtSettingsDir } = composeAgentLaunch({
       runner,
       task,
@@ -142,6 +151,7 @@ export async function setupWorkspace(
       sandboxName,
       workspaceKind,
       workerEnvironment: workerEnvironmentForTask(completionTaskId),
+      taskSourceWritePaths,
     });
     srtSettingsDir = stagedSrtSettingsDir;
     const launchCmd = stageWorkspaceLaunchCommand(promptDir, launchCommand);
