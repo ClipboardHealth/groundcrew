@@ -89,7 +89,7 @@ const config: ResolvedConfig = {
   },
   prompts: { initial: "x" },
   workspaceKind: "auto",
-  local: { runner: "auto" },
+  local: { runner: "auto", clearance: true },
   logging: { file: "/tmp/groundcrew-test.log" },
 };
 

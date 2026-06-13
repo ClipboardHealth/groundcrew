@@ -275,6 +275,16 @@ export interface Config {
    */
   local?: {
     runner?: LocalRunnerSetting;
+    /**
+     * Whether to run the safehouse runner under Clearance (the network-egress
+     * allowlist proxy). Defaults to `true`. Set `false` to keep the Safehouse
+     * filesystem sandbox but open network egress (bare `safehouse`, no proxy
+     * env, no deny-all-remote profile, no clearance daemon). Only affects the
+     * resolved `safehouse` runner: `srt` rejects it at launch (use srt's own
+     * `allowedDomains`), and it is a no-op under `sdx`/`none` and when `cmd`
+     * already starts with `safehouse`.
+     */
+    clearance?: boolean;
   };
   logging?: {
     /**
@@ -341,6 +351,13 @@ export interface ResolvedConfig {
    */
   local: {
     runner: LocalRunnerSetting;
+    /**
+     * Whether the safehouse runner wraps the agent with Clearance. Always
+     * present — defaults to `true`. `false` opens network egress while keeping
+     * the filesystem sandbox. The runner cross-check (srt rejection) is deferred
+     * to launch, since `runner` may still be `"auto"` here.
+     */
+    clearance: boolean;
   };
   logging: {
     file: string;
@@ -643,6 +660,16 @@ function normalizeLocalRunner(value: unknown, configKey: string): LocalRunnerSet
     fail(
       `${configKey} must be one of ${LOCAL_RUNNER_SETTINGS.join(", ")} (got ${JSON.stringify(value)})`,
     );
+  }
+  return value;
+}
+
+function normalizeClearance(value: unknown, configKey: string): boolean {
+  if (value === undefined) {
+    return true;
+  }
+  if (typeof value !== "boolean") {
+    fail(`${configKey} must be a boolean (got ${JSON.stringify(value)})`);
   }
   return value;
 }
@@ -1035,7 +1062,7 @@ function applyDefaults(user: Config, configDir: string): ResolvedConfig {
       "remote is no longer supported: groundcrew runs locally via safehouse/sdx/none; remove the remote block from your config",
     );
   }
-  const userLocal = (user as { local?: { runner?: unknown } }).local;
+  const userLocal = (user as { local?: { runner?: unknown; clearance?: unknown } }).local;
   if (userLocal !== undefined && !isPlainObject(userLocal)) {
     fail("local must be an object");
   }
@@ -1064,6 +1091,7 @@ function applyDefaults(user: Config, configDir: string): ResolvedConfig {
     workspaceKind: normalizeWorkspaceKind(user.workspaceKind, "workspaceKind") ?? "auto",
     local: {
       runner: normalizeLocalRunner(userLocal?.runner, "local.runner") ?? "auto",
+      clearance: normalizeClearance(userLocal?.clearance, "local.clearance"),
     },
     logging: {
       file: expandHome(

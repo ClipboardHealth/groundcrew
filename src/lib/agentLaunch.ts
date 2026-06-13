@@ -34,6 +34,7 @@ import type { WorkspaceKind } from "./workspaceAdapter.ts";
  */
 export function composeAgentLaunch(input: {
   runner: LocalRunner;
+  clearance: boolean;
   task: string;
   definition: AgentDefinition;
   promptFile: string;
@@ -67,6 +68,7 @@ export function composeAgentLaunch(input: {
     secretsFile: input.secretsFile,
     prepareWorktreeCommand: input.prepareWorktreeCommand,
     runner: input.runner,
+    clearance: input.clearance,
     sandboxName: input.sandboxName,
     srtPrepareSettingsFile: staged?.prepareFile,
     srtAgentSettingsFile: staged?.agentFile,
@@ -133,6 +135,8 @@ function warnOnCmuxIntegrationDrift(input: { unreviewedEnvNames: readonly string
 
 interface PreparedAgentLaunch {
   runner: LocalRunner;
+  /** Resolved `config.local.clearance`, threaded into `composeAgentLaunch`. */
+  clearance: boolean;
   sandboxName: string | undefined;
   workspaceKind: WorkspaceKind;
   ensureReady: () => Promise<void>;
@@ -147,10 +151,24 @@ export async function prepareAgentLaunch(input: {
 }): Promise<PreparedAgentLaunch> {
   const host = await detectHostCapabilities(input.signal);
   const runner = resolveLocalRunner(input.config.local.runner, host);
+  const { clearance } = input.config.local;
   const workspaceKind = resolveWorkspaceKind({ config: input.config, host }).resolved;
   assertLocalRunnerRequirements(host, runner);
+  // srt has its own network policy (allowedDomains), not Clearance, so disabling
+  // clearance under it is meaningless and would silently leave srt's allowlist
+  // active. Fail at resolution time so the operator sees it before the workspace
+  // spawns; buildLaunchCommand keeps the same check as defense in depth.
+  if (runner === "srt" && !clearance) {
+    throw new Error(
+      `Local groundcrew ${input.purpose} on agent '${input.agent}' cannot disable clearance under the srt runner in v1 — ` +
+        "srt has its own network policy (allowedDomains), not Clearance. " +
+        "Set local.runner to 'safehouse' to disable clearance, or remove local.clearance to keep srt's allowlist.",
+    );
+  }
+  // Clearance-off keeps the filesystem sandbox but skips the proxy daemon, so the
+  // ensure step that starts it is only needed for safehouse *with* clearance.
   const ensureReady =
-    runner === "safehouse"
+    runner === "safehouse" && clearance
       ? async (): Promise<void> => {
           await ensureSafehouseClearance(input.signal);
         }
@@ -197,7 +215,7 @@ export async function prepareAgentLaunch(input: {
     runner === "sdx" && input.definition.sandbox !== undefined
       ? sandboxNameFor({ agent: input.definition.sandbox.agent })
       : undefined;
-  return { runner, sandboxName, workspaceKind, ensureReady };
+  return { runner, clearance, sandboxName, workspaceKind, ensureReady };
 }
 
 async function alreadyReady(): Promise<void> {

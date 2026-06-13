@@ -98,7 +98,7 @@ function makeConfig(workspaceKind: WorkspaceKindSetting = "auto"): ResolvedConfi
     },
     prompts: { initial: "x" },
     workspaceKind,
-    local: { runner: "auto" },
+    local: { runner: "auto", clearance: true },
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }

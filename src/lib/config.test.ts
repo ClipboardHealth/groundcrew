@@ -1023,6 +1023,47 @@ describe("loadConfig", () => {
     expect(actual.local.runner).toBe("safehouse");
   });
 
+  it("defaults local.clearance to true when omitted", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      validConfigSource({ workspace: VALID_WORKSPACE(temporary) }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+    expect(actual.local.clearance).toBe(true);
+  });
+
+  it("preserves an explicit local.clearance: false", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      validConfigSource({
+        workspace: VALID_WORKSPACE(temporary),
+        local: { clearance: false },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+    expect(actual.local.clearance).toBe(false);
+  });
+
+  it("rejects a non-boolean local.clearance value", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      [
+        "export default {",
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        `  agents: { definitions: { claude: {} } },`,
+        `  local: { clearance: 'nope' },`,
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(/local\.clearance must be a boolean/);
+  });
+
   it("rejects legacy disabled agent entries with migration guidance", async () => {
     const configPath = writeConfigFile(
       temporary,

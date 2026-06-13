@@ -26,6 +26,7 @@ function arguments_(
     worktreeDir,
     workingDir: worktreeDir,
     runner: "safehouse",
+    clearance: true,
     ...overrides,
   };
 }
@@ -1301,6 +1302,65 @@ describe(buildLaunchCommand, () => {
 
       expect(out).not.toContain("-e NPM_TOKEN");
       expect(out).not.toContain("-e BUF_TOKEN");
+    });
+  });
+
+  describe(`${buildLaunchCommand.name} (runner='safehouse', clearance=false)`, () => {
+    it("wraps both safehouse phases with the bare safehouse binary, dropping the clearance shim and proxy env", () => {
+      const out = buildLaunchCommand(
+        arguments_({ clearance: false, prepareWorktreeCommand: "npm ci" }),
+      );
+
+      // Bare safehouse for both the prepareWorktree wrap (`sh -c`) and the agent
+      // wrap (the profile-selection shim), with no clearance layer.
+      expect(out).toContain("safehouse sh -c");
+      expect(out).toContain('safehouse "$_safehouse_shim" -c');
+      expect(out).not.toContain("safehouse-clearance");
+      expect(out).not.toContain("CLEARANCE_ALLOW_HOSTS_FILES");
+    });
+
+    it("keeps the filesystem sandbox machinery — profile shim and flag composition — intact", () => {
+      const out = buildLaunchCommand(
+        arguments_({
+          clearance: false,
+          prepareWorktreeCommand: "npm ci",
+          safehouseAddDirs: ["/work/repo-a-team-1", "/src/carrot/.git"],
+          safehouseAgentAddDirs: ["/Users/dev/v"],
+          definition: { cmd: "claude", color: "#fff", preLaunchEnv: ["SESSION_TOKEN"] },
+        }),
+      );
+
+      // The agent-named symlink-to-/bin/sh profile-selection trick is unchanged.
+      expect(out).toContain('_safehouse_shim="$_safehouse_shim_dir/claude"');
+      expect(out).toContain('ln -s /bin/sh "$_safehouse_shim"');
+      // --add-dirs (both wraps), the agent-only --add-dirs grant, and --env-pass
+      // all still compose around the bare-safehouse wrapper.
+      expect(out).toContain("--add-dirs='/work/repo-a-team-1:/src/carrot/.git'");
+      expect(out).toContain("--add-dirs='/work/repo-a-team-1:/src/carrot/.git:/Users/dev/v'");
+      expect(out).toContain("--env-pass=SESSION_TOKEN ");
+      expect(out).toContain(`exec claude "$@"`);
+    });
+
+    it("default clearance=true still wraps with the clearance shim (regression)", () => {
+      const out = buildLaunchCommand(arguments_({ prepareWorktreeCommand: "npm ci" }));
+
+      expect(out).toContain("safehouse-clearance' sh -c");
+      expect(out).toContain("CLEARANCE_ALLOW_HOSTS_FILES=");
+      expect(out).not.toContain("safehouse sh -c");
+    });
+
+    it("throws when clearance is disabled under the srt runner", () => {
+      expect(() =>
+        buildLaunchCommand(
+          arguments_({
+            runner: "srt",
+            clearance: false,
+            srtPrepareSettingsFile: "/tmp/s/prepare.json",
+            srtAgentSettingsFile: "/tmp/s/agent.json",
+            srtSettingsDir: "/tmp/s",
+          }),
+        ),
+      ).toThrow(/not supported under the srt runner/);
     });
   });
 });

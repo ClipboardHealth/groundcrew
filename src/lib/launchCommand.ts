@@ -136,6 +136,27 @@ function safehouseClearanceWrapperCommand(): string {
   return `CLEARANCE_ALLOW_HOSTS_FILES=${shellSingleQuote(clearanceAllowHostsFilesFromEnvironment())} ${shellSingleQuote(SAFEHOUSE_CLEARANCE_WRAPPER_PATH)}`;
 }
 
+/**
+ * No-clearance Safehouse invocation: the bare `safehouse` binary (Homebrew, on
+ * `PATH`) with the filesystem sandbox + agent-profile selection but no Clearance
+ * layer — no proxy env, no deny-all-remote profile, no `CLEARANCE_ALLOW_HOSTS_FILES`.
+ * Selected when `local.clearance` is `false`. The daemon-ensure step is skipped
+ * separately in `prepareAgentLaunch`.
+ */
+function bareSafehouseWrapperCommand(): string {
+  return "safehouse";
+}
+
+/**
+ * Pick the Safehouse wrapper for a launch: the Clearance shim by default, or the
+ * bare `safehouse` binary when clearance is disabled. Both wrap sites in
+ * `buildSafehouseLaunchCommand` read the selection, so one call de-clears the
+ * prepareWorktree wrap and the agent wrap together.
+ */
+function safehouseWrapperCommand(clearance: boolean): string {
+  return clearance ? safehouseClearanceWrapperCommand() : bareSafehouseWrapperCommand();
+}
+
 function trapCleanupLine(promptDir: string): string {
   const cleanupCmd = `rm -rf ${shellSingleQuote(promptDir)}`;
   return `trap ${shellSingleQuote(cleanupCmd)} EXIT`;
@@ -390,6 +411,14 @@ interface LaunchCommandArguments {
    */
   runner: LocalRunner;
   /**
+   * Whether the safehouse runner wraps the agent with Clearance. Threaded from
+   * `config.local.clearance`. `false` selects the bare `safehouse` binary
+   * (filesystem sandbox, open egress) for both safehouse wraps; rejected under
+   * `runner === "srt"`. Ignored by the sdx/unwrapped paths (clearance was never
+   * applied there).
+   */
+  clearance: boolean;
+  /**
    * sbx sandbox name when `runner === "sdx"`. Derived by the caller from
    * `sandboxNameFor({ agent })`. Required for sdx; ignored otherwise.
    * Kept off the agent definition so a agent can launch under safehouse
@@ -458,6 +487,12 @@ interface LaunchCommandArguments {
  */
 export function buildLaunchCommand(arguments_: LaunchCommandArguments): string {
   if (arguments_.runner === "srt") {
+    if (!arguments_.clearance) {
+      throw new Error(
+        "local.clearance: false is not supported under the srt runner in v1 — srt has its own network policy (allowedDomains), not Clearance. " +
+          "Set local.runner to 'safehouse' to disable clearance, or remove local.clearance to keep srt's allowlist.",
+      );
+    }
     return buildSrtLaunchCommand(arguments_);
   }
   if (arguments_.runner === "sdx") {
@@ -613,7 +648,7 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
     "--add-dirs-ro",
     safehouseAgentIntegration?.addDirsReadOnly ?? [],
   );
-  const safehouseWrapper = safehouseClearanceWrapperCommand();
+  const safehouseWrapper = safehouseWrapperCommand(arguments_.clearance);
 
   // Defensive shim+promptDir trap: by the time we arm it, `rm -rf <promptDir>`
   // has already run (line below) so the promptDir wipe is a no-op on the happy
