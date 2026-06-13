@@ -10,7 +10,7 @@ crew task list --source todo --status todo --unblocked
 crew task list --agent claude-fable --repo ClipboardHealth/api --json
 ```
 
-`crew task get <task-id>` prints one normalized task. Canonical IDs such as `todo:GC-20260608-001` route directly to the named source. Natural IDs can be resolved with `--source <name>` or, when unique, by searching all configured sources. If more than one source matches, the command fails and asks for a canonical ID or `--source`.
+`crew task get <task-id>` prints one normalized task. Canonical IDs such as `todo:GC-20260608-001` route directly to the named source. Natural IDs can be resolved with `--source <name>` or, when unique, by searching all configured sources. Exact IDs are tried first; if none match, Groundcrew accepts a unique prefix of a current listed task ID. If more than one task matches, the command fails and prints the matching canonical IDs.
 
 ```bash
 crew task get todo:GC-20260608-001
@@ -44,8 +44,9 @@ crew task create "Fix cancellation retry race" \
 `crew task done <task-id>` marks one task done through its source adapter. Use
 it for completed work that intentionally does not produce a PR. The command
 resolves canonical IDs such as `todo:flaky-triage-1` directly, or natural IDs
-when they match exactly one configured source. Sources without a done writeback
-return an unsupported error.
+when they match exactly one configured source. Exact IDs are tried first; if
+none match, Groundcrew accepts a unique prefix of a current listed task ID.
+Sources without a done writeback return an unsupported error.
 
 Groundcrew checks matching local worktrees before marking a task done. Clean
 worktrees, and tasks with no local worktree, are allowed. A dirty worktree with

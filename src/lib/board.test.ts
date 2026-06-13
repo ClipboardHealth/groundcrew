@@ -161,6 +161,72 @@ describe("Board.resolveOne", () => {
     expect(result?.id).toBe("b:x");
   });
 
+  it("resolves a unique natural id prefix from listed current tasks when exact lookup misses", async () => {
+    const listTasks = vi
+      .fn<() => Promise<Issue[]>>()
+      .mockResolvedValue([fakeIssue("todo:flaky-critic-1-20260613-002", "todo")]);
+    const board = createBoard([fakeSource("todo", { listTasks })]);
+
+    const result = await board.resolveOne("flaky-critic-1");
+
+    expect(result?.id).toBe("todo:flaky-critic-1-20260613-002");
+    expect(listTasks).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps exact natural id matches ahead of listed prefix matches", async () => {
+    const getTask = vi
+      .fn<(id: string) => Promise<Issue | null>>()
+      .mockResolvedValue(fakeIssue("todo:flaky-critic-1", "todo"));
+    const listTasks = vi
+      .fn<() => Promise<Issue[]>>()
+      .mockRejectedValue(new Error("prefix lookup should not run"));
+    const board = createBoard([fakeSource("todo", { getTask, listTasks })]);
+
+    const result = await board.resolveOne("flaky-critic-1");
+
+    expect(result?.id).toBe("todo:flaky-critic-1");
+    expect(listTasks).not.toHaveBeenCalled();
+  });
+
+  it("throws AmbiguousTaskError when a natural id prefix matches multiple listed current tasks", async () => {
+    const board = createBoard([
+      fakeSource("todo", {
+        listTasks: vi
+          .fn<() => Promise<Issue[]>>()
+          .mockResolvedValue([
+            fakeIssue("todo:flaky-critic-1-20260613-002", "todo"),
+            fakeIssue("todo:flaky-critic-10-20260613", "todo"),
+          ]),
+      }),
+    ]);
+
+    await expect(board.resolveOne("flaky-critic-1")).rejects.toThrow(
+      /ambiguous.*todo:flaky-critic-1-20260613-002.*todo:flaky-critic-10-20260613/i,
+    );
+  });
+
+  it("surfaces a source rejection from prefix lookup when no source matched", async () => {
+    const board = createBoard([
+      fakeSource("todo", {
+        listTasks: vi.fn<() => Promise<Issue[]>>().mockRejectedValue(new Error("source offline")),
+      }),
+    ]);
+
+    await expect(board.resolveOne("flaky-critic-1")).rejects.toThrow(/source offline/);
+  });
+
+  it("does not treat an empty canonical natural id as a prefix for every listed task", async () => {
+    const board = createBoard([
+      fakeSource("todo", {
+        listTasks: vi
+          .fn<() => Promise<Issue[]>>()
+          .mockResolvedValue([fakeIssue("todo:flaky-critic-1-20260613-002", "todo")]),
+      }),
+    ]);
+
+    await expect(board.resolveOne("todo:")).resolves.toBeUndefined();
+  });
+
   it("returns undefined when no source matches", async () => {
     const board = createBoard([fakeSource("a"), fakeSource("b")]);
     await expect(board.resolveOne("missing")).resolves.toBeUndefined();

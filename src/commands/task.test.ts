@@ -382,6 +382,58 @@ describe("crew task get", () => {
     expect(log.output()).toBe("Investigate cancellation retries.");
   });
 
+  it("resolves a unique source-native id prefix from listed current tasks", async () => {
+    const todo = stubSource("todo", [
+      makeIssue({
+        id: "todo:flaky-critic-1-20260613-002",
+        description: "Run flaky critic.",
+      }),
+    ]);
+    buildSourcesMock.mockResolvedValue([todo]);
+
+    const log = captureConsoleLog();
+    try {
+      await taskCli(["get", "flaky-critic-1", "--prompt"]);
+    } finally {
+      log.restore();
+    }
+
+    expect(todo.getTask).toHaveBeenCalledWith("flaky-critic-1");
+    expect(todo.listTasks).toHaveBeenCalledTimes(1);
+    expect(log.output()).toBe("Run flaky critic.");
+  });
+
+  it("keeps exact source-native id matches ahead of prefix matches", async () => {
+    const exact = makeIssue({ id: "todo:flaky-critic-1", title: "Exact" });
+    const todo = stubSource("todo", [
+      exact,
+      makeIssue({ id: "todo:flaky-critic-1-20260613-002", title: "Prefix" }),
+    ]);
+    buildSourcesMock.mockResolvedValue([todo]);
+
+    const log = captureConsoleLog();
+    try {
+      await taskCli(["get", "flaky-critic-1"]);
+    } finally {
+      log.restore();
+    }
+
+    expect(todo.listTasks).not.toHaveBeenCalled();
+    expect(log.output()).toContain("title: Exact");
+  });
+
+  it("fails prefix lookup when multiple current tasks match", async () => {
+    const todo = stubSource("todo", [
+      makeIssue({ id: "todo:flaky-critic-1-20260613-002" }),
+      makeIssue({ id: "todo:flaky-critic-10-20260613" }),
+    ]);
+    buildSourcesMock.mockResolvedValue([todo]);
+
+    await expect(taskCli(["get", "flaky-critic-1"])).rejects.toThrow(
+      /matched multiple tasks.*todo:flaky-critic-1-20260613-002.*todo:flaky-critic-10-20260613/i,
+    );
+  });
+
   it("fails natural id lookup when multiple sources match", async () => {
     const todo = stubSource("todo", [makeIssue()]);
     const linear = stubSource("linear", [makeIssue({ id: "linear:gc-1", source: "linear" })]);
@@ -619,6 +671,31 @@ describe("crew task done", () => {
     expect(findWorktreesByTaskMock).toHaveBeenCalledWith(expect.anything(), "gc-1");
     expect(markDone).toHaveBeenCalledWith(issue);
     expect(log.output()).toBe("Marked todo:gc-1 done.");
+  });
+
+  it("marks a task done through a unique source-native id prefix", async () => {
+    const issue = makeIssue({ id: "todo:flaky-critic-1-20260613-002", status: "in-progress" });
+    const markDone = vi.fn<NonNullable<TaskSource["markDone"]>>().mockResolvedValue({
+      outcome: "applied",
+    });
+    const todo = stubSource("todo", [issue], { markDone });
+    buildSourcesMock.mockResolvedValue([todo]);
+
+    const log = captureConsoleLog();
+    try {
+      await taskCli(["done", "flaky-critic-1"]);
+    } finally {
+      log.restore();
+    }
+
+    expect(todo.getTask).toHaveBeenCalledWith("flaky-critic-1");
+    expect(todo.listTasks).toHaveBeenCalledTimes(1);
+    expect(findWorktreesByTaskMock).toHaveBeenCalledWith(
+      expect.anything(),
+      "flaky-critic-1-20260613-002",
+    );
+    expect(markDone).toHaveBeenCalledWith(issue);
+    expect(log.output()).toBe("Marked todo:flaky-critic-1-20260613-002 done.");
   });
 
   it("allows a clean matching worktree without checking PRs", async () => {

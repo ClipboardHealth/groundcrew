@@ -410,6 +410,23 @@ describe(toCanonicalIssue, () => {
     ]);
   });
 
+  it("omits nativeStatus for an unmapped blocker that has no native status name", () => {
+    const issue = linearIssue({
+      blockers: [{ id: "team-2", title: "Block A", status: undefined, stateType: "backlog" }],
+    });
+
+    const result = toCanonicalIssue(issue, "linear");
+
+    expect(result.blockers).toStrictEqual([
+      {
+        id: "linear:team-2",
+        title: "Block A",
+        status: "other",
+        statusReason: "unmapped",
+      },
+    ]);
+  });
+
   it("uses a custom source name when provided", () => {
     const result = toCanonicalIssue(linearIssue(), "work-linear");
     expect(result.id).toBe("work-linear:team-1");
@@ -659,6 +676,15 @@ describe(createLinearTaskSource, () => {
     } satisfies AdapterContext);
 
     await expect(source.getTask("team-1")).rejects.toThrow("lookup failed");
+  });
+
+  it("preserves non-Error Linear lookup rejections", async () => {
+    vi.spyOn(boardSource, "fetchResolvedIssue").mockRejectedValue("offline");
+    const source = createLinearTaskSource({ kind: "linear" }, {
+      globalConfig: makeConfig(),
+    } satisfies AdapterContext);
+
+    await expect(source.getTask("team-1")).rejects.toBe("offline");
   });
 
   it("createTask() creates a Groundcrew-eligible Linear issue and blocked-by relation", async () => {
