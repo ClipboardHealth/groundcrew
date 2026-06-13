@@ -40,10 +40,11 @@ completed no-PR work. If omitted, groundcrew treats done advancement as
 unsupported and leaves the task for the source's own integration to close out.
 `${id}`, `${canonicalId}`, and `${name}` placeholders are shell-quoted before substitution.
 
-Workers receive `GROUNDCREW_TASK_ID` and `GROUNDCREW_COMPLETE` in their launch
-environment. The default prompt tells them to run `GROUNDCREW_COMPLETE` only
-when the requested work is complete, no PR is needed, and any dirty worktree
-state is expected or explicitly allowed.
+Workers receive `GROUNDCREW_TASK_ID` in their launch environment. They receive
+`GROUNDCREW_COMPLETE` only when the source supports done writeback. The default
+prompt tells them to run `GROUNDCREW_COMPLETE` only when it is set, the
+requested work is complete, no PR is needed, and any dirty worktree state is
+expected or explicitly allowed.
 
 ```json
 [

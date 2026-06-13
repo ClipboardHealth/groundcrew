@@ -323,28 +323,43 @@ const WORKER_ENVIRONMENT_NAMES = ["GROUNDCREW_TASK_ID", "GROUNDCREW_COMPLETE"] a
 
 type WorkerEnvironmentName = (typeof WORKER_ENVIRONMENT_NAMES)[number];
 
-export type WorkerEnvironment = Readonly<Record<WorkerEnvironmentName, string>>;
+export type WorkerEnvironment = Readonly<{
+  GROUNDCREW_TASK_ID: string;
+  GROUNDCREW_COMPLETE?: string;
+}>;
 
-export function workerEnvironmentForTask(taskId: string): WorkerEnvironment {
+export function workerEnvironmentForTask(arguments_: {
+  taskId: string;
+  markDoneSupported: boolean;
+}): WorkerEnvironment {
+  const { taskId, markDoneSupported } = arguments_;
   return {
     GROUNDCREW_TASK_ID: taskId,
-    GROUNDCREW_COMPLETE: `crew task done ${taskId}`,
+    ...(markDoneSupported ? { GROUNDCREW_COMPLETE: `crew task done ${taskId}` } : {}),
   };
 }
 
 function workerEnvironmentNames(
   workerEnvironment: WorkerEnvironment | undefined,
 ): readonly WorkerEnvironmentName[] {
-  return workerEnvironment === undefined ? [] : WORKER_ENVIRONMENT_NAMES;
+  if (workerEnvironment === undefined) {
+    return [];
+  }
+  return WORKER_ENVIRONMENT_NAMES.filter((name) => workerEnvironment[name] !== undefined);
 }
 
 function workerEnvironmentExports(workerEnvironment: WorkerEnvironment | undefined): string[] {
   if (workerEnvironment === undefined) {
     return [];
   }
-  return WORKER_ENVIRONMENT_NAMES.map(
-    (name) => `export ${name}=${shellSingleQuote(workerEnvironment[name])}`,
-  );
+  const exports: string[] = [];
+  for (const name of WORKER_ENVIRONMENT_NAMES) {
+    const value = workerEnvironment[name];
+    if (value !== undefined) {
+      exports.push(`export ${name}=${shellSingleQuote(value)}`);
+    }
+  }
+  return exports;
 }
 
 function envPassFlag(names: readonly string[]): string {

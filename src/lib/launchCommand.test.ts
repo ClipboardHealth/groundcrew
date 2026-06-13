@@ -16,6 +16,10 @@ const WORKER_ENVIRONMENT = {
   GROUNDCREW_COMPLETE: "crew task done todo:gc-1",
 } as const;
 
+const WORKER_ENVIRONMENT_WITHOUT_COMPLETION = {
+  GROUNDCREW_TASK_ID: "linear:team-1",
+} as const;
+
 function arguments_(
   overrides: Partial<Parameters<typeof buildLaunchCommand>[0]> = {},
 ): Parameters<typeof buildLaunchCommand>[0] {
@@ -228,6 +232,20 @@ describe(`${buildLaunchCommand.name} (runner='srt')`, () => {
     expect(afterPrepare).toContain(`GROUNDCREW_TASK_ID="$GROUNDCREW_TASK_ID"`);
     expect(afterPrepare).toContain(`GROUNDCREW_COMPLETE="$GROUNDCREW_COMPLETE"`);
     expect(prepareSegment).not.toContain("GROUNDCREW_COMPLETE");
+  });
+
+  it("omits the completion command when the task source cannot mark done", () => {
+    const out = buildLaunchCommand(
+      srtArguments({
+        prepareWorktreeCommand: "npm ci",
+        workerEnvironment: WORKER_ENVIRONMENT_WITHOUT_COMPLETION,
+      }),
+    );
+
+    const afterPrepare = out.slice(out.indexOf("npm ci"));
+    expect(out).toContain("export GROUNDCREW_TASK_ID='linear:team-1'");
+    expect(out).not.toContain("GROUNDCREW_COMPLETE");
+    expect(afterPrepare).toContain(`GROUNDCREW_TASK_ID="$GROUNDCREW_TASK_ID"`);
   });
 
   it("omits the config-home env for read-only agents (claude) that don't relocate", () => {

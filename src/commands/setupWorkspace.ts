@@ -6,6 +6,7 @@ import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
 import { workerEnvironmentForTask } from "../lib/launchCommand.ts";
 import { resolvePrepareWorktreeCommand } from "../lib/repositoryHooks.ts";
 import { recordRunState } from "../lib/runState.ts";
+import { sourceSupportsMarkDone } from "../lib/sourceCapabilities.ts";
 import {
   stageBuildSecrets,
   stagePromptFromTemplate,
@@ -33,6 +34,8 @@ export interface SetupWorkspaceOptions {
   task: string;
   /** Canonical source id for worker self-completion; falls back to `task`. */
   completionTaskId?: string;
+  /** Whether the task source can apply `crew task done`; defaults to true for direct calls. */
+  completionMarkDoneSupported?: boolean;
   repository: string;
   agent: string;
   details: TaskDetails;
@@ -130,6 +133,7 @@ export async function setupWorkspace(
     const secretsFile =
       prepareWorktreeCommand === undefined ? undefined : stageBuildSecrets(promptDir);
     const completionTaskId = options.completionTaskId ?? task;
+    const completionMarkDoneSupported = options.completionMarkDoneSupported ?? true;
     const { launchCommand, srtSettingsDir: stagedSrtSettingsDir } = composeAgentLaunch({
       runner,
       task,
@@ -141,7 +145,10 @@ export async function setupWorkspace(
       prepareWorktreeCommand,
       sandboxName,
       workspaceKind,
-      workerEnvironment: workerEnvironmentForTask(completionTaskId),
+      workerEnvironment: workerEnvironmentForTask({
+        taskId: completionTaskId,
+        markDoneSupported: completionMarkDoneSupported,
+      }),
     });
     srtSettingsDir = stagedSrtSettingsDir;
     const launchCmd = stageWorkspaceLaunchCommand(promptDir, launchCommand);
@@ -343,9 +350,10 @@ export async function setupWorkspaceCli(
   options: { dryRun?: boolean } = {},
 ): Promise<void> {
   const config = await loadConfig();
+  const rawSources = sourcesFromConfig(config);
   let sources;
   try {
-    sources = await buildSources(sourcesFromConfig(config), { globalConfig: config });
+    sources = await buildSources(rawSources, { globalConfig: config });
   } catch (error) {
     /* v8 ignore next @preserve -- catch re-throw always receives an Error; String(error) is an unreachable fallback */
     const message = error instanceof Error ? error.message : String(error);
@@ -377,6 +385,10 @@ export async function setupWorkspaceCli(
   await setupWorkspace(config, {
     task: naturalId,
     completionTaskId: resolved.id,
+    completionMarkDoneSupported: sourceSupportsMarkDone({
+      rawSources,
+      sourceName: resolved.source,
+    }),
     repository: resolved.repository,
     agent: resolved.agent,
     details: {
