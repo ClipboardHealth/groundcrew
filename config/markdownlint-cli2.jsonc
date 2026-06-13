@@ -19,5 +19,5 @@
   },
   "gitignore": true,
   "globs": ["**/*.{md,mdx}"],
-  "ignores": [".agents/**"],
+  "ignores": [".agents/**", ".worktrees/**"],
 }

@@ -112,6 +112,25 @@ describe(composeAgentLaunch, () => {
     expect(launchCommand).toContain('exec claude --permission-mode auto "$@"');
   });
 
+  it("adds task source write paths only to the Safehouse agent wrap", () => {
+    const launchCommand = compose({
+      prepareWorktreeCommand: "npm ci",
+      taskSourceWritePaths: ["/Users/dev/v", "/Users/dev/v/.tasks"],
+    });
+
+    const prepareWrapIndex = launchCommand.indexOf("safehouse-clearance' --add-dirs=");
+    const prepareCommandIndex = launchCommand.indexOf("npm ci");
+    const agentWrapIndex = launchCommand.indexOf('"$_safehouse_shim" -c');
+    const prepareWrap = launchCommand.slice(prepareWrapIndex, prepareCommandIndex);
+    const agentWrap = launchCommand.slice(prepareCommandIndex, agentWrapIndex + 200);
+
+    expect(prepareWrap).toContain("--add-dirs='/work/repo-a-team-1:/tmp/repo-a.git'");
+    expect(prepareWrap).not.toContain("/Users/dev/v");
+    expect(agentWrap).toContain(
+      "--add-dirs='/work/repo-a-team-1:/tmp/repo-a.git:/Users/dev/v:/Users/dev/v/.tasks'",
+    );
+  });
+
   it("warns when clearance reports unreviewed cmux Claude wrapper env names", () => {
     safehouseCmuxIntegrationWarningLinesMock.mockReturnValue([
       "groundcrew: clearance-owned warning one",

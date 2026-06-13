@@ -93,6 +93,7 @@ vi.mock(import("../lib/util.ts"), async (importOriginal) => {
     ...actual,
     log: vi.fn<typeof actual.log>(),
     debug: vi.fn<typeof actual.debug>(),
+    writeError: vi.fn<typeof actual.writeError>(),
   };
 });
 vi.mock(import("../lib/worktrees.ts"), async (importOriginal) => {
@@ -454,6 +455,36 @@ describe(setupWorkspace, () => {
       state: "running",
       url: "https://linear.app/example/issue/TEAM-1",
     });
+  });
+
+  it("grants matching todo-txt source paths to the worker completion sandbox", async () => {
+    const config: ResolvedConfig = {
+      ...makeConfig(),
+      sources: [
+        {
+          kind: "todo-txt",
+          name: "todo",
+          todoPath: "/Users/dev/v/todo.md",
+          tasksDir: "/Users/dev/v/.tasks",
+          idPrefix: "GC",
+          timezone: "UTC",
+        },
+      ],
+    };
+    mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
+
+    await setupWorkspace(config, {
+      task: "team-1",
+      completionTaskId: "todo:gc-1",
+      repository: "repo-a",
+      agent: "claude",
+      details: { title: "Test Title", description: "Body" },
+    });
+
+    const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
+    expect(launchScript).toContain(
+      "--add-dirs='/work/repo-a-team-1:/tmp/groundcrew-team-1-x/.git:/Users/dev/v:/Users/dev/v/.tasks'",
+    );
   });
 
   it("records the task url even on the failed-to-launch rollback path", async () => {

@@ -445,6 +445,11 @@ interface LaunchCommandArguments {
    */
   safehouseAddDirs?: readonly string[] | undefined;
   /**
+   * Extra read/write paths granted only to the Safehouse agent wrap. These are
+   * intentionally withheld from the repo-controlled prepareWorktree wrap.
+   */
+  safehouseAgentAddDirs?: readonly string[] | undefined;
+  /**
    * Extra host-terminal integration surface granted only to the Safehouse agent
    * wrap. The agent may need to execute host shims and reach their sockets
    * while repo-controlled prepareWorktree hooks should not inherit those paths
@@ -612,10 +617,13 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
   // Quote the whole value so shell-special chars survive; the trailing space
   // separates it from the next argv token. See `resolveSafehouseAddDirs` for
   // which paths these are and why.
-  const safehouseAddDirsFlag = safehousePathListFlag(
-    "--add-dirs",
-    arguments_.safehouseAddDirs ?? [],
-  );
+  const safehousePrepareAddDirs = arguments_.safehouseAddDirs ?? [];
+  const safehouseAgentAddDirs = uniqueStrings([
+    ...safehousePrepareAddDirs,
+    ...(arguments_.safehouseAgentAddDirs ?? []),
+  ]);
+  const safehouseAddDirsFlag = safehousePathListFlag("--add-dirs", safehousePrepareAddDirs);
+  const safehouseAgentAddDirsFlag = safehousePathListFlag("--add-dirs", safehouseAgentAddDirs);
   const safehouseAgentAddDirsReadOnlyFlag = safehousePathListFlag(
     "--add-dirs-ro",
     safehouseAgentIntegration?.addDirsReadOnly ?? [],
@@ -660,7 +668,7 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
     // Running the real launch chain as `sh -c` would make it see `sh`, so use
     // an agent-named symlink to /bin/sh. This preserves per-agent profile
     // selection without enabling every agent profile.
-    `{ ${safehouseWrapper} ${safehouseAddDirsFlag}${safehouseAgentAddDirsReadOnlyFlag}${agentEnvPassFlag}"$_safehouse_shim" -c ${shellSingleQuote(agentCommand)} sh "$_p"; _safehouse_status=$?; rm -rf "$_safehouse_shim_dir"; trap - EXIT; exit "$_safehouse_status"; }`,
+    `{ ${safehouseWrapper} ${safehouseAgentAddDirsFlag}${safehouseAgentAddDirsReadOnlyFlag}${agentEnvPassFlag}"$_safehouse_shim" -c ${shellSingleQuote(agentCommand)} sh "$_p"; _safehouse_status=$?; rm -rf "$_safehouse_shim_dir"; trap - EXIT; exit "$_safehouse_status"; }`,
   );
   return lines.join(" && ");
 }
@@ -670,6 +678,10 @@ function safehousePathListFlag(
   paths: readonly string[],
 ): string {
   return paths.length === 0 ? "" : `${flagName}=${shellSingleQuote(paths.join(":"))} `;
+}
+
+function uniqueStrings(values: readonly string[]): string[] {
+  return [...new Set(values)];
 }
 
 /**
