@@ -7,7 +7,7 @@ import type { RunCommandOptions } from "../lib/commandRunner.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
 import { recordRunState } from "../lib/runState.ts";
-import { canonicalLinearIssue } from "../lib/testing/canonicalFixtures.ts";
+import { canonicalLinearIssue, canonicalShellIssue } from "../lib/testing/canonicalFixtures.ts";
 import { createBoard, type Board } from "../lib/board.ts";
 import type * as boardModule from "../lib/board.ts";
 import { buildSources } from "../lib/buildSources.ts";
@@ -1929,13 +1929,48 @@ describe(setupWorkspaceCli, () => {
     );
   });
 
-  it("sets worker self-completion env from the resolved canonical task id", async () => {
+  it("omits worker self-completion command when the resolved source cannot mark done", async () => {
     await setupWorkspaceCli("team-1");
 
     const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
     expect(launchScript).toContain("export GROUNDCREW_TASK_ID='linear:team-1'");
-    expect(launchScript).toContain("export GROUNDCREW_COMPLETE='crew task done linear:team-1'");
+    expect(launchScript).not.toContain("GROUNDCREW_COMPLETE");
     expect(lastRecordedRunState().completionTaskId).toBe("linear:team-1");
+  });
+
+  it("sets worker self-completion command when the resolved source can mark done", async () => {
+    loadConfigMock.mockResolvedValueOnce({
+      ...makeConfig(),
+      sources: [
+        {
+          kind: "todo-txt",
+          name: "todo",
+          todoPath: "todo.txt",
+          tasksDir: ".tasks",
+          idPrefix: "GC",
+          timezone: "UTC",
+        },
+      ],
+    });
+    createBoardMock.mockReturnValueOnce(
+      fakeBoard(
+        canonicalShellIssue({
+          naturalId: "sweep-1",
+          sourceName: "todo",
+          repository: "repo-a",
+          agent: "claude",
+          title: "Title",
+          description: "Body",
+        }),
+      ),
+    );
+
+    await setupWorkspaceCli("todo:sweep-1");
+
+    const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
+    expect(launchScript).toContain("export GROUNDCREW_TASK_ID='todo:sweep-1'");
+    expect(launchScript).toContain("export GROUNDCREW_COMPLETE='crew task done todo:sweep-1'");
+    expect(lastRecordedRunState().completionTaskId).toBe("todo:sweep-1");
   });
 
   it("passes title and description from the resolved issue as details", async () => {

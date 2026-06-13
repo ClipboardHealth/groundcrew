@@ -1,10 +1,11 @@
 import { fetchResolvedIssue } from "../lib/adapters/linear/fetch.ts";
 import { getLinearClient } from "../lib/adapters/linear/client.ts";
-import { isLinearEnabled } from "../lib/buildSources.ts";
+import { isLinearEnabled, sourcesFromConfig } from "../lib/buildSources.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { composeAgentLaunch, openAgentWorkspace, prepareAgentLaunch } from "../lib/agentLaunch.ts";
 import { workerEnvironmentForTask } from "../lib/launchCommand.ts";
 import { readRunState, recordRunState, type RunState } from "../lib/runState.ts";
+import { taskSupportsCompletionCommand } from "../lib/sourceCapabilities.ts";
 import {
   removeStagedPrompt,
   stageBuildSecrets,
@@ -34,6 +35,7 @@ interface ResumeContext {
   title: string;
   description: string;
   completionTaskId: string;
+  completionMarkDoneSupported: boolean;
   reason?: string;
   resumeCount: number;
 }
@@ -65,6 +67,7 @@ async function contextFromLinear(
   worktree: WorktreeEntry,
 ): Promise<ResumeContext> {
   const resolved = await fetchResolvedIssue({ client: getLinearClient(), config, task });
+  const completionTaskId = toCanonicalId("linear", task);
   return {
     task,
     repository: resolved.repository,
@@ -72,7 +75,11 @@ async function contextFromLinear(
     worktree,
     title: resolved.title,
     description: resolved.description,
-    completionTaskId: toCanonicalId("linear", task),
+    completionTaskId,
+    completionMarkDoneSupported: taskSupportsCompletionCommand({
+      rawSources: sourcesFromConfig(config),
+      taskId: completionTaskId,
+    }),
     resumeCount: 0,
   };
 }
@@ -87,6 +94,7 @@ async function contextFromState(
   // missing-API-key error logs noisily even though resume only needs it to
   // enrich the prompt title/description (which falls back to the task id).
   const details = isLinearEnabled(config) ? await fetchTaskDetails(task) : undefined;
+  const completionTaskId = state.completionTaskId ?? task;
   return {
     task,
     repository: state.repository,
@@ -94,7 +102,11 @@ async function contextFromState(
     worktree,
     title: details?.title ?? task.toUpperCase(),
     description: details?.description ?? "",
-    completionTaskId: state.completionTaskId ?? task,
+    completionTaskId,
+    completionMarkDoneSupported: taskSupportsCompletionCommand({
+      rawSources: sourcesFromConfig(config),
+      taskId: completionTaskId,
+    }),
     ...(state.reason === undefined ? {} : { reason: state.reason }),
     resumeCount: state.resumeCount,
   };
@@ -210,7 +222,10 @@ export async function resumeWorkspace(
       secretsFile,
       sandboxName,
       workspaceKind,
-      workerEnvironment: workerEnvironmentForTask(context.completionTaskId),
+      workerEnvironment: workerEnvironmentForTask({
+        taskId: context.completionTaskId,
+        markDoneSupported: context.completionMarkDoneSupported,
+      }),
       taskSourceWritePaths,
     }));
     const launchCmd = stageWorkspaceLaunchCommand(stagedPrompt.directory, launchCommand);
