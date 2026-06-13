@@ -9,7 +9,7 @@
 
 import type { ResolvedConfig, WorkspaceKindSetting } from "./config.ts";
 import { detectHostCapabilities, type HostCapabilities } from "./host.ts";
-import { readEnvironmentVariable } from "./util.ts";
+import { readEnvironmentVariable, writeError } from "./util.ts";
 import {
   type Adapter,
   isSignalAborted,
@@ -82,34 +82,35 @@ const HOST_CAPABILITY_BY_KIND: Record<WorkspaceKind, "hasCmux" | "hasTmux" | "ha
   zellij: "hasZellij",
 };
 
-const ADAPTER_LOADER_BY_KIND: Record<WorkspaceKind, (config: ResolvedConfig) => Promise<Adapter>> =
-  {
-    cmux: async () => {
-      const { cmuxAdapter } = await import("./cmuxAdapter.ts");
-      return cmuxAdapter;
-    },
-    tmux: async (config) => {
-      const { createTmuxAdapter } = await import("./tmuxAdapter.ts");
-      return createTmuxAdapter({ sessionPerTask: resolveTmuxSessionPerTask(config) });
-    },
-    zellij: async () => {
-      const { zellijAdapter } = await import("./zellijAdapter.ts");
-      return zellijAdapter;
-    },
-  };
+const TMUX_SESSION_PER_TASK_ENV = "GROUNDCREW_TMUX_SESSION_PER_TASK";
 
-/**
- * Whether the tmux backend should give each task its own session. Config
- * (`tmux.perTaskMode`) is the source of truth; the
- * `GROUNDCREW_TMUX_SESSION_PER_TASK` env var overrides it when set (`"1"` →
- * session, anything else → window) for one-off runs and backward compatibility.
- */
-function resolveTmuxSessionPerTask(config: ResolvedConfig): boolean {
-  const override = readEnvironmentVariable("GROUNDCREW_TMUX_SESSION_PER_TASK");
-  if (override !== undefined) {
-    return override === "1";
-  }
-  return config.tmux?.perTaskMode === "session";
+const TMUX_SESSION_DEFAULT_WARNING = [
+  "WARNING: tmux window mode is deprecated; tmux session-per-task mode will become the default soon.",
+  `Opt in now with ${TMUX_SESSION_PER_TASK_ENV}=1.`,
+  "Migration: attach with `tmux attach -t <task>` instead of `tmux attach -t groundcrew:<task>`; each task gets its own tmux session; `crew stop` and `crew cleanup` close that managed session; set GROUNDCREW_KEEP_DEAD_WINDOWS=1 to keep exited scrollback.",
+].join("\n");
+
+const ADAPTER_LOADER_BY_KIND: Record<WorkspaceKind, () => Promise<Adapter>> = {
+  cmux: async () => {
+    const { cmuxAdapter } = await import("./cmuxAdapter.ts");
+    return cmuxAdapter;
+  },
+  tmux: async () => {
+    const { createTmuxAdapter } = await import("./tmuxAdapter.ts");
+    const sessionPerTask = resolveTmuxSessionPerTask();
+    if (!sessionPerTask) {
+      writeError(TMUX_SESSION_DEFAULT_WARNING);
+    }
+    return createTmuxAdapter({ sessionPerTask });
+  },
+  zellij: async () => {
+    const { zellijAdapter } = await import("./zellijAdapter.ts");
+    return zellijAdapter;
+  },
+};
+
+function resolveTmuxSessionPerTask(): boolean {
+  return readEnvironmentVariable(TMUX_SESSION_PER_TASK_ENV) === "1";
 }
 
 function failIfBinaryUnavailable(kind: WorkspaceKind, host: HostCapabilities): void {
@@ -134,7 +135,7 @@ async function adapterFor(config: ResolvedConfig, signal?: AbortSignal): Promise
     config,
     host: await detectHostCapabilities(signal),
   });
-  const adapter = await ADAPTER_LOADER_BY_KIND[resolved](config);
+  const adapter = await ADAPTER_LOADER_BY_KIND[resolved]();
   adapterCache.set(config, adapter);
   return adapter;
 }

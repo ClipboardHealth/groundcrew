@@ -1023,63 +1023,6 @@ describe("loadConfig", () => {
     expect(actual.local.runner).toBe("safehouse");
   });
 
-  it("rejects an invalid tmux.perTaskMode value", async () => {
-    const configPath = writeConfigFile(
-      temporary,
-      [
-        "export default {",
-        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        `  agents: { definitions: { claude: {} } },`,
-        `  tmux: { perTaskMode: 'nope' },`,
-        "};",
-      ].join("\n"),
-    );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
-    const { loadConfig } = await loadFreshConfig();
-    await expect(loadConfig()).rejects.toThrow(/tmux\.perTaskMode must be one of/);
-  });
-
-  it("rejects a non-object tmux block", async () => {
-    const configPath = writeConfigFile(
-      temporary,
-      [
-        "export default {",
-        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        `  agents: { definitions: { claude: {} } },`,
-        `  tmux: 5,`,
-        "};",
-      ].join("\n"),
-    );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
-    const { loadConfig } = await loadFreshConfig();
-    await expect(loadConfig()).rejects.toThrow(/tmux must be an object/);
-  });
-
-  it("defaults tmux.perTaskMode to 'window' when omitted", async () => {
-    const configPath = writeConfigFile(
-      temporary,
-      validConfigSource({ workspace: VALID_WORKSPACE(temporary) }),
-    );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
-    const { loadConfig } = await loadFreshConfig();
-    const actual = await loadConfig();
-    expect(actual.tmux?.perTaskMode).toBe("window");
-  });
-
-  it("preserves an explicit tmux.perTaskMode value", async () => {
-    const configPath = writeConfigFile(
-      temporary,
-      validConfigSource({
-        workspace: VALID_WORKSPACE(temporary),
-        tmux: { perTaskMode: "session" },
-      }),
-    );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
-    const { loadConfig } = await loadFreshConfig();
-    const actual = await loadConfig();
-    expect(actual.tmux?.perTaskMode).toBe("session");
-  });
-
   it("rejects legacy disabled agent entries with migration guidance", async () => {
     const configPath = writeConfigFile(
       temporary,

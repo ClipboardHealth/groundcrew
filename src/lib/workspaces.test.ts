@@ -5,10 +5,10 @@ import path from "node:path";
 import { deleteEnvironmentVariable, setEnvironmentVariable } from "../testHelpers/env.ts";
 import { probeError } from "../testHelpers/workspaceProbe.ts";
 import type { RunCommandOptions } from "./commandRunner.ts";
-import type { ResolvedConfig, TmuxPerTaskMode, WorkspaceKindSetting } from "./config.ts";
+import type { ResolvedConfig, WorkspaceKindSetting } from "./config.ts";
 import type * as hostModule from "./host.ts";
 import { detectHostCapabilities, type HostCapabilities } from "./host.ts";
-import { debug } from "./util.ts";
+import { debug, writeError } from "./util.ts";
 import type * as utilModule from "./util.ts";
 import {
   resolveWorkspaceKind,
@@ -18,6 +18,7 @@ import {
 } from "./workspaces.ts";
 
 const debugMock = vi.mocked(debug);
+const writeErrorMock = vi.mocked(writeError);
 
 type RunCommandMock = (
   command: string,
@@ -42,6 +43,7 @@ vi.mock(import("./util.ts"), async (importOriginal) => {
     ...actual,
     log: vi.fn<typeof actual.log>(),
     debug: vi.fn<typeof actual.debug>(),
+    writeError: vi.fn<typeof actual.writeError>(),
   };
 });
 vi.mock(import("./host.ts"), async (importOriginal) => {
@@ -73,10 +75,7 @@ function makeHost(overrides: Partial<HostCapabilities> = {}): HostCapabilities {
   };
 }
 
-function makeConfig(
-  workspaceKind: WorkspaceKindSetting = "auto",
-  perTaskMode: TmuxPerTaskMode = "window",
-): ResolvedConfig {
+function makeConfig(workspaceKind: WorkspaceKindSetting = "auto"): ResolvedConfig {
   return {
     sources: [],
     defaults: { hooks: {} },
@@ -100,7 +99,6 @@ function makeConfig(
     prompts: { initial: "x" },
     workspaceKind,
     local: { runner: "auto" },
-    tmux: { perTaskMode },
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }
@@ -112,6 +110,7 @@ function commonBeforeEach(): void {
 
 function commonAfterEach(): void {
   deleteEnvironmentVariable("GROUNDCREW_KEEP_DEAD_WINDOWS");
+  deleteEnvironmentVariable("GROUNDCREW_TMUX_SESSION_PER_TASK");
   vi.resetAllMocks();
 }
 
@@ -1342,29 +1341,15 @@ describe("workspaces.accessHint (tmux session-per-task)", () => {
   });
 });
 
-describe("workspaces tmux perTaskMode (config-driven)", () => {
+describe("workspaces tmux session-per-task env", () => {
   beforeEach(() => {
     commonBeforeEach();
     detectHostMock.mockResolvedValue(makeHost({ hasCmux: false, hasTmux: true }));
   });
   afterEach(sessionAfterEach);
 
-  it("uses the session model when tmux.perTaskMode is 'session'", async () => {
-    await workspaces.open(makeConfig("tmux", "session"), {
-      name: "TEAM-1",
-      cwd: "/cwd",
-      command: "x",
-    });
-
-    expect(runMock).toHaveBeenCalledWith(
-      "tmux",
-      expect.arrayContaining(["new-session", "-s", "TEAM-1"]),
-    );
-    expect(runMock).not.toHaveBeenCalledWith("tmux", expect.arrayContaining(["new-window"]));
-  });
-
-  it("uses the window model when tmux.perTaskMode is 'window'", async () => {
-    await workspaces.open(makeConfig("tmux", "window"), {
+  it("uses the window model when GROUNDCREW_TMUX_SESSION_PER_TASK is unset", async () => {
+    await workspaces.open(makeConfig("tmux"), {
       name: "TEAM-1",
       cwd: "/cwd",
       command: "x",
@@ -1377,10 +1362,26 @@ describe("workspaces tmux perTaskMode (config-driven)", () => {
     );
   });
 
-  it("env GROUNDCREW_TMUX_SESSION_PER_TASK=1 overrides config window to session", async () => {
+  it("warns window-mode tmux users about the upcoming session-mode default", async () => {
+    await workspaces.open(makeConfig("tmux"), {
+      name: "TEAM-1",
+      cwd: "/cwd",
+      command: "x",
+    });
+
+    expect(writeErrorMock).toHaveBeenCalledWith(
+      expect.stringContaining("tmux session-per-task mode will become the default soon"),
+    );
+    expect(writeErrorMock).toHaveBeenCalledWith(
+      expect.stringContaining("GROUNDCREW_TMUX_SESSION_PER_TASK=1"),
+    );
+    expect(writeErrorMock).toHaveBeenCalledWith(expect.stringContaining("tmux attach -t <task>"));
+  });
+
+  it("uses the session model when GROUNDCREW_TMUX_SESSION_PER_TASK is 1", async () => {
     setEnvironmentVariable("GROUNDCREW_TMUX_SESSION_PER_TASK", "1");
 
-    await workspaces.open(makeConfig("tmux", "window"), {
+    await workspaces.open(makeConfig("tmux"), {
       name: "TEAM-1",
       cwd: "/cwd",
       command: "x",
@@ -1390,12 +1391,14 @@ describe("workspaces tmux perTaskMode (config-driven)", () => {
       "tmux",
       expect.arrayContaining(["new-session", "-s", "TEAM-1"]),
     );
+    expect(runMock).not.toHaveBeenCalledWith("tmux", expect.arrayContaining(["new-window"]));
+    expect(writeErrorMock).not.toHaveBeenCalled();
   });
 
-  it("env GROUNDCREW_TMUX_SESSION_PER_TASK=0 overrides config session to window", async () => {
+  it("uses the window model when GROUNDCREW_TMUX_SESSION_PER_TASK is not 1", async () => {
     setEnvironmentVariable("GROUNDCREW_TMUX_SESSION_PER_TASK", "0");
 
-    await workspaces.open(makeConfig("tmux", "session"), {
+    await workspaces.open(makeConfig("tmux"), {
       name: "TEAM-1",
       cwd: "/cwd",
       command: "x",

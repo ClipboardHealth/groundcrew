@@ -166,12 +166,6 @@ export default {
   // // cmux-only feature).
   // workspaceKind: "auto",
   //
-  // // tmux backend layout. "window" (default) runs every task as a window
-  // // inside one shared `groundcrew` session; "session" gives each task its
-  // // own dedicated tmux session so its windows/panes stay isolated. The
-  // // GROUNDCREW_TMUX_SESSION_PER_TASK env var overrides this for one-off runs.
-  // tmux: { perTaskMode: "window" },
-  //
   // logging: {
   //   // Append-mode log file destination. `log()` / `logEvent()` tee here
   //   // in addition to stdout, so a vanished workspace doesn't take the

@@ -53,16 +53,6 @@ export const WORKSPACE_KIND_SETTINGS: readonly WorkspaceKindSetting[] = [
 ] as const;
 
 /**
- * tmux per-task layout. `window` (the default) runs every task as a window
- * inside one shared `groundcrew` session; `session` gives each task its own
- * dedicated tmux session so its windows/panes stay isolated. Only applies when
- * the resolved workspace backend is tmux.
- */
-export type TmuxPerTaskMode = "window" | "session";
-
-export const TMUX_PER_TASK_MODES: readonly TmuxPerTaskMode[] = ["window", "session"] as const;
-
-/**
  * Concrete local isolation backend selected for a launch. `safehouse` is
  * macOS-only (clearance HTTP-egress + sandbox profile); `srt` is Anthropic's
  * sandbox-runtime (macOS `sandbox-exec` + Linux `bubblewrap`, with a built-in
@@ -286,13 +276,6 @@ export interface Config {
   local?: {
     runner?: LocalRunnerSetting;
   };
-  /**
-   * tmux backend layout. `perTaskMode` defaults to `"window"`. Only consulted
-   * when the resolved workspace backend is tmux.
-   */
-  tmux?: {
-    perTaskMode?: TmuxPerTaskMode;
-  };
   logging?: {
     /**
      * Append-mode log file destination. `log()` and `logEvent()` tee here
@@ -358,14 +341,6 @@ export interface ResolvedConfig {
    */
   local: {
     runner: LocalRunnerSetting;
-  };
-  /**
-   * tmux backend layout. Optional in the type because most test fixtures omit
-   * it, but `normalize()` always populates it (default `perTaskMode: "window"`);
-   * consumers read `config.tmux?.perTaskMode` and treat absence as `"window"`.
-   */
-  tmux?: {
-    perTaskMode: TmuxPerTaskMode;
   };
   logging: {
     file: string;
@@ -670,32 +645,6 @@ function normalizeLocalRunner(value: unknown, configKey: string): LocalRunnerSet
     );
   }
   return value;
-}
-
-function isTmuxPerTaskMode(value: unknown): value is TmuxPerTaskMode {
-  return typeof value === "string" && (TMUX_PER_TASK_MODES as readonly string[]).includes(value);
-}
-
-function normalizeTmuxPerTaskMode(value: unknown, configKey: string): TmuxPerTaskMode | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (!isTmuxPerTaskMode(value)) {
-    fail(
-      `${configKey} must be one of ${TMUX_PER_TASK_MODES.join(", ")} (got ${JSON.stringify(value)})`,
-    );
-  }
-  return value;
-}
-
-function normalizeTmuxConfig(user: Config): NonNullable<ResolvedConfig["tmux"]> {
-  const { tmux } = user as { tmux?: { perTaskMode?: unknown } };
-  if (tmux !== undefined && !isPlainObject(tmux)) {
-    fail("tmux must be an object");
-  }
-  return {
-    perTaskMode: normalizeTmuxPerTaskMode(tmux?.perTaskMode, "tmux.perTaskMode") ?? "window",
-  };
 }
 
 function normalizeSandbox(value: unknown, configKey: string): SandboxDefinition {
@@ -1116,7 +1065,6 @@ function applyDefaults(user: Config, configDir: string): ResolvedConfig {
     local: {
       runner: normalizeLocalRunner(userLocal?.runner, "local.runner") ?? "auto",
     },
-    tmux: normalizeTmuxConfig(user),
     logging: {
       file: expandHome(
         normalizeOptionalString(user.logging?.file, "logging.file") ?? defaultLogFile(),

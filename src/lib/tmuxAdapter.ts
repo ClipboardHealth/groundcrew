@@ -1,8 +1,7 @@
 /**
  * tmux Workspace backend. Two layouts, chosen by the caller via
  * `createTmuxAdapter({ sessionPerTask })`. `workspaces.ts` resolves the flag
- * from `tmux.perTaskMode` config (default `"window"`), honoring the
- * `GROUNDCREW_TMUX_SESSION_PER_TASK` env var as an override.
+ * from the `GROUNDCREW_TMUX_SESSION_PER_TASK` env var.
  *
  * - Window model (`sessionPerTask: false`): workspaces live as windows inside
  *   one dedicated `groundcrew` tmux session; the window name is the task id.
@@ -46,9 +45,8 @@ const SESSION_PROBE_FORMAT = `#{session_name}\t#{${MANAGED_OPTION}}\t#{pane_dead
 
 /**
  * Builds the tmux adapter for the resolved layout. `sessionPerTask` is decided
- * by `workspaces.ts` from `tmux.perTaskMode` config plus the
- * `GROUNDCREW_TMUX_SESSION_PER_TASK` env override, so the adapter itself stays
- * config-agnostic.
+ * by `workspaces.ts` from the `GROUNDCREW_TMUX_SESSION_PER_TASK` env var, so
+ * the adapter itself stays config-agnostic.
  */
 export function createTmuxAdapter({ sessionPerTask }: { sessionPerTask: boolean }): Adapter {
   return {
