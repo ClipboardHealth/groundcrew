@@ -73,6 +73,12 @@ conda.anaconda.org
 registry.npmjs.org
 www.npmjs.com
 
+# PyPI registry + package CDN (pip / uv). pypi.org serves the Simple index;
+# files.pythonhosted.org serves the wheel/sdist artifacts. uv's managed-Python
+# downloads come from github.com (already allowed above).
+files.pythonhosted.org
+pypi.org
+
 # Google APIs
 developers.google.com
 www.googleapis.com
