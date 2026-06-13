@@ -165,10 +165,16 @@ export async function prepareAgentLaunch(input: {
         "Set local.runner to 'safehouse' to disable clearance, or remove local.clearance to keep srt's allowlist.",
     );
   }
-  // Clearance-off keeps the filesystem sandbox but skips the proxy daemon, so the
-  // ensure step that starts it is only needed for safehouse *with* clearance.
+  // A `safehouse`-prefixed cmd owns its own wrap: groundcrew composes nothing for
+  // such a cmd (and rejects it below), so `local.clearance` must stay a true
+  // no-op there.
+  const cmdOwnsSafehouseWrap = /^safehouse(?:\s|$)/.test(input.definition.cmd);
+  // Clearance-off keeps the filesystem sandbox but skips the proxy daemon. The
+  // daemon backs only groundcrew-composed safehouse wraps with clearance enabled;
+  // for a cmd-owned wrap the daemon decision is left as-is (not gated on
+  // `clearance`) so disabling clearance cannot skip a daemon that wrap may rely on.
   const ensureReady =
-    runner === "safehouse" && clearance
+    runner === "safehouse" && (clearance || cmdOwnsSafehouseWrap)
       ? async (): Promise<void> => {
           await ensureSafehouseClearance(input.signal);
         }
@@ -194,17 +200,13 @@ export async function prepareAgentLaunch(input: {
   // Mirror of buildLaunchCommand's defense — fail at config-resolution time so
   // the operator sees the problem before the workspace is spawned, not deep in
   // the launch shell. The buildLaunchCommand check stays as defense in depth.
-  if (
-    runner === "safehouse" &&
-    hasPreLaunchEnv(input.definition) &&
-    /^safehouse(?:\s|$)/.test(input.definition.cmd)
-  ) {
+  if (runner === "safehouse" && hasPreLaunchEnv(input.definition) && cmdOwnsSafehouseWrap) {
     throw new Error(
       `Local groundcrew ${input.purpose} on agent '${input.agent}' cannot inject preLaunchEnv when 'cmd' already starts with 'safehouse'. ` +
         "Your cmd owns the wrap, so add the names to its own '--env-pass=' flag, or drop the 'safehouse' prefix from 'cmd' to let groundcrew compose the flag for you.",
     );
   }
-  if (runner === "safehouse" && /^safehouse(?:\s|$)/.test(input.definition.cmd)) {
+  if (runner === "safehouse" && cmdOwnsSafehouseWrap) {
     throw new Error(
       `Local groundcrew ${input.purpose} on agent '${input.agent}' cannot inject worker self-completion env when 'cmd' already starts with 'safehouse'. ` +
         "Your cmd owns the wrap, so add GROUNDCREW_TASK_ID,GROUNDCREW_COMPLETE to its own '--env-pass=' flag, or drop the 'safehouse' prefix from 'cmd' to let groundcrew compose the flag for you.",

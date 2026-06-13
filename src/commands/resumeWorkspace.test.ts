@@ -450,6 +450,23 @@ describe(resumeWorkspace, () => {
     );
   });
 
+  it("keeps clearance:false a no-op for a cmd-owned safehouse wrap (still rejected upstream)", async () => {
+    // The user owns the wrap, so groundcrew injects nothing and `clearance` has
+    // no effect: it is rejected by the same worker-env guard as with clearance on.
+    const cmdOwned: ResolvedConfig = {
+      ...makeConfig(),
+      local: { runner: "safehouse", clearance: false },
+      agents: {
+        default: "claude",
+        definitions: { claude: { cmd: "safehouse claude --auto", color: "#fff" } },
+      },
+    };
+
+    await expect(resumeWorkspace(cmdOwned, { task: "team-1" })).rejects.toThrow(
+      /cannot inject worker self-completion env when 'cmd' already starts with 'safehouse'/,
+    );
+  });
+
   it("does not add task source sandbox grants for unsandboxed resume runners", async () => {
     const noneConfig: ResolvedConfig = {
       ...makeConfig(),
