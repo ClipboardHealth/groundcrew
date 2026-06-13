@@ -93,6 +93,7 @@ vi.mock(import("../lib/util.ts"), async (importOriginal) => {
     ...actual,
     log: vi.fn<typeof actual.log>(),
     debug: vi.fn<typeof actual.debug>(),
+    writeError: vi.fn<typeof actual.writeError>(),
   };
 });
 vi.mock(import("../lib/worktrees.ts"), async (importOriginal) => {
