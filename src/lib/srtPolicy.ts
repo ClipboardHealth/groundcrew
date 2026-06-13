@@ -73,6 +73,11 @@ export interface BuildSrtSettingsInput {
    * to the default config dir), so this is omitted for it.
    */
   relocatedConfigDir?: string;
+  /**
+   * Local task-source directories the worker needs for self-completion
+   * writeback, such as a todo-txt file's parent directory and task prompt dir.
+   */
+  taskSourceWritePaths?: readonly string[];
   /** Defaults to `process.platform`. Injected in tests to exercise both deny-read roots. */
   platform?: NodeJS.Platform;
   /** Defaults to `os.homedir()`. Injected in tests. */
@@ -355,6 +360,7 @@ export function buildSrtSettings(input: BuildSrtSettingsInput): SandboxRuntimeCo
     ...profile.readPaths.map(underHome),
     ...keychainRead,
     ...(input.relocatedConfigDir === undefined ? [] : [input.relocatedConfigDir]),
+    ...(input.taskSourceWritePaths ?? []),
   ]);
 
   const allowWrite = unique([
@@ -367,6 +373,7 @@ export function buildSrtSettings(input: BuildSrtSettingsInput): SandboxRuntimeCo
     // The agent's relocated, writable config home (codex). Absent for agents
     // that write their real home behind a deny-list (claude).
     ...(input.relocatedConfigDir === undefined ? [] : [input.relocatedConfigDir]),
+    ...(input.taskSourceWritePaths ?? []),
   ]);
 
   const denyWrite = unique([

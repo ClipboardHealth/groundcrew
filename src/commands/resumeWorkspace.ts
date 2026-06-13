@@ -11,6 +11,7 @@ import {
   stagePromptText,
   stageWorkspaceLaunchCommand,
 } from "../lib/stagedLaunch.ts";
+import { taskSourceWritePathsForCompletion } from "../lib/taskSourceFilesystem.ts";
 import { naturalIdFromCanonical, toCanonicalId } from "../lib/taskSource.ts";
 import { errorMessage, log } from "../lib/util.ts";
 import { workspaces } from "../lib/workspaces.ts";
@@ -191,6 +192,14 @@ export async function resumeWorkspace(
   let srtSettingsDir: string | undefined;
   try {
     let launchCommand: string;
+    const taskSourceWritePaths =
+      runner === "safehouse" || runner === "srt"
+        ? taskSourceWritePathsForCompletion({
+            config,
+            taskId: context.completionTaskId,
+            workingDir: launchDir,
+          })
+        : undefined;
     ({ launchCommand, srtSettingsDir } = composeAgentLaunch({
       runner,
       task,
@@ -202,6 +211,7 @@ export async function resumeWorkspace(
       sandboxName,
       workspaceKind,
       workerEnvironment: workerEnvironmentForTask(context.completionTaskId),
+      taskSourceWritePaths,
     }));
     const launchCmd = stageWorkspaceLaunchCommand(stagedPrompt.directory, launchCommand);
     await openAgentWorkspace({

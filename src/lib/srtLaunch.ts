@@ -69,6 +69,8 @@ export function buildAndStageSrtLaunch(input: {
   task: string;
   worktreeDir: string;
   definition: AgentDefinition;
+  /** Local task-source directories the agent needs for self-completion writeback. */
+  taskSourceWritePaths?: readonly string[] | undefined;
   /** Defaults to `os.homedir()`. Injected in tests to seed from a fixture home. */
   homeDir?: string;
 }): StagedSrtLaunch {
@@ -103,6 +105,7 @@ export function buildAndStageSrtLaunch(input: {
   const agentSettings = buildSrtSettings({
     ...base,
     agent,
+    taskSourceWritePaths: input.taskSourceWritePaths ?? [],
     ...(relocatedConfigDir === undefined ? {} : { relocatedConfigDir }),
   });
   const prepareFile = path.join(directory, "prepare-settings.json");
