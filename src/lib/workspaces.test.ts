@@ -1378,6 +1378,23 @@ describe("workspaces tmux session-per-task env", () => {
     expect(writeErrorMock).toHaveBeenCalledWith(expect.stringContaining("tmux attach -t <task>"));
   });
 
+  it("does not warn auto users when auto resolves to cmux", async () => {
+    detectHostMock.mockResolvedValue(makeHost({ hasCmux: true, hasTmux: true }));
+
+    await workspaces.probe(makeConfig("auto"));
+
+    expect(runMock).toHaveBeenCalledWith("cmux", ["--json", "list-workspaces"]);
+    expect(writeErrorMock).not.toHaveBeenCalled();
+  });
+
+  it("does not warn zellij users", async () => {
+    detectHostMock.mockResolvedValue(makeHost({ hasCmux: false, hasTmux: true, hasZellij: true }));
+
+    await workspaces.probe(makeConfig("zellij"));
+
+    expect(writeErrorMock).not.toHaveBeenCalled();
+  });
+
   it("uses the session model when GROUNDCREW_TMUX_SESSION_PER_TASK is 1", async () => {
     setEnvironmentVariable("GROUNDCREW_TMUX_SESSION_PER_TASK", "1");
 
