@@ -239,6 +239,14 @@ describe(doctor, () => {
     expect(output).toContain("[ok] config loaded — /work/crew.config.ts (GROUNDCREW_CONFIG)");
   });
 
+  it("reports the resolved log file path", async () => {
+    loadConfigWithSourceMock.mockResolvedValue(makeLoadedConfig(makeConfig()));
+
+    await doctor();
+
+    expect(consoleLog.output()).toContain("log file: /tmp/groundcrew-test.log");
+  });
+
   it("returns false when config loading fails", async () => {
     loadConfigMock.mockRejectedValue(new Error("GROUNDCREW_CONFIG=/missing.ts not found"));
 
