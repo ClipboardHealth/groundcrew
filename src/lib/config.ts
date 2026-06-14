@@ -282,10 +282,9 @@ export interface Config {
      *
      * `enabled` defaults to `true`. Set `{ enabled: false }` to keep the
      * Safehouse filesystem sandbox but open network egress (bare `safehouse`,
-     * no proxy env, no deny-all-remote profile, no clearance daemon). Only
-     * affects the resolved `safehouse` runner: `srt` rejects it at launch (use
-     * srt's own `allowedDomains`), and it is a no-op under `sdx`/`none` and when
-     * `cmd` already starts with `safehouse`.
+     * no proxy env, no deny-all-remote profile, no clearance daemon). A
+     * safehouse-only option: `srt`/`sdx`/`none` ignore it (srt enforces its own
+     * `allowedDomains`), as does a `cmd` that already starts with `safehouse`.
      */
     clearance?: { enabled?: boolean };
   };
@@ -357,8 +356,8 @@ export interface ResolvedConfig {
     /**
      * Resolved Clearance options for the safehouse runner. Always present;
      * `enabled` defaults to `true`. `enabled: false` opens network egress while
-     * keeping the filesystem sandbox. The runner cross-check (srt rejection) is
-     * deferred to launch, since `runner` may still be `"auto"` here.
+     * keeping the filesystem sandbox. A safehouse-only option: non-safehouse
+     * runners ignore it.
      */
     clearance: { enabled: boolean };
   };
