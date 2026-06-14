@@ -11,7 +11,15 @@ const CLEARANCE_CLI_PATH = fileURLToPath(new URL("../bin/clearanceCli.js", impor
 // `exports` gate) would instead surface a Node error and exit 1, so matching
 // one of these messages and one of these codes proves correct dispatch and
 // exit-code passthrough regardless of whether a proxy is already running.
-const CLEARANCE_DISPATCH_PATTERN = /Clearance already listening|Set CLEARANCE_ALLOW_HOSTS/;
+//
+// The "Unknown clearance-ensure command" arm keeps the arbitrary-args test
+// green across clearance versions: newer clearance parses argv into start/stop/
+// restart/status subcommands and rejects an unrecognized first arg with that
+// message (exit 2), whereas older clearance ignores argv and reaches the start
+// path. Both are clearance-owned responses, so either still proves the shim
+// forwarded argv without interpreting it.
+const CLEARANCE_DISPATCH_PATTERN =
+  /Clearance already listening|Set CLEARANCE_ALLOW_HOSTS|Unknown clearance-ensure command/;
 const CLEARANCE_EXIT_CODES = [0, 2];
 
 function runClearanceCli(args: readonly string[]): { status: number | null; stderr: string } {
