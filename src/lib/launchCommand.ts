@@ -413,9 +413,9 @@ interface LaunchCommandArguments {
   /**
    * Whether the safehouse runner wraps the agent with Clearance. Threaded from
    * `config.local.clearance.enabled`. `false` selects the bare `safehouse`
-   * binary (filesystem sandbox, open egress) for both safehouse wraps; rejected
-   * under `runner === "srt"`. Ignored by the sdx/unwrapped paths (clearance was
-   * never applied there).
+   * binary (filesystem sandbox, open egress) for both safehouse wraps. A
+   * safehouse-only concern: the srt/sdx/unwrapped paths ignore it (srt enforces
+   * its own network allowlist regardless).
    */
   clearanceEnabled: boolean;
   /**
@@ -487,12 +487,8 @@ interface LaunchCommandArguments {
  */
 export function buildLaunchCommand(arguments_: LaunchCommandArguments): string {
   if (arguments_.runner === "srt") {
-    if (!arguments_.clearanceEnabled) {
-      throw new Error(
-        "local.clearance.enabled: false is not supported under the srt runner in v1 — srt has its own network policy (allowedDomains), not Clearance. " +
-          "Set local.runner to 'safehouse' to disable clearance, or remove local.clearance to keep srt's allowlist.",
-      );
-    }
+    // `clearanceEnabled` is a safehouse-only concern; srt enforces its own
+    // network allowlist and ignores it.
     return buildSrtLaunchCommand(arguments_);
   }
   if (arguments_.runner === "sdx") {

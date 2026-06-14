@@ -52,8 +52,7 @@ This is for the case where the allowlist is more friction than the egress restri
 Scope and limits:
 
 - **safehouse only.** It applies to both groundcrew-composed Safehouse wraps (the `prepareWorktree` wrap and the agent wrap).
-- **srt errors.** `clearance: { enabled: false }` under a resolved `srt` runner fails loudly at launch: srt has its own network policy (`allowedDomains`), not Clearance.
-- **No-op under `sdx` / `none`,** which never apply clearance.
+- **Ignored by `srt` / `sdx` / `none`.** `clearance` is a safehouse-only option. The other runners ignore it, so you can leave `clearance` set while switching `local.runner`. Note that `srt` enforces its own network allowlist (`CLEARANCE_ALLOW_HOSTS` / `allowedDomains`) regardless: to actually open egress, use the `safehouse` runner.
 - **No-op when `cmd` already starts with `safehouse`:** that command owns its own wrap, so groundcrew injects nothing.
 
 ## srt (Anthropic sandbox-runtime)

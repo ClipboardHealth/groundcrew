@@ -151,20 +151,11 @@ export async function prepareAgentLaunch(input: {
 }): Promise<PreparedAgentLaunch> {
   const host = await detectHostCapabilities(input.signal);
   const runner = resolveLocalRunner(input.config.local.runner, host);
+  // `clearance` is a safehouse-only option; srt/sdx/none ignore it (srt enforces
+  // its own network allowlist regardless). Only safehouse reads `clearanceEnabled`.
   const clearanceEnabled = input.config.local.clearance.enabled;
   const workspaceKind = resolveWorkspaceKind({ config: input.config, host }).resolved;
   assertLocalRunnerRequirements(host, runner);
-  // srt has its own network policy (allowedDomains), not Clearance, so disabling
-  // clearance under it is meaningless and would silently leave srt's allowlist
-  // active. Fail at resolution time so the operator sees it before the workspace
-  // spawns; buildLaunchCommand keeps the same check as defense in depth.
-  if (runner === "srt" && !clearanceEnabled) {
-    throw new Error(
-      `Local groundcrew ${input.purpose} on agent '${input.agent}' cannot disable clearance under the srt runner in v1 — ` +
-        "srt has its own network policy (allowedDomains), not Clearance. " +
-        "Set local.runner to 'safehouse' to disable clearance, or remove local.clearance to keep srt's allowlist.",
-    );
-  }
   // A `safehouse`-prefixed cmd owns its own wrap: groundcrew composes nothing for
   // such a cmd (and rejects it below), so `local.clearance` must stay a true
   // no-op there.
