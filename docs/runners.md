@@ -33,7 +33,7 @@ crew run --watch
 
 Watch `${XDG_CACHE_HOME:-$HOME/.cache}/clearance/clearance.log` for `DENY` lines and add only the domains your agents actually need.
 
-`@clipboard-health/clearance` is pulled in transitively when you install groundcrew and provides the `clearance` / `clearance-ensure` bins used by Safehouse runs. See the [clearance README](https://github.com/ClipboardHealth/core-utils/tree/main/packages/clearance) for proxy env vars, log paths, and DNS rules.
+`@clipboard-health/clearance` is pulled in transitively when you install groundcrew, but npm links its `clearance` / `clearance-ensure` bins only into the nested `node_modules/.bin/`, never onto your shell `PATH`. So groundcrew exposes its own first-class `clearance-cli` command (installed alongside `crew`) that dispatches straight to clearance's `clearance-ensure` entrypoint, forwarding all args, stdio, and exit code unchanged. See the [clearance README](https://github.com/ClipboardHealth/core-utils/tree/main/packages/clearance) for proxy env vars, log paths, and DNS rules.
 
 ## srt (Anthropic sandbox-runtime)
 

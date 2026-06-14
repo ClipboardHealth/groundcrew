@@ -18,6 +18,7 @@
     "url": "git+https://github.com/ClipboardHealth/groundcrew.git"
   },
   "bin": {
+    "clearance-cli": "./bin/clearanceCli.js",
     "crew": "./bin/run.js"
   },
   "files": [
