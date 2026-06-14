@@ -127,8 +127,15 @@ export async function setupWorkspace(
     });
     promptDir = stagedPrompt.directory;
 
+    const perRepoHooks = config.workspace.repositories.find(
+      (entry) => entry.name === repository,
+    )?.hooks;
     const prepareWorktreeCommand = resolvePrepareWorktreeCommand({
       worktreeDir: launchDir,
+      // Spread-conditional rather than a direct assignment: under
+      // exactOptionalPropertyTypes an optional field can't take an explicit
+      // `undefined`, and the lookup yields undefined for repos with no hooks.
+      ...(perRepoHooks === undefined ? {} : { perRepoHooks }),
       defaultHooks: config.defaults.hooks,
     });
     const secretsFile =
