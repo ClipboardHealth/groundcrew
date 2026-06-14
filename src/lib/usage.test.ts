@@ -75,7 +75,7 @@ function makeConfig(
     },
     prompts: { initial: "x" },
     workspaceKind: "auto",
-    local: { runner: "auto" },
+    local: { runner: "auto", clearance: { enabled: true } },
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }

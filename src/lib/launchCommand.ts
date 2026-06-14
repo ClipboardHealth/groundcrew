@@ -136,6 +136,27 @@ function safehouseClearanceWrapperCommand(): string {
   return `CLEARANCE_ALLOW_HOSTS_FILES=${shellSingleQuote(clearanceAllowHostsFilesFromEnvironment())} ${shellSingleQuote(SAFEHOUSE_CLEARANCE_WRAPPER_PATH)}`;
 }
 
+/**
+ * No-clearance Safehouse invocation: the bare `safehouse` binary (Homebrew, on
+ * `PATH`) with the filesystem sandbox + agent-profile selection but no Clearance
+ * layer — no proxy env, no deny-all-remote profile, no `CLEARANCE_ALLOW_HOSTS_FILES`.
+ * Selected when `local.clearance` is `false`. The daemon-ensure step is skipped
+ * separately in `prepareAgentLaunch`.
+ */
+function bareSafehouseWrapperCommand(): string {
+  return "safehouse";
+}
+
+/**
+ * Pick the Safehouse wrapper for a launch: the Clearance shim by default, or the
+ * bare `safehouse` binary when clearance is disabled. Both wrap sites in
+ * `buildSafehouseLaunchCommand` read the selection, so one call de-clears the
+ * prepareWorktree wrap and the agent wrap together.
+ */
+function safehouseWrapperCommand(clearanceEnabled: boolean): string {
+  return clearanceEnabled ? safehouseClearanceWrapperCommand() : bareSafehouseWrapperCommand();
+}
+
 function trapCleanupLine(promptDir: string): string {
   const cleanupCmd = `rm -rf ${shellSingleQuote(promptDir)}`;
   return `trap ${shellSingleQuote(cleanupCmd)} EXIT`;
@@ -405,6 +426,14 @@ interface LaunchCommandArguments {
    */
   runner: LocalRunner;
   /**
+   * Whether the safehouse runner wraps the agent with Clearance. Threaded from
+   * `config.local.clearance.enabled`. `false` selects the bare `safehouse`
+   * binary (filesystem sandbox, open egress) for both safehouse wraps. A
+   * safehouse-only concern: the srt/sdx/unwrapped paths ignore it (srt enforces
+   * its own network allowlist regardless).
+   */
+  clearanceEnabled: boolean;
+  /**
    * sbx sandbox name when `runner === "sdx"`. Derived by the caller from
    * `sandboxNameFor({ agent })`. Required for sdx; ignored otherwise.
    * Kept off the agent definition so a agent can launch under safehouse
@@ -628,7 +657,7 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
     "--add-dirs-ro",
     safehouseAgentIntegration?.addDirsReadOnly ?? [],
   );
-  const safehouseWrapper = safehouseClearanceWrapperCommand();
+  const safehouseWrapper = safehouseWrapperCommand(arguments_.clearanceEnabled);
 
   // Defensive shim+promptDir trap: by the time we arm it, `rm -rf <promptDir>`
   // has already run (line below) so the promptDir wipe is a no-op on the happy

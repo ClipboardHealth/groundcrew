@@ -213,7 +213,7 @@ function makeConfig(overrides: Partial<ResolvedConfig["agents"]> = {}): Resolved
       initial: "Begin {{task}} ({{title}}) in {{worktree}}\n{{description}}",
     },
     workspaceKind: "auto",
-    local: { runner: "auto" },
+    local: { runner: "auto", clearance: { enabled: true } },
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }
@@ -557,7 +557,7 @@ describe(setupWorkspace, () => {
 
   it("stages neutral prepare + full agent srt settings and wraps the agent under the agent policy when runner=srt", async () => {
     const config = makeConfig();
-    config.local = { runner: "srt" };
+    config.local = { runner: "srt", clearance: { enabled: true } };
     mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
 
     await setupWorkspace(config, {
@@ -1176,7 +1176,7 @@ describe(setupWorkspace, () => {
       }),
     );
     const config = makeConfig();
-    config.local = { runner: "safehouse" };
+    config.local = { runner: "safehouse", clearance: { enabled: true } };
 
     await expect(
       setupWorkspace(config, {

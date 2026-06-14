@@ -275,6 +275,18 @@ export interface Config {
    */
   local?: {
     runner?: LocalRunnerSetting;
+    /**
+     * Clearance (network-egress allowlist proxy) options for the safehouse
+     * runner. An object so further egress options can be added later;
+     * `enabled` is the only field today.
+     *
+     * `enabled` defaults to `true`. Set `{ enabled: false }` to keep the
+     * Safehouse filesystem sandbox but open network egress (bare `safehouse`,
+     * no proxy env, no deny-all-remote profile, no clearance daemon). A
+     * safehouse-only option: `srt`/`sdx`/`none` ignore it (srt enforces its own
+     * `allowedDomains`), as does a `cmd` that already starts with `safehouse`.
+     */
+    clearance?: { enabled?: boolean };
   };
   logging?: {
     /**
@@ -341,6 +353,13 @@ export interface ResolvedConfig {
    */
   local: {
     runner: LocalRunnerSetting;
+    /**
+     * Resolved Clearance options for the safehouse runner. Always present;
+     * `enabled` defaults to `true`. `enabled: false` opens network egress while
+     * keeping the filesystem sandbox. A safehouse-only option: non-safehouse
+     * runners ignore it.
+     */
+    clearance: { enabled: boolean };
   };
   logging: {
     file: string;
@@ -645,6 +664,22 @@ function normalizeLocalRunner(value: unknown, configKey: string): LocalRunnerSet
     );
   }
   return value;
+}
+
+function normalizeClearance(value: unknown, configKey: string): { enabled: boolean } {
+  if (value === undefined) {
+    return { enabled: true };
+  }
+  if (!isPlainObject(value)) {
+    fail(
+      `${configKey} must be an object, for example { enabled: false } (got ${JSON.stringify(value)})`,
+    );
+  }
+  const { enabled } = value;
+  if (enabled !== undefined && typeof enabled !== "boolean") {
+    fail(`${configKey}.enabled must be a boolean (got ${JSON.stringify(enabled)})`);
+  }
+  return { enabled: enabled ?? true };
 }
 
 function normalizeSandbox(value: unknown, configKey: string): SandboxDefinition {
@@ -1035,7 +1070,7 @@ function applyDefaults(user: Config, configDir: string): ResolvedConfig {
       "remote is no longer supported: groundcrew runs locally via safehouse/sdx/none; remove the remote block from your config",
     );
   }
-  const userLocal = (user as { local?: { runner?: unknown } }).local;
+  const userLocal = (user as { local?: { runner?: unknown; clearance?: unknown } }).local;
   if (userLocal !== undefined && !isPlainObject(userLocal)) {
     fail("local must be an object");
   }
@@ -1064,6 +1099,7 @@ function applyDefaults(user: Config, configDir: string): ResolvedConfig {
     workspaceKind: normalizeWorkspaceKind(user.workspaceKind, "workspaceKind") ?? "auto",
     local: {
       runner: normalizeLocalRunner(userLocal?.runner, "local.runner") ?? "auto",
+      clearance: normalizeClearance(userLocal?.clearance, "local.clearance"),
     },
     logging: {
       file: expandHome(

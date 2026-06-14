@@ -192,7 +192,7 @@ function makeConfig(): ResolvedConfig {
     },
     prompts: { initial: "x" },
     workspaceKind: "auto",
-    local: { runner: "auto" },
+    local: { runner: "auto", clearance: { enabled: true } },
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }
@@ -469,7 +469,10 @@ describe(resumeWorkspace, () => {
   });
 
   it("stages neutral prepare + agent srt settings and wraps the resumed agent under srt", async () => {
-    const srtConfig = { ...makeConfig(), local: { runner: "srt" as const } };
+    const srtConfig = {
+      ...makeConfig(),
+      local: { runner: "srt" as const, clearance: { enabled: true } },
+    };
 
     await resumeWorkspace(srtConfig, { task: "team-1" });
 
@@ -486,10 +489,44 @@ describe(resumeWorkspace, () => {
     expect(launchScript).not.toContain("safehouse-clearance");
   });
 
+  it("wraps with bare safehouse and skips the clearance daemon when local.clearance is false", async () => {
+    const noClearance = {
+      ...makeConfig(),
+      local: { runner: "safehouse" as const, clearance: { enabled: false } },
+    };
+
+    await resumeWorkspace(noClearance, { task: "team-1" });
+
+    // Filesystem sandbox stays (the profile shim) under the bare safehouse
+    // binary, but no clearance layer and no clearance-ensure daemon call.
+    const launchScript = stagedLaunchScript();
+    expect(launchScript).toContain('ln -s /bin/sh "$_safehouse_shim"');
+    expect(launchScript).not.toContain("safehouse-clearance");
+    expect(launchScript).not.toContain("CLEARANCE_ALLOW_HOSTS_FILES");
+    expect(ensureClearanceMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps clearance:false a no-op for a cmd-owned safehouse wrap (still rejected upstream)", async () => {
+    // The user owns the wrap, so groundcrew injects nothing and `clearance` has
+    // no effect: it is rejected by the same worker-env guard as with clearance on.
+    const cmdOwned: ResolvedConfig = {
+      ...makeConfig(),
+      local: { runner: "safehouse", clearance: { enabled: false } },
+      agents: {
+        default: "claude",
+        definitions: { claude: { cmd: "safehouse claude --auto", color: "#fff" } },
+      },
+    };
+
+    await expect(resumeWorkspace(cmdOwned, { task: "team-1" })).rejects.toThrow(
+      /cannot inject worker self-completion env when 'cmd' already starts with 'safehouse'/,
+    );
+  });
+
   it("does not add task source sandbox grants for unsandboxed resume runners", async () => {
     const noneConfig: ResolvedConfig = {
       ...makeConfig(),
-      local: { runner: "none" },
+      local: { runner: "none", clearance: { enabled: true } },
       sources: [
         { kind: "linear" },
         {
@@ -525,7 +562,10 @@ describe(resumeWorkspace, () => {
   });
 
   it("cleans up the staged srt settings dir when the resumed launch fails to open", async () => {
-    const srtConfig = { ...makeConfig(), local: { runner: "srt" as const } };
+    const srtConfig = {
+      ...makeConfig(),
+      local: { runner: "srt" as const, clearance: { enabled: true } },
+    };
     workspacesOpenMock.mockRejectedValue(new Error("cmux down"));
 
     await expect(resumeWorkspace(srtConfig, { task: "team-1" })).rejects.toThrow("cmux down");

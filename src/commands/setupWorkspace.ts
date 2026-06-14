@@ -78,13 +78,14 @@ export async function setupWorkspace(
   if (!definition) {
     throw new Error(`Unknown agent: ${agent}`);
   }
-  const { runner, sandboxName, workspaceKind, ensureReady } = await prepareAgentLaunch({
-    config,
-    agent,
-    definition,
-    purpose: "runs",
-    ...(signal === undefined ? {} : { signal }),
-  });
+  const { runner, clearanceEnabled, sandboxName, workspaceKind, ensureReady } =
+    await prepareAgentLaunch({
+      config,
+      agent,
+      definition,
+      purpose: "runs",
+      ...(signal === undefined ? {} : { signal }),
+    });
 
   const spec = { repository, task };
   let created: WorktreeEntry;
@@ -145,6 +146,7 @@ export async function setupWorkspace(
         : undefined;
     const { launchCommand, srtSettingsDir: stagedSrtSettingsDir } = composeAgentLaunch({
       runner,
+      clearanceEnabled,
       task,
       definition,
       promptFile: stagedPrompt.file,

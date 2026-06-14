@@ -181,12 +181,13 @@ export async function resumeWorkspace(
     throw new Error(`Unknown agent: ${context.agent}`);
   }
 
-  const { runner, sandboxName, workspaceKind, ensureReady } = await prepareAgentLaunch({
-    config,
-    agent: context.agent,
-    definition,
-    purpose: "resumes",
-  });
+  const { runner, clearanceEnabled, sandboxName, workspaceKind, ensureReady } =
+    await prepareAgentLaunch({
+      config,
+      agent: context.agent,
+      definition,
+      purpose: "resumes",
+    });
   await ensureReady();
 
   const worktreeDir = context.worktree.dir;
@@ -214,6 +215,7 @@ export async function resumeWorkspace(
         : undefined;
     ({ launchCommand, srtSettingsDir } = composeAgentLaunch({
       runner,
+      clearanceEnabled,
       task,
       definition,
       promptFile: stagedPrompt.file,
