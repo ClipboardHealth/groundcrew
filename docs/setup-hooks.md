@@ -32,7 +32,21 @@ Hook failures are advisory. Groundcrew logs the non-zero exit and still launches
 the agent so a flaky package registry or stale lockfile does not block the
 session.
 
-## Defaults
+## Precedence
+
+`prepareWorktree` resolves through three layers, highest priority first:
+
+| Layer                                             | Where                      | Author           |
+| ------------------------------------------------- | -------------------------- | ---------------- |
+| `.groundcrew/config.json` `hooks.prepareWorktree` | committed in the repo      | repo maintainers |
+| `knownRepositories[].hooks.prepareWorktree`       | `crew.config.ts`, per-repo | operator         |
+| `defaults.hooks.prepareWorktree`                  | `crew.config.ts`, global   | operator         |
+
+The repo-committed file wins (it travels with the code and stays in sync with
+the repo's build), then the per-repo operator layer, then the global default. A
+repo with none of the three set skips the phase.
+
+### Global default
 
 For repos without local config, set a fallback in `crew.config.ts`:
 
@@ -50,6 +64,34 @@ export default {
 Repo-local `.groundcrew/config.json` wins for that hook. A repo-local file
 without `hooks.prepareWorktree` still falls back to the `crew.config.ts`
 default.
+
+### Per-repo operator hook
+
+When you can't (or don't want to) commit a `.groundcrew/config.json` into a repo
+— a third-party repo, or one where adding groundcrew files is undesirable — set
+the hook for just that repo from your own `crew.config.ts`:
+
+```ts
+export default {
+  workspace: {
+    projectDir: "~/dev",
+    knownRepositories: [
+      "your-org/your-repo",
+      {
+        name: "other-org/their-repo",
+        hooks: {
+          prepareWorktree: "uv sync --dev --frozen",
+        },
+      },
+    ],
+  },
+  // ...
+};
+```
+
+This reuses the same `hooks` container and `prepareWorktree` contract as the
+other two layers. It beats `defaults.hooks` but still yields to a committed
+`.groundcrew/config.json` in that repo.
 
 ## Examples
 

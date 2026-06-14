@@ -196,6 +196,14 @@ export interface KnownRepository {
    * is unchanged. Relative, no `..`.
    */
   workdir?: string;
+  /**
+   * Per-repo operator hooks, reusing the same `HookCommands` shape that
+   * `defaults.hooks` and the in-repo `.groundcrew/config.json` use. Slots
+   * between the repo-committed file (wins) and `defaults.hooks` (fallback) in
+   * the `prepareWorktree` cascade, so an operator can set the hook for a repo
+   * they don't want to (or can't) commit a `.groundcrew/config.json` into.
+   */
+  hooks?: HookCommands;
 }
 
 export interface Config {
@@ -933,6 +941,9 @@ function normalizeKnownRepository(entry: string | KnownRepository, index: number
   const workdir = normalizeOptionalString(entry.workdir, `${label}.workdir`);
   if (workdir !== undefined) {
     recipe.workdir = workdir;
+  }
+  if (entry.hooks !== undefined) {
+    recipe.hooks = normalizeHookCommands(entry.hooks, `${label}.hooks`);
   }
   return recipe;
 }
