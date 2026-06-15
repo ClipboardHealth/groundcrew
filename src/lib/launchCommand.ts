@@ -7,6 +7,7 @@ import {
   hasPreLaunchEnv,
   type LocalRunner,
   type AgentDefinition,
+  type NetworkEgressSetting,
 } from "./config.ts";
 import { clearanceAllowHostsFilesFromEnvironment } from "./clearanceAllowlist.ts";
 import { shellSingleQuote } from "./shell.ts";
@@ -134,6 +135,16 @@ function unsetSecretsLine(): string {
 
 function safehouseClearanceWrapperCommand(): string {
   return `CLEARANCE_ALLOW_HOSTS_FILES=${shellSingleQuote(clearanceAllowHostsFilesFromEnvironment())} ${shellSingleQuote(SAFEHOUSE_CLEARANCE_WRAPPER_PATH)}`;
+}
+
+/**
+ * Pick the Safehouse wrapper for a launch: the Clearance shim by default, or the
+ * bare `safehouse` binary when network egress is open. Both wrap sites in
+ * `buildSafehouseLaunchCommand` read the selection, so the prepareWorktree wrap
+ * and agent wrap use the same egress posture.
+ */
+function safehouseWrapperCommand(networkEgress: NetworkEgressSetting): string {
+  return networkEgress === "allowlisted" ? safehouseClearanceWrapperCommand() : "safehouse";
 }
 
 function trapCleanupLine(promptDir: string): string {
@@ -405,6 +416,12 @@ interface LaunchCommandArguments {
    */
   runner: LocalRunner;
   /**
+   * Network egress posture. The safehouse runner uses `"allowlisted"` for the
+   * Clearance shim and `"open"` for bare `safehouse`; srt/sdx/unwrapped paths
+   * ignore it.
+   */
+  networkEgress: NetworkEgressSetting;
+  /**
    * sbx sandbox name when `runner === "sdx"`. Derived by the caller from
    * `sandboxNameFor({ agent })`. Required for sdx; ignored otherwise.
    * Kept off the agent definition so a agent can launch under safehouse
@@ -628,7 +645,7 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
     "--add-dirs-ro",
     safehouseAgentIntegration?.addDirsReadOnly ?? [],
   );
-  const safehouseWrapper = safehouseClearanceWrapperCommand();
+  const safehouseWrapper = safehouseWrapperCommand(arguments_.networkEgress);
 
   // Defensive shim+promptDir trap: by the time we arm it, `rm -rf <promptDir>`
   // has already run (line below) so the promptDir wipe is a no-op on the happy

@@ -9,6 +9,7 @@ import {
   hasPreLaunchEnv,
   type LocalRunner,
   type AgentDefinition,
+  type NetworkEgressSetting,
   type ResolvedConfig,
 } from "./config.ts";
 import { detectHostCapabilities } from "./host.ts";
@@ -34,6 +35,7 @@ import type { WorkspaceKind } from "./workspaceAdapter.ts";
  */
 export function composeAgentLaunch(input: {
   runner: LocalRunner;
+  networkEgress: NetworkEgressSetting;
   task: string;
   definition: AgentDefinition;
   promptFile: string;
@@ -67,6 +69,7 @@ export function composeAgentLaunch(input: {
     secretsFile: input.secretsFile,
     prepareWorktreeCommand: input.prepareWorktreeCommand,
     runner: input.runner,
+    networkEgress: input.networkEgress,
     sandboxName: input.sandboxName,
     srtPrepareSettingsFile: staged?.prepareFile,
     srtAgentSettingsFile: staged?.agentFile,
@@ -133,6 +136,8 @@ function warnOnCmuxIntegrationDrift(input: { unreviewedEnvNames: readonly string
 
 interface PreparedAgentLaunch {
   runner: LocalRunner;
+  /** Resolved `config.local.networkEgress`, threaded into `composeAgentLaunch`. */
+  networkEgress: NetworkEgressSetting;
   sandboxName: string | undefined;
   workspaceKind: WorkspaceKind;
   ensureReady: () => Promise<void>;
@@ -147,10 +152,14 @@ export async function prepareAgentLaunch(input: {
 }): Promise<PreparedAgentLaunch> {
   const host = await detectHostCapabilities(input.signal);
   const runner = resolveLocalRunner(input.config.local.runner, host);
+  const { networkEgress } = input.config.local;
   const workspaceKind = resolveWorkspaceKind({ config: input.config, host }).resolved;
   assertLocalRunnerRequirements(host, runner);
+  const cmdOwnsSafehouseWrap = /^safehouse(?:\s|$)/.test(input.definition.cmd);
+  // A user-owned safehouse wrap owns its own egress posture and may rely on
+  // Clearance, so keep the readiness check aligned with the existing behavior.
   const ensureReady =
-    runner === "safehouse"
+    runner === "safehouse" && (networkEgress === "allowlisted" || cmdOwnsSafehouseWrap)
       ? async (): Promise<void> => {
           await ensureSafehouseClearance(input.signal);
         }
@@ -176,17 +185,13 @@ export async function prepareAgentLaunch(input: {
   // Mirror of buildLaunchCommand's defense — fail at config-resolution time so
   // the operator sees the problem before the workspace is spawned, not deep in
   // the launch shell. The buildLaunchCommand check stays as defense in depth.
-  if (
-    runner === "safehouse" &&
-    hasPreLaunchEnv(input.definition) &&
-    /^safehouse(?:\s|$)/.test(input.definition.cmd)
-  ) {
+  if (runner === "safehouse" && hasPreLaunchEnv(input.definition) && cmdOwnsSafehouseWrap) {
     throw new Error(
       `Local groundcrew ${input.purpose} on agent '${input.agent}' cannot inject preLaunchEnv when 'cmd' already starts with 'safehouse'. ` +
         "Your cmd owns the wrap, so add the names to its own '--env-pass=' flag, or drop the 'safehouse' prefix from 'cmd' to let groundcrew compose the flag for you.",
     );
   }
-  if (runner === "safehouse" && /^safehouse(?:\s|$)/.test(input.definition.cmd)) {
+  if (runner === "safehouse" && cmdOwnsSafehouseWrap) {
     throw new Error(
       `Local groundcrew ${input.purpose} on agent '${input.agent}' cannot inject worker self-completion env when 'cmd' already starts with 'safehouse'. ` +
         "Your cmd owns the wrap, so add GROUNDCREW_TASK_ID,GROUNDCREW_COMPLETE to its own '--env-pass=' flag, or drop the 'safehouse' prefix from 'cmd' to let groundcrew compose the flag for you.",
@@ -197,7 +202,7 @@ export async function prepareAgentLaunch(input: {
     runner === "sdx" && input.definition.sandbox !== undefined
       ? sandboxNameFor({ agent: input.definition.sandbox.agent })
       : undefined;
-  return { runner, sandboxName, workspaceKind, ensureReady };
+  return { runner, networkEgress, sandboxName, workspaceKind, ensureReady };
 }
 
 async function alreadyReady(): Promise<void> {

@@ -24,7 +24,7 @@ function resolvedConfigWithWorkspace(
     },
     prompts: { initial: "x" },
     workspaceKind: "auto",
-    local: { runner: "auto" },
+    local: { runner: "auto", networkEgress: "allowlisted" },
     logging: { file: "/tmp/x.log" },
   };
 }

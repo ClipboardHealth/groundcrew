@@ -79,6 +79,17 @@ export const LOCAL_RUNNER_SETTINGS: readonly LocalRunnerSetting[] = [
 ] as const;
 
 /**
+ * Network posture for local runners that can choose between allowlisted and
+ * unrestricted egress. Only the safehouse runner consumes this today.
+ */
+export type NetworkEgressSetting = "allowlisted" | "open";
+
+export const NETWORK_EGRESS_SETTINGS: readonly NetworkEgressSetting[] = [
+  "allowlisted",
+  "open",
+] as const;
+
+/**
  * Per-agent Docker Sandboxes (sdx) binding. Required at launch when
  * `local.runner` resolves to `sdx` so groundcrew knows which existing
  * sbx sandbox to address.
@@ -110,16 +121,15 @@ export interface AgentDefinition {
   /**
    * Optional list of env var names to forward from the launch shell into
    * the agent under the safehouse runner. Companion to `preLaunch` —
-   * names exported by `preLaunch` go here so groundcrew appends them to
-   * the `safehouse-clearance` wrap's `--env-pass=` flag, preserving the
-   * project's egress allowlist (`clearance-allow-hosts`) without forcing
-   * the user to rewrite `cmd`. Under `local.runner: "none"` exports flow
-   * through unchanged, so `preLaunchEnv` is a no-op. An empty array is a
-   * uniform no-op in every runner (it forwards zero names, so the
-   * unsupported-runner guards do not fire). A non-empty list is rejected
-   * when `local.runner` resolves to `sdx` in v1, and when `cmd` already
-   * starts with `safehouse` (the user owns env forwarding in that case).
-   * Each name must match `[A-Za-z_][A-Za-z0-9_]*` (POSIX env var name).
+   * names exported by `preLaunch` go here so groundcrew appends them to the
+   * Safehouse wrap's `--env-pass=` flag without forcing the user to rewrite
+   * `cmd`. Under `local.runner: "none"` exports flow through unchanged, so
+   * `preLaunchEnv` is a no-op. An empty array is a uniform no-op in every
+   * runner (it forwards zero names, so the unsupported-runner guards do not
+   * fire). A non-empty list is rejected when `local.runner` resolves to `sdx`
+   * in v1, and when `cmd` already starts with `safehouse` (the user owns env
+   * forwarding in that case). Each name must match `[A-Za-z_][A-Za-z0-9_]*`
+   * (POSIX env var name).
    */
   preLaunchEnv?: string[];
   color: string;
@@ -283,6 +293,13 @@ export interface Config {
    */
   local?: {
     runner?: LocalRunnerSetting;
+    /**
+     * Network egress posture for local launches. Defaults to `"allowlisted"`.
+     * With the safehouse runner, `"allowlisted"` uses Clearance and `"open"`
+     * keeps the filesystem sandbox while running bare `safehouse` with
+     * unrestricted network egress. `srt`/`sdx`/`none` ignore this setting.
+     */
+    networkEgress?: NetworkEgressSetting;
   };
   logging?: {
     /**
@@ -349,6 +366,11 @@ export interface ResolvedConfig {
    */
   local: {
     runner: LocalRunnerSetting;
+    /**
+     * Resolved network egress posture. Always present; defaults to
+     * `"allowlisted"`. Only the safehouse runner consumes this today.
+     */
+    networkEgress: NetworkEgressSetting;
   };
   logging: {
     file: string;
@@ -654,6 +676,27 @@ function normalizeLocalRunner(value: unknown, configKey: string): LocalRunnerSet
   if (!isLocalRunnerSetting(value)) {
     fail(
       `${configKey} must be one of ${LOCAL_RUNNER_SETTINGS.join(", ")} (got ${JSON.stringify(value)})`,
+    );
+  }
+  return value;
+}
+
+function isNetworkEgressSetting(value: unknown): value is NetworkEgressSetting {
+  return (
+    typeof value === "string" && (NETWORK_EGRESS_SETTINGS as readonly string[]).includes(value)
+  );
+}
+
+function normalizeNetworkEgress(
+  value: unknown,
+  configKey: string,
+): NetworkEgressSetting | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isNetworkEgressSetting(value)) {
+    fail(
+      `${configKey} must be one of ${NETWORK_EGRESS_SETTINGS.join(", ")} (got ${JSON.stringify(value)})`,
     );
   }
   return value;
@@ -1055,7 +1098,7 @@ function applyDefaults(user: Config, configDir: string): ResolvedConfig {
       "remote is no longer supported: groundcrew runs locally via safehouse/sdx/none; remove the remote block from your config",
     );
   }
-  const userLocal = (user as { local?: { runner?: unknown } }).local;
+  const userLocal = (user as { local?: { runner?: unknown; networkEgress?: unknown } }).local;
   if (userLocal !== undefined && !isPlainObject(userLocal)) {
     fail("local must be an object");
   }
@@ -1084,6 +1127,8 @@ function applyDefaults(user: Config, configDir: string): ResolvedConfig {
     workspaceKind: normalizeWorkspaceKind(user.workspaceKind, "workspaceKind") ?? "auto",
     local: {
       runner: normalizeLocalRunner(userLocal?.runner, "local.runner") ?? "auto",
+      networkEgress:
+        normalizeNetworkEgress(userLocal?.networkEgress, "local.networkEgress") ?? "allowlisted",
     },
     logging: {
       file: expandHome(

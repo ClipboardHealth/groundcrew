@@ -213,7 +213,7 @@ function makeConfig(overrides: Partial<ResolvedConfig["agents"]> = {}): Resolved
       initial: "Begin {{task}} ({{title}}) in {{worktree}}\n{{description}}",
     },
     workspaceKind: "auto",
-    local: { runner: "auto" },
+    local: { runner: "auto", networkEgress: "allowlisted" },
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }
@@ -557,7 +557,7 @@ describe(setupWorkspace, () => {
 
   it("stages neutral prepare + full agent srt settings and wraps the agent under the agent policy when runner=srt", async () => {
     const config = makeConfig();
-    config.local = { runner: "srt" };
+    config.local = { runner: "srt", networkEgress: "allowlisted" };
     mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
 
     await setupWorkspace(config, {
@@ -925,6 +925,26 @@ describe(setupWorkspace, () => {
     }
   });
 
+  it("wraps with bare safehouse and skips the clearance daemon when networkEgress is open", async () => {
+    const config = makeConfig();
+    config.local = { runner: "safehouse", networkEgress: "open" };
+    mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
+
+    await setupWorkspace(config, {
+      task: "team-1",
+      repository: "repo-a",
+      agent: "claude",
+      details: { title: "Test Title", description: "Body" },
+    });
+
+    const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
+    expect(launchScript).toContain("safehouse --add-dirs=");
+    expect(launchScript).toMatch(/safehouse .*"\$_safehouse_shim" -c/);
+    expect(launchScript).not.toContain("safehouse-clearance");
+    expect(launchScript).not.toContain("CLEARANCE_ALLOW_HOSTS_FILES");
+    expect(ensureClearanceMock).not.toHaveBeenCalled();
+  });
+
   it("keeps user-configured clearance allowlist files in addition to the bundled file", async () => {
     const personalAllowHostsFile = "/tmp/personal-allow-hosts";
     vi.stubEnv("CLEARANCE_ALLOW_HOSTS_FILES", personalAllowHostsFile);
@@ -1268,7 +1288,7 @@ describe(setupWorkspace, () => {
       }),
     );
     const config = makeConfig();
-    config.local = { runner: "safehouse" };
+    config.local = { runner: "safehouse", networkEgress: "allowlisted" };
 
     await expect(
       setupWorkspace(config, {
