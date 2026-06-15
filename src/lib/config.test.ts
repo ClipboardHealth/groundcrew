@@ -1531,6 +1531,52 @@ describe("loadConfig", () => {
     expect(recipe).toStrictEqual({ name: "billing", provision: scripted, workdir: "sub" });
   });
 
+  it("normalizes per-repo hooks on a repo entry", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      validConfigSource({
+        workspace: {
+          projectDir: temporary,
+          knownRepositories: [{ name: "billing", hooks: { prepareWorktree: "make setup" } }],
+        },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    const config = await loadConfig();
+    const [recipe] = config.workspace.repositories;
+    expect(recipe).toStrictEqual({ name: "billing", hooks: { prepareWorktree: "make setup" } });
+  });
+
+  it("rejects an empty per-repo prepareWorktree hook", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      validConfigSource({
+        workspace: {
+          projectDir: temporary,
+          knownRepositories: [{ name: "billing", hooks: { prepareWorktree: " " } }],
+        },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(
+      /workspace\.knownRepositories\[0\]\.hooks\.prepareWorktree must be a non-empty string/,
+    );
+  });
+
+  it("rejects per-repo hooks that are not an object", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      `export default { workspace: { projectDir: ${JSON.stringify(temporary)}, knownRepositories: [{ name: "billing", hooks: [] }] }, agents: { definitions: { claude: {} } } };\n`,
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(
+      /workspace\.knownRepositories\[0\]\.hooks must be an object/,
+    );
+  });
+
   const scripted = { create: "a", remove: "b" };
   const invalidEntries: [KnownRepository, RegExp][] = [
     [{ name: "b", provision: scripted, workdir: "/etc" }, /workdir.*must be a relative path/],

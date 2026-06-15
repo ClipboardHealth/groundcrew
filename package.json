@@ -18,7 +18,8 @@
     "url": "git+https://github.com/ClipboardHealth/groundcrew.git"
   },
   "bin": {
-    "crew": "./bin/run.js"
+    "crew": "./bin/run.js",
+    "crew-clearance-ensure": "./bin/crewClearanceEnsure.js"
   },
   "files": [
     "README.md",
