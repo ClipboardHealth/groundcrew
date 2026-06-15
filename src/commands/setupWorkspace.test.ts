@@ -925,6 +925,26 @@ describe(setupWorkspace, () => {
     }
   });
 
+  it("wraps with bare safehouse and skips the clearance daemon when networkEgress is open", async () => {
+    const config = makeConfig();
+    config.local = { runner: "safehouse", networkEgress: "open" };
+    mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
+
+    await setupWorkspace(config, {
+      task: "team-1",
+      repository: "repo-a",
+      agent: "claude",
+      details: { title: "Test Title", description: "Body" },
+    });
+
+    const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
+    expect(launchScript).toContain("safehouse --add-dirs=");
+    expect(launchScript).toMatch(/safehouse .*"\$_safehouse_shim" -c/);
+    expect(launchScript).not.toContain("safehouse-clearance");
+    expect(launchScript).not.toContain("CLEARANCE_ALLOW_HOSTS_FILES");
+    expect(ensureClearanceMock).not.toHaveBeenCalled();
+  });
+
   it("keeps user-configured clearance allowlist files in addition to the bundled file", async () => {
     const personalAllowHostsFile = "/tmp/personal-allow-hosts";
     vi.stubEnv("CLEARANCE_ALLOW_HOSTS_FILES", personalAllowHostsFile);

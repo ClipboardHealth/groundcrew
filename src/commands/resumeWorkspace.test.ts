@@ -501,6 +501,8 @@ describe(resumeWorkspace, () => {
     // binary, but no clearance layer and no clearance-ensure daemon call.
     const launchScript = stagedLaunchScript();
     expect(launchScript).toContain('ln -s /bin/sh "$_safehouse_shim"');
+    expect(launchScript).toContain("safehouse --add-dirs=");
+    expect(launchScript).toMatch(/safehouse .*"\$_safehouse_shim" -c/);
     expect(launchScript).not.toContain("safehouse-clearance");
     expect(launchScript).not.toContain("CLEARANCE_ALLOW_HOSTS_FILES");
     expect(ensureClearanceMock).not.toHaveBeenCalled();
