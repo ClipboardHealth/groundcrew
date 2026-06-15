@@ -7,6 +7,7 @@ import {
   setEnvironmentVariable,
   snapshotEnvironmentVariables,
 } from "../testHelpers/env.ts";
+import type { ShellAdapterConfig } from "./adapters/shell/schema.ts";
 import type { Config, LoadedConfig } from "./config.ts";
 
 interface ConfigModule {
@@ -106,5 +107,33 @@ describe("loadConfigWithSource", () => {
 
     expect(actual.source).toStrictEqual({ kind: "xdg", filepath: xdgConfigPath_ });
     expect(actual.config.workspace.projectDir).toBe(temporary);
+  });
+
+  it("expands ~ in a shell source's sandboxWritePaths", async () => {
+    setEnvironmentVariable("HOME", temporary);
+    const configPath = writeConfigFile(
+      temporary,
+      validConfigSource({
+        workspace: VALID_WORKSPACE(temporary),
+        sources: [
+          {
+            kind: "shell",
+            name: "plankeeper",
+            sandboxWritePaths: ["~/plans"],
+            commands: { listTasks: "./list.sh" },
+          },
+        ],
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+
+    const { loadConfigWithSource } = await loadFreshConfig();
+    const actual = await loadConfigWithSource();
+
+    const shellSource = actual.config.sources.find(
+      (source): source is ShellAdapterConfig => source.kind === "shell",
+    );
+    expect(shellSource).toBeDefined();
+    expect(shellSource?.sandboxWritePaths).toStrictEqual([path.join(temporary, "plans")]);
   });
 });

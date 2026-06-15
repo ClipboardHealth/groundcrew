@@ -894,6 +894,14 @@ function normalizeSources(raw: unknown): SourceConfig[] {
           ? { tasksDir: expandHome(entry["tasksDir"]) }
           : {}),
       });
+    } else if (kind === "shell" && Array.isArray(entry["sandboxWritePaths"])) {
+      const rawPaths: unknown[] = entry["sandboxWritePaths"];
+      expanded.push({
+        ...entry,
+        sandboxWritePaths: rawPaths.map((value) =>
+          typeof value === "string" ? expandHome(value) : value,
+        ),
+      });
     } else {
       expanded.push(entry);
     }
