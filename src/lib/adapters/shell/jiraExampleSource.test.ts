@@ -177,8 +177,10 @@ function setup(): Harness {
   }
 
   // Fake `jira` CLI: `list` echoes the reduced array; `view <KEY>` returns the
-  // full issue file (exit 1 when absent, the not-found signal); `me` records the
-  // exported JIRA_API_TOKEN so a test can assert trimming.
+  // full issue file (a realistic not-found message + exit 1 when absent, the
+  // sentinel `get` keys off; FAKE_VIEW_FAIL/_KEY replays a transient failure for
+  // a chosen key); `me` records the exported JIRA_API_TOKEN so a test can assert
+  // trimming.
   const fakeJira = path.join(dir, "jira");
   writeFileSync(
     fakeJira,
@@ -195,8 +197,11 @@ function setup(): Harness {
       '  cat "$FIXTURE_LIST"; exit 0',
       "fi",
       'if [[ "${1:-}" == "issue" && "${2:-}" == "view" ]]; then',
+      '  if [[ -n "${FAKE_VIEW_FAIL:-}" && "${3:-}" == "${FAKE_VIEW_FAIL_KEY:-}" ]]; then',
+      '    echo "$FAKE_VIEW_FAIL" >&2; exit 1',
+      "  fi",
       '  f="$VIEW_DIR/${3:-}.json"',
-      '  [[ -f "$f" ]] || exit 1',
+      '  [[ -f "$f" ]] || { echo "✗ Issue ${3:-} does not exist" >&2; exit 1; }',
       '  cat "$f"; exit 0',
       "fi",
       'if [[ "${1:-}" == "issue" && "${2:-}" == "move" ]]; then exit 0; fi',
@@ -314,11 +319,27 @@ describe("jira.sh example source", () => {
   });
 
   it("propagates a real list failure instead of masking it as no tasks", () => {
-    const { status, stderr } = run(h, ["list"], {
+    const { status, stdout, stderr } = run(h, ["list"], {
       FAKE_LIST_FAIL: "✗ Received unexpected response: 401 Unauthorized",
     });
     expect(status).toBe(1);
     expect(stderr).toContain("401 Unauthorized");
+    expect(stdout).toBe(""); // no `[]` — the empty-result branch must not run
+  });
+
+  it("list logs and skips an issue whose view enrichment fails", () => {
+    // A transient `view` failure on one key must not drop the whole list: the
+    // script logs the skip and keeps the issues it could enrich.
+    const { status, stdout, stderr } = run(h, ["list"], {
+      FAKE_VIEW_FAIL: "✗ Received unexpected response: 503 Service Unavailable",
+      FAKE_VIEW_FAIL_KEY: "ENG-2",
+    });
+    expect(status).toBe(0);
+
+    const parsed = shellFetchOutputSchema.parse(JSON.parse(stdout));
+    expect(parsed).toHaveLength(3); // ENG-1/3/4 present, ENG-2 dropped
+    expect(parsed.map((i) => i.id)).not.toContain("ENG-2");
+    expect(stderr).toContain("skipping ENG-2");
   });
 
   it("get emits one ShellIssue for a known key", () => {
@@ -348,6 +369,18 @@ describe("jira.sh example source", () => {
 
   it("get exits 3 (not-found sentinel) when jira cannot find the key", () => {
     expect(run(h, ["get", "MISSING-9"]).status).toBe(3);
+  });
+
+  it("get surfaces a real failure instead of the not-found sentinel", () => {
+    // A transient auth/network blip during a getTask poll must not be mistaken
+    // for a deleted task: exit 1 (retryable), not 3 (vanished).
+    const { status, stdout, stderr } = run(h, ["get", "ENG-1"], {
+      FAKE_VIEW_FAIL: "✗ Received unexpected response: 401 Unauthorized",
+      FAKE_VIEW_FAIL_KEY: "ENG-1",
+    });
+    expect(status).toBe(1);
+    expect(stderr).toContain("401");
+    expect(stdout).toBe("");
   });
 
   it("verify exits 0 when the token file is present", () => {

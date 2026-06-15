@@ -17,6 +17,11 @@ calls with a subcommand per operation:
 - [`jira` CLI](https://github.com/ankitpokhrel/jira-cli) — `brew install ankitpokhrel/jira-cli/jira-cli`, then `jira init`.
 - [`jq`](https://jqlang.github.io/jq/) — `brew install jq`.
 
+> **Note:** `list` and `get` detect "no results" and "not found" by matching the
+> `jira` CLI's stderr wording (it exposes no machine-readable signal for either).
+> Those strings are validated against **jira-cli 1.7.x**; re-verify them if you
+> upgrade the CLI, since a reworded message would be misread as a real failure.
+
 ### What `jira init` sets up
 
 `jira init` is a one-time wizard that writes `~/.config/.jira/.config.yml` — the
@@ -64,12 +69,12 @@ the token on per invocation.
 3. **Label your issues** so groundcrew knows what to pick up and where to
    dispatch it:
 
-   | Label                  | Example                            | Effect                                                                                                                                                                                                                                                                              |
-   | ---------------------- | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-   | `groundcrew`           | `groundcrew`                       | Opts the issue in. The default JQL fetches only issues carrying this label, so work is dispatched explicitly rather than every open issue being swept up. The label name is just a JQL convention — change the `labels = …` clause in `JIRA_GROUNDCREW_JQL` to use a different one. |
-   | `repo:<name>`          | `repo:wild-horses`                 | Sets `repository: "wild-horses"`. Use a bare repository name when your config's `knownRepositories` lists it by name — no owner needed.                                                                                                                                             |
-   | `repo:<Owner>__<name>` | `repo:ClipboardHealth__groundcrew` | Sets `repository: "ClipboardHealth/groundcrew"`. JIRA labels cannot contain `/`, so the slash is encoded as exactly **two** underscores (`__`).                                                                                                                                     |
-   | `agent:<name>`         | `agent:claude`                     | **Optional** — omit it to use `JIRA_DEFAULT_AGENT` (`claude` in the sample config). Only add this label to override the default for a specific issue.                                                                                                                               |
+   | Label                  | Example                            | Effect                                                                                                                                                                                                                                                                                                         |
+   | ---------------------- | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+   | `groundcrew`           | `groundcrew`                       | Opts the issue in. The default JQL fetches only issues carrying this label, so work is dispatched explicitly rather than every open issue being swept up. The label name is just a JQL convention — change the `labels = …` clause in `JIRA_GROUNDCREW_JQL` to use a different one.                            |
+   | `repo:<name>`          | `repo:wild-horses`                 | Sets `repository: "wild-horses"`. Use a bare repository name when your config's `knownRepositories` lists it by name — no owner needed.                                                                                                                                                                        |
+   | `repo:<Owner>__<name>` | `repo:ClipboardHealth__groundcrew` | Sets `repository: "ClipboardHealth/groundcrew"`. JIRA labels cannot contain `/`, so the slash is encoded as exactly **two** underscores (`__`). Every `__` decodes to `/`, so only two-component `Owner/name` repos are supported — a repository whose owner or name itself contains `__` cannot be expressed. |
+   | `agent:<name>`         | `agent:claude`                     | **Optional** — omit it to use `JIRA_DEFAULT_AGENT` (`claude` in the sample config). Only add this label to override the default for a specific issue.                                                                                                                                                          |
 
    So a typical dispatchable issue carries just `groundcrew` + a `repo:` label.
    An issue without a `repo:` label is listed but not dispatchable (and with no
@@ -109,13 +114,13 @@ the token on per invocation.
 
 The script reads these from the source's `env` block:
 
-| Variable              | Default                                          | Purpose                                                                |
-| --------------------- | ------------------------------------------------ | ---------------------------------------------------------------------- |
-| `JIRA_GROUNDCREW_JQL` | `statusCategory != Done AND labels = groundcrew` | Which issues `list` returns. Omit `ORDER BY` (jira-cli adds its own).  |
-| `JIRA_REVIEW_PATTERN` | `review`                                         | Case-insensitive regex; matching status names map to `in-review`.      |
-| `JIRA_DEFAULT_AGENT`  | _(empty -> `null`)_                              | Agent used when an issue has no `agent:` label.                        |
-| `JIRA_TOKEN_FILE`     | `~/.config/groundcrew/jira.token`                | Token file path.                                                       |
-| `JIRA_STATE_*`        | `In Progress` / `In Review` / `Done`             | Native JIRA state names used by `move`. Match your project's workflow. |
+| Variable              | Default                                          | Purpose                                                                                                                        |
+| --------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| `JIRA_GROUNDCREW_JQL` | `statusCategory != Done AND labels = groundcrew` | Which issues `list` returns, capped at the first 20 (`--paginate 0:20` in `jira.sh`). Omit `ORDER BY` (jira-cli adds its own). |
+| `JIRA_REVIEW_PATTERN` | `review`                                         | Case-insensitive regex; matching status names map to `in-review`.                                                              |
+| `JIRA_DEFAULT_AGENT`  | _(empty -> `null`)_                              | Agent used when an issue has no `agent:` label.                                                                                |
+| `JIRA_TOKEN_FILE`     | `~/.config/groundcrew/jira.token`                | Token file path.                                                                                                               |
+| `JIRA_STATE_*`        | `In Progress` / `In Review` / `Done`             | Native JIRA state names used by `move`. Match your project's workflow.                                                         |
 
 ## Status mapping
 
@@ -134,6 +139,10 @@ five. There is no "in-review" category, so review is detected by status _name_:
 - `list` returns at most 20 issues (the `--paginate 0:20` bound in `jira.sh`).
   Raise that bound or narrow `JIRA_GROUNDCREW_JQL` if you have more eligible
   issues than that.
+- The default JQL has no `project = …` clause, so it implicitly scopes to the
+  default project `jira init` selected (see [What `jira init` sets up](#what-jira-init-sets-up)).
+  On a multi-project instance, add an explicit `project = "ENG"` clause to
+  `JIRA_GROUNDCREW_JQL` to constrain which project `list` sweeps.
 - A query that matches nothing is the steady state (no issue is ready to
   dispatch). jira-cli treats "no results" as an error and exits non-zero, but
   `list` folds that into an empty array and exits `0`, so the shell adapter sees

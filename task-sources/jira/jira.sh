@@ -49,6 +49,9 @@ fi
 # so the two code paths can never drift. Labels carry dispatch metadata:
 #   repo:Owner__name -> repository "Owner/name"   (__ decodes to /)
 #   agent:<name>     -> agent "<name>"
+# `read -d ''` reads until a NUL; the heredoc has none, so `read` consumes the
+# whole body but returns 1 at EOF. The `|| true` keeps that expected non-zero
+# from tripping `set -e` — JQ_TRANSFORM is still fully populated.
 read -r -d '' JQ_TRANSFORM <<'JQ' || true
 def adfText: [.. | .text? // empty] | join(" ");
 # A rich-text field is either a plain string (REST v2) or an ADF object (v3);
@@ -133,6 +136,10 @@ case "${cmd}" in
     list_err="$(mktemp)"
     trap 'rm -f "${list_err}"' EXIT
     if ! list_raw="$(jira issue list -q "${LIST_JQL}" --order-by updated --reverse --raw --paginate 0:20 2>"${list_err}")"; then
+      # jira-cli has no machine-readable "empty result" signal, so we match its
+      # stderr wording. These strings are validated against jira-cli 1.7.x and
+      # may drift on upgrade (see README Prerequisites); the same caveat applies
+      # to the not-found match in `get` below.
       if grep -qiE "no result|no issues" "${list_err}"; then
         list_raw="[]"
       else
@@ -140,11 +147,16 @@ case "${cmd}" in
         exit 1
       fi
     fi
+    # Enrich each listed key with its full issue: 1 `list` + 1 `view` per key
+    # (≤21 calls at the 20-issue cap), which can approach the 60s `listTasks`
+    # timeout on a wide JQL — see README Notes. A failed `view` logs and skips
+    # that one key rather than `|| true` silently dropping it from the array.
     printf '%s' "${list_raw:-[]}" \
       | jq -r 'if type == "array" then .[].key else empty end' \
       | while IFS= read -r key; do
           [[ -n "${key}" ]] || continue
-          jira issue view "${key}" --raw 2>/dev/null || true
+          jira issue view "${key}" --raw 2>/dev/null \
+            || { echo "jira.sh list: skipping ${key} (view failed)" >&2; continue; }
         done \
       | jq -s -c --arg rp "${REVIEW_PATTERN}" --arg da "${DEFAULT_AGENT}" \
             "${JQ_TRANSFORM} [ .[] | toShellIssue(\$rp; \$da) ]"
@@ -152,7 +164,19 @@ case "${cmd}" in
   get)
     require_token
     key="${1:?usage: jira.sh get <KEY>}"
-    out="$(jira issue view "${key}" --raw 2>/dev/null)" || exit 3
+    get_err="$(mktemp)"
+    trap 'rm -f "${get_err}"' EXIT
+    if ! out="$(jira issue view "${key}" --raw 2>"${get_err}")"; then
+      # jira-cli exits non-zero for a genuinely missing key AND for transient
+      # auth/network failures. Only the former is the not-found sentinel (exit 3);
+      # surface the rest as a retryable error so groundcrew does not treat a live
+      # task as vanished. Not-found wording validated vs jira-cli 1.7.x (see S3).
+      if grep -qiE "not found|does not exist|404" "${get_err}"; then
+        exit 3
+      fi
+      cat "${get_err}" >&2
+      exit 1
+    fi
     [[ -n "${out}" ]] || exit 3
     printf '%s' "${out}" \
       | jq -c --arg rp "${REVIEW_PATTERN}" --arg da "${DEFAULT_AGENT}" \

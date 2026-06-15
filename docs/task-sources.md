@@ -74,7 +74,7 @@ source's declared paths. The `sdx` runner does not mount these host paths.
 ]
 ```
 
-Allowed `status` values are `todo`, `in-progress`, `in-review`, `done`, and `other`. Use `null` for `repository` or `agent` when a task should not be groundcrew-eligible. `hasMoreBlockers` is optional and defaults to `false`; `sourceRef` is opaque data that groundcrew passes back to your writeback command.
+Allowed `status` values are `todo`, `in-progress`, `in-review`, `done`, and `other`. In shell-script JSON output, use `null` for `repository` or `agent` when a task should not be groundcrew-eligible (the schema also accepts an omitted field, but emitting explicit `null` is clearest). `hasMoreBlockers` is optional and defaults to `false`; `sourceRef` is opaque data that groundcrew passes back to your writeback command.
 
 ## Todo.txt
 
