@@ -58,10 +58,12 @@ export const shellAdapterConfigSchema = z.object({
     .regex(/^[a-z][a-z0-9-]*$/, "name must be kebab-case (lowercase letters, digits, hyphens)"),
   /**
    * Local directories the sandbox opens for **read + write** while an agent
-   * works a task owned by this source. Scoped to this source's tasks (matched
-   * by task-id prefix): a task from another source does not receive them.
-   * `~` expands at config load. Use for an external task store the agent must
-   * read and update in place (e.g. a plan-keeper `~/plans` tree).
+   * works a task owned by this source. When the task id is source-qualified
+   * (a `<source>:` prefix), the grant is scoped to that source, so a task from
+   * another source does not receive these paths; an unqualified task id grants
+   * every eligible source's declared paths. `~` expands at config load. Use for
+   * an external task store the agent must read and update in place (e.g. a
+   * plan-keeper `~/plans` tree).
    */
   sandboxWritePaths: z
     .array(z.string().min(1, "sandboxWritePaths entries must be non-empty"))
