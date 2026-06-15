@@ -24,6 +24,7 @@ import {
 import { resolveDefaultBranch } from "./defaultBranch.ts";
 import { assertPlainTaskId, isPlainTaskId } from "./taskId.ts";
 import { debug, errorMessage, isVerbose } from "./util.ts";
+import { hasAdoptedBranch } from "./worktreeRunState.ts";
 import { type WorkspaceProbe, workspaces } from "./workspaces.ts";
 
 const WORKTREE_LIST_PREFIX = "worktree ";
@@ -534,7 +535,7 @@ async function removeWorktree(
     debug(`Worktree directory ${entry.dir} not found, pruning stale refs...`);
     await runLongGitCommand(["-C", repoDir, "worktree", "prune"], options.signal);
   }
-  if (entry.adoptedBranch === true) {
+  if (hasAdoptedBranch({ config, entry })) {
     debug(`Preserving adopted branch ${entry.branchName} (not groundcrew-created).`);
     return;
   }

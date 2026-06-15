@@ -1,7 +1,13 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
 import { setVerbose } from "../lib/util.ts";
 import { canonicalLinearIssue } from "../lib/testing/canonicalFixtures.ts";
 import type { Board } from "../lib/board.ts";
+import type { ResolvedConfig } from "../lib/config.ts";
 import type { PullRequestSummary } from "../lib/pullRequests.ts";
+import { recordRunState } from "../lib/runState.ts";
 import type { BoardState, Issue, MarkDoneResult, MarkInReviewResult } from "../lib/taskSource.ts";
 import type { WorktreeEntry } from "../lib/worktrees.ts";
 import { makeBoard } from "../testHelpers/boardFixtures.ts";
@@ -44,6 +50,32 @@ function pullRequest(overrides: Partial<PullRequestSummary> = {}): PullRequestSu
 
 function findReturning(prs: readonly PullRequestSummary[]): FindPullRequests {
   return vi.fn<FindPullRequests>().mockResolvedValue(prs);
+}
+
+function makeConfig(stateRoot: string): ResolvedConfig {
+  return {
+    sources: [],
+    defaults: { hooks: {} },
+    git: { remote: "origin", defaultBranch: "main" },
+    workspace: {
+      projectDir: "/work",
+      knownRepositories: ["repo-a"],
+      repositories: [{ name: "repo-a" }],
+    },
+    orchestrator: {
+      maximumInProgress: 4,
+      pollIntervalMilliseconds: 1000,
+      sessionLimitPercentage: 85,
+    },
+    agents: {
+      default: "claude",
+      definitions: { claude: { cmd: "claude", color: "#fff" } },
+    },
+    prompts: { initial: "x" },
+    workspaceKind: "auto",
+    local: { runner: "auto" },
+    logging: { file: path.join(stateRoot, "groundcrew.log") },
+  };
 }
 
 describe(createReviewer, () => {
@@ -111,6 +143,42 @@ describe(createReviewer, () => {
     const out = consoleLog.output();
     expect(out).toContain("Advanced team-1 to in-review (PR https://gh/pr/7)");
     expect(out).toContain("event=review outcome=advanced task=team-1");
+  });
+
+  it("uses recorded adopted branch state when reviewing a rediscovered worktree", async () => {
+    const stateRoot = mkdtempSync(path.join(tmpdir(), "groundcrew-reviewer-run-state-"));
+    const config = makeConfig(stateRoot);
+    recordRunState({
+      config,
+      state: {
+        task: "team-1",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-1",
+        branchName: "jdoe/fix-thing",
+        workspaceName: "team-1",
+        state: "running",
+        adoptedBranch: true,
+      },
+    });
+    const findPullRequests = findReturning([pullRequest({ state: "open" })]);
+    const reviewer = createReviewer({ board, findPullRequests, config });
+
+    try {
+      await reviewer.runOnce({
+        state: boardOf([inProgressIssue("team-1")]),
+        worktreeEntries: [hostEntryFor("team-1", { branchName: "dev-team-1" })],
+        dryRun: false,
+      });
+    } finally {
+      rmSync(stateRoot, { recursive: true, force: true });
+    }
+
+    expect(findPullRequests).toHaveBeenCalledWith({
+      cwd: "/work/repo-a-team-1",
+      branchName: "jdoe/fix-thing",
+    });
+    expect(markInReviewMock).toHaveBeenCalledTimes(1);
   });
 
   it("advances a merged PR to done (not in-review)", async () => {

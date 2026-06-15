@@ -99,10 +99,8 @@ export interface ResolvedPullRequest {
 }
 
 interface ResolvePullRequestArgs {
-  /** Clone directory used as `gh`'s cwd so it can authenticate. */
+  /** Clone directory used as `gh`'s cwd so it resolves the GitHub repo from its remote. */
   repoDir: string;
-  /** `owner/repo` slug passed via `--repo`. */
-  repo: string;
   /** PR number or URL accepted by `gh pr view`. */
   pr: string;
   signal?: AbortSignal;
@@ -143,26 +141,18 @@ function isRawResolvedPullRequest(value: unknown): value is RawResolvedPullReque
 export async function resolvePullRequest(
   arguments_: ResolvePullRequestArgs,
 ): Promise<ResolvedPullRequest> {
-  const { repoDir, repo, pr, signal } = arguments_;
+  const { repoDir, pr, signal } = arguments_;
   const options = signal === undefined ? { cwd: repoDir } : { cwd: repoDir, signal };
   let output: string;
   try {
     output = await runCommandAsync(
       "gh",
-      [
-        "pr",
-        "view",
-        pr,
-        "--repo",
-        repo,
-        "--json",
-        "number,headRefName,title,url,state,isCrossRepository",
-      ],
+      ["pr", "view", pr, "--json", "number,headRefName,title,url,state,isCrossRepository"],
       options,
     );
   } catch (error) {
     throw new Error(
-      `Could not look up pull request ${pr} in ${repo}. Ensure 'gh' is installed and authenticated (gh auth status) and the PR exists.`,
+      `Could not look up pull request ${pr} from ${repoDir}. Ensure 'gh' is installed and authenticated (gh auth status) and the PR exists.`,
       { cause: error },
     );
   }
@@ -170,12 +160,12 @@ export async function resolvePullRequest(
   try {
     parsed = JSON.parse(output);
   } catch (error) {
-    throw new Error(`Unexpected non-JSON response from 'gh pr view' for ${pr} in ${repo}.`, {
+    throw new Error(`Unexpected non-JSON response from 'gh pr view' for ${pr} from ${repoDir}.`, {
       cause: error,
     });
   }
   if (!isRawResolvedPullRequest(parsed)) {
-    throw new Error(`Unexpected response shape from 'gh pr view' for ${pr} in ${repo}.`);
+    throw new Error(`Unexpected response shape from 'gh pr view' for ${pr} from ${repoDir}.`);
   }
   return {
     number: parsed.number,

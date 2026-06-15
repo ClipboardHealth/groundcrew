@@ -241,6 +241,45 @@ describe("run state store", () => {
     });
   });
 
+  it("round-trips adopted branch state and preserves it across transitions", () => {
+    recordRunState({
+      config,
+      state: {
+        task: "pr-42",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-pr-42",
+        branchName: "jdoe/fix-thing",
+        workspaceName: "pr-42",
+        state: "running",
+        adoptedBranch: true,
+      },
+    });
+
+    expect(readRunState(config, "pr-42")).toMatchObject({
+      branchName: "jdoe/fix-thing",
+      adoptedBranch: true,
+    });
+
+    recordRunState({
+      config,
+      state: {
+        task: "pr-42",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-pr-42",
+        branchName: "jdoe/fix-thing",
+        workspaceName: "pr-42",
+        state: "interrupted",
+      },
+    });
+
+    expect(readRunState(config, "pr-42")).toMatchObject({
+      state: "interrupted",
+      adoptedBranch: true,
+    });
+  });
+
   it("prefers a freshly provided title over the previously-recorded one", () => {
     recordRunState({
       config,

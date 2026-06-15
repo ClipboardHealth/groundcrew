@@ -241,7 +241,6 @@ describe(resolvePullRequest, () => {
 
     const actual = await resolvePullRequest({
       repoDir: "/work/acme/widgets",
-      repo: "acme/widgets",
       pr: "42",
     });
 
@@ -255,24 +254,19 @@ describe(resolvePullRequest, () => {
     });
   });
 
-  it("runs gh pr view in the clone dir with the repo slug", async () => {
+  it("runs gh pr view in the clone dir and lets gh resolve the repo remote", async () => {
     runCommandMock.mockResolvedValue(rawResolved());
 
-    await resolvePullRequest({ repoDir: "/work/acme/widgets", repo: "acme/widgets", pr: "42" });
+    await resolvePullRequest({ repoDir: "/work/acme/widgets", pr: "42" });
 
     expect(runCommandMock).toHaveBeenCalledWith(
       "gh",
-      [
-        "pr",
-        "view",
-        "42",
-        "--repo",
-        "acme/widgets",
-        "--json",
-        "number,headRefName,title,url,state,isCrossRepository",
-      ],
+      ["pr", "view", "42", "--json", "number,headRefName,title,url,state,isCrossRepository"],
       { cwd: "/work/acme/widgets" },
     );
+    expect(runCommandMock).toHaveBeenCalledWith("gh", expect.not.arrayContaining(["--repo"]), {
+      cwd: "/work/acme/widgets",
+    });
   });
 
   it("forwards the AbortSignal alongside cwd when provided", async () => {
@@ -281,7 +275,6 @@ describe(resolvePullRequest, () => {
 
     await resolvePullRequest({
       repoDir: "/work/acme/widgets",
-      repo: "acme/widgets",
       pr: "42",
       signal,
     });
@@ -306,7 +299,6 @@ describe(resolvePullRequest, () => {
 
     const actual = await resolvePullRequest({
       repoDir: "/work/acme/widgets",
-      repo: "acme/widgets",
       pr: "7",
     });
 
@@ -327,7 +319,6 @@ describe(resolvePullRequest, () => {
 
     const actual = await resolvePullRequest({
       repoDir: "/work/acme/widgets",
-      repo: "acme/widgets",
       pr: "9",
     });
 
@@ -337,33 +328,33 @@ describe(resolvePullRequest, () => {
   it("throws a clear error when gh fails", async () => {
     runCommandMock.mockRejectedValue(new Error("gh: command not found"));
 
-    await expect(
-      resolvePullRequest({ repoDir: "/work/acme/widgets", repo: "acme/widgets", pr: "42" }),
-    ).rejects.toThrow(/Could not look up pull request 42 in acme\/widgets/);
+    await expect(resolvePullRequest({ repoDir: "/work/acme/widgets", pr: "42" })).rejects.toThrow(
+      /Could not look up pull request 42 from \/work\/acme\/widgets/,
+    );
   });
 
   it("throws when gh emits non-JSON output", async () => {
     runCommandMock.mockResolvedValue("not json");
 
-    await expect(
-      resolvePullRequest({ repoDir: "/work/acme/widgets", repo: "acme/widgets", pr: "42" }),
-    ).rejects.toThrow(/non-JSON response/);
+    await expect(resolvePullRequest({ repoDir: "/work/acme/widgets", pr: "42" })).rejects.toThrow(
+      /non-JSON response/,
+    );
   });
 
   it("throws when gh emits an unexpected JSON shape", async () => {
     runCommandMock.mockResolvedValue(JSON.stringify({ number: 42 }));
 
-    await expect(
-      resolvePullRequest({ repoDir: "/work/acme/widgets", repo: "acme/widgets", pr: "42" }),
-    ).rejects.toThrow(/Unexpected response shape/);
+    await expect(resolvePullRequest({ repoDir: "/work/acme/widgets", pr: "42" })).rejects.toThrow(
+      /Unexpected response shape/,
+    );
   });
 
   it("throws when gh emits a non-object JSON value", async () => {
     runCommandMock.mockResolvedValue("null");
 
-    await expect(
-      resolvePullRequest({ repoDir: "/work/acme/widgets", repo: "acme/widgets", pr: "42" }),
-    ).rejects.toThrow(/Unexpected response shape/);
+    await expect(resolvePullRequest({ repoDir: "/work/acme/widgets", pr: "42" })).rejects.toThrow(
+      /Unexpected response shape/,
+    );
   });
 
   it("forwards a lowercased unknown state verbatim", async () => {
@@ -380,7 +371,6 @@ describe(resolvePullRequest, () => {
 
     const actual = await resolvePullRequest({
       repoDir: "/work/acme/widgets",
-      repo: "acme/widgets",
       pr: "3",
     });
 

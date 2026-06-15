@@ -15,6 +15,7 @@ import {
 import { errorMessage, withLogOutputSuppressed, writeOutput } from "../lib/util.ts";
 import { type WorkspaceAccessHint, type WorkspaceProbe, workspaces } from "../lib/workspaces.ts";
 import { type WorktreeDirtiness, worktrees } from "../lib/worktrees.ts";
+import { effectiveBranchNameFromRunState } from "../lib/worktreeRunState.ts";
 
 export interface StatusOptions {
   task?: string;
@@ -51,19 +52,6 @@ function formatDirtiness(dirtiness: WorktreeDirtiness): string {
   return dirtiness.kind;
 }
 
-/**
- * The branch to display and look PRs up by. Worktree discovery derives the
- * branch from the task id, but `crew open` checks out an existing PR branch
- * that diverges from that convention; run state records the real branch, so
- * prefer it for the matching repository.
- */
-function effectiveBranchName(
-  entry: { repository: string; branchName: string },
-  runState: RunState | undefined,
-): string {
-  return runState?.repository === entry.repository ? runState.branchName : entry.branchName;
-}
-
 async function writeTaskWorktrees(config: ResolvedConfig, task: string): Promise<void> {
   writeSection("Worktrees");
   const entries = worktrees.findByTask(config, task);
@@ -73,7 +61,7 @@ async function writeTaskWorktrees(config: ResolvedConfig, task: string): Promise
   }
   const runState = readRunState(config, task);
   for (const entry of entries) {
-    const branchName = effectiveBranchName(entry, runState);
+    const branchName = effectiveBranchNameFromRunState({ entry, runState });
     // oxlint-disable-next-line no-await-in-loop -- status output is easier to read in worktree order.
     const dirtiness = await worktrees.probeWorkingTree({
       worktreeDir: entry.dir,
@@ -428,7 +416,10 @@ async function writeInventoryWorktrees(
   const pullRequests = await collectPullRequests(
     entries.map((entry) => ({
       dir: entry.dir,
-      branchName: effectiveBranchName(entry, runStates.get(entry.task)),
+      branchName: effectiveBranchNameFromRunState({
+        entry,
+        runState: runStates.get(entry.task),
+      }),
     })),
   );
   const now = new Date();

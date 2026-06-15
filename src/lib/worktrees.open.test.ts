@@ -6,6 +6,7 @@ import path from "node:path";
 
 import type { RunCommandOptions } from "./commandRunner.ts";
 import type { ResolvedConfig } from "./config.ts";
+import { recordRunState } from "./runState.ts";
 import { setVerbose } from "./util.ts";
 import { worktrees } from "./worktrees.ts";
 
@@ -156,6 +157,51 @@ describe(open, () => {
     expect(runCommandMock).toHaveBeenCalledWith(
       "git",
       ["-C", path.join(projectDir, "repo-a"), "worktree", "remove", "--force", entry.dir],
+      { stdio: "captured", timeoutMs: 0 },
+    );
+    expect(runCommandMock).not.toHaveBeenCalledWith(
+      "git",
+      expect.arrayContaining(["branch", "-D"]),
+    );
+  });
+
+  it("never force-deletes a rediscovered adopted branch recorded in run state", async () => {
+    mkdirSync(path.join(projectDir, "repo-a"));
+    const worktreeDir = path.join(projectDir, "repo-a-pr-1234");
+    mkdirSync(worktreeDir);
+    const config = {
+      ...makeConfig({ projectDir }),
+      logging: { file: path.join(projectDir, "groundcrew.log") },
+    };
+    recordRunState({
+      config,
+      state: {
+        task: "pr-1234",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir,
+        branchName: "feature/auth",
+        workspaceName: "pr-1234",
+        state: "running",
+        adoptedBranch: true,
+      },
+    });
+
+    await remove(
+      config,
+      {
+        repository: "repo-a",
+        task: "pr-1234",
+        branchName: "dev-pr-1234",
+        dir: worktreeDir,
+        kind: "host",
+      },
+      { force: true },
+    );
+
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "git",
+      ["-C", path.join(projectDir, "repo-a"), "worktree", "remove", "--force", worktreeDir],
       { stdio: "captured", timeoutMs: 0 },
     );
     expect(runCommandMock).not.toHaveBeenCalledWith(

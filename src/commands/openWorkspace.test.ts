@@ -186,6 +186,17 @@ function makeConfig(): ResolvedConfig {
   };
 }
 
+function makeConfigWithRepositories(repositories: readonly string[]): ResolvedConfig {
+  return {
+    ...makeConfig(),
+    workspace: {
+      projectDir: "/work",
+      knownRepositories: [...repositories],
+      repositories: repositories.map((name) => ({ name })),
+    },
+  };
+}
+
 function openedWorktree(): WorktreeEntry {
   return {
     repository: "acme/widgets",
@@ -209,10 +220,9 @@ describe(parseOpenWorkspaceArgs, () => {
     });
   });
 
-  it("infers the repo from a PR URL", () => {
+  it("keeps the URL repo as a hint for config-aware resolution", () => {
     expect(parseOpenWorkspaceArgs(["https://github.com/acme/widgets/pull/42"])).toStrictEqual({
-      input: { kind: "pr", pr: "42" },
-      repository: "acme/widgets",
+      input: { kind: "pr", pr: "42", repositoryHint: "acme/widgets" },
       dryRun: false,
     });
   });
@@ -225,6 +235,11 @@ describe(parseOpenWorkspaceArgs, () => {
     ]);
 
     expect(actual.repository).toBe("acme/other");
+    expect(actual.input).toStrictEqual({
+      kind: "pr",
+      pr: "42",
+      repositoryHint: "acme/widgets",
+    });
   });
 
   it("parses a --branch with repo, agent, prompt, task, and dry-run", () => {
@@ -393,6 +408,86 @@ describe(openWorkspace, () => {
       title: "Fix the thing",
       url: "https://github.com/acme/widgets/pull/42",
     });
+  });
+
+  it("resolves a PR URL to a unique bare known repository", async () => {
+    const configWithBareRepository = makeConfigWithRepositories(["widgets"]);
+    worktreeOpenMock.mockResolvedValue({
+      repository: "widgets",
+      task: "pr-42",
+      branchName: "jdoe/fix-thing",
+      dir: "/work/widgets-pr-42",
+      kind: "host",
+    });
+
+    await openWorkspace(configWithBareRepository, {
+      input: { kind: "pr", pr: "42", repositoryHint: "acme/widgets" },
+    });
+
+    expect(resolvePullRequestMock).toHaveBeenCalledWith({
+      repoDir: "/work/widgets",
+      pr: "42",
+    });
+    expect(worktreeOpenMock).toHaveBeenCalledWith(configWithBareRepository, {
+      repository: "widgets",
+      task: "pr-42",
+      branch: "jdoe/fix-thing",
+    });
+    expect(lastRecordedRunState()).toMatchObject({
+      repository: "widgets",
+      branchName: "jdoe/fix-thing",
+    });
+  });
+
+  it("resolves an exact PR URL repository hint before matching by repo name", async () => {
+    const configWithDuplicateRepoNames = makeConfigWithRepositories([
+      "acme/widgets",
+      "beta/widgets",
+    ]);
+
+    await openWorkspace(configWithDuplicateRepoNames, {
+      input: { kind: "pr", pr: "42", repositoryHint: "ACME/widgets" },
+    });
+
+    expect(resolvePullRequestMock).toHaveBeenCalledWith({
+      repoDir: "/work/acme/widgets",
+      pr: "42",
+    });
+    expect(worktreeOpenMock).toHaveBeenCalledWith(configWithDuplicateRepoNames, {
+      repository: "acme/widgets",
+      task: "pr-42",
+      branch: "jdoe/fix-thing",
+    });
+  });
+
+  it("rejects an ambiguous PR URL repo hint", async () => {
+    const configWithAmbiguousRepository = makeConfigWithRepositories([
+      "acme/widgets",
+      "beta/widgets",
+    ]);
+
+    await expect(
+      openWorkspace(configWithAmbiguousRepository, {
+        input: { kind: "pr", pr: "42", repositoryHint: "github/widgets" },
+      }),
+    ).rejects.toThrow(/matches multiple configured repositories/);
+    expect(resolvePullRequestMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a PR URL repo hint that matches no configured repository", async () => {
+    await expect(
+      openWorkspace(config, {
+        input: { kind: "pr", pr: "42", repositoryHint: "ghost/other" },
+      }),
+    ).rejects.toThrow(/does not match workspace\.knownRepositories/);
+    expect(resolvePullRequestMock).not.toHaveBeenCalled();
+  });
+
+  it("requires a repository for programmatic PR opens without a URL hint", async () => {
+    await expect(openWorkspace(config, { input: { kind: "pr", pr: "42" } })).rejects.toThrow(
+      /--repo <owner\/repo> is required/,
+    );
+    expect(resolvePullRequestMock).not.toHaveBeenCalled();
   });
 
   it("passes the prompt to the agent when one is given", async () => {
@@ -624,6 +719,26 @@ describe(openWorkspaceCli, () => {
     expect(loadConfigMock).toHaveBeenCalledTimes(1);
     expect(worktreeOpenMock).toHaveBeenCalledWith(config, {
       repository: "acme/widgets",
+      task: "pr-42",
+      branch: "jdoe/fix-thing",
+    });
+  });
+
+  it("loads config and opens a PR URL for a bare configured repository", async () => {
+    const configWithBareRepository = makeConfigWithRepositories(["widgets"]);
+    loadConfigMock.mockResolvedValue(configWithBareRepository);
+    worktreeOpenMock.mockResolvedValue({
+      repository: "widgets",
+      task: "pr-42",
+      branchName: "jdoe/fix-thing",
+      dir: "/work/widgets-pr-42",
+      kind: "host",
+    });
+
+    await openWorkspaceCli(["https://github.com/acme/widgets/pull/42"]);
+
+    expect(worktreeOpenMock).toHaveBeenCalledWith(configWithBareRepository, {
+      repository: "widgets",
       task: "pr-42",
       branch: "jdoe/fix-thing",
     });

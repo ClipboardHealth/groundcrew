@@ -7,6 +7,7 @@ import { createTodoTxtTaskSource } from "../lib/adapters/todo-txt/source.ts";
 import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { findPullRequestsForBranch, type PullRequestSummary } from "../lib/pullRequests.ts";
+import { recordRunState } from "../lib/runState.ts";
 import { naturalIdFromCanonical, type TaskSource, type Issue } from "../lib/taskSource.ts";
 import { worktrees, type WorktreeEntry } from "../lib/worktrees.ts";
 import { captureConsoleLog } from "../testHelpers/consoleCapture.ts";
@@ -781,6 +782,49 @@ describe("crew task done", () => {
 
     await taskCli(["done", "todo:GC-1"]);
 
+    expect(markDone).toHaveBeenCalledWith(issue);
+  });
+
+  it("checks the recorded adopted branch for a rediscovered dirty worktree", async () => {
+    const stateRoot = mkdtempSync(path.join(tmpdir(), "groundcrew-task-run-state-"));
+    const config = {
+      ...makeConfig(),
+      logging: { file: path.join(stateRoot, "groundcrew.log") },
+    };
+    loadConfigMock.mockResolvedValue(config);
+    const issue = makeIssue({ id: "todo:gc-1", status: "in-progress" });
+    const markDone = vi.fn<NonNullable<TaskSource["markDone"]>>().mockResolvedValue({
+      outcome: "applied",
+    });
+    buildSourcesMock.mockResolvedValue([stubSource("todo", [issue], { markDone })]);
+    const entry = hostEntryFor("gc-1", { branchName: "dev-gc-1" });
+    findWorktreesByTaskMock.mockReturnValue([entry]);
+    probeWorkingTreeMock.mockResolvedValue({ kind: "dirty", modified: 1, untracked: 0 });
+    findPullRequestsForBranchMock.mockResolvedValue([pullRequest()]);
+    recordRunState({
+      config,
+      state: {
+        task: "gc-1",
+        repository: "ClipboardHealth/api",
+        agent: "codex",
+        worktreeDir: entry.dir,
+        branchName: "jdoe/fix-thing",
+        workspaceName: "gc-1",
+        state: "running",
+        adoptedBranch: true,
+      },
+    });
+
+    try {
+      await taskCli(["done", "todo:GC-1"]);
+    } finally {
+      rmSync(stateRoot, { recursive: true, force: true });
+    }
+
+    expect(findPullRequestsForBranchMock).toHaveBeenCalledWith({
+      cwd: "/work/ClipboardHealth/api-gc-1",
+      branchName: "jdoe/fix-thing",
+    });
     expect(markDone).toHaveBeenCalledWith(issue);
   });
 

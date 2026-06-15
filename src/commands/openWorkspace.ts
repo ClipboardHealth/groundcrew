@@ -19,6 +19,7 @@ import { resolveLaunchDir, type WorktreeEntry, worktrees } from "../lib/worktree
 interface PullRequestInput {
   kind: "pr";
   pr: string;
+  repositoryHint?: string;
 }
 
 interface BranchInput {
@@ -28,7 +29,7 @@ interface BranchInput {
 
 export interface OpenWorkspaceOptions {
   input: PullRequestInput | BranchInput;
-  repository: string;
+  repository?: string;
   agent?: string;
   /** Resolved prompt text; when undefined the agent opens interactively. */
   promptText?: string;
@@ -74,6 +75,50 @@ function assertKnownRepository(config: ResolvedConfig, repository: string): void
   }
 }
 
+function repositoryBasename(repository: string): string {
+  const lastSlash = repository.lastIndexOf("/");
+  return lastSlash === -1 ? repository : repository.slice(lastSlash + 1);
+}
+
+function resolveRepositoryHint(config: ResolvedConfig, repositoryHint: string): string {
+  const normalizedHint = repositoryHint.toLowerCase();
+  const exactMatches = config.workspace.knownRepositories.filter(
+    (repository) => repository.toLowerCase() === normalizedHint,
+  );
+  const [exactMatch] = exactMatches;
+  if (exactMatches.length === 1 && exactMatch !== undefined) {
+    return exactMatch;
+  }
+
+  const basename = repositoryBasename(repositoryHint).toLowerCase();
+  const basenameMatches = config.workspace.knownRepositories.filter(
+    (repository) => repositoryBasename(repository).toLowerCase() === basename,
+  );
+  const [basenameMatch] = basenameMatches;
+  if (basenameMatches.length === 1 && basenameMatch !== undefined) {
+    return basenameMatch;
+  }
+  if (basenameMatches.length > 1) {
+    throw new Error(
+      `Repository hint "${repositoryHint}" matches multiple configured repositories: ${basenameMatches.join(", ")}. Pass --repo <name> to choose one.`,
+    );
+  }
+  throw new Error(
+    `Repository hint "${repositoryHint}" does not match workspace.knownRepositories: ${config.workspace.knownRepositories.join(", ")}. Pass --repo <name> to choose one.`,
+  );
+}
+
+function resolveOpenRepository(config: ResolvedConfig, options: OpenWorkspaceOptions): string {
+  if (options.repository !== undefined) {
+    assertKnownRepository(config, options.repository);
+    return options.repository;
+  }
+  if (options.input.kind === "pr" && options.input.repositoryHint !== undefined) {
+    return resolveRepositoryHint(config, options.input.repositoryHint);
+  }
+  throw new Error(`crew open: --repo <owner/repo> is required\n${OPEN_USAGE}`);
+}
+
 function failIfAlreadyTracked(config: ResolvedConfig, task: string, repository: string): void {
   const hasWorktree = worktrees
     .findByTask(config, task)
@@ -95,6 +140,7 @@ interface ResolvedTarget {
 async function resolveTarget(
   config: ResolvedConfig,
   options: OpenWorkspaceOptions,
+  repository: string,
 ): Promise<ResolvedTarget> {
   if (options.input.kind === "branch") {
     const { branch } = options.input;
@@ -105,13 +151,12 @@ async function resolveTarget(
     };
   }
   const pullRequest = await resolvePullRequest({
-    repoDir: repositoryCloneDir(config, options.repository),
-    repo: options.repository,
+    repoDir: repositoryCloneDir(config, repository),
     pr: options.input.pr,
   });
   if (pullRequest.isCrossRepository) {
     throw new Error(
-      `PR #${pullRequest.number} is from a fork (cross-repository); crew open cannot fetch fork branches. Check the branch out locally, then run crew open --branch <name> --repo ${options.repository}.`,
+      `PR #${pullRequest.number} is from a fork (cross-repository); crew open cannot fetch fork branches. Check the branch out locally, then run crew open --branch <name> --repo ${repository}.`,
     );
   }
   return {
@@ -151,15 +196,15 @@ export async function openWorkspace(
   config: ResolvedConfig,
   options: OpenWorkspaceOptions,
 ): Promise<void> {
-  assertKnownRepository(config, options.repository);
-  const repoDir = repositoryCloneDir(config, options.repository);
+  const repository = resolveOpenRepository(config, options);
+  const repoDir = repositoryCloneDir(config, repository);
   if (!existsSync(repoDir)) {
     throw new Error(`Repository not found: ${repoDir}`);
   }
 
-  const target = await resolveTarget(config, options);
+  const target = await resolveTarget(config, options, repository);
   await failIfWorkspaceAlreadyLive(config, target.task, "opening");
-  failIfAlreadyTracked(config, target.task, options.repository);
+  failIfAlreadyTracked(config, target.task, repository);
 
   const agent = options.agent ?? config.agents.default;
   const definition = config.agents.definitions[agent];
@@ -169,7 +214,7 @@ export async function openWorkspace(
 
   if (options.dryRun === true) {
     log(
-      `[dry-run] Would open ${target.task} on branch ${target.branch} in ${options.repository} (${agent})`,
+      `[dry-run] Would open ${target.task} on branch ${target.branch} in ${repository} (${agent})`,
     );
     return;
   }
@@ -183,11 +228,11 @@ export async function openWorkspace(
   await ensureReady();
 
   const created = await worktrees.open(config, {
-    repository: options.repository,
+    repository,
     task: target.task,
     branch: target.branch,
   });
-  const launchDir = resolveLaunchDir(config, options.repository, created.dir);
+  const launchDir = resolveLaunchDir(config, repository, created.dir);
 
   const omitPromptArgument = options.promptText === undefined;
   const stagedPrompt = stagePromptText({
@@ -235,13 +280,14 @@ export async function openWorkspace(
     config,
     state: {
       task: target.task,
-      repository: options.repository,
+      repository,
       agent,
       worktreeDir: created.dir,
       branchName: target.branch,
       workspaceName: target.task,
       state: "running",
       title: target.title,
+      adoptedBranch: true,
       ...(target.url === undefined ? {} : { url: target.url }),
     },
   });
@@ -375,13 +421,20 @@ function toOpenWorkspaceOptions(parsed: ParsedArguments): OpenWorkspaceOptions {
     throw new Error(`crew open: a PR (number or URL) or --branch is required\n${OPEN_USAGE}`);
   }
   const reference = parsePullRequestReference(parsed.positional);
-  const repository = parsed.repository ?? reference.repository;
-  if (repository === undefined) {
+  if (parsed.repository === undefined && reference.repository === undefined) {
     throw new Error(
       `crew open: --repo <owner/repo> is required when the PR is given by number\n${OPEN_USAGE}`,
     );
   }
-  return { input: { kind: "pr", pr: reference.pr }, repository, ...common };
+  return {
+    input: {
+      kind: "pr",
+      pr: reference.pr,
+      ...(reference.repository === undefined ? {} : { repositoryHint: reference.repository }),
+    },
+    ...(parsed.repository === undefined ? {} : { repository: parsed.repository }),
+    ...common,
+  };
 }
 
 export function parseOpenWorkspaceArgs(argv: string[]): OpenWorkspaceOptions {

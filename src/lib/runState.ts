@@ -37,6 +37,11 @@ export interface RunState {
    * resumed workers keep the same completion target as the original launch.
    */
   completionTaskId?: string;
+  /**
+   * True when the branch was adopted from an existing local/remote branch
+   * rather than created by groundcrew. Teardown must preserve such branches.
+   */
+  adoptedBranch?: boolean;
 }
 
 export interface RunStateDraft {
@@ -53,6 +58,7 @@ export interface RunStateDraft {
   title?: string;
   url?: string;
   completionTaskId?: string;
+  adoptedBranch?: boolean;
 }
 
 export interface RecordRunStateInput {
@@ -104,6 +110,10 @@ function isRunLifecycleState(value: unknown): value is RunLifecycleState {
   );
 }
 
+function isValidResumeCount(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
 function parseRunState(value: unknown): RunState | undefined {
   if (!isPlainObject(value)) {
     return undefined;
@@ -122,6 +132,7 @@ function parseRunState(value: unknown): RunState | undefined {
   const title = stringField(value, "title");
   const url = stringField(value, "url");
   const completionTaskId = stringField(value, "completionTaskId");
+  const adoptedBranch = value["adoptedBranch"] === true ? true : undefined;
   if (
     task === undefined ||
     repository === undefined ||
@@ -132,9 +143,7 @@ function parseRunState(value: unknown): RunState | undefined {
     !isRunLifecycleState(state) ||
     createdAt === undefined ||
     updatedAt === undefined ||
-    typeof resumeCount !== "number" ||
-    !Number.isInteger(resumeCount) ||
-    resumeCount < 0
+    !isValidResumeCount(resumeCount)
   ) {
     return undefined;
   }
@@ -154,6 +163,7 @@ function parseRunState(value: unknown): RunState | undefined {
     ...(title === undefined ? {} : { title }),
     ...(url === undefined ? {} : { url }),
     ...(completionTaskId === undefined ? {} : { completionTaskId }),
+    ...(adoptedBranch === undefined ? {} : { adoptedBranch }),
   };
 }
 
@@ -188,6 +198,7 @@ export function recordRunState(input: RecordRunStateInput): RunState {
   const title = input.state.title ?? existing?.title;
   const url = input.state.url ?? existing?.url;
   const completionTaskId = input.state.completionTaskId ?? existing?.completionTaskId;
+  const adoptedBranch = input.state.adoptedBranch ?? existing?.adoptedBranch;
   const state: RunState = {
     task: taskKey(input.state.task),
     repository: input.state.repository,
@@ -204,6 +215,7 @@ export function recordRunState(input: RecordRunStateInput): RunState {
     ...(title === undefined ? {} : { title }),
     ...(url === undefined ? {} : { url }),
     ...(completionTaskId === undefined ? {} : { completionTaskId }),
+    ...(adoptedBranch === undefined ? {} : { adoptedBranch }),
   };
   writeState(input.config, state);
   return state;
