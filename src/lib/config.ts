@@ -196,6 +196,14 @@ export interface KnownRepository {
    * is unchanged. Relative, no `..`.
    */
   workdir?: string;
+  /**
+   * Per-repo operator hooks, reusing the same `HookCommands` shape that
+   * `defaults.hooks` and the in-repo `.groundcrew/config.json` use. Slots
+   * between the repo-committed file (wins) and `defaults.hooks` (fallback) in
+   * the `prepareWorktree` cascade, so an operator can set the hook for a repo
+   * they don't want to (or can't) commit a `.groundcrew/config.json` into.
+   */
+  hooks?: HookCommands;
 }
 
 export interface Config {
@@ -485,6 +493,10 @@ function rethrowWithConfigPath({ error, filepath }: ConfigErrorContext): never {
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 
 function requireString(value: unknown, configKey: string): asserts value is string {
@@ -894,6 +906,11 @@ function normalizeSources(raw: unknown): SourceConfig[] {
           ? { tasksDir: expandHome(entry["tasksDir"]) }
           : {}),
       });
+    } else if (kind === "shell" && isStringArray(entry["sandboxWritePaths"])) {
+      expanded.push({
+        ...entry,
+        sandboxWritePaths: entry["sandboxWritePaths"].map((value) => expandHome(value)),
+      });
     } else {
       expanded.push(entry);
     }
@@ -933,6 +950,9 @@ function normalizeKnownRepository(entry: string | KnownRepository, index: number
   const workdir = normalizeOptionalString(entry.workdir, `${label}.workdir`);
   if (workdir !== undefined) {
     recipe.workdir = workdir;
+  }
+  if (entry.hooks !== undefined) {
+    recipe.hooks = normalizeHookCommands(entry.hooks, `${label}.hooks`);
   }
   return recipe;
 }

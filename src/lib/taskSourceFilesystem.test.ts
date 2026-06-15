@@ -1,4 +1,5 @@
 import { taskSourceWritePathsForCompletion } from "./taskSourceFilesystem.ts";
+import type { ShellAdapterConfig } from "./adapters/shell/schema.ts";
 import type { TodoTxtAdapterConfig } from "./adapters/todo-txt/schema.ts";
 import type { ResolvedConfig } from "./config.ts";
 
@@ -14,6 +15,16 @@ function todoSource(overrides: Partial<TodoTxtAdapterConfig> = {}): TodoTxtAdapt
     tasksDir: ".tasks",
     idPrefix: "GC",
     timezone: "UTC",
+    ...overrides,
+  };
+}
+
+function shellSource(overrides: Partial<ShellAdapterConfig> = {}): ShellAdapterConfig {
+  return {
+    kind: "shell",
+    name: "plankeeper",
+    commands: { listTasks: "./list.sh" },
+    sandboxWritePaths: ["/Users/rocky/plans"],
     ...overrides,
   };
 }
@@ -87,5 +98,63 @@ describe(taskSourceWritePathsForCompletion, () => {
     });
 
     expect(actual).toStrictEqual([]);
+  });
+});
+
+describe("taskSourceWritePathsForCompletion (shell sources)", () => {
+  it("grants a shell source's sandboxWritePaths for a matching task id", () => {
+    const actual = taskSourceWritePathsForCompletion({
+      config: configWithSources([shellSource()]),
+      taskId: "plankeeper:PLN-1",
+      workingDir: "/work/repo-a-team-1",
+    });
+
+    expect(actual).toStrictEqual(["/Users/rocky/plans"]);
+  });
+
+  it("resolves relative sandboxWritePaths against the worker cwd", () => {
+    const actual = taskSourceWritePathsForCompletion({
+      config: configWithSources([shellSource({ sandboxWritePaths: ["plans"] })]),
+      taskId: "plankeeper:PLN-1",
+      workingDir: "/work/repo-a-team-1",
+    });
+
+    expect(actual).toStrictEqual(["/work/repo-a-team-1/plans"]);
+  });
+
+  it("returns nothing for a shell source with no sandboxWritePaths", () => {
+    const source = shellSource();
+    Reflect.deleteProperty(source, "sandboxWritePaths");
+
+    const actual = taskSourceWritePathsForCompletion({
+      config: configWithSources([source]),
+      taskId: "plankeeper:PLN-1",
+      workingDir: "/work/repo-a-team-1",
+    });
+
+    expect(actual).toStrictEqual([]);
+  });
+
+  it("does not grant a shell source's paths to a different source's task", () => {
+    const actual = taskSourceWritePathsForCompletion({
+      config: configWithSources([shellSource({ name: "plankeeper" })]),
+      taskId: "todo:gc-1",
+      workingDir: "/work/repo-a-team-1",
+    });
+
+    expect(actual).toStrictEqual([]);
+  });
+
+  it("grants every shell source's paths when the task id is not source-qualified", () => {
+    const actual = taskSourceWritePathsForCompletion({
+      config: configWithSources([
+        shellSource({ name: "plankeeper", sandboxWritePaths: ["/plans/a"] }),
+        shellSource({ name: "jira", sandboxWritePaths: ["/plans/b"] }),
+      ]),
+      taskId: "gc-1",
+      workingDir: "/work/repo-a-team-1",
+    });
+
+    expect(actual).toStrictEqual(["/plans/a", "/plans/b"]);
   });
 });

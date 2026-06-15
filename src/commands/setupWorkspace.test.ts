@@ -807,6 +807,98 @@ describe(setupWorkspace, () => {
     expect(launchScript).toContain('"$prepare_status" -ne 0');
   });
 
+  it("runs the per-repo operator prepareWorktree hook when defaults define none", async () => {
+    detectHostMock.mockResolvedValue(host());
+    const base = makeConfig({
+      definitions: {
+        claude: {
+          cmd: "claude --permission-mode auto",
+          color: "#fff",
+        },
+      },
+    });
+    const config: ResolvedConfig = {
+      ...base,
+      workspace: {
+        ...base.workspace,
+        repositories: [{ name: "repo-a", hooks: { prepareWorktree: "make per-repo-setup" } }],
+      },
+    };
+    mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
+
+    await setupWorkspace(config, {
+      task: "team-1",
+      repository: "repo-a",
+      agent: "claude",
+      details: { title: "Test Title", description: "Body" },
+    });
+
+    const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
+    expect(launchScript).toContain("make per-repo-setup");
+  });
+
+  it("prefers the per-repo operator hook over the crew config default", async () => {
+    detectHostMock.mockResolvedValue(host());
+    const base = makeConfig({
+      definitions: {
+        claude: {
+          cmd: "claude --permission-mode auto",
+          color: "#fff",
+        },
+      },
+    });
+    const config: ResolvedConfig = {
+      ...base,
+      defaults: { hooks: { prepareWorktree: "npm ci" } },
+      workspace: {
+        ...base.workspace,
+        repositories: [{ name: "repo-a", hooks: { prepareWorktree: "make per-repo-setup" } }],
+      },
+    };
+    mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
+
+    await setupWorkspace(config, {
+      task: "team-1",
+      repository: "repo-a",
+      agent: "claude",
+      details: { title: "Test Title", description: "Body" },
+    });
+
+    const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
+    expect(launchScript).toContain("make per-repo-setup");
+    expect(launchScript).not.toContain("npm ci");
+  });
+
+  it("falls back to the crew config default when the matched repo entry has no hooks", async () => {
+    detectHostMock.mockResolvedValue(host());
+    const base = makeConfig({
+      definitions: {
+        claude: {
+          cmd: "claude --permission-mode auto",
+          color: "#fff",
+        },
+      },
+    });
+    const config: ResolvedConfig = {
+      ...base,
+      defaults: { hooks: { prepareWorktree: "npm ci" } },
+      // The matched entry exists but carries no `hooks`, so the per-repo layer
+      // is skipped and the global default fires.
+      workspace: { ...base.workspace, repositories: [{ name: "repo-a" }] },
+    };
+    mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
+
+    await setupWorkspace(config, {
+      task: "team-1",
+      repository: "repo-a",
+      agent: "claude",
+      details: { title: "Test Title", description: "Body" },
+    });
+
+    const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
+    expect(launchScript).toContain("npm ci");
+  });
+
   it("passes groundcrew's bundled clearance allowlist to Safehouse without requiring an export", async () => {
     vi.stubEnv("CLEARANCE_ALLOW_HOSTS_FILES", "");
     detectHostMock.mockResolvedValue(host());
