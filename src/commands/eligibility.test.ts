@@ -316,7 +316,6 @@ describe(classifyEligibility, () => {
 
       expect(verdicts[0]).toMatchObject({ kind: "skip", eventReason: "workspace_missing" });
       // The suggested `crew cleanup` command must use the natural id so it is actually runnable.
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- verdict kind is asserted above
       const { message } = verdicts[0] as SkipVerdict;
       expect(message).toMatch(/crew cleanup team-1/);
     });
