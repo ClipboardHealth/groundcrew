@@ -9,7 +9,7 @@ import type { ResolvedConfig } from "./config.ts";
 import { setVerbose } from "./util.ts";
 import { worktrees } from "./worktrees.ts";
 
-const { open } = worktrees;
+const { open, remove } = worktrees;
 
 type NodeOsMock = Omit<typeof nodeOs, "userInfo"> & {
   userInfo: ReturnType<typeof vi.fn<typeof userInfo>>;
@@ -135,7 +135,33 @@ describe(open, () => {
       branchName: "feature/auth",
       dir: path.join(projectDir, "repo-a-pr-1234"),
       kind: "host",
+      adoptedBranch: true,
     });
+  });
+
+  it("never force-deletes the adopted branch when its worktree is removed", async () => {
+    mkdirSync(path.join(projectDir, "repo-a"));
+    const config = makeConfig({ projectDir });
+
+    const entry = await open(config, {
+      repository: "repo-a",
+      task: "pr-1234",
+      branch: "feature/auth",
+    });
+    mkdirSync(entry.dir);
+    runCommandMock.mockClear();
+
+    await remove(config, entry, { force: true });
+
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "git",
+      ["-C", path.join(projectDir, "repo-a"), "worktree", "remove", "--force", entry.dir],
+      { stdio: "captured", timeoutMs: 0 },
+    );
+    expect(runCommandMock).not.toHaveBeenCalledWith(
+      "git",
+      expect.arrayContaining(["branch", "-D"]),
+    );
   });
 
   it("fetches the remote branch and creates a tracking branch when not local", async () => {

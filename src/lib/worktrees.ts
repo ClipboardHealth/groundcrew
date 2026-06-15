@@ -48,10 +48,16 @@ export interface WorktreeEntry {
   repository: string;
   /** Source task id, lowercased — e.g. "team-220" or "gc-20260608-001". */
   task: string;
-  /** Slash-free `<prefix>-<task>`. */
+  /** Slash-free `<prefix>-<task>`, except when `adoptedBranch` is true. */
   branchName: string;
   dir: string;
   kind: WorktreeKind;
+  /**
+   * True when `branchName` is a pre-existing branch groundcrew checked out but
+   * did not create (e.g. an open PR via `crew open`). Such a branch must never
+   * be deleted on teardown — doing so would destroy the user's local branch.
+   */
+  adoptedBranch?: boolean;
 }
 
 export interface WorktreeSpec {
@@ -275,6 +281,7 @@ function hostWorktreeEntry(arguments_: {
   task: string;
   branchName: string;
   dir: string;
+  adoptedBranch?: boolean;
 }): WorktreeEntry {
   return { ...arguments_, kind: "host" };
 }
@@ -404,6 +411,7 @@ async function openWorktree(
     task: spec.task,
     branchName: spec.branch,
     dir: base.hostWorktreeDir,
+    adoptedBranch: true,
   });
 }
 
@@ -525,6 +533,10 @@ async function removeWorktree(
   } else {
     debug(`Worktree directory ${entry.dir} not found, pruning stale refs...`);
     await runLongGitCommand(["-C", repoDir, "worktree", "prune"], options.signal);
+  }
+  if (entry.adoptedBranch === true) {
+    debug(`Preserving adopted branch ${entry.branchName} (not groundcrew-created).`);
+    return;
   }
   await deleteBranchBestEffort({
     cmd: "git",
