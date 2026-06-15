@@ -207,7 +207,7 @@ function signalProperty(signal?: AbortSignal): { signal: AbortSignal } | Record<
 
 function parseWorktreeDirectoryName(
   directoryName: string,
-  repositoryEntriesByLongestName: readonly (readonly [string, string])[],
+  repositoryEntriesByLongestName: ReadonlyArray<readonly [string, string]>,
 ): { repository: string; task: string } | undefined {
   // Match the longest repository basename first so overlapping names like
   // "repo-a" and "repo-a-admin" parse to the intended repository.

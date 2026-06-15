@@ -79,7 +79,6 @@ vi.mock(import("../lib/commandRunner.ts"), async (importOriginal) => {
   return {
     ...actual,
     runCommand: runCommandMock,
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- test mock intentionally shares one recorder across sync and async command APIs.
     runCommandAsync: runCommandMock as unknown as typeof actual.runCommandAsync,
   };
 });
@@ -568,11 +567,9 @@ describe(setupWorkspace, () => {
     });
 
     const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- staged settings are SandboxRuntimeConfig JSON
     const agent = JSON.parse(
       writtenFileContent("/tmp/groundcrew-team-1-x/agent-settings.json"),
     ) as SandboxRuntimeConfig;
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- staged settings are SandboxRuntimeConfig JSON
     const prepare = JSON.parse(
       writtenFileContent("/tmp/groundcrew-team-1-x/prepare-settings.json"),
     ) as SandboxRuntimeConfig;
