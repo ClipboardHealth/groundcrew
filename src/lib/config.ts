@@ -487,6 +487,10 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
 }
 
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
 function requireString(value: unknown, configKey: string): asserts value is string {
   if (!isNonEmptyString(value)) {
     fail(`${configKey} must be a non-empty string (got ${JSON.stringify(value)})`);
@@ -894,13 +898,10 @@ function normalizeSources(raw: unknown): SourceConfig[] {
           ? { tasksDir: expandHome(entry["tasksDir"]) }
           : {}),
       });
-    } else if (kind === "shell" && Array.isArray(entry["sandboxWritePaths"])) {
-      const rawPaths: unknown[] = entry["sandboxWritePaths"];
+    } else if (kind === "shell" && isStringArray(entry["sandboxWritePaths"])) {
       expanded.push({
         ...entry,
-        sandboxWritePaths: rawPaths.map((value) =>
-          typeof value === "string" ? expandHome(value) : value,
-        ),
+        sandboxWritePaths: entry["sandboxWritePaths"].map((value) => expandHome(value)),
       });
     } else {
       expanded.push(entry);

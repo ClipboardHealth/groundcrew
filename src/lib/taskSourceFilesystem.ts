@@ -38,10 +38,9 @@ export function taskSourceWritePathsForCompletion(input: {
       continue;
     }
 
-    // The runtime default name is the source's `kind` (e.g. shell), except the
-    // canonical todo source, which defaults to "todo".
-    const sourceName =
-      selector.name ?? (selector.kind === "todo-txt" ? DEFAULT_TODO_SOURCE_NAME : selector.kind);
+    // Only the canonical task-list source has an implicit default name; shell
+    // sources carry a schema-required name, so the fallback never applies there.
+    const sourceName = selector.name ?? DEFAULT_TODO_SOURCE_NAME;
     if (targetSourceName !== undefined && sourceName !== targetSourceName) {
       continue;
     }
