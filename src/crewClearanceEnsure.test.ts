@@ -1,7 +1,9 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-const CLEARANCE_CLI_PATH = fileURLToPath(new URL("../bin/clearanceCli.js", import.meta.url));
+const CREW_CLEARANCE_ENSURE_PATH = fileURLToPath(
+  new URL("../bin/crewClearanceEnsure.js", import.meta.url),
+);
 
 // Clearance's `ensure` entrypoint probes its fixed port (127.0.0.1:19999) and
 // then, with no allowlist configured, throws its own allowlist error. Either
@@ -22,15 +24,18 @@ const CLEARANCE_DISPATCH_PATTERN =
   /Clearance already listening|Set CLEARANCE_ALLOW_HOSTS|Unknown clearance-ensure command/;
 const CLEARANCE_EXIT_CODES = [0, 2];
 
-function runClearanceCli(args: readonly string[]): { status: number | null; stderr: string } {
-  const result = spawnSync(process.execPath, [CLEARANCE_CLI_PATH, ...args], {
+function runCrewClearanceEnsure(args: readonly string[]): {
+  status: number | null;
+  stderr: string;
+} {
+  const result = spawnSync(process.execPath, [CREW_CLEARANCE_ENSURE_PATH, ...args], {
     encoding: "utf8",
   });
 
   return { status: result.status, stderr: result.stderr };
 }
 
-describe("clearance-cli shim", () => {
+describe("crew-clearance-ensure shim", () => {
   beforeEach(() => {
     // Clear the allowlist so the port-free path throws its allowlist error
     // instead of spawning a real detached proxy, keeping the test
@@ -44,14 +49,14 @@ describe("clearance-cli shim", () => {
   });
 
   it("dispatches into clearance's ensure entrypoint and passes its exit code through", () => {
-    const actual = runClearanceCli([]);
+    const actual = runCrewClearanceEnsure([]);
 
     expect(actual.stderr).toMatch(CLEARANCE_DISPATCH_PATTERN);
     expect(CLEARANCE_EXIT_CODES).toContain(actual.status);
   });
 
   it("forwards arbitrary args to clearance without interpreting them itself", () => {
-    const actual = runClearanceCli(["--definitely-not-a-shim-flag", "extra"]);
+    const actual = runCrewClearanceEnsure(["--definitely-not-a-shim-flag", "extra"]);
 
     expect(actual.stderr).toMatch(CLEARANCE_DISPATCH_PATTERN);
     expect(CLEARANCE_EXIT_CODES).toContain(actual.status);

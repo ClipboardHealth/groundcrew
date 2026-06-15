@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
-// Groundcrew-owned `clearance-cli` command: a thin shim that ships on PATH with
-// `crew` and dispatches to clearance's `clearance-ensure` entrypoint, passing
-// args, stdio, and exit code straight through.
+// Groundcrew-owned `crew-clearance-ensure` command: a thin shim that ships on
+// PATH with `crew` and dispatches to clearance's `clearance-ensure` entrypoint,
+// passing args, stdio, and exit code straight through.
 
 import { createRequire } from "node:module";
 import path from "node:path";
