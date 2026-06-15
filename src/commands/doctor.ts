@@ -274,6 +274,10 @@ export async function doctor(): Promise<boolean> {
     config = loadedConfig;
     const sourceLabel = CONFIG_SOURCE_LABELS[source.kind];
     writeOutput(`[ok] config loaded — ${source.filepath} (${sourceLabel})`);
+    // Sibling "where things live" line: the resolved log file, so a user
+    // investigating a problem knows where to look. Shown as a full path to
+    // match the config filepath above (doctor favors exact, copyable paths).
+    writeOutput(`     log file: ${config.logging.file}`);
   } catch (error) {
     writeOutput(`[--] config: ${errorMessage(error)}`);
     return false;

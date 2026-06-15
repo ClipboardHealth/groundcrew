@@ -206,6 +206,14 @@ export interface KnownRepository {
    * is unchanged. Relative, no `..`.
    */
   workdir?: string;
+  /**
+   * Per-repo operator hooks, reusing the same `HookCommands` shape that
+   * `defaults.hooks` and the in-repo `.groundcrew/config.json` use. Slots
+   * between the repo-committed file (wins) and `defaults.hooks` (fallback) in
+   * the `prepareWorktree` cascade, so an operator can set the hook for a repo
+   * they don't want to (or can't) commit a `.groundcrew/config.json` into.
+   */
+  hooks?: HookCommands;
 }
 
 export interface Config {
@@ -467,7 +475,7 @@ const DEFAULT_PROMPT_INITIAL = [
   "2. Implement the smallest sensible change that completes the task.",
   "3. Run the repo's documented verification command. If no documented command exists, run the smallest relevant test suite you can find and fix failures you introduced before continuing.",
   "4. Follow the task description for output. If no output instructions exist, open a PR with `Closes {{task}}` in the description. If you cannot open one, leave the branch ready and record the blocker.",
-  "5. If the requested work is complete, no PR is needed, and any dirty worktree state is expected or explicitly allowed, run the command in `GROUNDCREW_COMPLETE` to mark the task done.",
+  "5. If the requested work is complete, no PR is needed, `GROUNDCREW_COMPLETE` is set, and any dirty worktree state is expected or explicitly allowed, run the command in `GROUNDCREW_COMPLETE` to mark the task done.",
 ].join("\n");
 
 const ALLOWED_PROMPT_PLACEHOLDERS = new Set([
@@ -976,6 +984,9 @@ function normalizeKnownRepository(entry: string | KnownRepository, index: number
   const workdir = normalizeOptionalString(entry.workdir, `${label}.workdir`);
   if (workdir !== undefined) {
     recipe.workdir = workdir;
+  }
+  if (entry.hooks !== undefined) {
+    recipe.hooks = normalizeHookCommands(entry.hooks, `${label}.hooks`);
   }
   return recipe;
 }

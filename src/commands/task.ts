@@ -2,6 +2,7 @@ import { type Board, createBoard } from "../lib/board.ts";
 import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
 import { AGENT_ANY, loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { findPullRequestsForBranch } from "../lib/pullRequests.ts";
+import { resolveTaskIdMatches, type TaskResolutionMatches } from "../lib/taskResolution.ts";
 import {
   type CanonicalStatus,
   type CreateTaskInput,
@@ -511,8 +512,38 @@ function canonicalParts(taskId: string): { sourceName: string; naturalId: string
   return { sourceName, naturalId };
 }
 
-async function taskFromSource(source: TaskSource, naturalId: string): Promise<Task | null> {
-  return await source.getTask(naturalId);
+interface TaskFromResolutionArguments {
+  taskId: string;
+  resolution: TaskResolutionMatches;
+  sourceName?: string;
+}
+
+function taskFromResolution({ taskId, resolution, sourceName }: TaskFromResolutionArguments): Task {
+  if (resolution.matches.length === 0) {
+    if (resolution.rejections.length > 0) {
+      throw resolution.rejections[0];
+    }
+    if (sourceName !== undefined) {
+      throw new Error(`Task ${taskId} not found in source "${sourceName}".`);
+    }
+    throw new Error(`Task ${taskId} not found across configured sources.`);
+  }
+  if (resolution.matches.length > 1) {
+    if (resolution.matchKind === "exact" && sourceName === undefined) {
+      throw new Error(
+        `Task id "${taskId}" matched multiple sources: ${resolution.matches.map((task) => task.id).join(", ")}. Re-run with a canonical id or --source <name>.`,
+      );
+    }
+    throw new Error(
+      `Task id "${taskId}" matched multiple tasks: ${resolution.matches.map((task) => task.id).join(", ")}. Re-run with a longer prefix or canonical id.`,
+    );
+  }
+  const [match] = resolution.matches;
+  /* v8 ignore next 3 @preserve -- matches.length was checked above; guard exists for noUncheckedIndexedAccess */
+  if (match === undefined) {
+    throw new Error(`Task ${taskId} not found across configured sources.`);
+  }
+  return match;
 }
 
 async function resolveTask(
@@ -528,53 +559,26 @@ async function resolveTask(
       );
     }
     const source = findSource(sources, canonical.sourceName);
-    const task = await taskFromSource(source, canonical.naturalId);
-    if (task === null) {
-      throw new Error(`Task ${taskId} not found in source "${source.name}".`);
-    }
-    return task;
+    return taskFromResolution({
+      taskId,
+      sourceName: source.name,
+      resolution: await resolveTaskIdMatches({ sources: [source], naturalId: canonical.naturalId }),
+    });
   }
 
   if (sourceName !== undefined) {
     const source = findSource(sources, sourceName);
-    const task = await taskFromSource(source, taskId);
-    if (task === null) {
-      throw new Error(`Task ${taskId} not found in source "${source.name}".`);
-    }
-    return task;
+    return taskFromResolution({
+      taskId,
+      sourceName: source.name,
+      resolution: await resolveTaskIdMatches({ sources: [source], naturalId: taskId }),
+    });
   }
 
-  const results = await Promise.allSettled(
-    sources.map(async (source) => await taskFromSource(source, taskId)),
-  );
-  const matches: Task[] = [];
-  const rejections: unknown[] = [];
-  for (const result of results) {
-    if (result.status === "fulfilled") {
-      if (result.value !== null) {
-        matches.push(result.value);
-      }
-      continue;
-    }
-    rejections.push(result.reason);
-  }
-  if (matches.length === 0) {
-    if (rejections.length > 0) {
-      throw rejections[0];
-    }
-    throw new Error(`Task ${taskId} not found across configured sources.`);
-  }
-  if (matches.length > 1) {
-    throw new Error(
-      `Task id "${taskId}" matched multiple sources: ${matches.map((task) => task.id).join(", ")}. Re-run with a canonical id or --source <name>.`,
-    );
-  }
-  const [match] = matches;
-  /* v8 ignore next 3 @preserve -- matches.length was checked above; guard exists for noUncheckedIndexedAccess */
-  if (match === undefined) {
-    throw new Error(`Task ${taskId} not found across configured sources.`);
-  }
-  return match;
+  return taskFromResolution({
+    taskId,
+    resolution: await resolveTaskIdMatches({ sources, naturalId: taskId }),
+  });
 }
 
 function writeTaskDetails(task: Task): void {
