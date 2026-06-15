@@ -343,6 +343,39 @@ describe("shell adapter config schema", () => {
   });
 });
 
+describe("shell adapter config: sandboxWritePaths", () => {
+  const base = {
+    kind: "shell",
+    name: "plankeeper",
+    commands: { listTasks: "./list.sh" },
+  };
+
+  it("accepts a non-empty string array", () => {
+    const parsed = shellAdapterConfigSchema.parse({
+      ...base,
+      sandboxWritePaths: ["~/plans", "/abs/dir"],
+    });
+    expect(parsed.sandboxWritePaths).toStrictEqual(["~/plans", "/abs/dir"]);
+  });
+
+  it("defaults to undefined when omitted", () => {
+    const parsed = shellAdapterConfigSchema.parse(base);
+    expect(parsed.sandboxWritePaths).toBeUndefined();
+  });
+
+  it("rejects empty-string entries", () => {
+    expect(() => shellAdapterConfigSchema.parse({ ...base, sandboxWritePaths: [""] })).toThrow(
+      /non-empty/i,
+    );
+  });
+
+  it("rejects a non-array value", () => {
+    expect(() => shellAdapterConfigSchema.parse({ ...base, sandboxWritePaths: "~/plans" })).toThrow(
+      /array/i,
+    );
+  });
+});
+
 describe("shell validate output schema", () => {
   it("accepts an array of error strings", () => {
     expect(() => shellValidateOutputSchema.parse(["error one", "error two"])).not.toThrow();
