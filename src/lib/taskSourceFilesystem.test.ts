@@ -144,4 +144,17 @@ describe("taskSourceWritePathsForCompletion (shell sources)", () => {
 
     expect(actual).toStrictEqual([]);
   });
+
+  it("grants every shell source's paths when the task id is not source-qualified", () => {
+    const actual = taskSourceWritePathsForCompletion({
+      config: configWithSources([
+        shellSource({ name: "plankeeper", sandboxWritePaths: ["/plans/a"] }),
+        shellSource({ name: "jira", sandboxWritePaths: ["/plans/b"] }),
+      ]),
+      taskId: "gc-1",
+      workingDir: "/work/repo-a-team-1",
+    });
+
+    expect(actual).toStrictEqual(["/plans/a", "/plans/b"]);
+  });
 });
