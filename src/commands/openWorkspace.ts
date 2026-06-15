@@ -174,7 +174,7 @@ export async function openWorkspace(
     return;
   }
 
-  const { runner, sandboxName, ensureReady } = await prepareAgentLaunch({
+  const { runner, sandboxName, workspaceKind, ensureReady } = await prepareAgentLaunch({
     config,
     agent,
     definition,
@@ -214,6 +214,7 @@ export async function openWorkspace(
       secretsFile,
       prepareWorktreeCommand,
       sandboxName,
+      workspaceKind,
       omitPromptArgument,
     }));
     const launchCmd = stageWorkspaceLaunchCommand(stagedPrompt.directory, launchCommand);

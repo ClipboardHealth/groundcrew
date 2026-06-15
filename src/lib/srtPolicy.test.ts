@@ -51,6 +51,13 @@ describe(buildSrtSettings, () => {
     expect(actual.filesystem.allowRead).not.toContain("/home/dev/.local");
   });
 
+  it("grants task source write paths for worker self-completion", () => {
+    const actual = buildSrtSettings(input({ taskSourceWritePaths: ["/Users/dev/v"] }));
+
+    expect(actual.filesystem.allowRead).toContain("/Users/dev/v");
+    expect(actual.filesystem.allowWrite).toContain("/Users/dev/v");
+  });
+
   describe("agent state isolation (work item 1)", () => {
     it("gives claude a writable home but denies every fixed-path executable surface (incl .claude.json + chrome)", () => {
       const actual = buildSrtSettings(input({ agent: "claude" }));

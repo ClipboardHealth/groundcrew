@@ -921,6 +921,25 @@ describe("TodoTxtTaskSource", () => {
     await expect(source.verify()).rejects.toThrow(/missing todo file/);
   });
 
+  it("verify() reports unreadable todo files separately from missing files", async () => {
+    tmp.writeTodo("(A) Good task id:GC-V1 agent:codex status:in-progress\n");
+    rmSync(tmp.todoPath);
+    mkdirSync(tmp.todoPath);
+    const source = makeSource(tmp);
+
+    await expect(source.verify()).rejects.toThrow(/could not read todo file/);
+    await expect(source.verify()).rejects.toThrow(/EISDIR|EACCES|EPERM/);
+  });
+
+  it("getTask() throws on unreadable todo files instead of treating them as empty", async () => {
+    tmp.writeTodo("(A) Good task id:GC-V1 agent:codex status:in-progress\n");
+    rmSync(tmp.todoPath);
+    mkdirSync(tmp.todoPath);
+    const source = makeSource(tmp);
+
+    await expect(source.getTask("GC-V1")).rejects.toThrow(/could not read todo file/);
+  });
+
   it("verify() catches duplicate id:", async () => {
     tmp.writeTodo("id:DUP agent:codex status:todo Task A\nid:DUP agent:codex status:todo Task B\n");
     tmp.writeTask("DUP", "Prompt.");

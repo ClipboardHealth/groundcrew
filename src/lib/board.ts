@@ -14,13 +14,15 @@ import {
   type ParentSkip,
   type TaskSource,
 } from "./taskSource.ts";
+import { resolveTaskIdMatches, type TaskResolutionMatches } from "./taskResolution.ts";
 
 export interface Board {
   verify: () => Promise<void>;
   fetch: () => Promise<BoardState>;
   /**
-   * Accepts either canonical (`linear:eng-220`) or natural (`eng-220`) ids.
-   * Natural ids fan out across sources; ambiguous matches throw.
+   * Accepts either canonical (`linear:eng-220`) or natural (`eng-220`) ids,
+   * plus unique prefixes of current listed tasks. Natural ids fan out across
+   * sources; ambiguous matches throw.
    */
   resolveOne: (canonicalOrNaturalId: string) => Promise<Issue | undefined>;
   /** Routes to the adapter whose `name` matches `issue.source`. Unknown source throws. */
@@ -54,8 +56,29 @@ async function callFetchParentSkips(source: TaskSource): Promise<readonly Parent
   return [];
 }
 
-async function callResolveOne(source: TaskSource, naturalId: string): Promise<Issue | undefined> {
-  return (await source.getTask(naturalId)) ?? undefined;
+interface UniqueResolvedIssueArguments {
+  idArgument: string;
+  resolution: TaskResolutionMatches;
+}
+
+function uniqueResolvedIssue({
+  idArgument,
+  resolution,
+}: UniqueResolvedIssueArguments): Issue | undefined {
+  if (resolution.matches.length === 0) {
+    if (resolution.rejections.length > 0) {
+      throw resolution.rejections[0];
+    }
+    return undefined;
+  }
+  if (resolution.matches.length === 1) {
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- length checked above
+    return resolution.matches[0]!;
+  }
+  throw new AmbiguousTaskError({
+    naturalId: idArgument,
+    matches: resolution.matches.map((match) => match.id),
+  });
 }
 
 export function createBoard(sources: readonly TaskSource[]): Board {
@@ -115,7 +138,10 @@ export function createBoard(sources: readonly TaskSource[]): Board {
         if (!source) {
           throw new Error(`unknown source "${sourceName}" in canonical id "${idArgument}"`);
         }
-        return await callResolveOne(source, naturalId);
+        return uniqueResolvedIssue({
+          idArgument,
+          resolution: await resolveTaskIdMatches({ sources: [source], naturalId }),
+        });
       }
       // Per-source resolveOne errors must not poison sibling resolutions.
       // A source that rejects on a natural-id lookup is treated as "I don't
@@ -124,33 +150,9 @@ export function createBoard(sources: readonly TaskSource[]): Board {
       // the rejection — so the user sees a real Linear/network error when
       // there's no fallback, but a stray "not found" from one source doesn't
       // mask a successful match from another.
-      const results = await Promise.allSettled(
-        sources.map(async (s) => await callResolveOne(s, idArgument)),
-      );
-      const matches: Issue[] = [];
-      const rejections: unknown[] = [];
-      for (const result of results) {
-        if (result.status === "rejected") {
-          rejections.push(result.reason);
-          continue;
-        }
-        if (result.value !== undefined) {
-          matches.push(result.value);
-        }
-      }
-      if (matches.length === 0) {
-        if (rejections.length > 0) {
-          throw rejections[0];
-        }
-        return undefined;
-      }
-      if (matches.length === 1) {
-        // oxlint-disable-next-line typescript/no-non-null-assertion -- length checked above
-        return matches[0]!;
-      }
-      throw new AmbiguousTaskError({
-        naturalId: idArgument,
-        matches: matches.map((m) => m.id),
+      return uniqueResolvedIssue({
+        idArgument,
+        resolution: await resolveTaskIdMatches({ sources, naturalId: idArgument }),
       });
     },
 
