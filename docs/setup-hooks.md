@@ -22,7 +22,8 @@ onboarding in this hook: no prompts, global installs, auth setup, runtime
 manager bootstrap (`nvm`, `pyenv`, `rustup`, `mise`, `asdf`), db seeds, husky,
 pre-commit, or local package linking.
 
-The hook runs from the repo root under every runner:
+The hook runs from the worktree root unless the repo entry sets `workdir`; in
+that case it runs from that subdirectory. Under every runner:
 
 - `safehouse`: inside a profile-neutral Safehouse wrap before the agent wrap.
 - `sdx`: inside the Docker Sandbox before the agent command.
