@@ -121,6 +121,9 @@ export default {
   //   {
   //     kind: "shell",
   //     name: "jira",
+  //     // Open local task-store directories for read/write inside the
+  //     // safehouse/srt sandbox when this source owns the launched task.
+  //     sandboxWritePaths: ["~/plans"],
   //     commands: {
   //       verify: "jira me",
   //       fetch: "~/.config/groundcrew/jira-fetch.sh",

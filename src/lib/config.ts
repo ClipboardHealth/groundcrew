@@ -495,6 +495,10 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
 }
 
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
 function requireString(value: unknown, configKey: string): asserts value is string {
   if (!isNonEmptyString(value)) {
     fail(`${configKey} must be a non-empty string (got ${JSON.stringify(value)})`);
@@ -901,6 +905,11 @@ function normalizeSources(raw: unknown): SourceConfig[] {
         ...(typeof entry["tasksDir"] === "string"
           ? { tasksDir: expandHome(entry["tasksDir"]) }
           : {}),
+      });
+    } else if (kind === "shell" && isStringArray(entry["sandboxWritePaths"])) {
+      expanded.push({
+        ...entry,
+        sandboxWritePaths: entry["sandboxWritePaths"].map((value) => expandHome(value)),
       });
     } else {
       expanded.push(entry);
