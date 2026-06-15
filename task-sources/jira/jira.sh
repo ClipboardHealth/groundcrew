@@ -15,7 +15,7 @@
 #   chmod 600 ~/.config/groundcrew/jira.token
 #
 # Knobs (set via the source's `env` block in crew.config):
-#   JIRA_GROUNDCREW_JQL  JQL for `list`  (default: open issues labeled groundcrew; no ORDER BY — see below)
+#   JIRA_GROUNDCREW_JQL  JQL for `list`  (default: open + last-7-days-done issues labeled groundcrew; no ORDER BY — see below)
 #   JIRA_REVIEW_PATTERN  case-insensitive regex; matching status names -> in-review (default: review)
 #   JIRA_DEFAULT_AGENT   agent when an issue has no agent:<x> label (default: empty -> null)
 #   JIRA_TOKEN_FILE      token path (default: ~/.config/groundcrew/jira.token)
@@ -25,8 +25,12 @@ TOKEN_FILE="${JIRA_TOKEN_FILE:-${HOME}/.config/groundcrew/jira.token}"
 # No ORDER BY here: jira-cli appends its own (see --order-by below), and a
 # second ORDER BY in the JQL makes JIRA reject the query with a 400.
 # The default gates dispatch on an explicit `groundcrew` label so only issues
-# you opt in are picked up — see the README's labeling step.
-LIST_JQL="${JIRA_GROUNDCREW_JQL:-statusCategory != Done AND labels = groundcrew}"
+# you opt in are picked up — see the README's labeling step. It also keeps
+# tickets done within the last 7 days in the list: groundcrew only tears down a
+# task's worktree once `list`/`get` report it `done`, so dropping done tickets
+# immediately would leak worktrees. The 7-day window lets cleanup happen, then
+# the ticket falls out so the steady-state list stays small.
+LIST_JQL="${JIRA_GROUNDCREW_JQL:-labels = groundcrew AND (statusCategory != Done OR (statusCategory = Done AND updated >= -7d))}"
 REVIEW_PATTERN="${JIRA_REVIEW_PATTERN:-review}"
 DEFAULT_AGENT="${JIRA_DEFAULT_AGENT:-}"
 

@@ -95,7 +95,7 @@ the token on per invocation.
        "markDone": "~/.config/groundcrew/jira.sh move ${id} \"$JIRA_STATE_DONE\""
      },
      "env": {
-       "JIRA_GROUNDCREW_JQL": "statusCategory != Done AND labels = groundcrew",
+       "JIRA_GROUNDCREW_JQL": "labels = groundcrew AND (statusCategory != Done OR (statusCategory = Done AND updated >= -7d))",
        "JIRA_REVIEW_PATTERN": "review",
        "JIRA_DEFAULT_AGENT": "claude",
        "JIRA_STATE_IN_PROGRESS": "In Progress",
@@ -114,13 +114,13 @@ the token on per invocation.
 
 The script reads these from the source's `env` block:
 
-| Variable              | Default                                          | Purpose                                                                                                                        |
-| --------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
-| `JIRA_GROUNDCREW_JQL` | `statusCategory != Done AND labels = groundcrew` | Which issues `list` returns, capped at the first 20 (`--paginate 0:20` in `jira.sh`). Omit `ORDER BY` (jira-cli adds its own). |
-| `JIRA_REVIEW_PATTERN` | `review`                                         | Case-insensitive regex; matching status names map to `in-review`.                                                              |
-| `JIRA_DEFAULT_AGENT`  | _(empty -> `null`)_                              | Agent used when an issue has no `agent:` label.                                                                                |
-| `JIRA_TOKEN_FILE`     | `~/.config/groundcrew/jira.token`                | Token file path.                                                                                                               |
-| `JIRA_STATE_*`        | `In Progress` / `In Review` / `Done`             | Native JIRA state names used by `move`. Match your project's workflow.                                                         |
+| Variable              | Default                                                                                          | Purpose                                                                                                                                                                                                                                 |
+| --------------------- | ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `JIRA_GROUNDCREW_JQL` | `labels = groundcrew AND (statusCategory != Done OR (statusCategory = Done AND updated >= -7d))` | Which issues `list` returns, capped at the first 20 (`--paginate 0:20` in `jira.sh`). Defaults to open issues plus those done in the last 7 days (so groundcrew can clean up their worktrees). Omit `ORDER BY` (jira-cli adds its own). |
+| `JIRA_REVIEW_PATTERN` | `review`                                                                                         | Case-insensitive regex; matching status names map to `in-review`.                                                                                                                                                                       |
+| `JIRA_DEFAULT_AGENT`  | _(empty -> `null`)_                                                                              | Agent used when an issue has no `agent:` label.                                                                                                                                                                                         |
+| `JIRA_TOKEN_FILE`     | `~/.config/groundcrew/jira.token`                                                                | Token file path.                                                                                                                                                                                                                        |
+| `JIRA_STATE_*`        | `In Progress` / `In Review` / `Done`                                                             | Native JIRA state names used by `move`. Match your project's workflow.                                                                                                                                                                  |
 
 ## Status mapping
 
@@ -139,6 +139,15 @@ five. There is no "in-review" category, so review is detected by status _name_:
 - `list` returns at most 20 issues (the `--paginate 0:20` bound in `jira.sh`).
   Raise that bound or narrow `JIRA_GROUNDCREW_JQL` if you have more eligible
   issues than that.
+- The default JQL keeps tickets done within the last 7 days in the list, not
+  just open ones. groundcrew only tears down a task's worktree once `list`/`get`
+  report it `done`, so dropping done tickets immediately would leak worktrees;
+  the 7-day window gives cleanup time to run, then the ticket falls out so the
+  steady-state list stays small. The window is keyed on `updated`, so a done
+  ticket edited within 7 days stays listed (harmless — groundcrew never
+  re-dispatches a `done` task). Shorten or drop the
+  `statusCategory = Done AND updated >= -7d` clause in `JIRA_GROUNDCREW_JQL` if
+  your source closes out worktrees some other way.
 - The default JQL has no `project = …` clause, so it implicitly scopes to the
   default project `jira init` selected (see [What `jira init` sets up](#what-jira-init-sets-up)).
   On a multi-project instance, add an explicit `project = "ENG"` clause to

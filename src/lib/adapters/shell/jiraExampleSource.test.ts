@@ -157,6 +157,7 @@ interface Harness {
   tokenEcho: string;
   listFixture: string;
   viewDir: string;
+  jqlEcho: string;
   cleanup: () => void;
 }
 
@@ -167,6 +168,7 @@ function setup(): Harness {
 
   const listFixture = path.join(dir, "list.json");
   const tokenEcho = path.join(dir, "token.echo");
+  const jqlEcho = path.join(dir, "jql.echo");
   writeFileSync(listFixture, JSON.stringify(LIST_OUTPUT));
 
   // One full-issue file per key, named <KEY>.json, for the `view` lookup.
@@ -176,11 +178,11 @@ function setup(): Harness {
     writeFileSync(path.join(viewDir, `${i.key}.json`), JSON.stringify(i));
   }
 
-  // Fake `jira` CLI: `list` echoes the reduced array; `view <KEY>` returns the
-  // full issue file (a realistic not-found message + exit 1 when absent, the
-  // sentinel `get` keys off; FAKE_VIEW_FAIL/_KEY replays a transient failure for
-  // a chosen key); `me` records the exported JIRA_API_TOKEN so a test can assert
-  // trimming.
+  // Fake `jira` CLI: `list` records the `-q` JQL (so a test can assert the
+  // default) and echoes the reduced array; `view <KEY>` returns the full issue
+  // file (a realistic not-found message + exit 1 when absent, the sentinel `get`
+  // keys off; FAKE_VIEW_FAIL/_KEY replays a transient failure for a chosen key);
+  // `me` records the exported JIRA_API_TOKEN so a test can assert trimming.
   const fakeJira = path.join(dir, "jira");
   writeFileSync(
     fakeJira,
@@ -193,6 +195,7 @@ function setup(): Harness {
       // is the stderr message, and the fake exits 1 — letting tests drive both
       // the "no result" and the genuine-failure branches of the script.
       'if [[ "${1:-}" == "issue" && "${2:-}" == "list" ]]; then',
+      '  if [[ "${3:-}" == "-q" && -n "${LIST_JQL_ECHO:-}" ]]; then printf "%s" "${4:-}" > "$LIST_JQL_ECHO"; fi',
       '  if [[ -n "${FAKE_LIST_FAIL:-}" ]]; then echo "$FAKE_LIST_FAIL" >&2; exit 1; fi',
       '  cat "$FIXTURE_LIST"; exit 0',
       "fi",
@@ -217,6 +220,7 @@ function setup(): Harness {
     tokenEcho,
     listFixture,
     viewDir,
+    jqlEcho,
     cleanup: () => {
       rmSync(dir, { recursive: true, force: true });
     },
@@ -240,6 +244,7 @@ function run(
       FIXTURE_LIST: h.listFixture,
       VIEW_DIR: h.viewDir,
       TOKEN_ECHO: h.tokenEcho,
+      LIST_JQL_ECHO: h.jqlEcho,
       ...extraEnv,
     },
   });
@@ -340,6 +345,18 @@ describe("jira.sh example source", () => {
     expect(parsed).toHaveLength(3); // ENG-1/3/4 present, ENG-2 dropped
     expect(parsed.map((i) => i.id)).not.toContain("ENG-2");
     expect(stderr).toContain("skipping ENG-2");
+  });
+
+  it("default JQL returns recently-done tickets so groundcrew can clean up worktrees", () => {
+    // groundcrew only tears down a task's worktree once it sees the task as
+    // `done`, so the default `list` must surface recently-done tickets, not just
+    // open ones. Assert the JQL the script hands jira-cli (the fake records it).
+    run(h, ["list"]); // no JIRA_GROUNDCREW_JQL override -> the script's default
+
+    const actual = readFileSync(h.jqlEcho, "utf8");
+    expect(actual).toContain("labels = groundcrew"); // still opt-in by label
+    expect(actual).toContain("statusCategory = Done"); // includes done tickets
+    expect(actual).toContain("-7d"); // bounded to the last 7 days
   });
 
   it("get emits one ShellIssue for a known key", () => {
