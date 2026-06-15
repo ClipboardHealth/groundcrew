@@ -7,14 +7,29 @@ const REPOSITORY_CONFIG_RELATIVE_PATH = ".groundcrew/config.json";
 
 interface ResolvePrepareWorktreeCommandArguments {
   worktreeDir: string;
+  /**
+   * Per-repo operator hooks from this repo's `knownRepositories[]` entry in
+   * `crew.config.ts`. Slots between the repo-committed file and the global
+   * `defaults.hooks` so an operator can set the hook for a repo they don't
+   * want to (or can't) commit a `.groundcrew/config.json` into.
+   */
+  perRepoHooks?: HookCommands;
   defaultHooks: HookCommands;
 }
 
+// Flat precedence cascade, highest priority first: the repo-committed
+// `.groundcrew/config.json` wins (closest to the code), then the per-repo
+// operator layer, then the global `defaults.hooks` fallback. All three reuse
+// the same `HookCommands` shape so this stays a plain `?? ?? ??`.
 export function resolvePrepareWorktreeCommand(
   arguments_: ResolvePrepareWorktreeCommandArguments,
 ): string | undefined {
   const repositoryConfig = readRepositoryConfig(arguments_.worktreeDir);
-  return repositoryConfig?.hooks.prepareWorktree ?? arguments_.defaultHooks.prepareWorktree;
+  return (
+    repositoryConfig?.hooks.prepareWorktree ??
+    arguments_.perRepoHooks?.prepareWorktree ??
+    arguments_.defaultHooks.prepareWorktree
+  );
 }
 
 interface RepositoryConfig {
