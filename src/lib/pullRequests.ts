@@ -86,6 +86,97 @@ function isRawPullRequest(value: unknown): value is RawPullRequest {
   );
 }
 
+export interface ResolvedPullRequest {
+  number: number;
+  /** Head branch name the PR is built from (`headRefName`). */
+  branch: string;
+  title: string;
+  url: string;
+  /** Lowercased lifecycle: "open" | "merged" | "closed". */
+  state: string;
+  /** True when the head branch lives on a fork rather than the base repo. */
+  isCrossRepository: boolean;
+}
+
+interface ResolvePullRequestArgs {
+  /** Clone directory used as `gh`'s cwd so it resolves the GitHub repo from its remote. */
+  repoDir: string;
+  /** PR number or URL accepted by `gh pr view`. */
+  pr: string;
+  signal?: AbortSignal;
+}
+
+interface RawResolvedPullRequest {
+  number: number;
+  headRefName: string;
+  title: string;
+  url: string;
+  state: string;
+  isCrossRepository: boolean;
+}
+
+function isRawResolvedPullRequest(value: unknown): value is RawResolvedPullRequest {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- narrowing untyped JSON.parse output to a record so we can probe its keys
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record["number"] === "number" &&
+    typeof record["headRefName"] === "string" &&
+    typeof record["title"] === "string" &&
+    typeof record["url"] === "string" &&
+    typeof record["state"] === "string" &&
+    typeof record["isCrossRepository"] === "boolean"
+  );
+}
+
+/**
+ * Resolve a single pull request to the metadata `crew open` needs (head branch,
+ * title, url, fork flag) via `gh pr view`. Unlike `findPullRequestsForBranch`,
+ * the caller named a specific PR, so failures are fatal: a missing `gh`, an
+ * unauthenticated host, or an unknown PR all throw with a clear message rather
+ * than degrading to "no PR info".
+ */
+export async function resolvePullRequest(
+  arguments_: ResolvePullRequestArgs,
+): Promise<ResolvedPullRequest> {
+  const { repoDir, pr, signal } = arguments_;
+  const options = signal === undefined ? { cwd: repoDir } : { cwd: repoDir, signal };
+  let output: string;
+  try {
+    output = await runCommandAsync(
+      "gh",
+      ["pr", "view", pr, "--json", "number,headRefName,title,url,state,isCrossRepository"],
+      options,
+    );
+  } catch (error) {
+    throw new Error(
+      `Could not look up pull request ${pr} from ${repoDir}. Ensure 'gh' is installed and authenticated (gh auth status) and the PR exists.`,
+      { cause: error },
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(output);
+  } catch (error) {
+    throw new Error(`Unexpected non-JSON response from 'gh pr view' for ${pr} from ${repoDir}.`, {
+      cause: error,
+    });
+  }
+  if (!isRawResolvedPullRequest(parsed)) {
+    throw new Error(`Unexpected response shape from 'gh pr view' for ${pr} from ${repoDir}.`);
+  }
+  return {
+    number: parsed.number,
+    branch: parsed.headRefName,
+    title: parsed.title,
+    url: parsed.url,
+    state: STATE_MAP[parsed.state] ?? parsed.state.toLowerCase(),
+    isCrossRepository: parsed.isCrossRepository,
+  };
+}
+
 export async function findPullRequestsForBranch(
   arguments_: LookupArgs,
 ): Promise<readonly PullRequestSummary[]> {

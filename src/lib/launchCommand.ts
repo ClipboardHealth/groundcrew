@@ -378,6 +378,16 @@ function envPassFlag(names: readonly string[]): string {
   return uniqueNames.length === 0 ? "" : `--env-pass=${uniqueNames.join(",")} `;
 }
 
+/**
+ * Trailing prompt positional passed to the agent. Normally ` "$_p"` (the staged
+ * prompt read into `$_p`); empty when `omitPromptArgument` is set, so the agent
+ * launches with no initial prompt and drops into its interactive session. The
+ * `$_p` read still runs either way — only the positional is dropped.
+ */
+function promptPositional(omitPromptArgument: boolean | undefined): string {
+  return omitPromptArgument === true ? "" : ` "$_p"`;
+}
+
 export interface SafehouseAgentIntegration {
   addDirsReadOnly: readonly string[];
   envPass: readonly string[];
@@ -478,6 +488,14 @@ interface LaunchCommandArguments {
    * to the agent process, not the prepareWorktree hook.
    */
   workerEnvironment?: WorkerEnvironment | undefined;
+  /**
+   * When set, the agent is exec'd with no trailing prompt positional so it opens
+   * its interactive session and hands control to the user. The staged prompt is
+   * still read into `$_p` (and the prompt dir cleaned up) for a uniform launch
+   * chain; only the positional is dropped. Used by `crew open` when no
+   * `--prompt`/`--prompt-file` is given.
+   */
+  omitPromptArgument?: boolean | undefined;
 }
 
 /**
@@ -569,7 +587,7 @@ function buildUnwrappedHostLaunchCommand(arguments_: LaunchCommandArguments): st
       worktreeDir: arguments_.worktreeDir,
       promptFile: arguments_.promptFile,
       promptDir,
-      execLine: `exec ${agentCmd} "$_p"`,
+      execLine: `exec ${agentCmd}${promptPositional(arguments_.omitPromptArgument)}`,
     }),
   );
   return lines.join(" && ");
@@ -685,7 +703,7 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
     // Running the real launch chain as `sh -c` would make it see `sh`, so use
     // an agent-named symlink to /bin/sh. This preserves per-agent profile
     // selection without enabling every agent profile.
-    `{ ${safehouseWrapper} ${safehouseAgentAddDirsFlag}${safehouseAgentAddDirsReadOnlyFlag}${agentEnvPassFlag}"$_safehouse_shim" -c ${shellSingleQuote(agentCommand)} sh "$_p"; _safehouse_status=$?; rm -rf "$_safehouse_shim_dir"; trap - EXIT; exit "$_safehouse_status"; }`,
+    `{ ${safehouseWrapper} ${safehouseAgentAddDirsFlag}${safehouseAgentAddDirsReadOnlyFlag}${agentEnvPassFlag}"$_safehouse_shim" -c ${shellSingleQuote(agentCommand)} sh${promptPositional(arguments_.omitPromptArgument)}; _safehouse_status=$?; rm -rf "$_safehouse_shim_dir"; trap - EXIT; exit "$_safehouse_status"; }`,
   );
   return lines.join(" && ");
 }
@@ -820,7 +838,7 @@ function buildSrtLaunchCommand(arguments_: LaunchCommandArguments): string {
   }
   lines.push(
     ...workerEnvironmentExports(arguments_.workerEnvironment),
-    `{ ${agentWrap} sh -c ${shellSingleQuote(agentCommand)} sh "$_p"; _srt_status=$?; rm -rf ${shellSingleQuote(arguments_.srtSettingsDir)}; trap - EXIT; exit "$_srt_status"; }`,
+    `{ ${agentWrap} sh -c ${shellSingleQuote(agentCommand)} sh${promptPositional(arguments_.omitPromptArgument)}; _srt_status=$?; rm -rf ${shellSingleQuote(arguments_.srtSettingsDir)}; trap - EXIT; exit "$_srt_status"; }`,
   );
   return lines.join(" && ");
 }
@@ -860,7 +878,7 @@ function buildSdxLaunchCommand(arguments_: LaunchCommandArguments): string {
   lines.push(
     `_p=$(cat ${shellSingleQuote(arguments_.promptFile)})`,
     `rm -rf ${shellSingleQuote(promptDir)}`,
-    `exec sbx exec -it ${sbxEnvironmentFlags}-w ${shellSingleQuote(arguments_.workingDir)} ${shellSingleQuote(arguments_.sandboxName)} sh -c ${shellSingleQuote(innerCommand)} sh "$_p"`,
+    `exec sbx exec -it ${sbxEnvironmentFlags}-w ${shellSingleQuote(arguments_.workingDir)} ${shellSingleQuote(arguments_.sandboxName)} sh -c ${shellSingleQuote(innerCommand)} sh${promptPositional(arguments_.omitPromptArgument)}`,
   );
   return lines.join(" && ");
 }

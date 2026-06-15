@@ -13,6 +13,7 @@ import {
 } from "../lib/taskSource.ts";
 import { parseSourceFilterArgs, writeOutput } from "../lib/util.ts";
 import { type WorktreeDirtiness, type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
+import { effectiveBranchName } from "../lib/worktreeRunState.ts";
 
 const TASK_USAGE = `Usage: crew task <subcommand>
 
@@ -676,10 +677,13 @@ function describeDirtiness(dirtiness: WorktreeDirtiness): string {
   return "unknown git status";
 }
 
-async function worktreeHasPullRequest(entry: WorktreeEntry): Promise<boolean> {
+async function worktreeHasPullRequest(input: {
+  config: ResolvedConfig;
+  entry: WorktreeEntry;
+}): Promise<boolean> {
   const pullRequests = await findPullRequestsForBranch({
-    cwd: entry.dir,
-    branchName: entry.branchName,
+    cwd: input.entry.dir,
+    branchName: effectiveBranchName({ config: input.config, entry: input.entry }),
   });
   return pullRequests.length > 0;
 }
@@ -702,9 +706,12 @@ async function assertCanMarkDone(arguments_: {
     if (dirtiness.kind === "clean") {
       continue;
     }
-    // oxlint-disable-next-line no-await-in-loop -- only dirty/unknown worktrees need the PR lookup.
-    if (dirtiness.kind === "dirty" && (await worktreeHasPullRequest(entry))) {
-      continue;
+    if (dirtiness.kind === "dirty") {
+      // oxlint-disable-next-line no-await-in-loop -- one PR lookup per dirty worktree keeps diagnostics deterministic.
+      const hasPullRequest = await worktreeHasPullRequest({ config: arguments_.config, entry });
+      if (hasPullRequest) {
+        continue;
+      }
     }
     throw new Error(
       `crew task done: refusing to mark ${arguments_.issue.id} done because ${entry.dir} has ${describeDirtiness(dirtiness)} and no matching PR. Commit or stash the work, open a PR, or rerun with --allow-dirty.`,

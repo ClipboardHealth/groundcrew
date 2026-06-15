@@ -1,5 +1,5 @@
 import type { RunCommandOptions } from "./commandRunner.ts";
-import { findPullRequestsForBranch } from "./pullRequests.ts";
+import { findPullRequestsForBranch, resolvePullRequest } from "./pullRequests.ts";
 
 type RunCommandAsyncMock = (
   command: string,
@@ -217,5 +217,163 @@ describe(findPullRequestsForBranch, () => {
     });
 
     expect(prs[0]?.state).toBe("draft");
+  });
+});
+
+function rawResolved(): string {
+  return JSON.stringify({
+    number: 42,
+    headRefName: "jdoe/fix-thing",
+    title: "Wire up auth",
+    url: "https://github.com/acme/widgets/pull/42",
+    state: "OPEN",
+    isCrossRepository: false,
+  });
+}
+
+describe(resolvePullRequest, () => {
+  afterEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it("resolves a PR to its head branch, title, url, and fork flag", async () => {
+    runCommandMock.mockResolvedValue(rawResolved());
+
+    const actual = await resolvePullRequest({
+      repoDir: "/work/acme/widgets",
+      pr: "42",
+    });
+
+    expect(actual).toStrictEqual({
+      number: 42,
+      branch: "jdoe/fix-thing",
+      title: "Wire up auth",
+      url: "https://github.com/acme/widgets/pull/42",
+      state: "open",
+      isCrossRepository: false,
+    });
+  });
+
+  it("runs gh pr view in the clone dir and lets gh resolve the repo remote", async () => {
+    runCommandMock.mockResolvedValue(rawResolved());
+
+    await resolvePullRequest({ repoDir: "/work/acme/widgets", pr: "42" });
+
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "gh",
+      ["pr", "view", "42", "--json", "number,headRefName,title,url,state,isCrossRepository"],
+      { cwd: "/work/acme/widgets" },
+    );
+    expect(runCommandMock).toHaveBeenCalledWith("gh", expect.not.arrayContaining(["--repo"]), {
+      cwd: "/work/acme/widgets",
+    });
+  });
+
+  it("forwards the AbortSignal alongside cwd when provided", async () => {
+    runCommandMock.mockResolvedValue(rawResolved());
+    const { signal } = new AbortController();
+
+    await resolvePullRequest({
+      repoDir: "/work/acme/widgets",
+      pr: "42",
+      signal,
+    });
+
+    expect(runCommandMock).toHaveBeenCalledWith("gh", expect.any(Array), {
+      cwd: "/work/acme/widgets",
+      signal,
+    });
+  });
+
+  it("normalises the lifecycle state to lowercase", async () => {
+    runCommandMock.mockResolvedValue(
+      JSON.stringify({
+        number: 7,
+        headRefName: "feature/x",
+        title: "x",
+        url: "https://x/pull/7",
+        state: "MERGED",
+        isCrossRepository: false,
+      }),
+    );
+
+    const actual = await resolvePullRequest({
+      repoDir: "/work/acme/widgets",
+      pr: "7",
+    });
+
+    expect(actual.state).toBe("merged");
+  });
+
+  it("flags a cross-repository (fork) PR", async () => {
+    runCommandMock.mockResolvedValue(
+      JSON.stringify({
+        number: 9,
+        headRefName: "contributor:patch",
+        title: "fork pr",
+        url: "https://x/pull/9",
+        state: "OPEN",
+        isCrossRepository: true,
+      }),
+    );
+
+    const actual = await resolvePullRequest({
+      repoDir: "/work/acme/widgets",
+      pr: "9",
+    });
+
+    expect(actual.isCrossRepository).toBe(true);
+  });
+
+  it("throws a clear error when gh fails", async () => {
+    runCommandMock.mockRejectedValue(new Error("gh: command not found"));
+
+    await expect(resolvePullRequest({ repoDir: "/work/acme/widgets", pr: "42" })).rejects.toThrow(
+      /Could not look up pull request 42 from \/work\/acme\/widgets/,
+    );
+  });
+
+  it("throws when gh emits non-JSON output", async () => {
+    runCommandMock.mockResolvedValue("not json");
+
+    await expect(resolvePullRequest({ repoDir: "/work/acme/widgets", pr: "42" })).rejects.toThrow(
+      /non-JSON response/,
+    );
+  });
+
+  it("throws when gh emits an unexpected JSON shape", async () => {
+    runCommandMock.mockResolvedValue(JSON.stringify({ number: 42 }));
+
+    await expect(resolvePullRequest({ repoDir: "/work/acme/widgets", pr: "42" })).rejects.toThrow(
+      /Unexpected response shape/,
+    );
+  });
+
+  it("throws when gh emits a non-object JSON value", async () => {
+    runCommandMock.mockResolvedValue("null");
+
+    await expect(resolvePullRequest({ repoDir: "/work/acme/widgets", pr: "42" })).rejects.toThrow(
+      /Unexpected response shape/,
+    );
+  });
+
+  it("forwards a lowercased unknown state verbatim", async () => {
+    runCommandMock.mockResolvedValue(
+      JSON.stringify({
+        number: 3,
+        headRefName: "wip/x",
+        title: "wip",
+        url: "https://x/pull/3",
+        state: "DRAFT",
+        isCrossRepository: false,
+      }),
+    );
+
+    const actual = await resolvePullRequest({
+      repoDir: "/work/acme/widgets",
+      pr: "3",
+    });
+
+    expect(actual.state).toBe("draft");
   });
 });

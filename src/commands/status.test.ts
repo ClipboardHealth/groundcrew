@@ -280,6 +280,20 @@ describe(status, () => {
     expect(output).toContain("title: Fix status");
   });
 
+  it("shows the run-state branch (not the derived one) for an opened PR worktree", async () => {
+    readRunStateMock.mockReturnValue(runState({ branchName: "jdoe/fix-thing" }));
+    findByTaskMock.mockReturnValue([worktree({ branchName: "dev-team-1" })]);
+    probeWorkingTreeMock.mockResolvedValue({ kind: "clean" });
+    buildSourcesMock.mockResolvedValue([fakeSource([])]);
+
+    await status(makeConfig(), { task: "team-1" });
+
+    expect(consoleLog.output()).toContain("branch: jdoe/fix-thing");
+    expect(findPullRequestsMock).toHaveBeenCalledWith(
+      expect.objectContaining({ branchName: "jdoe/fix-thing" }),
+    );
+  });
+
   it("prints unavailable fields without attempting recovery", async () => {
     const config = makeConfig({ logging: { file: path.join(temporaryDirectory, "missing.log") } });
     findByTaskMock.mockReturnValue([]);

@@ -15,7 +15,7 @@ import {
 import { taskSourceWritePathsForCompletion } from "../lib/taskSourceFilesystem.ts";
 import { naturalIdFromCanonical, toCanonicalId } from "../lib/taskSource.ts";
 import { errorMessage, log } from "../lib/util.ts";
-import { workspaces } from "../lib/workspaces.ts";
+import { failIfWorkspaceAlreadyLive } from "../lib/workspaceLiveness.ts";
 import { resolveLaunchDir, type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 
 export interface ResumeWorkspaceOptions {
@@ -99,7 +99,10 @@ async function contextFromState(
     task,
     repository: state.repository,
     agent: state.agent,
-    worktree,
+    // Prefer the branch recorded in run state: `crew open` worktrees check out
+    // an existing PR branch that diverges from the `<prefix>-<task>` name the
+    // worktree-dir scan derives, and run state is the source of truth for it.
+    worktree: { ...worktree, branchName: state.branchName },
     title: details?.title ?? task.toUpperCase(),
     description: details?.description ?? "",
     completionTaskId,
@@ -156,25 +159,12 @@ function renderResumePrompt(context: ResumeContext): string {
   ].join("\n");
 }
 
-async function failIfWorkspaceAlreadyLive(config: ResolvedConfig, task: string): Promise<void> {
-  const probe = await workspaces.probe(config);
-  if (probe.kind === "unavailable") {
-    const detail = probe.error === undefined ? "" : `: ${errorMessage(probe.error)}`;
-    throw new Error(
-      `Could not verify whether workspace for ${task} is already live${detail}. Retry or inspect the workspace backend manually before resuming.`,
-    );
-  }
-  if (probe.names.has(task)) {
-    throw new Error(`Workspace for ${task} is already live; attach to it instead of resuming.`);
-  }
-}
-
 export async function resumeWorkspace(
   config: ResolvedConfig,
   options: ResumeWorkspaceOptions,
 ): Promise<void> {
   const task = options.task.toLowerCase();
-  await failIfWorkspaceAlreadyLive(config, task);
+  await failIfWorkspaceAlreadyLive(config, task, "resuming");
   const context = await buildResumeContext(config, task);
   const definition = config.agents.definitions[context.agent];
   if (definition === undefined) {

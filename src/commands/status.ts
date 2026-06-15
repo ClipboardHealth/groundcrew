@@ -15,6 +15,7 @@ import {
 import { errorMessage, withLogOutputSuppressed, writeOutput } from "../lib/util.ts";
 import { type WorkspaceAccessHint, type WorkspaceProbe, workspaces } from "../lib/workspaces.ts";
 import { type WorktreeDirtiness, worktrees } from "../lib/worktrees.ts";
+import { effectiveBranchNameFromRunState } from "../lib/worktreeRunState.ts";
 
 export interface StatusOptions {
   task?: string;
@@ -58,7 +59,9 @@ async function writeTaskWorktrees(config: ResolvedConfig, task: string): Promise
     writeOutput("(none)");
     return;
   }
+  const runState = readRunState(config, task);
   for (const entry of entries) {
+    const branchName = effectiveBranchNameFromRunState({ entry, runState });
     // oxlint-disable-next-line no-await-in-loop -- status output is easier to read in worktree order.
     const dirtiness = await worktrees.probeWorkingTree({
       worktreeDir: entry.dir,
@@ -66,10 +69,10 @@ async function writeTaskWorktrees(config: ResolvedConfig, task: string): Promise
     // oxlint-disable-next-line no-await-in-loop -- one gh lookup per worktree is acceptable; multi-worktree-per-task is rare.
     const prs = await findPullRequestsForBranch({
       cwd: entry.dir,
-      branchName: entry.branchName,
+      branchName,
     });
     writeOutput(`- ${entry.repository} ${entry.kind}`);
-    writeOutput(`  branch: ${entry.branchName}`);
+    writeOutput(`  branch: ${branchName}`);
     writeOutput(`  dir: ${entry.dir}`);
     writeOutput(`  git: ${formatDirtiness(dirtiness)}`);
     if (prs.length > 0) {
@@ -403,14 +406,24 @@ async function writeInventoryWorktrees(
     writeOutput("(none)");
     return;
   }
-  const accessHints = await collectAccessHints(config, entries);
-  const pullRequests = await collectPullRequests(entries);
   const runStates = new Map<string, RunState | undefined>();
-  const now = new Date();
-  for (const [index, entry] of entries.entries()) {
+  for (const entry of entries) {
     if (!runStates.has(entry.task)) {
       runStates.set(entry.task, readRunState(config, entry.task));
     }
+  }
+  const accessHints = await collectAccessHints(config, entries);
+  const pullRequests = await collectPullRequests(
+    entries.map((entry) => ({
+      dir: entry.dir,
+      branchName: effectiveBranchNameFromRunState({
+        entry,
+        runState: runStates.get(entry.task),
+      }),
+    })),
+  );
+  const now = new Date();
+  for (const [index, entry] of entries.entries()) {
     const runState = runStates.get(entry.task);
     const accessHint = accessHints.get(entry.task);
     // `collectPullRequests` guarantees an entry for every worktree dir seen

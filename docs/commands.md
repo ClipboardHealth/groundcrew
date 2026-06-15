@@ -146,3 +146,21 @@ The command closes the cmux/tmux/zellij workspace if present, records local run 
 `crew resume <TASK>` reopens an existing task worktree with a continuation prompt. Resume never creates a new worktree; if none exists it fails and leaves re-dispatch to `crew start <task>`.
 
 The resume prompt tells the agent to inspect git status and diff before editing, includes the previous interrupt reason when recorded, and reuses the recorded agent, repository, branch, runner, sandbox, and workspace backend. When no run-state file exists but a worktree does, resume falls back to Linear resolution for the agent and task context.
+
+## Open
+
+`crew open` provisions a worktree for an existing pull request or branch — work that groundcrew did not create — and launches a session in it. Use it to iterate on a PR opened by hand, by a teammate, or by another tool.
+
+```bash
+crew open 1234 --repo owner/repo                       # PR number (repo required)
+crew open https://github.com/owner/repo/pull/1234      # PR URL (repo inferred)
+crew open --branch jdoe/fix-thing --repo owner/repo    # a pushed branch with no PR yet
+crew open 1234 --repo owner/repo --prompt "address the review comments"
+crew open 1234 --repo owner/repo --agent codex --task pr-1234 --dry-run
+```
+
+Open checks out the PR's actual head branch (fetching it from the remote when it isn't already local), so commits and pushes land on the same PR. It synthesizes a task id — `pr-<number>` for a PR, or a slug of the branch — that becomes the handle for `crew status`, `crew stop`, `crew resume`, and `crew cleanup`. `--task` overrides it. The opened worktree's real branch is recorded in run state, so `crew status` shows it and its PR.
+
+When `--prompt`/`--prompt-file` is given, the agent starts with that prompt; otherwise it opens its interactive session with no prompt and hands control to you.
+
+`crew cleanup <task>` removes the opened worktree but never deletes the remote PR branch. Fork (cross-repository) PRs and `provision`/sparse-checkout repositories are not supported; for a fork, check the branch out locally and use `--branch`.

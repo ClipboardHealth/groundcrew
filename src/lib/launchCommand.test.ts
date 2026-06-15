@@ -1368,3 +1368,63 @@ describe(buildLaunchCommand, () => {
     });
   });
 });
+
+describe("buildLaunchCommand omitPromptArgument (interactive launch)", () => {
+  it("drops the trailing prompt positional on the unwrapped host path", () => {
+    const withPrompt = buildLaunchCommand(arguments_({ runner: "none" }));
+    const interactive = buildLaunchCommand(
+      arguments_({ runner: "none", omitPromptArgument: true }),
+    );
+
+    expect(withPrompt).toMatch(/exec claude "\$_p"$/);
+    expect(interactive).toMatch(/exec claude$/);
+    // The prompt is still read into $_p (and its dir cleaned up); only the
+    // positional is dropped.
+    expect(interactive).toContain("_p=$(cat '/tmp/prompt-team-1/prompt.txt')");
+  });
+
+  it("drops the trailing prompt positional from the Safehouse agent wrap", () => {
+    const withPrompt = buildLaunchCommand(arguments_({ runner: "safehouse" }));
+    const interactive = buildLaunchCommand(
+      arguments_({ runner: "safehouse", omitPromptArgument: true }),
+    );
+
+    expect(withPrompt).toContain(`sh "$_p"; _safehouse_status=$?`);
+    expect(interactive).toContain(`sh; _safehouse_status=$?`);
+    expect(interactive).not.toContain(`sh "$_p"`);
+    expect(interactive).toContain("_p=$(cat '/tmp/prompt-team-1/prompt.txt')");
+  });
+
+  it("drops the trailing prompt positional from the srt agent wrap", () => {
+    const srtArgs = {
+      runner: "srt" as const,
+      srtPrepareSettingsFile: "/tmp/groundcrew-srt-team-1/prepare-settings.json",
+      srtAgentSettingsFile: "/tmp/groundcrew-srt-team-1/agent-settings.json",
+      srtSettingsDir: "/tmp/groundcrew-srt-team-1",
+    };
+    const withPrompt = buildLaunchCommand(arguments_(srtArgs));
+    const interactive = buildLaunchCommand(arguments_({ ...srtArgs, omitPromptArgument: true }));
+
+    expect(withPrompt).toContain(`sh "$_p"; _srt_status=$?`);
+    expect(interactive).toContain(`sh; _srt_status=$?`);
+    expect(interactive).not.toContain(`sh "$_p"`);
+  });
+
+  it("drops the trailing prompt positional from the sdx exec", () => {
+    const sdxArgs = {
+      runner: "sdx" as const,
+      sandboxName: "groundcrew-claude",
+      definition: {
+        cmd: "claude",
+        color: "#fff",
+        sandbox: { agent: "claude" },
+      } satisfies AgentDefinition,
+    };
+    const withPrompt = buildLaunchCommand(arguments_(sdxArgs));
+    const interactive = buildLaunchCommand(arguments_({ ...sdxArgs, omitPromptArgument: true }));
+
+    expect(withPrompt).toMatch(/sh "\$_p"$/);
+    expect(interactive).toMatch(/ sh$/);
+    expect(interactive).not.toContain(`sh "$_p"`);
+  });
+});
