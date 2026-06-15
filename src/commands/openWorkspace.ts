@@ -219,7 +219,7 @@ export async function openWorkspace(
     return;
   }
 
-  const { runner, sandboxName, workspaceKind, ensureReady } = await prepareAgentLaunch({
+  const { runner, networkEgress, sandboxName, workspaceKind, ensureReady } = await prepareAgentLaunch({
     config,
     agent,
     definition,
@@ -251,6 +251,7 @@ export async function openWorkspace(
     let launchCommand: string;
     ({ launchCommand, srtSettingsDir } = composeAgentLaunch({
       runner,
+      networkEgress,
       task: target.task,
       definition,
       promptFile: stagedPrompt.file,
