@@ -120,6 +120,7 @@ export async function orchestrate(options: OrchestratorOptions): Promise<void> {
   const cleaner: Cleaner = createCleaner({ config });
   const reviewer: Reviewer = createReviewer({
     board,
+    config,
     findPullRequests: findPullRequestsForBranch,
   });
   const dispatcher: Dispatcher = createDispatcher({ config, board });

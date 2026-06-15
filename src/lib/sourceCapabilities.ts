@@ -1,7 +1,6 @@
 import { z } from "zod";
 
 import { shellAdapterConfigSchema } from "./adapters/shell/schema.ts";
-import { kindShape } from "./buildSources.ts";
 
 interface SourceCapabilities {
   verify: boolean;
@@ -21,6 +20,7 @@ export interface SourceSummary {
 }
 
 const nameShape = z.looseObject({ name: z.string().optional() });
+const kindShape = z.object({ kind: z.string() });
 
 const LINEAR_CAPABILITIES: SourceCapabilities = {
   verify: true,
@@ -87,4 +87,37 @@ export function summarizeSource(raw: unknown): SourceSummary {
   }
 
   return { name: sourceName, kind, capabilities };
+}
+
+export function sourceSupportsMarkDone(arguments_: {
+  rawSources: readonly unknown[];
+  sourceName: string;
+}): boolean {
+  const { rawSources, sourceName } = arguments_;
+  for (const rawSource of rawSources) {
+    const source = summarizeSource(rawSource);
+    if (source.name === sourceName) {
+      return source.capabilities.markDone;
+    }
+  }
+  return false;
+}
+
+export function taskSupportsCompletionCommand(arguments_: {
+  rawSources: readonly unknown[];
+  taskId: string;
+}): boolean {
+  const { rawSources, taskId } = arguments_;
+  const colonIndex = taskId.indexOf(":");
+  if (colonIndex === -1) {
+    const [singleSource] = rawSources;
+    if (rawSources.length === 1 && singleSource !== undefined) {
+      return summarizeSource(singleSource).capabilities.markDone;
+    }
+    return false;
+  }
+  return sourceSupportsMarkDone({
+    rawSources,
+    sourceName: taskId.slice(0, colonIndex),
+  });
 }

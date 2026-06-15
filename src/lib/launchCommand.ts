@@ -7,6 +7,7 @@ import {
   hasPreLaunchEnv,
   type LocalRunner,
   type AgentDefinition,
+  type NetworkEgressSetting,
 } from "./config.ts";
 import { clearanceAllowHostsFilesFromEnvironment } from "./clearanceAllowlist.ts";
 import { shellSingleQuote } from "./shell.ts";
@@ -134,6 +135,16 @@ function unsetSecretsLine(): string {
 
 function safehouseClearanceWrapperCommand(): string {
   return `CLEARANCE_ALLOW_HOSTS_FILES=${shellSingleQuote(clearanceAllowHostsFilesFromEnvironment())} ${shellSingleQuote(SAFEHOUSE_CLEARANCE_WRAPPER_PATH)}`;
+}
+
+/**
+ * Pick the Safehouse wrapper for a launch: the Clearance shim by default, or the
+ * bare `safehouse` binary when network egress is open. Both wrap sites in
+ * `buildSafehouseLaunchCommand` read the selection, so the prepareWorktree wrap
+ * and agent wrap use the same egress posture.
+ */
+function safehouseWrapperCommand(networkEgress: NetworkEgressSetting): string {
+  return networkEgress === "allowlisted" ? safehouseClearanceWrapperCommand() : "safehouse";
 }
 
 function trapCleanupLine(promptDir: string): string {
@@ -323,33 +334,64 @@ const WORKER_ENVIRONMENT_NAMES = ["GROUNDCREW_TASK_ID", "GROUNDCREW_COMPLETE"] a
 
 type WorkerEnvironmentName = (typeof WORKER_ENVIRONMENT_NAMES)[number];
 
-export type WorkerEnvironment = Readonly<Record<WorkerEnvironmentName, string>>;
+export type WorkerEnvironment = Readonly<{
+  GROUNDCREW_TASK_ID: string;
+  GROUNDCREW_COMPLETE?: string;
+}>;
 
-export function workerEnvironmentForTask(taskId: string): WorkerEnvironment {
+export function workerEnvironmentForTask(arguments_: {
+  taskId: string;
+  markDoneSupported: boolean;
+}): WorkerEnvironment {
+  const { taskId, markDoneSupported } = arguments_;
   return {
     GROUNDCREW_TASK_ID: taskId,
-    GROUNDCREW_COMPLETE: `crew task done ${taskId}`,
+    ...(markDoneSupported ? { GROUNDCREW_COMPLETE: `crew task done ${taskId}` } : {}),
   };
 }
 
 function workerEnvironmentNames(
   workerEnvironment: WorkerEnvironment | undefined,
 ): readonly WorkerEnvironmentName[] {
-  return workerEnvironment === undefined ? [] : WORKER_ENVIRONMENT_NAMES;
+  if (workerEnvironment === undefined) {
+    return [];
+  }
+  return WORKER_ENVIRONMENT_NAMES.filter((name) => workerEnvironment[name] !== undefined);
 }
 
 function workerEnvironmentExports(workerEnvironment: WorkerEnvironment | undefined): string[] {
   if (workerEnvironment === undefined) {
     return [];
   }
-  return WORKER_ENVIRONMENT_NAMES.map(
-    (name) => `export ${name}=${shellSingleQuote(workerEnvironment[name])}`,
-  );
+  const exports: string[] = [];
+  for (const name of WORKER_ENVIRONMENT_NAMES) {
+    const value = workerEnvironment[name];
+    if (value !== undefined) {
+      exports.push(`export ${name}=${shellSingleQuote(value)}`);
+    }
+  }
+  return exports;
 }
 
 function envPassFlag(names: readonly string[]): string {
   const uniqueNames = [...new Set(names)];
   return uniqueNames.length === 0 ? "" : `--env-pass=${uniqueNames.join(",")} `;
+}
+
+/**
+ * Trailing prompt positional passed to the agent. Normally ` "$_p"` (the staged
+ * prompt read into `$_p`); empty when `omitPromptArgument` is set, so the agent
+ * launches with no initial prompt and drops into its interactive session. The
+ * `$_p` read still runs either way — only the positional is dropped.
+ */
+function promptPositional(omitPromptArgument: boolean | undefined): string {
+  return omitPromptArgument === true ? "" : ` "$_p"`;
+}
+
+export interface SafehouseAgentIntegration {
+  addDirsReadOnly: readonly string[];
+  envPass: readonly string[];
+  commandPreludes: readonly string[];
 }
 
 interface LaunchCommandArguments {
@@ -383,6 +425,12 @@ interface LaunchCommandArguments {
    * function is called — `auto` is never seen here.
    */
   runner: LocalRunner;
+  /**
+   * Network egress posture. The safehouse runner uses `"allowlisted"` for the
+   * Clearance shim and `"open"` for bare `safehouse`; srt/sdx/unwrapped paths
+   * ignore it.
+   */
+  networkEgress: NetworkEgressSetting;
   /**
    * sbx sandbox name when `runner === "sdx"`. Derived by the caller from
    * `sandboxNameFor({ agent })`. Required for sdx; ignored otherwise.
@@ -424,10 +472,30 @@ interface LaunchCommandArguments {
    */
   safehouseAddDirs?: readonly string[] | undefined;
   /**
+   * Extra read/write paths granted only to the Safehouse agent wrap. These are
+   * intentionally withheld from the repo-controlled prepareWorktree wrap.
+   */
+  safehouseAgentAddDirs?: readonly string[] | undefined;
+  /**
+   * Extra host-terminal integration surface granted only to the Safehouse agent
+   * wrap. The agent may need to execute host shims and reach their sockets
+   * while repo-controlled prepareWorktree hooks should not inherit those paths
+   * or env vars.
+   */
+  safehouseAgentIntegration?: SafehouseAgentIntegration | undefined;
+  /**
    * Groundcrew-managed task metadata exposed to the launched worker. Forwarded
    * to the agent process, not the prepareWorktree hook.
    */
   workerEnvironment?: WorkerEnvironment | undefined;
+  /**
+   * When set, the agent is exec'd with no trailing prompt positional so it opens
+   * its interactive session and hands control to the user. The staged prompt is
+   * still read into `$_p` (and the prompt dir cleaned up) for a uniform launch
+   * chain; only the positional is dropped. Used by `crew open` when no
+   * `--prompt`/`--prompt-file` is given.
+   */
+  omitPromptArgument?: boolean | undefined;
 }
 
 /**
@@ -519,7 +587,7 @@ function buildUnwrappedHostLaunchCommand(arguments_: LaunchCommandArguments): st
       worktreeDir: arguments_.worktreeDir,
       promptFile: arguments_.promptFile,
       promptDir,
-      execLine: `exec ${agentCmd} "$_p"`,
+      execLine: `exec ${agentCmd}${promptPositional(arguments_.omitPromptArgument)}`,
     }),
   );
   return lines.join(" && ");
@@ -558,7 +626,13 @@ function buildUnwrappedHostLaunchCommand(arguments_: LaunchCommandArguments): st
 function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string {
   const promptDir = path.dirname(arguments_.promptFile);
   const safehouseCommandName = inferAgentCommandName(arguments_.definition.cmd);
-  const { agentCommand, prepareWorktreeCommand } = renderPrepareAndAgentCommand(arguments_);
+  const { agentCommand: rawAgentCommand, prepareWorktreeCommand } =
+    renderPrepareAndAgentCommand(arguments_);
+  const { safehouseAgentIntegration } = arguments_;
+  const agentCommand = [
+    ...(safehouseAgentIntegration?.commandPreludes ?? []),
+    rawAgentCommand,
+  ].join("; ");
 
   // Split --env-pass per wrap: the prepareWorktree wrap only needs build secrets (so
   // `npm install` etc. can authenticate); the agent wrap only needs the
@@ -571,16 +645,25 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
   const agentEnvPassFlag = envPassFlag([
     ...(arguments_.definition.preLaunchEnv ?? []),
     ...workerEnvironmentNames(arguments_.workerEnvironment),
+    ...(safehouseAgentIntegration?.envPass ?? []),
   ]);
   // safehouse reads colon-separated paths from `--add-dirs`; both wraps get the
   // same grant so the prepareWorktree hook and the agent can each reach git.
   // Quote the whole value so shell-special chars survive; the trailing space
   // separates it from the next argv token. See `resolveSafehouseAddDirs` for
   // which paths these are and why.
-  const addDirs = arguments_.safehouseAddDirs ?? [];
-  const safehouseAddDirsFlag =
-    addDirs.length === 0 ? "" : `--add-dirs=${shellSingleQuote(addDirs.join(":"))} `;
-  const safehouseWrapper = safehouseClearanceWrapperCommand();
+  const safehousePrepareAddDirs = arguments_.safehouseAddDirs ?? [];
+  const safehouseAgentAddDirs = uniqueStrings([
+    ...safehousePrepareAddDirs,
+    ...(arguments_.safehouseAgentAddDirs ?? []),
+  ]);
+  const safehouseAddDirsFlag = safehousePathListFlag("--add-dirs", safehousePrepareAddDirs);
+  const safehouseAgentAddDirsFlag = safehousePathListFlag("--add-dirs", safehouseAgentAddDirs);
+  const safehouseAgentAddDirsReadOnlyFlag = safehousePathListFlag(
+    "--add-dirs-ro",
+    safehouseAgentIntegration?.addDirsReadOnly ?? [],
+  );
+  const safehouseWrapper = safehouseWrapperCommand(arguments_.networkEgress);
 
   // Defensive shim+promptDir trap: by the time we arm it, `rm -rf <promptDir>`
   // has already run (line below) so the promptDir wipe is a no-op on the happy
@@ -620,9 +703,20 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
     // Running the real launch chain as `sh -c` would make it see `sh`, so use
     // an agent-named symlink to /bin/sh. This preserves per-agent profile
     // selection without enabling every agent profile.
-    `{ ${safehouseWrapper} ${safehouseAddDirsFlag}${agentEnvPassFlag}"$_safehouse_shim" -c ${shellSingleQuote(agentCommand)} sh "$_p"; _safehouse_status=$?; rm -rf "$_safehouse_shim_dir"; trap - EXIT; exit "$_safehouse_status"; }`,
+    `{ ${safehouseWrapper} ${safehouseAgentAddDirsFlag}${safehouseAgentAddDirsReadOnlyFlag}${agentEnvPassFlag}"$_safehouse_shim" -c ${shellSingleQuote(agentCommand)} sh${promptPositional(arguments_.omitPromptArgument)}; _safehouse_status=$?; rm -rf "$_safehouse_shim_dir"; trap - EXIT; exit "$_safehouse_status"; }`,
   );
   return lines.join(" && ");
+}
+
+function safehousePathListFlag(
+  flagName: "--add-dirs" | "--add-dirs-ro",
+  paths: readonly string[],
+): string {
+  return paths.length === 0 ? "" : `${flagName}=${shellSingleQuote(paths.join(":"))} `;
+}
+
+function uniqueStrings(values: readonly string[]): string[] {
+  return [...new Set(values)];
 }
 
 /**
@@ -744,7 +838,7 @@ function buildSrtLaunchCommand(arguments_: LaunchCommandArguments): string {
   }
   lines.push(
     ...workerEnvironmentExports(arguments_.workerEnvironment),
-    `{ ${agentWrap} sh -c ${shellSingleQuote(agentCommand)} sh "$_p"; _srt_status=$?; rm -rf ${shellSingleQuote(arguments_.srtSettingsDir)}; trap - EXIT; exit "$_srt_status"; }`,
+    `{ ${agentWrap} sh -c ${shellSingleQuote(agentCommand)} sh${promptPositional(arguments_.omitPromptArgument)}; _srt_status=$?; rm -rf ${shellSingleQuote(arguments_.srtSettingsDir)}; trap - EXIT; exit "$_srt_status"; }`,
   );
   return lines.join(" && ");
 }
@@ -784,7 +878,7 @@ function buildSdxLaunchCommand(arguments_: LaunchCommandArguments): string {
   lines.push(
     `_p=$(cat ${shellSingleQuote(arguments_.promptFile)})`,
     `rm -rf ${shellSingleQuote(promptDir)}`,
-    `exec sbx exec -it ${sbxEnvironmentFlags}-w ${shellSingleQuote(arguments_.workingDir)} ${shellSingleQuote(arguments_.sandboxName)} sh -c ${shellSingleQuote(innerCommand)} sh "$_p"`,
+    `exec sbx exec -it ${sbxEnvironmentFlags}-w ${shellSingleQuote(arguments_.workingDir)} ${shellSingleQuote(arguments_.sandboxName)} sh -c ${shellSingleQuote(innerCommand)} sh${promptPositional(arguments_.omitPromptArgument)}`,
   );
   return lines.join(" && ");
 }

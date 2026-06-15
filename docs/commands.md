@@ -10,7 +10,7 @@ crew task list --source todo --status todo --unblocked
 crew task list --agent claude-fable --repo ClipboardHealth/api --json
 ```
 
-`crew task get <task-id>` prints one normalized task. Canonical IDs such as `todo:GC-20260608-001` route directly to the named source. Natural IDs can be resolved with `--source <name>` or, when unique, by searching all configured sources. If more than one source matches, the command fails and asks for a canonical ID or `--source`.
+`crew task get <task-id>` prints one normalized task. Canonical IDs such as `todo:GC-20260608-001` route directly to the named source. Natural IDs can be resolved with `--source <name>` or, when unique, by searching all configured sources. Exact IDs are tried first; if none match, Groundcrew accepts a unique prefix of a current listed task ID. If more than one task matches, the command fails and prints the matching canonical IDs.
 
 ```bash
 crew task get todo:GC-20260608-001
@@ -44,8 +44,9 @@ crew task create "Fix cancellation retry race" \
 `crew task done <task-id>` marks one task done through its source adapter. Use
 it for completed work that intentionally does not produce a PR. The command
 resolves canonical IDs such as `todo:flaky-triage-1` directly, or natural IDs
-when they match exactly one configured source. Sources without a done writeback
-return an unsupported error.
+when they match exactly one configured source. Exact IDs are tried first; if
+none match, Groundcrew accepts a unique prefix of a current listed task ID.
+Sources without a done writeback return an unsupported error.
 
 Groundcrew checks matching local worktrees before marking a task done. Clean
 worktrees, and tasks with no local worktree, are allowed. A dirty worktree with
@@ -145,3 +146,21 @@ The command closes the cmux/tmux/zellij workspace if present, records local run 
 `crew resume <TASK>` reopens an existing task worktree with a continuation prompt. Resume never creates a new worktree; if none exists it fails and leaves re-dispatch to `crew start <task>`.
 
 The resume prompt tells the agent to inspect git status and diff before editing, includes the previous interrupt reason when recorded, and reuses the recorded agent, repository, branch, runner, sandbox, and workspace backend. When no run-state file exists but a worktree does, resume falls back to Linear resolution for the agent and task context.
+
+## Open
+
+`crew open` provisions a worktree for an existing pull request or branch — work that groundcrew did not create — and launches a session in it. Use it to iterate on a PR opened by hand, by a teammate, or by another tool.
+
+```bash
+crew open 1234 --repo owner/repo                       # PR number (repo required)
+crew open https://github.com/owner/repo/pull/1234      # PR URL (repo inferred)
+crew open --branch jdoe/fix-thing --repo owner/repo    # a pushed branch with no PR yet
+crew open 1234 --repo owner/repo --prompt "address the review comments"
+crew open 1234 --repo owner/repo --agent codex --task pr-1234 --dry-run
+```
+
+Open checks out the PR's actual head branch (fetching it from the remote when it isn't already local), so commits and pushes land on the same PR. It synthesizes a task id — `pr-<number>` for a PR, or a slug of the branch — that becomes the handle for `crew status`, `crew stop`, `crew resume`, and `crew cleanup`. `--task` overrides it. The opened worktree's real branch is recorded in run state, so `crew status` shows it and its PR.
+
+When `--prompt`/`--prompt-file` is given, the agent starts with that prompt; otherwise it opens its interactive session with no prompt and hands control to you.
+
+`crew cleanup <task>` removes the opened worktree but never deletes the remote PR branch. Fork (cross-repository) PRs and `provision`/sparse-checkout repositories are not supported; for a fork, check the branch out locally and use `--branch`.

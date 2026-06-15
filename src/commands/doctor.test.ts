@@ -124,7 +124,7 @@ function makeConfig(overrides: Partial<ResolvedConfig["agents"]> = {}): Resolved
     },
     prompts: { initial: "x" },
     workspaceKind: "auto",
-    local: { runner: "auto" },
+    local: { runner: "auto", networkEgress: "allowlisted" },
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }
@@ -237,6 +237,14 @@ describe(doctor, () => {
     expect(actual).toBe(true);
     const output = consoleLog.output();
     expect(output).toContain("[ok] config loaded — /work/crew.config.ts (GROUNDCREW_CONFIG)");
+  });
+
+  it("reports the resolved log file path", async () => {
+    loadConfigWithSourceMock.mockResolvedValue(makeLoadedConfig(makeConfig()));
+
+    await doctor();
+
+    expect(consoleLog.output()).toContain("log file: /tmp/groundcrew-test.log");
   });
 
   it("returns false when config loading fails", async () => {
@@ -646,7 +654,10 @@ describe(doctor, () => {
 
   it("reports the srt runner as ready on macOS for an explicit local.runner='srt'", async () => {
     detectHostMock.mockResolvedValue(host());
-    loadConfigMock.mockResolvedValue({ ...makeConfig(), local: { runner: "srt" } });
+    loadConfigMock.mockResolvedValue({
+      ...makeConfig(),
+      local: { runner: "srt", networkEgress: "allowlisted" },
+    });
 
     const actual = await doctor();
 
@@ -668,7 +679,10 @@ describe(doctor, () => {
         hasRipgrep: false,
       }),
     );
-    loadConfigMock.mockResolvedValue({ ...makeConfig(), local: { runner: "srt" } });
+    loadConfigMock.mockResolvedValue({
+      ...makeConfig(),
+      local: { runner: "srt", networkEgress: "allowlisted" },
+    });
 
     const actual = await doctor();
 
@@ -691,7 +705,10 @@ describe(doctor, () => {
         hasRipgrep: true,
       }),
     );
-    loadConfigMock.mockResolvedValue({ ...makeConfig(), local: { runner: "srt" } });
+    loadConfigMock.mockResolvedValue({
+      ...makeConfig(),
+      local: { runner: "srt", networkEgress: "allowlisted" },
+    });
 
     const actual = await doctor();
 
@@ -710,7 +727,10 @@ describe(doctor, () => {
         isSdxSupported: false,
       }),
     );
-    loadConfigMock.mockResolvedValue({ ...makeConfig(), local: { runner: "srt" } });
+    loadConfigMock.mockResolvedValue({
+      ...makeConfig(),
+      local: { runner: "srt", networkEgress: "allowlisted" },
+    });
 
     const actual = await doctor();
 
@@ -720,7 +740,10 @@ describe(doctor, () => {
 
   it("surfaces a WARNING when local.runner is configured to 'none'", async () => {
     detectHostMock.mockResolvedValue(host());
-    loadConfigMock.mockResolvedValue({ ...makeConfig(), local: { runner: "none" } });
+    loadConfigMock.mockResolvedValue({
+      ...makeConfig(),
+      local: { runner: "none", networkEgress: "allowlisted" },
+    });
 
     const actual = await doctor();
 
@@ -732,7 +755,10 @@ describe(doctor, () => {
 
   it("honours an explicit local.runner='sdx' even on macOS, reflecting the requested vs resolved line", async () => {
     detectHostMock.mockResolvedValue(host({ hasSbx: true }));
-    loadConfigMock.mockResolvedValue({ ...makeConfig(), local: { runner: "sdx" } });
+    loadConfigMock.mockResolvedValue({
+      ...makeConfig(),
+      local: { runner: "sdx", networkEgress: "allowlisted" },
+    });
 
     const actual = await doctor();
 

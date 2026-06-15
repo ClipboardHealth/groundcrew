@@ -158,7 +158,7 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
     },
     prompts: { initial: "x", ...overrides.prompts },
     workspaceKind: overrides.workspaceKind ?? "auto",
-    local: { runner: "auto", ...overrides.local },
+    local: { runner: "auto", networkEgress: "allowlisted", ...overrides.local },
     logging: { file: "/tmp/groundcrew-test.log", ...overrides.logging },
   };
 }
@@ -278,6 +278,20 @@ describe(status, () => {
     expect(output).not.toContain("Task source");
     expect(output).toContain("task: team-1  in-progress  https://linear.app/example/issue/TEAM-1");
     expect(output).toContain("title: Fix status");
+  });
+
+  it("shows the run-state branch (not the derived one) for an opened PR worktree", async () => {
+    readRunStateMock.mockReturnValue(runState({ branchName: "jdoe/fix-thing" }));
+    findByTaskMock.mockReturnValue([worktree({ branchName: "dev-team-1" })]);
+    probeWorkingTreeMock.mockResolvedValue({ kind: "clean" });
+    buildSourcesMock.mockResolvedValue([fakeSource([])]);
+
+    await status(makeConfig(), { task: "team-1" });
+
+    expect(consoleLog.output()).toContain("branch: jdoe/fix-thing");
+    expect(findPullRequestsMock).toHaveBeenCalledWith(
+      expect.objectContaining({ branchName: "jdoe/fix-thing" }),
+    );
   });
 
   it("prints unavailable fields without attempting recovery", async () => {

@@ -85,6 +85,19 @@ describe("loadConfig", () => {
     await expect(loadConfig()).rejects.toThrow(/disabled: true` is no longer supported/);
   });
 
+  it("includes the config filepath in migration errors", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      configSource({ workspace: VALID_WORKSPACE(temporary) }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(`groundcrew config: ${configPath}:`);
+    await expect(loadConfig()).rejects.toThrow(/configuration migration required/);
+  });
+
   it("loads an explicit built-in agent and applies defaults", async () => {
     const configPath = writeConfigFile(
       temporary,
@@ -1010,6 +1023,55 @@ describe("loadConfig", () => {
     expect(actual.local.runner).toBe("safehouse");
   });
 
+  it("defaults local.networkEgress to allowlisted when omitted", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      validConfigSource({ workspace: VALID_WORKSPACE(temporary) }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+    expect(actual.local.networkEgress).toBe("allowlisted");
+  });
+
+  it.each(["allowlisted", "open"] as const)(
+    "preserves an explicit local.networkEgress: %s",
+    async (networkEgress) => {
+      const configPath = writeConfigFile(
+        temporary,
+        validConfigSource({
+          workspace: VALID_WORKSPACE(temporary),
+          local: { networkEgress },
+        }),
+      );
+      setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+      const { loadConfig } = await loadFreshConfig();
+      const actual = await loadConfig();
+      expect(actual.local.networkEgress).toBe(networkEgress);
+    },
+  );
+
+  it.each([
+    ["unknown", "'blocked'"],
+    ["non-string", "false"],
+  ] as const)("rejects a %s local.networkEgress value", async (_caseName, valueSource) => {
+    const configPath = writeConfigFile(
+      temporary,
+      [
+        "export default {",
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        `  agents: { definitions: { claude: {} } },`,
+        `  local: { networkEgress: ${valueSource} },`,
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(
+      /local\.networkEgress must be one of allowlisted, open/,
+    );
+  });
+
   it("rejects legacy disabled agent entries with migration guidance", async () => {
     const configPath = writeConfigFile(
       temporary,
@@ -1443,6 +1505,25 @@ describe("loadConfig", () => {
     await expect(loadConfig()).rejects.toThrow(/workspace must be an object/);
   });
 
+  it("does not rewrite unexpected loader errors as config validation errors", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      [
+        "export default {",
+        "  get workspace() {",
+        '    throw new Error("workspace getter exploded");',
+        "  },",
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow("workspace getter exploded");
+    await expect(loadConfig()).rejects.not.toThrow(configPath);
+  });
+
   it("fails when knownRepositories is not an array", async () => {
     const configPath = writeConfigFile(
       temporary,
@@ -1497,6 +1578,52 @@ describe("loadConfig", () => {
     const config = await loadConfig();
     const [recipe] = config.workspace.repositories;
     expect(recipe).toStrictEqual({ name: "billing", provision: scripted, workdir: "sub" });
+  });
+
+  it("normalizes per-repo hooks on a repo entry", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      validConfigSource({
+        workspace: {
+          projectDir: temporary,
+          knownRepositories: [{ name: "billing", hooks: { prepareWorktree: "make setup" } }],
+        },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    const config = await loadConfig();
+    const [recipe] = config.workspace.repositories;
+    expect(recipe).toStrictEqual({ name: "billing", hooks: { prepareWorktree: "make setup" } });
+  });
+
+  it("rejects an empty per-repo prepareWorktree hook", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      validConfigSource({
+        workspace: {
+          projectDir: temporary,
+          knownRepositories: [{ name: "billing", hooks: { prepareWorktree: " " } }],
+        },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(
+      /workspace\.knownRepositories\[0\]\.hooks\.prepareWorktree must be a non-empty string/,
+    );
+  });
+
+  it("rejects per-repo hooks that are not an object", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      `export default { workspace: { projectDir: ${JSON.stringify(temporary)}, knownRepositories: [{ name: "billing", hooks: [] }] }, agents: { definitions: { claude: {} } } };\n`,
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(
+      /workspace\.knownRepositories\[0\]\.hooks must be an object/,
+    );
   });
 
   const scripted = { create: "a", remove: "b" };

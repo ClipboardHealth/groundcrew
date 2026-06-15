@@ -79,6 +79,17 @@ export const LOCAL_RUNNER_SETTINGS: readonly LocalRunnerSetting[] = [
 ] as const;
 
 /**
+ * Network posture for local runners that can choose between allowlisted and
+ * unrestricted egress. Only the safehouse runner consumes this today.
+ */
+export type NetworkEgressSetting = "allowlisted" | "open";
+
+export const NETWORK_EGRESS_SETTINGS: readonly NetworkEgressSetting[] = [
+  "allowlisted",
+  "open",
+] as const;
+
+/**
  * Per-agent Docker Sandboxes (sdx) binding. Required at launch when
  * `local.runner` resolves to `sdx` so groundcrew knows which existing
  * sbx sandbox to address.
@@ -110,16 +121,15 @@ export interface AgentDefinition {
   /**
    * Optional list of env var names to forward from the launch shell into
    * the agent under the safehouse runner. Companion to `preLaunch` —
-   * names exported by `preLaunch` go here so groundcrew appends them to
-   * the `safehouse-clearance` wrap's `--env-pass=` flag, preserving the
-   * project's egress allowlist (`clearance-allow-hosts`) without forcing
-   * the user to rewrite `cmd`. Under `local.runner: "none"` exports flow
-   * through unchanged, so `preLaunchEnv` is a no-op. An empty array is a
-   * uniform no-op in every runner (it forwards zero names, so the
-   * unsupported-runner guards do not fire). A non-empty list is rejected
-   * when `local.runner` resolves to `sdx` in v1, and when `cmd` already
-   * starts with `safehouse` (the user owns env forwarding in that case).
-   * Each name must match `[A-Za-z_][A-Za-z0-9_]*` (POSIX env var name).
+   * names exported by `preLaunch` go here so groundcrew appends them to the
+   * Safehouse wrap's `--env-pass=` flag without forcing the user to rewrite
+   * `cmd`. Under `local.runner: "none"` exports flow through unchanged, so
+   * `preLaunchEnv` is a no-op. An empty array is a uniform no-op in every
+   * runner (it forwards zero names, so the unsupported-runner guards do not
+   * fire). A non-empty list is rejected when `local.runner` resolves to `sdx`
+   * in v1, and when `cmd` already starts with `safehouse` (the user owns env
+   * forwarding in that case). Each name must match `[A-Za-z_][A-Za-z0-9_]*`
+   * (POSIX env var name).
    */
   preLaunchEnv?: string[];
   color: string;
@@ -196,6 +206,14 @@ export interface KnownRepository {
    * is unchanged. Relative, no `..`.
    */
   workdir?: string;
+  /**
+   * Per-repo operator hooks, reusing the same `HookCommands` shape that
+   * `defaults.hooks` and the in-repo `.groundcrew/config.json` use. Slots
+   * between the repo-committed file (wins) and `defaults.hooks` (fallback) in
+   * the `prepareWorktree` cascade, so an operator can set the hook for a repo
+   * they don't want to (or can't) commit a `.groundcrew/config.json` into.
+   */
+  hooks?: HookCommands;
 }
 
 export interface Config {
@@ -275,6 +293,13 @@ export interface Config {
    */
   local?: {
     runner?: LocalRunnerSetting;
+    /**
+     * Network egress posture for local launches. Defaults to `"allowlisted"`.
+     * With the safehouse runner, `"allowlisted"` uses Clearance and `"open"`
+     * keeps the filesystem sandbox while running bare `safehouse` with
+     * unrestricted network egress. `srt`/`sdx`/`none` ignore this setting.
+     */
+    networkEgress?: NetworkEgressSetting;
   };
   logging?: {
     /**
@@ -341,6 +366,11 @@ export interface ResolvedConfig {
    */
   local: {
     runner: LocalRunnerSetting;
+    /**
+     * Resolved network egress posture. Always present; defaults to
+     * `"allowlisted"`. Only the safehouse runner consumes this today.
+     */
+    networkEgress: NetworkEgressSetting;
   };
   logging: {
     file: string;
@@ -445,7 +475,7 @@ const DEFAULT_PROMPT_INITIAL = [
   "2. Implement the smallest sensible change that completes the task.",
   "3. Run the repo's documented verification command. If no documented command exists, run the smallest relevant test suite you can find and fix failures you introduced before continuing.",
   "4. Follow the task description for output. If no output instructions exist, open a PR with `Closes {{task}}` in the description. If you cannot open one, leave the branch ready and record the blocker.",
-  "5. If the requested work is complete, no PR is needed, and any dirty worktree state is expected or explicitly allowed, run the command in `GROUNDCREW_COMPLETE` to mark the task done.",
+  "5. If the requested work is complete, no PR is needed, `GROUNDCREW_COMPLETE` is set, and any dirty worktree state is expected or explicitly allowed, run the command in `GROUNDCREW_COMPLETE` to mark the task done.",
 ].join("\n");
 
 const ALLOWED_PROMPT_PLACEHOLDERS = new Set([
@@ -459,17 +489,36 @@ const PROMPT_PLACEHOLDER_RE = /{{[^{}]*}}/g;
 
 const PERCENT_MIN_EXCLUSIVE = 0;
 const PERCENT_MAX = 100;
+const CONFIG_ERROR_PREFIX = "groundcrew config: ";
 
 function defaultLogFile(): string {
   return xdgStatePath("groundcrew", "groundcrew.log");
 }
 
 function fail(message: string): never {
-  throw new Error(`groundcrew config: ${message}`);
+  throw new Error(`${CONFIG_ERROR_PREFIX}${message}`);
+}
+
+interface ConfigErrorContext {
+  error: unknown;
+  filepath: string;
+}
+
+function rethrowWithConfigPath({ error, filepath }: ConfigErrorContext): never {
+  if (error instanceof Error && error.message.startsWith(CONFIG_ERROR_PREFIX)) {
+    const message = error.message.slice(CONFIG_ERROR_PREFIX.length);
+    throw new Error(`${CONFIG_ERROR_PREFIX}${filepath}: ${message}`, { cause: error });
+  }
+
+  throw error;
 }
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 
 function requireString(value: unknown, configKey: string): asserts value is string {
@@ -627,6 +676,27 @@ function normalizeLocalRunner(value: unknown, configKey: string): LocalRunnerSet
   if (!isLocalRunnerSetting(value)) {
     fail(
       `${configKey} must be one of ${LOCAL_RUNNER_SETTINGS.join(", ")} (got ${JSON.stringify(value)})`,
+    );
+  }
+  return value;
+}
+
+function isNetworkEgressSetting(value: unknown): value is NetworkEgressSetting {
+  return (
+    typeof value === "string" && (NETWORK_EGRESS_SETTINGS as readonly string[]).includes(value)
+  );
+}
+
+function normalizeNetworkEgress(
+  value: unknown,
+  configKey: string,
+): NetworkEgressSetting | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isNetworkEgressSetting(value)) {
+    fail(
+      `${configKey} must be one of ${NETWORK_EGRESS_SETTINGS.join(", ")} (got ${JSON.stringify(value)})`,
     );
   }
   return value;
@@ -879,6 +949,11 @@ function normalizeSources(raw: unknown): SourceConfig[] {
           ? { tasksDir: expandHome(entry["tasksDir"]) }
           : {}),
       });
+    } else if (kind === "shell" && isStringArray(entry["sandboxWritePaths"])) {
+      expanded.push({
+        ...entry,
+        sandboxWritePaths: entry["sandboxWritePaths"].map((value) => expandHome(value)),
+      });
     } else {
       expanded.push(entry);
     }
@@ -918,6 +993,9 @@ function normalizeKnownRepository(entry: string | KnownRepository, index: number
   const workdir = normalizeOptionalString(entry.workdir, `${label}.workdir`);
   if (workdir !== undefined) {
     recipe.workdir = workdir;
+  }
+  if (entry.hooks !== undefined) {
+    recipe.hooks = normalizeHookCommands(entry.hooks, `${label}.hooks`);
   }
   return recipe;
 }
@@ -1020,7 +1098,7 @@ function applyDefaults(user: Config, configDir: string): ResolvedConfig {
       "remote is no longer supported: groundcrew runs locally via safehouse/sdx/none; remove the remote block from your config",
     );
   }
-  const userLocal = (user as { local?: { runner?: unknown } }).local;
+  const userLocal = (user as { local?: { runner?: unknown; networkEgress?: unknown } }).local;
   if (userLocal !== undefined && !isPlainObject(userLocal)) {
     fail("local must be an object");
   }
@@ -1049,6 +1127,8 @@ function applyDefaults(user: Config, configDir: string): ResolvedConfig {
     workspaceKind: normalizeWorkspaceKind(user.workspaceKind, "workspaceKind") ?? "auto",
     local: {
       runner: normalizeLocalRunner(userLocal?.runner, "local.runner") ?? "auto",
+      networkEgress:
+        normalizeNetworkEgress(userLocal?.networkEgress, "local.networkEgress") ?? "allowlisted",
     },
     logging: {
       file: expandHome(
@@ -1297,10 +1377,14 @@ export async function loadConfigWithSource(): Promise<Readonly<LoadedConfig>> {
   }
   debug(`Loaded config from ${filepath}`);
 
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- runtime fields are validated by applyDefaults/validate
-  const resolved = applyDefaults(userConfig as unknown as Config, path.dirname(filepath));
-
-  validate(resolved);
+  let resolved: ResolvedConfig;
+  try {
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- runtime fields are validated by applyDefaults/validate
+    resolved = applyDefaults(userConfig as unknown as Config, path.dirname(filepath));
+    validate(resolved);
+  } catch (error) {
+    rethrowWithConfigPath({ error, filepath });
+  }
 
   setLogFile(resolved.logging.file);
 

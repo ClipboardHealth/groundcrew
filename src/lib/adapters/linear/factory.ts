@@ -67,17 +67,16 @@ function canonicalBlockerStatus(
     stateType: blocker.stateType,
     statusNames,
   });
-  if (status !== "other") {
-    return {
-      status,
-      ...(blocker.status !== undefined && { nativeStatus: blocker.status }),
-    };
-  }
-  return {
-    status,
-    statusReason: blocker.stateType === undefined ? "missing" : "unmapped",
-    ...(blocker.status !== undefined && { nativeStatus: blocker.status }),
-  };
+  return status === "other"
+    ? {
+        status,
+        statusReason: blocker.stateType === undefined ? "missing" : "unmapped",
+        ...(blocker.status !== undefined && { nativeStatus: blocker.status }),
+      }
+    : {
+        status,
+        ...(blocker.status !== undefined && { nativeStatus: blocker.status }),
+      };
 }
 
 function toCanonicalBlocker(
@@ -109,6 +108,10 @@ function isLinearNotFoundError(error: unknown, naturalId: string): boolean {
     error.message.startsWith(`Task ${naturalId.toUpperCase()} `) &&
     error.message.includes("not found")
   );
+}
+
+function throwLinearLookupError(error: unknown): never {
+  throw error;
 }
 
 export function toCanonicalIssue(
@@ -195,10 +198,7 @@ export function createLinearTaskSource(
         task: naturalId,
       });
     } catch (error: unknown) {
-      if (isLinearNotFoundError(error, naturalId)) {
-        return null;
-      }
-      throw error;
+      return isLinearNotFoundError(error, naturalId) ? null : throwLinearLookupError(error);
     }
     const sourceRef: LinearSourceRef = {
       uuid: resolved.uuid,

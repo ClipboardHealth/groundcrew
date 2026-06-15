@@ -8,8 +8,10 @@
  */
 
 import type { Board } from "../lib/board.ts";
+import { sourcesFromConfig } from "../lib/buildSources.ts";
 import type { ResolvedConfig } from "../lib/config.ts";
 import { dispatchableRepository, formatKnownRepositories } from "../lib/repositoryValidation.ts";
+import { sourceSupportsMarkDone } from "../lib/sourceCapabilities.ts";
 import {
   type BoardState,
   type GroundcrewIssue,
@@ -86,6 +88,7 @@ function logMissingRepositorySkip(
 
 export function createDispatcher(deps: DispatcherDeps): Dispatcher {
   const { config, board } = deps;
+  const rawSources = sourcesFromConfig(config);
 
   function buildExhaustedSet(usage: UsageByAgent): Set<string> {
     const exhausted = new Set<string>();
@@ -130,6 +133,10 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
           repository: issue.repository,
           task: taskId,
           completionTaskId: issue.id,
+          completionMarkDoneSupported: sourceSupportsMarkDone({
+            rawSources,
+            sourceName: issue.source,
+          }),
           agent: issue.agent,
           details: {
             title: issue.title,

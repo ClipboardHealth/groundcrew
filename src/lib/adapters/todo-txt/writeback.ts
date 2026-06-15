@@ -9,6 +9,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 
+import { describeFileError, fileErrorCode } from "./fileErrors.ts";
 import { DATE_RE, hashLine, parseAllLines, type ParsedTodoLine } from "./parser.ts";
 import { isValidThresholdValue, type TodoTxtSourceRef } from "./normalizer.ts";
 
@@ -446,6 +447,14 @@ export function copyPromptFile(oldPath: string, newPath: string): void {
   }
 }
 
+function todoFileReadError(todoPath: string, error: unknown): string {
+  const code = fileErrorCode(error);
+  if (code === "ENOENT") {
+    return `missing todo file: ${todoPath}`;
+  }
+  return `could not read todo file ${todoPath}: ${describeFileError(error)}`;
+}
+
 function validatePromptFile(
   tasksDir: string,
   id: string,
@@ -563,8 +572,8 @@ export function validateTodoFile(
   let content: string;
   try {
     content = readFileSync(todoPath, "utf8");
-  } catch {
-    return [`missing todo file: ${todoPath}`];
+  } catch (error) {
+    return [todoFileReadError(todoPath, error)];
   }
 
   const parsedAll = parseAllLines(content);

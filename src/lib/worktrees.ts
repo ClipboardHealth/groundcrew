@@ -24,6 +24,7 @@ import {
 import { resolveDefaultBranch } from "./defaultBranch.ts";
 import { assertPlainTaskId, isPlainTaskId } from "./taskId.ts";
 import { debug, errorMessage, isVerbose } from "./util.ts";
+import { hasAdoptedBranch } from "./worktreeRunState.ts";
 import { type WorkspaceProbe, workspaces } from "./workspaces.ts";
 
 const WORKTREE_LIST_PREFIX = "worktree ";
@@ -48,15 +49,28 @@ export interface WorktreeEntry {
   repository: string;
   /** Source task id, lowercased — e.g. "team-220" or "gc-20260608-001". */
   task: string;
-  /** Slash-free `<prefix>-<task>`. */
+  /** Slash-free `<prefix>-<task>`, except when `adoptedBranch` is true. */
   branchName: string;
   dir: string;
   kind: WorktreeKind;
+  /**
+   * True when `branchName` is a pre-existing branch groundcrew checked out but
+   * did not create (e.g. an open PR via `crew open`). Such a branch must never
+   * be deleted on teardown — doing so would destroy the user's local branch.
+   */
+  adoptedBranch?: boolean;
 }
 
 export interface WorktreeSpec {
   repository: string;
   task: string;
+}
+
+export interface WorktreeOpenSpec {
+  repository: string;
+  task: string;
+  /** Existing branch to check out (the PR head), used verbatim. */
+  branch: string;
 }
 
 function branchPrefix(config: ResolvedConfig): string {
@@ -263,17 +277,14 @@ async function deleteBranchBestEffort(arguments_: {
   }
 }
 
-async function branchExists(arguments_: {
-  repoDir: string;
+function hostWorktreeEntry(arguments_: {
+  repository: string;
+  task: string;
   branchName: string;
-  signal?: AbortSignal;
-}): Promise<boolean> {
-  const output = await runCommandAsync(
-    "git",
-    ["-C", arguments_.repoDir, "branch", "--list", arguments_.branchName],
-    signalProperty(arguments_.signal),
-  );
-  return output.trim().length > 0;
+  dir: string;
+  adoptedBranch?: boolean;
+}): WorktreeEntry {
+  return { ...arguments_, kind: "host" };
 }
 
 async function createWorktree(
@@ -283,14 +294,51 @@ async function createWorktree(
 ): Promise<WorktreeEntry> {
   const base = basePaths(config, spec.repository, spec.task);
   const recipe = recipeFor(config, spec.repository);
-  const entry: WorktreeEntry = {
-    repository: spec.repository,
-    task: spec.task,
-    branchName: base.branchName,
-    dir: base.hostWorktreeDir,
-    kind: "host",
-  };
-  if (recipe.provision !== undefined) {
+  if (recipe.provision === undefined) {
+    // A prior run can leave the `<prefix>-<task>` branch behind after its
+    // worktree directory is gone — teardown deletes the branch only
+    // best-effort, and operators sometimes remove the directory by hand.
+    // Attaching the surviving branch reuses its work instead of crashing on
+    // `git worktree add -b <existing branch>`.
+    if (await localBranchExists(base.repoDir, base.branchName, signal)) {
+      debug(
+        `Branch ${base.branchName} already exists; attaching it to worktree ${spec.repository}-${spec.task}...`,
+      );
+      await runLongGitCommand(
+        ["-C", base.repoDir, "worktree", "add", base.hostWorktreeDir, base.branchName],
+        signal,
+      );
+    } else {
+      const defaultBranch = await resolveDefaultBranch({
+        repoDir: base.repoDir,
+        remote: config.git.remote,
+        fallback: config.git.defaultBranch,
+        ...signalProperty(signal),
+      });
+      const baseRef = `${config.git.remote}/${defaultBranch}`;
+      debug(`Fetching ${baseRef} in ${spec.repository}...`);
+      await runLongGitCommand(
+        ["-C", base.repoDir, "fetch", config.git.remote, defaultBranch],
+        signal,
+      );
+      debug(
+        `Creating worktree ${spec.repository}-${spec.task} (branch ${base.branchName} from ${baseRef})...`,
+      );
+      await runLongGitCommand(
+        [
+          "-C",
+          base.repoDir,
+          "worktree",
+          "add",
+          "-b",
+          base.branchName,
+          base.hostWorktreeDir,
+          baseRef,
+        ],
+        signal,
+      );
+    }
+  } else {
     const command = applySubstitutions(
       recipe.provision.create,
       provisionerSubstitutions(config, {
@@ -302,47 +350,94 @@ async function createWorktree(
     );
     debug(`Provisioning worktree ${spec.repository}-${spec.task} via create template...`);
     await runLongShellCommand(command, base.repoDir, signal);
-    return entry;
   }
+  return hostWorktreeEntry({
+    repository: spec.repository,
+    task: spec.task,
+    branchName: base.branchName,
+    dir: base.hostWorktreeDir,
+  });
+}
 
-  // A prior run can leave the branch behind after its worktree directory is
-  // gone — teardown deletes the branch only best-effort, and operators
-  // sometimes remove the directory by hand. Attaching the surviving branch
-  // reuses its work instead of crashing on `git worktree add -b <existing>`.
-  if (
-    await branchExists({
-      repoDir: base.repoDir,
-      branchName: base.branchName,
-      ...signalProperty(signal),
-    })
-  ) {
+async function localBranchExists(
+  repoDir: string,
+  branch: string,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  try {
+    await runCommandAsync(
+      "git",
+      ["-C", repoDir, "show-ref", "--verify", "--quiet", `refs/heads/${branch}`],
+      signalProperty(signal),
+    );
+    return true;
+  } catch (error) {
+    if (signal?.aborted === true) {
+      throw error;
+    }
+    // `show-ref --verify --quiet` exits non-zero when the ref is absent, which
+    // runCommandAsync surfaces as a throw — that is the "branch not local"
+    // signal, so any non-abort failure resolves to false.
+    return false;
+  }
+}
+
+/**
+ * Check out an *existing* branch into a fresh worktree, for iterating on work
+ * groundcrew did not create (e.g. an open PR). Unlike `createWorktree`, the
+ * branch is not derived from the task id and is not cut from the default
+ * branch: an already-local branch is checked out as-is, otherwise the branch is
+ * fetched from the remote and a local tracking branch is created. The returned
+ * entry's `branchName` is the real branch, which diverges from the
+ * `<prefix>-<task>` convention and is persisted in RunState as the source of
+ * truth.
+ */
+async function openWorktree(
+  config: ResolvedConfig,
+  spec: WorktreeOpenSpec,
+  signal?: AbortSignal,
+): Promise<WorktreeEntry> {
+  const base = basePaths(config, spec.repository, spec.task);
+  const recipe = recipeFor(config, spec.repository);
+  if (recipe.provision !== undefined) {
+    throw new Error(
+      `crew open does not support provision/sparse-checkout repository "${spec.repository}".`,
+    );
+  }
+  if (await localBranchExists(base.repoDir, spec.branch, signal)) {
     debug(
-      `Branch ${base.branchName} already exists; attaching it to worktree ${spec.repository}-${spec.task}...`,
+      `Adding worktree ${spec.repository}-${spec.task} for existing local branch ${spec.branch}...`,
     );
     await runLongGitCommand(
-      ["-C", base.repoDir, "worktree", "add", base.hostWorktreeDir, base.branchName],
+      ["-C", base.repoDir, "worktree", "add", base.hostWorktreeDir, spec.branch],
       signal,
     );
-    return entry;
+  } else {
+    const { remote } = config.git;
+    debug(`Fetching ${remote}/${spec.branch} in ${spec.repository}...`);
+    await runLongGitCommand(["-C", base.repoDir, "fetch", remote, spec.branch], signal);
+    await runLongGitCommand(
+      [
+        "-C",
+        base.repoDir,
+        "worktree",
+        "add",
+        "--track",
+        "-b",
+        spec.branch,
+        base.hostWorktreeDir,
+        `${remote}/${spec.branch}`,
+      ],
+      signal,
+    );
   }
-
-  const defaultBranch = await resolveDefaultBranch({
-    repoDir: base.repoDir,
-    remote: config.git.remote,
-    fallback: config.git.defaultBranch,
-    ...signalProperty(signal),
+  return hostWorktreeEntry({
+    repository: spec.repository,
+    task: spec.task,
+    branchName: spec.branch,
+    dir: base.hostWorktreeDir,
+    adoptedBranch: true,
   });
-  const baseRef = `${config.git.remote}/${defaultBranch}`;
-  debug(`Fetching ${baseRef} in ${spec.repository}...`);
-  await runLongGitCommand(["-C", base.repoDir, "fetch", config.git.remote, defaultBranch], signal);
-  debug(
-    `Creating worktree ${spec.repository}-${spec.task} (branch ${base.branchName} from ${baseRef})...`,
-  );
-  await runLongGitCommand(
-    ["-C", base.repoDir, "worktree", "add", "-b", base.branchName, base.hostWorktreeDir, baseRef],
-    signal,
-  );
-  return entry;
 }
 
 function listWorktrees(config: ResolvedConfig): WorktreeEntry[] {
@@ -463,6 +558,10 @@ async function removeWorktree(
   } else {
     debug(`Worktree directory ${entry.dir} not found, pruning stale refs...`);
     await runLongGitCommand(["-C", repoDir, "worktree", "prune"], options.signal);
+  }
+  if (hasAdoptedBranch({ config, entry })) {
+    debug(`Preserving adopted branch ${entry.branchName} (not groundcrew-created).`);
+    return;
   }
   await deleteBranchBestEffort({
     cmd: "git",
@@ -655,18 +754,22 @@ function findByTask(config: ResolvedConfig, task: string): WorktreeEntry[] {
   return list(config).filter((entry) => entry.task === task);
 }
 
-async function create(
+// Shared by create() and open(): reject a duplicate worktree for the same
+// task+repo before building, then assert the configured workdir materialized,
+// rolling the worktree back if it did not. The build callback owns the git
+// porcelain that differs between a fresh branch and an existing one.
+async function provisionWorktree(
   config: ResolvedConfig,
-  spec: WorktreeSpec,
+  repository: string,
+  task: string,
+  build: () => Promise<WorktreeEntry>,
   signal?: AbortSignal,
 ): Promise<WorktreeEntry> {
-  const existing = findByTask(config, spec.task).find(
-    (entry) => entry.repository === spec.repository,
-  );
+  const existing = findByTask(config, task).find((entry) => entry.repository === repository);
   if (existing !== undefined) {
     throw new WorktreeAlreadyExistsError(existing.dir);
   }
-  const entry = await createWorktree(config, spec, signal);
+  const entry = await build();
   try {
     assertWorkdirPresent(config, entry);
   } catch (error) {
@@ -674,6 +777,34 @@ async function create(
     throw error;
   }
   return entry;
+}
+
+async function create(
+  config: ResolvedConfig,
+  spec: WorktreeSpec,
+  signal?: AbortSignal,
+): Promise<WorktreeEntry> {
+  return await provisionWorktree(
+    config,
+    spec.repository,
+    spec.task,
+    async () => await createWorktree(config, spec, signal),
+    signal,
+  );
+}
+
+async function open(
+  config: ResolvedConfig,
+  spec: WorktreeOpenSpec,
+  signal?: AbortSignal,
+): Promise<WorktreeEntry> {
+  return await provisionWorktree(
+    config,
+    spec.repository,
+    spec.task,
+    async () => await openWorktree(config, spec, signal),
+    signal,
+  );
 }
 
 async function remove(
@@ -790,6 +921,7 @@ async function probeWorkingTree(input: {
 
 export const worktrees = {
   create,
+  open,
   list,
   findByTask,
   remove,

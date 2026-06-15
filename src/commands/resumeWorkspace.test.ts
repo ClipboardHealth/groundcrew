@@ -1,13 +1,14 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import type * as nodeFs from "node:fs";
 
-import { ensureClearance } from "@clipboard-health/clearance";
+import { ensureClearance, type SafehouseCmuxIntegration } from "@clipboard-health/clearance";
 
 import { fetchResolvedIssue } from "../lib/adapters/linear/fetch.ts";
 import { getLinearClient } from "../lib/adapters/linear/client.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
 import { readRunState, recordRunState, type RunState } from "../lib/runState.ts";
+import { safehouseCmuxIntegrationFixture } from "../testHelpers/safehouseCmuxIntegration.ts";
 import { workspaces } from "../lib/workspaces.ts";
 import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 import { resumeWorkspace, resumeWorkspaceCli } from "./resumeWorkspace.ts";
@@ -17,6 +18,10 @@ interface NodeFsMock extends Omit<typeof nodeFs, "mkdtempSync" | "rmSync" | "wri
   rmSync: ReturnType<typeof vi.fn<typeof rmSync>>;
   writeFileSync: ReturnType<typeof vi.fn<typeof writeFileSync>>;
 }
+
+const resolveSafehouseCmuxIntegrationMock = vi.hoisted(() =>
+  vi.fn<() => SafehouseCmuxIntegration>(),
+);
 
 vi.mock("node:fs", async (importOriginal): Promise<NodeFsMock> => {
   const actual = await importOriginal<typeof nodeFs>();
@@ -29,7 +34,11 @@ vi.mock("node:fs", async (importOriginal): Promise<NodeFsMock> => {
 });
 vi.mock(import("@clipboard-health/clearance"), async (importOriginal) => {
   const actual = await importOriginal();
-  return { ...actual, ensureClearance: vi.fn<typeof ensureClearance>() };
+  return {
+    ...actual,
+    ensureClearance: vi.fn<typeof ensureClearance>(),
+    resolveSafehouseCmuxIntegration: resolveSafehouseCmuxIntegrationMock,
+  };
 });
 vi.mock(import("../lib/adapters/linear/fetch.ts"), async (importOriginal) => {
   const actual = await importOriginal();
@@ -183,7 +192,7 @@ function makeConfig(): ResolvedConfig {
     },
     prompts: { initial: "x" },
     workspaceKind: "auto",
-    local: { runner: "auto" },
+    local: { runner: "auto", networkEgress: "allowlisted" },
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }
@@ -248,6 +257,7 @@ describe(resumeWorkspace, () => {
       port: 19_999,
       status: "already-running",
     });
+    resolveSafehouseCmuxIntegrationMock.mockReturnValue(safehouseCmuxIntegrationFixture());
   });
 
   afterEach(() => {
@@ -273,6 +283,19 @@ describe(resumeWorkspace, () => {
     });
   });
 
+  it("prefers the run-state branch over the task-derived worktree branch", async () => {
+    readRunStateMock.mockReturnValue(makeRunState({ branchName: "jdoe/fix-thing" }));
+    findByTaskMock.mockReturnValue([makeWorktree()]);
+
+    await resumeWorkspace(config, { task: "team-1" });
+
+    expect(writeFileMock).toHaveBeenCalledWith(
+      "/tmp/groundcrew-resume-team-1-x/prompt.txt",
+      expect.stringContaining("Branch: jdoe/fix-thing"),
+    );
+    expect(lastRecordedRunState().branchName).toBe("jdoe/fix-thing");
+  });
+
   it("includes continuation context in the staged prompt", async () => {
     await resumeWorkspace(config, { task: "team-1" });
 
@@ -286,26 +309,87 @@ describe(resumeWorkspace, () => {
     );
   });
 
-  it("uses the recorded canonical completion task id for worker self-completion env", async () => {
+  it("omits worker self-completion command when the recorded source cannot mark done", async () => {
     readRunStateMock.mockReturnValue(makeRunState({ completionTaskId: "linear:team-1" }));
 
     await resumeWorkspace(config, { task: "team-1" });
 
     const launchScript = stagedLaunchScript();
     expect(launchScript).toContain("export GROUNDCREW_TASK_ID='linear:team-1'");
-    expect(launchScript).toContain("export GROUNDCREW_COMPLETE='crew task done linear:team-1'");
+    expect(launchScript).not.toContain("GROUNDCREW_COMPLETE");
     expect(lastRecordedRunState().completionTaskId).toBe("linear:team-1");
   });
 
-  it("uses the task id for worker self-completion env when old state lacks a completion task id", async () => {
+  it("omits worker self-completion command for old state when the only source cannot mark done", async () => {
     readRunStateMock.mockReturnValue(makeRunState());
 
     await resumeWorkspace(config, { task: "team-1" });
 
     const launchScript = stagedLaunchScript();
     expect(launchScript).toContain("export GROUNDCREW_TASK_ID='team-1'");
-    expect(launchScript).toContain("export GROUNDCREW_COMPLETE='crew task done team-1'");
+    expect(launchScript).not.toContain("GROUNDCREW_COMPLETE");
     expect(lastRecordedRunState().completionTaskId).toBe("team-1");
+  });
+
+  it("omits worker self-completion command for old state when no source can be inferred", async () => {
+    const noSourceConfig: ResolvedConfig = { ...config, sources: [] };
+    readRunStateMock.mockReturnValue(makeRunState());
+
+    await resumeWorkspace(noSourceConfig, { task: "team-1" });
+
+    const launchScript = stagedLaunchScript();
+    expect(launchScript).toContain("export GROUNDCREW_TASK_ID='team-1'");
+    expect(launchScript).not.toContain("GROUNDCREW_COMPLETE");
+    expect(lastRecordedRunState().completionTaskId).toBe("team-1");
+  });
+
+  it("omits worker self-completion command for old state when multiple sources are possible", async () => {
+    const multiSourceConfig: ResolvedConfig = {
+      ...config,
+      sources: [
+        { kind: "linear" },
+        {
+          kind: "todo-txt",
+          name: "todo",
+          todoPath: "todo.txt",
+          tasksDir: ".tasks",
+          idPrefix: "GC",
+          timezone: "UTC",
+        },
+      ],
+    };
+    readRunStateMock.mockReturnValue(makeRunState());
+
+    await resumeWorkspace(multiSourceConfig, { task: "team-1" });
+
+    const launchScript = stagedLaunchScript();
+    expect(launchScript).toContain("export GROUNDCREW_TASK_ID='team-1'");
+    expect(launchScript).not.toContain("GROUNDCREW_COMPLETE");
+    expect(lastRecordedRunState().completionTaskId).toBe("team-1");
+  });
+
+  it("sets worker self-completion command when the recorded source can mark done", async () => {
+    const todoConfig: ResolvedConfig = {
+      ...config,
+      sources: [
+        {
+          kind: "todo-txt",
+          name: "todo",
+          todoPath: "todo.txt",
+          tasksDir: ".tasks",
+          idPrefix: "GC",
+          timezone: "UTC",
+        },
+      ],
+    };
+    readRunStateMock.mockReturnValue(makeRunState({ completionTaskId: "todo:sweep-1" }));
+
+    await resumeWorkspace(todoConfig, { task: "team-1" });
+
+    const launchScript = stagedLaunchScript();
+    expect(launchScript).toContain("export GROUNDCREW_TASK_ID='todo:sweep-1'");
+    expect(launchScript).toContain("export GROUNDCREW_COMPLETE='crew task done todo:sweep-1'");
+    expect(lastRecordedRunState().completionTaskId).toBe("todo:sweep-1");
   });
 
   it("falls back to the task id when Linear detail lookup fails during state resume", async () => {
@@ -398,7 +482,10 @@ describe(resumeWorkspace, () => {
   });
 
   it("stages neutral prepare + agent srt settings and wraps the resumed agent under srt", async () => {
-    const srtConfig = { ...makeConfig(), local: { runner: "srt" as const } };
+    const srtConfig = {
+      ...makeConfig(),
+      local: { runner: "srt" as const, networkEgress: "allowlisted" as const },
+    };
 
     await resumeWorkspace(srtConfig, { task: "team-1" });
 
@@ -413,6 +500,65 @@ describe(resumeWorkspace, () => {
       /sandbox-runtime\/dist\/cli\.js' --settings .*agent-settings\.json/,
     );
     expect(launchScript).not.toContain("safehouse-clearance");
+  });
+
+  it("wraps with bare safehouse and skips the clearance daemon when networkEgress is open", async () => {
+    const openEgress = {
+      ...makeConfig(),
+      local: { runner: "safehouse" as const, networkEgress: "open" as const },
+    };
+
+    await resumeWorkspace(openEgress, { task: "team-1" });
+
+    // Filesystem sandbox stays (the profile shim) under the bare safehouse
+    // binary, but no clearance layer and no clearance-ensure daemon call.
+    const launchScript = stagedLaunchScript();
+    expect(launchScript).toContain('ln -s /bin/sh "$_safehouse_shim"');
+    expect(launchScript).toContain("safehouse --add-dirs=");
+    expect(launchScript).toMatch(/safehouse .*"\$_safehouse_shim" -c/);
+    expect(launchScript).not.toContain("safehouse-clearance");
+    expect(launchScript).not.toContain("CLEARANCE_ALLOW_HOSTS_FILES");
+    expect(ensureClearanceMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps networkEgress:open a no-op for a cmd-owned safehouse wrap (still rejected upstream)", async () => {
+    // The user owns the wrap, so groundcrew injects nothing and `networkEgress`
+    // has no effect: it is rejected by the same worker-env guard as allowlisted.
+    const cmdOwned: ResolvedConfig = {
+      ...makeConfig(),
+      local: { runner: "safehouse", networkEgress: "open" },
+      agents: {
+        default: "claude",
+        definitions: { claude: { cmd: "safehouse claude --auto", color: "#fff" } },
+      },
+    };
+
+    await expect(resumeWorkspace(cmdOwned, { task: "team-1" })).rejects.toThrow(
+      /cannot inject worker self-completion env when 'cmd' already starts with 'safehouse'/,
+    );
+  });
+
+  it("does not add task source sandbox grants for unsandboxed resume runners", async () => {
+    const noneConfig: ResolvedConfig = {
+      ...makeConfig(),
+      local: { runner: "none", networkEgress: "allowlisted" },
+      sources: [
+        { kind: "linear" },
+        {
+          kind: "todo-txt",
+          name: "todo",
+          todoPath: "/Users/dev/v/todo.md",
+          tasksDir: "/Users/dev/v/.tasks",
+          idPrefix: "GC",
+          timezone: "UTC",
+        },
+      ],
+    };
+    readRunStateMock.mockReturnValue(makeRunState({ completionTaskId: "todo:gc-1" }));
+
+    await resumeWorkspace(noneConfig, { task: "team-1" });
+
+    expect(stagedLaunchScript()).not.toContain("/Users/dev/v");
   });
 
   it("cds into the configured workdir subproject on resume", async () => {
@@ -431,7 +577,10 @@ describe(resumeWorkspace, () => {
   });
 
   it("cleans up the staged srt settings dir when the resumed launch fails to open", async () => {
-    const srtConfig = { ...makeConfig(), local: { runner: "srt" as const } };
+    const srtConfig = {
+      ...makeConfig(),
+      local: { runner: "srt" as const, networkEgress: "allowlisted" as const },
+    };
     workspacesOpenMock.mockRejectedValue(new Error("cmux down"));
 
     await expect(resumeWorkspace(srtConfig, { task: "team-1" })).rejects.toThrow("cmux down");
@@ -518,6 +667,7 @@ describe(resumeWorkspaceCli, () => {
       port: 19_999,
       status: "already-running",
     });
+    resolveSafehouseCmuxIntegrationMock.mockReturnValue(safehouseCmuxIntegrationFixture());
   });
 
   afterEach(() => {

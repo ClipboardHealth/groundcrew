@@ -14,6 +14,7 @@ import {
 } from "../../taskSource.ts";
 import { formatKnownRepositories } from "../../repositoryValidation.ts";
 import { readEnvironmentVariable } from "../../util.ts";
+import { describeFileError, isFileErrorCode } from "./fileErrors.ts";
 import { isActiveForFetch, normalizeToIssue, type TodoTxtSourceRef } from "./normalizer.ts";
 import { DATE_RE, getMetadataFirst, parseAllLines, type ParsedTodoLine } from "./parser.ts";
 import type { TodoTxtAdapterConfig } from "./schema.ts";
@@ -52,8 +53,11 @@ function descriptionFor(parsed: ParsedTodoLine, promptPath: string): string {
 function fileUpdatedAt(filePath: string): string {
   try {
     return new Date(statSync(filePath).mtimeMs).toISOString();
-  } catch {
-    /* v8 ignore next @preserve -- statSync failing means file missing; covered by empty-file tests */
+  } catch (error) {
+    /* v8 ignore next @preserve -- statSync failing with ENOENT means file missing; covered by empty-file tests */
+    if (!isFileErrorCode(error, "ENOENT")) {
+      throw todoFileAccessError("stat", filePath, error);
+    }
     return new Date().toISOString();
   }
 }
@@ -64,12 +68,21 @@ function readAndParseTodo(todoPath: string): {
   let content: string;
   try {
     content = readFileSync(todoPath, "utf8");
-  } catch {
+  } catch (error) {
+    if (!isFileErrorCode(error, "ENOENT")) {
+      throw todoFileAccessError("read", todoPath, error);
+    }
     content = "";
   }
   return {
     parsedAll: parseAllLines(content),
   };
+}
+
+function todoFileAccessError(operation: "read" | "stat", filePath: string, error: unknown): Error {
+  return new Error(
+    `todo-txt: could not ${operation} todo file ${filePath}: ${describeFileError(error)}`,
+  );
 }
 
 function buildIssue(options: {
@@ -315,8 +328,9 @@ function appendTodoLine(todoPath: string, line: string): void {
     const current = readFileSync(todoPath, "utf8");
     separator = current.length === 0 || current.endsWith("\n") ? "" : "\n";
   } catch (error: unknown) {
-    /* v8 ignore else @preserve -- no explicit else branch; full-suite V8 coverage remaps the synthetic else inconsistently. */
-    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+    /* v8 ignore next @preserve -- non-ENOENT append failures are an fs passthrough, not todo-txt logic */
+    if (!isFileErrorCode(error, "ENOENT")) {
+      /* v8 ignore next @preserve -- non-ENOENT append failures are an fs passthrough, not todo-txt logic */
       throw error;
     }
   }

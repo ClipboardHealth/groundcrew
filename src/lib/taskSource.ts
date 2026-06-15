@@ -242,7 +242,7 @@ export class AmbiguousTaskError extends Error {
   public constructor(arguments_: { naturalId: string; matches: readonly string[] }) {
     const { naturalId, matches } = arguments_;
     super(
-      `Task id "${naturalId}" is ambiguous; matched in multiple sources: ${matches.join(", ")}. Re-invoke with one of those canonical ids.`,
+      `Task id "${naturalId}" is ambiguous; matched multiple tasks: ${matches.join(", ")}. Re-invoke with a longer prefix or one of those canonical ids.`,
     );
     this.name = "AmbiguousTaskError";
   }

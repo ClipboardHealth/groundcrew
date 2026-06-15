@@ -16,6 +16,8 @@
   ],
   "words": [
     "assertname",
+    "jdoe",
+    "slugified",
     "awsapps",
     "azureedge",
     "boardsource",
@@ -85,6 +87,8 @@
     "pipefail",
     "Pipfile",
     "pipenv",
+    "pypi",
+    "pythonhosted",
     "plankeeper",
     "pmem",
     "prereqs",
@@ -103,6 +107,7 @@
     "sandboxed",
     "sandboxing",
     "sandboxauth",
+    "sdist",
     "socat",
     "unsandboxed",
     "unwritable",
@@ -147,6 +152,7 @@
     "nostatus",
     "norec",
     "nodone",
+    "unreviewed",
     "linejoin",
     "Neue",
     "qlmanage"

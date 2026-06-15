@@ -76,7 +76,7 @@ function makeConfig(overrides: {
     agents: { default: "claude", definitions: agents },
     prompts: { initial: "x" },
     workspaceKind: "auto",
-    local: { runner: "auto" },
+    local: { runner: "auto", networkEgress: "allowlisted" },
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }
@@ -101,6 +101,15 @@ function makeBillingWorkdirConfig(projectDir: string): ResolvedConfig {
 
 function hasArguments(arguments_: readonly string[], ...needles: readonly string[]): boolean {
   return needles.every((needle) => arguments_.includes(needle));
+}
+
+// `localBranchExists` probes `git show-ref --verify`; the default mock returns
+// "" (success), which would report every branch as already local. Fresh-create
+// tests call this so the probe exits non-zero and the `-b` create path runs.
+function throwWhenProbingBranch(arguments_: readonly string[]): void {
+  if (hasArguments(arguments_, "show-ref", "--verify")) {
+    throw new Error("not a local branch");
+  }
 }
 
 let projectDir: string;
@@ -128,6 +137,7 @@ describe(create, () => {
     mkdirSync(path.join(projectDir, "repo-a"));
     const config = makeConfig({ projectDir });
     runCommandMock.mockImplementation((_command, arguments_) => {
+      throwWhenProbingBranch(arguments_);
       // oxlint-disable-next-line vitest/no-conditional-in-test -- discriminator picks out the symbolic-ref probe so it returns origin/<branch>
       if (hasArguments(arguments_, "symbolic-ref", "refs/remotes/origin/HEAD")) {
         return "origin/main\n";
@@ -177,19 +187,26 @@ describe(create, () => {
   it("reuses an existing branch by attaching it to a new worktree instead of recreating it", async () => {
     mkdirSync(path.join(projectDir, "repo-a"));
     const config = makeConfig({ projectDir });
-    runCommandMock.mockImplementation((_command, arguments_) => {
-      // oxlint-disable-next-line vitest/no-conditional-in-test -- reports the branch lingering from a prior run whose worktree dir was already removed
-      if (hasArguments(arguments_, "branch", "--list", "dev-team-1")) {
-        return "  dev-team-1\n";
-      }
-      return "";
-    });
+    // show-ref succeeds (default mock returns ""), so dev-team-1 is already a
+    // local branch — left behind by a prior run whose worktree dir was removed.
 
     const actual = await create(config, {
       repository: "repo-a",
       task: "team-1",
     });
 
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "git",
+      [
+        "-C",
+        path.join(projectDir, "repo-a"),
+        "show-ref",
+        "--verify",
+        "--quiet",
+        "refs/heads/dev-team-1",
+      ],
+      {},
+    );
     expect(runCommandMock).toHaveBeenCalledWith(
       "git",
       [
@@ -206,18 +223,12 @@ describe(create, () => {
     // fresh-branch seeding (default-branch probe + fetch) and never pass -b.
     expect(runCommandMock).not.toHaveBeenCalledWith(
       "git",
-      ["-C", path.join(projectDir, "repo-a"), "fetch", "origin", "main"],
+      expect.arrayContaining(["fetch"]),
       expect.anything(),
     );
     expect(runCommandMock).not.toHaveBeenCalledWith(
       "git",
-      [
-        "-C",
-        path.join(projectDir, "repo-a"),
-        "symbolic-ref",
-        "--short",
-        "refs/remotes/origin/HEAD",
-      ],
+      expect.arrayContaining(["symbolic-ref"]),
       expect.anything(),
     );
     expect(actual).toMatchObject({
@@ -227,12 +238,16 @@ describe(create, () => {
       dir: path.join(projectDir, "repo-a-team-1"),
       kind: "host",
     });
+    // The reused branch is still groundcrew's own <prefix>-<task> branch, so it
+    // is not adopted — teardown may delete it as usual.
+    expect(actual.adoptedBranch).toBeUndefined();
   });
 
   it("creates worktrees for multi-segment source task ids", async () => {
     mkdirSync(path.join(projectDir, "repo-a"));
     const config = makeConfig({ projectDir });
     runCommandMock.mockImplementation((_command, arguments_) => {
+      throwWhenProbingBranch(arguments_);
       // oxlint-disable-next-line vitest/no-conditional-in-test -- discriminator picks out the symbolic-ref probe so it returns origin/<branch>
       if (hasArguments(arguments_, "symbolic-ref", "refs/remotes/origin/HEAD")) {
         return "origin/main\n";
@@ -272,6 +287,7 @@ describe(create, () => {
     mkdirSync(path.join(projectDir, "repo-a"));
     const config = makeConfig({ projectDir });
     runCommandMock.mockImplementation((_command, arguments_) => {
+      throwWhenProbingBranch(arguments_);
       // oxlint-disable-next-line vitest/no-conditional-in-test -- discriminator picks out the symbolic-ref probe so it returns origin/<branch>
       if (hasArguments(arguments_, "symbolic-ref", "refs/remotes/origin/HEAD")) {
         return "origin/main\n";
@@ -311,6 +327,7 @@ describe(create, () => {
     mkdirSync(path.join(projectDir, "repo-a"));
     const config = makeConfig({ projectDir });
     runCommandMock.mockImplementation((_command, arguments_) => {
+      throwWhenProbingBranch(arguments_);
       // oxlint-disable-next-line vitest/no-conditional-in-test -- discriminator reports an origin/main-backed repo
       if (hasArguments(arguments_, "symbolic-ref", "refs/remotes/origin/HEAD")) {
         return "origin/main\n";
@@ -332,6 +349,7 @@ describe(create, () => {
     mkdirSync(path.join(projectDir, "repo-a"));
     const config = makeConfig({ projectDir });
     runCommandMock.mockImplementation((_command, arguments_) => {
+      throwWhenProbingBranch(arguments_);
       // oxlint-disable-next-line vitest/no-conditional-in-test -- discriminator picks out the symbolic-ref probe so it reports a master-backed repo
       if (hasArguments(arguments_, "symbolic-ref", "refs/remotes/origin/HEAD")) {
         return "origin/master\n";
@@ -372,6 +390,7 @@ describe(create, () => {
       git: { remote: "origin", defaultBranch: "trunk" },
     });
     runCommandMock.mockImplementation((_command, arguments_) => {
+      throwWhenProbingBranch(arguments_);
       // oxlint-disable-next-line vitest/no-conditional-in-test -- mirrors `git symbolic-ref` exit status 1 when refs/remotes/origin/HEAD is unset
       if (hasArguments(arguments_, "symbolic-ref", "refs/remotes/origin/HEAD")) {
         throw new Error(

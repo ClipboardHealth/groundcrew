@@ -18,6 +18,7 @@ export default {
         markInReview: "jira issue move ${id} 'In Review'",
         markDone: "jira issue move ${id} 'Done'",
       },
+      sandboxWritePaths: ["~/plans"],
       timeouts: { listTasks: 60_000, markInReview: 15_000, markDone: 15_000 },
     },
   ],
@@ -40,10 +41,18 @@ completed no-PR work. If omitted, groundcrew treats done advancement as
 unsupported and leaves the task for the source's own integration to close out.
 `${id}`, `${canonicalId}`, and `${name}` placeholders are shell-quoted before substitution.
 
-Workers receive `GROUNDCREW_TASK_ID` and `GROUNDCREW_COMPLETE` in their launch
-environment. The default prompt tells them to run `GROUNDCREW_COMPLETE` only
-when the requested work is complete, no PR is needed, and any dirty worktree
-state is expected or explicitly allowed.
+Workers receive `GROUNDCREW_TASK_ID` in their launch environment. They receive
+`GROUNDCREW_COMPLETE` only when the source supports done writeback. The default
+prompt tells them to run `GROUNDCREW_COMPLETE` only when it is set, the
+requested work is complete, no PR is needed, and any dirty worktree state is
+expected or explicitly allowed.
+
+Set `sandboxWritePaths` when the shell source owns local files the agent must
+read and update in place, such as a plan directory. Each path may be absolute,
+relative to the agent working directory, or `~`-prefixed. Under the `safehouse`
+and `srt` runners, groundcrew opens those directories for read and write only
+for tasks from that source; an unqualified task id grants every eligible
+source's declared paths. The `sdx` runner does not mount these host paths.
 
 ```json
 [

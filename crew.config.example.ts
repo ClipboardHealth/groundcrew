@@ -49,6 +49,16 @@ export default {
     //   graft repo add ~/dev/owner/monorepo
     //   graft alias add billing services/billing libs/common
     // `crew doctor` does not parse or validate these shell templates.
+    //
+    // An object entry can also set a per-repo prepareWorktree hook without a
+    // committed `.groundcrew/config.json` — handy for third-party repos you
+    // don't want to add groundcrew files to. It beats `defaults.hooks` below
+    // but still yields to a repo-committed `.groundcrew/config.json`:
+    //
+    //   {
+    //     name: "other-org/their-repo",
+    //     hooks: { prepareWorktree: "uv sync --dev --frozen" },
+    //   },
   },
   agents: {
     default: "claude",
@@ -78,8 +88,10 @@ export default {
   },
   // Repo-preparation hook: runs after each worktree is created and before the
   // agent launches. The default below is a no-op placeholder. Replace it with
-  // your repo's setup, e.g. "npm ci" or "uv sync --dev --frozen". A repo-local
-  // `.groundcrew/config.json` hooks.prepareWorktree overrides this per repo.
+  // your repo's setup, e.g. "npm ci" or "uv sync --dev --frozen". This is the
+  // lowest-priority layer: a per-repo `knownRepositories[].hooks.prepareWorktree`
+  // (above) overrides it, and a repo-committed `.groundcrew/config.json`
+  // `hooks.prepareWorktree` overrides both.
   defaults: {
     hooks: {
       prepareWorktree: "true",
@@ -109,6 +121,9 @@ export default {
   //   {
   //     kind: "shell",
   //     name: "jira",
+  //     // Open local task-store directories for read/write inside the
+  //     // safehouse/srt sandbox when this source owns the launched task.
+  //     sandboxWritePaths: ["~/plans"],
   //     commands: {
   //       verify: "jira me",
   //       fetch: "~/.config/groundcrew/jira-fetch.sh",

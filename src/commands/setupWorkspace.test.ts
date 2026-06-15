@@ -2,12 +2,12 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import type * as nodeFs from "node:fs";
 import path from "node:path";
 import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
-import { ensureClearance } from "@clipboard-health/clearance";
+import { ensureClearance, type SafehouseCmuxIntegration } from "@clipboard-health/clearance";
 import type { RunCommandOptions } from "../lib/commandRunner.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
 import { recordRunState } from "../lib/runState.ts";
-import { canonicalLinearIssue } from "../lib/testing/canonicalFixtures.ts";
+import { canonicalLinearIssue, canonicalShellIssue } from "../lib/testing/canonicalFixtures.ts";
 import { createBoard, type Board } from "../lib/board.ts";
 import type * as boardModule from "../lib/board.ts";
 import { buildSources } from "../lib/buildSources.ts";
@@ -17,6 +17,7 @@ import type * as utilModule from "../lib/util.ts";
 import { debug, log } from "../lib/util.ts";
 import { WorktreeAlreadyExistsError, type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 import { deleteEnvironmentVariable, setEnvironmentVariable } from "../testHelpers/env.ts";
+import { safehouseCmuxIntegrationFixture } from "../testHelpers/safehouseCmuxIntegration.ts";
 import { emptyTeardownResult } from "../testHelpers/teardownResult.ts";
 import {
   setupWorkspace,
@@ -34,6 +35,10 @@ interface NodeFsMock extends Omit<
   rmSync: ReturnType<typeof vi.fn<typeof rmSync>>;
   writeFileSync: ReturnType<typeof vi.fn<typeof writeFileSync>>;
 }
+
+const resolveSafehouseCmuxIntegrationMock = vi.hoisted(() =>
+  vi.fn<() => SafehouseCmuxIntegration>(),
+);
 
 vi.mock("node:fs", async (importOriginal): Promise<NodeFsMock> => {
   const actual = await importOriginal<typeof nodeFs>();
@@ -58,6 +63,7 @@ vi.mock(import("@clipboard-health/clearance"), async (importOriginal) => {
   return {
     ...actual,
     ensureClearance: vi.fn<typeof ensureClearance>(),
+    resolveSafehouseCmuxIntegration: resolveSafehouseCmuxIntegrationMock,
   };
 });
 type RunCommandMock = (
@@ -87,6 +93,7 @@ vi.mock(import("../lib/util.ts"), async (importOriginal) => {
     ...actual,
     log: vi.fn<typeof actual.log>(),
     debug: vi.fn<typeof actual.debug>(),
+    writeError: vi.fn<typeof actual.writeError>(),
   };
 });
 vi.mock(import("../lib/worktrees.ts"), async (importOriginal) => {
@@ -206,7 +213,7 @@ function makeConfig(overrides: Partial<ResolvedConfig["agents"]> = {}): Resolved
       initial: "Begin {{task}} ({{title}}) in {{worktree}}\n{{description}}",
     },
     workspaceKind: "auto",
-    local: { runner: "auto" },
+    local: { runner: "auto", networkEgress: "allowlisted" },
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }
@@ -378,6 +385,7 @@ describe(setupWorkspace, () => {
     detectHostMock.mockResolvedValue(host());
     createMock.mockImplementation(async () => hostEntry());
     ensureClearanceMock.mockResolvedValue(clearanceResult());
+    resolveSafehouseCmuxIntegrationMock.mockReturnValue(safehouseCmuxIntegrationFixture());
     mkdtempMock.mockReturnValue("/tmp/groundcrew-team-1-x");
     runCommandMock.mockReturnValue("");
     teardownMock.mockResolvedValue(emptyTeardownResult());
@@ -447,6 +455,36 @@ describe(setupWorkspace, () => {
       state: "running",
       url: "https://linear.app/example/issue/TEAM-1",
     });
+  });
+
+  it("grants matching todo-txt source paths to the worker completion sandbox", async () => {
+    const config: ResolvedConfig = {
+      ...makeConfig(),
+      sources: [
+        {
+          kind: "todo-txt",
+          name: "todo",
+          todoPath: "/Users/dev/v/todo.md",
+          tasksDir: "/Users/dev/v/.tasks",
+          idPrefix: "GC",
+          timezone: "UTC",
+        },
+      ],
+    };
+    mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
+
+    await setupWorkspace(config, {
+      task: "team-1",
+      completionTaskId: "todo:gc-1",
+      repository: "repo-a",
+      agent: "claude",
+      details: { title: "Test Title", description: "Body" },
+    });
+
+    const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
+    expect(launchScript).toContain(
+      "--add-dirs='/work/repo-a-team-1:/tmp/groundcrew-team-1-x/.git:/Users/dev/v:/Users/dev/v/.tasks'",
+    );
   });
 
   it("records the task url even on the failed-to-launch rollback path", async () => {
@@ -519,7 +557,7 @@ describe(setupWorkspace, () => {
 
   it("stages neutral prepare + full agent srt settings and wraps the agent under the agent policy when runner=srt", async () => {
     const config = makeConfig();
-    config.local = { runner: "srt" };
+    config.local = { runner: "srt", networkEgress: "allowlisted" };
     mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
 
     await setupWorkspace(config, {
@@ -769,6 +807,98 @@ describe(setupWorkspace, () => {
     expect(launchScript).toContain('"$prepare_status" -ne 0');
   });
 
+  it("runs the per-repo operator prepareWorktree hook when defaults define none", async () => {
+    detectHostMock.mockResolvedValue(host());
+    const base = makeConfig({
+      definitions: {
+        claude: {
+          cmd: "claude --permission-mode auto",
+          color: "#fff",
+        },
+      },
+    });
+    const config: ResolvedConfig = {
+      ...base,
+      workspace: {
+        ...base.workspace,
+        repositories: [{ name: "repo-a", hooks: { prepareWorktree: "make per-repo-setup" } }],
+      },
+    };
+    mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
+
+    await setupWorkspace(config, {
+      task: "team-1",
+      repository: "repo-a",
+      agent: "claude",
+      details: { title: "Test Title", description: "Body" },
+    });
+
+    const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
+    expect(launchScript).toContain("make per-repo-setup");
+  });
+
+  it("prefers the per-repo operator hook over the crew config default", async () => {
+    detectHostMock.mockResolvedValue(host());
+    const base = makeConfig({
+      definitions: {
+        claude: {
+          cmd: "claude --permission-mode auto",
+          color: "#fff",
+        },
+      },
+    });
+    const config: ResolvedConfig = {
+      ...base,
+      defaults: { hooks: { prepareWorktree: "npm ci" } },
+      workspace: {
+        ...base.workspace,
+        repositories: [{ name: "repo-a", hooks: { prepareWorktree: "make per-repo-setup" } }],
+      },
+    };
+    mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
+
+    await setupWorkspace(config, {
+      task: "team-1",
+      repository: "repo-a",
+      agent: "claude",
+      details: { title: "Test Title", description: "Body" },
+    });
+
+    const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
+    expect(launchScript).toContain("make per-repo-setup");
+    expect(launchScript).not.toContain("npm ci");
+  });
+
+  it("falls back to the crew config default when the matched repo entry has no hooks", async () => {
+    detectHostMock.mockResolvedValue(host());
+    const base = makeConfig({
+      definitions: {
+        claude: {
+          cmd: "claude --permission-mode auto",
+          color: "#fff",
+        },
+      },
+    });
+    const config: ResolvedConfig = {
+      ...base,
+      defaults: { hooks: { prepareWorktree: "npm ci" } },
+      // The matched entry exists but carries no `hooks`, so the per-repo layer
+      // is skipped and the global default fires.
+      workspace: { ...base.workspace, repositories: [{ name: "repo-a" }] },
+    };
+    mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
+
+    await setupWorkspace(config, {
+      task: "team-1",
+      repository: "repo-a",
+      agent: "claude",
+      details: { title: "Test Title", description: "Body" },
+    });
+
+    const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
+    expect(launchScript).toContain("npm ci");
+  });
+
   it("passes groundcrew's bundled clearance allowlist to Safehouse without requiring an export", async () => {
     vi.stubEnv("CLEARANCE_ALLOW_HOSTS_FILES", "");
     detectHostMock.mockResolvedValue(host());
@@ -793,6 +923,26 @@ describe(setupWorkspace, () => {
     } finally {
       vi.unstubAllEnvs();
     }
+  });
+
+  it("wraps with bare safehouse and skips the clearance daemon when networkEgress is open", async () => {
+    const config = makeConfig();
+    config.local = { runner: "safehouse", networkEgress: "open" };
+    mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
+
+    await setupWorkspace(config, {
+      task: "team-1",
+      repository: "repo-a",
+      agent: "claude",
+      details: { title: "Test Title", description: "Body" },
+    });
+
+    const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
+    expect(launchScript).toContain("safehouse --add-dirs=");
+    expect(launchScript).toMatch(/safehouse .*"\$_safehouse_shim" -c/);
+    expect(launchScript).not.toContain("safehouse-clearance");
+    expect(launchScript).not.toContain("CLEARANCE_ALLOW_HOSTS_FILES");
+    expect(ensureClearanceMock).not.toHaveBeenCalled();
   });
 
   it("keeps user-configured clearance allowlist files in addition to the bundled file", async () => {
@@ -844,8 +994,14 @@ describe(setupWorkspace, () => {
     expect(launchScript).not.toContain("groundcrew prepareWorktree hook exited");
     expect(launchScript).not.toContain(".groundcrew/setup.sh");
     expect(launchScript).toContain(
-      "/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance' --add-dirs='/work/repo-a-team-1:/tmp/groundcrew-team-1-x/.git' --env-pass=GROUNDCREW_TASK_ID,GROUNDCREW_COMPLETE \"$_safehouse_shim\" -c",
+      "/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance' --add-dirs='/work/repo-a-team-1:/tmp/groundcrew-team-1-x/.git'",
     );
+    expect(launchScript).toContain("--add-dirs-ro='/Applications/cmux.app:");
+    expect(launchScript).toContain(
+      "--env-pass=GROUNDCREW_TASK_ID,GROUNDCREW_COMPLETE,CMUX_SURFACE_ID,CMUX_SOCKET_PATH",
+    );
+    expect(launchScript).toContain("export CMUX_CUSTOM_CLAUDE_PATH=/Users/dev/.local/bin/claude");
+    expect(launchScript).toContain('"$_safehouse_shim" -c');
   });
 
   it("wraps the agent in an sbx exec call and skips ensureClearance when runner='sdx'", async () => {
@@ -1132,7 +1288,7 @@ describe(setupWorkspace, () => {
       }),
     );
     const config = makeConfig();
-    config.local = { runner: "safehouse" };
+    config.local = { runner: "safehouse", networkEgress: "allowlisted" };
 
     await expect(
       setupWorkspace(config, {
@@ -1762,6 +1918,7 @@ describe(setupWorkspaceCli, () => {
     mkdtempMock.mockReturnValue("/tmp/groundcrew-team-1-x");
     runCommandMock.mockReturnValue(JSON.stringify({ ref: "workspace:1" }));
     loadConfigMock.mockResolvedValue(makeConfig());
+    resolveSafehouseCmuxIntegrationMock.mockReturnValue(safehouseCmuxIntegrationFixture());
     defaultBoard = fakeBoard(
       canonicalLinearIssue({
         naturalId: "team-1",
@@ -1884,13 +2041,48 @@ describe(setupWorkspaceCli, () => {
     );
   });
 
-  it("sets worker self-completion env from the resolved canonical task id", async () => {
+  it("omits worker self-completion command when the resolved source cannot mark done", async () => {
     await setupWorkspaceCli("team-1");
 
     const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
     expect(launchScript).toContain("export GROUNDCREW_TASK_ID='linear:team-1'");
-    expect(launchScript).toContain("export GROUNDCREW_COMPLETE='crew task done linear:team-1'");
+    expect(launchScript).not.toContain("GROUNDCREW_COMPLETE");
     expect(lastRecordedRunState().completionTaskId).toBe("linear:team-1");
+  });
+
+  it("sets worker self-completion command when the resolved source can mark done", async () => {
+    loadConfigMock.mockResolvedValueOnce({
+      ...makeConfig(),
+      sources: [
+        {
+          kind: "todo-txt",
+          name: "todo",
+          todoPath: "todo.txt",
+          tasksDir: ".tasks",
+          idPrefix: "GC",
+          timezone: "UTC",
+        },
+      ],
+    });
+    createBoardMock.mockReturnValueOnce(
+      fakeBoard(
+        canonicalShellIssue({
+          naturalId: "sweep-1",
+          sourceName: "todo",
+          repository: "repo-a",
+          agent: "claude",
+          title: "Title",
+          description: "Body",
+        }),
+      ),
+    );
+
+    await setupWorkspaceCli("todo:sweep-1");
+
+    const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
+    expect(launchScript).toContain("export GROUNDCREW_TASK_ID='todo:sweep-1'");
+    expect(launchScript).toContain("export GROUNDCREW_COMPLETE='crew task done todo:sweep-1'");
+    expect(lastRecordedRunState().completionTaskId).toBe("todo:sweep-1");
   });
 
   it("passes title and description from the resolved issue as details", async () => {

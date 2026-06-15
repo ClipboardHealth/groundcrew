@@ -64,6 +64,71 @@ describe(resolvePrepareWorktreeCommand, () => {
     }
   });
 
+  it("uses the per-repo operator hook over the crew config default", () => {
+    const worktreeDir = temporaryWorktree();
+    try {
+      const actual = resolvePrepareWorktreeCommand({
+        worktreeDir,
+        perRepoHooks: { prepareWorktree: "make setup" },
+        defaultHooks: { prepareWorktree: "npm ci" },
+      });
+
+      expect(actual).toBe("make setup");
+    } finally {
+      rmSync(worktreeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses the per-repo operator hook when no crew config default is set", () => {
+    const worktreeDir = temporaryWorktree();
+    try {
+      const actual = resolvePrepareWorktreeCommand({
+        worktreeDir,
+        perRepoHooks: { prepareWorktree: "make setup" },
+        defaultHooks: {},
+      });
+
+      expect(actual).toBe("make setup");
+    } finally {
+      rmSync(worktreeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses the repo-local hook over the per-repo operator hook", () => {
+    const worktreeDir = temporaryWorktree();
+    try {
+      writeRepositoryConfig(worktreeDir, {
+        version: 1,
+        hooks: { prepareWorktree: "uv sync --dev" },
+      });
+
+      const actual = resolvePrepareWorktreeCommand({
+        worktreeDir,
+        perRepoHooks: { prepareWorktree: "make setup" },
+        defaultHooks: { prepareWorktree: "npm ci" },
+      });
+
+      expect(actual).toBe("uv sync --dev");
+    } finally {
+      rmSync(worktreeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to the crew config default when the per-repo layer has no hook", () => {
+    const worktreeDir = temporaryWorktree();
+    try {
+      const actual = resolvePrepareWorktreeCommand({
+        worktreeDir,
+        perRepoHooks: {},
+        defaultHooks: { prepareWorktree: "npm ci" },
+      });
+
+      expect(actual).toBe("npm ci");
+    } finally {
+      rmSync(worktreeDir, { recursive: true, force: true });
+    }
+  });
+
   it("falls back to the crew config default when repo config has no prepareWorktree hook", () => {
     const worktreeDir = temporaryWorktree();
     try {

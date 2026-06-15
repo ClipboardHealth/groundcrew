@@ -16,6 +16,10 @@ const WORKER_ENVIRONMENT = {
   GROUNDCREW_COMPLETE: "crew task done todo:gc-1",
 } as const;
 
+const WORKER_ENVIRONMENT_WITHOUT_COMPLETION = {
+  GROUNDCREW_TASK_ID: "linear:team-1",
+} as const;
+
 function arguments_(
   overrides: Partial<Parameters<typeof buildLaunchCommand>[0]> = {},
 ): Parameters<typeof buildLaunchCommand>[0] {
@@ -26,6 +30,7 @@ function arguments_(
     worktreeDir,
     workingDir: worktreeDir,
     runner: "safehouse",
+    networkEgress: "allowlisted",
     ...overrides,
   };
 }
@@ -230,6 +235,20 @@ describe(`${buildLaunchCommand.name} (runner='srt')`, () => {
     expect(prepareSegment).not.toContain("GROUNDCREW_COMPLETE");
   });
 
+  it("omits the completion command when the task source cannot mark done", () => {
+    const out = buildLaunchCommand(
+      srtArguments({
+        prepareWorktreeCommand: "npm ci",
+        workerEnvironment: WORKER_ENVIRONMENT_WITHOUT_COMPLETION,
+      }),
+    );
+
+    const afterPrepare = out.slice(out.indexOf("npm ci"));
+    expect(out).toContain("export GROUNDCREW_TASK_ID='linear:team-1'");
+    expect(out).not.toContain("GROUNDCREW_COMPLETE");
+    expect(afterPrepare).toContain(`GROUNDCREW_TASK_ID="$GROUNDCREW_TASK_ID"`);
+  });
+
   it("omits the config-home env for read-only agents (claude) that don't relocate", () => {
     const out = buildLaunchCommand(srtArguments());
 
@@ -340,6 +359,51 @@ describe(buildLaunchCommand, () => {
     expect(out).toContain('ln -s /bin/sh "$_safehouse_shim"');
     expect(out).toContain('"$_safehouse_shim" -c');
     expect(out).not.toContain("--enable=all-agents");
+  });
+
+  it("can grant a workspace shim integration to the Safehouse agent without stripping PATH", () => {
+    const out = buildLaunchCommand(
+      arguments_({
+        definition: { cmd: "claude --permission-mode auto", color: "#fff" },
+        prepareWorktreeCommand: "npm ci",
+        safehouseAgentIntegration: {
+          addDirsReadOnly: ["/Applications/cmux.app", "/Users/dev/.local/state/cmux"],
+          envPass: [
+            "CMUX_SURFACE_ID",
+            "CMUX_SOCKET_PATH",
+            "CMUX_CLAUDE_WRAPPER_SHIM",
+            "CMUX_CLAUDE_WRAPPER_SHIM_ROOT",
+            "CMUX_CUSTOM_CLAUDE_PATH",
+          ],
+          commandPreludes: ["export CMUX_CUSTOM_CLAUDE_PATH=/Users/dev/.local/bin/claude"],
+        },
+      }),
+    );
+
+    const prepareWrapIndex = out.indexOf("safehouse-clearance' sh -c");
+    const agentWrapIndex = out.indexOf('"$_safehouse_shim" -c');
+    const readOnlyGrantIndex = out.indexOf(
+      "--add-dirs-ro='/Applications/cmux.app:/Users/dev/.local/state/cmux'",
+    );
+    const envPassIndex = out.indexOf(
+      "--env-pass=CMUX_SURFACE_ID,CMUX_SOCKET_PATH,CMUX_CLAUDE_WRAPPER_SHIM,CMUX_CLAUDE_WRAPPER_SHIM_ROOT,CMUX_CUSTOM_CLAUDE_PATH",
+    );
+    const shimSetupIndex = out.indexOf("_safehouse_shim_dir=", prepareWrapIndex);
+    const preludeIndex = out.indexOf("export CMUX_CUSTOM_CLAUDE_PATH=/Users/dev/.local/bin/claude");
+    const execIndex = out.indexOf('exec claude --permission-mode auto "$@"');
+    expect(prepareWrapIndex).toBeGreaterThan(-1);
+    expect(readOnlyGrantIndex).toBeGreaterThan(prepareWrapIndex);
+    expect(readOnlyGrantIndex).toBeLessThan(agentWrapIndex);
+    expect(envPassIndex).toBeGreaterThan(prepareWrapIndex);
+    expect(envPassIndex).toBeLessThan(agentWrapIndex);
+    expect(preludeIndex).toBeGreaterThan(agentWrapIndex);
+    expect(execIndex).toBeGreaterThan(preludeIndex);
+    expect(shimSetupIndex).toBeGreaterThan(prepareWrapIndex);
+    const prepareWrap = out.slice(prepareWrapIndex, shimSetupIndex);
+    expect(prepareWrap).not.toContain("--add-dirs-ro");
+    expect(prepareWrap).not.toContain("CMUX_SURFACE_ID");
+    expect(prepareWrap).not.toContain("CMUX_SOCKET_PATH");
+    expect(out).not.toContain("_groundcrew_path_without_cmux");
   });
 
   it("infers the Safehouse profile command from an absolute agent path", () => {
@@ -1257,5 +1321,110 @@ describe(buildLaunchCommand, () => {
       expect(out).not.toContain("-e NPM_TOKEN");
       expect(out).not.toContain("-e BUF_TOKEN");
     });
+  });
+
+  describe(`${buildLaunchCommand.name} (runner='safehouse', networkEgress='open')`, () => {
+    it("wraps both safehouse phases with the bare safehouse binary, dropping the clearance shim and proxy env", () => {
+      const out = buildLaunchCommand(
+        arguments_({ networkEgress: "open", prepareWorktreeCommand: "npm ci" }),
+      );
+
+      // Bare safehouse for both the prepareWorktree wrap (`sh -c`) and the agent
+      // wrap (the profile-selection shim), with no clearance layer.
+      expect(out).toContain("safehouse sh -c");
+      expect(out).toContain('safehouse "$_safehouse_shim" -c');
+      expect(out).not.toContain("safehouse-clearance");
+      expect(out).not.toContain("CLEARANCE_ALLOW_HOSTS_FILES");
+    });
+
+    it("keeps the filesystem sandbox machinery — profile shim and flag composition — intact", () => {
+      const out = buildLaunchCommand(
+        arguments_({
+          networkEgress: "open",
+          prepareWorktreeCommand: "npm ci",
+          safehouseAddDirs: ["/work/repo-a-team-1", "/src/carrot/.git"],
+          safehouseAgentAddDirs: ["/Users/dev/v"],
+          definition: { cmd: "claude", color: "#fff", preLaunchEnv: ["SESSION_TOKEN"] },
+        }),
+      );
+
+      // The agent-named symlink-to-/bin/sh profile-selection trick is unchanged.
+      expect(out).toContain('_safehouse_shim="$_safehouse_shim_dir/claude"');
+      expect(out).toContain('ln -s /bin/sh "$_safehouse_shim"');
+      // --add-dirs (both wraps), the agent-only --add-dirs grant, and --env-pass
+      // all still compose around the bare-safehouse wrapper.
+      expect(out).toContain("--add-dirs='/work/repo-a-team-1:/src/carrot/.git'");
+      expect(out).toContain("--add-dirs='/work/repo-a-team-1:/src/carrot/.git:/Users/dev/v'");
+      expect(out).toContain("--env-pass=SESSION_TOKEN ");
+      expect(out).toContain(`exec claude "$@"`);
+    });
+
+    it("default allowlisted network egress still wraps with the clearance shim (regression)", () => {
+      const out = buildLaunchCommand(arguments_({ prepareWorktreeCommand: "npm ci" }));
+
+      expect(out).toContain("safehouse-clearance' sh -c");
+      expect(out).toContain("CLEARANCE_ALLOW_HOSTS_FILES=");
+      expect(out).not.toContain("safehouse sh -c");
+    });
+  });
+});
+
+describe("buildLaunchCommand omitPromptArgument (interactive launch)", () => {
+  it("drops the trailing prompt positional on the unwrapped host path", () => {
+    const withPrompt = buildLaunchCommand(arguments_({ runner: "none" }));
+    const interactive = buildLaunchCommand(
+      arguments_({ runner: "none", omitPromptArgument: true }),
+    );
+
+    expect(withPrompt).toMatch(/exec claude "\$_p"$/);
+    expect(interactive).toMatch(/exec claude$/);
+    // The prompt is still read into $_p (and its dir cleaned up); only the
+    // positional is dropped.
+    expect(interactive).toContain("_p=$(cat '/tmp/prompt-team-1/prompt.txt')");
+  });
+
+  it("drops the trailing prompt positional from the Safehouse agent wrap", () => {
+    const withPrompt = buildLaunchCommand(arguments_({ runner: "safehouse" }));
+    const interactive = buildLaunchCommand(
+      arguments_({ runner: "safehouse", omitPromptArgument: true }),
+    );
+
+    expect(withPrompt).toContain(`sh "$_p"; _safehouse_status=$?`);
+    expect(interactive).toContain(`sh; _safehouse_status=$?`);
+    expect(interactive).not.toContain(`sh "$_p"`);
+    expect(interactive).toContain("_p=$(cat '/tmp/prompt-team-1/prompt.txt')");
+  });
+
+  it("drops the trailing prompt positional from the srt agent wrap", () => {
+    const srtArgs = {
+      runner: "srt" as const,
+      srtPrepareSettingsFile: "/tmp/groundcrew-srt-team-1/prepare-settings.json",
+      srtAgentSettingsFile: "/tmp/groundcrew-srt-team-1/agent-settings.json",
+      srtSettingsDir: "/tmp/groundcrew-srt-team-1",
+    };
+    const withPrompt = buildLaunchCommand(arguments_(srtArgs));
+    const interactive = buildLaunchCommand(arguments_({ ...srtArgs, omitPromptArgument: true }));
+
+    expect(withPrompt).toContain(`sh "$_p"; _srt_status=$?`);
+    expect(interactive).toContain(`sh; _srt_status=$?`);
+    expect(interactive).not.toContain(`sh "$_p"`);
+  });
+
+  it("drops the trailing prompt positional from the sdx exec", () => {
+    const sdxArgs = {
+      runner: "sdx" as const,
+      sandboxName: "groundcrew-claude",
+      definition: {
+        cmd: "claude",
+        color: "#fff",
+        sandbox: { agent: "claude" },
+      } satisfies AgentDefinition,
+    };
+    const withPrompt = buildLaunchCommand(arguments_(sdxArgs));
+    const interactive = buildLaunchCommand(arguments_({ ...sdxArgs, omitPromptArgument: true }));
+
+    expect(withPrompt).toMatch(/sh "\$_p"$/);
+    expect(interactive).toMatch(/ sh$/);
+    expect(interactive).not.toContain(`sh "$_p"`);
   });
 });

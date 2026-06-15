@@ -23,6 +23,7 @@
  */
 
 import type { Board } from "../lib/board.ts";
+import type { ResolvedConfig } from "../lib/config.ts";
 import type { PullRequestSummary } from "../lib/pullRequests.ts";
 import {
   type BoardState,
@@ -32,6 +33,7 @@ import {
 } from "../lib/taskSource.ts";
 import { debug, errorMessage, log, logEvent } from "../lib/util.ts";
 import type { WorktreeEntry } from "../lib/worktrees.ts";
+import { effectiveBranchName } from "../lib/worktreeRunState.ts";
 
 /**
  * Injected PR lookup. Matches `findPullRequestsForBranch`'s shape: best-effort,
@@ -48,6 +50,7 @@ export type FindPullRequests = (arguments_: {
 interface ReviewerDeps {
   board: Board;
   findPullRequests: FindPullRequests;
+  config?: ResolvedConfig;
 }
 
 /** Per-tick inputs, mirroring the other orchestrator steps' shape. */
@@ -108,7 +111,7 @@ function matchingWorktreeEntries(arguments_: {
 }
 
 export function createReviewer(deps: ReviewerDeps): Reviewer {
-  const { board, findPullRequests } = deps;
+  const { board, config, findPullRequests } = deps;
 
   async function runOnce(arguments_: ReviewArguments): Promise<void> {
     const { state, worktreeEntries, dryRun, signal } = arguments_;
@@ -126,6 +129,7 @@ export function createReviewer(deps: ReviewerDeps): Reviewer {
         issue,
         worktreeEntries,
         dryRun,
+        ...(config === undefined ? {} : { config }),
         ...(signal === undefined ? {} : { signal }),
       });
     }
@@ -139,13 +143,18 @@ export function createReviewer(deps: ReviewerDeps): Reviewer {
     issue: Issue;
     worktreeEntries: readonly WorktreeEntry[];
     dryRun: boolean;
+    config?: ResolvedConfig;
     signal?: AbortSignal;
   }): Promise<void> {
-    const { issue, worktreeEntries, dryRun, signal } = arguments_;
+    const { issue, worktreeEntries, dryRun, config: reviewerConfig, signal } = arguments_;
     const task = naturalIdFromCanonical(issue.id);
     const entries = matchingWorktreeEntries({ issue, worktreeEntries, task });
 
     for (const entry of entries) {
+      const branchName =
+        reviewerConfig === undefined
+          ? entry.branchName
+          : effectiveBranchName({ config: reviewerConfig, entry });
       // The injected lookup is contracted never to reject (failures resolve to
       // []), but we still guard it so one bad lookup can never abort the tick
       // and starve the other candidates. A failure means "can't tell yet" →
@@ -155,11 +164,11 @@ export function createReviewer(deps: ReviewerDeps): Reviewer {
         // oxlint-disable-next-line no-await-in-loop -- a task almost always has one worktree; sequential lookups are fine.
         pullRequests = await findPullRequests({
           cwd: entry.dir,
-          branchName: entry.branchName,
+          branchName,
           ...(signal === undefined ? {} : { signal }),
         });
       } catch (error) {
-        debug(`PR lookup failed for ${task} (${entry.branchName}): ${errorMessage(error)}`);
+        debug(`PR lookup failed for ${task} (${branchName}): ${errorMessage(error)}`);
         continue;
       }
       const transition = intendedTransition(pullRequests, issue.status);

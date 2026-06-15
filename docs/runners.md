@@ -15,7 +15,7 @@
 
 Only applies when `local.runner` resolves to `safehouse`. Groundcrew starts `clearance` on `http://127.0.0.1:19999` and runs the agent through the bundled `safehouse-clearance` wrapper. Groundcrew automatically points clearance at its shipped starter allowlist, so a fresh install does not need a `CLEARANCE_ALLOW_HOSTS_FILES` export.
 
-Groundcrew ships that starter file at `$(npm root -g)/@clipboard-health/groundcrew/clearance-allow-hosts`, covering model APIs, Linear, Notion, Slack, Datadog, GitHub, npm, and common dev tooling.
+Groundcrew ships that starter file at `$(npm root -g)/@clipboard-health/groundcrew/clearance-allow-hosts`, covering model APIs, Linear, Notion, Slack, Datadog, GitHub, npm, PyPI, and common dev tooling.
 
 To add ad hoc hosts for one run, use `CLEARANCE_ALLOW_HOSTS`:
 
@@ -33,7 +33,27 @@ crew run --watch
 
 Watch `${XDG_CACHE_HOME:-$HOME/.cache}/clearance/clearance.log` for `DENY` lines and add only the domains your agents actually need.
 
-`@clipboard-health/clearance` is pulled in transitively when you install groundcrew and provides the `clearance` / `clearance-ensure` bins used by Safehouse runs. See the [clearance README](https://github.com/ClipboardHealth/core-utils/tree/main/packages/clearance) for proxy env vars, log paths, and DNS rules.
+`@clipboard-health/clearance` is pulled in transitively when you install groundcrew, but npm links its `clearance` / `clearance-ensure` bins only into the nested `node_modules/.bin/`, never onto your shell `PATH`. So groundcrew exposes its own first-class `crew-clearance-ensure` command (installed alongside `crew`) that dispatches straight to clearance's `clearance-ensure` entrypoint, forwarding all args, stdio, and exit code unchanged. See the [clearance README](https://github.com/ClipboardHealth/core-utils/tree/main/packages/clearance) for proxy env vars, log paths, and DNS rules.
+
+### Opening network egress (`local.networkEgress: "open"`)
+
+`local.networkEgress` defaults to `"allowlisted"`, which makes the `safehouse` runner wrap agents with Clearance. Set it to `"open"` to keep the Safehouse **filesystem sandbox** while opening **network egress**: groundcrew runs the bare `safehouse` binary instead of the `safehouse-clearance` shim, so there is no egress allowlist, no proxy env, and no clearance daemon to start.
+
+```ts
+// crew.config.ts
+export default {
+  // ...
+  local: { runner: "safehouse", networkEgress: "open" },
+} satisfies Config;
+```
+
+This is for the case where the allowlist is more friction than the egress restriction is worth, but you still want the filesystem isolation and per-agent profiles. To keep clearance on and merely add hosts, use `CLEARANCE_ALLOW_HOSTS` / `CLEARANCE_ALLOW_HOSTS_FILES` (above) instead.
+
+Scope and limits:
+
+- **safehouse only.** It applies to both groundcrew-composed Safehouse wraps (the `prepareWorktree` wrap and the agent wrap).
+- **Ignored by `srt` / `sdx` / `none`.** The other runners ignore it, so you can leave `networkEgress` set while switching `local.runner`. Note that `srt` enforces its own network allowlist (`CLEARANCE_ALLOW_HOSTS` / `allowedDomains`) regardless: to actually open egress, use the `safehouse` runner.
+- **No additional effect when `cmd` already starts with `safehouse`:** that command owns its own wrap, so groundcrew injects nothing. Groundcrew-managed setup/resume launches still reject cmd-owned Safehouse wraps because worker self-completion env cannot be injected.
 
 ## srt (Anthropic sandbox-runtime)
 
