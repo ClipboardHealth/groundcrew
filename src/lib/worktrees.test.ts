@@ -31,7 +31,6 @@ vi.mock(import("./commandRunner.ts"), async (importOriginal) => {
   return {
     ...actual,
     runCommand: runCommandMock,
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- test mock intentionally shares one recorder across sync and async command APIs.
     runCommandAsync: runCommandMock as unknown as typeof actual.runCommandAsync,
   };
 });
@@ -1471,7 +1470,6 @@ describe(remove, () => {
 describe(teardown, () => {
   setupTempProjectDir();
   const workspacesProbeMock = vi.mocked(workspaces.probe);
-  // oxlint-disable-next-line typescript/unbound-method -- vi.mocked needs the function reference
   const workspacesCloseMock = vi.mocked(workspaces.close);
 
   beforeEach(() => {
@@ -1778,7 +1776,6 @@ describe("worktrees.probeWorkingTree", () => {
     // Restore the real runCommandAsync for these tests so the probe actually
     // shells out to git against a real temp repo.
     const actual = await vi.importActual<typeof commandRunnerModule>("./commandRunner.ts");
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- bridging the shared sync/async mock recorder to the real async implementation; same pattern as the top-of-file vi.mock.
     runCommandMock.mockImplementation(actual.runCommandAsync as unknown as RunCommandMock);
   });
 

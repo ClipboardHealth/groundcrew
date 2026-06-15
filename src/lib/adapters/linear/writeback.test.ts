@@ -37,7 +37,6 @@ function makeClient(
 }
 
 function asLinearClient(stub: ClientStub): LinearClient {
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests use the LinearClient surface consumed by writeback
   return stub as unknown as LinearClient;
 }
 
