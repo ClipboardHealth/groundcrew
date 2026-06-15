@@ -35,15 +35,15 @@ Watch `${XDG_CACHE_HOME:-$HOME/.cache}/clearance/clearance.log` for `DENY` lines
 
 `@clipboard-health/clearance` is pulled in transitively when you install groundcrew and provides the `clearance` / `clearance-ensure` bins used by Safehouse runs. See the [clearance README](https://github.com/ClipboardHealth/core-utils/tree/main/packages/clearance) for proxy env vars, log paths, and DNS rules.
 
-### Disabling clearance (`local.clearance.enabled: false`)
+### Opening network egress (`local.networkEgress: "open"`)
 
-`local.clearance` is an object (so further egress options can be added later); its only field today is `enabled` (boolean, default `true`), which controls whether the `safehouse` runner wraps the agent with Clearance. Set `enabled: false` to keep the Safehouse **filesystem sandbox** while opening **network egress**: groundcrew runs the bare `safehouse` binary instead of the `safehouse-clearance` shim, so there is no egress allowlist, no proxy env, and no clearance daemon to start.
+`local.networkEgress` defaults to `"allowlisted"`, which makes the `safehouse` runner wrap agents with Clearance. Set it to `"open"` to keep the Safehouse **filesystem sandbox** while opening **network egress**: groundcrew runs the bare `safehouse` binary instead of the `safehouse-clearance` shim, so there is no egress allowlist, no proxy env, and no clearance daemon to start.
 
 ```ts
 // crew.config.ts
 export default {
   // ...
-  local: { runner: "safehouse", clearance: { enabled: false } },
+  local: { runner: "safehouse", networkEgress: "open" },
 } satisfies Config;
 ```
 
@@ -52,8 +52,8 @@ This is for the case where the allowlist is more friction than the egress restri
 Scope and limits:
 
 - **safehouse only.** It applies to both groundcrew-composed Safehouse wraps (the `prepareWorktree` wrap and the agent wrap).
-- **Ignored by `srt` / `sdx` / `none`.** `clearance` is a safehouse-only option. The other runners ignore it, so you can leave `clearance` set while switching `local.runner`. Note that `srt` enforces its own network allowlist (`CLEARANCE_ALLOW_HOSTS` / `allowedDomains`) regardless: to actually open egress, use the `safehouse` runner.
-- **No-op when `cmd` already starts with `safehouse`:** that command owns its own wrap, so groundcrew injects nothing.
+- **Ignored by `srt` / `sdx` / `none`.** The other runners ignore it, so you can leave `networkEgress` set while switching `local.runner`. Note that `srt` enforces its own network allowlist (`CLEARANCE_ALLOW_HOSTS` / `allowedDomains`) regardless: to actually open egress, use the `safehouse` runner.
+- **No additional effect when `cmd` already starts with `safehouse`:** that command owns its own wrap, so groundcrew injects nothing. Groundcrew-managed setup/resume launches still reject cmd-owned Safehouse wraps because worker self-completion env cannot be injected.
 
 ## srt (Anthropic sandbox-runtime)
 

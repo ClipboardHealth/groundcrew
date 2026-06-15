@@ -26,7 +26,7 @@ function arguments_(
     worktreeDir,
     workingDir: worktreeDir,
     runner: "safehouse",
-    clearanceEnabled: true,
+    networkEgress: "allowlisted",
     ...overrides,
   };
 }
@@ -1305,10 +1305,10 @@ describe(buildLaunchCommand, () => {
     });
   });
 
-  describe(`${buildLaunchCommand.name} (runner='safehouse', clearance=false)`, () => {
+  describe(`${buildLaunchCommand.name} (runner='safehouse', networkEgress='open')`, () => {
     it("wraps both safehouse phases with the bare safehouse binary, dropping the clearance shim and proxy env", () => {
       const out = buildLaunchCommand(
-        arguments_({ clearanceEnabled: false, prepareWorktreeCommand: "npm ci" }),
+        arguments_({ networkEgress: "open", prepareWorktreeCommand: "npm ci" }),
       );
 
       // Bare safehouse for both the prepareWorktree wrap (`sh -c`) and the agent
@@ -1322,7 +1322,7 @@ describe(buildLaunchCommand, () => {
     it("keeps the filesystem sandbox machinery — profile shim and flag composition — intact", () => {
       const out = buildLaunchCommand(
         arguments_({
-          clearanceEnabled: false,
+          networkEgress: "open",
           prepareWorktreeCommand: "npm ci",
           safehouseAddDirs: ["/work/repo-a-team-1", "/src/carrot/.git"],
           safehouseAgentAddDirs: ["/Users/dev/v"],
@@ -1341,7 +1341,7 @@ describe(buildLaunchCommand, () => {
       expect(out).toContain(`exec claude "$@"`);
     });
 
-    it("default clearance=true still wraps with the clearance shim (regression)", () => {
+    it("default allowlisted network egress still wraps with the clearance shim (regression)", () => {
       const out = buildLaunchCommand(arguments_({ prepareWorktreeCommand: "npm ci" }));
 
       expect(out).toContain("safehouse-clearance' sh -c");

@@ -192,7 +192,7 @@ function makeConfig(): ResolvedConfig {
     },
     prompts: { initial: "x" },
     workspaceKind: "auto",
-    local: { runner: "auto", clearance: { enabled: true } },
+    local: { runner: "auto", networkEgress: "allowlisted" },
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }
@@ -410,7 +410,7 @@ describe(resumeWorkspace, () => {
   it("stages neutral prepare + agent srt settings and wraps the resumed agent under srt", async () => {
     const srtConfig = {
       ...makeConfig(),
-      local: { runner: "srt" as const, clearance: { enabled: true } },
+      local: { runner: "srt" as const, networkEgress: "allowlisted" as const },
     };
 
     await resumeWorkspace(srtConfig, { task: "team-1" });
@@ -428,13 +428,13 @@ describe(resumeWorkspace, () => {
     expect(launchScript).not.toContain("safehouse-clearance");
   });
 
-  it("wraps with bare safehouse and skips the clearance daemon when local.clearance is false", async () => {
-    const noClearance = {
+  it("wraps with bare safehouse and skips the clearance daemon when networkEgress is open", async () => {
+    const openEgress = {
       ...makeConfig(),
-      local: { runner: "safehouse" as const, clearance: { enabled: false } },
+      local: { runner: "safehouse" as const, networkEgress: "open" as const },
     };
 
-    await resumeWorkspace(noClearance, { task: "team-1" });
+    await resumeWorkspace(openEgress, { task: "team-1" });
 
     // Filesystem sandbox stays (the profile shim) under the bare safehouse
     // binary, but no clearance layer and no clearance-ensure daemon call.
@@ -445,12 +445,12 @@ describe(resumeWorkspace, () => {
     expect(ensureClearanceMock).not.toHaveBeenCalled();
   });
 
-  it("keeps clearance:false a no-op for a cmd-owned safehouse wrap (still rejected upstream)", async () => {
-    // The user owns the wrap, so groundcrew injects nothing and `clearance` has
-    // no effect: it is rejected by the same worker-env guard as with clearance on.
+  it("keeps networkEgress:open a no-op for a cmd-owned safehouse wrap (still rejected upstream)", async () => {
+    // The user owns the wrap, so groundcrew injects nothing and `networkEgress`
+    // has no effect: it is rejected by the same worker-env guard as allowlisted.
     const cmdOwned: ResolvedConfig = {
       ...makeConfig(),
-      local: { runner: "safehouse", clearance: { enabled: false } },
+      local: { runner: "safehouse", networkEgress: "open" },
       agents: {
         default: "claude",
         definitions: { claude: { cmd: "safehouse claude --auto", color: "#fff" } },
@@ -465,7 +465,7 @@ describe(resumeWorkspace, () => {
   it("does not add task source sandbox grants for unsandboxed resume runners", async () => {
     const noneConfig: ResolvedConfig = {
       ...makeConfig(),
-      local: { runner: "none", clearance: { enabled: true } },
+      local: { runner: "none", networkEgress: "allowlisted" },
       sources: [
         { kind: "linear" },
         {
@@ -503,7 +503,7 @@ describe(resumeWorkspace, () => {
   it("cleans up the staged srt settings dir when the resumed launch fails to open", async () => {
     const srtConfig = {
       ...makeConfig(),
-      local: { runner: "srt" as const, clearance: { enabled: true } },
+      local: { runner: "srt" as const, networkEgress: "allowlisted" as const },
     };
     workspacesOpenMock.mockRejectedValue(new Error("cmux down"));
 

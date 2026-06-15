@@ -1023,7 +1023,7 @@ describe("loadConfig", () => {
     expect(actual.local.runner).toBe("safehouse");
   });
 
-  it("defaults local.clearance.enabled to true when omitted", async () => {
+  it("defaults local.networkEgress to allowlisted when omitted", async () => {
     const configPath = writeConfigFile(
       temporary,
       validConfigSource({ workspace: VALID_WORKSPACE(temporary) }),
@@ -1031,67 +1031,71 @@ describe("loadConfig", () => {
     setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
-    expect(actual.local.clearance).toStrictEqual({ enabled: true });
+    expect(actual.local.networkEgress).toBe("allowlisted");
   });
 
-  it("defaults local.clearance.enabled to true for an empty clearance object", async () => {
+  it("preserves an explicit local.networkEgress: 'allowlisted'", async () => {
     const configPath = writeConfigFile(
       temporary,
       validConfigSource({
         workspace: VALID_WORKSPACE(temporary),
-        local: { clearance: {} },
+        local: { networkEgress: "allowlisted" },
       }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
-    expect(actual.local.clearance).toStrictEqual({ enabled: true });
+    expect(actual.local.networkEgress).toBe("allowlisted");
   });
 
-  it("preserves an explicit local.clearance: { enabled: false }", async () => {
+  it("preserves an explicit local.networkEgress: 'open'", async () => {
     const configPath = writeConfigFile(
       temporary,
       validConfigSource({
         workspace: VALID_WORKSPACE(temporary),
-        local: { clearance: { enabled: false } },
+        local: { networkEgress: "open" },
       }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
-    expect(actual.local.clearance).toStrictEqual({ enabled: false });
+    expect(actual.local.networkEgress).toBe("open");
   });
 
-  it("rejects a non-object local.clearance value", async () => {
+  it("rejects an unknown local.networkEgress value", async () => {
     const configPath = writeConfigFile(
       temporary,
       [
         "export default {",
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
         `  agents: { definitions: { claude: {} } },`,
-        `  local: { clearance: false },`,
+        `  local: { networkEgress: 'blocked' },`,
         "};",
       ].join("\n"),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
-    await expect(loadConfig()).rejects.toThrow(/local\.clearance must be an object/);
+    await expect(loadConfig()).rejects.toThrow(
+      /local\.networkEgress must be one of allowlisted, open/,
+    );
   });
 
-  it("rejects a non-boolean local.clearance.enabled value", async () => {
+  it("rejects a non-string local.networkEgress value", async () => {
     const configPath = writeConfigFile(
       temporary,
       [
         "export default {",
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
         `  agents: { definitions: { claude: {} } },`,
-        `  local: { clearance: { enabled: 'nope' } },`,
+        `  local: { networkEgress: false },`,
         "};",
       ].join("\n"),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
-    await expect(loadConfig()).rejects.toThrow(/local\.clearance\.enabled must be a boolean/);
+    await expect(loadConfig()).rejects.toThrow(
+      /local\.networkEgress must be one of allowlisted, open/,
+    );
   });
 
   it("rejects legacy disabled agent entries with migration guidance", async () => {

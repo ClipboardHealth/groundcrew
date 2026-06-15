@@ -79,6 +79,17 @@ export const LOCAL_RUNNER_SETTINGS: readonly LocalRunnerSetting[] = [
 ] as const;
 
 /**
+ * Network posture for local runners that can choose between allowlisted and
+ * unrestricted egress. Only the safehouse runner consumes this today.
+ */
+export type NetworkEgressSetting = "allowlisted" | "open";
+
+export const NETWORK_EGRESS_SETTINGS: readonly NetworkEgressSetting[] = [
+  "allowlisted",
+  "open",
+] as const;
+
+/**
  * Per-agent Docker Sandboxes (sdx) binding. Required at launch when
  * `local.runner` resolves to `sdx` so groundcrew knows which existing
  * sbx sandbox to address.
@@ -110,16 +121,15 @@ export interface AgentDefinition {
   /**
    * Optional list of env var names to forward from the launch shell into
    * the agent under the safehouse runner. Companion to `preLaunch` —
-   * names exported by `preLaunch` go here so groundcrew appends them to
-   * the `safehouse-clearance` wrap's `--env-pass=` flag, preserving the
-   * project's egress allowlist (`clearance-allow-hosts`) without forcing
-   * the user to rewrite `cmd`. Under `local.runner: "none"` exports flow
-   * through unchanged, so `preLaunchEnv` is a no-op. An empty array is a
-   * uniform no-op in every runner (it forwards zero names, so the
-   * unsupported-runner guards do not fire). A non-empty list is rejected
-   * when `local.runner` resolves to `sdx` in v1, and when `cmd` already
-   * starts with `safehouse` (the user owns env forwarding in that case).
-   * Each name must match `[A-Za-z_][A-Za-z0-9_]*` (POSIX env var name).
+   * names exported by `preLaunch` go here so groundcrew appends them to the
+   * Safehouse wrap's `--env-pass=` flag without forcing the user to rewrite
+   * `cmd`. Under `local.runner: "none"` exports flow through unchanged, so
+   * `preLaunchEnv` is a no-op. An empty array is a uniform no-op in every
+   * runner (it forwards zero names, so the unsupported-runner guards do not
+   * fire). A non-empty list is rejected when `local.runner` resolves to `sdx`
+   * in v1, and when `cmd` already starts with `safehouse` (the user owns env
+   * forwarding in that case). Each name must match `[A-Za-z_][A-Za-z0-9_]*`
+   * (POSIX env var name).
    */
   preLaunchEnv?: string[];
   color: string;
@@ -276,17 +286,12 @@ export interface Config {
   local?: {
     runner?: LocalRunnerSetting;
     /**
-     * Clearance (network-egress allowlist proxy) options for the safehouse
-     * runner. An object so further egress options can be added later;
-     * `enabled` is the only field today.
-     *
-     * `enabled` defaults to `true`. Set `{ enabled: false }` to keep the
-     * Safehouse filesystem sandbox but open network egress (bare `safehouse`,
-     * no proxy env, no deny-all-remote profile, no clearance daemon). A
-     * safehouse-only option: `srt`/`sdx`/`none` ignore it (srt enforces its own
-     * `allowedDomains`), as does a `cmd` that already starts with `safehouse`.
+     * Network egress posture for local launches. Defaults to `"allowlisted"`.
+     * With the safehouse runner, `"allowlisted"` uses Clearance and `"open"`
+     * keeps the filesystem sandbox while running bare `safehouse` with
+     * unrestricted network egress. `srt`/`sdx`/`none` ignore this setting.
      */
-    clearance?: { enabled?: boolean };
+    networkEgress?: NetworkEgressSetting;
   };
   logging?: {
     /**
@@ -354,12 +359,10 @@ export interface ResolvedConfig {
   local: {
     runner: LocalRunnerSetting;
     /**
-     * Resolved Clearance options for the safehouse runner. Always present;
-     * `enabled` defaults to `true`. `enabled: false` opens network egress while
-     * keeping the filesystem sandbox. A safehouse-only option: non-safehouse
-     * runners ignore it.
+     * Resolved network egress posture. Always present; defaults to
+     * `"allowlisted"`. Only the safehouse runner consumes this today.
      */
-    clearance: { enabled: boolean };
+    networkEgress: NetworkEgressSetting;
   };
   logging: {
     file: string;
@@ -666,20 +669,25 @@ function normalizeLocalRunner(value: unknown, configKey: string): LocalRunnerSet
   return value;
 }
 
-function normalizeClearance(value: unknown, configKey: string): { enabled: boolean } {
+function isNetworkEgressSetting(value: unknown): value is NetworkEgressSetting {
+  return (
+    typeof value === "string" && (NETWORK_EGRESS_SETTINGS as readonly string[]).includes(value)
+  );
+}
+
+function normalizeNetworkEgress(
+  value: unknown,
+  configKey: string,
+): NetworkEgressSetting | undefined {
   if (value === undefined) {
-    return { enabled: true };
+    return undefined;
   }
-  if (!isPlainObject(value)) {
+  if (!isNetworkEgressSetting(value)) {
     fail(
-      `${configKey} must be an object, for example { enabled: false } (got ${JSON.stringify(value)})`,
+      `${configKey} must be one of ${NETWORK_EGRESS_SETTINGS.join(", ")} (got ${JSON.stringify(value)})`,
     );
   }
-  const { enabled } = value;
-  if (enabled !== undefined && typeof enabled !== "boolean") {
-    fail(`${configKey}.enabled must be a boolean (got ${JSON.stringify(enabled)})`);
-  }
-  return { enabled: enabled ?? true };
+  return value;
 }
 
 function normalizeSandbox(value: unknown, configKey: string): SandboxDefinition {
@@ -1070,7 +1078,7 @@ function applyDefaults(user: Config, configDir: string): ResolvedConfig {
       "remote is no longer supported: groundcrew runs locally via safehouse/sdx/none; remove the remote block from your config",
     );
   }
-  const userLocal = (user as { local?: { runner?: unknown; clearance?: unknown } }).local;
+  const userLocal = (user as { local?: { runner?: unknown; networkEgress?: unknown } }).local;
   if (userLocal !== undefined && !isPlainObject(userLocal)) {
     fail("local must be an object");
   }
@@ -1099,7 +1107,8 @@ function applyDefaults(user: Config, configDir: string): ResolvedConfig {
     workspaceKind: normalizeWorkspaceKind(user.workspaceKind, "workspaceKind") ?? "auto",
     local: {
       runner: normalizeLocalRunner(userLocal?.runner, "local.runner") ?? "auto",
-      clearance: normalizeClearance(userLocal?.clearance, "local.clearance"),
+      networkEgress:
+        normalizeNetworkEgress(userLocal?.networkEgress, "local.networkEgress") ?? "allowlisted",
     },
     logging: {
       file: expandHome(

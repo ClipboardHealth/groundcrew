@@ -122,7 +122,7 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
     },
     prompts: { initial: "x", ...overrides.prompts },
     workspaceKind: overrides.workspaceKind ?? "auto",
-    local: { runner: "auto", clearance: { enabled: true }, ...overrides.local },
+    local: { runner: "auto", networkEgress: "allowlisted", ...overrides.local },
     logging: { file: "/tmp/groundcrew-test.log", ...overrides.logging },
   };
 }

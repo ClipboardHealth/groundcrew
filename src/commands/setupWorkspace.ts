@@ -75,7 +75,7 @@ export async function setupWorkspace(
   if (!definition) {
     throw new Error(`Unknown agent: ${agent}`);
   }
-  const { runner, clearanceEnabled, sandboxName, workspaceKind, ensureReady } =
+  const { runner, networkEgress, sandboxName, workspaceKind, ensureReady } =
     await prepareAgentLaunch({
       config,
       agent,
@@ -142,7 +142,7 @@ export async function setupWorkspace(
         : undefined;
     const { launchCommand, srtSettingsDir: stagedSrtSettingsDir } = composeAgentLaunch({
       runner,
-      clearanceEnabled,
+      networkEgress,
       task,
       definition,
       promptFile: stagedPrompt.file,

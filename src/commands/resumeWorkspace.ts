@@ -169,7 +169,7 @@ export async function resumeWorkspace(
     throw new Error(`Unknown agent: ${context.agent}`);
   }
 
-  const { runner, clearanceEnabled, sandboxName, workspaceKind, ensureReady } =
+  const { runner, networkEgress, sandboxName, workspaceKind, ensureReady } =
     await prepareAgentLaunch({
       config,
       agent: context.agent,
@@ -203,7 +203,7 @@ export async function resumeWorkspace(
         : undefined;
     ({ launchCommand, srtSettingsDir } = composeAgentLaunch({
       runner,
-      clearanceEnabled,
+      networkEgress,
       task,
       definition,
       promptFile: stagedPrompt.file,

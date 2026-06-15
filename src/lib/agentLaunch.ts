@@ -9,6 +9,7 @@ import {
   hasPreLaunchEnv,
   type LocalRunner,
   type AgentDefinition,
+  type NetworkEgressSetting,
   type ResolvedConfig,
 } from "./config.ts";
 import { detectHostCapabilities } from "./host.ts";
@@ -34,7 +35,7 @@ import type { WorkspaceKind } from "./workspaceAdapter.ts";
  */
 export function composeAgentLaunch(input: {
   runner: LocalRunner;
-  clearanceEnabled: boolean;
+  networkEgress: NetworkEgressSetting;
   task: string;
   definition: AgentDefinition;
   promptFile: string;
@@ -68,7 +69,7 @@ export function composeAgentLaunch(input: {
     secretsFile: input.secretsFile,
     prepareWorktreeCommand: input.prepareWorktreeCommand,
     runner: input.runner,
-    clearanceEnabled: input.clearanceEnabled,
+    networkEgress: input.networkEgress,
     sandboxName: input.sandboxName,
     srtPrepareSettingsFile: staged?.prepareFile,
     srtAgentSettingsFile: staged?.agentFile,
@@ -135,8 +136,8 @@ function warnOnCmuxIntegrationDrift(input: { unreviewedEnvNames: readonly string
 
 interface PreparedAgentLaunch {
   runner: LocalRunner;
-  /** Resolved `config.local.clearance.enabled`, threaded into `composeAgentLaunch`. */
-  clearanceEnabled: boolean;
+  /** Resolved `config.local.networkEgress`, threaded into `composeAgentLaunch`. */
+  networkEgress: NetworkEgressSetting;
   sandboxName: string | undefined;
   workspaceKind: WorkspaceKind;
   ensureReady: () => Promise<void>;
@@ -151,14 +152,14 @@ export async function prepareAgentLaunch(input: {
 }): Promise<PreparedAgentLaunch> {
   const host = await detectHostCapabilities(input.signal);
   const runner = resolveLocalRunner(input.config.local.runner, host);
-  const clearanceEnabled = input.config.local.clearance.enabled;
+  const { networkEgress } = input.config.local;
   const workspaceKind = resolveWorkspaceKind({ config: input.config, host }).resolved;
   assertLocalRunnerRequirements(host, runner);
   const cmdOwnsSafehouseWrap = /^safehouse(?:\s|$)/.test(input.definition.cmd);
-  // `cmdOwnsSafehouseWrap` keeps `clearanceEnabled: false` from skipping the
-  // daemon for a user-owned safehouse wrap, which may rely on it.
+  // A user-owned safehouse wrap owns its own egress posture and may rely on
+  // Clearance, so keep the readiness check aligned with the existing behavior.
   const ensureReady =
-    runner === "safehouse" && (clearanceEnabled || cmdOwnsSafehouseWrap)
+    runner === "safehouse" && (networkEgress === "allowlisted" || cmdOwnsSafehouseWrap)
       ? async (): Promise<void> => {
           await ensureSafehouseClearance(input.signal);
         }
@@ -201,7 +202,7 @@ export async function prepareAgentLaunch(input: {
     runner === "sdx" && input.definition.sandbox !== undefined
       ? sandboxNameFor({ agent: input.definition.sandbox.agent })
       : undefined;
-  return { runner, clearanceEnabled, sandboxName, workspaceKind, ensureReady };
+  return { runner, networkEgress, sandboxName, workspaceKind, ensureReady };
 }
 
 async function alreadyReady(): Promise<void> {

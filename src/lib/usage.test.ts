@@ -75,7 +75,7 @@ function makeConfig(
     },
     prompts: { initial: "x" },
     workspaceKind: "auto",
-    local: { runner: "auto", clearance: { enabled: true } },
+    local: { runner: "auto", networkEgress: "allowlisted" },
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }

@@ -7,6 +7,7 @@ import {
   hasPreLaunchEnv,
   type LocalRunner,
   type AgentDefinition,
+  type NetworkEgressSetting,
 } from "./config.ts";
 import { clearanceAllowHostsFilesFromEnvironment } from "./clearanceAllowlist.ts";
 import { shellSingleQuote } from "./shell.ts";
@@ -137,24 +138,13 @@ function safehouseClearanceWrapperCommand(): string {
 }
 
 /**
- * No-clearance Safehouse invocation: the bare `safehouse` binary (Homebrew, on
- * `PATH`) with the filesystem sandbox + agent-profile selection but no Clearance
- * layer — no proxy env, no deny-all-remote profile, no `CLEARANCE_ALLOW_HOSTS_FILES`.
- * Selected when `local.clearance` is `false`. The daemon-ensure step is skipped
- * separately in `prepareAgentLaunch`.
- */
-function bareSafehouseWrapperCommand(): string {
-  return "safehouse";
-}
-
-/**
  * Pick the Safehouse wrapper for a launch: the Clearance shim by default, or the
- * bare `safehouse` binary when clearance is disabled. Both wrap sites in
- * `buildSafehouseLaunchCommand` read the selection, so one call de-clears the
- * prepareWorktree wrap and the agent wrap together.
+ * bare `safehouse` binary when network egress is open. Both wrap sites in
+ * `buildSafehouseLaunchCommand` read the selection, so the prepareWorktree wrap
+ * and agent wrap use the same egress posture.
  */
-function safehouseWrapperCommand(clearanceEnabled: boolean): string {
-  return clearanceEnabled ? safehouseClearanceWrapperCommand() : bareSafehouseWrapperCommand();
+function safehouseWrapperCommand(networkEgress: NetworkEgressSetting): string {
+  return networkEgress === "allowlisted" ? safehouseClearanceWrapperCommand() : "safehouse";
 }
 
 function trapCleanupLine(promptDir: string): string {
@@ -411,13 +401,11 @@ interface LaunchCommandArguments {
    */
   runner: LocalRunner;
   /**
-   * Whether the safehouse runner wraps the agent with Clearance. Threaded from
-   * `config.local.clearance.enabled`. `false` selects the bare `safehouse`
-   * binary (filesystem sandbox, open egress) for both safehouse wraps. A
-   * safehouse-only concern: the srt/sdx/unwrapped paths ignore it (srt enforces
-   * its own network allowlist regardless).
+   * Network egress posture. The safehouse runner uses `"allowlisted"` for the
+   * Clearance shim and `"open"` for bare `safehouse`; srt/sdx/unwrapped paths
+   * ignore it.
    */
-  clearanceEnabled: boolean;
+  networkEgress: NetworkEgressSetting;
   /**
    * sbx sandbox name when `runner === "sdx"`. Derived by the caller from
    * `sandboxNameFor({ agent })`. Required for sdx; ignored otherwise.
@@ -642,7 +630,7 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
     "--add-dirs-ro",
     safehouseAgentIntegration?.addDirsReadOnly ?? [],
   );
-  const safehouseWrapper = safehouseWrapperCommand(arguments_.clearanceEnabled);
+  const safehouseWrapper = safehouseWrapperCommand(arguments_.networkEgress);
 
   // Defensive shim+promptDir trap: by the time we arm it, `rm -rf <promptDir>`
   // has already run (line below) so the promptDir wipe is a no-op on the happy

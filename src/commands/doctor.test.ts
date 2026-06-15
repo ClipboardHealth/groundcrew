@@ -124,7 +124,7 @@ function makeConfig(overrides: Partial<ResolvedConfig["agents"]> = {}): Resolved
     },
     prompts: { initial: "x" },
     workspaceKind: "auto",
-    local: { runner: "auto", clearance: { enabled: true } },
+    local: { runner: "auto", networkEgress: "allowlisted" },
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }
@@ -648,7 +648,7 @@ describe(doctor, () => {
     detectHostMock.mockResolvedValue(host());
     loadConfigMock.mockResolvedValue({
       ...makeConfig(),
-      local: { runner: "srt", clearance: { enabled: true } },
+      local: { runner: "srt", networkEgress: "allowlisted" },
     });
 
     const actual = await doctor();
@@ -673,7 +673,7 @@ describe(doctor, () => {
     );
     loadConfigMock.mockResolvedValue({
       ...makeConfig(),
-      local: { runner: "srt", clearance: { enabled: true } },
+      local: { runner: "srt", networkEgress: "allowlisted" },
     });
 
     const actual = await doctor();
@@ -699,7 +699,7 @@ describe(doctor, () => {
     );
     loadConfigMock.mockResolvedValue({
       ...makeConfig(),
-      local: { runner: "srt", clearance: { enabled: true } },
+      local: { runner: "srt", networkEgress: "allowlisted" },
     });
 
     const actual = await doctor();
@@ -721,7 +721,7 @@ describe(doctor, () => {
     );
     loadConfigMock.mockResolvedValue({
       ...makeConfig(),
-      local: { runner: "srt", clearance: { enabled: true } },
+      local: { runner: "srt", networkEgress: "allowlisted" },
     });
 
     const actual = await doctor();
@@ -734,7 +734,7 @@ describe(doctor, () => {
     detectHostMock.mockResolvedValue(host());
     loadConfigMock.mockResolvedValue({
       ...makeConfig(),
-      local: { runner: "none", clearance: { enabled: true } },
+      local: { runner: "none", networkEgress: "allowlisted" },
     });
 
     const actual = await doctor();
@@ -749,7 +749,7 @@ describe(doctor, () => {
     detectHostMock.mockResolvedValue(host({ hasSbx: true }));
     loadConfigMock.mockResolvedValue({
       ...makeConfig(),
-      local: { runner: "sdx", clearance: { enabled: true } },
+      local: { runner: "sdx", networkEgress: "allowlisted" },
     });
 
     const actual = await doctor();
