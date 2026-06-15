@@ -263,6 +263,19 @@ async function deleteBranchBestEffort(arguments_: {
   }
 }
 
+async function branchExists(arguments_: {
+  repoDir: string;
+  branchName: string;
+  signal?: AbortSignal;
+}): Promise<boolean> {
+  const output = await runCommandAsync(
+    "git",
+    ["-C", arguments_.repoDir, "branch", "--list", arguments_.branchName],
+    signalProperty(arguments_.signal),
+  );
+  return output.trim().length > 0;
+}
+
 async function createWorktree(
   config: ResolvedConfig,
   spec: WorktreeSpec,
@@ -270,6 +283,13 @@ async function createWorktree(
 ): Promise<WorktreeEntry> {
   const base = basePaths(config, spec.repository, spec.task);
   const recipe = recipeFor(config, spec.repository);
+  const entry: WorktreeEntry = {
+    repository: spec.repository,
+    task: spec.task,
+    branchName: base.branchName,
+    dir: base.hostWorktreeDir,
+    kind: "host",
+  };
   if (recipe.provision !== undefined) {
     const command = applySubstitutions(
       recipe.provision.create,
@@ -282,14 +302,30 @@ async function createWorktree(
     );
     debug(`Provisioning worktree ${spec.repository}-${spec.task} via create template...`);
     await runLongShellCommand(command, base.repoDir, signal);
-    return {
-      repository: spec.repository,
-      task: spec.task,
-      branchName: base.branchName,
-      dir: base.hostWorktreeDir,
-      kind: "host",
-    };
+    return entry;
   }
+
+  // A prior run can leave the branch behind after its worktree directory is
+  // gone — teardown deletes the branch only best-effort, and operators
+  // sometimes remove the directory by hand. Attaching the surviving branch
+  // reuses its work instead of crashing on `git worktree add -b <existing>`.
+  if (
+    await branchExists({
+      repoDir: base.repoDir,
+      branchName: base.branchName,
+      ...signalProperty(signal),
+    })
+  ) {
+    debug(
+      `Branch ${base.branchName} already exists; attaching it to worktree ${spec.repository}-${spec.task}...`,
+    );
+    await runLongGitCommand(
+      ["-C", base.repoDir, "worktree", "add", base.hostWorktreeDir, base.branchName],
+      signal,
+    );
+    return entry;
+  }
+
   const defaultBranch = await resolveDefaultBranch({
     repoDir: base.repoDir,
     remote: config.git.remote,
@@ -306,13 +342,7 @@ async function createWorktree(
     ["-C", base.repoDir, "worktree", "add", "-b", base.branchName, base.hostWorktreeDir, baseRef],
     signal,
   );
-  return {
-    repository: spec.repository,
-    task: spec.task,
-    branchName: base.branchName,
-    dir: base.hostWorktreeDir,
-    kind: "host",
-  };
+  return entry;
 }
 
 function listWorktrees(config: ResolvedConfig): WorktreeEntry[] {
