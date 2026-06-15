@@ -232,7 +232,7 @@ export interface Config {
      * to `projectDir` when unset, so single-directory setups are unchanged.
      */
     worktreeDir?: string;
-    knownRepositories: (string | KnownRepository)[];
+    knownRepositories: Array<string | KnownRepository>;
   };
   defaults?: {
     hooks?: HookCommands;

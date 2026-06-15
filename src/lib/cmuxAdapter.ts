@@ -100,7 +100,7 @@ interface CmuxRawWorkspace {
 function parseCmuxList(output: string): CmuxRawWorkspace[] {
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- cmux --json list-workspaces always emits this shape
   const parsed = JSON.parse(output) as {
-    workspaces?: { title?: string; ref?: string; id?: string }[];
+    workspaces?: Array<{ title?: string; ref?: string; id?: string }>;
   };
   const items: CmuxRawWorkspace[] = [];
   /* v8 ignore next @preserve -- cmux always emits a workspaces field; default keeps the loop safe */

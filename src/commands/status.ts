@@ -450,7 +450,7 @@ async function writeInventoryWorktrees(
 
 async function collectAccessHints(
   config: ResolvedConfig,
-  entries: readonly { task: string }[],
+  entries: ReadonlyArray<{ task: string }>,
 ): Promise<Map<string, WorkspaceAccessHint | undefined>> {
   const uniqueTasks = [...new Set(entries.map((entry) => entry.task))];
   const results = await Promise.allSettled(
@@ -465,7 +465,7 @@ async function collectAccessHints(
 }
 
 async function collectPullRequests(
-  entries: readonly { dir: string; branchName: string }[],
+  entries: ReadonlyArray<{ dir: string; branchName: string }>,
 ): Promise<Map<string, readonly PullRequestSummary[]>> {
   // Each worktree dir is unique, so keying by dir collapses nothing in
   // practice; the Map removes duplicates defensively if the same dir

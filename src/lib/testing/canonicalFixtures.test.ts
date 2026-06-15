@@ -24,7 +24,6 @@ describe(canonicalLinearIssue, () => {
     });
     expect(issue.status).toBe("in-progress");
     expect(issue.repository).toBe("acme/web");
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- sourceRef is opaque unknown in Issue; this test validates the fixture merges partial overrides
     expect((issue.sourceRef as { uuid: string }).uuid).toBe("custom-uuid");
   });
 
