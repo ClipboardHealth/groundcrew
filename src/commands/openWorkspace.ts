@@ -219,7 +219,8 @@ export async function openWorkspace(
     return;
   }
 
-  const { runner, networkEgress, sandboxName, workspaceKind, ensureReady } = await prepareAgentLaunch({
+  const { runner, networkEgress, sandboxName, workspaceKind, ensureReady } =
+    await prepareAgentLaunch({
     config,
     agent,
     definition,
