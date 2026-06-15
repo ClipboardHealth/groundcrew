@@ -73,7 +73,7 @@ function makeConfig(stateRoot: string): ResolvedConfig {
     },
     prompts: { initial: "x" },
     workspaceKind: "auto",
-    local: { runner: "auto" },
+    local: { runner: "auto", networkEgress: "allowlisted" },
     logging: { file: path.join(stateRoot, "groundcrew.log") },
   };
 }

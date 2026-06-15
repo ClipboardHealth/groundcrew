@@ -221,11 +221,11 @@ export async function openWorkspace(
 
   const { runner, networkEgress, sandboxName, workspaceKind, ensureReady } =
     await prepareAgentLaunch({
-    config,
-    agent,
-    definition,
-    purpose: "runs",
-  });
+      config,
+      agent,
+      definition,
+      purpose: "runs",
+    });
   await ensureReady();
 
   const created = await worktrees.open(config, {
