@@ -75,6 +75,14 @@ function hasArguments(arguments_: readonly string[], ...needles: readonly string
   return needles.every((needle) => arguments_.includes(needle));
 }
 
+function expectNoForceDeleteBranchCommand(): void {
+  const didForceDeleteBranch = runCommandMock.mock.calls.some(
+    ([command, arguments_]) => command === "git" && hasArguments(arguments_, "branch", "-D"),
+  );
+
+  expect(didForceDeleteBranch).toBe(false);
+}
+
 let projectDir: string;
 
 describe(open, () => {
@@ -159,10 +167,7 @@ describe(open, () => {
       ["-C", path.join(projectDir, "repo-a"), "worktree", "remove", "--force", entry.dir],
       { stdio: "captured", timeoutMs: 0 },
     );
-    expect(runCommandMock).not.toHaveBeenCalledWith(
-      "git",
-      expect.arrayContaining(["branch", "-D"]),
-    );
+    expectNoForceDeleteBranchCommand();
   });
 
   it("never force-deletes a rediscovered adopted branch recorded in run state", async () => {
@@ -204,10 +209,7 @@ describe(open, () => {
       ["-C", path.join(projectDir, "repo-a"), "worktree", "remove", "--force", worktreeDir],
       { stdio: "captured", timeoutMs: 0 },
     );
-    expect(runCommandMock).not.toHaveBeenCalledWith(
-      "git",
-      expect.arrayContaining(["branch", "-D"]),
-    );
+    expectNoForceDeleteBranchCommand();
   });
 
   it("fetches the remote branch and creates a tracking branch when not local", async () => {
