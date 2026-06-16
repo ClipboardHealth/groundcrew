@@ -295,25 +295,49 @@ async function createWorktree(
   const base = basePaths(config, spec.repository, spec.task);
   const recipe = recipeFor(config, spec.repository);
   if (recipe.provision === undefined) {
-    const defaultBranch = await resolveDefaultBranch({
-      repoDir: base.repoDir,
-      remote: config.git.remote,
-      fallback: config.git.defaultBranch,
-      ...signalProperty(signal),
-    });
-    const baseRef = `${config.git.remote}/${defaultBranch}`;
-    debug(`Fetching ${baseRef} in ${spec.repository}...`);
-    await runLongGitCommand(
-      ["-C", base.repoDir, "fetch", config.git.remote, defaultBranch],
-      signal,
-    );
-    debug(
-      `Creating worktree ${spec.repository}-${spec.task} (branch ${base.branchName} from ${baseRef})...`,
-    );
-    await runLongGitCommand(
-      ["-C", base.repoDir, "worktree", "add", "-b", base.branchName, base.hostWorktreeDir, baseRef],
-      signal,
-    );
+    // A prior run can leave the `<prefix>-<task>` branch behind after its
+    // worktree directory is gone — teardown deletes the branch only
+    // best-effort, and operators sometimes remove the directory by hand.
+    // Attaching the surviving branch reuses its work instead of crashing on
+    // `git worktree add -b <existing branch>`.
+    if (await localBranchExists(base.repoDir, base.branchName, signal)) {
+      debug(
+        `Branch ${base.branchName} already exists; attaching it to worktree ${spec.repository}-${spec.task}...`,
+      );
+      await runLongGitCommand(
+        ["-C", base.repoDir, "worktree", "add", base.hostWorktreeDir, base.branchName],
+        signal,
+      );
+    } else {
+      const defaultBranch = await resolveDefaultBranch({
+        repoDir: base.repoDir,
+        remote: config.git.remote,
+        fallback: config.git.defaultBranch,
+        ...signalProperty(signal),
+      });
+      const baseRef = `${config.git.remote}/${defaultBranch}`;
+      debug(`Fetching ${baseRef} in ${spec.repository}...`);
+      await runLongGitCommand(
+        ["-C", base.repoDir, "fetch", config.git.remote, defaultBranch],
+        signal,
+      );
+      debug(
+        `Creating worktree ${spec.repository}-${spec.task} (branch ${base.branchName} from ${baseRef})...`,
+      );
+      await runLongGitCommand(
+        [
+          "-C",
+          base.repoDir,
+          "worktree",
+          "add",
+          "-b",
+          base.branchName,
+          base.hostWorktreeDir,
+          baseRef,
+        ],
+        signal,
+      );
+    }
   } else {
     const command = applySubstitutions(
       recipe.provision.create,
