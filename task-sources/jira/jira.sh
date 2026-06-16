@@ -16,7 +16,8 @@
 #
 # Knobs (set via the source's `env` block in crew.config):
 #   JIRA_GROUNDCREW_JQL  JQL for `list`  (default: open + last-7-days-done issues labeled groundcrew; no ORDER BY — see below)
-#   JIRA_REVIEW_PATTERN  case-insensitive regex; matching status names -> in-review (default: review)
+#   JIRA_REVIEW_PATTERN  case-insensitive regex; matching In-Progress status names -> in-review (default: review)
+#   JIRA_TODO_PATTERN    case-insensitive regex; matching In-Progress status names -> todo (default: empty -> off)
 #   JIRA_DEFAULT_AGENT   agent when an issue has no agent:<x> label (default: empty -> null)
 #   JIRA_TOKEN_FILE      token path (default: ~/.config/groundcrew/jira.token)
 set -euo pipefail
@@ -32,6 +33,7 @@ TOKEN_FILE="${JIRA_TOKEN_FILE:-${HOME}/.config/groundcrew/jira.token}"
 # the ticket falls out so the steady-state list stays small.
 LIST_JQL="${JIRA_GROUNDCREW_JQL:-labels = groundcrew AND (statusCategory != Done OR (statusCategory = Done AND updated >= -7d))}"
 REVIEW_PATTERN="${JIRA_REVIEW_PATTERN:-review}"
+TODO_PATTERN="${JIRA_TODO_PATTERN:-}"
 DEFAULT_AGENT="${JIRA_DEFAULT_AGENT:-}"
 
 if [[ -r "${TOKEN_FILE}" ]]; then
@@ -67,12 +69,21 @@ def labelValue($p):
 def browseUrl:
   ((.self // "") | capture("^(?<b>https?://[^/]+)") | .b) as $base
   | if ($base // "") == "" then null else $base + "/browse/" + .key end;
-def canonStatus($rp):
+# JIRA has only three status *categories* (new/indeterminate/done) but groundcrew
+# needs five canonical states. The indeterminate ("In Progress") category is the
+# catch-all for in-flight workflow, so review and todo are recovered from the
+# status *name*: a name matching $tp (e.g. "Acknowledged") demotes to todo so
+# groundcrew dispatches it as new work; a name matching $rp promotes to in-review.
+# $tp is checked first and only when non-empty (an empty regex matches every name).
+def canonStatus($rp; $tp):
   (.fields.status.statusCategory.key // "") as $c
   | (.fields.status.name // "") as $n
   | if   $c == "done"          then "done"
     elif $c == "new"           then "todo"
-    elif $c == "indeterminate" then (if ($n | test($rp; "i")) then "in-review" else "in-progress" end)
+    elif $c == "indeterminate" then
+      (if   ($tp != "" and ($n | test($tp; "i"))) then "todo"
+       elif ($n | test($rp; "i"))                  then "in-review"
+       else "in-progress" end)
     else "other" end;
 # Render the issue's comments (oldest first) as one text block, each headed by
 # author and timestamp. groundcrew feeds `description` to the agent as its
@@ -85,7 +96,7 @@ def commentsText:
          + (if (.created // "") == "" then "" else " (" + .created + ")" end)
          + "]\n" + (.body | bodyText))
    | join("\n\n"));
-def toShellIssue($rp; $da):
+def toShellIssue($rp; $tp; $da):
   (labelValue("repo:")  | if . == null then null else gsub("__"; "/") end) as $repo
   | (labelValue("agent:") // (if $da == "" then null else $da end)) as $agent
   | (.fields.description | bodyText) as $body
@@ -98,7 +109,7 @@ def toShellIssue($rp; $da):
   | { id: .key,
       title: (.fields.summary // .key),
       description: (if $hdr == "" then $content else $hdr + "\n\n" + $content end),
-      status: canonStatus($rp),
+      status: canonStatus($rp; $tp),
       repository: $repo,
       agent: $agent,
       assignee: (.fields.assignee.displayName // "Unassigned"),
@@ -162,8 +173,8 @@ case "${cmd}" in
           jira issue view "${key}" --raw 2>/dev/null \
             || { echo "jira.sh list: skipping ${key} (view failed)" >&2; continue; }
         done \
-      | jq -s -c --arg rp "${REVIEW_PATTERN}" --arg da "${DEFAULT_AGENT}" \
-            "${JQ_TRANSFORM} [ .[] | toShellIssue(\$rp; \$da) ]"
+      | jq -s -c --arg rp "${REVIEW_PATTERN}" --arg tp "${TODO_PATTERN}" --arg da "${DEFAULT_AGENT}" \
+            "${JQ_TRANSFORM} [ .[] | toShellIssue(\$rp; \$tp; \$da) ]"
     ;;
   get)
     require_token
@@ -183,8 +194,8 @@ case "${cmd}" in
     fi
     [[ -n "${out}" ]] || exit 3
     printf '%s' "${out}" \
-      | jq -c --arg rp "${REVIEW_PATTERN}" --arg da "${DEFAULT_AGENT}" \
-            "${JQ_TRANSFORM} toShellIssue(\$rp; \$da)"
+      | jq -c --arg rp "${REVIEW_PATTERN}" --arg tp "${TODO_PATTERN}" --arg da "${DEFAULT_AGENT}" \
+            "${JQ_TRANSFORM} toShellIssue(\$rp; \$tp; \$da)"
     ;;
   move)
     require_token

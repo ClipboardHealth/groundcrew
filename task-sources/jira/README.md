@@ -97,6 +97,7 @@ the token on per invocation.
      "env": {
        "JIRA_GROUNDCREW_JQL": "labels = groundcrew AND (statusCategory != Done OR (statusCategory = Done AND updated >= -7d))",
        "JIRA_REVIEW_PATTERN": "review",
+       "JIRA_TODO_PATTERN": "",
        "JIRA_DEFAULT_AGENT": "claude",
        "JIRA_STATE_IN_PROGRESS": "In Progress",
        "JIRA_STATE_IN_REVIEW": "In Review",
@@ -117,7 +118,8 @@ The script reads these from the source's `env` block:
 | Variable              | Default                                                                                          | Purpose                                                                                                                                                                                                                                 |
 | --------------------- | ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `JIRA_GROUNDCREW_JQL` | `labels = groundcrew AND (statusCategory != Done OR (statusCategory = Done AND updated >= -7d))` | Which issues `list` returns, capped at the first 20 (`--paginate 0:20` in `jira.sh`). Defaults to open issues plus those done in the last 7 days (so groundcrew can clean up their worktrees). Omit `ORDER BY` (jira-cli adds its own). |
-| `JIRA_REVIEW_PATTERN` | `review`                                                                                         | Case-insensitive regex; matching status names map to `in-review`.                                                                                                                                                                       |
+| `JIRA_REVIEW_PATTERN` | `review`                                                                                         | Case-insensitive regex; matching In-Progress status names map to `in-review`.                                                                                                                                                           |
+| `JIRA_TODO_PATTERN`   | _(empty -> off)_                                                                                 | Case-insensitive regex; matching In-Progress status names map to `todo` so groundcrew dispatches them as new work. Set it to e.g. `acknowledged` for an "Acknowledged" triage status. Checked before `JIRA_REVIEW_PATTERN`.             |
 | `JIRA_DEFAULT_AGENT`  | _(empty -> `null`)_                                                                              | Agent used when an issue has no `agent:` label.                                                                                                                                                                                         |
 | `JIRA_TOKEN_FILE`     | `~/.config/groundcrew/jira.token`                                                                | Token file path.                                                                                                                                                                                                                        |
 | `JIRA_STATE_*`        | `In Progress` / `In Review` / `Done`                                                             | Native JIRA state names used by `move`. Match your project's workflow.                                                                                                                                                                  |
@@ -125,14 +127,18 @@ The script reads these from the source's `env` block:
 ## Status mapping
 
 JIRA Cloud groups statuses into three `statusCategory` keys; groundcrew needs
-five. There is no "in-review" category, so review is detected by status _name_:
+five. The catch-all `indeterminate` ("In Progress") category covers in-flight
+workflow, so `in-review` and `todo` are recovered from the status _name_: a name
+matching `JIRA_TODO_PATTERN` demotes to `todo` (so e.g. an "Acknowledged" triage
+status is dispatched as new work); a name matching `JIRA_REVIEW_PATTERN` promotes
+to `in-review`. The todo pattern is checked first.
 
-| JIRA `statusCategory.key` | Canonical status                                                                 |
-| ------------------------- | -------------------------------------------------------------------------------- |
-| `new`                     | `todo`                                                                           |
-| `indeterminate`           | `in-progress`, or `in-review` when the status name matches `JIRA_REVIEW_PATTERN` |
-| `done`                    | `done`                                                                           |
-| anything else             | `other`                                                                          |
+| JIRA `statusCategory.key` | Canonical status                                                                                                        |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `new`                     | `todo`                                                                                                                  |
+| `indeterminate`           | `in-progress`; `todo` when the name matches `JIRA_TODO_PATTERN`, else `in-review` when it matches `JIRA_REVIEW_PATTERN` |
+| `done`                    | `done`                                                                                                                  |
+| anything else             | `other`                                                                                                                 |
 
 ## Notes
 

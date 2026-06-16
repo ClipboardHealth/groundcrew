@@ -280,6 +280,36 @@ describe("jira.sh example source", () => {
     expect(byId["ENG-4"]?.status).toBe("done"); // statusCategory done
   });
 
+  it("promotes an indeterminate status whose name matches JIRA_TODO_PATTERN to todo", () => {
+    // JIRA groups in-flight workflow states like "Acknowledged" under the
+    // indeterminate (In Progress) category, so they default to in-progress and
+    // groundcrew never dispatches them as new work. JIRA_TODO_PATTERN promotes
+    // matching status names to canonical todo, mirroring JIRA_REVIEW_PATTERN.
+    // (Default empty -> no promotion; the mapping test above covers that.)
+    const acknowledged: JiraIssue = {
+      id: "20001",
+      key: "CAT-1",
+      self: "https://acme.atlassian.net/rest/api/3/issue/20001",
+      fields: {
+        summary: "Triage me",
+        status: {
+          name: "Acknowledged",
+          statusCategory: { key: "indeterminate", name: "In Progress" },
+        },
+        labels: [],
+        assignee: null,
+        updated: "2026-06-15T00:00:00.000+0000",
+      },
+    };
+    writeFileSync(path.join(h.viewDir, `${acknowledged.key}.json`), JSON.stringify(acknowledged));
+
+    const { status, stdout } = run(h, ["get", acknowledged.key], {
+      JIRA_TODO_PATTERN: "acknowledged",
+    });
+    expect(status).toBe(0);
+    expect(shellIssueSchema.parse(JSON.parse(stdout)).status).toBe("todo");
+  });
+
   it("decodes repo/agent labels and falls back to the default agent", () => {
     const parsed = shellFetchOutputSchema.parse(JSON.parse(run(h, ["list"]).stdout));
     const byId = Object.fromEntries(parsed.map((i) => [i.id, i]));
