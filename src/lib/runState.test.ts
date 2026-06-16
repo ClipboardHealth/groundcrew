@@ -313,7 +313,13 @@ describe("run state store", () => {
   });
 
   it("round-trips every lifecycle state", () => {
-    const states: RunLifecycleState[] = ["running", "interrupted", "resumed", "failed-to-launch"];
+    const states: RunLifecycleState[] = [
+      "provisioning",
+      "running",
+      "interrupted",
+      "resumed",
+      "failed-to-launch",
+    ];
 
     for (const state of states) {
       recordRunState({

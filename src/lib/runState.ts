@@ -4,7 +4,12 @@ import path from "node:path";
 import type { ResolvedConfig } from "./config.ts";
 import { normalizePlainTaskId } from "./taskId.ts";
 
-export type RunLifecycleState = "running" | "interrupted" | "resumed" | "failed-to-launch";
+export type RunLifecycleState =
+  | "provisioning"
+  | "running"
+  | "interrupted"
+  | "resumed"
+  | "failed-to-launch";
 
 export interface RunState {
   task: string;
@@ -103,6 +108,7 @@ function stringField(value: Record<string, unknown>, key: string): string | unde
 
 function isRunLifecycleState(value: unknown): value is RunLifecycleState {
   return (
+    value === "provisioning" ||
     value === "running" ||
     value === "interrupted" ||
     value === "resumed" ||

@@ -1314,6 +1314,23 @@ describe("worktrees.branchNameForTask", () => {
   });
 });
 
+describe("worktrees.predictedEntry", () => {
+  setupTempProjectDir();
+
+  it("returns the branch name and host worktree dir for a task that has not been created yet", () => {
+    userInfoMock.mockReturnValue(makeUserInfo("dev"));
+    mkdirSync(path.join(projectDir, "repo-a"), { recursive: true });
+    const config = makeConfig({ projectDir });
+
+    const actual = worktrees.predictedEntry(config, "repo-a", "team-1");
+
+    expect(actual).toStrictEqual({
+      branchName: "dev-team-1",
+      worktreeDir: path.join(projectDir, "repo-a-team-1"),
+    });
+  });
+});
+
 describe("worktrees.probeWorkingTree", () => {
   beforeEach(async () => {
     // Strip inherited GIT_* env vars so probe tests run against the temp repo,
