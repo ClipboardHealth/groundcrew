@@ -501,11 +501,16 @@ async function collectPullRequests(
   );
 }
 
+const ORPHANED_SESSIONS_HEADER = "Orphaned sessions (no matching worktree)";
+const ORPHANED_SESSIONS_ACTION =
+  "What to do: run 'crew stop <task>' to close the session, or 'tmux kill-session -t <task>' if no run-state exists.";
+
 function writeStraySessions(probe: WorkspaceProbe, worktreeTasks: ReadonlySet<string>): void {
   if (probe.kind === "unavailable") {
-    // Surface probe failures so the user knows we couldn't classify strays
-    // (silently dropping the section would hide that diagnostic).
-    writeSection("Stray sessions");
+    // Surface probe failures so the user knows we couldn't classify orphans
+    // (silently dropping the section would hide that diagnostic). The action
+    // hint is omitted here — there's no row to act on.
+    writeSection(ORPHANED_SESSIONS_HEADER);
     writeOutput(workspaceProbeUnavailableLine(probe));
     return;
   }
@@ -513,7 +518,8 @@ function writeStraySessions(probe: WorkspaceProbe, worktreeTasks: ReadonlySet<st
   if (strays.length === 0) {
     return;
   }
-  writeSection("Stray sessions");
+  writeSection(ORPHANED_SESSIONS_HEADER);
+  writeOutput(ORPHANED_SESSIONS_ACTION);
   writeOutput(strays.join("\n"));
 }
 
@@ -661,6 +667,10 @@ function writeInProgressIssue(issue: SourceIssue): void {
   }
 }
 
+const SLOT_HOLDERS_HEADER = "Slot holders with no local worktree";
+const SLOT_HOLDERS_ACTION =
+  "What to do: transition the ticket off 'in-progress' on the board, or run 'crew run <task>' to recreate the worktree locally.";
+
 function writeInProgressWithoutWorktree(
   boardResult: BoardFetchResult,
   worktreeTasks: ReadonlySet<string>,
@@ -672,7 +682,8 @@ function writeInProgressWithoutWorktree(
   if (issues.length === 0) {
     return;
   }
-  writeSection("In progress (no local worktree)");
+  writeSection(SLOT_HOLDERS_HEADER);
+  writeOutput(SLOT_HOLDERS_ACTION);
   for (const [index, issue] of issues.entries()) {
     if (index > 0) {
       writeOutput();
