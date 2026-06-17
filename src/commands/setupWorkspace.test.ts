@@ -1586,6 +1586,33 @@ describe(setupWorkspace, () => {
     expect(createMock).not.toHaveBeenCalled();
   });
 
+  it("does not clobber a parallel dispatcher's 'provisioning' row when create() loses the race", async () => {
+    // The preflight gate sees no existing worktree (findByTask default: []),
+    // but worktrees.create() throws WorktreeAlreadyExistsError because a
+    // parallel dispatcher beat us to provisionWorktree's internal duplicate
+    // check. The live `provisioning` row belongs to that other dispatcher
+    // now — overwriting it with `failed-to-launch` would lie about their
+    // state. Surface the attach hint instead.
+    mockTmuxHost();
+    mockTmuxWindows(["team-1"]);
+    createMock.mockRejectedValue(new WorktreeAlreadyExistsError("/work/repo-a-team-1"));
+
+    await expect(
+      setupWorkspace(makeConfig(), {
+        task: "team-1",
+        repository: "repo-a",
+        agent: "claude",
+        details: { title: "Test Title", description: "Body" },
+      }),
+    ).rejects.toThrow(/Worktree already exists/);
+
+    const failedToLaunch = recordRunStateMock.mock.calls.filter(
+      ([input]) => input.state.state === "failed-to-launch",
+    );
+    expect(failedToLaunch).toHaveLength(0);
+    expect(debugMock).toHaveBeenCalledWith("  Attach:   tmux attach -t groundcrew:team-1");
+  });
+
   it("logs the tmux access hint when the worktree already exists and the previous workspace is still live", async () => {
     mockTmuxHost();
     mockExistingWorktree();

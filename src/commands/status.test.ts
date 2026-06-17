@@ -411,7 +411,11 @@ describe(status, () => {
     // Provisioning runs before worktrees.create() resolves, so there is no
     // live workspace yet — make sure the status view doesn't decorate the
     // line with `session dead` (running/resumed only) or any duration token.
-    readRunStateMock.mockReturnValue(runState({ state: "provisioning" }));
+    // The explicit fresh updatedAt keeps this row inside the 5m stranded
+    // threshold (clock is pinned 1m30s later).
+    readRunStateMock.mockReturnValue(
+      runState({ state: "provisioning", updatedAt: "2026-05-26T02:13:00.000Z" }),
+    );
     workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set() });
 
     await status(makeConfig(), { task: "team-1" });
@@ -421,6 +425,21 @@ describe(status, () => {
     expect(output).not.toContain("idle");
     expect(output).not.toContain("session dead");
     expect(output).not.toContain("session exited");
+    expect(output).not.toContain("provisioning stalled");
+  });
+
+  it("flags the per-task run: line as `provisioning stalled` when the row is older than 5 minutes", async () => {
+    // A `provisioning` row whose updatedAt is past the threshold means the
+    // dispatcher died between preflightProvisioningGate and create()'s catch
+    // block — `crew cleanup` is the operator's recourse.
+    readRunStateMock.mockReturnValue(
+      runState({ state: "provisioning", updatedAt: "2026-05-26T02:00:00.000Z" }),
+    );
+    workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set() });
+
+    await status(makeConfig(), { task: "team-1" });
+
+    expect(consoleLog.output()).toContain("run: provisioning (provisioning stalled);");
   });
 
   it("leaves the per-task run: line as bare `running` when the session is live", async () => {
@@ -770,6 +789,37 @@ describe(status, () => {
     expect(output).toContain(
       "  hint:      run 'crew cleanup team-1' to clear this stray exited session",
     );
+  });
+
+  it("flags inventory rows as `provisioning stalled` and suggests `crew cleanup` when the row is older than 5 minutes", async () => {
+    listWorktreesMock.mockReturnValue([worktree({ task: "team-1", repository: "repo-a" })]);
+    readRunStateMock.mockReturnValue(
+      runState({ state: "provisioning", updatedAt: "2026-05-26T02:00:00.000Z" }),
+    );
+    workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set() });
+
+    await status(makeConfig());
+
+    const output = consoleLog.output();
+    expect(output).toContain("  state:     provisioning (provisioning stalled)");
+    expect(output).toContain(
+      "  hint:      provisioning stalled — run 'crew cleanup team-1' to clear and retry",
+    );
+  });
+
+  it("leaves inventory rows bare when the provisioning row is fresh", async () => {
+    listWorktreesMock.mockReturnValue([worktree({ task: "team-1", repository: "repo-a" })]);
+    readRunStateMock.mockReturnValue(
+      runState({ state: "provisioning", updatedAt: "2026-05-26T02:13:00.000Z" }),
+    );
+    workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set() });
+
+    await status(makeConfig());
+
+    const output = consoleLog.output();
+    expect(output).toContain("  state:     provisioning\n");
+    expect(output).not.toContain("provisioning stalled");
+    expect(output).not.toContain("  hint:");
   });
 
   it("omits the `hint:` line on healthy rows", async () => {

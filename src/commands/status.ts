@@ -228,9 +228,12 @@ async function writeTaskStatus(config: ResolvedConfig, rawTask: string): Promise
     readTaskSourceStatus(config, task),
   ]);
   const accessHint = await exitedWorkspaceAccessHint(config, workspaceProbe, task);
+  const now = new Date();
   writeOutput(formatTaskLine(task, runState, sourceStatus));
   writeTaskTitle(runState, sourceStatus);
-  writeOutput(`run: ${formatRunState(runState, runProbeFlags(runState, workspaceProbe, task))}`);
+  writeOutput(
+    `run: ${formatRunState(runState, runProbeFlags(runState, workspaceProbe, task, now))}`,
+  );
   writeOutput(`workspace: ${taskWorkspaceText(workspaceProbe, task)}`);
   if (accessHint !== undefined) {
     writeOutput(`attach: ${accessHint.command}`);
@@ -263,6 +266,22 @@ function runStateDurationMs(runState: RunState | undefined, now: Date): number |
 const MS_PER_MINUTE = 60_000;
 const MS_PER_HOUR = 60 * MS_PER_MINUTE;
 const MS_PER_DAY = 24 * MS_PER_HOUR;
+const PROVISIONING_STALLED_THRESHOLD_MS = 5 * MS_PER_MINUTE;
+
+/**
+ * A `provisioning` row whose updatedAt is past the threshold means the
+ * dispatcher died between `preflightProvisioningGate` and create()'s catch
+ * block — without this, `crew status` would render the stale row indistinguishably
+ * from a live in-flight provision. `crew cleanup` is the operator's recourse.
+ */
+function isProvisioningStalled(runState: RunState | undefined, now: Date): boolean {
+  if (runState?.state !== "provisioning") {
+    return false;
+  }
+  // A malformed `updatedAt` parses to NaN; `now - NaN > THRESHOLD` is false,
+  // so the row stays un-flagged — the safe default for unparseable state.
+  return now.getTime() - Date.parse(runState.updatedAt) > PROVISIONING_STALLED_THRESHOLD_MS;
+}
 
 function formatDuration(ms: number): string {
   if (ms < MS_PER_MINUTE) {
@@ -286,21 +305,28 @@ function formatDuration(ms: number): string {
  * `run:` line. Flags the two interesting disagreements between the recorded
  * RunState lifecycle and the live workspace probe: a running/resumed dispatch
  * with a missing or exited session, and an idle row with a stray live or
- * exited session. `probe.kind === "unavailable"` is "we don't know" and yields
- * no flags. Excludes the duration token, which only the inventory row appends.
+ * exited session. Also flags a `provisioning` row whose updatedAt is past the
+ * stranded threshold (probe-independent, since provisioning predates the
+ * workspace). `probe.kind === "unavailable"` is "we don't know" for the
+ * probe-dependent flags but does not suppress the time-based stranded flag.
+ * Excludes the duration token, which only the inventory row appends.
  */
 function runProbeFlags(
   runState: RunState | undefined,
   probe: WorkspaceProbe,
   task: string,
+  now: Date,
 ): string[] {
+  const flags: string[] = [];
+  if (isProvisioningStalled(runState, now)) {
+    flags.push("provisioning stalled");
+  }
   if (probe.kind !== "ok") {
-    return [];
+    return flags;
   }
   const lifecycle = runState?.state ?? "idle";
   const sessionPresent = probe.names.has(task);
   const sessionExited = isWorkspaceExited(probe, task);
-  const flags: string[] = [];
   if (lifecycle === "idle" && sessionPresent) {
     flags.push(sessionExited ? "stray exited session" : "stray session");
   }
@@ -325,7 +351,7 @@ function inventoryStateText(
   now: Date,
 ): string {
   const lifecycle = runState?.state ?? "idle";
-  const flags = runProbeFlags(runState, probe, task);
+  const flags = runProbeFlags(runState, probe, task, now);
   const duration = runStateDurationMs(runState, now);
   if (duration !== undefined) {
     flags.push(formatDuration(duration));
@@ -338,6 +364,9 @@ function inventoryStateText(
  * probe disagree. Returned commands are safe defaults; the user is free to
  * ignore them and use `attach:` + `pr:` to investigate first.
  *
+ * - Stalled provisioning (row stuck past the threshold, dispatcher died
+ *   between preflight and create()'s catch) -> `crew cleanup` clears the
+ *   row whether or not the partial worktree landed on disk.
  * - Stray session (session present, no run-state record) -> `crew cleanup`
  *   to tear down the orphaned worktree and close the session.
  * - Session exited (run-state says running/resumed, kept dead tmux window)
@@ -345,14 +374,19 @@ function inventoryStateText(
  * - Session dead (run-state says running/resumed, no session present) ->
  *   `crew resume` to bring the agent back; the worktree is preserved.
  *
- * No hint when the probe is unavailable (we genuinely don't know whether
- * there's a disagreement) or when the row is healthy.
+ * No hint when the probe is unavailable (we don't know whether the session
+ * disagreement is real); the time-based stalled flag is independent of the
+ * probe and still fires. No hint when the row is healthy.
  */
 function inventoryHint(
   runState: RunState | undefined,
   probe: WorkspaceProbe,
   task: string,
+  now: Date,
 ): string | undefined {
+  if (isProvisioningStalled(runState, now)) {
+    return `provisioning stalled — run 'crew cleanup ${task}' to clear and retry`;
+  }
   if (probe.kind === "unavailable") {
     return undefined;
   }
@@ -454,7 +488,7 @@ async function writeInventoryWorktrees(
     if (prs.length > 0) {
       writeOutput(inventoryField("pr", formatPullRequests(prs)));
     }
-    const hint = inventoryHint(runState, probe, entry.task);
+    const hint = inventoryHint(runState, probe, entry.task, now);
     if (hint !== undefined) {
       writeOutput(inventoryField("hint", hint));
     }

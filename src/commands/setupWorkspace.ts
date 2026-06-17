@@ -97,6 +97,16 @@ export async function setupWorkspace(
   try {
     created = await createdPromise;
   } catch (error) {
+    if (error instanceof WorktreeAlreadyExistsError) {
+      // The preflight gate was clean, so a parallel dispatcher beat us to
+      // provisionWorktree's internal duplicate check. The live `provisioning`
+      // row belongs to that dispatcher now — clobbering it with
+      // `failed-to-launch` would lie about their state. Per-host dispatcher
+      // serialization makes this race vanishingly rare; surface the attach
+      // hint so the operator can find the in-flight session.
+      await logAccessHintForExistingWorkspace({ config, task, signal });
+      throw error;
+    }
     // Roll the pre-flight `provisioning` row forward; the outer catch only
     // fires post-create and the dispatcher just logs and moves on.
     recordFailedToLaunch({
@@ -344,6 +354,8 @@ function recordRunStateBestEffort(arguments_: {
   worktreeDir: string;
   branchName: string;
   workspaceName: string;
+  // Narrowed to the states this helper writes: interrupted/resumed go through
+  // updateRunState elsewhere.
   state: "provisioning" | "running" | "failed-to-launch";
   title: string;
   detail?: string;

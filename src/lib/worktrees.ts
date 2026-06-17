@@ -750,14 +750,16 @@ function findByTask(config: ResolvedConfig, task: string): WorktreeEntry[] {
   return list(config).filter((entry) => entry.task === task);
 }
 
+/**
+ * Deterministic preview of where worktree create() would land. Lets callers
+ * record run state (e.g. "provisioning") before the worktree exists on disk,
+ * without duplicating the path-derivation rules in basePaths().
+ */
 export interface PredictedWorktreeEntry {
   branchName: string;
   worktreeDir: string;
 }
 
-// Deterministic preview of where worktree create() would land. Lets callers
-// record run state (e.g. "provisioning") before the worktree exists on disk,
-// without duplicating the path-derivation rules in basePaths().
 function predictedEntry(
   config: ResolvedConfig,
   repository: string,
