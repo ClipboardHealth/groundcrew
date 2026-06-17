@@ -530,9 +530,14 @@ describe(status, () => {
     expect(output).not.toContain("  branch:");
     // team-2 has no RunState but the probe sees a session — stray session.
     expect(output).toContain("team-2\n  state:     idle (stray session)");
-    expect(output).toContain("Stray sessions");
+    expect(output).toContain("Orphaned sessions (no matching worktree)");
+    expect(output).toContain(
+      "What to do: run 'crew stop <task>' to close the session, or 'tmux kill-session -t <task>' if no run-state exists.",
+    );
     // team-1/team-2 sessions are tied to worktrees and should NOT appear as strays.
-    expect(output).toMatch(/Stray sessions\n-+\norphan-workspace\n/);
+    expect(output).toMatch(
+      /Orphaned sessions \(no matching worktree\)\n-+\nWhat to do: [^\n]+\norphan-workspace\n/,
+    );
     expect(readRunStateMock).toHaveBeenCalledTimes(2);
   });
 
@@ -615,13 +620,13 @@ describe(status, () => {
     expect(output).toContain("  pr:        https://github.com/acme/widgets/pull/42 (open)");
   });
 
-  it("hides the Stray sessions section when every live session matches a worktree", async () => {
+  it("hides the Orphaned sessions section when every live session matches a worktree", async () => {
     listWorktreesMock.mockReturnValue([worktree({ task: "team-1", repository: "repo-a" })]);
     workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-1"]) });
 
     await status(makeConfig());
 
-    expect(consoleLog.output()).not.toContain("Stray sessions");
+    expect(consoleLog.output()).not.toContain("Orphaned sessions");
   });
 
   it("formats durations across <1m / Nm / Nh / Nh Mm / Nd / Nd Mh ranges", async () => {
@@ -937,7 +942,12 @@ describe(status, () => {
     await status(makeConfig({ sources: [{ kind: "linear", name: "linear" }] }));
 
     const output = consoleLog.output();
-    expect(output).toContain("In progress (no local worktree)\n-------------------------------");
+    expect(output).toContain(
+      "Slot holders with no local worktree\n-----------------------------------",
+    );
+    expect(output).toContain(
+      "What to do: transition the ticket off 'in-progress' on the board, or run 'crew run <task>' to recreate the worktree locally.",
+    );
     expect(output).toContain("team-902  https://linear.app/example/issue/TEAM-902");
     expect(output).toContain("  title:     Type the boundary");
     expect(output).toContain("  repo:      repo-b");
@@ -945,13 +955,13 @@ describe(status, () => {
     // team-901 has a worktree, so it belongs in the Worktrees section only and
     // must not be duplicated under the new section (which sits just above the
     // slots line).
-    const sectionStart = output.indexOf("In progress (no local worktree)");
+    const sectionStart = output.indexOf("Slot holders with no local worktree");
     const section = output.slice(sectionStart, output.indexOf("slots:", sectionStart));
     expect(section).toContain("team-902");
     expect(section).not.toContain("team-901");
   });
 
-  it("hides the in-progress-without-worktree section when every in-progress task has a worktree", async () => {
+  it("hides the slot-holders-without-worktree section when every in-progress task has a worktree", async () => {
     listWorktreesMock.mockReturnValue([worktree({ task: "team-901", repository: "repo-a" })]);
     workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set() });
     buildSourcesMock.mockResolvedValue([
@@ -960,7 +970,7 @@ describe(status, () => {
 
     await status(makeConfig({ sources: [{ kind: "linear", name: "linear" }] }));
 
-    expect(consoleLog.output()).not.toContain("In progress (no local worktree)");
+    expect(consoleLog.output()).not.toContain("Slot holders with no local worktree");
   });
 
   it("omits the repo line for an in-progress task with no repository", async () => {
@@ -982,7 +992,7 @@ describe(status, () => {
     const output = consoleLog.output();
     expect(output).toContain("team-905");
     expect(output).toContain("  title:     Task without a repo");
-    const sectionStart = output.indexOf("In progress (no local worktree)");
+    const sectionStart = output.indexOf("Slot holders with no local worktree");
     const section = output.slice(sectionStart, output.indexOf("slots:", sectionStart));
     expect(section).not.toContain("repo:");
   });
@@ -1139,7 +1149,7 @@ describe(status, () => {
     await status(makeConfig({ sources: [{ kind: "linear", name: "linear" }] }));
 
     const output = consoleLog.output();
-    expect(output).toContain("In progress (no local worktree)");
+    expect(output).toContain("Slot holders with no local worktree");
     expect(output).toContain("  task:      in-progress (slot held)");
   });
 
@@ -1211,10 +1221,10 @@ describe(status, () => {
     // team-103 is an ineligible Todo (no repo/agent) — surfaced nowhere.
     expect(output).not.toContain("team-103");
     // team-104 is in-progress, so it's excluded from the Queue but now appears
-    // in the "In progress (no local worktree)" section above the slots line.
+    // in the "Slot holders with no local worktree" section above the slots line.
     const queueSection = output.slice(output.indexOf("Queue\n-----"));
     expect(queueSection).not.toContain("team-104");
-    expect(output).toContain("In progress (no local worktree)");
+    expect(output).toContain("Slot holders with no local worktree");
     expect(output).toContain("team-104");
   });
 
@@ -1228,7 +1238,7 @@ describe(status, () => {
     await status(makeConfig({ sources: [{ kind: "linear", name: "linear" }] }));
 
     // No eligible Todos -> no Queue section. (The lone in-progress task
-    // surfaces in the "In progress (no local worktree)" section instead, so
+    // surfaces in the "Slot holders with no local worktree" section instead, so
     // match the Queue section header rather than the bare word "Queue", which
     // also appears in the default "Queued task" title.)
     expect(consoleLog.output()).not.toContain("Queue\n-----");
