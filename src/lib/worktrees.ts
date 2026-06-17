@@ -41,10 +41,6 @@ export class WorktreeAlreadyExistsError extends Error {
   }
 }
 
-export function isWorktreeAlreadyExistsError(error: unknown): error is WorktreeAlreadyExistsError {
-  return error instanceof WorktreeAlreadyExistsError;
-}
-
 export interface WorktreeEntry {
   repository: string;
   /** Source task id, lowercased — e.g. "team-220" or "gc-20260608-001". */
@@ -754,6 +750,23 @@ function findByTask(config: ResolvedConfig, task: string): WorktreeEntry[] {
   return list(config).filter((entry) => entry.task === task);
 }
 
+export interface PredictedWorktreeEntry {
+  branchName: string;
+  worktreeDir: string;
+}
+
+// Deterministic preview of where worktree create() would land. Lets callers
+// record run state (e.g. "provisioning") before the worktree exists on disk,
+// without duplicating the path-derivation rules in basePaths().
+function predictedEntry(
+  config: ResolvedConfig,
+  repository: string,
+  task: string,
+): PredictedWorktreeEntry {
+  const { branchName, hostWorktreeDir } = basePaths(config, repository, task);
+  return { branchName, worktreeDir: hostWorktreeDir };
+}
+
 // Shared by create() and open(): reject a duplicate worktree for the same
 // task+repo before building, then assert the configured workdir materialized,
 // rolling the worktree back if it did not. The build callback owns the git
@@ -924,6 +937,7 @@ export const worktrees = {
   open,
   list,
   findByTask,
+  predictedEntry,
   remove,
   teardown,
   branchNameForTask,

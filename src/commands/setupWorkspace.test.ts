@@ -104,6 +104,8 @@ vi.mock(import("../lib/worktrees.ts"), async (importOriginal) => {
       ...actual.worktrees,
       create: vi.fn<typeof actual.worktrees.create>(),
       teardown: vi.fn<typeof actual.worktrees.teardown>(),
+      findByTask: vi.fn<typeof actual.worktrees.findByTask>(),
+      predictedEntry: vi.fn<typeof actual.worktrees.predictedEntry>(),
     },
   };
 });
@@ -146,6 +148,8 @@ const debugMock = vi.mocked(debug);
 const recordRunStateMock = vi.mocked(recordRunState);
 const createMock = vi.mocked(worktrees.create);
 const teardownMock = vi.mocked(worktrees.teardown);
+const findByTaskMock = vi.mocked(worktrees.findByTask);
+const predictedEntryMock = vi.mocked(worktrees.predictedEntry);
 
 type RecordedRunState = Parameters<typeof recordRunState>[0]["state"];
 
@@ -296,6 +300,10 @@ function mockTmuxWindows(names: readonly string[]): void {
 }
 
 function mockExistingWorktree(): void {
+  // The hoisted duplicate check in setupWorkspace runs before worktrees.create
+  // is called, so make findByTask report the entry. createMock still rejects as
+  // a belt-and-suspenders for the (vanishingly rare) parallel-dispatcher race.
+  findByTaskMock.mockReturnValue([hostEntry()]);
   createMock.mockRejectedValue(new WorktreeAlreadyExistsError("/work/repo-a-team-1"));
 }
 
@@ -384,6 +392,11 @@ describe(setupWorkspace, () => {
     existsMock.mockReturnValue(true);
     detectHostMock.mockResolvedValue(host());
     createMock.mockImplementation(async () => hostEntry());
+    findByTaskMock.mockReturnValue([]);
+    predictedEntryMock.mockReturnValue({
+      branchName: "dev-team-1",
+      worktreeDir: "/work/repo-a-team-1",
+    });
     ensureClearanceMock.mockResolvedValue(clearanceResult());
     resolveSafehouseCmuxIntegrationMock.mockReturnValue(safehouseCmuxIntegrationFixture());
     mkdtempMock.mockReturnValue("/tmp/groundcrew-team-1-x");
@@ -1510,7 +1523,7 @@ describe(setupWorkspace, () => {
     expect(ensureClearanceMock).not.toHaveBeenCalled();
   });
 
-  it("propagates worktree-creation errors without launching cmux", async () => {
+  it("propagates worktree-creation errors, skips cmux, and records 'failed-to-launch'", async () => {
     createMock.mockRejectedValue(new Error("git fetch failed"));
 
     await expect(
@@ -1518,13 +1531,59 @@ describe(setupWorkspace, () => {
         task: "team-1",
         repository: "repo-a",
         agent: "claude",
-        details: { title: "Test Title", description: "Body" },
+        details: { title: "Test Title", description: "Body", url: "https://example/TEAM-1" },
       }),
     ).rejects.toThrow(/git fetch failed/);
     expect(runCommandMock).not.toHaveBeenCalledWith(
       "cmux",
       expect.arrayContaining(["new-workspace"]),
     );
+    // Without this row the pre-flight `provisioning` would strand forever.
+    const last = lastRecordedRunState();
+    expect(last.state).toBe("failed-to-launch");
+    expect(last.url).toBe("https://example/TEAM-1");
+  });
+
+  it("records a 'provisioning' run state with the predicted paths before worktrees.create starts", async () => {
+    mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:1" }));
+    createMock.mockResolvedValue(hostEntry());
+    await setupWorkspace(makeConfig(), {
+      task: "team-1",
+      repository: "repo-a",
+      agent: "claude",
+      details: { title: "Long", description: "Body", url: "https://example/TEAM-1" },
+    });
+    const provisioning = recordRunStateMock.mock.calls.find(
+      ([input]) => input.state.state === "provisioning",
+    )?.[0].state;
+    expect(provisioning).toMatchObject({
+      state: "provisioning",
+      task: "team-1",
+      branchName: "dev-team-1",
+      worktreeDir: "/work/repo-a-team-1",
+      title: "Long",
+      url: "https://example/TEAM-1",
+    });
+    // The row must hit disk BEFORE create() starts, else `crew status` races.
+    expect(firstInvocationOrder(recordRunStateMock)).toBeLessThan(firstInvocationOrder(createMock));
+    expect(lastRecordedRunState().state).toBe("running");
+  });
+
+  it("does not record a 'provisioning' run state when the worktree already exists", async () => {
+    mockExistingWorktree();
+    await expect(
+      setupWorkspace(makeConfig(), {
+        task: "team-1",
+        repository: "repo-a",
+        agent: "claude",
+        details: { title: "Test Title", description: "Body" },
+      }),
+    ).rejects.toThrow(/Worktree already exists/);
+    const provisioned = recordRunStateMock.mock.calls.filter(
+      ([input]) => input.state.state === "provisioning",
+    );
+    expect(provisioned).toHaveLength(0);
+    expect(createMock).not.toHaveBeenCalled();
   });
 
   it("logs the tmux access hint when the worktree already exists and the previous workspace is still live", async () => {
@@ -1915,6 +1974,11 @@ describe(setupWorkspaceCli, () => {
     existsMock.mockReturnValue(true);
     detectHostMock.mockResolvedValue(host());
     createMock.mockImplementation(async () => hostEntry());
+    findByTaskMock.mockReturnValue([]);
+    predictedEntryMock.mockReturnValue({
+      branchName: "dev-team-1",
+      worktreeDir: "/work/repo-a-team-1",
+    });
     mkdtempMock.mockReturnValue("/tmp/groundcrew-team-1-x");
     runCommandMock.mockReturnValue(JSON.stringify({ ref: "workspace:1" }));
     loadConfigMock.mockResolvedValue(makeConfig());

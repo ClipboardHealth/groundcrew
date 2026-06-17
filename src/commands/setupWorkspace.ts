@@ -18,8 +18,8 @@ import { naturalIdFromCanonical } from "../lib/taskSource.ts";
 import { debug, errorMessage, log, okMark } from "../lib/util.ts";
 import { type WorkspaceAccessHint, workspaces } from "../lib/workspaces.ts";
 import {
-  isWorktreeAlreadyExistsError,
   resolveLaunchDir,
+  WorktreeAlreadyExistsError,
   type WorktreeEntry,
   worktrees,
 } from "../lib/worktrees.ts";
@@ -87,17 +87,24 @@ export async function setupWorkspace(
       ...(signal === undefined ? {} : { signal }),
     });
 
+  await preflightProvisioningGate({ config, options, signal });
+
   const spec = { repository, task };
-  let created: WorktreeEntry;
   const createdPromise =
     signal === undefined ? worktrees.create(config, spec) : worktrees.create(config, spec, signal);
   const readinessPromise = startLaunchReadiness(ensureReady);
+  let created: WorktreeEntry;
   try {
     created = await createdPromise;
   } catch (error) {
-    if (isWorktreeAlreadyExistsError(error)) {
-      await logAccessHintForExistingWorkspace({ config, task, signal });
-    }
+    // Roll the pre-flight `provisioning` row forward; the outer catch only
+    // fires post-create and the dispatcher just logs and moves on.
+    recordFailedToLaunch({
+      config,
+      options,
+      paths: worktrees.predictedEntry(config, repository, task),
+      error,
+    });
     throw error;
   }
   const { branchName, dir: worktreeDir } = created;
@@ -204,22 +211,71 @@ export async function setupWorkspace(
     }
   } catch (error) {
     await rollbackWorktree({ config, entry: created, promptDir, srtSettingsDir });
-    recordRunStateBestEffort({
-      config,
-      task,
-      repository,
-      agent,
-      worktreeDir,
-      branchName,
-      workspaceName: task,
-      state: "failed-to-launch",
-      detail: errorMessage(error),
-      title: options.details.title,
-      completionTaskId: options.completionTaskId ?? task,
-      ...(options.details.url === undefined ? {} : { url: options.details.url }),
-    });
+    recordFailedToLaunch({ config, options, paths: { worktreeDir, branchName }, error });
     throw error;
   }
+}
+
+/**
+ * Bail out before any state-write when the worktree already exists, then
+ * record a "provisioning" row so `crew status` can surface the in-flight
+ * worktree create instead of falling back to "idle". The dispatcher
+ * serializes setupWorkspace calls per host, so the race against a parallel
+ * worktrees.create() can't realistically fire here — `worktrees.create()`
+ * still defends against it internally.
+ */
+async function preflightProvisioningGate(arguments_: {
+  config: ResolvedConfig;
+  options: SetupWorkspaceOptions;
+  signal: AbortSignal | undefined;
+}): Promise<void> {
+  const { config, options, signal } = arguments_;
+  const { task, repository, agent } = options;
+  const existing = worktrees
+    .findByTask(config, task)
+    .find((entry) => entry.repository === repository);
+  if (existing !== undefined) {
+    await logAccessHintForExistingWorkspace({ config, task, signal });
+    throw new WorktreeAlreadyExistsError(existing.dir);
+  }
+  const predicted = worktrees.predictedEntry(config, repository, task);
+  recordRunStateBestEffort({
+    config,
+    task,
+    repository,
+    agent,
+    worktreeDir: predicted.worktreeDir,
+    branchName: predicted.branchName,
+    workspaceName: task,
+    state: "provisioning",
+    title: options.details.title,
+    completionTaskId: options.completionTaskId ?? task,
+    ...(options.details.url === undefined ? {} : { url: options.details.url }),
+  });
+}
+
+function recordFailedToLaunch(arguments_: {
+  config: ResolvedConfig;
+  options: SetupWorkspaceOptions;
+  paths: { worktreeDir: string; branchName: string };
+  error: unknown;
+}): void {
+  const { config, options, paths, error } = arguments_;
+  const { task, repository, agent } = options;
+  recordRunStateBestEffort({
+    config,
+    task,
+    repository,
+    agent,
+    worktreeDir: paths.worktreeDir,
+    branchName: paths.branchName,
+    workspaceName: task,
+    state: "failed-to-launch",
+    detail: errorMessage(error),
+    title: options.details.title,
+    completionTaskId: options.completionTaskId ?? task,
+    ...(options.details.url === undefined ? {} : { url: options.details.url }),
+  });
 }
 
 type LaunchReadinessResult = { kind: "ready" } | { kind: "failed"; error: unknown };
@@ -288,7 +344,7 @@ function recordRunStateBestEffort(arguments_: {
   worktreeDir: string;
   branchName: string;
   workspaceName: string;
-  state: "running" | "failed-to-launch";
+  state: "provisioning" | "running" | "failed-to-launch";
   title: string;
   detail?: string;
   url?: string;

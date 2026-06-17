@@ -407,6 +407,22 @@ describe(status, () => {
     );
   });
 
+  it("renders the per-task run: line as bare `provisioning` while the worktree is being created", async () => {
+    // Provisioning runs before worktrees.create() resolves, so there is no
+    // live workspace yet — make sure the status view doesn't decorate the
+    // line with `session dead` (running/resumed only) or any duration token.
+    readRunStateMock.mockReturnValue(runState({ state: "provisioning" }));
+    workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set() });
+
+    await status(makeConfig(), { task: "team-1" });
+
+    const output = consoleLog.output();
+    expect(output).toContain("run: provisioning;");
+    expect(output).not.toContain("idle");
+    expect(output).not.toContain("session dead");
+    expect(output).not.toContain("session exited");
+  });
+
   it("leaves the per-task run: line as bare `running` when the session is live", async () => {
     readRunStateMock.mockReturnValue(runState({ state: "running" }));
     workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-1"]) });
