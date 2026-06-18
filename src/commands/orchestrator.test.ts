@@ -276,7 +276,6 @@ function makeClient(options: {
 }
 
 function mockLinearClient(client: ClientStub): void {
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests use the LinearClient surface consumed by orchestrate
   linearClientMock.mockReturnValue(client as unknown as LinearClient);
 }
 
