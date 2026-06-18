@@ -35,7 +35,6 @@ function makeTempDir(): TempDir {
   };
 }
 
-// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- shell adapter doesn't read globalConfig
 const fakeContext: AdapterContext = { globalConfig: {} as ResolvedConfig };
 
 function shellIssue(overrides: Partial<ShellIssue> = {}): ShellIssue {

@@ -437,7 +437,6 @@ describe(toCanonicalIssue, () => {
 describe(createLinearTaskSource, () => {
   const rawRequest =
     vi.fn<(query: string, variables?: Record<string, unknown>) => Promise<{ data?: unknown }>>();
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests provide the subset of LinearClient used by the methods they exercise
   const fakeClient = { client: { rawRequest } } as unknown as LinearClient;
   beforeEach(() => {
     rawRequest.mockReset();
