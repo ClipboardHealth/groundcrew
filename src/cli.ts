@@ -212,8 +212,8 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
     },
   },
   resume: {
-    summary: "Reopen an existing task worktree with a continuation prompt",
-    usage: "<task>",
+    summary: "Reopen an existing task worktree, resuming the agent's chat session",
+    usage: "[--new] <task>",
     invoke: resumeWorkspaceCli,
   },
   open: {

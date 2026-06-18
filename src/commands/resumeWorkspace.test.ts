@@ -283,6 +283,63 @@ describe(resumeWorkspace, () => {
     });
   });
 
+  function sessionConfig(): ResolvedConfig {
+    return {
+      ...config,
+      agents: {
+        default: "claude",
+        definitions: {
+          claude: {
+            cmd: "claude --auto",
+            color: "#fff",
+            session: { start: "--session-id {{session}}", resume: "--resume {{session}}" },
+          },
+        },
+      },
+    };
+  }
+
+  it("reopens the stored chat session by default when the agent has session config", async () => {
+    readRunStateMock.mockReturnValue(makeRunState({ sessionId: "team-1-20260101t000000z" }));
+
+    await resumeWorkspace(sessionConfig(), { task: "team-1" });
+
+    expect(stagedLaunchScript()).toMatch(/--resume.*team-1-20260101t000000z/);
+    expect(lastRecordedRunState().sessionId).toBe("team-1-20260101t000000z");
+  });
+
+  it("cold-starts and mints a fresh pinned session id with --new", async () => {
+    readRunStateMock.mockReturnValue(makeRunState({ sessionId: "team-1-20260101t000000z" }));
+
+    await resumeWorkspace(sessionConfig(), { task: "team-1", fresh: true });
+
+    const launchScript = stagedLaunchScript();
+    expect(launchScript).toMatch(/--session-id.*team-1-\d{8}t\d{6}z/);
+    expect(launchScript).not.toContain("--resume");
+    const { sessionId } = lastRecordedRunState();
+    expect(sessionId).toMatch(/^team-1-\d{8}t\d{6}z$/);
+    expect(sessionId).not.toBe("team-1-20260101t000000z");
+  });
+
+  it("falls back to cold-start when session config exists but no id was stored", async () => {
+    readRunStateMock.mockReturnValue(makeRunState());
+
+    await resumeWorkspace(sessionConfig(), { task: "team-1" });
+
+    expect(stagedLaunchScript()).not.toContain("--resume");
+    expect(lastRecordedRunState().sessionId).toBeUndefined();
+  });
+
+  it("does not touch the launch command for agents without session config", async () => {
+    readRunStateMock.mockReturnValue(makeRunState({ sessionId: "team-1-20260101t000000z" }));
+
+    await resumeWorkspace(config, { task: "team-1" });
+
+    const launchScript = stagedLaunchScript();
+    expect(launchScript).not.toContain("--resume");
+    expect(launchScript).not.toContain("--session-id");
+  });
+
   it("prefers the run-state branch over the task-derived worktree branch", async () => {
     readRunStateMock.mockReturnValue(makeRunState({ branchName: "jdoe/fix-thing" }));
     findByTaskMock.mockReturnValue([makeWorktree()]);
@@ -700,5 +757,23 @@ describe(resumeWorkspaceCli, () => {
 
   it("rejects extra positional args", async () => {
     await expect(resumeWorkspaceCli(["team-1", "extra"])).rejects.toThrow(/Usage: crew resume/);
+  });
+
+  it("consumes the --new flag before the task without treating it as a positional", async () => {
+    await resumeWorkspaceCli(["--new", "TEAM-1"]);
+
+    expect(workspacesOpenMock).toHaveBeenCalledWith(
+      config,
+      expect.objectContaining({ name: "team-1" }),
+    );
+  });
+
+  it("accepts the --new flag after the task", async () => {
+    await resumeWorkspaceCli(["team-1", "--new"]);
+
+    expect(workspacesOpenMock).toHaveBeenCalledWith(
+      config,
+      expect.objectContaining({ name: "team-1" }),
+    );
   });
 });

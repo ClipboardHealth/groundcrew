@@ -10,9 +10,28 @@ import {
   type NetworkEgressSetting,
 } from "./config.ts";
 import { clearanceAllowHostsFilesFromEnvironment } from "./clearanceAllowlist.ts";
+import { SESSION_ID_PLACEHOLDER } from "./sessionId.ts";
 import { shellSingleQuote } from "./shell.ts";
 
 export { shellSingleQuote } from "./shell.ts";
+
+/**
+ * Return a copy of `definition` whose `cmd` has the agent's session-args
+ * `template` appended (the `{{session}}` placeholder replaced with the
+ * shell-quoted `sessionId`). Appending after the base `cmd` keeps the first
+ * token — which `inferAgentCommandName` reads for the safehouse profile — and
+ * the trailing `"$_p"` prompt positional the launch builders add both intact.
+ * Used by `setupWorkspace` (the `session.start` template) and `resumeWorkspace`
+ * (the `session.resume` template) to pin/reopen the agent's chat session.
+ */
+export function withSessionArgs(
+  definition: AgentDefinition,
+  template: string,
+  sessionId: string,
+): AgentDefinition {
+  const rendered = template.replaceAll(SESSION_ID_PLACEHOLDER, shellSingleQuote(sessionId));
+  return { ...definition, cmd: `${definition.cmd} ${rendered}` };
+}
 
 /**
  * Resolve the shipped Safehouse proxy wrapper inside `@clipboard-health/clearance`

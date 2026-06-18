@@ -142,6 +142,28 @@ export interface AgentDefinition {
    * or `none` without surprise.
    */
   sandbox?: SandboxDefinition;
+  /**
+   * Opt-in named, resumable agent chat sessions. When set, the first launch
+   * pins a `<task>-<timestamp>` session id (stored in run state) so a later
+   * `crew resume` reopens the agent CLI's own conversation instead of cold-
+   * starting. Both fields are shell-arg templates appended to `cmd`; the only
+   * placeholder is `{{session}}`, replaced with the generated id.
+   *
+   * Example (Claude Code): `{ start: "--session-id {{session}}", resume: "--resume {{session}}" }`.
+   * Resume-only CLIs that reopen the latest conversation can omit `start` and
+   * `{{session}}` entirely, e.g. `{ resume: "--continue" }`.
+   */
+  session?: SessionDefinition;
+}
+
+export interface SessionDefinition {
+  /**
+   * Args appended to `cmd` on the FIRST launch to pin the chat session id.
+   * Optional — omit for CLIs that resume the latest session without an id.
+   */
+  start?: string;
+  /** Args appended to `cmd` on `crew resume` to reopen the stored chat session. */
+  resume: string;
 }
 
 /**
@@ -702,6 +724,40 @@ function normalizeNetworkEgress(
   return value;
 }
 
+const SESSION_PLACEHOLDER = "{{session}}";
+
+function failOnUnknownSessionPlaceholder(template: string, configKey: string): void {
+  const placeholders = template.match(PROMPT_PLACEHOLDER_RE) ?? [];
+  const unknown = placeholders.find((placeholder) => placeholder !== SESSION_PLACEHOLDER);
+  if (unknown !== undefined) {
+    fail(
+      `${configKey} contains unknown placeholder ${JSON.stringify(unknown)}. The only allowed placeholder is ${SESSION_PLACEHOLDER}`,
+    );
+  }
+}
+
+function normalizeSessionTemplate(value: unknown, configKey: string): string {
+  requireString(value, configKey);
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    fail(`${configKey} must be a non-empty string (got ${JSON.stringify(value)})`);
+  }
+  failOnUnknownSessionPlaceholder(trimmed, configKey);
+  return trimmed;
+}
+
+function normalizeSession(value: unknown, configKey: string): SessionDefinition {
+  if (!isPlainObject(value)) {
+    fail(`${configKey} must be an object`);
+  }
+  const resume = normalizeSessionTemplate(value["resume"], `${configKey}.resume`);
+  const start =
+    value["start"] === undefined
+      ? undefined
+      : normalizeSessionTemplate(value["start"], `${configKey}.start`);
+  return { resume, ...(start === undefined ? {} : { start }) };
+}
+
 function normalizeSandbox(value: unknown, configKey: string): SandboxDefinition {
   if (!isPlainObject(value)) {
     fail(`${configKey} must be an object`);
@@ -801,6 +857,9 @@ function buildOverrideCandidate(
   if (override.sandbox !== undefined) {
     candidate.sandbox = normalizeSandbox(override.sandbox, `agents.definitions.${name}.sandbox`);
   }
+  if (override.session !== undefined) {
+    candidate.session = normalizeSession(override.session, `agents.definitions.${name}.session`);
+  }
   if (override.preLaunch !== undefined) {
     candidate.preLaunch = override.preLaunch;
   }
@@ -825,7 +884,7 @@ function mergeDefinitions(
 
     const builtIn = BUILT_IN_AGENT_DEFINITIONS[name];
     const candidate = buildOverrideCandidate(name, override, builtIn);
-    const { cmd, color, usage, sandbox, preLaunch, preLaunchEnv } = candidate;
+    const { cmd, color, usage, sandbox, session, preLaunch, preLaunchEnv } = candidate;
     if (typeof cmd !== "string" || cmd.length === 0) {
       fail(`agents.definitions.${name}.cmd must be a non-empty string`);
     }
@@ -838,6 +897,9 @@ function mergeDefinitions(
     }
     if (sandbox !== undefined) {
       definition.sandbox = sandbox;
+    }
+    if (session !== undefined) {
+      definition.session = session;
     }
     if (preLaunch !== undefined) {
       definition.preLaunch = preLaunch;

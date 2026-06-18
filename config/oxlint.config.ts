@@ -45,6 +45,16 @@ export default defineConfig(
           // duplicate module mocks to race under Vitest's parallel runner.
           files: ["**/setupWorkspace.test.ts"],
           rules: {
+            "max-lines": ["error", 2300],
+          },
+        },
+        {
+          // config.test.ts exhaustively covers config resolution, merging, and
+          // validation for every field (agents, sources, hooks, sessions, …).
+          // Splitting it would scatter the shared loadFreshConfig / writeConfigFile
+          // harness across files without improving readability. Bump the cap.
+          files: ["**/config.test.ts"],
+          rules: {
             "max-lines": ["error", 2200],
           },
         },

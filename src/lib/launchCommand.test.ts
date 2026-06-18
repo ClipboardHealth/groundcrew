@@ -9,6 +9,7 @@ import {
   resolveSafehouseClearancePath,
   resolveSrtBinPath,
   srtBinEntry,
+  withSessionArgs,
 } from "./launchCommand.ts";
 
 const WORKER_ENVIRONMENT = {
@@ -1426,5 +1427,37 @@ describe("buildLaunchCommand omitPromptArgument (interactive launch)", () => {
     expect(withPrompt).toMatch(/sh "\$_p"$/);
     expect(interactive).toMatch(/ sh$/);
     expect(interactive).not.toContain(`sh "$_p"`);
+  });
+});
+
+describe(withSessionArgs, () => {
+  const definition = {
+    cmd: "claude --permission-mode auto",
+    color: "#fff",
+  } satisfies AgentDefinition;
+
+  it("appends the substituted session args after the base cmd", () => {
+    const actual = withSessionArgs(definition, "--resume {{session}}", "team-1-20260618t193656z");
+
+    expect(actual.cmd).toBe("claude --permission-mode auto --resume 'team-1-20260618t193656z'");
+  });
+
+  it("substitutes every {{session}} occurrence and shell-quotes the id", () => {
+    const actual = withSessionArgs(definition, "resume {{session}} --tag {{session}}", "team-1");
+
+    expect(actual.cmd).toBe("claude --permission-mode auto resume 'team-1' --tag 'team-1'");
+  });
+
+  it("preserves the inferred command name (first token) so safehouse profile selection is unaffected", () => {
+    const actual = withSessionArgs(definition, "--session-id {{session}}", "team-1");
+
+    expect(actual.cmd.startsWith("claude ")).toBe(true);
+    expect(actual.color).toBe(definition.color);
+  });
+
+  it("does not mutate the input definition", () => {
+    withSessionArgs(definition, "--resume {{session}}", "team-1");
+
+    expect(definition.cmd).toBe("claude --permission-mode auto");
   });
 });

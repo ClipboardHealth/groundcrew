@@ -1990,4 +1990,75 @@ describe("loadConfig", () => {
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(/no crew config found/);
   });
+
+  it("resolves an agent session block with start and resume templates", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      validConfigSource({
+        workspace: VALID_WORKSPACE(temporary),
+        agents: {
+          definitions: {
+            claude: {
+              session: { start: "--session-id {{session}}", resume: "--resume {{session}}" },
+            },
+          },
+        },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+
+    expect(actual.agents.definitions["claude"]?.session).toStrictEqual({
+      start: "--session-id {{session}}",
+      resume: "--resume {{session}}",
+    });
+  });
+
+  it("allows a resume-only session block without start", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      validConfigSource({
+        workspace: VALID_WORKSPACE(temporary),
+        agents: { definitions: { claude: { session: { resume: "--continue" } } } },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+
+    expect(actual.agents.definitions["claude"]?.session).toStrictEqual({ resume: "--continue" });
+  });
+
+  it("rejects a session block missing the required resume template", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      [
+        "export default {",
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        '  agents: { definitions: { claude: { session: { start: "--session-id {{session}}" } } } },',
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(/agents\.definitions\.claude\.session\.resume/);
+  });
+
+  it("rejects a session template that uses an unknown placeholder", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      validConfigSource({
+        workspace: VALID_WORKSPACE(temporary),
+        agents: { definitions: { claude: { session: { resume: "--resume {{worktree}}" } } } },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(/unknown placeholder "\{\{worktree\}\}"/);
+  });
 });

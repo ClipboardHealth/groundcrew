@@ -143,9 +143,11 @@ The command closes the cmux/tmux/zellij workspace if present, records local run 
 
 ## Resume
 
-`crew resume <TASK>` reopens an existing task worktree with a continuation prompt. Resume never creates a new worktree; if none exists it fails and leaves re-dispatch to `crew start <task>`.
+`crew resume [--new] <TASK>` reopens an existing task worktree with a continuation prompt. Resume never creates a new worktree; if none exists it fails and leaves re-dispatch to `crew start <task>`.
 
 The resume prompt tells the agent to inspect git status and diff before editing, includes the previous interrupt reason when recorded, and reuses the recorded agent, repository, branch, runner, sandbox, and workspace backend. When no run-state file exists but a worktree does, resume falls back to Linear resolution for the agent and task context.
+
+When the launched agent has a [`session`](./configuration.md#agent-chat-sessions) block, the first launch pins a `<task>-<timestamp>` chat-session id (recorded in run state). `crew resume <TASK>` then reopens that conversation by appending the agent's `session.resume` args, instead of cold-starting. `crew resume --new <TASK>` forces the historic cold-start behavior and mints a fresh session id, so subsequent `crew resume` calls reopen that new conversation. Agents without a `session` block — and tasks dispatched before a session id was recorded — always cold-start.
 
 ## Open
 
