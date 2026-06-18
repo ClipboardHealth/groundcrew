@@ -150,6 +150,8 @@ describe("workspaces.open (cmux)", () => {
       "/work/repo-a-TEAM-1",
       "--command",
       "exec claude",
+      "--description",
+      "groundcrew:TEAM-1",
     ]);
   });
 
@@ -300,12 +302,12 @@ describe("workspaces.probe (cmux)", () => {
   beforeEach(commonBeforeEach);
   afterEach(commonAfterEach);
 
-  it("returns kind=ok with the workspaces' titles as names", async () => {
+  it("returns kind=ok with names resolved from the groundcrew description marker", async () => {
     runMock.mockReturnValue(
       JSON.stringify({
         workspaces: [
-          { title: "TEAM-1", id: "id-1" },
-          { title: "TEAM-2", id: "id-2" },
+          { title: "TEAM-1", id: "id-1", description: "groundcrew:TEAM-1" },
+          { title: "TEAM-2", id: "id-2", description: "groundcrew:TEAM-2" },
         ],
       }),
     );
@@ -315,6 +317,48 @@ describe("workspaces.probe (cmux)", () => {
       names: new Set(["TEAM-1", "TEAM-2"]),
     });
     expect(runMock).toHaveBeenCalledWith("cmux", ["--json", "list-workspaces"]);
+  });
+
+  it("tracks a workspace by its marker even when the title has been renamed", async () => {
+    runMock.mockReturnValue(
+      JSON.stringify({
+        workspaces: [{ title: "Fix the login bug", id: "id-1", description: "groundcrew:TEAM-1" }],
+      }),
+    );
+
+    await expect(workspaces.probe(makeConfig())).resolves.toStrictEqual({
+      kind: "ok",
+      names: new Set(["TEAM-1"]),
+    });
+  });
+
+  it("falls back to the title when the marker is present but carries no task id", async () => {
+    runMock.mockReturnValue(
+      JSON.stringify({
+        workspaces: [{ title: "TEAM-1", id: "id-1", description: "groundcrew:" }],
+      }),
+    );
+
+    await expect(workspaces.probe(makeConfig())).resolves.toStrictEqual({
+      kind: "ok",
+      names: new Set(["TEAM-1"]),
+    });
+  });
+
+  it("falls back to the title for legacy workspaces without a marker", async () => {
+    runMock.mockReturnValue(
+      JSON.stringify({
+        workspaces: [
+          { title: "TEAM-1", id: "id-1", description: null },
+          { title: "TEAM-2", id: "id-2" },
+        ],
+      }),
+    );
+
+    await expect(workspaces.probe(makeConfig())).resolves.toStrictEqual({
+      kind: "ok",
+      names: new Set(["TEAM-1", "TEAM-2"]),
+    });
   });
 
   it("returns kind=ok with an empty name set when cmux reports no workspaces", async () => {
@@ -387,6 +431,58 @@ describe("workspaces.close (cmux)", () => {
       "--workspace",
       "workspace:42",
     ]);
+  });
+
+  it("closes by the description marker even when the title was renamed", async () => {
+    runMock.mockReturnValue(
+      JSON.stringify({
+        workspaces: [
+          { title: "Fix the login bug", ref: "workspace:42", description: "groundcrew:TEAM-1" },
+        ],
+      }),
+    );
+
+    await expect(workspaces.close(makeConfig(), "TEAM-1")).resolves.toStrictEqual({
+      kind: "closed",
+    });
+
+    expect(runMock).toHaveBeenCalledWith("cmux", [
+      "close-workspace",
+      "--workspace",
+      "workspace:42",
+    ]);
+  });
+
+  it("closes a legacy workspace by title when no marker is present", async () => {
+    runMock.mockReturnValue(
+      JSON.stringify({ workspaces: [{ title: "TEAM-1", ref: "workspace:42", description: null }] }),
+    );
+
+    await expect(workspaces.close(makeConfig(), "TEAM-1")).resolves.toStrictEqual({
+      kind: "closed",
+    });
+
+    expect(runMock).toHaveBeenCalledWith("cmux", [
+      "close-workspace",
+      "--workspace",
+      "workspace:42",
+    ]);
+  });
+
+  it("is missing when neither a marker nor the title matches the requested name", async () => {
+    runMock.mockReturnValue(
+      JSON.stringify({
+        workspaces: [
+          { title: "Fix the login bug", ref: "workspace:42", description: "groundcrew:TEAM-2" },
+        ],
+      }),
+    );
+
+    await expect(workspaces.close(makeConfig(), "TEAM-1")).resolves.toStrictEqual({
+      kind: "missing",
+    });
+
+    expect(runMock).not.toHaveBeenCalledWith("cmux", expect.arrayContaining(["close-workspace"]));
   });
 
   it("falls back to the workspace id when ref is omitted", async () => {

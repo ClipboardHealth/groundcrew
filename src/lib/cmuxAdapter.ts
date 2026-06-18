@@ -25,6 +25,8 @@ export const cmuxAdapter: Adapter = {
         spec.cwd,
         "--command",
         spec.command,
+        "--description",
+        cmuxDescriptionFor(spec.name),
       ],
       signal,
     );
@@ -50,7 +52,7 @@ export const cmuxAdapter: Adapter = {
   },
   async list(signal) {
     const raw = await listCmuxRaw(signal);
-    return raw?.map((ws) => ({ name: ws.title }));
+    return raw?.map((ws) => ({ name: cmuxTaskId(ws) }));
   },
   async close(name, signal) {
     const raw = await listCmuxRaw(signal);
@@ -61,7 +63,7 @@ export const cmuxAdapter: Adapter = {
       debug(`cmux close-workspace skipped for ${name}: list-workspaces failed, no usable id`);
       return { kind: "unavailable" };
     }
-    const match = raw.find((ws) => ws.title === name);
+    const match = raw.find((ws) => cmuxTaskId(ws) === name);
     if (match === undefined) {
       return { kind: "missing" };
     }
@@ -76,7 +78,7 @@ export const cmuxAdapter: Adapter = {
       if (remaining === undefined) {
         return { kind: "unavailable", error };
       }
-      const isStillPresent = remaining.some((ws) => ws.title === name);
+      const isStillPresent = remaining.some((ws) => cmuxTaskId(ws) === name);
       if (!isStillPresent) {
         return { kind: "closed" };
       }
@@ -91,16 +93,41 @@ export const cmuxAdapter: Adapter = {
   },
 };
 
+/**
+ * Stable per-workspace task-id marker stamped into cmux's `description` at
+ * creation. Identity keys on this, not the title — a user renaming a panel
+ * must not make crew lose track of the workspace. cmux exposes no
+ * set-description RPC (settable only at creation), so legacy workspaces carry
+ * `description: null`; `cmuxTaskId` falls back to the title for those.
+ */
+const CMUX_DESCRIPTION_MARKER_PREFIX = "groundcrew:";
+
+function cmuxDescriptionFor(taskId: string): string {
+  return `${CMUX_DESCRIPTION_MARKER_PREFIX}${taskId}`;
+}
+
+function cmuxTaskId(ws: CmuxRawWorkspace): string {
+  if (ws.description !== null && ws.description.startsWith(CMUX_DESCRIPTION_MARKER_PREFIX)) {
+    const marked = ws.description.slice(CMUX_DESCRIPTION_MARKER_PREFIX.length);
+    if (marked.length > 0) {
+      return marked;
+    }
+  }
+  return ws.title;
+}
+
 interface CmuxRawWorkspace {
   title: string;
   /** Stable UUID handle. v2 RPC requires this for workspace.close / etc. */
   id: string;
+  /** cmux per-workspace description; carries the task-id marker, or null for legacy workspaces. */
+  description: string | null;
 }
 
 function parseCmuxList(output: string): CmuxRawWorkspace[] {
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- cmux --json list-workspaces always emits this shape
   const parsed = JSON.parse(output) as {
-    workspaces?: { title?: string; ref?: string; id?: string }[];
+    workspaces?: { title?: string; ref?: string; id?: string; description?: string | null }[];
   };
   const items: CmuxRawWorkspace[] = [];
   /* v8 ignore next @preserve -- cmux always emits a workspaces field; default keeps the loop safe */
@@ -115,7 +142,7 @@ function parseCmuxList(output: string): CmuxRawWorkspace[] {
       );
       continue;
     }
-    items.push({ title: ws.title, id });
+    items.push({ title: ws.title, id, description: ws.description ?? null });
   }
   return items;
 }
