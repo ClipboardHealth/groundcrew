@@ -110,7 +110,24 @@ describe(composeAgentLaunch, () => {
     expect(launchCommand).toContain("CMUX_SOCKET_PATH");
     expect(launchCommand).toContain("CMUX_CUSTOM_CLAUDE_PATH");
     expect(launchCommand).toContain("export CMUX_CUSTOM_CLAUDE_PATH=/Users/dev/.local/bin/claude");
-    expect(launchCommand).toContain('exec claude --permission-mode auto "$@"');
+    expect(launchCommand).toContain("exec claude --permission-mode auto --settings ");
+    expect(launchCommand).toContain('"$@"');
+  });
+
+  it("injects cmux activity-reporting hooks for a cmux-hosted Claude agent", () => {
+    const launchCommand = compose();
+
+    expect(launchCommand).toContain("--settings ");
+    expect(launchCommand).toContain("set-progress");
+    expect(launchCommand).toContain("running · claude");
+    expect(launchCommand).toContain("SessionStart");
+  });
+
+  it("does not inject Claude activity hooks for a non-Claude cmux agent", () => {
+    const launchCommand = compose({ definition: definition({ cmd: "codex", color: "#000" }) });
+
+    expect(launchCommand).toContain('exec codex "$@"');
+    expect(launchCommand).not.toContain("set-progress");
   });
 
   it("adds task source write paths only to the Safehouse agent wrap", () => {
