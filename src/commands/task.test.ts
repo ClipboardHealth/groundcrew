@@ -755,6 +755,22 @@ describe("crew task done", () => {
     expect(markDone).not.toHaveBeenCalled();
   });
 
+  it("refuses a dirty matching worktree when the branch only has a merged PR", async () => {
+    const issue = makeIssue({ id: "todo:gc-1", status: "in-progress" });
+    const markDone = vi.fn<NonNullable<TaskSource["markDone"]>>().mockResolvedValue({
+      outcome: "applied",
+    });
+    buildSourcesMock.mockResolvedValue([stubSource("todo", [issue], { markDone })]);
+    findWorktreesByTaskMock.mockReturnValue([hostEntryFor("gc-1")]);
+    probeWorkingTreeMock.mockResolvedValue({ kind: "dirty", modified: 1, untracked: 2 });
+    findPullRequestsForBranchMock.mockResolvedValue([pullRequest({ state: "merged" })]);
+
+    await expect(taskCli(["done", "todo:GC-1"])).rejects.toThrow(
+      /refusing to mark todo:gc-1 done.*1 modified, 2 untracked.*--allow-dirty/,
+    );
+    expect(markDone).not.toHaveBeenCalled();
+  });
+
   it("refuses a worktree when git status cannot be verified", async () => {
     const issue = makeIssue({ id: "todo:gc-1", status: "in-progress" });
     const markDone = vi.fn<NonNullable<TaskSource["markDone"]>>().mockResolvedValue({
