@@ -5,6 +5,7 @@ import { type Board, createBoard } from "../lib/board.ts";
 import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
 import { workerEnvironmentForTask } from "../lib/launchCommand.ts";
 import { resolvePrepareWorktreeCommand } from "../lib/repositoryHooks.ts";
+import { syncWorkspaceProgress } from "../lib/progressSync.ts";
 import { recordRunState } from "../lib/runState.ts";
 import { sourceSupportsMarkDone } from "../lib/sourceCapabilities.ts";
 import {
@@ -209,6 +210,11 @@ export async function setupWorkspace(
     if (accessHint !== undefined) {
       logAccessHint(accessHint);
     }
+    await syncWorkspaceProgress({
+      config,
+      run: { task, workspaceName: task, agent, state: "running" },
+      ...(signal === undefined ? {} : { signal }),
+    });
   } catch (error) {
     await rollbackWorktree({ config, entry: created, promptDir, srtSettingsDir });
     recordFailedToLaunch({ config, options, paths: { worktreeDir, branchName }, error });

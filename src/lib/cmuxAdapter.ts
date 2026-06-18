@@ -8,6 +8,7 @@ import {
   type Adapter,
   isSignalAborted,
   runWorkspaceCommand,
+  type WorkspaceProgress,
   type WorkspaceStatus,
 } from "./workspaceAdapter.ts";
 import { debug, errorMessage, log } from "./util.ts";
@@ -90,6 +91,19 @@ export const cmuxAdapter: Adapter = {
     // not a shell command. No useful hint to emit.
     // oxlint-disable-next-line unicorn/no-useless-undefined -- explicit signal that the backend has no hint
     return undefined;
+  },
+  async reportProgress(name, progress, signal) {
+    const raw = await listCmuxRaw(signal);
+    if (raw === undefined) {
+      debug(`cmux set-progress skipped for ${name}: list-workspaces failed, no usable id`);
+      return;
+    }
+    const match = raw.find((ws) => cmuxTaskId(ws) === name);
+    if (match === undefined) {
+      debug(`cmux set-progress skipped for ${name}: no live workspace`);
+      return;
+    }
+    await applyCmuxProgress(match.id, progress, signal);
   },
 };
 
@@ -218,6 +232,32 @@ async function applyCmuxStatus(
 
 async function closeCmuxWorkspace(workspaceId: string, signal?: AbortSignal): Promise<void> {
   await runWorkspaceCommand("cmux", ["close-workspace", "--workspace", workspaceId], signal);
+}
+
+function clampProgressValue(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.min(1, Math.max(0, value));
+}
+
+async function applyCmuxProgress(
+  workspaceId: string,
+  progress: WorkspaceProgress,
+  signal?: AbortSignal,
+): Promise<void> {
+  await runWorkspaceCommand(
+    "cmux",
+    [
+      "set-progress",
+      String(clampProgressValue(progress.value)),
+      "--label",
+      progress.label,
+      "--workspace",
+      workspaceId,
+    ],
+    signal,
+  );
 }
 
 function isCmuxSetStatusUnsupported(error: unknown): boolean {

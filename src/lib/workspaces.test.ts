@@ -582,6 +582,100 @@ describe("workspaces.close (cmux)", () => {
   });
 });
 
+describe("workspaces.reportProgress (cmux)", () => {
+  beforeEach(commonBeforeEach);
+  afterEach(commonAfterEach);
+
+  it("looks up the id by name and calls set-progress with the value and label", async () => {
+    runMock.mockReturnValue(
+      JSON.stringify({ workspaces: [{ title: "TEAM-1", ref: "workspace:42" }] }),
+    );
+
+    await workspaces.reportProgress(makeConfig(), "TEAM-1", {
+      value: 0.5,
+      label: "running · claude",
+    });
+
+    expect(runMock).toHaveBeenCalledWith("cmux", [
+      "set-progress",
+      "0.5",
+      "--label",
+      "running · claude",
+      "--workspace",
+      "workspace:42",
+    ]);
+  });
+
+  it("clamps an out-of-range value into 0..1", async () => {
+    runMock.mockReturnValue(JSON.stringify({ workspaces: [{ title: "TEAM-1", id: "abc123" }] }));
+
+    await workspaces.reportProgress(makeConfig(), "TEAM-1", { value: 1.7, label: "running" });
+
+    expect(runMock).toHaveBeenCalledWith("cmux", [
+      "set-progress",
+      "1",
+      "--label",
+      "running",
+      "--workspace",
+      "abc123",
+    ]);
+  });
+
+  it("coerces a non-finite value to 0", async () => {
+    runMock.mockReturnValue(JSON.stringify({ workspaces: [{ title: "TEAM-1", id: "abc123" }] }));
+
+    await workspaces.reportProgress(makeConfig(), "TEAM-1", {
+      value: Number.NaN,
+      label: "running",
+    });
+
+    expect(runMock).toHaveBeenCalledWith("cmux", [
+      "set-progress",
+      "0",
+      "--label",
+      "running",
+      "--workspace",
+      "abc123",
+    ]);
+  });
+
+  it("is a no-op when no workspace exists for the name", async () => {
+    runMock.mockReturnValue(JSON.stringify({ workspaces: [] }));
+
+    await workspaces.reportProgress(makeConfig(), "TEAM-1", { value: 0.5, label: "running" });
+
+    expect(runMock).not.toHaveBeenCalledWith("cmux", expect.arrayContaining(["set-progress"]));
+  });
+
+  it("is a no-op when the cmux list itself fails", async () => {
+    runMock.mockImplementationOnce(() => {
+      throw new Error("cmux down");
+    });
+
+    await workspaces.reportProgress(makeConfig(), "TEAM-1", { value: 0.5, label: "running" });
+
+    expect(runMock).not.toHaveBeenCalledWith("cmux", expect.arrayContaining(["set-progress"]));
+  });
+});
+
+describe("workspaces.reportProgress (tmux)", () => {
+  beforeEach(() => {
+    commonBeforeEach();
+    detectHostMock.mockResolvedValue(makeHost({ hasCmux: false, hasTmux: true }));
+  });
+  afterEach(commonAfterEach);
+
+  it("is a no-op because tmux has no sidebar channel", async () => {
+    await workspaces.reportProgress(makeConfig("tmux"), "TEAM-1", {
+      value: 0.5,
+      label: "running",
+    });
+
+    expect(runMock).not.toHaveBeenCalledWith("cmux", expect.arrayContaining(["set-progress"]));
+    expect(runMock).not.toHaveBeenCalledWith("tmux", expect.arrayContaining(["set-progress"]));
+  });
+});
+
 describe("workspaces.open (tmux)", () => {
   beforeEach(() => {
     commonBeforeEach();

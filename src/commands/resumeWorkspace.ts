@@ -4,6 +4,7 @@ import { isLinearEnabled, sourcesFromConfig } from "../lib/buildSources.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { composeAgentLaunch, openAgentWorkspace, prepareAgentLaunch } from "../lib/agentLaunch.ts";
 import { workerEnvironmentForTask } from "../lib/launchCommand.ts";
+import { syncWorkspaceProgress } from "../lib/progressSync.ts";
 import { readRunState, recordRunState, type RunState } from "../lib/runState.ts";
 import { taskSupportsCompletionCommand } from "../lib/sourceCapabilities.ts";
 import {
@@ -254,6 +255,10 @@ export async function resumeWorkspace(
     },
   });
   log(`Resumed ${task} in ${context.worktree.dir} (${context.agent})`);
+  await syncWorkspaceProgress({
+    config,
+    run: { task, workspaceName: task, agent: context.agent, state: "resumed" },
+  });
 }
 
 export async function resumeWorkspaceCli(argv: string[]): Promise<void> {

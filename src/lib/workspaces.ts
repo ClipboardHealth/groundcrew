@@ -19,6 +19,7 @@ import {
   type WorkspaceInterruptResult,
   type WorkspaceKind,
   type WorkspaceProbe,
+  type WorkspaceProgress,
 } from "./workspaceAdapter.ts";
 
 export type {
@@ -29,6 +30,7 @@ export type {
   WorkspaceInterruptResult,
   WorkspaceKind,
   WorkspaceProbe,
+  WorkspaceProgress,
   WorkspaceStatus,
 } from "./workspaceAdapter.ts";
 
@@ -208,4 +210,16 @@ export const workspaces = {
   },
   interrupt: interruptWorkspace,
   accessHint: accessHintForWorkspace,
+  async reportProgress(
+    config: ResolvedConfig,
+    name: string,
+    progress: WorkspaceProgress,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const adapter = await adapterFor(config, signal);
+    if (adapter.reportProgress === undefined) {
+      return;
+    }
+    await adapter.reportProgress(name, progress, signal);
+  },
 };
