@@ -52,7 +52,7 @@ function priorityToNumber(priority: string | undefined): number | undefined {
 
 function resolveBlocker(
   depId: string,
-  allParsed: (ParsedTodoLine | null)[],
+  allParsed: Array<ParsedTodoLine | null>,
   sourceName: string,
 ): Blocker {
   const found = allParsed.find(
@@ -85,7 +85,7 @@ function resolveBlocker(
 
 export interface NormalizeOptions {
   parsed: ParsedTodoLine;
-  allParsed: (ParsedTodoLine | null)[];
+  allParsed: Array<ParsedTodoLine | null>;
   sourceName: string;
   todoPath: string;
   tasksDir: string;

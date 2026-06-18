@@ -164,7 +164,7 @@ interface ParsedAgentLabels {
 }
 
 function parseAgentLabels(
-  labels: { name: string }[],
+  labels: Array<{ name: string }>,
   config: ResolvedConfig,
 ): ParsedAgentLabels | undefined {
   const agentLabels = labels.filter((label) => label.name.startsWith(AGENT_LABEL_PREFIX));
@@ -195,7 +195,7 @@ function parseAgentLabels(
 }
 
 export function resolveAgentFor(arguments_: {
-  labels: { name: string }[];
+  labels: Array<{ name: string }>;
   config: ResolvedConfig;
 }): AgentResolution {
   const { labels, config } = arguments_;

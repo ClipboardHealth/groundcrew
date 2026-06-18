@@ -13,7 +13,6 @@ function definition(cmd: string): AgentDefinition {
 }
 
 function readSettings(file: string): SandboxRuntimeConfig {
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- staged settings are SandboxRuntimeConfig JSON
   return JSON.parse(readFileSync(file, "utf8")) as SandboxRuntimeConfig;
 }
 

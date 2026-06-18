@@ -1627,7 +1627,7 @@ describe("loadConfig", () => {
   });
 
   const scripted = { create: "a", remove: "b" };
-  const invalidEntries: [KnownRepository, RegExp][] = [
+  const invalidEntries: Array<[KnownRepository, RegExp]> = [
     [{ name: "b", provision: scripted, workdir: "/etc" }, /workdir.*must be a relative path/],
     [{ name: "b", provision: scripted, workdir: ".." }, /workdir.*must not contain '\.\.'/],
     [{ name: "b", projectDirOverride: "~/d", provision: scripted }, /cannot be combined/],

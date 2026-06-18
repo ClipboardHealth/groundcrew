@@ -25,7 +25,6 @@ vi.mock(import("../lib/commandRunner.ts"), async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- overload-collapsing cast; tests only exercise the captured-stdio signature
     runCommand: vi.fn<RunCommandFn>() as unknown as typeof actual.runCommand,
   };
 });
