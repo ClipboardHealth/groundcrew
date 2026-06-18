@@ -61,7 +61,8 @@ async function writeTaskWorktrees(config: ResolvedConfig, task: string): Promise
   }
   const runState = readRunState(config, task);
   for (const entry of entries) {
-    const branchName = effectiveBranchNameFromRunState({ entry, runState });
+    // oxlint-disable-next-line no-await-in-loop -- status output is easier to read in worktree order.
+    const branchName = await effectiveBranchNameFromRunState({ entry, runState });
     // oxlint-disable-next-line no-await-in-loop -- status output is easier to read in worktree order.
     const dirtiness = await worktrees.probeWorkingTree({
       worktreeDir: entry.dir,
@@ -414,13 +415,15 @@ async function writeInventoryWorktrees(
   }
   const accessHints = await collectAccessHints(config, entries);
   const pullRequests = await collectPullRequests(
-    entries.map((entry) => ({
-      dir: entry.dir,
-      branchName: effectiveBranchNameFromRunState({
-        entry,
-        runState: runStates.get(entry.task),
-      }),
-    })),
+    await Promise.all(
+      entries.map(async (entry) => ({
+        dir: entry.dir,
+        branchName: await effectiveBranchNameFromRunState({
+          entry,
+          runState: runStates.get(entry.task),
+        }),
+      })),
+    ),
   );
   const now = new Date();
   for (const [index, entry] of entries.entries()) {

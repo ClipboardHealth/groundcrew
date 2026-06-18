@@ -623,7 +623,6 @@ describe(status, () => {
         number: 42,
         state: "open",
         title: "Wire up auth",
-        headRefOid: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       },
     ]);
 
@@ -814,7 +813,6 @@ describe(status, () => {
         number: 42,
         state: "open",
         title: "Wire up auth",
-        headRefOid: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       },
     ]);
 
@@ -837,14 +835,12 @@ describe(status, () => {
         number: 1,
         state: "open",
         title: "a",
-        headRefOid: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       },
       {
         url: "https://x/pull/2",
         number: 2,
         state: "merged",
         title: "b",
-        headRefOid: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       },
     ]);
 
@@ -874,7 +870,6 @@ describe(status, () => {
         number: 99,
         state: "open",
         title: "Something",
-        headRefOid: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       },
     ]);
 

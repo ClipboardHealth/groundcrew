@@ -154,7 +154,8 @@ export function createReviewer(deps: ReviewerDeps): Reviewer {
       const branchName =
         reviewerConfig === undefined
           ? entry.branchName
-          : effectiveBranchName({ config: reviewerConfig, entry });
+          : // oxlint-disable-next-line no-await-in-loop -- one git lookup per worktree; a task almost always has one entry.
+            await effectiveBranchName({ config: reviewerConfig, entry });
       // The injected lookup is contracted never to reject (failures resolve to
       // []), but we still guard it so one bad lookup can never abort the tick
       // and starve the other candidates. A failure means "can't tell yet" →
