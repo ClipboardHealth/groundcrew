@@ -295,7 +295,7 @@ function assertValidTransition(
 
 function buildRecurResult(
   parsed: ParsedTodoLine,
-  parsedAll: (ParsedTodoLine | null)[],
+  parsedAll: Array<ParsedTodoLine | null>,
   originalLine: string,
   ref: TodoTxtSourceRef,
   completionDateStr: string,
@@ -479,7 +479,7 @@ function validatePromptFile(
 
 function validateDepsAndDates(
   parsed: ParsedTodoLine,
-  parsedAll: (ParsedTodoLine | null)[],
+  parsedAll: Array<ParsedTodoLine | null>,
   id: string,
   prefix: string,
   errors: string[],
@@ -528,7 +528,7 @@ function validateDepsAndDates(
 
 function validateActiveTaskLine(
   parsed: ParsedTodoLine,
-  parsedAll: (ParsedTodoLine | null)[],
+  parsedAll: Array<ParsedTodoLine | null>,
   tasksDir: string,
   id: string,
   prefix: string,

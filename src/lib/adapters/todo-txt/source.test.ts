@@ -15,7 +15,6 @@ function makeAdapterContext(options: {
 }): AdapterContext {
   const { defaultAgent, definitions, knownRepositories = ["ClipboardHealth/api"] } = options;
   return {
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- partial config sufficient for source tests
     globalConfig: {
       agents: { default: defaultAgent, definitions },
       workspace: { knownRepositories },
@@ -97,7 +96,6 @@ function makeSource(tmp: TempDir, defaultRepository?: string) {
 }
 
 function sourceRef(issue: Issue): TodoTxtSourceRef {
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests read the sourceRef shape
   return issue.sourceRef as TodoTxtSourceRef;
 }
 

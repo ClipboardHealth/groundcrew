@@ -22,13 +22,13 @@ interface CreateLinearIssueArguments {
 interface LinearCreateContext {
   viewer: { id: string; name: string } | null;
   teams: {
-    nodes: {
+    nodes: Array<{
       id: string;
       key: string;
       name: string;
-      labels: { nodes: { id: string; name: string }[] };
+      labels: { nodes: Array<{ id: string; name: string }> };
       states: { nodes: LinearWorkflowState[] };
-    }[];
+    }>;
   };
 }
 

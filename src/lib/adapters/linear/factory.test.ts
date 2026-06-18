@@ -119,15 +119,15 @@ function createConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
 
 function createContextResponse(
   overrides: {
-    labels?: { id: string; name: string }[];
-    states?: { id: string; name: string; type: string; position: number }[];
-    teams?: {
+    labels?: Array<{ id: string; name: string }>;
+    states?: Array<{ id: string; name: string; type: string; position: number }>;
+    teams?: Array<{
       id: string;
       key: string;
       name: string;
-      labels: { nodes: { id: string; name: string }[] };
-      states: { nodes: { id: string; name: string; type: string; position: number }[] };
-    }[];
+      labels: { nodes: Array<{ id: string; name: string }> };
+      states: { nodes: Array<{ id: string; name: string; type: string; position: number }> };
+    }>;
     viewer?: { id: string; name: string } | null;
   } = {},
 ): { data: unknown } {
@@ -187,7 +187,7 @@ function createRelationResponse(success = true): { data: unknown } {
 function resolvedIssueResponse(
   overrides: {
     description?: string;
-    labels?: { name: string }[];
+    labels?: Array<{ name: string }>;
     inverseRelations?: {
       nodes: boardSource.IssueRelationNode[];
       pageInfo: { hasNextPage: boolean };
@@ -238,7 +238,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function issueCreateInput(calls: readonly (readonly unknown[])[]): Record<string, unknown> {
+function issueCreateInput(calls: ReadonlyArray<readonly unknown[]>): Record<string, unknown> {
   const [, call] = calls;
   if (call === undefined) {
     throw new Error("missing issueCreate call");
@@ -437,7 +437,6 @@ describe(toCanonicalIssue, () => {
 describe(createLinearTaskSource, () => {
   const rawRequest =
     vi.fn<(query: string, variables?: Record<string, unknown>) => Promise<{ data?: unknown }>>();
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests provide the subset of LinearClient used by the methods they exercise
   const fakeClient = { client: { rawRequest } } as unknown as LinearClient;
   beforeEach(() => {
     rawRequest.mockReset();

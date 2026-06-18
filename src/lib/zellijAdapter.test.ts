@@ -21,7 +21,6 @@ vi.mock(import("./commandRunner.ts"), async (importOriginal) => {
   return {
     ...actual,
     runCommand: runMock,
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- shared sync/async recorder
     runCommandAsync: runMock as unknown as typeof actual.runCommandAsync,
   };
 });

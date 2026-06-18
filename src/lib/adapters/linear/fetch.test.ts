@@ -28,16 +28,16 @@ interface IssueNodeStub {
   team?: { id: string; key: string } | null;
   assignee?: { name: string } | null;
   children?: { nodes: unknown[] };
-  labels?: { nodes: { name: string }[] };
+  labels?: { nodes: Array<{ name: string }> };
   inverseRelations?: {
-    nodes: {
+    nodes: Array<{
       type: string;
       issue?: {
         identifier: string;
         title: string;
         state?: { name: string; type?: string } | null;
       } | null;
-    }[];
+    }>;
     pageInfo: { hasNextPage: boolean };
   };
 }
@@ -144,7 +144,6 @@ function expectCallMatching(
   if (call === undefined) {
     throw new Error(`No call matched ${queryPrefix}`);
   }
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- helper narrows the queue tuple shape after the find() guard above
   return call as [string, Record<string, unknown>];
 }
 
@@ -221,7 +220,6 @@ function makeBoardSource(
   source: ReturnType<typeof createBoardSource>;
   rawRequest: ClientStub["client"]["rawRequest"];
 } {
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests hit the LinearClient surface consumed by boardSource
   const source = createBoardSource({ config, client: client as unknown as LinearClient });
   return { source, rawRequest: client.client.rawRequest };
 }
@@ -396,7 +394,6 @@ describe(fetchResolvedIssue, () => {
   it("returns the resolved repository and agent from the issue description and labels", async () => {
     const client = makeClient();
     const resolved = await fetchResolvedIssue({
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests hit the LinearClient surface consumed by boardSource
       client: client as unknown as LinearClient,
       config: makeConfig(),
       task: "TEAM-1",
@@ -422,7 +419,6 @@ describe(fetchResolvedIssue, () => {
       },
     };
     const resolved = await fetchResolvedIssue({
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests hit the LinearClient surface consumed by boardSource
       client: client as unknown as LinearClient,
       config: makeConfig(),
       task: "TEAM-1",
@@ -449,7 +445,6 @@ describe(fetchResolvedIssue, () => {
       },
     });
     const resolved = await fetchResolvedIssue({
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests hit the LinearClient surface consumed by boardSource
       client: client as unknown as LinearClient,
       config,
       task: "TEAM-1",
@@ -475,7 +470,6 @@ describe(fetchResolvedIssue, () => {
     };
     await expect(
       fetchResolvedIssue({
-        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests hit the LinearClient surface consumed by boardSource
         client: client as unknown as LinearClient,
         config: makeConfig(),
         task: "TEAM-1",
@@ -545,7 +539,6 @@ describe(fetchRawLinearIssue, () => {
   it("returns the raw fields when the task exists", async () => {
     const client = makeClient();
     const raw = await fetchRawLinearIssue({
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests hit the LinearClient surface consumed by boardSource
       client: client as unknown as LinearClient,
       task: "team-1",
     });
@@ -570,7 +563,6 @@ describe(fetchRawLinearIssue, () => {
       },
     };
     const raw = await fetchRawLinearIssue({
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests hit the LinearClient surface consumed by boardSource
       client: client as unknown as LinearClient,
       task: "team-1",
     });
@@ -593,7 +585,6 @@ describe(fetchRawLinearIssue, () => {
     };
 
     const raw = await fetchRawLinearIssue({
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests hit the LinearClient surface consumed by boardSource
       client: client as unknown as LinearClient,
       task: "team-1",
     });
@@ -621,7 +612,6 @@ describe(fetchRawLinearIssue, () => {
     };
 
     const raw = await fetchRawLinearIssue({
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests hit the LinearClient surface consumed by boardSource
       client: client as unknown as LinearClient,
       task: "team-1",
     });
@@ -641,7 +631,6 @@ describe(fetchRawLinearIssue, () => {
     };
     await expect(
       fetchRawLinearIssue({
-        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests hit the LinearClient surface consumed by boardSource
         client: client as unknown as LinearClient,
         task: "team-9999",
       }),
@@ -653,7 +642,6 @@ describe(fetchInProgressIssueCount, () => {
   it("counts matching in-progress tasks across all pages", async () => {
     const client = makeClient({ activePages: [2, 3] });
     const count = await fetchInProgressIssueCount({
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests hit the LinearClient surface consumed by boardSource
       client: client as unknown as LinearClient,
     });
     expect(count).toBe(5);
@@ -662,7 +650,6 @@ describe(fetchInProgressIssueCount, () => {
   it("filters by assignee=isMe AND agent-* label AND state.type=started", async () => {
     const client = makeClient({ activePages: [0] });
     await fetchInProgressIssueCount({
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests hit the LinearClient surface consumed by boardSource
       client: client as unknown as LinearClient,
     });
     const [query, variables] = expectCallMatching(client.client.rawRequest, "InProgressIssues");
@@ -774,7 +761,7 @@ describe(resolveAgentFor, () => {
 });
 
 describe(fetchBlockersForTask, () => {
-  function makeBlockerClient(pages: { nodes: unknown[]; hasNextPage: boolean }[]): ClientStub {
+  function makeBlockerClient(pages: Array<{ nodes: unknown[]; hasNextPage: boolean }>): ClientStub {
     let callIndex = 0;
     return {
       client: {
@@ -807,7 +794,6 @@ describe(fetchBlockersForTask, () => {
       },
     ]);
     const blockers = await fetchBlockersForTask({
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests hit the LinearClient surface consumed by boardSource
       client: client as unknown as LinearClient,
       task: "TEAM-1",
       uuid: "uuid-1",
@@ -823,7 +809,6 @@ describe(fetchBlockersForTask, () => {
       { nodes: [blockingRelation("TEAM-10", "Done", "completed")], hasNextPage: false },
     ]);
     const blockers = await fetchBlockersForTask({
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests hit the LinearClient surface consumed by boardSource
       client: client as unknown as LinearClient,
       task: "TEAM-1",
       uuid: "uuid-1",
@@ -838,7 +823,6 @@ describe(fetchBlockersForTask, () => {
       },
     };
     const blockers = await fetchBlockersForTask({
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests hit the LinearClient surface consumed by boardSource
       client: client as unknown as LinearClient,
       task: "TEAM-1",
       uuid: "uuid-1",

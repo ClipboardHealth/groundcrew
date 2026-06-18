@@ -144,16 +144,16 @@ interface IssueNodeStub {
   team?: { id: string; key: string } | null;
   assignee?: { name: string } | null;
   children?: { nodes: unknown[] };
-  labels?: { nodes: { name: string }[] };
+  labels?: { nodes: Array<{ name: string }> };
   inverseRelations?: {
-    nodes: {
+    nodes: Array<{
       type: string;
       issue?: {
         identifier: string;
         title: string;
         state?: { name: string; type?: string } | null;
       } | null;
-    }[];
+    }>;
     pageInfo: { hasNextPage: boolean };
   };
 }
@@ -276,7 +276,6 @@ function makeClient(options: {
 }
 
 function mockLinearClient(client: ClientStub): void {
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests use the LinearClient surface consumed by orchestrate
   linearClientMock.mockReturnValue(client as unknown as LinearClient);
 }
 
