@@ -161,13 +161,26 @@ describe(interruptWorkspace, () => {
     });
   });
 
-  it("fails when there is no run state or worktree", async () => {
+  it("closes the live workspace when there is no run state or worktree", async () => {
     readRunStateMock.mockReset();
     findByTaskMock.mockReturnValue([]);
+
+    await interruptWorkspace(config, { task: "orphan-1" });
+
+    expect(interruptMock).toHaveBeenCalledWith(config, "orphan-1");
+    expect(recordRunStateMock).not.toHaveBeenCalled();
+    expect(consoleLog.output()).toContain("Closed orphaned workspace orphan-1");
+  });
+
+  it("fails when there is no run state, no worktree, and no live workspace", async () => {
+    readRunStateMock.mockReset();
+    findByTaskMock.mockReturnValue([]);
+    interruptMock.mockResolvedValue({ kind: "missing" });
 
     await expect(interruptWorkspace(config, { task: "team-1" })).rejects.toThrow(
       /nothing to interrupt/,
     );
+    expect(recordRunStateMock).not.toHaveBeenCalled();
   });
 
   it("fails when the workspace backend is unavailable", async () => {
