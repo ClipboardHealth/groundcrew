@@ -683,7 +683,7 @@ async function worktreeHasPullRequest(input: {
 }): Promise<boolean> {
   const pullRequests = await findPullRequestsForBranch({
     cwd: input.entry.dir,
-    branchName: effectiveBranchName({ config: input.config, entry: input.entry }),
+    branchName: await effectiveBranchName({ config: input.config, entry: input.entry }),
   });
   return pullRequests.length > 0;
 }
