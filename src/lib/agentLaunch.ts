@@ -5,6 +5,8 @@ import {
 } from "@clipboard-health/clearance";
 
 import { clearanceAllowHostsFilesFromEnvironment } from "./clearanceAllowlist.ts";
+import { cmuxAgentHookSettingsJson } from "./cmuxAgentHooks.ts";
+import { shellSingleQuote } from "./shell.ts";
 import {
   hasPreLaunchEnv,
   type LocalRunner,
@@ -114,7 +116,8 @@ function safehouseAgentIntegrationFor(
   if (workspaceKind !== "cmux") {
     return undefined;
   }
-  const isClaudeAgent = inferAgentCommandName(definition.cmd) === "claude";
+  const agentCommandName = inferAgentCommandName(definition.cmd);
+  const isClaudeAgent = agentCommandName === "claude";
   const cmuxIntegration = resolveSafehouseCmuxIntegration();
   if (isClaudeAgent) {
     warnOnCmuxIntegrationDrift({ unreviewedEnvNames: cmuxIntegration.unreviewedEnvNames });
@@ -124,6 +127,14 @@ function safehouseAgentIntegrationFor(
     addDirsReadOnly: cmuxIntegration.addDirsReadOnly,
     envPass: cmuxIntegration.envPass,
     commandPreludes: isClaudeAgent ? [cmuxIntegration.claudeCommandPrelude] : [],
+    ...(isClaudeAgent
+      ? {
+          agentArgs: [
+            "--settings",
+            shellSingleQuote(cmuxAgentHookSettingsJson({ agent: agentCommandName })),
+          ],
+        }
+      : {}),
   };
 }
 
