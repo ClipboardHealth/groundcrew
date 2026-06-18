@@ -8,6 +8,14 @@
  * resolve the GitHub repo from that checkout's own `origin` remote. This
  * handles bare config names, full `owner/repo` slugs, forks, and SSH/HTTPS
  * remotes uniformly — we never reconstruct the slug ourselves.
+ *
+ * To guard against PRs from a long-dead, unrelated history that happens to
+ * have reused the same branch name, the lookup keeps only PRs whose head
+ * is linearly related to the worktree's local HEAD — either one reachable
+ * from the other via `git merge-base --is-ancestor`. When git can't tell
+ * (PR head not in the local object DB, etc.), the PR is kept; hiding a
+ * likely-relevant PR is worse than showing one the user can recognize as
+ * wrong from its title and URL.
  */
 
 import { runCommandAsync } from "./commandRunner.ts";
@@ -18,7 +26,7 @@ export interface PullRequestSummary {
   /** Lowercased lifecycle: "open" | "merged" | "closed". */
   state: string;
   title: string;
-  /** PR head commit SHA used to ignore historical PRs from reused branch names. */
+  /** PR head commit SHA; compared against local HEAD to drop unrelated histories. */
   headRefOid: string;
 }
 
@@ -202,10 +210,72 @@ export async function findPullRequestsForBranch(
       ),
       runCommandAsync("git", ["rev-parse", "HEAD"], options),
     ]);
-    return parsePullRequests(output).filter((pr) => pr.headRefOid === currentHeadOid);
+    const summaries = parsePullRequests(output);
+    const kept: PullRequestSummary[] = [];
+    for (const pr of summaries) {
+      if (pr.headRefOid === currentHeadOid) {
+        kept.push(pr);
+        continue;
+      }
+      // oxlint-disable-next-line no-await-in-loop -- ≤ GH_PR_LIST_LIMIT (5) PRs; sequential avoids fan-out of git processes for a status display
+      if (await mightShareHistory(pr.headRefOid, currentHeadOid, cwd, signal)) {
+        kept.push(pr);
+      }
+    }
+    return kept;
   } catch {
     // gh/git not installed / not authenticated / non-GitHub remote / network
     // error / etc. All resolve to "no PR info available" for display.
     return [];
   }
+}
+
+/**
+ * Returns true when the two heads might be on the same history — either git
+ * confirms one is reachable from the other, or git can't tell (missing object
+ * DB entry, git failure). Returns false only when both directions definitively
+ * report "not an ancestor", which is the branch-name-reuse case the strict
+ * filter was originally guarding against.
+ */
+async function mightShareHistory(
+  prHeadOid: string,
+  localHeadOid: string,
+  cwd: string,
+  signal: AbortSignal | undefined,
+): Promise<boolean> {
+  const forward = await ancestorRelation(prHeadOid, localHeadOid, cwd, signal);
+  if (forward !== "not-ancestor") {
+    return true;
+  }
+  const reverse = await ancestorRelation(localHeadOid, prHeadOid, cwd, signal);
+  return reverse !== "not-ancestor";
+}
+
+async function ancestorRelation(
+  ancestor: string,
+  descendant: string,
+  cwd: string,
+  signal: AbortSignal | undefined,
+): Promise<"ancestor" | "not-ancestor" | "unknown"> {
+  const options = signal === undefined ? { cwd } : { cwd, signal };
+  try {
+    await runCommandAsync("git", ["merge-base", "--is-ancestor", ancestor, descendant], options);
+    return "ancestor";
+  } catch (error) {
+    // Exit 1 is git's definitive "not an ancestor". Anything else (typically
+    // exit 128 — missing object, bad SHA, repo error) is non-definitive;
+    // favor visibility and let the caller keep the PR.
+    return hasExitStatus(error, 1) ? "not-ancestor" : "unknown";
+  }
+}
+
+function hasExitStatus(error: unknown, expected: number): boolean {
+  if (typeof error !== "object" || error === null || !("cause" in error)) {
+    return false;
+  }
+  const { cause } = error;
+  if (typeof cause !== "object" || cause === null || !("status" in cause)) {
+    return false;
+  }
+  return typeof cause.status === "number" && cause.status === expected;
 }

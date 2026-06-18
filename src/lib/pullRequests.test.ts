@@ -20,6 +20,11 @@ vi.mock(import("./commandRunner.ts"), async (importOriginal) => {
 
 const WORKTREE_HEAD_OID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const STALE_HEAD_OID = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+const PR_AHEAD_OF_LOCAL_OID = "cccccccccccccccccccccccccccccccccccccccc";
+const LOCAL_AHEAD_OF_PR_OID = "dddddddddddddddddddddddddddddddddddddddd";
+const MISSING_PR_HEAD_OID = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+
+type AncestorVerdict = "ancestor" | "not-ancestor" | "missing";
 
 interface RawPullRequestFixture {
   url: string;
@@ -39,15 +44,56 @@ function rawPullRequest(overrides: Partial<RawPullRequestFixture> = {}): RawPull
   };
 }
 
-function mockSuccessfulLookup(output: string, currentHeadOid = WORKTREE_HEAD_OID): void {
-  runCommandMock.mockImplementation(async (command) => {
+function commandFailure(status: number): Error {
+  const cause = Object.assign(new Error("Command exited unsuccessfully"), { status });
+  return new Error(`Command failed (test fixture)\nExit status: ${status}`, { cause });
+}
+
+function mockSuccessfulLookup(
+  output: string,
+  currentHeadOid: string = WORKTREE_HEAD_OID,
+  ancestorMap: Readonly<Record<string, AncestorVerdict>> = {},
+): void {
+  runCommandMock.mockImplementation(async (command, arguments_) => {
     if (command === "gh") {
       return output;
     }
-    if (command === "git") {
+    if (command !== "git") {
+      throw new Error(`unexpected command: ${command}`);
+    }
+    const [verb, flag, ancestor, descendant] = arguments_;
+    if (verb === "rev-parse" && flag === "HEAD") {
       return currentHeadOid;
     }
-    throw new Error(`unexpected command: ${command}`);
+    if (verb === "merge-base" && flag === "--is-ancestor") {
+      const verdict = ancestorMap[`${ancestor}->${descendant}`];
+      if (verdict === undefined) {
+        throw new Error(`unmocked merge-base --is-ancestor ${ancestor} ${descendant}`);
+      }
+      if (verdict === "ancestor") {
+        return "";
+      }
+      throw commandFailure(verdict === "not-ancestor" ? 1 : 128);
+    }
+    throw new Error(`unexpected git args: ${arguments_.join(" ")}`);
+  });
+}
+
+function mockMergeBaseRawError(prNumber: number, prHeadOid: string, mergeBaseError: Error): void {
+  runCommandMock.mockImplementation(async (command, arguments_) => {
+    if (command === "gh") {
+      return JSON.stringify([rawPullRequest({ number: prNumber, headRefOid: prHeadOid })]);
+    }
+    if (command !== "git") {
+      throw new Error(`unexpected command: ${command}`);
+    }
+    if (arguments_[0] === "rev-parse") {
+      return WORKTREE_HEAD_OID;
+    }
+    if (arguments_[0] === "merge-base") {
+      throw mergeBaseError;
+    }
+    throw new Error(`unexpected git args: ${arguments_.join(" ")}`);
   });
 }
 
@@ -103,6 +149,11 @@ describe(findPullRequestsForBranch, () => {
     expect(runCommandMock).toHaveBeenCalledWith("git", ["rev-parse", "HEAD"], {
       cwd: "/work/widgets-team-1",
     });
+    expect(runCommandMock).not.toHaveBeenCalledWith(
+      "git",
+      expect.arrayContaining(["merge-base"]),
+      expect.anything(),
+    );
   });
 
   it("normalises MERGED and CLOSED states to lowercase", async () => {
@@ -121,12 +172,17 @@ describe(findPullRequestsForBranch, () => {
     expect(prs.map((p) => p.state)).toStrictEqual(["merged", "closed"]);
   });
 
-  it("returns only PRs whose head matches the current worktree HEAD", async () => {
+  it("drops PRs whose head is on a history unrelated to local HEAD (branch-name reuse)", async () => {
     mockSuccessfulLookup(
       JSON.stringify([
         rawPullRequest({ number: 1, state: "MERGED", headRefOid: STALE_HEAD_OID }),
         rawPullRequest({ number: 2, state: "OPEN" }),
       ]),
+      WORKTREE_HEAD_OID,
+      {
+        [`${STALE_HEAD_OID}->${WORKTREE_HEAD_OID}`]: "not-ancestor",
+        [`${WORKTREE_HEAD_OID}->${STALE_HEAD_OID}`]: "not-ancestor",
+      },
     );
 
     const prs = await findPullRequestsForBranch({
@@ -135,6 +191,164 @@ describe(findPullRequestsForBranch, () => {
     });
 
     expect(prs.map((p) => p.number)).toStrictEqual([2]);
+  });
+
+  it("keeps a PR whose head is an ancestor of local HEAD (local has WIP commits on top)", async () => {
+    mockSuccessfulLookup(
+      JSON.stringify([rawPullRequest({ number: 7, headRefOid: PR_AHEAD_OF_LOCAL_OID })]),
+      WORKTREE_HEAD_OID,
+      { [`${PR_AHEAD_OF_LOCAL_OID}->${WORKTREE_HEAD_OID}`]: "ancestor" },
+    );
+
+    const prs = await findPullRequestsForBranch({
+      cwd: "/work/widgets-team-1",
+      branchName: "x",
+    });
+
+    expect(prs.map((p) => p.number)).toStrictEqual([7]);
+  });
+
+  it("keeps a PR whose head is ahead of local HEAD (PR has a merge-master commit)", async () => {
+    mockSuccessfulLookup(
+      JSON.stringify([rawPullRequest({ number: 8, headRefOid: LOCAL_AHEAD_OF_PR_OID })]),
+      WORKTREE_HEAD_OID,
+      {
+        [`${LOCAL_AHEAD_OF_PR_OID}->${WORKTREE_HEAD_OID}`]: "not-ancestor",
+        [`${WORKTREE_HEAD_OID}->${LOCAL_AHEAD_OF_PR_OID}`]: "ancestor",
+      },
+    );
+
+    const prs = await findPullRequestsForBranch({
+      cwd: "/work/widgets-team-1",
+      branchName: "x",
+    });
+
+    expect(prs.map((p) => p.number)).toStrictEqual([8]);
+  });
+
+  it("keeps a PR whose head is not in the local object DB (favor visibility over a missed fetch)", async () => {
+    mockSuccessfulLookup(
+      JSON.stringify([rawPullRequest({ number: 9, headRefOid: MISSING_PR_HEAD_OID })]),
+      WORKTREE_HEAD_OID,
+      {
+        [`${MISSING_PR_HEAD_OID}->${WORKTREE_HEAD_OID}`]: "missing",
+        [`${WORKTREE_HEAD_OID}->${MISSING_PR_HEAD_OID}`]: "missing",
+      },
+    );
+
+    const prs = await findPullRequestsForBranch({
+      cwd: "/work/widgets-team-1",
+      branchName: "x",
+    });
+
+    expect(prs.map((p) => p.number)).toStrictEqual([9]);
+  });
+
+  it("keeps a PR when merge-base fails with an error that has no cause (e.g. spawn ENOENT)", async () => {
+    mockMergeBaseRawError(12, STALE_HEAD_OID, new Error("spawn ENOENT"));
+
+    const prs = await findPullRequestsForBranch({
+      cwd: "/work/widgets-team-1",
+      branchName: "x",
+    });
+
+    expect(prs.map((p) => p.number)).toStrictEqual([12]);
+  });
+
+  it("keeps a PR when merge-base fails with a wrapper cause that carries no status field", async () => {
+    mockMergeBaseRawError(
+      13,
+      STALE_HEAD_OID,
+      new Error("wrapped", { cause: new Error("nested without status") }),
+    );
+
+    const prs = await findPullRequestsForBranch({
+      cwd: "/work/widgets-team-1",
+      branchName: "x",
+    });
+
+    expect(prs.map((p) => p.number)).toStrictEqual([13]);
+  });
+
+  it("preserves gh's ordering across a mixed batch of equal / ancestor / unrelated / descendant heads", async () => {
+    mockSuccessfulLookup(
+      JSON.stringify([
+        rawPullRequest({ number: 100 }),
+        rawPullRequest({ number: 101, headRefOid: PR_AHEAD_OF_LOCAL_OID }),
+        rawPullRequest({ number: 102, headRefOid: STALE_HEAD_OID }),
+        rawPullRequest({ number: 103, headRefOid: LOCAL_AHEAD_OF_PR_OID }),
+      ]),
+      WORKTREE_HEAD_OID,
+      {
+        [`${PR_AHEAD_OF_LOCAL_OID}->${WORKTREE_HEAD_OID}`]: "ancestor",
+        [`${STALE_HEAD_OID}->${WORKTREE_HEAD_OID}`]: "not-ancestor",
+        [`${WORKTREE_HEAD_OID}->${STALE_HEAD_OID}`]: "not-ancestor",
+        [`${LOCAL_AHEAD_OF_PR_OID}->${WORKTREE_HEAD_OID}`]: "not-ancestor",
+        [`${WORKTREE_HEAD_OID}->${LOCAL_AHEAD_OF_PR_OID}`]: "ancestor",
+      },
+    );
+
+    const prs = await findPullRequestsForBranch({
+      cwd: "/work/widgets-team-1",
+      branchName: "x",
+    });
+
+    expect(prs.map((p) => p.number)).toStrictEqual([100, 101, 103]);
+  });
+
+  it("keeps a PR when forward is not-ancestor but reverse is unknown (reverse-arm fallback)", async () => {
+    mockSuccessfulLookup(
+      JSON.stringify([rawPullRequest({ number: 15, headRefOid: MISSING_PR_HEAD_OID })]),
+      WORKTREE_HEAD_OID,
+      {
+        [`${MISSING_PR_HEAD_OID}->${WORKTREE_HEAD_OID}`]: "not-ancestor",
+        [`${WORKTREE_HEAD_OID}->${MISSING_PR_HEAD_OID}`]: "missing",
+      },
+    );
+
+    const prs = await findPullRequestsForBranch({
+      cwd: "/work/widgets-team-1",
+      branchName: "x",
+    });
+
+    expect(prs.map((p) => p.number)).toStrictEqual([15]);
+  });
+
+  it("forwards the AbortSignal to merge-base invocations alongside cwd", async () => {
+    mockSuccessfulLookup(
+      JSON.stringify([rawPullRequest({ number: 14, headRefOid: PR_AHEAD_OF_LOCAL_OID })]),
+      WORKTREE_HEAD_OID,
+      { [`${PR_AHEAD_OF_LOCAL_OID}->${WORKTREE_HEAD_OID}`]: "ancestor" },
+    );
+    const { signal } = new AbortController();
+
+    await findPullRequestsForBranch({
+      cwd: "/work/widgets-team-1",
+      branchName: "x",
+      signal,
+    });
+
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "git",
+      ["merge-base", "--is-ancestor", PR_AHEAD_OF_LOCAL_OID, WORKTREE_HEAD_OID],
+      { cwd: "/work/widgets-team-1", signal },
+    );
+  });
+
+  it("skips merge-base entirely on OID equality (fast path)", async () => {
+    mockSuccessfulLookup(JSON.stringify([rawPullRequest({ number: 11 })]));
+
+    const prs = await findPullRequestsForBranch({
+      cwd: "/work/widgets-team-1",
+      branchName: "x",
+    });
+
+    expect(prs.map((p) => p.number)).toStrictEqual([11]);
+    expect(runCommandMock).not.toHaveBeenCalledWith(
+      "git",
+      expect.arrayContaining(["merge-base"]),
+      expect.anything(),
+    );
   });
 
   it("returns empty when gh fails (not installed / not authenticated / network)", async () => {
