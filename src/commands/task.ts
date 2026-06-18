@@ -685,7 +685,11 @@ async function worktreeHasPullRequest(input: {
     cwd: input.entry.dir,
     branchName: await effectiveBranchName({ config: input.config, entry: input.entry }),
   });
-  return pullRequests.length > 0;
+  // Only an open PR gates `crew task done`: a merged or closed PR for this
+  // branch is stale (work already landed, or abandoned) and shouldn't keep the
+  // worktree pinned. The lifecycle filter also defends against branch-name
+  // reuse — a long-dead merged PR with the same head name doesn't count.
+  return pullRequests.some((pr) => pr.state === "open");
 }
 
 async function assertCanMarkDone(arguments_: {

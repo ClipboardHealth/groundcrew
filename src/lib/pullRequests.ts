@@ -9,13 +9,13 @@
  * handles bare config names, full `owner/repo` slugs, forks, and SSH/HTTPS
  * remotes uniformly — we never reconstruct the slug ourselves.
  *
- * To guard against PRs from a long-dead, unrelated history that happens to
- * have reused the same branch name, the lookup keeps only PRs whose head
- * is linearly related to the worktree's local HEAD — either one reachable
- * from the other via `git merge-base --is-ancestor`. When git can't tell
- * (PR head not in the local object DB, etc.), the PR is kept; hiding a
- * likely-relevant PR is worse than showing one the user can recognize as
- * wrong from its title and URL.
+ * Whatever GitHub returns is returned verbatim. We do not filter by commit
+ * history: the branch name on the remote (which `gh pr list --head` matches)
+ * is already a strong identifier for "the PR(s) for this checkout". Stale
+ * PRs from a long-dead branch with a reused name surface as `(merged)` or
+ * `(closed)` in the status output, which is more informative than silently
+ * dropping them. Decision-making callers (e.g. `crew task done`) filter by
+ * lifecycle state instead.
  */
 
 import { runCommandAsync } from "./commandRunner.ts";
@@ -26,8 +26,6 @@ export interface PullRequestSummary {
   /** Lowercased lifecycle: "open" | "merged" | "closed". */
   state: string;
   title: string;
-  /** PR head commit SHA; compared against local HEAD to drop unrelated histories. */
-  headRefOid: string;
 }
 
 const GH_PR_LIST_LIMIT = 5;
@@ -50,7 +48,6 @@ interface RawPullRequest {
   number: number;
   state: string;
   title: string;
-  headRefOid: string;
 }
 
 function parsePullRequests(output: string): PullRequestSummary[] {
@@ -73,7 +70,6 @@ function parsePullRequests(output: string): PullRequestSummary[] {
       number: entry.number,
       state: STATE_MAP[entry.state] ?? entry.state.toLowerCase(),
       title: entry.title,
-      headRefOid: entry.headRefOid,
     });
   }
   return summaries;
@@ -89,8 +85,7 @@ function isRawPullRequest(value: unknown): value is RawPullRequest {
     typeof record["url"] === "string" &&
     typeof record["number"] === "number" &&
     typeof record["state"] === "string" &&
-    typeof record["title"] === "string" &&
-    typeof record["headRefOid"] === "string"
+    typeof record["title"] === "string"
   );
 }
 
@@ -191,91 +186,26 @@ export async function findPullRequestsForBranch(
   const { cwd, branchName, signal } = arguments_;
   const options = signal === undefined ? { cwd } : { cwd, signal };
   try {
-    const [output, currentHeadOid] = await Promise.all([
-      runCommandAsync(
-        "gh",
-        [
-          "pr",
-          "list",
-          "--head",
-          branchName,
-          "--state",
-          "all",
-          "--limit",
-          String(GH_PR_LIST_LIMIT),
-          "--json",
-          "url,number,state,title,headRefOid",
-        ],
-        options,
-      ),
-      runCommandAsync("git", ["rev-parse", "HEAD"], options),
-    ]);
-    const summaries = parsePullRequests(output);
-    const kept: PullRequestSummary[] = [];
-    for (const pr of summaries) {
-      if (pr.headRefOid === currentHeadOid) {
-        kept.push(pr);
-        continue;
-      }
-      // oxlint-disable-next-line no-await-in-loop -- ≤ GH_PR_LIST_LIMIT (5) PRs; sequential avoids fan-out of git processes for a status display
-      if (await mightShareHistory(pr.headRefOid, currentHeadOid, cwd, signal)) {
-        kept.push(pr);
-      }
-    }
-    return kept;
+    const output = await runCommandAsync(
+      "gh",
+      [
+        "pr",
+        "list",
+        "--head",
+        branchName,
+        "--state",
+        "all",
+        "--limit",
+        String(GH_PR_LIST_LIMIT),
+        "--json",
+        "url,number,state,title",
+      ],
+      options,
+    );
+    return parsePullRequests(output);
   } catch {
-    // gh/git not installed / not authenticated / non-GitHub remote / network
+    // gh not installed / not authenticated / non-GitHub remote / network
     // error / etc. All resolve to "no PR info available" for display.
     return [];
   }
-}
-
-/**
- * Returns true when the two heads might be on the same history — either git
- * confirms one is reachable from the other, or git can't tell (missing object
- * DB entry, git failure). Returns false only when both directions definitively
- * report "not an ancestor", which is the branch-name-reuse case the strict
- * filter was originally guarding against.
- */
-async function mightShareHistory(
-  prHeadOid: string,
-  localHeadOid: string,
-  cwd: string,
-  signal: AbortSignal | undefined,
-): Promise<boolean> {
-  const forward = await ancestorRelation(prHeadOid, localHeadOid, cwd, signal);
-  if (forward !== "not-ancestor") {
-    return true;
-  }
-  const reverse = await ancestorRelation(localHeadOid, prHeadOid, cwd, signal);
-  return reverse !== "not-ancestor";
-}
-
-async function ancestorRelation(
-  ancestor: string,
-  descendant: string,
-  cwd: string,
-  signal: AbortSignal | undefined,
-): Promise<"ancestor" | "not-ancestor" | "unknown"> {
-  const options = signal === undefined ? { cwd } : { cwd, signal };
-  try {
-    await runCommandAsync("git", ["merge-base", "--is-ancestor", ancestor, descendant], options);
-    return "ancestor";
-  } catch (error) {
-    // Exit 1 is git's definitive "not an ancestor". Anything else (typically
-    // exit 128 — missing object, bad SHA, repo error) is non-definitive;
-    // favor visibility and let the caller keep the PR.
-    return hasExitStatus(error, 1) ? "not-ancestor" : "unknown";
-  }
-}
-
-function hasExitStatus(error: unknown, expected: number): boolean {
-  if (typeof error !== "object" || error === null || !("cause" in error)) {
-    return false;
-  }
-  const { cause } = error;
-  if (typeof cause !== "object" || cause === null || !("status" in cause)) {
-    return false;
-  }
-  return typeof cause.status === "number" && cause.status === expected;
 }

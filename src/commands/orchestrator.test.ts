@@ -1336,7 +1336,6 @@ JSON
           number: 3,
           state: "open",
           title: "PR",
-          headRefOid: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         },
       ]);
       const client = makeClient({ pages: [[]] });

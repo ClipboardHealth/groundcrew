@@ -44,7 +44,6 @@ function pullRequest(overrides: Partial<PullRequestSummary> = {}): PullRequestSu
     number: overrides.number ?? 1,
     state: overrides.state ?? "open",
     title: overrides.title ?? "PR title",
-    headRefOid: overrides.headRefOid ?? "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   };
 }
 
