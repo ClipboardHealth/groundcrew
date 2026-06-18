@@ -24,6 +24,18 @@ export interface WorkspaceStatus {
   icon?: string;
 }
 
+export interface WorkspaceProgress {
+  /**
+   * 0..1 carrier for the cmux `set-progress` value argument. A coarse
+   * lifecycle-phase number, NOT context-window usage; the Groundcrew sidebar
+   * renders `label` and hides the bar, so views that don't show the raw value
+   * ignore it.
+   */
+  value: number;
+  /** Human status painted on the workspace row (e.g. "running · claude"). */
+  label: string;
+}
+
 export interface WorkspaceAccessHint {
   kind: "attachCommand";
   command: string;
@@ -74,6 +86,16 @@ export interface Adapter {
    * has no concise external hint.
    */
   accessHint: (name: string) => WorkspaceAccessHint | undefined;
+  /**
+   * Paint a live status onto the workspace row, best-effort. Optional: a
+   * backend with no sidebar channel (tmux, zellij) omits it and callers skip
+   * the sync. cmux implements it via `set-progress`.
+   */
+  reportProgress?: (
+    name: string,
+    progress: WorkspaceProgress,
+    signal?: AbortSignal,
+  ) => Promise<void>;
 }
 
 export async function runWorkspaceCommand(
