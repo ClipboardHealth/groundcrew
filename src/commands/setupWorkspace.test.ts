@@ -437,7 +437,7 @@ describe(setupWorkspace, () => {
     );
     expect(runCommandMock).toHaveBeenCalledWith(
       "cmux",
-      expect.arrayContaining(["new-workspace", "--name", "team-1"]),
+      expect.arrayContaining(["new-workspace", "--name", "Test Title"]),
     );
     expect(runCommandMock).toHaveBeenCalledWith(
       "cmux",
@@ -635,7 +635,7 @@ describe(setupWorkspace, () => {
     );
     expect(runCommandMock).toHaveBeenCalledWith(
       "cmux",
-      expect.arrayContaining(["new-workspace", "--name", "team-1"]),
+      expect.arrayContaining(["new-workspace", "--name", "Test Title"]),
       { signal },
     );
   });

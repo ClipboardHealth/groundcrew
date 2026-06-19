@@ -32,6 +32,8 @@ export interface WorkspaceAccessHint {
 export interface OpenSpec {
   /** Task id; becomes the workspace's name. */
   name: string;
+  /** Human-facing panel title shown by the workspace UI; falls back to `name`; identity still keys on `name` via the description marker. */
+  displayName?: string;
   /** Working directory the workspace runs in. */
   cwd: string;
   /** Shell string the workspace executes (host setup + agent exec). */
