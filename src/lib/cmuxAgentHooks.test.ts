@@ -35,7 +35,7 @@ describe(buildCmuxAgentHookSettings, () => {
 
     expect(commandFor(actual, "SessionStart")).toContain("running · claude");
     expect(commandFor(actual, "UserPromptSubmit")).toContain("working");
-    expect(commandFor(actual, "Notification")).toContain("needs input");
+    expect(commandFor(actual, "Notification")).toContain("idle");
     expect(commandFor(actual, "Stop")).toContain("idle");
     expect(commandFor(actual, "SessionEnd")).toContain("done");
   });
