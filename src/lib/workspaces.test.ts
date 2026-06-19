@@ -157,7 +157,31 @@ describe("workspaces.open (cmux)", () => {
   beforeEach(commonBeforeEach);
   afterEach(commonAfterEach);
 
-  it("calls cmux new-workspace with the spec's name, working directory, and command", async () => {
+  it("uses displayName for --name and keeps groundcrew: marker in --description", async () => {
+    runMock.mockReturnValue(JSON.stringify({ ref: "workspace:42" }));
+
+    await workspaces.open(makeConfig(), {
+      name: "TEAM-1",
+      displayName: "Fix the login bug",
+      cwd: "/work/repo-a-TEAM-1",
+      command: "exec claude",
+    });
+
+    expect(runMock).toHaveBeenCalledWith("cmux", [
+      "--json",
+      "new-workspace",
+      "--name",
+      "Fix the login bug",
+      "--cwd",
+      "/work/repo-a-TEAM-1",
+      "--command",
+      "exec claude",
+      "--description",
+      "groundcrew:TEAM-1",
+    ]);
+  });
+
+  it("falls back to name for --name when displayName is absent", async () => {
     runMock.mockReturnValue(JSON.stringify({ ref: "workspace:42" }));
 
     await workspaces.open(makeConfig(), {

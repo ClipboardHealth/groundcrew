@@ -24,7 +24,7 @@ export const cmuxAdapter: Adapter = {
           "--json",
           "new-workspace",
           "--name",
-          spec.name,
+          spec.displayName ?? spec.name,
           "--cwd",
           spec.cwd,
           "--command",

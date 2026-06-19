@@ -278,6 +278,7 @@ export async function resumeWorkspace(
     await openAgentWorkspace({
       config,
       name: task,
+      displayName: context.title,
       cwd: launchDir,
       command: launchCmd,
       agent: context.agent,
