@@ -1,0 +1,39 @@
+{
+  "name": "jira",
+  "kind": "shell",
+  "description": "Feed JIRA issues into groundcrew via the jira CLI.",
+  "installDir": "~/.config/groundcrew",
+  "files": ["jira.sh"],
+  "prerequisites": [
+    {
+      "bin": "jira",
+      "install": "brew install ankitpokhrel/jira-cli/jira-cli",
+      "setup": "jira init"
+    },
+    {
+      "bin": "jq",
+      "install": "brew install jq"
+    }
+  ],
+  "secrets": [
+    {
+      "env": "JIRA_API_TOKEN",
+      "file": "jira.token",
+      "mode": "0600",
+      "url": "https://id.atlassian.com/manage-profile/security/api-tokens"
+    }
+  ],
+  "env": {
+    "JIRA_STATE_IN_PROGRESS": "In Progress",
+    "JIRA_STATE_IN_REVIEW": "In Review",
+    "JIRA_STATE_DONE": "Done"
+  },
+  "commands": {
+    "verify": "~/.config/groundcrew/jira.sh verify",
+    "listTasks": "~/.config/groundcrew/jira.sh list",
+    "getTask": "~/.config/groundcrew/jira.sh get ${id}",
+    "markInProgress": "~/.config/groundcrew/jira.sh move ${id} \"$JIRA_STATE_IN_PROGRESS\"",
+    "markInReview": "~/.config/groundcrew/jira.sh move ${id} \"$JIRA_STATE_IN_REVIEW\"",
+    "markDone": "~/.config/groundcrew/jira.sh move ${id} \"$JIRA_STATE_DONE\""
+  }
+}

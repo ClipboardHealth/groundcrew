@@ -15,9 +15,13 @@
     "docs/superpowers/**"
   ],
   "words": [
+    "ankitpokhrel",
     "assertname",
     "jdoe",
     "slugified",
+    "gsub",
+    "ltrimstr",
+    "startswith",
     "awsapps",
     "azureedge",
     "boardsource",

@@ -25,6 +25,8 @@ export default {
 };
 ```
 
+A complete, runnable JIRA source backed by the [`jira` CLI](https://github.com/ankitpokhrel/jira-cli) ships in [`task-sources/jira/`](../task-sources/jira/README.md): a single `jira.sh` dispatcher (`verify`/`list`/`get`/`move`) that maps JIRA's REST output into the contract below, plus the config block to wire it up.
+
 `commands.listTasks` must print a JSON array of issues. `commands.getTask`, when
 set, must print one issue, print nothing for "not found", or exit `3` for "not
 found". The legacy aliases `commands.fetch` and `commands.resolveOne` still work
@@ -72,7 +74,7 @@ source's declared paths. The `sdx` runner does not mount these host paths.
 ]
 ```
 
-Allowed `status` values are `todo`, `in-progress`, `in-review`, `done`, and `other`. Omit `repository` or `agent` when a task should not be groundcrew-eligible. `hasMoreBlockers` is optional and defaults to `false`; `sourceRef` is opaque data that groundcrew passes back to your writeback command.
+Allowed `status` values are `todo`, `in-progress`, `in-review`, `done`, and `other`. In shell-script JSON output, emit both `repository` and `agent`; use `null` when a task should not be groundcrew-eligible. `hasMoreBlockers` is optional and defaults to `false`; `sourceRef` is opaque data that groundcrew passes back to your writeback command.
 
 ## Todo.txt
 
