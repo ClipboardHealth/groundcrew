@@ -321,6 +321,26 @@ describe(resumeWorkspace, () => {
     expect(sessionId).not.toBe("team-1-20260101t000000z");
   });
 
+  it("mints a fresh id with --new for a resume-only session without start args", async () => {
+    const resumeOnlyConfig: ResolvedConfig = {
+      ...config,
+      agents: {
+        default: "claude",
+        definitions: {
+          claude: { cmd: "claude --auto", color: "#fff", session: { resume: "--continue" } },
+        },
+      },
+    };
+    readRunStateMock.mockReturnValue(makeRunState({ sessionId: "team-1-20260101t000000z" }));
+
+    await resumeWorkspace(resumeOnlyConfig, { task: "team-1", fresh: true });
+
+    const launchScript = stagedLaunchScript();
+    expect(launchScript).not.toContain("--session-id");
+    expect(launchScript).not.toContain("--continue");
+    expect(lastRecordedRunState().sessionId).toMatch(/^team-1-\d{8}t\d{6}z$/);
+  });
+
   it("falls back to cold-start when session config exists but no id was stored", async () => {
     readRunStateMock.mockReturnValue(makeRunState());
 
