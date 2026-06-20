@@ -54,12 +54,12 @@ interface ResolvedShellTimeouts {
 }
 
 const DEFAULT_TIMEOUTS: ResolvedShellTimeouts = {
-  verify: 10_000,
+  verify: 30_000,
   listTasks: 30_000,
-  getTask: 10_000,
-  markInProgress: 10_000,
-  markInReview: 10_000,
-  markDone: 10_000,
+  getTask: 30_000,
+  markInProgress: 30_000,
+  markInReview: 30_000,
+  markDone: 30_000,
   createTask: 30_000,
   validate: 30_000,
 };

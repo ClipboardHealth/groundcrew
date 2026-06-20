@@ -307,10 +307,12 @@ function mockExistingWorktree(): void {
   createMock.mockRejectedValue(new WorktreeAlreadyExistsError("/work/repo-a-team-1"));
 }
 
-function lastRunArgumentFromCallWithArgument(argument: string): string {
+function launchCommandFromRunCall(argument: string): string {
   const call = runCommandMock.mock.calls.find((candidate) => candidate[1].includes(argument));
-  const lastArgument = call?.[1].at(-1);
-  return typeof lastArgument === "string" ? lastArgument : "";
+  const arguments_ = call?.[1] ?? [];
+  const commandIndex = arguments_.indexOf("--command");
+  const commandValue = commandIndex === -1 ? undefined : arguments_[commandIndex + 1];
+  return typeof commandValue === "string" ? commandValue : "";
 }
 
 function writtenFileContent(filePath: string): string {
@@ -534,7 +536,7 @@ describe(setupWorkspace, () => {
       details: { title: "Test Title", description: "Body" },
     });
 
-    const command = lastRunArgumentFromCallWithArgument("new-workspace");
+    const command = launchCommandFromRunCall("new-workspace");
     const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
 
     expect(command).toBe("bash '/tmp/groundcrew-team-1-x/launch.sh'");
@@ -796,7 +798,7 @@ describe(setupWorkspace, () => {
     expect(firstInvocationOrder(createMock)).toBeLessThan(
       firstInvocationOrder(ensureClearanceMock),
     );
-    const command = lastRunArgumentFromCallWithArgument("new-workspace");
+    const command = launchCommandFromRunCall("new-workspace");
     const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
     expect(command).toBe("bash '/tmp/groundcrew-team-1-x/launch.sh'");
     expect(launchScript).toContain("cd '/work/repo-a-team-1'");
@@ -814,7 +816,8 @@ describe(setupWorkspace, () => {
     );
     expect(launchScript).toContain('_safehouse_shim="$_safehouse_shim_dir/claude"');
     expect(launchScript).not.toContain("--enable=all-agents");
-    expect(launchScript).toContain('exec claude --permission-mode auto "$@"');
+    expect(launchScript).toContain("exec claude --permission-mode auto --settings ");
+    expect(launchScript).toContain('"$@"');
     expect(launchScript).toContain('sh "$_p"');
     // prepareWorktree status guard so a failed install still launches the agent
     expect(launchScript).toContain('"$prepare_status" -ne 0');
@@ -1151,7 +1154,7 @@ describe(setupWorkspace, () => {
         "NPM_TOKEN='npm_test_token'\n",
         { mode: 0o600 },
       );
-      const command = lastRunArgumentFromCallWithArgument("new-workspace");
+      const command = launchCommandFromRunCall("new-workspace");
       const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
       expect(command).toBe("bash '/tmp/groundcrew-team-1-x/launch.sh'");
       expect(launchScript).toContain(". '/tmp/groundcrew-team-1-x/secrets.env'");
@@ -1213,7 +1216,7 @@ describe(setupWorkspace, () => {
         expect.anything(),
         expect.anything(),
       );
-      const command = lastRunArgumentFromCallWithArgument("new-workspace");
+      const command = launchCommandFromRunCall("new-workspace");
       const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
       expect(command).not.toContain("secrets.env");
       expect(command).not.toContain("unset NPM_TOKEN");
@@ -1931,7 +1934,7 @@ describe(setupWorkspace, () => {
       details: { title: "Test Title", description: "Body" },
     });
 
-    const cmd = lastRunArgumentFromCallWithArgument("new-workspace");
+    const cmd = launchCommandFromRunCall("new-workspace");
     const launchScript = writtenFileContent("/tmp/with'quote-1/launch.sh");
     expect(cmd).toContain(String.raw`'\''`);
     expect(launchScript).toContain(String.raw`_p=$(cat '/tmp/with'\''quote-1/prompt.txt')`);

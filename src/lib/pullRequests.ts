@@ -8,6 +8,14 @@
  * resolve the GitHub repo from that checkout's own `origin` remote. This
  * handles bare config names, full `owner/repo` slugs, forks, and SSH/HTTPS
  * remotes uniformly — we never reconstruct the slug ourselves.
+ *
+ * Whatever GitHub returns is returned verbatim. We do not filter by commit
+ * history: the branch name on the remote (which `gh pr list --head` matches)
+ * is already a strong identifier for "the PR(s) for this checkout". Stale
+ * PRs from a long-dead branch with a reused name surface as `(merged)` or
+ * `(closed)` in the status output, which is more informative than silently
+ * dropping them. Decision-making callers (e.g. `crew task done`) filter by
+ * lifecycle state instead.
  */
 
 import { runCommandAsync } from "./commandRunner.ts";
@@ -18,8 +26,6 @@ export interface PullRequestSummary {
   /** Lowercased lifecycle: "open" | "merged" | "closed". */
   state: string;
   title: string;
-  /** PR head commit SHA used to ignore historical PRs from reused branch names. */
-  headRefOid: string;
 }
 
 const GH_PR_LIST_LIMIT = 5;
@@ -42,7 +48,6 @@ interface RawPullRequest {
   number: number;
   state: string;
   title: string;
-  headRefOid: string;
 }
 
 function parsePullRequests(output: string): PullRequestSummary[] {
@@ -65,7 +70,6 @@ function parsePullRequests(output: string): PullRequestSummary[] {
       number: entry.number,
       state: STATE_MAP[entry.state] ?? entry.state.toLowerCase(),
       title: entry.title,
-      headRefOid: entry.headRefOid,
     });
   }
   return summaries;
@@ -81,8 +85,7 @@ function isRawPullRequest(value: unknown): value is RawPullRequest {
     typeof record["url"] === "string" &&
     typeof record["number"] === "number" &&
     typeof record["state"] === "string" &&
-    typeof record["title"] === "string" &&
-    typeof record["headRefOid"] === "string"
+    typeof record["title"] === "string"
   );
 }
 
@@ -183,28 +186,25 @@ export async function findPullRequestsForBranch(
   const { cwd, branchName, signal } = arguments_;
   const options = signal === undefined ? { cwd } : { cwd, signal };
   try {
-    const [output, currentHeadOid] = await Promise.all([
-      runCommandAsync(
-        "gh",
-        [
-          "pr",
-          "list",
-          "--head",
-          branchName,
-          "--state",
-          "all",
-          "--limit",
-          String(GH_PR_LIST_LIMIT),
-          "--json",
-          "url,number,state,title,headRefOid",
-        ],
-        options,
-      ),
-      runCommandAsync("git", ["rev-parse", "HEAD"], options),
-    ]);
-    return parsePullRequests(output).filter((pr) => pr.headRefOid === currentHeadOid);
+    const output = await runCommandAsync(
+      "gh",
+      [
+        "pr",
+        "list",
+        "--head",
+        branchName,
+        "--state",
+        "all",
+        "--limit",
+        String(GH_PR_LIST_LIMIT),
+        "--json",
+        "url,number,state,title",
+      ],
+      options,
+    );
+    return parsePullRequests(output);
   } catch {
-    // gh/git not installed / not authenticated / non-GitHub remote / network
+    // gh not installed / not authenticated / non-GitHub remote / network
     // error / etc. All resolve to "no PR info available" for display.
     return [];
   }

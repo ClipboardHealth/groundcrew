@@ -48,6 +48,15 @@ export function createVitestConfig(
       include: ["{src,tests}/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}"],
       name,
       reporters: ["default"],
+      // Subprocess-spawning tests (adapters/shell/*, orchestrator) spawn a
+      // child process that races the shell adapter's per-call timeout (up to
+      // 30s). With one worker thread per core plus v8 coverage, the pool
+      // saturates every core and a spawned child can't be scheduled in time.
+      // Cap the pool to leave CPU headroom for those children, and keep the
+      // harness timeout above the adapter ceiling so the real outcome wins.
+      testTimeout: 60_000,
+      hookTimeout: 60_000,
+      maxWorkers: 4,
       watch: false,
     },
   });

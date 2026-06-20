@@ -222,8 +222,10 @@ function renderPrepareAndAgentCommand(arguments_: LaunchCommandArguments): {
     worktreeDir: arguments_.worktreeDir,
     sandboxName: arguments_.sandboxName ?? "",
   });
+  const agentArgs = arguments_.safehouseAgentIntegration?.agentArgs ?? [];
+  const agentInvocation = agentArgs.length === 0 ? agentCmd : `${agentCmd} ${agentArgs.join(" ")}`;
   return {
-    agentCommand: `exec ${agentCmd} "$@"`,
+    agentCommand: `exec ${agentInvocation} "$@"`,
     prepareWorktreeCommand:
       arguments_.prepareWorktreeCommand === undefined
         ? undefined
@@ -404,6 +406,12 @@ export interface SafehouseAgentIntegration {
   addDirsReadOnly: readonly string[];
   envPass: readonly string[];
   commandPreludes: readonly string[];
+  /**
+   * Extra, already-shell-safe argv tokens appended to the agent invocation
+   * before the prompt positional (e.g. `--settings <quoted-json>` to inject
+   * cmux activity-reporting hooks for a Claude agent).
+   */
+  agentArgs?: readonly string[];
 }
 
 interface LaunchCommandArguments {

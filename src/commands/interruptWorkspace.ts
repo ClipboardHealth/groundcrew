@@ -82,14 +82,14 @@ function resolveInterruptSource(arguments_: {
   task: string;
   state: RunState | undefined;
   entry: WorktreeEntry | undefined;
-}): InterruptSource {
+}): InterruptSource | undefined {
   if (arguments_.state !== undefined) {
     return sourceFromState(arguments_.state);
   }
   if (arguments_.entry !== undefined) {
     return sourceFromWorktree(arguments_.config, arguments_.task, arguments_.entry);
   }
-  throw new Error(`No run state or worktree found for ${arguments_.task}; nothing to interrupt.`);
+  return undefined;
 }
 
 function interruptDetail(result: WorkspaceInterruptResult): string | undefined {
@@ -116,6 +116,10 @@ export async function interruptWorkspace(
   const state = readRunState(config, task);
   const [entry] = worktrees.findByTask(config, task);
   const source = resolveInterruptSource({ config, task, state, entry });
+  if (source === undefined) {
+    await interruptOrphanWorkspace(config, task);
+    return;
+  }
   const result = await workspaces.interrupt(config, source.workspaceName);
   failOnUnavailable(result);
   const detail = interruptDetail(result);
@@ -136,6 +140,21 @@ export async function interruptWorkspace(
   });
   log(`Interrupted ${task}; worktree preserved at ${source.worktreeDir}`);
   log(`Next: crew status ${task}`);
+}
+
+// Orphan path: a tmux session/window for `task` exists but neither a run-state
+// record nor a worktree does, so there's no lifecycle to record `interrupted`
+// against — just close the workspace. Reported in `crew status` under
+// "Orphaned sessions" and pointed at `crew stop`.
+async function interruptOrphanWorkspace(config: ResolvedConfig, task: string): Promise<void> {
+  const result = await workspaces.interrupt(config, task);
+  failOnUnavailable(result);
+  if (result.kind === "missing") {
+    throw new Error(
+      `No run state, worktree, or live workspace found for ${task}; nothing to interrupt.`,
+    );
+  }
+  log(`Closed orphaned workspace ${task}`);
 }
 
 export async function interruptWorkspaceCli(argv: string[]): Promise<void> {
