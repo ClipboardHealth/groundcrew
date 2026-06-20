@@ -283,81 +283,34 @@ describe(resumeWorkspace, () => {
     });
   });
 
-  function sessionConfig(): ResolvedConfig {
+  function resumeArgsConfig(): ResolvedConfig {
     return {
       ...config,
       agents: {
         default: "claude",
         definitions: {
-          claude: {
-            cmd: "claude --auto",
-            color: "#fff",
-            session: { start: "--session-id {{session}}", resume: "--resume {{session}}" },
-          },
+          claude: { cmd: "claude --auto", color: "#fff", resumeArgs: "--continue" },
         },
       },
     };
   }
 
-  it("reopens the stored chat session by default when the agent has session config", async () => {
-    readRunStateMock.mockReturnValue(makeRunState({ sessionId: "team-1-20260101t000000z" }));
+  it("appends resumeArgs by default so the agent reopens its conversation", async () => {
+    await resumeWorkspace(resumeArgsConfig(), { task: "team-1" });
 
-    await resumeWorkspace(sessionConfig(), { task: "team-1" });
-
-    expect(stagedLaunchScript()).toMatch(/--resume.*team-1-20260101t000000z/);
-    expect(lastRecordedRunState().sessionId).toBe("team-1-20260101t000000z");
+    expect(stagedLaunchScript()).toContain("--continue");
   });
 
-  it("cold-starts and mints a fresh pinned session id with --new", async () => {
-    readRunStateMock.mockReturnValue(makeRunState({ sessionId: "team-1-20260101t000000z" }));
+  it("cold-starts without resume args when --new is passed", async () => {
+    await resumeWorkspace(resumeArgsConfig(), { task: "team-1", fresh: true });
 
-    await resumeWorkspace(sessionConfig(), { task: "team-1", fresh: true });
-
-    const launchScript = stagedLaunchScript();
-    expect(launchScript).toMatch(/--session-id.*team-1-\d{8}t\d{6}z/);
-    expect(launchScript).not.toContain("--resume");
-    const { sessionId } = lastRecordedRunState();
-    expect(sessionId).toMatch(/^team-1-\d{8}t\d{6}z$/);
-    expect(sessionId).not.toBe("team-1-20260101t000000z");
+    expect(stagedLaunchScript()).not.toContain("--continue");
   });
 
-  it("mints a fresh id with --new for a resume-only session without start args", async () => {
-    const resumeOnlyConfig: ResolvedConfig = {
-      ...config,
-      agents: {
-        default: "claude",
-        definitions: {
-          claude: { cmd: "claude --auto", color: "#fff", session: { resume: "--continue" } },
-        },
-      },
-    };
-    readRunStateMock.mockReturnValue(makeRunState({ sessionId: "team-1-20260101t000000z" }));
-
-    await resumeWorkspace(resumeOnlyConfig, { task: "team-1", fresh: true });
-
-    const launchScript = stagedLaunchScript();
-    expect(launchScript).not.toContain("--session-id");
-    expect(launchScript).not.toContain("--continue");
-    expect(lastRecordedRunState().sessionId).toMatch(/^team-1-\d{8}t\d{6}z$/);
-  });
-
-  it("falls back to cold-start when session config exists but no id was stored", async () => {
-    readRunStateMock.mockReturnValue(makeRunState());
-
-    await resumeWorkspace(sessionConfig(), { task: "team-1" });
-
-    expect(stagedLaunchScript()).not.toContain("--resume");
-    expect(lastRecordedRunState().sessionId).toBeUndefined();
-  });
-
-  it("does not touch the launch command for agents without session config", async () => {
-    readRunStateMock.mockReturnValue(makeRunState({ sessionId: "team-1-20260101t000000z" }));
-
+  it("does not append resume args for agents without resumeArgs", async () => {
     await resumeWorkspace(config, { task: "team-1" });
 
-    const launchScript = stagedLaunchScript();
-    expect(launchScript).not.toContain("--resume");
-    expect(launchScript).not.toContain("--session-id");
+    expect(stagedLaunchScript()).not.toContain("--continue");
   });
 
   it("prefers the run-state branch over the task-derived worktree branch", async () => {

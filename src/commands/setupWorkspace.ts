@@ -1,12 +1,11 @@
 import { rmSync } from "node:fs";
-import { type AgentDefinition, loadConfig, type ResolvedConfig } from "../lib/config.ts";
+import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { composeAgentLaunch, openAgentWorkspace, prepareAgentLaunch } from "../lib/agentLaunch.ts";
 import { type Board, createBoard } from "../lib/board.ts";
 import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
-import { withSessionArgs, workerEnvironmentForTask } from "../lib/launchCommand.ts";
+import { workerEnvironmentForTask } from "../lib/launchCommand.ts";
 import { resolvePrepareWorktreeCommand } from "../lib/repositoryHooks.ts";
 import { recordRunState } from "../lib/runState.ts";
-import { generateSessionId } from "../lib/sessionId.ts";
 import { sourceSupportsMarkDone } from "../lib/sourceCapabilities.ts";
 import {
   stageBuildSecrets,
@@ -66,27 +65,6 @@ function stagePrompt(input: {
       workspaceContinuationInstruction: input.workspaceContinuationInstruction,
     },
   });
-}
-
-/**
- * Pin a chat session for the first launch when the agent has `session` config:
- * generate a `<task>-<timestamp>` id and, when a `start` template is set, append
- * it so the agent opens its conversation under that id. Returns the (possibly
- * augmented) definition to launch and the id to record in run state.
- */
-function resolveStartSession(
-  definition: AgentDefinition,
-  task: string,
-): { definition: AgentDefinition; sessionId: string | undefined } {
-  if (definition.session === undefined) {
-    return { definition, sessionId: undefined };
-  }
-  const sessionId = generateSessionId(task);
-  const { start } = definition.session;
-  return {
-    definition: start === undefined ? definition : withSessionArgs(definition, start, sessionId),
-    sessionId,
-  };
 }
 
 export async function setupWorkspace(
@@ -180,14 +158,11 @@ export async function setupWorkspace(
             workingDir: launchDir,
           })
         : undefined;
-    // Pin a chat session id when the agent opts into resumable sessions, so a
-    // later `crew resume` can reopen the conversation.
-    const { definition: launchDefinition, sessionId } = resolveStartSession(definition, task);
     const { launchCommand, srtSettingsDir: stagedSrtSettingsDir } = composeAgentLaunch({
       runner,
       networkEgress,
       task,
-      definition: launchDefinition,
+      definition,
       promptFile: stagedPrompt.file,
       worktreeDir,
       workingDir: launchDir,
@@ -226,7 +201,6 @@ export async function setupWorkspace(
       title: taskDetails.title,
       completionTaskId,
       ...(taskDetails.url === undefined ? {} : { url: taskDetails.url }),
-      ...(sessionId === undefined ? {} : { sessionId }),
     });
 
     log(`${okMark()} "${task}" launched (${agent})  worktree ${worktreeName}`);
@@ -375,7 +349,6 @@ function recordRunStateBestEffort(arguments_: {
   detail?: string;
   url?: string;
   completionTaskId: string;
-  sessionId?: string;
 }): void {
   try {
     recordRunState({
@@ -392,7 +365,6 @@ function recordRunStateBestEffort(arguments_: {
         completionTaskId: arguments_.completionTaskId,
         ...(arguments_.detail === undefined ? {} : { detail: arguments_.detail }),
         ...(arguments_.url === undefined ? {} : { url: arguments_.url }),
-        ...(arguments_.sessionId === undefined ? {} : { sessionId: arguments_.sessionId }),
       },
     });
   } catch (error) {

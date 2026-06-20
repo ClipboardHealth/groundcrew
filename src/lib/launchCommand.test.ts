@@ -9,7 +9,7 @@ import {
   resolveSafehouseClearancePath,
   resolveSrtBinPath,
   srtBinEntry,
-  withSessionArgs,
+  withResumeArgs,
 } from "./launchCommand.ts";
 
 const WORKER_ENVIRONMENT = {
@@ -1430,33 +1430,33 @@ describe("buildLaunchCommand omitPromptArgument (interactive launch)", () => {
   });
 });
 
-describe(withSessionArgs, () => {
+describe(withResumeArgs, () => {
   const definition = {
     cmd: "claude --permission-mode auto",
     color: "#fff",
   } satisfies AgentDefinition;
 
-  it("appends the substituted session args after the base cmd", () => {
-    const actual = withSessionArgs(definition, "--resume {{session}}", "team-1-20260618t193656z");
+  it("appends the resume args after the base cmd", () => {
+    const actual = withResumeArgs(definition, "--continue");
 
-    expect(actual.cmd).toBe("claude --permission-mode auto --resume 'team-1-20260618t193656z'");
+    expect(actual.cmd).toBe("claude --permission-mode auto --continue");
   });
 
-  it("substitutes every {{session}} occurrence and shell-quotes the id", () => {
-    const actual = withSessionArgs(definition, "resume {{session}} --tag {{session}}", "team-1");
+  it("appends subcommand-style resume args verbatim", () => {
+    const actual = withResumeArgs({ cmd: "codex --yolo", color: "#000" }, "resume --last");
 
-    expect(actual.cmd).toBe("claude --permission-mode auto resume 'team-1' --tag 'team-1'");
+    expect(actual.cmd).toBe("codex --yolo resume --last");
   });
 
-  it("preserves the inferred command name (first token) so safehouse profile selection is unaffected", () => {
-    const actual = withSessionArgs(definition, "--session-id {{session}}", "team-1");
+  it("preserves the inferred command name (first token) and color", () => {
+    const actual = withResumeArgs(definition, "--continue");
 
     expect(actual.cmd.startsWith("claude ")).toBe(true);
     expect(actual.color).toBe(definition.color);
   });
 
   it("does not mutate the input definition", () => {
-    withSessionArgs(definition, "--resume {{session}}", "team-1");
+    withResumeArgs(definition, "--continue");
 
     expect(definition.cmd).toBe("claude --permission-mode auto");
   });

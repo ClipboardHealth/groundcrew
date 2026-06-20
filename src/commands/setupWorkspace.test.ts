@@ -449,67 +449,6 @@ describe(setupWorkspace, () => {
     });
   });
 
-  it("pins a chat session id and injects the start args when the agent has session config", async () => {
-    const config = makeConfig({
-      definitions: {
-        claude: {
-          cmd: "claude --auto",
-          color: "#fff",
-          session: { start: "--session-id {{session}}", resume: "--resume {{session}}" },
-        },
-      },
-    });
-    mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
-
-    await setupWorkspace(config, {
-      task: "team-1",
-      repository: "repo-a",
-      agent: "claude",
-      details: { title: "Test Title", description: "Body" },
-    });
-
-    const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
-    expect(launchScript).toMatch(/--session-id.*team-1-\d{8}t\d{6}z/);
-    expect(lastRecordedRunState().sessionId).toMatch(/^team-1-\d{8}t\d{6}z$/);
-  });
-
-  it("records a session id without touching the launch command for a resume-only session", async () => {
-    const config = makeConfig({
-      definitions: {
-        claude: { cmd: "claude --auto", color: "#fff", session: { resume: "--continue" } },
-      },
-    });
-    mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
-
-    await setupWorkspace(config, {
-      task: "team-1",
-      repository: "repo-a",
-      agent: "claude",
-      details: { title: "Test Title", description: "Body" },
-    });
-
-    const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
-    expect(launchScript).not.toContain("--session-id");
-    expect(launchScript).not.toContain("--continue");
-    expect(lastRecordedRunState().sessionId).toMatch(/^team-1-\d{8}t\d{6}z$/);
-  });
-
-  it("does not record a session id for agents without session config", async () => {
-    const config = makeConfig();
-    mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
-
-    await setupWorkspace(config, {
-      task: "team-1",
-      repository: "repo-a",
-      agent: "claude",
-      details: { title: "Test Title", description: "Body" },
-    });
-
-    const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
-    expect(launchScript).not.toContain("--session-id");
-    expect(lastRecordedRunState().sessionId).toBeUndefined();
-  });
-
   it("records the task url in RunState when the source provides one", async () => {
     const config = makeConfig();
     mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));

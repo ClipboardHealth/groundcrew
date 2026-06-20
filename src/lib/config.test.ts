@@ -1991,18 +1991,12 @@ describe("loadConfig", () => {
     await expect(loadConfig()).rejects.toThrow(/no crew config found/);
   });
 
-  it("resolves an agent session block with start and resume templates", async () => {
+  it("resolves an agent's resumeArgs", async () => {
     const configPath = writeConfigFile(
       temporary,
       validConfigSource({
         workspace: VALID_WORKSPACE(temporary),
-        agents: {
-          definitions: {
-            claude: {
-              session: { start: "--session-id {{session}}", resume: "--resume {{session}}" },
-            },
-          },
-        },
+        agents: { definitions: { claude: { resumeArgs: "--continue" } } },
       }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
@@ -2010,89 +2004,38 @@ describe("loadConfig", () => {
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
 
-    expect(actual.agents.definitions["claude"]?.session).toStrictEqual({
-      start: "--session-id {{session}}",
-      resume: "--resume {{session}}",
-    });
+    expect(actual.agents.definitions["claude"]?.resumeArgs).toBe("--continue");
   });
 
-  it("allows a resume-only session block without start", async () => {
+  it("rejects whitespace-only resumeArgs", async () => {
     const configPath = writeConfigFile(
       temporary,
       validConfigSource({
         workspace: VALID_WORKSPACE(temporary),
-        agents: { definitions: { claude: { session: { resume: "--continue" } } } },
-      }),
-    );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
-
-    const { loadConfig } = await loadFreshConfig();
-    const actual = await loadConfig();
-
-    expect(actual.agents.definitions["claude"]?.session).toStrictEqual({ resume: "--continue" });
-  });
-
-  it("rejects a session block missing the required resume template", async () => {
-    const configPath = writeConfigFile(
-      temporary,
-      [
-        "export default {",
-        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        '  agents: { definitions: { claude: { session: { start: "--session-id {{session}}" } } } },',
-        "};",
-      ].join("\n"),
-    );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
-
-    const { loadConfig } = await loadFreshConfig();
-    await expect(loadConfig()).rejects.toThrow(/agents\.definitions\.claude\.session\.resume/);
-  });
-
-  it("rejects a session template that uses an unknown placeholder", async () => {
-    const configPath = writeConfigFile(
-      temporary,
-      validConfigSource({
-        workspace: VALID_WORKSPACE(temporary),
-        agents: { definitions: { claude: { session: { resume: "--resume {{worktree}}" } } } },
-      }),
-    );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
-
-    const { loadConfig } = await loadFreshConfig();
-    await expect(loadConfig()).rejects.toThrow(/unknown placeholder "\{\{worktree\}\}"/);
-  });
-
-  it("rejects a whitespace-only session template", async () => {
-    const configPath = writeConfigFile(
-      temporary,
-      validConfigSource({
-        workspace: VALID_WORKSPACE(temporary),
-        agents: { definitions: { claude: { session: { resume: "   " } } } },
+        agents: { definitions: { claude: { resumeArgs: "   " } } },
       }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
 
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(
-      /agents\.definitions\.claude\.session\.resume must be a non-empty string/,
+      /agents\.definitions\.claude\.resumeArgs must be a non-empty string/,
     );
   });
 
-  it("rejects a session block that is not an object", async () => {
+  it("rejects non-string resumeArgs", async () => {
     const configPath = writeConfigFile(
       temporary,
       [
         "export default {",
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        "  agents: { definitions: { claude: { session: 5 } } },",
+        "  agents: { definitions: { claude: { resumeArgs: 5 } } },",
         "};",
       ].join("\n"),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
 
     const { loadConfig } = await loadFreshConfig();
-    await expect(loadConfig()).rejects.toThrow(
-      /agents\.definitions\.claude\.session must be an object/,
-    );
+    await expect(loadConfig()).rejects.toThrow(/agents\.definitions\.claude\.resumeArgs/);
   });
 });

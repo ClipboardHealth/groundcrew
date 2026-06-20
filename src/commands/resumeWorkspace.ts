@@ -3,9 +3,8 @@ import { getLinearClient } from "../lib/adapters/linear/client.ts";
 import { isLinearEnabled, sourcesFromConfig } from "../lib/buildSources.ts";
 import { type AgentDefinition, loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { composeAgentLaunch, openAgentWorkspace, prepareAgentLaunch } from "../lib/agentLaunch.ts";
-import { withSessionArgs, workerEnvironmentForTask } from "../lib/launchCommand.ts";
+import { withResumeArgs, workerEnvironmentForTask } from "../lib/launchCommand.ts";
 import { readRunState, recordRunState, type RunState } from "../lib/runState.ts";
-import { generateSessionId } from "../lib/sessionId.ts";
 import { taskSupportsCompletionCommand } from "../lib/sourceCapabilities.ts";
 import {
   removeStagedPrompt,
@@ -22,10 +21,9 @@ import { resolveLaunchDir, type WorktreeEntry, worktrees } from "../lib/worktree
 export interface ResumeWorkspaceOptions {
   task: string;
   /**
-   * Force a fresh chat session: cold-start the agent (the historic behavior)
-   * and, for agents with `session` config, mint and pin a new session id that
-   * future `crew resume` calls reopen. Defaults to false (reopen the stored
-   * session when one exists).
+   * Force a fresh conversation: cold-start the agent (the historic behavior),
+   * ignoring the agent's `resumeArgs`. Defaults to false, which reopens the
+   * agent's previous conversation when `resumeArgs` is configured.
    */
   fresh?: boolean;
 }
@@ -46,8 +44,6 @@ interface ResumeContext {
   completionMarkDoneSupported: boolean;
   reason?: string;
   resumeCount: number;
-  /** Chat session id pinned at first launch; undefined on the cold-resume path. */
-  sessionId?: string;
 }
 
 function parseArguments(argv: string[]): ResumeWorkspaceOptions {
@@ -131,7 +127,6 @@ async function contextFromState(
     }),
     ...(state.reason === undefined ? {} : { reason: state.reason }),
     resumeCount: state.resumeCount,
-    ...(state.sessionId === undefined ? {} : { sessionId: state.sessionId }),
   };
 }
 
@@ -179,53 +174,25 @@ function renderResumePrompt(context: ResumeContext): string {
   ].join("\n");
 }
 
-interface SessionLaunch {
-  /** The (possibly session-augmented) definition to launch. */
-  definition: AgentDefinition;
-  /** Session id to record in run state; undefined when no session is pinned. */
-  sessionId: string | undefined;
-}
-
 /**
- * Decide how to launch a resume: reopen the stored chat session (default),
- * mint a fresh one (`--new`), or fall back to today's cold-start when there is
- * no session to reopen. Returns the definition to launch and the id to record.
+ * Decide the definition to launch on resume: when the agent has `resumeArgs`
+ * and `--new` was not passed, append them so the agent reopens its previous
+ * conversation; otherwise cold-start (the historic behavior).
  */
-function resolveSessionLaunch(input: {
+function resolveResumeLaunch(input: {
   task: string;
   definition: AgentDefinition;
-  context: ResumeContext;
   fresh: boolean;
-}): SessionLaunch {
-  const { task, definition, context, fresh } = input;
-  const { session } = definition;
-  if (fresh) {
-    if (session === undefined) {
-      return { definition, sessionId: undefined };
+}): AgentDefinition {
+  const { task, definition, fresh } = input;
+  if (fresh || definition.resumeArgs === undefined) {
+    if (fresh && definition.resumeArgs !== undefined) {
+      log(`Starting a fresh conversation for ${task}`);
     }
-    const sessionId = generateSessionId(task);
-    log(`Starting a fresh chat session for ${task} (${sessionId})`);
-    return {
-      definition:
-        session.start === undefined
-          ? definition
-          : withSessionArgs(definition, session.start, sessionId),
-      sessionId,
-    };
+    return definition;
   }
-  if (session?.resume !== undefined && context.sessionId !== undefined) {
-    log(`Reopening chat session ${context.sessionId} for ${task}`);
-    return {
-      definition: withSessionArgs(definition, session.resume, context.sessionId),
-      sessionId: context.sessionId,
-    };
-  }
-  if (session?.resume !== undefined) {
-    log(
-      `No stored chat session for ${task}; cold-starting. Use 'crew resume --new ${task}' to pin one.`,
-    );
-  }
-  return { definition, sessionId: context.sessionId };
+  log(`Reopening the previous conversation for ${task}`);
+  return withResumeArgs(definition, definition.resumeArgs);
 }
 
 export async function resumeWorkspace(
@@ -240,10 +207,9 @@ export async function resumeWorkspace(
     throw new Error(`Unknown agent: ${context.agent}`);
   }
 
-  const { definition: launchDefinition, sessionId } = resolveSessionLaunch({
+  const launchDefinition = resolveResumeLaunch({
     task,
     definition,
-    context,
     fresh: options.fresh === true,
   });
 
@@ -327,7 +293,6 @@ export async function resumeWorkspace(
       resumeCount: context.resumeCount + 1,
       completionTaskId: context.completionTaskId,
       ...(context.reason === undefined ? {} : { reason: context.reason }),
-      ...(sessionId === undefined ? {} : { sessionId }),
     },
   });
   log(`Resumed ${task} in ${context.worktree.dir} (${context.agent})`);

@@ -47,14 +47,6 @@ export interface RunState {
    * rather than created by groundcrew. Teardown must preserve such branches.
    */
   adoptedBranch?: boolean;
-  /**
-   * Literal `<task>-<timestamp>` chat-session id pinned at first launch when
-   * the agent has a `session` config. `crew resume` reuses it to reopen the
-   * agent CLI's conversation; `crew resume --new` overwrites it. Absent for
-   * agents without `session` config and for tasks dispatched before the
-   * feature existed (those resume via the cold-start path).
-   */
-  sessionId?: string;
 }
 
 export interface RunStateDraft {
@@ -72,7 +64,6 @@ export interface RunStateDraft {
   url?: string;
   completionTaskId?: string;
   adoptedBranch?: boolean;
-  sessionId?: string;
 }
 
 export interface RecordRunStateInput {
@@ -129,36 +120,6 @@ function isValidResumeCount(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 0;
 }
 
-type OptionalRunStateFields = Pick<
-  RunState,
-  "reason" | "detail" | "title" | "url" | "completionTaskId" | "adoptedBranch" | "sessionId"
->;
-
-/**
- * Collect the optional run-state fields, dropping the ones that are undefined.
- * Shared by `parseRunState` and `recordRunState` so the per-field presence
- * checks live in one place instead of inflating both functions.
- */
-function optionalRunStateFields(fields: {
-  reason: string | undefined;
-  detail: string | undefined;
-  title: string | undefined;
-  url: string | undefined;
-  completionTaskId: string | undefined;
-  adoptedBranch: boolean | undefined;
-  sessionId: string | undefined;
-}): Partial<OptionalRunStateFields> {
-  return {
-    ...(fields.reason === undefined ? {} : { reason: fields.reason }),
-    ...(fields.detail === undefined ? {} : { detail: fields.detail }),
-    ...(fields.title === undefined ? {} : { title: fields.title }),
-    ...(fields.url === undefined ? {} : { url: fields.url }),
-    ...(fields.completionTaskId === undefined ? {} : { completionTaskId: fields.completionTaskId }),
-    ...(fields.adoptedBranch === undefined ? {} : { adoptedBranch: fields.adoptedBranch }),
-    ...(fields.sessionId === undefined ? {} : { sessionId: fields.sessionId }),
-  };
-}
-
 function parseRunState(value: unknown): RunState | undefined {
   if (!isPlainObject(value)) {
     return undefined;
@@ -178,7 +139,6 @@ function parseRunState(value: unknown): RunState | undefined {
   const url = stringField(value, "url");
   const completionTaskId = stringField(value, "completionTaskId");
   const adoptedBranch = value["adoptedBranch"] === true ? true : undefined;
-  const sessionId = stringField(value, "sessionId");
   if (
     task === undefined ||
     repository === undefined ||
@@ -204,15 +164,12 @@ function parseRunState(value: unknown): RunState | undefined {
     createdAt,
     updatedAt,
     resumeCount,
-    ...optionalRunStateFields({
-      reason,
-      detail,
-      title,
-      url,
-      completionTaskId,
-      adoptedBranch,
-      sessionId,
-    }),
+    ...(reason === undefined ? {} : { reason }),
+    ...(detail === undefined ? {} : { detail }),
+    ...(title === undefined ? {} : { title }),
+    ...(url === undefined ? {} : { url }),
+    ...(completionTaskId === undefined ? {} : { completionTaskId }),
+    ...(adoptedBranch === undefined ? {} : { adoptedBranch }),
   };
 }
 
@@ -248,7 +205,6 @@ export function recordRunState(input: RecordRunStateInput): RunState {
   const url = input.state.url ?? existing?.url;
   const completionTaskId = input.state.completionTaskId ?? existing?.completionTaskId;
   const adoptedBranch = input.state.adoptedBranch ?? existing?.adoptedBranch;
-  const sessionId = input.state.sessionId ?? existing?.sessionId;
   const state: RunState = {
     task: taskKey(input.state.task),
     repository: input.state.repository,
@@ -260,15 +216,12 @@ export function recordRunState(input: RecordRunStateInput): RunState {
     createdAt: existing?.createdAt ?? timestamp,
     updatedAt: timestamp,
     resumeCount: input.state.resumeCount ?? existing?.resumeCount ?? 0,
-    ...optionalRunStateFields({
-      reason: input.state.reason,
-      detail: input.state.detail,
-      title,
-      url,
-      completionTaskId,
-      adoptedBranch,
-      sessionId,
-    }),
+    ...(input.state.reason === undefined ? {} : { reason: input.state.reason }),
+    ...(input.state.detail === undefined ? {} : { detail: input.state.detail }),
+    ...(title === undefined ? {} : { title }),
+    ...(url === undefined ? {} : { url }),
+    ...(completionTaskId === undefined ? {} : { completionTaskId }),
+    ...(adoptedBranch === undefined ? {} : { adoptedBranch }),
   };
   writeState(input.config, state);
   return state;

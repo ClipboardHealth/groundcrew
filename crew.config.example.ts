@@ -150,14 +150,11 @@ export default {
   //   preLaunchEnv: ["SESSION_TOKEN"],
   //   // Required for this agent when `local.runner` resolves to `sdx`.
   //   sandbox: { agent: "claude" },
-  //   // Optional: named, resumable agent chat sessions. The first launch pins a
-  //   // `<task>-<timestamp>` id (`{{session}}`) so `crew resume` reopens the
-  //   // agent's own conversation instead of cold-starting; `crew resume --new`
-  //   // mints a fresh one. `start` is appended on the first launch, `resume` on
-  //   // resume. NOTE: Claude Code's `--session-id` requires a UUID, so the literal
-  //   // id only works with CLIs that accept arbitrary names; for Claude itself
-  //   // use a resume-only block such as `session: { resume: "--continue" }`.
-  //   session: { start: "--session-id {{session}}", resume: "--resume {{session}}" },
+  //   // Optional: args appended on `crew resume` so the agent reopens its
+  //   // previous conversation in the worktree instead of cold-starting.
+  //   // `crew resume --new` ignores this and starts fresh. Examples:
+  //   //   claude → "--continue"   codex → "resume --last"
+  //   resumeArgs: "--continue",
   // },
   //
   // // Local isolation backend. Defaults to `"auto"` — macOS → safehouse,

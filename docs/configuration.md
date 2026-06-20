@@ -201,29 +201,26 @@ Rules:
 - `agents.default` must point at an enabled agent.
 - Legacy agent entries like `codex: { disabled: true }` are rejected with migration guidance; remove unwanted entries instead.
 
-## Agent chat sessions
+## Resuming the agent's conversation
 
-By default `crew resume` cold-starts the agent with a continuation prompt — it does not reopen the agent CLI's own conversation. Add a `session` block to an agent to make resumes reattach to the same chat:
+By default `crew resume` cold-starts the agent with a continuation prompt — it does not reopen the agent CLI's own conversation. Set `resumeArgs` on an agent so resumes reattach to its previous conversation in the worktree:
 
 ```ts
 agents: {
   default: "claude",
   definitions: {
-    claude: {
-      session: { start: "--session-id {{session}}", resume: "--resume {{session}}" },
-    },
+    claude: { resumeArgs: "--continue" },     // Claude Code
+    codex: { resumeArgs: "resume --last" },    // Codex
   },
 },
 ```
 
 How it works:
 
-- On the first launch, groundcrew generates a literal `<task>-<timestamp>` session id (e.g. `team-220-20260619t143000z`), records it in run state, and appends the `start` template to `cmd` (with `{{session}}` substituted) so the agent opens its conversation under that id. Omit `start` for CLIs that resume the latest conversation without an explicit id.
-- `crew resume <TASK>` appends the `resume` template instead, reopening that conversation.
-- `crew resume --new <TASK>` cold-starts and mints a fresh id, which future resumes reopen.
-- The only placeholder allowed in either template is `{{session}}`. Both are appended after `cmd`, so the agent binary (and its safehouse profile) and the trailing prompt argument are unaffected.
-
-> **Claude Code caveat:** `claude --session-id` requires a valid UUID, so the literal `<task>-<timestamp>` id only works with CLIs that accept arbitrary session names. For Claude itself, use a resume-only block — `session: { resume: "--continue" }` — which reopens the worktree's latest conversation without pinning an id.
+- The first launch is unchanged — the agent creates its own conversation in the worktree.
+- `crew resume <TASK>` appends `resumeArgs` to the agent's `cmd`, so the agent reopens that conversation (`claude --continue`, `codex … resume --last`). groundcrew stores no session id — each task has its own worktree, so the agent's "resume the latest conversation in this directory" primitive is enough.
+- `crew resume --new <TASK>` ignores `resumeArgs` and cold-starts a fresh conversation.
+- `resumeArgs` is appended after `cmd`, so the agent binary (and its safehouse profile) and the trailing prompt argument are unaffected. It assumes one conversation per worktree — if you manually open extra sessions in that directory, "latest" may not be the one you expect.
 
 ## Prompt Customization
 
@@ -336,7 +333,7 @@ and hook contract.
 | `agents.definitions.<name>.sandbox`                   | optional             | Docker Sandboxes binding for the agent. Required at launch when `local.runner` resolves to `sdx`. Field: `agent` (required sbx agent name). Groundcrew assumes the `groundcrew-<agent>` sandbox already exists.                                                                                                                                                                                                                                                       |
 | `agents.definitions.<name>.preLaunch`                 | optional             | Host-only shell snippet run before the agent exec and outside Safehouse/sdx. Exports survive into the launch shell; under the default `safehouse` runner they are only forwarded to the agent when listed via `preLaunchEnv` or when `cmd` includes its own `safehouse --env-pass=NAMES`. `{{worktree}}` is substituted. A non-zero exit aborts launch. Not supported when `local.runner` resolves to `sdx` in v1.                                                    |
 | `agents.definitions.<name>.preLaunchEnv`              | optional             | Companion to `preLaunch`: list of env var names to append to groundcrew's Safehouse `--env-pass=` flag, so `preLaunch` exports reach the agent without overriding `cmd`. Each entry must match `[A-Za-z_][A-Za-z0-9_]*`. Under `runner: "none"` exports already inherit and `preLaunchEnv` is a no-op. An empty array is a uniform no-op in every runner; a non-empty list is rejected when `cmd` already starts with `safehouse` or when `runner` resolves to `sdx`. |
-| `agents.definitions.<name>.session`                   | optional             | Opt into [named, resumable chat sessions](#agent-chat-sessions). Object with `resume` (required) and `start` (optional) shell-arg templates appended to `cmd`; the only placeholder is `{{session}}`, replaced with the pinned `<task>-<timestamp>` id. `start` runs on the first launch, `resume` on `crew resume`.                                                                                                                                                  |
+| `agents.definitions.<name>.resumeArgs`                | optional             | Shell args appended to `cmd` on `crew resume` so the agent [reopens its previous conversation](#resuming-the-agents-conversation) in the worktree (e.g. `"--continue"` for Claude, `"resume --last"` for Codex). `crew resume --new` ignores it and cold-starts. No session id is stored — relies on one conversation per worktree. |
 | `prompts.initial`                                     | unattended template  | First message sent to the agent: the execution wrapper around each task. The task description is the task-specific prompt. Placeholders: `{{task}}`, `{{worktree}}`, `{{title}}`, `{{description}}`. Override only to change the execution contract for every task, such as team-wide review rules or tool conventions. Mutually exclusive with `prompts.promptFile`.                                                                                                 |
 | `prompts.promptFile`                                  | optional             | Path to a UTF-8 file whose contents become `prompts.initial`, read at load time. Resolved relative to the config file's directory; `~` is expanded and absolute paths are used as-is. The JSON-friendly alternative to inlining a large prompt or `readFileSync`. Mutually exclusive with `prompts.initial`.                                                                                                                                                          |
 | `workspaceKind`                                       | `"auto"`             | Terminal session manager. `"auto"` picks `cmux` when on PATH, else `tmux`. Set to `"cmux"`, `"tmux"`, or `"zellij"` to fail loudly when the chosen backend is missing.                                                                                                                                                                                                                                                                                                |

@@ -241,44 +241,6 @@ describe("run state store", () => {
     });
   });
 
-  it("round-trips the chat session id and preserves it across transitions", () => {
-    recordRunState({
-      config,
-      state: {
-        task: "team-1",
-        repository: "repo-a",
-        agent: "claude",
-        worktreeDir: "/work/repo-a-team-1",
-        branchName: "dev-team-1",
-        workspaceName: "team-1",
-        state: "running",
-        sessionId: "team-1-20260618t193656z",
-      },
-    });
-
-    expect(readRunState(config, "team-1")).toMatchObject({
-      sessionId: "team-1-20260618t193656z",
-    });
-
-    recordRunState({
-      config,
-      state: {
-        task: "team-1",
-        repository: "repo-a",
-        agent: "claude",
-        worktreeDir: "/work/repo-a-team-1",
-        branchName: "dev-team-1",
-        workspaceName: "team-1",
-        state: "interrupted",
-      },
-    });
-
-    expect(readRunState(config, "team-1")).toMatchObject({
-      state: "interrupted",
-      sessionId: "team-1-20260618t193656z",
-    });
-  });
-
   it("round-trips adopted branch state and preserves it across transitions", () => {
     recordRunState({
       config,
