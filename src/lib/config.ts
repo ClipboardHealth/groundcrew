@@ -433,11 +433,14 @@ const BUILT_IN_AGENT_DEFINITIONS: Record<string, AgentDefinition> = {
     cmd: "claude --permission-mode auto",
     color: "#C15F3C",
     usage: { codexbar: { provider: "claude" } },
+    // `crew resume` reopens the worktree's latest conversation by default.
+    resumeArgs: "--continue",
   },
   codex: {
     cmd: "codex --dangerously-bypass-approvals-and-sandbox",
     color: "#3267e3",
     usage: { codexbar: { provider: "codex" } },
+    resumeArgs: "resume --last",
   },
 };
 
