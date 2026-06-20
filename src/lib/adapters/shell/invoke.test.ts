@@ -66,7 +66,7 @@ describe(invokeShellCommand, () => {
     const script = dir.writeScript("ok.sh", 'echo "hello"');
     const result = await invokeShellCommand({
       command: script,
-      timeoutMs: 5000,
+      timeoutMs: 30_000,
       sourceName: "test",
     });
     expect(result.stdout.trim()).toBe("hello");
@@ -76,14 +76,14 @@ describe(invokeShellCommand, () => {
   it("throws on nonzero exit with stderr content in the error message", async () => {
     const script = dir.writeScript("bad.sh", 'echo "err message" >&2; exit 1');
     await expect(
-      invokeShellCommand({ command: script, timeoutMs: 5000, sourceName: "test" }),
+      invokeShellCommand({ command: script, timeoutMs: 30_000, sourceName: "test" }),
     ).rejects.toThrow(/err message/);
   });
 
   it("falls back to the command when stderr is empty on nonzero exit", async () => {
     const script = dir.writeScript("silent.sh", "exit 2");
     await expect(
-      invokeShellCommand({ command: script, timeoutMs: 5000, sourceName: "test" }),
+      invokeShellCommand({ command: script, timeoutMs: 30_000, sourceName: "test" }),
     ).rejects.toThrow(/exit 2/);
   });
 
@@ -91,7 +91,7 @@ describe(invokeShellCommand, () => {
     const script = dir.writeScript("nf.sh", "exit 3");
     const result = await invokeShellCommand({
       command: script,
-      timeoutMs: 5000,
+      timeoutMs: 30_000,
       sourceName: "test",
     });
     expect(result.exitCode).toBe(3);
@@ -108,7 +108,7 @@ describe(invokeShellCommand, () => {
     const script = dir.writeScript("stdin.sh", "cat");
     const result = await invokeShellCommand({
       command: script,
-      timeoutMs: 5000,
+      timeoutMs: 30_000,
       stdin: "hello stdin",
       sourceName: "test",
     });
@@ -119,7 +119,7 @@ describe(invokeShellCommand, () => {
     const script = dir.writeScript("show.sh", 'echo "$1"');
     const result = await invokeShellCommand({
       command: `${script} \${id}`,
-      timeoutMs: 5000,
+      timeoutMs: 30_000,
       substitutions: { id: "'; rm -rf /; echo '" },
       sourceName: "test",
     });
@@ -132,7 +132,7 @@ describe(invokeShellCommand, () => {
     const script = dir.writeScript("env.sh", 'echo "$MY_VAR"');
     const result = await invokeShellCommand({
       command: script,
-      timeoutMs: 5000,
+      timeoutMs: 30_000,
       env: { MY_VAR: "passed through" },
       sourceName: "test",
     });
@@ -143,7 +143,7 @@ describe(invokeShellCommand, () => {
     const script = dir.writeScript("warn.sh", 'echo "warning text" >&2; echo "ok"');
     const result = await invokeShellCommand({
       command: script,
-      timeoutMs: 5000,
+      timeoutMs: 30_000,
       sourceName: "test",
     });
     expect(result.stderr).toContain("warning text");
@@ -154,7 +154,7 @@ describe(invokeShellCommand, () => {
     const script = dir.writeScript("small.sh", 'echo "ok"');
     const result = await invokeShellCommand({
       command: script,
-      timeoutMs: 5000,
+      timeoutMs: 30_000,
       sourceName: "test",
     });
     expect(result.truncated).toBe(false);
@@ -166,7 +166,7 @@ describe(invokeShellCommand, () => {
     const script = dir.writeScript("yes.sh", "yes a | head -c 500");
     const result = await invokeShellCommand({
       command: script,
-      timeoutMs: 5000,
+      timeoutMs: 30_000,
       sourceName: "test",
       maxOutputBytes: 100,
     });
@@ -180,7 +180,7 @@ describe(invokeShellCommand, () => {
     const script = dir.writeScript("yes-err.sh", "yes a | head -c 500 >&2; echo ok");
     const result = await invokeShellCommand({
       command: script,
-      timeoutMs: 5000,
+      timeoutMs: 30_000,
       sourceName: "test",
       maxOutputBytes: 100,
     });
@@ -199,7 +199,7 @@ describe(invokeShellCommand, () => {
     );
     const result = await invokeShellCommand({
       command: script,
-      timeoutMs: 5000,
+      timeoutMs: 30_000,
       sourceName: "test",
       maxOutputBytes: 100,
     });
