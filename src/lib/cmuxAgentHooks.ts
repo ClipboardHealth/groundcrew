@@ -30,7 +30,7 @@ export function buildCmuxAgentHookSettings(input: { agent: string }): CmuxAgentH
   const phases: readonly CmuxAgentHookPhase[] = [
     { event: "SessionStart", value: 0.05, label: `running · ${agent}` },
     { event: "UserPromptSubmit", value: 0.5, label: "working" },
-    { event: "Notification", value: 0.5, label: "needs input" },
+    { event: "Notification", value: 0.5, label: "idle" },
     { event: "Stop", value: 0.9, label: "idle" },
     { event: "SessionEnd", value: 1, label: "done" },
   ];
