@@ -142,6 +142,17 @@ export interface AgentDefinition {
    * or `none` without surprise.
    */
   sandbox?: SandboxDefinition;
+  /**
+   * Opt-in: shell args appended to `cmd` on `crew resume` so the agent reopens
+   * its previous conversation in the worktree instead of cold-starting. groundcrew
+   * stores no session id — it relies on one conversation per worktree, so the
+   * agent's own "resume latest in this directory" primitive is enough.
+   *
+   * Examples: `"--continue"` (Claude Code), `"resume --last"` (Codex).
+   *
+   * `crew resume --new` ignores this and forces a fresh conversation.
+   */
+  resumeArgs?: string;
 }
 
 /**
@@ -422,11 +433,14 @@ const BUILT_IN_AGENT_DEFINITIONS: Record<string, AgentDefinition> = {
     cmd: "claude --permission-mode auto",
     color: "#C15F3C",
     usage: { codexbar: { provider: "claude" } },
+    // `crew resume` reopens the worktree's latest conversation by default.
+    resumeArgs: "--continue",
   },
   codex: {
     cmd: "codex --dangerously-bypass-approvals-and-sandbox",
     color: "#3267e3",
     usage: { codexbar: { provider: "codex" } },
+    resumeArgs: "resume --last",
   },
 };
 
@@ -702,6 +716,15 @@ function normalizeNetworkEgress(
   return value;
 }
 
+function normalizeResumeArgs(value: unknown, configKey: string): string {
+  requireString(value, configKey);
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    fail(`${configKey} must be a non-empty string (got ${JSON.stringify(value)})`);
+  }
+  return trimmed;
+}
+
 function normalizeSandbox(value: unknown, configKey: string): SandboxDefinition {
   if (!isPlainObject(value)) {
     fail(`${configKey} must be an object`);
@@ -801,6 +824,12 @@ function buildOverrideCandidate(
   if (override.sandbox !== undefined) {
     candidate.sandbox = normalizeSandbox(override.sandbox, `agents.definitions.${name}.sandbox`);
   }
+  if (override.resumeArgs !== undefined) {
+    candidate.resumeArgs = normalizeResumeArgs(
+      override.resumeArgs,
+      `agents.definitions.${name}.resumeArgs`,
+    );
+  }
   if (override.preLaunch !== undefined) {
     candidate.preLaunch = override.preLaunch;
   }
@@ -825,7 +854,7 @@ function mergeDefinitions(
 
     const builtIn = BUILT_IN_AGENT_DEFINITIONS[name];
     const candidate = buildOverrideCandidate(name, override, builtIn);
-    const { cmd, color, usage, sandbox, preLaunch, preLaunchEnv } = candidate;
+    const { cmd, color, usage, sandbox, resumeArgs, preLaunch, preLaunchEnv } = candidate;
     if (typeof cmd !== "string" || cmd.length === 0) {
       fail(`agents.definitions.${name}.cmd must be a non-empty string`);
     }
@@ -838,6 +867,9 @@ function mergeDefinitions(
     }
     if (sandbox !== undefined) {
       definition.sandbox = sandbox;
+    }
+    if (resumeArgs !== undefined) {
+      definition.resumeArgs = resumeArgs;
     }
     if (preLaunch !== undefined) {
       definition.preLaunch = preLaunch;

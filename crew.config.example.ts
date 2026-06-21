@@ -153,6 +153,11 @@ export default {
   //   preLaunchEnv: ["SESSION_TOKEN"],
   //   // Required for this agent when `local.runner` resolves to `sdx`.
   //   sandbox: { agent: "claude" },
+  //   // Args appended on `crew resume` so the agent reopens its previous
+  //   // conversation in the worktree (`crew resume --new` starts fresh). The
+  //   // built-in claude/codex presets default this ("--continue" / "resume
+  //   // --last"); set it for custom agents or to override the preset default.
+  //   resumeArgs: "--continue",
   // },
   //
   // // Local isolation backend. Defaults to `"auto"` — macOS → safehouse,

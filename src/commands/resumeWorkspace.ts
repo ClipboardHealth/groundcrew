@@ -1,9 +1,9 @@
 import { fetchResolvedIssue } from "../lib/adapters/linear/fetch.ts";
 import { getLinearClient } from "../lib/adapters/linear/client.ts";
 import { isLinearEnabled, sourcesFromConfig } from "../lib/buildSources.ts";
-import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
+import { type AgentDefinition, loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { composeAgentLaunch, openAgentWorkspace, prepareAgentLaunch } from "../lib/agentLaunch.ts";
-import { workerEnvironmentForTask } from "../lib/launchCommand.ts";
+import { withResumeArgs, workerEnvironmentForTask } from "../lib/launchCommand.ts";
 import { readRunState, recordRunState, type RunState } from "../lib/runState.ts";
 import { taskSupportsCompletionCommand } from "../lib/sourceCapabilities.ts";
 import {
@@ -20,6 +20,12 @@ import { resolveLaunchDir, type WorktreeEntry, worktrees } from "../lib/worktree
 
 export interface ResumeWorkspaceOptions {
   task: string;
+  /**
+   * Force a fresh conversation: cold-start the agent (the historic behavior),
+   * ignoring the agent's `resumeArgs`. Defaults to false, which reopens the
+   * agent's previous conversation when `resumeArgs` is configured.
+   */
+  fresh?: boolean;
 }
 
 interface TaskDetails {
@@ -41,11 +47,20 @@ interface ResumeContext {
 }
 
 function parseArguments(argv: string[]): ResumeWorkspaceOptions {
-  const [task, ...extras] = argv;
-  if (task === undefined || task.length === 0 || extras.length > 0 || task.startsWith("-")) {
-    throw new Error("Usage: crew resume <task>");
+  let fresh = false;
+  const positionals: string[] = [];
+  for (const argument of argv) {
+    if (argument === "--new") {
+      fresh = true;
+      continue;
+    }
+    positionals.push(argument);
   }
-  return { task: naturalIdFromCanonical(task).toLowerCase() };
+  const [task, ...extras] = positionals;
+  if (task === undefined || task.length === 0 || extras.length > 0 || task.startsWith("-")) {
+    throw new Error("Usage: crew resume [--new] <task>");
+  }
+  return { task: naturalIdFromCanonical(task).toLowerCase(), fresh };
 }
 
 async function fetchTaskDetails(task: string): Promise<TaskDetails | undefined> {
@@ -159,6 +174,27 @@ function renderResumePrompt(context: ResumeContext): string {
   ].join("\n");
 }
 
+/**
+ * Decide the definition to launch on resume: when the agent has `resumeArgs`
+ * and `--new` was not passed, append them so the agent reopens its previous
+ * conversation; otherwise cold-start (the historic behavior).
+ */
+function resolveResumeLaunch(input: {
+  task: string;
+  definition: AgentDefinition;
+  fresh: boolean;
+}): AgentDefinition {
+  const { task, definition, fresh } = input;
+  if (fresh || definition.resumeArgs === undefined) {
+    if (fresh && definition.resumeArgs !== undefined) {
+      log(`Starting a fresh conversation for ${task}`);
+    }
+    return definition;
+  }
+  log(`Reopening the previous conversation for ${task}`);
+  return withResumeArgs(definition, definition.resumeArgs);
+}
+
 export async function resumeWorkspace(
   config: ResolvedConfig,
   options: ResumeWorkspaceOptions,
@@ -171,11 +207,17 @@ export async function resumeWorkspace(
     throw new Error(`Unknown agent: ${context.agent}`);
   }
 
+  const launchDefinition = resolveResumeLaunch({
+    task,
+    definition,
+    fresh: options.fresh === true,
+  });
+
   const { runner, networkEgress, sandboxName, workspaceKind, ensureReady } =
     await prepareAgentLaunch({
       config,
       agent: context.agent,
-      definition,
+      definition: launchDefinition,
       purpose: "resumes",
     });
   await ensureReady();
@@ -207,7 +249,7 @@ export async function resumeWorkspace(
       runner,
       networkEgress,
       task,
-      definition,
+      definition: launchDefinition,
       promptFile: stagedPrompt.file,
       worktreeDir,
       workingDir: launchDir,

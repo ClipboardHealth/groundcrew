@@ -1990,4 +1990,69 @@ describe("loadConfig", () => {
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(/no crew config found/);
   });
+
+  it("defaults resumeArgs for the built-in claude and codex presets", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      validConfigSource({
+        workspace: VALID_WORKSPACE(temporary),
+        agents: { default: "claude", definitions: { claude: {}, codex: {} } },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+
+    expect(actual.agents.definitions["claude"]?.resumeArgs).toBe("--continue");
+    expect(actual.agents.definitions["codex"]?.resumeArgs).toBe("resume --last");
+  });
+
+  it("lets config override the preset resumeArgs", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      validConfigSource({
+        workspace: VALID_WORKSPACE(temporary),
+        agents: { definitions: { claude: { resumeArgs: "--resume latest" } } },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+
+    expect(actual.agents.definitions["claude"]?.resumeArgs).toBe("--resume latest");
+  });
+
+  it("rejects whitespace-only resumeArgs", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      validConfigSource({
+        workspace: VALID_WORKSPACE(temporary),
+        agents: { definitions: { claude: { resumeArgs: "   " } } },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(
+      /agents\.definitions\.claude\.resumeArgs must be a non-empty string/,
+    );
+  });
+
+  it("rejects non-string resumeArgs", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      [
+        "export default {",
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        "  agents: { definitions: { claude: { resumeArgs: 5 } } },",
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(/agents\.definitions\.claude\.resumeArgs/);
+  });
 });

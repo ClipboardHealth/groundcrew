@@ -48,6 +48,16 @@ export default defineConfig(
             "max-lines": ["error", 2200],
           },
         },
+        {
+          // config.test.ts exhaustively covers config resolution, merging, and
+          // validation for every field (agents, sources, hooks, resumeArgs, …).
+          // Splitting it would scatter the shared loadFreshConfig / writeConfigFile
+          // harness across files without improving readability. Bump the cap.
+          files: ["**/config.test.ts"],
+          rules: {
+            "max-lines": ["error", 2200],
+          },
+        },
       ],
     },
     presets: [base, vitest],

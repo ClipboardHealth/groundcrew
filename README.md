@@ -105,7 +105,7 @@ crew status [<TASK>]                                   # inspect current state o
 crew run [--watch]                                       # one-shot or --watch forever
 crew start <TASK>                                      # provision + launch one task now
 crew stop <TASK> [--reason <text>]                     # stop workspace, keep worktree
-crew resume <TASK>                                     # reopen a paused task
+crew resume [--new] <TASK>                             # reopen a paused task (--new: fresh conversation)
 crew open <pr> | --branch <name> [--repo <owner/repo>] # iterate on an existing PR or branch
          [--prompt <text> | --prompt-file <path>] [--task <id>] [--dry-run]
 crew cleanup [--force] <TASK>                          # tear down every worktree for a task

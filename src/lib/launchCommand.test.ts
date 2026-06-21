@@ -9,6 +9,7 @@ import {
   resolveSafehouseClearancePath,
   resolveSrtBinPath,
   srtBinEntry,
+  withResumeArgs,
 } from "./launchCommand.ts";
 
 const WORKER_ENVIRONMENT = {
@@ -1426,5 +1427,37 @@ describe("buildLaunchCommand omitPromptArgument (interactive launch)", () => {
     expect(withPrompt).toMatch(/sh "\$_p"$/);
     expect(interactive).toMatch(/ sh$/);
     expect(interactive).not.toContain(`sh "$_p"`);
+  });
+});
+
+describe(withResumeArgs, () => {
+  const definition = {
+    cmd: "claude --permission-mode auto",
+    color: "#fff",
+  } satisfies AgentDefinition;
+
+  it("appends the resume args after the base cmd", () => {
+    const actual = withResumeArgs(definition, "--continue");
+
+    expect(actual.cmd).toBe("claude --permission-mode auto --continue");
+  });
+
+  it("appends subcommand-style resume args verbatim", () => {
+    const actual = withResumeArgs({ cmd: "codex --yolo", color: "#000" }, "resume --last");
+
+    expect(actual.cmd).toBe("codex --yolo resume --last");
+  });
+
+  it("preserves the inferred command name (first token) and color", () => {
+    const actual = withResumeArgs(definition, "--continue");
+
+    expect(actual.cmd.startsWith("claude ")).toBe(true);
+    expect(actual.color).toBe(definition.color);
+  });
+
+  it("does not mutate the input definition", () => {
+    withResumeArgs(definition, "--continue");
+
+    expect(definition.cmd).toBe("claude --permission-mode auto");
   });
 });

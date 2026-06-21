@@ -201,6 +201,27 @@ Rules:
 - `agents.default` must point at an enabled agent.
 - Legacy agent entries like `codex: { disabled: true }` are rejected with migration guidance; remove unwanted entries instead.
 
+## Resuming the agent's conversation
+
+`crew resume` reopens the agent's previous conversation in the worktree — **no config required** for the built-in agents. The shipped `claude` and `codex` presets carry a `resumeArgs` default (`--continue` and `resume --last`), which groundcrew appends to the agent's command on resume.
+
+How it works:
+
+- The first launch is unchanged — the agent creates its own conversation in the worktree.
+- `crew resume <TASK>` appends `resumeArgs` to the agent's `cmd`, so the agent reopens that conversation (`claude --continue`, `codex … resume --last`). groundcrew stores no session id — each task has its own worktree, so the agent's "resume the latest conversation in this directory" primitive is enough.
+- `crew resume --new <TASK>` ignores `resumeArgs` and cold-starts a fresh conversation.
+- `resumeArgs` is appended after `cmd`, so the agent binary (and its safehouse profile) and the trailing prompt argument are unaffected. It assumes one conversation per worktree — if you manually open extra sessions in that directory, "latest" may not be the one you expect.
+
+Set `resumeArgs` yourself to enable this for a **custom** agent, or to override/replace the preset default:
+
+```ts
+agents: {
+  definitions: {
+    "claude-opus": { cmd: "claude --model claude-opus-4-8 --permission-mode auto", color: "#8A4FFF", resumeArgs: "--continue" },
+  },
+},
+```
+
 ## Prompt Customization
 
 Groundcrew ships one agent-agnostic unattended prompt by default. It tells the agent to make reasonable assumptions, follow repository instructions, run documented verification, review its diff, open a PR when GitHub/`gh` is available, and include a workspace continuation hint when known.
@@ -312,6 +333,7 @@ and hook contract.
 | `agents.definitions.<name>.sandbox`                   | optional             | Docker Sandboxes binding for the agent. Required at launch when `local.runner` resolves to `sdx`. Field: `agent` (required sbx agent name). Groundcrew assumes the `groundcrew-<agent>` sandbox already exists.                                                                                                                                                                                                                                                       |
 | `agents.definitions.<name>.preLaunch`                 | optional             | Host-only shell snippet run before the agent exec and outside Safehouse/sdx. Exports survive into the launch shell; under the default `safehouse` runner they are only forwarded to the agent when listed via `preLaunchEnv` or when `cmd` includes its own `safehouse --env-pass=NAMES`. `{{worktree}}` is substituted. A non-zero exit aborts launch. Not supported when `local.runner` resolves to `sdx` in v1.                                                    |
 | `agents.definitions.<name>.preLaunchEnv`              | optional             | Companion to `preLaunch`: list of env var names to append to groundcrew's Safehouse `--env-pass=` flag, so `preLaunch` exports reach the agent without overriding `cmd`. Each entry must match `[A-Za-z_][A-Za-z0-9_]*`. Under `runner: "none"` exports already inherit and `preLaunchEnv` is a no-op. An empty array is a uniform no-op in every runner; a non-empty list is rejected when `cmd` already starts with `safehouse` or when `runner` resolves to `sdx`. |
+| `agents.definitions.<name>.resumeArgs`                | preset default       | Shell args appended to `cmd` on `crew resume` so the agent [reopens its previous conversation](#resuming-the-agents-conversation) in the worktree. Defaults to `"--continue"` (claude) and `"resume --last"` (codex) on the built-in presets; set it for custom agents or to override. `crew resume --new` ignores it and cold-starts. No session id is stored.                                                                                                       |
 | `prompts.initial`                                     | unattended template  | First message sent to the agent: the execution wrapper around each task. The task description is the task-specific prompt. Placeholders: `{{task}}`, `{{worktree}}`, `{{title}}`, `{{description}}`. Override only to change the execution contract for every task, such as team-wide review rules or tool conventions. Mutually exclusive with `prompts.promptFile`.                                                                                                 |
 | `prompts.promptFile`                                  | optional             | Path to a UTF-8 file whose contents become `prompts.initial`, read at load time. Resolved relative to the config file's directory; `~` is expanded and absolute paths are used as-is. The JSON-friendly alternative to inlining a large prompt or `readFileSync`. Mutually exclusive with `prompts.initial`.                                                                                                                                                          |
 | `workspaceKind`                                       | `"auto"`             | Terminal session manager. `"auto"` picks `cmux` when on PATH, else `tmux`. Set to `"cmux"`, `"tmux"`, or `"zellij"` to fail loudly when the chosen backend is missing.                                                                                                                                                                                                                                                                                                |

@@ -143,9 +143,11 @@ The command closes the cmux/tmux/zellij workspace if present, records local run 
 
 ## Resume
 
-`crew resume <TASK>` reopens an existing task worktree with a continuation prompt. Resume never creates a new worktree; if none exists it fails and leaves re-dispatch to `crew start <task>`.
+`crew resume [--new] <TASK>` reopens an existing task worktree with a continuation prompt. Resume never creates a new worktree; if none exists it fails and leaves re-dispatch to `crew start <task>`.
 
 The resume prompt tells the agent to inspect git status and diff before editing, includes the previous interrupt reason when recorded, and reuses the recorded agent, repository, branch, runner, sandbox, and workspace backend. When no run-state file exists but a worktree does, resume falls back to Linear resolution for the agent and task context.
+
+`crew resume <TASK>` reopens the agent's previous conversation in the worktree by default — the built-in `claude` and `codex` presets ship a [`resumeArgs`](./configuration.md#resuming-the-agents-conversation) default (`--continue`, `resume --last`) that groundcrew appends to the agent's command. `crew resume --new <TASK>` ignores `resumeArgs` and forces a fresh conversation. Custom agents cold-start unless they set `resumeArgs`. groundcrew stores no session id — it relies on one conversation per worktree.
 
 ## Open
 

@@ -15,6 +15,18 @@ import { shellSingleQuote } from "./shell.ts";
 export { shellSingleQuote } from "./shell.ts";
 
 /**
+ * Return a copy of `definition` whose `cmd` has the agent's `resumeArgs`
+ * appended, so `crew resume` relaunches the agent into its previous
+ * conversation (e.g. `--continue` for Claude, `resume --last` for Codex).
+ * Appending after the base `cmd` keeps the first token — which
+ * `inferAgentCommandName` reads for the safehouse profile — and the trailing
+ * `"$_p"` prompt positional the launch builders add both intact.
+ */
+export function withResumeArgs(definition: AgentDefinition, resumeArgs: string): AgentDefinition {
+  return { ...definition, cmd: `${definition.cmd} ${resumeArgs}` };
+}
+
+/**
  * Resolve the shipped Safehouse proxy wrapper inside `@clipboard-health/clearance`
  * via Node's module-resolution algorithm so the path works whether npm hoists
  * clearance as a sibling of groundcrew or nests it under

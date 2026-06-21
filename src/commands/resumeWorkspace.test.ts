@@ -283,6 +283,36 @@ describe(resumeWorkspace, () => {
     });
   });
 
+  function resumeArgsConfig(): ResolvedConfig {
+    return {
+      ...config,
+      agents: {
+        default: "claude",
+        definitions: {
+          claude: { cmd: "claude --auto", color: "#fff", resumeArgs: "--continue" },
+        },
+      },
+    };
+  }
+
+  it("appends resumeArgs by default so the agent reopens its conversation", async () => {
+    await resumeWorkspace(resumeArgsConfig(), { task: "team-1" });
+
+    expect(stagedLaunchScript()).toContain("--continue");
+  });
+
+  it("cold-starts without resume args when --new is passed", async () => {
+    await resumeWorkspace(resumeArgsConfig(), { task: "team-1", fresh: true });
+
+    expect(stagedLaunchScript()).not.toContain("--continue");
+  });
+
+  it("does not append resume args for agents without resumeArgs", async () => {
+    await resumeWorkspace(config, { task: "team-1" });
+
+    expect(stagedLaunchScript()).not.toContain("--continue");
+  });
+
   it("prefers the run-state branch over the task-derived worktree branch", async () => {
     readRunStateMock.mockReturnValue(makeRunState({ branchName: "jdoe/fix-thing" }));
     findByTaskMock.mockReturnValue([makeWorktree()]);
@@ -700,5 +730,23 @@ describe(resumeWorkspaceCli, () => {
 
   it("rejects extra positional args", async () => {
     await expect(resumeWorkspaceCli(["team-1", "extra"])).rejects.toThrow(/Usage: crew resume/);
+  });
+
+  it("consumes the --new flag before the task without treating it as a positional", async () => {
+    await resumeWorkspaceCli(["--new", "TEAM-1"]);
+
+    expect(workspacesOpenMock).toHaveBeenCalledWith(
+      config,
+      expect.objectContaining({ name: "team-1" }),
+    );
+  });
+
+  it("accepts the --new flag after the task", async () => {
+    await resumeWorkspaceCli(["team-1", "--new"]);
+
+    expect(workspacesOpenMock).toHaveBeenCalledWith(
+      config,
+      expect.objectContaining({ name: "team-1" }),
+    );
   });
 });
