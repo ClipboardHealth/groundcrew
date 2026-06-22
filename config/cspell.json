@@ -161,6 +161,8 @@
     "Neue",
     "qlmanage",
     "argjson",
-    "tostring"
+    "tostring",
+    "hset",
+    "newfloor"
   ]
 }

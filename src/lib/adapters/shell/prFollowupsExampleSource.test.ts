@@ -231,4 +231,88 @@ describe("pr-followups shell source", () => {
     // oxlint-disable-next-line typescript/no-non-null-assertion -- asserted above
     expect(t!.agent).toBe("claude-fable");
   });
+
+  it("advances the floor across a contiguous handled/followup prefix and prunes", () => {
+    // 201 handled, 202 followup branch, 203 PENDING (hole), 204 handled.
+    const prs: MergedPr[] = [
+      {
+        number: 201,
+        title: "h1",
+        mergedAt: "2026-06-01T00:00:00Z",
+        headRefName: "x/1",
+        body: "",
+        author: { login: "a" },
+      },
+      {
+        number: 202,
+        title: "fu",
+        mergedAt: "2026-06-02T00:00:00Z",
+        headRefName: "gc-followup/1-x",
+        body: "",
+        author: { login: "a" },
+      },
+      {
+        number: 203,
+        title: "pending",
+        mergedAt: "2026-06-03T00:00:00Z",
+        headRefName: "x/3",
+        body: "",
+        author: { login: "a" },
+      },
+      {
+        number: 204,
+        title: "h2",
+        mergedAt: "2026-06-04T00:00:00Z",
+        headRefName: "x/4",
+        body: "",
+        author: { login: "a" },
+      },
+    ];
+    const h = makeHarness({
+      prList: prs,
+      stateSeed: { floor: "2026-05-01T00:00:00Z", handled: [201, 204] },
+    });
+    const r = h.run(["list"]);
+    const tasks = shellFetchOutputSchema.parse(JSON.parse(r.stdout));
+    // Only 203 is pending and emittable (201 handled, 202 followup, 204 handled).
+    expect(tasks.map((t) => t.id)).toStrictEqual(["followup-203"]);
+
+    const state = h.readState();
+    // Floor advances past 201 and 202, stops at the 203 hole -> floor == 202's time.
+    expect(state.floor).toBe("2026-06-02T00:00:00Z");
+    // 201 (< new floor) pruned; 204 kept (still a hole above the floor).
+    expect(state.handled.toSorted((a, b) => a - b)).toStrictEqual([204]);
+  });
+
+  it("keeps a handled PR tied exactly to the new floor in the set", () => {
+    // Two handled PRs share a timestamp at the advancing boundary; the boundary
+    // one must stay in `handled` so it is not re-emitted next poll.
+    const prs: MergedPr[] = [
+      {
+        number: 301,
+        title: "h",
+        mergedAt: "2026-06-01T00:00:00Z",
+        headRefName: "x/1",
+        body: "",
+        author: { login: "a" },
+      },
+      {
+        number: 302,
+        title: "h",
+        mergedAt: "2026-06-02T00:00:00Z",
+        headRefName: "x/2",
+        body: "",
+        author: { login: "a" },
+      },
+    ];
+    const h = makeHarness({
+      prList: prs,
+      stateSeed: { floor: "2026-05-01T00:00:00Z", handled: [301, 302] },
+    });
+    h.run(["list"]);
+    const state = h.readState();
+    expect(state.floor).toBe("2026-06-02T00:00:00Z");
+    // 301 (< floor) pruned, 302 (== floor) kept.
+    expect(state.handled).toStrictEqual([302]);
+  });
 });

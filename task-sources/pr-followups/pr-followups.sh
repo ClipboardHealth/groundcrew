@@ -121,6 +121,32 @@ case "${cmd}" in
             sourceRef: { number: $pr.number }
           }
       ]'
+
+    # Compaction: advance the floor across the oldest-first contiguous run of
+    # PRs that need no (further) processing (in `handled` OR followup-branch),
+    # then prune from `handled` everything strictly below the new floor. A PR
+    # tied exactly at the new floor stays in `handled` so the inclusive boundary
+    # cannot re-emit it.
+    new_state="$(printf '%s' "${prs}" | jq -c \
+      --arg floor "${floor}" \
+      --argjson handled "${handled}" \
+      --arg prefix "${BRANCH_PREFIX}" '
+      ([$handled[] | tostring]) as $hset
+      | (sort_by(.mergedAt)) as $sorted
+      | (reduce $sorted[] as $pr ({stop:false, floor:$floor};
+          if .stop then .
+          elif ($pr.headRefName | startswith($prefix)) then .floor = $pr.mergedAt
+          elif ($hset | index($pr.number | tostring)) != null then .floor = $pr.mergedAt
+          else .stop = true end)
+        ).floor as $newfloor
+      | {
+          floor: $newfloor,
+          handled: [ $handled[] as $n
+                     | (([$sorted[] | select(.number == $n) | .mergedAt] | first) // null) as $m
+                     | select(($m == null) or ($m >= $newfloor))
+                     | $n ]
+        }')"
+    printf '%s' "${new_state}" > "${state_file}"
     ;;
   *)
     echo "usage: pr-followups.sh {verify|list|get <ID>|reviewed <ID>|complete <ID>}" >&2
