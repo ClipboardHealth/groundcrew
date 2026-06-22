@@ -338,4 +338,30 @@ describe("pr-followups shell source", () => {
     const r = h.run(["get", "followup-999"]);
     expect(r.status).toBe(3);
   });
+
+  it("complete records the PR number from stdin sourceRef", () => {
+    const h = makeHarness({
+      prList: [],
+      stateSeed: { floor: "2026-06-01T00:00:00Z", handled: [] },
+    });
+    const r = h.run(["complete", "followup-123"], {
+      stdin: JSON.stringify({ number: 123 }),
+    });
+    expect(r.status).toBe(0);
+    expect(h.readState().handled).toStrictEqual([123]);
+  });
+
+  it("reviewed is idempotent and preserves the floor", () => {
+    const h = makeHarness({
+      prList: [],
+      stateSeed: { floor: "2026-06-01T00:00:00Z", handled: [123] },
+    });
+    const r = h.run(["reviewed", "followup-123"], {
+      stdin: JSON.stringify({ number: 123 }),
+    });
+    expect(r.status).toBe(0);
+    const state = h.readState();
+    expect(state.handled).toStrictEqual([123]);
+    expect(state.floor).toBe("2026-06-01T00:00:00Z");
+  });
 });

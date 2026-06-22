@@ -94,6 +94,25 @@ ensure_state() {
   fi
 }
 
+# Append a PR number (read from the stdin sourceRef JSON) to `handled`,
+# idempotently. Used by both `reviewed` and `complete`.
+record_handled() {
+  local repo state_file number
+  repo="$(resolve_repo)"
+  state_file="$(state_path "${repo}")"
+  ensure_state "${state_file}"
+  number="$(jq -r '.number')"   # reads stdin
+  [[ -n "${number}" && "${number}" != "null" ]] || {
+    echo "pr-followups: no .number on stdin sourceRef" >&2
+    exit 1
+  }
+  local tmp
+  tmp="$(mktemp)"
+  jq -c --argjson n "${number}" \
+    '.handled = ((.handled + [$n]) | unique)' "${state_file}" > "${tmp}"
+  mv "${tmp}" "${state_file}"
+}
+
 cmd="${1:-}"
 shift || true
 case "${cmd}" in
@@ -173,6 +192,9 @@ case "${cmd}" in
     printf '%s' "${out}" | jq -c \
       --arg repo "${repo}" --arg agent "${AGENT}" --arg rubric "${RUBRIC}" \
       "${JQ_TO_ISSUE} toIssue(\$repo; \$agent; \$rubric)"
+    ;;
+  reviewed|complete)
+    record_handled
     ;;
   *)
     echo "usage: pr-followups.sh {verify|list|get <ID>|reviewed <ID>|complete <ID>}" >&2
