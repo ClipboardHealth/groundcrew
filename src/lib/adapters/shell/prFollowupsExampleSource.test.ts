@@ -200,6 +200,12 @@ describe("pr-followups shell source", () => {
     expect(t!.description).toContain("#101");
     // oxlint-disable-next-line typescript/no-non-null-assertion -- asserted above
     expect(t!.description).toContain("gh pr diff 101");
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- asserted above
+    expect(t!.agent).toBeNull();
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- asserted above
+    expect(t!.blockers).toStrictEqual([]);
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- asserted above
+    expect(t!.hasMoreBlockers).toBe(false);
   });
 
   it("emits nothing when no PR is newer than the floor", () => {
