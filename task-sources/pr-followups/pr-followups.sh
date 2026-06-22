@@ -35,12 +35,34 @@ resolve_repo() {
   fi
 }
 
+now_iso() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
+# ${STATE_DIR}/<owner>__<name>.json for "owner/name".
+state_path() {
+  local repo="$1"
+  printf '%s/%s.json' "${STATE_DIR}" "${repo//\//__}"
+}
+
+ensure_state() {
+  local file="$1"
+  if [[ ! -f "${file}" ]]; then
+    mkdir -p "$(dirname "${file}")"
+    jq -n --arg floor "$(now_iso)" '{floor: $floor, handled: []}' > "${file}"
+  fi
+}
+
 cmd="${1:-}"
 shift || true
 case "${cmd}" in
   verify)
     gh auth status >/dev/null 2>&1
     gh repo view "$(resolve_repo)" --json nameWithOwner >/dev/null
+    ;;
+  list)
+    repo="$(resolve_repo)"
+    state_file="$(state_path "${repo}")"
+    ensure_state "${state_file}"
+    printf '[]'
     ;;
   *)
     echo "usage: pr-followups.sh {verify|list|get <ID>|reviewed <ID>|complete <ID>}" >&2

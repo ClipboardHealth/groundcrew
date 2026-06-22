@@ -131,4 +131,14 @@ describe("pr-followups shell source", () => {
     expect(r.status).toBe(2);
     expect(r.stderr).toContain("usage:");
   });
+
+  it("list initializes state on first run with an empty handled set", () => {
+    const h = makeHarness({ prList: [] });
+    const r = h.run(["list"]);
+    expect(r.status).toBe(0);
+    const state = h.readState();
+    expect(state.handled).toStrictEqual([]);
+    // floor is an ISO-8601 Zulu timestamp.
+    expect(state.floor).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+  });
 });
