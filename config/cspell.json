@@ -159,6 +159,8 @@
     "unreviewed",
     "linejoin",
     "Neue",
-    "qlmanage"
+    "qlmanage",
+    "argjson",
+    "tostring"
   ]
 }

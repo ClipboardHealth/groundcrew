@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { snapshotEnvironmentVariables } from "../../../testHelpers/env.ts";
+import { shellFetchOutputSchema } from "./schema.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../../../");
 const SCRIPT = path.join(REPO_ROOT, "task-sources/pr-followups/pr-followups.sh");
@@ -140,5 +141,88 @@ describe("pr-followups shell source", () => {
     expect(state.handled).toStrictEqual([]);
     // floor is an ISO-8601 Zulu timestamp.
     expect(state.floor).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+  });
+
+  const PRS: MergedPr[] = [
+    {
+      number: 101,
+      title: "Add retry logic",
+      mergedAt: "2026-06-10T10:00:00Z",
+      headRefName: "feature/retry",
+      body: "Body of 101",
+      author: { login: "alice" },
+    },
+    {
+      number: 102,
+      title: "Already handled",
+      mergedAt: "2026-06-11T10:00:00Z",
+      headRefName: "feature/handled",
+      body: "Body of 102",
+      author: { login: "bob" },
+    },
+    {
+      number: 103,
+      title: "A followup PR",
+      mergedAt: "2026-06-12T10:00:00Z",
+      headRefName: "gc-followup/77-extract",
+      body: "Body of 103",
+      author: { login: "carol" },
+    },
+  ];
+
+  it("emits one valid task per qualifying merged PR", () => {
+    const h = makeHarness({
+      prList: PRS,
+      stateSeed: { floor: "2026-06-01T00:00:00Z", handled: [102] },
+    });
+    const r = h.run(["list"]);
+    expect(r.status).toBe(0);
+    const tasks = shellFetchOutputSchema.parse(JSON.parse(r.stdout));
+    // 102 is handled, 103 is a followup branch -> only 101 emitted.
+    expect(tasks.map((task) => task.id)).toStrictEqual(["followup-101"]);
+    const [t] = tasks;
+    expect(t).toBeDefined();
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- asserted above
+    expect(t!.title).toBe("Refactor followup for #101: Add retry logic");
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- asserted above
+    expect(t!.status).toBe("todo");
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- asserted above
+    expect(t!.repository).toBe("acme/widgets");
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- asserted above
+    expect(t!.assignee).toBe("alice");
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- asserted above
+    expect(t!.updatedAt).toBe("2026-06-10T10:00:00Z");
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- asserted above
+    expect(t!.url).toBe("https://github.com/acme/widgets/pull/101");
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- asserted above
+    expect(t!.sourceRef).toStrictEqual({ number: 101 });
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- asserted above
+    expect(t!.description).toContain("#101");
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- asserted above
+    expect(t!.description).toContain("gh pr diff 101");
+  });
+
+  it("emits nothing when no PR is newer than the floor", () => {
+    const h = makeHarness({
+      prList: PRS,
+      stateSeed: { floor: "2026-12-01T00:00:00Z", handled: [] },
+    });
+    const r = h.run(["list"]);
+    expect(shellFetchOutputSchema.parse(JSON.parse(r.stdout))).toStrictEqual([]);
+  });
+
+  it("emits a default agent when PR_FOLLOWUPS_AGENT is set", () => {
+    const [pr101] = PRS;
+    expect(pr101).toBeDefined();
+    const h = makeHarness({
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- asserted above
+      prList: [pr101!],
+      stateSeed: { floor: "2026-06-01T00:00:00Z", handled: [] },
+    });
+    const r = h.run(["list"], { env: { PR_FOLLOWUPS_AGENT: "claude-fable" } });
+    const [t] = shellFetchOutputSchema.parse(JSON.parse(r.stdout));
+    expect(t).toBeDefined();
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- asserted above
+    expect(t!.agent).toBe("claude-fable");
   });
 });
