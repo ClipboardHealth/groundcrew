@@ -253,7 +253,7 @@ async function ensureSafehouseClearance(signal?: AbortSignal): Promise<void> {
 export async function openAgentWorkspace(input: {
   config: ResolvedConfig;
   name: string;
-  displayName?: string;
+  displayName: string;
   cwd: string;
   command: string;
   agent: string;
@@ -262,7 +262,7 @@ export async function openAgentWorkspace(input: {
 }): Promise<void> {
   const spec = {
     name: input.name,
-    ...(input.displayName === undefined ? {} : { displayName: input.displayName }),
+    displayName: input.displayName,
     cwd: input.cwd,
     command: input.command,
     status: { text: input.agent, color: input.color, icon: "sparkle" },
