@@ -600,8 +600,8 @@ function buildUnwrappedHostLaunchCommand(arguments_: LaunchCommandArguments): st
   if (arguments_.secretsFile !== undefined) {
     lines.push(unsetSecretsLine());
   }
-  lines.push(...workerEnvironmentExports(arguments_.workerEnvironment));
   lines.push(
+    ...workerEnvironmentExports(arguments_.workerEnvironment),
     ...preLaunchPromptAndExec({
       definition: arguments_.definition,
       worktreeDir: arguments_.worktreeDir,
@@ -879,8 +879,7 @@ function buildSdxLaunchCommand(arguments_: LaunchCommandArguments): string {
   if (arguments_.secretsFile !== undefined) {
     innerParts.push(unsetSecretsLine());
   }
-  innerParts.push(...workerEnvironmentExports(arguments_.workerEnvironment));
-  innerParts.push(agentCommand);
+  innerParts.push(...workerEnvironmentExports(arguments_.workerEnvironment), agentCommand);
   const innerCommand = innerParts.join("; ");
   // Passthrough form (`-e KEY` without `=VALUE`): sbx reads each value
   // from its own env at invocation time — populated by sourceSecretsLine
