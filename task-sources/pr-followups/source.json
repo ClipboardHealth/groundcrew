@@ -1,0 +1,22 @@
+{
+  "name": "pr-followups",
+  "kind": "shell",
+  "description": "Open followup refactoring PRs for each merged PR.",
+  "installDir": "~/.config/groundcrew",
+  "files": ["pr-followups.sh"],
+  "prerequisites": [
+    { "bin": "gh", "install": "brew install gh", "setup": "gh auth login" },
+    { "bin": "jq", "install": "brew install jq" }
+  ],
+  "env": {
+    "PR_FOLLOWUPS_BASE": "main",
+    "PR_FOLLOWUPS_BRANCH_GLOB": "gc-followup/*"
+  },
+  "commands": {
+    "verify": "~/.config/groundcrew/pr-followups.sh verify",
+    "listTasks": "~/.config/groundcrew/pr-followups.sh list",
+    "getTask": "~/.config/groundcrew/pr-followups.sh get ${id}",
+    "markInReview": "~/.config/groundcrew/pr-followups.sh reviewed ${id}",
+    "markDone": "~/.config/groundcrew/pr-followups.sh complete ${id}"
+  }
+}

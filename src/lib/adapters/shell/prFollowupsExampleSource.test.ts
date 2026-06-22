@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { snapshotEnvironmentVariables } from "../../../testHelpers/env.ts";
-import { shellFetchOutputSchema, shellIssueSchema } from "./schema.ts";
+import { shellAdapterConfigSchema, shellFetchOutputSchema, shellIssueSchema } from "./schema.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../../../");
 const SCRIPT = path.join(REPO_ROOT, "task-sources/pr-followups/pr-followups.sh");
@@ -363,5 +363,16 @@ describe("pr-followups shell source", () => {
     const state = h.readState();
     expect(state.handled).toStrictEqual([123]);
     expect(state.floor).toBe("2026-06-01T00:00:00Z");
+  });
+
+  it("source.json commands parse against the shell adapter config schema", () => {
+    const raw = readFileSync(path.join(REPO_ROOT, "task-sources/pr-followups/source.json"), "utf8");
+    // shellAdapterConfigSchema.parse accepts `unknown`; pass the JSON.parse
+    // output directly so the schema itself validates and narrows the types.
+    const parsed = shellAdapterConfigSchema.parse(JSON.parse(raw));
+    expect(parsed.name).toBe("pr-followups");
+    expect(parsed.commands.listTasks).toContain("pr-followups.sh list");
+    expect(parsed.commands.markInReview).toContain("reviewed");
+    expect(parsed.commands.markDone).toContain("complete");
   });
 });
