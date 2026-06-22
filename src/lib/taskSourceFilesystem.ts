@@ -50,8 +50,10 @@ export function taskSourceWritePathsForCompletion(input: {
 
       // Completion writeback writes the todo file plus lock/tmp siblings, so the
       // sandbox grant must cover the todo file's parent directory.
-      paths.push(resolveForWorker(input.workingDir, path.dirname(source.todoPath)));
-      paths.push(resolveForWorker(input.workingDir, source.tasksDir));
+      paths.push(
+        resolveForWorker(input.workingDir, path.dirname(source.todoPath)),
+        resolveForWorker(input.workingDir, source.tasksDir),
+      );
     } else {
       // shell: open the directories the source declares it reads/writes in place
       // (e.g. an external plan store) for read + write under the sandbox.

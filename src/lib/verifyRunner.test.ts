@@ -66,8 +66,7 @@ describe(runVerify, () => {
       [
         "test",
         async (check) => {
-          events.push(`start:${check.name}`);
-          events.push(`finish:${check.name}`);
+          events.push(`start:${check.name}`, `finish:${check.name}`);
           return passingResult(check);
         },
       ],
