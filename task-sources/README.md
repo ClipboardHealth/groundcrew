@@ -39,3 +39,4 @@ The command keys (`verify`, `listTasks`, `getTask`, `markInProgress`,
 
 - [`jira/`](./jira/README.md) — JIRA issues via the
   [`jira` CLI](https://github.com/ankitpokhrel/jira-cli).
+- [`pr-followups/`](./pr-followups/README.md) - followup refactoring PRs for each merged PR (read-only, local state).

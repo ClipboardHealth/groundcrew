@@ -25,7 +25,7 @@ export default {
 };
 ```
 
-A complete, runnable JIRA source backed by the [`jira` CLI](https://github.com/ankitpokhrel/jira-cli) ships in [`task-sources/jira/`](../task-sources/jira/README.md): a single `jira.sh` dispatcher (`verify`/`list`/`get`/`move`) that maps JIRA's REST output into the contract below, plus the config block to wire it up.
+A complete, runnable JIRA source backed by the [`jira` CLI](https://github.com/ankitpokhrel/jira-cli) ships in [`task-sources/jira/`](../task-sources/jira/README.md): a single `jira.sh` dispatcher (`verify`/`list`/`get`/`move`) that maps JIRA's REST output into the contract below, plus the config block to wire it up. A read-only, merged-PR-driven example ships in [`task-sources/pr-followups/`](../task-sources/pr-followups/README.md): it emits one task per merged PR so an agent can open followup refactoring PRs, tracking progress in a local state file (no GitHub writes).
 
 `commands.listTasks` must print a JSON array of issues. `commands.getTask`, when
 set, must print one issue, print nothing for "not found", or exit `3` for "not
