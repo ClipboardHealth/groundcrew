@@ -43,6 +43,33 @@ diff minimal and focused. If none clearly applies, run `$GROUNDCREW_COMPLETE` an
 stop WITHOUT opening a PR. Do not refactor beyond the listed items.
 TXT
 
+# Shared single-PR -> ShellIssue transform. Input: one PR object (as `gh pr
+# view --json number,title,mergedAt,headRefName,body,author` returns). Args:
+# $repo, $agent, $rubric. Used by `list` (mapped over the array) and `get`.
+read -r -d '' JQ_TO_ISSUE <<'JQ' || true
+def toIssue($repo; $agent; $rubric):
+  {
+    id: ("followup-" + (.number | tostring)),
+    title: ("Refactor followup for #" + (.number | tostring) + ": " + .title),
+    description: ($rubric
+      + "\n\n--- Merged PR ---\n"
+      + "Number: #" + (.number | tostring) + "\n"
+      + "Title: " + .title + "\n\n"
+      + "Body:\n" + (.body // "")
+      + "\n\nFetch the full diff with: gh pr diff " + (.number | tostring)
+      + " --repo " + $repo),
+    status: "todo",
+    repository: $repo,
+    agent: (if $agent == "" then null else $agent end),
+    assignee: (.author.login // "unknown"),
+    updatedAt: .mergedAt,
+    blockers: [],
+    hasMoreBlockers: false,
+    url: ("https://github.com/" + $repo + "/pull/" + (.number | tostring)),
+    sourceRef: { number: .number }
+  };
+JQ
+
 resolve_repo() {
   if [[ -n "${PR_FOLLOWUPS_REPO:-}" ]]; then
     printf '%s' "${PR_FOLLOWUPS_REPO}"
@@ -94,33 +121,14 @@ case "${cmd}" in
       --arg prefix "${BRANCH_PREFIX}" \
       --arg repo "${repo}" \
       --arg agent "${AGENT}" \
-      --arg rubric "${RUBRIC}" '
+      --arg rubric "${RUBRIC}" "
+      ${JQ_TO_ISSUE}
       [ .[]
-        | select(.mergedAt > $floor)
-        | select((.headRefName | startswith($prefix)) | not)
-        | . as $pr
-        | select(([$handled[] | tostring] | index($pr.number | tostring)) == null)
-        | {
-            id: ("followup-" + ($pr.number | tostring)),
-            title: ("Refactor followup for #" + ($pr.number | tostring) + ": " + $pr.title),
-            description: ($rubric
-              + "\n\n--- Merged PR ---\n"
-              + "Number: #" + ($pr.number | tostring) + "\n"
-              + "Title: " + $pr.title + "\n\n"
-              + "Body:\n" + ($pr.body // "")
-              + "\n\nFetch the full diff with: gh pr diff " + ($pr.number | tostring)
-              + " --repo " + $repo),
-            status: "todo",
-            repository: $repo,
-            agent: (if $agent == "" then null else $agent end),
-            assignee: ($pr.author.login // "unknown"),
-            updatedAt: $pr.mergedAt,
-            blockers: [],
-            hasMoreBlockers: false,
-            url: ("https://github.com/" + $repo + "/pull/" + ($pr.number | tostring)),
-            sourceRef: { number: $pr.number }
-          }
-      ]'
+        | select(.mergedAt > \$floor)
+        | select((.headRefName | startswith(\$prefix)) | not)
+        | . as \$pr
+        | select(([\$handled[] | tostring] | index(\$pr.number | tostring)) == null)
+        | toIssue(\$repo; \$agent; \$rubric) ]"
 
     # Compaction: advance the floor across the oldest-first contiguous run of
     # PRs that need no (further) processing (in `handled` OR followup-branch),
@@ -147,6 +155,24 @@ case "${cmd}" in
                      | $n ]
         }')"
     printf '%s' "${new_state}" > "${state_file}"
+    ;;
+  get)
+    repo="$(resolve_repo)"
+    id="${1:?usage: pr-followups.sh get <ID>}"
+    number="${id#followup-}"
+    get_err="$(mktemp)"
+    trap 'rm -f "${get_err}"' EXIT
+    if ! out="$(gh pr view "${number}" --repo "${repo}" \
+                  --json number,title,mergedAt,headRefName,body,author,state 2>"${get_err}")"; then
+      # gh exits non-zero for a missing PR; treat as the not-found sentinel.
+      exit 3
+    fi
+    # Only merged PRs are valid followup tasks; anything else is "not found".
+    merged_at="$(printf '%s' "${out}" | jq -r '.mergedAt // empty')"
+    [[ -n "${merged_at}" ]] || exit 3
+    printf '%s' "${out}" | jq -c \
+      --arg repo "${repo}" --arg agent "${AGENT}" --arg rubric "${RUBRIC}" \
+      "${JQ_TO_ISSUE} toIssue(\$repo; \$agent; \$rubric)"
     ;;
   *)
     echo "usage: pr-followups.sh {verify|list|get <ID>|reviewed <ID>|complete <ID>}" >&2

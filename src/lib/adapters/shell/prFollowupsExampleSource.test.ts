@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { snapshotEnvironmentVariables } from "../../../testHelpers/env.ts";
-import { shellFetchOutputSchema } from "./schema.ts";
+import { shellFetchOutputSchema, shellIssueSchema } from "./schema.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../../../");
 const SCRIPT = path.join(REPO_ROOT, "task-sources/pr-followups/pr-followups.sh");
@@ -314,5 +314,28 @@ describe("pr-followups shell source", () => {
     expect(state.floor).toBe("2026-06-02T00:00:00Z");
     // 301 (< floor) pruned, 302 (== floor) kept.
     expect(state.handled).toStrictEqual([302]);
+  });
+
+  it("get returns one valid task for a known followup id", () => {
+    const pr: MergedPr = {
+      number: 101,
+      title: "Add retry logic",
+      mergedAt: "2026-06-10T10:00:00Z",
+      headRefName: "feature/retry",
+      body: "Body",
+      author: { login: "alice" },
+    };
+    const h = makeHarness({ prList: [], prView: { "101": pr } });
+    const r = h.run(["get", "followup-101"]);
+    expect(r.status).toBe(0);
+    const task = shellIssueSchema.parse(JSON.parse(r.stdout));
+    expect(task.id).toBe("followup-101");
+    expect(task.sourceRef).toStrictEqual({ number: 101 });
+  });
+
+  it("get exits 3 when the PR is absent", () => {
+    const h = makeHarness({ prList: [], prView: {} });
+    const r = h.run(["get", "followup-999"]);
+    expect(r.status).toBe(3);
   });
 });
