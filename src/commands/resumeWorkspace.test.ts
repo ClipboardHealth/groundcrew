@@ -115,7 +115,6 @@ const detectHostMock = vi.mocked(detectHostCapabilities);
 const readRunStateMock = vi.mocked(readRunState);
 const recordRunStateMock = vi.mocked(recordRunState);
 const getLinearClientMock = vi.mocked(getLinearClient);
-// oxlint-disable-next-line typescript/unbound-method -- workspaces is mocked to plain vi.fn properties in this file.
 const workspacesOpenMock = vi.mocked(workspaces.open);
 const workspacesProbeMock = vi.mocked(workspaces.probe);
 const findByTaskMock = vi.mocked(worktrees.findByTask);
@@ -233,7 +232,6 @@ function makeRunStateWithoutReason(overrides: Partial<RunState> = {}): RunState 
 
 function mockLinearIssue(): void {
   const issue = vi.fn<IssueLookup>().mockResolvedValue({ title: "Title", description: "Body" });
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- resume tests stub only the issue lookup surface.
   getLinearClientMock.mockReturnValue({
     issue,
   } as unknown as ReturnType<typeof getLinearClient>);
@@ -423,7 +421,6 @@ describe(resumeWorkspace, () => {
   });
 
   it("falls back to the task id when Linear detail lookup fails during state resume", async () => {
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- resume tests stub only the issue lookup surface.
     getLinearClientMock.mockReturnValue({
       issue: vi.fn<IssueLookup>().mockRejectedValue(new Error("offline")),
     } as unknown as ReturnType<typeof getLinearClient>);
@@ -453,7 +450,6 @@ describe(resumeWorkspace, () => {
 
   it("renders empty task details and no previous reason when state has neither", async () => {
     readRunStateMock.mockReturnValue(makeRunStateWithoutReason());
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- resume tests stub only the issue lookup surface.
     getLinearClientMock.mockReturnValue({
       issue: vi.fn<IssueLookup>().mockResolvedValue({ title: "Title" }),
     } as unknown as ReturnType<typeof getLinearClient>);

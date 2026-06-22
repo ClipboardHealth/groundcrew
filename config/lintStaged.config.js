@@ -1,4 +1,3 @@
-// oxlint-disable import/no-anonymous-default-export
 /**
  * @param {string[]} files
  * @returns {string[]}

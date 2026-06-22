@@ -1,5 +1,5 @@
 export interface ConsoleCapture {
-  readonly calls: readonly (readonly string[])[];
+  readonly calls: ReadonlyArray<readonly string[]>;
   output: () => string;
   restore: () => void;
 }
