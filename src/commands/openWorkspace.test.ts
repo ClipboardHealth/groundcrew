@@ -113,7 +113,6 @@ const resolvePullRequestMock = vi.mocked(resolvePullRequest);
 const resolvePrepareWorktreeCommandMock = vi.mocked(resolvePrepareWorktreeCommand);
 const readRunStateMock = vi.mocked(readRunState);
 const recordRunStateMock = vi.mocked(recordRunState);
-// oxlint-disable-next-line typescript/unbound-method -- workspaces is mocked to plain vi.fn properties in this file.
 const workspacesOpenMock = vi.mocked(workspaces.open);
 const workspacesProbeMock = vi.mocked(workspaces.probe);
 const worktreeOpenMock = vi.mocked(worktrees.open);

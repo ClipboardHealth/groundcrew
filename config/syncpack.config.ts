@@ -25,5 +25,4 @@ export default {
       label: "@types packages should only be under devDependencies.",
     },
   ],
-  // oxlint-disable-next-line typescript/consistent-type-imports
 } satisfies import("syncpack").RcFile;

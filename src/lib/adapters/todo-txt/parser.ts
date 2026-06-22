@@ -103,7 +103,7 @@ function parseTodoLine(raw: string): ParsedTodoLine {
   };
 }
 
-export function parseAllLines(fileContent: string): (ParsedTodoLine | null)[] {
+export function parseAllLines(fileContent: string): Array<ParsedTodoLine | null> {
   return fileContent.split("\n").map((line) => {
     const trimmed = line.trim();
     if (trimmed.length === 0 || trimmed.startsWith("#")) {

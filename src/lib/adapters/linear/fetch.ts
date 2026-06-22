@@ -174,7 +174,7 @@ interface IssueNode {
   team?: { id: string; key: string };
   assignee?: { name: string } | null;
   children: { nodes: unknown[] };
-  labels: { nodes: { name: string }[] };
+  labels: { nodes: Array<{ name: string }> };
   inverseRelations?: {
     nodes: IssueRelationNode[];
     pageInfo: { hasNextPage: boolean };
@@ -419,7 +419,7 @@ export interface RawLinearIssue {
   title: string;
   description: string;
   teamId: string;
-  labels: { name: string }[];
+  labels: Array<{ name: string }>;
   /** Linear workflow state name, e.g. "Todo", "In Review". May be "" if state was null. */
   stateName: string;
   stateType: string;
@@ -541,8 +541,8 @@ export async function fetchRawLinearIssue(arguments_: {
       team?: { id: string } | null;
       state?: { id: string; name: string; type: string } | null;
       assignee?: { name: string } | null;
-      children?: { nodes: { id: string }[] } | null;
-      labels: { nodes: { name: string }[] };
+      children?: { nodes: Array<{ id: string }> } | null;
+      labels: { nodes: Array<{ name: string }> };
       inverseRelations?: {
         nodes: IssueRelationNode[];
         pageInfo: { hasNextPage: boolean };
@@ -576,10 +576,10 @@ export async function fetchRawLinearIssue(arguments_: {
 }
 
 interface InProgressIssuesPage {
-  nodes: {
+  nodes: Array<{
     id: string;
     state?: { type: string } | null;
-  }[];
+  }>;
   pageInfo: { hasNextPage: boolean; endCursor: string };
 }
 

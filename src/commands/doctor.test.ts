@@ -57,7 +57,6 @@ vi.mock(import("../lib/commandRunner.ts"), async (importOriginal) => {
   return {
     ...actual,
     runCommand: runCommandMock,
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- test mock intentionally shares one recorder across sync and async command APIs.
     runCommandAsync: runCommandMock as unknown as typeof actual.runCommandAsync,
   };
 });
@@ -168,7 +167,6 @@ function host(overrides: Partial<HostCapabilities> = {}): HostCapabilities {
 }
 
 function statsWithDirectoryValue(isDirectory: boolean): ReturnType<typeof statSync> {
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- tests only need the statSync isDirectory surface
   return { isDirectory: () => isDirectory } as ReturnType<typeof statSync>;
 }
 
