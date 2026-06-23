@@ -1,7 +1,11 @@
 import {
+  agentHookDelivery,
   buildCmuxAgentHookSettings,
+  buildCursorProjectHooks,
   type CmuxAgentHookSettings,
   cmuxAgentHookSettingsJson,
+  cursorProjectHooksJson,
+  isGroundcrewHookCommand,
 } from "./cmuxAgentHooks.ts";
 
 function commandFor(settings: CmuxAgentHookSettings, event: string): string {
@@ -69,5 +73,77 @@ describe(cmuxAgentHookSettingsJson, () => {
     const actual: unknown = JSON.parse(cmuxAgentHookSettingsJson({ agent: "claude" }));
 
     expect(actual).toStrictEqual(expected);
+  });
+});
+
+function cursorCommandFor(
+  hooks: ReturnType<typeof buildCursorProjectHooks>,
+  event: string,
+): string {
+  const command = hooks.hooks[event]?.[0]?.command;
+  if (command === undefined) {
+    throw new Error(`No cursor hook command for event ${event}`);
+  }
+
+  return command;
+}
+
+describe(buildCursorProjectHooks, () => {
+  it("maps the shared progress phases onto cursor's lifecycle event names", () => {
+    const actual = buildCursorProjectHooks({ agent: "cursor" });
+
+    expect(actual.version).toBe(1);
+    expect(Object.keys(actual.hooks)).toStrictEqual([
+      "sessionStart",
+      "beforeSubmitPrompt",
+      "stop",
+      "afterAgentResponse",
+      "sessionEnd",
+    ]);
+    expect(cursorCommandFor(actual, "sessionStart")).toContain("running · cursor");
+    expect(cursorCommandFor(actual, "beforeSubmitPrompt")).toContain("working");
+    expect(cursorCommandFor(actual, "stop")).toContain("idle");
+    expect(cursorCommandFor(actual, "afterAgentResponse")).toContain("idle");
+    expect(cursorCommandFor(actual, "sessionEnd")).toContain("done");
+  });
+
+  it("paints via the same guarded best-effort set-progress command as claude", () => {
+    const actual = cursorCommandFor(buildCursorProjectHooks({ agent: "cursor" }), "stop");
+
+    expect(actual).toContain('if [ -n "$CMUX_WORKSPACE_ID" ]');
+    expect(actual).toContain('--workspace "$CMUX_WORKSPACE_ID"');
+    // eslint-disable-next-line no-template-curly-in-string -- shell parameter expansion, not a JS template
+    expect(actual).toContain('"${CMUX_BUNDLED_CLI_PATH:-cmux}" set-progress');
+    expect(actual).toContain("|| true");
+  });
+});
+
+describe(cursorProjectHooksJson, () => {
+  it("serializes to valid JSON that round-trips to the cursor hooks object", () => {
+    const expected = buildCursorProjectHooks({ agent: "cursor" });
+
+    const actual: unknown = JSON.parse(cursorProjectHooksJson({ agent: "cursor" }));
+
+    expect(actual).toStrictEqual(expected);
+  });
+});
+
+describe(agentHookDelivery, () => {
+  it("routes claude to inline settings and cursor to a project file", () => {
+    expect(agentHookDelivery("claude")).toBe("claude-settings");
+    expect(agentHookDelivery("cursor")).toBe("cursor-project-file");
+  });
+
+  it("returns undefined for agents with no hook integration", () => {
+    expect(agentHookDelivery("codex")).toBeUndefined();
+  });
+});
+
+describe(isGroundcrewHookCommand, () => {
+  it("recognizes a painted set-progress command and ignores foreign ones", () => {
+    const ours = cursorCommandFor(buildCursorProjectHooks({ agent: "cursor" }), "stop");
+
+    expect(isGroundcrewHookCommand(ours)).toBe(true);
+    expect(isGroundcrewHookCommand("bun run ./hooks/repo-stop.ts")).toBe(false);
   });
 });

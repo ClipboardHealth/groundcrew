@@ -7,7 +7,8 @@ import {
 } from "@clipboard-health/clearance";
 
 import { clearanceAllowHostsFilesFromEnvironment } from "./clearanceAllowlist.ts";
-import { cmuxAgentHookSettingsJson } from "./cmuxAgentHooks.ts";
+import { agentHookDelivery, cmuxAgentHookSettingsJson } from "./cmuxAgentHooks.ts";
+import { writeCursorProjectHooks } from "./cursorProjectHooks.ts";
 import { shellSingleQuote } from "./shell.ts";
 import {
   hasPreLaunchEnv,
@@ -69,6 +70,13 @@ export function composeAgentLaunch(input: {
     input.runner === "safehouse"
       ? safehouseAgentIntegrationFor(input.workspaceKind, input.definition)
       : undefined;
+  if (input.runner === "safehouse" && input.workspaceKind === "cmux") {
+    stageProjectFileHooks({
+      definition: input.definition,
+      workingDir: input.workingDir,
+      worktreeDir: input.worktreeDir,
+    });
+  }
   const launchCommand = buildLaunchCommand({
     definition: input.definition,
     promptFile: input.promptFile,
@@ -133,11 +141,13 @@ function safehouseAgentIntegrationFor(
     warnOnCmuxIntegrationDrift({ unreviewedEnvNames: cmuxIntegration.unreviewedEnvNames });
   }
 
+  const ridesAgentArgs = agentHookDelivery(agentCommandName) === "claude-settings";
+
   return {
     addDirsReadOnly: cmuxIntegration.addDirsReadOnly,
     envPass: cmuxIntegration.envPass,
     commandPreludes: isClaudeAgent ? [cmuxIntegration.claudeCommandPrelude] : [],
-    ...(isClaudeAgent
+    ...(ridesAgentArgs
       ? {
           agentArgs: [
             "--settings",
@@ -146,6 +156,29 @@ function safehouseAgentIntegrationFor(
         }
       : {}),
   };
+}
+
+/**
+ * Stage hooks that a `cursor-project-file` agent (currently cursor) discovers
+ * from the worktree, since its lifecycle hooks can't ride the agent argv the way
+ * claude's `--settings` does. A no-op for agents whose hooks ride agent args or
+ * that have no hook integration.
+ */
+function stageProjectFileHooks(input: {
+  definition: AgentDefinition;
+  workingDir: string;
+  worktreeDir: string;
+}): void {
+  const agentCommandName = inferAgentCommandName(input.definition.cmd);
+  if (agentHookDelivery(agentCommandName) !== "cursor-project-file") {
+    return;
+  }
+
+  writeCursorProjectHooks({
+    workingDir: input.workingDir,
+    worktreeDir: input.worktreeDir,
+    agent: agentCommandName,
+  });
 }
 
 function warnOnCmuxIntegrationDrift(input: { unreviewedEnvNames: readonly string[] }): void {
@@ -253,7 +286,7 @@ async function ensureSafehouseClearance(signal?: AbortSignal): Promise<void> {
 export async function openAgentWorkspace(input: {
   config: ResolvedConfig;
   name: string;
-  displayName: string;
+  displayName?: string;
   cwd: string;
   command: string;
   agent: string;
@@ -262,7 +295,7 @@ export async function openAgentWorkspace(input: {
 }): Promise<void> {
   const spec = {
     name: input.name,
-    displayName: input.displayName,
+    ...(input.displayName === undefined ? {} : { displayName: input.displayName }),
     cwd: input.cwd,
     command: input.command,
     status: { text: input.agent, color: input.color, icon: "sparkle" },
