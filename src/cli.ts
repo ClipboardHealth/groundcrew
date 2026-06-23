@@ -7,6 +7,7 @@ import { interruptWorkspaceCli } from "./commands/interruptWorkspace.ts";
 import { openWorkspaceCli } from "./commands/openWorkspace.ts";
 import { orchestrate } from "./commands/orchestrator.ts";
 import { resumeWorkspaceCli } from "./commands/resumeWorkspace.ts";
+import { setAgentWorkspaceCli } from "./commands/setAgent.ts";
 import { setupWorkspaceCli } from "./commands/setupWorkspace.ts";
 import { sourceCli } from "./commands/source.ts";
 import { statusCli } from "./commands/status.ts";
@@ -215,6 +216,11 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
     summary: "Reopen an existing task worktree, resuming the agent's chat session",
     usage: "[--new] <task>",
     invoke: resumeWorkspaceCli,
+  },
+  "set-agent": {
+    summary: "Change the agent (model/provider) for an existing task worktree",
+    usage: "<task> <agent>",
+    invoke: setAgentWorkspaceCli,
   },
   open: {
     summary: "Open an existing PR or branch in a new worktree and launch a session",
