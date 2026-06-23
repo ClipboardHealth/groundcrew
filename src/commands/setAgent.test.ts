@@ -68,7 +68,7 @@ function makeConfig(): ResolvedConfig {
     },
     prompts: { initial: "x" },
     workspaceKind: "auto",
-    local: { runner: "auto" },
+    local: { runner: "auto", networkEgress: "allowlisted" },
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }
@@ -146,7 +146,7 @@ describe(setAgentWorkspace, () => {
     });
     expect(interruptMock).not.toHaveBeenCalled();
     expect(resumeMock).not.toHaveBeenCalled();
-    expect(consoleLog.output()).toContain("takes effect on next");
+    expect(consoleLog.output()).toContain("takes effect on next 'crew resume --new team-1'");
   });
 
   it("stops then resumes with the new agent when the workspace is live", async () => {
@@ -160,7 +160,7 @@ describe(setAgentWorkspace, () => {
       patch: { state: "running", agent: "claude-opus" },
     });
     expect(interruptMock).toHaveBeenCalledWith(config, { task: "team-1" });
-    expect(resumeMock).toHaveBeenCalledWith(config, { task: "team-1" });
+    expect(resumeMock).toHaveBeenCalledWith(config, { task: "team-1", fresh: true });
     expect(consoleLog.output()).toContain("Switched team-1 to claude-opus and resumed");
   });
 

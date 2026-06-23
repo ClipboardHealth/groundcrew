@@ -63,11 +63,17 @@ export async function setAgentWorkspace(
 
   if (live) {
     await interruptWorkspace(config, { task });
-    await resumeWorkspace(config, { task });
+    // fresh: true — the prior conversation belongs to the old agent. Reopening
+    // it under the new agent's resumeArgs would attach to the wrong (or a
+    // nonexistent) session and, for same-CLI model swaps, `--resume` can
+    // restore the session's original model, silently defeating the switch.
+    await resumeWorkspace(config, { task, fresh: true });
     log(`Switched ${task} to ${agent} and resumed.`);
     return;
   }
-  log(`Agent for ${task} set to ${agent}; takes effect on next 'crew resume'.`);
+  log(
+    `Agent for ${task} set to ${agent}; takes effect on next 'crew resume --new ${task}' (use --new to start a fresh conversation with the new agent).`,
+  );
 }
 
 function parseArguments(argv: string[]): SetAgentWorkspaceOptions {
