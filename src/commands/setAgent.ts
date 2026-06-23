@@ -41,7 +41,10 @@ export async function setAgentWorkspace(
 ): Promise<void> {
   const task = options.task.toLowerCase();
   const { agent } = options;
-  if (config.agents.definitions[agent] === undefined) {
+  // Object.hasOwn, not `=== undefined`: a raw index lookup resolves inherited
+  // keys like `toString`/`constructor` to Object.prototype members, which would
+  // pass an undefined check and persist a bogus agent into run state.
+  if (!Object.hasOwn(config.agents.definitions, agent)) {
     throw new Error(`Unknown agent: ${agent}`);
   }
   const state = readRunState(config, task);

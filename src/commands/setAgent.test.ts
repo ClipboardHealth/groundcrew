@@ -113,6 +113,13 @@ describe(setAgentWorkspace, () => {
     expect(updateRunStateMock).not.toHaveBeenCalled();
   });
 
+  it("rejects an inherited Object key that is not an own agent definition", async () => {
+    await expect(setAgentWorkspace(config, { task: "team-1", agent: "toString" })).rejects.toThrow(
+      /Unknown agent: toString/,
+    );
+    expect(updateRunStateMock).not.toHaveBeenCalled();
+  });
+
   it("fails when no run state exists for the task", async () => {
     readRunStateMock.mockReset();
 
