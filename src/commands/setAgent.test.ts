@@ -164,6 +164,37 @@ describe(setAgentWorkspace, () => {
     expect(consoleLog.output()).toContain("Switched team-1 to claude-opus and resumed");
   });
 
+  it("persists the new agent before interrupting so the restart uses it", async () => {
+    probeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-1"]) });
+    const sequence: string[] = [];
+    updateRunStateMock.mockImplementation(() => {
+      sequence.push("persist");
+      return makeRunState({ agent: "claude-opus" });
+    });
+    interruptMock.mockImplementation(async () => {
+      sequence.push("interrupt");
+    });
+    resumeMock.mockImplementation(async () => {
+      sequence.push("resume");
+    });
+
+    await setAgentWorkspace(config, { task: "team-1", agent: "claude-opus" });
+
+    expect(sequence).toStrictEqual(["persist", "interrupt", "resume"]);
+  });
+
+  it("preserves the existing lifecycle state when repointing a stopped task", async () => {
+    readRunStateMock.mockReturnValue(makeRunState({ state: "interrupted" }));
+
+    await setAgentWorkspace(config, { task: "team-1", agent: "claude-opus" });
+
+    expect(updateRunStateMock).toHaveBeenCalledWith({
+      config,
+      task: "team-1",
+      patch: { state: "interrupted", agent: "claude-opus" },
+    });
+  });
+
   it("fails when the workspace backend cannot be probed", async () => {
     probeMock.mockResolvedValue({ kind: "unavailable", error: new Error("cmux down") });
 
