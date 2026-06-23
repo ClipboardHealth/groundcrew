@@ -123,7 +123,7 @@ function makeConfig(overrides: Partial<ResolvedConfig["agents"]> = {}): Resolved
     },
     prompts: { initial: "x" },
     workspaceKind: "auto",
-    local: { runner: "auto", networkEgress: "allowlisted" },
+    local: { runner: "auto", networkEgress: "allowlisted", safehouse: { enable: [] } },
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }
@@ -654,7 +654,7 @@ describe(doctor, () => {
     detectHostMock.mockResolvedValue(host());
     loadConfigMock.mockResolvedValue({
       ...makeConfig(),
-      local: { runner: "srt", networkEgress: "allowlisted" },
+      local: { runner: "srt", networkEgress: "allowlisted", safehouse: { enable: [] } },
     });
 
     const actual = await doctor();
@@ -679,7 +679,7 @@ describe(doctor, () => {
     );
     loadConfigMock.mockResolvedValue({
       ...makeConfig(),
-      local: { runner: "srt", networkEgress: "allowlisted" },
+      local: { runner: "srt", networkEgress: "allowlisted", safehouse: { enable: [] } },
     });
 
     const actual = await doctor();
@@ -705,7 +705,7 @@ describe(doctor, () => {
     );
     loadConfigMock.mockResolvedValue({
       ...makeConfig(),
-      local: { runner: "srt", networkEgress: "allowlisted" },
+      local: { runner: "srt", networkEgress: "allowlisted", safehouse: { enable: [] } },
     });
 
     const actual = await doctor();
@@ -727,7 +727,7 @@ describe(doctor, () => {
     );
     loadConfigMock.mockResolvedValue({
       ...makeConfig(),
-      local: { runner: "srt", networkEgress: "allowlisted" },
+      local: { runner: "srt", networkEgress: "allowlisted", safehouse: { enable: [] } },
     });
 
     const actual = await doctor();
@@ -740,7 +740,7 @@ describe(doctor, () => {
     detectHostMock.mockResolvedValue(host());
     loadConfigMock.mockResolvedValue({
       ...makeConfig(),
-      local: { runner: "none", networkEgress: "allowlisted" },
+      local: { runner: "none", networkEgress: "allowlisted", safehouse: { enable: [] } },
     });
 
     const actual = await doctor();
@@ -755,7 +755,7 @@ describe(doctor, () => {
     detectHostMock.mockResolvedValue(host({ hasSbx: true }));
     loadConfigMock.mockResolvedValue({
       ...makeConfig(),
-      local: { runner: "sdx", networkEgress: "allowlisted" },
+      local: { runner: "sdx", networkEgress: "allowlisted", safehouse: { enable: [] } },
     });
 
     const actual = await doctor();

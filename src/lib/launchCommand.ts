@@ -497,6 +497,15 @@ interface LaunchCommandArguments {
    */
   safehouseAgentAddDirs?: readonly string[] | undefined;
   /**
+   * Optional Safehouse integrations turned on for the agent wrap, emitted as
+   * `--enable=<comma-list>` before the profile shim. Each name layers the
+   * matching optional sandbox profile (e.g. `agent-browser`) on top of the
+   * agent's deny-by-default policy. Withheld from the repo-controlled
+   * prepareWorktree wrap, which never needs them. Empty/undefined → no
+   * `--enable` flag.
+   */
+  safehouseEnableFeatures?: readonly string[] | undefined;
+  /**
    * Extra host-terminal integration surface granted only to the Safehouse agent
    * wrap. The agent may need to execute host shims and reach their sockets
    * while repo-controlled prepareWorktree hooks should not inherit those paths
@@ -683,6 +692,9 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
     "--add-dirs-ro",
     safehouseAgentIntegration?.addDirsReadOnly ?? [],
   );
+  // Optional sandbox integrations (e.g. `agent-browser`) layered onto the agent
+  // profile only — the repo-controlled prepareWorktree hook never needs them.
+  const safehouseEnableFlag = safehouseEnableFeaturesFlag(arguments_.safehouseEnableFeatures ?? []);
   const safehouseWrapper = safehouseWrapperCommand(arguments_.networkEgress);
 
   // Defensive shim+promptDir trap: by the time we arm it, `rm -rf <promptDir>`
@@ -723,7 +735,7 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
     // Running the real launch chain as `sh -c` would make it see `sh`, so use
     // an agent-named symlink to /bin/sh. This preserves per-agent profile
     // selection without enabling every agent profile.
-    `{ ${safehouseWrapper} ${safehouseAgentAddDirsFlag}${safehouseAgentAddDirsReadOnlyFlag}${agentEnvPassFlag}"$_safehouse_shim" -c ${shellSingleQuote(agentCommand)} sh${promptPositional(arguments_.omitPromptArgument)}; _safehouse_status=$?; rm -rf "$_safehouse_shim_dir"; trap - EXIT; exit "$_safehouse_status"; }`,
+    `{ ${safehouseWrapper} ${safehouseAgentAddDirsFlag}${safehouseAgentAddDirsReadOnlyFlag}${safehouseEnableFlag}${agentEnvPassFlag}"$_safehouse_shim" -c ${shellSingleQuote(agentCommand)} sh${promptPositional(arguments_.omitPromptArgument)}; _safehouse_status=$?; rm -rf "$_safehouse_shim_dir"; trap - EXIT; exit "$_safehouse_status"; }`,
   );
   return lines.join(" && ");
 }
@@ -733,6 +745,10 @@ function safehousePathListFlag(
   paths: readonly string[],
 ): string {
   return paths.length === 0 ? "" : `${flagName}=${shellSingleQuote(paths.join(":"))} `;
+}
+
+function safehouseEnableFeaturesFlag(features: readonly string[]): string {
+  return features.length === 0 ? "" : `--enable=${shellSingleQuote(features.join(","))} `;
 }
 
 function uniqueStrings(values: readonly string[]): string[] {

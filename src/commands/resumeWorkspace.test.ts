@@ -191,7 +191,7 @@ function makeConfig(): ResolvedConfig {
     },
     prompts: { initial: "x" },
     workspaceKind: "auto",
-    local: { runner: "auto", networkEgress: "allowlisted" },
+    local: { runner: "auto", networkEgress: "allowlisted", safehouse: { enable: [] } },
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }
@@ -510,7 +510,11 @@ describe(resumeWorkspace, () => {
   it("stages neutral prepare + agent srt settings and wraps the resumed agent under srt", async () => {
     const srtConfig = {
       ...makeConfig(),
-      local: { runner: "srt" as const, networkEgress: "allowlisted" as const },
+      local: {
+        runner: "srt" as const,
+        networkEgress: "allowlisted" as const,
+        safehouse: { enable: [] },
+      },
     };
 
     await resumeWorkspace(srtConfig, { task: "team-1" });
@@ -531,7 +535,11 @@ describe(resumeWorkspace, () => {
   it("wraps with bare safehouse and skips the clearance daemon when networkEgress is open", async () => {
     const openEgress = {
       ...makeConfig(),
-      local: { runner: "safehouse" as const, networkEgress: "open" as const },
+      local: {
+        runner: "safehouse" as const,
+        networkEgress: "open" as const,
+        safehouse: { enable: [] },
+      },
     };
 
     await resumeWorkspace(openEgress, { task: "team-1" });
@@ -552,7 +560,7 @@ describe(resumeWorkspace, () => {
     // has no effect: it is rejected by the same worker-env guard as allowlisted.
     const cmdOwned: ResolvedConfig = {
       ...makeConfig(),
-      local: { runner: "safehouse", networkEgress: "open" },
+      local: { runner: "safehouse", networkEgress: "open", safehouse: { enable: [] } },
       agents: {
         default: "claude",
         definitions: { claude: { cmd: "safehouse claude --auto", color: "#fff" } },
@@ -567,7 +575,7 @@ describe(resumeWorkspace, () => {
   it("does not add task source sandbox grants for unsandboxed resume runners", async () => {
     const noneConfig: ResolvedConfig = {
       ...makeConfig(),
-      local: { runner: "none", networkEgress: "allowlisted" },
+      local: { runner: "none", networkEgress: "allowlisted", safehouse: { enable: [] } },
       sources: [
         { kind: "linear" },
         {
@@ -605,7 +613,11 @@ describe(resumeWorkspace, () => {
   it("cleans up the staged srt settings dir when the resumed launch fails to open", async () => {
     const srtConfig = {
       ...makeConfig(),
-      local: { runner: "srt" as const, networkEgress: "allowlisted" as const },
+      local: {
+        runner: "srt" as const,
+        networkEgress: "allowlisted" as const,
+        safehouse: { enable: [] },
+      },
     };
     workspacesOpenMock.mockRejectedValue(new Error("cmux down"));
 

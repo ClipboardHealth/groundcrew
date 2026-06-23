@@ -1023,6 +1023,100 @@ describe("loadConfig", () => {
     expect(actual.local.runner).toBe("safehouse");
   });
 
+  it("defaults local.safehouse.enable to an empty list when omitted", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      validConfigSource({ workspace: VALID_WORKSPACE(temporary) }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+    expect(actual.local.safehouse.enable).toStrictEqual([]);
+  });
+
+  it("preserves and de-duplicates local.safehouse.enable feature names", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      validConfigSource({
+        workspace: VALID_WORKSPACE(temporary),
+        local: {
+          safehouse: { enable: ["agent-browser", "browser-native-messaging", "agent-browser"] },
+        },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+    expect(actual.local.safehouse.enable).toStrictEqual([
+      "agent-browser",
+      "browser-native-messaging",
+    ]);
+  });
+
+  it("defaults local.safehouse.enable to an empty list when safehouse is set without enable", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      validConfigSource({
+        workspace: VALID_WORKSPACE(temporary),
+        local: { safehouse: {} },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+    expect(actual.local.safehouse.enable).toStrictEqual([]);
+  });
+
+  it("rejects a non-object local.safehouse", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      [
+        "export default {",
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        `  agents: { definitions: { claude: {} } },`,
+        `  local: { safehouse: 5 },`,
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(/local\.safehouse must be an object/);
+  });
+
+  it("rejects a non-array local.safehouse.enable", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      [
+        "export default {",
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        `  agents: { definitions: { claude: {} } },`,
+        `  local: { safehouse: { enable: 'agent-browser' } },`,
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(/local\.safehouse\.enable must be an array/);
+  });
+
+  it("rejects an invalid local.safehouse.enable feature slug", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      [
+        "export default {",
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        `  agents: { definitions: { claude: {} } },`,
+        `  local: { safehouse: { enable: ['Agent Browser'] } },`,
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(
+      /local\.safehouse\.enable\[0\] must be a safehouse feature slug/,
+    );
+  });
+
   it("defaults local.networkEgress to allowlisted when omitted", async () => {
     const configPath = writeConfigFile(
       temporary,
