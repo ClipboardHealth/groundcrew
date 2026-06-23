@@ -183,7 +183,7 @@ describe(setAgentWorkspace, () => {
     expect(sequence).toStrictEqual(["persist", "interrupt", "resume"]);
   });
 
-  it("preserves the existing lifecycle state when repointing a stopped task", async () => {
+  it("preserves the existing lifecycle state when switching a stopped task's agent", async () => {
     readRunStateMock.mockReturnValue(makeRunState({ state: "interrupted" }));
 
     await setAgentWorkspace(config, { task: "team-1", agent: "claude-opus" });
