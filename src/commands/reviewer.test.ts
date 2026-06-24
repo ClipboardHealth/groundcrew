@@ -693,6 +693,32 @@ describe(createReviewer, () => {
 
     const out = consoleLog.output();
     expect(out).toContain("Advanced team-1 to done");
-    expect(out).toContain("worktree remove failed");
+    expect(out).toContain("Teardown failed for team-1: worktree remove failed");
+    expect(out).not.toContain("Failed to advance team-1 to done");
+  });
+
+  it("threads the abort signal into teardown on a successful markDone (supported source)", async () => {
+    const { signal } = new AbortController();
+    const stateRoot = mkdtempSync(path.join(tmpdir(), "groundcrew-reviewer-signal-"));
+    const config = makeConfig(stateRoot);
+    const entry = hostEntryFor("team-1");
+    const reviewer = createReviewer({
+      board,
+      findPullRequests: findReturning([pullRequest({ state: "merged" })]),
+      config,
+    });
+
+    try {
+      await reviewer.runOnce({
+        state: boardOf([inProgressIssue("team-1")]),
+        worktreeEntries: [entry],
+        dryRun: false,
+        signal,
+      });
+    } finally {
+      rmSync(stateRoot, { recursive: true, force: true });
+    }
+
+    expect(teardownMock).toHaveBeenCalledWith(expect.anything(), [entry], { signal });
   });
 });

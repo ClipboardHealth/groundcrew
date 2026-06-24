@@ -7,8 +7,11 @@
  *   dispatch slot (slot math counts only in-progress) while leaving the
  *   worktree intact for review, since the cleaner only tears down `done`.
  * - A **merged** PR (on an in-progress or in-review task) → `markDone`:
- *   the work has landed, so the task is terminal and the cleaner tears the
- *   worktree down on a later tick. `merged` never routes to `in-review`.
+ *   the work has landed, so the task is terminal. On a successful `markDone`
+ *   the reviewer tears the worktree down immediately (same step). The cleaner
+ *   remains the level-triggered backstop for sources where `markDone` is
+ *   unsupported or that keep reporting `done`. `merged` never routes to
+ *   `in-review`.
  *
  * Sources that don't implement `markDone` (e.g. Linear) return `unsupported`;
  * the reviewer logs the skip and does nothing — there is no in-review
@@ -238,7 +241,11 @@ export function createReviewer(deps: ReviewerDeps): Reviewer {
         to: transition,
       });
       if (transition === "done" && reviewerConfig !== undefined) {
-        await reapWorktrees(reviewerConfig, [entry], signal);
+        try {
+          await reapWorktrees(reviewerConfig, [entry], signal);
+        } catch (teardownError) {
+          log(`Teardown failed for ${task}: ${errorMessage(teardownError)}`);
+        }
       }
     } catch (error) {
       log(`Failed to advance ${task} to ${transition}: ${errorMessage(error)}`);
