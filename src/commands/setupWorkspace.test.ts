@@ -216,7 +216,7 @@ function makeConfig(overrides: Partial<ResolvedConfig["agents"]> = {}): Resolved
       initial: "Begin {{task}} ({{title}}) in {{worktree}}\n{{description}}",
     },
     workspaceKind: "auto",
-    local: { runner: "auto", networkEgress: "allowlisted" },
+    local: { runner: "auto", networkEgress: "allowlisted", safehouse: { enable: [] } },
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }
@@ -571,7 +571,7 @@ describe(setupWorkspace, () => {
 
   it("stages neutral prepare + full agent srt settings and wraps the agent under the agent policy when runner=srt", async () => {
     const config = makeConfig();
-    config.local = { runner: "srt", networkEgress: "allowlisted" };
+    config.local = { runner: "srt", networkEgress: "allowlisted", safehouse: { enable: [] } };
     mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
 
     await setupWorkspace(config, {
@@ -940,7 +940,7 @@ describe(setupWorkspace, () => {
 
   it("wraps with bare safehouse and skips the clearance daemon when networkEgress is open", async () => {
     const config = makeConfig();
-    config.local = { runner: "safehouse", networkEgress: "open" };
+    config.local = { runner: "safehouse", networkEgress: "open", safehouse: { enable: [] } };
     mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
 
     await setupWorkspace(config, {
@@ -1301,7 +1301,7 @@ describe(setupWorkspace, () => {
       }),
     );
     const config = makeConfig();
-    config.local = { runner: "safehouse", networkEgress: "allowlisted" };
+    config.local = { runner: "safehouse", networkEgress: "allowlisted", safehouse: { enable: [] } };
 
     await expect(
       setupWorkspace(config, {

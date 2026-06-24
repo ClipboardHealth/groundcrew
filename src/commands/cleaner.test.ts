@@ -50,7 +50,7 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
     },
     prompts: { initial: "x", ...overrides.prompts },
     workspaceKind: overrides.workspaceKind ?? "auto",
-    local: { runner: "auto", networkEgress: "allowlisted" },
+    local: { runner: "auto", networkEgress: "allowlisted", safehouse: { enable: [] } },
     logging: { file: "/tmp/groundcrew-test.log", ...overrides.logging },
   };
 }

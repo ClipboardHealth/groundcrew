@@ -65,7 +65,7 @@ function makeConfig(overrides: {
     agents: { default: "claude", definitions: { claude: { cmd: "claude", color: "#fff" } } },
     prompts: { initial: "x" },
     workspaceKind: "auto",
-    local: { runner: "auto", networkEgress: "allowlisted" },
+    local: { runner: "auto", networkEgress: "allowlisted", safehouse: { enable: [] } },
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }

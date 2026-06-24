@@ -261,6 +261,7 @@ export async function resumeWorkspace(
         markDoneSupported: context.completionMarkDoneSupported,
       }),
       taskSourceWritePaths,
+      safehouseEnableFeatures: config.local.safehouse.enable,
     }));
     const launchCmd = stageWorkspaceLaunchCommand(stagedPrompt.directory, launchCommand);
     await openAgentWorkspace({

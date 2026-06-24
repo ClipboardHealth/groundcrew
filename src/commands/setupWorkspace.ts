@@ -175,6 +175,7 @@ export async function setupWorkspace(
         markDoneSupported: completionMarkDoneSupported,
       }),
       taskSourceWritePaths,
+      safehouseEnableFeatures: config.local.safehouse.enable,
     });
     srtSettingsDir = stagedSrtSettingsDir;
     const launchCmd = stageWorkspaceLaunchCommand(promptDir, launchCommand);

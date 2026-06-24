@@ -343,6 +343,30 @@ describe(buildLaunchCommand, () => {
     expect(out).not.toContain("--add-dirs");
   });
 
+  it("turns on requested Safehouse features on the agent wrap only via --enable", () => {
+    const out = buildLaunchCommand(
+      arguments_({
+        prepareWorktreeCommand: "npm ci",
+        safehouseEnableFeatures: ["browser-native-messaging", "agent-browser"],
+      }),
+    );
+
+    const enableFlag = "--enable='browser-native-messaging,agent-browser'";
+    // The shim-dir line splits the prepareWorktree wrap (before) from the agent
+    // wrap (after); browser features belong only to the latter.
+    const agentWrapStart = out.indexOf("_safehouse_shim_dir=$(mktemp");
+
+    expect(out.split(enableFlag).length - 1).toBe(1);
+    expect(out).toContain(`${enableFlag} "$_safehouse_shim" -c`);
+    expect(out.slice(0, agentWrapStart)).not.toContain("--enable");
+  });
+
+  it("omits --enable when no Safehouse features are requested", () => {
+    const out = buildLaunchCommand(arguments_({ prepareWorktreeCommand: "npm ci" }));
+
+    expect(out).not.toContain("--enable");
+  });
+
   it("uses an agent-named shell shim so Safehouse applies only the matching agent profile", () => {
     const out = buildLaunchCommand(arguments_());
 

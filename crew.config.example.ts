@@ -166,6 +166,15 @@ export default {
   // // macOS when you need an agent to use Docker safely.
   // local: { runner: "auto" },
   //
+  // // Safehouse optional integrations, turned on for every agent launched
+  // // under the safehouse runner (forwarded to `safehouse --enable=<list>`).
+  // // Each name layers the matching optional sandbox profile on top of the
+  // // deny-by-default policy. Examples: `agent-browser` so the
+  // // chrome-devtools MCP server can drive a headless Chrome;
+  // // `browser-native-messaging` for `claude --chrome`. Ignored by the
+  // // srt/sdx/none runners.
+  // local: { safehouse: { enable: ["agent-browser"] } },
+  //
   // // Groundcrew does not create or authenticate sdx sandboxes. For an sdx
   // // agent, create the matching sandbox yourself before first launch:
   // //   sbx create --name groundcrew-claude claude ~/dev/groundcrew

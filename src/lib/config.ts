@@ -311,6 +311,24 @@ export interface Config {
      * unrestricted network egress. `srt`/`sdx`/`none` ignore this setting.
      */
     networkEgress?: NetworkEgressSetting;
+    /**
+     * Safehouse sandbox tuning. Consumed only by the `safehouse` runner; other
+     * runners ignore it.
+     */
+    safehouse?: {
+      /**
+       * Optional Safehouse integrations turned on for every agent launched
+       * under the safehouse runner, forwarded verbatim to
+       * `safehouse --enable=<comma-list>` on the agent wrap. Each name layers
+       * the matching optional sandbox profile on top of the deny-by-default
+       * policy — e.g. `agent-browser` for the chrome-devtools MCP server's
+       * Puppeteer/CDP browser, or `browser-native-messaging` for
+       * `claude --chrome`. Names are safehouse feature slugs
+       * (`[a-z0-9][a-z0-9-]*`); unknown names are rejected by safehouse at
+       * launch. Defaults to none.
+       */
+      enable?: string[];
+    };
   };
   logging?: {
     /**
@@ -382,6 +400,13 @@ export interface ResolvedConfig {
      * `"allowlisted"`. Only the safehouse runner consumes this today.
      */
     networkEgress: NetworkEgressSetting;
+    /**
+     * Resolved Safehouse tuning. Always present; `enable` defaults to `[]`.
+     * Only the safehouse runner consumes it.
+     */
+    safehouse: {
+      enable: readonly string[];
+    };
   };
   logging: {
     file: string;
@@ -714,6 +739,36 @@ function normalizeNetworkEgress(
     );
   }
   return value;
+}
+
+const SAFEHOUSE_FEATURE_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
+
+function normalizeSafehouseEnable(value: unknown, configKey: string): readonly string[] {
+  if (value === undefined) {
+    return [];
+  }
+  if (!isPlainObject(value)) {
+    fail(`${configKey} must be an object`);
+  }
+  const { enable } = value;
+  if (enable === undefined) {
+    return [];
+  }
+  if (!Array.isArray(enable)) {
+    fail(
+      `${configKey}.enable must be an array of safehouse feature names (got ${JSON.stringify(enable)})`,
+    );
+  }
+  const features: string[] = [];
+  for (const [index, entry] of enable.entries()) {
+    if (typeof entry !== "string" || !SAFEHOUSE_FEATURE_PATTERN.test(entry)) {
+      fail(
+        `${configKey}.enable[${index}] must be a safehouse feature slug matching ${SAFEHOUSE_FEATURE_PATTERN.source} (got ${JSON.stringify(entry)})`,
+      );
+    }
+    features.push(entry);
+  }
+  return [...new Set(features)];
 }
 
 function normalizeResumeArgs(value: unknown, configKey: string): string {
@@ -1130,7 +1185,9 @@ function applyDefaults(user: Config, configDir: string): ResolvedConfig {
       "remote is no longer supported: groundcrew runs locally via safehouse/sdx/none; remove the remote block from your config",
     );
   }
-  const userLocal = (user as { local?: { runner?: unknown; networkEgress?: unknown } }).local;
+  const userLocal = (
+    user as { local?: { runner?: unknown; networkEgress?: unknown; safehouse?: unknown } }
+  ).local;
   if (userLocal !== undefined && !isPlainObject(userLocal)) {
     fail("local must be an object");
   }
@@ -1161,6 +1218,9 @@ function applyDefaults(user: Config, configDir: string): ResolvedConfig {
       runner: normalizeLocalRunner(userLocal?.runner, "local.runner") ?? "auto",
       networkEgress:
         normalizeNetworkEgress(userLocal?.networkEgress, "local.networkEgress") ?? "allowlisted",
+      safehouse: {
+        enable: normalizeSafehouseEnable(userLocal?.safehouse, "local.safehouse"),
+      },
     },
     logging: {
       file: expandHome(
