@@ -256,6 +256,7 @@ export async function resumeWorkspace(
       secretsFile,
       sandboxName,
       workspaceKind,
+      readOnlyDirs: config.local.readOnlyDirs,
       workerEnvironment: workerEnvironmentForTask({
         taskId: context.completionTaskId,
         markDoneSupported: context.completionMarkDoneSupported,

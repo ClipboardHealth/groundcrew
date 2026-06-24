@@ -506,6 +506,12 @@ interface LaunchCommandArguments {
    */
   safehouseEnableFeatures?: readonly string[] | undefined;
   /**
+   * Extra read-only paths granted only to the Safehouse agent wrap via
+   * `--add-dirs-ro` (host toolchains the Safehouse profile masks but doesn't
+   * re-open). Read-only so the agent cannot mutate host toolchain state.
+   */
+  safehouseAgentAddDirsReadOnly?: readonly string[] | undefined;
+  /**
    * Extra host-terminal integration surface granted only to the Safehouse agent
    * wrap. The agent may need to execute host shims and reach their sockets
    * while repo-controlled prepareWorktree hooks should not inherit those paths
@@ -690,7 +696,10 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
   const safehouseAgentAddDirsFlag = safehousePathListFlag("--add-dirs", safehouseAgentAddDirs);
   const safehouseAgentAddDirsReadOnlyFlag = safehousePathListFlag(
     "--add-dirs-ro",
-    safehouseAgentIntegration?.addDirsReadOnly ?? [],
+    uniqueStrings([
+      ...(safehouseAgentIntegration?.addDirsReadOnly ?? []),
+      ...(arguments_.safehouseAgentAddDirsReadOnly ?? []),
+    ]),
   );
   // Optional sandbox integrations (e.g. `agent-browser`) layered onto the agent
   // profile only — the repo-controlled prepareWorktree hook never needs them.

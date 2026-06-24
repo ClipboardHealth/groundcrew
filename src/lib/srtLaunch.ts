@@ -71,6 +71,8 @@ export function buildAndStageSrtLaunch(input: {
   definition: AgentDefinition;
   /** Local task-source directories the agent needs for self-completion writeback. */
   taskSourceWritePaths?: readonly string[] | undefined;
+  /** Absolute host dirs re-opened read-only (`config.local.readOnlyDirs`). */
+  readOnlyDirs?: readonly string[] | undefined;
   /** Defaults to `os.homedir()`. Injected in tests to seed from a fixture home. */
   homeDir?: string;
 }): StagedSrtLaunch {
@@ -83,6 +85,7 @@ export function buildAndStageSrtLaunch(input: {
       hosts: readEnvironmentVariable("CLEARANCE_ALLOW_HOSTS"),
       files: clearanceAllowHostsFilesFromEnvironment(),
     }),
+    readOnlyDirs: input.readOnlyDirs ?? [],
   };
 
   const directory = mkdtempSync(path.join(os.tmpdir(), `groundcrew-srt-${input.task}-`));
