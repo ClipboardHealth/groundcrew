@@ -34,6 +34,7 @@ import {
 import { debug, errorMessage, log, logEvent } from "../lib/util.ts";
 import type { WorktreeEntry } from "../lib/worktrees.ts";
 import { effectiveBranchName } from "../lib/worktreeRunState.ts";
+import { reapWorktrees } from "./teardownReporter.ts";
 
 /**
  * Injected PR lookup. Matches `findPullRequestsForBranch`'s shape: best-effort,
@@ -189,7 +190,15 @@ export function createReviewer(deps: ReviewerDeps): Reviewer {
         return;
       }
       // oxlint-disable-next-line no-await-in-loop -- single write-back then return; never iterates past the first actionable worktree.
-      await advance({ issue, task, pullRequest, transition });
+      await advance({
+        issue,
+        task,
+        pullRequest,
+        transition,
+        entry,
+        reviewerConfig,
+        signal,
+      });
       return;
     }
   }
@@ -202,8 +211,11 @@ export function createReviewer(deps: ReviewerDeps): Reviewer {
     task: string;
     pullRequest: PullRequestSummary;
     transition: Transition;
+    entry: WorktreeEntry;
+    reviewerConfig: ResolvedConfig | undefined;
+    signal: AbortSignal | undefined;
   }): Promise<void> {
-    const { issue, task, pullRequest, transition } = arguments_;
+    const { issue, task, pullRequest, transition, entry, reviewerConfig, signal } = arguments_;
     try {
       const result =
         transition === "done" ? await board.markDone(issue) : await board.markInReview(issue);
@@ -225,6 +237,9 @@ export function createReviewer(deps: ReviewerDeps): Reviewer {
         state: pullRequest.state,
         to: transition,
       });
+      if (transition === "done" && reviewerConfig !== undefined) {
+        await reapWorktrees(reviewerConfig, [entry], signal);
+      }
     } catch (error) {
       log(`Failed to advance ${task} to ${transition}: ${errorMessage(error)}`);
       logEvent("review", {
