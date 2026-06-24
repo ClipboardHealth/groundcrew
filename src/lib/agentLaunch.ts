@@ -53,7 +53,6 @@ export function composeAgentLaunch(input: {
   omitPromptArgument?: boolean | undefined;
   taskSourceWritePaths?: readonly string[] | undefined;
   safehouseEnableFeatures?: readonly string[] | undefined;
-  /** `config.local.readOnlyDirs`: host dirs re-opened read-only in the sandbox. */
   readOnlyDirs?: readonly string[] | undefined;
 }): { launchCommand: string; srtSettingsDir: string | undefined } {
   const staged =
