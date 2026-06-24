@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import type { SafehouseCmuxIntegration } from "@clipboard-health/clearance";
 
 import type { AgentDefinition } from "./config.ts";
@@ -70,6 +74,7 @@ function compose(overrides: Partial<Parameters<typeof composeAgentLaunch>[0]> = 
     worktreeDir: "/work/repo-a-team-1",
     workingDir: "/work/repo-a-team-1",
     workspaceKind: "cmux",
+    readOnlyDirs: [],
     ...overrides,
   }).launchCommand;
 }
@@ -194,5 +199,37 @@ describe(composeAgentLaunch, () => {
     expect(launchCommand).not.toContain("--add-dirs-ro");
     expect(launchCommand).not.toContain("CMUX_SOCKET_PATH");
     expect(resolveSafehouseCmuxIntegrationMock).not.toHaveBeenCalled();
+  });
+
+  it("grants existing readOnlyDirs read-only to the Safehouse agent wrap", () => {
+    const existing = mkdtempSync(path.join(os.tmpdir(), "gc-ro-"));
+    try {
+      const launchCommand = compose({ workspaceKind: "tmux", readOnlyDirs: [existing] });
+
+      expect(launchCommand).toContain(`--add-dirs-ro='${existing}'`);
+    } finally {
+      rmSync(existing, { recursive: true, force: true });
+    }
+  });
+
+  it("drops nonexistent readOnlyDirs (Safehouse rejects absent --add-dirs-ro paths)", () => {
+    const launchCommand = compose({
+      workspaceKind: "tmux",
+      readOnlyDirs: ["/no/such/dir/groundcrew-absent"],
+    });
+
+    expect(launchCommand).not.toContain("--add-dirs-ro");
+  });
+
+  it("omits --add-dirs-ro for non-safehouse runners", () => {
+    const launchCommand = compose({ runner: "none", readOnlyDirs: [os.tmpdir()] });
+
+    expect(launchCommand).not.toContain("--add-dirs-ro");
+  });
+
+  it("treats omitted readOnlyDirs as empty under safehouse", () => {
+    const launchCommand = compose({ workspaceKind: "tmux", readOnlyDirs: undefined });
+
+    expect(launchCommand).not.toContain("--add-dirs-ro");
   });
 });

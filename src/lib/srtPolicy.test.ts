@@ -42,6 +42,12 @@ describe(buildSrtSettings, () => {
     expect(actual.filesystem.allowRead).toContain("/home/dev/.gitconfig");
   });
 
+  it("re-opens config.local.readOnlyDirs read-only", () => {
+    const actual = buildSrtSettings({ ...input(), readOnlyDirs: ["/home/dev/.config/tfenv"] });
+
+    expect(actual.filesystem.allowRead).toContain("/home/dev/.config/tfenv");
+  });
+
   it("narrows credential-bearing toolchain homes to runtime subpaths (allowRead wins over denyRead)", () => {
     const actual = buildSrtSettings(input());
 

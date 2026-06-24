@@ -84,6 +84,12 @@ export interface BuildSrtSettingsInput {
   homeDir?: string;
   /** Defaults to `process.execPath`; used to locate the global node_modules to deny writes to. */
   nodeExecPath?: string;
+  /**
+   * Absolute host dirs re-opened read-only from `config.local.readOnlyDirs`
+   * (toolchains the profile masks but doesn't re-open, e.g. tfenv). srt skips
+   * any that don't exist, so passing an absent path is harmless.
+   */
+  readOnlyDirs?: readonly string[];
 }
 
 /**
@@ -358,6 +364,7 @@ export function buildSrtSettings(input: BuildSrtSettingsInput): SandboxRuntimeCo
     ...TOOLCHAIN_READ_ROOTS.map(underHome),
     ...GIT_READ_PATHS.map(underHome),
     ...profile.readPaths.map(underHome),
+    ...(input.readOnlyDirs ?? []),
     ...keychainRead,
     ...(input.relocatedConfigDir === undefined ? [] : [input.relocatedConfigDir]),
     ...(input.taskSourceWritePaths ?? []),

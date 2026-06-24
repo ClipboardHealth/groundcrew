@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+
 import {
   ensureClearance,
   resolveSafehouseCmuxIntegration,
@@ -51,6 +53,8 @@ export function composeAgentLaunch(input: {
   omitPromptArgument?: boolean | undefined;
   taskSourceWritePaths?: readonly string[] | undefined;
   safehouseEnableFeatures?: readonly string[] | undefined;
+  /** `config.local.readOnlyDirs`: host dirs re-opened read-only in the sandbox. */
+  readOnlyDirs?: readonly string[] | undefined;
 }): { launchCommand: string; srtSettingsDir: string | undefined } {
   const staged =
     input.runner === "srt"
@@ -59,6 +63,7 @@ export function composeAgentLaunch(input: {
           worktreeDir: input.worktreeDir,
           definition: input.definition,
           taskSourceWritePaths: input.taskSourceWritePaths,
+          readOnlyDirs: input.readOnlyDirs,
         })
       : undefined;
   const safehouseAgentIntegration =
@@ -87,6 +92,9 @@ export function composeAgentLaunch(input: {
       input.runner === "safehouse" ? (input.taskSourceWritePaths ?? []) : undefined,
     safehouseEnableFeatures:
       input.runner === "safehouse" ? input.safehouseEnableFeatures : undefined,
+    // Safehouse rejects nonexistent --add-dirs-ro paths, so drop absent ones.
+    safehouseAgentAddDirsReadOnly:
+      input.runner === "safehouse" ? (input.readOnlyDirs ?? []).filter(existsSync) : undefined,
     safehouseAgentIntegration,
   });
   return { launchCommand, srtSettingsDir: staged?.directory };

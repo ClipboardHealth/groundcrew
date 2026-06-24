@@ -89,7 +89,12 @@ const config: ResolvedConfig = {
   },
   prompts: { initial: "x" },
   workspaceKind: "auto",
-  local: { runner: "auto", networkEgress: "allowlisted", safehouse: { enable: [] } },
+  local: {
+    runner: "auto",
+    networkEgress: "allowlisted",
+    safehouse: { enable: [] },
+    readOnlyDirs: [],
+  },
   logging: { file: "/tmp/groundcrew-test.log" },
 };
 
