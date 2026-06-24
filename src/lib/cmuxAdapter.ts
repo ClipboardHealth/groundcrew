@@ -8,9 +8,10 @@ import {
   type Adapter,
   isSignalAborted,
   runWorkspaceCommand,
+  type WorkspaceCloseResult,
   type WorkspaceStatus,
 } from "./workspaceAdapter.ts";
-import { debug, errorMessage, log } from "./util.ts";
+import { debug, errorMessage, log, logEvent } from "./util.ts";
 
 export const cmuxAdapter: Adapter = {
   async open(spec, signal) {
@@ -63,27 +64,21 @@ export const cmuxAdapter: Adapter = {
       debug(`cmux close-workspace skipped for ${name}: list-workspaces failed, no usable id`);
       return { kind: "unavailable" };
     }
-    const match = raw.find((ws) => cmuxTaskId(ws) === name);
-    if (match === undefined) {
+    const matches = raw.filter((ws) => cmuxTaskId(ws) === name);
+    if (matches.length === 0) {
       return { kind: "missing" };
     }
-    try {
-      await closeCmuxWorkspace(match.id, signal);
-      return { kind: "closed" };
-    } catch (error) {
-      if (isSignalAborted(signal)) {
-        throw error;
-      }
-      const remaining = await listCmuxRaw(signal);
-      if (remaining === undefined) {
-        return { kind: "unavailable", error };
-      }
-      const isStillPresent = remaining.some((ws) => cmuxTaskId(ws) === name);
-      if (!isStillPresent) {
-        return { kind: "closed" };
-      }
-      throw error;
+    if (matches.length > 1) {
+      // A single task id maps to many cmux workspaces only after a leaked launch
+      // or session-restore duplication. Surface the leak so it's observable
+      // rather than silently reconciled away.
+      logEvent("cmux_close", {
+        outcome: "duplicate_markers",
+        task: name,
+        duplicates: matches.length,
+      });
     }
+    return await closeAllCmuxMatches(matches, signal);
   },
   accessHint(_name) {
     // cmux is a TUI; users surface workspaces by launching the cmux app,
@@ -214,6 +209,52 @@ async function applyCmuxStatus(
   }
   arguments_.push("--workspace", workspaceId);
   await runWorkspaceCommand("cmux", arguments_, signal);
+}
+
+/**
+ * Closes every workspace sharing the requested marker. Closes run sequentially:
+ * a failure path re-lists cmux to confirm the workspace is gone, and firing N
+ * mutations plus N confirmation lists concurrently would race on that shared
+ * state. A confirmed-still-present failure rethrows (preserving single-match
+ * semantics); a failure that cannot be confirmed yields `unavailable`; `closed`
+ * wins only when every match is gone.
+ */
+async function closeAllCmuxMatches(
+  matches: readonly CmuxRawWorkspace[],
+  signal?: AbortSignal,
+): Promise<WorkspaceCloseResult> {
+  let unavailable: { kind: "unavailable"; error?: unknown } | undefined;
+  for (const match of matches) {
+    // oxlint-disable-next-line no-await-in-loop -- sequential by design; failure re-lists shared cmux state
+    const result = await closeCmuxMatch(match, signal);
+    if (result.kind === "unavailable") {
+      unavailable = result;
+    }
+  }
+  return unavailable ?? { kind: "closed" };
+}
+
+async function closeCmuxMatch(
+  match: CmuxRawWorkspace,
+  signal?: AbortSignal,
+): Promise<{ kind: "closed" } | { kind: "unavailable"; error?: unknown }> {
+  try {
+    await closeCmuxWorkspace(match.id, signal);
+    return { kind: "closed" };
+  } catch (error) {
+    if (isSignalAborted(signal)) {
+      throw error;
+    }
+    const remaining = await listCmuxRaw(signal);
+    if (remaining === undefined) {
+      return { kind: "unavailable", error };
+    }
+    const isStillPresent = remaining.some((ws) => ws.id === match.id);
+    if (!isStillPresent) {
+      return { kind: "closed" };
+    }
+    throw error;
+  }
 }
 
 async function closeCmuxWorkspace(workspaceId: string, signal?: AbortSignal): Promise<void> {

@@ -8,7 +8,7 @@ import type { RunCommandOptions } from "./commandRunner.ts";
 import type { ResolvedConfig, WorkspaceKindSetting } from "./config.ts";
 import type * as hostModule from "./host.ts";
 import { detectHostCapabilities, type HostCapabilities } from "./host.ts";
-import { debug, writeError } from "./util.ts";
+import { debug, logEvent, writeError } from "./util.ts";
 import type * as utilModule from "./util.ts";
 import {
   resolveWorkspaceKind,
@@ -18,6 +18,7 @@ import {
 } from "./workspaces.ts";
 
 const debugMock = vi.mocked(debug);
+const logEventMock = vi.mocked(logEvent);
 const writeErrorMock = vi.mocked(writeError);
 
 type RunCommandMock = (
@@ -42,6 +43,7 @@ vi.mock(import("./util.ts"), async (importOriginal) => {
     ...actual,
     log: vi.fn<typeof actual.log>(),
     debug: vi.fn<typeof actual.debug>(),
+    logEvent: vi.fn<typeof actual.logEvent>(),
     writeError: vi.fn<typeof actual.writeError>(),
   };
 });
@@ -578,6 +580,76 @@ describe("workspaces.close (cmux)", () => {
       "close interrupted",
     );
     expect(runMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("closes every workspace sharing one marker, not just the first", async () => {
+    runMock.mockReturnValue(
+      JSON.stringify({
+        workspaces: [
+          { title: "first", ref: "workspace:1", description: "groundcrew:TEAM-1" },
+          { title: "second", ref: "workspace:2", description: "groundcrew:TEAM-1" },
+          { title: "third", ref: "workspace:3", description: "groundcrew:TEAM-1" },
+        ],
+      }),
+    );
+
+    await expect(workspaces.close(makeConfig(), "TEAM-1")).resolves.toStrictEqual({
+      kind: "closed",
+    });
+
+    expect(runMock).toHaveBeenCalledWith("cmux", ["close-workspace", "--workspace", "workspace:1"]);
+    expect(runMock).toHaveBeenCalledWith("cmux", ["close-workspace", "--workspace", "workspace:2"]);
+    expect(runMock).toHaveBeenCalledWith("cmux", ["close-workspace", "--workspace", "workspace:3"]);
+  });
+
+  it("emits a structured duplicate-marker event when more than one workspace matches", async () => {
+    runMock.mockReturnValue(
+      JSON.stringify({
+        workspaces: [
+          { title: "first", ref: "workspace:1", description: "groundcrew:TEAM-1" },
+          { title: "second", ref: "workspace:2", description: "groundcrew:TEAM-1" },
+        ],
+      }),
+    );
+
+    await workspaces.close(makeConfig(), "TEAM-1");
+
+    expect(logEventMock).toHaveBeenCalledWith(
+      "cmux_close",
+      expect.objectContaining({ outcome: "duplicate_markers", task: "TEAM-1", duplicates: 2 }),
+    );
+  });
+
+  it("does not emit a duplicate-marker event for a single match", async () => {
+    runMock.mockReturnValue(
+      JSON.stringify({ workspaces: [{ title: "TEAM-1", ref: "workspace:42" }] }),
+    );
+
+    await workspaces.close(makeConfig(), "TEAM-1");
+
+    expect(logEventMock).not.toHaveBeenCalledWith("cmux_close", expect.anything());
+  });
+
+  it("closes the remaining duplicates even when one close fails but is confirmed gone", async () => {
+    const list = JSON.stringify({
+      workspaces: [
+        { title: "first", ref: "workspace:1", description: "groundcrew:TEAM-1" },
+        { title: "second", ref: "workspace:2", description: "groundcrew:TEAM-1" },
+      ],
+    });
+    runMock
+      .mockReturnValueOnce(list)
+      .mockImplementationOnce(() => {
+        throw new Error("workspace not found");
+      })
+      .mockReturnValueOnce(JSON.stringify({ workspaces: [] }))
+      .mockReturnValue("");
+
+    await expect(workspaces.close(makeConfig(), "TEAM-1")).resolves.toStrictEqual({
+      kind: "closed",
+    });
+
+    expect(runMock).toHaveBeenCalledWith("cmux", ["close-workspace", "--workspace", "workspace:2"]);
   });
 });
 
