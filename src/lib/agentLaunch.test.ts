@@ -22,6 +22,9 @@ const safehouseCmuxIntegrationWarningLinesMock = vi.hoisted(() =>
   >(),
 );
 const writeErrorMock = vi.hoisted(() => vi.fn<(message: string) => void>());
+const writeCmuxAgentProjectSettingsMock = vi.hoisted(() =>
+  vi.fn<(input: { worktreeDir: string; agentCommandName: string }) => void>(),
+);
 
 vi.mock(import("./commandRunner.ts"), async (importOriginal) => {
   const actual = await importOriginal();
@@ -30,6 +33,9 @@ vi.mock(import("./commandRunner.ts"), async (importOriginal) => {
     runCommand: runCommandMock,
   };
 });
+vi.mock(import("./cmuxProjectSettings.ts"), () => ({
+  writeCmuxAgentProjectSettings: writeCmuxAgentProjectSettingsMock,
+}));
 vi.mock(import("@clipboard-health/clearance"), async (importOriginal) => {
   const actual = await importOriginal();
   return {
@@ -95,6 +101,7 @@ describe(composeAgentLaunch, () => {
     );
     safehouseCmuxIntegrationWarningLinesMock.mockReturnValue([]);
     writeErrorMock.mockReset();
+    writeCmuxAgentProjectSettingsMock.mockReset();
     deleteEnvironmentVariable("CMUX_SOCKET_PATH");
   });
 
@@ -115,24 +122,45 @@ describe(composeAgentLaunch, () => {
     expect(launchCommand).toContain("CMUX_SOCKET_PATH");
     expect(launchCommand).toContain("CMUX_CUSTOM_CLAUDE_PATH");
     expect(launchCommand).toContain("export CMUX_CUSTOM_CLAUDE_PATH=/Users/dev/.local/bin/claude");
-    expect(launchCommand).toContain("exec claude --permission-mode auto --settings ");
-    expect(launchCommand).toContain('"$@"');
+    expect(launchCommand).toContain('exec claude --permission-mode auto "$@"');
   });
 
-  it("injects cmux activity-reporting hooks for a cmux-hosted Claude agent", () => {
+  it("delivers cmux activity hooks via the project settings file, not inline --settings", () => {
     const launchCommand = compose();
 
-    expect(launchCommand).toContain("--settings ");
-    expect(launchCommand).toContain("set-progress");
-    expect(launchCommand).toContain("running · claude");
-    expect(launchCommand).toContain("SessionStart");
+    expect(launchCommand).not.toContain("--settings ");
+    expect(launchCommand).not.toContain("set-progress");
+    expect(writeCmuxAgentProjectSettingsMock).toHaveBeenCalledWith({
+      worktreeDir: "/work/repo-a-team-1",
+      agentCommandName: "claude",
+    });
   });
 
-  it("does not inject Claude activity hooks for a non-Claude cmux agent", () => {
+  it("writes no hooks for a non-Claude cmux agent", () => {
     const launchCommand = compose({ definition: definition({ cmd: "codex", color: "#000" }) });
 
     expect(launchCommand).toContain('exec codex "$@"');
     expect(launchCommand).not.toContain("set-progress");
+    expect(writeCmuxAgentProjectSettingsMock).toHaveBeenCalledWith({
+      worktreeDir: "/work/repo-a-team-1",
+      agentCommandName: "codex",
+    });
+  });
+
+  it("does not write project hooks for non-cmux workspace backends", () => {
+    compose({ workspaceKind: "tmux" });
+
+    expect(writeCmuxAgentProjectSettingsMock).not.toHaveBeenCalled();
+  });
+
+  it("still builds the launch command when the project-hooks write fails", () => {
+    writeCmuxAgentProjectSettingsMock.mockImplementation(() => {
+      throw new Error("disk full");
+    });
+
+    const launchCommand = compose();
+
+    expect(launchCommand).toContain('exec claude --permission-mode auto "$@"');
   });
 
   it("adds task source write paths only to the Safehouse agent wrap", () => {

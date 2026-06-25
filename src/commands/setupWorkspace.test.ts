@@ -818,8 +818,8 @@ describe(setupWorkspace, () => {
     );
     expect(launchScript).toContain('_safehouse_shim="$_safehouse_shim_dir/claude"');
     expect(launchScript).not.toContain("--enable=all-agents");
-    expect(launchScript).toContain("exec claude --permission-mode auto --settings ");
-    expect(launchScript).toContain('"$@"');
+    expect(launchScript).toContain('exec claude --permission-mode auto "$@"');
+    expect(launchScript).not.toContain("--settings ");
     expect(launchScript).toContain('sh "$_p"');
     // prepareWorktree status guard so a failed install still launches the agent
     expect(launchScript).toContain('"$prepare_status" -ne 0');

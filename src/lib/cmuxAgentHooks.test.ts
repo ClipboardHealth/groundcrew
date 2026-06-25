@@ -1,7 +1,8 @@
 import {
   buildCmuxAgentHookSettings,
   type CmuxAgentHookSettings,
-  cmuxAgentHookSettingsJson,
+  cmuxAgentHookDelivery,
+  isCmuxAgentHookCommand,
 } from "./cmuxAgentHooks.ts";
 
 function commandFor(settings: CmuxAgentHookSettings, event: string): string {
@@ -60,14 +61,37 @@ describe(buildCmuxAgentHookSettings, () => {
 
     expect(actual).toContain("running · codex");
   });
+
+  it("stamps every command with the groundcrew marker so a later merge can find it", () => {
+    const settings = buildCmuxAgentHookSettings({ agent: "claude" });
+
+    for (const event of Object.keys(settings.hooks)) {
+      expect(isCmuxAgentHookCommand(commandFor(settings, event))).toBe(true);
+    }
+  });
 });
 
-describe(cmuxAgentHookSettingsJson, () => {
-  it("serializes to valid JSON that round-trips to the settings object", () => {
-    const expected = buildCmuxAgentHookSettings({ agent: "claude" });
+describe(isCmuxAgentHookCommand, () => {
+  it("recognizes groundcrew-authored hook commands", () => {
+    const command = commandFor(buildCmuxAgentHookSettings({ agent: "claude" }), "Stop");
 
-    const actual: unknown = JSON.parse(cmuxAgentHookSettingsJson({ agent: "claude" }));
+    expect(isCmuxAgentHookCommand(command)).toBe(true);
+  });
 
-    expect(actual).toStrictEqual(expected);
+  it("does not claim an unrelated user hook command", () => {
+    expect(isCmuxAgentHookCommand("npm run lint")).toBe(false);
+  });
+});
+
+describe(cmuxAgentHookDelivery, () => {
+  it("delivers Claude hooks via the project settings.local.json file", () => {
+    expect(cmuxAgentHookDelivery("claude")).toStrictEqual({
+      projectSettingsPath: ".claude/settings.local.json",
+    });
+  });
+
+  it("returns no delivery for agents without a hook integration", () => {
+    expect(cmuxAgentHookDelivery("codex")).toBeUndefined();
+    expect(cmuxAgentHookDelivery("cursor-agent")).toBeUndefined();
   });
 });

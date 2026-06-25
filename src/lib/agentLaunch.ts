@@ -7,8 +7,7 @@ import {
 } from "@clipboard-health/clearance";
 
 import { clearanceAllowHostsFilesFromEnvironment } from "./clearanceAllowlist.ts";
-import { cmuxAgentHookSettingsJson } from "./cmuxAgentHooks.ts";
-import { shellSingleQuote } from "./shell.ts";
+import { writeCmuxAgentProjectSettings } from "./cmuxProjectSettings.ts";
 import {
   hasPreLaunchEnv,
   type LocalRunner,
@@ -26,7 +25,7 @@ import {
 import { assertLocalRunnerRequirements, resolveLocalRunner } from "./localRunner.ts";
 import { sandboxNameFor } from "./sandboxName.ts";
 import { buildAndStageSrtLaunch, resolveGitCommonDir } from "./srtLaunch.ts";
-import { debug, sleep, writeError } from "./util.ts";
+import { debug, errorMessage, sleep, writeError } from "./util.ts";
 import { resolveWorkspaceKind, workspaces } from "./workspaces.ts";
 import type { WorkspaceKind } from "./workspaceAdapter.ts";
 
@@ -96,7 +95,30 @@ export function composeAgentLaunch(input: {
       input.runner === "safehouse" ? (input.readOnlyDirs ?? []).filter(existsSync) : undefined,
     safehouseAgentIntegration,
   });
+  if (input.workspaceKind === "cmux") {
+    deliverCmuxAgentProjectHooks({
+      worktreeDir: input.worktreeDir,
+      agentCommandName: inferAgentCommandName(input.definition.cmd),
+    });
+  }
   return { launchCommand, srtSettingsDir: staged?.directory };
+}
+
+/**
+ * Best-effort write of the agent's cmux activity hooks into its project settings
+ * file in the worktree. The hooks are live-progress observability, not required
+ * functionality, so a failure here is logged and swallowed rather than allowed
+ * to strand the launch.
+ */
+function deliverCmuxAgentProjectHooks(input: {
+  worktreeDir: string;
+  agentCommandName: string;
+}): void {
+  try {
+    writeCmuxAgentProjectSettings(input);
+  } catch (error) {
+    debug(`cmux agent project hooks not written: ${errorMessage(error)}`);
+  }
 }
 
 /**
@@ -137,14 +159,6 @@ function safehouseAgentIntegrationFor(
     addDirsReadOnly: cmuxIntegration.addDirsReadOnly,
     envPass: cmuxIntegration.envPass,
     commandPreludes: isClaudeAgent ? [cmuxIntegration.claudeCommandPrelude] : [],
-    ...(isClaudeAgent
-      ? {
-          agentArgs: [
-            "--settings",
-            shellSingleQuote(cmuxAgentHookSettingsJson({ agent: agentCommandName })),
-          ],
-        }
-      : {}),
   };
 }
 
