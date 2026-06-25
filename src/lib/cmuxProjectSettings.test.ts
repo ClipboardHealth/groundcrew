@@ -44,6 +44,15 @@ function countOccurrences(haystack: string, needle: string): number {
 }
 
 beforeEach(() => {
+  // Strip inherited GIT_* env vars so the temp-repo git calls run against the
+  // temp worktree, not whatever repo invoked vitest (e.g. a `git push` pre-push
+  // hook that exports GIT_DIR, which would override the `git -C <tempdir>` flag).
+  // oxlint-disable-next-line unicorn/no-useless-undefined -- undefined is the unset signal here
+  vi.stubEnv("GIT_DIR", undefined);
+  // oxlint-disable-next-line unicorn/no-useless-undefined
+  vi.stubEnv("GIT_WORK_TREE", undefined);
+  // oxlint-disable-next-line unicorn/no-useless-undefined
+  vi.stubEnv("GIT_INDEX_FILE", undefined);
   worktreeDir = mkdtempSync(path.join(os.tmpdir(), "gc-project-hooks-"));
   runCommand("git", ["-C", worktreeDir, "init", "-q"]);
   runCommand("git", ["-C", worktreeDir, "config", "user.email", "test@example.com"]);
@@ -51,6 +60,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   rmSync(worktreeDir, { recursive: true, force: true });
 });
 
