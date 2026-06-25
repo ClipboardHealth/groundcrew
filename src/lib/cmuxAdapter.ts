@@ -215,8 +215,10 @@ async function applyCmuxStatus(
  * Closes every workspace sharing the requested marker. Closes run sequentially:
  * a failure path re-lists cmux to confirm the workspace is gone, and firing N
  * mutations plus N confirmation lists concurrently would race on that shared
- * state. A confirmed-still-present failure rethrows (preserving single-match
- * semantics); a failure that cannot be confirmed yields `unavailable`; `closed`
+ * state. Each match is attempted even when an earlier one fails, so a single
+ * stuck duplicate can't orphan the rest; a confirmed-still-present failure is
+ * collected and rethrown only after the loop (preserving single-match
+ * semantics). A failure that cannot be confirmed yields `unavailable`; `closed`
  * wins only when every match is gone.
  */
 async function closeAllCmuxMatches(
@@ -224,12 +226,23 @@ async function closeAllCmuxMatches(
   signal?: AbortSignal,
 ): Promise<WorkspaceCloseResult> {
   let unavailable: { kind: "unavailable"; error?: unknown } | undefined;
+  const errors: unknown[] = [];
   for (const match of matches) {
-    // oxlint-disable-next-line no-await-in-loop -- sequential by design; failure re-lists shared cmux state
-    const result = await closeCmuxMatch(match, signal);
-    if (result.kind === "unavailable") {
-      unavailable = result;
+    try {
+      // oxlint-disable-next-line no-await-in-loop -- sequential by design; failure re-lists shared cmux state
+      const result = await closeCmuxMatch(match, signal);
+      if (result.kind === "unavailable") {
+        unavailable = result;
+      }
+    } catch (error) {
+      if (isSignalAborted(signal)) {
+        throw error;
+      }
+      errors.push(error);
     }
+  }
+  if (errors.length > 0) {
+    throw errors.length === 1 ? errors[0] : new AggregateError(errors);
   }
   return unavailable ?? { kind: "closed" };
 }

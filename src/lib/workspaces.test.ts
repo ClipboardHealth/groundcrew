@@ -651,6 +651,50 @@ describe("workspaces.close (cmux)", () => {
 
     expect(runMock).toHaveBeenCalledWith("cmux", ["close-workspace", "--workspace", "workspace:2"]);
   });
+
+  it("still attempts later duplicates when an earlier one fails confirmed-still-present", async () => {
+    const list = JSON.stringify({
+      workspaces: [
+        { title: "first", ref: "workspace:1", description: "groundcrew:TEAM-1" },
+        { title: "second", ref: "workspace:2", description: "groundcrew:TEAM-1" },
+      ],
+    });
+    runMock
+      .mockReturnValueOnce(list)
+      .mockImplementationOnce(() => {
+        throw new Error("permission denied");
+      })
+      .mockReturnValueOnce(list)
+      .mockReturnValue("");
+
+    await expect(workspaces.close(makeConfig(), "TEAM-1")).rejects.toThrow("permission denied");
+
+    expect(runMock).toHaveBeenCalledWith("cmux", ["close-workspace", "--workspace", "workspace:2"]);
+  });
+
+  it("aggregates errors when every duplicate fails confirmed-still-present", async () => {
+    const list = JSON.stringify({
+      workspaces: [
+        { title: "first", ref: "workspace:1", description: "groundcrew:TEAM-1" },
+        { title: "second", ref: "workspace:2", description: "groundcrew:TEAM-1" },
+      ],
+    });
+    runMock
+      .mockReturnValueOnce(list)
+      .mockImplementationOnce(() => {
+        throw new Error("permission denied");
+      })
+      .mockReturnValueOnce(list)
+      .mockImplementationOnce(() => {
+        throw new Error("still mounted");
+      })
+      .mockReturnValueOnce(list);
+
+    await expect(workspaces.close(makeConfig(), "TEAM-1")).rejects.toThrow(AggregateError);
+
+    expect(runMock).toHaveBeenCalledWith("cmux", ["close-workspace", "--workspace", "workspace:1"]);
+    expect(runMock).toHaveBeenCalledWith("cmux", ["close-workspace", "--workspace", "workspace:2"]);
+  });
 });
 
 describe("workspaces.open (tmux)", () => {
