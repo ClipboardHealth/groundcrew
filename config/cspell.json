@@ -104,6 +104,7 @@
     "reflogs",
     "rustup",
     "Safehouse",
+    "tfenv",
     "bubblewrap",
     "dockersandbox",
     "gpgsign",

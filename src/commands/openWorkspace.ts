@@ -262,6 +262,7 @@ export async function openWorkspace(
       prepareWorktreeCommand,
       sandboxName,
       workspaceKind,
+      readOnlyDirs: config.local.readOnlyDirs,
       omitPromptArgument,
     }));
     const launchCmd = stageWorkspaceLaunchCommand(stagedPrompt.directory, launchCommand);

@@ -1,5 +1,7 @@
+import type { ResolvedConfig } from "../lib/config.ts";
+import { recordCleanedUpRuns } from "../lib/runStateCleanup.ts";
 import { debug, errorMessage, log, logEvent, okMark } from "../lib/util.ts";
-import type { TeardownResult } from "../lib/worktrees.ts";
+import { type TeardownResult, type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 
 export function logTeardown(result: TeardownResult): void {
   if (result.workspaceProbe.kind === "unavailable" && result.workspaceProbe.error !== undefined) {
@@ -20,6 +22,26 @@ export function logTeardown(result: TeardownResult): void {
       log(`Cleanup failed for ${failure.entry.task} (${failure.entry.kind}): ${message}`);
     }
   }
+}
+
+/**
+ * Shared helper: runs `worktrees.teardown` then records run-state cleanup,
+ * logs the result, and emits telemetry events. Used by both the cleaner and
+ * the reviewer fast-path so the sequence is never duplicated.
+ */
+export async function reapWorktrees(
+  config: ResolvedConfig,
+  entries: readonly WorktreeEntry[],
+  signal?: AbortSignal,
+): Promise<TeardownResult> {
+  const result =
+    signal === undefined
+      ? await worktrees.teardown(config, entries)
+      : await worktrees.teardown(config, entries, { signal });
+  recordCleanedUpRuns(config, result.removed);
+  logTeardown(result);
+  recordTeardownEvents(result);
+  return result;
 }
 
 export function recordTeardownEvents(result: TeardownResult): void {

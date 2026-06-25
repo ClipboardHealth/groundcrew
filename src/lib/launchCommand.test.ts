@@ -386,6 +386,39 @@ describe(buildLaunchCommand, () => {
     expect(out).not.toContain("--enable=all-agents");
   });
 
+  it("grants safehouseAgentAddDirsReadOnly to the agent wrap only, via --add-dirs-ro", () => {
+    const out = buildLaunchCommand(
+      arguments_({
+        definition: { cmd: "claude --permission-mode auto", color: "#fff" },
+        prepareWorktreeCommand: "npm ci",
+        safehouseAgentAddDirsReadOnly: ["/Users/dev/.config/tfenv"],
+      }),
+    );
+
+    expect(out).toContain("--add-dirs-ro='/Users/dev/.config/tfenv'");
+    const agentWrapIndex = out.indexOf('"$_safehouse_shim" -c');
+    const readOnlyGrantIndex = out.indexOf("--add-dirs-ro='/Users/dev/.config/tfenv'");
+    expect(readOnlyGrantIndex).toBeLessThan(agentWrapIndex);
+    const prepareWrap = out.slice(0, out.indexOf("_safehouse_shim_dir="));
+    expect(prepareWrap).not.toContain("--add-dirs-ro");
+  });
+
+  it("merges safehouseAgentAddDirsReadOnly with the cmux integration read-only grant", () => {
+    const out = buildLaunchCommand(
+      arguments_({
+        definition: { cmd: "claude --permission-mode auto", color: "#fff" },
+        safehouseAgentIntegration: {
+          addDirsReadOnly: ["/Applications/cmux.app"],
+          envPass: [],
+          commandPreludes: [],
+        },
+        safehouseAgentAddDirsReadOnly: ["/Users/dev/.config/tfenv"],
+      }),
+    );
+
+    expect(out).toContain("--add-dirs-ro='/Applications/cmux.app:/Users/dev/.config/tfenv'");
+  });
+
   it("can grant a workspace shim integration to the Safehouse agent without stripping PATH", () => {
     const out = buildLaunchCommand(
       arguments_({

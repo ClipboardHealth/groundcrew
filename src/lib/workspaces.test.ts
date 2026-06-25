@@ -99,7 +99,12 @@ function makeConfig(workspaceKind: WorkspaceKindSetting = "auto"): ResolvedConfi
     },
     prompts: { initial: "x" },
     workspaceKind,
-    local: { runner: "auto", networkEgress: "allowlisted", safehouse: { enable: [] } },
+    local: {
+      runner: "auto",
+      networkEgress: "allowlisted",
+      safehouse: { enable: [] },
+      readOnlyDirs: [],
+    },
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }

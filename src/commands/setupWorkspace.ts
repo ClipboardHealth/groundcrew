@@ -170,6 +170,7 @@ export async function setupWorkspace(
       prepareWorktreeCommand,
       sandboxName,
       workspaceKind,
+      readOnlyDirs: config.local.readOnlyDirs,
       workerEnvironment: workerEnvironmentForTask({
         taskId: completionTaskId,
         markDoneSupported: completionMarkDoneSupported,

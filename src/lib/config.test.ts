@@ -1,5 +1,5 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 
 import {
@@ -1164,6 +1164,47 @@ describe("loadConfig", () => {
     await expect(loadConfig()).rejects.toThrow(
       /local\.networkEgress must be one of allowlisted, open/,
     );
+  });
+
+  it("defaults local.readOnlyDirs to tfenv's config root when omitted", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      validConfigSource({ workspace: VALID_WORKSPACE(temporary) }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+    expect(actual.local.readOnlyDirs).toEqual([path.join(homedir(), ".config", "tfenv")]);
+  });
+
+  it("preserves and expands explicit local.readOnlyDirs", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      validConfigSource({
+        workspace: VALID_WORKSPACE(temporary),
+        local: { readOnlyDirs: ["~/.tfenv", "/opt/tools"] },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+    expect(actual.local.readOnlyDirs).toEqual([path.join(homedir(), ".tfenv"), "/opt/tools"]);
+  });
+
+  it("rejects a non-array local.readOnlyDirs value", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      [
+        "export default {",
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        `  agents: { definitions: { claude: {} } },`,
+        `  local: { readOnlyDirs: "~/.config/tfenv" },`,
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(/local\.readOnlyDirs must be an array of strings/);
   });
 
   it("rejects legacy disabled agent entries with migration guidance", async () => {
