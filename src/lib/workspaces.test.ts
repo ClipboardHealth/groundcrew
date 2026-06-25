@@ -115,12 +115,20 @@ function commonAfterEach(): void {
 }
 
 // Mirrors the error `runCommandAsync` rejects with on a non-zero exit: the
-// message embeds the captured stdout and the original error (carrying the raw
-// `stdout`) rides along as `cause`.
+// normalized message embeds the captured stdout under a `Stdout:` section,
+// which is what the adapter parses the leaked workspace id back out of.
 function cmuxNewWorkspaceFailure(stdout: string): Error {
   return new Error(
     `Command failed: cmux --json new-workspace\nExit status: 1\nStdout:\n${stdout}\nCause: Command exited unsuccessfully`,
-    { cause: Object.assign(new Error("Command exited unsuccessfully"), { stdout }) },
+  );
+}
+
+// Signature-agnostic: matches a close-workspace invocation regardless of how
+// many arguments (e.g. a trailing signal) accompany it.
+function closeWorkspaceWasCalled(): boolean {
+  return runMock.mock.calls.some(
+    ([command, arguments_]) =>
+      command === "cmux" && Array.isArray(arguments_) && arguments_.includes("close-workspace"),
   );
 }
 
@@ -328,7 +336,7 @@ describe("workspaces.open (cmux)", () => {
     ]);
   });
 
-  it("rethrows without attempting a close when the failed new-workspace output carries no id", async () => {
+  it("rethrows without attempting a close when the failed new-workspace stdout carries no id", async () => {
     runMock.mockImplementationOnce(() => {
       throw cmuxNewWorkspaceFailure("no recognizable id here");
     });
@@ -337,7 +345,23 @@ describe("workspaces.open (cmux)", () => {
       workspaces.open(makeConfig(), { name: "TEAM-1", cwd: "/cwd", command: "x" }),
     ).rejects.toThrow(/Command failed: cmux/);
 
-    expect(runMock).not.toHaveBeenCalledWith("cmux", expect.arrayContaining(["close-workspace"]));
+    expect(closeWorkspaceWasCalled()).toBe(false);
+  });
+
+  it("does not let a stray workspace id in stderr trigger a close", async () => {
+    // The real workspace id lives in stdout; an unrelated `workspace:7` in
+    // stderr must not be parsed as the leaked workspace.
+    runMock.mockImplementationOnce(() => {
+      throw new Error(
+        "Command failed: cmux --json new-workspace\nExit status: 1\nStderr:\nconflict with workspace:7\nCause: Command exited unsuccessfully",
+      );
+    });
+
+    await expect(
+      workspaces.open(makeConfig(), { name: "TEAM-1", cwd: "/cwd", command: "x" }),
+    ).rejects.toThrow(/Command failed: cmux/);
+
+    expect(closeWorkspaceWasCalled()).toBe(false);
   });
 
   it("does not fight an already-aborted signal by trying to close the leaked workspace", async () => {
@@ -355,11 +379,7 @@ describe("workspaces.open (cmux)", () => {
       ),
     ).rejects.toThrow(/Command failed: cmux/);
 
-    expect(runMock).not.toHaveBeenCalledWith(
-      "cmux",
-      expect.arrayContaining(["close-workspace"]),
-      expect.anything(),
-    );
+    expect(closeWorkspaceWasCalled()).toBe(false);
   });
 
   it("logs a manual-close hint when closing the leaked workspace itself fails", async () => {

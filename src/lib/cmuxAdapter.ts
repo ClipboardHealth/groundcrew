@@ -261,19 +261,21 @@ async function closeWorkspaceLeakedByFailedOpen(
 }
 
 /**
- * The captured stdout/stderr is folded into the command error's message (see
- * `normalizeCommandError`), so parse the id back out of it. cmux `--json`
- * failures emit a `workspace_id`/`id` JSON field; older builds print a bare
- * `workspace:N` ref that the success extractor already recognizes.
+ * Recover the created workspace id from a failed `new-workspace`. Parse only
+ * the captured stdout slice of the command error's message (see
+ * `normalizeCommandError`), never the whole message — matching against stderr
+ * or the echoed command line risks grabbing an unrelated `workspace:N` and
+ * closing the wrong workspace. The slice is the same shape the success path
+ * sees, so `extractCmuxOpenId` handles both the `--json` id object and a bare
+ * `workspace:N` ref.
  */
 function extractCmuxOpenIdFromFailure(error: unknown): string | undefined {
-  const message = errorMessage(error);
-  const refId = extractCmuxOpenId(message);
-  if (refId !== undefined) {
-    return refId;
-  }
-  const jsonIdMatch = /"(?:workspace_id|id)"\s*:\s*"([^"]+)"/.exec(message);
-  return jsonIdMatch?.[1];
+  const stdout = cmuxStdoutFromFailureMessage(errorMessage(error));
+  return stdout === undefined ? undefined : extractCmuxOpenId(stdout);
+}
+
+function cmuxStdoutFromFailureMessage(message: string): string | undefined {
+  return /\nStdout:\n([\s\S]*?)(?:\nCause: |$)/.exec(message)?.[1];
 }
 
 function isCmuxSetStatusUnsupported(error: unknown): boolean {
