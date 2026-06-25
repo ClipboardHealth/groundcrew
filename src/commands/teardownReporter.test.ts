@@ -1,8 +1,28 @@
+import type { ResolvedConfig } from "../lib/config.ts";
+import { removeRunState } from "../lib/runState.ts";
 import { setVerbose } from "../lib/util.ts";
-import type { TeardownResult, WorktreeEntry } from "../lib/worktrees.ts";
+import { type TeardownResult, type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCapture.ts";
 import { emptyTeardownResult } from "../testHelpers/teardownResult.ts";
-import { logTeardown, recordTeardownEvents } from "./teardownReporter.ts";
+import { logTeardown, reapWorktrees, recordTeardownEvents } from "./teardownReporter.ts";
+
+vi.mock(import("../lib/worktrees.ts"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    worktrees: {
+      ...actual.worktrees,
+      teardown: vi.fn<typeof actual.worktrees.teardown>(),
+    },
+  };
+});
+vi.mock(import("../lib/runState.ts"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, removeRunState: vi.fn<typeof removeRunState>() };
+});
+
+const teardownMock = vi.mocked(worktrees.teardown);
+const removeRunStateMock = vi.mocked(removeRunState);
 
 // The teardown reporter's telemetry (logEvent) and sub-step lines (debug) are
 // diagnostic, so they only reach the console under verbose. These cases assert
@@ -182,5 +202,92 @@ describe(recordTeardownEvents, () => {
     expect(out).toContain("repository=repo-a");
     expect(out).toContain("kind=host");
     expect(out).toContain("busy");
+  });
+});
+
+function makeConfig(): ResolvedConfig {
+  return {
+    sources: [],
+    defaults: { hooks: {} },
+    git: { remote: "origin", defaultBranch: "main" },
+    workspace: {
+      projectDir: "/work",
+      knownRepositories: ["repo-a"],
+      repositories: [{ name: "repo-a" }],
+    },
+    orchestrator: {
+      maximumInProgress: 2,
+      pollIntervalMilliseconds: 1000,
+      sessionLimitPercentage: 85,
+    },
+    agents: {
+      default: "claude",
+      definitions: { claude: { cmd: "claude", color: "#fff" } },
+    },
+    prompts: { initial: "x" },
+    workspaceKind: "auto",
+    local: { runner: "auto", networkEgress: "allowlisted" },
+    logging: { file: "/tmp/groundcrew-test.log" },
+  };
+}
+
+describe(reapWorktrees, () => {
+  let consoleLog: ConsoleCapture;
+
+  beforeEach(() => {
+    consoleLog = captureConsoleLog();
+    teardownMock.mockResolvedValue(emptyTeardownResult());
+    setVerbose(true);
+  });
+
+  afterEach(() => {
+    consoleLog.restore();
+    setVerbose(false);
+    vi.clearAllMocks();
+  });
+
+  it("calls worktrees.teardown with the given entries", async () => {
+    const entry = hostEntry("team-1");
+
+    await reapWorktrees(makeConfig(), [entry]);
+
+    expect(teardownMock).toHaveBeenCalledWith(expect.anything(), [entry]);
+  });
+
+  it("passes the signal into worktrees.teardown when provided", async () => {
+    const { signal } = new AbortController();
+    const entry = hostEntry("team-1");
+
+    await reapWorktrees(makeConfig(), [entry], signal);
+
+    expect(teardownMock).toHaveBeenCalledWith(expect.anything(), [entry], { signal });
+  });
+
+  it("calls removeRunState for each removed entry", async () => {
+    const entry = hostEntry("team-1");
+    teardownMock.mockResolvedValue(emptyTeardownResult({ removed: [entry] }));
+
+    await reapWorktrees(makeConfig(), [entry]);
+
+    expect(removeRunStateMock).toHaveBeenCalledWith(expect.anything(), "team-1");
+  });
+
+  it("logs cleanup complete for a removed entry", async () => {
+    const entry = hostEntry("team-1");
+    teardownMock.mockResolvedValue(emptyTeardownResult({ removed: [entry] }));
+
+    await reapWorktrees(makeConfig(), [entry]);
+
+    expect(consoleLog.output()).toContain("event=cleanup outcome=cleaned task=team-1");
+  });
+
+  it("returns the TeardownResult from worktrees.teardown", async () => {
+    const entry = hostEntry("team-1");
+    const expected = emptyTeardownResult({ removed: [entry] });
+    teardownMock.mockResolvedValue(expected);
+
+    const actual = await reapWorktrees(makeConfig(), [entry]);
+
+    expect(actual).toBe(expected);
   });
 });
