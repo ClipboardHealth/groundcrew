@@ -96,6 +96,20 @@ function makeCursorConfig(): ResolvedConfig {
   });
 }
 
+/**
+ * Mirrors `normalizeCommandError`: codexbar exits non-zero but still writes its
+ * JSON payload to stdout, which `runCommandAsync` attaches to the thrown
+ * error's `cause`.
+ */
+function codexbarCommandFailure(status: number, payload: unknown): Error {
+  return new Error(`Command failed: codexbar\nExit status: ${status}`, {
+    cause: Object.assign(new Error("Command exited unsuccessfully"), {
+      status,
+      stdout: Buffer.from(JSON.stringify(payload)),
+    }),
+  });
+}
+
 function mockCodexbarResponse(source: string, provider = "codex"): string {
   return JSON.stringify([
     {
@@ -276,6 +290,81 @@ describe(getUsageByAgent, () => {
 
     expect(actual["codex"]).toStrictEqual(EXHAUSTED_USAGE);
     expect(consoleCapture.output()).toContain("codex app-server closed stdout");
+  });
+
+  it("treats codexbar's non-zero-exit 'no rate limit events yet' as available, not exhausted", async () => {
+    stubPlatform("darwin");
+    // codexbar exits 3 for this handled provider condition, still emitting its
+    // JSON payload on stdout — exactly how runCommandAsync surfaces it.
+    runCommandMock.mockImplementation(() => {
+      throw codexbarCommandFailure(3, [
+        {
+          provider: "codex",
+          source: "oauth",
+          error: {
+            kind: "provider",
+            code: 3,
+            message: "Found sessions, but no rate limit events yet.",
+          },
+        },
+      ]);
+    });
+
+    const actual = await getUsageByAgent(makeConfig());
+
+    expect(actual["codex"]).toStrictEqual({
+      session: null,
+      sessionEndDuration: null,
+      weekly: null,
+      weekEndDuration: null,
+    });
+  });
+
+  it("fails closed when codexbar exits non-zero with a genuine provider failure payload", async () => {
+    stubPlatform("darwin");
+    runCommandMock.mockImplementation(() => {
+      throw codexbarCommandFailure(1, [
+        {
+          provider: "codex",
+          source: "oauth",
+          error: { kind: "provider", code: 1, message: "codex app-server closed stdout" },
+        },
+      ]);
+    });
+
+    const actual = await getUsageByAgent(makeConfig());
+
+    expect(actual["codex"]).toStrictEqual(EXHAUSTED_USAGE);
+    expect(consoleCapture.output()).toContain("codex app-server closed stdout");
+  });
+
+  it("fails closed when codexbar exits non-zero with no stdout payload to recover", async () => {
+    stubPlatform("darwin");
+    runCommandMock.mockImplementation(() => {
+      throw new Error("Command failed: codexbar\nExit status: 1", {
+        cause: Object.assign(new Error("Command exited unsuccessfully"), {
+          status: 1,
+          stdout: undefined,
+        }),
+      });
+    });
+
+    const actual = await getUsageByAgent(makeConfig());
+
+    expect(actual["codex"]).toStrictEqual(EXHAUSTED_USAGE);
+  });
+
+  it("fails closed when the command error carries no captured output", async () => {
+    stubPlatform("darwin");
+    runCommandMock.mockImplementation(() => {
+      throw new Error("Command failed: codexbar", {
+        cause: new Error("spawn codexbar ENOENT"),
+      });
+    });
+
+    const actual = await getUsageByAgent(makeConfig());
+
+    expect(actual["codex"]).toStrictEqual(EXHAUSTED_USAGE);
   });
 
   it("fails closed when codexbar returns an entry with neither usage nor error", async () => {
