@@ -278,6 +278,32 @@ describe(getUsageByAgent, () => {
     expect(consoleCapture.output()).toContain("codex app-server closed stdout");
   });
 
+  it("treats codexbar's 'no rate limit events yet' as available, not exhausted", async () => {
+    stubPlatform("darwin");
+    runCommandMock.mockReturnValue(
+      JSON.stringify([
+        {
+          provider: "codex",
+          source: "oauth",
+          error: {
+            kind: "provider",
+            code: 3,
+            message: "Found sessions, but no rate limit events yet.",
+          },
+        },
+      ]),
+    );
+
+    const actual = await getUsageByAgent(makeConfig());
+
+    expect(actual["codex"]).toStrictEqual({
+      session: null,
+      sessionEndDuration: null,
+      weekly: null,
+      weekEndDuration: null,
+    });
+  });
+
   it("fails closed when codexbar returns an entry with neither usage nor error", async () => {
     stubPlatform("darwin");
     runCommandMock.mockReturnValue(JSON.stringify([{ provider: "codex", source: "auto" }]));

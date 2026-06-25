@@ -129,8 +129,16 @@ async function codexbarUsage(definition: AgentDefinition, signal?: AbortSignal):
     );
   }
   if (!match.usage) {
-    // codexbar can return `{error: ...}` instead of `{usage: ...}` when
-    // the underlying provider failed (e.g. codex app-server crashed). The
+    // codexbar reports a valid session that simply has no rate-limit events
+    // recorded yet — a fresh, low-traffic, or unlimited-quota account that has
+    // consumed nothing the windows can measure. That is the *least* exhausted
+    // state, not an unreadable one: return empty windows so it normalizes to
+    // `session: null` (available) instead of fail-closing to exhausted.
+    if (isNoRateLimitEvents(match.error)) {
+      return {};
+    }
+    // codexbar can otherwise return `{error: ...}` instead of `{usage: ...}`
+    // when the underlying provider failed (e.g. codex app-server crashed). The
     // outer catch in getUsageByAgent turns this into a fail-closed
     // exhausted entry; surface codexbar's error message so the operator
     // can fix the underlying CLI.
@@ -138,6 +146,15 @@ async function codexbarUsage(definition: AgentDefinition, signal?: AbortSignal):
     throw new Error(`codexbar returned no usage for provider=${provider}: ${detail}`);
   }
   return match.usage;
+}
+
+/**
+ * codexbar signals an authenticated account with zero recorded rate-limit
+ * events via this provider error (e.g. "Found sessions, but no rate limit
+ * events yet."). It means no quota consumed — available — not a probe failure.
+ */
+function isNoRateLimitEvents(error: CodexbarEntry["error"]): boolean {
+  return /no rate limit events/i.test(error?.message ?? "");
 }
 
 function toFraction(value: number | undefined | null): number | null {
