@@ -251,7 +251,10 @@ describe(getUsageByAgent, () => {
 
     const actual = await getUsageByAgent(makeConfig());
 
-    expect(actual["codex"]).toStrictEqual(EXHAUSTED_USAGE);
+    expect(actual["codex"]).toMatchObject({
+      ...EXHAUSTED_USAGE,
+      unavailableReason: "codexbar exploded",
+    });
     expect(consoleCapture.output()).toContain(
       "Usage check failed for codex (treating as exhausted): codexbar exploded",
     );
@@ -288,7 +291,7 @@ describe(getUsageByAgent, () => {
 
     const actual = await getUsageByAgent(makeConfig());
 
-    expect(actual["codex"]).toStrictEqual(EXHAUSTED_USAGE);
+    expect(actual["codex"]).toMatchObject(EXHAUSTED_USAGE);
     expect(consoleCapture.output()).toContain("codex app-server closed stdout");
   });
 
@@ -334,7 +337,7 @@ describe(getUsageByAgent, () => {
 
     const actual = await getUsageByAgent(makeConfig());
 
-    expect(actual["codex"]).toStrictEqual(EXHAUSTED_USAGE);
+    expect(actual["codex"]).toMatchObject(EXHAUSTED_USAGE);
     expect(consoleCapture.output()).toContain("codex app-server closed stdout");
   });
 
@@ -351,7 +354,7 @@ describe(getUsageByAgent, () => {
 
     const actual = await getUsageByAgent(makeConfig());
 
-    expect(actual["codex"]).toStrictEqual(EXHAUSTED_USAGE);
+    expect(actual["codex"]).toMatchObject(EXHAUSTED_USAGE);
   });
 
   it("fails closed when the command error carries no captured output", async () => {
@@ -364,7 +367,7 @@ describe(getUsageByAgent, () => {
 
     const actual = await getUsageByAgent(makeConfig());
 
-    expect(actual["codex"]).toStrictEqual(EXHAUSTED_USAGE);
+    expect(actual["codex"]).toMatchObject(EXHAUSTED_USAGE);
   });
 
   it("fails closed when codexbar returns an entry with neither usage nor error", async () => {
@@ -373,7 +376,7 @@ describe(getUsageByAgent, () => {
 
     const actual = await getUsageByAgent(makeConfig());
 
-    expect(actual["codex"]).toStrictEqual(EXHAUSTED_USAGE);
+    expect(actual["codex"]).toMatchObject(EXHAUSTED_USAGE);
     expect(consoleCapture.output()).toContain("no usage data");
   });
 
@@ -468,7 +471,7 @@ describe(getUsageByAgent, () => {
 
     const actual = await getUsageByAgent(makeConfig());
 
-    expect(actual["codex"]).toStrictEqual(EXHAUSTED_USAGE);
+    expect(actual["codex"]).toMatchObject(EXHAUSTED_USAGE);
     expect(consoleCapture.output()).toContain(
       "codexbar returned no matching entry for provider=codex",
     );
@@ -493,7 +496,7 @@ describe(getUsageByAgent, () => {
 
     const actual = await getUsageByAgent(makeConfig());
 
-    expect(actual["codex"]).toStrictEqual(EXHAUSTED_USAGE);
+    expect(actual["codex"]).toMatchObject(EXHAUSTED_USAGE);
     expect(consoleCapture.output()).toContain(
       "codexbar returned no matching entry for provider=codex",
     );

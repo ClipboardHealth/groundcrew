@@ -334,6 +334,9 @@ function hasRecoverableCandidate(
 }
 
 function formatUsageExhaustion(exhaustion: AgentUsageExhaustion): string {
+  if (exhaustion.kind === "unavailable") {
+    return `${exhaustion.agent} usage unavailable: ${exhaustion.reason} — skipping its tasks`;
+  }
   if (exhaustion.kind === "session") {
     const mins = exhaustion.resetMinutes ?? "?";
     return `${exhaustion.agent} session at ${exhaustion.usedPercentage.toFixed(0)}% (> ${exhaustion.limitPercentage}%), resets in ${mins}m — skipping its tasks`;
