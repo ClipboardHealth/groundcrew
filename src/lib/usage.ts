@@ -43,6 +43,8 @@ interface NormalizedUsage {
   sessionEndDuration: number | null;
   weekly: number | null;
   weekEndDuration: number | null;
+  /** Set when the snapshot is fail-closed because codexbar could not be read. */
+  unavailableReason?: string;
 }
 
 export type UsageByAgent = Record<string, NormalizedUsage>;
@@ -157,7 +159,9 @@ async function codexbarUsage(definition: AgentDefinition, signal?: AbortSignal):
     // exhausted entry; surface codexbar's error message so the operator
     // can fix the underlying CLI.
     const detail = match.error?.message ?? "no usage data";
-    throw new Error(`codexbar returned no usage for provider=${provider}: ${detail}`);
+    throw new Error(
+      `codexbar returned no usage for provider=${provider}, source=${source}: ${detail}`,
+    );
   }
   return match.usage;
 }
@@ -253,8 +257,9 @@ export async function getUsageByAgent(
       // --verbose) so operators can fix the underlying CLI, and return a
       // fully-exhausted snapshot so the dispatcher gates the agent. The
       // gate itself surfaces a visible skip line via formatUsageExhaustion.
-      debug(`Usage check failed for ${agent} (treating as exhausted): ${errorMessage(error)}`);
-      out[agent] = EXHAUSTED_USAGE;
+      const reason = errorMessage(error);
+      debug(`Usage check failed for ${agent} (treating as exhausted): ${reason}`);
+      out[agent] = { ...EXHAUSTED_USAGE, unavailableReason: reason };
     }
   }
   return out;

@@ -949,18 +949,28 @@ describe(createDispatcher, () => {
     it("does not double-gate when weekly is Infinity (session gate handles EXHAUSTED_USAGE)", async () => {
       const board = makeBoard();
       const dispatcher = createDispatcher({ config: makeConfig(), board });
+      const usageByAgent = {
+        claude: {
+          ...EXHAUSTED_USAGE,
+          unavailableReason: "codexbar returned no usage for provider=claude, source=oauth",
+        },
+      };
 
       await dispatcher.runOnce({
         state: boardOf([todoIssue()]),
         worktreeEntries: [],
-        usage: async () => ({ claude: EXHAUSTED_USAGE }),
+        usage: async () => usageByAgent,
         dryRun: false,
       });
 
       expect(setupMock).not.toHaveBeenCalled();
-      // Session gate's log fires; weekly gate's "paced budget" log doesn't.
+      // Fail-closed usage logs the diagnostic reason instead of formatting the
+      // sentinel as a real percentage; weekly gate's "paced budget" log doesn't.
       const output = consoleLog.output();
-      expect(output).toContain("session at Infinity%");
+      expect(output).toContain(
+        "claude usage unavailable: codexbar returned no usage for provider=claude, source=oauth",
+      );
+      expect(output).not.toContain("session at Infinity%");
       expect(output).not.toContain("paced budget");
     });
   });

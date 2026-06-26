@@ -56,6 +56,11 @@ type Verdict = StartVerdict | SkipVerdict;
 
 export type AgentUsageExhaustion =
   | {
+      kind: "unavailable";
+      agent: string;
+      reason: string;
+    }
+  | {
       kind: "session";
       agent: string;
       usedPercentage: number;
@@ -171,6 +176,14 @@ export function classifyUsageExhaustion(
   const exhausted: AgentUsageExhaustion[] = [];
   const sessionLimit = config.orchestrator.sessionLimitPercentage;
   for (const [agent, snapshot] of Object.entries(usage)) {
+    if (snapshot.unavailableReason !== undefined) {
+      exhausted.push({
+        kind: "unavailable",
+        agent,
+        reason: snapshot.unavailableReason,
+      });
+      continue;
+    }
     if (snapshot.session !== null && snapshot.session * PERCENT_FRACTION_DIVISOR > sessionLimit) {
       exhausted.push({
         kind: "session",
