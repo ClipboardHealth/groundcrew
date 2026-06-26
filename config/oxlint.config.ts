@@ -58,6 +58,18 @@ export default defineConfig(
             "max-lines": ["error", 2200],
           },
         },
+        {
+          // workspaces.test.ts covers every adapter path (cmux, tmux,
+          // tmux-session-per-task, zellij) plus probe/close/interrupt/accessHint
+          // and resolveWorkspaceKind, all keyed off the same hoisted runMock and
+          // shared makeHost / makeConfig / commonBeforeEach harness. Splitting by
+          // describe block would duplicate the commandRunner/util/host module
+          // mocks and race them under Vitest's parallel runner. Bump the cap.
+          files: ["**/workspaces.test.ts"],
+          rules: {
+            "max-lines": ["error", 2200],
+          },
+        },
       ],
     },
     presets: [base, vitest],
