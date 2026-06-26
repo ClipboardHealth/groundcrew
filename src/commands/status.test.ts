@@ -162,6 +162,7 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
       runner: "auto",
       networkEgress: "allowlisted",
       safehouse: { enable: [] },
+      readOnlyDirs: [],
       ...overrides.local,
     },
     logging: { file: "/tmp/groundcrew-test.log", ...overrides.logging },

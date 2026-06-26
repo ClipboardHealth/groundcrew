@@ -5,11 +5,10 @@
  */
 
 import type { ResolvedConfig } from "../lib/config.ts";
-import { recordCleanedUpRuns } from "../lib/runStateCleanup.ts";
 import { naturalIdFromCanonical, type BoardState } from "../lib/taskSource.ts";
 import { log, logEvent } from "../lib/util.ts";
-import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
-import { logTeardown, recordTeardownEvents } from "./teardownReporter.ts";
+import type { WorktreeEntry } from "../lib/worktrees.ts";
+import { reapWorktrees } from "./teardownReporter.ts";
 
 interface CleanerDeps {
   config: ResolvedConfig;
@@ -66,13 +65,7 @@ export function createCleaner(deps: CleanerDeps): Cleaner {
     }
 
     log(`Cleaning up ${stale.length} terminal worktree(s)`);
-    const result =
-      signal === undefined
-        ? await worktrees.teardown(config, stale)
-        : await worktrees.teardown(config, stale, { signal });
-    recordCleanedUpRuns(config, result.removed);
-    logTeardown(result);
-    recordTeardownEvents(result);
+    await reapWorktrees(config, stale, signal);
   }
 
   return { runOnce };

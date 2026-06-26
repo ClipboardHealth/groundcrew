@@ -191,7 +191,12 @@ function makeConfig(): ResolvedConfig {
     },
     prompts: { initial: "x" },
     workspaceKind: "auto",
-    local: { runner: "auto", networkEgress: "allowlisted", safehouse: { enable: [] } },
+    local: {
+      runner: "auto",
+      networkEgress: "allowlisted",
+      safehouse: { enable: [] },
+      readOnlyDirs: [],
+    },
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }
@@ -514,6 +519,7 @@ describe(resumeWorkspace, () => {
         runner: "srt" as const,
         networkEgress: "allowlisted" as const,
         safehouse: { enable: [] },
+        readOnlyDirs: [],
       },
     };
 
@@ -539,6 +545,7 @@ describe(resumeWorkspace, () => {
         runner: "safehouse" as const,
         networkEgress: "open" as const,
         safehouse: { enable: [] },
+        readOnlyDirs: [],
       },
     };
 
@@ -560,7 +567,12 @@ describe(resumeWorkspace, () => {
     // has no effect: it is rejected by the same worker-env guard as allowlisted.
     const cmdOwned: ResolvedConfig = {
       ...makeConfig(),
-      local: { runner: "safehouse", networkEgress: "open", safehouse: { enable: [] } },
+      local: {
+        runner: "safehouse",
+        networkEgress: "open",
+        safehouse: { enable: [] },
+        readOnlyDirs: [],
+      },
       agents: {
         default: "claude",
         definitions: { claude: { cmd: "safehouse claude --auto", color: "#fff" } },
@@ -575,7 +587,12 @@ describe(resumeWorkspace, () => {
   it("does not add task source sandbox grants for unsandboxed resume runners", async () => {
     const noneConfig: ResolvedConfig = {
       ...makeConfig(),
-      local: { runner: "none", networkEgress: "allowlisted", safehouse: { enable: [] } },
+      local: {
+        runner: "none",
+        networkEgress: "allowlisted",
+        safehouse: { enable: [] },
+        readOnlyDirs: [],
+      },
       sources: [
         { kind: "linear" },
         {
@@ -617,6 +634,7 @@ describe(resumeWorkspace, () => {
         runner: "srt" as const,
         networkEgress: "allowlisted" as const,
         safehouse: { enable: [] },
+        readOnlyDirs: [],
       },
     };
     workspacesOpenMock.mockRejectedValue(new Error("cmux down"));

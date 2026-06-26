@@ -1,6 +1,6 @@
 {
   "name": "@clipboard-health/groundcrew",
-  "version": "4.45.3",
+  "version": "4.45.6",
   "description": "Linear-driven orchestrator that launches AI coding agents in git worktrees, with workspace lifecycle and usage tracking.",
   "keywords": [
     "agent",
@@ -83,12 +83,12 @@
     "@tsconfig/node24": "24.0.4",
     "@tsconfig/strictest": "2.0.8",
     "@types/node": "25.9.4",
-    "@typescript/native-preview": "7.0.0-dev.20260618.1",
+    "@typescript/native-preview": "7.0.0-dev.20260621.1",
     "@vitest/coverage-v8": "4.1.9",
     "cspell": "10.0.1",
     "dependency-cruiser": "17.4.3",
     "husky": "9.1.7",
-    "jscpd": "5.0.10",
+    "jscpd": "5.0.11",
     "knip": "6.16.1",
     "lint-staged": "17.0.7",
     "markdownlint-cli2": "0.22.1",

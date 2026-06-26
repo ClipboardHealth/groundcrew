@@ -97,16 +97,30 @@ async function codexbarUsage(definition: AgentDefinition, signal?: AbortSignal):
     "json",
   ];
 
-  const out = await runCommandAsync(
-    "codexbar",
-    arguments_,
+  const options =
     signal === undefined
       ? { timeoutMs: CODEXBAR_TIMEOUT_MS }
-      : {
-          signal,
-          timeoutMs: CODEXBAR_TIMEOUT_MS,
-        },
-  );
+      : { signal, timeoutMs: CODEXBAR_TIMEOUT_MS };
+  let out: string;
+  try {
+    out = await runCommandAsync("codexbar", arguments_, options);
+  } catch (error) {
+    if (signal?.aborted === true) {
+      throw error;
+    }
+    // codexbar exits non-zero (e.g. status 3 for "no rate limit events yet")
+    // for handled provider conditions while still writing its JSON payload to
+    // stdout. runCommandAsync rejects on the exit code, so recover that payload
+    // and parse it like a success — its per-entry `error` field, not the exit
+    // code, distinguishes "available" from a genuine failure below. A missing
+    // or unparseable payload is a real failure: rethrow so the caller fails
+    // closed.
+    const recovered = recoverStdout(error);
+    if (recovered === undefined) {
+      throw error;
+    }
+    out = recovered;
+  }
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- JSON.parse returns any; codexbar's --format json output matches CodexbarEntry[]
   const parsed = JSON.parse(out) as CodexbarEntry[];
   // codexbar can return multiple entries when a provider has several
@@ -129,8 +143,16 @@ async function codexbarUsage(definition: AgentDefinition, signal?: AbortSignal):
     );
   }
   if (!match.usage) {
-    // codexbar can return `{error: ...}` instead of `{usage: ...}` when
-    // the underlying provider failed (e.g. codex app-server crashed). The
+    // codexbar reports a valid session that simply has no rate-limit events
+    // recorded yet — a fresh, low-traffic, or unlimited-quota account that has
+    // consumed nothing the windows can measure. That is the *least* exhausted
+    // state, not an unreadable one: return empty windows so it normalizes to
+    // `session: null` (available) instead of fail-closing to exhausted.
+    if (isNoRateLimitEvents(match.error)) {
+      return {};
+    }
+    // codexbar can otherwise return `{error: ...}` instead of `{usage: ...}`
+    // when the underlying provider failed (e.g. codex app-server crashed). The
     // outer catch in getUsageByAgent turns this into a fail-closed
     // exhausted entry; surface codexbar's error message so the operator
     // can fix the underlying CLI.
@@ -138,6 +160,35 @@ async function codexbarUsage(definition: AgentDefinition, signal?: AbortSignal):
     throw new Error(`codexbar returned no usage for provider=${provider}: ${detail}`);
   }
   return match.usage;
+}
+
+/**
+ * codexbar signals an authenticated account with zero recorded rate-limit
+ * events via this provider error (e.g. "Found sessions, but no rate limit
+ * events yet."). It means no quota consumed — available — not a probe failure.
+ */
+function isNoRateLimitEvents(error: CodexbarEntry["error"]): boolean {
+  return /no rate limit events/i.test(error?.message ?? "");
+}
+
+/**
+ * runCommandAsync rejects on a non-zero exit, attaching the captured stdout
+ * Buffer to the thrown error's `cause`. codexbar uses non-zero exits for handled
+ * provider conditions while still emitting its JSON payload, so pull that stdout
+ * back out to parse like a success. Returns undefined when no stdout was
+ * captured (a real failure with nothing to parse).
+ */
+function recoverStdout(error: unknown): string | undefined {
+  /* v8 ignore next 3 @preserve -- runCommandAsync always rejects with an Error */
+  if (!(error instanceof Error)) {
+    return undefined;
+  }
+  // A plain command failure with no captured output carries no cause/stdout.
+  if (!(error.cause instanceof Error) || !("stdout" in error.cause)) {
+    return undefined;
+  }
+  const { stdout } = error.cause;
+  return Buffer.isBuffer(stdout) ? stdout.toString("utf8") : undefined;
 }
 
 function toFraction(value: number | undefined | null): number | null {

@@ -329,6 +329,13 @@ export interface Config {
        */
       enable?: string[];
     };
+    /**
+     * Host directories re-opened read-only inside the sandbox (safehouse +
+     * srt), for toolchains the sandbox profile masks but does not re-open.
+     * `~` is expanded. Defaults to tfenv's config root so `terraform`/`tfenv`
+     * work in the sandbox; set your own list to add or replace entries.
+     */
+    readOnlyDirs?: string[];
   };
   logging?: {
     /**
@@ -407,6 +414,8 @@ export interface ResolvedConfig {
     safehouse: {
       enable: readonly string[];
     };
+    /** Resolved, `~`-expanded read-only sandbox dirs. Defaults to tfenv's config root. */
+    readOnlyDirs: string[];
   };
   logging: {
     file: string;
@@ -446,6 +455,36 @@ const DEFAULT_GIT: ResolvedConfig["git"] = {
   remote: "origin",
   defaultBranch: "main",
 };
+
+/**
+ * Read-only sandbox dirs granted by default: tfenv's config root, which the
+ * safehouse/srt profiles mask but don't re-open. `~` expands at normalization.
+ */
+const DEFAULT_LOCAL_READ_ONLY_DIRS: readonly string[] = ["~/.config/tfenv"];
+
+function normalizeLocal(
+  userLocal:
+    | { runner?: unknown; networkEgress?: unknown; safehouse?: unknown; readOnlyDirs?: unknown }
+    | undefined,
+): ResolvedConfig["local"] {
+  return {
+    runner: normalizeLocalRunner(userLocal?.runner, "local.runner") ?? "auto",
+    networkEgress:
+      normalizeNetworkEgress(userLocal?.networkEgress, "local.networkEgress") ?? "allowlisted",
+    safehouse: {
+      enable: normalizeSafehouseEnable(userLocal?.safehouse, "local.safehouse"),
+    },
+    readOnlyDirs: normalizeReadOnlyDirs(userLocal?.readOnlyDirs),
+  };
+}
+
+function normalizeReadOnlyDirs(value: unknown): string[] {
+  const dirs = value ?? DEFAULT_LOCAL_READ_ONLY_DIRS;
+  if (!isStringArray(dirs)) {
+    fail("local.readOnlyDirs must be an array of strings");
+  }
+  return dirs.map(expandHome);
+}
 
 const DEFAULT_ORCHESTRATOR: ResolvedConfig["orchestrator"] = {
   maximumInProgress: 4,
@@ -1186,7 +1225,14 @@ function applyDefaults(user: Config, configDir: string): ResolvedConfig {
     );
   }
   const userLocal = (
-    user as { local?: { runner?: unknown; networkEgress?: unknown; safehouse?: unknown } }
+    user as {
+      local?: {
+        runner?: unknown;
+        networkEgress?: unknown;
+        safehouse?: unknown;
+        readOnlyDirs?: unknown;
+      };
+    }
   ).local;
   if (userLocal !== undefined && !isPlainObject(userLocal)) {
     fail("local must be an object");
@@ -1214,14 +1260,7 @@ function applyDefaults(user: Config, configDir: string): ResolvedConfig {
       initial: resolveInitialPrompt(user.prompts, configDir),
     },
     workspaceKind: normalizeWorkspaceKind(user.workspaceKind, "workspaceKind") ?? "auto",
-    local: {
-      runner: normalizeLocalRunner(userLocal?.runner, "local.runner") ?? "auto",
-      networkEgress:
-        normalizeNetworkEgress(userLocal?.networkEgress, "local.networkEgress") ?? "allowlisted",
-      safehouse: {
-        enable: normalizeSafehouseEnable(userLocal?.safehouse, "local.safehouse"),
-      },
-    },
+    local: normalizeLocal(userLocal),
     logging: {
       file: expandHome(
         normalizeOptionalString(user.logging?.file, "logging.file") ?? defaultLogFile(),

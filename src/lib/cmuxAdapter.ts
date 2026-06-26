@@ -15,22 +15,28 @@ import { debug, errorMessage, log, logEvent } from "./util.ts";
 
 export const cmuxAdapter: Adapter = {
   async open(spec, signal) {
-    const output = await runWorkspaceCommand(
-      "cmux",
-      [
-        "--json",
-        "new-workspace",
-        "--name",
-        spec.name,
-        "--cwd",
-        spec.cwd,
-        "--command",
-        spec.command,
-        "--description",
-        cmuxDescriptionFor(spec.name),
-      ],
-      signal,
-    );
+    let output: string;
+    try {
+      output = await runWorkspaceCommand(
+        "cmux",
+        [
+          "--json",
+          "new-workspace",
+          "--name",
+          spec.name,
+          "--cwd",
+          spec.cwd,
+          "--command",
+          spec.command,
+          "--description",
+          cmuxDescriptionFor(spec.name),
+        ],
+        signal,
+      );
+    } catch (error) {
+      await closeWorkspaceLeakedByFailedOpen(error, spec.name, signal);
+      throw error;
+    }
     const workspaceId = extractCmuxOpenId(output);
     if (workspaceId === undefined) {
       log(
@@ -272,6 +278,58 @@ async function closeCmuxMatch(
 
 async function closeCmuxWorkspace(workspaceId: string, signal?: AbortSignal): Promise<void> {
   await runWorkspaceCommand("cmux", ["close-workspace", "--workspace", workspaceId], signal);
+}
+
+/**
+ * cmux occasionally exits non-zero from `new-workspace` while still having
+ * created the workspace (a known flake where it also lands in the wrong `--cwd`).
+ * The id rides along in the failed command's captured output, so recover it and
+ * close that exact workspace by id — a failed launch must not strand an orphan
+ * tagged with the task's `groundcrew:<taskId>` marker. Closing by the recovered
+ * id needs no `list-workspaces`, so it survives a concurrent list failure that
+ * would defeat re-enumeration. Re-enumeration close is unsafe here anyway; we
+ * hold the precise id cmux returned, so there is no same-named-sibling risk.
+ */
+async function closeWorkspaceLeakedByFailedOpen(
+  error: unknown,
+  name: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (isSignalAborted(signal)) {
+    return;
+  }
+  const workspaceId = extractCmuxOpenIdFromFailure(error);
+  if (workspaceId === undefined) {
+    return;
+  }
+  try {
+    await closeCmuxWorkspace(workspaceId, signal);
+    debug(
+      `cmux new-workspace for ${name} exited non-zero but had created ${workspaceId}; closed the leaked workspace.`,
+    );
+  } catch (closeError) {
+    log(
+      `cmux new-workspace for ${name} exited non-zero and left workspace ${workspaceId}; automatic close failed (${errorMessage(closeError)}). Run \`cmux close-workspace --workspace ${workspaceId}\` by hand.`,
+    );
+  }
+}
+
+/**
+ * Recover the created workspace id from a failed `new-workspace`. Parse only
+ * the captured stdout slice of the command error's message (see
+ * `normalizeCommandError`), never the whole message — matching against stderr
+ * or the echoed command line risks grabbing an unrelated `workspace:N` and
+ * closing the wrong workspace. The slice is the same shape the success path
+ * sees, so `extractCmuxOpenId` handles both the `--json` id object and a bare
+ * `workspace:N` ref.
+ */
+function extractCmuxOpenIdFromFailure(error: unknown): string | undefined {
+  const stdout = cmuxStdoutFromFailureMessage(errorMessage(error));
+  return stdout === undefined ? undefined : extractCmuxOpenId(stdout);
+}
+
+function cmuxStdoutFromFailureMessage(message: string): string | undefined {
+  return /\nStdout:\n([\s\S]*?)(?:\nCause: |$)/.exec(message)?.[1];
 }
 
 function isCmuxSetStatusUnsupported(error: unknown): boolean {

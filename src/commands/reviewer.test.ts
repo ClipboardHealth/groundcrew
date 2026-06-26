@@ -9,10 +9,24 @@ import type { ResolvedConfig } from "../lib/config.ts";
 import type { PullRequestSummary } from "../lib/pullRequests.ts";
 import { recordRunState } from "../lib/runState.ts";
 import type { BoardState, Issue, MarkDoneResult, MarkInReviewResult } from "../lib/taskSource.ts";
-import type { WorktreeEntry } from "../lib/worktrees.ts";
+import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 import { makeBoard } from "../testHelpers/boardFixtures.ts";
 import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCapture.ts";
+import { emptyTeardownResult } from "../testHelpers/teardownResult.ts";
 import { createReviewer, type FindPullRequests } from "./reviewer.ts";
+
+vi.mock(import("../lib/worktrees.ts"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    worktrees: {
+      ...actual.worktrees,
+      teardown: vi.fn<typeof actual.worktrees.teardown>(),
+    },
+  };
+});
+
+const teardownMock = vi.mocked(worktrees.teardown);
 
 function boardOf(issues: BoardState["issues"]): BoardState {
   return { timestamp: "2025-01-01T00:00:00.000Z", issues, parentSkips: [] };
@@ -72,7 +86,12 @@ function makeConfig(stateRoot: string): ResolvedConfig {
     },
     prompts: { initial: "x" },
     workspaceKind: "auto",
-    local: { runner: "auto", networkEgress: "allowlisted", safehouse: { enable: [] } },
+    local: {
+      runner: "auto",
+      networkEgress: "allowlisted",
+      safehouse: { enable: [] },
+      readOnlyDirs: [],
+    },
     logging: { file: path.join(stateRoot, "groundcrew.log") },
   };
 }
@@ -92,6 +111,7 @@ describe(createReviewer, () => {
       .fn<(issue: Issue) => Promise<MarkDoneResult>>()
       .mockResolvedValue({ outcome: "applied" });
     board = makeBoard({ markInReview: markInReviewMock, markDone: markDoneMock });
+    teardownMock.mockResolvedValue(emptyTeardownResult());
     // review telemetry (event= lines) is diagnostic — verbose echoes it to the
     // console so these cases can assert the wording.
     setVerbose(true);
@@ -556,5 +576,154 @@ describe(createReviewer, () => {
       branchName: "dev-team-1",
       signal,
     });
+  });
+
+  it("tears down the worktree after a successful markDone (merged PR, supported source)", async () => {
+    const stateRoot = mkdtempSync(path.join(tmpdir(), "groundcrew-reviewer-teardown-"));
+    const config = makeConfig(stateRoot);
+    const entry = hostEntryFor("team-1");
+    const reviewer = createReviewer({
+      board,
+      findPullRequests: findReturning([pullRequest({ state: "merged" })]),
+      config,
+    });
+
+    try {
+      await reviewer.runOnce({
+        state: boardOf([inProgressIssue("team-1")]),
+        worktreeEntries: [entry],
+        dryRun: false,
+      });
+    } finally {
+      rmSync(stateRoot, { recursive: true, force: true });
+    }
+
+    expect(markDoneMock).toHaveBeenCalledTimes(1);
+    expect(teardownMock).toHaveBeenCalledWith(expect.anything(), [entry]);
+  });
+
+  it("does not tear down when markDone returns unsupported", async () => {
+    markDoneMock.mockResolvedValueOnce({
+      outcome: "unsupported",
+      reason: "source has no done transition",
+    });
+    const stateRoot = mkdtempSync(path.join(tmpdir(), "groundcrew-reviewer-teardown-"));
+    const config = makeConfig(stateRoot);
+    const reviewer = createReviewer({
+      board,
+      findPullRequests: findReturning([pullRequest({ state: "merged" })]),
+      config,
+    });
+
+    try {
+      await reviewer.runOnce({
+        state: boardOf([inProgressIssue("team-1")]),
+        worktreeEntries: [hostEntryFor("team-1")],
+        dryRun: false,
+      });
+    } finally {
+      rmSync(stateRoot, { recursive: true, force: true });
+    }
+
+    expect(teardownMock).not.toHaveBeenCalled();
+  });
+
+  it("does not tear down on a markInReview transition (open PR)", async () => {
+    const stateRoot = mkdtempSync(path.join(tmpdir(), "groundcrew-reviewer-teardown-"));
+    const config = makeConfig(stateRoot);
+    const reviewer = createReviewer({
+      board,
+      findPullRequests: findReturning([pullRequest({ state: "open" })]),
+      config,
+    });
+
+    try {
+      await reviewer.runOnce({
+        state: boardOf([inProgressIssue("team-1")]),
+        worktreeEntries: [hostEntryFor("team-1")],
+        dryRun: false,
+      });
+    } finally {
+      rmSync(stateRoot, { recursive: true, force: true });
+    }
+
+    expect(markInReviewMock).toHaveBeenCalledTimes(1);
+    expect(teardownMock).not.toHaveBeenCalled();
+  });
+
+  it("does not tear down on --dry-run even with a merged PR", async () => {
+    const stateRoot = mkdtempSync(path.join(tmpdir(), "groundcrew-reviewer-teardown-"));
+    const config = makeConfig(stateRoot);
+    const reviewer = createReviewer({
+      board,
+      findPullRequests: findReturning([pullRequest({ state: "merged" })]),
+      config,
+    });
+
+    try {
+      await reviewer.runOnce({
+        state: boardOf([inProgressIssue("team-1")]),
+        worktreeEntries: [hostEntryFor("team-1")],
+        dryRun: true,
+      });
+    } finally {
+      rmSync(stateRoot, { recursive: true, force: true });
+    }
+
+    expect(markDoneMock).not.toHaveBeenCalled();
+    expect(teardownMock).not.toHaveBeenCalled();
+  });
+
+  it("logs and swallows a teardown failure after a successful markDone", async () => {
+    teardownMock.mockRejectedValue(new Error("worktree remove failed"));
+    const stateRoot = mkdtempSync(path.join(tmpdir(), "groundcrew-reviewer-teardown-"));
+    const config = makeConfig(stateRoot);
+    const reviewer = createReviewer({
+      board,
+      findPullRequests: findReturning([pullRequest({ state: "merged", url: "https://gh/pr/9" })]),
+      config,
+    });
+
+    try {
+      await expect(
+        reviewer.runOnce({
+          state: boardOf([inProgressIssue("team-1")]),
+          worktreeEntries: [hostEntryFor("team-1")],
+          dryRun: false,
+        }),
+      ).resolves.toBeUndefined();
+    } finally {
+      rmSync(stateRoot, { recursive: true, force: true });
+    }
+
+    const out = consoleLog.output();
+    expect(out).toContain("Advanced team-1 to done");
+    expect(out).toContain("Teardown failed for team-1: worktree remove failed");
+    expect(out).not.toContain("Failed to advance team-1 to done");
+  });
+
+  it("threads the abort signal into teardown on a successful markDone (supported source)", async () => {
+    const { signal } = new AbortController();
+    const stateRoot = mkdtempSync(path.join(tmpdir(), "groundcrew-reviewer-signal-"));
+    const config = makeConfig(stateRoot);
+    const entry = hostEntryFor("team-1");
+    const reviewer = createReviewer({
+      board,
+      findPullRequests: findReturning([pullRequest({ state: "merged" })]),
+      config,
+    });
+
+    try {
+      await reviewer.runOnce({
+        state: boardOf([inProgressIssue("team-1")]),
+        worktreeEntries: [entry],
+        dryRun: false,
+        signal,
+      });
+    } finally {
+      rmSync(stateRoot, { recursive: true, force: true });
+    }
+
+    expect(teardownMock).toHaveBeenCalledWith(expect.anything(), [entry], { signal });
   });
 });
