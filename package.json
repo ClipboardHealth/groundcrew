@@ -69,7 +69,7 @@
     "verify": "node scripts/verifyAll.mts"
   },
   "dependencies": {
-    "@anthropic-ai/sandbox-runtime": "0.0.55",
+    "@anthropic-ai/sandbox-runtime": "0.0.56",
     "@clipboard-health/clearance": "1.3.2",
     "@linear/sdk": "87.0.0",
     "cosmiconfig": "9.0.2",
@@ -89,11 +89,11 @@
     "dependency-cruiser": "17.4.3",
     "husky": "9.1.7",
     "jscpd": "5.0.11",
-    "knip": "6.16.1",
-    "lint-staged": "17.0.7",
+    "knip": "6.18.0",
+    "lint-staged": "17.0.8",
     "markdownlint-cli2": "0.22.1",
     "nx": "22.7.5",
-    "oxfmt": "0.55.0",
+    "oxfmt": "0.56.0",
     "oxlint": "1.70.0",
     "oxlint-tsgolint": "0.23.0",
     "syncpack": "15.3.2",
