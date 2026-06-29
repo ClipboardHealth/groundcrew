@@ -66,7 +66,7 @@ function parseRecurrence(rec: string): Recurrence | undefined {
   return {
     strict: strictStr === "+",
     /* v8 ignore next @preserve -- regex (\d+) guarantees amountStr is always defined */
-    amount: Number.parseInt(amountStr ?? "1", 10),
+    amount: Math.trunc(Number(amountStr ?? "1")),
     unit,
   };
 }
