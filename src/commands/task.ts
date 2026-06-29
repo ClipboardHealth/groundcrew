@@ -184,7 +184,7 @@ const CREATE_VALUE_HANDLERS: Readonly<Record<string, CreateValueHandler | undefi
 };
 
 function parseLimit(raw: string): number {
-  const limit = Number.parseInt(raw, 10);
+  const limit = Math.trunc(Number(raw));
   if (!Number.isInteger(limit) || limit < 1 || String(limit) !== raw) {
     throw new Error("crew task list: --limit must be a positive integer");
   }

@@ -207,7 +207,7 @@ function nextGeneratedId(
     if (id === undefined || !id.startsWith(prefix)) {
       continue;
     }
-    const sequence = Number.parseInt(id.slice(prefix.length), 10);
+    const sequence = Math.trunc(Number(id.slice(prefix.length)));
     if (Number.isFinite(sequence) && sequence > maximumSequence) {
       maximumSequence = sequence;
     }

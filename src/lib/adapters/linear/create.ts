@@ -181,7 +181,7 @@ function linearPriority(priority: string | undefined): number | undefined {
   if (priority === undefined) {
     return undefined;
   }
-  const parsed = Number.parseInt(priority, 10);
+  const parsed = Math.trunc(Number(priority));
   if (!Number.isInteger(parsed) || String(parsed) !== priority || parsed < 0 || parsed > 4) {
     throw new Error("linear: --priority must be an integer from 0 to 4");
   }
