@@ -159,7 +159,12 @@ describe(mergeManifestAdapters, () => {
 describe("adapterRegistry production IIFE", () => {
   it("loads the built-in adapters plus discovered manifest sources", async () => {
     const registry = await adapterRegistry;
-    expect(Object.keys(registry).toSorted()).toStrictEqual(["jira", "linear", "shell", "todo-txt"]);
+    // The three built-in code adapters plus the package-bundled `jira` manifest
+    // source. Asserted by presence rather than exact set so a developer's own
+    // user-installed sources under ~/.config do not break the suite.
+    expect(Object.keys(registry)).toEqual(
+      expect.arrayContaining(["jira", "linear", "shell", "todo-txt"]),
+    );
     expect(registry["linear"]?.kind).toBe("linear");
     expect(registry["shell"]?.kind).toBe("shell");
     expect(registry["todo-txt"]?.kind).toBe("todo-txt");
