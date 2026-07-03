@@ -5,7 +5,7 @@ import path from "node:path";
 import type { AdapterContext } from "../../adapterDefinition.ts";
 import type { ResolvedConfig } from "../../config.ts";
 
-import { manifestAdapter, shellConfigFromManifest } from "./manifestAdapter.ts";
+import { manifestAdapter, manifestMeta, shellConfigFromManifest } from "./manifestAdapter.ts";
 import type { SourceManifest } from "./manifest.ts";
 
 const fakeContext: AdapterContext = { globalConfig: {} as ResolvedConfig };
@@ -51,15 +51,61 @@ describe("shellConfigFromManifest", () => {
   });
 });
 
+describe("manifestMeta", () => {
+  it("marks a source with secrets as requiring credentials", () => {
+    const actual = manifestMeta(
+      manifestWith({
+        description: "JIRA source",
+        secrets: [{ env: "JIRA_API_TOKEN", file: "jira.token" }],
+      }),
+      "package",
+    );
+
+    expect(actual).toStrictEqual({
+      description: "JIRA source",
+      requiresCredentials: true,
+      origin: "package",
+    });
+  });
+
+  it("marks a secret-free source as not requiring credentials and carries the origin", () => {
+    const actual = manifestMeta(manifestWith({ description: "no secrets" }), "user");
+
+    expect(actual).toStrictEqual({
+      description: "no secrets",
+      requiresCredentials: false,
+      origin: "user",
+    });
+  });
+});
+
 describe("manifestAdapter", () => {
   it("exposes the manifest name as the adapter kind", () => {
-    const adapter = manifestAdapter(manifestWith({ name: "jira" }), "/tmp/x");
+    const adapter = manifestAdapter(manifestWith({ name: "jira" }), "/tmp/x", "package");
 
     expect(adapter.kind).toBe("jira");
     expect(() => adapter.configSchema.parse({ kind: "jira" })).not.toThrow();
     expect(() => adapter.configSchema.parse({ kind: "jira", bogus: true })).toThrow(
       /unrecognized/i,
     );
+  });
+
+  it("derives catalog meta from the manifest and the discovery origin", () => {
+    const adapter = manifestAdapter(
+      manifestWith({
+        name: "jira",
+        description: "JIRA source",
+        secrets: [{ env: "JIRA_API_TOKEN", file: "jira.token" }],
+      }),
+      "/tmp/x",
+      "package",
+    );
+
+    expect(adapter.meta).toStrictEqual({
+      description: "JIRA source",
+      requiresCredentials: true,
+      origin: "package",
+    });
   });
 
   it("installs scripts then builds a shell task source on create", () => {
@@ -70,7 +116,7 @@ describe("manifestAdapter", () => {
       mkdirSync(manifestDir);
       writeFileSync(path.join(manifestDir, "demo.sh"), "#!/bin/sh\n");
       const manifest = manifestWith({ installDir, files: ["demo.sh"] });
-      const adapter = manifestAdapter(manifest, manifestDir);
+      const adapter = manifestAdapter(manifest, manifestDir, "user");
 
       const source = adapter.create({ kind: "demo" }, fakeContext);
 

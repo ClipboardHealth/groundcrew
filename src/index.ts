@@ -49,7 +49,12 @@ export {
 export { getUsageByAgent, type UsageByAgent } from "./lib/usage.ts";
 export { type Board, createBoard } from "./lib/board.ts";
 export { buildSources, buildSourcesWith } from "./lib/buildSources.ts";
-export type { AdapterContext, AdapterDefinition } from "./lib/adapterDefinition.ts";
+export type {
+  AdapterContext,
+  AdapterDefinition,
+  AdapterMeta,
+  AdapterOrigin,
+} from "./lib/adapterDefinition.ts";
 export {
   adapterRegistry,
   type AdapterLoader,
@@ -57,6 +62,9 @@ export {
   buildSourceConfigSchema,
   listAdapterDirectories,
 } from "./lib/adapters/registry.ts";
+export { listTaskSources, type TaskSourceCatalogEntry } from "./lib/adapters/catalog.ts";
+export { getTaskSourceManifest } from "./lib/adapters/shell/discovery.ts";
+export type { SourceManifest } from "./lib/adapters/shell/manifest.ts";
 export {
   AmbiguousTaskError,
   type Blocker as CanonicalBlocker,

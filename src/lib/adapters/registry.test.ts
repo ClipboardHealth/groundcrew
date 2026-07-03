@@ -140,13 +140,14 @@ function discovered(name: string): DiscoveredManifest {
 }
 
 describe(mergeManifestAdapters, () => {
-  it("adds a discovered manifest as an adapter keyed by its name", () => {
+  it("adds a discovered manifest as an adapter keyed by its name, carrying the discovery origin", () => {
     const code = { shell: fakeAdapter("shell") };
 
     const merged = mergeManifestAdapters(code, [discovered("jira")]);
 
     expect(Object.keys(merged).toSorted()).toStrictEqual(["jira", "shell"]);
     expect(merged["jira"]?.kind).toBe("jira");
+    expect(merged["jira"]?.meta?.origin).toBe("user");
   });
 
   it("rejects a manifest whose name shadows a built-in adapter kind", () => {

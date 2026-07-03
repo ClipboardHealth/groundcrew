@@ -7,6 +7,12 @@ const definition: AdapterDefinition<typeof linearAdapterConfigSchema> = {
   kind: "linear",
   configSchema: linearAdapterConfigSchema,
   create: createLinearTaskSource,
+  meta: {
+    description:
+      "Pick up Linear issues assigned to your API key's viewer that carry an agent-* label.",
+    requiresCredentials: true,
+    origin: "builtin",
+  },
 };
 
 export default definition;
