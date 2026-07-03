@@ -75,6 +75,23 @@ describe("installShellSource", () => {
     }
   });
 
+  it("rejects a files entry that escapes the install directory", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "install-shell-"));
+    try {
+      const manifestDir = path.join(root, "manifest");
+      const installDir = path.join(root, "install");
+      mkdirSync(manifestDir);
+      writeFileSync(path.join(manifestDir, "evil.sh"), "#!/bin/sh\n");
+      const manifest = manifestWith({ installDir, files: ["../evil.sh"] });
+
+      const run = (): unknown => installShellSource({ manifest, manifestDir });
+
+      expect(run).toThrow(/escapes/i);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("installs nothing when the manifest lists no files", () => {
     const root = mkdtempSync(path.join(tmpdir(), "install-shell-"));
     try {

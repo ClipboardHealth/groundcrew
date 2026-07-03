@@ -35,6 +35,14 @@ export function installShellSource(options: InstallShellSourceOptions): Installe
   for (const file of manifest.files) {
     const source = path.join(manifestDir, file);
     const dest = path.join(installDir, file);
+    // Reject a files[] entry that escapes installDir (e.g. "../../.zshrc").
+    // Manifests are only semi-trusted, and each dest is made executable, so a
+    // traversal would let a source write over arbitrary files.
+    if (path.relative(installDir, dest).startsWith("..")) {
+      throw new Error(
+        `Task source "${manifest.name}" lists file "${file}" that escapes its install directory "${installDir}".`,
+      );
+    }
     if (!existsSync(dest) || readFileSync(dest).compare(readFileSync(source)) !== 0) {
       copyFileSync(source, dest);
     }
