@@ -5,7 +5,7 @@ import { workspaces } from "../lib/workspaces.ts";
 import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCapture.ts";
 import { emptyTeardownResult } from "../testHelpers/teardownResult.ts";
-import { cleanupWorkspace, cleanupWorkspaceCli } from "./cleanupWorkspace.ts";
+import { cleanupAllWorkspaces, cleanupWorkspace, cleanupWorkspaceCli } from "./cleanupWorkspace.ts";
 
 vi.mock(import("../lib/config.ts"), async (importOriginal) => {
   const actual = await importOriginal();
@@ -17,6 +17,7 @@ vi.mock(import("../lib/worktrees.ts"), async (importOriginal) => {
     ...actual,
     worktrees: {
       ...actual.worktrees,
+      list: vi.fn<typeof actual.worktrees.list>(),
       findByTask: vi.fn<typeof actual.worktrees.findByTask>(),
       teardown: vi.fn<typeof actual.worktrees.teardown>(),
     },
@@ -42,6 +43,7 @@ vi.mock(import("../lib/workspaces.ts"), async (importOriginal) => {
 });
 
 const loadConfigMock = vi.mocked(loadConfig);
+const listMock = vi.mocked(worktrees.list);
 const findByTaskMock = vi.mocked(worktrees.findByTask);
 const teardownMock = vi.mocked(worktrees.teardown);
 const readRunStateMock = vi.mocked(readRunState);
@@ -53,6 +55,14 @@ const hostEntry: WorktreeEntry = {
   task: "team-1",
   branchName: "dev-team-1",
   dir: "/work/repo-a-team-1",
+  kind: "host",
+};
+
+const secondEntry: WorktreeEntry = {
+  repository: "repo-a",
+  task: "team-2",
+  branchName: "dev-team-2",
+  dir: "/work/repo-a-team-2",
   kind: "host",
 };
 
@@ -304,6 +314,110 @@ describe(cleanupWorkspace, () => {
   });
 });
 
+describe(cleanupAllWorkspaces, () => {
+  let consoleLog: ConsoleCapture;
+
+  beforeEach(() => {
+    consoleLog = captureConsoleLog();
+    teardownMock.mockResolvedValue(emptyTeardownResult());
+    workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set() });
+  });
+
+  afterEach(() => {
+    consoleLog.restore();
+    vi.resetAllMocks();
+  });
+
+  it("tears down every worktree when no workspace is in use", async () => {
+    listMock.mockReturnValue([hostEntry, secondEntry]);
+    teardownMock.mockResolvedValue(emptyTeardownResult({ removed: [hostEntry, secondEntry] }));
+
+    await cleanupAllWorkspaces(config, {});
+
+    expect(teardownMock).toHaveBeenCalledWith(config, [hostEntry, secondEntry], { force: false });
+    expect(removeRunStateMock).toHaveBeenCalledWith(config, "team-1");
+    expect(removeRunStateMock).toHaveBeenCalledWith(config, "team-2");
+  });
+
+  it("skips worktrees whose workspace is live and tears down the rest", async () => {
+    listMock.mockReturnValue([hostEntry, secondEntry]);
+    workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-1"]) });
+    teardownMock.mockResolvedValue(emptyTeardownResult({ removed: [secondEntry] }));
+
+    await cleanupAllWorkspaces(config, {});
+
+    expect(teardownMock).toHaveBeenCalledWith(config, [secondEntry], { force: false });
+    expect(consoleLog.output()).toContain("team-1");
+    expect(consoleLog.output()).toContain("in use");
+  });
+
+  it("treats an exited workspace session as idle and cleans it up", async () => {
+    listMock.mockReturnValue([hostEntry]);
+    workspaceProbeMock.mockResolvedValue({
+      kind: "ok",
+      names: new Set(["team-1"]),
+      exitedNames: new Set(["team-1"]),
+    });
+    teardownMock.mockResolvedValue(emptyTeardownResult({ removed: [hostEntry] }));
+
+    await cleanupAllWorkspaces(config, {});
+
+    expect(teardownMock).toHaveBeenCalledWith(config, [hostEntry], { force: false });
+  });
+
+  it("cleans up nothing when the workspace probe is unavailable", async () => {
+    listMock.mockReturnValue([hostEntry, secondEntry]);
+    workspaceProbeMock.mockResolvedValue({ kind: "unavailable" });
+
+    await cleanupAllWorkspaces(config, {});
+
+    expect(teardownMock).not.toHaveBeenCalled();
+    expect(consoleLog.output()).toContain("probe unavailable");
+  });
+
+  it("logs and returns when there are no worktrees at all", async () => {
+    listMock.mockReturnValue([]);
+
+    await cleanupAllWorkspaces(config, {});
+
+    expect(teardownMock).not.toHaveBeenCalled();
+    expect(workspaceProbeMock).not.toHaveBeenCalled();
+    expect(consoleLog.output()).toContain("nothing to clean up");
+  });
+
+  it("logs and returns when every worktree is in use", async () => {
+    listMock.mockReturnValue([hostEntry]);
+    workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-1"]) });
+
+    await cleanupAllWorkspaces(config, {});
+
+    expect(teardownMock).not.toHaveBeenCalled();
+    expect(consoleLog.output()).toContain("No idle worktrees");
+  });
+
+  it("passes --force through to teardown", async () => {
+    listMock.mockReturnValue([hostEntry]);
+    teardownMock.mockResolvedValue(emptyTeardownResult({ removed: [hostEntry] }));
+
+    await cleanupAllWorkspaces(config, { force: true });
+
+    expect(teardownMock).toHaveBeenCalledWith(config, [hostEntry], { force: true });
+  });
+
+  it("re-throws the first failure reported by teardown", async () => {
+    listMock.mockReturnValue([hostEntry]);
+    teardownMock.mockResolvedValue(
+      emptyTeardownResult({
+        failures: [
+          { entry: hostEntry, step: "worktree_remove", error: new Error("worktree busy") },
+        ],
+      }),
+    );
+
+    await expect(cleanupAllWorkspaces(config, {})).rejects.toThrow(/worktree busy/);
+  });
+});
+
 describe(cleanupWorkspaceCli, () => {
   let consoleLog: ConsoleCapture;
 
@@ -312,6 +426,7 @@ describe(cleanupWorkspaceCli, () => {
     findByTaskMock.mockReturnValue([hostEntry]);
     loadConfigMock.mockResolvedValue(config);
     teardownMock.mockResolvedValue(emptyTeardownResult({ removed: [hostEntry] }));
+    workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set() });
   });
 
   afterEach(() => {
@@ -350,6 +465,32 @@ describe(cleanupWorkspaceCli, () => {
 
   it("rejects extra positional args", async () => {
     await expect(cleanupWorkspaceCli(["team-1", "extra"])).rejects.toThrow(/Usage: crew cleanup/);
+    expect(findByTaskMock).not.toHaveBeenCalled();
+  });
+
+  it("routes --all to the batch cleanup instead of a single task", async () => {
+    listMock.mockReturnValue([hostEntry]);
+    teardownMock.mockResolvedValue(emptyTeardownResult({ removed: [hostEntry] }));
+
+    await cleanupWorkspaceCli(["--all"]);
+
+    expect(listMock).toHaveBeenCalledWith(config);
+    expect(findByTaskMock).not.toHaveBeenCalled();
+    expect(teardownMock).toHaveBeenCalledWith(config, [hostEntry], { force: false });
+  });
+
+  it("passes --force through with --all", async () => {
+    listMock.mockReturnValue([hostEntry]);
+    teardownMock.mockResolvedValue(emptyTeardownResult({ removed: [hostEntry] }));
+
+    await cleanupWorkspaceCli(["--all", "--force"]);
+
+    expect(teardownMock).toHaveBeenCalledWith(config, [hostEntry], { force: true });
+  });
+
+  it("rejects --all combined with a task argument", async () => {
+    await expect(cleanupWorkspaceCli(["--all", "team-1"])).rejects.toThrow(/Usage: crew cleanup/);
+    expect(listMock).not.toHaveBeenCalled();
     expect(findByTaskMock).not.toHaveBeenCalled();
   });
 });

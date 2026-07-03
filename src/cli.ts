@@ -193,8 +193,8 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
     invoke: statusCli,
   },
   cleanup: {
-    summary: "Tear down a worktree",
-    usage: "[--force] <task>",
+    summary: "Tear down a worktree, or every idle worktree with --all",
+    usage: "[--force] <task> | [--force] --all",
     invoke: cleanupWorkspaceCli,
   },
   stop: {
