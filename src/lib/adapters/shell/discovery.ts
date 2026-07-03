@@ -12,7 +12,7 @@ import path from "node:path";
 
 import { writeError } from "../../util.ts";
 import { xdgConfigPath } from "../../xdg.ts";
-import { isFileErrorCode } from "../todo-txt/fileErrors.ts";
+import { describeFileError, isFileErrorCode } from "../todo-txt/fileErrors.ts";
 
 import { sourceManifestSchema, type SourceManifest } from "./manifest.ts";
 
@@ -73,7 +73,17 @@ export function discoverFromRoots(roots: readonly ManifestRoot[]): DiscoveryResu
       if (!existsSync(manifestPath)) {
         continue;
       }
-      const manifest = sourceManifestSchema.parse(JSON.parse(readFileSync(manifestPath, "utf8")));
+      let manifest: SourceManifest;
+      try {
+        manifest = sourceManifestSchema.parse(JSON.parse(readFileSync(manifestPath, "utf8")));
+      } catch (error) {
+        // One malformed source.json must not take down the whole registry: skip
+        // this source and warn, so every other adapter still loads.
+        warnings.push(
+          `Ignoring invalid task source manifest at ${manifestPath}: ${describeFileError(error)}.`,
+        );
+        continue;
+      }
       const previous = byName.get(manifest.name);
       if (previous) {
         warnings.push(

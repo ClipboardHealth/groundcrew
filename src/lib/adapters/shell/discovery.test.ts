@@ -89,6 +89,23 @@ describe("discoverFromRoots", () => {
     expect(run).toThrow(/ENAMETOOLONG/i);
   });
 
+  it("skips a manifest with invalid JSON and records a warning", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "discover-bad-"));
+    try {
+      const broken = path.join(root, "broken");
+      mkdirSync(broken, { recursive: true });
+      writeFileSync(path.join(broken, "source.json"), "{ not valid json");
+      writeBundle(root, "jira", "jira list");
+
+      const { manifests, warnings } = discoverFromRoots([{ dir: root, origin: "package" }]);
+
+      expect(manifests.map((m) => m.manifest.name)).toStrictEqual(["jira"]);
+      expect(warnings.some((w) => w.includes("broken"))).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("skips a subdirectory that has no source.json", () => {
     const root = mkdtempSync(path.join(tmpdir(), "discover-no-source-"));
     try {
