@@ -64,4 +64,28 @@ describe("discoverFromRoots", () => {
 
     expect(manifests).toStrictEqual([]);
   });
+
+  it("treats a file path root as empty rather than crashing", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "discover-file-"));
+    try {
+      const filePath = path.join(root, "not-a-dir");
+      writeFileSync(filePath, "x");
+
+      const { manifests } = discoverFromRoots([{ dir: filePath, origin: "user" }]);
+
+      expect(manifests).toStrictEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("re-raises an unexpected readdir failure rather than swallowing it", () => {
+    // An over-long path component makes readdir fail with ENAMETOOLONG (not
+    // ENOENT/ENOTDIR), which discovery must surface rather than treat as an
+    // empty root. Deterministic and independent of the running user.
+    const tooLong = `/${"a".repeat(1000)}`;
+    const run = (): unknown => discoverFromRoots([{ dir: tooLong, origin: "user" }]);
+
+    expect(run).toThrow(/ENAMETOOLONG/i);
+  });
 });

@@ -7,11 +7,12 @@
  * (`../registry.ts`) turns each result into an enable-by-kind adapter.
  */
 
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { type Dirent, existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import { writeError } from "../../util.ts";
 import { xdgConfigPath } from "../../xdg.ts";
+import { isFileErrorCode } from "../todo-txt/fileErrors.ts";
 
 import { sourceManifestSchema, type SourceManifest } from "./manifest.ts";
 
@@ -41,15 +42,29 @@ export function userTaskSourcesRoot(): string {
   return xdgConfigPath("groundcrew", "task-sources");
 }
 
+/**
+ * Read a root's directory entries, treating an absent or non-directory root as
+ * empty. A task-sources root is optional (a user may never install one, and it
+ * can be torn down mid-run), so "not a readable directory" yields no sources
+ * rather than crashing discovery. Any other fault (e.g. EACCES) is re-raised.
+ */
+function readRootEntries(dir: string): Dirent[] {
+  try {
+    return readdirSync(dir, { withFileTypes: true });
+  } catch (error) {
+    if (isFileErrorCode(error, "ENOENT") || isFileErrorCode(error, "ENOTDIR")) {
+      return [];
+    }
+    throw error;
+  }
+}
+
 export function discoverFromRoots(roots: readonly ManifestRoot[]): DiscoveryResult {
   const byName = new Map<string, DiscoveredManifest>();
   const warnings: string[] = [];
 
   for (const root of roots) {
-    if (!existsSync(root.dir)) {
-      continue;
-    }
-    for (const entry of readdirSync(root.dir, { withFileTypes: true })) {
+    for (const entry of readRootEntries(root.dir)) {
       if (!entry.isDirectory()) {
         continue;
       }
