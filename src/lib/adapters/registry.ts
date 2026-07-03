@@ -17,6 +17,9 @@ import { z } from "zod";
 
 import type { AdapterDefinition } from "../adapterDefinition.ts";
 
+import { discoverTaskSourceManifests, type DiscoveredManifest } from "./shell/discovery.ts";
+import { manifestAdapter } from "./shell/manifestAdapter.ts";
+
 export type AdapterLoader = (directoryName: string) => Promise<AdapterDefinition>;
 
 /**
@@ -71,6 +74,29 @@ export function buildSourceConfigSchema(registry: Record<string, AdapterDefiniti
   return z.union([first, second, ...rest]);
 }
 
+/**
+ * Fold discovered manifest sources into a code-adapter registry. Each becomes
+ * an adapter keyed by its manifest name. A manifest may not shadow a built-in
+ * code-adapter kind (`linear`, `shell`, `todo-txt`) - those are reserved, so a
+ * collision is a hard error. Manifest-vs-manifest precedence (user over
+ * package) is already resolved by discovery, so `discovered` has no duplicates.
+ */
+export function mergeManifestAdapters(
+  codeRegistry: Record<string, AdapterDefinition>,
+  discovered: readonly DiscoveredManifest[],
+): Record<string, AdapterDefinition> {
+  const merged: Record<string, AdapterDefinition> = { ...codeRegistry };
+  for (const { manifest, manifestDir } of discovered) {
+    if (codeRegistry[manifest.name]) {
+      throw new Error(
+        `Task source "${manifest.name}" collides with the built-in "${manifest.name}" adapter. Rename the source manifest.`,
+      );
+    }
+    merged[manifest.name] = manifestAdapter(manifest, manifestDir);
+  }
+  return merged;
+}
+
 const here = import.meta.dirname;
 
 async function defaultImportLoader(directoryName: string): Promise<AdapterDefinition> {
@@ -93,9 +119,10 @@ export function listAdapterDirectories(baseDir: string): string[] {
 }
 
 /**
- * Production registry. Initialised at module load by scanning `src/lib/adapters/`.
+ * Production registry. Scans `src/lib/adapters/` for code adapters, then folds
+ * in the manifest sources discovered under the package + user task-sources roots.
  */
 export const adapterRegistry: Promise<Record<string, AdapterDefinition>> = buildRegistry(
   listAdapterDirectories(here),
   defaultImportLoader,
-);
+).then((codeRegistry) => mergeManifestAdapters(codeRegistry, discoverTaskSourceManifests()));
