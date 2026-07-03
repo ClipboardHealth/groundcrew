@@ -19,9 +19,11 @@ describe("npm package contents", () => {
     expect(files).toContain("task-sources");
   });
 
-  it("has the packaged jira source manifest on disk", () => {
+  it("has the packaged jira source files on disk", () => {
     const manifestPath = path.join(REPO_ROOT, "task-sources/jira/source.json");
+    const scriptPath = path.join(REPO_ROOT, "task-sources/jira/jira.sh");
 
     expect(() => readFileSync(manifestPath, "utf8")).not.toThrow();
+    expect(() => readFileSync(scriptPath, "utf8")).not.toThrow();
   });
 });
