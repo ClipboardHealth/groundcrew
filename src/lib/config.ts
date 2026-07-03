@@ -16,12 +16,30 @@ import { BUILD_SECRET_NAMES } from "./buildSecrets.ts";
 export { BUILD_SECRET_NAMES } from "./buildSecrets.ts";
 
 /**
+ * Authoring shape for a manifest-backed (discovered) task source: enable by
+ * kind, with light overrides. The concrete per-source schema is built at
+ * runtime by `manifestAdapter` and validated at `buildSources` time, so the
+ * static type here is intentionally permissive.
+ */
+export interface ManifestSourceConfig {
+  kind: string;
+  name?: string;
+  env?: Record<string, string>;
+  timeouts?: ShellAdapterConfig["timeouts"];
+  enabled?: boolean;
+}
+
+/**
  * Discriminated union of all built-in adapter config shapes. Used at
  * config-load time as the static type for `Config.sources[]` and
  * `ResolvedConfig.sources[]`. The runtime Zod validation lives in each
  * adapter's `schema.ts` and runs at `buildSources` time, not here.
  */
-export type SourceConfig = LinearAdapterConfig | ShellAdapterConfig | TodoTxtAdapterConfig;
+export type SourceConfig =
+  | LinearAdapterConfig
+  | ShellAdapterConfig
+  | TodoTxtAdapterConfig
+  | ManifestSourceConfig;
 
 export interface HookCommands {
   prepareWorktree?: string;

@@ -39,6 +39,16 @@ describe("shellConfigFromManifest", () => {
 
     expect(actual.env).toStrictEqual({ A: "1", B: "override" });
   });
+
+  it("prefers an override name and timeouts over the manifest values", () => {
+    const actual = shellConfigFromManifest(manifestWith({ name: "demo" }), {
+      name: "renamed",
+      timeouts: { listTasks: 1234 },
+    });
+
+    expect(actual.name).toBe("renamed");
+    expect(actual.timeouts).toStrictEqual({ listTasks: 1234 });
+  });
 });
 
 describe("manifestAdapter", () => {

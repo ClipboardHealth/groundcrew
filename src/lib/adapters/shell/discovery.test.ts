@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { discoverFromRoots } from "./discovery.ts";
+import { discoverFromRoots, discoverTaskSourceManifests } from "./discovery.ts";
 
 function writeBundle(root: string, name: string, listTasks: string): void {
   const dir = path.join(root, name);
@@ -87,5 +87,42 @@ describe("discoverFromRoots", () => {
     const run = (): unknown => discoverFromRoots([{ dir: tooLong, origin: "user" }]);
 
     expect(run).toThrow(/ENAMETOOLONG/i);
+  });
+
+  it("skips a subdirectory that has no source.json", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "discover-no-source-"));
+    try {
+      mkdirSync(path.join(root, "not-a-source"));
+      writeBundle(root, "jira", "jira list");
+
+      const { manifests } = discoverFromRoots([{ dir: root, origin: "package" }]);
+
+      expect(manifests.map((m) => m.manifest.name)).toStrictEqual(["jira"]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("discoverTaskSourceManifests", () => {
+  it("warns to stderr when a user source overrides a package source", () => {
+    const home = mkdtempSync(path.join(tmpdir(), "discover-xdg-"));
+    const errorSpy = vi.spyOn(console, "error").mockReturnValue();
+    vi.stubEnv("XDG_CONFIG_HOME", home);
+    try {
+      // "jira" collides with the package-bundled jira source, so the user copy
+      // wins and a warning is written to stderr.
+      writeBundle(path.join(home, "groundcrew", "task-sources"), "jira", "user jira list");
+
+      const manifests = discoverTaskSourceManifests();
+
+      const jira = manifests.find((m) => m.manifest.name === "jira");
+      expect(jira?.origin).toBe("user");
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringMatching(/jira/));
+    } finally {
+      vi.unstubAllEnvs();
+      errorSpy.mockRestore();
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });

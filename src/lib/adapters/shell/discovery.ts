@@ -16,7 +16,7 @@ import { isFileErrorCode } from "../todo-txt/fileErrors.ts";
 
 import { sourceManifestSchema, type SourceManifest } from "./manifest.ts";
 
-export type ManifestOrigin = "package" | "user";
+type ManifestOrigin = "package" | "user";
 
 export interface DiscoveredManifest {
   manifest: SourceManifest;
@@ -38,7 +38,7 @@ export interface DiscoveryResult {
 const PACKAGE_TASK_SOURCES_ROOT = path.resolve(import.meta.dirname, "../../../../task-sources");
 
 /** Sources any external installer drops into the groundcrew config dir. */
-export function userTaskSourcesRoot(): string {
+function userTaskSourcesRoot(): string {
   return xdgConfigPath("groundcrew", "task-sources");
 }
 

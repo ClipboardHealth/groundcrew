@@ -55,6 +55,26 @@ describe("installShellSource", () => {
     }
   });
 
+  it("re-copies nothing when the installed script already matches", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "install-shell-"));
+    try {
+      const manifestDir = path.join(root, "manifest");
+      const installDir = path.join(root, "install");
+      mkdirSync(manifestDir);
+      mkdirSync(installDir);
+      writeFileSync(path.join(manifestDir, "demo.sh"), "same\n");
+      writeFileSync(path.join(installDir, "demo.sh"), "same\n");
+      const manifest = manifestWith({ installDir, files: ["demo.sh"] });
+
+      const actual = installShellSource({ manifest, manifestDir });
+
+      expect(readFileSync(path.join(installDir, "demo.sh"), "utf8")).toBe("same\n");
+      expect(actual.scriptPaths).toStrictEqual([path.join(installDir, "demo.sh")]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("installs nothing when the manifest lists no files", () => {
     const root = mkdtempSync(path.join(tmpdir(), "install-shell-"));
     try {
