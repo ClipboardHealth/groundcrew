@@ -20,7 +20,7 @@ describe(canonicalLinearIssue, () => {
       naturalId: "eng-99",
       status: "in-progress",
       repository: "acme/web",
-      sourceRef: { uuid: "custom-uuid" } as unknown,
+      sourceRef: { uuid: "custom-uuid" },
     });
     expect(issue.status).toBe("in-progress");
     expect(issue.repository).toBe("acme/web");
