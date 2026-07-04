@@ -28,7 +28,8 @@
     "crew.config.example.ts",
     "dist",
     "docs",
-    "static"
+    "static",
+    "task-sources"
   ],
   "type": "module",
   "main": "./dist/index.js",
