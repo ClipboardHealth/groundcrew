@@ -109,6 +109,7 @@ crew resume [--new] <TASK>                             # reopen a paused task (-
 crew open <pr> | --branch <name> [--repo <owner/repo>] # iterate on an existing PR or branch
          [--prompt <text> | --prompt-file <path>] [--task <id>] [--dry-run]
 crew cleanup [--force] <TASK>                          # tear down every worktree for a task
+crew cleanup [--force] --all                           # tear down every idle worktree (no live workspace)
 crew upgrade [<version>]                                 # reinstall crew globally through npm
 ```
 
