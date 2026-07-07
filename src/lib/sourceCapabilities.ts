@@ -29,6 +29,8 @@ interface ManifestCapabilitiesForKindArguments {
   kind: string;
 }
 
+let cachedManifestCapabilitiesByKind: ReadonlyMap<string, SourceCapabilities> | undefined;
+
 const nameShape = z.looseObject({ name: z.string().optional() });
 const kindShape = z.object({ kind: z.string() });
 
@@ -84,15 +86,22 @@ function manifestCapabilities(arguments_: ManifestCapabilitiesArguments): Source
   };
 }
 
+function getManifestCapabilitiesByKind(): ReadonlyMap<string, SourceCapabilities> {
+  if (cachedManifestCapabilitiesByKind === undefined) {
+    const capabilitiesByKind = new Map<string, SourceCapabilities>();
+    for (const { manifest } of discoverTaskSourceManifests()) {
+      capabilitiesByKind.set(manifest.name, manifestCapabilities({ manifest }));
+    }
+    cachedManifestCapabilitiesByKind = capabilitiesByKind;
+  }
+  return cachedManifestCapabilitiesByKind;
+}
+
 function manifestCapabilitiesForKind(
   arguments_: ManifestCapabilitiesForKindArguments,
 ): SourceCapabilities | undefined {
   const { kind } = arguments_;
-  const discovered = discoverTaskSourceManifests().find(({ manifest }) => manifest.name === kind);
-  if (discovered === undefined) {
-    return undefined;
-  }
-  return manifestCapabilities({ manifest: discovered.manifest });
+  return getManifestCapabilitiesByKind().get(kind);
 }
 
 const TODO_TXT_CAPABILITIES: SourceCapabilities = {
