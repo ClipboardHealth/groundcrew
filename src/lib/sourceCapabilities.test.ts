@@ -24,17 +24,21 @@ describe(sourceSupportsMarkDone, () => {
     expect(actual).toBe(true);
   });
 
-  it("uses discovered manifest commands for manifest-backed source kinds", () => {
+  it("uses discovered manifest commands for manifest-backed source kinds", async () => {
+    vi.resetModules();
     const home = mkdtempSync(path.join(tmpdir(), "source-capabilities-xdg-"));
     vi.stubEnv("XDG_CONFIG_HOME", home);
     try {
+      const { sourceSupportsMarkDone: sourceSupportsMarkDoneWithFreshModule } =
+        await import("./sourceCapabilities.ts");
       const rawSources = [{ kind: "jira" }];
 
-      const actual = sourceSupportsMarkDone({ rawSources, sourceName: "jira" });
+      const actual = sourceSupportsMarkDoneWithFreshModule({ rawSources, sourceName: "jira" });
 
       expect(actual).toBe(true);
     } finally {
       vi.unstubAllEnvs();
+      vi.resetModules();
       rmSync(home, { recursive: true, force: true });
     }
   });
