@@ -12,7 +12,9 @@ import {
   buildRegistry,
   buildSourceConfigSchema,
   listAdapterDirectories,
+  mergeManifestAdapters,
 } from "./registry.ts";
+import type { DiscoveredManifest } from "./shell/discovery.ts";
 
 function emptySource(name: string): TaskSource {
   return {
@@ -122,13 +124,51 @@ describe(listAdapterDirectories, () => {
   });
 });
 
+function discovered(name: string): DiscoveredManifest {
+  return {
+    manifest: {
+      name,
+      kind: "shell",
+      description: name,
+      installDir: "~/.config/groundcrew",
+      files: [],
+      commands: { listTasks: `${name} list` },
+    },
+    manifestDir: `/tmp/${name}`,
+    origin: "user",
+  };
+}
+
+describe(mergeManifestAdapters, () => {
+  it("adds a discovered manifest as an adapter keyed by its name", () => {
+    const code = { shell: fakeAdapter("shell") };
+
+    const merged = mergeManifestAdapters(code, [discovered("jira")]);
+
+    expect(Object.keys(merged).toSorted()).toStrictEqual(["jira", "shell"]);
+    expect(merged["jira"]?.kind).toBe("jira");
+  });
+
+  it("rejects a manifest whose name shadows a built-in adapter kind", () => {
+    const code = { shell: fakeAdapter("shell") };
+
+    expect(() => mergeManifestAdapters(code, [discovered("shell")])).toThrow(/collides/i);
+  });
+});
+
 describe("adapterRegistry production IIFE", () => {
-  it("loads the built-in adapters from src/lib/adapters/", async () => {
+  it("loads the built-in adapters plus discovered manifest sources", async () => {
     const registry = await adapterRegistry;
-    expect(Object.keys(registry).toSorted()).toStrictEqual(["linear", "shell", "todo-txt"]);
+    // The three built-in code adapters plus the package-bundled `jira` manifest
+    // source. Asserted by presence rather than exact set so a developer's own
+    // user-installed sources under ~/.config do not break the suite.
+    expect(Object.keys(registry)).toEqual(
+      expect.arrayContaining(["jira", "linear", "shell", "todo-txt"]),
+    );
     expect(registry["linear"]?.kind).toBe("linear");
     expect(registry["shell"]?.kind).toBe("shell");
     expect(registry["todo-txt"]?.kind).toBe("todo-txt");
+    expect(registry["jira"]?.kind).toBe("jira");
   });
 
   it("each loaded adapter exposes a Zod configSchema and a create function", async () => {

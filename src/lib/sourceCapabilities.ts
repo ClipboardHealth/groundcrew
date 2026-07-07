@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { discoverTaskSourceManifests } from "./adapters/shell/discovery.ts";
+import type { SourceManifest } from "./adapters/shell/manifest.ts";
 import { shellAdapterConfigSchema } from "./adapters/shell/schema.ts";
 
 interface SourceCapabilities {
@@ -18,6 +20,16 @@ export interface SourceSummary {
   kind: string;
   capabilities: SourceCapabilities;
 }
+
+interface ManifestCapabilitiesArguments {
+  manifest: SourceManifest;
+}
+
+interface ManifestCapabilitiesForKindArguments {
+  kind: string;
+}
+
+let cachedManifestCapabilitiesByKind: ReadonlyMap<string, SourceCapabilities> | undefined;
 
 const nameShape = z.looseObject({ name: z.string().optional() });
 const kindShape = z.object({ kind: z.string() });
@@ -59,6 +71,39 @@ function shellCapabilities(raw: unknown): SourceCapabilities {
   };
 }
 
+function manifestCapabilities(arguments_: ManifestCapabilitiesArguments): SourceCapabilities {
+  const { manifest } = arguments_;
+  const { commands } = manifest;
+  return {
+    verify: commands.verify !== undefined,
+    listTasks: true,
+    getTask: commands.getTask !== undefined,
+    createTask: commands.createTask !== undefined,
+    markInProgress: commands.markInProgress !== undefined,
+    markInReview: commands.markInReview !== undefined,
+    markDone: commands.markDone !== undefined,
+    validate: commands.validate !== undefined,
+  };
+}
+
+function getManifestCapabilitiesByKind(): ReadonlyMap<string, SourceCapabilities> {
+  if (cachedManifestCapabilitiesByKind === undefined) {
+    const capabilitiesByKind = new Map<string, SourceCapabilities>();
+    for (const { manifest } of discoverTaskSourceManifests()) {
+      capabilitiesByKind.set(manifest.name, manifestCapabilities({ manifest }));
+    }
+    cachedManifestCapabilitiesByKind = capabilitiesByKind;
+  }
+  return cachedManifestCapabilitiesByKind;
+}
+
+function manifestCapabilitiesForKind(
+  arguments_: ManifestCapabilitiesForKindArguments,
+): SourceCapabilities | undefined {
+  const { kind } = arguments_;
+  return getManifestCapabilitiesByKind().get(kind);
+}
+
 const TODO_TXT_CAPABILITIES: SourceCapabilities = {
   verify: true,
   listTasks: true,
@@ -83,7 +128,7 @@ export function summarizeSource(raw: unknown): SourceSummary {
   } else if (kind === "todo-txt") {
     capabilities = TODO_TXT_CAPABILITIES;
   } else {
-    capabilities = UNKNOWN_KIND_CAPABILITIES;
+    capabilities = manifestCapabilitiesForKind({ kind }) ?? UNKNOWN_KIND_CAPABILITIES;
   }
 
   return { name: sourceName, kind, capabilities };

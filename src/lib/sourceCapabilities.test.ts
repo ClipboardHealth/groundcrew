@@ -1,3 +1,8 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
+import type { DiscoveredManifest } from "./adapters/shell/discovery.ts";
 import { sourceSupportsMarkDone, taskSupportsCompletionCommand } from "./sourceCapabilities.ts";
 
 describe(sourceSupportsMarkDone, () => {
@@ -17,6 +22,59 @@ describe(sourceSupportsMarkDone, () => {
     const actual = sourceSupportsMarkDone({ rawSources, sourceName: "todo" });
 
     expect(actual).toBe(true);
+  });
+
+  it("uses discovered manifest commands for manifest-backed source kinds", async () => {
+    vi.resetModules();
+    const home = mkdtempSync(path.join(tmpdir(), "source-capabilities-xdg-"));
+    vi.stubEnv("XDG_CONFIG_HOME", home);
+    try {
+      const { sourceSupportsMarkDone: sourceSupportsMarkDoneWithFreshModule } =
+        await import("./sourceCapabilities.ts");
+      const rawSources = [{ kind: "jira" }];
+
+      const actual = sourceSupportsMarkDoneWithFreshModule({ rawSources, sourceName: "jira" });
+
+      expect(actual).toBe(true);
+    } finally {
+      vi.unstubAllEnvs();
+      vi.resetModules();
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("caches discovered manifest capabilities across repeated lookups", async () => {
+    vi.resetModules();
+    const mockDiscoverTaskSourceManifests = vi.fn<() => DiscoveredManifest[]>(() => [
+      {
+        manifest: {
+          name: "jira",
+          kind: "shell",
+          description: "jira",
+          installDir: "~/.config/groundcrew",
+          files: [],
+          commands: { listTasks: "jira list", markDone: "jira done" },
+        },
+        manifestDir: "/tmp/jira",
+        origin: "package",
+      },
+    ]);
+    vi.doMock("./adapters/shell/discovery.ts", () => ({
+      discoverTaskSourceManifests: mockDiscoverTaskSourceManifests,
+    }));
+    try {
+      const { sourceSupportsMarkDone: sourceSupportsMarkDoneWithMock } =
+        await import("./sourceCapabilities.ts");
+      const rawSources = [{ kind: "jira" }];
+
+      expect(sourceSupportsMarkDoneWithMock({ rawSources, sourceName: "jira" })).toBe(true);
+      expect(sourceSupportsMarkDoneWithMock({ rawSources, sourceName: "jira" })).toBe(true);
+
+      expect(mockDiscoverTaskSourceManifests).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.doUnmock("./adapters/shell/discovery.ts");
+      vi.resetModules();
+    }
   });
 });
 
