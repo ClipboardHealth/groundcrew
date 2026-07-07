@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
 import { sourceSupportsMarkDone, taskSupportsCompletionCommand } from "./sourceCapabilities.ts";
 
 describe(sourceSupportsMarkDone, () => {
@@ -17,6 +21,21 @@ describe(sourceSupportsMarkDone, () => {
     const actual = sourceSupportsMarkDone({ rawSources, sourceName: "todo" });
 
     expect(actual).toBe(true);
+  });
+
+  it("uses discovered manifest commands for manifest-backed source kinds", () => {
+    const home = mkdtempSync(path.join(tmpdir(), "source-capabilities-xdg-"));
+    vi.stubEnv("XDG_CONFIG_HOME", home);
+    try {
+      const rawSources = [{ kind: "jira" }];
+
+      const actual = sourceSupportsMarkDone({ rawSources, sourceName: "jira" });
+
+      expect(actual).toBe(true);
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });
 

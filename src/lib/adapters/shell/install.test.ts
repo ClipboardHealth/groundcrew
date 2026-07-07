@@ -36,6 +36,24 @@ describe("installShellSource", () => {
     }
   });
 
+  it("creates nested directories for nested bundle files", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "install-shell-"));
+    try {
+      const manifestDir = path.join(root, "manifest");
+      const installDir = path.join(root, "install");
+      mkdirSync(path.join(manifestDir, "bin"), { recursive: true });
+      writeFileSync(path.join(manifestDir, "bin", "demo.sh"), "#!/bin/sh\necho hi\n");
+      const manifest = manifestWith({ installDir, files: ["bin/demo.sh"] });
+
+      const actual = installShellSource({ manifest, manifestDir });
+
+      expect(existsSync(path.join(installDir, "bin", "demo.sh"))).toBe(true);
+      expect(actual.scriptPaths).toStrictEqual([path.join(installDir, "bin", "demo.sh")]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("refreshes an installed script when the shipped copy differs", () => {
     const root = mkdtempSync(path.join(tmpdir(), "install-shell-"));
     try {

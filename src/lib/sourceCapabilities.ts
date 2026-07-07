@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { discoverTaskSourceManifests } from "./adapters/shell/discovery.ts";
+import type { SourceManifest } from "./adapters/shell/manifest.ts";
 import { shellAdapterConfigSchema } from "./adapters/shell/schema.ts";
 
 interface SourceCapabilities {
@@ -17,6 +19,14 @@ export interface SourceSummary {
   name: string;
   kind: string;
   capabilities: SourceCapabilities;
+}
+
+interface ManifestCapabilitiesArguments {
+  manifest: SourceManifest;
+}
+
+interface ManifestCapabilitiesForKindArguments {
+  kind: string;
 }
 
 const nameShape = z.looseObject({ name: z.string().optional() });
@@ -59,6 +69,32 @@ function shellCapabilities(raw: unknown): SourceCapabilities {
   };
 }
 
+function manifestCapabilities(arguments_: ManifestCapabilitiesArguments): SourceCapabilities {
+  const { manifest } = arguments_;
+  const { commands } = manifest;
+  return {
+    verify: commands.verify !== undefined,
+    listTasks: true,
+    getTask: commands.getTask !== undefined,
+    createTask: commands.createTask !== undefined,
+    markInProgress: commands.markInProgress !== undefined,
+    markInReview: commands.markInReview !== undefined,
+    markDone: commands.markDone !== undefined,
+    validate: commands.validate !== undefined,
+  };
+}
+
+function manifestCapabilitiesForKind(
+  arguments_: ManifestCapabilitiesForKindArguments,
+): SourceCapabilities | undefined {
+  const { kind } = arguments_;
+  const discovered = discoverTaskSourceManifests().find(({ manifest }) => manifest.name === kind);
+  if (discovered === undefined) {
+    return undefined;
+  }
+  return manifestCapabilities({ manifest: discovered.manifest });
+}
+
 const TODO_TXT_CAPABILITIES: SourceCapabilities = {
   verify: true,
   listTasks: true,
@@ -83,7 +119,7 @@ export function summarizeSource(raw: unknown): SourceSummary {
   } else if (kind === "todo-txt") {
     capabilities = TODO_TXT_CAPABILITIES;
   } else {
-    capabilities = UNKNOWN_KIND_CAPABILITIES;
+    capabilities = manifestCapabilitiesForKind({ kind }) ?? UNKNOWN_KIND_CAPABILITIES;
   }
 
   return { name: sourceName, kind, capabilities };

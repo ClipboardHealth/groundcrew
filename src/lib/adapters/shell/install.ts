@@ -38,11 +38,13 @@ export function installShellSource(options: InstallShellSourceOptions): Installe
     // Reject a files[] entry that escapes installDir (e.g. "../../.zshrc").
     // Manifests are only semi-trusted, and each dest is made executable, so a
     // traversal would let a source write over arbitrary files.
-    if (path.relative(installDir, dest).startsWith("..")) {
+    const relativeDest = path.relative(installDir, dest);
+    if (relativeDest === ".." || relativeDest.startsWith(`..${path.sep}`)) {
       throw new Error(
         `Task source "${manifest.name}" lists file "${file}" that escapes its install directory "${installDir}".`,
       );
     }
+    mkdirSync(path.dirname(dest), { recursive: true });
     if (!existsSync(dest) || readFileSync(dest).compare(readFileSync(source)) !== 0) {
       copyFileSync(source, dest);
     }
