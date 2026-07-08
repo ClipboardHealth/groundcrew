@@ -57,6 +57,22 @@ describe("sourceManifestSchema", () => {
     expect(parse).not.toThrow();
   });
 
+  it("ships the jira config knobs as editable env defaults", () => {
+    const raw = readFileSync(path.join(REPO_ROOT, "task-sources/jira/source.json"), "utf8");
+    const manifest = sourceManifestSchema.parse(JSON.parse(raw));
+
+    // The four jira.sh knobs surface as editable rows in crew-config's env
+    // pre-fill. Each value equals the script's own `:-` default (so injecting
+    // it is behavior-neutral), except JIRA_DEFAULT_AGENT, deliberately seeded to
+    // `claude` so no-agent-label issues dispatch to a real agent by default.
+    expect(manifest.env).toMatchObject({
+      JIRA_GROUNDCREW_JQL: expect.stringContaining("labels = groundcrew"),
+      JIRA_REVIEW_PATTERN: "review",
+      JIRA_TODO_PATTERN: "",
+      JIRA_DEFAULT_AGENT: "claude",
+    });
+  });
+
   describe("prerequisite install", () => {
     const withInstall = (install: unknown): unknown => ({
       ...validManifest,
