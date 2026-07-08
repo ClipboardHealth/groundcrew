@@ -56,4 +56,37 @@ describe("sourceManifestSchema", () => {
 
     expect(parse).not.toThrow();
   });
+
+  describe("prerequisite install", () => {
+    const withInstall = (install: unknown): unknown => ({
+      ...validManifest,
+      prerequisites: [{ bin: "jira", install }],
+    });
+
+    it("accepts a plain-string install (applies to all platforms)", () => {
+      const parse = (): unknown => sourceManifestSchema.parse(withInstall("brew install jira"));
+
+      expect(parse).not.toThrow();
+    });
+
+    it("accepts a per-OS install object keyed by platform", () => {
+      const parse = (): unknown =>
+        sourceManifestSchema.parse(
+          withInstall({
+            darwin: "brew install jira",
+            linux: "sudo apt-get install jira",
+            default: "go install jira",
+          }),
+        );
+
+      expect(parse).not.toThrow();
+    });
+
+    it("rejects an unknown key in a per-OS install object", () => {
+      const parse = (): unknown =>
+        sourceManifestSchema.parse(withInstall({ windows: "install manually" }));
+
+      expect(parse).toThrow(/unrecognized/i);
+    });
+  });
 });

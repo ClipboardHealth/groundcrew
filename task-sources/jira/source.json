@@ -7,12 +7,18 @@
   "prerequisites": [
     {
       "bin": "jira",
-      "install": "brew install ankitpokhrel/jira-cli/jira-cli",
+      "install": {
+        "darwin": "brew install ankitpokhrel/jira-cli/jira-cli",
+        "linux": "go install github.com/ankitpokhrel/jira-cli/cmd/jira@latest (or grab a binary from https://github.com/ankitpokhrel/jira-cli/releases)"
+      },
       "setup": "jira init"
     },
     {
       "bin": "jq",
-      "install": "brew install jq"
+      "install": {
+        "darwin": "brew install jq",
+        "linux": "sudo apt-get install jq"
+      }
     }
   ],
   "secrets": [

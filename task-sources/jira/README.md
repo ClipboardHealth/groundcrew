@@ -14,8 +14,13 @@ calls with a subcommand per operation:
 
 ## Prerequisites
 
-- [`jira` CLI](https://github.com/ankitpokhrel/jira-cli) — `brew install ankitpokhrel/jira-cli/jira-cli`, then `jira init`.
-- [`jq`](https://jqlang.github.io/jq/) — `brew install jq`.
+- [`jira` CLI](https://github.com/ankitpokhrel/jira-cli), then `jira init`:
+  - macOS: `brew install ankitpokhrel/jira-cli/jira-cli`
+  - Linux: `go install github.com/ankitpokhrel/jira-cli/cmd/jira@latest` (or grab a
+    binary from the [releases page](https://github.com/ankitpokhrel/jira-cli/releases))
+- [`jq`](https://jqlang.github.io/jq/):
+  - macOS: `brew install jq`
+  - Linux: `sudo apt-get install jq`
 
 > **Note:** `list` and `get` detect "no results" and "not found" by matching the
 > `jira` CLI's stderr wording (it exposes no machine-readable signal for either).
