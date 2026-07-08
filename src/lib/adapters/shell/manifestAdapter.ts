@@ -10,7 +10,12 @@
 
 import { z } from "zod";
 
-import type { AdapterContext, AdapterDefinition } from "../../adapterDefinition.ts";
+import type {
+  AdapterContext,
+  AdapterDefinition,
+  AdapterMeta,
+  AdapterOrigin,
+} from "../../adapterDefinition.ts";
 import type { TaskSource } from "../../taskSource.ts";
 
 import { createShellTaskSource } from "./factory.ts";
@@ -39,7 +44,24 @@ export function shellConfigFromManifest(
   };
 }
 
-export function manifestAdapter(manifest: SourceManifest, manifestDir: string): AdapterDefinition {
+/**
+ * Descriptive metadata for the unified catalog, derived from the manifest. A
+ * source `requiresCredentials` when it declares any `secrets`; `origin` is where
+ * discovery found it (bundled `package` vs. user-installed `user`).
+ */
+export function manifestMeta(manifest: SourceManifest, origin: AdapterOrigin): AdapterMeta {
+  return {
+    description: manifest.description,
+    requiresCredentials: (manifest.secrets?.length ?? 0) > 0,
+    origin,
+  };
+}
+
+export function manifestAdapter(
+  manifest: SourceManifest,
+  manifestDir: string,
+  origin: AdapterOrigin,
+): AdapterDefinition {
   const configSchema = z.strictObject({
     kind: z.literal(manifest.name),
     name: z
@@ -68,5 +90,6 @@ export function manifestAdapter(manifest: SourceManifest, manifestDir: string): 
         context,
       );
     },
+    meta: manifestMeta(manifest, origin),
   };
 }

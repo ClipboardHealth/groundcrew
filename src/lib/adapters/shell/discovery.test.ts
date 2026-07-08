@@ -2,7 +2,11 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { discoverFromRoots, discoverTaskSourceManifests } from "./discovery.ts";
+import {
+  discoverFromRoots,
+  discoverTaskSourceManifests,
+  getTaskSourceManifest,
+} from "./discovery.ts";
 
 function writeBundle(root: string, name: string, listTasks: string): void {
   const dir = path.join(root, name);
@@ -117,6 +121,22 @@ describe("discoverFromRoots", () => {
       expect(manifests.map((m) => m.manifest.name)).toStrictEqual(["jira"]);
     } finally {
       rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("getTaskSourceManifest", () => {
+  it("returns the manifest for a discovered source and undefined for a code-adapter kind", () => {
+    const home = mkdtempSync(path.join(tmpdir(), "get-manifest-"));
+    vi.stubEnv("XDG_CONFIG_HOME", home);
+    try {
+      writeBundle(path.join(home, "groundcrew", "task-sources"), "acme", "acme list");
+
+      expect(getTaskSourceManifest("acme")?.name).toBe("acme");
+      expect(getTaskSourceManifest("linear")).toBeUndefined();
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(home, { recursive: true, force: true });
     }
   });
 });

@@ -107,3 +107,19 @@ export function discoverTaskSourceManifests(): DiscoveredManifest[] {
   }
   return manifests;
 }
+
+/**
+ * Look up a single discovered manifest by name (the enable-by-kind `kind`).
+ * Manifest-only: a built-in code adapter (`linear`, `todo-txt`) has no manifest,
+ * so this returns `undefined` for those kinds. Part of the public discovery API
+ * so crew-config can read a source's install-time hints (prerequisites,
+ * secrets) without re-scanning the roots itself.
+ *
+ * This reads the discovery roots fresh on each call. Prefer
+ * `discoverTaskSourceManifests()` when looking up multiple names in one flow so
+ * callers only pay the filesystem scan once.
+ */
+export function getTaskSourceManifest(name: string): SourceManifest | undefined {
+  return discoverTaskSourceManifests().find((discovered) => discovered.manifest.name === name)
+    ?.manifest;
+}

@@ -86,13 +86,13 @@ export function mergeManifestAdapters(
   discovered: readonly DiscoveredManifest[],
 ): Record<string, AdapterDefinition> {
   const merged: Record<string, AdapterDefinition> = { ...codeRegistry };
-  for (const { manifest, manifestDir } of discovered) {
+  for (const { manifest, manifestDir, origin } of discovered) {
     if (codeRegistry[manifest.name]) {
       throw new Error(
         `Task source "${manifest.name}" collides with the built-in "${manifest.name}" adapter. Rename the source manifest.`,
       );
     }
-    merged[manifest.name] = manifestAdapter(manifest, manifestDir);
+    merged[manifest.name] = manifestAdapter(manifest, manifestDir, origin);
   }
   return merged;
 }

@@ -14,9 +14,13 @@ export interface ResolvedLinearApiKey {
 export function resolveLinearApiKey(): ResolvedLinearApiKey | undefined {
   for (const source of LINEAR_API_KEY_SOURCES) {
     const value = readEnvironmentVariable(source);
-    if (value !== undefined && value.length > 0) {
-      return { value, source };
+    if (value === undefined) {
+      continue;
     }
+    if (value.length === 0) {
+      continue;
+    }
+    return { value, source };
   }
   return undefined;
 }

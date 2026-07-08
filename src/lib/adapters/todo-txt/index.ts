@@ -7,6 +7,10 @@ const definition: AdapterDefinition<typeof todoTxtAdapterConfigSchema> = {
   kind: "todo-txt",
   configSchema: todoTxtAdapterConfigSchema,
   create: createTodoTxtTaskSource,
+  meta: {
+    description: "Track tasks from a local todo.txt file; no credentials required.",
+    origin: "builtin",
+  },
 };
 
 export default definition;
