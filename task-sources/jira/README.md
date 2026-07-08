@@ -101,8 +101,8 @@ the token on per invocation.
      },
      "env": {
        "JIRA_GROUNDCREW_JQL": "labels = groundcrew AND (statusCategory != Done OR (statusCategory = Done AND updated >= -7d))",
-       "JIRA_REVIEW_PATTERN": "review",
-       "JIRA_TODO_PATTERN": "",
+       "JIRA_REVIEW_PATTERN": "In Review",
+       "JIRA_TODO_PATTERN": "New",
        "JIRA_DEFAULT_AGENT": "claude",
        "JIRA_STATE_IN_PROGRESS": "In Progress",
        "JIRA_STATE_IN_REVIEW": "In Review",
@@ -123,8 +123,8 @@ The script reads these from the source's `env` block:
 | Variable              | Default                                                                                          | Purpose                                                                                                                                                                                                                                 |
 | --------------------- | ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `JIRA_GROUNDCREW_JQL` | `labels = groundcrew AND (statusCategory != Done OR (statusCategory = Done AND updated >= -7d))` | Which issues `list` returns, capped at the first 20 (`--paginate 0:20` in `jira.sh`). Defaults to open issues plus those done in the last 7 days (so groundcrew can clean up their worktrees). Omit `ORDER BY` (jira-cli adds its own). |
-| `JIRA_REVIEW_PATTERN` | `review`                                                                                         | Case-insensitive regex; matching In-Progress status names map to `in-review`.                                                                                                                                                           |
-| `JIRA_TODO_PATTERN`   | _(empty -> off)_                                                                                 | Case-insensitive regex; matching In-Progress status names map to `todo` so groundcrew dispatches them as new work. Set it to e.g. `acknowledged` for an "Acknowledged" triage status. Checked before `JIRA_REVIEW_PATTERN`.             |
+| `JIRA_REVIEW_PATTERN` | `In Review`                                                                                      | Case-insensitive regex; matching In-Progress status names map to `in-review`.                                                                                                                                                           |
+| `JIRA_TODO_PATTERN`   | `New`                                                                                            | Case-insensitive regex; matching In-Progress status names map to `todo` so groundcrew dispatches them as new work. The shipped source seeds `New`; clear the row to turn this off. Checked before `JIRA_REVIEW_PATTERN`.                |
 | `JIRA_DEFAULT_AGENT`  | `claude`                                                                                         | Agent used when an issue has no `agent:` label. The shipped source seeds `claude`; clear the row (empty -> `null`) to leave such issues unassigned.                                                                                     |
 | `JIRA_TOKEN_FILE`     | `~/.config/groundcrew/jira.token`                                                                | Token file path.                                                                                                                                                                                                                        |
 | `JIRA_STATE_*`        | `In Progress` / `In Review` / `Done`                                                             | Native JIRA state names used by `move`. Match your project's workflow.                                                                                                                                                                  |

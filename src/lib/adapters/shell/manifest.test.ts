@@ -62,13 +62,15 @@ describe("sourceManifestSchema", () => {
     const manifest = sourceManifestSchema.parse(JSON.parse(raw));
 
     // The four jira.sh knobs surface as editable rows in crew-config's env
-    // pre-fill. Each value equals the script's own `:-` default (so injecting
-    // it is behavior-neutral), except JIRA_DEFAULT_AGENT, deliberately seeded to
-    // `claude` so no-agent-label issues dispatch to a real agent by default.
+    // pre-fill. JIRA_GROUNDCREW_JQL equals the script's own `:-` default (so it
+    // is behavior-neutral); the other three deliberately diverge to give a
+    // sensible starting workflow: JIRA_DEFAULT_AGENT seeds `claude`,
+    // JIRA_TODO_PATTERN seeds `New` (dispatch In-Progress "New" statuses as
+    // fresh work), and JIRA_REVIEW_PATTERN narrows to `In Review`.
     expect(manifest.env).toMatchObject({
       JIRA_GROUNDCREW_JQL: expect.stringContaining("labels = groundcrew"),
-      JIRA_REVIEW_PATTERN: "review",
-      JIRA_TODO_PATTERN: "",
+      JIRA_REVIEW_PATTERN: "In Review",
+      JIRA_TODO_PATTERN: "New",
       JIRA_DEFAULT_AGENT: "claude",
     });
   });
