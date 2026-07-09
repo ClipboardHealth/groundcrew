@@ -28,7 +28,7 @@
  *      config dir (`CODEX_HOME`, see {@link agentConfigRelocation}) and its real
  *      `~/.codex` is never write-granted at all. **cursor-agent** keeps a
  *      writable `~/.cursor` (chats/projects/resume) but denies mcp.json,
- *      skills, plugins, and commands — the host-RCE surfaces.
+ *      hooks, rules, skills, plugins, and commands — the host-RCE surfaces.
  *   2. **Git (work item 2).** The git common dir is granted write as a **narrow
  *      allowlist** of exactly the paths `status/diff/add/commit/push/gc` write —
  *      never wholesale — so the per-worktree gitdir redirection files, sibling
@@ -221,6 +221,8 @@ const AGENT_SRT_PROFILES: Record<string, AgentCredentialProfile> = {
       // Lifecycle hooks run on the user's next Cursor launch.
       ".cursor/hooks.json",
       ".cursor/hooks",
+      // Global rules can inject instructions into future Cursor sessions.
+      ".cursor/rules",
       ".cursor/skills-cursor",
       ".cursor/plugins",
       ".cursor/commands",

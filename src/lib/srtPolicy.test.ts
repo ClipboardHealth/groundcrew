@@ -116,6 +116,7 @@ describe(buildSrtSettings, () => {
         "/home/dev/.cursor/mcp.json",
         "/home/dev/.cursor/hooks.json",
         "/home/dev/.cursor/hooks",
+        "/home/dev/.cursor/rules",
         "/home/dev/.cursor/skills-cursor",
         "/home/dev/.cursor/plugins",
         "/home/dev/.cursor/commands",
