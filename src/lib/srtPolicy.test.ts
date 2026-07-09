@@ -103,19 +103,47 @@ describe(buildSrtSettings, () => {
       expect(actual.filesystem.denyWrite).toContain("/home/dev/.codex");
     });
 
+    it("gives cursor-agent a writable ~/.cursor but denies fixed-path executable surfaces (incl mcp.json)", () => {
+      const actual = buildSrtSettings(input({ agent: "cursor-agent" }));
+
+      expect(actual.filesystem.allowRead).toContain("/home/dev/.cursor");
+      expect(actual.filesystem.allowRead).toContain("/home/dev/.config/cursor");
+      expect(actual.filesystem.allowRead).toContain("/home/dev/.local/share/cursor-agent");
+      expect(actual.filesystem.allowWrite).toContain("/home/dev/.cursor");
+      expect(actual.filesystem.allowWrite).toContain("/home/dev/.config/cursor");
+      expect(actual.filesystem.allowWrite).toContain("/home/dev/.cache/cursor-compile-cache");
+      for (const denied of [
+        "/home/dev/.cursor/mcp.json",
+        "/home/dev/.cursor/skills-cursor",
+        "/home/dev/.cursor/plugins",
+        "/home/dev/.cursor/commands",
+      ]) {
+        expect(actual.filesystem.denyWrite).toContain(denied);
+      }
+      expect(actual.filesystem.allowWrite).not.toContain("/home/dev/.local/share/cursor-agent");
+    });
+
     it("denies each agent the home dirs it does not own (cross-agent + srt ~/.claude/debug override)", () => {
       // claude owns its writable ~/.claude, so it is not self-denied, but it
-      // can't write ~/.codex.
+      // can't write ~/.codex or ~/.cursor.
       const claude = buildSrtSettings(input({ agent: "claude" }));
       expect(claude.filesystem.denyWrite).toContain("/home/dev/.codex");
+      expect(claude.filesystem.denyWrite).toContain("/home/dev/.cursor");
       expect(claude.filesystem.denyWrite).not.toContain("/home/dev/.claude");
 
+      // cursor-agent owns ~/.cursor but not the other agent homes.
+      const cursorAgent = buildSrtSettings(input({ agent: "cursor-agent" }));
+      expect(cursorAgent.filesystem.denyWrite).toContain("/home/dev/.claude");
+      expect(cursorAgent.filesystem.denyWrite).toContain("/home/dev/.codex");
+      expect(cursorAgent.filesystem.denyWrite).not.toContain("/home/dev/.cursor");
+
       // codex relocates (no writable real home) + the neutral prepare policy and
-      // an unknown agent own neither — all deny both real homes.
+      // an unknown agent own neither — all deny every agent home.
       for (const agent of ["codex", "", "mystery"]) {
         const actual = buildSrtSettings(input({ agent }));
         expect(actual.filesystem.denyWrite).toContain("/home/dev/.claude");
         expect(actual.filesystem.denyWrite).toContain("/home/dev/.codex");
+        expect(actual.filesystem.denyWrite).toContain("/home/dev/.cursor");
       }
     });
 
@@ -158,6 +186,17 @@ describe(buildSrtSettings, () => {
       );
 
       expect(actual.filesystem.allowRead).not.toContain("/Users/dev/Library/Keychains");
+    });
+
+    it("re-opens ~/Library/Keychains for cursor-agent on macOS so it can authenticate under the home mask", () => {
+      const actual = buildSrtSettings(
+        input({ agent: "cursor-agent", platform: "darwin", homeDir: "/Users/dev" }),
+      );
+
+      expect(actual.filesystem.allowRead).toContain("/Users/dev/Library/Keychains");
+      expect(actual.filesystem.allowWrite).toContain(
+        "/Users/dev/Library/Caches/cursor-compile-cache",
+      );
     });
   });
 
@@ -243,10 +282,12 @@ describe(buildSrtSettings, () => {
 
     expect(prepare.filesystem.allowRead).not.toContain("/home/dev/.claude");
     expect(prepare.filesystem.allowRead).not.toContain("/home/dev/.codex");
+    expect(prepare.filesystem.allowRead).not.toContain("/home/dev/.cursor");
     expect(prepare.filesystem.allowRead).toContain("/home/dev/.nvm");
     expect(prepare.filesystem.allowWrite).toContain("/home/dev/.npm");
     expect(prepare.filesystem.denyWrite).toContain("/home/dev/.claude");
     expect(prepare.filesystem.denyWrite).toContain("/home/dev/.codex");
+    expect(prepare.filesystem.denyWrite).toContain("/home/dev/.cursor");
   });
 
   it("never emits glob patterns in filesystem rules (bubblewrap ignores them on Linux)", () => {

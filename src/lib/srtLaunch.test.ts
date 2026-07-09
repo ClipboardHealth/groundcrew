@@ -186,6 +186,19 @@ describe(buildAndStageSrtLaunch, () => {
     }
   });
 
+  it("stages cursor-agent settings with ~/.cursor access and no relocated home", () => {
+    const result = stage("cursor-agent --model composer-2.5 --sandbox disabled --force");
+
+    expect(result.agentConfigDirEnv).toBeUndefined();
+
+    const agent = readSettings(result.agentFile);
+    const prepare = readSettings(result.prepareFile);
+    expect(agent.filesystem.allowRead?.some((p) => p.endsWith("/.cursor"))).toBe(true);
+    expect(agent.filesystem.allowWrite.some((p) => p.endsWith("/.cursor"))).toBe(true);
+    expect(agent.filesystem.denyWrite.some((p) => p.endsWith("/.cursor/mcp.json"))).toBe(true);
+    expect(prepare.filesystem.allowRead?.some((p) => p.endsWith("/.cursor"))).toBe(false);
+  });
+
   it("skips missing seed files (best-effort) so a not-logged-in agent still stages", () => {
     const realCodex = path.join(fakeHome, ".codex");
     mkdirSync(realCodex, { recursive: true });
