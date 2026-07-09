@@ -33,7 +33,7 @@
     "JIRA_GROUNDCREW_JQL": "labels = groundcrew AND (statusCategory != Done OR (statusCategory = Done AND updated >= -7d))",
     "JIRA_REVIEW_PATTERN": "In Review",
     "JIRA_TODO_PATTERN": "New",
-    "JIRA_DEFAULT_AGENT": "claude",
+    "JIRA_DEFAULT_AGENT": "",
     "JIRA_STATE_IN_PROGRESS": "In Progress",
     "JIRA_STATE_IN_REVIEW": "In Review",
     "JIRA_STATE_DONE": "Done"
