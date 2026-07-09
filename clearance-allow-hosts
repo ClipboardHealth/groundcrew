@@ -17,6 +17,12 @@ docs.claude.com
 downloads.claude.ai
 platform.claude.com
 
+# Cursor (Composer / cursor-agent). Wildcard covers the numbered API hosts
+# (api2, api2direct, api3, repo42, ...) the CLI rotates through.
+*.cursor.sh
+cursor.com
+www.cursor.com
+
 # Hosted MCP servers + their auth/web hosts
 api.linear.app
 api.notion.com
