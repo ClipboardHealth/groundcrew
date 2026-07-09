@@ -71,8 +71,14 @@ function seedCursorWorkspaceTrust(workspacePath: string, home: string): void {
     trustMethod: GROUNDCREW_TRUST_METHOD,
   };
 
-  mkdirSync(path.dirname(markerPath), { recursive: true });
-  writeFileSync(markerPath, `${JSON.stringify(marker, undefined, 2)}\n`, "utf8");
+  try {
+    mkdirSync(path.dirname(markerPath), { recursive: true });
+    writeFileSync(markerPath, `${JSON.stringify(marker, undefined, 2)}\n`, "utf8");
+  } catch (error) {
+    writeError(
+      `groundcrew: could not seed Cursor workspace trust for ${absoluteWorkspacePath} (${String(error)})`,
+    );
+  }
 }
 
 function readClaudeJsonFile(claudeJsonPath: string): ClaudeJsonFile {
@@ -222,10 +228,11 @@ function readCodexConfigFile(codexConfig: string): string {
 function seedCodexWorkspaceTrust(workspacePath: string, home: string): void {
   const absoluteWorkspacePath = path.resolve(workspacePath);
   const codexConfig = codexConfigPath(home);
-  const updated = upsertCodexWorkspaceTrust(
-    readCodexConfigFile(codexConfig),
-    absoluteWorkspacePath,
-  );
+  const existing = readCodexConfigFile(codexConfig);
+  const updated = upsertCodexWorkspaceTrust(existing, absoluteWorkspacePath);
+  if (updated === existing) {
+    return;
+  }
 
   try {
     writeCodexConfigFile(codexConfig, updated);

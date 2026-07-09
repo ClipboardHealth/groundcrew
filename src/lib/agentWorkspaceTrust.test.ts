@@ -5,6 +5,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import os from "node:os";
@@ -245,6 +246,7 @@ describe(seedAgentWorkspaceTrust, () => {
     const existing = `[features]\nhooks = true\n\n${codexProjectTableHeader(workspacePath)}\ntrust_level = "trusted"\n`;
     mkdirSync(path.join(fakeHome, ".codex"), { recursive: true });
     writeFileSync(codexConfigPath(), existing, "utf8");
+    const before = statSync(codexConfigPath()).mtimeMs;
 
     seedAgentWorkspaceTrust({
       agentCommandName: "codex",
@@ -253,6 +255,7 @@ describe(seedAgentWorkspaceTrust, () => {
     });
 
     expect(readCodexConfig()).toBe(existing);
+    expect(statSync(codexConfigPath()).mtimeMs).toBe(before);
   });
 
   it("preserves unrelated Codex config.toml settings", () => {
@@ -449,6 +452,23 @@ describe(seedAgentWorkspaceTrust, () => {
     chmodSync(fakeHome, 0o700);
     expect(writeErrorMock).toHaveBeenCalledWith(
       expect.stringContaining("could not seed Claude workspace trust"),
+    );
+  });
+
+  it("logs when Cursor workspace trust cannot be written", () => {
+    const workspacePath = path.join(fakeHome, "cursor-write-fail");
+    mkdirSync(path.join(fakeHome, ".cursor", "projects"), { recursive: true });
+    chmodSync(path.join(fakeHome, ".cursor", "projects"), 0o500);
+
+    seedAgentWorkspaceTrust({
+      agentCommandName: "cursor-agent",
+      workspacePath,
+      homeDir: fakeHome,
+    });
+
+    chmodSync(path.join(fakeHome, ".cursor", "projects"), 0o700);
+    expect(writeErrorMock).toHaveBeenCalledWith(
+      expect.stringContaining("could not seed Cursor workspace trust"),
     );
   });
 
