@@ -26,23 +26,12 @@ interface CursorWorkspaceTrustedMarker {
 
 export interface SeedAgentWorkspaceTrustInput {
   agentCommandName: string;
-  /** Exact cwd at agent launch. Required for Codex, which matches trust by exact path. */
-  launchDir: string;
-  /** Parent worktree root (`worktreeBaseDir`). Used for Cursor and Claude parent inheritance. */
-  trustRootPath: string;
+  /** Worktree or launch cwd to record in the agent trust store. */
+  workspacePath: string;
   /** Defaults to `os.homedir()`. Injected in tests. */
   homeDir?: string;
   /** Test seam for `os.homedir()` failures. Not used by production callers. */
   readHome?: () => string;
-}
-
-/** Cursor and Claude inherit parent trust; Codex requires the exact launch cwd. */
-export function resolveAgentTrustPath(input: {
-  agentCommandName: string;
-  launchDir: string;
-  trustRootPath: string;
-}): string {
-  return input.agentCommandName === "codex" ? input.launchDir : input.trustRootPath;
 }
 
 function resolveOptionalPath(value: string | undefined, fallback: string): string {
@@ -52,17 +41,10 @@ function resolveOptionalPath(value: string | undefined, fallback: string): strin
   return path.resolve(value);
 }
 
-/** Resolve `seed` CLI paths: blank values fall back to `cwd` (usually the directory you run from). */
-export function resolveSeedTrustPaths(input: {
-  launchDir?: string;
-  trustRootPath?: string;
-  cwd?: string;
-}): { launchDir: string; trustRootPath: string } {
+/** Resolve `seed` CLI path: blank values fall back to `cwd` (usually the directory you run from). */
+export function resolveSeedTrustPath(input: { workspacePath?: string; cwd?: string }): string {
   const cwd = input.cwd ?? process.cwd();
-  return {
-    launchDir: resolveOptionalPath(input.launchDir, cwd),
-    trustRootPath: resolveOptionalPath(input.trustRootPath, cwd),
-  };
+  return resolveOptionalPath(input.workspacePath, cwd);
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -283,8 +265,7 @@ export function seedAgentWorkspaceTrust(input: SeedAgentWorkspaceTrustInput): vo
     return;
   }
 
-  const { agentCommandName } = input;
-  const workspacePath = resolveAgentTrustPath(input);
+  const { agentCommandName, workspacePath } = input;
   if (agentCommandName === "cursor-agent") {
     seedCursorWorkspaceTrust(workspacePath, home);
     return;

@@ -7,11 +7,7 @@ import {
   formatTrustActionResults,
   shortenTrustPath,
 } from "./lib/agentWorkspaceTrustFormat.ts";
-import {
-  resolveAgentTrustPath,
-  resolveSeedTrustPaths,
-  seedAgentWorkspaceTrust,
-} from "./lib/agentWorkspaceTrust.ts";
+import { resolveSeedTrustPath, seedAgentWorkspaceTrust } from "./lib/agentWorkspaceTrust.ts";
 import {
   deleteAgentWorkspaceTrust,
   listAgentWorkspaceTrust,
@@ -22,7 +18,7 @@ import { writeOutput } from "./lib/util.ts";
 
 const USAGE = `Usage:
   node --run trust:admin -- list [--agent cursor|claude|codex] [--missing] [--home <dir>]
-  node --run trust:admin -- seed --agent <agent> [--dir <abs>] [--trust-root <abs>] [--home <dir>]
+  node --run trust:admin -- seed --agent <agent> [--dir <abs>] [--home <dir>]
   node --run trust:admin -- delete (--all | --path <abs> | --prefix <dir>)
     [--agent cursor|claude|codex] [--groundcrew-only] [--home <dir>]
   node --run trust:admin -- prune [--agent cursor|claude|codex] [--home <dir>]
@@ -30,7 +26,7 @@ const USAGE = `Usage:
 Examples:
   node --run trust:admin -- list
   node --run trust:admin -- list --missing
-  node --run trust:admin -- seed --agent claude --dir "$PWD" --trust-root "$HOME/groundcrew/workspaces"
+  node --run trust:admin -- seed --agent claude --dir "$PWD"
   node --run trust:admin -- seed --agent codex --dir "$PWD"
   node --run trust:admin -- delete --path "$HOME/groundcrew/workspaces/repo-team-1"
   node --run trust:admin -- prune`;
@@ -39,8 +35,7 @@ interface ParsedArguments {
   command?: "list" | "delete" | "prune" | "seed";
   agent?: AgentTrustAgent;
   homeDir: string;
-  launchDir?: string;
-  trustRootPath?: string;
+  workspacePath?: string;
   path?: string;
   pathPrefix?: string;
   all: boolean;
@@ -94,11 +89,7 @@ function applyArgument(
       return index + 1;
     }
     case "--dir": {
-      parsed.launchDir = readFlagValue(argv, index, arg);
-      return index + 1;
-    }
-    case "--trust-root": {
-      parsed.trustRootPath = readFlagValue(argv, index, arg);
+      parsed.workspacePath = readFlagValue(argv, index, arg);
       return index + 1;
     }
     case "--prefix": {
@@ -170,23 +161,18 @@ function main(): void {
     if (parsed.agent === undefined) {
       throw new Error("seed requires --agent");
     }
-    const { launchDir, trustRootPath } = resolveSeedTrustPaths({
-      ...(parsed.launchDir === undefined ? {} : { launchDir: parsed.launchDir }),
-      ...(parsed.trustRootPath === undefined ? {} : { trustRootPath: parsed.trustRootPath }),
-    });
+    const workspacePath = resolveSeedTrustPath(
+      parsed.workspacePath === undefined ? {} : { workspacePath: parsed.workspacePath },
+    );
     const agentCommandName = seedAgentCommandName(parsed.agent);
     seedAgentWorkspaceTrust({
       agentCommandName,
-      launchDir,
-      trustRootPath,
+      workspacePath,
       homeDir: parsed.homeDir,
     });
-    const seededPath = resolveAgentTrustPath({
-      agentCommandName,
-      launchDir,
-      trustRootPath,
-    });
-    writeOutput(`Seeded ${parsed.agent} trust for ${shortenTrustPath(seededPath, parsed.homeDir)}`);
+    writeOutput(
+      `Seeded ${parsed.agent} trust for ${shortenTrustPath(workspacePath, parsed.homeDir)}`,
+    );
     return;
   }
 

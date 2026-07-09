@@ -4,12 +4,7 @@ import path from "node:path";
 import { seedAgentWorkspaceTrust } from "../lib/agentWorkspaceTrust.ts";
 import { composeAgentLaunch, openAgentWorkspace, prepareAgentLaunch } from "../lib/agentLaunch.ts";
 import { inferAgentCommandName } from "../lib/launchCommand.ts";
-import {
-  loadConfig,
-  repositoryBaseDir,
-  worktreeBaseDir,
-  type ResolvedConfig,
-} from "../lib/config.ts";
+import { loadConfig, repositoryBaseDir, type ResolvedConfig } from "../lib/config.ts";
 import { resolvePullRequest } from "../lib/pullRequests.ts";
 import { resolvePrepareWorktreeCommand } from "../lib/repositoryHooks.ts";
 import { recordRunState, readRunState } from "../lib/runState.ts";
@@ -258,8 +253,7 @@ export async function openWorkspace(
       prepareWorktreeCommand === undefined ? undefined : stageBuildSecrets(stagedPrompt.directory);
     seedAgentWorkspaceTrust({
       agentCommandName: inferAgentCommandName(definition.cmd),
-      launchDir,
-      trustRootPath: path.resolve(worktreeBaseDir(config)),
+      workspacePath: launchDir,
     });
     let launchCommand: string;
     ({ launchCommand, srtSettingsDir } = composeAgentLaunch({

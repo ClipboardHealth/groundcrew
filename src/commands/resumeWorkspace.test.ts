@@ -293,8 +293,7 @@ describe(resumeWorkspace, () => {
     });
     expect(seedAgentWorkspaceTrustMock).toHaveBeenCalledWith({
       agentCommandName: "claude",
-      launchDir: "/work/repo-a-team-1",
-      trustRootPath: "/work",
+      workspacePath: "/work/repo-a-team-1",
     });
   });
 
