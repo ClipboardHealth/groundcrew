@@ -197,8 +197,8 @@ describe(formatTrustActionResults, () => {
     expect(formatted).toContain("Pruned 2 stale entries");
   });
 
-  it("reports when delete finds no matches", () => {
-    expect(formatTrustActionResults([], { homeDir: fakeHome, action: "delete" })).toBe(
+  it("reports when remove finds no matches", () => {
+    expect(formatTrustActionResults([], { homeDir: fakeHome, action: "remove" })).toBe(
       "No matching workspace trust entries.",
     );
   });
@@ -209,10 +209,10 @@ describe(formatTrustActionResults, () => {
     );
   });
 
-  it("renders delete results without a failure summary when everything succeeds", () => {
+  it("renders remove results without a failure summary when everything succeeds", () => {
     const formatted = formatTrustActionResults(
       [{ agent: "claude", workspacePath: "/Users/test/gone", deleted: true }],
-      { homeDir: fakeHome, action: "delete" },
+      { homeDir: fakeHome, action: "remove" },
     );
 
     expect(formatted).toContain("Removed 1 entry");

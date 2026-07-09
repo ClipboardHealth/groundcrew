@@ -17,22 +17,22 @@ import {
 import { writeOutput } from "./lib/util.ts";
 
 const USAGE = `Usage:
-  node --run trust:admin -- list [--agent cursor|claude|codex] [--missing] [--home <dir>]
-  node --run trust:admin -- seed --agent <agent> [--dir <abs>] [--home <dir>]
-  node --run trust:admin -- delete (--all | --path <abs> | --prefix <dir>)
+  node --run agent-trust -- list [--agent cursor|claude|codex] [--missing] [--home <dir>]
+  node --run agent-trust -- add --agent <agent> [--dir <abs>] [--home <dir>]
+  node --run agent-trust -- remove (--all | --path <abs> | --prefix <dir>)
     [--agent cursor|claude|codex] [--groundcrew-only] [--home <dir>]
-  node --run trust:admin -- prune [--agent cursor|claude|codex] [--home <dir>]
+  node --run agent-trust -- prune [--agent cursor|claude|codex] [--home <dir>]
 
 Examples:
-  node --run trust:admin -- list
-  node --run trust:admin -- list --missing
-  node --run trust:admin -- seed --agent claude --dir "$PWD"
-  node --run trust:admin -- seed --agent codex --dir "$PWD"
-  node --run trust:admin -- delete --path "$HOME/groundcrew/workspaces/repo-team-1"
-  node --run trust:admin -- prune`;
+  node --run agent-trust -- list
+  node --run agent-trust -- list --missing
+  node --run agent-trust -- add --agent claude --dir "$PWD"
+  node --run agent-trust -- add --agent codex --dir "$PWD"
+  node --run agent-trust -- remove --path "$HOME/groundcrew/workspaces/repo-team-1"
+  node --run agent-trust -- prune`;
 
 interface ParsedArguments {
-  command?: "list" | "delete" | "prune" | "seed";
+  command?: "list" | "add" | "remove" | "prune";
   agent?: AgentTrustAgent;
   homeDir: string;
   workspacePath?: string;
@@ -50,7 +50,7 @@ function parseAgent(value: string): AgentTrustAgent {
   throw new Error(`Unknown agent: ${value}`);
 }
 
-function seedAgentCommandName(agent: AgentTrustAgent): "cursor-agent" | "claude" | "codex" {
+function addAgentCommandName(agent: AgentTrustAgent): "cursor-agent" | "claude" | "codex" {
   return agent === "cursor" ? "cursor-agent" : agent;
 }
 
@@ -70,9 +70,9 @@ function applyArgument(
 ): number {
   switch (arg) {
     case "list":
-    case "delete":
-    case "prune":
-    case "seed": {
+    case "add":
+    case "remove":
+    case "prune": {
       parsed.command = arg;
       return index;
     }
@@ -157,21 +157,21 @@ function main(): void {
     return;
   }
 
-  if (parsed.command === "seed") {
+  if (parsed.command === "add") {
     if (parsed.agent === undefined) {
-      throw new Error("seed requires --agent");
+      throw new Error("add requires --agent");
     }
     const workspacePath = resolveSeedTrustPath(
       parsed.workspacePath === undefined ? {} : { workspacePath: parsed.workspacePath },
     );
-    const agentCommandName = seedAgentCommandName(parsed.agent);
+    const agentCommandName = addAgentCommandName(parsed.agent);
     seedAgentWorkspaceTrust({
       agentCommandName,
       workspacePath,
       homeDir: parsed.homeDir,
     });
     writeOutput(
-      `Seeded ${parsed.agent} trust for ${shortenTrustPath(workspacePath, parsed.homeDir)}`,
+      `Added ${parsed.agent} trust for ${shortenTrustPath(workspacePath, parsed.homeDir)}`,
     );
     return;
   }
@@ -193,7 +193,7 @@ function main(): void {
     ...(parsed.path === undefined ? {} : { path: parsed.path }),
     ...(parsed.pathPrefix === undefined ? {} : { pathPrefix: parsed.pathPrefix }),
   });
-  writeOutput(formatTrustActionResults(results, { homeDir: parsed.homeDir, action: "delete" }));
+  writeOutput(formatTrustActionResults(results, { homeDir: parsed.homeDir, action: "remove" }));
 }
 
 try {

@@ -67,7 +67,7 @@
     "sync-ai-rules": "node ./node_modules/@clipboard-health/ai-rules/scripts/sync.js common",
     "syncpack:lint": "syncpack lint --config config/syncpack.config.ts",
     "test": "vitest run --coverage",
-    "trust:admin": "node --run build:dev && node ./dist/agentWorkspaceTrustCli.js",
+    "agent-trust": "node --run build:dev && node ./dist/agentWorkspaceTrustCli.js",
     "verify": "node scripts/verifyAll.mts"
   },
   "dependencies": {

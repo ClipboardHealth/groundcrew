@@ -18,7 +18,7 @@ export interface FormatAgentTrustListOptions {
 
 export interface FormatTrustActionResultsOptions {
   homeDir: string;
-  action: "delete" | "prune";
+  action: "remove" | "prune";
 }
 
 export function shortenTrustPath(workspacePath: string, homeDir: string): string {

@@ -424,7 +424,7 @@ export function deleteAgentWorkspaceTrust(
   const hasTarget =
     input.all === true || input.path !== undefined || input.pathPrefix !== undefined;
   if (!hasTarget) {
-    throw new Error("delete requires --all, --path, or --prefix");
+    throw new Error("remove requires --all, --path, or --prefix");
   }
 
   const targets = listAgentWorkspaceTrust({

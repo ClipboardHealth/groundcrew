@@ -521,9 +521,9 @@ describe(deleteAgentWorkspaceTrust, () => {
     );
   });
 
-  it("requires a delete target", () => {
+  it("requires a remove target", () => {
     expect(() => deleteAgentWorkspaceTrust({ homeDir: fakeHome })).toThrow(
-      "delete requires --all, --path, or --prefix",
+      "remove requires --all, --path, or --prefix",
     );
   });
 
