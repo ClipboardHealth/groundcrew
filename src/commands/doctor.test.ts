@@ -468,6 +468,54 @@ describe(doctor, () => {
     );
   });
 
+  it("hints how to stop probing a missing cursor CLI (cursor-agent)", async () => {
+    loadConfigMock.mockResolvedValue(
+      makeConfig({
+        default: "cursor",
+        definitions: {
+          cursor: {
+            cmd: "cursor-agent --model composer-2.5 --sandbox disabled --force --approve-mcps",
+            color: "#8B5CF6",
+          },
+        },
+      }),
+    );
+    mockWhichFailure("cursor-agent", "not installed");
+
+    const actual = await doctor();
+
+    expect(actual).toBe(false);
+    // The cursor preset's binary (cursor-agent) differs from its agent name, so
+    // the hint must key on the binary. Assert the hint substring only, to avoid
+    // reproducing the em-dash separator format() inserts.
+    expect(consoleLog.output()).toContain(
+      "install cursor-agent or remove `agents.definitions.cursor` from crew.config.ts",
+    );
+  });
+
+  it("hints how to stop probing a missing cursor-grok CLI (cursor-agent)", async () => {
+    loadConfigMock.mockResolvedValue(
+      makeConfig({
+        default: "cursor-grok",
+        definitions: {
+          "cursor-grok": {
+            cmd: "cursor-agent --model grok-4.5-xhigh --sandbox disabled --force --approve-mcps",
+            color: "#16A34A",
+          },
+        },
+      }),
+    );
+    mockWhichFailure("cursor-agent", "not installed");
+
+    const actual = await doctor();
+
+    expect(actual).toBe(false);
+    // cursor-grok, like cursor, runs via cursor-agent, so the hint keys on the binary.
+    expect(consoleLog.output()).toContain(
+      "install cursor-agent or remove `agents.definitions.cursor-grok` from crew.config.ts",
+    );
+  });
+
   it("treats an empty `which` result as missing", async () => {
     loadConfigMock.mockResolvedValue(makeConfig());
     mockWhichEmpty("cmux");

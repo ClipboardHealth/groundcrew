@@ -288,7 +288,7 @@ describe("loadConfig", () => {
         agents: {
           definitions: {
             claude: { cmd: "my-claude" },
-            cursor: { cmd: "cursor-agent", color: "#929292" },
+            mycli: { cmd: "my-cli", color: "#929292" },
           },
         },
       }),
@@ -303,8 +303,8 @@ describe("loadConfig", () => {
     expect(actual.agents.definitions["claude"]?.usage).toStrictEqual({
       codexbar: { provider: "claude" },
     });
-    expect(actual.agents.definitions["cursor"]).toStrictEqual({
-      cmd: "cursor-agent",
+    expect(actual.agents.definitions["mycli"]).toStrictEqual({
+      cmd: "my-cli",
       color: "#929292",
     });
   });
@@ -351,9 +351,9 @@ describe("loadConfig", () => {
       configSource({
         workspace: VALID_WORKSPACE(temporary),
         agents: {
-          default: "cursor",
+          default: "mycli",
           definitions: {
-            cursor: { cmd: "cursor", color: "#abc", usage: { disabled: true } },
+            mycli: { cmd: "my-cli", color: "#abc", usage: { disabled: true } },
           },
         },
       }),
@@ -363,7 +363,7 @@ describe("loadConfig", () => {
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
 
-    expect(actual.agents.definitions["cursor"]).toStrictEqual({ cmd: "cursor", color: "#abc" });
+    expect(actual.agents.definitions["mycli"]).toStrictEqual({ cmd: "my-cli", color: "#abc" });
   });
 
   it("rejects a config that still uses the old `models` key", async () => {
@@ -674,9 +674,9 @@ describe("loadConfig", () => {
       configSource({
         workspace: VALID_WORKSPACE(temporary),
         agents: {
-          default: "cursor",
+          default: "mycli",
           definitions: {
-            cursor: { cmd: "cursor", color: "#abc", usage: { codexbar: { provider: "cursor" } } },
+            mycli: { cmd: "my-cli", color: "#abc", usage: { codexbar: { provider: "cursor" } } },
           },
         },
       }),
@@ -684,7 +684,7 @@ describe("loadConfig", () => {
     setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
-    expect(actual.agents.definitions["cursor"]?.usage).toStrictEqual({
+    expect(actual.agents.definitions["mycli"]?.usage).toStrictEqual({
       codexbar: { provider: "cursor" },
     });
   });
@@ -771,8 +771,8 @@ describe("loadConfig", () => {
         "export const config = {",
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
         "  agents: {",
-        '    default: "cursor",',
-        '    definitions: { cursor: { cmd: "cursor-agent", color: "#929292", preLaunch: "export FOO=bar" } },',
+        '    default: "mycli",',
+        '    definitions: { mycli: { cmd: "my-cli", color: "#929292", preLaunch: "export FOO=bar" } },',
         "  },",
         "};",
       ].join("\n"),
@@ -782,7 +782,7 @@ describe("loadConfig", () => {
     const { loadConfig } = await loadFreshConfig();
 
     const config = await loadConfig();
-    expect(config.agents.definitions["cursor"]?.preLaunch).toBe("export FOO=bar");
+    expect(config.agents.definitions["mycli"]?.preLaunch).toBe("export FOO=bar");
   });
 
   it("merges preLaunchEnv through an override and preserves cmd/color defaults", async () => {
@@ -1861,12 +1861,12 @@ describe("loadConfig", () => {
       temporary,
       configSource({
         workspace: VALID_WORKSPACE(temporary),
-        agents: { definitions: { cursor: { cmd: "cursor" } } },
+        agents: { definitions: { mycli: { cmd: "my-cli" } } },
       }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
-    await expect(loadConfig()).rejects.toThrow(/agents\.definitions\.cursor\.color/);
+    await expect(loadConfig()).rejects.toThrow(/agents\.definitions\.mycli\.color/);
   });
 
   it('fails when agents.definitions contains the reserved "any" name', async () => {
