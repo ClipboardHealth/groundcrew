@@ -524,6 +524,18 @@ const BUILT_IN_AGENT_DEFINITIONS: Record<string, AgentDefinition> = {
     usage: { codexbar: { provider: "codex" } },
     resumeArgs: "resume --last",
   },
+  composer: {
+    // Cursor's `cursor-agent` running the composer-2.5 model. `--force`
+    // auto-approves commands; `--sandbox disabled` hands isolation to the
+    // groundcrew runner (mirroring codex's bypass), so the runner stays the
+    // sole boundary rather than nesting Cursor's own sandbox inside it.
+    cmd: "cursor-agent --force --sandbox disabled --model composer-2.5",
+    color: "#8B5CF6",
+    // No `usage`: codexbar has no Cursor provider, so composer runs without
+    // session-limit gating. `usage` is optional on AgentDefinition, so a
+    // usage-less built-in validates and merges cleanly.
+    resumeArgs: "--continue",
+  },
 };
 
 const MODEL_DEFINITIONS_MIGRATION_MESSAGE = [
