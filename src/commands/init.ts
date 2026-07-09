@@ -17,8 +17,10 @@ const CONFIG_FILE_NAME = "crew.config.ts";
 const EXAMPLE_FILE_NAME = "crew.config.example.ts";
 const DEFAULT_EXAMPLE_PROJECT_DIR = "~/dev/groundcrew";
 const INIT_USAGE =
-  "Usage: crew init [--global | --local] [--force] [--dry-run] [--project-dir <dir>] [--repo <owner/repo>]... [--runner <auto|safehouse|sdx|none>] [--agent <claude|codex|composer>]";
-const INIT_AGENTS = ["claude", "codex", "composer"] as const;
+  "Usage: crew init [--global | --local] [--force] [--dry-run] [--project-dir <dir>] [--repo <owner/repo>]... [--runner <auto|safehouse|sdx|none>] [--agent <claude|codex|cursor>]";
+// Model-variant presets with hyphens (e.g. `cursor-grok`) are enabled via
+// config, not `init`: renderConfig would emit an unquoted, invalid TS key.
+const INIT_AGENTS = ["claude", "codex", "cursor"] as const;
 
 type InitConfigScope = "global" | "local";
 type InitAgent = (typeof INIT_AGENTS)[number];
@@ -198,7 +200,7 @@ function isLocalRunnerSetting(value: string): value is LocalRunnerSetting {
 }
 
 function isInitAgent(value: string): value is InitAgent {
-  return value === "claude" || value === "codex" || value === "composer";
+  return value === "claude" || value === "codex" || value === "cursor";
 }
 
 function tsString(value: string): string {

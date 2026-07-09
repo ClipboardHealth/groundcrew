@@ -17,7 +17,7 @@ docs.claude.com
 downloads.claude.ai
 platform.claude.com
 
-# Cursor (Composer / cursor-agent). Wildcard covers the numbered API hosts
+# Cursor (cursor-agent: composer, grok models). Wildcard covers the numbered API hosts
 # (api2, api2direct, api3, repo42, ...) the CLI rotates through.
 *.cursor.sh
 cursor.com

@@ -25,15 +25,16 @@ import { resolveWorkspaceKind, type WorkspaceResolution } from "../lib/workspace
 // Tokenization stops after this many non-flag tokens. Two is enough to
 // catch wrapper + wrapped CLI commands like `safehouse claude --foo`.
 const MAX_TOKENS_PER_CMD = 2;
-const BUILT_IN_AGENT_NAMES = ["claude", "codex", "composer"] as const;
+const BUILT_IN_AGENT_NAMES = ["claude", "codex", "cursor", "cursor-grok"] as const;
 
 // Primary CLI binary probed on PATH for each built-in agent. Usually equal to
-// the agent name, but composer launches Cursor's `cursor-agent`, so the
-// missing-CLI hint must key on the binary rather than the agent name.
+// the agent name, but the cursor and cursor-grok presets both launch Cursor's
+// `cursor-agent`, so the missing-CLI hint must key on the binary, not the name.
 const BUILT_IN_AGENT_BINARIES: Record<(typeof BUILT_IN_AGENT_NAMES)[number], string> = {
   claude: "claude",
   codex: "codex",
-  composer: "cursor-agent",
+  cursor: "cursor-agent",
+  "cursor-grok": "cursor-agent",
 };
 
 const CONFIG_SOURCE_LABELS: Record<ConfigSourceKind, string> = {
@@ -256,7 +257,7 @@ function agentCliHint(agentName: string, token: string): string | undefined {
 }
 
 function isBuiltInAgentName(value: string): value is (typeof BUILT_IN_AGENT_NAMES)[number] {
-  return value === "claude" || value === "codex" || value === "composer";
+  return value === "claude" || value === "codex" || value === "cursor" || value === "cursor-grok";
 }
 
 function format(check: Check): string {

@@ -61,12 +61,12 @@ describe("loadConfig built-in agent presets", () => {
     vi.restoreAllMocks();
   });
 
-  it("enables composer from an empty override using the built-in preset", async () => {
+  it("enables cursor from an empty override using the built-in preset", async () => {
     const configPath = writeConfigFile(
       temporary,
       configSource({
         workspace: VALID_WORKSPACE(temporary),
-        agents: { default: "composer", definitions: { composer: {} } },
+        agents: { default: "cursor", definitions: { cursor: {} } },
       }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
@@ -74,11 +74,33 @@ describe("loadConfig built-in agent presets", () => {
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
 
-    const { composer } = actual.agents.definitions;
-    expect(composer?.cmd).toBe("cursor-agent --model composer-2.5 --sandbox disabled --force");
-    expect(composer?.color).toBe("#8B5CF6");
-    expect(composer?.resumeArgs).toBe("--continue");
-    // composer ships without codexbar usage gating.
-    expect(composer?.usage).toBeUndefined();
+    const { cursor } = actual.agents.definitions;
+    // The cursor preset runs Cursor's composer-2.5 model via cursor-agent.
+    expect(cursor?.cmd).toBe("cursor-agent --model composer-2.5 --sandbox disabled --force");
+    expect(cursor?.color).toBe("#8B5CF6");
+    expect(cursor?.resumeArgs).toBe("--continue");
+    // The cursor preset ships without codexbar usage gating.
+    expect(cursor?.usage).toBeUndefined();
+  });
+
+  it("enables cursor-grok from an empty override using the built-in preset", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      configSource({
+        workspace: VALID_WORKSPACE(temporary),
+        agents: { default: "cursor-grok", definitions: { "cursor-grok": {} } },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+
+    // cursor-grok runs Grok 4.5 through the same cursor-agent CLI as cursor.
+    const grok = actual.agents.definitions["cursor-grok"];
+    expect(grok?.cmd).toBe("cursor-agent --model grok-4.5-xhigh --sandbox disabled --force");
+    expect(grok?.color).toBe("#16A34A");
+    expect(grok?.resumeArgs).toBe("--continue");
+    expect(grok?.usage).toBeUndefined();
   });
 });

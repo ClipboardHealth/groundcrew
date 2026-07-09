@@ -468,12 +468,12 @@ describe(doctor, () => {
     );
   });
 
-  it("hints how to stop probing a missing composer CLI (cursor-agent)", async () => {
+  it("hints how to stop probing a missing cursor CLI (cursor-agent)", async () => {
     loadConfigMock.mockResolvedValue(
       makeConfig({
-        default: "composer",
+        default: "cursor",
         definitions: {
-          composer: {
+          cursor: {
             cmd: "cursor-agent --model composer-2.5 --sandbox disabled --force",
             color: "#8B5CF6",
           },
@@ -485,11 +485,34 @@ describe(doctor, () => {
     const actual = await doctor();
 
     expect(actual).toBe(false);
-    // composer's binary (cursor-agent) differs from its agent name, so the
-    // hint must key on the binary. Assert the hint substring only, to avoid
+    // The cursor preset's binary (cursor-agent) differs from its agent name, so
+    // the hint must key on the binary. Assert the hint substring only, to avoid
     // reproducing the em-dash separator format() inserts.
     expect(consoleLog.output()).toContain(
-      "install cursor-agent or remove `agents.definitions.composer` from crew.config.ts",
+      "install cursor-agent or remove `agents.definitions.cursor` from crew.config.ts",
+    );
+  });
+
+  it("hints how to stop probing a missing cursor-grok CLI (cursor-agent)", async () => {
+    loadConfigMock.mockResolvedValue(
+      makeConfig({
+        default: "cursor-grok",
+        definitions: {
+          "cursor-grok": {
+            cmd: "cursor-agent --model grok-4.5-xhigh --sandbox disabled --force",
+            color: "#16A34A",
+          },
+        },
+      }),
+    );
+    mockWhichFailure("cursor-agent", "not installed");
+
+    const actual = await doctor();
+
+    expect(actual).toBe(false);
+    // cursor-grok, like cursor, runs via cursor-agent, so the hint keys on the binary.
+    expect(consoleLog.output()).toContain(
+      "install cursor-agent or remove `agents.definitions.cursor-grok` from crew.config.ts",
     );
   });
 
