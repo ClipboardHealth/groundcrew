@@ -16,11 +16,18 @@ calls with a subcommand per operation:
 
 - [`jira` CLI](https://github.com/ankitpokhrel/jira-cli), then `jira init`:
   - macOS: `brew install ankitpokhrel/jira-cli/jira-cli`
-  - Linux: `go install github.com/ankitpokhrel/jira-cli/cmd/jira@latest` (or grab a
-    binary from the [releases page](https://github.com/ankitpokhrel/jira-cli/releases))
+  - Linux (Ubuntu): `sudo snap install jira-cli && sudo snap alias jira-cli jira`
 - [`jq`](https://jqlang.github.io/jq/):
   - macOS: `brew install jq`
   - Linux: `sudo apt-get install jq`
+
+The Ubuntu snap ships the binary as `jira-cli`, but the `snap alias` step drops a
+`jira` symlink on PATH, so `jira` is the single canonical command name on every
+platform. That is deliberate: the manifest keeps `bin: "jira"` and
+`setup: "jira init"`, and `jira.sh` keeps invoking the `jira` command verbatim,
+so there is no per-OS binary name to plumb through. If you install the snap without aliasing,
+the `jira` prerequisite probe fails and the setup screen surfaces this install
+hint, which now includes the alias step.
 
 > **Note:** `list` and `get` detect "no results" and "not found" by matching the
 > `jira` CLI's stderr wording (it exposes no machine-readable signal for either).

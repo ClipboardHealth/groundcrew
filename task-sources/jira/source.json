@@ -9,7 +9,7 @@
       "bin": "jira",
       "install": {
         "darwin": "brew install ankitpokhrel/jira-cli/jira-cli",
-        "linux": "go install github.com/ankitpokhrel/jira-cli/cmd/jira@latest (or grab a binary from https://github.com/ankitpokhrel/jira-cli/releases)"
+        "linux": "sudo snap install jira-cli && sudo snap alias jira-cli jira"
       },
       "setup": "jira init"
     },
