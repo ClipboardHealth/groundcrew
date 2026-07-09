@@ -257,7 +257,7 @@ function agentCliHint(agentName: string, token: string): string | undefined {
 }
 
 function isBuiltInAgentName(value: string): value is (typeof BUILT_IN_AGENT_NAMES)[number] {
-  return value === "claude" || value === "codex" || value === "cursor" || value === "cursor-grok";
+  return (BUILT_IN_AGENT_NAMES as readonly string[]).includes(value);
 }
 
 function format(check: Check): string {

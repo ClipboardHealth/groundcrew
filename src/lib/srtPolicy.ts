@@ -218,6 +218,9 @@ const AGENT_SRT_PROFILES: Record<string, AgentCredentialProfile> = {
       // mcpServers — the sharpest host-RCE vector (same class as claude's
       // ~/.claude.json mcpServers).
       ".cursor/mcp.json",
+      // Lifecycle hooks run on the user's next Cursor launch.
+      ".cursor/hooks.json",
+      ".cursor/hooks",
       ".cursor/skills-cursor",
       ".cursor/plugins",
       ".cursor/commands",

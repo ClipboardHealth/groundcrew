@@ -114,6 +114,8 @@ describe(buildSrtSettings, () => {
       expect(actual.filesystem.allowWrite).toContain("/home/dev/.cache/cursor-compile-cache");
       for (const denied of [
         "/home/dev/.cursor/mcp.json",
+        "/home/dev/.cursor/hooks.json",
+        "/home/dev/.cursor/hooks",
         "/home/dev/.cursor/skills-cursor",
         "/home/dev/.cursor/plugins",
         "/home/dev/.cursor/commands",
