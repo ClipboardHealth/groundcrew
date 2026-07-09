@@ -70,7 +70,7 @@ export default {
     definitions: {
       claude: {},
       // codex: {},
-      // composer: {}, // Cursor's cursor-agent running composer-2.5
+      // composer: {},
       // "claude-fable": {
       //   cmd: "claude --model claude-fable-5 --permission-mode auto",
       //   color: "#C15F3C",
