@@ -315,8 +315,26 @@ describe("crew init", () => {
 
     it("rejects unsupported agent values", async () => {
       await expect(initConfigCli(["--agent", "cursor"])).rejects.toThrow(
-        /--agent must be one of claude, codex/,
+        /--agent must be one of claude, codex, composer/,
       );
+    });
+
+    it("supports composer-only quickstart config", async () => {
+      await initConfigCli([
+        "--global",
+        "--project-dir",
+        "~/dev",
+        "--repo",
+        "OWNER/REPO",
+        "--agent",
+        "composer",
+      ]);
+
+      const destination = path.join(xdgHome, "groundcrew", "crew.config.ts");
+      const actual = readFileSync(destination, "utf8");
+      expect(actual).toContain('default: "composer"');
+      expect(actual).toContain("composer: {}");
+      expect(actual).not.toContain("// composer: {}");
     });
 
     it("rejects --global and --local passed together", async () => {
