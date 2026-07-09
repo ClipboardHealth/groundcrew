@@ -292,10 +292,10 @@ export interface Config {
   agents?: {
     default?: string;
     /**
-     * Explicit enabled agent set. Built-in keys (`claude`, `codex`) merge over
-     * their presets, so `{ claude: {} }` enables Claude with the shipped
-     * command/color/usage. Brand-new agent names must supply enough fields to
-     * satisfy `validate()`.
+     * Explicit enabled agent set. Built-in keys (`claude`, `codex`, `cursor`,
+     * `cursor-grok`) merge over their presets, so `{ claude: {} }` enables
+     * Claude with the shipped command/color/usage. Brand-new agent names must
+     * supply enough fields to satisfy `validate()`.
      */
     definitions?: Record<string, UserAgentDefinition>;
   };
