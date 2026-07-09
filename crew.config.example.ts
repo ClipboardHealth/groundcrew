@@ -83,9 +83,13 @@ export default {
       //   color: "#8A4FFF",
       //   usage: { codexbar: { provider: "claude" } },
       // },
+      // The cursor/cursor-grok presets bypass Cursor's approval prompts for
+      // unattended runs: `--force` auto-approves shell/tool commands (unless
+      // explicitly denied) and `--approve-mcps` auto-approves MCP servers. To
+      // require approvals instead, override cmd without those flags:
       // cursor: {
-      //   cmd: "cursor-agent",
-      //   color: "#929292",
+      //   cmd: "cursor-agent --model composer-2.5 --sandbox disabled",
+      //   color: "#8B5CF6",
       // },
     },
   },

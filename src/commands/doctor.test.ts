@@ -474,7 +474,7 @@ describe(doctor, () => {
         default: "cursor",
         definitions: {
           cursor: {
-            cmd: "cursor-agent --model composer-2.5 --sandbox disabled --force",
+            cmd: "cursor-agent --model composer-2.5 --sandbox disabled --force --approve-mcps",
             color: "#8B5CF6",
           },
         },
@@ -499,7 +499,7 @@ describe(doctor, () => {
         default: "cursor-grok",
         definitions: {
           "cursor-grok": {
-            cmd: "cursor-agent --model grok-4.5-xhigh --sandbox disabled --force",
+            cmd: "cursor-agent --model grok-4.5-xhigh --sandbox disabled --force --approve-mcps",
             color: "#16A34A",
           },
         },

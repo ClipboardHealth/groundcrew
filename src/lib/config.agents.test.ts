@@ -76,7 +76,9 @@ describe("loadConfig built-in agent presets", () => {
 
     const { cursor } = actual.agents.definitions;
     // The cursor preset runs Cursor's composer-2.5 model via cursor-agent.
-    expect(cursor?.cmd).toBe("cursor-agent --model composer-2.5 --sandbox disabled --force");
+    expect(cursor?.cmd).toBe(
+      "cursor-agent --model composer-2.5 --sandbox disabled --force --approve-mcps",
+    );
     expect(cursor?.color).toBe("#8B5CF6");
     expect(cursor?.resumeArgs).toBe("--continue");
     // The cursor preset ships without codexbar usage gating.
@@ -98,7 +100,9 @@ describe("loadConfig built-in agent presets", () => {
 
     // cursor-grok runs Grok 4.5 through the same cursor-agent CLI as cursor.
     const grok = actual.agents.definitions["cursor-grok"];
-    expect(grok?.cmd).toBe("cursor-agent --model grok-4.5-xhigh --sandbox disabled --force");
+    expect(grok?.cmd).toBe(
+      "cursor-agent --model grok-4.5-xhigh --sandbox disabled --force --approve-mcps",
+    );
     expect(grok?.color).toBe("#16A34A");
     expect(grok?.resumeArgs).toBe("--continue");
     expect(grok?.usage).toBeUndefined();

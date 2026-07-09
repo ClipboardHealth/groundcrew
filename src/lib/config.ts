@@ -525,16 +525,20 @@ const BUILT_IN_AGENT_DEFINITIONS: Record<string, AgentDefinition> = {
     resumeArgs: "resume --last",
   },
   cursor: {
-    // Cursor's `cursor-agent` CLI running its composer-2.5 model. `--force`
-    // auto-approves commands; `--sandbox disabled` hands isolation to the
-    // groundcrew runner (mirroring codex's bypass), so the runner stays the
-    // sole boundary rather than nesting Cursor's own sandbox inside it.
+    // Cursor's `cursor-agent` CLI running its composer-2.5 model. Unattended
+    // groundcrew runs cannot answer approval prompts, so `--force` auto-approves
+    // shell/tool commands (unless explicitly denied) and `--approve-mcps`
+    // auto-approves MCP servers (a separate gate). `--sandbox disabled` hands
+    // isolation to the groundcrew runner (mirroring codex's bypass), so the
+    // runner stays the sole boundary rather than nesting Cursor's own sandbox.
+    // Drop `--force`/`--approve-mcps` in your config to restore approval prompts.
     //
     // Flag order matters for `crew doctor`: its PATH-probe tokenizer assumes
-    // every flag consumes the next token as its value, so a valueless boolean
-    // flag must come last. With `--force` trailing, the tokenizer resolves the
-    // command to `cursor-agent` alone instead of probing a phantom `disabled`.
-    cmd: "cursor-agent --model composer-2.5 --sandbox disabled --force",
+    // every flag consumes the next token as its value, so the valueless boolean
+    // flags (`--force`, `--approve-mcps`) must come last. With them trailing, the
+    // tokenizer resolves the command to `cursor-agent` alone instead of probing
+    // a phantom `disabled`.
+    cmd: "cursor-agent --model composer-2.5 --sandbox disabled --force --approve-mcps",
     color: "#8B5CF6",
     // No `usage`: codexbar has no Cursor provider, so cursor runs without
     // session-limit gating. `usage` is optional on AgentDefinition, so a
@@ -546,9 +550,10 @@ const BUILT_IN_AGENT_DEFINITIONS: Record<string, AgentDefinition> = {
     // Grok 4.5 instead of composer-2.5. Cursor labels `grok-4.5-xhigh` as the
     // plain "Grok 4.5"; swap in a `-fast`/lower-effort variant (e.g.
     // grok-4.5-fast-high) to trade quality for latency. Same
-    // `--sandbox disabled --force` posture and `--force`-last flag ordering as
-    // the `cursor` preset (see it for why order matters to `crew doctor`).
-    cmd: "cursor-agent --model grok-4.5-xhigh --sandbox disabled --force",
+    // `--sandbox disabled --force --approve-mcps` posture and trailing-boolean
+    // flag ordering as the `cursor` preset (see it for why order matters to
+    // `crew doctor`, and how to restore approval prompts).
+    cmd: "cursor-agent --model grok-4.5-xhigh --sandbox disabled --force --approve-mcps",
     color: "#16A34A",
     // No `usage`: cursor-agent has no codexbar provider.
     resumeArgs: "--continue",
