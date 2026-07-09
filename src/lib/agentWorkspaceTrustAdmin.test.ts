@@ -1,15 +1,33 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 import { codexProjectTableHeader, cursorProjectSlug } from "./agentWorkspaceTrust.ts";
 import {
   deleteAgentWorkspaceTrust,
+  deleteClaudeTrustEntryForTests,
+  deleteCodexTrustEntryForTests,
+  deleteCursorTrustEntryForTests,
+  deleteTrustEntryForTests,
   listAgentWorkspaceTrust,
   listCodexTrustedProjects,
+  matchesDeleteTargetForTests,
+  normalizedPrefixForTests,
   pruneAgentWorkspaceTrust,
   removeCodexProjectTrust,
+  type AgentTrustAgent,
+  type AgentTrustEntry,
 } from "./agentWorkspaceTrustAdmin.ts";
+
+const GROUNDCREW_TRUST_METHOD = "groundcrew-auto-trust";
 
 describe(listAgentWorkspaceTrust, () => {
   let fakeHome: string;
@@ -83,9 +101,73 @@ describe(listAgentWorkspaceTrust, () => {
     expect(listAgentWorkspaceTrust({ homeDir: fakeHome, agent: "claude" })).toEqual([]);
   });
 
+  it("lists Cursor markers that omit optional JSON fields", () => {
+    const workspacePath = path.resolve(fakeHome, "explicit-path");
+    const fallbackSlug = "tmp-fallback-slug";
+    mkdirSync(path.join(fakeHome, ".cursor", "projects", fallbackSlug), { recursive: true });
+    writeFileSync(
+      path.join(fakeHome, ".cursor", "projects", fallbackSlug, ".workspace-trusted"),
+      `${JSON.stringify({ workspacePath })}\n`,
+      "utf8",
+    );
+    mkdirSync(path.join(fakeHome, ".cursor", "projects", "trust-method-only"), { recursive: true });
+    writeFileSync(
+      path.join(fakeHome, ".cursor", "projects", "trust-method-only", ".workspace-trusted"),
+      `${JSON.stringify({ trustMethod: "manual" })}\n`,
+      "utf8",
+    );
+    mkdirSync(path.join(fakeHome, ".cursor", "projects", "array-marker"), { recursive: true });
+    writeFileSync(
+      path.join(fakeHome, ".cursor", "projects", "array-marker", ".workspace-trusted"),
+      "[]\n",
+      "utf8",
+    );
+
+    const entries = listAgentWorkspaceTrust({ homeDir: fakeHome, agent: "cursor" });
+    expect(entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          agent: "cursor",
+          workspacePath,
+          detail: "trusted",
+        }),
+        expect.objectContaining({
+          agent: "cursor",
+          detail: "manual",
+        }),
+        expect.objectContaining({
+          agent: "cursor",
+          detail: "trusted (unparseable marker)",
+        }),
+      ]),
+    );
+  });
+
   it("treats malformed Claude JSON as empty", () => {
     writeFileSync(path.join(fakeHome, ".claude.json"), "{not-json", "utf8");
     expect(listAgentWorkspaceTrust({ homeDir: fakeHome, agent: "claude" })).toEqual([]);
+  });
+
+  it("skips Claude projects without accepted trust dialog", () => {
+    writeFileSync(
+      path.join(fakeHome, ".claude.json"),
+      JSON.stringify({
+        projects: {
+          [path.resolve(fakeHome, "no-trust")]: { note: "skip-me" },
+        },
+      }),
+      "utf8",
+    );
+    expect(listAgentWorkspaceTrust({ homeDir: fakeHome, agent: "claude" })).toEqual([]);
+  });
+
+  it("treats unreadable Codex config as empty", () => {
+    const codexConfig = path.join(fakeHome, ".codex", "config.toml");
+    mkdirSync(path.dirname(codexConfig), { recursive: true });
+    writeFileSync(codexConfig, "[features]\nhooks = true\n", "utf8");
+    chmodSync(codexConfig, 0o000);
+    expect(listAgentWorkspaceTrust({ homeDir: fakeHome, agent: "codex" })).toEqual([]);
+    chmodSync(codexConfig, 0o600);
   });
 
   it("lists only missing workspace paths when requested", () => {
@@ -112,6 +194,143 @@ describe(listAgentWorkspaceTrust, () => {
   });
 });
 
+describe(matchesDeleteTargetForTests, () => {
+  const entry = {
+    agent: "cursor" as const,
+    workspacePath: "/tmp/ws",
+    detail: GROUNDCREW_TRUST_METHOD,
+    store: "/tmp/.cursor/projects/slug/.workspace-trusted",
+  };
+
+  it("filters by agent, groundcrew markers, and path prefix", () => {
+    expect(matchesDeleteTargetForTests(entry, { homeDir: "/tmp", all: true })).toBe(true);
+    expect(
+      matchesDeleteTargetForTests(entry, {
+        homeDir: "/tmp",
+        agent: "claude",
+        all: true,
+      }),
+    ).toBe(false);
+    expect(
+      matchesDeleteTargetForTests(
+        { ...entry, detail: "manual" },
+        { homeDir: "/tmp", groundcrewOnly: true, all: true },
+      ),
+    ).toBe(false);
+    expect(
+      matchesDeleteTargetForTests(entry, {
+        homeDir: "/tmp",
+        groundcrewOnly: true,
+        all: true,
+      }),
+    ).toBe(true);
+    expect(
+      matchesDeleteTargetForTests(entry, {
+        homeDir: "/tmp",
+        path: "/tmp/ws",
+      }),
+    ).toBe(true);
+    expect(
+      matchesDeleteTargetForTests(entry, {
+        homeDir: "/tmp",
+        path: "/tmp/other",
+      }),
+    ).toBe(false);
+    expect(
+      matchesDeleteTargetForTests(entry, {
+        homeDir: "/tmp",
+        pathPrefix: "/tmp",
+      }),
+    ).toBe(true);
+    expect(
+      matchesDeleteTargetForTests(entry, {
+        homeDir: "/tmp",
+        pathPrefix: "/elsewhere",
+      }),
+    ).toBe(false);
+    expect(matchesDeleteTargetForTests(entry, { homeDir: "/tmp" })).toBe(false);
+  });
+});
+
+describe(normalizedPrefixForTests, () => {
+  it("keeps root prefixes and appends separators elsewhere", () => {
+    expect(normalizedPrefixForTests("/")).toBe("/");
+    expect(normalizedPrefixForTests("/tmp/prefix")).toBe(`/tmp/prefix${path.sep}`);
+  });
+});
+
+describe(deleteCodexTrustEntryForTests, () => {
+  let fakeHome: string;
+
+  beforeEach(() => {
+    fakeHome = mkdtempSync(path.join(os.tmpdir(), "agent-workspace-trust-admin-codex-delete-"));
+  });
+
+  afterEach(() => {
+    rmSync(fakeHome, { recursive: true, force: true });
+  });
+
+  it("returns false when the project trust section is already absent", () => {
+    mkdirSync(path.join(fakeHome, ".codex"), { recursive: true });
+    writeFileSync(
+      path.join(fakeHome, ".codex", "config.toml"),
+      "[features]\nhooks = true\n",
+      "utf8",
+    );
+    expect(deleteCodexTrustEntryForTests(fakeHome, "/tmp/missing")).toBe(false);
+  });
+});
+
+describe(deleteClaudeTrustEntryForTests, () => {
+  let fakeHome: string;
+
+  beforeEach(() => {
+    fakeHome = mkdtempSync(path.join(os.tmpdir(), "agent-workspace-trust-admin-claude-delete-"));
+  });
+
+  afterEach(() => {
+    rmSync(fakeHome, { recursive: true, force: true });
+  });
+
+  it("returns false when the project never accepted trust", () => {
+    const workspacePath = path.resolve(fakeHome, "no-trust");
+    writeFileSync(
+      path.join(fakeHome, ".claude.json"),
+      JSON.stringify({
+        projects: {
+          [workspacePath]: { note: "skip-me" },
+        },
+      }),
+      "utf8",
+    );
+    expect(deleteClaudeTrustEntryForTests(fakeHome, workspacePath)).toBe(false);
+  });
+
+  it("handles a Claude config without a projects map", () => {
+    writeFileSync(path.join(fakeHome, ".claude.json"), "{}\n", "utf8");
+    expect(deleteClaudeTrustEntryForTests(fakeHome, path.resolve(fakeHome, "missing"))).toBe(false);
+  });
+});
+
+describe(deleteCursorTrustEntryForTests, () => {
+  it("returns false when the marker file is already gone", () => {
+    expect(deleteCursorTrustEntryForTests("/tmp/missing-marker")).toBe(false);
+  });
+});
+
+describe(deleteTrustEntryForTests, () => {
+  it("rejects unsupported agents", () => {
+    expect(() =>
+      deleteTrustEntryForTests("/tmp/home", {
+        agent: "invalid" as unknown as AgentTrustAgent,
+        workspacePath: "/tmp/ws",
+        detail: "trusted",
+        store: "/tmp/marker",
+      } satisfies AgentTrustEntry),
+    ).toThrow("Unsupported trust agent: invalid");
+  });
+});
+
 describe(listCodexTrustedProjects, () => {
   it("parses trusted Codex project sections", () => {
     const workspacePath = "/tmp/repo-team-1";
@@ -119,6 +338,18 @@ describe(listCodexTrustedProjects, () => {
     expect(listCodexTrustedProjects(config)).toEqual([
       { path: workspacePath, trustLevel: "trusted" },
     ]);
+  });
+
+  it("stops at the next TOML section when reading project bodies", () => {
+    const workspacePath = "/tmp/repo-team-1";
+    const config = [
+      codexProjectTableHeader(workspacePath),
+      'trust_level = "trusted"',
+      "[features]",
+      "hooks = true",
+      "",
+    ].join("\n");
+    expect(removeCodexProjectTrust(config, workspacePath)).toBe("[features]\nhooks = true\n");
   });
 
   it("skips Codex sections without trust_level and parses escaped paths", () => {
@@ -239,6 +470,26 @@ describe(deleteAgentWorkspaceTrust, () => {
     expect(listAgentWorkspaceTrust({ homeDir: fakeHome, agent: "claude" })).toHaveLength(1);
   });
 
+  it("normalizes root path prefixes when deleting by prefix", () => {
+    const workspacePath = path.resolve(fakeHome, "root-prefix");
+    writeFileSync(
+      path.join(fakeHome, ".claude.json"),
+      JSON.stringify({
+        projects: {
+          [workspacePath]: { hasTrustDialogAccepted: true },
+        },
+      }),
+      "utf8",
+    );
+
+    const results = deleteAgentWorkspaceTrust({
+      homeDir: fakeHome,
+      agent: "claude",
+      pathPrefix: "/",
+    });
+    expect(results).toEqual([{ agent: "claude", workspacePath, deleted: true }]);
+  });
+
   it("deletes only groundcrew Cursor markers when requested", () => {
     const groundcrewPath = path.resolve(fakeHome, "gc");
     const manualPath = path.resolve(fakeHome, "manual");
@@ -299,6 +550,12 @@ describe(deleteAgentWorkspaceTrust, () => {
       deleteAgentWorkspaceTrust({
         homeDir: fakeHome,
         path: path.resolve(fakeHome, "missing"),
+      }),
+    ).toEqual([]);
+    expect(
+      deleteAgentWorkspaceTrust({
+        homeDir: fakeHome,
+        pathPrefix: path.resolve(fakeHome, "no-such-prefix"),
       }),
     ).toEqual([]);
   });
@@ -450,5 +707,32 @@ describe(pruneAgentWorkspaceTrust, () => {
     );
     expect(listAgentWorkspaceTrust({ homeDir: fakeHome, agent: "claude" })).toHaveLength(1);
     expect(listAgentWorkspaceTrust({ homeDir: fakeHome, agent: "codex" })).toEqual([]);
+  });
+
+  it("prunes only the requested agent", () => {
+    const existingPath = path.resolve(fakeHome, "still-here");
+    const missingClaudePath = path.resolve(fakeHome, "gone-claude");
+    const missingCodexPath = path.resolve(fakeHome, "gone-codex");
+    mkdirSync(existingPath, { recursive: true });
+    writeFileSync(
+      path.join(fakeHome, ".claude.json"),
+      JSON.stringify({
+        projects: {
+          [existingPath]: { hasTrustDialogAccepted: true },
+          [missingClaudePath]: { hasTrustDialogAccepted: true },
+        },
+      }),
+      "utf8",
+    );
+    mkdirSync(path.join(fakeHome, ".codex"), { recursive: true });
+    writeFileSync(
+      path.join(fakeHome, ".codex", "config.toml"),
+      `${codexProjectTableHeader(missingCodexPath)}\ntrust_level = "trusted"\n`,
+      "utf8",
+    );
+
+    const results = pruneAgentWorkspaceTrust({ homeDir: fakeHome, agent: "claude" });
+    expect(results).toEqual([{ agent: "claude", workspacePath: missingClaudePath, deleted: true }]);
+    expect(listAgentWorkspaceTrust({ homeDir: fakeHome, agent: "codex" })).toHaveLength(1);
   });
 });

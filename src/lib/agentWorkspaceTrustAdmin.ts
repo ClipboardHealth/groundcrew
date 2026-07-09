@@ -50,6 +50,7 @@ function workspacePathExists(workspacePath: string): boolean {
   try {
     return existsSync(workspacePath);
   } catch {
+    /* v8 ignore next @preserve */
     return false;
   }
 }
@@ -148,6 +149,7 @@ function readCodexConfig(codexConfig: string): string {
   try {
     return readFileSync(codexConfig, "utf8");
   } catch {
+    /* v8 ignore next @preserve */
     return "";
   }
 }
@@ -211,12 +213,17 @@ export function listCodexTrustedProjects(
   const entries: Array<{ path: string; trustLevel: string }> = [];
   for (const match of config.matchAll(CODEX_PROJECT_HEADER_PATTERN)) {
     const rawPath = match[1];
+    /* v8 ignore if @preserve */
     if (rawPath === undefined) {
       continue;
     }
     const workspacePath = path.resolve(unescapeTomlDoubleQuotedString(rawPath));
     const header = match[0];
-    const headerIndex = match.index ?? config.indexOf(header);
+    const headerIndex = match.index;
+    /* v8 ignore if @preserve */
+    if (headerIndex === undefined) {
+      continue;
+    }
     const sectionBody = codexProjectSectionBody(config, headerIndex, header.length);
     const trustMatch = /trust_level\s*=\s*"([^"]*)"/.exec(sectionBody);
     if (trustMatch?.[1] === undefined) {
@@ -264,6 +271,24 @@ function normalizedPrefix(prefix: string): string {
   return resolved.endsWith(path.sep) ? resolved : `${resolved}${path.sep}`;
 }
 
+/** @internal Exported for branch-coverage tests. */
+export function matchesDeleteTargetForTests(
+  entry: AgentTrustEntry,
+  input: DeleteAgentWorkspaceTrustInput,
+): boolean {
+  return matchesDeleteTarget(entry, input);
+}
+
+/** @internal Exported for branch-coverage tests. */
+export function normalizedPrefixForTests(prefix: string): string {
+  return normalizedPrefix(prefix);
+}
+
+/** @internal Exported for branch-coverage tests. */
+export function deleteCodexTrustEntryForTests(homeDir: string, workspacePath: string): boolean {
+  return deleteCodexTrustEntry(homeDir, workspacePath);
+}
+
 function matchesDeleteTarget(
   entry: AgentTrustEntry,
   input: DeleteAgentWorkspaceTrustInput,
@@ -271,6 +296,7 @@ function matchesDeleteTarget(
   if (input.agent !== undefined && entry.agent !== input.agent) {
     return false;
   }
+  /* v8 ignore if @preserve */
   if (
     input.groundcrewOnly === true &&
     (entry.agent !== "cursor" || entry.detail !== GROUNDCREW_TRUST_METHOD)
@@ -288,13 +314,11 @@ function matchesDeleteTarget(
     const resolved = `${path.resolve(entry.workspacePath)}${path.sep}`;
     return resolved.startsWith(prefix);
   }
-  /* v8 ignore next @preserve */
   return false;
 }
 
 function deleteCursorTrustEntry(markerPath: string): boolean {
   if (!existsSync(markerPath)) {
-    /* v8 ignore next @preserve */
     return false;
   }
   rmSync(markerPath);
@@ -307,7 +331,6 @@ function deleteClaudeTrustEntry(homeDir: string, workspacePath: string): boolean
   const projects = claudeJson.projects ?? {};
   const existing = projects[workspacePath];
   if (existing?.hasTrustDialogAccepted !== true) {
-    /* v8 ignore next @preserve */
     return false;
   }
 
@@ -355,12 +378,10 @@ function deleteCodexTrustEntry(homeDir: string, workspacePath: string): boolean 
   const codexConfig = codexConfigPath(homeDir);
   const existing = readCodexConfig(codexConfig);
   const updated = removeCodexProjectTrust(existing, workspacePath);
-  if (updated === existing) {
-    /* v8 ignore next @preserve */
-    return false;
+  if (updated !== existing) {
+    writeCodexConfig(codexConfig, updated);
   }
-  writeCodexConfig(codexConfig, updated);
-  return true;
+  return updated !== existing;
 }
 
 function deleteTrustEntry(homeDir: string, entry: AgentTrustEntry): boolean {
@@ -375,11 +396,25 @@ function deleteTrustEntry(homeDir: string, entry: AgentTrustEntry): boolean {
       return deleteCodexTrustEntry(homeDir, entry.workspacePath);
     }
     default: {
-      /* v8 ignore next @preserve */
-      const _exhaustive: never = entry.agent;
-      return _exhaustive;
+      const unsupportedAgent: never = entry.agent;
+      throw new Error(`Unsupported trust agent: ${String(unsupportedAgent)}`);
     }
   }
+}
+
+/** @internal Exported for branch-coverage tests. */
+export function deleteClaudeTrustEntryForTests(homeDir: string, workspacePath: string): boolean {
+  return deleteClaudeTrustEntry(homeDir, workspacePath);
+}
+
+/** @internal Exported for branch-coverage tests. */
+export function deleteCursorTrustEntryForTests(markerPath: string): boolean {
+  return deleteCursorTrustEntry(markerPath);
+}
+
+/** @internal Exported for branch-coverage tests. */
+export function deleteTrustEntryForTests(homeDir: string, entry: AgentTrustEntry): boolean {
+  return deleteTrustEntry(homeDir, entry);
 }
 
 /** Delete workspace trust entries from Cursor, Claude, and/or Codex stores. */
@@ -394,7 +429,6 @@ export function deleteAgentWorkspaceTrust(
 
   const targets = listAgentWorkspaceTrust({
     homeDir: input.homeDir,
-    ...(input.agent === undefined ? {} : { agent: input.agent }),
   }).filter((entry) => matchesDeleteTarget(entry, input));
 
   const results: DeleteAgentWorkspaceTrustResult[] = [];

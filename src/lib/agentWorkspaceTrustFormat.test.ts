@@ -18,6 +18,10 @@ describe(shortenTrustPath, () => {
   it("leaves paths outside the home directory unchanged", () => {
     expect(shortenTrustPath("/tmp/ws", "/Users/test")).toBe("/tmp/ws");
   });
+
+  it("handles home directories that already end with a separator", () => {
+    expect(shortenTrustPath("/foo/bar", "/")).toBe(`~${path.sep}foo${path.sep}bar`);
+  });
 });
 
 describe(formatAgentTrustList, () => {
@@ -64,6 +68,23 @@ describe(formatAgentTrustList, () => {
     expect(formatted).not.toContain("groundcrew-auto-trust");
   });
 
+  it("uses a singular header when one listed entry is missing", () => {
+    const missingPath = path.join(fakeHome, "gone");
+    const formatted = formatAgentTrustList(
+      [
+        {
+          agent: "claude",
+          workspacePath: missingPath,
+          detail: "hasTrustDialogAccepted",
+          store: `${fakeHome}/.claude.json#projects`,
+        },
+      ],
+      { homeDir: fakeHome },
+    );
+
+    expect(formatted).toContain("Workspace trust (1 entry · 1 missing)");
+  });
+
   it("shows a warning only for unparseable Cursor markers", () => {
     const formatted = formatAgentTrustList(
       [
@@ -98,6 +119,52 @@ describe(formatAgentTrustList, () => {
     expect(formatted).toContain("Stale workspace trust (1 entry)");
     expect(formatted).not.toContain("trust_level");
   });
+
+  it("uses plural stale headers and omits missing counts when all paths exist", () => {
+    const firstPath = path.join(fakeHome, "one");
+    const secondPath = path.join(fakeHome, "two");
+    mkdirSync(firstPath, { recursive: true });
+    mkdirSync(secondPath, { recursive: true });
+
+    const staleFormatted = formatAgentTrustList(
+      [
+        {
+          agent: "claude",
+          workspacePath: path.join(fakeHome, "gone-1"),
+          detail: "hasTrustDialogAccepted",
+          store: `${fakeHome}/.claude.json#projects`,
+        },
+        {
+          agent: "codex",
+          workspacePath: path.join(fakeHome, "gone-2"),
+          detail: "trust_level=trusted",
+          store: `${fakeHome}/.codex/config.toml`,
+        },
+      ],
+      { homeDir: fakeHome, missingOnly: true },
+    );
+    expect(staleFormatted).toContain("Stale workspace trust (2 entries)");
+
+    const allPresentFormatted = formatAgentTrustList(
+      [
+        {
+          agent: "claude",
+          workspacePath: firstPath,
+          detail: "hasTrustDialogAccepted",
+          store: `${fakeHome}/.claude.json#projects`,
+        },
+        {
+          agent: "codex",
+          workspacePath: secondPath,
+          detail: "trust_level=trusted",
+          store: `${fakeHome}/.codex/config.toml`,
+        },
+      ],
+      { homeDir: fakeHome },
+    );
+    expect(allPresentFormatted).toContain("Workspace trust (2 entries)");
+    expect(allPresentFormatted).not.toContain("missing");
+  });
 });
 
 describe(formatTrustActionResults, () => {
@@ -118,15 +185,49 @@ describe(formatTrustActionResults, () => {
     expect(formatted).toContain("Summary: 1 removed · 1 failed");
   });
 
+  it("uses plural nouns when multiple entries are removed", () => {
+    const formatted = formatTrustActionResults(
+      [
+        { agent: "claude", workspacePath: "/Users/test/one", deleted: true },
+        { agent: "codex", workspacePath: "/Users/test/two", deleted: true },
+      ],
+      { homeDir: fakeHome, action: "prune" },
+    );
+
+    expect(formatted).toContain("Pruned 2 stale entries");
+  });
+
   it("reports when delete finds no matches", () => {
     expect(formatTrustActionResults([], { homeDir: fakeHome, action: "delete" })).toBe(
       "No matching workspace trust entries.",
     );
   });
 
+  it("reports when prune finds nothing to remove", () => {
+    expect(formatTrustActionResults([], { homeDir: fakeHome, action: "prune" })).toBe(
+      "No stale workspace trust entries.",
+    );
+  });
+
+  it("renders delete results without a failure summary when everything succeeds", () => {
+    const formatted = formatTrustActionResults(
+      [{ agent: "claude", workspacePath: "/Users/test/gone", deleted: true }],
+      { homeDir: fakeHome, action: "delete" },
+    );
+
+    expect(formatted).toContain("Removed 1 entry");
+    expect(formatted).not.toContain("Summary:");
+  });
+
   it("reports when list is empty", () => {
     expect(formatAgentTrustList([], { homeDir: fakeHome })).toBe(
       "No workspace trust entries found.",
+    );
+  });
+
+  it("reports when stale list is empty", () => {
+    expect(formatAgentTrustList([], { homeDir: fakeHome, missingOnly: true })).toBe(
+      "No stale workspace trust entries.",
     );
   });
 });

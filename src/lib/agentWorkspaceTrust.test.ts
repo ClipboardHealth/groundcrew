@@ -101,6 +101,12 @@ describe(resolveSeedTrustPaths, () => {
       trustRootPath: "/tmp/parent",
     });
   });
+
+  it("defaults cwd to process.cwd when omitted", () => {
+    const cwd = resolveSeedTrustPaths({});
+    expect(cwd.launchDir).toBe(process.cwd());
+    expect(cwd.trustRootPath).toBe(process.cwd());
+  });
 });
 
 describe(seedAgentWorkspaceTrust, () => {
