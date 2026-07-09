@@ -5,6 +5,7 @@ import path from "node:path";
 import { writeError } from "./util.ts";
 
 const GROUNDCREW_TRUST_METHOD = "groundcrew-auto-trust";
+const CODEX_TRUST_LEVEL = "trusted";
 
 interface ClaudeProjectEntry {
   hasTrustDialogAccepted?: boolean;
@@ -137,6 +138,104 @@ function seedClaudeWorkspaceTrust(workspacePath: string, home: string): void {
   }
 }
 
+function escapeTomlDoubleQuotedString(value: string): string {
+  return value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
+}
+
+/** Codex keys per-workspace trust under `[projects."<abs-path>"]` in `config.toml`. */
+export function codexProjectTableHeader(absoluteWorkspacePath: string): string {
+  return `[projects."${escapeTomlDoubleQuotedString(absoluteWorkspacePath)}"]`;
+}
+
+function codexConfigPath(home: string): string {
+  return path.join(home, ".codex", "config.toml");
+}
+
+function codexProjectSectionBody(
+  config: string,
+  headerIndex: number,
+  headerLength: number,
+): string {
+  const afterHeader = config.slice(headerIndex + headerLength);
+  const nextSection = afterHeader.search(/^\[/m);
+  return nextSection === -1 ? afterHeader : afterHeader.slice(0, nextSection);
+}
+
+function hasCodexWorkspaceTrust(config: string, absoluteWorkspacePath: string): boolean {
+  const header = codexProjectTableHeader(absoluteWorkspacePath);
+  const headerIndex = config.indexOf(header);
+  if (headerIndex === -1) {
+    return false;
+  }
+  const sectionBody = codexProjectSectionBody(config, headerIndex, header.length);
+  return /trust_level\s*=\s*"trusted"/.test(sectionBody);
+}
+
+function upsertCodexWorkspaceTrust(config: string, absoluteWorkspacePath: string): string {
+  if (hasCodexWorkspaceTrust(config, absoluteWorkspacePath)) {
+    return config;
+  }
+
+  const header = codexProjectTableHeader(absoluteWorkspacePath);
+  const headerIndex = config.indexOf(header);
+  if (headerIndex === -1) {
+    const separator = config.length === 0 ? "" : config.endsWith("\n") ? "" : "\n";
+    return `${config}${separator}${header}\ntrust_level = "${CODEX_TRUST_LEVEL}"\n`;
+  }
+
+  const sectionBody = codexProjectSectionBody(config, headerIndex, header.length);
+  const sectionEnd = headerIndex + header.length + sectionBody.length;
+  if (/trust_level\s*=/.test(sectionBody)) {
+    const updatedSection = sectionBody.replace(
+      /trust_level\s*=\s*"[^"]*"/,
+      `trust_level = "${CODEX_TRUST_LEVEL}"`,
+    );
+    return `${config.slice(0, headerIndex + header.length)}${updatedSection}${config.slice(sectionEnd)}`;
+  }
+
+  const insertion = sectionBody.endsWith("\n")
+    ? `trust_level = "${CODEX_TRUST_LEVEL}"\n`
+    : `\ntrust_level = "${CODEX_TRUST_LEVEL}"\n`;
+  return `${config.slice(0, sectionEnd)}${insertion}${config.slice(sectionEnd)}`;
+}
+
+function writeCodexConfigFile(codexConfig: string, contents: string): void {
+  mkdirSync(path.dirname(codexConfig), { recursive: true });
+  const tmpPath = `${codexConfig}.${process.pid}.tmp`;
+  writeFileSync(tmpPath, contents, { mode: 0o600 });
+  renameSync(tmpPath, codexConfig);
+}
+
+function readCodexConfigFile(codexConfig: string): string {
+  try {
+    return readFileSync(codexConfig, "utf8");
+  } catch (error) {
+    if (existsSync(codexConfig)) {
+      writeError(
+        `groundcrew: could not read ${codexConfig} for workspace trust (${String(error)}); seeding from a fresh file`,
+      );
+    }
+    return "";
+  }
+}
+
+function seedCodexWorkspaceTrust(workspacePath: string, home: string): void {
+  const absoluteWorkspacePath = path.resolve(workspacePath);
+  const codexConfig = codexConfigPath(home);
+  const updated = upsertCodexWorkspaceTrust(
+    readCodexConfigFile(codexConfig),
+    absoluteWorkspacePath,
+  );
+
+  try {
+    writeCodexConfigFile(codexConfig, updated);
+  } catch (error) {
+    writeError(
+      `groundcrew: could not seed Codex workspace trust for ${absoluteWorkspacePath} (${String(error)})`,
+    );
+  }
+}
+
 /** Seed agent-specific workspace trust stores before the first interactive launch. */
 export function seedAgentWorkspaceTrust(input: SeedAgentWorkspaceTrustInput): void {
   const home = resolveHomeDir(input.homeDir, input.readHome);
@@ -152,5 +251,9 @@ export function seedAgentWorkspaceTrust(input: SeedAgentWorkspaceTrustInput): vo
   }
   if (agentCommandName === "claude") {
     seedClaudeWorkspaceTrust(workspacePath, home);
+    return;
+  }
+  if (agentCommandName === "codex") {
+    seedCodexWorkspaceTrust(workspacePath, home);
   }
 }

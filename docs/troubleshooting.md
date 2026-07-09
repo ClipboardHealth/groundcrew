@@ -54,7 +54,7 @@ Groundcrew creates isolated per-task worktrees for unattended runs, so the shipp
 
 ## Workspace Trust Is Seeded Automatically
 
-Groundcrew provisions each worktree and seeds workspace trust for `claude` and `cursor-agent` before the agent starts, so unattended launches do not stall on first-run trust dialogs. There is no config toggle: if groundcrew created the worktree, trust is recorded in the agent's local store (`~/.claude.json` for Claude, `~/.cursor/projects/<slug>/.workspace-trusted` for Cursor) with `trustMethod: "groundcrew-auto-trust"`. This applies only to groundcrew-provisioned worktrees at launch time; it does not trust arbitrary paths you open manually. Permission mode (`claude --permission-mode auto`) is separate from workspace trust.
+Groundcrew provisions each worktree and seeds workspace trust for `claude`, `codex`, and `cursor-agent` before the agent starts, so unattended launches do not stall on first-run trust dialogs. There is no config toggle: if groundcrew created the worktree, trust is recorded in the agent's local store (`~/.claude.json` for Claude, `~/.codex/config.toml` for Codex, `~/.cursor/projects/<slug>/.workspace-trusted` for Cursor). Cursor markers use `trustMethod: "groundcrew-auto-trust"` for auditability. This applies only to groundcrew-provisioned worktrees at launch time; it does not trust arbitrary paths you open manually. Permission mode (`claude --permission-mode auto`) and Codex approval bypass (`--dangerously-bypass-approvals-and-sandbox`) are separate from workspace trust.
 
 ## Doctor's Command Introspection Is Shallow
 

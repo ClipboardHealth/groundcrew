@@ -10,7 +10,11 @@ import {
 import os from "node:os";
 import path from "node:path";
 
-import { cursorProjectSlug, seedAgentWorkspaceTrust } from "./agentWorkspaceTrust.ts";
+import {
+  codexProjectTableHeader,
+  cursorProjectSlug,
+  seedAgentWorkspaceTrust,
+} from "./agentWorkspaceTrust.ts";
 
 const writeErrorMock = vi.hoisted(() => vi.fn<(message: string) => void>());
 
@@ -22,6 +26,20 @@ vi.mock(import("./util.ts"), async (importOriginal) => {
 describe(cursorProjectSlug, () => {
   it("strips the leading slash and replaces path separators with dashes", () => {
     expect(cursorProjectSlug("/Users/dev/repo/worktree")).toBe("Users-dev-repo-worktree");
+  });
+});
+
+describe(codexProjectTableHeader, () => {
+  it("quotes the absolute workspace path for Codex config.toml", () => {
+    expect(codexProjectTableHeader("/Users/dev/repo-team-1")).toBe(
+      '[projects."/Users/dev/repo-team-1"]',
+    );
+  });
+
+  it("escapes backslashes and double quotes in workspace paths", () => {
+    expect(codexProjectTableHeader(String.raw`/tmp\weird"path`)).toBe(
+      String.raw`[projects."/tmp\\weird\"path"]`,
+    );
   });
 });
 
@@ -42,6 +60,14 @@ describe(seedAgentWorkspaceTrust, () => {
       string,
       unknown
     >;
+  }
+
+  function readCodexConfig(): string {
+    return readFileSync(path.join(fakeHome, ".codex", "config.toml"), "utf8");
+  }
+
+  function codexConfigPath(): string {
+    return path.join(fakeHome, ".codex", "config.toml");
   }
 
   it("creates a Cursor workspace trust marker for a new path", () => {
@@ -199,14 +225,170 @@ describe(seedAgentWorkspaceTrust, () => {
     expect(marker.workspacePath).not.toBe(path.resolve(worktreeDir));
   });
 
-  it("is a no-op for codex and unknown agents", () => {
-    const workspacePath = path.join(fakeHome, "noop-ws");
+  it("trusts a Codex workspace in config.toml for a new path", () => {
+    const workspacePath = path.join(fakeHome, "codex-ws");
 
     seedAgentWorkspaceTrust({
       agentCommandName: "codex",
       workspacePath,
       homeDir: fakeHome,
     });
+
+    const absolutePath = path.resolve(workspacePath);
+    expect(readCodexConfig()).toBe(
+      `${codexProjectTableHeader(absolutePath)}\ntrust_level = "trusted"\n`,
+    );
+  });
+
+  it("is idempotent when Codex already trusts the workspace", () => {
+    const workspacePath = path.resolve(fakeHome, "codex-trusted");
+    const existing = `[features]\nhooks = true\n\n${codexProjectTableHeader(workspacePath)}\ntrust_level = "trusted"\n`;
+    mkdirSync(path.join(fakeHome, ".codex"), { recursive: true });
+    writeFileSync(codexConfigPath(), existing, "utf8");
+
+    seedAgentWorkspaceTrust({
+      agentCommandName: "codex",
+      workspacePath,
+      homeDir: fakeHome,
+    });
+
+    expect(readCodexConfig()).toBe(existing);
+  });
+
+  it("preserves unrelated Codex config.toml settings", () => {
+    const workspacePath = path.join(fakeHome, "codex-new");
+    mkdirSync(path.join(fakeHome, ".codex"), { recursive: true });
+    writeFileSync(codexConfigPath(), "[features]\nhooks = true\n", "utf8");
+
+    seedAgentWorkspaceTrust({
+      agentCommandName: "codex",
+      workspacePath,
+      homeDir: fakeHome,
+    });
+
+    expect(readCodexConfig()).toBe(
+      `[features]\nhooks = true\n${codexProjectTableHeader(path.resolve(workspacePath))}\ntrust_level = "trusted"\n`,
+    );
+  });
+
+  it("upgrades an existing Codex project section to trusted", () => {
+    const workspacePath = path.resolve(fakeHome, "codex-upgrade");
+    mkdirSync(path.join(fakeHome, ".codex"), { recursive: true });
+    writeFileSync(
+      codexConfigPath(),
+      `${codexProjectTableHeader(workspacePath)}\napproval_policy = "on-request"\n`,
+      "utf8",
+    );
+
+    seedAgentWorkspaceTrust({
+      agentCommandName: "codex",
+      workspacePath,
+      homeDir: fakeHome,
+    });
+
+    expect(readCodexConfig()).toBe(
+      `${codexProjectTableHeader(workspacePath)}\napproval_policy = "on-request"\ntrust_level = "trusted"\n`,
+    );
+  });
+
+  it("replaces a non-trusted Codex trust_level", () => {
+    const workspacePath = path.resolve(fakeHome, "codex-replace");
+    mkdirSync(path.join(fakeHome, ".codex"), { recursive: true });
+    writeFileSync(
+      codexConfigPath(),
+      `${codexProjectTableHeader(workspacePath)}\ntrust_level = "untrusted"\n`,
+      "utf8",
+    );
+
+    seedAgentWorkspaceTrust({
+      agentCommandName: "codex",
+      workspacePath,
+      homeDir: fakeHome,
+    });
+
+    expect(readCodexConfig()).toBe(
+      `${codexProjectTableHeader(workspacePath)}\ntrust_level = "trusted"\n`,
+    );
+  });
+
+  it("updates trust inside a Codex project section when later sections follow", () => {
+    const workspacePath = path.resolve(fakeHome, "codex-middle");
+    mkdirSync(path.join(fakeHome, ".codex"), { recursive: true });
+    writeFileSync(
+      codexConfigPath(),
+      `${codexProjectTableHeader(workspacePath)}\ntrust_level = "untrusted"\n[features]\nhooks = true\n`,
+      "utf8",
+    );
+
+    seedAgentWorkspaceTrust({
+      agentCommandName: "codex",
+      workspacePath,
+      homeDir: fakeHome,
+    });
+
+    expect(readCodexConfig()).toBe(
+      `${codexProjectTableHeader(workspacePath)}\ntrust_level = "trusted"\n[features]\nhooks = true\n`,
+    );
+  });
+
+  it("appends a newline before a new Codex project section when config omits a trailing newline", () => {
+    const workspacePath = path.join(fakeHome, "codex-no-nl");
+    mkdirSync(path.join(fakeHome, ".codex"), { recursive: true });
+    writeFileSync(codexConfigPath(), "[features]\nhooks = true", "utf8");
+
+    seedAgentWorkspaceTrust({
+      agentCommandName: "codex",
+      workspacePath,
+      homeDir: fakeHome,
+    });
+
+    expect(readCodexConfig()).toBe(
+      `[features]\nhooks = true\n${codexProjectTableHeader(path.resolve(workspacePath))}\ntrust_level = "trusted"\n`,
+    );
+  });
+
+  it("adds trust_level to a Codex project section that omits a trailing newline", () => {
+    const workspacePath = path.resolve(fakeHome, "codex-section-no-nl");
+    mkdirSync(path.join(fakeHome, ".codex"), { recursive: true });
+    writeFileSync(
+      codexConfigPath(),
+      `${codexProjectTableHeader(workspacePath)}\napproval_policy = "on-request"`,
+      "utf8",
+    );
+
+    seedAgentWorkspaceTrust({
+      agentCommandName: "codex",
+      workspacePath,
+      homeDir: fakeHome,
+    });
+
+    expect(readCodexConfig()).toBe(
+      `${codexProjectTableHeader(workspacePath)}\napproval_policy = "on-request"\ntrust_level = "trusted"\n`,
+    );
+  });
+
+  it("seeds from a fresh codex config when an existing config.toml cannot be read", () => {
+    const workspacePath = path.join(fakeHome, "codex-unreadable");
+    mkdirSync(path.join(fakeHome, ".codex"), { recursive: true });
+    writeFileSync(codexConfigPath(), "[features]\nhooks = true\n", "utf8");
+    chmodSync(codexConfigPath(), 0o000);
+
+    seedAgentWorkspaceTrust({
+      agentCommandName: "codex",
+      workspacePath,
+      homeDir: fakeHome,
+    });
+
+    chmodSync(codexConfigPath(), 0o600);
+    expect(readCodexConfig()).toBe(
+      `${codexProjectTableHeader(path.resolve(workspacePath))}\ntrust_level = "trusted"\n`,
+    );
+    expect(writeErrorMock).toHaveBeenCalledWith(expect.stringContaining("could not read"));
+  });
+
+  it("is a no-op for unknown agents", () => {
+    const workspacePath = path.join(fakeHome, "noop-ws");
+
     seedAgentWorkspaceTrust({
       agentCommandName: "unknown-agent",
       workspacePath,
@@ -215,6 +397,7 @@ describe(seedAgentWorkspaceTrust, () => {
 
     expect(existsSync(path.join(fakeHome, ".claude.json"))).toBe(false);
     expect(existsSync(path.join(fakeHome, ".cursor"))).toBe(false);
+    expect(existsSync(codexConfigPath())).toBe(false);
   });
 
   it("rejects non-object claude.json roots", () => {
@@ -266,6 +449,23 @@ describe(seedAgentWorkspaceTrust, () => {
     chmodSync(fakeHome, 0o700);
     expect(writeErrorMock).toHaveBeenCalledWith(
       expect.stringContaining("could not seed Claude workspace trust"),
+    );
+  });
+
+  it("logs when codex config.toml cannot be written", () => {
+    const workspacePath = path.join(fakeHome, "codex-write-fail");
+    mkdirSync(path.join(fakeHome, ".codex"), { recursive: true });
+    chmodSync(path.join(fakeHome, ".codex"), 0o500);
+
+    seedAgentWorkspaceTrust({
+      agentCommandName: "codex",
+      workspacePath,
+      homeDir: fakeHome,
+    });
+
+    chmodSync(path.join(fakeHome, ".codex"), 0o700);
+    expect(writeErrorMock).toHaveBeenCalledWith(
+      expect.stringContaining("could not seed Codex workspace trust"),
     );
   });
 
