@@ -64,12 +64,13 @@ export default {
     default: "claude",
     // `definitions` is the enabled launch profile set. Built-in keys can use
     // `{}` to opt into the shipped command/color/usage preset. Add
-    // `codex: {}` if you want both shipped agents. Agent names are launch
-    // profiles: add custom entries such as `claude-fable` or `claude-opus` to
-    // pin a model per task, then tag tasks with `agent-<name>`.
+    // `codex: {}` or `composer: {}` for the other shipped agents. Agent names
+    // are launch profiles: add custom entries such as `claude-fable` or
+    // `claude-opus` to pin a model per task, then tag tasks with `agent-<name>`.
     definitions: {
       claude: {},
       // codex: {},
+      // composer: {}, // Cursor's cursor-agent running composer-2.5
       // "claude-fable": {
       //   cmd: "claude --model claude-fable-5 --permission-mode auto",
       //   color: "#C15F3C",
