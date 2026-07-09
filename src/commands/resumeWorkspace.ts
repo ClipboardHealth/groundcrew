@@ -1,7 +1,14 @@
+import path from "node:path";
+
 import { fetchResolvedIssue } from "../lib/adapters/linear/fetch.ts";
 import { getLinearClient } from "../lib/adapters/linear/client.ts";
 import { isLinearEnabled, sourcesFromConfig } from "../lib/buildSources.ts";
-import { type AgentDefinition, loadConfig, type ResolvedConfig } from "../lib/config.ts";
+import {
+  type AgentDefinition,
+  loadConfig,
+  worktreeBaseDir,
+  type ResolvedConfig,
+} from "../lib/config.ts";
 import { seedAgentWorkspaceTrust } from "../lib/agentWorkspaceTrust.ts";
 import { composeAgentLaunch, openAgentWorkspace, prepareAgentLaunch } from "../lib/agentLaunch.ts";
 import {
@@ -252,7 +259,8 @@ export async function resumeWorkspace(
         : undefined;
     seedAgentWorkspaceTrust({
       agentCommandName: inferAgentCommandName(launchDefinition.cmd),
-      workspacePath: launchDir,
+      launchDir,
+      trustRootPath: path.resolve(worktreeBaseDir(config)),
     });
     ({ launchCommand, srtSettingsDir } = composeAgentLaunch({
       runner,

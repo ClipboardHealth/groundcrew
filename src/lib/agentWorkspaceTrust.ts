@@ -26,11 +26,23 @@ interface CursorWorkspaceTrustedMarker {
 
 export interface SeedAgentWorkspaceTrustInput {
   agentCommandName: string;
-  workspacePath: string;
+  /** Exact cwd at agent launch. Required for Codex, which matches trust by exact path. */
+  launchDir: string;
+  /** Parent worktree root (`worktreeBaseDir`). Used for Cursor and Claude parent inheritance. */
+  trustRootPath: string;
   /** Defaults to `os.homedir()`. Injected in tests. */
   homeDir?: string;
   /** Test seam for `os.homedir()` failures. Not used by production callers. */
   readHome?: () => string;
+}
+
+/** Cursor and Claude inherit parent trust; Codex requires the exact launch cwd. */
+export function resolveAgentTrustPath(input: {
+  agentCommandName: string;
+  launchDir: string;
+  trustRootPath: string;
+}): string {
+  return input.agentCommandName === "codex" ? input.launchDir : input.trustRootPath;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -251,7 +263,8 @@ export function seedAgentWorkspaceTrust(input: SeedAgentWorkspaceTrustInput): vo
     return;
   }
 
-  const { agentCommandName, workspacePath } = input;
+  const { agentCommandName } = input;
+  const workspacePath = resolveAgentTrustPath(input);
   if (agentCommandName === "cursor-agent") {
     seedCursorWorkspaceTrust(workspacePath, home);
     return;

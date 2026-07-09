@@ -421,7 +421,8 @@ describe(openWorkspace, () => {
     });
     expect(seedAgentWorkspaceTrustMock).toHaveBeenCalledWith({
       agentCommandName: "claude",
-      workspacePath: "/work/acme/widgets-pr-42",
+      launchDir: "/work/acme/widgets-pr-42",
+      trustRootPath: "/work",
     });
   });
 

@@ -1,5 +1,6 @@
 import { rmSync } from "node:fs";
-import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
+import path from "node:path";
+import { loadConfig, worktreeBaseDir, type ResolvedConfig } from "../lib/config.ts";
 import { seedAgentWorkspaceTrust } from "../lib/agentWorkspaceTrust.ts";
 import { composeAgentLaunch, openAgentWorkspace, prepareAgentLaunch } from "../lib/agentLaunch.ts";
 import { inferAgentCommandName, workerEnvironmentForTask } from "../lib/launchCommand.ts";
@@ -161,7 +162,8 @@ export async function setupWorkspace(
         : undefined;
     seedAgentWorkspaceTrust({
       agentCommandName: inferAgentCommandName(definition.cmd),
-      workspacePath: launchDir,
+      launchDir,
+      trustRootPath: path.resolve(worktreeBaseDir(config)),
     });
     const { launchCommand, srtSettingsDir: stagedSrtSettingsDir } = composeAgentLaunch({
       runner,

@@ -14,6 +14,7 @@ import path from "node:path";
 import {
   codexProjectTableHeader,
   cursorProjectSlug,
+  resolveAgentTrustPath,
   seedAgentWorkspaceTrust,
 } from "./agentWorkspaceTrust.ts";
 
@@ -41,6 +42,35 @@ describe(codexProjectTableHeader, () => {
     expect(codexProjectTableHeader(String.raw`/tmp\weird"path`)).toBe(
       String.raw`[projects."/tmp\\weird\"path"]`,
     );
+  });
+});
+
+describe(resolveAgentTrustPath, () => {
+  it("uses the parent trust root for Cursor and Claude", () => {
+    expect(
+      resolveAgentTrustPath({
+        agentCommandName: "cursor-agent",
+        launchDir: "/worktrees/repo-team-1/services/api",
+        trustRootPath: "/worktrees",
+      }),
+    ).toBe("/worktrees");
+    expect(
+      resolveAgentTrustPath({
+        agentCommandName: "claude",
+        launchDir: "/worktrees/repo-team-1/services/api",
+        trustRootPath: "/worktrees",
+      }),
+    ).toBe("/worktrees");
+  });
+
+  it("uses the exact launch cwd for Codex", () => {
+    expect(
+      resolveAgentTrustPath({
+        agentCommandName: "codex",
+        launchDir: "/worktrees/repo-team-1/services/api",
+        trustRootPath: "/worktrees",
+      }),
+    ).toBe("/worktrees/repo-team-1/services/api");
   });
 });
 
@@ -76,7 +106,8 @@ describe(seedAgentWorkspaceTrust, () => {
 
     seedAgentWorkspaceTrust({
       agentCommandName: "cursor-agent",
-      workspacePath,
+      launchDir: workspacePath,
+      trustRootPath: workspacePath,
       homeDir: fakeHome,
     });
 
@@ -110,7 +141,8 @@ describe(seedAgentWorkspaceTrust, () => {
 
     seedAgentWorkspaceTrust({
       agentCommandName: "cursor-agent",
-      workspacePath,
+      launchDir: workspacePath,
+      trustRootPath: workspacePath,
       homeDir: fakeHome,
     });
 
@@ -122,7 +154,8 @@ describe(seedAgentWorkspaceTrust, () => {
 
     seedAgentWorkspaceTrust({
       agentCommandName: "claude",
-      workspacePath,
+      launchDir: workspacePath,
+      trustRootPath: workspacePath,
       homeDir: fakeHome,
     });
 
@@ -149,7 +182,8 @@ describe(seedAgentWorkspaceTrust, () => {
 
     seedAgentWorkspaceTrust({
       agentCommandName: "claude",
-      workspacePath,
+      launchDir: workspacePath,
+      trustRootPath: workspacePath,
       homeDir: fakeHome,
     });
 
@@ -166,7 +200,8 @@ describe(seedAgentWorkspaceTrust, () => {
 
     seedAgentWorkspaceTrust({
       agentCommandName: "claude",
-      workspacePath,
+      launchDir: workspacePath,
+      trustRootPath: workspacePath,
       homeDir: fakeHome,
     });
 
@@ -191,7 +226,8 @@ describe(seedAgentWorkspaceTrust, () => {
 
     seedAgentWorkspaceTrust({
       agentCommandName: "claude",
-      workspacePath,
+      launchDir: workspacePath,
+      trustRootPath: workspacePath,
       homeDir: fakeHome,
     });
 
@@ -202,14 +238,15 @@ describe(seedAgentWorkspaceTrust, () => {
     expect(projects[path.resolve(workspacePath)]?.["hasTrustDialogAccepted"]).toBe(true);
   });
 
-  it("seeds the provided workspace path when it differs from the worktree root", () => {
-    const worktreeDir = path.join(fakeHome, "repo-team-1");
-    const workingDir = path.join(worktreeDir, "services", "api");
-    mkdirSync(workingDir, { recursive: true });
+  it("seeds the parent trust root for Cursor when launch cwd is a monorepo subdir", () => {
+    const trustRootPath = path.join(fakeHome, "worktrees");
+    const launchDir = path.join(trustRootPath, "repo-team-1", "services", "api");
+    mkdirSync(launchDir, { recursive: true });
 
     seedAgentWorkspaceTrust({
       agentCommandName: "cursor-agent",
-      workspacePath: workingDir,
+      launchDir,
+      trustRootPath,
       homeDir: fakeHome,
     });
 
@@ -217,13 +254,30 @@ describe(seedAgentWorkspaceTrust, () => {
       fakeHome,
       ".cursor",
       "projects",
-      cursorProjectSlug(workingDir),
+      cursorProjectSlug(trustRootPath),
       ".workspace-trusted",
     );
     expect(existsSync(markerPath)).toBe(true);
     const marker = JSON.parse(readFileSync(markerPath, "utf8")) as { workspacePath: string };
-    expect(marker.workspacePath).toBe(path.resolve(workingDir));
-    expect(marker.workspacePath).not.toBe(path.resolve(worktreeDir));
+    expect(marker.workspacePath).toBe(path.resolve(trustRootPath));
+    expect(marker.workspacePath).not.toBe(path.resolve(launchDir));
+  });
+
+  it("seeds the exact launch cwd for Codex when it is a monorepo subdir", () => {
+    const trustRootPath = path.join(fakeHome, "worktrees");
+    const launchDir = path.join(trustRootPath, "repo-team-1", "services", "api");
+    mkdirSync(launchDir, { recursive: true });
+
+    seedAgentWorkspaceTrust({
+      agentCommandName: "codex",
+      launchDir,
+      trustRootPath,
+      homeDir: fakeHome,
+    });
+
+    expect(readCodexConfig()).toBe(
+      `${codexProjectTableHeader(path.resolve(launchDir))}\ntrust_level = "trusted"\n`,
+    );
   });
 
   it("trusts a Codex workspace in config.toml for a new path", () => {
@@ -231,7 +285,8 @@ describe(seedAgentWorkspaceTrust, () => {
 
     seedAgentWorkspaceTrust({
       agentCommandName: "codex",
-      workspacePath,
+      launchDir: workspacePath,
+      trustRootPath: workspacePath,
       homeDir: fakeHome,
     });
 
@@ -250,7 +305,8 @@ describe(seedAgentWorkspaceTrust, () => {
 
     seedAgentWorkspaceTrust({
       agentCommandName: "codex",
-      workspacePath,
+      launchDir: workspacePath,
+      trustRootPath: workspacePath,
       homeDir: fakeHome,
     });
 
@@ -265,7 +321,8 @@ describe(seedAgentWorkspaceTrust, () => {
 
     seedAgentWorkspaceTrust({
       agentCommandName: "codex",
-      workspacePath,
+      launchDir: workspacePath,
+      trustRootPath: workspacePath,
       homeDir: fakeHome,
     });
 
@@ -285,7 +342,8 @@ describe(seedAgentWorkspaceTrust, () => {
 
     seedAgentWorkspaceTrust({
       agentCommandName: "codex",
-      workspacePath,
+      launchDir: workspacePath,
+      trustRootPath: workspacePath,
       homeDir: fakeHome,
     });
 
@@ -305,7 +363,8 @@ describe(seedAgentWorkspaceTrust, () => {
 
     seedAgentWorkspaceTrust({
       agentCommandName: "codex",
-      workspacePath,
+      launchDir: workspacePath,
+      trustRootPath: workspacePath,
       homeDir: fakeHome,
     });
 
@@ -325,7 +384,8 @@ describe(seedAgentWorkspaceTrust, () => {
 
     seedAgentWorkspaceTrust({
       agentCommandName: "codex",
-      workspacePath,
+      launchDir: workspacePath,
+      trustRootPath: workspacePath,
       homeDir: fakeHome,
     });
 
@@ -341,7 +401,8 @@ describe(seedAgentWorkspaceTrust, () => {
 
     seedAgentWorkspaceTrust({
       agentCommandName: "codex",
-      workspacePath,
+      launchDir: workspacePath,
+      trustRootPath: workspacePath,
       homeDir: fakeHome,
     });
 
@@ -361,7 +422,8 @@ describe(seedAgentWorkspaceTrust, () => {
 
     seedAgentWorkspaceTrust({
       agentCommandName: "codex",
-      workspacePath,
+      launchDir: workspacePath,
+      trustRootPath: workspacePath,
       homeDir: fakeHome,
     });
 
@@ -378,7 +440,8 @@ describe(seedAgentWorkspaceTrust, () => {
 
     seedAgentWorkspaceTrust({
       agentCommandName: "codex",
-      workspacePath,
+      launchDir: workspacePath,
+      trustRootPath: workspacePath,
       homeDir: fakeHome,
     });
 
@@ -394,7 +457,8 @@ describe(seedAgentWorkspaceTrust, () => {
 
     seedAgentWorkspaceTrust({
       agentCommandName: "unknown-agent",
-      workspacePath,
+      launchDir: workspacePath,
+      trustRootPath: workspacePath,
       homeDir: fakeHome,
     });
 
@@ -409,7 +473,8 @@ describe(seedAgentWorkspaceTrust, () => {
 
     seedAgentWorkspaceTrust({
       agentCommandName: "claude",
-      workspacePath,
+      launchDir: workspacePath,
+      trustRootPath: workspacePath,
       homeDir: fakeHome,
     });
 
@@ -428,7 +493,8 @@ describe(seedAgentWorkspaceTrust, () => {
 
     seedAgentWorkspaceTrust({
       agentCommandName: "claude",
-      workspacePath,
+      launchDir: workspacePath,
+      trustRootPath: workspacePath,
       homeDir: fakeHome,
     });
 
@@ -445,7 +511,8 @@ describe(seedAgentWorkspaceTrust, () => {
 
     seedAgentWorkspaceTrust({
       agentCommandName: "claude",
-      workspacePath,
+      launchDir: workspacePath,
+      trustRootPath: workspacePath,
       homeDir: fakeHome,
     });
 
@@ -462,7 +529,8 @@ describe(seedAgentWorkspaceTrust, () => {
 
     seedAgentWorkspaceTrust({
       agentCommandName: "cursor-agent",
-      workspacePath,
+      launchDir: workspacePath,
+      trustRootPath: workspacePath,
       homeDir: fakeHome,
     });
 
@@ -479,7 +547,8 @@ describe(seedAgentWorkspaceTrust, () => {
 
     seedAgentWorkspaceTrust({
       agentCommandName: "codex",
-      workspacePath,
+      launchDir: workspacePath,
+      trustRootPath: workspacePath,
       homeDir: fakeHome,
     });
 
@@ -492,7 +561,8 @@ describe(seedAgentWorkspaceTrust, () => {
   it("logs and skips seeding when home cannot be resolved", () => {
     seedAgentWorkspaceTrust({
       agentCommandName: "claude",
-      workspacePath: "/tmp/ws",
+      launchDir: "/tmp/ws",
+      trustRootPath: "/tmp",
       readHome: () => {
         throw new Error("no home");
       },
