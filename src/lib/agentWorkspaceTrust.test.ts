@@ -15,6 +15,7 @@ import {
   codexProjectTableHeader,
   cursorProjectSlug,
   resolveAgentTrustPath,
+  resolveSeedTrustPaths,
   seedAgentWorkspaceTrust,
 } from "./agentWorkspaceTrust.ts";
 
@@ -71,6 +72,34 @@ describe(resolveAgentTrustPath, () => {
         trustRootPath: "/worktrees",
       }),
     ).toBe("/worktrees/repo-team-1/services/api");
+  });
+});
+
+describe(resolveSeedTrustPaths, () => {
+  it("defaults blank launch and trust-root paths to cwd", () => {
+    expect(
+      resolveSeedTrustPaths({
+        launchDir: "",
+        trustRootPath: "",
+        cwd: "/tmp/test-ws",
+      }),
+    ).toEqual({
+      launchDir: "/tmp/test-ws",
+      trustRootPath: "/tmp/test-ws",
+    });
+  });
+
+  it("uses explicit paths when provided", () => {
+    expect(
+      resolveSeedTrustPaths({
+        launchDir: "/tmp/child",
+        trustRootPath: "/tmp/parent",
+        cwd: "/tmp/ignored",
+      }),
+    ).toEqual({
+      launchDir: "/tmp/child",
+      trustRootPath: "/tmp/parent",
+    });
   });
 });
 

@@ -45,6 +45,26 @@ export function resolveAgentTrustPath(input: {
   return input.agentCommandName === "codex" ? input.launchDir : input.trustRootPath;
 }
 
+function resolveOptionalPath(value: string | undefined, fallback: string): string {
+  if (value === undefined || value.trim() === "") {
+    return path.resolve(fallback);
+  }
+  return path.resolve(value);
+}
+
+/** Resolve `seed` CLI paths: blank values fall back to `cwd` (usually the directory you run from). */
+export function resolveSeedTrustPaths(input: {
+  launchDir?: string;
+  trustRootPath?: string;
+  cwd?: string;
+}): { launchDir: string; trustRootPath: string } {
+  const cwd = input.cwd ?? process.cwd();
+  return {
+    launchDir: resolveOptionalPath(input.launchDir, cwd),
+    trustRootPath: resolveOptionalPath(input.trustRootPath, cwd),
+  };
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
