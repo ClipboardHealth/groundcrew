@@ -1,7 +1,9 @@
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 
+import { seedAgentWorkspaceTrust } from "../lib/agentWorkspaceTrust.ts";
 import { composeAgentLaunch, openAgentWorkspace, prepareAgentLaunch } from "../lib/agentLaunch.ts";
+import { inferAgentCommandName } from "../lib/launchCommand.ts";
 import { loadConfig, repositoryBaseDir, type ResolvedConfig } from "../lib/config.ts";
 import { resolvePullRequest } from "../lib/pullRequests.ts";
 import { resolvePrepareWorktreeCommand } from "../lib/repositoryHooks.ts";
@@ -249,6 +251,10 @@ export async function openWorkspace(
     });
     const secretsFile =
       prepareWorktreeCommand === undefined ? undefined : stageBuildSecrets(stagedPrompt.directory);
+    seedAgentWorkspaceTrust({
+      agentCommandName: inferAgentCommandName(definition.cmd),
+      workspacePath: launchDir,
+    });
     let launchCommand: string;
     ({ launchCommand, srtSettingsDir } = composeAgentLaunch({
       runner,

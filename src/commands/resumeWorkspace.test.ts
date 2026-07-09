@@ -3,6 +3,8 @@ import type * as nodeFs from "node:fs";
 
 import { ensureClearance, type SafehouseCmuxIntegration } from "@clipboard-health/clearance";
 
+import { seedAgentWorkspaceTrust } from "../lib/agentWorkspaceTrust.ts";
+import type * as agentWorkspaceTrustModule from "../lib/agentWorkspaceTrust.ts";
 import { fetchResolvedIssue } from "../lib/adapters/linear/fetch.ts";
 import { getLinearClient } from "../lib/adapters/linear/client.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
@@ -86,6 +88,10 @@ vi.mock(import("../lib/worktrees.ts"), async (importOriginal) => {
     },
   };
 });
+vi.mock(import("../lib/agentWorkspaceTrust.ts"), async (importOriginal) => {
+  const actual = await importOriginal<typeof agentWorkspaceTrustModule>();
+  return { ...actual, seedAgentWorkspaceTrust: vi.fn<typeof seedAgentWorkspaceTrust>() };
+});
 const runCommandMock = vi.hoisted(() =>
   vi.fn<(cmd: string, arguments_: readonly string[]) => string>(),
 );
@@ -115,6 +121,7 @@ const detectHostMock = vi.mocked(detectHostCapabilities);
 const readRunStateMock = vi.mocked(readRunState);
 const recordRunStateMock = vi.mocked(recordRunState);
 const getLinearClientMock = vi.mocked(getLinearClient);
+const seedAgentWorkspaceTrustMock = vi.mocked(seedAgentWorkspaceTrust);
 const workspacesOpenMock = vi.mocked(workspaces.open);
 const workspacesProbeMock = vi.mocked(workspaces.probe);
 const findByTaskMock = vi.mocked(worktrees.findByTask);
@@ -283,6 +290,10 @@ describe(resumeWorkspace, () => {
       state: "resumed",
       resumeCount: 2,
       reason: "wrong direction",
+    });
+    expect(seedAgentWorkspaceTrustMock).toHaveBeenCalledWith({
+      agentCommandName: "claude",
+      workspacePath: "/work/repo-a-team-1",
     });
   });
 

@@ -3,6 +3,8 @@ import type * as nodeFs from "node:fs";
 
 import { ensureClearance } from "@clipboard-health/clearance";
 
+import { seedAgentWorkspaceTrust } from "../lib/agentWorkspaceTrust.ts";
+import type * as agentWorkspaceTrustModule from "../lib/agentWorkspaceTrust.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
 import { resolvePullRequest } from "../lib/pullRequests.ts";
@@ -86,6 +88,10 @@ vi.mock(import("../lib/worktrees.ts"), async (importOriginal) => {
     },
   };
 });
+vi.mock(import("../lib/agentWorkspaceTrust.ts"), async (importOriginal) => {
+  const actual = await importOriginal<typeof agentWorkspaceTrustModule>();
+  return { ...actual, seedAgentWorkspaceTrust: vi.fn<typeof seedAgentWorkspaceTrust>() };
+});
 const runCommandMock = vi.hoisted(() =>
   vi.fn<(cmd: string, arguments_: readonly string[]) => string>(),
 );
@@ -114,6 +120,7 @@ const resolvePrepareWorktreeCommandMock = vi.mocked(resolvePrepareWorktreeComman
 const readRunStateMock = vi.mocked(readRunState);
 const recordRunStateMock = vi.mocked(recordRunState);
 const workspacesOpenMock = vi.mocked(workspaces.open);
+const seedAgentWorkspaceTrustMock = vi.mocked(seedAgentWorkspaceTrust);
 const workspacesProbeMock = vi.mocked(workspaces.probe);
 const worktreeOpenMock = vi.mocked(worktrees.open);
 const teardownMock = vi.mocked(worktrees.teardown);
@@ -411,6 +418,10 @@ describe(openWorkspace, () => {
       state: "running",
       title: "Fix the thing",
       url: "https://github.com/acme/widgets/pull/42",
+    });
+    expect(seedAgentWorkspaceTrustMock).toHaveBeenCalledWith({
+      agentCommandName: "claude",
+      workspacePath: "/work/acme/widgets-pr-42",
     });
   });
 

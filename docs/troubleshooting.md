@@ -52,6 +52,10 @@ If the task intentionally has no PR, mark it complete with `crew task done <task
 
 Groundcrew creates isolated per-task worktrees for unattended runs, so the shipped `claude` command is `claude --permission-mode auto` to let Claude proceed without stopping for clarifying questions while keeping its built-in safety prompts intact. Override `agents.definitions.claude.cmd` for `bypassPermissions` if you need to suppress tool-permission prompts entirely, or for a stricter mode.
 
+## Workspace Trust Is Seeded Automatically
+
+Groundcrew provisions each worktree and seeds workspace trust for `claude` and `cursor-agent` before the agent starts, so unattended launches do not stall on first-run trust dialogs. There is no config toggle: if groundcrew created the worktree, trust is recorded in the agent's local store (`~/.claude.json` for Claude, `~/.cursor/projects/<slug>/.workspace-trusted` for Cursor) with `trustMethod: "groundcrew-auto-trust"`. This applies only to groundcrew-provisioned worktrees at launch time; it does not trust arbitrary paths you open manually. Permission mode (`claude --permission-mode auto`) is separate from workspace trust.
+
 ## Doctor's Command Introspection Is Shallow
 
 Doctor reports the resolved local runner and whether its prerequisites are met, then tokenizes agent `cmd` and checks the first two non-flag tokens against PATH. Boolean flags without values, env-var assignments (`FOO=1`), shell pipelines, and subshells are not parsed. When `local.runner` is `"none"`, doctor surfaces a single WARNING line.
