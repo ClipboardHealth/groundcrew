@@ -468,6 +468,31 @@ describe(doctor, () => {
     );
   });
 
+  it("hints how to stop probing a missing composer CLI (cursor-agent)", async () => {
+    loadConfigMock.mockResolvedValue(
+      makeConfig({
+        default: "composer",
+        definitions: {
+          composer: {
+            cmd: "cursor-agent --model composer-2.5 --sandbox disabled --force",
+            color: "#8B5CF6",
+          },
+        },
+      }),
+    );
+    mockWhichFailure("cursor-agent", "not installed");
+
+    const actual = await doctor();
+
+    expect(actual).toBe(false);
+    // composer's binary (cursor-agent) differs from its agent name, so the
+    // hint must key on the binary. Assert the hint substring only, to avoid
+    // reproducing the em-dash separator format() inserts.
+    expect(consoleLog.output()).toContain(
+      "install cursor-agent or remove `agents.definitions.composer` from crew.config.ts",
+    );
+  });
+
   it("treats an empty `which` result as missing", async () => {
     loadConfigMock.mockResolvedValue(makeConfig());
     mockWhichEmpty("cmux");

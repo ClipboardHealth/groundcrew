@@ -25,7 +25,16 @@ import { resolveWorkspaceKind, type WorkspaceResolution } from "../lib/workspace
 // Tokenization stops after this many non-flag tokens. Two is enough to
 // catch wrapper + wrapped CLI commands like `safehouse claude --foo`.
 const MAX_TOKENS_PER_CMD = 2;
-const BUILT_IN_AGENT_NAMES = ["claude", "codex"] as const;
+const BUILT_IN_AGENT_NAMES = ["claude", "codex", "composer"] as const;
+
+// Primary CLI binary probed on PATH for each built-in agent. Usually equal to
+// the agent name, but composer launches Cursor's `cursor-agent`, so the
+// missing-CLI hint must key on the binary rather than the agent name.
+const BUILT_IN_AGENT_BINARIES: Record<(typeof BUILT_IN_AGENT_NAMES)[number], string> = {
+  claude: "claude",
+  codex: "codex",
+  composer: "cursor-agent",
+};
 
 const CONFIG_SOURCE_LABELS: Record<ConfigSourceKind, string> = {
   env: "GROUNDCREW_CONFIG",
@@ -237,17 +246,17 @@ function gatherToolTargets(config: ResolvedConfig): ToolCheckTarget[] {
 }
 
 function agentCliHint(agentName: string, token: string): string | undefined {
-  if (token !== agentName) {
+  if (!isBuiltInAgentName(agentName)) {
     return undefined;
   }
-  if (!isBuiltInAgentName(agentName)) {
+  if (token !== BUILT_IN_AGENT_BINARIES[agentName]) {
     return undefined;
   }
   return `install ${token} or remove \`agents.definitions.${agentName}\` from crew.config.ts`;
 }
 
 function isBuiltInAgentName(value: string): value is (typeof BUILT_IN_AGENT_NAMES)[number] {
-  return value === "claude" || value === "codex";
+  return value === "claude" || value === "codex" || value === "composer";
 }
 
 function format(check: Check): string {

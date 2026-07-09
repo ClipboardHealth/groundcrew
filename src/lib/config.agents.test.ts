@@ -75,7 +75,7 @@ describe("loadConfig built-in agent presets", () => {
     const actual = await loadConfig();
 
     const { composer } = actual.agents.definitions;
-    expect(composer?.cmd).toBe("cursor-agent --force --sandbox disabled --model composer-2.5");
+    expect(composer?.cmd).toBe("cursor-agent --model composer-2.5 --sandbox disabled --force");
     expect(composer?.color).toBe("#8B5CF6");
     expect(composer?.resumeArgs).toBe("--continue");
     // composer ships without codexbar usage gating.

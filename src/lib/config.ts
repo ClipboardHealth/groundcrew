@@ -529,7 +529,12 @@ const BUILT_IN_AGENT_DEFINITIONS: Record<string, AgentDefinition> = {
     // auto-approves commands; `--sandbox disabled` hands isolation to the
     // groundcrew runner (mirroring codex's bypass), so the runner stays the
     // sole boundary rather than nesting Cursor's own sandbox inside it.
-    cmd: "cursor-agent --force --sandbox disabled --model composer-2.5",
+    //
+    // Flag order matters for `crew doctor`: its PATH-probe tokenizer assumes
+    // every flag consumes the next token as its value, so a valueless boolean
+    // flag must come last. With `--force` trailing, the tokenizer resolves the
+    // command to `cursor-agent` alone instead of probing a phantom `disabled`.
+    cmd: "cursor-agent --model composer-2.5 --sandbox disabled --force",
     color: "#8B5CF6",
     // No `usage`: codexbar has no Cursor provider, so composer runs without
     // session-limit gating. `usage` is optional on AgentDefinition, so a
