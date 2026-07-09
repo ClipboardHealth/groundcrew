@@ -7,12 +7,18 @@
   "prerequisites": [
     {
       "bin": "jira",
-      "install": "brew install ankitpokhrel/jira-cli/jira-cli",
+      "install": {
+        "darwin": "brew install ankitpokhrel/jira-cli/jira-cli",
+        "linux": "sudo snap install jira-cli && sudo snap alias jira-cli jira"
+      },
       "setup": "jira init"
     },
     {
       "bin": "jq",
-      "install": "brew install jq"
+      "install": {
+        "darwin": "brew install jq",
+        "linux": "sudo apt-get install jq"
+      }
     }
   ],
   "secrets": [
@@ -24,6 +30,10 @@
     }
   ],
   "env": {
+    "JIRA_GROUNDCREW_JQL": "labels = groundcrew AND (statusCategory != Done OR (statusCategory = Done AND updated >= -7d))",
+    "JIRA_REVIEW_PATTERN": "In Review",
+    "JIRA_TODO_PATTERN": "New",
+    "JIRA_DEFAULT_AGENT": "",
     "JIRA_STATE_IN_PROGRESS": "In Progress",
     "JIRA_STATE_IN_REVIEW": "In Review",
     "JIRA_STATE_DONE": "Done"

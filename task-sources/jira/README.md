@@ -14,8 +14,20 @@ calls with a subcommand per operation:
 
 ## Prerequisites
 
-- [`jira` CLI](https://github.com/ankitpokhrel/jira-cli) — `brew install ankitpokhrel/jira-cli/jira-cli`, then `jira init`.
-- [`jq`](https://jqlang.github.io/jq/) — `brew install jq`.
+- [`jira` CLI](https://github.com/ankitpokhrel/jira-cli), then `jira init`:
+  - macOS: `brew install ankitpokhrel/jira-cli/jira-cli`
+  - Linux (Ubuntu): `sudo snap install jira-cli && sudo snap alias jira-cli jira`
+- [`jq`](https://jqlang.github.io/jq/):
+  - macOS: `brew install jq`
+  - Linux: `sudo apt-get install jq`
+
+The Ubuntu snap ships the binary as `jira-cli`, but the `snap alias` step drops a
+`jira` symlink on PATH, so `jira` is the single canonical command name on every
+platform. That is deliberate: the manifest keeps `bin: "jira"` and
+`setup: "jira init"`, and `jira.sh` keeps invoking the `jira` command verbatim,
+so there is no per-OS binary name to plumb through. If you install the snap without aliasing,
+the `jira` prerequisite probe fails and the setup screen surfaces this install
+hint, which now includes the alias step.
 
 > **Note:** `list` and `get` detect "no results" and "not found" by matching the
 > `jira` CLI's stderr wording (it exposes no machine-readable signal for either).
@@ -74,9 +86,10 @@ the token on per invocation.
    | `groundcrew`           | `groundcrew`                       | Opts the issue in. The default JQL fetches only issues carrying this label, so work is dispatched explicitly rather than every open issue being swept up. The label name is just a JQL convention — change the `labels = …` clause in `JIRA_GROUNDCREW_JQL` to use a different one.                            |
    | `repo:<name>`          | `repo:wild-horses`                 | Sets `repository: "wild-horses"`. Use a bare repository name when your config's `knownRepositories` lists it by name — no owner needed.                                                                                                                                                                        |
    | `repo:<Owner>__<name>` | `repo:ClipboardHealth__groundcrew` | Sets `repository: "ClipboardHealth/groundcrew"`. JIRA labels cannot contain `/`, so the slash is encoded as exactly **two** underscores (`__`). Every `__` decodes to `/`, so only two-component `Owner/name` repos are supported — a repository whose owner or name itself contains `__` cannot be expressed. |
-   | `agent:<name>`         | `agent:claude`                     | **Optional** — omit it to use `JIRA_DEFAULT_AGENT` (`claude` in the sample config). Only add this label to override the default for a specific issue.                                                                                                                                                          |
+   | `agent:<name>`         | `agent:claude`                     | Sets `agent: "claude"`. Omit it only when `JIRA_DEFAULT_AGENT` is configured separately; the shipped source leaves that default empty so unlabeled issues are listed but not auto-dispatched.                                                                                                                  |
 
-   So a typical dispatchable issue carries just `groundcrew` + a `repo:` label.
+   So a typical dispatchable issue carries `groundcrew` + a `repo:` label + an
+   `agent:` label.
    An issue without a `repo:` label is listed but not dispatchable (and with no
    `agent:` label and no `JIRA_DEFAULT_AGENT`, its agent is `null`).
 
@@ -96,9 +109,9 @@ the token on per invocation.
      },
      "env": {
        "JIRA_GROUNDCREW_JQL": "labels = groundcrew AND (statusCategory != Done OR (statusCategory = Done AND updated >= -7d))",
-       "JIRA_REVIEW_PATTERN": "review",
-       "JIRA_TODO_PATTERN": "",
-       "JIRA_DEFAULT_AGENT": "claude",
+       "JIRA_REVIEW_PATTERN": "In Review",
+       "JIRA_TODO_PATTERN": "New",
+       "JIRA_DEFAULT_AGENT": "",
        "JIRA_STATE_IN_PROGRESS": "In Progress",
        "JIRA_STATE_IN_REVIEW": "In Review",
        "JIRA_STATE_DONE": "Done"
@@ -118,9 +131,9 @@ The script reads these from the source's `env` block:
 | Variable              | Default                                                                                          | Purpose                                                                                                                                                                                                                                 |
 | --------------------- | ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `JIRA_GROUNDCREW_JQL` | `labels = groundcrew AND (statusCategory != Done OR (statusCategory = Done AND updated >= -7d))` | Which issues `list` returns, capped at the first 20 (`--paginate 0:20` in `jira.sh`). Defaults to open issues plus those done in the last 7 days (so groundcrew can clean up their worktrees). Omit `ORDER BY` (jira-cli adds its own). |
-| `JIRA_REVIEW_PATTERN` | `review`                                                                                         | Case-insensitive regex; matching In-Progress status names map to `in-review`.                                                                                                                                                           |
-| `JIRA_TODO_PATTERN`   | _(empty -> off)_                                                                                 | Case-insensitive regex; matching In-Progress status names map to `todo` so groundcrew dispatches them as new work. Set it to e.g. `acknowledged` for an "Acknowledged" triage status. Checked before `JIRA_REVIEW_PATTERN`.             |
-| `JIRA_DEFAULT_AGENT`  | _(empty -> `null`)_                                                                              | Agent used when an issue has no `agent:` label.                                                                                                                                                                                         |
+| `JIRA_REVIEW_PATTERN` | `In Review`                                                                                      | Case-insensitive regex; matching In-Progress status names map to `in-review`.                                                                                                                                                           |
+| `JIRA_TODO_PATTERN`   | `New`                                                                                            | Case-insensitive regex; matching In-Progress status names map to `todo` so groundcrew dispatches them as new work. The shipped source seeds `New`; clear the row to turn this off. Checked before `JIRA_REVIEW_PATTERN`.                |
+| `JIRA_DEFAULT_AGENT`  | _(empty -> `null`)_                                                                              | Agent used when an issue has no `agent:` label. Set it to an agent name only when every matching Jira issue should be eligible for that agent by default.                                                                               |
 | `JIRA_TOKEN_FILE`     | `~/.config/groundcrew/jira.token`                                                                | Token file path.                                                                                                                                                                                                                        |
 | `JIRA_STATE_*`        | `In Progress` / `In Review` / `Done`                                                             | Native JIRA state names used by `move`. Match your project's workflow.                                                                                                                                                                  |
 
