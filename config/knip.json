@@ -6,7 +6,6 @@
     "config/syncpack.config.ts",
     "config/vitestShared.ts",
     "crew.config.example.ts",
-    "src/agentWorkspaceTrustCli.ts",
     "src/lib/adapters/*/index.ts",
     "src/main.ts"
   ],

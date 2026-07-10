@@ -67,13 +67,13 @@
     "sync-ai-rules": "node ./node_modules/@clipboard-health/ai-rules/scripts/sync.js common",
     "syncpack:lint": "syncpack lint --config config/syncpack.config.ts",
     "test": "vitest run --coverage",
-    "agent-trust": "node --run build:dev && node ./dist/agentWorkspaceTrustCli.js",
     "verify": "node scripts/verifyAll.mts"
   },
   "dependencies": {
     "@anthropic-ai/sandbox-runtime": "0.0.63",
     "@clipboard-health/clearance": "1.4.4",
     "@linear/sdk": "88.0.0",
+    "@paulbaranowski/agent-trust": "0.1.1",
     "cosmiconfig": "9.0.2",
     "tslib": "2.8.1",
     "zod": "4.4.3"

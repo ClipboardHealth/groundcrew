@@ -2,14 +2,12 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import type * as nodeFs from "node:fs";
 
 import { ensureClearance, type SafehouseCmuxIntegration } from "@clipboard-health/clearance";
-
-import { seedAgentWorkspaceTrust } from "../lib/agentWorkspaceTrust.ts";
-import type * as agentWorkspaceTrustModule from "../lib/agentWorkspaceTrust.ts";
 import { fetchResolvedIssue } from "../lib/adapters/linear/fetch.ts";
 import { getLinearClient } from "../lib/adapters/linear/client.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
 import { readRunState, recordRunState, type RunState } from "../lib/runState.ts";
+import { seedLaunchWorkspaceTrust } from "../lib/seedLaunchWorkspaceTrust.ts";
 import { safehouseCmuxIntegrationFixture } from "../testHelpers/safehouseCmuxIntegration.ts";
 import { workspaces } from "../lib/workspaces.ts";
 import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
@@ -88,9 +86,9 @@ vi.mock(import("../lib/worktrees.ts"), async (importOriginal) => {
     },
   };
 });
-vi.mock(import("../lib/agentWorkspaceTrust.ts"), async (importOriginal) => {
-  const actual = await importOriginal<typeof agentWorkspaceTrustModule>();
-  return { ...actual, seedAgentWorkspaceTrust: vi.fn<typeof seedAgentWorkspaceTrust>() };
+vi.mock(import("../lib/seedLaunchWorkspaceTrust.ts"), async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/seedLaunchWorkspaceTrust.ts")>();
+  return { ...actual, seedLaunchWorkspaceTrust: vi.fn<typeof seedLaunchWorkspaceTrust>() };
 });
 const runCommandMock = vi.hoisted(() =>
   vi.fn<(cmd: string, arguments_: readonly string[]) => string>(),
@@ -121,7 +119,7 @@ const detectHostMock = vi.mocked(detectHostCapabilities);
 const readRunStateMock = vi.mocked(readRunState);
 const recordRunStateMock = vi.mocked(recordRunState);
 const getLinearClientMock = vi.mocked(getLinearClient);
-const seedAgentWorkspaceTrustMock = vi.mocked(seedAgentWorkspaceTrust);
+const seedLaunchWorkspaceTrustMock = vi.mocked(seedLaunchWorkspaceTrust);
 const workspacesOpenMock = vi.mocked(workspaces.open);
 const workspacesProbeMock = vi.mocked(workspaces.probe);
 const findByTaskMock = vi.mocked(worktrees.findByTask);
@@ -291,9 +289,9 @@ describe(resumeWorkspace, () => {
       resumeCount: 2,
       reason: "wrong direction",
     });
-    expect(seedAgentWorkspaceTrustMock).toHaveBeenCalledWith({
+    expect(seedLaunchWorkspaceTrustMock).toHaveBeenCalledWith({
       agentCommandName: "claude",
-      workspacePath: "/work/repo-a-team-1",
+      launchDir: "/work/repo-a-team-1",
     });
   });
 
