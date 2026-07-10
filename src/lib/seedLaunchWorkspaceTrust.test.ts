@@ -1,10 +1,10 @@
-import { agentTrustDir } from "@paulbaranowski/agent-trust";
+import { agentTrustDir } from "agent-trust";
 
 import { seedLaunchWorkspaceTrust } from "./seedLaunchWorkspaceTrust.ts";
 import { writeError } from "./util.ts";
 
-vi.mock(import("@paulbaranowski/agent-trust"), async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@paulbaranowski/agent-trust")>();
+vi.mock(import("agent-trust"), async (importOriginal) => {
+  const actual = await importOriginal<typeof import("agent-trust")>();
   return { ...actual, agentTrustDir: vi.fn<typeof agentTrustDir>() };
 });
 vi.mock(import("./util.ts"), async (importOriginal) => {

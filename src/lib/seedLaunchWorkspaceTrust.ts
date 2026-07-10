@@ -1,4 +1,4 @@
-import { agentTrustDir } from "@paulbaranowski/agent-trust";
+import { agentTrustDir } from "agent-trust";
 
 import { writeError } from "./util.ts";
 
