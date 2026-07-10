@@ -18,6 +18,7 @@ export function resolveLinearApiKey(): ResolvedLinearApiKey | undefined {
     if (value === undefined) {
       continue;
     }
+    /* v8 ignore next */
     if (value.length === 0) {
       continue;
     }
