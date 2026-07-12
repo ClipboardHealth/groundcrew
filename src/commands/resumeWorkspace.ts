@@ -3,8 +3,13 @@ import { getLinearClient } from "../lib/adapters/linear/client.ts";
 import { isLinearEnabled, sourcesFromConfig } from "../lib/buildSources.ts";
 import { type AgentDefinition, loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { composeAgentLaunch, openAgentWorkspace, prepareAgentLaunch } from "../lib/agentLaunch.ts";
-import { withResumeArgs, workerEnvironmentForTask } from "../lib/launchCommand.ts";
+import {
+  inferAgentCommandName,
+  withResumeArgs,
+  workerEnvironmentForTask,
+} from "../lib/launchCommand.ts";
 import { readRunState, recordRunState, type RunState } from "../lib/runState.ts";
+import { seedLaunchWorkspaceTrust } from "../lib/seedLaunchWorkspaceTrust.ts";
 import { taskSupportsCompletionCommand } from "../lib/sourceCapabilities.ts";
 import {
   removeStagedPrompt,
@@ -245,6 +250,10 @@ export async function resumeWorkspace(
             workingDir: launchDir,
           })
         : undefined;
+    seedLaunchWorkspaceTrust({
+      agentCommandName: inferAgentCommandName(launchDefinition.cmd),
+      launchDir,
+    });
     ({ launchCommand, srtSettingsDir } = composeAgentLaunch({
       runner,
       networkEgress,

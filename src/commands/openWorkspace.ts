@@ -2,10 +2,12 @@ import { existsSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 
 import { composeAgentLaunch, openAgentWorkspace, prepareAgentLaunch } from "../lib/agentLaunch.ts";
+import { inferAgentCommandName } from "../lib/launchCommand.ts";
 import { loadConfig, repositoryBaseDir, type ResolvedConfig } from "../lib/config.ts";
 import { resolvePullRequest } from "../lib/pullRequests.ts";
 import { resolvePrepareWorktreeCommand } from "../lib/repositoryHooks.ts";
 import { recordRunState, readRunState } from "../lib/runState.ts";
+import { seedLaunchWorkspaceTrust } from "../lib/seedLaunchWorkspaceTrust.ts";
 import {
   stageBuildSecrets,
   stagePromptText,
@@ -249,6 +251,10 @@ export async function openWorkspace(
     });
     const secretsFile =
       prepareWorktreeCommand === undefined ? undefined : stageBuildSecrets(stagedPrompt.directory);
+    seedLaunchWorkspaceTrust({
+      agentCommandName: inferAgentCommandName(definition.cmd),
+      launchDir,
+    });
     let launchCommand: string;
     ({ launchCommand, srtSettingsDir } = composeAgentLaunch({
       runner,

@@ -2,12 +2,12 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import type * as nodeFs from "node:fs";
 
 import { ensureClearance } from "@clipboard-health/clearance";
-
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
 import { resolvePullRequest } from "../lib/pullRequests.ts";
 import { resolvePrepareWorktreeCommand } from "../lib/repositoryHooks.ts";
 import { readRunState, recordRunState } from "../lib/runState.ts";
+import { seedLaunchWorkspaceTrust } from "../lib/seedLaunchWorkspaceTrust.ts";
 import { workspaces } from "../lib/workspaces.ts";
 import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 import { openWorkspace, openWorkspaceCli, parseOpenWorkspaceArgs } from "./openWorkspace.ts";
@@ -86,6 +86,10 @@ vi.mock(import("../lib/worktrees.ts"), async (importOriginal) => {
     },
   };
 });
+vi.mock(import("../lib/seedLaunchWorkspaceTrust.ts"), async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/seedLaunchWorkspaceTrust.ts")>();
+  return { ...actual, seedLaunchWorkspaceTrust: vi.fn<typeof seedLaunchWorkspaceTrust>() };
+});
 const runCommandMock = vi.hoisted(() =>
   vi.fn<(cmd: string, arguments_: readonly string[]) => string>(),
 );
@@ -114,6 +118,7 @@ const resolvePrepareWorktreeCommandMock = vi.mocked(resolvePrepareWorktreeComman
 const readRunStateMock = vi.mocked(readRunState);
 const recordRunStateMock = vi.mocked(recordRunState);
 const workspacesOpenMock = vi.mocked(workspaces.open);
+const seedLaunchWorkspaceTrustMock = vi.mocked(seedLaunchWorkspaceTrust);
 const workspacesProbeMock = vi.mocked(workspaces.probe);
 const worktreeOpenMock = vi.mocked(worktrees.open);
 const teardownMock = vi.mocked(worktrees.teardown);
@@ -411,6 +416,10 @@ describe(openWorkspace, () => {
       state: "running",
       title: "Fix the thing",
       url: "https://github.com/acme/widgets/pull/42",
+    });
+    expect(seedLaunchWorkspaceTrustMock).toHaveBeenCalledWith({
+      agentCommandName: "claude",
+      launchDir: "/work/acme/widgets-pr-42",
     });
   });
 
