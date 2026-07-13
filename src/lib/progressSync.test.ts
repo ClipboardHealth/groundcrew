@@ -21,7 +21,6 @@ vi.mock(import("./util.ts"), async (importOriginal) => {
 const logEventMock = vi.mocked(logEvent);
 
 function makeConfig(): ResolvedConfig {
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the helper only forwards config to workspaces.reportProgress, which is mocked.
   return { logging: { file: "/tmp/groundcrew-test.log" } } as unknown as ResolvedConfig;
 }
 
