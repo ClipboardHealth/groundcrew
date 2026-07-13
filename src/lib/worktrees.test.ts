@@ -529,6 +529,156 @@ describe(remove, () => {
     expect(gitSubcommands).toStrictEqual([]);
   });
 
+  it("remove scrubs the scripted worktree directory when the template returns 0 but leaves it behind", async () => {
+    const worktreeDir = path.join(projectDir, "billing-team-220");
+    mkdirSync(worktreeDir, { recursive: true });
+    userInfoMock.mockReturnValue(makeUserInfo("paul"));
+    // Every mocked command returns "" — the template "succeeds" without deleting
+    // the dir. Mirrors a `graft rm ... || true` that no-ops when the provisioner
+    // has no record of the worktree.
+    runCommandMock.mockReturnValue("");
+
+    const config = makeConfig({
+      projectDir,
+      knownRepositories: ["billing"],
+      repositories: [
+        {
+          name: "billing",
+          provision: { create: "graft new ${branch}", remove: "graft rm ${branch} -f || true" },
+        },
+      ],
+    });
+
+    await remove(config, {
+      repository: "billing",
+      task: "team-220",
+      branchName: "paul-team-220",
+      dir: worktreeDir,
+      kind: "host",
+    });
+
+    expect(existsSync(worktreeDir)).toBe(false);
+  });
+
+  it("remove with --force scrubs the scripted worktree directory when the template fails", async () => {
+    const worktreeDir = path.join(projectDir, "billing-team-220");
+    mkdirSync(worktreeDir, { recursive: true });
+    userInfoMock.mockReturnValue(makeUserInfo("paul"));
+    // The template shells out and hard-fails (e.g. `graft rm` reports
+    // "worktree ... not found in repo ..."). With --force the caller has
+    // opted into aggressive cleanup, so the host dir must still be scrubbed.
+    runCommandMock.mockImplementation((command) => {
+      // oxlint-disable-next-line vitest/no-conditional-in-test -- the mock discriminates so only the template throws
+      if (command === "sh") {
+        throw new Error("graft rm failed: worktree 'paul-team-220' not found in repo 'billing'");
+      }
+      return "";
+    });
+
+    const config = makeConfig({
+      projectDir,
+      knownRepositories: ["billing"],
+      repositories: [
+        {
+          name: "billing",
+          provision: { create: "graft new ${branch}", remove: "graft rm ${branch} -f" },
+        },
+      ],
+    });
+
+    await remove(
+      config,
+      {
+        repository: "billing",
+        task: "team-220",
+        branchName: "paul-team-220",
+        dir: worktreeDir,
+        kind: "host",
+      },
+      { force: true },
+    );
+
+    expect(existsSync(worktreeDir)).toBe(false);
+  });
+
+  it("remove without --force still surfaces a scripted remove template failure", async () => {
+    const worktreeDir = path.join(projectDir, "billing-team-220");
+    mkdirSync(worktreeDir, { recursive: true });
+    userInfoMock.mockReturnValue(makeUserInfo("paul"));
+    // Dirty-probe returns clean; the template then throws. Without --force we
+    // must NOT silently mask the failure — the caller relies on it to notice
+    // real provisioner problems (missing binary, permissions, etc.).
+    runCommandMock.mockImplementation((command) => {
+      // oxlint-disable-next-line vitest/no-conditional-in-test -- the mock discriminates so only the template throws
+      if (command === "sh") {
+        throw new Error("graft rm failed: some other real problem");
+      }
+      return "";
+    });
+
+    const config = makeConfig({
+      projectDir,
+      knownRepositories: ["billing"],
+      repositories: [
+        {
+          name: "billing",
+          provision: { create: "graft new ${branch}", remove: "graft rm ${branch} -f" },
+        },
+      ],
+    });
+
+    await expect(
+      remove(config, {
+        repository: "billing",
+        task: "team-220",
+        branchName: "paul-team-220",
+        dir: worktreeDir,
+        kind: "host",
+      }),
+    ).rejects.toThrow(/some other real problem/);
+    // The failed template must not scrub the on-disk dir without --force.
+    expect(existsSync(worktreeDir)).toBe(true);
+  });
+
+  it("remove with --force treats a missing scripted worktree as cleaned when the template fails", async () => {
+    userInfoMock.mockReturnValue(makeUserInfo("paul"));
+    runCommandMock.mockImplementation((command) => {
+      // oxlint-disable-next-line vitest/no-conditional-in-test -- the mock discriminates so only the template throws
+      if (command === "sh") {
+        throw new Error("graft rm failed: worktree 'paul-team-220' not found in repo 'billing'");
+      }
+      return "";
+    });
+
+    const config = makeConfig({
+      projectDir,
+      knownRepositories: ["billing"],
+      repositories: [
+        {
+          name: "billing",
+          provision: { create: "graft new ${branch}", remove: "graft rm ${branch} -f" },
+        },
+      ],
+    });
+
+    const missingDir = path.join(projectDir, "billing-team-220");
+
+    await expect(
+      remove(
+        config,
+        {
+          repository: "billing",
+          task: "team-220",
+          branchName: "paul-team-220",
+          dir: missingDir, // never created
+          kind: "host",
+        },
+        { force: true },
+      ),
+    ).resolves.toBeUndefined();
+    expect(existsSync(missingDir)).toBe(false);
+  });
+
   it("runs git worktree remove for a host entry whose dir exists", async () => {
     mkdirSync(path.join(projectDir, "repo-a"));
     mkdirSync(path.join(projectDir, "repo-a-team-1"));

@@ -600,7 +600,25 @@ async function removeScriptedWorktree(
     }),
   );
   debug(`Removing worktree ${entry.dir} via remove template...`);
-  await runLongShellCommand(command, worktreeRoot, options.signal);
+  try {
+    await runLongShellCommand(command, worktreeRoot, options.signal);
+  } catch (error) {
+    if (options.signal?.aborted === true || !options.force) {
+      throw error;
+    }
+    // --force + template failed: fall back to disk cleanup so a half-provisioned
+    // task (provisioner no longer knows about it — e.g. `graft rm` reporting
+    // "not found in repo") isn't permanently stranded. Mirrors the git-native
+    // orphan recovery in removeWorktree above.
+    debug(`Remove template failed under --force; falling back to disk cleanup of ${entry.dir}`);
+  }
+  // Post-condition: groundcrew's on-disk worktree dir is gone. The template is
+  // expected to delete it, but scripted provisioners can no-op (e.g. `graft rm`
+  // paired with `|| true`) and leave the dir behind, which then resurrects the
+  // task on the next listWorktrees() scan.
+  if (existsSync(entry.dir)) {
+    removeOrphanWorktreeDirectory(config, entry);
+  }
 }
 
 export type WorktreeDirtiness =
