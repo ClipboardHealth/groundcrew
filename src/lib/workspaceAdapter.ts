@@ -30,9 +30,9 @@ export interface WorkspaceAccessHint {
 }
 
 export interface OpenSpec {
-  /** Task id; becomes the workspace's name. */
+  /** Task id used as the logical workspace identity; adapters may also use it as the visible name. */
   name: string;
-  /** Human-facing panel title shown by the workspace UI; falls back to `name`; identity still keys on `name` via the description marker. */
+  /** Optional cmux panel title; other adapters may ignore it. Cmux keeps `name` as the identity marker. */
   displayName?: string;
   /** Working directory the workspace runs in. */
   cwd: string;

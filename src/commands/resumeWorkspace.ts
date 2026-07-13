@@ -123,7 +123,7 @@ async function contextFromState(
     // an existing PR branch that diverges from the `<prefix>-<task>` name the
     // worktree-dir scan derives, and run state is the source of truth for it.
     worktree: { ...worktree, branchName: state.branchName },
-    title: details?.title ?? task.toUpperCase(),
+    title: details?.title ?? state.title ?? task.toUpperCase(),
     description: details?.description ?? "",
     completionTaskId,
     completionMarkDoneSupported: taskSupportsCompletionCommand({

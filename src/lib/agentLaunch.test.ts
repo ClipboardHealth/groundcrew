@@ -286,4 +286,20 @@ describe("openAgentWorkspace", () => {
     expect(spec).toMatchObject({ name: "team-1" });
     expect(spec).not.toHaveProperty("displayName");
   });
+
+  it("omits displayName when the flag is unset even if a title is supplied", async () => {
+    await openAgentWorkspace({
+      config: { workspace: {} } as unknown as ResolvedConfig,
+      name: "team-1",
+      displayName: "Fix the login bug",
+      cwd: "/work/repo-a-team-1",
+      command: "exec claude",
+      agent: "claude",
+      color: "#fff",
+    });
+
+    const spec = openWorkspaceMock.mock.calls[0]?.[1];
+    expect(spec).toMatchObject({ name: "team-1" });
+    expect(spec).not.toHaveProperty("displayName");
+  });
 });
