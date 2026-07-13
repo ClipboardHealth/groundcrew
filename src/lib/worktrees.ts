@@ -12,6 +12,7 @@
 import { type Dirent, existsSync, readdirSync, rmSync, statSync } from "node:fs";
 import { userInfo } from "node:os";
 import path from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 
 import { applySubstitutions } from "./adapters/shell/invoke.ts";
 import { runCommandAsync } from "./commandRunner.ts";
@@ -533,7 +534,7 @@ async function removeWorktree(
         if (registration !== "orphan") {
           throw error;
         }
-        removeOrphanWorktreeDirectory(config, entry);
+        await removeOrphanWorktreeDirectory(config, entry);
       } else {
         const dirtiness = await throwIfWorktreeDirty(entry, options.signal, error);
         if (dirtiness.kind === "unknown") {
@@ -729,7 +730,64 @@ function isInsideDirectory(parentDir: string, childDir: string): boolean {
   );
 }
 
-function removeOrphanWorktreeDirectory(config: ResolvedConfig, entry: WorktreeEntry): void {
+// APFS reports ENOTEMPTY (and occasionally EBUSY/EPERM) from a recursive rmdir
+// when directory-entry caches lag behind the unlinks that just emptied it. This
+// bites large trees like node_modules, where `rmSync` bails partway through even
+// though a plain `rm -rf` succeeds. Retrying the removal lets the caches settle
+// and drains the remaining entries.
+const RECOVERABLE_REMOVAL_ERROR_CODES = new Set([
+  "ENOTEMPTY",
+  "EBUSY",
+  "EPERM",
+  "EMFILE",
+  "ENFILE",
+]);
+
+export function isRecoverableRemovalError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    typeof error.code === "string" &&
+    RECOVERABLE_REMOVAL_ERROR_CODES.has(error.code)
+  );
+}
+
+export interface ForceRemoveDirectoryOptions {
+  attempts?: number;
+  delayMs?: number;
+  remove?: (target: string) => void;
+}
+
+export async function forceRemoveDirectory(
+  targetDir: string,
+  options: ForceRemoveDirectoryOptions = {},
+): Promise<void> {
+  const attempts = options.attempts ?? 8;
+  const delayMs = options.delayMs ?? 100;
+  const removeDirectory =
+    options.remove ??
+    ((target: string) => {
+      rmSync(target, { recursive: true, force: true });
+    });
+
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      removeDirectory(targetDir);
+      return;
+    } catch (error) {
+      if (attempt >= attempts || !isRecoverableRemovalError(error)) {
+        throw error;
+      }
+      // oxlint-disable-next-line no-await-in-loop -- retries are intentionally serial with a settle delay between attempts.
+      await sleep(delayMs);
+    }
+  }
+}
+
+async function removeOrphanWorktreeDirectory(
+  config: ResolvedConfig,
+  entry: WorktreeEntry,
+): Promise<void> {
   const worktreeRoot = path.resolve(worktreeBaseDir(config));
   const expectedDir = expectedHostWorktreeDir(config, entry);
   const targetDir = path.resolve(entry.dir);
@@ -739,7 +797,7 @@ function removeOrphanWorktreeDirectory(config: ResolvedConfig, entry: WorktreeEn
     );
   }
   debug(`Removing orphaned worktree directory ${entry.dir} (--force)...`);
-  rmSync(targetDir, { recursive: true, force: true });
+  await forceRemoveDirectory(targetDir);
 }
 
 function list(config: ResolvedConfig): WorktreeEntry[] {
