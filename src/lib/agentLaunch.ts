@@ -260,9 +260,11 @@ export async function openAgentWorkspace(input: {
   color: string;
   signal?: AbortSignal;
 }): Promise<void> {
+  const panelTitle =
+    input.config.workspace.useTaskTitleForPanelName === true ? input.displayName : undefined;
   const spec = {
     name: input.name,
-    ...(input.displayName === undefined ? {} : { displayName: input.displayName }),
+    ...(panelTitle === undefined ? {} : { displayName: panelTitle }),
     cwd: input.cwd,
     command: input.command,
     status: { text: input.agent, color: input.color, icon: "sparkle" },

@@ -280,6 +280,13 @@ export interface Config {
      */
     worktreeDir?: string;
     knownRepositories: Array<string | KnownRepository>;
+    /**
+     * When true, cmux workspace panels are titled with the task's ticket title
+     * instead of the task id. Identity still keys on the task id, so renaming
+     * is safe. Defaults to false. Only cmux paints a panel title; tmux ignores
+     * it.
+     */
+    useTaskTitleForPanelName?: boolean;
   };
   defaults?: {
     hooks?: HookCommands;
@@ -392,6 +399,8 @@ export interface ResolvedConfig {
     repositories: KnownRepository[];
     /** name -> resolved parent dir, only for entries that override projectDir. */
     repositoryDirs?: Record<string, string>;
+    /** Present and true only when panels should use the task's ticket title. */
+    useTaskTitleForPanelName?: boolean;
   };
   defaults: {
     hooks: HookCommands;
@@ -1223,6 +1232,8 @@ function normalizeWorkspace(workspace: Config["workspace"]): ResolvedConfig["wor
     knownRepositories: repositories.map((recipe) => recipe.name),
     repositories,
     ...(Object.keys(repositoryDirs).length === 0 ? {} : { repositoryDirs }),
+    // Only a literal `true` opts in; anything else keeps the task-id panel name.
+    ...(workspace.useTaskTitleForPanelName === true ? { useTaskTitleForPanelName: true } : {}),
   };
 }
 
