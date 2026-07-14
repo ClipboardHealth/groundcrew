@@ -6,6 +6,8 @@
  * the visible entries in `SUBCOMMANDS` (see `../cli.ts`).
  */
 
+import { LOCAL_RUNNER_SETTINGS } from "../lib/config.ts";
+import { shellSingleQuote } from "../lib/shell.ts";
 import { writeOutput } from "../lib/util.ts";
 
 /** Describes the value a flag consumes, driving per-shell value completion. */
@@ -36,7 +38,9 @@ export const SUPPORTED_SHELLS = ["bash", "zsh", "fish"] as const;
 
 export type SupportedShell = (typeof SUPPORTED_SHELLS)[number];
 
-const RUNNER_VALUES = ["auto", "safehouse", "sdx", "none"] as const;
+// `--runner` values come from the canonical list in config.ts so completions
+// never drift from what `crew init --runner` accepts. Agent and status values
+// have no exported canonical array to import, so they stay as local literals.
 const AGENT_VALUES = ["claude", "codex"] as const;
 const STATUS_VALUES = ["todo", "in-progress", "in-review", "done", "other"] as const;
 
@@ -73,7 +77,11 @@ export const COMPLETION_SPEC: readonly CompletionCommand[] = [
       DRY_RUN_OPTION,
       { name: "--project-dir", summary: "Workspace project directory", arg: { kind: "dir" } },
       REPO_OPTION,
-      { name: "--runner", summary: "Sandbox runner", arg: { kind: "enum", values: RUNNER_VALUES } },
+      {
+        name: "--runner",
+        summary: "Sandbox runner",
+        arg: { kind: "enum", values: LOCAL_RUNNER_SETTINGS },
+      },
       AGENT_OPTION,
     ],
   },
@@ -246,31 +254,53 @@ function valueArgsByName(): Map<string, CompletionArg> {
   return result;
 }
 
-// -- bash ------------------------------------------------------------------
+/** Appends the one global flag (`--verbose`) every subcommand tolerates. */
+function withVerbose(tokens: string[]): string {
+  return [...tokens, COMMAND_GLOBAL].join(" ");
+}
 
-function bashValueCases(): string {
+/**
+ * Walks every value-taking flag once and emits a per-shell `case` line via the
+ * given templates. Enum/file/dir flags each get their own line; plain string
+ * flags collapse into one fall-through case that offers no completion.
+ */
+function valueCases(render: {
+  enum: (name: string, values: readonly string[]) => string;
+  file: (name: string) => string;
+  dir: (name: string) => string;
+  string: (names: string[]) => string;
+}): string {
   const lines: string[] = [];
   const stringNames: string[] = [];
   for (const [name, arg] of valueArgsByName()) {
     if (arg.kind === "enum") {
-      lines.push(
-        `    ${name}) COMPREPLY=( $(compgen -W "${arg.values.join(" ")}" -- "$cur") ); return ;;`,
-      );
+      lines.push(render.enum(name, arg.values));
     } else if (arg.kind === "file") {
-      lines.push(`    ${name}) COMPREPLY=( $(compgen -f -- "$cur") ); return ;;`);
+      lines.push(render.file(name));
     } else if (arg.kind === "dir") {
-      lines.push(`    ${name}) COMPREPLY=( $(compgen -d -- "$cur") ); return ;;`);
+      lines.push(render.dir(name));
     } else {
       stringNames.push(name);
     }
   }
 
-  lines.push(`    ${stringNames.join("|")}) return ;;`);
+  lines.push(render.string(stringNames));
   return lines.join("\n");
 }
 
+// -- bash ------------------------------------------------------------------
+
+function bashValueCases(): string {
+  return valueCases({
+    enum: (name, values) =>
+      `    ${name}) COMPREPLY=( $(compgen -W "${values.join(" ")}" -- "$cur") ); return ;;`,
+    file: (name) => `    ${name}) COMPREPLY=( $(compgen -f -- "$cur") ); return ;;`,
+    dir: (name) => `    ${name}) COMPREPLY=( $(compgen -d -- "$cur") ); return ;;`,
+    string: (names) => `    ${names.join("|")}) return ;;`,
+  });
+}
+
 function bashCommandCase(command: CompletionCommand): string {
-  const withVerbose = (tokens: string[]): string => [...tokens, COMMAND_GLOBAL].join(" ");
   if (command.subcommands !== undefined) {
     const subNames = command.subcommands.map((sub) => sub.name);
     const subCases = command.subcommands
@@ -355,37 +385,22 @@ complete -F _crew crew
 // -- zsh -------------------------------------------------------------------
 
 function zshValueCases(): string {
-  const lines: string[] = [];
-  const stringNames: string[] = [];
-  for (const [name, arg] of valueArgsByName()) {
-    if (arg.kind === "enum") {
-      lines.push(`    ${name}) compadd -- ${arg.values.join(" ")}; return ;;`);
-    } else if (arg.kind === "file") {
-      lines.push(`    ${name}) _files; return ;;`);
-    } else if (arg.kind === "dir") {
-      lines.push(`    ${name}) _files -/; return ;;`);
-    } else {
-      stringNames.push(name);
-    }
-  }
-
-  lines.push(`    ${stringNames.join("|")}) return ;;`);
-  return lines.join("\n");
-}
-
-function zshQuote(value: string): string {
-  return `'${value.replaceAll("'", String.raw`'\''`)}'`;
+  return valueCases({
+    enum: (name, values) => `    ${name}) compadd -- ${values.join(" ")}; return ;;`,
+    file: (name) => `    ${name}) _files; return ;;`,
+    dir: (name) => `    ${name}) _files -/; return ;;`,
+    string: (names) => `    ${names.join("|")}) return ;;`,
+  });
 }
 
 function zshDescribeArray(name: string, entries: readonly CompletionCommand[]): string {
   const items = entries
-    .map((entry) => `    ${zshQuote(`${entry.name}:${entry.summary}`)}`)
+    .map((entry) => `    ${shellSingleQuote(`${entry.name}:${entry.summary}`)}`)
     .join("\n");
   return [`  local -a ${name}`, `  ${name}=(`, items, `  )`].join("\n");
 }
 
 function zshCommandCase(command: CompletionCommand): string {
-  const withVerbose = (tokens: string[]): string => [...tokens, COMMAND_GLOBAL].join(" ");
   if (command.subcommands !== undefined) {
     const subCases = command.subcommands
       .map(
@@ -540,7 +555,6 @@ function fishCommandLines(command: CompletionCommand): string[] {
 }
 
 function fishScript(): string {
-  const commandNames = COMPLETION_SPEC.map((command) => command.name).join(" ");
   const commandLines = COMPLETION_SPEC.map(
     (command) =>
       `complete -c crew -f -n '__fish_use_subcommand' -a ${command.name} -d "${fishDescription(command.summary)}"`,
@@ -553,7 +567,6 @@ function fishScript(): string {
   const perCommandLines = COMPLETION_SPEC.flatMap(fishCommandLines);
   return `# fish completion for crew
 # Install: crew completions fish > ~/.config/fish/completions/crew.fish
-# Command names: ${commandNames}
 ${commandLines.join("\n")}
 ${globalLines.join("\n")}
 ${perCommandLines.join("\n")}
