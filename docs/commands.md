@@ -166,3 +166,24 @@ Open checks out the PR's actual head branch (fetching it from the remote when it
 When `--prompt`/`--prompt-file` is given, the agent starts with that prompt; otherwise it opens its interactive session with no prompt and hands control to you.
 
 `crew cleanup <task>` removes the opened worktree but never deletes the remote PR branch. Fork (cross-repository) PRs and `provision`/sparse-checkout repositories are not supported; for a fork, check the branch out locally and use `--branch`.
+
+## Completions
+
+`crew completions <bash|zsh|fish>` prints a shell completion script to stdout. The script completes command names, subcommands (for `crew source` and `crew task`), flags, and enumerated flag values (`--runner`, `--status`, `--agent`); `--prompt-file` and `--project-dir` fall back to file and directory completion. Task IDs, source names, and repositories are configuration-specific and are not completed.
+
+Load it once per shell session, or install it so your shell loads it automatically.
+
+```bash
+# bash — add to ~/.bashrc
+source <(crew completions bash)
+
+# zsh — write into a directory on your $fpath (run once), then restart the shell
+crew completions zsh > "${fpath[1]}/_crew"
+# or, to load in the current session, add to ~/.zshrc:
+source <(crew completions zsh)
+
+# fish — install once; fish loads it automatically on the next session
+crew completions fish > ~/.config/fish/completions/crew.fish
+```
+
+The command tree is generated from a single spec in `src/commands/completions.ts`, so completions stay in sync with the CLI as commands and flags change.
