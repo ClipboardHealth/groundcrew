@@ -608,15 +608,15 @@ async function removeScriptedWorktree(
       throw error;
     }
     // --force + template failed: fall back to disk cleanup so a half-provisioned
-    // task (provisioner no longer knows about it — e.g. `graft rm` reporting
-    // "not found in repo") isn't permanently stranded. Mirrors the git-native
-    // orphan recovery in removeWorktree above.
+    // task (the provisioner no longer knows about it and reports "not found")
+    // isn't permanently stranded. Mirrors the git-native orphan recovery in
+    // removeWorktree above.
     debug(`Remove template failed under --force; falling back to disk cleanup of ${entry.dir}`);
   }
   // Post-condition: groundcrew's on-disk worktree dir is gone. The template is
-  // expected to delete it, but scripted provisioners can no-op (e.g. `graft rm`
-  // paired with `|| true`) and leave the dir behind, which then resurrects the
-  // task on the next listWorktrees() scan.
+  // expected to delete it, but scripted provisioners can no-op (e.g. a remove
+  // command paired with `|| true`) and leave the dir behind, which then
+  // resurrects the task on the next listWorktrees() scan.
   if (existsSync(entry.dir)) {
     await removeOrphanWorktreeDirectory(config, entry);
   }

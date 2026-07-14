@@ -538,8 +538,8 @@ describe(remove, () => {
     mkdirSync(worktreeDir, { recursive: true });
     userInfoMock.mockReturnValue(makeUserInfo("paul"));
     // Every mocked command returns "" — the template "succeeds" without deleting
-    // the dir. Mirrors a `graft rm ... || true` that no-ops when the provisioner
-    // has no record of the worktree.
+    // the dir. Mirrors a remove command paired with `|| true` that no-ops when
+    // the provisioner has no record of the worktree.
     runCommandMock.mockReturnValue("");
 
     const config = makeConfig({
@@ -548,7 +548,10 @@ describe(remove, () => {
       repositories: [
         {
           name: "billing",
-          provision: { create: "graft new ${branch}", remove: "graft rm ${branch} -f || true" },
+          provision: {
+            create: "provision-tool new ${branch}",
+            remove: "provision-tool rm ${branch} -f || true",
+          },
         },
       ],
     });
@@ -568,13 +571,13 @@ describe(remove, () => {
     const worktreeDir = path.join(projectDir, "billing-team-220");
     mkdirSync(worktreeDir, { recursive: true });
     userInfoMock.mockReturnValue(makeUserInfo("paul"));
-    // The template shells out and hard-fails (e.g. `graft rm` reports
+    // The template shells out and hard-fails (e.g. the provisioner reports
     // "worktree ... not found in repo ..."). With --force the caller has
     // opted into aggressive cleanup, so the host dir must still be scrubbed.
     runCommandMock.mockImplementation((command) => {
       // oxlint-disable-next-line vitest/no-conditional-in-test -- the mock discriminates so only the template throws
       if (command === "sh") {
-        throw new Error("graft rm failed: worktree 'paul-team-220' not found in repo 'billing'");
+        throw new Error("remove failed: worktree 'paul-team-220' not found in repo 'billing'");
       }
       return "";
     });
@@ -585,7 +588,10 @@ describe(remove, () => {
       repositories: [
         {
           name: "billing",
-          provision: { create: "graft new ${branch}", remove: "graft rm ${branch} -f" },
+          provision: {
+            create: "provision-tool new ${branch}",
+            remove: "provision-tool rm ${branch} -f",
+          },
         },
       ],
     });
@@ -615,7 +621,7 @@ describe(remove, () => {
     runCommandMock.mockImplementation((command) => {
       // oxlint-disable-next-line vitest/no-conditional-in-test -- the mock discriminates so only the template throws
       if (command === "sh") {
-        throw new Error("graft rm failed: some other real problem");
+        throw new Error("remove failed: some other real problem");
       }
       return "";
     });
@@ -626,7 +632,10 @@ describe(remove, () => {
       repositories: [
         {
           name: "billing",
-          provision: { create: "graft new ${branch}", remove: "graft rm ${branch} -f" },
+          provision: {
+            create: "provision-tool new ${branch}",
+            remove: "provision-tool rm ${branch} -f",
+          },
         },
       ],
     });
@@ -649,7 +658,7 @@ describe(remove, () => {
     runCommandMock.mockImplementation((command) => {
       // oxlint-disable-next-line vitest/no-conditional-in-test -- the mock discriminates so only the template throws
       if (command === "sh") {
-        throw new Error("graft rm failed: worktree 'paul-team-220' not found in repo 'billing'");
+        throw new Error("remove failed: worktree 'paul-team-220' not found in repo 'billing'");
       }
       return "";
     });
@@ -660,7 +669,10 @@ describe(remove, () => {
       repositories: [
         {
           name: "billing",
-          provision: { create: "graft new ${branch}", remove: "graft rm ${branch} -f" },
+          provision: {
+            create: "provision-tool new ${branch}",
+            remove: "provision-tool rm ${branch} -f",
+          },
         },
       ],
     });
