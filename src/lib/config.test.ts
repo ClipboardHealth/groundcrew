@@ -101,13 +101,16 @@ describe("loadConfig", () => {
   it("loads an explicit built-in agent and applies defaults", async () => {
     const configPath = writeConfigFile(
       temporary,
-      validConfigSource({ workspace: VALID_WORKSPACE(temporary) }),
+      validConfigSource({
+        workspace: { ...VALID_WORKSPACE(temporary), useTaskTitleForPanelName: true },
+      }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
 
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
 
+    expect(actual.workspace.useTaskTitleForPanelName).toBe(true);
     expect(actual.git).toStrictEqual({ remote: "origin", defaultBranch: "main" });
     expect(actual.orchestrator).toStrictEqual({
       maximumInProgress: 4,

@@ -191,6 +191,7 @@ export async function setupWorkspace(
     await openAgentWorkspace({
       config,
       name: task,
+      displayName: taskDetails.title,
       cwd: launchDir,
       command: launchCmd,
       agent,

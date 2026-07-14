@@ -462,6 +462,36 @@ describe(resumeWorkspace, () => {
     );
   });
 
+  it("prefers the cached run-state title over the task id when Linear detail lookup fails", async () => {
+    readRunStateMock.mockReturnValue(makeRunState({ title: "Cached Title" }));
+    getLinearClientMock.mockReturnValue({
+      issue: vi.fn<IssueLookup>().mockRejectedValue(new Error("offline")),
+    } as unknown as ReturnType<typeof getLinearClient>);
+
+    await resumeWorkspace(config, { task: "team-1" });
+
+    expect(writeFileMock).toHaveBeenCalledWith(
+      "/tmp/groundcrew-resume-team-1-x/prompt.txt",
+      expect.stringContaining("task team-1 (Cached Title)"),
+    );
+  });
+
+  it("prefers the cached run-state title over the task id during state resume when Linear is disabled", async () => {
+    readRunStateMock.mockReturnValue(makeRunState({ title: "Cached Title" }));
+    const noLinearConfig: ResolvedConfig = {
+      ...makeConfig(),
+      sources: [{ kind: "linear", enabled: false }],
+    };
+
+    await resumeWorkspace(noLinearConfig, { task: "team-1" });
+
+    expect(getLinearClientMock).not.toHaveBeenCalled();
+    expect(writeFileMock).toHaveBeenCalledWith(
+      "/tmp/groundcrew-resume-team-1-x/prompt.txt",
+      expect.stringContaining("task team-1 (Cached Title)"),
+    );
+  });
+
   it("renders empty task details and no previous reason when state has neither", async () => {
     readRunStateMock.mockReturnValue(makeRunStateWithoutReason());
     getLinearClientMock.mockReturnValue({
