@@ -9,6 +9,7 @@
 import { LOCAL_RUNNER_SETTINGS } from "../lib/config.ts";
 import { shellSingleQuote } from "../lib/shell.ts";
 import { writeOutput } from "../lib/util.ts";
+import { INIT_AGENTS } from "./init.ts";
 
 /** Describes the value a flag consumes, driving per-shell value completion. */
 type CompletionArg =
@@ -38,16 +39,17 @@ export const SUPPORTED_SHELLS = ["bash", "zsh", "fish"] as const;
 
 export type SupportedShell = (typeof SUPPORTED_SHELLS)[number];
 
-// `--runner` values come from the canonical list in config.ts so completions
-// never drift from what `crew init --runner` accepts. Agent and status values
-// have no exported canonical array to import, so they stay as local literals.
-const AGENT_VALUES = ["claude", "codex"] as const;
+// `--runner` and `init --agent` values come from the canonical lists their
+// parsers validate against (config.ts, init.ts) so completions never drift.
+// Status has no exported canonical array to import, so it stays a local literal.
 const STATUS_VALUES = ["todo", "in-progress", "in-review", "done", "other"] as const;
 
-const AGENT_OPTION: CompletionOption = {
+// `init` validates `--agent` against a fixed built-in set; `open`/`task` accept
+// any configured agent name, so their `--agent` is declared free-form (string).
+const INIT_AGENT_OPTION: CompletionOption = {
   name: "--agent",
   summary: "Agent name",
-  arg: { kind: "enum", values: AGENT_VALUES },
+  arg: { kind: "enum", values: INIT_AGENTS },
 };
 const REPO_OPTION: CompletionOption = {
   name: "--repo",
@@ -82,7 +84,7 @@ export const COMPLETION_SPEC: readonly CompletionCommand[] = [
         summary: "Sandbox runner",
         arg: { kind: "enum", values: LOCAL_RUNNER_SETTINGS },
       },
-      AGENT_OPTION,
+      INIT_AGENT_OPTION,
     ],
   },
   {
@@ -199,7 +201,7 @@ export const COMPLETION_SPEC: readonly CompletionCommand[] = [
     options: [
       { name: "--branch", summary: "Branch name", arg: { kind: "string" } },
       REPO_OPTION,
-      AGENT_OPTION,
+      { name: "--agent", summary: "Agent name", arg: { kind: "string" } },
       { name: "--prompt", summary: "Prompt text", arg: { kind: "string" } },
       { name: "--prompt-file", summary: "Read prompt from file", arg: { kind: "file" } },
       { name: "--task", summary: "Associate a task id", arg: { kind: "string" } },
@@ -233,13 +235,22 @@ function optionTokens(options: readonly CompletionOption[] | undefined): string[
   );
 }
 
-/** Collects every value-taking flag across the tree, keyed by flag name. */
+/**
+ * Collects every value-taking flag across the tree, keyed by flag name, for the
+ * shell `prev`-based value cases (bash/zsh) which key on flag name globally.
+ * A flag can be declared with different kinds across commands (e.g. `--agent`
+ * is an enum under `init` but free-form under `open`/`task`); prefer the enum so
+ * value suggestions survive regardless of spec order.
+ */
 function valueArgsByName(): Map<string, CompletionArg> {
   const result = new Map<string, CompletionArg>();
   function visit(command: CompletionCommand): void {
     for (const option of command.options ?? []) {
       if (option.arg !== undefined) {
-        result.set(option.name, option.arg);
+        const existing = result.get(option.name);
+        if (existing?.kind !== "enum") {
+          result.set(option.name, option.arg);
+        }
       }
     }
     for (const subcommand of command.subcommands ?? []) {
@@ -326,7 +337,7 @@ function bashCommandCase(command: CompletionCommand): string {
     return [
       `    ${command.name})`,
       `      if [ -z "$subcommand" ]; then`,
-      `        COMPREPLY=( $(compgen -W "${command.argValues.join(" ")}" -- "$cur") )`,
+      `        COMPREPLY=( $(compgen -W "${withVerbose([...command.argValues])}" -- "$cur") )`,
       `      fi`,
       `      ;;`,
     ].join("\n");
@@ -427,7 +438,7 @@ function zshCommandCase(command: CompletionCommand): string {
   if (command.argValues !== undefined) {
     return [
       `    ${command.name})`,
-      `      if [[ -z $subcommand ]]; then compadd -- ${command.argValues.join(" ")}; fi`,
+      `      if [[ -z $subcommand ]]; then compadd -- ${withVerbose([...command.argValues])}; fi`,
       `      ;;`,
     ].join("\n");
   }

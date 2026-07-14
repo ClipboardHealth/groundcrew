@@ -47,13 +47,21 @@ describe("crew completions", () => {
         expect(script).toContain("--repo|--source");
       });
 
+      it("prefers the enum kind for a flag declared as both enum and string", () => {
+        // `--agent` is enum under `init` but free-form under `open`/`task`; the
+        // global prev-based case must still offer the enum values.
+        expect(script).toContain(
+          '--agent) COMPREPLY=( $(compgen -W "claude codex cursor" -- "$cur") ); return ;;',
+        );
+      });
+
       it("nests subcommand cases for commands with subcommands", () => {
         expect(script).toContain('COMPREPLY=( $(compgen -W "list verify --verbose" -- "$cur") )');
         expect(script).toContain("list) COMPREPLY=");
       });
 
-      it("completes static positional values for completions", () => {
-        expect(script).toContain('COMPREPLY=( $(compgen -W "bash zsh fish" -- "$cur") )');
+      it("completes static positional values (plus --verbose) for completions", () => {
+        expect(script).toContain('COMPREPLY=( $(compgen -W "bash zsh fish --verbose" -- "$cur") )');
       });
     });
 
