@@ -111,6 +111,7 @@ crew open <pr> | --branch <name> [--repo <owner/repo>] # iterate on an existing 
 crew cleanup [--force] <TASK>                          # tear down every worktree for a task
 crew cleanup [--force] --all                           # tear down every idle worktree (no live workspace)
 crew upgrade [<version>]                                 # reinstall crew globally through npm
+crew completions <bash|zsh|fish>                        # print a shell completion script
 ```
 
 See [command details](./docs/commands.md) for status output, doctor behavior, and the stop/resume workflow.

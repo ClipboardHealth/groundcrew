@@ -160,6 +160,13 @@
     "unreviewed",
     "linejoin",
     "Neue",
-    "qlmanage"
+    "qlmanage",
+    "compadd",
+    "compdef",
+    "compgen",
+    "COMPREPLY",
+    "CWORD",
+    "fpath",
+    "funcstack"
   ]
 }

@@ -1,6 +1,7 @@
 import { createRequire } from "node:module";
 
 import { cleanupWorkspaceCli } from "./commands/cleanupWorkspace.ts";
+import { completionsCli } from "./commands/completions.ts";
 import { doctor } from "./commands/doctor.ts";
 import { initConfigCli } from "./commands/init.ts";
 import { interruptWorkspaceCli } from "./commands/interruptWorkspace.ts";
@@ -233,11 +234,30 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
     usage: "[<version>]",
     invoke: upgradeCliInvoke,
   },
+  completions: {
+    summary: "Print a shell completion script for bash, zsh, or fish",
+    usage: "<bash|zsh|fish>",
+    invoke: completionsCli,
+  },
 };
 
+function isVisibleCommand(command: Subcommand): boolean {
+  return command.hidden !== true && command.deprecated !== true;
+}
+
+/**
+ * The command names shown in `crew --help` and offered by shell completions:
+ * every registered subcommand that is neither hidden nor a deprecated alias.
+ */
+export function visibleCommandNames(): readonly string[] {
+  return Object.entries(SUBCOMMANDS)
+    .filter(([, command]) => isVisibleCommand(command))
+    .map(([name]) => name);
+}
+
 function printHelp(): void {
-  const visibleCommands = Object.entries(SUBCOMMANDS).filter(
-    ([, command]) => command.hidden !== true && command.deprecated !== true,
+  const visibleCommands = Object.entries(SUBCOMMANDS).filter(([, command]) =>
+    isVisibleCommand(command),
   );
   const width = Math.max(...visibleCommands.map(([key]) => key.length));
   writeOutput("Usage: crew <command> [...args]\n");
