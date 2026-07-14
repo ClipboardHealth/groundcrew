@@ -3,8 +3,13 @@ import { getLinearClient } from "../lib/adapters/linear/client.ts";
 import { isLinearEnabled, sourcesFromConfig } from "../lib/buildSources.ts";
 import { type AgentDefinition, loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { composeAgentLaunch, openAgentWorkspace, prepareAgentLaunch } from "../lib/agentLaunch.ts";
-import { withResumeArgs, workerEnvironmentForTask } from "../lib/launchCommand.ts";
+import {
+  inferAgentCommandName,
+  withResumeArgs,
+  workerEnvironmentForTask,
+} from "../lib/launchCommand.ts";
 import { readRunState, recordRunState, type RunState } from "../lib/runState.ts";
+import { seedLaunchWorkspaceTrust } from "../lib/seedLaunchWorkspaceTrust.ts";
 import { taskSupportsCompletionCommand } from "../lib/sourceCapabilities.ts";
 import {
   removeStagedPrompt,
@@ -118,7 +123,7 @@ async function contextFromState(
     // an existing PR branch that diverges from the `<prefix>-<task>` name the
     // worktree-dir scan derives, and run state is the source of truth for it.
     worktree: { ...worktree, branchName: state.branchName },
-    title: details?.title ?? task.toUpperCase(),
+    title: details?.title ?? state.title ?? task.toUpperCase(),
     description: details?.description ?? "",
     completionTaskId,
     completionMarkDoneSupported: taskSupportsCompletionCommand({
@@ -245,6 +250,10 @@ export async function resumeWorkspace(
             workingDir: launchDir,
           })
         : undefined;
+    seedLaunchWorkspaceTrust({
+      agentCommandName: inferAgentCommandName(launchDefinition.cmd),
+      launchDir,
+    });
     ({ launchCommand, srtSettingsDir } = composeAgentLaunch({
       runner,
       networkEgress,
@@ -268,6 +277,7 @@ export async function resumeWorkspace(
     await openAgentWorkspace({
       config,
       name: task,
+      displayName: context.title,
       cwd: launchDir,
       command: launchCmd,
       agent: context.agent,

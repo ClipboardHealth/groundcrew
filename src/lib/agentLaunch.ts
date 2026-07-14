@@ -253,14 +253,18 @@ async function ensureSafehouseClearance(signal?: AbortSignal): Promise<void> {
 export async function openAgentWorkspace(input: {
   config: ResolvedConfig;
   name: string;
+  displayName?: string;
   cwd: string;
   command: string;
   agent: string;
   color: string;
   signal?: AbortSignal;
 }): Promise<void> {
+  const panelTitle =
+    input.config.workspace.useTaskTitleForPanelName === true ? input.displayName : undefined;
   const spec = {
     name: input.name,
+    ...(panelTitle === undefined ? {} : { displayName: panelTitle }),
     cwd: input.cwd,
     command: input.command,
     status: { text: input.agent, color: input.color, icon: "sparkle" },

@@ -4,8 +4,8 @@ import path from "node:path";
 
 import type { SafehouseCmuxIntegration } from "@clipboard-health/clearance";
 
-import type { AgentDefinition } from "./config.ts";
-import { composeAgentLaunch } from "./agentLaunch.ts";
+import type { AgentDefinition, ResolvedConfig } from "./config.ts";
+import { composeAgentLaunch, openAgentWorkspace } from "./agentLaunch.ts";
 import { readEnvironmentVariable } from "./util.ts";
 import { deleteEnvironmentVariable, setEnvironmentVariable } from "../testHelpers/env.ts";
 import { safehouseCmuxIntegrationFixture } from "../testHelpers/safehouseCmuxIntegration.ts";
@@ -22,6 +22,9 @@ const safehouseCmuxIntegrationWarningLinesMock = vi.hoisted(() =>
   >(),
 );
 const writeErrorMock = vi.hoisted(() => vi.fn<(message: string) => void>());
+const openWorkspaceMock = vi.hoisted(() =>
+  vi.fn<typeof import("./workspaces.ts").workspaces.open>(),
+);
 
 vi.mock(import("./commandRunner.ts"), async (importOriginal) => {
   const actual = await importOriginal();
@@ -43,6 +46,13 @@ vi.mock(import("./util.ts"), async (importOriginal) => {
   return {
     ...actual,
     writeError: writeErrorMock,
+  };
+});
+vi.mock(import("./workspaces.ts"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    workspaces: { ...actual.workspaces, open: openWorkspaceMock },
   };
 });
 
@@ -231,5 +241,65 @@ describe(composeAgentLaunch, () => {
     const launchCommand = compose({ workspaceKind: "tmux", readOnlyDirs: undefined });
 
     expect(launchCommand).not.toContain("--add-dirs-ro");
+  });
+});
+
+function configWithTitleFlag(enabled: boolean): ResolvedConfig {
+  return { workspace: { useTaskTitleForPanelName: enabled } } as unknown as ResolvedConfig;
+}
+
+describe("openAgentWorkspace", () => {
+  beforeEach(() => {
+    openWorkspaceMock.mockReset();
+    openWorkspaceMock.mockResolvedValue();
+  });
+
+  it("passes the ticket title as displayName when useTaskTitleForPanelName is enabled", async () => {
+    await openAgentWorkspace({
+      config: configWithTitleFlag(true),
+      name: "team-1",
+      displayName: "Fix the login bug",
+      cwd: "/work/repo-a-team-1",
+      command: "exec claude",
+      agent: "claude",
+      color: "#fff",
+    });
+
+    expect(openWorkspaceMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ name: "team-1", displayName: "Fix the login bug" }),
+    );
+  });
+
+  it("omits displayName when the flag is off even if a title is supplied", async () => {
+    await openAgentWorkspace({
+      config: configWithTitleFlag(false),
+      name: "team-1",
+      displayName: "Fix the login bug",
+      cwd: "/work/repo-a-team-1",
+      command: "exec claude",
+      agent: "claude",
+      color: "#fff",
+    });
+
+    const spec = openWorkspaceMock.mock.calls[0]?.[1];
+    expect(spec).toMatchObject({ name: "team-1" });
+    expect(spec).not.toHaveProperty("displayName");
+  });
+
+  it("omits displayName when the flag is unset even if a title is supplied", async () => {
+    await openAgentWorkspace({
+      config: { workspace: {} } as unknown as ResolvedConfig,
+      name: "team-1",
+      displayName: "Fix the login bug",
+      cwd: "/work/repo-a-team-1",
+      command: "exec claude",
+      agent: "claude",
+      color: "#fff",
+    });
+
+    const spec = openWorkspaceMock.mock.calls[0]?.[1];
+    expect(spec).toMatchObject({ name: "team-1" });
+    expect(spec).not.toHaveProperty("displayName");
   });
 });

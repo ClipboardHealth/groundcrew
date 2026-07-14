@@ -14,9 +14,26 @@
 
 import { z } from "zod";
 
+/**
+ * A prerequisite's install hint. A plain string applies to every platform; an
+ * object keys hints by Node's `process.platform` value (`darwin`, `linux`) so a
+ * consumer can index by platform directly, with `default` as the fallback for
+ * platforms without an explicit entry. Only crew-config reads this field, so the
+ * per-OS shape stays JSON-serializable and an older crew-config that expects a
+ * string simply shows no hint for the object form (a graceful degradation).
+ */
+const installSchema = z.union([
+  z.string(),
+  z.strictObject({
+    darwin: z.string().optional(),
+    linux: z.string().optional(),
+    default: z.string().optional(),
+  }),
+]);
+
 const prerequisiteSchema = z.strictObject({
   bin: z.string().min(1),
-  install: z.string().optional(),
+  install: installSchema.optional(),
   setup: z.string().optional(),
 });
 

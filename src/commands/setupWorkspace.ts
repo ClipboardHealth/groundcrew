@@ -1,11 +1,13 @@
 import { rmSync } from "node:fs";
+
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { composeAgentLaunch, openAgentWorkspace, prepareAgentLaunch } from "../lib/agentLaunch.ts";
+import { inferAgentCommandName, workerEnvironmentForTask } from "../lib/launchCommand.ts";
 import { type Board, createBoard } from "../lib/board.ts";
 import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
-import { workerEnvironmentForTask } from "../lib/launchCommand.ts";
 import { resolvePrepareWorktreeCommand } from "../lib/repositoryHooks.ts";
 import { recordRunState } from "../lib/runState.ts";
+import { seedLaunchWorkspaceTrust } from "../lib/seedLaunchWorkspaceTrust.ts";
 import { sourceSupportsMarkDone } from "../lib/sourceCapabilities.ts";
 import {
   stageBuildSecrets,
@@ -158,6 +160,10 @@ export async function setupWorkspace(
             workingDir: launchDir,
           })
         : undefined;
+    seedLaunchWorkspaceTrust({
+      agentCommandName: inferAgentCommandName(definition.cmd),
+      launchDir,
+    });
     const { launchCommand, srtSettingsDir: stagedSrtSettingsDir } = composeAgentLaunch({
       runner,
       networkEgress,
@@ -185,6 +191,7 @@ export async function setupWorkspace(
     await openAgentWorkspace({
       config,
       name: task,
+      displayName: taskDetails.title,
       cwd: launchDir,
       command: launchCmd,
       agent,

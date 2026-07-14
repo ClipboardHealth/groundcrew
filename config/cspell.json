@@ -167,6 +167,10 @@
     "COMPREPLY",
     "CWORD",
     "fpath",
-    "funcstack"
+    "funcstack",
+    "xhigh",
+    "mycli",
+    "mcps",
+    "APFS"
   ]
 }

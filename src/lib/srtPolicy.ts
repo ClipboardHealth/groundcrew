@@ -26,7 +26,9 @@
  *      denied; claude tolerates those write denials. **codex** hard-fails with a
  *      read-only home, so it is pointed at a relocated, per-launch writable
  *      config dir (`CODEX_HOME`, see {@link agentConfigRelocation}) and its real
- *      `~/.codex` is never write-granted at all.
+ *      `~/.codex` is never write-granted at all. **cursor-agent** keeps a
+ *      writable `~/.cursor` (chats/projects/resume) but denies mcp.json,
+ *      hooks, rules, skills, plugins, and commands — the host-RCE surfaces.
  *   2. **Git (work item 2).** The git common dir is granted write as a **narrow
  *      allowlist** of exactly the paths `status/diff/add/commit/push/gc` write —
  *      never wholesale — so the per-worktree gitdir redirection files, sibling
@@ -201,6 +203,32 @@ const AGENT_SRT_PROFILES: Record<string, AgentCredentialProfile> = {
     writePaths: [],
     denyPaths: [],
   },
+  "cursor-agent": {
+    // Writable state for chats/projects/resume (`--continue`), matching the
+    // paths Safehouse's cursor-agent profile re-opens. Persistence surfaces
+    // that would execute on the user's next host run are carved back out.
+    readPaths: [".cursor", ".config/cursor", ".local/share/cursor-agent"],
+    writePaths: [
+      ".cursor",
+      ".config/cursor",
+      ".cache/cursor-compile-cache",
+      "Library/Caches/cursor-compile-cache",
+    ],
+    denyPaths: [
+      // mcpServers — the sharpest host-RCE vector (same class as claude's
+      // ~/.claude.json mcpServers).
+      ".cursor/mcp.json",
+      // Lifecycle hooks run on the user's next Cursor launch.
+      ".cursor/hooks.json",
+      ".cursor/hooks",
+      // Global rules can inject instructions into future Cursor sessions.
+      ".cursor/rules",
+      ".cursor/skills-cursor",
+      ".cursor/plugins",
+      ".cursor/commands",
+    ],
+    usesMacosKeychain: true,
+  },
 };
 
 const AGENT_CONFIG_RELOCATIONS: Record<string, AgentConfigRelocation> = {
@@ -296,7 +324,7 @@ const GIT_COMMON_WRITE_PATHS: readonly string[] = [
  * profile. `denyWrite` wins over `allowWrite`, so denying the home dir overrides
  * the default.
  */
-const ALL_AGENT_HOME_DIRS: readonly string[] = [".claude", ".codex"];
+const ALL_AGENT_HOME_DIRS: readonly string[] = [".claude", ".codex", ".cursor"];
 
 /** Git identity/config the agent reads (never writes — see `allowGitConfig`). */
 const GIT_READ_PATHS: readonly string[] = [".gitconfig", ".config/git"];

@@ -2,12 +2,12 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import type * as nodeFs from "node:fs";
 
 import { ensureClearance, type SafehouseCmuxIntegration } from "@clipboard-health/clearance";
-
 import { fetchResolvedIssue } from "../lib/adapters/linear/fetch.ts";
 import { getLinearClient } from "../lib/adapters/linear/client.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
 import { readRunState, recordRunState, type RunState } from "../lib/runState.ts";
+import { seedLaunchWorkspaceTrust } from "../lib/seedLaunchWorkspaceTrust.ts";
 import { safehouseCmuxIntegrationFixture } from "../testHelpers/safehouseCmuxIntegration.ts";
 import { workspaces } from "../lib/workspaces.ts";
 import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
@@ -86,6 +86,10 @@ vi.mock(import("../lib/worktrees.ts"), async (importOriginal) => {
     },
   };
 });
+vi.mock(import("../lib/seedLaunchWorkspaceTrust.ts"), async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/seedLaunchWorkspaceTrust.ts")>();
+  return { ...actual, seedLaunchWorkspaceTrust: vi.fn<typeof seedLaunchWorkspaceTrust>() };
+});
 const runCommandMock = vi.hoisted(() =>
   vi.fn<(cmd: string, arguments_: readonly string[]) => string>(),
 );
@@ -115,6 +119,7 @@ const detectHostMock = vi.mocked(detectHostCapabilities);
 const readRunStateMock = vi.mocked(readRunState);
 const recordRunStateMock = vi.mocked(recordRunState);
 const getLinearClientMock = vi.mocked(getLinearClient);
+const seedLaunchWorkspaceTrustMock = vi.mocked(seedLaunchWorkspaceTrust);
 const workspacesOpenMock = vi.mocked(workspaces.open);
 const workspacesProbeMock = vi.mocked(workspaces.probe);
 const findByTaskMock = vi.mocked(worktrees.findByTask);
@@ -284,6 +289,10 @@ describe(resumeWorkspace, () => {
       resumeCount: 2,
       reason: "wrong direction",
     });
+    expect(seedLaunchWorkspaceTrustMock).toHaveBeenCalledWith({
+      agentCommandName: "claude",
+      launchDir: "/work/repo-a-team-1",
+    });
   });
 
   function resumeArgsConfig(): ResolvedConfig {
@@ -450,6 +459,36 @@ describe(resumeWorkspace, () => {
     expect(writeFileMock).toHaveBeenCalledWith(
       "/tmp/groundcrew-resume-team-1-x/prompt.txt",
       expect.stringContaining("task team-1 (TEAM-1)"),
+    );
+  });
+
+  it("prefers the cached run-state title over the task id when Linear detail lookup fails", async () => {
+    readRunStateMock.mockReturnValue(makeRunState({ title: "Cached Title" }));
+    getLinearClientMock.mockReturnValue({
+      issue: vi.fn<IssueLookup>().mockRejectedValue(new Error("offline")),
+    } as unknown as ReturnType<typeof getLinearClient>);
+
+    await resumeWorkspace(config, { task: "team-1" });
+
+    expect(writeFileMock).toHaveBeenCalledWith(
+      "/tmp/groundcrew-resume-team-1-x/prompt.txt",
+      expect.stringContaining("task team-1 (Cached Title)"),
+    );
+  });
+
+  it("prefers the cached run-state title over the task id during state resume when Linear is disabled", async () => {
+    readRunStateMock.mockReturnValue(makeRunState({ title: "Cached Title" }));
+    const noLinearConfig: ResolvedConfig = {
+      ...makeConfig(),
+      sources: [{ kind: "linear", enabled: false }],
+    };
+
+    await resumeWorkspace(noLinearConfig, { task: "team-1" });
+
+    expect(getLinearClientMock).not.toHaveBeenCalled();
+    expect(writeFileMock).toHaveBeenCalledWith(
+      "/tmp/groundcrew-resume-team-1-x/prompt.txt",
+      expect.stringContaining("task team-1 (Cached Title)"),
     );
   });
 
