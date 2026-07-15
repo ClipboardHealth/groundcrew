@@ -70,7 +70,7 @@
     "verify": "node scripts/verifyAll.mts"
   },
   "dependencies": {
-    "@anthropic-ai/sandbox-runtime": "0.0.63",
+    "@anthropic-ai/sandbox-runtime": "0.0.65",
     "@clipboard-health/clearance": "1.4.4",
     "@linear/sdk": "88.0.0",
     "agent-trust": "1.0.0",
