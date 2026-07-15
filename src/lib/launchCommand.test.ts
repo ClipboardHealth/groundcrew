@@ -259,11 +259,10 @@ describe(`${buildLaunchCommand.name} (runner='srt')`, () => {
 });
 
 describe(buildLaunchCommand, () => {
-  it("runs prepareWorktree under plain Safehouse, then runs only the agent through the profile shim", () => {
+  it("runs prepareWorktree on the host, then runs only the agent through the profile shim", () => {
     const out = buildLaunchCommand(arguments_({ prepareWorktreeCommand: "npm ci" }));
 
-    const setupWrapIndex = out.indexOf("safehouse-clearance' sh -c");
-    const setupIndex = out.indexOf("npm ci");
+    const setupIndex = out.indexOf("(npm ci); prepare_status=$?");
     const shimIndex = out.indexOf("_safehouse_shim_dir=$(mktemp");
     const agentWrapIndex = out.indexOf('"$_safehouse_shim" -c');
     const agentIndex = out.indexOf(`exec claude "$@"`);
@@ -271,18 +270,18 @@ describe(buildLaunchCommand, () => {
     expect(out).toContain("cd '/work/repo-a-team-1'");
     expect(out).toContain("_p=$(cat '/tmp/prompt-team-1/prompt.txt')");
     expect(out).toContain("rm -rf '/tmp/prompt-team-1'");
-    expect(out).toContain(
-      "/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance' sh -c",
-    );
+    // The prepareWorktree hook runs unsandboxed on the host — no Safehouse wrap.
+    expect(out).not.toContain("safehouse-clearance' sh -c");
+    // Only the agent runs through the Safehouse profile shim.
     expect(out).toContain(
       '/node_modules/@clipboard-health/clearance/safehouse/safehouse-clearance\' "$_safehouse_shim" -c',
     );
     expect(out).not.toContain("--enable=all-agents");
-    expect(out).toContain("npm ci");
+    expect(out).toContain("(npm ci); prepare_status=$?");
     expect(out).toContain(`exec claude "$@"`);
     expect(out).toContain('sh "$_p"; _safehouse_status=$?');
-    expect(setupWrapIndex).toBeGreaterThan(-1);
-    expect(setupIndex).toBeGreaterThan(setupWrapIndex);
+    // Host hook precedes the shim setup, which precedes the agent wrap.
+    expect(setupIndex).toBeGreaterThan(-1);
     expect(shimIndex).toBeGreaterThan(setupIndex);
     expect(agentWrapIndex).toBeGreaterThan(shimIndex);
     expect(agentIndex).toBeGreaterThan(agentWrapIndex);
@@ -298,7 +297,7 @@ describe(buildLaunchCommand, () => {
     expect(out).toContain('"$_safehouse_shim" -c');
   });
 
-  it("grants the worktree root and git common dir to both safehouse wraps via --add-dirs", () => {
+  it("grants the worktree root and git common dir to the agent wrap via --add-dirs", () => {
     const out = buildLaunchCommand(
       arguments_({
         prepareWorktreeCommand: "npm ci",
@@ -307,13 +306,13 @@ describe(buildLaunchCommand, () => {
     );
 
     const addDirsFlag = "--add-dirs='/work/repo-a-team-1:/src/carrot/.git'";
-    // One grant per wrap: the prepareWorktree wrap (so the hook's git/npm can
-    // reach the checkout) and the agent wrap (so git works inside a graft /
-    // sparse-checkout worktree whose real `.git` lives outside the worktree
-    // tree — e.g. an external `~/carrot/.git`).
-    expect(out.split(addDirsFlag).length - 1).toBe(2);
-    expect(out).toContain(`${addDirsFlag} sh -c`);
+    // The prepareWorktree hook runs unsandboxed on the host (full git access), so
+    // only the agent wrap needs the grant — so git works inside a graft /
+    // sparse-checkout worktree whose real `.git` lives outside the worktree tree
+    // (e.g. an external `~/carrot/.git`).
+    expect(out.split(addDirsFlag).length - 1).toBe(1);
     expect(out).toContain(`${addDirsFlag} "$_safehouse_shim" -c`);
+    expect(out).not.toContain(`${addDirsFlag} sh -c`);
   });
 
   it("forwards worker completion env into the Safehouse agent wrap only", () => {
@@ -438,7 +437,8 @@ describe(buildLaunchCommand, () => {
       }),
     );
 
-    const prepareWrapIndex = out.indexOf("safehouse-clearance' sh -c");
+    const prepareIndex = out.indexOf("(npm ci); prepare_status=$?");
+    const shimSetupIndex = out.indexOf("_safehouse_shim_dir=");
     const agentWrapIndex = out.indexOf('"$_safehouse_shim" -c');
     const readOnlyGrantIndex = out.indexOf(
       "--add-dirs-ro='/Applications/cmux.app:/Users/dev/.local/state/cmux'",
@@ -446,21 +446,22 @@ describe(buildLaunchCommand, () => {
     const envPassIndex = out.indexOf(
       "--env-pass=CMUX_SURFACE_ID,CMUX_SOCKET_PATH,CMUX_CLAUDE_WRAPPER_SHIM,CMUX_CLAUDE_WRAPPER_SHIM_ROOT,CMUX_CUSTOM_CLAUDE_PATH",
     );
-    const shimSetupIndex = out.indexOf("_safehouse_shim_dir=", prepareWrapIndex);
     const preludeIndex = out.indexOf("export CMUX_CUSTOM_CLAUDE_PATH=/Users/dev/.local/bin/claude");
     const execIndex = out.indexOf('exec claude --permission-mode auto "$@"');
-    expect(prepareWrapIndex).toBeGreaterThan(-1);
-    expect(readOnlyGrantIndex).toBeGreaterThan(prepareWrapIndex);
+    expect(prepareIndex).toBeGreaterThan(-1);
+    expect(readOnlyGrantIndex).toBeGreaterThan(prepareIndex);
     expect(readOnlyGrantIndex).toBeLessThan(agentWrapIndex);
-    expect(envPassIndex).toBeGreaterThan(prepareWrapIndex);
+    expect(envPassIndex).toBeGreaterThan(prepareIndex);
     expect(envPassIndex).toBeLessThan(agentWrapIndex);
     expect(preludeIndex).toBeGreaterThan(agentWrapIndex);
     expect(execIndex).toBeGreaterThan(preludeIndex);
-    expect(shimSetupIndex).toBeGreaterThan(prepareWrapIndex);
-    const prepareWrap = out.slice(prepareWrapIndex, shimSetupIndex);
-    expect(prepareWrap).not.toContain("--add-dirs-ro");
-    expect(prepareWrap).not.toContain("CMUX_SURFACE_ID");
-    expect(prepareWrap).not.toContain("CMUX_SOCKET_PATH");
+    expect(shimSetupIndex).toBeGreaterThan(prepareIndex);
+    // The host prepareWorktree region (everything up to the shim setup) carries
+    // none of the agent-only cmux grants.
+    const beforeAgent = out.slice(0, shimSetupIndex);
+    expect(beforeAgent).not.toContain("--add-dirs-ro");
+    expect(beforeAgent).not.toContain("CMUX_SURFACE_ID");
+    expect(beforeAgent).not.toContain("CMUX_SOCKET_PATH");
     expect(out).not.toContain("_groundcrew_path_without_cmux");
   });
 
@@ -650,7 +651,7 @@ describe(buildLaunchCommand, () => {
       expect(out).not.toContain("--env-pass");
     });
 
-    it("sources secrets on the host, forwards them only to prepareWorktree, and clears them before the agent", () => {
+    it("sources build secrets on the host for the prepareWorktree hook, then clears them before the agent", () => {
       const out = buildLaunchCommand(
         arguments_({
           secretsFile: "/tmp/prompt-team-1/secrets.env",
@@ -659,24 +660,21 @@ describe(buildLaunchCommand, () => {
       );
 
       const sourceIndex = out.indexOf(". '/tmp/prompt-team-1/secrets.env'");
-      const setupWrapIndex = out.indexOf(
-        "safehouse-clearance' --env-pass=NPM_TOKEN,BUF_TOKEN sh -c",
-      );
-      const setupIndex = out.indexOf("prepare_status=$?");
+      const setupIndex = out.indexOf("(npm ci); prepare_status=$?");
       const unsetIndex = out.indexOf("unset NPM_TOKEN BUF_TOKEN");
       const agentWrapIndex = out.indexOf('"$_safehouse_shim" -c');
       const agentIndex = out.indexOf(`exec claude "$@"`);
 
-      // Secrets are sourced into the host shell before the wrap so Safehouse can
-      // forward them into prepareWorktree; the agent Safehouse process never gets them.
+      // Secrets are sourced into the host shell before the hook runs, so the
+      // host-run prepareWorktree inherits them directly — no --env-pass, no
+      // Safehouse prepare wrap. They are cleared before the agent wrap.
       expect(sourceIndex).toBeGreaterThan(-1);
-      expect(setupWrapIndex).toBeGreaterThan(sourceIndex);
-      expect(out).toContain("--env-pass=NPM_TOKEN,BUF_TOKEN");
-      expect(setupIndex).toBeGreaterThan(setupWrapIndex);
+      expect(setupIndex).toBeGreaterThan(sourceIndex);
+      expect(out).not.toContain("--env-pass=NPM_TOKEN");
+      expect(out).not.toContain("safehouse-clearance' --env-pass");
       expect(unsetIndex).toBeGreaterThan(setupIndex);
       expect(agentWrapIndex).toBeGreaterThan(unsetIndex);
       expect(agentIndex).toBeGreaterThan(agentWrapIndex);
-      expect(out.slice(agentWrapIndex)).not.toContain("--env-pass");
       expect(out.slice(agentWrapIndex)).not.toContain("unset NPM_TOKEN");
       expect(out).toContain(
         "if [ -f '/tmp/prompt-team-1/secrets.env' ]; then set -a && . '/tmp/prompt-team-1/secrets.env' && set +a; fi",
@@ -914,24 +912,24 @@ describe(buildLaunchCommand, () => {
       const preLaunchIndex = out.indexOf("export FOO=bar");
       const sourceIndex = out.indexOf(". '/tmp/prompt-team-1/secrets.env'");
       const readPromptIndex = out.indexOf("_p=$(cat '/tmp/prompt-team-1/prompt.txt')");
-      const setupWrapIndex = out.indexOf("safehouse-clearance");
+      const prepareIndex = out.indexOf("(npm ci); prepare_status=$?");
       // Two `unset NPM_TOKEN BUF_TOKEN` occurrences now: the first scrubs the
       // inherited env before preLaunch, the last clears the file-sourced
-      // values between the prepareWorktree and agent wraps.
+      // values between the host prepareWorktree hook and the agent wrap.
       const scrubUnsetIndex = out.indexOf("unset NPM_TOKEN BUF_TOKEN");
       const betweenWrapsUnsetIndex = out.lastIndexOf("unset NPM_TOKEN BUF_TOKEN");
       const agentWrapIndex = out.indexOf('"$_safehouse_shim" -c');
       // trap → cd → unset (scrub inherited) → preLaunch → source secrets.env →
-      //   read prompt → prepareWorktree wrap → host-side unset → agent wrap. The scrub
-      // runs before preLaunch so it sees neither inherited nor sourced build
+      //   read prompt → host prepareWorktree → host-side unset → agent wrap. The
+      // scrub runs before preLaunch so it sees neither inherited nor sourced build
       // secrets; the between-wraps unset keeps them off the agent wrap (#128).
       expect(cdIndex).toBeGreaterThan(-1);
       expect(scrubUnsetIndex).toBeGreaterThan(cdIndex);
       expect(preLaunchIndex).toBeGreaterThan(scrubUnsetIndex);
       expect(sourceIndex).toBeGreaterThan(preLaunchIndex);
       expect(readPromptIndex).toBeGreaterThan(sourceIndex);
-      expect(setupWrapIndex).toBeGreaterThan(readPromptIndex);
-      expect(betweenWrapsUnsetIndex).toBeGreaterThan(setupWrapIndex);
+      expect(prepareIndex).toBeGreaterThan(readPromptIndex);
+      expect(betweenWrapsUnsetIndex).toBeGreaterThan(prepareIndex);
       expect(agentWrapIndex).toBeGreaterThan(betweenWrapsUnsetIndex);
       // No build-secret *values* are sourced into env before preLaunch runs.
       expect(out.slice(0, preLaunchIndex)).not.toContain(". '/tmp/prompt-team-1/secrets.env'");
@@ -1121,7 +1119,7 @@ describe(buildLaunchCommand, () => {
   });
 
   describe("preLaunchEnv", () => {
-    it("splits --env-pass per wrap: build secrets to prepareWorktree, preLaunchEnv to agent (PR #128 isolation)", () => {
+    it("withholds preLaunchEnv credentials from the host prepareWorktree hook and forwards them to the agent (PR #128 isolation)", () => {
       const out = buildLaunchCommand(
         arguments_({
           secretsFile: "/tmp/prompt-team-1/secrets.env",
@@ -1134,21 +1132,23 @@ describe(buildLaunchCommand, () => {
         }),
       );
 
-      const setupWrapRe = /safehouse-clearance' (?<envPass>--env-pass=[^ ]+ )?sh -c '[^']*'/;
       const agentWrapRe = /safehouse-clearance' (?<envPass>--env-pass=[^ ]+ )?"\$_safehouse_shim"/;
-      const setupWrapMatch = setupWrapRe.exec(out);
       const agentWrapMatch = agentWrapRe.exec(out);
-      // prepareWorktree wrap: build secrets only — preLaunch credentials must never reach
-      // the profile-neutral prepare phase that #128 deliberately walled off.
-      expect(setupWrapMatch?.[1]).toBe(`--env-pass=${BUILD_SECRET_NAMES.join(",")} `);
+      // The trusted host hook runs with the preLaunch credential names unset in
+      // its own status-reporting subshell, so it cannot read them — #128's wall,
+      // preserved now that the hook runs on the host instead of a prepare wrap.
+      expect(out).toContain("(unset SESSION_TOKEN TEAM_ID; npm ci); prepare_status=$?");
+      // Build secrets are never forwarded via --env-pass — the host hook inherits
+      // them from the sourced env directly.
+      expect(out).not.toContain(`--env-pass=${BUILD_SECRET_NAMES.join(",")}`);
       // Agent wrap: preLaunchEnv only — build secrets are `unset` on the host
-      // between the two wraps, so forwarding them here would silently no-op.
+      // before the wrap, so forwarding them here would silently no-op.
       expect(agentWrapMatch?.[1]).toBe("--env-pass=SESSION_TOKEN,TEAM_ID ");
       // The old single-wrap composition must NOT reappear anywhere.
       expect(out).not.toContain(`--env-pass=${BUILD_SECRET_NAMES.join(",")},SESSION_TOKEN`);
     });
 
-    it("emits an agent-wrap --env-pass when no secretsFile is staged (prepareWorktree wrap unflagged)", () => {
+    it("emits an agent-wrap --env-pass when no secretsFile is staged (host hook scrubs the name)", () => {
       const out = buildLaunchCommand(
         arguments_({
           prepareWorktreeCommand: "npm ci",
@@ -1160,11 +1160,12 @@ describe(buildLaunchCommand, () => {
         }),
       );
 
-      const setupWrapRe = /safehouse-clearance' (?<envPass>--env-pass=[^ ]+ )?sh -c '[^']*'/;
       const agentWrapRe = /safehouse-clearance' (?<envPass>--env-pass=[^ ]+ )?"\$_safehouse_shim"/;
-      const setupWrapMatch = setupWrapRe.exec(out);
       const agentWrapMatch = agentWrapRe.exec(out);
-      expect(setupWrapMatch?.[1]).toBeUndefined();
+      // No Safehouse prepare wrap exists — the hook runs on the host, scrubbing
+      // the preLaunchEnv name in its own subshell (#128).
+      expect(out).not.toContain("safehouse-clearance' sh -c");
+      expect(out).toContain("(unset SESSION_TOKEN; npm ci); prepare_status=$?");
       expect(agentWrapMatch?.[1]).toBe("--env-pass=SESSION_TOKEN ");
       // No build-secret names should sneak in (no secretsFile staged).
       for (const name of BUILD_SECRET_NAMES) {
@@ -1382,15 +1383,16 @@ describe(buildLaunchCommand, () => {
   });
 
   describe(`${buildLaunchCommand.name} (runner='safehouse', networkEgress='open')`, () => {
-    it("wraps both safehouse phases with the bare safehouse binary, dropping the clearance shim and proxy env", () => {
+    it("wraps the agent with the bare safehouse binary, dropping the clearance shim and proxy env", () => {
       const out = buildLaunchCommand(
         arguments_({ networkEgress: "open", prepareWorktreeCommand: "npm ci" }),
       );
 
-      // Bare safehouse for both the prepareWorktree wrap (`sh -c`) and the agent
-      // wrap (the profile-selection shim), with no clearance layer.
-      expect(out).toContain("safehouse sh -c");
+      // Bare safehouse for the agent wrap (the profile-selection shim), with no
+      // clearance layer. The prepareWorktree hook runs unsandboxed on the host.
       expect(out).toContain('safehouse "$_safehouse_shim" -c');
+      expect(out).toContain("(npm ci); prepare_status=$?");
+      expect(out).not.toContain("safehouse sh -c");
       expect(out).not.toContain("safehouse-clearance");
       expect(out).not.toContain("CLEARANCE_ALLOW_HOSTS_FILES");
     });
@@ -1409,19 +1411,19 @@ describe(buildLaunchCommand, () => {
       // The agent-named symlink-to-/bin/sh profile-selection trick is unchanged.
       expect(out).toContain('_safehouse_shim="$_safehouse_shim_dir/claude"');
       expect(out).toContain('ln -s /bin/sh "$_safehouse_shim"');
-      // --add-dirs (both wraps), the agent-only --add-dirs grant, and --env-pass
-      // all still compose around the bare-safehouse wrapper.
-      expect(out).toContain("--add-dirs='/work/repo-a-team-1:/src/carrot/.git'");
+      // The base grant merged with the agent-only --add-dirs grant, plus
+      // --env-pass, all still compose around the bare-safehouse agent wrapper.
       expect(out).toContain("--add-dirs='/work/repo-a-team-1:/src/carrot/.git:/Users/dev/v'");
       expect(out).toContain("--env-pass=SESSION_TOKEN ");
       expect(out).toContain(`exec claude "$@"`);
     });
 
-    it("default allowlisted network egress still wraps with the clearance shim (regression)", () => {
+    it("default allowlisted network egress still wraps the agent with the clearance shim (regression)", () => {
       const out = buildLaunchCommand(arguments_({ prepareWorktreeCommand: "npm ci" }));
 
-      expect(out).toContain("safehouse-clearance' sh -c");
+      expect(out).toContain('safehouse-clearance\' "$_safehouse_shim" -c');
       expect(out).toContain("CLEARANCE_ALLOW_HOSTS_FILES=");
+      expect(out).not.toContain("safehouse-clearance' sh -c");
       expect(out).not.toContain("safehouse sh -c");
     });
   });

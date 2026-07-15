@@ -804,15 +804,16 @@ describe(setupWorkspace, () => {
     const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
     expect(command).toBe("bash '/tmp/groundcrew-team-1-x/launch.sh'");
     expect(launchScript).toContain("cd '/work/repo-a-team-1'");
-    expect(launchScript).toContain("npm ci");
+    // The prepareWorktree hook runs unsandboxed on the host — no Safehouse wrap.
+    expect(launchScript).toContain("(npm ci); prepare_status=$?");
+    expect(launchScript).not.toContain("safehouse-clearance' sh -c");
     expect(launchScript).not.toContain(".groundcrew/setup.sh");
-    // Both wraps grant the worktree root and git common dir so git works in the
-    // prepareWorktree hook and the agent. The grant flag precedes the wrapped command;
-    // optional flags (e.g. --env-pass from ambient build secrets) may appear between them.
+    // Only the agent wrap grants the worktree root and git common dir (the host
+    // hook already has full git access). The grant flag precedes the wrapped
+    // command; optional flags (e.g. --env-pass) may appear between them.
     const addDirsPattern = `--add-dirs='/work/repo-a-team-1:/tmp/groundcrew-team-1-x/\\.git'`;
     const safehouseWithDirs = `safehouse-clearance' ${addDirsPattern}`;
-    expect(launchScript).toMatch(new RegExp(`${safehouseWithDirs}(?: --\\S+)* sh -c`));
-    // The agent runs inside the wrap (after prepareWorktree), so the prompt is the sh -c arg.
+    // The agent runs inside the wrap, so the prompt is the sh -c arg.
     expect(launchScript).toMatch(
       new RegExp(`${safehouseWithDirs}(?: --\\S+)* "\\$_safehouse_shim" -c`),
     );
