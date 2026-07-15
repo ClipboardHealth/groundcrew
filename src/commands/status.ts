@@ -602,15 +602,23 @@ function statusByWorktreeTask(
   return statuses;
 }
 
-function writeQueueSections(boardResult: BoardFetchResult): void {
+function writeQueueSections(
+  boardResult: BoardFetchResult,
+  worktreeTasks: ReadonlySet<string>,
+): void {
   if (boardResult.kind === "error") {
     writeSection("Queue");
     writeOutput(`unavailable: ${errorMessage(boardResult.error)}`);
     return;
   }
   // Only groundcrew-eligible Todos are dispatchable; non-eligible ones lack
-  // a repo or agent, so `crew run` would skip them.
-  const todos = boardResult.issues.filter(isTodoSourceIssue).filter(isGroundcrewIssue);
+  // a repo or agent, so `crew run` would skip them. Todos whose task already
+  // has a local worktree are omitted so a dispatched-but-not-yet-transitioned
+  // ticket doesn't show as both provisioning and queued.
+  const todos = boardResult.issues
+    .filter(isTodoSourceIssue)
+    .filter(isGroundcrewIssue)
+    .filter((i) => !worktreeTasks.has(naturalIdFromCanonical(i.id).toLowerCase()));
   const ready = todos.filter((i) => !hasOpenBlocker(i));
   const blocked = todos.filter(hasOpenBlocker);
 
@@ -716,7 +724,7 @@ async function writeInventoryStatus(config: ResolvedConfig): Promise<void> {
     writeOutput();
     writeOutput(`slots: ${used}/${config.orchestrator.maximumInProgress} used`);
   }
-  writeQueueSections(boardResult);
+  writeQueueSections(boardResult, worktreeTasks);
 }
 
 export async function status(config: ResolvedConfig, options: StatusOptions = {}): Promise<void> {

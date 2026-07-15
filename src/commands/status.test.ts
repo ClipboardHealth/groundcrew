@@ -1245,6 +1245,57 @@ describe(status, () => {
     expect(output).toContain("team-104");
   });
 
+  it("excludes Queue and Blocked rows whose task already has a local worktree", async () => {
+    // Reproduces the "queued + provisioning at the same time" bug: when a task
+    // has been dispatched (worktree exists, local run state is provisioning)
+    // but the board still reports it as todo, it must not appear in the Queue.
+    listWorktreesMock.mockReturnValue([
+      worktree({ repository: "repo-a", task: "team-101" }),
+      worktree({ repository: "repo-b", task: "team-102", dir: "/work/repo-b-team-102" }),
+    ]);
+    const runStatesByTask = new Map<string, RunState>([
+      ["team-101", runState({ task: "team-101", repository: "repo-a", state: "provisioning" })],
+      ["team-102", runState({ task: "team-102", repository: "repo-b", state: "provisioning" })],
+    ]);
+    readRunStateMock.mockImplementation((_config, task) => runStatesByTask.get(task));
+    workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set() });
+    buildSourcesMock.mockResolvedValue([
+      fakeSource([
+        // Dispatched todo — should NOT appear in Queue.
+        sourceIssue({
+          id: "linear:team-101",
+          title: "Already dispatched",
+          repository: "repo-a",
+          agent: "claude",
+        }),
+        // Dispatched todo, blocked — should NOT appear in Blocked.
+        sourceIssue({
+          id: "linear:team-102",
+          title: "Dispatched but blocked upstream",
+          repository: "repo-b",
+          agent: "claude",
+          blockers: [{ id: "linear:team-50", title: "x", status: "in-progress" }],
+        }),
+        // Not yet dispatched — should still appear in Queue as a control.
+        sourceIssue({
+          id: "linear:team-777",
+          title: "Genuinely queued",
+          repository: "repo-a",
+          agent: "claude",
+        }),
+      ]),
+    ]);
+
+    await status(makeConfig({ sources: [{ kind: "linear", name: "linear" }] }));
+
+    const output = consoleLog.output();
+    const queueSection = output.slice(output.indexOf("Queue\n-----"));
+    expect(queueSection).not.toContain("team-101");
+    expect(queueSection).not.toContain("team-102");
+    expect(queueSection).toContain("team-777");
+    expect(output).not.toContain("Blocked\n-------");
+  });
+
   it("hides the Queue section when the source has only non-Todo issues", async () => {
     listWorktreesMock.mockReturnValue([]);
     workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set() });
