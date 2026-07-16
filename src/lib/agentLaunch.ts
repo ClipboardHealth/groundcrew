@@ -14,6 +14,7 @@ import {
   type LocalRunner,
   type AgentDefinition,
   type NetworkEgressSetting,
+  type PrepareWorktreeSource,
   type ResolvedConfig,
 } from "./config.ts";
 import { detectHostCapabilities } from "./host.ts";
@@ -47,6 +48,7 @@ export function composeAgentLaunch(input: {
   workingDir: string;
   secretsFile?: string | undefined;
   prepareWorktreeCommand?: string | undefined;
+  prepareWorktreeSource?: PrepareWorktreeSource | undefined;
   sandboxName?: string | undefined;
   workspaceKind: WorkspaceKind;
   workerEnvironment?: WorkerEnvironment | undefined;
@@ -76,6 +78,7 @@ export function composeAgentLaunch(input: {
     workingDir: input.workingDir,
     secretsFile: input.secretsFile,
     prepareWorktreeCommand: input.prepareWorktreeCommand,
+    prepareWorktreeSource: input.prepareWorktreeSource,
     runner: input.runner,
     networkEgress: input.networkEgress,
     sandboxName: input.sandboxName,

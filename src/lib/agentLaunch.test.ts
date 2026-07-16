@@ -148,6 +148,8 @@ describe(composeAgentLaunch, () => {
   it("adds task source write paths only to the Safehouse agent wrap", () => {
     const launchCommand = compose({
       prepareWorktreeCommand: "npm ci",
+      // Operator-authored hook runs on the host, so this asserts the host path.
+      prepareWorktreeSource: "operator",
       taskSourceWritePaths: ["/Users/dev/v", "/Users/dev/v/.tasks"],
     });
 

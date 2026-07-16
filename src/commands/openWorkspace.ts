@@ -245,12 +245,12 @@ export async function openWorkspace(
   });
   let srtSettingsDir: string | undefined;
   try {
-    const prepareWorktreeCommand = resolvePrepareWorktreeCommand({
+    const prepareWorktree = resolvePrepareWorktreeCommand({
       worktreeDir: launchDir,
       defaultHooks: config.defaults.hooks,
     });
     const secretsFile =
-      prepareWorktreeCommand === undefined ? undefined : stageBuildSecrets(stagedPrompt.directory);
+      prepareWorktree === undefined ? undefined : stageBuildSecrets(stagedPrompt.directory);
     seedLaunchWorkspaceTrust({
       agentCommandName: inferAgentCommandName(definition.cmd),
       launchDir,
@@ -265,7 +265,8 @@ export async function openWorkspace(
       worktreeDir: created.dir,
       workingDir: launchDir,
       secretsFile,
-      prepareWorktreeCommand,
+      prepareWorktreeCommand: prepareWorktree?.command,
+      prepareWorktreeSource: prepareWorktree?.source,
       sandboxName,
       workspaceKind,
       readOnlyDirs: config.local.readOnlyDirs,

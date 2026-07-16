@@ -46,6 +46,16 @@ export interface HookCommands {
 }
 
 /**
+ * Which configuration layer supplied a resolved `prepareWorktree` hook.
+ * `"repository"` means the repo-committed `.groundcrew/config.json` — untrusted,
+ * because repository authors control it. `"operator"` means the operator's own
+ * `crew.config.ts` (`knownRepositories[].hooks` or `defaults.hooks`). The
+ * safehouse runner sandboxes `"repository"` hooks and runs `"operator"` hooks on
+ * the host, so this provenance is a security boundary, not a cosmetic label.
+ */
+export type PrepareWorktreeSource = "repository" | "operator";
+
+/**
  * Reserved agent name. A task labeled `agent-any` resolves at runtime
  * to the configured agent with the most available session capacity, so
  * `any` cannot itself be a agent. orchestrator.ts imports this constant

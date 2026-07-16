@@ -39,7 +39,7 @@ describe(resolvePrepareWorktreeCommand, () => {
         defaultHooks: { prepareWorktree: "npm ci" },
       });
 
-      expect(actual).toBe("npm ci");
+      expect(actual).toEqual({ command: "npm ci", source: "operator" });
     } finally {
       rmSync(worktreeDir, { recursive: true, force: true });
     }
@@ -58,7 +58,7 @@ describe(resolvePrepareWorktreeCommand, () => {
         defaultHooks: { prepareWorktree: "npm ci" },
       });
 
-      expect(actual).toBe("uv sync --dev");
+      expect(actual).toEqual({ command: "uv sync --dev", source: "repository" });
     } finally {
       rmSync(worktreeDir, { recursive: true, force: true });
     }
@@ -73,7 +73,7 @@ describe(resolvePrepareWorktreeCommand, () => {
         defaultHooks: { prepareWorktree: "npm ci" },
       });
 
-      expect(actual).toBe("make setup");
+      expect(actual).toEqual({ command: "make setup", source: "operator" });
     } finally {
       rmSync(worktreeDir, { recursive: true, force: true });
     }
@@ -88,7 +88,7 @@ describe(resolvePrepareWorktreeCommand, () => {
         defaultHooks: {},
       });
 
-      expect(actual).toBe("make setup");
+      expect(actual).toEqual({ command: "make setup", source: "operator" });
     } finally {
       rmSync(worktreeDir, { recursive: true, force: true });
     }
@@ -108,7 +108,7 @@ describe(resolvePrepareWorktreeCommand, () => {
         defaultHooks: { prepareWorktree: "npm ci" },
       });
 
-      expect(actual).toBe("uv sync --dev");
+      expect(actual).toEqual({ command: "uv sync --dev", source: "repository" });
     } finally {
       rmSync(worktreeDir, { recursive: true, force: true });
     }
@@ -123,7 +123,7 @@ describe(resolvePrepareWorktreeCommand, () => {
         defaultHooks: { prepareWorktree: "npm ci" },
       });
 
-      expect(actual).toBe("npm ci");
+      expect(actual).toEqual({ command: "npm ci", source: "operator" });
     } finally {
       rmSync(worktreeDir, { recursive: true, force: true });
     }
@@ -139,7 +139,7 @@ describe(resolvePrepareWorktreeCommand, () => {
         defaultHooks: { prepareWorktree: "npm ci" },
       });
 
-      expect(actual).toBe("npm ci");
+      expect(actual).toEqual({ command: "npm ci", source: "operator" });
     } finally {
       rmSync(worktreeDir, { recursive: true, force: true });
     }
@@ -155,7 +155,7 @@ describe(resolvePrepareWorktreeCommand, () => {
         defaultHooks: { prepareWorktree: "npm ci" },
       });
 
-      expect(actual).toBe("npm ci");
+      expect(actual).toEqual({ command: "npm ci", source: "operator" });
     } finally {
       rmSync(worktreeDir, { recursive: true, force: true });
     }
