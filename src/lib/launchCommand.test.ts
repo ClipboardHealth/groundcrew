@@ -694,6 +694,44 @@ describe(buildLaunchCommand, () => {
     });
   });
 
+  describe("prepareWorktreeUnsandboxed (runner=safehouse)", () => {
+    it("runs prepareWorktreeUnsandboxed on the host before the sandboxed prepareWorktree wrap", () => {
+      const out = buildLaunchCommand(
+        arguments_({
+          prepareWorktreeUnsandboxedCommand: "bin/setup",
+          prepareWorktreeCommand: "npm ci",
+        }),
+      );
+
+      const unsandboxedIndex = out.indexOf("(bin/setup); prepare_status=$?");
+      const sandboxedWrapIndex = out.indexOf("safehouse-clearance' sh -c");
+      const npmIndex = out.indexOf("npm ci");
+      const agentWrapIndex = out.indexOf('"$_safehouse_shim" -c');
+
+      // The unsandboxed host command runs first, and is NOT inside a safehouse wrap.
+      expect(unsandboxedIndex).toBeGreaterThan(-1);
+      expect(unsandboxedIndex).toBeLessThan(sandboxedWrapIndex);
+      // prepareWorktree still runs inside the safehouse prepare wrap.
+      expect(sandboxedWrapIndex).toBeGreaterThan(-1);
+      expect(npmIndex).toBeGreaterThan(sandboxedWrapIndex);
+      expect(agentWrapIndex).toBeGreaterThan(npmIndex);
+      // bin/setup is on the host, not wrapped by safehouse-clearance.
+      expect(out).not.toContain("safehouse-clearance' sh -c '(bin/setup)");
+    });
+
+    it("runs prepareWorktreeUnsandboxed on the host even when no sandboxed prepareWorktree is set", () => {
+      const out = buildLaunchCommand(
+        arguments_({ prepareWorktreeUnsandboxedCommand: "bin/setup" }),
+      );
+
+      expect(out).toContain("(bin/setup); prepare_status=$?");
+      // No sandboxed prepare wrap when prepareWorktree is unset.
+      expect(out).not.toContain("safehouse-clearance' sh -c");
+      // The agent wrap still runs.
+      expect(out).toContain('"$_safehouse_shim" -c');
+    });
+  });
+
   describe("runner='none'", () => {
     it("execs the agent directly without the safehouse wrapper", () => {
       const out = buildLaunchCommand(arguments_({ runner: "none" }));

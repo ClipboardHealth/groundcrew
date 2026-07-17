@@ -756,6 +756,14 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
       secretsFile: arguments_.secretsFile,
     }),
   );
+  if (arguments_.prepareWorktreeUnsandboxedCommand !== undefined) {
+    lines.push(
+      hostPrepareWorktreeLine(
+        arguments_.prepareWorktreeUnsandboxedCommand,
+        arguments_.definition.preLaunchEnv ?? [],
+      ),
+    );
+  }
   if (prepareWorktreeCommand !== undefined) {
     lines.push(
       `${safehouseWrapper} ${safehouseAddDirsFlag}${prepareWorktreeEnvPassFlag}sh -c ${shellSingleQuote(prepareWorktreeCommand)}`,
