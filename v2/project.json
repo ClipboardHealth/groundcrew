@@ -1,0 +1,8 @@
+{
+  "$schema": "../node_modules/nx/schemas/project-schema.json",
+  "name": "groundcrew-v2",
+  "projectType": "application",
+  "root": "v2",
+  "sourceRoot": "v2/src",
+  "targets": {}
+}
