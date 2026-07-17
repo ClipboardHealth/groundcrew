@@ -105,7 +105,7 @@ posture, or writes outside the worktree. For those cases an operator may grant a
 knownRepositories: [
   {
     name: "catalog-admin",
-    hooks: { prepareWorktree: "npm ci" }, // sandboxed, always
+    hooks: { prepareWorktree: "npm ci" }, // runs where the agent runs
     prepareWorktreeUnsandboxed: "bin/setup", // HOST, explicit opt-in
   },
 ];
