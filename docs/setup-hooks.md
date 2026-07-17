@@ -94,27 +94,28 @@ This reuses the same `hooks` container and `prepareWorktree` contract as the
 other two layers. It beats `defaults.hooks` but still yields to a committed
 `.groundcrew/config.json` in that repo.
 
-## `prepareWorktreeUnsandboxed` (operator-only host setup)
+## `unsandboxedHooks` (operator-only host setup)
 
 Some setup cannot run in the sandbox — it needs host toolchains, host network
 posture, or writes outside the worktree. For those cases an operator may grant a
-**per-repository** host command:
+**per-repository** host hook. It mirrors the `hooks` container's
+`prepareWorktree` phase, on the opposite side of the sandbox boundary:
 
 ```ts
 // crew.config.ts (operator only)
 knownRepositories: [
   {
     name: "catalog-admin",
-    hooks: { prepareWorktree: "npm ci" }, // runs where the agent runs
-    prepareWorktreeUnsandboxed: "bin/setup", // HOST, explicit opt-in
+    hooks: { prepareWorktree: "npm ci" }, // sandboxed
+    unsandboxedHooks: { prepareWorktree: "bin/setup" }, // HOST, explicit opt-in
   },
 ];
 ```
 
-When both are set, `prepareWorktreeUnsandboxed` runs first on the host, then
-`prepareWorktree` runs sandboxed, then the agent starts.
+When both are set, `unsandboxedHooks.prepareWorktree` runs first on the host,
+then `hooks.prepareWorktree` runs sandboxed, then the agent starts.
 
-**The trust granted.** `prepareWorktreeUnsandboxed` runs on the host shell
+**The trust granted.** `unsandboxedHooks.prepareWorktree` runs on the host shell
 outside any sandbox, with the operator's full host authority, against
 repo-controlled code (lifecycle scripts, `Gemfile`, the repo's own `bin/setup`).
 Grant it only to repositories you trust to run arbitrary code on the host.
@@ -122,9 +123,9 @@ Grant it only to repositories you trust to run arbitrary code on the host.
 **Constraints.**
 
 - **Operator-only.** It is honored only from `crew.config.ts`. Setting
-  `prepareWorktreeUnsandboxed` in a repo-committed `.groundcrew/config.json`
+  `unsandboxedHooks` in a repo-committed `.groundcrew/config.json`
   (top-level or under `hooks`) is a hard config error.
-- **Per-repository only.** There is no `defaults.prepareWorktreeUnsandboxed`;
+- **Per-repository only.** There is no `defaults.unsandboxedHooks`;
   host execution is never a fleet-wide default.
 - **Runner support.** Runs on the host for `safehouse`, `srt`, and `none`. The
   `sdx` runner rejects it at launch — a container has no host to run it on.

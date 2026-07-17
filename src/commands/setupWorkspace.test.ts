@@ -917,7 +917,7 @@ describe(setupWorkspace, () => {
     expect(launchScript).toContain("npm ci");
   });
 
-  it("runs a per-repo prepareWorktreeUnsandboxed command on the host", async () => {
+  it("runs a per-repo unsandboxedHooks.prepareWorktree command on the host", async () => {
     detectHostMock.mockResolvedValue(host());
     const base = makeConfig({
       definitions: {
@@ -931,7 +931,7 @@ describe(setupWorkspace, () => {
       ...base,
       workspace: {
         ...base.workspace,
-        repositories: [{ name: "repo-a", prepareWorktreeUnsandboxed: "bin/setup" }],
+        repositories: [{ name: "repo-a", unsandboxedHooks: { prepareWorktree: "bin/setup" } }],
       },
     };
     mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));

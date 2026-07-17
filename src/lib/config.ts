@@ -46,6 +46,18 @@ export interface HookCommands {
 }
 
 /**
+ * Operator-only hooks that run OUTSIDE the sandbox, on the host shell. Mirrors
+ * the `prepareWorktree` phase name of {@link HookCommands} but is a distinct
+ * type: the two families follow opposite rules (host hooks are operator-only
+ * with no `defaults` cascade), and keeping them separate lets a consumer that
+ * takes an `UnsandboxedHookCommands` be self-documenting about isolation and
+ * lets the two shapes diverge without leaking into each other.
+ */
+export interface UnsandboxedHookCommands {
+  prepareWorktree?: string;
+}
+
+/**
  * Reserved agent name. A task labeled `agent-any` resolves at runtime
  * to the configured agent with the most available session capacity, so
  * `any` cannot itself be a agent. orchestrator.ts imports this constant
@@ -244,16 +256,17 @@ export interface KnownRepository {
    */
   hooks?: HookCommands;
   /**
-   * Operator-only, per-repository setup command run on the HOST shell outside
-   * any sandbox, before the sandboxed `prepareWorktree` and the agent. Honored
-   * ONLY from `crew.config.ts`; a `.groundcrew/config.json` that sets it is a
-   * hard config error (see `repositoryHooks.ts`). There is deliberately no
-   * `defaults` equivalent — host execution is an explicit per-repo grant, never
-   * a global default. Runs the operator's full host authority against
+   * Operator-only, per-repository hooks run on the HOST shell outside any
+   * sandbox. `unsandboxedHooks.prepareWorktree` runs before the sandboxed
+   * `hooks.prepareWorktree` and the agent. Honored ONLY from `crew.config.ts`;
+   * a `.groundcrew/config.json` that sets `unsandboxedHooks` is a hard config
+   * error (see `repositoryHooks.ts`). There is deliberately no `defaults`
+   * equivalent — host execution is an explicit per-repo grant, never a global
+   * default. Runs with the operator's full host authority against
    * repo-controlled code (lifecycle scripts, the repo's own `bin/setup`), so
    * granting it is an explicit trust decision.
    */
-  prepareWorktreeUnsandboxed?: string;
+  unsandboxedHooks?: UnsandboxedHookCommands;
 }
 
 export interface Config {
@@ -741,6 +754,27 @@ function normalizeHookCommands(value: unknown, configKey: string): HookCommands 
   return hooks;
 }
 
+// Caller guards `entry.unsandboxedHooks !== undefined`, so unlike
+// `normalizeHookCommands` (also reached via `defaults.hooks`) this never sees
+// `undefined` — there is deliberately no `defaults.unsandboxedHooks`.
+function normalizeUnsandboxedHookCommands(
+  value: unknown,
+  configKey: string,
+): UnsandboxedHookCommands {
+  if (!isPlainObject(value)) {
+    fail(`${configKey} must be an object`);
+  }
+  const hooks: UnsandboxedHookCommands = {};
+  const prepareWorktree = normalizeOptionalString(
+    value["prepareWorktree"],
+    `${configKey}.prepareWorktree`,
+  );
+  if (prepareWorktree !== undefined) {
+    hooks.prepareWorktree = prepareWorktree;
+  }
+  return hooks;
+}
+
 function normalizeDefaults(value: unknown): ResolvedConfig["defaults"] {
   if (value === undefined) {
     return { hooks: {} };
@@ -1195,12 +1229,11 @@ function normalizeKnownRepository(entry: string | KnownRepository, index: number
   if (entry.hooks !== undefined) {
     recipe.hooks = normalizeHookCommands(entry.hooks, `${label}.hooks`);
   }
-  const prepareWorktreeUnsandboxed = normalizeOptionalString(
-    entry.prepareWorktreeUnsandboxed,
-    `${label}.prepareWorktreeUnsandboxed`,
-  );
-  if (prepareWorktreeUnsandboxed !== undefined) {
-    recipe.prepareWorktreeUnsandboxed = prepareWorktreeUnsandboxed;
+  if (entry.unsandboxedHooks !== undefined) {
+    recipe.unsandboxedHooks = normalizeUnsandboxedHookCommands(
+      entry.unsandboxedHooks,
+      `${label}.unsandboxedHooks`,
+    );
   }
   return recipe;
 }

@@ -97,7 +97,7 @@ sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
 ## Docker Sandboxes Setup
 
-`sdx` does not support `prepareWorktreeUnsandboxed`. The sdx container has no
+`sdx` does not support `unsandboxedHooks`. The sdx container has no
 host to run it on; configuring it for an `sdx`-runner repo is a launch-time
 config error. Use `safehouse`, `srt`, or `none` if you need host-side setup.
 

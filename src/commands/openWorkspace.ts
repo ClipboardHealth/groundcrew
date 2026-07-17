@@ -257,7 +257,7 @@ export async function openWorkspace(
       ...(repositoryEntry?.hooks === undefined ? {} : { perRepoHooks: repositoryEntry.hooks }),
       defaultHooks: config.defaults.hooks,
     });
-    const prepareWorktreeUnsandboxedCommand = repositoryEntry?.prepareWorktreeUnsandboxed;
+    const prepareWorktreeUnsandboxedCommand = repositoryEntry?.unsandboxedHooks?.prepareWorktree;
     const secretsFile =
       prepareWorktreeCommand === undefined && prepareWorktreeUnsandboxedCommand === undefined
         ? undefined

@@ -556,10 +556,10 @@ describe(openWorkspace, () => {
     );
   });
 
-  it("runs a per-repo prepareWorktreeUnsandboxed command on the host when opening", async () => {
+  it("runs a per-repo unsandboxedHooks.prepareWorktree command on the host when opening", async () => {
     const repoConfig = makeConfigWithRepositories(["acme/widgets"]);
     repoConfig.workspace.repositories = [
-      { name: "acme/widgets", prepareWorktreeUnsandboxed: "bin/setup" },
+      { name: "acme/widgets", unsandboxedHooks: { prepareWorktree: "bin/setup" } },
     ];
 
     await openWorkspace(repoConfig, {

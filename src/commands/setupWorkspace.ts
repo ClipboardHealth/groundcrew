@@ -141,7 +141,7 @@ export async function setupWorkspace(
       (entry) => entry.name === repository,
     );
     const perRepoHooks = repositoryEntry?.hooks;
-    const prepareWorktreeUnsandboxedCommand = repositoryEntry?.prepareWorktreeUnsandboxed;
+    const prepareWorktreeUnsandboxedCommand = repositoryEntry?.unsandboxedHooks?.prepareWorktree;
     const prepareWorktreeCommand = resolvePrepareWorktreeCommand({
       worktreeDir: launchDir,
       // Spread-conditional rather than a direct assignment: under

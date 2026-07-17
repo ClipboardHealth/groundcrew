@@ -159,7 +159,7 @@ There is no `linear` config block. Groundcrew reads `GROUNDCREW_LINEAR_API_KEY` 
 - [Runners](./docs/runners.md): Safehouse, Docker Sandboxes, and the `none` escape hatch.
 - [Credentials](./docs/credentials.md): Linear API keys, 1Password, build secrets, and `preLaunch`.
 - [Prepare worktree hooks](./docs/setup-hooks.md): `.groundcrew/config.json` `hooks.prepareWorktree` for per-repo dependency setup.
-- [Operator host setup](./docs/setup-hooks.md#prepareworktreeunsandboxed-operator-only-host-setup): `crew.config.ts` `knownRepositories[].prepareWorktreeUnsandboxed` runs trusted, per-repo setup on the host outside the sandbox.
+- [Operator host setup](./docs/setup-hooks.md#unsandboxedhooks-operator-only-host-setup): `crew.config.ts` `knownRepositories[].unsandboxedHooks.prepareWorktree` runs trusted, per-repo setup on the host outside the sandbox.
 - [Task sources](./docs/task-sources.md): custom shell/Jira/local-plan adapters.
 - [Development](./docs/development.md): local source workflow and README/demo asset regeneration.
 - [Troubleshooting](./docs/troubleshooting.md): common operational pitfalls and fixes.

@@ -1735,13 +1735,15 @@ describe("loadConfig", () => {
     expect(recipe).toStrictEqual({ name: "billing", hooks: { prepareWorktree: "make setup" } });
   });
 
-  it("normalizes per-repo prepareWorktreeUnsandboxed on a repo entry", async () => {
+  it("normalizes per-repo unsandboxedHooks.prepareWorktree on a repo entry", async () => {
     const configPath = writeConfigFile(
       temporary,
       validConfigSource({
         workspace: {
           projectDir: temporary,
-          knownRepositories: [{ name: "billing", prepareWorktreeUnsandboxed: "bin/setup" }],
+          knownRepositories: [
+            { name: "billing", unsandboxedHooks: { prepareWorktree: "bin/setup" } },
+          ],
         },
       }),
     );
@@ -1749,23 +1751,55 @@ describe("loadConfig", () => {
     const { loadConfig } = await loadFreshConfig();
     const config = await loadConfig();
     const [recipe] = config.workspace.repositories;
-    expect(recipe).toStrictEqual({ name: "billing", prepareWorktreeUnsandboxed: "bin/setup" });
+    expect(recipe).toStrictEqual({
+      name: "billing",
+      unsandboxedHooks: { prepareWorktree: "bin/setup" },
+    });
   });
 
-  it("rejects an empty per-repo prepareWorktreeUnsandboxed command", async () => {
+  it("normalizes an empty per-repo unsandboxedHooks container", async () => {
     const configPath = writeConfigFile(
       temporary,
       validConfigSource({
         workspace: {
           projectDir: temporary,
-          knownRepositories: [{ name: "billing", prepareWorktreeUnsandboxed: " " }],
+          knownRepositories: [{ name: "billing", unsandboxedHooks: {} }],
+        },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    const config = await loadConfig();
+    const [recipe] = config.workspace.repositories;
+    expect(recipe).toStrictEqual({ name: "billing", unsandboxedHooks: {} });
+  });
+
+  it("rejects a per-repo unsandboxedHooks that is not an object", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      `export default { workspace: { projectDir: ${JSON.stringify(temporary)}, knownRepositories: [{ name: "billing", unsandboxedHooks: [] }] }, agents: { definitions: { claude: {} } } };\n`,
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(
+      /workspace\.knownRepositories\[0\]\.unsandboxedHooks must be an object/,
+    );
+  });
+
+  it("rejects an empty per-repo unsandboxedHooks.prepareWorktree command", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      validConfigSource({
+        workspace: {
+          projectDir: temporary,
+          knownRepositories: [{ name: "billing", unsandboxedHooks: { prepareWorktree: " " } }],
         },
       }),
     );
     setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(
-      /workspace\.knownRepositories\[0\]\.prepareWorktreeUnsandboxed must be a non-empty string/,
+      /workspace\.knownRepositories\[0\]\.unsandboxedHooks\.prepareWorktree must be a non-empty string/,
     );
   });
 

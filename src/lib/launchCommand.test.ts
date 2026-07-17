@@ -1498,10 +1498,10 @@ describe(buildLaunchCommand, () => {
       expect(out).not.toContain("-e BUF_TOKEN");
     });
 
-    it("rejects prepareWorktreeUnsandboxed because the container has no host to run it on", () => {
+    it("rejects unsandboxedHooks.prepareWorktree because the container has no host to run it on", () => {
       expect(() =>
         buildLaunchCommand(sdxArguments({ prepareWorktreeUnsandboxedCommand: "bin/setup" })),
-      ).toThrow(/prepareWorktreeUnsandboxed is not supported for runner='sdx'/);
+      ).toThrow(/unsandboxedHooks\.prepareWorktree is not supported for runner='sdx'/);
     });
   });
 

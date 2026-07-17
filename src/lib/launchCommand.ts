@@ -129,7 +129,7 @@ function prepareWorktreeWithStatusReporting(prepareWorktreeCommand: string): str
 }
 
 /**
- * Host-shell line for the operator-only `prepareWorktreeUnsandboxed` command.
+ * Host-shell line for the operator-only `unsandboxedHooks.prepareWorktree` command.
  * Reuses the same status-reporting wrapper as the sandboxed hook so a failure is
  * surfaced but non-fatal. `scrubNames` (the agent's `preLaunchEnv`) are `unset`
  * inside the subshell so this trusted host command cannot read agent
@@ -456,7 +456,7 @@ interface LaunchCommandArguments {
   /**
    * Operator-only, per-repository setup command run on the HOST shell (never a
    * sandbox), before `prepareWorktreeCommand` and the agent. Resolved by the
-   * caller from `knownRepositories[].prepareWorktreeUnsandboxed` in
+   * caller from `knownRepositories[].unsandboxedHooks.prepareWorktree` in
    * crew.config.ts. Emitted for the safehouse, srt, and none runners; the sdx
    * runner rejects it (no host to run it on).
    */
@@ -580,7 +580,7 @@ export function buildLaunchCommand(arguments_: LaunchCommandArguments): string {
     }
     if (arguments_.prepareWorktreeUnsandboxedCommand !== undefined) {
       throw new Error(
-        "prepareWorktreeUnsandboxed is not supported for runner='sdx': the sdx container has no host to run it on. Remove prepareWorktreeUnsandboxed for this repo, or use runner 'safehouse', 'srt', or 'none'.",
+        "unsandboxedHooks.prepareWorktree is not supported for runner='sdx': the sdx container has no host to run it on. Remove unsandboxedHooks for this repo, or use runner 'safehouse', 'srt', or 'none'.",
       );
     }
     return buildSdxLaunchCommand(arguments_);
