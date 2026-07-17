@@ -94,6 +94,44 @@ This reuses the same `hooks` container and `prepareWorktree` contract as the
 other two layers. It beats `defaults.hooks` but still yields to a committed
 `.groundcrew/config.json` in that repo.
 
+## `prepareWorktreeUnsandboxed` (operator-only host setup)
+
+Some setup cannot run in the sandbox — it needs host toolchains, host network
+posture, or writes outside the worktree. For those cases an operator may grant a
+**per-repository** host command:
+
+```ts
+// crew.config.ts (operator only)
+knownRepositories: [
+  {
+    name: "catalog-admin",
+    hooks: { prepareWorktree: "npm ci" }, // sandboxed, always
+    prepareWorktreeUnsandboxed: "bin/setup", // HOST, explicit opt-in
+  },
+];
+```
+
+When both are set, `prepareWorktreeUnsandboxed` runs first on the host, then
+`prepareWorktree` runs sandboxed, then the agent starts.
+
+**The trust granted.** `prepareWorktreeUnsandboxed` runs on the host shell
+outside any sandbox, with the operator's full host authority, against
+repo-controlled code (lifecycle scripts, `Gemfile`, the repo's own `bin/setup`).
+Grant it only to repositories you trust to run arbitrary code on the host.
+
+**Constraints.**
+
+- **Operator-only.** It is honored only from `crew.config.ts`. Setting
+  `prepareWorktreeUnsandboxed` in a repo-committed `.groundcrew/config.json`
+  (top-level or under `hooks`) is a hard config error.
+- **Per-repository only.** There is no `defaults.prepareWorktreeUnsandboxed`;
+  host execution is never a fleet-wide default.
+- **Runner support.** Runs on the host for `safehouse`, `srt`, and `none`. The
+  `sdx` runner rejects it at launch — a container has no host to run it on.
+- **Credentials.** Build secrets are available so `npm`/`bundle` can
+  authenticate; the agent's `preLaunchEnv` names are scrubbed so the command
+  cannot read agent credentials.
+
 ## Examples
 
 Python with uv:

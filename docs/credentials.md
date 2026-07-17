@@ -44,6 +44,13 @@ Net effect: by the time the agent process exists, the values are gone from the e
 
 `preLaunch` runs a host-shell snippet outside Safehouse/sdx before the agent starts. Use it when the agent needs a short-lived credential that must be minted from something the sandbox cannot reach, such as an engineer CLI session in Keychain.
 
+Build secrets are staged whenever either `prepareWorktree` or
+`prepareWorktreeUnsandboxed` is configured. When `prepareWorktreeUnsandboxed`
+is set, it runs on the host before `prepareWorktree` with build secrets sourced;
+`preLaunchEnv` names are scrubbed before it runs so the command cannot read
+agent credentials. After it completes, execution continues with the normal
+sandboxed `prepareWorktree` phase.
+
 The "preLaunch never sees build secrets" contract is enforced differently per runner:
 
 - `runner: "safehouse"`: `preLaunch` runs immediately after `cd`, before `secrets.env` is sourced into the launch shell. `prepareWorktree` then runs inside its own profile-neutral `safehouse-clearance` wrap with `--env-pass=NPM_TOKEN,BUF_TOKEN`; build secrets are unset on the host before the agent's Safehouse wrap is executed.
