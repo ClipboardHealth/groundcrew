@@ -123,7 +123,7 @@ skip + warn. Parseable but unsupported `protocolVersion` ⇒ explicit actionable
 
 ### 4.2 Invocation
 
-Core spawns `<command> ` with a single JSON object on **stdin** and expects a single JSON object on
+Core spawns `<command>` with a single JSON object on **stdin** and expects a single JSON object on
 **stdout** (result-shaped, one channel — design doc §12.1). stderr is diagnostics, logged only.
 Nonzero exit or unparseable stdout is mapped by core to the same failure shape.
 
