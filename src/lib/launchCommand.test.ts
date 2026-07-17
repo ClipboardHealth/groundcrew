@@ -1468,6 +1468,12 @@ describe(buildLaunchCommand, () => {
       expect(out).not.toContain("-e NPM_TOKEN");
       expect(out).not.toContain("-e BUF_TOKEN");
     });
+
+    it("rejects prepareWorktreeUnsandboxed because the container has no host to run it on", () => {
+      expect(() =>
+        buildLaunchCommand(sdxArguments({ prepareWorktreeUnsandboxedCommand: "bin/setup" })),
+      ).toThrow(/prepareWorktreeUnsandboxed is not supported for runner='sdx'/);
+    });
   });
 
   describe(`${buildLaunchCommand.name} (runner='safehouse', networkEgress='open')`, () => {

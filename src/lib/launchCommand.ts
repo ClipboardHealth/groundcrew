@@ -578,6 +578,11 @@ export function buildLaunchCommand(arguments_: LaunchCommandArguments): string {
         "preLaunchEnv is not yet supported for runner='sdx'. Set local.runner to 'safehouse' or 'none', or open an issue for sdx support.",
       );
     }
+    if (arguments_.prepareWorktreeUnsandboxedCommand !== undefined) {
+      throw new Error(
+        "prepareWorktreeUnsandboxed is not supported for runner='sdx': the sdx container has no host to run it on. Remove prepareWorktreeUnsandboxed for this repo, or use runner 'safehouse', 'srt', or 'none'.",
+      );
+    }
     return buildSdxLaunchCommand(arguments_);
   }
   if (shouldWrapWithSafehouse(arguments_)) {
