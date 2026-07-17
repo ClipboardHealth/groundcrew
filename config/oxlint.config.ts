@@ -41,11 +41,12 @@ export default defineConfig(
         {
           // setupWorkspace.test.ts covers launch composition across cmux,
           // tmux, safehouse, srt, sdx, rollback, and CLI source-resolution
-          // paths. Keep those shared mocks together; splitting the file causes
+          // paths, plus per-repo prepareWorktreeUnsandboxed host-command tests.
+          // Keep those shared mocks together; splitting the file causes
           // duplicate module mocks to race under Vitest's parallel runner.
           files: ["**/setupWorkspace.test.ts"],
           rules: {
-            "max-lines": ["error", 2200],
+            "max-lines": ["error", 2300],
           },
         },
         {

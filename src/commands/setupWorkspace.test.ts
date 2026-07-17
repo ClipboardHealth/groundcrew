@@ -917,6 +917,36 @@ describe(setupWorkspace, () => {
     expect(launchScript).toContain("npm ci");
   });
 
+  it("runs a per-repo prepareWorktreeUnsandboxed command on the host", async () => {
+    detectHostMock.mockResolvedValue(host());
+    const base = makeConfig({
+      definitions: {
+        claude: {
+          cmd: "claude --permission-mode auto",
+          color: "#fff",
+        },
+      },
+    });
+    const config: ResolvedConfig = {
+      ...base,
+      workspace: {
+        ...base.workspace,
+        repositories: [{ name: "repo-a", prepareWorktreeUnsandboxed: "bin/setup" }],
+      },
+    };
+    mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
+
+    await setupWorkspace(config, {
+      task: "team-1",
+      repository: "repo-a",
+      agent: "claude",
+      details: { title: "Test Title", description: "Body" },
+    });
+
+    const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
+    expect(launchScript).toContain("(bin/setup); prepare_status=$?");
+  });
+
   it("passes groundcrew's bundled clearance allowlist to Safehouse without requiring an export", async () => {
     vi.stubEnv("CLEARANCE_ALLOW_HOSTS_FILES", "");
     detectHostMock.mockResolvedValue(host());
