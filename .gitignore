@@ -37,4 +37,5 @@ vitest.config.*.timestamp*
 .nx/self-healing
 .claude/settings.local.json
 docs/superpowers/
+/test-output/v2-evidence/
 static/logo-concept.html

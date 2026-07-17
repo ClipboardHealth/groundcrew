@@ -1,0 +1,2 @@
+# v2/ is formatted by its own tooling (v2 verify), not the root formatter. See v2/docs/adr/0015.
+v2/

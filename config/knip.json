@@ -9,6 +9,7 @@
     "src/lib/adapters/*/index.ts",
     "src/main.ts"
   ],
+  "ignore": ["v2/**"],
   "ignoreBinaries": ["op", "taskkill"],
   "ignoreDependencies": ["@nx/js"]
 }
