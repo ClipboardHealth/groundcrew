@@ -916,6 +916,14 @@ function buildSrtLaunchCommand(arguments_: LaunchCommandArguments): string {
       secretsFile: arguments_.secretsFile,
     }),
   ];
+  if (arguments_.prepareWorktreeUnsandboxedCommand !== undefined) {
+    lines.push(
+      hostPrepareWorktreeLine(
+        arguments_.prepareWorktreeUnsandboxedCommand,
+        arguments_.definition.preLaunchEnv ?? [],
+      ),
+    );
+  }
   if (prepareWorktreeCommand !== undefined) {
     lines.push(`${prepareWrap} sh -c ${shellSingleQuote(prepareWorktreeCommand)}`);
   }

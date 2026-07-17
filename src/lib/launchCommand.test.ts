@@ -256,6 +256,26 @@ describe(`${buildLaunchCommand.name} (runner='srt')`, () => {
     expect(out).not.toContain("CODEX_HOME");
     expect(out).not.toContain("CLAUDE_CONFIG_DIR");
   });
+
+  it("runs prepareWorktreeUnsandboxed on the host before the srt prepare wrap", () => {
+    const out = buildLaunchCommand(
+      srtArguments({
+        prepareWorktreeUnsandboxedCommand: "bin/setup",
+        prepareWorktreeCommand: "npm ci",
+      }),
+    );
+
+    const unsandboxedIndex = out.indexOf("(bin/setup); prepare_status=$?");
+    const prepareWrapIndex = out.indexOf("prepare-settings.json' -- sh -c");
+    const npmIndex = out.indexOf("npm ci");
+
+    expect(unsandboxedIndex).toBeGreaterThan(-1);
+    // The host command runs before the srt-wrapped prepare hook, and is not itself
+    // wrapped by srt (no `env -i` / `--settings` between it and bin/setup).
+    expect(unsandboxedIndex).toBeLessThan(prepareWrapIndex);
+    expect(npmIndex).toBeGreaterThan(prepareWrapIndex);
+    expect(out).not.toContain("-- sh -c '(bin/setup)");
+  });
 });
 
 describe(buildLaunchCommand, () => {
