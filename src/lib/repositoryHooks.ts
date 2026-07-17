@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import type { HookCommands, PrepareWorktreeSource } from "./config.ts";
+import type { HookCommands } from "./config.ts";
 
 const REPOSITORY_CONFIG_RELATIVE_PATH = ".groundcrew/config.json";
 
@@ -17,35 +17,19 @@ interface ResolvePrepareWorktreeCommandArguments {
   defaultHooks: HookCommands;
 }
 
-export interface ResolvedPrepareWorktreeCommand {
-  command: string;
-  /**
-   * Which layer supplied `command`. The safehouse runner keys its host-vs-sandbox
-   * decision off this: `"repository"` hooks are untrusted and stay sandboxed;
-   * `"operator"` hooks are trusted and run on the host. See {@link PrepareWorktreeSource}.
-   */
-  source: PrepareWorktreeSource;
-}
-
 // Flat precedence cascade, highest priority first: the repo-committed
 // `.groundcrew/config.json` wins (closest to the code), then the per-repo
-// operator layer, then the global `defaults.hooks` fallback. The winning layer's
-// provenance is returned alongside the command because it is a security boundary
-// — only the operator layers are trusted enough to run unsandboxed.
+// operator layer, then the global `defaults.hooks` fallback. All three reuse
+// the same `HookCommands` shape so this stays a plain `?? ?? ??`.
 export function resolvePrepareWorktreeCommand(
   arguments_: ResolvePrepareWorktreeCommandArguments,
-): ResolvedPrepareWorktreeCommand | undefined {
+): string | undefined {
   const repositoryConfig = readRepositoryConfig(arguments_.worktreeDir);
-  const repositoryCommand = repositoryConfig?.hooks.prepareWorktree;
-  if (repositoryCommand !== undefined) {
-    return { command: repositoryCommand, source: "repository" };
-  }
-  const operatorCommand =
-    arguments_.perRepoHooks?.prepareWorktree ?? arguments_.defaultHooks.prepareWorktree;
-  if (operatorCommand !== undefined) {
-    return { command: operatorCommand, source: "operator" };
-  }
-  return undefined;
+  return (
+    repositoryConfig?.hooks.prepareWorktree ??
+    arguments_.perRepoHooks?.prepareWorktree ??
+    arguments_.defaultHooks.prepareWorktree
+  );
 }
 
 interface RepositoryConfig {

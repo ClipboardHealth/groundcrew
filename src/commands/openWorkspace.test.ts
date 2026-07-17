@@ -527,7 +527,7 @@ describe(openWorkspace, () => {
   });
 
   it("stages the prepareWorktree hook into the launch when one is configured", async () => {
-    resolvePrepareWorktreeCommandMock.mockReturnValue({ command: "npm ci", source: "operator" });
+    resolvePrepareWorktreeCommandMock.mockReturnValue("npm ci");
 
     await openWorkspace(config, {
       input: { kind: "pr", pr: "42" },

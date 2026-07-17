@@ -32,10 +32,6 @@ function arguments_(
     workingDir: worktreeDir,
     runner: "safehouse",
     networkEgress: "allowlisted",
-    // Default to a trusted operator hook so the many host-run prepareWorktree
-    // assertions below exercise the operator path; repo/unknown provenance is
-    // covered by dedicated tests that override this.
-    prepareWorktreeSource: "operator",
     ...overrides,
   };
 }
@@ -290,68 +286,6 @@ describe(buildLaunchCommand, () => {
     expect(agentWrapIndex).toBeGreaterThan(shimIndex);
     expect(agentIndex).toBeGreaterThan(agentWrapIndex);
     expect(out.slice(agentWrapIndex)).not.toContain("npm ci");
-  });
-
-  it("sandboxes a repo-authored prepareWorktree hook instead of running it on the host", () => {
-    const out = buildLaunchCommand(
-      arguments_({ prepareWorktreeCommand: "npm ci", prepareWorktreeSource: "repository" }),
-    );
-
-    const prepareWrapIndex = out.indexOf("safehouse-clearance' sh -c");
-    const shimIndex = out.indexOf("_safehouse_shim_dir=$(mktemp");
-    const agentWrapIndex = out.indexOf('"$_safehouse_shim" -c');
-
-    // The untrusted repo hook runs inside a Safehouse wrap as `sh -c '<hook>'`...
-    expect(out).toContain("safehouse-clearance' sh -c '(npm ci); prepare_status=$?");
-    // ...and never as a bare host `&&` chain element.
-    expect(out).not.toContain("&& (npm ci); prepare_status=$?");
-    // Sandboxed prepare wrap precedes the agent shim wrap.
-    expect(prepareWrapIndex).toBeGreaterThan(-1);
-    expect(shimIndex).toBeGreaterThan(prepareWrapIndex);
-    expect(agentWrapIndex).toBeGreaterThan(shimIndex);
-  });
-
-  it("sandboxes the prepareWorktree hook when its provenance is unknown (fails safe)", () => {
-    const out = buildLaunchCommand(
-      arguments_({ prepareWorktreeCommand: "npm ci", prepareWorktreeSource: undefined }),
-    );
-
-    expect(out).toContain("safehouse-clearance' sh -c '(npm ci); prepare_status=$?");
-    expect(out).not.toContain("&& (npm ci); prepare_status=$?");
-  });
-
-  it("forwards build secrets into the sandboxed repo prepareWorktree wrap only, never the agent wrap", () => {
-    const out = buildLaunchCommand(
-      arguments_({
-        prepareWorktreeCommand: "npm ci",
-        prepareWorktreeSource: "repository",
-        secretsFile: "/tmp/prompt-team-1/secrets.env",
-      }),
-    );
-
-    const agentWrapIndex = out.indexOf('"$_safehouse_shim" -c');
-    const envPassFlag = `--env-pass=${BUILD_SECRET_NAMES.join(",")} `;
-
-    // The sandboxed prepare wrap forwards build secrets so `npm ci` can auth...
-    expect(out).toContain(`${envPassFlag}sh -c '(npm ci); prepare_status=$?`);
-    // ...and they are unset on the host before the agent wrap, so it never sees them.
-    expect(out).toContain(`unset ${BUILD_SECRET_NAMES.join(" ")}`);
-    expect(out.slice(agentWrapIndex - 200, agentWrapIndex)).not.toContain(envPassFlag);
-  });
-
-  it("grants safehouseAddDirs to the sandboxed repo prepareWorktree wrap so it can reach git", () => {
-    const out = buildLaunchCommand(
-      arguments_({
-        prepareWorktreeCommand: "npm ci",
-        prepareWorktreeSource: "repository",
-        safehouseAddDirs: ["/work/repo-a-team-1", "/src/carrot/.git"],
-      }),
-    );
-
-    const addDirsFlag = "--add-dirs='/work/repo-a-team-1:/src/carrot/.git'";
-    // Both the sandboxed prepare wrap and the agent wrap get the git grant.
-    expect(out).toContain(`${addDirsFlag} sh -c '(npm ci); prepare_status=$?`);
-    expect(out).toContain(`${addDirsFlag} "$_safehouse_shim" -c`);
   });
 
   it("skips the prepareWorktree phase when no hook command is configured", () => {

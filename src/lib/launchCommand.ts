@@ -8,7 +8,6 @@ import {
   type LocalRunner,
   type AgentDefinition,
   type NetworkEgressSetting,
-  type PrepareWorktreeSource,
 } from "./config.ts";
 import { clearanceAllowHostsFilesFromEnvironment } from "./clearanceAllowlist.ts";
 import { shellSingleQuote } from "./shell.ts";
@@ -460,15 +459,6 @@ interface LaunchCommandArguments {
    */
   prepareWorktreeCommand?: string | undefined;
   /**
-   * Provenance of `prepareWorktreeCommand`, consumed only by the safehouse
-   * runner. `"operator"` (from crew.config.ts) is trusted and runs on the host
-   * shell; `"repository"` (from the repo-committed `.groundcrew/config.json`) is
-   * untrusted and runs inside the Safehouse wrap. When a hook is present but the
-   * source is absent, safehouse fails safe and sandboxes it. The srt and sdx
-   * runners ignore this — they sandbox every hook regardless.
-   */
-  prepareWorktreeSource?: PrepareWorktreeSource | undefined;
-  /**
    * Concrete local isolation backend chosen for this launch. Resolved
    * from `config.local.runner` via `resolveLocalRunner` before this
    * function is called — `auto` is never seen here.
@@ -697,12 +687,9 @@ function buildUnwrappedHostLaunchCommand(arguments_: LaunchCommandArguments): st
 function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string {
   const promptDir = path.dirname(arguments_.promptFile);
   const safehouseCommandName = inferAgentCommandName(arguments_.definition.cmd);
-  // The agent command always runs through the Safehouse wrap. The
-  // prepareWorktree hook's placement depends on provenance (see the prepare
-  // block below): operator-authored hooks run on the host shell; repo-authored
-  // (or unknown-provenance) hooks stay sandboxed via `prepareWorktreeCommand`.
-  const { agentCommand: rawAgentCommand, prepareWorktreeCommand } =
-    renderPrepareAndAgentCommand(arguments_);
+  // Only the agent command comes from here; the prepareWorktree hook runs on the
+  // host shell (see below), not through a Safehouse wrap.
+  const { agentCommand: rawAgentCommand } = renderPrepareAndAgentCommand(arguments_);
   const { safehouseAgentIntegration } = arguments_;
   const agentCommand = [
     ...(safehouseAgentIntegration?.commandPreludes ?? []),
@@ -719,27 +706,17 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
     ...workerEnvironmentNames(arguments_.workerEnvironment),
     ...(safehouseAgentIntegration?.envPass ?? []),
   ]);
-  // safehouse reads colon-separated paths from `--add-dirs`. The base grant
-  // (`safehouseAddDirs` — worktree root + git common dir; see
-  // `resolveSafehouseAddDirs`) goes to both wraps: a sandboxed prepareWorktree
-  // hook needs git access, and the agent wrap merges it with the agent-only
-  // paths. An operator-run (host) hook already has full git access, so its grant
-  // flag simply goes unused. Quote the whole value so shell-special chars
-  // survive; the trailing space separates it from the next argv token.
-  const safehousePrepareAddDirs = arguments_.safehouseAddDirs ?? [];
-  const safehousePrepareAddDirsFlag = safehousePathListFlag("--add-dirs", safehousePrepareAddDirs);
+  // safehouse reads colon-separated paths from `--add-dirs`. Only the agent wrap
+  // needs them now (the prepareWorktree hook runs unsandboxed on the host, so it
+  // already has full git access). The base grant (`safehouseAddDirs` — worktree
+  // root + git common dir; see `resolveSafehouseAddDirs`) is merged with the
+  // agent-only paths. Quote the whole value so shell-special chars survive; the
+  // trailing space separates it from the next argv token.
   const safehouseAgentAddDirs = uniqueStrings([
-    ...safehousePrepareAddDirs,
+    ...(arguments_.safehouseAddDirs ?? []),
     ...(arguments_.safehouseAgentAddDirs ?? []),
   ]);
   const safehouseAgentAddDirsFlag = safehousePathListFlag("--add-dirs", safehouseAgentAddDirs);
-  // Build secrets reach a sandboxed prepareWorktree hook via `--env-pass` only
-  // (Safehouse's `--env=FILE` baseline strips inherited env, and preLaunchEnv
-  // credentials are never listed here — keeping them out of the untrusted repo
-  // hook, per PR #128). Unused when the hook runs on the host, which sources
-  // secrets directly instead.
-  const prepareWorktreeEnvPassFlag =
-    arguments_.secretsFile === undefined ? "" : `--env-pass=${BUILD_SECRET_NAMES.join(",")} `;
   const safehouseAgentAddDirsReadOnlyFlag = safehousePathListFlag(
     "--add-dirs-ro",
     uniqueStrings([
@@ -772,29 +749,15 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
       secretsFile: arguments_.secretsFile,
     }),
   );
-  if (
-    arguments_.prepareWorktreeSource === "operator" &&
-    arguments_.prepareWorktreeCommand !== undefined
-  ) {
-    // Operator-authored (crew.config.ts) hook — trusted, pre-agent provisioning.
-    // Run it on the host shell, not in a Safehouse wrap, so the operator's own
-    // `bin/setup`/`bundle install` gets full host access. Scrub the declared
-    // preLaunchEnv credential names so the hook cannot read them (PR #128) while
-    // the agent wrap still can.
+  if (arguments_.prepareWorktreeCommand !== undefined) {
+    // Trusted, pre-agent provisioning: run the hook on the host shell, not in a
+    // Safehouse wrap. Scrub the declared preLaunchEnv credential names so the
+    // hook cannot read them (PR #128) while the agent wrap still can.
     lines.push(
       hostPrepareWorktreeLine(
         arguments_.prepareWorktreeCommand,
         arguments_.definition.preLaunchEnv ?? [],
       ),
-    );
-  } else if (prepareWorktreeCommand !== undefined) {
-    // Repo-authored (or unknown-provenance) hook — untrusted. Keep it sandboxed
-    // inside a Safehouse wrap so repository-controlled code cannot run with the
-    // operator's full host authority (build secrets, ambient credentials,
-    // unrestricted network) before the agent sandbox starts. Fail-safe: any
-    // source other than "operator" lands here.
-    lines.push(
-      `${safehouseWrapper} ${safehousePrepareAddDirsFlag}${prepareWorktreeEnvPassFlag}sh -c ${shellSingleQuote(prepareWorktreeCommand)}`,
     );
   }
   if (arguments_.secretsFile !== undefined) {

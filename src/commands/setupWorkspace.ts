@@ -140,7 +140,7 @@ export async function setupWorkspace(
     const perRepoHooks = config.workspace.repositories.find(
       (entry) => entry.name === repository,
     )?.hooks;
-    const prepareWorktree = resolvePrepareWorktreeCommand({
+    const prepareWorktreeCommand = resolvePrepareWorktreeCommand({
       worktreeDir: launchDir,
       // Spread-conditional rather than a direct assignment: under
       // exactOptionalPropertyTypes an optional field can't take an explicit
@@ -148,7 +148,8 @@ export async function setupWorkspace(
       ...(perRepoHooks === undefined ? {} : { perRepoHooks }),
       defaultHooks: config.defaults.hooks,
     });
-    const secretsFile = prepareWorktree === undefined ? undefined : stageBuildSecrets(promptDir);
+    const secretsFile =
+      prepareWorktreeCommand === undefined ? undefined : stageBuildSecrets(promptDir);
     const completionTaskId = options.completionTaskId ?? task;
     const completionMarkDoneSupported = options.completionMarkDoneSupported ?? true;
     const taskSourceWritePaths =
@@ -172,8 +173,7 @@ export async function setupWorkspace(
       worktreeDir,
       workingDir: launchDir,
       secretsFile,
-      prepareWorktreeCommand: prepareWorktree?.command,
-      prepareWorktreeSource: prepareWorktree?.source,
+      prepareWorktreeCommand,
       sandboxName,
       workspaceKind,
       readOnlyDirs: config.local.readOnlyDirs,
