@@ -129,25 +129,6 @@ function prepareWorktreeWithStatusReporting(prepareWorktreeCommand: string): str
 }
 
 /**
- * Host-shell prepareWorktree line for the safehouse runner: the trusted repo
- * hook runs directly on the host (not inside the agent sandbox), so it has the
- * host toolchain's full filesystem access. `scrubNames` are `unset` inside the
- * status-reporting subshell — used for the declared `preLaunchEnv` credential
- * names, which `preLaunch` has already minted into the host env by this point,
- * so the hook cannot read them (PR #128's credential wall) while the parent
- * shell keeps them for the agent wrap's `--env-pass`. Build secrets are left in
- * env so the hook can authenticate `npm install` etc.; they are `unset` on the
- * host afterward, before the agent wrap.
- */
-function hostPrepareWorktreeLine(
-  prepareWorktreeCommand: string,
-  scrubNames: readonly string[],
-): string {
-  const scrub = scrubNames.length === 0 ? "" : `${unsetEnvironmentLine(scrubNames)}; `;
-  return prepareWorktreeWithStatusReporting(`${scrub}${prepareWorktreeCommand}`);
-}
-
-/**
  * Source a `KEY='value'` file with auto-export so build-time secrets land
  * in the shell env before prepareWorktree runs. The `-f` guard keeps it a
  * no-op if the file disappeared between staging and launch.
@@ -648,18 +629,13 @@ function buildUnwrappedHostLaunchCommand(arguments_: LaunchCommandArguments): st
 }
 
 /**
- * Safehouse launch. The prepareWorktree hook runs on the **host shell**
- * (unsandboxed), and only the **agent** runs inside a Safehouse wrap:
+ * Safehouse launch. Two Safehouse wraps, by design:
  *
- *   1. **prepareWorktree (host)**: the repo preparation hook runs directly on
- *      the host launch shell — same as the `none` runner — so it has the host
- *      toolchain's full filesystem access. This is deliberate: the hook is
- *      trusted, pre-agent provisioning (a user-configured command run over a
- *      fresh base-branch checkout, before the agent has touched anything), so
- *      the agent's deny-by-default profile has no business constraining it.
- *      Wrapping it in the sandbox only made the operator's own setup script
- *      fail on host paths the profile masks (e.g. Ruby's XDG gem dirs).
- *      Omitted entirely when no hook command is configured.
+ *   1. **prepareWorktree wrap**: plain
+ *      `safehouse-clearance ... sh -c '<prepareWorktree>'`. Runs the repo
+ *      preparation hook filesystem-isolated and egress-restricted,
+ *      **without** inheriting agent-profile grants. Omitted entirely when no
+ *      hook command is configured.
  *   2. **Agent wrap**: `safehouse-clearance "$shim" -c '<exec agent>' sh "$_p"`
  *      where `$shim` is a `mktemp`-d symlink to `/bin/sh` named after the
  *      agent (e.g. `claude`). Safehouse selects the matching agent profile
@@ -672,50 +648,51 @@ function buildUnwrappedHostLaunchCommand(arguments_: LaunchCommandArguments): st
  * env — neither inherited values (the launch shell inherits groundcrew's env,
  * from which `stageBuildSecrets` reads them) nor file-sourced values — and keeps
  * stale same-named ambient credentials from being forwarded. `secrets.env` is
- * then sourced into the host launch shell so the host-run prepareWorktree hook
- * inherits build secrets directly (for `npm install` etc.). After prepareWorktree
- * returns, `BUILD_SECRET_NAMES` are `unset` again on the host so they cannot
- * reach the agent wrap.
+ * then sourced into the host launch shell so Safehouse can forward build secrets
+ * into the **prepareWorktree wrap** via `--env-pass=` (Safehouse's `--env=FILE` mode strips
+ * them otherwise). After prepareWorktree returns, `BUILD_SECRET_NAMES` are `unset` again
+ * on the host so they cannot reach the agent wrap.
  *
- * PR #128's credential wall is preserved: `preLaunch` runs before the host
- * prepareWorktree line, so its minted `preLaunchEnv` credentials are already in
- * the host env. The host prepareWorktree line therefore `unset`s those declared
- * names inside its own status-reporting subshell, so the trusted hook still
- * cannot read them, while the parent shell retains them for the agent wrap's
- * `--env-pass`.
+ * `--env-pass` composition is split per wrap (deliberate, post PR #128):
+ * - prepareWorktree wrap forwards build secrets only.
+ * - Agent wrap forwards `preLaunchEnv` names only. preLaunch credentials never
+ *   reach the profile-neutral prepare phase.
  */
 function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string {
   const promptDir = path.dirname(arguments_.promptFile);
   const safehouseCommandName = inferAgentCommandName(arguments_.definition.cmd);
-  // Only the agent command comes from here; the prepareWorktree hook runs on the
-  // host shell (see below), not through a Safehouse wrap.
-  const { agentCommand: rawAgentCommand } = renderPrepareAndAgentCommand(arguments_);
+  const { agentCommand: rawAgentCommand, prepareWorktreeCommand } =
+    renderPrepareAndAgentCommand(arguments_);
   const { safehouseAgentIntegration } = arguments_;
   const agentCommand = [
     ...(safehouseAgentIntegration?.commandPreludes ?? []),
     rawAgentCommand,
   ].join("; ");
 
-  // The agent wrap forwards the user's preLaunchEnv (plus worker/integration
-  // env). Build secrets are never forwarded to the agent wrap — they are sourced
-  // into the host shell for the host-run prepareWorktree hook, then `unset` on
-  // the host before this wrap. Keeps preLaunch credentials paired with the agent
-  // only, and (with the host prepareWorktree scrub) out of the hook — see PR #128.
+  // Split --env-pass per wrap: the prepareWorktree wrap only needs build secrets (so
+  // `npm install` etc. can authenticate); the agent wrap only needs the
+  // user's preLaunchEnv (build secrets are `unset` on the host between the
+  // two wraps, so forwarding them here would silently no-op). Keeps preLaunch
+  // credentials out of the profile-neutral prepare phase — see PR #128.
+  // Trailing space keeps each flag separated from the next argv token.
+  const prepareWorktreeEnvPassFlag =
+    arguments_.secretsFile === undefined ? "" : `--env-pass=${BUILD_SECRET_NAMES.join(",")} `;
   const agentEnvPassFlag = envPassFlag([
     ...(arguments_.definition.preLaunchEnv ?? []),
     ...workerEnvironmentNames(arguments_.workerEnvironment),
     ...(safehouseAgentIntegration?.envPass ?? []),
   ]);
-  // safehouse reads colon-separated paths from `--add-dirs`. Only the agent wrap
-  // needs them now (the prepareWorktree hook runs unsandboxed on the host, so it
-  // already has full git access). The base grant (`safehouseAddDirs` — worktree
-  // root + git common dir; see `resolveSafehouseAddDirs`) is merged with the
-  // agent-only paths. Quote the whole value so shell-special chars survive; the
-  // trailing space separates it from the next argv token.
+  // safehouse reads colon-separated paths from `--add-dirs`; both wraps get the
+  // same grant so the prepareWorktree hook and the agent can each reach git.
+  // Quote the whole value so shell-special chars survive; the trailing space
+  // separates it from the next argv token. See `resolveSafehouseAddDirs` for
+  // which paths these are and why.
+  const safehousePrepareAddDirs = arguments_.safehouseAddDirs ?? [];
   const safehouseAgentAddDirs = uniqueStrings([
-    ...(arguments_.safehouseAddDirs ?? []),
+    ...safehousePrepareAddDirs,
     ...(arguments_.safehouseAgentAddDirs ?? []),
   ]);
+  const safehouseAddDirsFlag = safehousePathListFlag("--add-dirs", safehousePrepareAddDirs);
   const safehouseAgentAddDirsFlag = safehousePathListFlag("--add-dirs", safehouseAgentAddDirs);
   const safehouseAgentAddDirsReadOnlyFlag = safehousePathListFlag(
     "--add-dirs-ro",
@@ -749,15 +726,9 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
       secretsFile: arguments_.secretsFile,
     }),
   );
-  if (arguments_.prepareWorktreeCommand !== undefined) {
-    // Trusted, pre-agent provisioning: run the hook on the host shell, not in a
-    // Safehouse wrap. Scrub the declared preLaunchEnv credential names so the
-    // hook cannot read them (PR #128) while the agent wrap still can.
+  if (prepareWorktreeCommand !== undefined) {
     lines.push(
-      hostPrepareWorktreeLine(
-        arguments_.prepareWorktreeCommand,
-        arguments_.definition.preLaunchEnv ?? [],
-      ),
+      `${safehouseWrapper} ${safehouseAddDirsFlag}${prepareWorktreeEnvPassFlag}sh -c ${shellSingleQuote(prepareWorktreeCommand)}`,
     );
   }
   if (arguments_.secretsFile !== undefined) {

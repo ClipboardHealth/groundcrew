@@ -151,16 +151,14 @@ describe(composeAgentLaunch, () => {
       taskSourceWritePaths: ["/Users/dev/v", "/Users/dev/v/.tasks"],
     });
 
-    const shimSetupIndex = launchCommand.indexOf("_safehouse_shim_dir=");
+    const prepareWrapIndex = launchCommand.indexOf("safehouse-clearance' --add-dirs=");
+    const prepareCommandIndex = launchCommand.indexOf("npm ci");
     const agentWrapIndex = launchCommand.indexOf('"$_safehouse_shim" -c');
-    // The host prepareWorktree region (everything before the shim setup) runs
-    // unsandboxed, so it carries no --add-dirs grant at all.
-    const beforeAgent = launchCommand.slice(0, shimSetupIndex);
-    const agentWrap = launchCommand.slice(shimSetupIndex, agentWrapIndex + 200);
+    const prepareWrap = launchCommand.slice(prepareWrapIndex, prepareCommandIndex);
+    const agentWrap = launchCommand.slice(prepareCommandIndex, agentWrapIndex + 200);
 
-    expect(beforeAgent).toContain("(npm ci); prepare_status=$?");
-    expect(beforeAgent).not.toContain("--add-dirs");
-    expect(beforeAgent).not.toContain("/Users/dev/v");
+    expect(prepareWrap).toContain("--add-dirs='/work/repo-a-team-1:/tmp/repo-a.git'");
+    expect(prepareWrap).not.toContain("/Users/dev/v");
     expect(agentWrap).toContain(
       "--add-dirs='/work/repo-a-team-1:/tmp/repo-a.git:/Users/dev/v:/Users/dev/v/.tasks'",
     );
