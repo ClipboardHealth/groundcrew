@@ -538,6 +538,39 @@ describe(openWorkspace, () => {
     expect(stagedLaunchScript()).toContain("npm ci");
   });
 
+  it("forwards per-repo hooks to resolvePrepareWorktreeCommand when opening", async () => {
+    const repoConfig = makeConfigWithRepositories(["acme/widgets"]);
+    repoConfig.workspace.repositories = [
+      { name: "acme/widgets", hooks: { prepareWorktree: "npm ci" } },
+    ];
+    resolvePrepareWorktreeCommandMock.mockReturnValue("npm ci");
+
+    await openWorkspace(repoConfig, {
+      input: { kind: "pr", pr: "42" },
+      repository: "acme/widgets",
+      promptText: "go",
+    });
+
+    expect(resolvePrepareWorktreeCommandMock).toHaveBeenCalledWith(
+      expect.objectContaining({ perRepoHooks: { prepareWorktree: "npm ci" } }),
+    );
+  });
+
+  it("runs a per-repo prepareWorktreeUnsandboxed command on the host when opening", async () => {
+    const repoConfig = makeConfigWithRepositories(["acme/widgets"]);
+    repoConfig.workspace.repositories = [
+      { name: "acme/widgets", prepareWorktreeUnsandboxed: "bin/setup" },
+    ];
+
+    await openWorkspace(repoConfig, {
+      input: { kind: "pr", pr: "42" },
+      repository: "acme/widgets",
+      promptText: "go",
+    });
+
+    expect(stagedLaunchScript()).toContain("(bin/setup); prepare_status=$?");
+  });
+
   it("rolls back the worktree when opening the workspace fails", async () => {
     workspacesOpenMock.mockRejectedValue(new Error("cmux down"));
 
