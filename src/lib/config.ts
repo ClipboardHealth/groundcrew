@@ -243,6 +243,17 @@ export interface KnownRepository {
    * they don't want to (or can't) commit a `.groundcrew/config.json` into.
    */
   hooks?: HookCommands;
+  /**
+   * Operator-only, per-repository setup command run on the HOST shell outside
+   * any sandbox, before the sandboxed `prepareWorktree` and the agent. Honored
+   * ONLY from `crew.config.ts`; a `.groundcrew/config.json` that sets it is a
+   * hard config error (see `repositoryHooks.ts`). There is deliberately no
+   * `defaults` equivalent — host execution is an explicit per-repo grant, never
+   * a global default. Runs the operator's full host authority against
+   * repo-controlled code (lifecycle scripts, the repo's own `bin/setup`), so
+   * granting it is an explicit trust decision.
+   */
+  prepareWorktreeUnsandboxed?: string;
 }
 
 export interface Config {
@@ -1183,6 +1194,13 @@ function normalizeKnownRepository(entry: string | KnownRepository, index: number
   }
   if (entry.hooks !== undefined) {
     recipe.hooks = normalizeHookCommands(entry.hooks, `${label}.hooks`);
+  }
+  const prepareWorktreeUnsandboxed = normalizeOptionalString(
+    entry.prepareWorktreeUnsandboxed,
+    `${label}.prepareWorktreeUnsandboxed`,
+  );
+  if (prepareWorktreeUnsandboxed !== undefined) {
+    recipe.prepareWorktreeUnsandboxed = prepareWorktreeUnsandboxed;
   }
   return recipe;
 }
