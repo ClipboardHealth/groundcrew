@@ -1,0 +1,11 @@
+{
+  "name": "fixture",
+  "protocolVersion": 1,
+  "commands": {
+    "list": "./list",
+    "get": "./get",
+    "update": "./update"
+  },
+  "environment": {},
+  "prerequisites": []
+}

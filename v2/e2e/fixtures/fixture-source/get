@@ -1,0 +1,71 @@
+#!/usr/bin/env node
+"use strict";
+
+// Protocol-1 `get` command (contracts §4). Returns a single task by id from the
+// $FIXTURE_STORE task store, recording the call. Store knob: `failGet`.
+
+const fs = require("node:fs");
+const path = require("node:path");
+
+const COMMAND = "get";
+
+main();
+
+function main() {
+  const storePath = requireStorePath();
+  const stdin = readStdin();
+  journal(storePath, stdin);
+
+  const store = JSON.parse(fs.readFileSync(storePath, "utf8"));
+  if (store.failGet) {
+    fail("get failed (fixture failGet knob)");
+  }
+
+  const task = (store.tasks || []).find((candidate) => candidate.id === stdin.id);
+  if (!task) {
+    fail(`task ${String(stdin.id)} not found`);
+  }
+
+  emit({ ok: true, data: { task } });
+}
+
+function requireStorePath() {
+  const value = process.env.FIXTURE_STORE;
+  if (!value) {
+    fail("FIXTURE_STORE is not set");
+  }
+
+  return value;
+}
+
+function readStdin() {
+  try {
+    const raw = fs.readFileSync(0, "utf8");
+    return raw.trim() === "" ? {} : JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+
+function journal(storePath, stdin) {
+  const entry = {
+    command: COMMAND,
+    args: process.argv.slice(2),
+    stdin,
+    timestamp: new Date().toISOString(),
+  };
+  fs.appendFileSync(
+    path.join(path.dirname(storePath), "calls.jsonl"),
+    JSON.stringify(entry) + "\n",
+  );
+}
+
+function emit(object) {
+  process.stdout.write(JSON.stringify(object) + "\n");
+  process.exit(0);
+}
+
+function fail(message) {
+  process.stdout.write(JSON.stringify({ ok: false, error: { message } }) + "\n");
+  process.exit(0);
+}

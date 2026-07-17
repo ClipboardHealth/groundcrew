@@ -1,0 +1,168 @@
+#!/usr/bin/env node
+"use strict";
+
+// Scripted agent for the e2e suite (catalog §1.4). Stands in for a real coding
+// agent CLI: it reads a per-scenario JSON step script from the file named by
+// $GROUNDCREW_TEST_AGENT_SCRIPT and executes the steps in order, deterministic-
+// ally. On start it writes a heartbeat file under the workspace so scenarios
+// synchronize on "agent running" without sleeping. Handles a leading
+// `--resume <sessionId>` argv prefix by recording the resumed id, then runs the
+// script. Agent profiles are declarative config with a `command`, so this is an
+// honest stand-in. No deps outside node builtins.
+
+const fs = require("node:fs");
+const path = require("node:path");
+const childProcess = require("node:child_process");
+
+const workspace = process.env.GROUNDCREW_WORKSPACE || process.cwd();
+const markerDirectory = path.join(workspace, ".groundcrew-test");
+
+main();
+
+function main() {
+  fs.mkdirSync(markerDirectory, { recursive: true });
+  recordResumeIfPresent();
+  writeHeartbeat();
+
+  const script = readScript();
+  for (const step of script.steps || []) {
+    runStep(step);
+  }
+
+  process.exit(0);
+}
+
+function recordResumeIfPresent() {
+  if (process.argv[2] === "--resume") {
+    const sessionId = process.argv[3] || "";
+    fs.appendFileSync(
+      path.join(markerDirectory, "agent-resume"),
+      JSON.stringify({ sessionId, timestamp: new Date().toISOString() }) + "\n",
+    );
+  }
+}
+
+function writeHeartbeat() {
+  fs.writeFileSync(
+    path.join(markerDirectory, "agent-heartbeat"),
+    JSON.stringify({ pid: process.pid, timestamp: new Date().toISOString() }) + "\n",
+  );
+}
+
+function readScript() {
+  return JSON.parse(fs.readFileSync(resolveScriptPath(), "utf8"));
+}
+
+// GROUNDCREW_TEST_AGENT_SCRIPT names a file or a directory. A file is used as
+// is (single-agent scenarios). A directory is resolved per task —
+// <dir>/<taskSlug>.json if present, else <dir>/default.json — so a scenario
+// with several concurrent agents can script each one independently.
+function resolveScriptPath() {
+  const configured = process.env.GROUNDCREW_TEST_AGENT_SCRIPT;
+  if (!configured) {
+    throw new Error("GROUNDCREW_TEST_AGENT_SCRIPT is not set");
+  }
+
+  const stats = fs.existsSync(configured) ? fs.statSync(configured) : undefined;
+  if (stats && stats.isFile()) {
+    return configured;
+  }
+
+  if (stats && stats.isDirectory()) {
+    const slug = taskSlug(process.env.GROUNDCREW_TASK_ID || "");
+    const perTask = path.join(configured, `${slug}.json`);
+    if (fs.existsSync(perTask)) {
+      return perTask;
+    }
+
+    return path.join(configured, "default.json");
+  }
+
+  return configured;
+}
+
+function taskSlug(taskId) {
+  return taskId
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function runStep(step) {
+  switch (step.type) {
+    case "writeFile":
+      return doWriteFile(step);
+    case "gitCommit":
+      return doGitCommit(step);
+    case "crew":
+      return doCrew(step);
+    case "sleep":
+      return syncSleep(step.milliseconds || 0);
+    case "waitForFile":
+      return doWaitForFile(step);
+    case "exitCode":
+      return process.exit(step.code || 0);
+    case "hang":
+      return doHang();
+    default:
+      throw new Error(`unknown scripted-agent step type: ${String(step.type)}`);
+  }
+}
+
+function doWriteFile(step) {
+  const target = resolvePath(step.path);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, step.content == null ? "" : String(step.content));
+}
+
+function doGitCommit(step) {
+  const repoDirectory = resolvePath(step.repo);
+  childProcess.execFileSync("git", ["add", "-A"], { cwd: repoDirectory, stdio: "inherit" });
+  childProcess.execFileSync("git", ["commit", "-m", step.message || "scripted commit"], {
+    cwd: repoDirectory,
+    stdio: "inherit",
+  });
+}
+
+function doCrew(step) {
+  const command = (process.env.GROUNDCREW_E2E_CREW_BIN || "").trim().split(/\s+/).filter(Boolean);
+  if (command.length === 0) {
+    throw new Error("GROUNDCREW_E2E_CREW_BIN is not set; cannot run crew step");
+  }
+
+  const [executable, ...baseArgs] = command;
+  childProcess.execFileSync(executable, [...baseArgs, ...(step.args || [])], {
+    stdio: "inherit",
+  });
+}
+
+function doWaitForFile(step) {
+  const target = resolvePath(step.path);
+  const deadline = Date.now() + (step.timeoutMilliseconds || 10000);
+  while (!fs.existsSync(target)) {
+    if (Date.now() >= deadline) {
+      throw new Error(`scripted-agent timed out waiting for file ${target}`);
+    }
+
+    syncSleep(25);
+  }
+}
+
+function doHang() {
+  // Block forever; the scenario kills this process (pause/SIGKILL cases).
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);
+}
+
+function syncSleep(milliseconds) {
+  if (milliseconds > 0) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
+  }
+}
+
+function resolvePath(candidate) {
+  if (!candidate) {
+    throw new Error("scripted-agent step is missing a path");
+  }
+
+  return path.isAbsolute(candidate) ? candidate : path.join(workspace, candidate);
+}

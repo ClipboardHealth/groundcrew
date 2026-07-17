@@ -1,0 +1,96 @@
+#!/usr/bin/env node
+"use strict";
+
+// Protocol-1 `update` command (contracts §4). Receives a writeback event on
+// stdin, journals it, and mutates the $FIXTURE_STORE task store so the source
+// side of the boundary carries observable truth (FLOW-05/COMPLETE-07):
+//   - claimed: emits `rejected` when the task id is in store.rejectClaims,
+//     otherwise `ok`; no mutation.
+//   - completed: records the outcome/artifacts/message under store.completions
+//     and adds the id to store.completedTaskIds (so `list` drops it unless it
+//     recurs). Emits `ok`.
+//   - anything else (e.g. progress): emits `ok`, no mutation.
+
+const fs = require("node:fs");
+const path = require("node:path");
+
+const COMMAND = "update";
+
+main();
+
+function main() {
+  const storePath = requireStorePath();
+  const stdin = readStdin();
+  journal(storePath, stdin);
+
+  const store = JSON.parse(fs.readFileSync(storePath, "utf8"));
+  const event = stdin.event || {};
+
+  if (event.type === "claimed") {
+    const rejected = (store.rejectClaims || []).includes(stdin.id);
+    if (rejected) {
+      emit({ ok: true, data: { result: "rejected", reason: "fixture rejected claim" } });
+    }
+
+    emit({ ok: true, data: { result: "ok" } });
+  }
+
+  if (event.type === "completed") {
+    store.completions = store.completions || {};
+    store.completions[stdin.id] = {
+      outcome: event.outcome,
+      artifacts: event.artifacts || [],
+      message: event.message,
+    };
+    store.completedTaskIds = store.completedTaskIds || [];
+    if (!store.completedTaskIds.includes(stdin.id)) {
+      store.completedTaskIds.push(stdin.id);
+    }
+
+    fs.writeFileSync(storePath, JSON.stringify(store, undefined, 2) + "\n");
+    emit({ ok: true, data: { result: "ok" } });
+  }
+
+  emit({ ok: true, data: { result: "ok" } });
+}
+
+function requireStorePath() {
+  const value = process.env.FIXTURE_STORE;
+  if (!value) {
+    fail("FIXTURE_STORE is not set");
+  }
+
+  return value;
+}
+
+function readStdin() {
+  try {
+    const raw = fs.readFileSync(0, "utf8");
+    return raw.trim() === "" ? {} : JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+
+function journal(storePath, stdin) {
+  const entry = {
+    command: COMMAND,
+    args: process.argv.slice(2),
+    stdin,
+    timestamp: new Date().toISOString(),
+  };
+  fs.appendFileSync(
+    path.join(path.dirname(storePath), "calls.jsonl"),
+    JSON.stringify(entry) + "\n",
+  );
+}
+
+function emit(object) {
+  process.stdout.write(JSON.stringify(object) + "\n");
+  process.exit(0);
+}
+
+function fail(message) {
+  process.stdout.write(JSON.stringify({ ok: false, error: { message } }) + "\n");
+  process.exit(0);
+}

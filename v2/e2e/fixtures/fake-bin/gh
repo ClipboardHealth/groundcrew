@@ -1,0 +1,22 @@
+#!/usr/bin/env node
+"use strict";
+
+// Fake `gh` for the e2e core lane (catalog §1.4). v2 core is forge-blind, so
+// ANY invocation of this by the core process is a spec failure (FLOW-06). It
+// records every call to $FAKE_GH_LOG and exits 0 with an empty JSON object so
+// an agent-scripted `gh` call does not blow up a scenario. The recorded-call
+// file is the FLOW-06 assertion point.
+
+const fs = require("node:fs");
+
+const logPath = process.env.FAKE_GH_LOG;
+if (logPath) {
+  const entry = {
+    argv: process.argv.slice(2),
+    timestamp: new Date().toISOString(),
+  };
+  fs.appendFileSync(logPath, JSON.stringify(entry) + "\n");
+}
+
+process.stdout.write("{}\n");
+process.exit(0);
