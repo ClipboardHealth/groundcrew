@@ -754,6 +754,37 @@ describe(buildLaunchCommand, () => {
       expect(execIndex).toBeGreaterThan(unsetIndex);
       expect(out).not.toContain("--env-pass");
     });
+
+    it("runs prepareWorktreeUnsandboxed on the host before prepareWorktree", () => {
+      const out = buildLaunchCommand(
+        arguments_({
+          runner: "none",
+          prepareWorktreeUnsandboxedCommand: "bin/setup",
+          prepareWorktreeCommand: "npm ci",
+        }),
+      );
+
+      const unsandboxedIndex = out.indexOf("bin/setup");
+      const prepareIndex = out.indexOf("npm ci");
+      const agentIndex = out.indexOf("exec claude");
+      expect(unsandboxedIndex).toBeGreaterThan(-1);
+      expect(prepareIndex).toBeGreaterThan(unsandboxedIndex);
+      expect(agentIndex).toBeGreaterThan(prepareIndex);
+      // Both run with status reporting so a failure is surfaced, not swallowed.
+      expect(out).toContain("(bin/setup); prepare_status=$?");
+    });
+
+    it("scrubs preLaunchEnv names inside the prepareWorktreeUnsandboxed subshell", () => {
+      const out = buildLaunchCommand(
+        arguments_({
+          runner: "none",
+          definition: { cmd: "claude", color: "#fff", preLaunchEnv: ["TOKEN"] },
+          prepareWorktreeUnsandboxedCommand: "bin/setup",
+        }),
+      );
+
+      expect(out).toContain("(unset TOKEN; bin/setup); prepare_status=$?");
+    });
   });
 
   describe("EXIT-trap promptDir cleanup", () => {
