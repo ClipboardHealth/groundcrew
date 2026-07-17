@@ -832,6 +832,35 @@ describe(buildLaunchCommand, () => {
       expect(out).toContain("(bin/setup); prepare_status=$?");
     });
 
+    it("does not launch the agent when a prerequisite before prepareWorktreeUnsandboxed fails", () => {
+      const markerDir = mkdtempSync(path.join(tmpdir(), "groundcrew-host-hook-marker-"));
+      const promptDir = mkdtempSync(path.join(tmpdir(), "groundcrew-host-hook-prompt-"));
+      const promptFile = path.join(promptDir, "prompt.txt");
+      const agentMarker = path.join(markerDir, "agent-ran");
+      const missingWorktreeDir = path.join(markerDir, "missing-worktree");
+      try {
+        writeFileSync(promptFile, "the prompt body\n");
+        const out = buildLaunchCommand(
+          arguments_({
+            runner: "none",
+            promptFile,
+            worktreeDir: missingWorktreeDir,
+            prepareWorktreeUnsandboxedCommand: "true",
+            definition: { cmd: `touch '${agentMarker}'`, color: "#fff" },
+            omitPromptArgument: true,
+          }),
+        );
+
+        const result = spawnSync("sh", ["-c", out]);
+
+        expect(result.status).not.toBe(0);
+        expect(() => statSync(agentMarker)).toThrow(/ENOENT/);
+      } finally {
+        rmSync(markerDir, { recursive: true, force: true });
+        rmSync(promptDir, { recursive: true, force: true });
+      }
+    });
+
     it("scrubs preLaunchEnv names inside the prepareWorktreeUnsandboxed subshell", () => {
       const out = buildLaunchCommand(
         arguments_({

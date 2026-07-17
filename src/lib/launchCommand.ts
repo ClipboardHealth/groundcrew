@@ -139,7 +139,7 @@ function prepareWorktreeWithStatusReporting(prepareWorktreeCommand: string): str
  */
 function hostPrepareWorktreeLine(command: string, scrubNames: readonly string[]): string {
   const scrub = scrubNames.length === 0 ? "" : `${unsetEnvironmentLine(scrubNames)}; `;
-  return prepareWorktreeWithStatusReporting(`${scrub}${command}`);
+  return `{ ${prepareWorktreeWithStatusReporting(`${scrub}${command}`)}; }`;
 }
 
 /**
