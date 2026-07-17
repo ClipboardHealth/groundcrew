@@ -68,7 +68,7 @@ An `e2e/` package in the groundcrew repo, plain TypeScript + vitest, spawning th
 
 - **Core never polls a destination for done-ness.** No forge calls, no tracker reads to infer task completion. `status` reports what groundcrew knows: **observed** workspace git facts (branches, commits, dirty state) and **agent-reported** events and artifacts. Whether the tracker moves to done is the source's business (its `update` handler) or tracker automation's — humans see the agent's report and judge for themselves.
 - **`completed{outcome}` frees the dispatch slot immediately** — a finished task never blocks the queue.
-- **The workspace lingers after completion.** Worktrees, branches, and the final state record stay on disk until a human runs `cleanup` — the review window for seeing what the agent reported before it disappears.
+- **The workspace lingers after completion, with two exits.** Worktrees, branches, and the final state record stay on disk until **either** a human runs `cleanup` **or** polling observes the _source_ reporting the task terminal (e.g. the tracker moved to Done after the PR merged) — v1's cleaner, kept as-is because it watches the source, not the forge. The review window holds in practice: the tracker rarely reaches done the instant the agent reports delivered. Auto-reap never removes a dirty worktree; it skips loudly and leaves it for a human.
 
 ## 3. The catalog
 
@@ -93,7 +93,8 @@ Each entry: **ID · lane · Given** (source store, config, disk, scripts) · **W
 - **COMPLETE-03** (core) — _Launch failure is truthful and rolled back._ Given an agent profile whose `cmd` doesn't exist. When `start(task)`. Then state records `complete{failed, reason: launch}`; worktree and branch rolled back; the failure appears in the journal if the task was already claimed.
 - **COMPLETE-04** (core) — _Agent failure is truth-told._ Scripted agent ends `completed {outcome: failed, message}`. Then journal carries the failure event with the message; state is `complete{failed}`; no artifact records invented; workspace lingers for inspection.
 - **COMPLETE-05** (core) — _Read-only source end-to-end._ Given a fixture manifest with no `update` command. Then dispatch, run, and completion all succeed; journal shows zero update calls; status labels the source read-only. (Also asserted at discovery level in PLUGIN-05.)
-- **COMPLETE-06** (core) — _Cleanup ends the linger._ Given a delivered task's lingering workspace. When `cleanup(task)`. Then worktree removed, branch deleted, state record gone; the source hears nothing new.
+- **COMPLETE-06** (core) — _Manual cleanup ends the linger._ Given a delivered task's lingering workspace. When `cleanup(task)`. Then worktree removed, branch deleted, state record gone; the source hears nothing new.
+- **COMPLETE-07** (core) — _Source-terminal auto-reap (v1 cleaner parity)._ Given a delivered task's lingering clean workspace. When the fixture source's store marks the task done and `tick()` runs. Then worktree, branch, and state record reaped automatically; the reap is logged. Variant: if the lingering worktree is dirty, auto-reap skips it with a visible warning and everything stays on disk.
 
 ### C. Session lifecycle
 
@@ -153,3 +154,4 @@ Each entry: **ID · lane · Given** (source store, config, disk, scripts) · **W
 ## 4. Iteration log
 
 - **Iteration 1** (2026-07-16): green-on-v1 gate dropped in favor of harness self-tests plus a migration-easing budget; completion model codified (forge-blind, agent-reported, linger-until-cleanup); suite stack confirmed (`e2e/` package, TS + vitest); sandbox lane confirmed v2-only. Tier A/B structure and the v1 driver removed accordingly.
+- **Iteration 2** (2026-07-16): linger gets two exits — manual `cleanup` or source-terminal auto-reap (v1's cleaner kept: it watches the source, never the forge; v1's merged-PR reviewer path dies). COMPLETE-07 added; dirty worktrees are never auto-reaped.
