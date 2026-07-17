@@ -183,6 +183,7 @@
     "pluggability",
     "neverthrow",
     "finalizers",
-    "opencode"
+    "opencode",
+    "inspectable"
   ]
 }

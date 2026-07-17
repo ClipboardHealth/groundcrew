@@ -1,4 +1,4 @@
-# E2E scenario catalog (draft prototype — DEVOP-5974)
+# E2E scenario catalog (DEVOP-5974)
 
 The executable half of the groundcrew v2 spec: the black-box scenarios the acceptance suite must cover, plus the harness shape that makes them hermetic. The suite is written **before v2 code exists** and brings v2 up red→green; it is v2's system-level TDD loop and the language-agnostic escape hatch (any implementation that passes is conformant).
 
@@ -33,8 +33,8 @@ Scenarios call abstract operations bound in exactly one harness module. The CLI 
 configure(fixture)            // write config into the scenario tmpdir
 seedSource(tasks[])           // load the fixture source's task store
 tick()                        // one poll/dispatch cycle
-start(taskId)                 // immediate dispatch, bypassing eligibility
-stop(taskId) / resume(taskId) / cleanup(taskId, {force}) / status(taskId?) / doctor()
+start(taskId, {force?})       // dispatch that task; force bypasses eligibility, never the repo-on-disk gate
+pause(taskId) / resume(taskId) / cleanup(taskId, {force}) / status(taskId?) / doctor()
 killOrchestrator() / restart()  // crash scenarios
 paths: { worktreeFor(repo, task), workspaceFor(task), stateFor(task), logFile }
 expect: { branchFor(task), sessionFor(task) }
@@ -88,7 +88,7 @@ Each entry: **ID · lane · Given** (source store, config, disk, scripts) · **W
 
 ### B. Completion & writeback
 
-- **COMPLETE-01** (core) — _Publishing work is reporting it._ Scripted agent commits, runs `crew artifact add <pr-url> --kind pr`, emits progress. Then: journal shows `update:progress` and the artifact-bearing update; status shows both layers (commits _observed_, PR _reported_); core made no forge call.
+- **COMPLETE-01** (core) — _Publishing work is reporting it._ Scripted agent commits and runs `crew artifact add <pr-url> --kind pr`. Then: the reported artifact appears in the run record and rides the `completed` writeback; status shows both layers (commits _observed_, PR _reported_); core made no forge call.
 - **COMPLETE-02** (core) — _Delivered: slot freed, workspace lingers._ Scripted agent ends `completed {outcome: delivered, artifacts}`. Then: journal carries the completed event exactly once with artifacts intact; state is `complete{delivered}`; session ended; **worktree, branch, and state record still on disk**; next `tick()` dispatches the next queued task (slot freed) while the delivered workspace lingers.
 - **COMPLETE-03** (core) — _Launch failure is truthful and rolled back._ Given an agent profile whose `cmd` doesn't exist. When `start(task)`. Then state records `complete{failed, reason: launch}`; worktree and branch rolled back; the failure appears in the journal if the task was already claimed.
 - **COMPLETE-04** (core) — _Agent failure is truth-told._ Scripted agent ends `completed {outcome: failed, message}`. Then journal carries the failure event with the message; state is `complete{failed}`; no artifact records invented; workspace lingers for inspection.
@@ -99,7 +99,7 @@ Each entry: **ID · lane · Given** (source store, config, disk, scripts) · **W
 
 ### C. Session lifecycle
 
-- **SESSION-01** (core) — _Stop keeps work._ Given a running task. When `stop(task)`. Then session closed, worktree and branch intact, state paused, resumable.
+- **SESSION-01** (core) — _Pause keeps work._ Given a running task. When `pause(task)`. Then session closed, worktree and branch intact, state paused, resumable.
 - **SESSION-02** (core) — _Resume reopens, never recreates._ When `resume(task)` on a paused task: session live again, same worktree, resume count incremented, state running. When `resume` on a task with no worktree: hard error, nothing created.
 - **SESSION-03** (core) — _Status tells the truth about strays._ Given state says running but the tmux session was killed externally. Then `status` flags the disagreement (stray/dead). Given no state but a live session matching a task: `status` flags the stray session.
 
@@ -127,7 +127,7 @@ Each entry: **ID · lane · Given** (source store, config, disk, scripts) · **W
 - **FLOW-01** (core) — _Reported vs observed are separate layers._ Agent commits but reports nothing. Then status shows commits _observed_ and no artifact _reported_ — a missing link, never a lie.
 - **FLOW-02** (core) — _Mixed artifact kinds round-trip._ Agent reports `pr`, `ticket`, and `file` artifacts. Then `completed.artifacts` in the journal carries all three, kinds and locators intact.
 - **FLOW-03** (core) — _Claim rejected._ Given the fixture source answers `claimed` with _rejected_. Then no provisioning, no session; task remains listed; the rejection is visible in log/status. (The remote-runner door.)
-- **FLOW-04** (core) — _Progress events flow._ Agent emits progress notes. Then journal shows `update:progress` with the notes, in order.
+- **FLOW-04** (core, **deferred post-v2.0**) — _Progress events flow._ Requires an agent-facing progress emitter, and v2.0 ships none: `crew progress` is a documented seam, not built (DEVOP-5982 §6). The `progress` event stays in protocol 1; this ID is reserved and the scenario activates when the emitter ships.
 - **FLOW-05** (core) — _Done-ness is not core's business._ After COMPLETE-02, the source's task store still says whatever its own `update` handler chose; core issues no reads to confirm or reconcile it, and status renders the agent's report unchanged.
 - **FLOW-06** (core) — _Core is forge-blind._ Across MULTI/FLOW scenarios, the fake `gh` (and any recorded network attempt in the core lane) shows **zero** invocations by the core process. Agent-initiated calls don't count.
 
@@ -161,3 +161,4 @@ Each entry: **ID · lane · Given** (source store, config, disk, scripts) · **W
 - **Iteration 1** (2026-07-16): green-on-v1 gate dropped in favor of harness self-tests plus a migration-easing budget; completion model codified (forge-blind, agent-reported, linger-until-cleanup); suite stack confirmed (`e2e/` package, TS + vitest); sandbox lane confirmed v2-only. Tier A/B structure and the v1 driver removed accordingly.
 - **Iteration 2** (2026-07-16): linger gets two exits — manual `cleanup` or source-terminal auto-reap (v1's cleaner kept: it watches the source, never the forge; v1's merged-PR reviewer path dies). COMPLETE-07 added; dirty worktrees are never auto-reaped.
 - **Iteration 3** (2026-07-16): absorbed the CLI surface resolution's handoff (DEVOP-5975, resolved concurrently): `workspace add` → `repo add`; completion via `crew done`; task-identity resolution order with exit codes 2/3 (MULTI-04/05/08); `--force` never overrides the repo gate (DISPATCH-07); `done` dirty-guard (COMPLETE-08); `init --yes`, v1-config conversion, and `source doctor` round-trip (SURFACE-05/06/07).
+- **Iteration 4** (2026-07-17): review pass on the design-doc assembly PR: "draft prototype" label dropped (the catalog is ratified); harness binding renamed `stop` → `pause` and `start` gains `{force?}` (SESSION-01, DISPATCH-07); progress assertions removed from COMPLETE-01 and FLOW-04 deferred post-v2.0 — v2.0 ships no agent-facing progress emitter (DEVOP-5982 §6).

@@ -122,12 +122,14 @@ Single-repo tasks stay dead simple as the degenerate case: one designated repo, 
 | In-session | `repo add <repo>`                                             | Runtime acquisition (section 4). Renamed from `workspace add` to dodge the cmux "workspace" collision.                                                                                                               |
 | In-session | `artifact add <locator> [--kind\|--title\|--repo]`            | Agent-reported artifacts (section 3).                                                                                                                                                                                |
 | In-session | `done [--outcome delivered\|failed\|stopped] [--allow-dirty]` | Replaces `$GROUNDCREW_COMPLETE` — the prompt just says "run `crew done`". Dirty-worktree guard refuses with the dirt named unless `--allow-dirty`.                                                                   |
+| Sources    | `source list`                                                 | Discovered source bundles with origin (`package`/`user`), protocol version, and user-dir override visibility (catalog PLUGIN-01/02).                                                                                 |
+| Sources    | `source doctor`                                               | Live round-trip probe of each configured source, naming the failing source on exit 1 (catalog SURFACE-07). Absorbs v1 `source verify` and `task validate`.                                                           |
 | Setup      | `init`                                                        | Interactive 5-step: baseDirectory, agent detection, source pick, write config, run doctor. Detects a v1 `crew.config.ts` and converts it, printing every dropped/renamed key. Global by default; `--local`, `--yes`. |
-| Setup      | `doctor` / `upgrade` / `completions`                          | `doctor` is the health-check verb everywhere: `crew doctor`, `crew source doctor` (absorbs `source verify` + `task validate`).                                                                                       |
+| Setup      | `doctor` / `upgrade` / `completions`                          | `doctor` is the health-check verb everywhere: `crew doctor`, `crew source doctor`.                                                                                                                                   |
 
 In-session commands are ordinary subcommands (no separate namespace). **Task identity resolution:** `--task` flag → `$GROUNDCREW_WORKSPACE` env (injected at launch) → walk up from cwd to `.groundcrew/task.json`. Exit codes: **2** = repo not cloned under `baseDirectory`, **3** = no task context.
 
-**Killed:** `open`, `task create`, `task list/get/validate`, `source install`, `source verify`, `interrupt`, `sandbox`, `setup`, the `crew-clearance-ensure` bin. No `progress` command in v2.0 (the protocol event exists; add a CLI if the need shows up). No `crew migrate` — `init`'s conversion is the migration aid.
+**Killed:** `open`, `task create`, `task list/get/validate`, `source install`, `interrupt`, `sandbox`, `setup`, the `crew-clearance-ensure` bin (`source verify` is renamed into `source doctor`, not killed). No `progress` command in v2.0 (the protocol event exists; add a CLI if the need shows up). No `crew migrate` — `init`'s conversion is the migration aid.
 
 **Verb families locked:** lifecycle `start → pause → resume → done`; health checks are `doctor`.
 
@@ -141,7 +143,7 @@ In-session commands are ordinary subcommands (no separate namespace). **Task ide
 
 ### 7.3 Setup
 
-`curl -fsSL …/install.sh | sh` → node ≥ 24 check, global npm install, exec `crew init` (`--yes` for CI/dotfiles). Deliberately manual forever: cloning repos, minting API keys, installing agent CLIs.
+`curl -fsSL …/install.sh | sh` → node ≥ 24 check, global npm install, exec `crew init` (`--yes` for CI/dotfiles). The script is a thin, inspectable wrapper over `npm install -g @clipboard-health/groundcrew`; that command is the direct path for anyone unwilling to pipe a remote script into a shell, and npm's registry integrity checks are the trust anchor either way. Deliberately manual forever: cloning repos, minting API keys, installing agent CLIs.
 
 ## 8. Session presenter
 
