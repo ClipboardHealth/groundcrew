@@ -27,7 +27,7 @@ Everything a scenario may assert on:
 
 ### 1.3 Command binding
 
-The CLI surface ([DEVOP-5975](https://linear.app/clipboardhealth/issue/DEVOP-5975)) is still open, so scenarios call abstract operations bound in exactly one harness module — the only file that changes when command names land:
+Scenarios call abstract operations bound in exactly one harness module. The CLI surface ([DEVOP-5975](https://linear.app/clipboardhealth/issue/DEVOP-5975)) has since landed the concrete names — `start` (merged run+start, `--watch`/`--force`), `pause`/`resume`, `cleanup`, `status`, `doctor`, and in-session `repo add` / `artifact add` / `done` — so the binding is now mechanical:
 
 ```text
 configure(fixture)            // write config into the scenario tmpdir
@@ -82,7 +82,7 @@ Each entry: **ID · lane · Given** (source store, config, disk, scripts) · **W
 - **DISPATCH-04** (core) — _Blocked task skipped, dispatched when unblocked._ Given a task with an open blocker. When `tick()`: nothing provisions. When the fixture marks the blocker done and `tick()` again: it provisions.
 - **DISPATCH-05** (core) — _Ineligible task ignored._ Given a task with no agent routing. When `tick()`. Then no provisioning, no writeback, task still listed as queued.
 - **DISPATCH-06** (core) — _Designated repo not on disk → bail._ Given a task designating a repo not cloned under the base dir. When `tick()`. Then no worktree/branch/session/state; the task stays queued at the source; the skip reason is visible (log line + status). (DEVOP-5967 §2.)
-- **DISPATCH-07** (core) — _Manual start bypasses eligibility._ Given an unlabeled/no-agent task. When `start(task)`. Then it provisions exactly as DISPATCH-01.
+- **DISPATCH-07** (core) — _Manual start bypasses eligibility, never the repo gate._ Given an unlabeled/no-agent task. When `start(task)` (`crew start <task> --force`). Then it provisions exactly as DISPATCH-01. Variant: the same forced start on a task designating a repo not on disk still bails per DISPATCH-06 — `--force` cannot override the repo-on-disk gate.
 - **DISPATCH-08** (core) — _Branch reuse._ Given a prior local branch `expect.branchFor(task)` with a commit. When dispatched. Then the worktree re-attaches to that branch (prior commit present), not a fresh one.
 - **DISPATCH-09** (core) — _Recurrence is a source concern._ Given a fixture source that re-lists a completed task per its recurrence rule. When the task completes and `tick()` runs after re-listing. Then a fresh dispatch occurs; core has no recurrence machinery to observe. (DEVOP-5968 §6.)
 
@@ -93,6 +93,7 @@ Each entry: **ID · lane · Given** (source store, config, disk, scripts) · **W
 - **COMPLETE-03** (core) — _Launch failure is truthful and rolled back._ Given an agent profile whose `cmd` doesn't exist. When `start(task)`. Then state records `complete{failed, reason: launch}`; worktree and branch rolled back; the failure appears in the journal if the task was already claimed.
 - **COMPLETE-04** (core) — _Agent failure is truth-told._ Scripted agent ends `completed {outcome: failed, message}`. Then journal carries the failure event with the message; state is `complete{failed}`; no artifact records invented; workspace lingers for inspection.
 - **COMPLETE-05** (core) — _Read-only source end-to-end._ Given a fixture manifest with no `update` command. Then dispatch, run, and completion all succeed; journal shows zero update calls; status labels the source read-only. (Also asserted at discovery level in PLUGIN-05.)
+- **COMPLETE-08** (core) — _`crew done` honors the dirty-worktree guard._ Scripted agent leaves uncommitted changes and runs `crew done --outcome delivered`: refused with a nonzero exit naming the dirt; task stays running; no completed event. Rerun with `--allow-dirty`: completes normally.
 - **COMPLETE-06** (core) — _Manual cleanup ends the linger._ Given a delivered task's lingering workspace. When `cleanup(task)`. Then worktree removed, branch deleted, state record gone; the source hears nothing new.
 - **COMPLETE-07** (core) — _Source-terminal auto-reap (v1 cleaner parity)._ Given a delivered task's lingering clean workspace. When the fixture source's store marks the task done and `tick()` runs. Then worktree, branch, and state record reaped automatically; the reap is logged. Variant: if the lingering worktree is dirty, auto-reap skips it with a visible warning and everything stays on disk.
 
@@ -115,8 +116,9 @@ Each entry: **ID · lane · Given** (source store, config, disk, scripts) · **W
 - **MULTI-01** (core) — _Designated multi-repo._ Given `Repos: alpha, beta`, both cloned. Then one workspace directory with two worktrees side by side, the **same** task branch in each, **one** tmux session at the workspace root.
 - **MULTI-02** (core) — _Designated-and-missing → bail._ Given `Repos: alpha, gamma`, `gamma` not cloned. Then nothing provisions (not even `alpha`), visible "repo not found" skip, task stays queued.
 - **MULTI-03** (core) — _Empty-workspace dispatch._ Given a task with no repo designation. Then the session launches in an empty workspace; zero worktrees; state running.
-- **MULTI-04** (core) — _Runtime acquisition, allowed._ Scripted agent runs `crew workspace add alpha` in-session (task identity via workspace state/env). Then a worktree for `alpha` appears under the workspace on the uniform task branch; the addition is recorded in task state; prepare-worktree hook ran.
-- **MULTI-05** (core) — _Runtime acquisition, gate-rejected._ Agent runs `crew workspace add not-cloned`. Then a loud error, nothing created, nonzero exit in-session; task keeps running.
+- **MULTI-04** (core) — _Runtime acquisition, allowed._ Scripted agent runs `crew repo add alpha` in-session (task identity via `$GROUNDCREW_WORKSPACE`). Then a worktree for `alpha` appears under the workspace on the uniform task branch; the addition is recorded in task state; prepare-worktree hook ran. Variants exercise the other two identity paths: explicit `--task`, and env unset with cwd inside the workspace (walk-up to `.groundcrew/task.json`).
+- **MULTI-05** (core) — _Runtime acquisition, gate-rejected._ Agent runs `crew repo add not-cloned`. Then a loud error, **exit 2** (repo not cloned under the base directory), nothing created; task keeps running.
+- **MULTI-08** (core) — _In-session command without task context._ `crew repo add alpha` run outside any workspace, with no `--task` and no `$GROUNDCREW_WORKSPACE`. Then **exit 3** (no task context), nothing created, no journal entry.
 - **MULTI-06** (core) — _Partial completion truth-telling._ Agent commits in `alpha` and `beta`, reports a pr artifact for `alpha` only, completes `{outcome: failed}`. Then per-repo records show exactly that (alpha: artifact reported + commits observed; beta: commits observed, nothing reported); no invented atomicity, no rollback.
 - **MULTI-07** (core) — _Repo-less delivery._ Agent in an empty workspace reports `{kind: document, locator: <url>}` and completes delivered. Then the completed event carries the artifact; no git facts exist or are claimed.
 
@@ -150,8 +152,12 @@ Each entry: **ID · lane · Given** (source store, config, disk, scripts) · **W
 - **SURFACE-02** (core) — _Doctor catches broken hosts._ Missing agent binary; unreachable/failing source verify; missing base dir — each produces a failing doctor with the cause named, exit 1.
 - **SURFACE-03** (core) — _Status degrades gracefully._ Given the fixture source errors on list. Then `status` still prints local truth (worktrees, sessions, state) and marks the queue unavailable with the reason; exit 0.
 - **SURFACE-04** (core) — _Structured logs are parseable._ After DISPATCH-01 + COMPLETE-02, every line of the log file parses as JSON and carries the task id on task-scoped events. (Deeper schema assertions belong to the observability design — fog.)
+- **SURFACE-05** (core) — _`init --yes` is non-interactive and sufficient._ On a fixture host with an agent CLI on PATH. When `crew init --yes`. Then a `crew.config.jsonc` exists that `doctor` passes and DISPATCH-01 runs against unmodified — no prompts, exit 0.
+- **SURFACE-06** (core) — _v1 config conversion._ Given a v1 `crew.config.ts` (with `knownRepositories`, a `shell` source block, and a safehouse runner setting). When `crew init`. Then a converted `crew.config.jsonc` is written and every dropped or renamed key is named in the output; `doctor` passes afterward.
+- **SURFACE-07** (core) — _`source doctor` live round-trip._ Given the fixture source installed. When `crew source doctor`. Then it exercises the source's verify/read probe end-to-end (journal shows the probe call) and reports healthy; with the fixture's script made to fail, it reports the failure with the source named, exit 1.
 
 ## 4. Iteration log
 
 - **Iteration 1** (2026-07-16): green-on-v1 gate dropped in favor of harness self-tests plus a migration-easing budget; completion model codified (forge-blind, agent-reported, linger-until-cleanup); suite stack confirmed (`e2e/` package, TS + vitest); sandbox lane confirmed v2-only. Tier A/B structure and the v1 driver removed accordingly.
 - **Iteration 2** (2026-07-16): linger gets two exits — manual `cleanup` or source-terminal auto-reap (v1's cleaner kept: it watches the source, never the forge; v1's merged-PR reviewer path dies). COMPLETE-07 added; dirty worktrees are never auto-reaped.
+- **Iteration 3** (2026-07-16): absorbed the CLI surface resolution's handoff (DEVOP-5975, resolved concurrently): `workspace add` → `repo add`; completion via `crew done`; task-identity resolution order with exit codes 2/3 (MULTI-04/05/08); `--force` never overrides the repo gate (DISPATCH-07); `done` dirty-guard (COMPLETE-08); `init --yes`, v1-config conversion, and `source doctor` round-trip (SURFACE-05/06/07).
