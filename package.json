@@ -62,6 +62,7 @@
     "lint": "oxlint --config config/oxlint.config.ts --deny-warnings",
     "markdown:lint": "markdownlint-cli2 --config config/markdownlint-cli2.jsonc",
     "prepack": "node --run build",
+    "proto:cli2": "node scripts/prototypeCrew2CliSurface.mts",
     "prepare": "husky",
     "spell:check": "cspell --config config/cspell.json --no-summary --no-progress --no-must-find-files",
     "sync-ai-rules": "node ./node_modules/@clipboard-health/ai-rules/scripts/sync.js common",
