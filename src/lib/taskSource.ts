@@ -143,7 +143,7 @@ export interface ReferenceLinkAttachment {
   title: string;
   url: string;
   /** Linear's sourceType ("github", "figma", ...) when known. */
-  sourceType: string | undefined;
+  sourceType?: string;
 }
 
 export interface SkippedAttachment {

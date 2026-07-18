@@ -1,8 +1,8 @@
 /**
  * Filename-safety and byte-cap primitives for staging task attachments into a
- * worktree. Consumed by the producing adapters (Linear download, shell
- * reconcile) as they land in follow-up slices. Dependency-free (Node builtins
- * only) so it stays extraction-ready.
+ * worktree — the helpers the `TaskSource.fetchAttachments` implementer
+ * contract points producing adapters at. Dependency-free (Node builtins only)
+ * so it stays extraction-ready.
  */
 
 import path from "node:path";

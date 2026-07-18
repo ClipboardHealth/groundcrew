@@ -6,7 +6,6 @@ import type { DiscoveredManifest } from "./adapters/shell/discovery.ts";
 import {
   sourceSupportsFetchAttachments,
   sourceSupportsMarkDone,
-  summarizeSource,
   taskSupportsCompletionCommand,
 } from "./sourceCapabilities.ts";
 
@@ -110,14 +109,6 @@ describe(sourceSupportsFetchAttachments, () => {
     });
 
     expect(actual).toBe(false);
-  });
-});
-
-describe(summarizeSource, () => {
-  it("includes a fetchAttachments capability flag on every summary", () => {
-    const actual = summarizeSource({ kind: "linear" });
-
-    expect(actual.capabilities.fetchAttachments).toBe(false);
   });
 });
 

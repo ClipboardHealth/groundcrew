@@ -67,13 +67,9 @@ export interface SetupWorkspaceOptions {
  * exists after worktree creation, so the closure threads Board access into
  * `setupWorkspace` without coupling it to Board/Issue.
  *
- * As of the core-plumbing slice every source kind reports
- * `fetchAttachments: false` (see `sourceCapabilities.ts`), so this returns
- * `undefined` for all configured sources until a producing-adapter slice
- * flips its kind on. Note the gate reads config (`rawSources`) while
- * `board.fetchAttachments` routes by built-adapter name; if those ever
- * diverge, the closure soft-fails at call time as a prompt `fetchError`
- * rather than aborting the dispatch.
+ * The gate reads config (`rawSources`) while `board.fetchAttachments` routes
+ * by built-adapter name; if those ever diverge, the closure soft-fails at
+ * call time as a prompt `fetchError` rather than aborting the dispatch.
  */
 export function buildFetchAttachmentsClosure(arguments_: {
   config: ResolvedConfig;

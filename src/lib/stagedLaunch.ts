@@ -28,22 +28,42 @@ interface PromptTemplateVariables {
 }
 
 function renderPromptTemplate(template: string, variables: PromptTemplateVariables): string {
-  return (
-    template
-      .replaceAll(
-        "{{workspaceContinuationInstruction}}",
-        variables.workspaceContinuationInstruction,
-      )
-      .replaceAll("{{attachments}}", variables.attachments)
-      // The two optional placeholders above leave stacked blank lines behind
-      // when they render empty; collapse BEFORE user-authored content (title,
-      // description) is substituted so task text is never reflowed.
-      .replaceAll(/\n{3,}/g, "\n\n")
-      .replaceAll("{{task}}", variables.task)
-      .replaceAll("{{worktree}}", variables.worktree)
-      .replaceAll("{{title}}", variables.title)
-      .replaceAll("{{description}}", variables.description)
-  );
+  const withOptionals = replaceOptionalPlaceholder({
+    template: replaceOptionalPlaceholder({
+      template,
+      placeholder: "{{workspaceContinuationInstruction}}",
+      value: variables.workspaceContinuationInstruction,
+    }),
+    placeholder: "{{attachments}}",
+    value: variables.attachments,
+  });
+  return withOptionals
+    .replaceAll("{{task}}", variables.task)
+    .replaceAll("{{worktree}}", variables.worktree)
+    .replaceAll("{{title}}", variables.title)
+    .replaceAll("{{description}}", variables.description);
+}
+
+/**
+ * Substitute an optional placeholder. Non-empty values replace verbatim; an
+ * empty value also absorbs the placeholder's own line (and one adjacent blank
+ * line) so the template doesn't render stacked blank lines. Scoped to the
+ * placeholder site on purpose: the template body is user-authored config and
+ * must never be reflowed.
+ */
+function replaceOptionalPlaceholder(arguments_: {
+  template: string;
+  placeholder: string;
+  value: string;
+}): string {
+  const { template, placeholder, value } = arguments_;
+  if (value !== "") {
+    return template.replaceAll(placeholder, value);
+  }
+  return template
+    .replaceAll(`\n${placeholder}\n\n`, "\n")
+    .replaceAll(`\n${placeholder}\n`, "\n")
+    .replaceAll(placeholder, "");
 }
 
 /**

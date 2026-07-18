@@ -10,7 +10,12 @@ import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
 import { recordRunState } from "../lib/runState.ts";
 import { sourceSupportsFetchAttachments } from "../lib/sourceCapabilities.ts";
-import type { AttachmentFetchResult } from "../lib/taskSource.ts";
+import type {
+  Attachment,
+  AttachmentFetchResult,
+  FetchAttachmentsArguments,
+  TaskSource,
+} from "../lib/taskSource.ts";
 import { canonicalLinearIssue, canonicalShellIssue } from "../lib/testing/canonicalFixtures.ts";
 import { createBoard, type Board } from "../lib/board.ts";
 import type * as boardModule from "../lib/board.ts";
@@ -777,7 +782,7 @@ describe(setupWorkspace, () => {
     expect(prompt).not.toContain("{{workspaceContinuationInstruction}}");
   });
 
-  it("omits the workspace continuation instruction when the backend has no access hint", async () => {
+  it("omits the workspace continuation instruction and its line when the backend has no access hint", async () => {
     const config = {
       ...makeConfig(),
       prompts: {
@@ -793,7 +798,9 @@ describe(setupWorkspace, () => {
       details: { title: "Test Title", description: "Body" },
     });
 
-    expect(writtenFileContent("/tmp/groundcrew-team-1-x/prompt.txt")).toBe("Before\n\nAfter");
+    // The empty optional placeholder absorbs its own line rather than
+    // leaving a stray blank line in every dispatched prompt.
+    expect(writtenFileContent("/tmp/groundcrew-team-1-x/prompt.txt")).toBe("Before\nAfter");
   });
 
   it("wraps the agent command with Safehouse and runs the default prepareWorktree hook", async () => {
@@ -1982,7 +1989,7 @@ describe(setupWorkspace, () => {
     }
 
     it("stages files via the fetch closure, hides them from git, and renders them into the prompt", async () => {
-      const fetchAttachments = vi.fn<(stageDir: string) => Promise<AttachmentFetchResult>>(
+      const fetchAttachmentsMock = vi.fn<(stageDir: string) => Promise<AttachmentFetchResult>>(
         async (stageDir: string): Promise<AttachmentFetchResult> => {
           await writeFile(path.join(stageDir, "mockup.png"), "png-bytes");
           return {
@@ -2018,11 +2025,11 @@ describe(setupWorkspace, () => {
         repository: "repo-a",
         agent: "claude",
         details: { title: "Test Title", description: "Body" },
-        fetchAttachments,
+        fetchAttachments: fetchAttachmentsMock,
       });
 
       const stageDir = path.join(launchDir, ".groundcrew", "attachments");
-      expect(fetchAttachments).toHaveBeenCalledWith(stageDir);
+      expect(fetchAttachmentsMock).toHaveBeenCalledWith(stageDir);
       await expect(access(path.join(stageDir, "mockup.png"))).resolves.toBeUndefined();
       expect(writeFileMock).toHaveBeenCalledWith(
         path.join(launchDir, ".groundcrew", ".gitignore"),
@@ -2034,6 +2041,38 @@ describe(setupWorkspace, () => {
       );
       expect(prompt).toContain('- "Related PR" - https://github.com/acme/widgets/pull/42');
       expect(prompt).toContain('- "huge.zip" - not staged');
+    });
+
+    it("absorbs the placeholder's blank line when attachments render empty", async () => {
+      const config: ResolvedConfig = {
+        ...makeConfig(),
+        prompts: { initial: "X\n\n{{attachments}}\n\nY" },
+      };
+
+      await setupWorkspace(config, {
+        task: "team-1",
+        repository: "repo-a",
+        agent: "claude",
+        details: { title: "Test Title", description: "Body" },
+      });
+
+      expect(writtenFileContent("/tmp/groundcrew-team-1-x/prompt.txt")).toBe("X\n\nY");
+    });
+
+    it("never reflows blank-line runs the user authored in the template body", async () => {
+      const config: ResolvedConfig = {
+        ...makeConfig(),
+        prompts: { initial: "A\n\n\n\nB{{attachments}}" },
+      };
+
+      await setupWorkspace(config, {
+        task: "team-1",
+        repository: "repo-a",
+        agent: "claude",
+        details: { title: "Test Title", description: "Body" },
+      });
+
+      expect(writtenFileContent("/tmp/groundcrew-team-1-x/prompt.txt")).toBe("A\n\n\n\nB");
     });
 
     it("creates no .groundcrew directory and renders an empty section when no closure is provided", async () => {
@@ -2050,7 +2089,7 @@ describe(setupWorkspace, () => {
     });
 
     it("skips fetching entirely when attachments.enabled is false", async () => {
-      const fetchAttachments = vi
+      const fetchAttachmentsMock = vi
         .fn<(stageDir: string) => Promise<AttachmentFetchResult>>()
         .mockResolvedValue({ attachments: [] });
       const config: ResolvedConfig = {
@@ -2063,15 +2102,15 @@ describe(setupWorkspace, () => {
         repository: "repo-a",
         agent: "claude",
         details: { title: "Test Title", description: "Body" },
-        fetchAttachments,
+        fetchAttachments: fetchAttachmentsMock,
       });
 
-      expect(fetchAttachments).not.toHaveBeenCalled();
+      expect(fetchAttachmentsMock).not.toHaveBeenCalled();
       await expect(access(path.join(launchDir, ".groundcrew"))).rejects.toThrow(/ENOENT/);
     });
 
     it("still launches the workspace when the fetch closure throws", async () => {
-      const fetchAttachments = vi
+      const fetchAttachmentsMock = vi
         .fn<(stageDir: string) => Promise<AttachmentFetchResult>>()
         .mockRejectedValue(new Error("boom"));
 
@@ -2080,7 +2119,7 @@ describe(setupWorkspace, () => {
         repository: "repo-a",
         agent: "claude",
         details: { title: "Test Title", description: "Body" },
-        fetchAttachments,
+        fetchAttachments: fetchAttachmentsMock,
       });
 
       expect(teardownMock).not.toHaveBeenCalled();
@@ -2092,7 +2131,7 @@ describe(setupWorkspace, () => {
     });
 
     it("logs and renders a notice when the fetch result carries fetchError", async () => {
-      const fetchAttachments = vi
+      const fetchAttachmentsMock = vi
         .fn<(stageDir: string) => Promise<AttachmentFetchResult>>()
         .mockResolvedValue({ attachments: [], fetchError: "GraphQL down" });
 
@@ -2101,7 +2140,7 @@ describe(setupWorkspace, () => {
         repository: "repo-a",
         agent: "claude",
         details: { title: "Test Title", description: "Body" },
-        fetchAttachments,
+        fetchAttachments: fetchAttachmentsMock,
       });
 
       expect(logMock).toHaveBeenCalledWith(
@@ -2240,6 +2279,64 @@ describe(setupWorkspaceCli, () => {
     await setupWorkspaceCli("team-1");
 
     expect(defaultBoard.fetchAttachments).not.toHaveBeenCalled();
+  });
+
+  it("stages attachments end-to-end: stub source through a real Board into the rendered prompt", async () => {
+    vi.mocked(sourceSupportsFetchAttachments).mockReturnValueOnce(true);
+    const { createBoard: actualCreateBoard } =
+      await vi.importActual<typeof boardModule>("../lib/board.ts");
+    const issue = canonicalLinearIssue({
+      naturalId: "team-1",
+      repository: "repo-a",
+      agent: "claude",
+      title: "Title",
+      description: "Body for repo-a",
+    });
+    const stubSource: TaskSource = {
+      name: issue.source,
+      verify: vi.fn<() => Promise<void>>().mockResolvedValue(),
+      listTasks: vi.fn<() => Promise<Issue[]>>().mockResolvedValue([]),
+      getTask: vi.fn<(id: string) => Promise<Issue | null>>().mockResolvedValue(issue),
+      fetch: vi.fn<() => Promise<Issue[]>>().mockResolvedValue([]),
+      resolveOne: vi.fn<(id: string) => Promise<Issue | undefined>>().mockResolvedValue(issue),
+      markInProgress: vi.fn<(issue: Issue) => Promise<void>>().mockResolvedValue(),
+      markInReview: vi.fn<TaskSource["markInReview"]>().mockResolvedValue({ outcome: "applied" }),
+      fetchAttachments: vi.fn<
+        (arguments_: FetchAttachmentsArguments) => Promise<readonly Attachment[]>
+      >(async ({ stageDir }) => {
+        await writeFile(path.join(stageDir, "mockup.png"), "png-bytes");
+        return [
+          {
+            kind: "file",
+            filename: "mockup.png",
+            relativePath: ".groundcrew/attachments/mockup.png",
+            title: "mockup.png",
+            sizeBytes: 9,
+          },
+        ];
+      }),
+    };
+    createBoardMock.mockImplementation(actualCreateBoard);
+    buildSourcesMock.mockResolvedValueOnce([stubSource]);
+    loadConfigMock.mockResolvedValue({
+      ...makeConfig(),
+      prompts: { initial: "Begin {{task}}\n{{attachments}}" },
+    });
+    const launchDir = await mkdtemp(path.join(tmpdir(), "groundcrew-attach-e2e-"));
+    createMock.mockImplementation(async () => ({ ...hostEntry(), dir: launchDir }));
+    try {
+      await setupWorkspaceCli("team-1");
+
+      // The staged file must exist exactly where the reported relativePath
+      // says it does — the value-level correspondence no seam test checks.
+      await expect(
+        access(path.join(launchDir, ".groundcrew", "attachments", "mockup.png")),
+      ).resolves.toBeUndefined();
+      const prompt = writtenFileContent("/tmp/groundcrew-team-1-x/prompt.txt");
+      expect(prompt).toContain("- `.groundcrew/attachments/mockup.png`");
+    } finally {
+      await rm(launchDir, { recursive: true, force: true });
+    }
   });
 
   it("does not provision or mark In Progress in dry-run mode", async () => {

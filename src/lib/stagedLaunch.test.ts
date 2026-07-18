@@ -104,9 +104,7 @@ describe(renderAttachments, () => {
 
   it("omits the Attached files section when only links are present", () => {
     const actual = renderAttachments({
-      attachments: [
-        { kind: "link", title: "Spec", url: "https://example.test/spec", sourceType: undefined },
-      ],
+      attachments: [{ kind: "link", title: "Spec", url: "https://example.test/spec" }],
     });
 
     expect(actual).toContain("## References");

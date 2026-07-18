@@ -14,9 +14,9 @@ interface SourceCapabilities {
   markDone: boolean;
   validate: boolean;
   /**
-   * Whether the source can stage task attachments. False for every kind in
-   * this slice; producing adapters (Linear, shell `commands.fetchAttachments`)
-   * flip their kinds on in follow-up slices.
+   * Whether the source kind can stage task attachments into the workspace
+   * (`TaskSource.fetchAttachments`). Dispatch builds the fetch closure only
+   * when this is true.
    */
   fetchAttachments: boolean;
 }
