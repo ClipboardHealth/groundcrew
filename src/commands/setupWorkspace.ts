@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
@@ -138,8 +138,15 @@ async function stageAttachments(arguments_: {
   try {
     const groundcrewDir = path.join(launchDir, ".groundcrew");
     const stageDir = path.join(groundcrewDir, "attachments");
+    const gitignorePath = path.join(groundcrewDir, ".gitignore");
+    // A branch can ship `.groundcrew` (or pieces of it) as symlinks pointing
+    // outside the worktree, and these writes run in the orchestrator process
+    // (not the agent sandbox) — refuse to follow rather than write through.
+    assertNotSymlink(groundcrewDir);
+    assertNotSymlink(stageDir);
+    assertNotSymlink(gitignorePath);
     mkdirSync(stageDir, { recursive: true });
-    writeFileSync(path.join(groundcrewDir, ".gitignore"), "*\n");
+    writeFileSync(gitignorePath, "*\n");
     result = await options.fetchAttachments(stageDir);
   } catch (error) {
     result = { attachments: [], fetchError: errorMessage(error) };
@@ -148,6 +155,13 @@ async function stageAttachments(arguments_: {
     log(`Attachment fetch failed for ${options.task}: ${result.fetchError}`);
   }
   return result;
+}
+
+function assertNotSymlink(target: string): void {
+  const stats = lstatSync(target, { throwIfNoEntry: false });
+  if (stats !== undefined && stats.isSymbolicLink()) {
+    throw new Error(`refusing to stage attachments: ${target} is a symlink`);
+  }
 }
 
 export async function setupWorkspace(

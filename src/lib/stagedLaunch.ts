@@ -27,38 +27,50 @@ interface PromptTemplateVariables {
   attachments: string;
 }
 
+const PROMPT_SUBSTITUTION_RE =
+  /\{\{(?:task|worktree|title|description|workspaceContinuationInstruction|attachments)\}\}/g;
+
 function renderPromptTemplate(template: string, variables: PromptTemplateVariables): string {
-  const withOptionals = replaceOptionalPlaceholder({
-    template: replaceOptionalPlaceholder({
+  const withOptionals = absorbEmptyOptionalPlaceholder(
+    absorbEmptyOptionalPlaceholder(
       template,
-      placeholder: "{{workspaceContinuationInstruction}}",
-      value: variables.workspaceContinuationInstruction,
-    }),
-    placeholder: "{{attachments}}",
-    value: variables.attachments,
-  });
-  return withOptionals
-    .replaceAll("{{task}}", variables.task)
-    .replaceAll("{{worktree}}", variables.worktree)
-    .replaceAll("{{title}}", variables.title)
-    .replaceAll("{{description}}", variables.description);
+      "{{workspaceContinuationInstruction}}",
+      variables.workspaceContinuationInstruction,
+    ),
+    "{{attachments}}",
+    variables.attachments,
+  );
+  const substitutions: ReadonlyMap<string, string> = new Map([
+    ["{{task}}", variables.task],
+    ["{{worktree}}", variables.worktree],
+    ["{{title}}", variables.title],
+    ["{{description}}", variables.description],
+    ["{{workspaceContinuationInstruction}}", variables.workspaceContinuationInstruction],
+    ["{{attachments}}", variables.attachments],
+  ]);
+  // Single pass over the template so substituted values are never re-scanned:
+  // task text (or an attachment title) containing "{{title}}" stays literal.
+  return withOptionals.replaceAll(
+    PROMPT_SUBSTITUTION_RE,
+    /* v8 ignore next @preserve -- the regex alternation guarantees every match is a map key, so the ?? fallback is unreachable */
+    (match) => substitutions.get(match) ?? match,
+  );
 }
 
 /**
- * Substitute an optional placeholder. Non-empty values replace verbatim; an
- * empty value also absorbs the placeholder's own line (and one adjacent blank
- * line) so the template doesn't render stacked blank lines. Scoped to the
- * placeholder site on purpose: the template body is user-authored config and
- * must never be reflowed.
+ * When an optional placeholder renders empty, absorb its own line (and one
+ * adjacent blank line) so the template doesn't render stacked blank lines.
+ * Scoped to the placeholder site on purpose: the template body is
+ * user-authored config and must never be reflowed. Non-empty values are left
+ * for the single-pass substitution.
  */
-function replaceOptionalPlaceholder(arguments_: {
-  template: string;
-  placeholder: string;
-  value: string;
-}): string {
-  const { template, placeholder, value } = arguments_;
+function absorbEmptyOptionalPlaceholder(
+  template: string,
+  placeholder: string,
+  value: string,
+): string {
   if (value !== "") {
-    return template.replaceAll(placeholder, value);
+    return template;
   }
   return template
     .replaceAll(`\n${placeholder}\n\n`, "\n")

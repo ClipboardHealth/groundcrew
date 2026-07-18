@@ -64,7 +64,12 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
       sessionLimitPercentage: 85,
       ...overrides.orchestrator,
     },
-    attachments: { enabled: true, maxAttachmentBytes: 26_214_400, maxTotalBytes: 104_857_600 },
+    attachments: {
+      enabled: true,
+      maxAttachmentBytes: 26_214_400,
+      maxTotalBytes: 104_857_600,
+      ...overrides.attachments,
+    },
     agents: {
       default: "claude",
       definitions: {

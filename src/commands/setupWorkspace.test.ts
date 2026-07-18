@@ -1,6 +1,6 @@
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import type * as nodeFs from "node:fs";
-import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
@@ -2041,6 +2041,49 @@ describe(setupWorkspace, () => {
       );
       expect(prompt).toContain('- "Related PR" - https://github.com/acme/widgets/pull/42');
       expect(prompt).toContain('- "huge.zip" - not staged');
+    });
+
+    it("refuses to stage through a symlinked .groundcrew and still launches", async () => {
+      const escapeTarget = await mkdtemp(path.join(tmpdir(), "groundcrew-escape-"));
+      await symlink(escapeTarget, path.join(launchDir, ".groundcrew"));
+      const fetchAttachmentsMock = vi
+        .fn<(stageDir: string) => Promise<AttachmentFetchResult>>()
+        .mockResolvedValue({ attachments: [] });
+      try {
+        await setupWorkspace(configWithAttachmentsTemplate(), {
+          task: "team-1",
+          repository: "repo-a",
+          agent: "claude",
+          details: { title: "Test Title", description: "Body" },
+          fetchAttachments: fetchAttachmentsMock,
+        });
+
+        expect(fetchAttachmentsMock).not.toHaveBeenCalled();
+        expect(lastRecordedRunState()).toMatchObject({ task: "team-1", state: "running" });
+        const prompt = writtenFileContent("/tmp/groundcrew-team-1-x/prompt.txt");
+        expect(prompt).toContain("*Attachment fetch failed:");
+        await expect(access(path.join(escapeTarget, "attachments"))).rejects.toThrow(/ENOENT/);
+      } finally {
+        await rm(escapeTarget, { recursive: true, force: true });
+      }
+    });
+
+    it("keeps placeholder-like text inside substituted values literal", async () => {
+      const config: ResolvedConfig = {
+        ...makeConfig(),
+        prompts: { initial: "{{title}}|{{description}}{{attachments}}" },
+      };
+
+      await setupWorkspace(config, {
+        task: "team-1",
+        repository: "repo-a",
+        agent: "claude",
+        details: { title: "T {{description}} T", description: "D" },
+      });
+
+      expect(writtenFileContent("/tmp/groundcrew-team-1-x/prompt.txt")).toBe(
+        "T {{description}} T|D",
+      );
     });
 
     it("absorbs the placeholder's blank line when attachments render empty", async () => {

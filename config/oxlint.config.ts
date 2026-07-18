@@ -46,7 +46,7 @@ export default defineConfig(
           // Vitest's parallel runner.
           files: ["**/setupWorkspace.test.ts"],
           rules: {
-            "max-lines": ["error", 2500],
+            "max-lines": ["error", 2600],
           },
         },
         {
