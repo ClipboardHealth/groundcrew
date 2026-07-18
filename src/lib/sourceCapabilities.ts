@@ -13,6 +13,12 @@ interface SourceCapabilities {
   markInReview: boolean;
   markDone: boolean;
   validate: boolean;
+  /**
+   * Whether the source can stage task attachments. False for every kind in
+   * this slice; producing adapters (Linear, shell `commands.fetchAttachments`)
+   * flip their kinds on in follow-up slices.
+   */
+  fetchAttachments: boolean;
 }
 
 export interface SourceSummary {
@@ -43,6 +49,7 @@ const LINEAR_CAPABILITIES: SourceCapabilities = {
   markInReview: true,
   markDone: false,
   validate: false,
+  fetchAttachments: false,
 };
 
 const UNKNOWN_KIND_CAPABILITIES: SourceCapabilities = {
@@ -54,6 +61,7 @@ const UNKNOWN_KIND_CAPABILITIES: SourceCapabilities = {
   markInReview: false,
   markDone: false,
   validate: false,
+  fetchAttachments: false,
 };
 
 function shellCapabilities(raw: unknown): SourceCapabilities {
@@ -68,6 +76,7 @@ function shellCapabilities(raw: unknown): SourceCapabilities {
     markInReview: commands.markInReview !== undefined,
     markDone: commands.markDone !== undefined,
     validate: commands.validate !== undefined,
+    fetchAttachments: false,
   };
 }
 
@@ -83,6 +92,7 @@ function manifestCapabilities(arguments_: ManifestCapabilitiesArguments): Source
     markInReview: commands.markInReview !== undefined,
     markDone: commands.markDone !== undefined,
     validate: commands.validate !== undefined,
+    fetchAttachments: false,
   };
 }
 
@@ -113,6 +123,7 @@ const TODO_TXT_CAPABILITIES: SourceCapabilities = {
   markInReview: true,
   markDone: true,
   validate: true,
+  fetchAttachments: false,
 };
 
 export function summarizeSource(raw: unknown): SourceSummary {
@@ -143,6 +154,25 @@ export function sourceSupportsMarkDone(arguments_: {
     const source = summarizeSource(rawSource);
     if (source.name === sourceName) {
       return source.capabilities.markDone;
+    }
+  }
+  return false;
+}
+
+/**
+ * Whether the named source can stage task attachments. Dispatch gates the
+ * `setupWorkspace` fetch closure on this so a source without the capability
+ * causes zero behavior change (no `.groundcrew/` directory is ever created).
+ */
+export function sourceSupportsFetchAttachments(arguments_: {
+  rawSources: readonly unknown[];
+  sourceName: string;
+}): boolean {
+  const { rawSources, sourceName } = arguments_;
+  for (const rawSource of rawSources) {
+    const source = summarizeSource(rawSource);
+    if (source.name === sourceName) {
+      return source.capabilities.fetchAttachments;
     }
   }
   return false;

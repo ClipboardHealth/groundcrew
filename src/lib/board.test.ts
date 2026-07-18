@@ -1,5 +1,7 @@
 import { createBoard } from "./board.ts";
 import type {
+  Attachment,
+  FetchAttachmentsArguments,
   Issue,
   MarkDoneResult,
   MarkInReviewResult,
@@ -359,5 +361,80 @@ describe("Board.markDone", () => {
     await expect(board.markDone(fakeIssue("nope:1", "nope"))).rejects.toThrow(
       /unknown source.*nope/,
     );
+  });
+});
+
+function fetchArguments(issue: Issue): FetchAttachmentsArguments {
+  return {
+    issue,
+    stageDir: "/work/repo-a-team-1/.groundcrew/attachments",
+    maxAttachmentBytes: 100,
+    maxTotalBytes: 250,
+  };
+}
+
+describe("Board.fetchAttachments", () => {
+  it("returns an empty result when the source does not implement fetchAttachments", async () => {
+    const board = createBoard([fakeSource("a")]);
+
+    const actual = await board.fetchAttachments(fetchArguments(fakeIssue("a:1", "a")));
+
+    expect(actual).toStrictEqual({ attachments: [] });
+  });
+
+  it("routes to the adapter named by issue.source and wraps its attachments", async () => {
+    const expected: Attachment[] = [
+      {
+        kind: "file",
+        filename: "mockup.png",
+        relativePath: ".groundcrew/attachments/mockup.png",
+        title: "mockup.png",
+        url: "https://example.test/mockup.png",
+        sizeBytes: 10,
+      },
+    ];
+    const aFetch = vi
+      .fn<(arguments_: FetchAttachmentsArguments) => Promise<readonly Attachment[]>>()
+      .mockResolvedValue(expected);
+    const board = createBoard([fakeSource("a", { fetchAttachments: aFetch }), fakeSource("b")]);
+    const input = fetchArguments(fakeIssue("a:1", "a"));
+
+    const actual = await board.fetchAttachments(input);
+
+    expect(actual).toStrictEqual({ attachments: expected });
+    expect(aFetch).toHaveBeenCalledWith(input);
+  });
+
+  it("wraps an adapter throw into fetchError instead of rejecting", async () => {
+    const aFetch = vi
+      .fn<(arguments_: FetchAttachmentsArguments) => Promise<readonly Attachment[]>>()
+      .mockRejectedValue(new Error("GraphQL down"));
+    const board = createBoard([fakeSource("a", { fetchAttachments: aFetch })]);
+
+    const actual = await board.fetchAttachments(fetchArguments(fakeIssue("a:1", "a")));
+
+    expect(actual).toStrictEqual({
+      attachments: [],
+      fetchError: "GraphQL down",
+    });
+  });
+
+  it("stringifies a non-Error adapter rejection into fetchError", async () => {
+    const aFetch = vi
+      .fn<(arguments_: FetchAttachmentsArguments) => Promise<readonly Attachment[]>>()
+      .mockRejectedValue("no good");
+    const board = createBoard([fakeSource("a", { fetchAttachments: aFetch })]);
+
+    const actual = await board.fetchAttachments(fetchArguments(fakeIssue("a:1", "a")));
+
+    expect(actual).toStrictEqual({ attachments: [], fetchError: "no good" });
+  });
+
+  it("throws when issue.source names an unknown source", async () => {
+    const board = createBoard([fakeSource("a")]);
+
+    await expect(
+      board.fetchAttachments(fetchArguments(fakeIssue("nope:1", "nope"))),
+    ).rejects.toThrow(/unknown source.*nope/);
   });
 });

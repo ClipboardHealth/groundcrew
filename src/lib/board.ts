@@ -7,7 +7,9 @@
 
 import {
   AmbiguousTaskError,
+  type AttachmentFetchResult,
   type BoardState,
+  type FetchAttachmentsArguments,
   type Issue,
   type MarkDoneResult,
   type MarkInReviewResult,
@@ -15,6 +17,7 @@ import {
   type TaskSource,
 } from "./taskSource.ts";
 import { resolveTaskIdMatches, type TaskResolutionMatches } from "./taskResolution.ts";
+import { errorMessage } from "./util.ts";
 
 export interface Board {
   verify: () => Promise<void>;
@@ -39,6 +42,15 @@ export interface Board {
    * optional `markDone` return `unsupported` (see `TaskSource.markDone`).
    */
   markDone: (issue: Issue) => Promise<MarkDoneResult>;
+  /**
+   * Stages attachments for `arguments_.issue` on the adapter whose `name`
+   * matches `issue.source`. Unknown source throws. Never rejects otherwise:
+   * a source without the optional `fetchAttachments` yields an empty result,
+   * and an adapter throw is wrapped into `fetchError` — so an adapter-level
+   * failure never fails a dispatch (`setupWorkspace` still guards its own
+   * stage-dir I/O separately).
+   */
+  fetchAttachments: (arguments_: FetchAttachmentsArguments) => Promise<AttachmentFetchResult>;
 }
 
 async function callVerify(source: TaskSource): Promise<void> {
@@ -173,6 +185,18 @@ export function createBoard(sources: readonly TaskSource[]): Board {
         };
       }
       return await source.markDone(issue);
+    },
+
+    async fetchAttachments(arguments_: FetchAttachmentsArguments): Promise<AttachmentFetchResult> {
+      const source = routeWriteback(byName, arguments_.issue);
+      if (source.fetchAttachments === undefined) {
+        return { attachments: [] };
+      }
+      try {
+        return { attachments: await source.fetchAttachments(arguments_) };
+      } catch (error) {
+        return { attachments: [], fetchError: errorMessage(error) };
+      }
     },
   };
 }

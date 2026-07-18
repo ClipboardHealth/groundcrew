@@ -28,6 +28,7 @@ function makeConfig(stateRoot: string): ResolvedConfig {
       pollIntervalMilliseconds: 1000,
       sessionLimitPercentage: 85,
     },
+    attachments: { enabled: true, maxAttachmentBytes: 26_214_400, maxTotalBytes: 104_857_600 },
     agents: {
       default: "claude",
       definitions: { claude: { cmd: "claude", color: "#fff" } },

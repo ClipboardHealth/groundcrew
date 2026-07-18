@@ -4,6 +4,12 @@ import path from "node:path";
 
 import { BUILD_SECRET_NAMES, type ResolvedConfig } from "./config.ts";
 import { shellSingleQuote } from "./launchCommand.ts";
+import type {
+  AttachmentFetchResult,
+  ReferenceLinkAttachment,
+  SkippedAttachment,
+  StagedFileAttachment,
+} from "./taskSource.ts";
 import { readEnvironmentVariable } from "./util.ts";
 
 export interface StagedPrompt {
@@ -17,15 +23,87 @@ interface PromptTemplateVariables {
   title: string;
   description: string;
   workspaceContinuationInstruction: string;
+  /** Rendered `renderAttachments` output; "" when the task has none. */
+  attachments: string;
 }
 
 function renderPromptTemplate(template: string, variables: PromptTemplateVariables): string {
-  return template
-    .replaceAll("{{task}}", variables.task)
-    .replaceAll("{{worktree}}", variables.worktree)
-    .replaceAll("{{title}}", variables.title)
-    .replaceAll("{{description}}", variables.description)
-    .replaceAll("{{workspaceContinuationInstruction}}", variables.workspaceContinuationInstruction);
+  return (
+    template
+      .replaceAll(
+        "{{workspaceContinuationInstruction}}",
+        variables.workspaceContinuationInstruction,
+      )
+      .replaceAll("{{attachments}}", variables.attachments)
+      // The two optional placeholders above leave stacked blank lines behind
+      // when they render empty; collapse BEFORE user-authored content (title,
+      // description) is substituted so task text is never reflowed.
+      .replaceAll(/\n{3,}/g, "\n\n")
+      .replaceAll("{{task}}", variables.task)
+      .replaceAll("{{worktree}}", variables.worktree)
+      .replaceAll("{{title}}", variables.title)
+      .replaceAll("{{description}}", variables.description)
+  );
+}
+
+/**
+ * Render an attachment fetch result into the `{{attachments}}` prompt
+ * section: an "Attached files" section (staged files as backticked
+ * launchDir-relative paths, plus visible skips), then a "References" section
+ * (URL-only links). Each section is omitted when empty; an empty result
+ * renders the empty string. A wholesale fetch failure renders a notice line
+ * so the agent knows attachments may exist that it cannot see.
+ */
+export function renderAttachments(result: AttachmentFetchResult): string {
+  const sections: string[] = [];
+  if (result.fetchError !== undefined) {
+    sections.push(
+      `*Attachment fetch failed: ${result.fetchError}. The task may have attachments that are not available here.*`,
+    );
+  }
+
+  const attachedLines = result.attachments.flatMap((attachment) => {
+    if (attachment.kind === "file") {
+      return [stagedFileLine(attachment)];
+    }
+    if (attachment.kind === "skipped") {
+      return skippedAttachmentLines(attachment);
+    }
+    return [];
+  });
+  if (attachedLines.length > 0) {
+    sections.push(["## Attached files", "", ...attachedLines].join("\n"));
+  }
+
+  const referenceLines = result.attachments
+    .filter((attachment) => attachment.kind === "link")
+    .map((link) => referenceLinkLine(link));
+  if (referenceLines.length > 0) {
+    sections.push(["## References", "", ...referenceLines].join("\n"));
+  }
+
+  return sections.join("\n\n");
+}
+
+function stagedFileLine(attachment: StagedFileAttachment): string {
+  const renamed =
+    attachment.filename === attachment.title ? "" : ` - originally "${attachment.title}"`;
+  return `- \`${attachment.relativePath}\`${renamed}`;
+}
+
+function referenceLinkLine(link: ReferenceLinkAttachment): string {
+  return `- "${link.title}" - ${link.url}`;
+}
+
+function skippedAttachmentLines(attachment: SkippedAttachment): string[] {
+  const lines = [
+    `- "${attachment.title}" - not staged`,
+    `  - reason: ${attachment.reason} - ${attachment.detail}`,
+  ];
+  if (attachment.url !== undefined) {
+    lines.push(`  - url: ${attachment.url}`);
+  }
+  return lines;
 }
 
 export function stagePromptText(input: {

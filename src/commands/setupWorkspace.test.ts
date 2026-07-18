@@ -1,5 +1,7 @@
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import type * as nodeFs from "node:fs";
+import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 import { ensureClearance, type SafehouseCmuxIntegration } from "@clipboard-health/clearance";
@@ -7,6 +9,8 @@ import type { RunCommandOptions } from "../lib/commandRunner.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
 import { recordRunState } from "../lib/runState.ts";
+import { sourceSupportsFetchAttachments } from "../lib/sourceCapabilities.ts";
+import type { AttachmentFetchResult } from "../lib/taskSource.ts";
 import { canonicalLinearIssue, canonicalShellIssue } from "../lib/testing/canonicalFixtures.ts";
 import { createBoard, type Board } from "../lib/board.ts";
 import type * as boardModule from "../lib/board.ts";
@@ -127,12 +131,25 @@ vi.mock(import("../lib/board.ts"), async (importOriginal) => {
       markInProgress: vi.fn<(issue: Issue) => Promise<void>>().mockResolvedValue(),
       markInReview: vi.fn<Board["markInReview"]>().mockResolvedValue({ outcome: "applied" }),
       markDone: vi.fn<Board["markDone"]>().mockResolvedValue({ outcome: "applied" }),
+      fetchAttachments: vi.fn<Board["fetchAttachments"]>().mockResolvedValue({ attachments: [] }),
     })),
   };
 });
 vi.mock(import("../lib/buildSources.ts"), async (importOriginal) => {
   const actual = await importOriginal<typeof buildSourcesModule>();
-  return { ...actual, buildSources: vi.fn<typeof actual.buildSources>().mockResolvedValue([]) };
+  return {
+    ...actual,
+    buildSources: vi.fn<typeof actual.buildSources>().mockResolvedValue([]),
+  };
+});
+vi.mock(import("../lib/sourceCapabilities.ts"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    sourceSupportsFetchAttachments: vi.fn<typeof actual.sourceSupportsFetchAttachments>(
+      actual.sourceSupportsFetchAttachments,
+    ),
+  };
 });
 
 const mkdtempMock = vi.mocked(mkdtempSync);
@@ -203,6 +220,11 @@ function makeConfig(overrides: Partial<ResolvedConfig["agents"]> = {}): Resolved
       maximumInProgress: 4,
       pollIntervalMilliseconds: 1000,
       sessionLimitPercentage: 85,
+    },
+    attachments: {
+      enabled: true,
+      maxAttachmentBytes: 26_214_400,
+      maxTotalBytes: 104_857_600,
     },
     agents: {
       default: "claude",
@@ -1942,6 +1964,155 @@ describe(setupWorkspace, () => {
     expect(launchScript).toContain(String.raw`_p=$(cat '/tmp/with'\''quote-1/prompt.txt')`);
   });
 
+  describe("attachment staging", () => {
+    let launchDir: string;
+
+    beforeEach(async () => {
+      launchDir = await mkdtemp(path.join(tmpdir(), "groundcrew-attach-"));
+      createMock.mockImplementation(async () => ({ ...hostEntry(), dir: launchDir }));
+      mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
+    });
+
+    afterEach(async () => {
+      await rm(launchDir, { recursive: true, force: true });
+    });
+
+    function configWithAttachmentsTemplate(): ResolvedConfig {
+      return { ...makeConfig(), prompts: { initial: "Begin {{task}}\n{{attachments}}" } };
+    }
+
+    it("stages files via the fetch closure, hides them from git, and renders them into the prompt", async () => {
+      const fetchAttachments = vi.fn<(stageDir: string) => Promise<AttachmentFetchResult>>(
+        async (stageDir: string): Promise<AttachmentFetchResult> => {
+          await writeFile(path.join(stageDir, "mockup.png"), "png-bytes");
+          return {
+            attachments: [
+              {
+                kind: "file",
+                filename: "mockup.png",
+                relativePath: ".groundcrew/attachments/mockup.png",
+                title: "Homepage mockup",
+                url: "https://example.test/mockup",
+                sizeBytes: 9,
+              },
+              {
+                kind: "link",
+                title: "Related PR",
+                url: "https://github.com/acme/widgets/pull/42",
+                sourceType: "github",
+              },
+              {
+                kind: "skipped",
+                title: "huge.zip",
+                url: "https://example.test/huge",
+                reason: "exceeds-per-file-cap",
+                detail: "89 MiB exceeds 25 MiB cap",
+              },
+            ],
+          };
+        },
+      );
+
+      await setupWorkspace(configWithAttachmentsTemplate(), {
+        task: "team-1",
+        repository: "repo-a",
+        agent: "claude",
+        details: { title: "Test Title", description: "Body" },
+        fetchAttachments,
+      });
+
+      const stageDir = path.join(launchDir, ".groundcrew", "attachments");
+      expect(fetchAttachments).toHaveBeenCalledWith(stageDir);
+      await expect(access(path.join(stageDir, "mockup.png"))).resolves.toBeUndefined();
+      expect(writeFileMock).toHaveBeenCalledWith(
+        path.join(launchDir, ".groundcrew", ".gitignore"),
+        "*\n",
+      );
+      const prompt = writtenFileContent("/tmp/groundcrew-team-1-x/prompt.txt");
+      expect(prompt).toContain(
+        '- `.groundcrew/attachments/mockup.png` - originally "Homepage mockup"',
+      );
+      expect(prompt).toContain('- "Related PR" - https://github.com/acme/widgets/pull/42');
+      expect(prompt).toContain('- "huge.zip" - not staged');
+    });
+
+    it("creates no .groundcrew directory and renders an empty section when no closure is provided", async () => {
+      await setupWorkspace(configWithAttachmentsTemplate(), {
+        task: "team-1",
+        repository: "repo-a",
+        agent: "claude",
+        details: { title: "Test Title", description: "Body" },
+      });
+
+      await expect(access(path.join(launchDir, ".groundcrew"))).rejects.toThrow(/ENOENT/);
+      const prompt = writtenFileContent("/tmp/groundcrew-team-1-x/prompt.txt");
+      expect(prompt).toBe("Begin team-1\n");
+    });
+
+    it("skips fetching entirely when attachments.enabled is false", async () => {
+      const fetchAttachments = vi
+        .fn<(stageDir: string) => Promise<AttachmentFetchResult>>()
+        .mockResolvedValue({ attachments: [] });
+      const config: ResolvedConfig = {
+        ...configWithAttachmentsTemplate(),
+        attachments: { enabled: false, maxAttachmentBytes: 26_214_400, maxTotalBytes: 104_857_600 },
+      };
+
+      await setupWorkspace(config, {
+        task: "team-1",
+        repository: "repo-a",
+        agent: "claude",
+        details: { title: "Test Title", description: "Body" },
+        fetchAttachments,
+      });
+
+      expect(fetchAttachments).not.toHaveBeenCalled();
+      await expect(access(path.join(launchDir, ".groundcrew"))).rejects.toThrow(/ENOENT/);
+    });
+
+    it("still launches the workspace when the fetch closure throws", async () => {
+      const fetchAttachments = vi
+        .fn<(stageDir: string) => Promise<AttachmentFetchResult>>()
+        .mockRejectedValue(new Error("boom"));
+
+      await setupWorkspace(configWithAttachmentsTemplate(), {
+        task: "team-1",
+        repository: "repo-a",
+        agent: "claude",
+        details: { title: "Test Title", description: "Body" },
+        fetchAttachments,
+      });
+
+      expect(teardownMock).not.toHaveBeenCalled();
+      expect(lastRecordedRunState()).toMatchObject({ task: "team-1", state: "running" });
+      const prompt = writtenFileContent("/tmp/groundcrew-team-1-x/prompt.txt");
+      expect(prompt).toContain(
+        "*Attachment fetch failed: boom. The task may have attachments that are not available here.*",
+      );
+    });
+
+    it("logs and renders a notice when the fetch result carries fetchError", async () => {
+      const fetchAttachments = vi
+        .fn<(stageDir: string) => Promise<AttachmentFetchResult>>()
+        .mockResolvedValue({ attachments: [], fetchError: "GraphQL down" });
+
+      await setupWorkspace(configWithAttachmentsTemplate(), {
+        task: "team-1",
+        repository: "repo-a",
+        agent: "claude",
+        details: { title: "Test Title", description: "Body" },
+        fetchAttachments,
+      });
+
+      expect(logMock).toHaveBeenCalledWith(
+        expect.stringContaining("Attachment fetch failed for team-1: GraphQL down"),
+      );
+      expect(lastRecordedRunState()).toMatchObject({ task: "team-1", state: "running" });
+      const prompt = writtenFileContent("/tmp/groundcrew-team-1-x/prompt.txt");
+      expect(prompt).toContain("*Attachment fetch failed: GraphQL down.");
+    });
+  });
+
   it("requires details from the caller (no Linear re-fetch)", () => {
     // Type-level test: SetupWorkspaceOptions.details is non-optional.
     type _DetailsRequired = SetupWorkspaceOptions["details"] extends TaskDetails ? true : never;
@@ -1969,6 +2140,7 @@ function fakeBoard(resolvedIssue: Issue | undefined): FakeBoard {
     markInProgress: vi.fn<(issue: Issue) => Promise<void>>().mockResolvedValue(),
     markInReview: vi.fn<Board["markInReview"]>().mockResolvedValue({ outcome: "applied" }),
     markDone: vi.fn<Board["markDone"]>().mockResolvedValue({ outcome: "applied" }),
+    fetchAttachments: vi.fn<Board["fetchAttachments"]>().mockResolvedValue({ attachments: [] }),
   };
 }
 
@@ -2044,6 +2216,30 @@ describe(setupWorkspaceCli, () => {
     expect(firstInvocationOrder(runCommandMock)).toBeLessThan(
       firstInvocationOrder(defaultBoard.markInProgress),
     );
+  });
+
+  it("passes a Board-backed fetchAttachments closure when the source supports staging", async () => {
+    vi.mocked(sourceSupportsFetchAttachments).mockReturnValueOnce(true);
+    const launchDir = await mkdtemp(path.join(tmpdir(), "groundcrew-attach-cli-"));
+    createMock.mockImplementation(async () => ({ ...hostEntry(), dir: launchDir }));
+    try {
+      await setupWorkspaceCli("team-1");
+
+      expect(defaultBoard.fetchAttachments).toHaveBeenCalledWith({
+        issue: expect.objectContaining({ id: "linear:team-1" }),
+        stageDir: path.join(launchDir, ".groundcrew", "attachments"),
+        maxAttachmentBytes: 26_214_400,
+        maxTotalBytes: 104_857_600,
+      });
+    } finally {
+      await rm(launchDir, { recursive: true, force: true });
+    }
+  });
+
+  it("omits the fetch closure when the source lacks the fetchAttachments capability", async () => {
+    await setupWorkspaceCli("team-1");
+
+    expect(defaultBoard.fetchAttachments).not.toHaveBeenCalled();
   });
 
   it("does not provision or mark In Progress in dry-run mode", async () => {

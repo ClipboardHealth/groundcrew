@@ -1,4 +1,5 @@
-import { rmSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import path from "node:path";
 
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { composeAgentLaunch, openAgentWorkspace, prepareAgentLaunch } from "../lib/agentLaunch.ts";
@@ -8,15 +9,23 @@ import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
 import { resolvePrepareWorktreeCommand } from "../lib/repositoryHooks.ts";
 import { recordRunState } from "../lib/runState.ts";
 import { seedLaunchWorkspaceTrust } from "../lib/seedLaunchWorkspaceTrust.ts";
-import { sourceSupportsMarkDone } from "../lib/sourceCapabilities.ts";
 import {
+  sourceSupportsFetchAttachments,
+  sourceSupportsMarkDone,
+} from "../lib/sourceCapabilities.ts";
+import {
+  renderAttachments,
   stageBuildSecrets,
   stagePromptFromTemplate,
   stageWorkspaceLaunchCommand,
   type StagedPrompt,
 } from "../lib/stagedLaunch.ts";
 import { taskSourceWritePathsForCompletion } from "../lib/taskSourceFilesystem.ts";
-import { naturalIdFromCanonical } from "../lib/taskSource.ts";
+import {
+  type AttachmentFetchResult,
+  type Issue,
+  naturalIdFromCanonical,
+} from "../lib/taskSource.ts";
 import { debug, errorMessage, log, okMark } from "../lib/util.ts";
 import { type WorkspaceAccessHint, workspaces } from "../lib/workspaces.ts";
 import {
@@ -42,6 +51,47 @@ export interface SetupWorkspaceOptions {
   repository: string;
   agent: string;
   details: TaskDetails;
+  /**
+   * Present when the caller can fetch attachments for this task (a
+   * Board-backed closure from `buildFetchAttachmentsClosure`). Callers that
+   * omit it get no `.groundcrew/` directory and an empty attachments section.
+   */
+  fetchAttachments?: (stageDir: string) => Promise<AttachmentFetchResult>;
+}
+
+/**
+ * Build the `SetupWorkspaceOptions.fetchAttachments` closure for an issue, or
+ * `undefined` when its source lacks the capability — the capability gate is
+ * what keeps non-implementing sources at zero behavior change (no
+ * `.groundcrew/` directory is ever created for them). The stage dir only
+ * exists after worktree creation, so the closure threads Board access into
+ * `setupWorkspace` without coupling it to Board/Issue.
+ *
+ * As of the core-plumbing slice every source kind reports
+ * `fetchAttachments: false` (see `sourceCapabilities.ts`), so this returns
+ * `undefined` for all configured sources until a producing-adapter slice
+ * flips its kind on. Note the gate reads config (`rawSources`) while
+ * `board.fetchAttachments` routes by built-adapter name; if those ever
+ * diverge, the closure soft-fails at call time as a prompt `fetchError`
+ * rather than aborting the dispatch.
+ */
+export function buildFetchAttachmentsClosure(arguments_: {
+  config: ResolvedConfig;
+  board: Board;
+  issue: Issue;
+  rawSources: readonly unknown[];
+}): ((stageDir: string) => Promise<AttachmentFetchResult>) | undefined {
+  const { config, board, issue, rawSources } = arguments_;
+  if (!sourceSupportsFetchAttachments({ rawSources, sourceName: issue.source })) {
+    return undefined;
+  }
+  return async (stageDir: string) =>
+    await board.fetchAttachments({
+      issue,
+      stageDir,
+      maxAttachmentBytes: config.attachments.maxAttachmentBytes,
+      maxTotalBytes: config.attachments.maxTotalBytes,
+    });
 }
 
 export interface SetupWorkspaceRunOptions {
@@ -54,6 +104,7 @@ function stagePrompt(input: {
   taskDetails: TaskDetails;
   worktreeName: string;
   workspaceContinuationInstruction: string;
+  attachmentResult: AttachmentFetchResult;
 }): StagedPrompt {
   return stagePromptFromTemplate({
     config: input.config,
@@ -65,8 +116,42 @@ function stagePrompt(input: {
       title: input.taskDetails.title,
       description: input.taskDetails.description,
       workspaceContinuationInstruction: input.workspaceContinuationInstruction,
+      attachments: renderAttachments(input.attachmentResult),
     },
   });
+}
+
+/**
+ * Create `<launchDir>/.groundcrew/attachments`, hide it from git, and run the
+ * caller's fetch closure. Best-effort by contract: any failure — the closure
+ * throwing, or even directory creation — degrades to a `fetchError` the
+ * prompt surfaces as a notice, never a failed workspace. (`.git` is a file in
+ * linked worktrees and `info/exclude` lives in the common git dir, so a
+ * directory-local gitignore is the only safe per-worktree exclusion.)
+ */
+async function stageAttachments(arguments_: {
+  config: ResolvedConfig;
+  options: SetupWorkspaceOptions;
+  launchDir: string;
+}): Promise<AttachmentFetchResult> {
+  const { config, options, launchDir } = arguments_;
+  if (!config.attachments.enabled || options.fetchAttachments === undefined) {
+    return { attachments: [] };
+  }
+  let result: AttachmentFetchResult;
+  try {
+    const groundcrewDir = path.join(launchDir, ".groundcrew");
+    const stageDir = path.join(groundcrewDir, "attachments");
+    mkdirSync(stageDir, { recursive: true });
+    writeFileSync(path.join(groundcrewDir, ".gitignore"), "*\n");
+    result = await options.fetchAttachments(stageDir);
+  } catch (error) {
+    result = { attachments: [], fetchError: errorMessage(error) };
+  }
+  if (result.fetchError !== undefined) {
+    log(`Attachment fetch failed for ${options.task}: ${result.fetchError}`);
+  }
+  return result;
 }
 
 export async function setupWorkspace(
@@ -126,7 +211,12 @@ export async function setupWorkspace(
     await assertLaunchReady(readinessPromise);
 
     const taskDetails = options.details;
-    const accessHint = await workspaces.accessHint(config, task, signal);
+    // Independent: the workspace-adapter probe and the attachment fetch share
+    // no state, and the fetch becomes network-bound once real adapters land.
+    const [accessHint, attachmentResult] = await Promise.all([
+      workspaces.accessHint(config, task, signal),
+      stageAttachments({ config, options, launchDir }),
+    ]);
 
     const stagedPrompt = stagePrompt({
       config,
@@ -134,6 +224,7 @@ export async function setupWorkspace(
       taskDetails,
       worktreeName,
       workspaceContinuationInstruction: renderWorkspaceContinuationInstruction(accessHint),
+      attachmentResult,
     });
     promptDir = stagedPrompt.directory;
 
@@ -465,6 +556,12 @@ export async function setupWorkspaceCli(
   }
 
   const naturalId = naturalIdFromCanonical(resolved.id);
+  const fetchAttachments = buildFetchAttachmentsClosure({
+    config,
+    board,
+    issue: resolved,
+    rawSources,
+  });
 
   await setupWorkspace(config, {
     task: naturalId,
@@ -480,6 +577,7 @@ export async function setupWorkspaceCli(
       description: resolved.description,
       ...(resolved.url === undefined ? {} : { url: resolved.url }),
     },
+    ...(fetchAttachments === undefined ? {} : { fetchAttachments }),
   });
   await board.markInProgress(resolved);
 }

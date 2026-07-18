@@ -184,6 +184,7 @@
     "neverthrow",
     "finalizers",
     "opencode",
-    "inspectable"
+    "inspectable",
+    "backticked"
   ]
 }

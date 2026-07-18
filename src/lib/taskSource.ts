@@ -119,6 +119,61 @@ export interface BoardState {
   parentSkips: readonly ParentSkip[];
 }
 
+/**
+ * One attachment surfaced to the launched agent: a file staged into the
+ * worktree, a URL-only reference to chase, or a known-but-unstaged skip.
+ */
+export type Attachment = StagedFileAttachment | ReferenceLinkAttachment | SkippedAttachment;
+
+export interface StagedFileAttachment {
+  kind: "file";
+  /** Final on-disk name (post sanitize/disambiguate). */
+  filename: string;
+  /** Path the prompt prints, relative to the agent's working directory (launchDir). */
+  relativePath: string;
+  /** Source-side display title (pre-disambiguation). */
+  title: string;
+  /** Source URL when known; omitted for script-staged files with no reported URL. */
+  url?: string;
+  sizeBytes: number;
+}
+
+export interface ReferenceLinkAttachment {
+  kind: "link";
+  title: string;
+  url: string;
+  /** Linear's sourceType ("github", "figma", ...) when known. */
+  sourceType: string | undefined;
+}
+
+export interface SkippedAttachment {
+  kind: "skipped";
+  title: string;
+  /** Source URL when known, so the agent can still try its own tooling. */
+  url?: string;
+  reason: "exceeds-per-file-cap" | "exceeds-per-task-cap" | "download-failed" | "invalid-filename";
+  /** Human-readable detail, e.g. "87 MiB exceeds 25 MiB cap", "HTTP 503", script-provided text. */
+  detail: string;
+}
+
+export interface FetchAttachmentsArguments {
+  issue: Issue;
+  /**
+   * Absolute path to `<launchDir>/.groundcrew/attachments`; the caller
+   * creates it before the call. The layout is fixed, so a staged file's
+   * `relativePath` is always `.groundcrew/attachments/<filename>`.
+   */
+  stageDir: string;
+  maxAttachmentBytes: number;
+  maxTotalBytes: number;
+}
+
+export interface AttachmentFetchResult {
+  attachments: readonly Attachment[];
+  /** Present iff the adapter call itself failed wholesale (network, GraphQL, script crash/timeout). */
+  fetchError?: string;
+}
+
 export type MarkInReviewResult =
   | { outcome: "applied" }
   | { outcome: "unsupported"; reason: string };
@@ -209,6 +264,23 @@ export interface TaskSource {
    * Unlike `verify()`, this never throws — errors are returned as an array.
    */
   validate?: () => Promise<string[]>;
+
+  /**
+   * Optional. Stage downloadable files into `stageDir`, collect URL-only
+   * references, report known-but-unstaged attachments. Implementer contract:
+   *
+   * - Enforce `maxAttachmentBytes` / `maxTotalBytes` yourself — Board does
+   *   not. Files the caps reject become `SkippedAttachment` entries with the
+   *   matching `exceeds-*` reason; `createCapAccountant`
+   *   (`./attachmentStaging.ts`) does the accounting.
+   * - Guard filenames yourself: `sanitizeAttachmentFilename` and
+   *   `resolveInsideStageDir` (same module) handle unsafe titles and
+   *   stage-dir containment.
+   * - Per-file failures become `SkippedAttachment` entries. Throwing is
+   *   reserved for wholesale failure; Board wraps it into
+   *   `AttachmentFetchResult.fetchError`.
+   */
+  fetchAttachments?: (arguments_: FetchAttachmentsArguments) => Promise<readonly Attachment[]>;
 }
 
 export class RepositoryResolutionError extends Error {

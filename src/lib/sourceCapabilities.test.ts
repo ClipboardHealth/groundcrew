@@ -3,7 +3,12 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import type { DiscoveredManifest } from "./adapters/shell/discovery.ts";
-import { sourceSupportsMarkDone, taskSupportsCompletionCommand } from "./sourceCapabilities.ts";
+import {
+  sourceSupportsFetchAttachments,
+  sourceSupportsMarkDone,
+  summarizeSource,
+  taskSupportsCompletionCommand,
+} from "./sourceCapabilities.ts";
 
 describe(sourceSupportsMarkDone, () => {
   it("continues past non-matching sources before returning the markDone capability", () => {
@@ -75,6 +80,44 @@ describe(sourceSupportsMarkDone, () => {
       vi.doUnmock("./adapters/shell/discovery.ts");
       vi.resetModules();
     }
+  });
+});
+
+describe(sourceSupportsFetchAttachments, () => {
+  it("reports false for every built-in kind (no producing adapter ships in this slice)", () => {
+    const rawSources = [
+      { kind: "linear" },
+      { kind: "shell", name: "plans", commands: { listTasks: "plans list" } },
+      {
+        kind: "todo-txt",
+        name: "todo",
+        todoPath: "todo.txt",
+        tasksDir: ".tasks",
+        idPrefix: "GC",
+        timezone: "UTC",
+      },
+    ];
+
+    expect(sourceSupportsFetchAttachments({ rawSources, sourceName: "linear" })).toBe(false);
+    expect(sourceSupportsFetchAttachments({ rawSources, sourceName: "plans" })).toBe(false);
+    expect(sourceSupportsFetchAttachments({ rawSources, sourceName: "todo" })).toBe(false);
+  });
+
+  it("reports false for a source name no configured source claims", () => {
+    const actual = sourceSupportsFetchAttachments({
+      rawSources: [{ kind: "linear" }],
+      sourceName: "nope",
+    });
+
+    expect(actual).toBe(false);
+  });
+});
+
+describe(summarizeSource, () => {
+  it("includes a fetchAttachments capability flag on every summary", () => {
+    const actual = summarizeSource({ kind: "linear" });
+
+    expect(actual.capabilities.fetchAttachments).toBe(false);
   });
 });
 

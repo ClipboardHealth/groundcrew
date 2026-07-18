@@ -7,12 +7,22 @@ import { workspaces } from "../lib/workspaces.ts";
 import type { WorktreeEntry } from "../lib/worktrees.ts";
 import { setVerbose } from "../lib/util.ts";
 import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCapture.ts";
+import { sourceSupportsFetchAttachments } from "../lib/sourceCapabilities.ts";
 import { createDispatcher, formatActiveSlotList } from "./dispatcher.ts";
 import { setupWorkspace } from "./setupWorkspace.ts";
 
 vi.mock(import("./setupWorkspace.ts"), async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, setupWorkspace: vi.fn<typeof setupWorkspace>() };
+});
+vi.mock(import("../lib/sourceCapabilities.ts"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    sourceSupportsFetchAttachments: vi.fn<typeof actual.sourceSupportsFetchAttachments>(
+      actual.sourceSupportsFetchAttachments,
+    ),
+  };
 });
 vi.mock(import("../lib/workspaces.ts"), async (importOriginal) => {
   const actual = await importOriginal();
@@ -47,6 +57,11 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
       pollIntervalMilliseconds: 1000,
       sessionLimitPercentage: 85,
       ...overrides.orchestrator,
+    },
+    attachments: {
+      enabled: true,
+      maxAttachmentBytes: 26_214_400,
+      maxTotalBytes: 104_857_600,
     },
     agents: {
       default: "claude",
@@ -162,6 +177,49 @@ describe(createDispatcher, () => {
 
       const setupCall = setupMock.mock.calls.at(-1);
       expect(setupCall?.[1]?.details.url).toBe("https://linear.app/example/issue/TEAM-1");
+    });
+
+    it("omits the fetchAttachments closure when the source lacks the capability", async () => {
+      const board = makeBoard();
+      const dispatcher = createDispatcher({ config: makeConfig(), board });
+
+      await dispatcher.runOnce({
+        state: boardOf([todoIssue()]),
+        worktreeEntries: [],
+        usage: async () => ({}),
+        dryRun: false,
+      });
+
+      const setupCall = setupMock.mock.calls.at(-1);
+      expect(setupCall?.[1]).not.toHaveProperty("fetchAttachments");
+    });
+
+    it("passes a Board-backed fetchAttachments closure when the source supports staging", async () => {
+      // Once-only so the capability override cannot leak past this test:
+      // the file's afterEach clears calls but not implementations.
+      vi.mocked(sourceSupportsFetchAttachments).mockReturnValueOnce(true);
+      const board = makeBoard();
+      const dispatcher = createDispatcher({ config: makeConfig(), board });
+
+      await dispatcher.runOnce({
+        state: boardOf([todoIssue()]),
+        worktreeEntries: [],
+        usage: async () => ({}),
+        dryRun: false,
+      });
+
+      const setupCall = setupMock.mock.calls.at(-1);
+      const closure = setupCall?.[1]?.fetchAttachments;
+      expect(closure).toBeTypeOf("function");
+
+      await closure?.("/stage/dir");
+
+      expect(board.fetchAttachments).toHaveBeenCalledWith({
+        issue: expect.objectContaining({ id: "linear:team-1" }),
+        stageDir: "/stage/dir",
+        maxAttachmentBytes: 26_214_400,
+        maxTotalBytes: 104_857_600,
+      });
     });
 
     it("logs `At capacity` when no slots remain", async () => {

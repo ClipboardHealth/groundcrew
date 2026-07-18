@@ -245,6 +245,19 @@ export interface KnownRepository {
   hooks?: HookCommands;
 }
 
+/**
+ * User-facing attachment staging knobs. Caps express worktree disk impact,
+ * not source identity, so the block is top-level and uniform across sources.
+ */
+export interface AttachmentConfig {
+  /** Default true; false skips attachment fetching entirely. */
+  enabled?: boolean;
+  /** Per-file byte cap. Default 26_214_400 (25 MiB). */
+  maxAttachmentBytes?: number;
+  /** Per-task cumulative byte cap. Default 104_857_600 (100 MiB). */
+  maxTotalBytes?: number;
+}
+
 export interface Config {
   /**
    * Additional pluggable task sources beyond the built-in Linear adapter
@@ -296,6 +309,8 @@ export interface Config {
     pollIntervalMilliseconds?: number;
     sessionLimitPercentage?: number;
   };
+  /** Attachment staging for dispatched tasks. Omitted means enabled with default caps. */
+  attachments?: AttachmentConfig;
   agents?: {
     default?: string;
     /**
@@ -410,6 +425,12 @@ export interface ResolvedConfig {
     pollIntervalMilliseconds: number;
     sessionLimitPercentage: number;
   };
+  /** Resolved attachment staging knobs; always present with defaults applied. */
+  attachments: {
+    enabled: boolean;
+    maxAttachmentBytes: number;
+    maxTotalBytes: number;
+  };
   agents: {
     default: string;
     definitions: Record<string, AgentDefinition>;
@@ -491,7 +512,12 @@ const DEFAULT_LOCAL_READ_ONLY_DIRS: readonly string[] = ["~/.config/tfenv"];
 
 function normalizeLocal(
   userLocal:
-    | { runner?: unknown; networkEgress?: unknown; safehouse?: unknown; readOnlyDirs?: unknown }
+    | {
+        runner?: unknown;
+        networkEgress?: unknown;
+        safehouse?: unknown;
+        readOnlyDirs?: unknown;
+      }
     | undefined,
 ): ResolvedConfig["local"] {
   return {
@@ -517,6 +543,12 @@ const DEFAULT_ORCHESTRATOR: ResolvedConfig["orchestrator"] = {
   maximumInProgress: 4,
   pollIntervalMilliseconds: 120_000,
   sessionLimitPercentage: 85,
+};
+
+const DEFAULT_ATTACHMENTS: ResolvedConfig["attachments"] = {
+  enabled: true,
+  maxAttachmentBytes: 26_214_400, // 25 MiB
+  maxTotalBytes: 104_857_600, // 100 MiB
 };
 
 const BUILT_IN_AGENT_DEFINITIONS: Record<string, AgentDefinition> = {
@@ -603,6 +635,8 @@ const DEFAULT_PROMPT_INITIAL = [
   "{{description}}",
   "</task_description>",
   "",
+  "{{attachments}}",
+  "",
   "## Operating mode",
   "",
   "There is no human watching this session. Do not stop to ask clarifying questions. When the task is ambiguous or incomplete, choose the simplest reasonable interpretation consistent with the task and the codebase, then document that choice in the output.",
@@ -623,6 +657,7 @@ const ALLOWED_PROMPT_PLACEHOLDERS = new Set([
   "{{title}}",
   "{{description}}",
   "{{workspaceContinuationInstruction}}",
+  "{{attachments}}",
 ]);
 const PROMPT_PLACEHOLDER_RE = /{{[^{}]*}}/g;
 
@@ -1315,6 +1350,7 @@ function applyDefaults(user: Config, configDir: string): ResolvedConfig {
     workspace: normalizeWorkspace(user.workspace),
     defaults: normalizeDefaults((user as { defaults?: unknown }).defaults),
     orchestrator: { ...DEFAULT_ORCHESTRATOR, ...user.orchestrator },
+    attachments: { ...DEFAULT_ATTACHMENTS, ...user.attachments },
     agents: {
       default: user.agents?.default ?? "claude",
       definitions: mergeDefinitions(user.agents?.definitions),
@@ -1372,6 +1408,14 @@ function validate(config: ResolvedConfig): void {
   );
 
   requirePercent(config.orchestrator.sessionLimitPercentage, "orchestrator.sessionLimitPercentage");
+
+  if (typeof config.attachments.enabled !== "boolean") {
+    fail(
+      `attachments.enabled must be a boolean (got ${JSON.stringify(config.attachments.enabled)})`,
+    );
+  }
+  requirePositiveInt(config.attachments.maxAttachmentBytes, "attachments.maxAttachmentBytes");
+  requirePositiveInt(config.attachments.maxTotalBytes, "attachments.maxTotalBytes");
 
   const { definitions } = config.agents;
   if (Object.keys(definitions).length === 0) {

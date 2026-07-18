@@ -31,7 +31,7 @@ import {
   type SkipVerdict,
   type StartVerdict,
 } from "./eligibility.ts";
-import { setupWorkspace } from "./setupWorkspace.ts";
+import { buildFetchAttachmentsClosure, setupWorkspace } from "./setupWorkspace.ts";
 
 interface DispatcherDeps {
   config: ResolvedConfig;
@@ -129,6 +129,12 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
       if (recovery) {
         log(`Worktree and workspace already exist for ${taskId}; resuming with markInProgress`);
       } else {
+        const fetchAttachments = buildFetchAttachmentsClosure({
+          config,
+          board,
+          issue,
+          rawSources,
+        });
         const setupOptions = {
           repository: issue.repository,
           task: taskId,
@@ -143,6 +149,7 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
             description: issue.description,
             ...(issue.url === undefined ? {} : { url: issue.url }),
           },
+          ...(fetchAttachments === undefined ? {} : { fetchAttachments }),
         };
         await (signal === undefined
           ? setupWorkspace(config, setupOptions)

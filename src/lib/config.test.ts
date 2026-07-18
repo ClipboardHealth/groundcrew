@@ -124,6 +124,91 @@ describe("loadConfig", () => {
     expect(actual.sources).toStrictEqual([]);
   });
 
+  it("applies attachment defaults (enabled, 25 MiB per file, 100 MiB total) when the block is omitted", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      validConfigSource({ workspace: VALID_WORKSPACE(temporary) }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+
+    expect(actual.attachments).toStrictEqual({
+      enabled: true,
+      maxAttachmentBytes: 26_214_400,
+      maxTotalBytes: 104_857_600,
+    });
+  });
+
+  it("merges a partial attachments block over the defaults", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      validConfigSource({
+        workspace: VALID_WORKSPACE(temporary),
+        attachments: { enabled: false, maxAttachmentBytes: 1024 },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+
+    expect(actual.attachments).toStrictEqual({
+      enabled: false,
+      maxAttachmentBytes: 1024,
+      maxTotalBytes: 104_857_600,
+    });
+  });
+
+  it("fails when attachments.maxAttachmentBytes is not a positive integer", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      validConfigSource({
+        workspace: VALID_WORKSPACE(temporary),
+        attachments: { maxAttachmentBytes: 0 },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(
+      /attachments\.maxAttachmentBytes must be an integer ≥ 1/,
+    );
+  });
+
+  it("fails when attachments.maxTotalBytes is not a positive integer", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      validConfigSource({
+        workspace: VALID_WORKSPACE(temporary),
+        attachments: { maxTotalBytes: -5 },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(/attachments\.maxTotalBytes must be an integer ≥ 1/);
+  });
+
+  it("fails when attachments.enabled is not a boolean", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      configSource({
+        workspace: VALID_WORKSPACE(temporary),
+        agents: { definitions: { claude: {} } },
+        attachments: { enabled: "yes" as unknown as boolean },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(/attachments\.enabled must be a boolean/);
+  });
+
   it("ships a agent-agnostic unattended default prompt", async () => {
     const configPath = writeConfigFile(
       temporary,
@@ -143,6 +228,7 @@ describe("loadConfig", () => {
     expect(actual.prompts.initial).toContain("GROUNDCREW_COMPLETE");
     expect(actual.prompts.initial).toMatch(/no PR is needed/i);
     expect(actual.prompts.initial).toContain("{{workspaceContinuationInstruction}}");
+    expect(actual.prompts.initial).toContain("{{attachments}}");
     expect(actual.prompts.initial).not.toContain("tmux attach -t groundcrew:{{task}}");
   });
 
