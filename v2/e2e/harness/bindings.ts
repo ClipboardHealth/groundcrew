@@ -35,7 +35,13 @@ import type { Task } from "./schemas.js";
 export interface SourceFixture {
   readonly name?: string;
   readonly kind?: string;
-  readonly agent?: string;
+  /**
+   * Source-level agent designation. Omitted → defaults to `"scripted"`.
+   * `null` → write no `agent` key at all (an unrouted source, for DISPATCH-05).
+   * An empty string is deliberately never produced: contracts pin it as a
+   * config schema error, and "unrouted" means the key is absent, not empty.
+   */
+  readonly agent?: string | null;
   readonly sandbox?: boolean;
   readonly readOnly?: boolean;
   readonly environment?: Readonly<Record<string, string>>;
@@ -56,7 +62,11 @@ export interface ConfigFixture {
     Record<string, { workingDirectory?: string; prepareWorktree?: string }>
   >;
   readonly sources?: readonly SourceFixture[];
-  readonly defaultAgent?: string;
+  /**
+   * Config-level default agent (`agents.default`). Omitted → `"scripted"`.
+   * `null` → write no `agents.default` key (no config-level routing fallback).
+   */
+  readonly defaultAgent?: string | null;
   readonly agentProfiles?: Readonly<Record<string, AgentProfileFixture>>;
   readonly maximumInProgress?: number;
   readonly pollIntervalMilliseconds?: number;
@@ -204,7 +214,7 @@ function installSources(input: {
     sourceEntries.push({
       kind: fixture.kind ?? name,
       name,
-      agent: fixture.agent ?? DEFAULT_AGENT,
+      ...(fixture.agent === null ? {} : { agent: fixture.agent ?? DEFAULT_AGENT }),
       sandbox: fixture.sandbox ?? true,
       environment: { FIXTURE_STORE: handle.storePath, ...fixture.environment },
     });
@@ -233,7 +243,9 @@ function buildConfigObject(input: {
     },
     sources: sourceEntries,
     agents: {
-      default: config.defaultAgent ?? DEFAULT_AGENT,
+      ...(config.defaultAgent === null
+        ? {}
+        : { default: config.defaultAgent ?? DEFAULT_AGENT }),
       profiles: buildAgentProfiles({
         config,
         scriptsDirectory: agentScriptsDirectory({ scenario }),
