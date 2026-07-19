@@ -1,0 +1,103 @@
+#!/usr/bin/env node
+"use strict";
+
+// Sandbox probe agent (catalog SANDBOX-01/02). Stands in for a coding agent that
+// is launched inside the srt sandbox. Instead of doing real work it executes a
+// declarative probe spec and records the outcome of every action into a marker
+// file, so BOTH the permitted action and the denied one are observed as files —
+// never as the process crashing on an EPERM. The spec arrives as JSON in
+// $GROUNDCREW_SANDBOX_PROBE_JSON (an env var, so it survives into the sandbox
+// without any filesystem grant). Every marker path the harness supplies lives
+// inside the workspace, which the sandbox grants read-write; only an action's
+// *target* may point outside the sandbox and be denied.
+//
+// Spec shape:
+//   { "actions": [
+//       { "kind": "write",   "path": "<abs target>", "marker": "<abs marker>" },
+//       { "kind": "httpGet", "url": "http://…",      "marker": "<abs marker>",
+//         "timeoutMilliseconds": 3000 }
+//   ] }
+// Marker file contents: { "ok": true|false, "detail"?: "<errno|status|message>" }.
+
+const fs = require("node:fs");
+const http = require("node:http");
+const path = require("node:path");
+
+main();
+
+function main() {
+  const raw = process.env.GROUNDCREW_SANDBOX_PROBE_JSON;
+  if (!raw) {
+    process.exit(0);
+  }
+
+  let spec;
+  try {
+    spec = JSON.parse(raw);
+  } catch {
+    process.exit(0);
+  }
+
+  const actions = (spec && spec.actions) || [];
+  runAll(actions).then(
+    () => process.exit(0),
+    () => process.exit(0),
+  );
+}
+
+async function runAll(actions) {
+  for (const action of actions) {
+    // eslint-disable-next-line no-await-in-loop -- probe actions are intentionally sequential
+    await runAction(action);
+  }
+}
+
+async function runAction(action) {
+  if (action.kind === "write") {
+    return doWrite(action);
+  }
+
+  if (action.kind === "httpGet") {
+    return doHttpGet(action);
+  }
+}
+
+function doWrite(action) {
+  try {
+    fs.mkdirSync(path.dirname(action.path), { recursive: true });
+    fs.writeFileSync(action.path, "sandbox-probe\n");
+    record(action.marker, { ok: true });
+  } catch (error) {
+    record(action.marker, { ok: false, detail: errorDetail(error) });
+  }
+}
+
+function doHttpGet(action) {
+  return new Promise((resolve) => {
+    const request = http.get(action.url, (response) => {
+      record(action.marker, { ok: true, detail: String(response.statusCode) });
+      response.resume();
+      resolve();
+    });
+    request.setTimeout(action.timeoutMilliseconds || 3000, () => {
+      request.destroy(new Error("timeout"));
+    });
+    request.on("error", (error) => {
+      record(action.marker, { ok: false, detail: errorDetail(error) });
+      resolve();
+    });
+  });
+}
+
+function record(marker, outcome) {
+  fs.mkdirSync(path.dirname(marker), { recursive: true });
+  fs.writeFileSync(marker, JSON.stringify(outcome) + "\n");
+}
+
+function errorDetail(error) {
+  if (error && error.code) {
+    return String(error.code);
+  }
+
+  return error instanceof Error ? error.message : String(error);
+}

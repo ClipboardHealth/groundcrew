@@ -116,3 +116,24 @@ export {
   waitForSession,
   waitForSessionGone,
 } from "./tmuxObservation.js";
+
+export {
+  encodeProbeSpec,
+  installSandboxProbeAgent,
+  installSandboxProbeSource,
+  PROBE_AGENT_SPEC_ENV,
+  PROBE_SOURCE_SPEC_ENV,
+  probeOutcomeSchema,
+  readProbeOutcome,
+  sourceScratchDirectory,
+  startLoopbackServer,
+  waitForProbeOutcome,
+} from "./sandboxLane.js";
+export type {
+  LoopbackServer,
+  ProbeAction,
+  ProbeHttpAction,
+  ProbeOutcome,
+  ProbeReadAction,
+  ProbeWriteAction,
+} from "./sandboxLane.js";

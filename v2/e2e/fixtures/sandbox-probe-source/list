@@ -1,0 +1,135 @@
+#!/usr/bin/env node
+"use strict";
+
+// Protocol-1 `list` command for the sandbox source-posture scenarios (catalog
+// SANDBOX-03/04). Unlike the plain fixture source it does not just emit tasks:
+// it first executes a declarative probe spec ($GROUNDCREW_SOURCE_PROBE_JSON) so
+// the scenario can observe which filesystem/network operations the source
+// sandbox permits. Every marker path the harness supplies lives in the source's
+// scratch dir (granted read-write); a probe's *target* may point out of scope
+// (denied) or at the loopback fixture the manifest never declared (denied). The
+// outcome of each action is recorded as { "ok": bool, "detail"?: string } so
+// both the permitted and denied paths are observed as files, then the command
+// emits a valid (empty) task list.
+//
+// Action kinds: "write" {path,marker}, "read" {path,marker},
+// "httpGet" {url,marker,timeoutMilliseconds}.
+
+const fs = require("node:fs");
+const http = require("node:http");
+const path = require("node:path");
+
+main();
+
+function main() {
+  runProbe()
+    .then(() => {
+      emit({ ok: true, data: { tasks: [] } });
+    })
+    .catch(() => {
+      emit({ ok: true, data: { tasks: [] } });
+    });
+}
+
+async function runProbe() {
+  const raw = process.env.GROUNDCREW_SOURCE_PROBE_JSON;
+  if (!raw) {
+    return;
+  }
+
+  let spec;
+  try {
+    spec = JSON.parse(raw);
+  } catch {
+    return;
+  }
+
+  for (const action of (spec && spec.actions) || []) {
+    // eslint-disable-next-line no-await-in-loop -- probe actions are intentionally sequential
+    await runAction(action);
+  }
+}
+
+async function runAction(action) {
+  if (action.kind === "write") {
+    return doWrite(action);
+  }
+
+  if (action.kind === "read") {
+    return doRead(action);
+  }
+
+  if (action.kind === "httpGet") {
+    return doHttpGet(action);
+  }
+}
+
+function doWrite(action) {
+  const marker = resolveInScratch(action.marker);
+  try {
+    const target = resolveInScratch(action.path);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, "sandbox-probe-source\n");
+    record(marker, { ok: true });
+  } catch (error) {
+    record(marker, { ok: false, detail: errorDetail(error) });
+  }
+}
+
+function doRead(action) {
+  const marker = resolveInScratch(action.marker);
+  try {
+    fs.readFileSync(resolveInScratch(action.path), "utf8");
+    record(marker, { ok: true });
+  } catch (error) {
+    record(marker, { ok: false, detail: errorDetail(error) });
+  }
+}
+
+function doHttpGet(action) {
+  const marker = resolveInScratch(action.marker);
+  return new Promise((resolve) => {
+    const request = http.get(action.url, (response) => {
+      record(marker, { ok: true, detail: String(response.statusCode) });
+      response.resume();
+      resolve();
+    });
+    request.setTimeout(action.timeoutMilliseconds || 3000, () => {
+      request.destroy(new Error("timeout"));
+    });
+    request.on("error", (error) => {
+      record(marker, { ok: false, detail: errorDetail(error) });
+      resolve();
+    });
+  });
+}
+
+// Relative marker/target paths resolve against the scratch dir core grants and
+// passes as GROUNDCREW_SOURCE_SCRATCH (contracts §4.1); absolute paths (what the
+// harness currently supplies) pass through unchanged.
+function resolveInScratch(candidate) {
+  if (!candidate || path.isAbsolute(candidate)) {
+    return candidate;
+  }
+
+  const scratch = process.env.GROUNDCREW_SOURCE_SCRATCH;
+  return scratch ? path.join(scratch, candidate) : path.resolve(candidate);
+}
+
+function record(marker, outcome) {
+  fs.mkdirSync(path.dirname(marker), { recursive: true });
+  fs.writeFileSync(marker, JSON.stringify(outcome) + "\n");
+}
+
+function errorDetail(error) {
+  if (error && error.code) {
+    return String(error.code);
+  }
+
+  return error instanceof Error ? error.message : String(error);
+}
+
+function emit(object) {
+  process.stdout.write(JSON.stringify(object) + "\n");
+  process.exit(0);
+}

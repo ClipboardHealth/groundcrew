@@ -1,0 +1,273 @@
+/**
+ * Section H — Sandbox posture (catalog §3.H, sandbox lane §1.6).
+ *
+ * This lane runs *real* srt: on macOS it wraps agents and sources with
+ * `sandbox-exec`, and asserts denial behavior that cannot be faked honestly.
+ * The whole describe is opt-in and platform-gated — it runs only on macOS with
+ * `GROUNDCREW_E2E_SANDBOX=1`. Linux/bubblewrap is intentionally untested here:
+ * this machine is macOS, and v1's posture keeps its own unit-level coverage.
+ *
+ * Each scenario observes outcomes through marker files a probe writes: the
+ * permitted action records `{ ok: true }`, the denied one records
+ * `{ ok: false }` with the errno — so both are observed as files, never as a
+ * crash. Probes get their spec through an environment variable, so it survives
+ * into the sandbox without any filesystem grant; markers always land in a
+ * sandbox-writable place (the agent workspace, or the source scratch dir).
+ */
+
+import * as fs from "node:fs";
+import path from "node:path";
+
+import { describe, expect, it } from "vitest";
+
+import {
+  configure,
+  createRepo,
+  encodeProbeSpec,
+  installSandboxProbeAgent,
+  installSandboxProbeSource,
+  PROBE_AGENT_SPEC_ENV,
+  PROBE_SOURCE_SPEC_ENV,
+  sourceScratchDirectory,
+  startLoopbackServer,
+  taskSlug,
+  waitForProbeOutcome,
+  withScenario,
+} from "../harness/index.js";
+import type { ProbeAction, Scenario } from "../harness/index.js";
+
+// oxlint-disable-next-line node/no-process-env -- the sandbox lane is opt-in via a host env var
+const sandboxOptIn = process.env["GROUNDCREW_E2E_SANDBOX"] === "1";
+const sandboxLaneEnabled = process.platform === "darwin" && sandboxOptIn;
+
+const TASK_ID = "fixture:TASK-1";
+
+/** Deterministic workspace root for a task (contracts §2 default layout). */
+function workspaceDirectory(input: { readonly scenario: Scenario; readonly taskId: string }): string {
+  return path.join(
+    input.scenario.baseDirectory,
+    ".groundcrew",
+    "worktrees",
+    taskSlug({ taskId: input.taskId }),
+  );
+}
+
+describe.runIf(sandboxLaneEnabled)("H. Sandbox posture", () => {
+  it("SANDBOX-01: contains the agent to its workspace by default", async () => {
+    await withScenario(async (scenario) => {
+      await createRepo({ scenario, name: "alpha" });
+
+      const workspace = workspaceDirectory({ scenario, taskId: TASK_ID });
+      const insideTarget = path.join(workspace, "inside.txt");
+      const insideMarker = path.join(workspace, ".probe", "inside.json");
+      const outsideTarget = path.join(scenario.root, `sandbox-outside-${scenario.id}.txt`);
+      const outsideMarker = path.join(workspace, ".probe", "outside.json");
+
+      const actions: ProbeAction[] = [
+        { kind: "write", path: insideTarget, marker: insideMarker },
+        { kind: "write", path: outsideTarget, marker: outsideMarker },
+      ];
+
+      const crew = configure({
+        scenario,
+        config: {
+          agentProfiles: {
+            scripted: {
+              command: "sandbox-probe",
+              environment: { [PROBE_AGENT_SPEC_ENV]: encodeProbeSpec({ actions }) },
+            },
+          },
+        },
+      });
+      installSandboxProbeAgent({ scenario });
+      crew.seedSource([{ id: "TASK-1", title: "probe", agent: "scripted", repos: ["alpha"] }]);
+
+      await crew.tick();
+
+      const inside = await waitForProbeOutcome({ marker: insideMarker });
+      const outside = await waitForProbeOutcome({ marker: outsideMarker });
+
+      expect(inside.ok).toBe(true);
+      expect(fs.existsSync(insideTarget)).toBe(true);
+
+      expect(outside.ok).toBe(false);
+      expect(fs.existsSync(outsideTarget)).toBe(false);
+    });
+  });
+
+  it("SANDBOX-02: allowlists the agent's network egress", async () => {
+    const allowed = await startLoopbackServer();
+    const denied = await startLoopbackServer();
+    try {
+      await withScenario(async (scenario) => {
+        await createRepo({ scenario, name: "alpha" });
+
+        const workspace = workspaceDirectory({ scenario, taskId: TASK_ID });
+        const allowMarker = path.join(workspace, ".probe", "allow.json");
+        const denyMarker = path.join(workspace, ".probe", "deny.json");
+
+        const actions: ProbeAction[] = [
+          { kind: "httpGet", url: allowed.url, marker: allowMarker },
+          { kind: "httpGet", url: denied.url, marker: denyMarker },
+        ];
+
+        const crew = configure({
+          scenario,
+          config: {
+            sandbox: { network: [allowed.hostPort] },
+            agentProfiles: {
+              scripted: {
+                command: "sandbox-probe",
+                environment: { [PROBE_AGENT_SPEC_ENV]: encodeProbeSpec({ actions }) },
+              },
+            },
+          },
+        });
+        installSandboxProbeAgent({ scenario });
+        crew.seedSource([{ id: "TASK-1", title: "probe", agent: "scripted", repos: ["alpha"] }]);
+
+        await crew.tick();
+
+        const allow = await waitForProbeOutcome({ marker: allowMarker });
+        const deny = await waitForProbeOutcome({ marker: denyMarker });
+
+        expect(allow.ok).toBe(true);
+        expect(allow.detail).toBe("200");
+        expect(deny.ok).toBe(false);
+      });
+    } finally {
+      await allowed.close();
+      await denied.close();
+    }
+  });
+
+  it("SANDBOX-03: sandboxes sources by default", async () => {
+    const loopback = await startLoopbackServer();
+    try {
+      await withScenario(async (scenario) => {
+        // HARNESS GAP: the source discovers its scratch dir only because the
+        // harness hands it absolute marker paths under the canonical location
+        // (contracts §2: <stateRoot>/source-scratch/<name>/). Core must grant
+        // that exact directory read-write and create it before invoking a
+        // sandboxed `list`; the harness pre-creates it so the marker writes have
+        // somewhere to land under RED.
+        const scratch = sourceScratchDirectory({ scenario, sourceName: "fixture" });
+        const scratchWriteMarker = path.join(scratch, "scratch-write.json");
+        const outWriteMarker = path.join(scratch, "out-write.json");
+        const installReadMarker = path.join(scratch, "install-read.json");
+        const egressMarker = path.join(scratch, "egress.json");
+
+        const outOfScopeTarget = path.join(scenario.root, `source-out-${scenario.id}.txt`);
+
+        const crew = configure({
+          scenario,
+          config: { sources: [{ name: "fixture", kind: "fixture" }] },
+        });
+
+        // The probe spec references the install-dir read target, known only
+        // once the bundle exists, so it is patched in after installation.
+        installSandboxProbeSource({ bundleDirectory: crew.source.bundleDirectory, name: "fixture" });
+        rewriteSourceProbeSpec({
+          scenario,
+          sourceName: "fixture",
+          actions: [
+            { kind: "write", path: path.join(scratch, "scratch.txt"), marker: scratchWriteMarker },
+            { kind: "write", path: outOfScopeTarget, marker: outWriteMarker },
+            { kind: "read", path: path.join(crew.source.bundleDirectory, "source.json"), marker: installReadMarker },
+            { kind: "httpGet", url: loopback.url, marker: egressMarker },
+          ],
+        });
+
+        crew.seedSource([{ id: "TASK-1", title: "probe", agent: "scripted" }]);
+        await crew.tick();
+
+        const scratchWrite = await waitForProbeOutcome({ marker: scratchWriteMarker });
+        const outWrite = await waitForProbeOutcome({ marker: outWriteMarker });
+        const installRead = await waitForProbeOutcome({ marker: installReadMarker });
+        const egress = await waitForProbeOutcome({ marker: egressMarker });
+
+        expect(scratchWrite.ok).toBe(true);
+        expect(installRead.ok).toBe(true);
+        expect(outWrite.ok).toBe(false);
+        expect(fs.existsSync(outOfScopeTarget)).toBe(false);
+        expect(egress.ok).toBe(false);
+      });
+    } finally {
+      await loopback.close();
+    }
+  });
+
+  it("SANDBOX-04: sandbox:false opt-out runs unsandboxed and is flagged loudly", async () => {
+    const loopback = await startLoopbackServer();
+    try {
+      await withScenario(async (scenario) => {
+        const scratch = sourceScratchDirectory({ scenario, sourceName: "fixture" });
+        const outWriteMarker = path.join(scratch, "out-write.json");
+        const outOfScopeTarget = path.join(scenario.root, `source-out-${scenario.id}.txt`);
+
+        const crew = configure({
+          scenario,
+          config: {
+            sources: [{ name: "fixture", kind: "fixture", sandbox: false }],
+          },
+        });
+        installSandboxProbeSource({ bundleDirectory: crew.source.bundleDirectory, name: "fixture" });
+        rewriteSourceProbeSpec({
+          scenario,
+          sourceName: "fixture",
+          actions: [{ kind: "write", path: outOfScopeTarget, marker: outWriteMarker }],
+        });
+
+        crew.seedSource([{ id: "TASK-1", title: "probe", agent: "scripted" }]);
+        await crew.tick();
+
+        const outWrite = await waitForProbeOutcome({ marker: outWriteMarker });
+        // With the sandbox opted out, the out-of-scope write succeeds.
+        expect(outWrite.ok).toBe(true);
+        expect(fs.existsSync(outOfScopeTarget)).toBe(true);
+
+        const status = await crew.status();
+        const doctor = await crew.doctor();
+        const surface = `${status.stdout}\n${status.stderr}\n${doctor.stdout}\n${doctor.stderr}`;
+        expect(surface).toMatch(/sandbox/i);
+        expect(surface).toMatch(/fixture/);
+        expect(surface).toMatch(/false|disabled|off|opt/i);
+      });
+    } finally {
+      await loopback.close();
+    }
+  });
+});
+
+/**
+ * Rewrites the source's probe spec after `installSandboxProbeSource` has run.
+ * `configure` seeds the source `environment` (and therefore the spec) at config
+ * write time, before the bundle directory — and thus the install-dir read
+ * target — is known; this patches the spec into the on-disk config in place.
+ */
+function rewriteSourceProbeSpec(input: {
+  readonly scenario: Scenario;
+  readonly sourceName: string;
+  readonly actions: readonly ProbeAction[];
+}): void {
+  const configPath = path.join(
+    input.scenario.groundcrewConfigDirectory,
+    "crew.config.jsonc",
+  );
+  const raw = fs.readFileSync(configPath, "utf8");
+  const withoutHeader = raw.replace(/^\/\/[^\n]*\n/u, "");
+  const parsed = JSON.parse(withoutHeader) as {
+    sources: Array<{ name?: string; environment?: Record<string, string> }>;
+  };
+
+  const entry = parsed.sources.find((source) => source.name === input.sourceName);
+  if (entry === undefined) {
+    throw new Error(`no source named ${input.sourceName} in the generated config`);
+  }
+
+  entry.environment = {
+    ...entry.environment,
+    [PROBE_SOURCE_SPEC_ENV]: encodeProbeSpec({ actions: input.actions }),
+  };
+  fs.writeFileSync(configPath, JSON.stringify(parsed, undefined, 2) + "\n");
+}

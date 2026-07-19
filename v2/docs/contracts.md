@@ -84,6 +84,9 @@ The record exists only for started (claimed) work and lingers after completion u
 
 In-session task identity resolution (CLI): `--task` flag → `$GROUNDCREW_WORKSPACE` env (path to the
 workspace directory) → walk up from cwd to `.groundcrew/task.json`. Exit code 3 when none resolves.
+Identity resolution runs BEFORE any other gate: `crew repo add` with no task context exits 3 even
+when the repo argument is also not on disk (exit 2 is only reachable with task context resolved).
+The `prepareWorktree` hook runs with cwd set to the just-created worktree root (v1 behavior).
 
 ### 3.3 Dispatch verdicts — `dispatch.json`
 
@@ -124,6 +127,8 @@ skip + warn. Parseable but unsupported `protocolVersion` ⇒ explicit actionable
 Config `sources[].environment` (non-secret) is merged over the manifest's `environment` and both are
 set in the source process env, alongside resolved secrets (fixture bundles use this to receive
 their task-store path; under the sandbox lane a writable store belongs in the source's scratch dir).
+Core pre-creates `<stateRoot>/source-scratch/<sourceName>/` before any source invocation, grants it
+read-write in the source sandbox, and passes it as `GROUNDCREW_SOURCE_SCRATCH` in the source env.
 
 ### 4.2 Invocation
 
@@ -215,12 +220,21 @@ JSON lines; every line carries `ts` (ISO-8601 UTC), `level` ∈ `debug|info|warn
 the seven module names, `event` (snake_case, unique per call site). Correlation ids flat at top
 level when known: `taskId`, `runId`, `sessionId`, `source`, `repo`. `msg` optional. The logging lib
 exports the zod schema; the e2e suite validates every emitted line against the published shape.
+Reserved reconcile GC event names (design doc §10.5 — one line per GC action): `reconcile_gc_worktree`,
+`reconcile_gc_session`, `reconcile_gc_run_record`, `reconcile_gc_sandbox`.
 Console: human-rendered `info`+ (`--verbose` ⇒ `debug`); raw JSON never on the console.
 
 ## 7. CLI exit codes and env
 
-- Exit `0` success; `1` generic/doctor failure; `2` repo not cloned under `baseDirectory`;
+- Exit `0` success; `1` generic/doctor failure; `2` repo not cloned under `baseDirectory`
+  (applies to `crew repo add` and to single-task `crew start <task>` whose designation bails);
   `3` no task context for an in-session command.
+- **Eligibility**: a task is eligible when not blocked, not already claimed-and-live, a slot is
+  free, and agent routing resolves (`task.agent` → `sources[].agent` → `agents.default`).
+  `crew start <task> --force` bypasses blocked/slots/eligibility but never the repo-on-disk gate;
+  agent resolution still applies (`--agent` overrides). An empty-string agent anywhere in config is
+  a schema error, not "unrouted" — unrouted means the fields are absent, and yields skip verdict
+  `ineligible`.
 - Env kept: `GROUNDCREW_CONFIG`, `GROUNDCREW_VERBOSE`. Injected into agent sessions:
   `GROUNDCREW_WORKSPACE` (workspace dir), `GROUNDCREW_TASK_ID` (canonical id).
 - Presenter-internal (tmux adapter): `GROUNDCREW_TMUX_SOCKET` — when set, every tmux call uses
@@ -249,5 +263,9 @@ interface Presenter {
 2. Sandbox wraps: `wrap(command, policy) → command` (srt; `sandbox-exec` on macOS, bubblewrap on
    Linux). Policy: workspace read-write, `readOnlyDirectories`, network per config.
 3. Presenter `open()` runs the wrapped command at the workspace root with the injected env.
+
+Agent session environment = the orchestrator's own environment (PATH etc. inherited), overlaid with
+the profile's `environment`, overlaid with the injected `GROUNDCREW_WORKSPACE`/`GROUNDCREW_TASK_ID`.
+The sandbox confines filesystem/network, not env visibility.
 
 The default initial prompt ends by instructing the agent to run `crew done` when finished.

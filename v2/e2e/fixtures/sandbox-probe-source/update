@@ -1,0 +1,28 @@
+#!/usr/bin/env node
+"use strict";
+
+// Protocol-1 `update` for the sandbox source-posture bundle. Writeback is not
+// what the posture scenarios assert on, so this always acknowledges.
+
+const fs = require("node:fs");
+
+main();
+
+function main() {
+  readStdin();
+  emit({ ok: true, data: { result: "ok" } });
+}
+
+function readStdin() {
+  try {
+    const raw = fs.readFileSync(0, "utf8");
+    return raw.trim() === "" ? {} : JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+
+function emit(object) {
+  process.stdout.write(JSON.stringify(object) + "\n");
+  process.exit(0);
+}

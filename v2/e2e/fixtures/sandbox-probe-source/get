@@ -1,0 +1,30 @@
+#!/usr/bin/env node
+"use strict";
+
+// Protocol-1 `get` for the sandbox source-posture bundle. The posture scenarios
+// exercise `list`; `get` exists only so the manifest is complete. It echoes a
+// minimal task shaped from the requested id.
+
+const fs = require("node:fs");
+
+main();
+
+function main() {
+  const stdin = readStdin();
+  const id = stdin.id || "TASK-1";
+  emit({ ok: true, data: { task: { id, title: id } } });
+}
+
+function readStdin() {
+  try {
+    const raw = fs.readFileSync(0, "utf8");
+    return raw.trim() === "" ? {} : JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+
+function emit(object) {
+  process.stdout.write(JSON.stringify(object) + "\n");
+  process.exit(0);
+}
