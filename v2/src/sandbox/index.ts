@@ -9,40 +9,48 @@
  * ones needs coordinator approval.
  */
 
-export interface SandboxPolicy {
-  /** Absolute paths the sandboxed process may read and write. */
-  writablePaths: string[];
-  /** Absolute paths readable (not writable) in addition to system defaults. */
-  readOnlyPaths: string[];
-  /**
-   * Network egress allowlist entries (`host` or `host:port`). Empty array =
-   * deny all egress. Sources declare theirs in manifests; agent sessions get
-   * config `sandbox.network` (contracts §5).
-   */
-  network: string[];
-}
+import type { WrapCommandInput, WrappedCommand } from "./types.js";
+import { buildSrtSettings, stageSettings } from "./srtSettings.js";
 
-export interface WrapCommandInput {
-  /** The fully composed command line to confine. */
-  command: string;
-  policy: SandboxPolicy;
-}
+export type { SandboxPolicy, WrapCommandInput, WrappedCommand } from "./types.js";
+import { composeSrtInvocation, isRunnerAvailable, resolveSrtCli } from "./runner.js";
 
-export interface WrappedCommand {
-  /** The command line to hand to the presenter/spawner in place of the input. */
-  command: string;
-}
+export {
+  buildSrtSettings,
+  homeReadMask,
+  nodeRuntimePrefix,
+  settingsHash,
+  stageSettings,
+  toAllowedDomain,
+  type BuildSrtSettingsOptions,
+  type SrtSettings,
+} from "./srtSettings.js";
+export {
+  composeSrtInvocation,
+  isPlatformSupported,
+  isRunnerAvailable,
+  resolveSrtCli,
+  shellSingleQuote,
+} from "./runner.js";
 
 /**
  * Wrap a command in the srt sandbox (`sandbox-exec` on macOS, bubblewrap on
  * Linux) under the given policy. Nesting is presenter → sandbox → agent; the
- * caller composes, the presenter never knows (spec §8).
+ * caller composes, the presenter never knows (spec §8). The policy is compiled
+ * to an srt settings file (staged deterministically under the OS temp dir) and
+ * the returned command runs the original command line under that policy.
  */
-export async function wrapCommand(_input: WrapCommandInput): Promise<WrappedCommand> {
-  throw new Error("not implemented: sandbox.wrapCommand");
+export async function wrapCommand(input: WrapCommandInput): Promise<WrappedCommand> {
+  const settingsFile = stageSettings(buildSrtSettings(input.policy));
+  const command = composeSrtInvocation({
+    srtCli: resolveSrtCli(),
+    settingsFile,
+    command: input.command,
+  });
+  return { command };
 }
 
 /** Whether the srt runner is usable on this host (doctor's sandbox check). */
 export async function isSandboxRunnerAvailable(): Promise<boolean> {
-  throw new Error("not implemented: sandbox.isSandboxRunnerAvailable");
+  return isRunnerAvailable();
 }

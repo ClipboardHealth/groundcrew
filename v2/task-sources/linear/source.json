@@ -1,0 +1,13 @@
+{
+  "name": "linear",
+  "protocolVersion": 1,
+  "commands": {
+    "list": "./list",
+    "get": "./get",
+    "update": "./update"
+  },
+  "secrets": ["LINEAR_API_KEY"],
+  "environment": {},
+  "network": ["api.linear.app"],
+  "prerequisites": []
+}

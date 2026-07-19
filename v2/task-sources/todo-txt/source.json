@@ -1,0 +1,13 @@
+{
+  "name": "todo-txt",
+  "protocolVersion": 1,
+  "commands": {
+    "list": "./list",
+    "get": "./get",
+    "update": "./update"
+  },
+  "environment": {
+    "TODO_FILE": "~/todo.txt"
+  },
+  "prerequisites": []
+}

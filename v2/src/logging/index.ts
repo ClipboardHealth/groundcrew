@@ -12,54 +12,20 @@
  */
 import { z } from "zod";
 
-export const LOG_LEVELS = ["debug", "info", "warn", "error"] as const;
-export type LogLevel = (typeof LOG_LEVELS)[number];
+import { LOG_LEVELS, LOG_MODULES } from "./types.js";
 
-export const LOG_MODULES = [
-  "acquisition",
-  "dispatch",
-  "run",
-  "workspace",
-  "session",
-  "sandbox",
-  "shell",
-] as const;
-export type LogModule = (typeof LOG_MODULES)[number];
+export {
+  LOG_LEVELS,
+  LOG_MODULES,
+  type LogLevel,
+  type LogModule,
+  type LogCorrelation,
+  type LogEventInput,
+  type Logger,
+  type CreateLoggerInput,
+} from "./types.js";
 
-/** Reserved correlation ids, flat at top level, present when known (§10.2). */
-export interface LogCorrelation {
-  taskId?: string;
-  runId?: string;
-  sessionId?: string;
-  source?: string;
-  repo?: string;
-}
-
-export interface LogEventInput extends LogCorrelation {
-  level: LogLevel;
-  module: LogModule;
-  /** Required snake_case event name, unique per call site, no module prefix. */
-  event: string;
-  /** Optional human-facing message. */
-  msg?: string;
-  /** Extra flat fields; must not collide with reserved keys. */
-  fields?: Record<string, string | number | boolean>;
-}
-
-export interface Logger {
-  log(input: LogEventInput): void;
-}
-
-export interface CreateLoggerInput {
-  /** Absolute path of the JSON-lines file (contracts §2). */
-  filePath: string;
-  /** Console threshold; "silent" for in-session commands that own stdout. */
-  consoleLevel?: LogLevel | "silent";
-}
-
-export function createLogger(_input: CreateLoggerInput): Logger {
-  throw new Error("not implemented: logging.createLogger");
-}
+export { createLogger } from "./logger.js";
 
 /** The published line format (contracts §6); e2e validates against this shape. */
 export const logLineSchema = z

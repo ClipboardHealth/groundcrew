@@ -1,0 +1,6 @@
+#!/usr/bin/env node
+"use strict";
+
+const { run, listTasks } = require("./lib.js");
+
+run(() => listTasks());
