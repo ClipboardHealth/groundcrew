@@ -24,6 +24,10 @@ One bounded context, seven modules under `src/`:
 - `sandbox/` — a pure `wrap(command, policy) → command` library; srt only, core-only.
 - `shell/` — commander wiring, routing, rendering, error-to-exit-code mapping.
 
+Plus `src/logging/` — the cross-cutting JSON-lines logging lib, deliberately **not** an eighth
+module (design doc §10.2): every module except the pure `sandbox/` may import it, it imports
+nothing, and its exported zod line schema is a published compatibility surface.
+
 Shipped source bundles live in `task-sources/` — **outside `src/`, with no import path**. The
 black-box acceptance suite lives in `e2e/`.
 

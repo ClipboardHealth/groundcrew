@@ -67,7 +67,7 @@ module.exports = {
       from: { path: String.raw`^src/dispatch/` },
       to: {
         path: String.raw`^src/`,
-        pathNot: String.raw`^src/(dispatch|acquisition|workspace|session|run)/`,
+        pathNot: String.raw`^src/(dispatch|acquisition|workspace|session|run|logging)/`,
       },
     },
     {
@@ -78,7 +78,7 @@ module.exports = {
       from: { path: String.raw`^src/run/` },
       to: {
         path: String.raw`^src/`,
-        pathNot: String.raw`^src/run/`,
+        pathNot: String.raw`^src/(run|logging)/`,
       },
     },
     {
@@ -88,7 +88,7 @@ module.exports = {
       from: { path: String.raw`^src/session/` },
       to: {
         path: String.raw`^src/`,
-        pathNot: String.raw`^src/(session|sandbox)/`,
+        pathNot: String.raw`^src/(session|sandbox|logging)/`,
       },
     },
     {
@@ -98,7 +98,7 @@ module.exports = {
       from: { path: String.raw`^src/acquisition/` },
       to: {
         path: String.raw`^src/`,
-        pathNot: String.raw`^src/(acquisition|sandbox)/`,
+        pathNot: String.raw`^src/(acquisition|sandbox|logging)/`,
       },
     },
     {
@@ -108,7 +108,7 @@ module.exports = {
       from: { path: String.raw`^src/workspace/` },
       to: {
         path: String.raw`^src/`,
-        pathNot: String.raw`^src/workspace/`,
+        pathNot: String.raw`^src/(workspace|logging)/`,
       },
     },
     {
@@ -120,6 +120,17 @@ module.exports = {
       to: {
         path: String.raw`^src/`,
         pathNot: String.raw`^src/sandbox/`,
+      },
+    },
+    {
+      name: "logging-edges",
+      comment:
+        "The cross-cutting logging lib is deliberately not an eighth module (spec §10.2): every module except the pure Sandbox may import it; it imports nothing in src.",
+      severity: "error",
+      from: { path: String.raw`^src/logging/` },
+      to: {
+        path: String.raw`^src/`,
+        pathNot: String.raw`^src/logging/`,
       },
     },
     {
