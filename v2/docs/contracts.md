@@ -10,9 +10,10 @@ here is a spec change, not a refactor.
 
 - **Canonical task id**: `<sourceName>:<sourceLocalId>` (e.g. `fixture:TASK-1`, `linear:DEVOP-123`).
   Source name defaults to the bundle's manifest `name` (which defaults to its directory name).
-- **Task slug**: canonical id lowercased, every character outside `[a-z0-9]` collapsed to `-`,
-  trimmed of leading/trailing `-` (e.g. `fixture:TASK-1` → `fixture-task-1`). Used in paths,
-  branches, and session names.
+- **Task slug**: canonical id lowercased, every run of characters outside `[a-z0-9]` collapsed to a
+  single `-`, trimmed of leading/trailing `-` (`fixture:TASK-1` → `fixture-task-1`,
+  `fixture:TASK_1.x` → `fixture-task-1-x`). Reference implementation: `e2e/harness/identity.ts`;
+  core must match it. Used in paths, branches, and session names.
 - **Task branch** (uniform across every worktree of the task): `<branchPrefix>/<taskSlug>`;
   `git.branchPrefix` defaults to `crew`. Example: `crew/fixture-task-1`.
 - **Presenter session name**: `crew-<taskSlug>`. One session per task.
@@ -120,6 +121,9 @@ workspace directory) → walk up from cwd to `.groundcrew/task.json`. Exit code 
 
 Config may set per-source `sandbox: false` (loud in status/doctor). Unparseable manifest ⇒
 skip + warn. Parseable but unsupported `protocolVersion` ⇒ explicit actionable error, never silent.
+Config `sources[].environment` (non-secret) is merged over the manifest's `environment` and both are
+set in the source process env, alongside resolved secrets (fixture bundles use this to receive
+their task-store path; under the sandbox lane a writable store belongs in the source's scratch dir).
 
 ### 4.2 Invocation
 
@@ -188,7 +192,8 @@ omitted = detected / specified = exactly yours, never merged; no secret values s
       "claude": {},                               // pure preset
       "scripted": { "command": "scripted-agent {{prompt}}",
                      "resume": "scripted-agent --resume {{sessionId}}",
-                     "model": "m1", "effort": "high" }
+                     "model": "m1", "effort": "high",
+                     "environment": { "MY_AGENT_VAR": "value" } }  // injected into the agent session env at launch
     }
   },
   "orchestrator": { "maximumInProgress": 4, "pollIntervalMilliseconds": 120000,
