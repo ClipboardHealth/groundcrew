@@ -131,6 +131,8 @@ export async function acquireWorktree(input: {
     ...(config.repositories?.[repo]?.prepareWorktree === undefined
       ? {}
       : { perRepoHook: config.repositories[repo]?.prepareWorktree }),
+    ...(config.prepareWorktree === undefined ? {} : { defaultHook: config.prepareWorktree }),
+    ...(config.environment === undefined ? {} : { environment: config.environment }),
   });
 
   addRepoToMarker({ workspaceDirectory, taskId, branch, repo });

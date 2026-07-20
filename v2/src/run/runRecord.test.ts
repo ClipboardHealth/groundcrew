@@ -5,10 +5,11 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { RunNotFoundError } from "./errors.js";
+import { ForeignRunRecordError, RunNotFoundError } from "./errors.js";
 import {
   type RunRecord,
   deleteRunRecord,
+  listForeignRunRecords,
   listRunRecords,
   readRunRecord,
   runRecordExists,
@@ -73,12 +74,47 @@ describe("run record I/O", () => {
     await expect(readRunRecord({ path: recordPath })).rejects.toBeInstanceOf(RunNotFoundError);
   });
 
-  it("rejects a record that violates the schema", async () => {
+  it("throws a typed ForeignRunRecordError (clean, no zod issues) for a foreign file", async () => {
     const recordPath = runRecordPath({ stateRoot, taskSlug: "bad" });
     await fsp.mkdir(runsDirectory({ stateRoot }), { recursive: true });
     await fsp.writeFile(recordPath, JSON.stringify({ version: 1, taskId: "x" }));
 
-    await expect(readRunRecord({ path: recordPath })).rejects.toThrow(/runId/);
+    const error = await readRunRecord({ path: recordPath }).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(ForeignRunRecordError);
+    expect((error as ForeignRunRecordError).message).toContain("not a v2 run record (v1 state?)");
+    // The clean message must not leak raw zod issue text.
+    expect((error as ForeignRunRecordError).message).not.toMatch(/runId|invalid_type|expected/i);
+  });
+
+  it("throws ForeignRunRecordError for unparseable JSON", async () => {
+    const recordPath = runRecordPath({ stateRoot, taskSlug: "junk" });
+    await fsp.mkdir(runsDirectory({ stateRoot }), { recursive: true });
+    await fsp.writeFile(recordPath, "not json at all");
+
+    await expect(readRunRecord({ path: recordPath })).rejects.toBeInstanceOf(ForeignRunRecordError);
+  });
+
+  it("classifies a v1-shape record as foreign with an unknown-version reason", async () => {
+    // A live v1 run record: none of the v2 required fields, a different version.
+    const v1Record = {
+      version: 3,
+      task: "DEVOP-1",
+      repository: "cbh-core",
+      agent: "claude",
+      worktreeDir: "/w",
+      branchName: "crew/x",
+      workspaceName: "x",
+      state: "running",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+    await fsp.mkdir(runsDirectory({ stateRoot }), { recursive: true });
+    await fsp.writeFile(path.join(runsDirectory({ stateRoot }), "devop-1.json"), JSON.stringify(v1Record));
+
+    const foreign = await listForeignRunRecords({ stateRoot });
+    expect(foreign).toHaveLength(1);
+    expect(foreign[0]?.reason).toBe("unknown version 3");
+    // And it never surfaces as a valid record.
+    expect(await listRunRecords({ stateRoot })).toEqual([]);
   });
 
   it("reports existence and deletes idempotently", async () => {

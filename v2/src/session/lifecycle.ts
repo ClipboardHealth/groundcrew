@@ -70,6 +70,8 @@ export interface ResumeSessionInput {
   /** Prompt used only for the fresh-launch fallback (profile with no resume form). */
   prompt?: string;
   environment: Record<string, string>;
+  /** Workspace-level session env layered beneath the profile env (contracts §9). */
+  sessionEnvironment?: Record<string, string>;
   policy?: SandboxPolicy;
   wrapCommand?: WrapCommand;
   presenter: Presenter;
@@ -96,6 +98,7 @@ export async function resumeSession(input: ResumeSessionInput): Promise<LaunchRe
     profileEnvironment: resolved.environment,
     agentCommand,
     environment: input.environment,
+    sessionEnvironment: input.sessionEnvironment,
     policy: input.policy,
     wrapCommand: input.wrapCommand,
     presenter: input.presenter,

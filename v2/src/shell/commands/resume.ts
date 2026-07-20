@@ -49,6 +49,7 @@ export async function runResume(input: {
   }
 
   const profileName = run.snapshot.agentProfile;
+  const sessionEnvironment = context.sessionEnvironment();
   await resumeSession({
     taskId: taskContext.taskId,
     workspaceDirectory,
@@ -57,6 +58,7 @@ export async function runResume(input: {
     fresh: input.fresh,
     ...(run.snapshot.sessionId === undefined ? {} : { sessionId: run.snapshot.sessionId }),
     environment: context.ambientEnvironment(),
+    ...(sessionEnvironment === undefined ? {} : { sessionEnvironment }),
     presenter: context.presenter(),
   });
 

@@ -168,26 +168,48 @@ describe("I. Surface & diagnostics", () => {
     });
   });
 
-  it("SURFACE-06: converts a v1 config and names every dropped or renamed key", async () => {
+  it("SURFACE-06: converts a v1 config, writing exactly what it announces, and tolerates v1 state", async () => {
     await withScenario(async (scenario) => {
       await createRepo({ scenario, name: "alpha" });
       installScriptedAgent({ scenario });
       installAgentAs({ scenario, name: "claude" });
-      // A todo.txt keeps the default source healthy once the v1 shell source is dropped.
-      fs.writeFileSync(path.join(scenario.baseDirectory, "todo.txt"), "");
+      installAgentAs({ scenario, name: "codex" });
+      // The v1 `linear` source becomes a healthy, secret-free user bundle so the
+      // converted config's linear source checks clean under doctor.
+      const linear = installFixtureSource({ scenario, name: "linear" });
+      linear.seed({ tasks: [{ id: "TASK-1", title: "do", agent: "claude", repos: ["alpha"] }] });
+      // Live v1 run state sitting in the runs dir: v2 must ignore it, not crash (Bug 3).
+      seedV1RunRecord({ scenario });
       fs.writeFileSync(v1ConfigPath({ scenario }), v1ConfigContents({ scenario }));
       writeAgentScript({ scenario, steps: [{ type: "hang" }] });
 
       const init = await runCrew({ scenario, args: ["init", "--yes"] });
+      expect(init.exitCode).toBe(0);
       expect(fs.existsSync(configPath({ scenario }))).toBe(true);
 
       const surface = surfaceOf(init);
       expect(surface).toMatch(/projectDir/); // renamed → workspace.baseDirectory
       expect(surface).toMatch(/shell/); // dropped shell source adapter
       expect(surface).toMatch(/safehouse|runner|local/i); // dropped runner/safehouse settings
+      expect(surface).toMatch(/PUPPETEER_SKIP_CHROMIUM_DOWNLOAD/); // collected preLaunch export
+      expect(surface).toMatch(/linear/); // kept, non-shell source
 
+      // The written config carries what init announced — announcements cannot
+      // diverge from the file (Bug 1: converter dropped these while announcing them).
+      const config = readGeneratedConfig({ scenario });
+      expect(config.sources[0]?.kind).toBe("linear");
+      expect(config.sources[0]?.name).toBe("l");
+      expect(config.sources.some((source) => source.kind === "shell")).toBe(false);
+      expect(config.agents?.default).toBe("claude");
+      expect(config.agents?.profiles?.["claude"]).toBeDefined();
+      expect(config.agents?.profiles?.["codex"]).toBeDefined();
+      expect(config.workspace.prepareWorktree).toBe("test ! -f package-lock.json || npm ci");
+      expect(config.workspace.environment?.["PUPPETEER_SKIP_CHROMIUM_DOWNLOAD"]).toBe("true");
+
+      // doctor passes despite the foreign v1 state file, and says it ignored it (Bug 3).
       const doctor = await runCrew({ scenario, args: ["doctor"] });
       expect(doctor.exitCode).toBe(0);
+      expect(surfaceOf(doctor)).toMatch(/unrecognized state file|v1 state/i);
     });
   });
 
@@ -339,19 +361,28 @@ async function waitForComplete(input: {
 }
 
 function v1ConfigContents(input: { readonly scenario: Scenario }): string {
-  // A realistic v1 crew.config.ts (see crew.config.example.ts at the repo root):
-  // projectDir + knownRepositories, a shell source block, and a safehouse runner
-  // setting — the keys the v2 converter must drop or rename and name in output.
+  // The user's real dogfooding crew.config.ts (DEVOP): a global prepareWorktree
+  // hook, agent definitions carrying pure-export preLaunch + preLaunchEnv, a
+  // linear source alongside a shell source, projectDir + knownRepositories, and a
+  // safehouse runner — every key the v2 converter must map, keep, or drop-with-why.
   return [
     'import type { Config } from "@clipboard-health/groundcrew";',
     "",
     "export default {",
+    '  defaults: { hooks: { prepareWorktree: "test ! -f package-lock.json || npm ci" } },',
     "  workspace: {",
     `    projectDir: ${JSON.stringify(input.scenario.baseDirectory)},`,
-    '    knownRepositories: ["alpha"],',
+    '    knownRepositories: ["alpha", /* …9 more repos */ "groundtruth"],',
     "  },",
-    '  agents: { default: "claude", definitions: { claude: {} } },',
+    "  agents: {",
+    '    default: "claude",',
+    "    definitions: {",
+    '      claude: { preLaunch: "export PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true", preLaunchEnv: ["PUPPETEER_SKIP_CHROMIUM_DOWNLOAD"] },',
+    '      codex: { preLaunch: "export PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true", preLaunchEnv: ["PUPPETEER_SKIP_CHROMIUM_DOWNLOAD"] },',
+    "    },",
+    "  },",
     "  sources: [",
+    '    { kind: "linear", name: "l" },',
     "    {",
     '      kind: "shell",',
     '      name: "jira",',
@@ -367,4 +398,51 @@ function v1ConfigContents(input: { readonly scenario: Scenario }): string {
     "} satisfies Config;",
     "",
   ].join("\n");
+}
+
+/** The v2 config init writes, parsed (strip the leading JSONC comment line). */
+interface GeneratedConfig {
+  readonly workspace: {
+    readonly baseDirectory: string;
+    readonly worktreeDirectory?: string;
+    readonly environment?: Record<string, string>;
+    readonly prepareWorktree?: string;
+  };
+  readonly sources: ReadonlyArray<{ readonly kind: string; readonly name?: string }>;
+  readonly agents?: {
+    readonly default?: string;
+    readonly profiles?: Record<string, unknown>;
+  };
+}
+
+function readGeneratedConfig(input: { readonly scenario: Scenario }): GeneratedConfig {
+  const raw = fs.readFileSync(configPath(input), "utf8");
+  return JSON.parse(raw.slice(raw.indexOf("{"))) as GeneratedConfig;
+}
+
+/**
+ * Seeds a live v1-shape run record into the scenario's runs dir. Its shape (task,
+ * repository, branchName, …) is nothing like a v2 record, so v2 must classify it
+ * foreign and ignore it — never zod-throw on it (Bug 3).
+ */
+function seedV1RunRecord(input: { readonly scenario: Scenario }): void {
+  const runsDirectory = path.join(input.scenario.stateRoot, "runs");
+  fs.mkdirSync(runsDirectory, { recursive: true });
+  fs.writeFileSync(
+    path.join(runsDirectory, "devop-1234.json"),
+    JSON.stringify(
+      {
+        task: "DEVOP-1234",
+        repository: "cbh-core",
+        agent: "claude",
+        worktreeDir: "/home/me/dev/.worktrees/devop-1234",
+        branchName: "crew/devop-1234",
+        workspaceName: "devop-1234",
+        state: "running",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      },
+      undefined,
+      2,
+    ),
+  );
 }

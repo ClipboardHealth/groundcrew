@@ -22,6 +22,14 @@ export const workspaceConfigSchema = z.object({
   /** The only required key in the file (contracts §5). */
   baseDirectory: z.string().min(1),
   worktreeDirectory: z.string().min(1).optional(),
+  /**
+   * Non-secret env injected into every prepareWorktree hook process and layered
+   * into every agent session (between ambient and profile.environment). The v2
+   * home for v1's `preLaunch`/`preLaunchEnv` export passthroughs (contracts §5).
+   */
+  environment: z.record(z.string().min(1), z.string()).optional(),
+  /** Default prepareWorktree hook when a repo has no per-repo override (v1's `defaults.hooks`). */
+  prepareWorktree: z.string().min(1).optional(),
   repositories: z.record(z.string().min(1), repositoryOverrideSchema).optional(),
 });
 

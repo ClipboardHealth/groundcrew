@@ -1,9 +1,11 @@
 /**
  * `prepareWorktree` hook resolution and execution. Ported and adapted from v1's
  * `src/lib/repositoryHooks.ts`: a repo may commit a `.groundcrew/config.json`
- * that overrides the operator's per-repo config hook (closest-to-the-code wins).
- * v2 drops v1's global `defaults.hooks` layer — config per-repo override is the
- * operator layer (contracts §3.2). The hook runs with cwd = the worktree root.
+ * that overrides the operator's config hook (closest-to-the-code wins).
+ * Precedence: the repo-committed hook, then the per-repo config override, then
+ * the workspace default (`workspace.prepareWorktree`, v2's home for v1's
+ * `defaults.hooks`, contracts §3.2/§5). The hook runs with cwd = the worktree
+ * root, its process env `workspace.environment` overlaid on the ambient env.
  */
 
 import * as fs from "node:fs";
@@ -23,23 +25,28 @@ const REPOSITORY_CONFIG_RELATIVE_PATH = path.join(".groundcrew", "config.json");
 export function resolvePrepareWorktreeCommand(input: {
   readonly worktreeDirectory: string;
   readonly perRepoHook?: string;
+  readonly defaultHook?: string;
 }): string | undefined {
   const committed = readRepositoryConfigHook({ worktreeDirectory: input.worktreeDirectory });
-  return committed ?? input.perRepoHook;
+  return committed ?? input.perRepoHook ?? input.defaultHook;
 }
 
 /**
- * Runs the resolved hook (if any) at the worktree root. Throws
- * `PrepareWorktreeError` on nonzero exit so provisioning rolls back.
+ * Runs the resolved hook (if any) at the worktree root, with
+ * `environment` overlaid on the ambient env. Throws `PrepareWorktreeError` on
+ * nonzero exit so provisioning rolls back.
  */
 export async function runPrepareWorktree(input: {
   readonly worktreeDirectory: string;
   readonly repo: string;
   readonly perRepoHook?: string;
+  readonly defaultHook?: string;
+  readonly environment?: Readonly<Record<string, string>>;
 }): Promise<void> {
   const command = resolvePrepareWorktreeCommand({
     worktreeDirectory: input.worktreeDirectory,
     ...(input.perRepoHook === undefined ? {} : { perRepoHook: input.perRepoHook }),
+    ...(input.defaultHook === undefined ? {} : { defaultHook: input.defaultHook }),
   });
   if (command === undefined) {
     return;
@@ -50,6 +57,8 @@ export async function runPrepareWorktree(input: {
     cwd: input.worktreeDirectory,
     reject: false,
     stripFinalNewline: false,
+    // Ambient env is inherited; workspace.environment overlays it (contracts §5).
+    ...(input.environment === undefined ? {} : { env: { ...input.environment } }),
   });
   const exitCode = typeof result.exitCode === "number" ? result.exitCode : 1;
   if (exitCode !== 0) {

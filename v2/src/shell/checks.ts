@@ -19,6 +19,11 @@ export interface CheckResult {
   readonly detail: string | undefined;
   /** The source a per-source check belongs to (SURFACE-07 naming). */
   readonly source: string | undefined;
+  /**
+   * An informational note rather than a pass/fail: rendered distinctly and never
+   * failing the run (e.g. unrecognized v1 state files in the runs dir).
+   */
+  readonly note?: boolean;
 }
 
 function pass(label: string, detail?: string): CheckResult {

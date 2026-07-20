@@ -87,6 +87,10 @@ workspace directory) → walk up from cwd to `.groundcrew/task.json`. Exit code 
 Identity resolution runs BEFORE any other gate: `crew repo add` with no task context exits 3 even
 when the repo argument is also not on disk (exit 2 is only reachable with task context resolved).
 The `prepareWorktree` hook runs with cwd set to the just-created worktree root (v1 behavior).
+Hook precedence (closest-to-the-code wins): the repo-committed `.groundcrew/config.json` hook, then
+the per-repo `workspace.repositories.<name>.prepareWorktree`, then the workspace default
+`workspace.prepareWorktree`. The hook process env is `workspace.environment` overlaid on the ambient
+environment.
 
 ### 3.3 Dispatch verdicts — `dispatch.json`
 
@@ -183,6 +187,12 @@ omitted = detected / specified = exactly yours, never merged; no secret values s
   "workspace": {
     "baseDirectory": "~/dev",                    // the only required key in the file
     "worktreeDirectory": "~/scratch/worktrees",  // default: <baseDirectory>/.groundcrew/worktrees
+    "environment": { "PUPPETEER_SKIP_CHROMIUM_DOWNLOAD": "true" }, // non-secret env: injected into
+                                                    // every prepareWorktree hook process and layered
+                                                    // into every agent session (ambient < workspace <
+                                                    // profile.environment). v2 home for v1 preLaunch exports.
+    "prepareWorktree": "test ! -f package-lock.json || npm ci",   // default hook; a per-repo
+                                                    // `repositories.<name>.prepareWorktree` overrides it
     "repositories": {                             // per-repo overrides only
       "alpha": { "workingDirectory": "packages/api", "prepareWorktree": "npm ci" }
     }

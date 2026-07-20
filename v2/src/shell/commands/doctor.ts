@@ -20,6 +20,7 @@ import {
 import { type ContextEnvironment, type Context, loadContext } from "../context.js";
 import { dispatchReconcile } from "../dispatchAdapter.js";
 import { onPath } from "../detect.js";
+import { listForeignRunRecords, runsDirectory } from "../../run/index.js";
 import type { Io } from "../io.js";
 import { renderChecks } from "../render/doctor.js";
 
@@ -61,7 +62,33 @@ export async function runDoctor(input: {
 
   checks.push(...checkAgents(context), credentialCheck(context), await reconcileCheck(context));
 
+  const foreignNote = await foreignStateNote(context);
+  if (foreignNote !== undefined) {
+    checks.push(foreignNote);
+  }
+
   return report({ checks, json: input.json, io: input.io });
+}
+
+/**
+ * A note (never a failure) when the runs directory holds files v2 does not
+ * recognize — most often live v1 state. v2 ignores them; this just says so, so
+ * the operator is not surprised and doctor still exits 0 (Bug 3, DEVOP dogfood).
+ */
+async function foreignStateNote(context: Context): Promise<CheckResult | undefined> {
+  const foreign = await listForeignRunRecords({ stateRoot: context.stateRoot });
+  if (foreign.length === 0) {
+    return undefined;
+  }
+
+  const directory = runsDirectory({ stateRoot: context.stateRoot });
+  return {
+    label: `${String(foreign.length)} unrecognized state file(s) in ${directory} (v1 state? v2 ignores them)`,
+    ok: true,
+    detail: undefined,
+    source: undefined,
+    note: true,
+  };
 }
 
 function credentialCheck(context: Context): CheckResult {

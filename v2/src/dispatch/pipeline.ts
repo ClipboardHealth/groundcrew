@@ -283,6 +283,9 @@ async function provisionAndLaunch(context: {
       profileName: resolved.name,
       profile: resolved.profile,
       environment: input.environment,
+      ...(input.sessionEnvironment === undefined
+        ? {}
+        : { sessionEnvironment: input.sessionEnvironment }),
       presenter: input.presenter,
       ...(input.prompt === undefined ? {} : { prompt: input.prompt }),
       // The per-task grant (contracts §9): the config policy names host-wide

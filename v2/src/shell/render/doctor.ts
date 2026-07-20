@@ -12,7 +12,9 @@ export function renderChecks(input: {
   const lines: string[] = [input.title];
 
   for (const check of input.checks) {
-    if (check.ok) {
+    if (check.note === true) {
+      lines.push(`  note  ${check.label}`);
+    } else if (check.ok) {
       lines.push(`  ok    ${check.label}`);
     } else {
       lines.push(`  FAIL  ${check.label}: ${check.detail ?? "failed"}`);
@@ -20,13 +22,12 @@ export function renderChecks(input: {
   }
 
   const failed = input.checks.filter((check) => !check.ok);
+  const counted = input.checks.filter((check) => check.note !== true).length;
   lines.push("");
   if (failed.length === 0) {
-    lines.push(`All ${String(input.checks.length)} checks passed.`);
+    lines.push(`All ${String(counted)} checks passed.`);
   } else {
-    lines.push(
-      `${String(failed.length)} of ${String(input.checks.length)} checks failed:`,
-    );
+    lines.push(`${String(failed.length)} of ${String(counted)} checks failed:`);
     for (const check of failed) {
       lines.push(`  - ${check.label}`);
     }

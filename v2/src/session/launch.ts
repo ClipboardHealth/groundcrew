@@ -61,6 +61,12 @@ export interface LaunchSessionInput {
   prompt?: string;
   /** Ambient environment (orchestrator's own); its `PATH` gates the launch. */
   environment: Record<string, string>;
+  /**
+   * Non-secret env layered into the session overlay beneath the profile's own
+   * environment (`workspace.environment`, contracts §5/§9). Optional; defaults
+   * to none.
+   */
+  sessionEnvironment?: Record<string, string>;
   /** When present, the composed command is sandbox-wrapped under this policy. */
   policy?: SandboxPolicy;
   /** Injected sandbox wrap; defaults to the real `wrapCommand` from `../sandbox`. */
@@ -92,6 +98,7 @@ export async function launchSession(input: LaunchSessionInput): Promise<LaunchRe
     profileEnvironment: resolved.environment,
     agentCommand,
     environment: input.environment,
+    sessionEnvironment: input.sessionEnvironment,
     policy: input.policy,
     wrapCommand: input.wrapCommand,
     presenter: input.presenter,
@@ -110,6 +117,8 @@ export interface OpenComposedInput {
   /** The composed agent command (launch or resume form), pre-wrap. */
   agentCommand: string;
   environment: Record<string, string>;
+  /** Workspace-level session env layered beneath the profile env (contracts §9). */
+  sessionEnvironment: Record<string, string> | undefined;
   policy: SandboxPolicy | undefined;
   wrapCommand: WrapCommand | undefined;
   presenter: Presenter;
@@ -135,7 +144,7 @@ export async function openComposed(
       name: sessionName,
       cwd: input.workspaceDirectory,
       command,
-      environment: overlayEnvironment(input, input.profileEnvironment),
+      environment: overlayEnvironment(input, input.profileEnvironment, input.sessionEnvironment),
     });
   } catch (error) {
     throw new LaunchError(`could not open session "${sessionName}": ${errorMessage(error)}`);
@@ -145,15 +154,18 @@ export async function openComposed(
 }
 
 /**
- * The presenter overlay (contracts §9): the profile's non-secret environment
- * plus the two injected correlation variables. Ambient PATH etc. is inherited by
- * the presenter process, not layered here.
+ * The presenter overlay (contracts §9): the workspace-level session env, then
+ * the profile's non-secret environment (which wins on conflict), then the
+ * injected correlation variables. Ambient PATH etc. is inherited by the
+ * presenter process, not layered here.
  */
 export function overlayEnvironment(
   input: { taskId: string; workspaceDirectory: string },
   profileEnvironment: Record<string, string>,
+  sessionEnvironment?: Record<string, string>,
 ): Record<string, string> {
   return {
+    ...sessionEnvironment,
     ...profileEnvironment,
     GROUNDCREW_WORKSPACE: input.workspaceDirectory,
     GROUNDCREW_TASK_ID: input.taskId,

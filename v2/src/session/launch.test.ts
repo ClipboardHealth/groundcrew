@@ -80,6 +80,34 @@ describe("launchSession", () => {
       MY_AGENT_VAR: "value",
       GROUNDCREW_WORKSPACE: "/work/fixture-task-1",
       GROUNDCREW_TASK_ID: "fixture:TASK-1",
+      // The outermost wrap is the only wrap: every session carries the
+      // kill-switch for its own children (contracts §9).
+      GROUNDCREW_SANDBOX: "off",
+    });
+  });
+
+  it("layers workspace sessionEnvironment beneath the profile environment", async () => {
+    const { presenter, opens } = fakePresenter();
+    const { lookup } = lookupFor("scripted-agent");
+
+    await launchSession({
+      taskId: "fixture:TASK-1",
+      workspaceDirectory: "/work/fixture-task-1",
+      profileName: "scripted",
+      // The profile shares a key with the session env: the profile wins.
+      profile: { command: "scripted-agent {{prompt}}", environment: { SHARED: "profile" } },
+      sessionEnvironment: { PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: "true", SHARED: "workspace" },
+      environment,
+      presenter,
+      lookup,
+    });
+
+    expect(opens[0]?.environment).toEqual({
+      PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: "true",
+      SHARED: "profile",
+      GROUNDCREW_WORKSPACE: "/work/fixture-task-1",
+      GROUNDCREW_TASK_ID: "fixture:TASK-1",
+      GROUNDCREW_SANDBOX: "off",
     });
   });
 

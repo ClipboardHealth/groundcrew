@@ -29,6 +29,10 @@ export interface WorkspaceConfig {
   readonly remote?: string;
   /** Fallback default branch when the remote HEAD cannot be read; default `main`. */
   readonly defaultBranch?: string;
+  /** Non-secret env overlaid on the ambient environment for prepareWorktree hooks (contracts §5). */
+  readonly environment?: Readonly<Record<string, string>>;
+  /** Default prepareWorktree hook when a repo has no override (contracts §3.2/§5). */
+  readonly prepareWorktree?: string;
   readonly repositories?: Readonly<Record<string, RepositoryOverride>>;
 }
 

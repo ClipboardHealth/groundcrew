@@ -17,8 +17,16 @@ export {
   runRecordExists,
   deleteRunRecord,
   listRunRecords,
+  listForeignRunRecords,
 } from "./runRecord.js";
-export type { Artifact, RunEvent, RunRecord, RunState, RunOutcome } from "./runRecord.js";
+export type {
+  Artifact,
+  ForeignRunRecord,
+  RunEvent,
+  RunRecord,
+  RunState,
+  RunOutcome,
+} from "./runRecord.js";
 
 export {
   Run,
@@ -31,7 +39,7 @@ export {
 } from "./run.js";
 export type { CreateRunInput, LoadRunInput, CompleteRunInput } from "./run.js";
 
-export { InvalidTransitionError, RunNotFoundError } from "./errors.js";
+export { ForeignRunRecordError, InvalidTransitionError, RunNotFoundError } from "./errors.js";
 
 export { noopWritebackPort } from "./writeback.js";
 export type { WritebackPort, WritebackCompletion } from "./writeback.js";

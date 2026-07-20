@@ -73,6 +73,8 @@ export interface DispatchDeps {
   maximumInProgress: number;
   /** Ambient env whose `PATH` gates the launch (contracts §9); the orchestrator's own. */
   environment: Record<string, string>;
+  /** `workspace.environment` layered into the session env beneath the profile env (contracts §5/§9). */
+  sessionEnvironment?: Record<string, string>;
   /** Initial prompt (`prompts.initial`); defaults to the bare `crew done` instruction. */
   prompt?: string;
   /** Agent sandbox policy; omitted ⇒ the launch is not sandbox-wrapped. */

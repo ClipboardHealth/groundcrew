@@ -4,6 +4,8 @@
  * at the boundary: `RepoNotOnDiskError` → 2, `NoTaskContextError` → 3, every
  * other error → 1 with a clean one-line message (no stack unless `--verbose`).
  */
+import { ZodError } from "zod";
+
 import { NoTaskContextError, RepoNotOnDiskError } from "../workspace/index.js";
 
 /** A config that could not be located, parsed, or validated (exit 1). */
@@ -58,9 +60,26 @@ export function exitCodeFor(error: unknown): number {
 
 /** The clean one-line-or-more message to print to stderr for a failure. */
 export function messageFor(error: unknown): string {
+  // A ZodError's own `.message` is the raw JSON issue dump; never let that reach
+  // the console. Render a concise, human `path: message` list instead. (Config
+  // and run-record parsing already map to typed errors upstream; this is the
+  // backstop so any stray zod error still renders cleanly.)
+  if (error instanceof ZodError) {
+    return `validation failed:\n${formatZodIssues(error)}`;
+  }
+
   if (error instanceof Error) {
     return error.message;
   }
 
   return String(error);
+}
+
+function formatZodIssues(error: ZodError): string {
+  return error.issues
+    .map((issue) => {
+      const location = issue.path.length > 0 ? issue.path.join(".") : "(root)";
+      return `  - ${location}: ${issue.message}`;
+    })
+    .join("\n");
 }

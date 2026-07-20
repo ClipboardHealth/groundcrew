@@ -15,6 +15,25 @@ export class RunNotFoundError extends Error {
 }
 
 /**
+ * Thrown when a file in the runs directory is present but is not a v2 run record
+ * (unparseable JSON, wrong version, or missing/invalid fields — most often live
+ * v1 state). Carries a one-line human message, never raw zod issues, so Shell
+ * can surface it cleanly and v2 tolerates a directory it does not own.
+ */
+export class ForeignRunRecordError extends Error {
+  public readonly path: string;
+  /** A short classification detail (e.g. "not valid JSON", "unknown version"). */
+  public readonly reason: string;
+
+  public constructor(recordPath: string, reason: string) {
+    super(`${recordPath}: not a v2 run record (v1 state?)`);
+    this.name = "ForeignRunRecordError";
+    this.path = recordPath;
+    this.reason = reason;
+  }
+}
+
+/**
  * Thrown when a lifecycle call is illegal for the run's current state (spec §3).
  * `from` is a run state; typed as `string` here so this leaf module stays free
  * of a `runRecord` import (keeps the module import graph acyclic).

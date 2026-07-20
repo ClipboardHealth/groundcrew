@@ -37,6 +37,47 @@ describe("hooks", () => {
     );
   });
 
+  it("falls back to the workspace default hook when no per-repo hook exists", () => {
+    expect(resolvePrepareWorktreeCommand({ worktreeDirectory, defaultHook: "make setup" })).toBe(
+      "make setup",
+    );
+  });
+
+  it("prefers the per-repo hook over the workspace default hook", () => {
+    expect(
+      resolvePrepareWorktreeCommand({
+        worktreeDirectory,
+        perRepoHook: "npm ci",
+        defaultHook: "make setup",
+      }),
+    ).toBe("npm ci");
+  });
+
+  it("prefers a committed hook over both the per-repo and default hooks", () => {
+    writeCommittedHook({ worktreeDirectory, command: "make setup" });
+
+    expect(
+      resolvePrepareWorktreeCommand({
+        worktreeDirectory,
+        perRepoHook: "npm ci",
+        defaultHook: "make bootstrap",
+      }),
+    ).toBe("make setup");
+  });
+
+  it("overlays workspace.environment onto the hook process env", async () => {
+    await runPrepareWorktree({
+      worktreeDirectory,
+      repo: "alpha",
+      defaultHook: 'printf %s "$MY_HOOK_VAR" > hook-env.txt',
+      environment: { MY_HOOK_VAR: "from-workspace" },
+    });
+
+    expect(fs.readFileSync(path.join(worktreeDirectory, "hook-env.txt"), "utf8")).toBe(
+      "from-workspace",
+    );
+  });
+
   it("rejects a malformed committed config", () => {
     fs.mkdirSync(path.join(worktreeDirectory, ".groundcrew"), { recursive: true });
     fs.writeFileSync(

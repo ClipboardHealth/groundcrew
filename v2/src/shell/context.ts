@@ -114,6 +114,10 @@ export class Context {
       ...(workspace.worktreeDirectory === undefined
         ? {}
         : { worktreeDirectory: this.expand(workspace.worktreeDirectory) }),
+      ...(workspace.environment === undefined ? {} : { environment: { ...workspace.environment } }),
+      ...(workspace.prepareWorktree === undefined
+        ? {}
+        : { prepareWorktree: workspace.prepareWorktree }),
       ...(git?.branchPrefix === undefined ? {} : { branchPrefix: git.branchPrefix }),
       ...(git?.remote === undefined ? {} : { remote: git.remote }),
       ...(git?.defaultBranch === undefined ? {} : { defaultBranch: git.defaultBranch }),
@@ -298,6 +302,8 @@ export class Context {
       ...(detected.default === undefined ? {} : { default: detected.default }),
     };
 
+    const sessionEnvironment = this.sessionEnvironment();
+
     return {
       stateRoot: this.stateRoot,
       workspaceConfig: this.workspaceConfig(),
@@ -306,6 +312,9 @@ export class Context {
       agents,
       maximumInProgress: this.config.orchestrator?.maximumInProgress ?? 4,
       environment: this.ambientEnvironment(),
+      // workspace.environment is layered into the agent session env between the
+      // ambient env and the profile's own environment (contracts §5/§9).
+      ...(sessionEnvironment === undefined ? {} : { sessionEnvironment }),
       ...(this.config.prompts?.initial === undefined
         ? {}
         : { prompt: this.config.prompts.initial }),
@@ -342,6 +351,16 @@ export class Context {
   /** The configured poll cadence (`orchestrator.pollIntervalMilliseconds`). */
   public pollIntervalMilliseconds(): number {
     return this.config.orchestrator?.pollIntervalMilliseconds ?? 120_000;
+  }
+
+  /**
+   * The non-secret `workspace.environment` layered into agent sessions beneath
+   * the profile env (contracts §5/§9); `undefined` when unset.
+   */
+  public sessionEnvironment(): Record<string, string> | undefined {
+    return this.config.workspace.environment === undefined
+      ? undefined
+      : { ...this.config.workspace.environment };
   }
 
   /** The ambient (orchestrator) environment as a defined string map for launches. */

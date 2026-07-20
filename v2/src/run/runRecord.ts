@@ -10,7 +10,7 @@ import path from "node:path";
 
 import { z } from "zod";
 
-import { RunNotFoundError } from "./errors.js";
+import { ForeignRunRecordError, RunNotFoundError } from "./errors.js";
 
 export const RUN_RECORD_VERSION = 1;
 
@@ -75,7 +75,53 @@ export async function writeRunRecord(input: {
   await fs.rename(temporaryPath, input.path);
 }
 
-/** Reads and validates a record; throws `RunNotFoundError` when absent. */
+/** A file in the runs directory that is not a v2 run record (contracts §3.1). */
+export interface ForeignRunRecord {
+  readonly path: string;
+  /** Short human reason (e.g. "not valid JSON", "unknown version", "missing/invalid fields"). */
+  readonly reason: string;
+}
+
+type Classification =
+  | { readonly kind: "record"; readonly record: RunRecord }
+  | { readonly kind: "foreign"; readonly reason: string };
+
+/**
+ * Classify raw file contents as a v2 run record or foreign state. Never throws:
+ * unparseable JSON, an unsupported version, or any schema violation is
+ * "foreign" (most often live v1 state that v2 must tolerate, not crash on).
+ */
+function classify(raw: string): Classification {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { kind: "foreign", reason: "not valid JSON" };
+  }
+
+  const result = runRecordSchema.safeParse(parsed);
+  if (result.success) {
+    return { kind: "record", record: result.data };
+  }
+
+  return { kind: "foreign", reason: foreignReason(parsed) };
+}
+
+/** A one-liner distinguishing a version mismatch from a shape mismatch. */
+function foreignReason(parsed: unknown): string {
+  const probe = z.object({ version: z.number() }).safeParse(parsed);
+  if (probe.success && probe.data.version !== RUN_RECORD_VERSION) {
+    return `unknown version ${String(probe.data.version)}`;
+  }
+
+  return "missing/invalid fields";
+}
+
+/**
+ * Reads and validates a record. Throws `RunNotFoundError` when absent and
+ * `ForeignRunRecordError` (a clean one-liner, never raw zod issues) when the
+ * file is present but is not a v2 run record.
+ */
 export async function readRunRecord(input: { path: string }): Promise<RunRecord> {
   let raw: string;
   try {
@@ -84,7 +130,12 @@ export async function readRunRecord(input: { path: string }): Promise<RunRecord>
     throw new RunNotFoundError(input.path);
   }
 
-  return runRecordSchema.parse(JSON.parse(raw));
+  const classified = classify(raw);
+  if (classified.kind === "foreign") {
+    throw new ForeignRunRecordError(input.path, classified.reason);
+  }
+
+  return classified.record;
 }
 
 export async function runRecordExists(input: { path: string }): Promise<boolean> {
@@ -100,25 +151,60 @@ export async function deleteRunRecord(input: { path: string }): Promise<void> {
   await fs.rm(input.path, { force: true });
 }
 
-/** All readable run records under `<stateRoot>/runs/`, sorted by task slug. */
-export async function listRunRecords(input: { stateRoot: string }): Promise<RunRecord[]> {
+/**
+ * One tolerant scan of `<stateRoot>/runs/`, splitting readable v2 records from
+ * foreign files (v1 state, junk). Neither list ever throws on a bad file —
+ * foreign files are classified and set aside, never surfaced as zod issues.
+ */
+async function scanRunsDirectory(input: {
+  stateRoot: string;
+}): Promise<{ records: RunRecord[]; foreign: ForeignRunRecord[] }> {
   const directory = runsDirectory({ stateRoot: input.stateRoot });
   let entries: string[];
   try {
     entries = await fs.readdir(directory);
   } catch {
-    return [];
+    return { records: [], foreign: [] };
   }
 
   const files = entries.filter((entry) => entry.endsWith(".json")).toSorted();
   const records: RunRecord[] = [];
+  const foreign: ForeignRunRecord[] = [];
   for (const file of files) {
-    // eslint-disable-next-line no-await-in-loop -- small, ordered, filesystem-bound read
-    const record = await readRunRecord({ path: path.join(directory, file) });
-    records.push(record);
+    const recordPath = path.join(directory, file);
+    let raw: string;
+    try {
+      // eslint-disable-next-line no-await-in-loop -- small, ordered, filesystem-bound read
+      raw = await fs.readFile(recordPath, "utf8");
+    } catch {
+      continue; // vanished between readdir and read
+    }
+
+    const classified = classify(raw);
+    if (classified.kind === "record") {
+      records.push(classified.record);
+    } else {
+      foreign.push({ path: recordPath, reason: classified.reason });
+    }
   }
 
-  return records;
+  return { records, foreign };
+}
+
+/** All readable v2 run records under `<stateRoot>/runs/`, sorted by task slug. */
+export async function listRunRecords(input: { stateRoot: string }): Promise<RunRecord[]> {
+  return (await scanRunsDirectory(input)).records;
+}
+
+/**
+ * Files in the runs directory that are not v2 run records — surfaced as
+ * `{ path, reason }` metadata (contracts §3.1), never as thrown errors, so
+ * callers (doctor) can note them and everything else can skip them.
+ */
+export async function listForeignRunRecords(input: {
+  stateRoot: string;
+}): Promise<ForeignRunRecord[]> {
+  return (await scanRunsDirectory(input)).foreign;
 }
 
 function randomSuffix(): string {
