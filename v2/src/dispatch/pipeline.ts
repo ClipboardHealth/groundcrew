@@ -285,7 +285,21 @@ async function provisionAndLaunch(context: {
       environment: input.environment,
       presenter: input.presenter,
       ...(input.prompt === undefined ? {} : { prompt: input.prompt }),
-      ...(input.policy === undefined ? {} : { policy: input.policy }),
+      // The per-task grant (contracts §9): the config policy names host-wide
+      // read-only dirs and egress; the workspace and the state root (run
+      // records, log file — what in-session `crew` writes) are granted per task.
+      ...(input.policy === undefined
+        ? {}
+        : {
+            policy: {
+              ...input.policy,
+              writablePaths: [
+                ...input.policy.writablePaths,
+                workspaceDirectory,
+                input.stateRoot,
+              ],
+            },
+          }),
       ...(input.wrapCommand === undefined ? {} : { wrapCommand: input.wrapCommand }),
     });
 

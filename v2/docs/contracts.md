@@ -270,7 +270,10 @@ interface Presenter {
 3. Presenter `open()` runs the wrapped command at the workspace root with the injected env.
 
 Agent session environment = the orchestrator's own environment (PATH etc. inherited), overlaid with
-the profile's `environment`, overlaid with the injected `GROUNDCREW_WORKSPACE`/`GROUNDCREW_TASK_ID`.
-The sandbox confines filesystem/network, not env visibility.
+the profile's `environment`, overlaid with the injected `GROUNDCREW_WORKSPACE`/`GROUNDCREW_TASK_ID`
+and `GROUNDCREW_SANDBOX=off` — the outermost wrap is the only wrap: in-session `crew` never nests a
+second srt sandbox inside an already-confined session. The sandbox confines filesystem/network, not
+env visibility. The launch policy = config `sandbox` (read-only dirs, egress) plus the per-task
+grant added by Dispatch: the task workspace and the state root (run records, log file) writable.
 
 The default initial prompt ends by instructing the agent to run `crew done` when finished.

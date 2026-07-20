@@ -157,6 +157,10 @@ export function overlayEnvironment(
     ...profileEnvironment,
     GROUNDCREW_WORKSPACE: input.workspaceDirectory,
     GROUNDCREW_TASK_ID: input.taskId,
+    // The outermost wrap is the only wrap (contracts §9): in-session `crew`
+    // must never nest a second srt sandbox inside an already-confined session,
+    // so every session carries the kill-switch for its own children.
+    GROUNDCREW_SANDBOX: "off",
   };
 }
 
