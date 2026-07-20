@@ -58,6 +58,10 @@ export type { DetectedPresenter, DetectPresenterInput, PresenterName } from "./d
 export { DEFAULT_PROMPT, launchSession, LaunchError } from "./launch.js";
 export type { LaunchResult, LaunchSessionInput, WrapCommand } from "./launch.js";
 
+// Agent sandbox policy composition (contracts §9; ported from v1 srtPolicy).
+export { composeAgentPolicy, DEFAULT_AGENT_EGRESS } from "./agentPolicy.js";
+export type { AgentSandboxConfig, ComposeAgentPolicyInput } from "./agentPolicy.js";
+
 // Session lifecycle: pause / resume / close / probe.
 export { closeSession, pauseSession, probeSessions, resumeSession } from "./lifecycle.js";
 export type { ResumeSessionInput, SessionRef } from "./lifecycle.js";

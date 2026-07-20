@@ -21,7 +21,7 @@ function recorder(
 }
 
 describe("createZellijPresenter open", () => {
-  it("names the session and delivers the command on stdin at the cwd with the overlay env", async () => {
+  it("creates a detached session then runs the command in it (validated live, zellij 0.44)", async () => {
     const { exec, calls } = recorder(() => ({}));
     const presenter = createZellijPresenter({ exec });
 
@@ -32,13 +32,28 @@ describe("createZellijPresenter open", () => {
       environment: { GROUNDCREW_TASK_ID: "fixture:TASK-1" },
     });
 
-    expect(calls).toHaveLength(1);
+    expect(calls).toHaveLength(2);
     expect(calls[0]).toMatchObject({
       command: "zellij",
-      args: ["--session", "crew-alpha"],
+      args: ["attach", "--create-background", "crew-alpha"],
       cwd: "/work/alpha",
       env: { GROUNDCREW_TASK_ID: "fixture:TASK-1" },
-      stdin: "scripted-agent 'go'",
+    });
+    expect(calls[1]).toMatchObject({
+      command: "zellij",
+      args: [
+        "--session",
+        "crew-alpha",
+        "run",
+        "--cwd",
+        "/work/alpha",
+        "--",
+        "sh",
+        "-c",
+        "scripted-agent 'go'",
+      ],
+      cwd: "/work/alpha",
+      env: { GROUNDCREW_TASK_ID: "fixture:TASK-1" },
     });
   });
 
@@ -135,7 +150,7 @@ describe("createZellijPresenter surface", () => {
     const { exec } = recorder(() => ({}));
     const presenter = createZellijPresenter({ exec });
 
-    expect(await presenter.accessHint("crew-alpha")).toBe("zellij attach crew-alpha");
+    expect(await presenter.accessHint("crew-alpha")).toMatch(/^ZELLIJ_SOCKET_DIR=\S+ zellij attach crew-alpha$/u);
     expect(presenter.setStatus).toBeUndefined();
   });
 });
