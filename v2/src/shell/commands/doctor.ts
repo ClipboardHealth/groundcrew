@@ -50,6 +50,9 @@ export async function runDoctor(input: {
   }
 
   checks.push(...(await checkRequiredTools(context)), checkBaseDirectory(context));
+  if (context.sandboxDisabled()) {
+    checks.push(ok("sandbox: OFF (GROUNDCREW_SANDBOX=off — agents and sources run unwrapped)"));
+  }
 
   for (const resolved of context.resolvedSources()) {
     // eslint-disable-next-line no-await-in-loop -- sources are checked in order for stable output

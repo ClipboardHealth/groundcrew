@@ -95,30 +95,32 @@ describe.runIf(sandboxLaneEnabled)("H. Sandbox posture", () => {
     }, { sandboxLane: true });
   });
 
+  // srt (the ratified, only runner) filters remote egress by host and treats
+  // loopback as a single allowLocalBinding capability — it has no port
+  // dimension. The catalog's two-ports-one-config formulation is therefore not
+  // expressible; the same assertion (allowlisted succeeds, non-allowlisted
+  // fails) runs as two dispatches under two configs.
   it("SANDBOX-02: allowlists the agent's network egress", async () => {
-    const allowed = await startLoopbackServer();
-    const denied = await startLoopbackServer();
+    const fixture = await startLoopbackServer();
     try {
       await withScenario(async (scenario) => {
         await createRepo({ scenario, name: "alpha" });
 
         const workspace = workspaceDirectory({ scenario, taskId: TASK_ID });
         const allowMarker = path.join(workspace, ".probe", "allow.json");
-        const denyMarker = path.join(workspace, ".probe", "deny.json");
-
-        const actions: ProbeAction[] = [
-          { kind: "httpGet", url: allowed.url, marker: allowMarker },
-          { kind: "httpGet", url: denied.url, marker: denyMarker },
-        ];
 
         const crew = configure({
           scenario,
           config: {
-            sandbox: { network: [allowed.hostPort] },
+            sandbox: { network: [fixture.hostPort] },
             agentProfiles: {
               scripted: {
                 command: "sandbox-probe",
-                environment: { [PROBE_AGENT_SPEC_ENV]: encodeProbeSpec({ actions }) },
+                environment: {
+                  [PROBE_AGENT_SPEC_ENV]: encodeProbeSpec({
+                    actions: [{ kind: "httpGet", url: fixture.url, marker: allowMarker }],
+                  }),
+                },
               },
             },
           },
@@ -129,15 +131,42 @@ describe.runIf(sandboxLaneEnabled)("H. Sandbox posture", () => {
         await crew.tick();
 
         const allow = await waitForProbeOutcome({ marker: allowMarker });
-        const deny = await waitForProbeOutcome({ marker: denyMarker });
-
         expect(allow.ok).toBe(true);
         expect(allow.detail).toBe("200");
+      }, { sandboxLane: true });
+
+      await withScenario(async (scenario) => {
+        await createRepo({ scenario, name: "alpha" });
+
+        const workspace = workspaceDirectory({ scenario, taskId: TASK_ID });
+        const denyMarker = path.join(workspace, ".probe", "deny.json");
+
+        const crew = configure({
+          scenario,
+          config: {
+            sandbox: { network: [] },
+            agentProfiles: {
+              scripted: {
+                command: "sandbox-probe",
+                environment: {
+                  [PROBE_AGENT_SPEC_ENV]: encodeProbeSpec({
+                    actions: [{ kind: "httpGet", url: fixture.url, marker: denyMarker }],
+                  }),
+                },
+              },
+            },
+          },
+        });
+        installSandboxProbeAgent({ scenario });
+        crew.seedSource([{ id: "TASK-1", title: "probe", agent: "scripted", repos: ["alpha"] }]);
+
+        await crew.tick();
+
+        const deny = await waitForProbeOutcome({ marker: denyMarker });
         expect(deny.ok).toBe(false);
       }, { sandboxLane: true });
     } finally {
-      await allowed.close();
-      await denied.close();
+      await fixture.close();
     }
   });
 

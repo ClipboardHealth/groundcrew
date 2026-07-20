@@ -179,3 +179,27 @@ describe(stageSettings, () => {
     expect(stageSettings(settings, tmp)).toBe(file);
   });
 });
+
+describe("loopback network entries", () => {
+  it("maps loopback allowlist entries to allowLocalBinding, not allowedDomains", () => {
+    const settings = buildSrtSettings({
+      writablePaths: [],
+      readOnlyPaths: [],
+      network: ["127.0.0.1:8080", "localhost", "api.linear.app"],
+    });
+
+    expect(settings.network.allowLocalBinding).toBe(true);
+    expect(settings.network.allowedDomains).toEqual(["api.linear.app"]);
+  });
+
+  it("keeps local binding off for remote-only allowlists", () => {
+    const settings = buildSrtSettings({
+      writablePaths: [],
+      readOnlyPaths: [],
+      network: ["api.linear.app"],
+    });
+
+    expect(settings.network.allowLocalBinding).toBe(false);
+    expect(settings.network.allowedDomains).toEqual(["api.linear.app"]);
+  });
+});

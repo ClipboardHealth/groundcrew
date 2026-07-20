@@ -31,6 +31,7 @@ const baseModel: StatusModel = {
   strays: [],
   deadRuns: [],
   logFile: "/x.jsonl",
+  sandboxDisabled: false,
   missingTaskId: undefined,
 };
 
@@ -142,6 +143,14 @@ describe("renderStatusHuman (overview flags)", () => {
     const out = renderStatusHuman(model);
     expect(out).toMatch(/stray/i);
     expect(out).toMatch(/dead/i);
+  });
+});
+
+describe("renderStatusHuman (sandbox kill-switch)", () => {
+  it("surfaces the GROUNDCREW_SANDBOX=off flag loudly", () => {
+    const out = renderStatusHuman({ ...baseModel, sandboxDisabled: true });
+    expect(out).toMatch(/sandbox/i);
+    expect(out).toMatch(/off|disabled/i);
   });
 });
 

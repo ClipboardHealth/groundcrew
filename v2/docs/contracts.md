@@ -206,7 +206,9 @@ omitted = detected / specified = exactly yours, never merged; no secret values s
   "git": { "remote": "origin", "defaultBranch": "main", "branchPrefix": "crew" },
   "presenter": "tmux",                            // cmux | tmux | zellij; omitted → first found
   "sandbox": { "readOnlyDirectories": ["~/.config/tfenv"],
-                "network": ["api.github.com"] },   // agent-session egress allowlist (sources declare theirs in manifests)
+                "network": ["api.github.com"] },   // agent-session egress allowlist (sources declare theirs in manifests).
+                                                    // srt granularity (validated live): remote hosts domain-matched, ports
+                                                    // ignored; any loopback entry enables local traffic as a whole.
   "prompts": { "initial": "…" },                  // or { "promptFile": "…" }
   "logging": { "file": "~/.local/state/groundcrew/groundcrew.jsonl" }
 }

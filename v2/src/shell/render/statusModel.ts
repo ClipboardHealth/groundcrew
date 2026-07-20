@@ -87,6 +87,8 @@ export interface StatusModel {
   /** A run that expects a live session but has none (dead, SESSION-03). */
   readonly deadRuns: readonly RunView[];
   readonly logFile: string;
+  /** True when the `GROUNDCREW_SANDBOX=off` kill-switch is set (contracts §7). */
+  readonly sandboxDisabled: boolean;
   /** Present only when scoped to a task that has no run record. */
   readonly missingTaskId: string | undefined;
 }
@@ -134,6 +136,7 @@ export async function buildStatusModel(input: {
     strays,
     deadRuns,
     logFile: context.config.logging?.file ?? "",
+    sandboxDisabled: context.sandboxDisabled(),
     missingTaskId:
       scope === "task" && records.length === 0 ? input.task : undefined,
   };

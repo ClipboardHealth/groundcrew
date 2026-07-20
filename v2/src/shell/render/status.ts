@@ -17,6 +17,13 @@ import type {
 export function renderStatusHuman(model: StatusModel): string {
   const lines: string[] = [];
 
+  if (model.sandboxDisabled) {
+    lines.push(
+      "sandbox: OFF (disabled by GROUNDCREW_SANDBOX=off — agents and sources run unwrapped)",
+      "",
+    );
+  }
+
   if (model.scope === "task") {
     renderTaskDetail(model, lines);
   } else {
@@ -304,6 +311,7 @@ export function renderStatusJson(model: StatusModel): string {
       strays: model.strays,
       deadRuns: model.deadRuns.map((run) => run.record.taskId),
       logFile: model.logFile,
+      sandboxDisabled: model.sandboxDisabled,
     },
     undefined,
     2,

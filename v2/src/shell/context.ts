@@ -24,7 +24,13 @@ import {
 import { type Logger, type LogLevel, createLogger } from "../logging/index.js";
 import type { WritebackCompletion, WritebackPort } from "../run/index.js";
 import { type AgentProfileConfig, type Presenter, detectPresenter } from "../session/index.js";
-import type { AgentRouting, DispatchDeps, DispatchSource } from "../dispatch/index.js";
+import { wrapCommand as sandboxWrapCommand } from "../sandbox/index.js";
+import type {
+  AgentRouting,
+  DispatchDeps,
+  DispatchSource,
+  LaunchPolicy,
+} from "../dispatch/index.js";
 import type { WorkspaceConfig } from "../workspace/index.js";
 import type { Config, SourceConfigSection } from "./config/schema.js";
 import { loadConfig, type LoadConfigInput } from "./config/load.js";
@@ -303,8 +309,34 @@ export class Context {
       ...(this.config.prompts?.initial === undefined
         ? {}
         : { prompt: this.config.prompts.initial }),
+      // Agent sandbox: omit policy+wrap when the kill-switch is set (unwrapped),
+      // else wrap under the config's egress/read-only policy (contracts §7/§9).
+      // The per-task workspace grant is added at launch (sandbox lane).
+      ...(this.sandboxDisabled()
+        ? {}
+        : { policy: this.agentSandboxPolicy(), wrapCommand: sandboxWrapCommand }),
       logger: this.logger,
     };
+  }
+
+  /** The agent-session sandbox policy from `sandbox.readOnlyDirectories`/`network`. */
+  public agentSandboxPolicy(): LaunchPolicy {
+    return {
+      writablePaths: [],
+      readOnlyPaths: (this.config.sandbox?.readOnlyDirectories ?? []).map((directory) =>
+        this.expand(directory),
+      ),
+      network: this.config.sandbox?.network ?? [],
+    };
+  }
+
+  /**
+   * The sandbox kill-switch (contracts §7): `GROUNDCREW_SANDBOX=off` in crew's own
+   * environment disables ALL srt wrapping — agent sessions and source processes
+   * both run unwrapped. Any other value (or unset) means sandboxing is on.
+   */
+  public sandboxDisabled(): boolean {
+    return isSandboxDisabled(this.environment);
   }
 
   /** The configured poll cadence (`orchestrator.pollIntervalMilliseconds`). */
@@ -340,14 +372,24 @@ export function loadContext(input: LoadContextInput): Context {
     ...(input.consoleLevel === undefined ? {} : { consoleLevel: input.consoleLevel }),
   });
 
+  // Source-process wrapping honours the kill-switch too (precedence: kill-switch
+  // → per-source `sandbox:false`, applied inside openSource → wrap).
+  const wrapCommand =
+    input.wrapCommand ?? (isSandboxDisabled(input.environment) ? undefined : sandboxWrapCommand);
+
   return new Context({
     config: loaded.config,
     configPath: loaded.path,
     environment: input.environment,
     cwd: input.cwd,
     logger,
-    wrapCommand: input.wrapCommand,
+    wrapCommand,
   });
+}
+
+/** The `GROUNDCREW_SANDBOX=off` kill-switch predicate (contracts §7). */
+export function isSandboxDisabled(environment: ContextEnvironment): boolean {
+  return environment["GROUNDCREW_SANDBOX"] === "off";
 }
 
 /** Builds the logger from config + verbosity (contracts §6, design §10.3). */

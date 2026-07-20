@@ -98,6 +98,10 @@ export function nodeRuntimePrefix(nodeExecPath: string): string {
  * on. srt's egress allowlist is host-level only — it has no port dimension — so
  * the port is dropped. Returns `undefined` for a blank entry.
  */
+export function isLoopbackHost(host: string): boolean {
+  return host === "127.0.0.1" || host === "localhost" || host === "::1";
+}
+
 export function toAllowedDomain(entry: string): string | undefined {
   const trimmed = entry.trim();
   if (trimmed === "") {
@@ -124,11 +128,16 @@ export function buildSrtSettings(
   const platform = options.platform ?? process.platform;
   const nodeExecPath = options.nodeExecPath ?? process.execPath;
 
-  const allowedDomains = unique(
-    policy.network
-      .map((entry) => toAllowedDomain(entry))
-      .filter((host): host is string => host !== undefined),
-  );
+  const hosts = policy.network
+    .map((entry) => toAllowedDomain(entry))
+    .filter((host): host is string => host !== undefined);
+  // srt has no port dimension, and loopback egress is governed by
+  // `allowLocalBinding`, not `allowedDomains` (which rejects IP:port entries):
+  // a loopback allowlist entry therefore enables local traffic as a whole,
+  // and only non-loopback hosts ride the domain allowlist. Validated live on
+  // macOS sandbox-exec (evidence: sandbox-lane bring-up).
+  const allowedDomains = unique(hosts.filter((host) => !isLoopbackHost(host)));
+  const allowLocalBinding = hosts.some((host) => isLoopbackHost(host));
 
   const allowRead = unique([
     nodeRuntimePrefix(nodeExecPath),
@@ -141,7 +150,7 @@ export function buildSrtSettings(
     network: {
       allowedDomains,
       deniedDomains: [],
-      allowLocalBinding: false,
+      allowLocalBinding,
       allowUnixSockets: [],
       allowAllUnixSockets: false,
     },

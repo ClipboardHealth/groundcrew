@@ -18,6 +18,7 @@ import { composeSrtInvocation, isRunnerAvailable, resolveSrtCli } from "./runner
 export {
   buildSrtSettings,
   homeReadMask,
+  isLoopbackHost,
   nodeRuntimePrefix,
   settingsHash,
   stageSettings,
