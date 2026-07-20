@@ -280,8 +280,12 @@ function readStdin() {
 }
 
 function emit(object) {
-  process.stdout.write(JSON.stringify(object) + "\n");
-  process.exit(0);
+  // Exit only once the write has flushed: `process.exit` right after a large
+  // `stdout.write` truncates at the 64KB pipe buffer when stdout is a pipe
+  // (which it always is under groundcrew). Found live with a 274KB list.
+  process.stdout.write(JSON.stringify(object) + "\n", () => {
+    process.exit(0);
+  });
 }
 
 async function run(handler) {

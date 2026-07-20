@@ -173,6 +173,10 @@ export function overlayEnvironment(
     // must never nest a second srt sandbox inside an already-confined session,
     // so every session carries the kill-switch for its own children.
     GROUNDCREW_SANDBOX: "off",
+    // Sandboxed remote egress rides srt's injected filtering proxy; node's
+    // fetch ignores proxy env vars unless this is set (node ≥ 24). Node-based
+    // agent CLIs would otherwise see ENOTFOUND for allowlisted hosts.
+    NODE_USE_ENV_PROXY: "1",
   };
 }
 

@@ -133,6 +133,8 @@ set in the source process env, alongside resolved secrets (fixture bundles use t
 their task-store path; under the sandbox lane a writable store belongs in the source's scratch dir).
 Core pre-creates `<stateRoot>/source-scratch/<sourceName>/` before any source invocation, grants it
 read-write in the source sandbox, and passes it as `GROUNDCREW_SOURCE_SCRATCH` in the source env.
+Source and session envs also carry `NODE_USE_ENV_PROXY=1`: sandboxed remote egress rides srt's
+injected filtering proxy, which node's `fetch` ignores without it (validated live).
 
 ### 4.2 Invocation
 

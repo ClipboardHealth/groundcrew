@@ -172,6 +172,24 @@ describe("linear bundle", () => {
     ]);
   });
 
+  test("a list larger than the 64KB pipe buffer arrives intact", async () => {
+    // Regression: `process.exit` right after a large stdout write truncates at
+    // the pipe buffer; found live with a 274KB real Linear list.
+    const bigDescription = "x".repeat(10_000);
+    respond = () => ({
+      issues: {
+        nodes: Array.from({ length: 30 }, (_, index) =>
+          issueNode({ identifier: `BIG-${String(index)}`, description: bigDescription }),
+        ),
+        pageInfo: { hasNextPage: false, endCursor: null },
+      },
+    });
+
+    const tasks = (await invokeOk("list", {})).tasks ?? [];
+    strictEqual(tasks.length, 30);
+    strictEqual(tasks[29]?.description?.length, 10_000);
+  });
+
   test("priority inversion covers the whole scale", async () => {
     respond = () => ({
       issues: {

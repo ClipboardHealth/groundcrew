@@ -241,6 +241,12 @@ function composeEnvironment(input: {
     ...input.configEnvironment,
     ...input.secretEnvironment,
     [SOURCE_SCRATCH_ENV]: withTrailingSeparator(input.scratchDirectory),
+    // Under the srt sandbox, remote egress rides an injected filtering proxy.
+    // Node's fetch/undici ignores proxy env vars unless this is set (node ≥ 24),
+    // so node-based bundles would see ENOTFOUND while curl works. Harmless
+    // outside the sandbox and for non-node bundles. Validated live against
+    // api.linear.app (contracts §4.1).
+    NODE_USE_ENV_PROXY: "1",
   };
 
   for (const key of ["PATH", "HOME"]) {
@@ -328,7 +334,7 @@ function interpret(input: {
   try {
     json = JSON.parse(input.stdout.trim());
   } catch {
-    throw failure(input, "unparseable-stdout", "stdout was not valid JSON");
+    throw failure(input, "unparseable-stdout", `stdout was not valid JSON: ${snippet(input.stdout)}`);
   }
 
   const envelope = protocolEnvelopeSchema.safeParse(json);
@@ -400,4 +406,12 @@ function logStderr(input: {
 
 function asString(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+function snippet(output: string): string {
+  const trimmed = output.trim();
+  if (trimmed === "") {
+    return "(empty stdout)";
+  }
+  return JSON.stringify(trimmed.length > 160 ? `${trimmed.slice(0, 160)}…` : trimmed);
 }

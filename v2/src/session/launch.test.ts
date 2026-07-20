@@ -83,6 +83,7 @@ describe("launchSession", () => {
       // The outermost wrap is the only wrap: every session carries the
       // kill-switch for its own children (contracts §9).
       GROUNDCREW_SANDBOX: "off",
+      NODE_USE_ENV_PROXY: "1",
     });
   });
 
@@ -108,6 +109,7 @@ describe("launchSession", () => {
       GROUNDCREW_WORKSPACE: "/work/fixture-task-1",
       GROUNDCREW_TASK_ID: "fixture:TASK-1",
       GROUNDCREW_SANDBOX: "off",
+      NODE_USE_ENV_PROXY: "1",
     });
   });
 
