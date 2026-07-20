@@ -64,9 +64,25 @@ function normalizeRepositoryConfig(value: unknown): RepositoryConfig {
   if (value["version"] !== 1) {
     fail("version must be 1");
   }
+  rejectUnsandboxedField(value);
   return {
     hooks: normalizeHookCommands(value["hooks"]),
   };
+}
+
+// `unsandboxedHooks` grants host execution, which is operator-only. A
+// repo-committed config must never be able to set it — top-level or nested under
+// `hooks` — so fail closed with guidance to move it to crew.config.ts. Checked
+// before `normalizeHookCommands`, which would otherwise silently drop the nested
+// form.
+function rejectUnsandboxedField(value: Record<string, unknown>): void {
+  const hooks = value["hooks"];
+  const nestedHasField = isPlainObject(hooks) && "unsandboxedHooks" in hooks;
+  if ("unsandboxedHooks" in value || nestedHasField) {
+    fail(
+      "unsandboxedHooks is operator-only and cannot be set in a repository config. Move it to crew.config.ts.",
+    );
+  }
 }
 
 function normalizeHookCommands(value: unknown): HookCommands {

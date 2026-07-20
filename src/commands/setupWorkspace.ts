@@ -137,9 +137,11 @@ export async function setupWorkspace(
     });
     promptDir = stagedPrompt.directory;
 
-    const perRepoHooks = config.workspace.repositories.find(
+    const repositoryEntry = config.workspace.repositories.find(
       (entry) => entry.name === repository,
-    )?.hooks;
+    );
+    const perRepoHooks = repositoryEntry?.hooks;
+    const prepareWorktreeUnsandboxedCommand = repositoryEntry?.unsandboxedHooks?.prepareWorktree;
     const prepareWorktreeCommand = resolvePrepareWorktreeCommand({
       worktreeDir: launchDir,
       // Spread-conditional rather than a direct assignment: under
@@ -149,7 +151,9 @@ export async function setupWorkspace(
       defaultHooks: config.defaults.hooks,
     });
     const secretsFile =
-      prepareWorktreeCommand === undefined ? undefined : stageBuildSecrets(promptDir);
+      prepareWorktreeCommand === undefined && prepareWorktreeUnsandboxedCommand === undefined
+        ? undefined
+        : stageBuildSecrets(promptDir);
     const completionTaskId = options.completionTaskId ?? task;
     const completionMarkDoneSupported = options.completionMarkDoneSupported ?? true;
     const taskSourceWritePaths =
@@ -174,6 +178,7 @@ export async function setupWorkspace(
       workingDir: launchDir,
       secretsFile,
       prepareWorktreeCommand,
+      prepareWorktreeUnsandboxedCommand,
       sandboxName,
       workspaceKind,
       readOnlyDirs: config.local.readOnlyDirs,

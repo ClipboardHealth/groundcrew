@@ -32,7 +32,7 @@ Set them in the shell you run `crew` from. Anything not in this list is ignored.
 
 For each task:
 
-1. If a `prepareWorktree` hook is configured and any recognized var is set and non-empty, groundcrew writes `secrets.env` with mode `0600` into the task's temp prompt dir as `KEY='value'` lines.
+1. If a `prepareWorktree` or `unsandboxedHooks.prepareWorktree` hook is configured and any recognized var is set and non-empty, groundcrew writes `secrets.env` with mode `0600` into the task's temp prompt dir as `KEY='value'` lines.
 2. The launch script sources `secrets.env` with `set -a` so the values are exported into the `prepareWorktree` phase only. Under `sdx`, they are forwarded into the sandbox via `-e KEY` flags.
 3. After `prepareWorktree` completes, the script removes every name in `BUILD_SECRET_NAMES` from the environment and removes the entire prompt dir before executing the agent.
 
@@ -43,6 +43,13 @@ Net effect: by the time the agent process exists, the values are gone from the e
 ## Per-Session Credentials
 
 `preLaunch` runs a host-shell snippet outside Safehouse/sdx before the agent starts. Use it when the agent needs a short-lived credential that must be minted from something the sandbox cannot reach, such as an engineer CLI session in Keychain.
+
+Build secrets are staged whenever either `prepareWorktree` or
+`unsandboxedHooks.prepareWorktree` is configured. When
+`unsandboxedHooks.prepareWorktree` is set, it runs on the host before
+`prepareWorktree` with build secrets sourced; `preLaunchEnv` names are scrubbed
+before it runs so the command cannot read agent credentials. After it completes,
+execution continues with the normal sandboxed `prepareWorktree` phase.
 
 The "preLaunch never sees build secrets" contract is enforced differently per runner:
 

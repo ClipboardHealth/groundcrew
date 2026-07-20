@@ -56,6 +56,7 @@ export function composeAgentLaunch(input: {
   workingDir: string;
   secretsFile?: string | undefined;
   prepareWorktreeCommand?: string | undefined;
+  prepareWorktreeUnsandboxedCommand?: string | undefined;
   sandboxName?: string | undefined;
   workspaceKind: WorkspaceKind;
   workerEnvironment?: WorkerEnvironment | undefined;
@@ -99,6 +100,7 @@ export function composeAgentLaunch(input: {
     workingDir: input.workingDir,
     secretsFile: input.secretsFile,
     prepareWorktreeCommand: input.prepareWorktreeCommand,
+    prepareWorktreeUnsandboxedCommand: input.prepareWorktreeUnsandboxedCommand,
     runner: input.runner,
     networkEgress: input.networkEgress,
     sandboxName: input.sandboxName,

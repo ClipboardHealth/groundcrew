@@ -257,6 +257,26 @@ describe(`${buildLaunchCommand.name} (runner='srt')`, () => {
     expect(out).not.toContain("CODEX_HOME");
     expect(out).not.toContain("CLAUDE_CONFIG_DIR");
   });
+
+  it("runs prepareWorktreeUnsandboxed on the host before the srt prepare wrap", () => {
+    const out = buildLaunchCommand(
+      srtArguments({
+        prepareWorktreeUnsandboxedCommand: "bin/setup",
+        prepareWorktreeCommand: "npm ci",
+      }),
+    );
+
+    const unsandboxedIndex = out.indexOf("(bin/setup); prepare_status=$?");
+    const prepareWrapIndex = out.indexOf("prepare-settings.json' -- sh -c");
+    const npmIndex = out.indexOf("npm ci");
+
+    expect(unsandboxedIndex).toBeGreaterThan(-1);
+    // The host command runs before the srt-wrapped prepare hook, and is not itself
+    // wrapped by srt (no `env -i` / `--settings` between it and bin/setup).
+    expect(unsandboxedIndex).toBeLessThan(prepareWrapIndex);
+    expect(npmIndex).toBeGreaterThan(prepareWrapIndex);
+    expect(out).not.toContain("-- sh -c '(bin/setup)");
+  });
 });
 
 describe(buildLaunchCommand, () => {
@@ -764,6 +784,44 @@ describe(buildLaunchCommand, () => {
     });
   });
 
+  describe("prepareWorktreeUnsandboxed (runner=safehouse)", () => {
+    it("runs prepareWorktreeUnsandboxed on the host before the sandboxed prepareWorktree wrap", () => {
+      const out = buildLaunchCommand(
+        arguments_({
+          prepareWorktreeUnsandboxedCommand: "bin/setup",
+          prepareWorktreeCommand: "npm ci",
+        }),
+      );
+
+      const unsandboxedIndex = out.indexOf("(bin/setup); prepare_status=$?");
+      const sandboxedWrapIndex = out.indexOf("safehouse-clearance' sh -c");
+      const npmIndex = out.indexOf("npm ci");
+      const agentWrapIndex = out.indexOf('"$_safehouse_shim" -c');
+
+      // The unsandboxed host command runs first, and is NOT inside a safehouse wrap.
+      expect(unsandboxedIndex).toBeGreaterThan(-1);
+      expect(unsandboxedIndex).toBeLessThan(sandboxedWrapIndex);
+      // prepareWorktree still runs inside the safehouse prepare wrap.
+      expect(sandboxedWrapIndex).toBeGreaterThan(-1);
+      expect(npmIndex).toBeGreaterThan(sandboxedWrapIndex);
+      expect(agentWrapIndex).toBeGreaterThan(npmIndex);
+      // bin/setup is on the host, not wrapped by safehouse-clearance.
+      expect(out).not.toContain("safehouse-clearance' sh -c '(bin/setup)");
+    });
+
+    it("runs prepareWorktreeUnsandboxed on the host even when no sandboxed prepareWorktree is set", () => {
+      const out = buildLaunchCommand(
+        arguments_({ prepareWorktreeUnsandboxedCommand: "bin/setup" }),
+      );
+
+      expect(out).toContain("(bin/setup); prepare_status=$?");
+      // No sandboxed prepare wrap when prepareWorktree is unset.
+      expect(out).not.toContain("safehouse-clearance' sh -c");
+      // The agent wrap still runs.
+      expect(out).toContain('"$_safehouse_shim" -c');
+    });
+  });
+
   describe("runner='none'", () => {
     it("execs the agent directly without the safehouse wrapper", () => {
       const out = buildLaunchCommand(arguments_({ runner: "none" }));
@@ -823,6 +881,66 @@ describe(buildLaunchCommand, () => {
       expect(unsetIndex).toBeGreaterThan(setupIndex);
       expect(execIndex).toBeGreaterThan(unsetIndex);
       expect(out).not.toContain("--env-pass");
+    });
+
+    it("runs prepareWorktreeUnsandboxed on the host before prepareWorktree", () => {
+      const out = buildLaunchCommand(
+        arguments_({
+          runner: "none",
+          prepareWorktreeUnsandboxedCommand: "bin/setup",
+          prepareWorktreeCommand: "npm ci",
+        }),
+      );
+
+      const unsandboxedIndex = out.indexOf("bin/setup");
+      const prepareIndex = out.indexOf("npm ci");
+      const agentIndex = out.indexOf("exec claude");
+      expect(unsandboxedIndex).toBeGreaterThan(-1);
+      expect(prepareIndex).toBeGreaterThan(unsandboxedIndex);
+      expect(agentIndex).toBeGreaterThan(prepareIndex);
+      // Both run with status reporting so a failure is surfaced, not swallowed.
+      expect(out).toContain("(bin/setup); prepare_status=$?");
+    });
+
+    it("does not launch the agent when a prerequisite before prepareWorktreeUnsandboxed fails", () => {
+      const markerDir = mkdtempSync(path.join(tmpdir(), "groundcrew-host-hook-marker-"));
+      const promptDir = mkdtempSync(path.join(tmpdir(), "groundcrew-host-hook-prompt-"));
+      const promptFile = path.join(promptDir, "prompt.txt");
+      const agentMarker = path.join(markerDir, "agent-ran");
+      const missingWorktreeDir = path.join(markerDir, "missing-worktree");
+      try {
+        writeFileSync(promptFile, "the prompt body\n");
+        const out = buildLaunchCommand(
+          arguments_({
+            runner: "none",
+            promptFile,
+            worktreeDir: missingWorktreeDir,
+            prepareWorktreeUnsandboxedCommand: "true",
+            definition: { cmd: `touch '${agentMarker}'`, color: "#fff" },
+            omitPromptArgument: true,
+          }),
+        );
+
+        const result = spawnSync("sh", ["-c", out]);
+
+        expect(result.status).not.toBe(0);
+        expect(() => statSync(agentMarker)).toThrow(/ENOENT/);
+      } finally {
+        rmSync(markerDir, { recursive: true, force: true });
+        rmSync(promptDir, { recursive: true, force: true });
+      }
+    });
+
+    it("scrubs preLaunchEnv names inside the prepareWorktreeUnsandboxed subshell", () => {
+      const out = buildLaunchCommand(
+        arguments_({
+          runner: "none",
+          definition: { cmd: "claude", color: "#fff", preLaunchEnv: ["TOKEN"] },
+          prepareWorktreeUnsandboxedCommand: "bin/setup",
+        }),
+      );
+
+      expect(out).toContain("(unset TOKEN; bin/setup); prepare_status=$?");
     });
   });
 
@@ -1448,6 +1566,12 @@ describe(buildLaunchCommand, () => {
 
       expect(out).not.toContain("-e NPM_TOKEN");
       expect(out).not.toContain("-e BUF_TOKEN");
+    });
+
+    it("rejects unsandboxedHooks.prepareWorktree because the container has no host to run it on", () => {
+      expect(() =>
+        buildLaunchCommand(sdxArguments({ prepareWorktreeUnsandboxedCommand: "bin/setup" })),
+      ).toThrow(/unsandboxedHooks\.prepareWorktree is not supported for runner='sdx'/);
     });
   });
 
