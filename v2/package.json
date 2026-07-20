@@ -21,6 +21,7 @@
   "dependencies": {
     "@anthropic-ai/sandbox-runtime": "0.0.65",
     "@commander-js/extra-typings": "14.0.0",
+    "agent-trust": "1.0.0",
     "commander": "14.0.2",
     "execa": "9.6.0",
     "jsonc-parser": "3.3.1",

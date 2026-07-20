@@ -30,6 +30,7 @@ import {
   resolveProfile,
 } from "./profiles.js";
 import { firstToken, lookupExecutable, type LookupExecutable, shellQuote } from "./shellCommand.js";
+import { seedWorkspaceTrust } from "./workspaceTrust.js";
 
 /** The injected sandbox wrap; same shape as sandbox's `wrapCommand`. */
 export type WrapCommand = (input: {
@@ -144,6 +145,14 @@ export async function openComposed(
     pathValue: input.environment["PATH"] ?? "",
     cwd: input.workspaceDirectory,
     lookup: input.lookup ?? lookupExecutable,
+  });
+
+  // Seed workspace trust before launch so an interactive agent (Claude, Codex)
+  // does not stall on its first-run "trust this directory?" prompt in an
+  // unattended session. Keyed by the pre-wrap agent command's name; fail-open.
+  seedWorkspaceTrust({
+    agentCommand: input.agentCommand,
+    workspaceDirectory: input.workspaceDirectory,
   });
 
   const wrapped = await maybeWrap(input.agentCommand, input.policy, input.wrapCommand);
