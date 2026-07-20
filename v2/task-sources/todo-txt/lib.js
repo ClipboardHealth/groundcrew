@@ -51,6 +51,16 @@ function resolveTodoFile() {
   return expandHome(value);
 }
 
+// v1 parity: v1's grammar used a singular `repo:<name>` tag
+// (src/lib/adapters/todo-txt/normalizer.ts:117); existing todo.txt files
+// carry it. Both forms are explicit designations; `repos:` entries first.
+function parseRepoTags(tags) {
+  return [...(tags["repos"] ?? []), ...(tags["repo"] ?? [])]
+    .flatMap((value) => value.split(","))
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
 function hashLine(text) {
   return crypto.createHash("sha256").update(text).digest("hex").slice(0, 12);
 }
@@ -103,13 +113,7 @@ function parseLine(raw, lineIndex) {
   }
 
   const id = tags["id"]?.[0] ?? hashLine(trimmed);
-  // v1 parity: v1's grammar used a singular `repo:<name>` tag
-  // (src/lib/adapters/todo-txt/normalizer.ts:117); existing todo.txt files
-  // carry it. Both forms are explicit designations; `repos:` entries first.
-  const repos = [...(tags["repos"] ?? []), ...(tags["repo"] ?? [])]
-    .flatMap((value) => value.split(","))
-    .map((value) => value.trim())
-    .filter(Boolean);
+  const repos = parseRepoTags(tags);
   const agent = tags["agent"]?.[0];
   const blockedValue = tags["blocked"]?.[0];
   const blocked = blockedValue !== undefined && !FALSEY.has(blockedValue.toLowerCase());
