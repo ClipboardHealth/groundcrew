@@ -223,6 +223,10 @@ describe("linear bundle", () => {
             description: "Repository: ClipboardHealth/core-utils",
           }),
           issueNode({
+            identifier: "R-4",
+            description: "Repository: `cbh-mobile-app`",
+          }),
+          issueNode({
             identifier: "R-3",
             description: "Repos: web, api\nRepository: ignored-when-repos-present",
           }),
@@ -235,6 +239,7 @@ describe("linear bundle", () => {
     const byId = new Map(tasks.map((task) => [task.id, task]));
     deepStrictEqual(byId.get("R-1")?.repos, ["cbh-admin-frontend"]);
     deepStrictEqual(byId.get("R-2")?.repos, ["core-utils"]); // owner/repo → directory basename
+    deepStrictEqual(byId.get("R-4")?.repos, ["cbh-mobile-app"]); // markdown backticks stripped
     deepStrictEqual(byId.get("R-3")?.repos, ["web", "api"]); // Repos: wins
   });
 

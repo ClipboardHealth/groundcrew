@@ -102,9 +102,13 @@ function parseRepos(description) {
 
 // Accept `owner/repo` forms by keeping the directory basename — the repo
 // universe is directory names under workspace.baseDirectory (design §4).
+// Tickets routinely wrap the name in markdown (`repo`, **repo**), so
+// formatting characters are stripped first (v1's word-boundary regex was
+// naturally immune; found live via a "cbh-mobile-app\`" skip detail).
 function repoDirectoryName(value) {
-  const slash = value.lastIndexOf("/");
-  return slash === -1 ? value : value.slice(slash + 1);
+  const stripped = value.replace(/^[`*_\s]+|[`*_\s.,;]+$/g, "");
+  const slash = stripped.lastIndexOf("/");
+  return slash === -1 ? stripped : stripped.slice(slash + 1);
 }
 
 function parseAgent(description) {
