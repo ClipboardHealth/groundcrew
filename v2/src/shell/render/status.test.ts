@@ -122,6 +122,21 @@ describe("renderStatusHuman (overview flags)", () => {
     expect(renderStatusHuman(model)).toContain("repo-not-on-disk");
   });
 
+  it("stamps a verdict with its age so a stale skip is not read as current", () => {
+    const stamped: StatusModel = {
+      ...baseModel,
+      queue: [
+        {
+          taskId: "fixture:TASK-3",
+          title: undefined,
+          blocked: false,
+          verdict: { skipReason: "slots-full", ts: "2026-07-20T10:12:34.000Z" },
+        },
+      ],
+    };
+    expect(renderStatusHuman(stamped)).toContain("skip: slots-full (as of 10:12 UTC)");
+  });
+
   it("flags read-only and sandbox-off sources and the user override", () => {
     const out = renderStatusHuman(model);
     expect(out).toMatch(/read-only/i);
