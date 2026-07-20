@@ -34,6 +34,19 @@ describe("scenario", () => {
     });
   });
 
+  it("pins GROUNDCREW_SANDBOX=off in the core lane and omits it in the sandbox lane", async () => {
+    await withScenario(async (scenario) => {
+      expect(scenario.env["GROUNDCREW_SANDBOX"]).toBe("off");
+    });
+
+    await withScenario(
+      async (scenario) => {
+        expect(scenario.env["GROUNDCREW_SANDBOX"]).toBeUndefined();
+      },
+      { sandboxLane: true },
+    );
+  });
+
   it("cleanup kills the tmux server and removes the tmpdir", async () => {
     const scenario = createScenario();
     await run({

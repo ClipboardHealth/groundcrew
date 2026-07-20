@@ -48,8 +48,22 @@ export interface Scenario {
   dispose(): Promise<void>;
 }
 
+export interface CreateScenarioOptions {
+  /**
+   * Selects the lane's sandbox posture via the crew env (contracts §7).
+   * Default `false` (core lane) → `GROUNDCREW_SANDBOX="off"` is set, the
+   * hermetic kill-switch that keeps the core lane out of real srt. `true`
+   * (sandbox lane) → the variable is omitted so core sandboxes for real.
+   *
+   * This is per-scenario, never keyed off a process-global: a sandbox-lane run
+   * shares the vitest process with core-lane scenarios, which must keep their
+   * kill-switch.
+   */
+  readonly sandboxLane?: boolean;
+}
+
 /** Creates a scenario environment. Caller is responsible for {@link Scenario.dispose}. */
-export function createScenario(): Scenario {
+export function createScenario(options: CreateScenarioOptions = {}): Scenario {
   const id = `gc-${crypto.randomBytes(4).toString("hex")}`;
   const root = fs.mkdtempSync(path.join(os.tmpdir(), `${id}-`));
 
@@ -94,6 +108,8 @@ export function createScenario(): Scenario {
     FAKE_GH_LOG: fakeGhLogPath,
     GIT_CONFIG_NOSYSTEM: "1",
     GIT_TERMINAL_PROMPT: "0",
+    // Core lane pins the kill-switch; the sandbox lane omits it (contracts §7).
+    ...(options.sandboxLane === true ? {} : { GROUNDCREW_SANDBOX: "off" }),
   };
 
   let disposed = false;
@@ -136,8 +152,9 @@ export function createScenario(): Scenario {
  */
 export async function withScenario<T>(
   body: (scenario: Scenario) => Promise<T>,
+  options?: CreateScenarioOptions,
 ): Promise<T> {
-  const scenario = createScenario();
+  const scenario = createScenario(options);
   try {
     return await body(scenario);
   } finally {
