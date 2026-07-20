@@ -14,12 +14,23 @@
 //   LINEAR_API_URL          GraphQL endpoint; default https://api.linear.app/graphql
 //                           (override for self-hosted proxies and tests)
 //   LINEAR_GROUNDCREW_LABEL optional issue-label name to filter the queue
-//   LINEAR_COMPLETED_STATE_ID  optional workflow state id; when set, a
-//                           delivered completion also moves the issue there
+//   LINEAR_STATUS_IN_PROGRESS  comma-separated candidate names for the
+//                           in-progress column (default "In Progress")
+//   LINEAR_STATUS_IN_REVIEW    comma-separated candidate names for the
+//                           in-review column (default "In Review")
+//   LINEAR_COMPLETED_STATE_ID  optional workflow state id; when set, it OVERRIDES
+//                           the in-review resolution — a delivered completion
+//                           moves the issue straight to that exact state instead
 
 const fs = require("node:fs");
 
 const DEFAULT_API_URL = "https://api.linear.app/graphql";
+// v1's status resolution (src/lib/adapters/linear/statusNames.ts:16-19): Linear's
+// default workflow has MULTIPLE `started`-type states — both "In Progress" and
+// "In Review" are `started`. Name-match wins; in-progress falls back to the
+// lowest-position started column, in-review has no fallback.
+const DEFAULT_IN_PROGRESS_NAMES = ["In Progress"];
+const DEFAULT_IN_REVIEW_NAMES = ["In Review"];
 const TERMINAL_STATE_TYPES = new Set(["completed", "canceled"]);
 const REPOS_LINE = /^Repos:\s*(.+)$/im;
 // v1's ticket convention (and the team's ticket-creation tooling) writes a
@@ -40,8 +51,24 @@ function config() {
     label: process.env["LINEAR_GROUNDCREW_LABEL"] || undefined,
     labelPrefix: process.env["LINEAR_GROUNDCREW_LABEL_PREFIX"] || "agent-",
     completedStateId: process.env["LINEAR_COMPLETED_STATE_ID"] || undefined,
+    inProgressNames: parseStatusNames(
+      process.env["LINEAR_STATUS_IN_PROGRESS"],
+      DEFAULT_IN_PROGRESS_NAMES,
+    ),
+    inReviewNames: parseStatusNames(process.env["LINEAR_STATUS_IN_REVIEW"], DEFAULT_IN_REVIEW_NAMES),
     timeoutMs: Number(process.env["LINEAR_HTTP_TIMEOUT_MS"]) || 20000,
   };
+}
+
+function parseStatusNames(raw, fallback) {
+  if (!raw || raw.trim() === "") {
+    return fallback;
+  }
+  const names = raw
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  return names.length > 0 ? names : fallback;
 }
 
 async function graphql(query, variables) {
@@ -124,6 +151,7 @@ const ISSUE_FIELDS = `
   priority
   state { type name }
   labels(first: 20) { nodes { name } }
+  children(first: 1, includeArchived: false) { nodes { id } }
   inverseRelations(first: 50, includeArchived: false) {
     nodes { type issue { identifier state { type } } }
   }
@@ -150,6 +178,12 @@ function taskFromNode(node) {
   // v1 parity: only Todo (state.type "unstarted") is dispatchable; anything
   // else is surfaced but ineligible, exactly like an open blocker.
   const dispatchable = node.state?.type === "unstarted";
+  // v1 parity (src/lib/adapters/linear/fetch.ts:265-276): an issue with children
+  // is a parent/epic and is never dispatched — v1 excluded it from the issues
+  // list entirely and only recorded it as a diagnostic `parentSkip`. v2 has a
+  // single tasks channel, so we surface it `blocked` instead of dropping it: the
+  // epic stays visible (and reapable when terminal) but is never a dispatch target.
+  const hasChildren = (node.children?.nodes ?? []).length > 0;
 
   const terminal = isTerminalStateType(node.state?.type);
   const task = {
@@ -163,7 +197,7 @@ function taskFromNode(node) {
   if (priority !== undefined) {
     task.priority = priority;
   }
-  if (blockers.length > 0 || (!dispatchable && !terminal)) {
+  if (blockers.length > 0 || (!terminal && (!dispatchable || hasChildren))) {
     task.blocked = true;
   }
   if (agent !== undefined) {
@@ -262,6 +296,88 @@ async function moveToState(issueId, stateId) {
   );
 }
 
+// The `started`-type workflow states for a team, resolved by team key (the
+// left-hand side of an issue identifier, e.g. DEVOP in DEVOP-123). v1 fetched
+// per transition and never negatively cached a missing state (writeback.ts:29-41);
+// each `update` is a fresh short-lived process, so a single fetch per invocation
+// is that same posture with nothing to cache.
+async function fetchStartedStates(teamKey) {
+  const data = await graphql(
+    `query TeamStates($key: String!) {
+      workflowStates(filter: { team: { key: { eq: $key } } }, first: 100) {
+        nodes { id name type position }
+      }
+    }`,
+    { key: teamKey },
+  );
+  return (data.workflowStates?.nodes ?? []).filter((state) => state.type === "started");
+}
+
+function normalizeStatusName(name) {
+  return String(name ?? "").trim().toLowerCase();
+}
+
+function findStateByName(states, names) {
+  const wanted = new Set(names.map(normalizeStatusName));
+  return states.find((state) => wanted.has(normalizeStatusName(state.name)));
+}
+
+// In-progress: name-match over started states, else the lowest-position
+// (leftmost) started column (statusNames.ts:64-66 / writeback.ts:63-66).
+function resolveInProgressStateId(startedStates, names) {
+  const named = findStateByName(startedStates, names);
+  if (named) {
+    return named.id;
+  }
+  return startedStates.toSorted((a, b) => a.position - b.position).at(0)?.id;
+}
+
+// In-review: name-match only — NO position fallback. v1's getInReviewStateId
+// returns undefined when unmatched and markInReview reports `unsupported`
+// (writeback.ts:74-90); under this bundle's soft posture that is a skipped move.
+function resolveInReviewStateId(startedStates, names) {
+  return findStateByName(startedStates, names)?.id;
+}
+
+function warnTransition(message) {
+  process.stderr.write(`groundcrew(linear): ${message}\n`);
+}
+
+// Soft posture: a state-move failure is logged to stderr and swallowed so the
+// comment writeback is never lost — mirroring v1's reviewer, which logs and
+// swallows writeback errors and retries next tick (src/commands/reviewer.ts:209-211).
+async function transitionToStarted(node, teamKey, kind) {
+  const { inProgressNames, inReviewNames } = config();
+  let startedStates;
+  try {
+    startedStates = await fetchStartedStates(teamKey);
+  } catch (error) {
+    warnTransition(
+      `could not fetch workflow states for team ${teamKey}: ${error?.message ?? String(error)}`,
+    );
+    return;
+  }
+  const stateId =
+    kind === "in-progress"
+      ? resolveInProgressStateId(startedStates, inProgressNames)
+      : resolveInReviewStateId(startedStates, inReviewNames);
+  if (!stateId) {
+    warnTransition(
+      `no "${kind}" workflow state for team ${teamKey}; leaving ${node.identifier} unchanged`,
+    );
+    return;
+  }
+  await softMove(node, stateId, kind);
+}
+
+async function softMove(node, stateId, label) {
+  try {
+    await moveToState(node.id, stateId);
+  } catch (error) {
+    warnTransition(`failed to move ${node.identifier} to ${label}: ${error?.message ?? String(error)}`);
+  }
+}
+
 function completionBody(event) {
   const lines = [`Groundcrew completed this task (outcome: **${event.outcome}**).`];
   if (event.message) {
@@ -282,10 +398,15 @@ function completionBody(event) {
 async function applyUpdate(input) {
   const event = input?.event ?? {};
   const node = await fetchNodeByIdentifier(input?.id);
+  const { key: teamKey } = parseIdentifier(node.identifier);
 
   if (event.type === "claimed") {
+    // Comment first, then move state: the comment is the primary writeback and a
+    // state-move failure must never lose it (soft posture). v1's dispatcher moved
+    // the ticket to In Progress at exactly this moment (src/commands/dispatcher.ts:151).
     await comment(node.id, `Groundcrew claimed this task${event.runId ? ` (run ${event.runId})` : ""}.`);
-    // Comment-only source: it never arbitrates contention, so a claim is always ok.
+    await transitionToStarted(node, teamKey, "in-progress");
+    // This source never arbitrates contention, so a claim is always ok.
     return { result: "ok" };
   }
   if (event.type === "progress") {
@@ -294,9 +415,20 @@ async function applyUpdate(input) {
   }
   if (event.type === "completed") {
     await comment(node.id, completionBody(event));
-    const { completedStateId } = config();
-    if (event.outcome === "delivered" && completedStateId) {
-      await moveToState(node.id, completedStateId);
+    // delivered ≙ v1's reviewer moving an in-progress task to In Review once an
+    // open PR existed (src/commands/reviewer.ts:78-89, 224): the agent reports
+    // `delivered` with its PR artifacts at that same moment. failed/stopped: v1
+    // left the ticket In Progress — no board caller reverts it to Todo (reap/
+    // runStateCleanup do no writeback) — so we post the comment only.
+    if (event.outcome === "delivered") {
+      const { completedStateId } = config();
+      if (completedStateId) {
+        // Explicit operator override: send delivered straight to this exact
+        // state id (e.g. Done), bypassing in-review resolution. Still soft.
+        await softMove(node, completedStateId, "completed");
+      } else {
+        await transitionToStarted(node, teamKey, "in-review");
+      }
     }
     return { result: "ok" };
   }

@@ -73,9 +73,16 @@ before(async () => {
         variables: body.variables,
       };
       requests.push(recorded);
-      const data = respond(recorded);
+      const result = respond(recorded);
       response.setHeader("content-type", "application/json");
-      response.end(JSON.stringify({ data }));
+      // A handler may return a full `{ errors: [...] }` envelope to drive the
+      // bundle's GraphQL error path (soft-transition test); anything else is the
+      // `data` payload. Backward-compatible: no existing handler returns errors.
+      if (result !== null && typeof result === "object" && "errors" in result) {
+        response.end(JSON.stringify(result));
+      } else {
+        response.end(JSON.stringify({ data: result }));
+      }
     });
   });
   await new Promise<void>((resolve) => {
@@ -150,6 +157,51 @@ function issueNode(overrides: Record<string, unknown> = {}): Record<string, unkn
   };
 }
 
+interface WorkflowState {
+  id: string;
+  name: string;
+  type: string;
+  position: number;
+}
+
+/**
+ * A `respond` handler for the `update` flow. Routes the four calls a transition
+ * makes — resolve issue, post comment, fetch team workflow states, move state —
+ * recording comment bodies and move variables. `failMove` returns a GraphQL
+ * error envelope for the `issueUpdate` mutation to exercise the soft posture.
+ */
+function updateServer(options: {
+  states?: WorkflowState[];
+  bodies?: string[];
+  moves?: Variables[];
+  failMove?: boolean;
+}): (recorded: Recorded) => unknown {
+  return (recorded: Recorded) => {
+    if (recorded.query.includes("commentCreate")) {
+      options.bodies?.push(recorded.variables.body ?? "");
+      return { commentCreate: { success: true } };
+    }
+    if (recorded.query.includes("workflowStates")) {
+      return { workflowStates: { nodes: options.states ?? [] } };
+    }
+    if (recorded.query.includes("issueUpdate")) {
+      if (options.failMove) {
+        return { errors: [{ message: "state move boom" }] };
+      }
+      options.moves?.push(recorded.variables);
+      return { issueUpdate: { success: true } };
+    }
+    return { issues: { nodes: [issueNode()] } };
+  };
+}
+
+const DEFAULT_STATES: WorkflowState[] = [
+  { id: "s-todo", name: "Todo", type: "unstarted", position: 0 },
+  { id: "s-prog", name: "In Progress", type: "started", position: 1 },
+  { id: "s-review", name: "In Review", type: "started", position: 2 },
+  { id: "s-done", name: "Done", type: "completed", position: 3 },
+];
+
 describe("linear bundle", () => {
   test("list maps issues, sends auth, and filters non-terminal assigned issues", async () => {
     respond = () => ({
@@ -208,6 +260,26 @@ describe("linear bundle", () => {
     strictEqual(byId.get("T-2")?.blocked, true); // started ⇒ listed, not dispatchable
     strictEqual(byId.get("T-3")?.terminal, true); // done ⇒ listed for the reap sweep
     strictEqual(byId.get("T-3")?.blocked, undefined);
+  });
+
+  test("a labelled parent issue with sub-issues is blocked, never dispatched", async () => {
+    // v1 parity (fetch.ts:265-276): an issue with children is an epic and is
+    // never dispatched. Even a Todo (unstarted) parent must not be dispatchable.
+    respond = () => ({
+      issues: {
+        nodes: [
+          issueNode({ identifier: "EPIC-1", children: { nodes: [{ id: "c1" }, { id: "c2" }] } }),
+          issueNode({ identifier: "LEAF-1", children: { nodes: [] } }),
+        ],
+        pageInfo: { hasNextPage: false, endCursor: null },
+      },
+    });
+    const tasks = (await invokeOk("list", {})).tasks ?? [];
+    const byId = new Map(tasks.map((task) => [task.id, task]));
+    strictEqual(byId.get("EPIC-1")?.blocked, true); // unstarted parent ⇒ surfaced, not dispatchable
+    strictEqual(byId.get("LEAF-1")?.blocked, undefined); // childless Todo ⇒ dispatchable
+    // The children connection is part of the fetched fields.
+    ok(requests[0]?.query.includes("children"));
   });
 
   test("v1's singular Repository: line is an accepted explicit designation", async () => {
@@ -403,6 +475,95 @@ describe("linear bundle", () => {
       { LINEAR_COMPLETED_STATE_ID: "state-done" },
     );
     deepStrictEqual(moved, { id: "uuid-1", stateId: "state-done" });
+  });
+
+  test("claimed moves the issue to the name-matched In Progress started state", async () => {
+    const moves: Variables[] = [];
+    respond = updateServer({ states: DEFAULT_STATES, moves });
+    const data = await invokeOk("update", {
+      id: "DEVOP-1",
+      event: { type: "claimed", runId: "r_abc" },
+    });
+    deepStrictEqual(data, { result: "ok" });
+    // Name match wins over the leftmost started column, and the mutation carries
+    // the resolved issue uuid, not the identifier.
+    deepStrictEqual(moves, [{ id: "uuid-1", stateId: "s-prog" }]);
+    // The workflowStates query filtered by the team key parsed from the identifier.
+    const statesReq = requests.find((request) => request.query.includes("workflowStates"));
+    strictEqual(statesReq?.variables.key, "DEVOP");
+  });
+
+  test("claimed falls back to the lowest-position started state when no name matches", async () => {
+    const moves: Variables[] = [];
+    respond = updateServer({
+      states: [
+        { id: "s-doing", name: "Doing", type: "started", position: 5 },
+        { id: "s-cr", name: "Code Review", type: "started", position: 2 },
+        { id: "s-todo", name: "Todo", type: "unstarted", position: 0 },
+      ],
+      moves,
+    });
+    await invokeOk("update", { id: "DEVOP-1", event: { type: "claimed" } });
+    deepStrictEqual(moves, [{ id: "uuid-1", stateId: "s-cr" }]); // position 2 < 5
+  });
+
+  test("completed/delivered moves the issue to the In Review started state", async () => {
+    const moves: Variables[] = [];
+    const bodies: string[] = [];
+    respond = updateServer({ states: DEFAULT_STATES, moves, bodies });
+    await invokeOk("update", {
+      id: "DEVOP-1",
+      event: { type: "completed", outcome: "delivered", artifacts: [] },
+    });
+    deepStrictEqual(moves, [{ id: "uuid-1", stateId: "s-review" }]);
+    ok(bodies.some((body) => body.includes("delivered")));
+  });
+
+  test("completed/failed and completed/stopped comment only, leaving state untouched", async () => {
+    for (const outcome of ["failed", "stopped"] as const) {
+      const moves: Variables[] = [];
+      const bodies: string[] = [];
+      respond = updateServer({ states: DEFAULT_STATES, moves, bodies });
+      // oxlint-disable-next-line no-await-in-loop -- two sequential outcomes; order is irrelevant
+      const data = await invokeOk("update", {
+        id: "DEVOP-1",
+        event: { type: "completed", outcome, artifacts: [] },
+      });
+      deepStrictEqual(data, { result: "ok" });
+      deepStrictEqual(moves, []); // v1 left failed/stopped tickets In Progress
+      ok(bodies.some((body) => body.includes(outcome)));
+    }
+  });
+
+  test("status name candidates are overridable via env", async () => {
+    const moves: Variables[] = [];
+    respond = updateServer({
+      states: [
+        { id: "s-todo", name: "Todo", type: "unstarted", position: 0 },
+        { id: "s-building", name: "Building", type: "started", position: 1 },
+        { id: "s-qa", name: "QA", type: "started", position: 2 },
+      ],
+      moves,
+    });
+    await invokeOk(
+      "update",
+      { id: "DEVOP-1", event: { type: "claimed" } },
+      { LINEAR_STATUS_IN_PROGRESS: "Doing, Building" },
+    );
+    deepStrictEqual(moves, [{ id: "uuid-1", stateId: "s-building" }]); // matched "Building", not leftmost QA
+  });
+
+  test("a state-move failure still returns ok and keeps the comment (soft posture)", async () => {
+    const bodies: string[] = [];
+    respond = updateServer({ states: DEFAULT_STATES, bodies, failMove: true });
+    const data = await invokeOk("update", {
+      id: "DEVOP-1",
+      event: { type: "claimed", runId: "r_soft" },
+    });
+    deepStrictEqual(data, { result: "ok" });
+    ok(bodies.some((body) => body.includes("claimed") && body.includes("r_soft")));
+    // The move mutation was attempted (and failed) but never aborted the writeback.
+    ok(requests.some((request) => request.query.includes("issueUpdate")));
   });
 
   test("missing LINEAR_API_KEY is a clean protocol failure", () => {
