@@ -201,6 +201,27 @@ describe("run lifecycle", () => {
       ]);
     });
 
+    it("fires the writeback before the record is observably complete", async () => {
+      const recordPath = runRecordPath({ stateRoot, taskSlug });
+      let stateAtWritebackTime: string | undefined;
+      const observingPort = {
+        async completed(): Promise<void> {
+          stateAtWritebackTime = (
+            JSON.parse(fs.readFileSync(recordPath, "utf8")) as RunRecord
+          ).state;
+        },
+      };
+      const run = await createRun(baseInput({ writeback: observingPort }));
+      await run.markRunning();
+
+      await run.complete({ outcome: "delivered" });
+
+      // The on-disk record still said "running" when the writeback fired; it
+      // only flips to "complete" on the single persist afterwards.
+      expect(stateAtWritebackTime).toBe("running");
+      expect(diskRecord().state).toBe("complete");
+    });
+
     it("completes from provisioning as complete{failed, reason: launch}", async () => {
       const run = await createRun(baseInput());
 
@@ -258,6 +279,19 @@ describe("run lifecycle", () => {
       await loaded.pause();
 
       expect(diskRecord().state).toBe("paused");
+    });
+
+    it("loads with an injected logger and default clock", async () => {
+      const created = await createRun(baseInput());
+      const log = vi.fn<(input: LogEventInput) => void>();
+
+      const loaded = await loadRun({ stateRoot, taskSlug, logger: { log } });
+      await loaded.markRunning();
+
+      expect(log.mock.calls.map(([entry]) => entry.event)).toEqual(["run_running"]);
+      const [, running] = loaded.snapshot.events;
+      expect(running?.ts).toMatch(/Z$/);
+      expect(created.runId).toBe(loaded.runId);
     });
 
     it("throws RunNotFoundError loading an absent run", async () => {

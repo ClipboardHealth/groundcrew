@@ -218,9 +218,12 @@ export class Run {
   }
 
   /**
-   * Terminal transition: any non-complete state -> complete. Persists the
-   * completion, then drives the Writeback port once and records
-   * `writeback_completed`. A no-op port (read-only source) is silent.
+   * Terminal transition: any non-complete state -> complete. Drives the
+   * Writeback port once, THEN persists exactly once — so the record is never
+   * observably `complete` before the completed writeback has landed (the e2e
+   * contract: an observer that sees state=complete is guaranteed the writeback
+   * fired). If the port throws, the run stays non-complete and the error
+   * propagates. A no-op port (read-only source) is silent.
    */
   public async complete(input: CompleteRunInput): Promise<void> {
     if (this.record.state === "complete") {
@@ -232,10 +235,8 @@ export class Run {
     if (input.reason !== undefined) {
       this.record.reason = input.reason;
     }
-
     this.append({ event: "state_complete", detail: input.outcome });
     this.emit({ level: "info", event: "run_completed", fields: { outcome: input.outcome } });
-    await this.persist();
 
     await this.writeback.completed({
       outcome: input.outcome,

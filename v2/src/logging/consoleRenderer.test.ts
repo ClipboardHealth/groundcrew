@@ -34,6 +34,22 @@ describe("renderHumanLine", () => {
     );
   });
 
+  it("JSON-encodes object-valued fields rather than rendering [object Object]", () => {
+    const input = {
+      ts: "2026-07-17T00:00:00.000Z",
+      level: "warn",
+      module: "dispatch",
+      event: "skip_recorded",
+      detail: { skipReason: "slots-full" },
+    };
+
+    const actual = renderHumanLine(input);
+
+    expect(actual).toBe(
+      `2026-07-17T00:00:00.000Z warn  dispatch skip_recorded (detail={"skipReason":"slots-full"})`,
+    );
+  });
+
   it("renders extra flat fields after the reserved ids", () => {
     const input = {
       ts: "2026-07-17T00:00:00.000Z",
