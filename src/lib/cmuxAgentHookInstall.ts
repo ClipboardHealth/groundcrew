@@ -18,7 +18,7 @@ const CMUX_HOOKS_INSTALL_TIMEOUT_MS = 10_000;
  * hung `cmux` binary from stalling every launch on this agent.
  */
 export function installCmuxAgentHooks(input: { agent: string; configDir: string }): void {
-  const logContext = { flow: CMUX_HOOKS_INSTALL_EVENT, agent: input.agent };
+  const logContext = { agent: input.agent };
   const relocation = agentConfigRelocation(input.agent);
   if (relocation === undefined) {
     logEvent(CMUX_HOOKS_INSTALL_EVENT, { ...logContext, outcome: "skipped" });
