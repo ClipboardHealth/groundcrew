@@ -15,6 +15,7 @@ interface Variables {
     assignee?: unknown;
     state?: { type?: { nin?: string[] } };
     labels?: unknown;
+    and?: unknown;
   };
   after?: string | null;
   key?: string;
@@ -202,7 +203,7 @@ describe("linear bundle", () => {
     const tasks = (await invokeOk("list", {})).tasks ?? [];
     const byId = new Map(tasks.map((task) => [task.id, task]));
     strictEqual(byId.get("T-1")?.agent, "claude"); // label wins over description
-    strictEqual(byId.get("T-1")?.blocked, undefined); // Todo ⇒ dispatchable
+    strictEqual(byId.get("T-1")?.blocked, undefined); // unstarted ⇒ dispatchable
     strictEqual(byId.get("T-2")?.agent, "codex");
     strictEqual(byId.get("T-2")?.blocked, true); // started ⇒ listed, not dispatchable
     strictEqual(byId.get("T-3")?.terminal, true); // done ⇒ listed for the reap sweep

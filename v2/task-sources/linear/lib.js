@@ -133,10 +133,11 @@ function taskFromNode(node) {
   // else is surfaced but ineligible, exactly like an open blocker.
   const dispatchable = node.state?.type === "unstarted";
 
+  const terminal = isTerminalStateType(node.state?.type);
   const task = {
     id: node.identifier,
     title: node.title,
-    terminal: isTerminalStateType(node.state?.type),
+    terminal,
   };
   if (description !== undefined) {
     task.description = description;
@@ -144,7 +145,7 @@ function taskFromNode(node) {
   if (priority !== undefined) {
     task.priority = priority;
   }
-  if (blockers.length > 0 || (!dispatchable && task.terminal !== true)) {
+  if (blockers.length > 0 || (!dispatchable && !terminal)) {
     task.blocked = true;
   }
   if (agent !== undefined) {
