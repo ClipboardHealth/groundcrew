@@ -237,6 +237,11 @@ Console: human-rendered `info`+ (`--verbose` ⇒ `debug`); raw JSON never on the
   `ineligible`.
 - Env kept: `GROUNDCREW_CONFIG`, `GROUNDCREW_VERBOSE`. Injected into agent sessions:
   `GROUNDCREW_WORKSPACE` (workspace dir), `GROUNDCREW_TASK_ID` (canonical id).
+- **`GROUNDCREW_SANDBOX=off`** — process-level sandbox kill-switch: no srt wrapping of agent
+  sessions or source processes. Exactly as loud as per-source `sandbox: false` (status and doctor
+  surface it). Exists for test harnesses (the e2e core lane sets it per scenario; the sandbox lane
+  does not) and unsupported hosts. Any other value (or unset) = sandboxing on, the default. The
+  wrap decision is a single policy: env kill-switch → per-source `sandbox: false` → wrap.
 - Presenter-internal (tmux adapter): `GROUNDCREW_TMUX_SOCKET` — when set, every tmux call uses
   `-L <socket>`. This is what keeps the e2e suite hermetic.
 

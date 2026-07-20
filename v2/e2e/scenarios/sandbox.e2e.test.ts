@@ -92,7 +92,7 @@ describe.runIf(sandboxLaneEnabled)("H. Sandbox posture", () => {
 
       expect(outside.ok).toBe(false);
       expect(fs.existsSync(outsideTarget)).toBe(false);
-    });
+    }, { sandboxLane: true });
   });
 
   it("SANDBOX-02: allowlists the agent's network egress", async () => {
@@ -134,7 +134,7 @@ describe.runIf(sandboxLaneEnabled)("H. Sandbox posture", () => {
         expect(allow.ok).toBe(true);
         expect(allow.detail).toBe("200");
         expect(deny.ok).toBe(false);
-      });
+      }, { sandboxLane: true });
     } finally {
       await allowed.close();
       await denied.close();
@@ -191,7 +191,7 @@ describe.runIf(sandboxLaneEnabled)("H. Sandbox posture", () => {
         expect(outWrite.ok).toBe(false);
         expect(fs.existsSync(outOfScopeTarget)).toBe(false);
         expect(egress.ok).toBe(false);
-      });
+      }, { sandboxLane: true });
     } finally {
       await loopback.close();
     }
@@ -232,7 +232,7 @@ describe.runIf(sandboxLaneEnabled)("H. Sandbox posture", () => {
         expect(surface).toMatch(/sandbox/i);
         expect(surface).toMatch(/fixture/);
         expect(surface).toMatch(/false|disabled|off|opt/i);
-      });
+      }, { sandboxLane: true });
     } finally {
       await loopback.close();
     }
