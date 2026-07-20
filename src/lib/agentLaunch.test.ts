@@ -217,7 +217,7 @@ describe(composeAgentLaunch, () => {
     );
     expect(launchCommand).not.toContain(`--add-dirs-ro='${configDir}'`);
     // ...and torn down alongside the shim dir once the agent wrap exits.
-    expect(launchCommand).toContain(`rm -rf ${shellSingleQuote(configDir)}`);
+    expect(launchCommand).toContain(`rm -rf ${shellSingleQuote(path.dirname(configDir))}`);
   });
 
   it("does not relocate CODEX_HOME or call installCmuxAgentHooks for a Claude agent", () => {

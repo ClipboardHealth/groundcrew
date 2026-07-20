@@ -187,7 +187,7 @@ function safehouseAgentIntegrationFor(input: {
       ? {}
       : {
           addDirs: [relocatedCmuxHooksHome.configDir],
-          teardownPaths: [relocatedCmuxHooksHome.configDir],
+          teardownPaths: [relocatedCmuxHooksHome.parentDir],
         }),
   };
 }
@@ -205,7 +205,7 @@ function stageSafehouseCmuxHooksHome(input: {
   agent: string;
   task: string;
   homeDir: string;
-}): StagedAgentConfigHome | undefined {
+}): (StagedAgentConfigHome & { parentDir: string }) | undefined {
   if (agentConfigRelocation(input.agent) === undefined) {
     return undefined;
   }
@@ -220,7 +220,9 @@ function stageSafehouseCmuxHooksHome(input: {
     return undefined;
   }
   installCmuxAgentHooks({ agent: input.agent, configDir: staged.configDir });
-  return staged;
+  // Tear down the dedicated parent mkdtemp dir, not just the configDir subdir
+  // inside it, so the launch leaves no empty temp dir behind.
+  return { ...staged, parentDir };
 }
 
 function warnOnCmuxIntegrationDrift(input: { unreviewedEnvNames: readonly string[] }): void {
