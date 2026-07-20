@@ -95,15 +95,15 @@ export function createTmuxPresenter(input: CreateTmuxPresenterInput = {}): Prese
       throw new Error(`tmux kill-session failed for "${name}": ${describe(result)}`);
     },
 
-    accessHint(name: string): Promise<string | undefined> {
+    async accessHint(name: string): Promise<string | undefined> {
       const prefix = socket === undefined ? "" : `-L ${socket} `;
-      return Promise.resolve(`tmux ${prefix}attach -t ${name}`);
+      return `tmux ${prefix}attach -t ${name}`;
     },
   };
 }
 
-// oxlint-disable-next-line node/no-process-env -- the tmux socket is a presenter-internal env seam (contracts §7)
 function readSocketFromEnvironment(): string | undefined {
+  // oxlint-disable-next-line node/no-process-env -- the tmux socket is a presenter-internal env seam (contracts §7)
   const value = process.env["GROUNDCREW_TMUX_SOCKET"];
   return value === undefined || value.length === 0 ? undefined : value;
 }

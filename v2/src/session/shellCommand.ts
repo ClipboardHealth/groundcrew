@@ -57,6 +57,7 @@ export type LookupExecutable = (input: LookupExecutableInput) => string | undefi
 
 export const lookupExecutable: LookupExecutable = ({ name, pathValue, cwd }) => {
   if (name.length === 0) {
+    // oxlint-disable-next-line unicorn/no-useless-undefined -- an explicit "not runnable"; a bare return would split the function's value/void returns
     return undefined;
   }
   if (name.includes("/")) {
@@ -72,6 +73,7 @@ export const lookupExecutable: LookupExecutable = ({ name, pathValue, cwd }) => 
       return candidate;
     }
   }
+  // oxlint-disable-next-line unicorn/no-useless-undefined -- no PATH entry resolved; matches the value returns above
   return undefined;
 };
 

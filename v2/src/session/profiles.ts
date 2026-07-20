@@ -41,6 +41,7 @@ export interface AgentProfileConfig {
 export type SessionIdCapture = (input: { output?: string }) => string | undefined;
 
 /** No v2.0 harness exposes a captured id through the presenter. */
+// oxlint-disable-next-line unicorn/no-useless-undefined -- the honest "captured nothing" sentinel this seam is built around
 export const noSessionIdCapture: SessionIdCapture = () => undefined;
 
 /** A profile resolved into concrete command templates and launch metadata. */
@@ -201,6 +202,10 @@ function buildPreset(input: {
       // tokenizer resolves the executable correctly (ported from the v1 preset).
       const base = ["cursor-agent", "--model", shellQuote(model), "--sandbox", "disabled", "--force", "--approve-mcps"];
       return { command: join([...base, "{{prompt}}"]), resume: join([...base, "--continue"]) };
+    }
+    default: {
+      /* v8 ignore next @preserve -- input.name is PresetName; this arm only satisfies exhaustiveness */
+      throw new ProfileError(`unknown preset "${String(input.name)}"`);
     }
   }
 }

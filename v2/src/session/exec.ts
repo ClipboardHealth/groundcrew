@@ -70,13 +70,10 @@ export function errorMessage(error: unknown): string {
 }
 
 function stringOutput(value: unknown): string {
-  if (typeof value === "string") {
-    return value;
-  }
-  if (value === undefined) {
-    return "";
-  }
-  return String(value);
+  // With the execa options above stdout/stderr are always strings; anything
+  // else (an undefined stream) collapses to empty rather than a stringified
+  // object.
+  return typeof value === "string" ? value : "";
 }
 
 const SPAWN_FAILURE_CODES = new Set(["ENOENT", "EACCES", "ENOTDIR"]);

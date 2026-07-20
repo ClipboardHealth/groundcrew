@@ -40,18 +40,24 @@ async function rawTmux(socket: string, args: readonly string[]): Promise<void> {
 async function waitFor(condition: () => Promise<boolean>): Promise<void> {
   const deadline = Date.now() + 5000;
   while (Date.now() < deadline) {
+    // oxlint-disable-next-line no-await-in-loop -- polling a real tmux server is inherently sequential
     if (await condition()) {
       return;
     }
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    // oxlint-disable-next-line no-await-in-loop -- polling a real tmux server is inherently sequential
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 50);
+    });
   }
   throw new Error("condition not met within 5s");
 }
 
 afterEach(async () => {
-  for (const socket of activeSockets) {
-    await runProcess({ command: "tmux", args: ["-L", socket, "kill-server"] });
-  }
+  await Promise.all(
+    [...activeSockets].map(async (socket) => {
+      await runProcess({ command: "tmux", args: ["-L", socket, "kill-server"] });
+    }),
+  );
   activeSockets.clear();
   for (const directory of tempDirectories.splice(0)) {
     rmSync(directory, { recursive: true, force: true });
@@ -179,39 +185,52 @@ describe("createTmuxPresenter (real tmux)", () => {
   });
 });
 
-describe("createTmuxPresenter (injected exec failure branches)", () => {
-  const failing: ExecFn = () =>
-    Promise.resolve({ exitCode: 7, stdout: "", stderr: "tmux down", spawnFailed: false });
-  const missing: ExecFn = () =>
-    Promise.resolve({ exitCode: 127, stdout: "", stderr: "spawn tmux ENOENT", spawnFailed: true });
+const failingExec: ExecFn = async () => ({
+  exitCode: 7,
+  stdout: "",
+  stderr: "tmux down",
+  spawnFailed: false,
+});
+const missingExec: ExecFn = async () => ({
+  exitCode: 127,
+  stdout: "",
+  stderr: "spawn tmux ENOENT",
+  spawnFailed: true,
+});
+const noServerExec: ExecFn = async () => ({
+  exitCode: 1,
+  stdout: "",
+  stderr: "no server running on /tmp/tmux",
+  spawnFailed: false,
+});
+const goneExec: ExecFn = async () => ({
+  exitCode: 1,
+  stdout: "",
+  stderr: "can't find session: crew-x",
+  spawnFailed: false,
+});
 
+describe("createTmuxPresenter (injected exec failure branches)", () => {
   it("probe reports unavailable when tmux exits non-zero without the no-server signature", async () => {
-    const presenter = createTmuxPresenter({ exec: failing, socket: "s" });
+    const presenter = createTmuxPresenter({ exec: failingExec, socket: "s" });
 
     expect(await presenter.probe()).toEqual({ available: false, sessions: [] });
   });
 
   it("probe reports unavailable when tmux cannot be spawned", async () => {
-    const presenter = createTmuxPresenter({ exec: missing, socket: "s" });
+    const presenter = createTmuxPresenter({ exec: missingExec, socket: "s" });
 
     expect(await presenter.probe()).toEqual({ available: false, sessions: [] });
   });
 
   it("probe treats a no-server stderr as a definitive empty", async () => {
-    const noServer: ExecFn = () =>
-      Promise.resolve({
-        exitCode: 1,
-        stdout: "",
-        stderr: "no server running on /tmp/tmux",
-        spawnFailed: false,
-      });
-    const presenter = createTmuxPresenter({ exec: noServer, socket: "s" });
+    const presenter = createTmuxPresenter({ exec: noServerExec, socket: "s" });
 
     expect(await presenter.probe()).toEqual({ available: true, sessions: [] });
   });
 
   it("open throws when the tmux binary is missing", async () => {
-    const presenter = createTmuxPresenter({ exec: missing, socket: "s" });
+    const presenter = createTmuxPresenter({ exec: missingExec, socket: "s" });
 
     await expect(presenter.open({ name: "crew-x", cwd: "/tmp", command: "sleep 1" })).rejects.toThrow(
       /tmux new-session failed/,
@@ -219,20 +238,13 @@ describe("createTmuxPresenter (injected exec failure branches)", () => {
   });
 
   it("close surfaces an unexpected failure", async () => {
-    const presenter = createTmuxPresenter({ exec: failing, socket: "s" });
+    const presenter = createTmuxPresenter({ exec: failingExec, socket: "s" });
 
     await expect(presenter.close("crew-x")).rejects.toThrow(/tmux kill-session failed/);
   });
 
   it("close swallows an already-gone session", async () => {
-    const gone: ExecFn = () =>
-      Promise.resolve({
-        exitCode: 1,
-        stdout: "",
-        stderr: "can't find session: crew-x",
-        spawnFailed: false,
-      });
-    const presenter = createTmuxPresenter({ exec: gone, socket: "s" });
+    const presenter = createTmuxPresenter({ exec: goneExec, socket: "s" });
 
     await expect(presenter.close("crew-x")).resolves.toBeUndefined();
   });
