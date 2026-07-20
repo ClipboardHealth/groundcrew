@@ -19,18 +19,10 @@ const commandForFiles = (command, files) => {
  * @param {string[]} files
  * @returns {string[]}
  */
-const spellFiles = (files) =>
-  commandForFiles("cspell --config config/cspell.json --no-must-find-files", files);
-
-/**
- * @param {string[]} files
- * @returns {string[]}
- */
 const formatFiles = (files) =>
   commandForFiles("oxfmt --config config/oxfmt.json --no-error-on-unmatched-pattern", files);
 
 export default {
-  "**/*": spellFiles,
   "**/*.{css,scss,graphql,js,json,jsx,ts,tsx,md,mdx,toml,yml,yaml}": formatFiles,
   "**/*.{ts,tsx,js,jsx}": () => [`node --run lint`],
   "**/package.json": () => ["syncpack lint --config config/syncpack.config.ts"],

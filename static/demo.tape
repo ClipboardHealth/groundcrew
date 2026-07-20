@@ -1,5 +1,3 @@
-# cspell:ignore noprofile norc ttyd
-
 Output static/demo.gif
 Require bash
 Require ffmpeg
