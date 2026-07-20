@@ -80,8 +80,19 @@ export interface DispatchDeps {
   environment: Record<string, string>;
   /** `workspace.environment` layered into the session env beneath the profile env (contracts §5/§9). */
   sessionEnvironment?: Record<string, string>;
-  /** Initial prompt (`prompts.initial`); defaults to the bare `crew done` instruction. */
-  prompt?: string;
+  /**
+   * The prompt template (`prompts.initial`, or the contents of `prompts.promptFile`)
+   * rendered per task with `{{id}}`/`{{title}}`/`{{description}}`/`{{repos}}`
+   * (contracts §5/§9). Omitted ⇒ dispatch renders the default template so the
+   * launched agent always receives its task context.
+   */
+  promptTemplate?: string;
+  /**
+   * The launching crew's `bin` directory, prepended to each session's PATH so
+   * in-session `crew` resolves to this installation (contracts §9). Omitted ⇒
+   * the session inherits ambient PATH unchanged.
+   */
+  crewBinDir?: string;
   /**
    * Config-derived agent sandbox slice (read-only dirs + optional egress);
    * omitted ⇒ the launch is not sandbox-wrapped. Dispatch composes the full
@@ -130,6 +141,19 @@ export interface TickReport {
   /** Verdicts persisted this tick, keyed by canonical id. */
   skipped: Record<string, DispatchVerdict>;
   reconcile?: ReconcileReport;
+}
+
+/**
+ * A dry-run dispatch plan (`crew start --dry-run`): the same poll + eligibility
+ * pass a tick would run, with NOTHING claimed, provisioned, or launched. Claim
+ * contention is unknowable without a side effect, so a task that clears every
+ * local gate is listed as would-dispatch optimistically.
+ */
+export interface DispatchPlan {
+  /** Canonical ids that would be dispatched this tick, in dispatch order. */
+  wouldDispatch: string[];
+  /** Per-task skip verdicts, keyed by canonical id (same reasons a tick persists). */
+  skipped: Record<string, DispatchVerdict>;
 }
 
 /** The outcome of a single-task dispatch. */

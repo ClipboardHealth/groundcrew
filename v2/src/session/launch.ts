@@ -29,7 +29,7 @@ import {
   defaultInitialPrompt,
   resolveProfile,
 } from "./profiles.js";
-import { firstToken, lookupExecutable, type LookupExecutable } from "./shellCommand.js";
+import { firstToken, lookupExecutable, type LookupExecutable, shellQuote } from "./shellCommand.js";
 
 /** The injected sandbox wrap; same shape as sandbox's `wrapCommand`. */
 export type WrapCommand = (input: {
@@ -61,6 +61,13 @@ export interface LaunchSessionInput {
   prompt?: string;
   /** Ambient environment (orchestrator's own); its `PATH` gates the launch. */
   environment: Record<string, string>;
+  /**
+   * The running crew installation's `bin` directory (contracts §9). Prepended to
+   * the session `PATH` so in-session `crew` resolves to the launching crew, not
+   * whatever is globally installed. Omitted ⇒ the session inherits ambient PATH
+   * unchanged (unit tests / direct callers).
+   */
+  crewBinDir?: string;
   /**
    * Non-secret env layered into the session overlay beneath the profile's own
    * environment (`workspace.environment`, contracts §5/§9). Optional; defaults
@@ -99,6 +106,7 @@ export async function launchSession(input: LaunchSessionInput): Promise<LaunchRe
     agentCommand,
     environment: input.environment,
     sessionEnvironment: input.sessionEnvironment,
+    crewBinDir: input.crewBinDir,
     policy: input.policy,
     wrapCommand: input.wrapCommand,
     presenter: input.presenter,
@@ -119,6 +127,8 @@ export interface OpenComposedInput {
   environment: Record<string, string>;
   /** Workspace-level session env layered beneath the profile env (contracts §9). */
   sessionEnvironment: Record<string, string> | undefined;
+  /** The launching crew's bin directory, prepended to the session PATH (contracts §9). */
+  crewBinDir: string | undefined;
   policy: SandboxPolicy | undefined;
   wrapCommand: WrapCommand | undefined;
   presenter: Presenter;
@@ -136,7 +146,10 @@ export async function openComposed(
     lookup: input.lookup ?? lookupExecutable,
   });
 
-  const command = await maybeWrap(input.agentCommand, input.policy, input.wrapCommand);
+  const wrapped = await maybeWrap(input.agentCommand, input.policy, input.wrapCommand);
+  // The crew-bin PATH prepend rides the outermost command (post-wrap) so both
+  // the sandbox process and the agent it runs resolve `crew` to this install.
+  const command = withCrewBinPath(wrapped, input.crewBinDir);
   const sessionName = sessionNameFor({ taskId: input.taskId });
 
   try {
@@ -158,6 +171,10 @@ export async function openComposed(
  * the profile's non-secret environment (which wins on conflict), then the
  * injected correlation variables. Ambient PATH etc. is inherited by the
  * presenter process, not layered here.
+ *
+ * PATH is deliberately NOT overlaid here: tmux silently ignores `-e PATH` for
+ * the spawned command (verified — other `-e` vars propagate, PATH does not), so
+ * the crew-bin prepend rides the command string instead ({@link withCrewBinPath}).
  */
 export function overlayEnvironment(
   input: { taskId: string; workspaceDirectory: string },
@@ -178,6 +195,22 @@ export function overlayEnvironment(
     // agent CLIs would otherwise see ENOTFOUND for allowlisted hosts.
     NODE_USE_ENV_PROXY: "1",
   };
+}
+
+/**
+ * Prepend the launching crew's bin directory to `PATH` for the session command
+ * (contracts §9). Emitted as a shell env-assignment prefix on the composed
+ * command — `PATH=<crewBinDir>:"$PATH" <command>` — because the presenter runs
+ * the command through a shell and tmux ignores `-e PATH`. Applied to the
+ * outermost (post-sandbox-wrap) command so the sandbox process and the agent it
+ * runs both see the prepend, and in-session `crew` resolves to this installation.
+ * `$PATH` expands at launch to the session's inherited PATH, so nothing is lost.
+ */
+export function withCrewBinPath(command: string, crewBinDir: string | undefined): string {
+  if (crewBinDir === undefined || crewBinDir.length === 0) {
+    return command;
+  }
+  return `PATH=${shellQuote(crewBinDir)}:"$PATH" ${command}`;
 }
 
 async function maybeWrap(

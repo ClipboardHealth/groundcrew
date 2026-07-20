@@ -21,7 +21,15 @@ import path from "node:path";
 import type { Task } from "../acquisition/index.js";
 import type { Logger } from "../logging/index.js";
 import { createRun, deleteRun, generateRunId, listRuns, type RunRecord } from "../run/index.js";
-import { composeAgentPolicy, LaunchError, launchSession, sessionNameFor } from "../session/index.js";
+import {
+  composeAgentPolicy,
+  createPrepareHookSandbox,
+  DEFAULT_PROMPT_TEMPLATE,
+  LaunchError,
+  launchSession,
+  renderPromptTemplate,
+  sessionNameFor,
+} from "../session/index.js";
 import {
   canonicalTaskId,
   clonePath,
@@ -37,6 +45,7 @@ import { orderByPriority, resolveAgent, type ResolvedAgent } from "./routing.js"
 import { persistVerdicts, upsertVerdict } from "./state.js";
 import type {
   DispatchDeps,
+  DispatchPlan,
   DispatchSource,
   DispatchVerdict,
   SkipReason,
@@ -172,6 +181,88 @@ export async function startTask(input: StartTaskInput): Promise<StartTaskReport>
   return { taskId, dispatched, runId };
 }
 
+/**
+ * The dry-run plan (`crew start --dry-run`): the poll + eligibility pass a tick
+ * would run, claiming/provisioning/launching NOTHING and persisting no verdicts.
+ * Mirrors {@link tick}'s ordering and gates (live guard → blocked → routing →
+ * repo-on-disk → slots) so the printed plan matches what a real tick would do,
+ * short of claim contention (unknowable without a side effect).
+ */
+export async function planTick(input: DispatchDeps): Promise<DispatchPlan> {
+  const now = input.now ?? ((): Date => new Date());
+  const plan: DispatchPlan = { wouldDispatch: [], skipped: {} };
+
+  const records = await listRuns({ stateRoot: input.stateRoot });
+  const liveTaskIds = new Set(
+    records.filter((record) => LIVE_STATES.has(record.state)).map((record) => record.taskId),
+  );
+  let availableSlots = input.maximumInProgress - liveTaskIds.size;
+
+  for (const source of input.sources) {
+    let tasks: Task[];
+    try {
+      // eslint-disable-next-line no-await-in-loop -- sources are polled in order
+      tasks = await source.handle.list();
+    } catch (error) {
+      logSourceListFailure({ logger: input.logger, source: source.handle.name, error });
+      continue;
+    }
+
+    const sourced = tasks
+      .map((task): SourcedTask => ({ task, source }))
+      .filter((entry) => entry.task.terminal !== true);
+
+    for (const entry of orderByPriority(sourced)) {
+      const taskId = canonicalOf(entry);
+      if (liveTaskIds.has(taskId)) {
+        continue; // already live — its slot is already counted
+      }
+
+      const skip = planVerdictFor({ input, entry, availableSlots, now });
+      if (skip !== undefined) {
+        plan.skipped[taskId] = skip;
+        continue;
+      }
+
+      plan.wouldDispatch.push(taskId);
+      availableSlots -= 1;
+    }
+  }
+
+  return plan;
+}
+
+/** The would-skip verdict for one candidate, or `undefined` if it would dispatch. */
+function planVerdictFor(context: {
+  input: DispatchDeps;
+  entry: SourcedTask;
+  availableSlots: number;
+  now: () => Date;
+}): DispatchVerdict | undefined {
+  const { input, entry, availableSlots, now } = context;
+  const { task, source } = entry;
+
+  if (task.blocked === true) {
+    return verdict({ reason: "ineligible", detail: "blocked", now });
+  }
+
+  const resolved = resolveAgent({ task, source, agents: input.agents });
+  if (resolved === undefined) {
+    return verdict({ reason: "ineligible", detail: "unrouted", now });
+  }
+
+  const missing = missingRepos({ config: input.workspaceConfig, repos: task.repos ?? [] });
+  if (missing.length > 0) {
+    return verdict({ reason: "repo-not-on-disk", detail: missing.join(", "), now });
+  }
+
+  if (availableSlots <= 0) {
+    return verdict({ reason: "slots-full", now });
+  }
+
+  return undefined;
+}
+
 interface ConsiderResult {
   verdict?: DispatchVerdict;
   dispatched?: boolean;
@@ -248,6 +339,20 @@ async function provisionAndLaunch(context: {
   const repos = task.repos ?? [];
   const workspaceDirectory = workspacePath({ config: input.workspaceConfig, taskId });
 
+  // Render the per-task prompt so the agent receives its task context: the
+  // configured template (`prompts.initial`/`promptFile`), else the default
+  // template (contracts §9). {{id}} is the canonical id, {{title}}/{{description}}
+  // the task prose, {{repos}} the designated repos as a comma list.
+  const prompt = renderPromptTemplate({
+    template: input.promptTemplate ?? DEFAULT_PROMPT_TEMPLATE,
+    variables: {
+      id: taskId,
+      title: task.title,
+      ...(task.description === undefined ? {} : { description: task.description }),
+      repos,
+    },
+  });
+
   const run = await createRun({
     stateRoot: input.stateRoot,
     taskSlug: taskSlug({ taskId }),
@@ -263,11 +368,26 @@ async function provisionAndLaunch(context: {
     ...(input.now === undefined ? {} : { now: input.now }),
   });
 
+  // Sandbox the repo-controlled prepareWorktree hook, injected DOWN into
+  // provisioning so Workspace's imports stay git-only. Built from the same
+  // injected wrap + agent sandbox slice; undefined under the kill-switch (Shell
+  // omits both wrapCommand and agentSandbox), so the hook runs unwrapped exactly
+  // as before — dispatch never reads GROUNDCREW_SANDBOX itself.
+  const prepareHookSandbox =
+    input.wrapCommand === undefined || input.agentSandbox === undefined
+      ? undefined
+      : createPrepareHookSandbox({
+          wrapCommand: input.wrapCommand,
+          configPolicy: input.agentSandbox,
+          environment: input.environment,
+        });
+
   try {
     await provisionWorkspace({
       config: input.workspaceConfig,
       taskId,
       repos,
+      ...(prepareHookSandbox === undefined ? {} : { prepareHookSandbox }),
       ...(input.logger === undefined ? {} : { logger: input.logger }),
     });
   } catch (error) {
@@ -288,7 +408,8 @@ async function provisionAndLaunch(context: {
         ? {}
         : { sessionEnvironment: input.sessionEnvironment }),
       presenter: input.presenter,
-      ...(input.prompt === undefined ? {} : { prompt: input.prompt }),
+      prompt,
+      ...(input.crewBinDir === undefined ? {} : { crewBinDir: input.crewBinDir }),
       // The per-task grant (contracts §9): the config slice names host-wide
       // read-only dirs and egress; Session composes the full policy — workspace,
       // state root, agent-home carve-outs, and each repo clone's `.git` (so the

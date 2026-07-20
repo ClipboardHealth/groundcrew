@@ -90,7 +90,12 @@ The `prepareWorktree` hook runs with cwd set to the just-created worktree root (
 Hook precedence (closest-to-the-code wins): the repo-committed `.groundcrew/config.json` hook, then
 the per-repo `workspace.repositories.<name>.prepareWorktree`, then the workspace default
 `workspace.prepareWorktree`. The hook process env is `workspace.environment` overlaid on the ambient
-environment.
+environment. Because the hook command can come from the repo-committed `.groundcrew/config.json`, it
+runs sandboxed under a profile-neutral, credential-free policy (home masked, only the worktree and
+its clone's `.git` writable, no agent config/credentials, egress = the agent baseline): the
+orchestrator composes the policy at the Dispatch/Shell layer and injects the wrap DOWN into
+provisioning (Workspace stays import-git-only). The `GROUNDCREW_SANDBOX=off` kill-switch runs the
+hook unwrapped, exactly as it does for agents and sources.
 
 ### 3.3 Dispatch verdicts — `dispatch.json`
 
@@ -218,14 +223,23 @@ omitted = detected / specified = exactly yours, never merged; no secret values s
   "git": { "remote": "origin", "defaultBranch": "main", "branchPrefix": "crew" },
   "presenter": "tmux",                            // cmux | tmux | zellij; omitted → first found
   "sandbox": { "readOnlyDirectories": ["~/.config/tfenv"],
-                "network": ["api.github.com"] },   // agent-session egress allowlist (sources declare theirs in manifests).
+                "network": ["api.github.com"],      // agent-session egress allowlist (sources declare theirs in manifests).
                                                     // OMITTED ⇒ a built-in default baseline applies (agent-provider APIs,
                                                     // package registries, git hosts, common MCP endpoints) so a fresh
                                                     // install works out of the box; SPECIFIED (even []) replaces the
                                                     // baseline wholesale (principle 1). [] ⇒ deny all agent egress.
                                                     // srt granularity (validated live): remote hosts domain-matched, ports
                                                     // ignored; any loopback entry enables local traffic as a whole.
-  "prompts": { "initial": "…" },                  // or { "promptFile": "…" }
+                "additionalNetwork": ["vpn.internal"] },  // appended to the effective egress list rather than replacing it —
+                                                    // the additive alternative to `network`. Appended to the baseline when
+                                                    // `network` is omitted, or to `network` when both are set, and
+                                                    // de-duplicated. Add a host without recopying the ~30-entry baseline.
+  "prompts": { "initial": "…" },                  // or { "promptFile": "…" } (read at load, path
+                                                    // relative to the config file; setting both errors).
+                                                    // Rendered PER TASK with {{id}} {{title}}
+                                                    // {{description}} {{repos}}; missing values render
+                                                    // empty. OMITTED ⇒ a built-in default template
+                                                    // (task header + description + repos + `crew done`).
   "logging": { "file": "~/.local/state/groundcrew/groundcrew.jsonl" }
 }
 ```
@@ -299,4 +313,41 @@ identity, and the macOS keychain readable under the home mask; and **each provis
 `.git` directory** writable — a worktree shares the parent clone's object store, so this is what lets
 a sandboxed agent commit.
 
-The default initial prompt ends by instructing the agent to run `crew done` when finished.
+Broad grants carry write carve-outs (`SandboxPolicy.denyWritePaths` → srt `denyWrite`; deny wins over
+allow) so a prompted agent cannot plant something that runs on the user's next host invocation: inside
+the whole-`.git` grant, `hooks/` and `config` stay unwritable (a commit touches neither, so it still
+succeeds); inside the agent config homes, the executable/instruction surfaces are denied
+(`~/.claude/{settings,commands,hooks,plugins,skills,chrome,…}`, `~/.cursor/{mcp.json,hooks,rules,…}`,
+`~/.codex/config.toml`); `~/.npm/_npx` is denied even though `~/.npm` is writable; and agent homes the
+launch does not use are denied outright. Egress is `network` when specified, else the baseline, with
+`additionalNetwork` appended (contracts §5).
+
+Two honest residuals against v1's posture. **codex** is not relocated to a temp `CODEX_HOME` here (v1
+seeded a throwaway home so the real `~/.codex` was never written); instead the real `~/.codex` stays
+writable for session state and only `config.toml` (its `mcp_servers`/`notify`/providers — the cited
+host-RCE surface) is denied — so other files under `~/.codex` remain writable, and full relocation is
+a follow-up owned by the launch layer. The **`.git`** carve-out denies only `hooks/` and `config`
+(the host-RCE surfaces); v1 also denied sibling-worktree gitdirs and the `commondir`/`gitdir`/
+`config.worktree` redirection files (cross-task tamper, lower severity), which this does not.
+
+**Per-task prompt (contracts §5 `prompts`).** Dispatch renders the prompt once per task and passes
+it to the launch; the agent must receive its task context, not a static string. The template is
+`prompts.initial` (inline) or the contents of `prompts.promptFile` (read at config load, resolved
+relative to the config file; setting both is a config error). When neither is set, dispatch renders a
+built-in default template. A template supports four placeholders substituted from the task — `{{id}}`
+(canonical `<source>:<localId>`), `{{title}}`, `{{description}}`, `{{repos}}` (comma-separated
+designated repos) — and a missing value renders empty. The default template carries the id, title,
+description block, and designated repos, and ends by instructing the agent to run `crew done` (add
+`--outcome failed` if it could not finish) so groundcrew records the result. Session's `DEFAULT_PROMPT`
+(the bare `crew done` sentence) remains the fallback for direct callers that pass no prompt.
+
+**In-session `crew` PATH (contracts §9).** The composed session command is prefixed with a shell
+env-assignment — `PATH=<crewBinDir>:"$PATH" <command>` — so in-session `crew` resolves to the launching
+installation, never a differently-versioned global one. `crewBinDir` is the running crew's `bin`
+directory, derived once at startup from `process.argv[1]` (its real path's directory) and threaded
+through the context → dispatch deps → launch input. The prefix rides the command string (not the
+presenter overlay env) because tmux silently ignores `-e PATH` for the spawned command; it is applied
+to the outermost, post-sandbox-wrap command so both the sandbox process and the agent see it, and
+`"$PATH"` expands at launch so the inherited PATH is preserved. Both the repo checkout (`bin/run.js`'s
+directory) and an npm global install (the package `bin/`) contain an executable `crew` shim, so the
+prepend resolves in either layout.

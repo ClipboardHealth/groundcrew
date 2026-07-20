@@ -68,12 +68,14 @@ export {
   agentScriptsDirectory,
   heartbeatPath,
   installScriptedAgent,
+  readLaunchRecord,
   readResumeRecords,
   waitForHeartbeat,
+  waitForLaunchRecord,
   waitForResume,
   writeAgentScript,
 } from "./scriptedAgent.js";
-export type { AgentStep, ResumeRecord } from "./scriptedAgent.js";
+export type { AgentStep, LaunchRecord, ResumeRecord } from "./scriptedAgent.js";
 
 export {
   artifactSchema,

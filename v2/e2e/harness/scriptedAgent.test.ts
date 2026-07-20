@@ -13,6 +13,7 @@ import {
   agentScriptsDirectory,
   heartbeatPath,
   installScriptedAgent,
+  readLaunchRecord,
   readResumeRecords,
   waitForHeartbeat,
   writeAgentScript,
@@ -110,6 +111,27 @@ describe("scriptedAgent", () => {
         child.kill("SIGKILL");
         await child;
       }
+    });
+  });
+
+  it("records its launch argv and env for prompt-delivery assertions", async () => {
+    await withScenario(async (scenario) => {
+      installScriptedAgent({ scenario });
+      const { workspace } = await makeWorkspace({ scenario });
+      writeAgentScript({ scenario, steps: [] });
+
+      const result = await run({
+        command: "scripted-agent",
+        args: ["the whole prompt"],
+        env: agentEnv({ scenario, workspace }),
+      });
+
+      expect(result.exitCode).toBe(0);
+      const launch = readLaunchRecord({ workspaceDirectory: workspace });
+      expect(launch?.argv).toEqual(["the whole prompt"]);
+      expect(launch?.env.GROUNDCREW_TASK_ID).toBe("fixture:TASK-1");
+      expect(launch?.env.GROUNDCREW_WORKSPACE).toBe(workspace);
+      expect(launch?.env.PATH.length).toBeGreaterThan(0);
     });
   });
 

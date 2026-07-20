@@ -42,6 +42,11 @@ export type {
   SessionIdCapture,
 } from "./profiles.js";
 
+// Per-task prompt templating (contracts §5/§9): dispatch renders a template per
+// task so the launched agent receives its task context.
+export { DEFAULT_PROMPT_TEMPLATE, renderPromptTemplate } from "./promptTemplate.js";
+export type { PromptTemplateVariables } from "./promptTemplate.js";
+
 // In-core presenter adapters.
 export { createTmuxPresenter } from "./tmuxPresenter.js";
 export type { CreateTmuxPresenterInput } from "./tmuxPresenter.js";
@@ -59,8 +64,18 @@ export { DEFAULT_PROMPT, launchSession, LaunchError } from "./launch.js";
 export type { LaunchResult, LaunchSessionInput, WrapCommand } from "./launch.js";
 
 // Agent sandbox policy composition (contracts §9; ported from v1 srtPolicy).
-export { composeAgentPolicy, DEFAULT_AGENT_EGRESS } from "./agentPolicy.js";
-export type { AgentSandboxConfig, ComposeAgentPolicyInput } from "./agentPolicy.js";
+export {
+  composeAgentPolicy,
+  composeHookPolicy,
+  createPrepareHookSandbox,
+  DEFAULT_AGENT_EGRESS,
+} from "./agentPolicy.js";
+export type {
+  AgentSandboxConfig,
+  ComposeAgentPolicyInput,
+  ComposeHookPolicyInput,
+  PrepareHookSandbox,
+} from "./agentPolicy.js";
 
 // Session lifecycle: pause / resume / close / probe.
 export { closeSession, pauseSession, probeSessions, resumeSession } from "./lifecycle.js";

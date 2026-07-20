@@ -10,7 +10,7 @@ import type { LogEventInput } from "../logging/index.js";
 import { loadRun, runRecordPath, type RunRecord } from "../run/index.js";
 import type { Presenter, PresenterOpenSpec, PresenterProbe } from "../session/index.js";
 import { taskSlug, type WorkspaceConfig } from "../workspace/index.js";
-import { startTask, tick } from "./pipeline.js";
+import { planTick, startTask, tick } from "./pipeline.js";
 import { dispatchStatePath, readDispatchState } from "./state.js";
 import type { DispatchDeps, DispatchSource } from "./types.js";
 
@@ -657,6 +657,127 @@ describe("startTask", () => {
     const report = await startTask({ ...dependencies, taskId: "fixture:TASK-1", agent: "special" });
     expect(report.dispatched).toBe(true);
     expect(readRecord("fixture:TASK-1").agentProfile).toBe("special");
+  });
+});
+
+describe("tick — per-task prompt delivery", () => {
+  it("renders the default template with the task's title, description, and repos into the launch command", async () => {
+    createRepo("alpha");
+    const { entry } = source({
+      tasks: [
+        {
+          id: "TASK-1",
+          title: "Fix the widget",
+          description: "The widget crashes on load.",
+          agent: "scripted",
+          repos: ["alpha"],
+        },
+      ],
+    });
+    const dependencies = deps({ sources: [entry] });
+
+    await tick(dependencies);
+
+    const command = dependencies.presenter.opened[0]?.command;
+    expect(command).toContain("fixture:TASK-1");
+    expect(command).toContain("Fix the widget");
+    expect(command).toContain("The widget crashes on load.");
+    expect(command).toContain("alpha");
+  });
+
+  it("renders a configured template, substituting the task placeholders", async () => {
+    createRepo("alpha");
+    const { entry } = source({
+      tasks: [{ id: "TASK-1", title: "Ship it", agent: "scripted", repos: ["alpha"] }],
+    });
+    const dependencies: DispatchDeps & { presenter: FakePresenter } = {
+      ...deps({ sources: [entry] }),
+      promptTemplate: "work {{id}} :: {{title}}",
+    };
+
+    await tick(dependencies);
+
+    expect(dependencies.presenter.opened[0]?.command).toBe("true 'work fixture:TASK-1 :: Ship it'");
+  });
+
+  it("survives a description with newlines, quotes, and backticks (single-layer shell quoting)", async () => {
+    createRepo("alpha");
+    const description = "line one\nrun `crew done` with 'quotes' and \"doubles\"";
+    const { entry } = source({
+      tasks: [{ id: "TASK-1", title: "Tricky", description, agent: "scripted", repos: ["alpha"] }],
+    });
+    const dependencies: DispatchDeps & { presenter: FakePresenter } = {
+      ...deps({ sources: [entry] }),
+      promptTemplate: "{{description}}",
+    };
+
+    await tick(dependencies);
+
+    // shellQuote wraps in single quotes and escapes embedded single quotes; the
+    // command is one argv token that a single `sh -c` layer restores verbatim.
+    expect(dependencies.presenter.opened[0]?.command).toBe(
+      `true 'line one\nrun \`crew done\` with '\\''quotes'\\'' and "doubles"'`,
+    );
+  });
+
+  it("prepends the crew bin dir to PATH via the launched command", async () => {
+    createRepo("alpha");
+    const { entry } = source({
+      tasks: [{ id: "TASK-1", title: "Do it", agent: "scripted", repos: ["alpha"] }],
+    });
+    const dependencies: DispatchDeps & { presenter: FakePresenter } = {
+      ...deps({ sources: [entry] }),
+      environment: { PATH: PATH_ENV },
+      crewBinDir: "/opt/crew/bin",
+    };
+
+    await tick(dependencies);
+
+    expect(dependencies.presenter.opened[0]?.command.startsWith(`PATH='/opt/crew/bin':"$PATH" `)).toBe(
+      true,
+    );
+  });
+});
+
+describe("planTick — dry-run plan (no side effects)", () => {
+  it("lists would-dispatch and per-task skip reasons without claiming or provisioning", async () => {
+    createRepo("alpha");
+    const { handle, entry } = source({
+      tasks: [
+        { id: "TASK-1", title: "Ready", agent: "scripted", repos: ["alpha"] },
+        { id: "TASK-2", title: "Blocked", agent: "scripted", repos: ["alpha"], blocked: true },
+        { id: "TASK-3", title: "Missing repo", agent: "scripted", repos: ["gamma"] },
+      ],
+    });
+    const dependencies = deps({ sources: [entry] });
+
+    const plan = await planTick(dependencies);
+
+    expect(plan.wouldDispatch).toEqual(["fixture:TASK-1"]);
+    expect(plan.skipped["fixture:TASK-2"]?.skipReason).toBe("ineligible");
+    expect(plan.skipped["fixture:TASK-2"]?.detail).toBe("blocked");
+    expect(plan.skipped["fixture:TASK-3"]?.skipReason).toBe("repo-not-on-disk");
+
+    // No side effects: nothing claimed, no run records, no session, no verdicts persisted.
+    expect(handle.claimed).toHaveLength(0);
+    expect(recordExists("fixture:TASK-1")).toBe(false);
+    expect(dependencies.presenter.opened).toHaveLength(0);
+    expect(verdictFor("fixture:TASK-2")).toBeUndefined();
+  });
+
+  it("marks tasks past the slot budget as slots-full", async () => {
+    createRepo("alpha");
+    const { entry } = source({
+      tasks: [
+        { id: "TASK-1", title: "First", agent: "scripted", repos: ["alpha"] },
+        { id: "TASK-2", title: "Second", agent: "scripted", repos: ["alpha"] },
+      ],
+    });
+
+    const plan = await planTick(deps({ sources: [entry], maximumInProgress: 1 }));
+
+    expect(plan.wouldDispatch).toEqual(["fixture:TASK-1"]);
+    expect(plan.skipped["fixture:TASK-2"]?.skipReason).toBe("slots-full");
   });
 });
 

@@ -169,9 +169,18 @@ export class Run {
     await this.persist();
   }
 
-  public async pause(): Promise<void> {
-    this.transition({ from: "running", to: "paused", event: "state_paused" });
-    this.emit({ level: "info", event: "run_paused" });
+  public async pause(input: { reason?: string } = {}): Promise<void> {
+    this.transition({
+      from: "running",
+      to: "paused",
+      event: "state_paused",
+      ...(input.reason === undefined ? {} : { detail: input.reason }),
+    });
+    this.emit({
+      level: "info",
+      event: "run_paused",
+      ...(input.reason === undefined ? {} : { fields: { reason: input.reason } }),
+    });
     await this.persist();
   }
 
@@ -253,13 +262,18 @@ export class Run {
     await writeRunRecord({ path: this.recordPath, record: this.record });
   }
 
-  private transition(input: { from: RunState; to: RunState; event: string }): void {
+  private transition(input: {
+    from: RunState;
+    to: RunState;
+    event: string;
+    detail?: string;
+  }): void {
     if (this.record.state !== input.from) {
       throw new InvalidTransitionError({ from: this.record.state, to: input.to });
     }
 
     this.record.state = input.to;
-    this.append({ event: input.event });
+    this.append({ event: input.event, ...(input.detail === undefined ? {} : { detail: input.detail }) });
   }
 
   private assertMutable(intent: string): void {

@@ -229,4 +229,68 @@ describe("launchSession", () => {
   it("DEFAULT_PROMPT is the crew-done instruction", () => {
     expect(DEFAULT_PROMPT).toBe(CREW_DONE_INSTRUCTION);
   });
+
+  it("prepends the crew bin dir to PATH via a command prefix (contracts §9)", async () => {
+    const { presenter, opens } = fakePresenter();
+    const { lookup } = lookupFor("scripted-agent");
+
+    await launchSession({
+      taskId: "fixture:TASK-1",
+      workspaceDirectory: "/work/fixture-task-1",
+      profileName: "scripted",
+      profile: { command: "scripted-agent {{prompt}}" },
+      environment: { PATH: "/usr/bin:/bin" },
+      crewBinDir: "/opt/crew/bin",
+      presenter,
+      lookup,
+    });
+
+    // A shell env-assignment prefix — tmux ignores `-e PATH`, so PATH rides the
+    // command; `"$PATH"` expands at launch to the session's inherited PATH.
+    expect(opens[0]?.command).toBe(
+      `PATH='/opt/crew/bin':"$PATH" scripted-agent '${DEFAULT_PROMPT}'`,
+    );
+    // PATH is not overlaid into the presenter env (tmux would drop it anyway).
+    expect(opens[0]?.environment).not.toHaveProperty("PATH");
+  });
+
+  it("wraps the crew-bin PATH prefix around the sandbox wrap (prefix is outermost)", async () => {
+    const { presenter, opens } = fakePresenter();
+    const { lookup } = lookupFor("scripted-agent");
+    const wrapCommand = vi.fn<WrapCommand>(async ({ command }) => ({ command: `srt -- ${command}` }));
+
+    await launchSession({
+      taskId: "fixture:TASK-1",
+      workspaceDirectory: "/w",
+      profileName: "scripted",
+      profile: { command: "scripted-agent {{prompt}}" },
+      environment: { PATH: "/usr/bin" },
+      crewBinDir: "/opt/crew/bin",
+      policy: { writablePaths: ["/w"], readOnlyPaths: [], network: [] },
+      wrapCommand,
+      presenter,
+      lookup,
+    });
+
+    expect(opens[0]?.command).toBe(
+      `PATH='/opt/crew/bin':"$PATH" srt -- scripted-agent '${DEFAULT_PROMPT}'`,
+    );
+  });
+
+  it("leaves the command unprefixed when no crew bin dir is given", async () => {
+    const { presenter, opens } = fakePresenter();
+    const { lookup } = lookupFor("scripted-agent");
+
+    await launchSession({
+      taskId: "fixture:TASK-1",
+      workspaceDirectory: "/work/fixture-task-1",
+      profileName: "scripted",
+      profile: { command: "scripted-agent {{prompt}}" },
+      environment: { PATH: "/usr/bin:/bin" },
+      presenter,
+      lookup,
+    });
+
+    expect(opens[0]?.command).toBe(`scripted-agent '${DEFAULT_PROMPT}'`);
+  });
 });

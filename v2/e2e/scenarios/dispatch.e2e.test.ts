@@ -11,6 +11,7 @@
  */
 
 import * as fs from "node:fs";
+import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -29,6 +30,7 @@ import {
   runRecordExists,
   sessionExists,
   waitForHeartbeat,
+  waitForLaunchRecord,
   waitForSession,
   withScenario,
   worktreeList,
@@ -198,6 +200,43 @@ describe("A. Dispatch & happy paths", () => {
       const claimed = claimedFor(crew.source, "TASK-1");
       expect(claimed).toBeDefined();
       expect(claimedRunId(claimed)).toBe(record.runId);
+    });
+  });
+
+  it("DISPATCH-01b — the launched agent receives its task context, and PATH resolves crew", async () => {
+    await withScenario(async (scenario) => {
+      await createRepo({ scenario, name: "alpha" });
+
+      const crew = configure({ scenario });
+      scriptHang(scenario);
+      // A description with a newline, backticks, and single quotes: it must
+      // survive tmux → sh → node argv quoting intact (contracts §9, finding #5).
+      const description = "Reproduce with `npm test`\nthen fix the 'off-by-one' bug.";
+      crew.seedSource([
+        { id: "TASK-1", title: "Fix the widget", description, agent: "scripted", repos: ["alpha"] },
+      ]);
+
+      const taskId = "fixture:TASK-1";
+      const result = await crew.tick();
+      expect(result.exitCode).toBe(0);
+
+      const launch = await waitForLaunchRecord({
+        workspaceDirectory: crew.paths.workspaceFor(taskId),
+      });
+
+      // The prompt argv carries the full task context — id, title, description.
+      const prompt = launch.argv.join("\n");
+      expect(prompt).toContain(taskId);
+      expect(prompt).toContain("Fix the widget");
+      expect(prompt).toContain(description);
+      expect(launch.env.GROUNDCREW_TASK_ID).toBe(taskId);
+
+      // The session PATH is prepended with the launching crew's bin dir, so
+      // in-session `crew` resolves to this installation (contracts §9).
+      const crewResolvesOnPath = launch.env.PATH.split(path.delimiter).some((directory) =>
+        fs.existsSync(path.join(directory, "crew")),
+      );
+      expect(crewResolvesOnPath).toBe(true);
     });
   });
 

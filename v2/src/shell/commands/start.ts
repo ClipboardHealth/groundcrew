@@ -7,6 +7,7 @@
  */
 import type { StartTaskReport, TickReport } from "../../dispatch/index.js";
 import {
+  dispatchPlan,
   dispatchReconcile,
   dispatchStartTask,
   dispatchTick,
@@ -14,6 +15,7 @@ import {
 } from "../dispatchAdapter.js";
 import type { Context } from "../context.js";
 import type { Io } from "../io.js";
+import { summarizePlan } from "../render/plan.js";
 import { summarizeTick } from "../render/tick.js";
 
 export interface StartOptions {
@@ -32,7 +34,12 @@ export async function runStart(input: {
   const { context, options, io } = input;
 
   if (options.dryRun === true) {
-    io.out("dry run: no tasks are dispatched.");
+    // The dispatch plan: the same poll + eligibility pass a tick runs, with
+    // nothing claimed, provisioned, or launched (contracts §7).
+    const plan = await dispatchPlan({ context });
+    for (const line of summarizePlan(plan)) {
+      io.out(line);
+    }
     return;
   }
 

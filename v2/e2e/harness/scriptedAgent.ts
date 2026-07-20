@@ -35,6 +35,23 @@ export const resumeRecordSchema = z.object({
 
 export type ResumeRecord = z.infer<typeof resumeRecordSchema>;
 
+/**
+ * What the scripted agent recorded about its own launch: the argv it received
+ * (the prompt positional) and the correlation/PATH env the session actually saw.
+ * Lets a scenario assert the launch delivered the task context (prompt) and the
+ * crew-bin PATH prepend (contracts §9), black-box.
+ */
+export const launchRecordSchema = z.object({
+  argv: z.array(z.string()),
+  env: z.object({
+    GROUNDCREW_TASK_ID: z.string(),
+    GROUNDCREW_WORKSPACE: z.string(),
+    PATH: z.string(),
+  }),
+});
+
+export type LaunchRecord = z.infer<typeof launchRecordSchema>;
+
 /** Directory of per-task step scripts for a scenario; the value of GROUNDCREW_TEST_AGENT_SCRIPT. */
 export function agentScriptsDirectory(input: { readonly scenario: Scenario }): string {
   return path.join(input.scenario.root, "agent-scripts");
@@ -141,6 +158,34 @@ export async function waitForResume(input: {
       const records = readResumeRecords({ workspaceDirectory: input.workspaceDirectory });
       return records.length >= wanted ? records : undefined;
     },
+  });
+}
+
+/** Reads the launch record the agent wrote in `workspaceDirectory`, if any. */
+export function readLaunchRecord(input: {
+  readonly workspaceDirectory: string;
+}): LaunchRecord | undefined {
+  const target = path.join(input.workspaceDirectory, ".groundcrew-test", "agent-launch");
+  if (!fs.existsSync(target)) {
+    return undefined;
+  }
+
+  const line = fs
+    .readFileSync(target, "utf8")
+    .split("\n")
+    .find((entry) => entry.trim() !== "");
+  return line === undefined ? undefined : launchRecordSchema.parse(JSON.parse(line));
+}
+
+/** Blocks until the agent has written its launch record, returning it. */
+export async function waitForLaunchRecord(input: {
+  readonly workspaceDirectory: string;
+  readonly timeoutMilliseconds?: number;
+}): Promise<LaunchRecord> {
+  return await pollForValue({
+    description: `scripted agent launch record in ${input.workspaceDirectory}`,
+    timeoutMilliseconds: input.timeoutMilliseconds,
+    probe: () => readLaunchRecord({ workspaceDirectory: input.workspaceDirectory }),
   });
 }
 

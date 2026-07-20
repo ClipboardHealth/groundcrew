@@ -47,6 +47,21 @@ function writeHeartbeat() {
     path.join(markerDirectory, "agent-heartbeat"),
     JSON.stringify({ pid: process.pid, timestamp: new Date().toISOString() }) + "\n",
   );
+  // Record exactly what the launch delivered so scenarios can assert the agent
+  // received its task context (prompt argv) and the crew-bin PATH prepend
+  // (contracts §9). argv is the launched command's args (the prompt positional);
+  // env captures the correlation vars and PATH the session actually saw.
+  fs.writeFileSync(
+    path.join(markerDirectory, "agent-launch"),
+    JSON.stringify({
+      argv: process.argv.slice(2),
+      env: {
+        GROUNDCREW_TASK_ID: process.env.GROUNDCREW_TASK_ID || "",
+        GROUNDCREW_WORKSPACE: process.env.GROUNDCREW_WORKSPACE || "",
+        PATH: process.env.PATH || "",
+      },
+    }) + "\n",
+  );
 }
 
 function readScript() {

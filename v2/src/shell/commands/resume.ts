@@ -59,6 +59,7 @@ export async function runResume(input: {
     ...(run.snapshot.sessionId === undefined ? {} : { sessionId: run.snapshot.sessionId }),
     environment: context.ambientEnvironment(),
     ...(sessionEnvironment === undefined ? {} : { sessionEnvironment }),
+    ...(context.crewBinDir === undefined ? {} : { crewBinDir: context.crewBinDir }),
     presenter: context.presenter(),
   });
 

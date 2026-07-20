@@ -13,6 +13,7 @@ import type { Io } from "../io.js";
 export async function runPause(input: {
   readonly context: Context;
   readonly task: string;
+  readonly reason?: string;
   readonly io: Io;
 }): Promise<void> {
   const { context } = input;
@@ -37,7 +38,7 @@ export async function runPause(input: {
   }
 
   await pauseSession({ taskId: taskContext.taskId, presenter: context.presenter() });
-  await run.pause();
+  await run.pause(input.reason === undefined ? {} : { reason: input.reason });
 
   input.io.out(`Paused ${taskContext.taskId}. Resume with \`crew resume ${taskContext.taskId}\`.`);
 }

@@ -126,6 +126,16 @@ describe("run lifecycle", () => {
       ]);
     });
 
+    it("records a pause reason on the state_paused event", async () => {
+      const run = await createRun(baseInput());
+      await run.markRunning();
+
+      await run.pause({ reason: "waiting on review" });
+
+      const paused = diskRecord().events.find((event) => event.event === "state_paused");
+      expect(paused?.detail).toBe("waiting on review");
+    });
+
     it("rejects illegal transitions with InvalidTransitionError", async () => {
       const run = await createRun(baseInput());
 

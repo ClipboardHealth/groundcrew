@@ -6,6 +6,9 @@
  * `RepoNotOnDiskError` → 2, `NoTaskContextError` → 3, everything else → 1 with a
  * clean message (no stack unless `--verbose`).
  */
+import { realpathSync } from "node:fs";
+import path from "node:path";
+
 import { Command } from "@commander-js/extra-typings";
 
 import { type Context, type ContextEnvironment, loadContext } from "./context.js";
@@ -29,6 +32,27 @@ import { runUpgrade } from "./commands/upgrade.js";
 // oxlint-disable-next-line node/no-process-env -- the CLI's environment is the process environment (contracts §7)
 const environment = process.env as ContextEnvironment;
 
+/**
+ * The running crew installation's `bin` directory (contracts §9): the real path
+ * of the entry script (`bin/run.js` or the `crew` shim), resolved through any
+ * symlink an npm global install created, then its directory. Prepended to each
+ * agent session's PATH so in-session `crew` is THIS installation. Undefined when
+ * the entry cannot be resolved (leaves session PATH untouched).
+ */
+function resolveCrewBinDir(): string | undefined {
+  const entry = process.argv[1];
+  if (entry === undefined || entry.length === 0) {
+    return undefined;
+  }
+  try {
+    return path.dirname(realpathSync(entry));
+  } catch {
+    return undefined;
+  }
+}
+
+const crewBinDir = resolveCrewBinDir();
+
 /** Builds the `crew` program. `io` is injectable so tests can capture output. */
 export function buildProgram(io: Io = processIo): Command {
   const program = new Command();
@@ -51,7 +75,12 @@ export function buildProgram(io: Io = processIo): Command {
     fn: (context: Context) => Promise<number | undefined>,
   ): Promise<void> => {
     try {
-      const context = loadContext({ environment, cwd: process.cwd(), verbose: verbose() });
+      const context = loadContext({
+        environment,
+        cwd: process.cwd(),
+        verbose: verbose(),
+        ...(crewBinDir === undefined ? {} : { crewBinDir }),
+      });
       const code = await fn(context);
       if (typeof code === "number") {
         process.exitCode = code;
@@ -116,9 +145,15 @@ export function buildProgram(io: Io = processIo): Command {
     .command("pause")
     .argument("<task>", "task id or unique prefix")
     .description("suspend a running task, preserving its workspace")
-    .action(async (task) => {
+    .option("--reason <text>", "why the task was paused (recorded on the run)")
+    .action(async (task, options) => {
       await withContext(async (context): Promise<undefined> => {
-        await runPause({ context, task, io });
+        await runPause({
+          context,
+          task,
+          ...(options.reason === undefined ? {} : { reason: options.reason }),
+          io,
+        });
       });
     });
 

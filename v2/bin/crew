@@ -1,0 +1,7 @@
+#!/usr/bin/env node
+// Executable `crew` shim: identical entry to `run.js`, committed under the
+// package `bin/` so an in-session PATH prepend (contracts §9) resolves `crew`
+// to THIS installation in both layouts — the repo checkout (`node bin/run.js`,
+// whose bin dir has no `crew` otherwise) and an npm global install (whose
+// package bin dir is what PATH is pointed at). Delegates to the built shell.
+import "../dist/shell/main.js";

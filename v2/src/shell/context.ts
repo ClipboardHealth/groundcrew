@@ -26,7 +26,9 @@ import type { WritebackCompletion, WritebackPort } from "../run/index.js";
 import {
   type AgentProfileConfig,
   type AgentSandboxConfig,
+  type PrepareHookSandbox,
   type Presenter,
+  createPrepareHookSandbox,
   detectPresenter,
 } from "../session/index.js";
 import { wrapCommand as sandboxWrapCommand } from "../sandbox/index.js";
@@ -34,6 +36,7 @@ import type { AgentRouting, DispatchDeps, DispatchSource } from "../dispatch/ind
 import type { WorkspaceConfig } from "../workspace/index.js";
 import type { Config, SourceConfigSection } from "./config/schema.js";
 import { loadConfig, type LoadConfigInput } from "./config/load.js";
+import { ConfigError } from "./errors.js";
 import {
   type PathEnvironment,
   dispatchFile,
@@ -71,6 +74,12 @@ export interface LoadContextInput {
   readonly consoleLevel?: LogLevel | "silent";
   /** Sandbox wrap seam; omit for unwrapped spawns (core lanes). */
   readonly wrapCommand?: WrapCommand;
+  /**
+   * The launching crew's `bin` directory (contracts §9), prepended to each agent
+   * session's PATH so in-session `crew` resolves to this installation. `main`
+   * derives it from `process.argv[1]`; omit in tests to leave PATH untouched.
+   */
+  readonly crewBinDir?: string;
 }
 
 /** Everything a command needs, derived from the config once. */
@@ -82,6 +91,7 @@ export class Context {
   public readonly stateRoot: string;
   public readonly dispatchFile: string;
   public readonly logger: Logger;
+  public readonly crewBinDir: string | undefined;
   private readonly wrapCommand: WrapCommand | undefined;
   private discoveredCache: DiscoveredSource[] | undefined;
   private secretsResolverCache: SecretsResolver | undefined;
@@ -93,6 +103,7 @@ export class Context {
     cwd: string;
     logger: Logger;
     wrapCommand: WrapCommand | undefined;
+    crewBinDir: string | undefined;
   }) {
     this.config = input.config;
     this.configPath = input.configPath;
@@ -102,6 +113,7 @@ export class Context {
     this.dispatchFile = dispatchFile(input.environment);
     this.logger = input.logger;
     this.wrapCommand = input.wrapCommand;
+    this.crewBinDir = input.crewBinDir;
   }
 
   /** The workspace-module view of the config (contracts §2/§5). */
@@ -235,10 +247,15 @@ export class Context {
     }).presenter;
   }
 
+  /** The optional on-disk secrets store (`secrets.env`); doctor checks its mode. */
+  public secretsFilePath(): string {
+    return path.join(groundcrewConfigDirectory(this.environment), "secrets.env");
+  }
+
   /** The secrets resolver over the parent env plus an optional `secrets.env`. */
   public secretsResolver(): SecretsResolver {
     if (this.secretsResolverCache === undefined) {
-      const secretsPath = path.join(groundcrewConfigDirectory(this.environment), "secrets.env");
+      const secretsPath = this.secretsFilePath();
       const contents = fs.existsSync(secretsPath)
         ? fs.readFileSync(secretsPath, "utf8")
         : undefined;
@@ -303,6 +320,7 @@ export class Context {
     };
 
     const sessionEnvironment = this.sessionEnvironment();
+    const promptTemplate = this.promptTemplate();
 
     return {
       stateRoot: this.stateRoot,
@@ -315,9 +333,12 @@ export class Context {
       // workspace.environment is layered into the agent session env between the
       // ambient env and the profile's own environment (contracts §5/§9).
       ...(sessionEnvironment === undefined ? {} : { sessionEnvironment }),
-      ...(this.config.prompts?.initial === undefined
-        ? {}
-        : { prompt: this.config.prompts.initial }),
+      // The prompt template rendered per task by dispatch (contracts §5/§9);
+      // omitted ⇒ dispatch renders the built-in default template.
+      ...(promptTemplate === undefined ? {} : { promptTemplate }),
+      // The launching crew's bin dir, prepended to each session's PATH so
+      // in-session `crew` is this installation (contracts §9).
+      ...(this.crewBinDir === undefined ? {} : { crewBinDir: this.crewBinDir }),
       // Agent sandbox: omit config+wrap when the kill-switch is set (unwrapped),
       // else pass the config slice + agent kinds so Dispatch can compose the full
       // per-task policy at launch (workspace/state/repo grants, contracts §7/§9).
@@ -346,7 +367,29 @@ export class Context {
       ...(this.config.sandbox?.network === undefined
         ? {}
         : { network: this.config.sandbox.network }),
+      ...(this.config.sandbox?.additionalNetwork === undefined
+        ? {}
+        : { additionalNetwork: this.config.sandbox.additionalNetwork }),
     };
+  }
+
+  /**
+   * The sandbox wrapper for the repo-controlled `prepareWorktree` hook, or
+   * `undefined` when the kill-switch is set (hook runs unwrapped, like agents and
+   * sources). Provisioning injects this DOWN into Workspace so the hook policy is
+   * composed at this layer (Workspace imports stay git-only). The policy is
+   * profile-neutral and credential-free (see `composeHookPolicy`).
+   */
+  public prepareHookSandbox(): PrepareHookSandbox | undefined {
+    if (this.sandboxDisabled()) {
+      return undefined;
+    }
+
+    return createPrepareHookSandbox({
+      wrapCommand: sandboxWrapCommand,
+      configPolicy: this.agentSandboxConfig(),
+      environment: this.ambientEnvironment(),
+    });
   }
 
   /**
@@ -371,6 +414,39 @@ export class Context {
     return this.config.workspace.environment === undefined
       ? undefined
       : { ...this.config.workspace.environment };
+  }
+
+  /**
+   * The per-task prompt template (contracts §5/§9): the `prompts.promptFile`
+   * contents (read here, resolved relative to the config file) or the inline
+   * `prompts.initial`. Setting both is a config error. `undefined` when neither
+   * is set — dispatch then renders the built-in default template.
+   */
+  public promptTemplate(): string | undefined {
+    const prompts = this.config.prompts;
+    if (prompts === undefined) {
+      return undefined;
+    }
+
+    if (prompts.initial !== undefined && prompts.promptFile !== undefined) {
+      throw new ConfigError("prompts: set either `initial` or `promptFile`, not both");
+    }
+
+    if (prompts.promptFile !== undefined) {
+      const expanded = this.expand(prompts.promptFile);
+      const resolved = path.isAbsolute(expanded)
+        ? expanded
+        : path.resolve(path.dirname(this.configPath), expanded);
+      try {
+        return fs.readFileSync(resolved, "utf8");
+      } catch (error) {
+        throw new ConfigError(
+          `prompts.promptFile could not be read at ${resolved}: ${String(error)}`,
+        );
+      }
+    }
+
+    return prompts.initial;
   }
 
   /** The ambient (orchestrator) environment as a defined string map for launches. */
@@ -413,6 +489,7 @@ export function loadContext(input: LoadContextInput): Context {
     cwd: input.cwd,
     logger,
     wrapCommand,
+    crewBinDir: input.crewBinDir,
   });
 }
 

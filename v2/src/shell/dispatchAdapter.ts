@@ -5,9 +5,11 @@
  * `cleanup` stay declarative and the config → deps mapping lives in one place.
  */
 import {
+  type DispatchPlan,
   type ReconcileReport,
   type StartTaskReport,
   type TickReport,
+  planTick,
   reconcile,
   startTask,
   tick,
@@ -23,6 +25,10 @@ export async function dispatchTick(input: {
     ...input.context.dispatchDeps(),
     ...(input.reconcile === undefined ? {} : { reconcile: input.reconcile }),
   });
+}
+
+export async function dispatchPlan(input: { readonly context: Context }): Promise<DispatchPlan> {
+  return await planTick(input.context.dispatchDeps());
 }
 
 export async function dispatchStartTask(input: {

@@ -8,8 +8,9 @@
  */
 export const MODULE = "dispatch";
 
-// The picker: one poll cycle, its single-task sibling, and the `--watch` loop.
-export { tick, startTask } from "./pipeline.js";
+// The picker: one poll cycle, its single-task sibling, the dry-run planner, and
+// the `--watch` loop.
+export { tick, startTask, planTick } from "./pipeline.js";
 export { watchLoop } from "./watch.js";
 export type { WatchLoopInput } from "./watch.js";
 
@@ -37,6 +38,7 @@ export { SKIP_REASONS } from "./types.js";
 export type {
   AgentRouting,
   DispatchDeps,
+  DispatchPlan,
   DispatchSource,
   DispatchState,
   DispatchVerdict,

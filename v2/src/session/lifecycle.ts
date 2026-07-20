@@ -72,6 +72,8 @@ export interface ResumeSessionInput {
   environment: Record<string, string>;
   /** Workspace-level session env layered beneath the profile env (contracts §9). */
   sessionEnvironment?: Record<string, string>;
+  /** The launching crew's bin dir, prepended to the session PATH (contracts §9). */
+  crewBinDir?: string;
   policy?: SandboxPolicy;
   wrapCommand?: WrapCommand;
   presenter: Presenter;
@@ -99,6 +101,7 @@ export async function resumeSession(input: ResumeSessionInput): Promise<LaunchRe
     agentCommand,
     environment: input.environment,
     sessionEnvironment: input.sessionEnvironment,
+    crewBinDir: input.crewBinDir,
     policy: input.policy,
     wrapCommand: input.wrapCommand,
     presenter: input.presenter,
