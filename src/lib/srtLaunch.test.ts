@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -6,7 +6,7 @@ import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 
 import { runCommand } from "./commandRunner.ts";
 import type { AgentDefinition } from "./config.ts";
-import { buildAndStageSrtLaunch } from "./srtLaunch.ts";
+import { buildAndStageSrtLaunch, stageRelocatedAgentConfigHome } from "./srtLaunch.ts";
 
 function definition(cmd: string): AgentDefinition {
   return { cmd, color: "#fff" };
@@ -14,6 +14,13 @@ function definition(cmd: string): AgentDefinition {
 
 function readSettings(file: string): SandboxRuntimeConfig {
   return JSON.parse(readFileSync(file, "utf8")) as SandboxRuntimeConfig;
+}
+
+function assertDefined<T>(value: T | undefined, label = "value"): T {
+  if (value === undefined) {
+    throw new TypeError(`Expected ${label} to be defined`);
+  }
+  return value;
 }
 
 describe(buildAndStageSrtLaunch, () => {
@@ -210,5 +217,62 @@ describe(buildAndStageSrtLaunch, () => {
     const relocated = path.join(result.directory, "codex-home");
     expect(readFileSync(path.join(relocated, "config.toml"), "utf8")).toBe("model = 'gpt'\n");
     expect(() => readFileSync(path.join(relocated, "auth.json"), "utf8")).toThrow(/ENOENT/);
+  });
+});
+
+describe(stageRelocatedAgentConfigHome, () => {
+  let parentDir: string;
+  let fakeHome: string;
+
+  beforeEach(() => {
+    parentDir = mkdtempSync(path.join(os.tmpdir(), "stage-relocated-parent-"));
+    fakeHome = mkdtempSync(path.join(os.tmpdir(), "stage-relocated-home-"));
+  });
+
+  afterEach(() => {
+    rmSync(parentDir, { recursive: true, force: true });
+    rmSync(fakeHome, { recursive: true, force: true });
+  });
+
+  it("is a no-op and returns undefined for an agent with no registered config relocation (claude)", () => {
+    const result = stageRelocatedAgentConfigHome({ agent: "claude", parentDir, homeDir: fakeHome });
+
+    expect(result).toBeUndefined();
+  });
+
+  it("stages and seeds a writable config home for a relocating agent (codex), exposing its configDirEnv", () => {
+    const realCodex = path.join(fakeHome, ".codex");
+    mkdirSync(realCodex, { recursive: true });
+    writeFileSync(path.join(realCodex, "auth.json"), '{"token":"x"}');
+    writeFileSync(path.join(realCodex, "config.toml"), "model = 'gpt'\n");
+
+    const result = assertDefined(
+      stageRelocatedAgentConfigHome({ agent: "codex", parentDir, homeDir: fakeHome }),
+      "staged config home for codex",
+    );
+    const expectedDir = path.join(parentDir, "codex-home");
+    expect(result).toStrictEqual({
+      configDir: expectedDir,
+      configDirEnv: { name: "CODEX_HOME", value: expectedDir },
+    });
+    expect(readFileSync(path.join(result.configDir, "auth.json"), "utf8")).toBe('{"token":"x"}');
+    expect(readFileSync(path.join(result.configDir, "config.toml"), "utf8")).toBe(
+      "model = 'gpt'\n",
+    );
+  });
+
+  it("seeds only existing files, skipping a missing seed file (not-logged-in agent)", () => {
+    const realCodex = path.join(fakeHome, ".codex");
+    mkdirSync(realCodex, { recursive: true });
+    writeFileSync(path.join(realCodex, "config.toml"), "model = 'gpt'\n");
+
+    const result = assertDefined(
+      stageRelocatedAgentConfigHome({ agent: "codex", parentDir, homeDir: fakeHome }),
+      "staged config home for codex",
+    );
+    expect(readFileSync(path.join(result.configDir, "config.toml"), "utf8")).toBe(
+      "model = 'gpt'\n",
+    );
+    expect(existsSync(path.join(result.configDir, "auth.json"))).toBe(false);
   });
 });

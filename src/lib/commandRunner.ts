@@ -14,6 +14,15 @@ export interface RunCommandOptions {
   timeoutMs?: number;
   stdio?: "captured" | "inherit";
   trim?: boolean;
+  /**
+   * Explicit subprocess env, replacing (not merging with) the inherited host
+   * env — matching `execFileSync`'s own semantics. Callers that want the host
+   * env plus overrides (e.g. relocating an agent's config-dir var) build that
+   * merge themselves before calling in, the same pattern the shell adapter
+   * uses for its own subprocess spawns. Only honored for the default
+   * (`captured`) mode — no caller needs it under `stdio: "inherit"` yet.
+   */
+  env?: NodeJS.ProcessEnv;
 }
 
 export function runCommand(
@@ -48,6 +57,7 @@ export function runCommand(
       maxBuffer: RUN_MAX_BUFFER_BYTES,
       stdio: ["ignore", "pipe", "pipe"],
       timeout: options.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS,
+      ...(options.env === undefined ? {} : { env: options.env }),
     });
     return options.trim === false ? output : output.trim();
   } catch (error) {

@@ -90,19 +90,9 @@ export function buildAndStageSrtLaunch(input: {
 
   const directory = mkdtempSync(path.join(os.tmpdir(), `groundcrew-srt-${input.task}-`));
 
-  const relocation = agentConfigRelocation(agent);
-  let relocatedConfigDir: string | undefined;
-  let agentConfigDirEnv: { name: string; value: string } | undefined;
-  if (relocation !== undefined) {
-    relocatedConfigDir = path.join(directory, `${agent}-home`);
-    mkdirSync(relocatedConfigDir, { recursive: true });
-    seedRelocatedConfigDir({
-      sourceDir: path.join(homeDir, relocation.sourceHomeRelativeDir),
-      seedFiles: relocation.seedFiles,
-      relocatedConfigDir,
-    });
-    agentConfigDirEnv = { name: relocation.configDirEnv, value: relocatedConfigDir };
-  }
+  const staged = stageRelocatedAgentConfigHome({ agent, parentDir: directory, homeDir });
+  const relocatedConfigDir = staged?.configDir;
+  const agentConfigDirEnv = staged?.configDirEnv;
 
   const prepare = buildSrtSettings({ ...base, agent: "" });
   const agentSettings = buildSrtSettings({
@@ -122,6 +112,43 @@ export function buildAndStageSrtLaunch(input: {
     agentFile,
     ...(agentConfigDirEnv === undefined ? {} : { agentConfigDirEnv }),
   };
+}
+
+export interface StagedAgentConfigHome {
+  /** The relocated, writable config/state home staged for this launch. */
+  configDir: string;
+  /** Env var (e.g. `CODEX_HOME`) that points the agent at `configDir`. */
+  configDirEnv: { name: string; value: string };
+}
+
+/**
+ * Stage + seed a relocated, writable config home for an agent that cannot run
+ * with a read-only config home (codex's `CODEX_HOME`) — shared by every
+ * runner that needs it, so adding another relocating agent (or a second
+ * runner) is a registry entry in `AGENT_CONFIG_RELOCATIONS`, not a new code
+ * path. `parentDir` must already exist (both callers stage it inside a
+ * dedicated per-launch temp dir); the config home itself is created here.
+ *
+ * Returns `undefined` when the agent has no registered relocation (claude,
+ * unknown agents) — the caller then runs that agent against its real home.
+ */
+export function stageRelocatedAgentConfigHome(input: {
+  agent: string;
+  parentDir: string;
+  homeDir: string;
+}): StagedAgentConfigHome | undefined {
+  const relocation = agentConfigRelocation(input.agent);
+  if (relocation === undefined) {
+    return undefined;
+  }
+  const configDir = path.join(input.parentDir, `${input.agent}-home`);
+  mkdirSync(configDir, { recursive: true });
+  seedRelocatedConfigDir({
+    sourceDir: path.join(input.homeDir, relocation.sourceHomeRelativeDir),
+    seedFiles: relocation.seedFiles,
+    relocatedConfigDir: configDir,
+  });
+  return { configDir, configDirEnv: { name: relocation.configDirEnv, value: configDir } };
 }
 
 /**

@@ -62,6 +62,20 @@ describe(runCommand, () => {
     );
   });
 
+  it("forwards a caller-provided env override to the subprocess", () => {
+    execFileMock.mockReturnValue("");
+
+    runCommand("cmux", ["hooks", "codex", "install", "--yes"], {
+      env: { CODEX_HOME: "/tmp/codex-home" },
+    });
+
+    expect(execFileMock).toHaveBeenCalledWith(
+      "cmux",
+      ["hooks", "codex", "install", "--yes"],
+      expect.objectContaining({ env: { CODEX_HOME: "/tmp/codex-home" } }),
+    );
+  });
+
   it("inherits stdio for interactive commands and returns nothing", () => {
     execFileMock.mockReturnValue("");
 

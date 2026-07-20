@@ -8,6 +8,7 @@ import {
   buildLaunchCommand,
   resolveSafehouseClearancePath,
   resolveSrtBinPath,
+  shellSingleQuote,
   srtBinEntry,
   withResumeArgs,
 } from "./launchCommand.ts";
@@ -417,6 +418,75 @@ describe(buildLaunchCommand, () => {
     );
 
     expect(out).toContain("--add-dirs-ro='/Applications/cmux.app:/Users/dev/.config/tfenv'");
+  });
+
+  it("merges safehouseAgentIntegration.addDirs (writable) into the agent --add-dirs grant", () => {
+    const out = buildLaunchCommand(
+      arguments_({
+        definition: { cmd: "codex", color: "#000" },
+        safehouseAddDirs: ["/work/repo-a-team-1", "/src/carrot/.git"],
+        safehouseAgentIntegration: {
+          addDirsReadOnly: [],
+          envPass: [],
+          commandPreludes: [],
+          addDirs: ["/tmp/groundcrew-safehouse-team-1/codex-home"],
+        },
+      }),
+    );
+
+    expect(out).toContain(
+      "--add-dirs='/work/repo-a-team-1:/src/carrot/.git:/tmp/groundcrew-safehouse-team-1/codex-home'",
+    );
+    // The prepareWorktree wrap (repo-controlled) must never see the agent's
+    // relocated config-home grant.
+    const prepareWrap = out.slice(0, out.indexOf("_safehouse_shim_dir="));
+    expect(prepareWrap).not.toContain("codex-home");
+  });
+
+  it("tears down safehouseAgentIntegration.teardownPaths via the EXIT trap and after a successful agent wrap", () => {
+    const out = buildLaunchCommand(
+      arguments_({
+        definition: { cmd: "codex", color: "#000" },
+        safehouseAgentIntegration: {
+          addDirsReadOnly: [],
+          envPass: [],
+          commandPreludes: [],
+          teardownPaths: ["/tmp/groundcrew-safehouse-team-1/codex-home"],
+        },
+      }),
+    );
+
+    const expectedTrap = `trap ${shellSingleQuote(
+      [
+        'rm -rf "$_safehouse_shim_dir"',
+        `rm -rf ${shellSingleQuote("/tmp/prompt-team-1")}`,
+        `rm -rf ${shellSingleQuote("/tmp/groundcrew-safehouse-team-1/codex-home")}`,
+      ].join("; "),
+    )} EXIT`;
+    expect(out).toContain(expectedTrap);
+    // The trap-armed cleanup also runs explicitly right after a successful
+    // agent wrap, before the trap is disarmed — so a happy-path run doesn't
+    // rely solely on the (now-disarmed) trap to remove the staged dir.
+    expect(out).toMatch(
+      /rm -rf "\$_safehouse_shim_dir"; rm -rf '\/tmp\/groundcrew-safehouse-team-1\/codex-home'; trap - EXIT/,
+    );
+  });
+
+  it("leaves the Claude safehouse launch unchanged when the integration carries no addDirs/teardownPaths", () => {
+    const out = buildLaunchCommand(
+      arguments_({
+        safehouseAgentIntegration: {
+          addDirsReadOnly: ["/Applications/cmux.app"],
+          envPass: [],
+          commandPreludes: [],
+        },
+      }),
+    );
+
+    expect(out).toContain(
+      String.raw`trap 'rm -rf "$_safehouse_shim_dir"; rm -rf '\''/tmp/prompt-team-1'\''' EXIT`,
+    );
+    expect(out).not.toContain("codex-home");
   });
 
   it("can grant a workspace shim integration to the Safehouse agent without stripping PATH", () => {

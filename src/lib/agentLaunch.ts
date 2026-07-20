@@ -1,4 +1,6 @@
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import {
   ensureClearance,
@@ -7,6 +9,7 @@ import {
 } from "@clipboard-health/clearance";
 
 import { clearanceAllowHostsFilesFromEnvironment } from "./clearanceAllowlist.ts";
+import { installCmuxAgentHooks } from "./cmuxAgentHookInstall.ts";
 import { cmuxAgentHookSettingsJson } from "./cmuxAgentHooks.ts";
 import { shellSingleQuote } from "./shell.ts";
 import {
@@ -25,7 +28,13 @@ import {
 } from "./launchCommand.ts";
 import { assertLocalRunnerRequirements, resolveLocalRunner } from "./localRunner.ts";
 import { sandboxNameFor } from "./sandboxName.ts";
-import { buildAndStageSrtLaunch, resolveGitCommonDir } from "./srtLaunch.ts";
+import {
+  buildAndStageSrtLaunch,
+  resolveGitCommonDir,
+  stageRelocatedAgentConfigHome,
+  type StagedAgentConfigHome,
+} from "./srtLaunch.ts";
+import { agentConfigRelocation } from "./srtPolicy.ts";
 import { debug, sleep, writeError } from "./util.ts";
 import { resolveWorkspaceKind, workspaces } from "./workspaces.ts";
 import type { WorkspaceKind } from "./workspaceAdapter.ts";
@@ -54,7 +63,15 @@ export function composeAgentLaunch(input: {
   taskSourceWritePaths?: readonly string[] | undefined;
   safehouseEnableFeatures?: readonly string[] | undefined;
   readOnlyDirs?: readonly string[] | undefined;
+  /**
+   * Test-only seam: overrides `os.homedir()` when staging a relocated agent
+   * config home (codex's `CODEX_HOME` under safehouse). Production callers
+   * must omit this so specs can seed a fixture home instead of touching the
+   * real `~/.codex`.
+   */
+  homeDir?: string;
 }): { launchCommand: string; srtSettingsDir: string | undefined } {
+  const homeDir = input.homeDir ?? os.homedir();
   const staged =
     input.runner === "srt"
       ? buildAndStageSrtLaunch({
@@ -63,11 +80,17 @@ export function composeAgentLaunch(input: {
           definition: input.definition,
           taskSourceWritePaths: input.taskSourceWritePaths,
           readOnlyDirs: input.readOnlyDirs,
+          homeDir,
         })
       : undefined;
   const safehouseAgentIntegration =
     input.runner === "safehouse"
-      ? safehouseAgentIntegrationFor(input.workspaceKind, input.definition)
+      ? safehouseAgentIntegrationFor({
+          workspaceKind: input.workspaceKind,
+          definition: input.definition,
+          task: input.task,
+          homeDir,
+        })
       : undefined;
   const launchCommand = buildLaunchCommand({
     definition: input.definition,
@@ -119,24 +142,39 @@ function resolveSafehouseAddDirs(worktreeDir: string): readonly string[] {
   return [...new Set([worktreeDir, resolveGitCommonDir(worktreeDir)])];
 }
 
-function safehouseAgentIntegrationFor(
-  workspaceKind: WorkspaceKind,
-  definition: AgentDefinition,
-): SafehouseAgentIntegration | undefined {
-  if (workspaceKind !== "cmux") {
+function safehouseAgentIntegrationFor(input: {
+  workspaceKind: WorkspaceKind;
+  definition: AgentDefinition;
+  task: string;
+  homeDir: string;
+}): SafehouseAgentIntegration | undefined {
+  if (input.workspaceKind !== "cmux") {
     return undefined;
   }
-  const agentCommandName = inferAgentCommandName(definition.cmd);
+  const agentCommandName = inferAgentCommandName(input.definition.cmd);
   const isClaudeAgent = agentCommandName === "claude";
   const cmuxIntegration = resolveSafehouseCmuxIntegration();
   if (isClaudeAgent) {
     warnOnCmuxIntegrationDrift({ unreviewedEnvNames: cmuxIntegration.unreviewedEnvNames });
   }
 
+  const relocatedCmuxHooksHome = stageSafehouseCmuxHooksHome({
+    agent: agentCommandName,
+    task: input.task,
+    homeDir: input.homeDir,
+  });
+
   return {
     addDirsReadOnly: cmuxIntegration.addDirsReadOnly,
     envPass: cmuxIntegration.envPass,
-    commandPreludes: isClaudeAgent ? [cmuxIntegration.claudeCommandPrelude] : [],
+    commandPreludes: [
+      ...(isClaudeAgent ? [cmuxIntegration.claudeCommandPrelude] : []),
+      ...(relocatedCmuxHooksHome === undefined
+        ? []
+        : [
+            `export ${relocatedCmuxHooksHome.configDirEnv.name}=${shellSingleQuote(relocatedCmuxHooksHome.configDirEnv.value)}`,
+          ]),
+    ],
     ...(isClaudeAgent
       ? {
           agentArgs: [
@@ -145,7 +183,44 @@ function safehouseAgentIntegrationFor(
           ],
         }
       : {}),
+    ...(relocatedCmuxHooksHome === undefined
+      ? {}
+      : {
+          addDirs: [relocatedCmuxHooksHome.configDir],
+          teardownPaths: [relocatedCmuxHooksHome.configDir],
+        }),
   };
+}
+
+/**
+ * Relocate + seed a writable config home for a cmux-hosted agent whose hook
+ * activation is file-driven (codex reads `$CODEX_HOME/config.toml` +
+ * `hooks.json`, unlike Claude's `--settings` flag) and best-effort install
+ * cmux's lifecycle hooks into it — the safehouse-runner counterpart to the
+ * srt runner's `buildAndStageSrtLaunch` relocation (which does not install
+ * hooks; see `srtLaunch.ts`). Undefined for agents with no registered
+ * relocation (claude), which keep reporting status via `--settings` instead.
+ */
+function stageSafehouseCmuxHooksHome(input: {
+  agent: string;
+  task: string;
+  homeDir: string;
+}): StagedAgentConfigHome | undefined {
+  if (agentConfigRelocation(input.agent) === undefined) {
+    return undefined;
+  }
+  const parentDir = mkdtempSync(path.join(os.tmpdir(), `groundcrew-safehouse-${input.task}-`));
+  const staged = stageRelocatedAgentConfigHome({
+    agent: input.agent,
+    parentDir,
+    homeDir: input.homeDir,
+  });
+  /* v8 ignore next 3 @preserve -- agentConfigRelocation(agent) !== undefined was just checked above, so stageRelocatedAgentConfigHome cannot itself return undefined here */
+  if (staged === undefined) {
+    return undefined;
+  }
+  installCmuxAgentHooks({ agent: input.agent, configDir: staged.configDir });
+  return staged;
 }
 
 function warnOnCmuxIntegrationDrift(input: { unreviewedEnvNames: readonly string[] }): void {

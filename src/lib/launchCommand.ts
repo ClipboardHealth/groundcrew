@@ -412,6 +412,22 @@ export interface SafehouseAgentIntegration {
    * cmux activity-reporting hooks for a Claude agent).
    */
   agentArgs?: readonly string[];
+  /**
+   * Extra **writable** safehouse `--add-dirs` paths contributed by the
+   * integration (e.g. codex's relocated `CODEX_HOME` under safehouse, which
+   * the agent must read AND write session/state into — unlike
+   * `addDirsReadOnly`). Merged into the agent wrap's `--add-dirs` alongside
+   * `safehouseAgentAddDirs`; never granted to the repo-controlled
+   * prepareWorktree wrap.
+   */
+  addDirs?: readonly string[];
+  /**
+   * Extra paths torn down (`rm -rf`) once the agent wrap exits — success or
+   * failure — folded into the same EXIT trap that already cleans up the
+   * profile-shim dir. Empty/undefined for integrations that stage nothing
+   * (Claude), which leaves the trap's shape unchanged.
+   */
+  teardownPaths?: readonly string[];
 }
 
 interface LaunchCommandArguments {
@@ -691,6 +707,7 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
   const safehouseAgentAddDirs = uniqueStrings([
     ...safehousePrepareAddDirs,
     ...(arguments_.safehouseAgentAddDirs ?? []),
+    ...(safehouseAgentIntegration?.addDirs ?? []),
   ]);
   const safehouseAddDirsFlag = safehousePathListFlag("--add-dirs", safehousePrepareAddDirs);
   const safehouseAgentAddDirsFlag = safehousePathListFlag("--add-dirs", safehouseAgentAddDirs);
@@ -706,11 +723,19 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
   const safehouseEnableFlag = safehouseEnableFeaturesFlag(arguments_.safehouseEnableFeatures ?? []);
   const safehouseWrapper = safehouseWrapperCommand(arguments_.networkEgress);
 
+  // Extra paths an integration staged for the agent wrap (e.g. codex's
+  // relocated CODEX_HOME) and wants removed alongside the shim dir. Rendered
+  // once and reused by both the trap (failure path) and the explicit
+  // post-wrap cleanup (success path) below, so the two stay in lockstep.
+  const teardownCleanupCmd = safehouseTeardownCleanupCommand(
+    uniqueStrings(safehouseAgentIntegration?.teardownPaths ?? []),
+  );
+
   // Defensive shim+promptDir trap: by the time we arm it, `rm -rf <promptDir>`
   // has already run (line below) so the promptDir wipe is a no-op on the happy
   // path. Keeps the failure-window between shim creation and the explicit
   // post-wrap cleanup covered for both targets without an unarmed window.
-  const shimAndPromptCleanup = `rm -rf "$_safehouse_shim_dir"; rm -rf ${shellSingleQuote(promptDir)}`;
+  const shimAndPromptCleanup = safehouseShimAndPromptCleanup({ promptDir, teardownCleanupCmd });
   const shimAndPromptTrap = `trap ${shellSingleQuote(shimAndPromptCleanup)} EXIT`;
 
   const lines = hostTrapAndCd({ workingDir: arguments_.workingDir, promptDir });
@@ -744,9 +769,43 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
     // Running the real launch chain as `sh -c` would make it see `sh`, so use
     // an agent-named symlink to /bin/sh. This preserves per-agent profile
     // selection without enabling every agent profile.
-    `{ ${safehouseWrapper} ${safehouseAgentAddDirsFlag}${safehouseAgentAddDirsReadOnlyFlag}${safehouseEnableFlag}${agentEnvPassFlag}"$_safehouse_shim" -c ${shellSingleQuote(agentCommand)} sh${promptPositional(arguments_.omitPromptArgument)}; _safehouse_status=$?; rm -rf "$_safehouse_shim_dir"; trap - EXIT; exit "$_safehouse_status"; }`,
+    `{ ${safehouseWrapper} ${safehouseAgentAddDirsFlag}${safehouseAgentAddDirsReadOnlyFlag}${safehouseEnableFlag}${agentEnvPassFlag}"$_safehouse_shim" -c ${shellSingleQuote(agentCommand)} sh${promptPositional(arguments_.omitPromptArgument)}; _safehouse_status=$?; rm -rf "$_safehouse_shim_dir";${successPathTeardownSegment(teardownCleanupCmd)} trap - EXIT; exit "$_safehouse_status"; }`,
   );
   return lines.join(" && ");
+}
+
+/**
+ * Extra paths an integration staged for the agent wrap (e.g. codex's
+ * relocated `CODEX_HOME`) rendered as a single `rm -rf` command, or `""` when
+ * the integration staged nothing (Claude) — the empty string keeps every
+ * caller's string interpolation a no-op rather than branching itself.
+ */
+function safehouseTeardownCleanupCommand(teardownPaths: readonly string[]): string {
+  return teardownPaths.length === 0
+    ? ""
+    : `rm -rf ${teardownPaths.map((teardownPath) => shellSingleQuote(teardownPath)).join(" ")}`;
+}
+
+/**
+ * The EXIT-trap command that wipes the profile-shim dir, the prompt dir, and
+ * any integration teardown paths — the failure-path cleanup. Shared with the
+ * explicit success-path cleanup below it (`successPathTeardownSegment`) so
+ * both paths remove the same set of staged paths.
+ */
+function safehouseShimAndPromptCleanup(input: {
+  promptDir: string;
+  teardownCleanupCmd: string;
+}): string {
+  return [
+    `rm -rf "$_safehouse_shim_dir"`,
+    `rm -rf ${shellSingleQuote(input.promptDir)}`,
+    ...(input.teardownCleanupCmd === "" ? [] : [input.teardownCleanupCmd]),
+  ].join("; ");
+}
+
+/** Success-path counterpart to `teardownCleanupCmd`: a leading-space-prefixed `; `-ready segment, or `""` when there's nothing to tear down. */
+function successPathTeardownSegment(teardownCleanupCmd: string): string {
+  return teardownCleanupCmd === "" ? "" : ` ${teardownCleanupCmd};`;
 }
 
 function safehousePathListFlag(
