@@ -129,6 +129,20 @@ function prepareWorktreeWithStatusReporting(prepareWorktreeCommand: string): str
 }
 
 /**
+ * Host-shell line for the operator-only `unsandboxedHooks.prepareWorktree` command.
+ * Reuses the same status-reporting wrapper as the sandboxed hook so a failure is
+ * surfaced but non-fatal. `scrubNames` (the agent's `preLaunchEnv`) are `unset`
+ * inside the subshell so this trusted host command cannot read agent
+ * credentials minted by `preLaunch`. Build secrets are intentionally left in
+ * scope so `npm`/`bundle` can authenticate; the caller `unset`s them before the
+ * agent wrap.
+ */
+function hostPrepareWorktreeLine(command: string, scrubNames: readonly string[]): string {
+  const scrub = scrubNames.length === 0 ? "" : `${unsetEnvironmentLine(scrubNames)}; `;
+  return `{ ${prepareWorktreeWithStatusReporting(`${scrub}${command}`)}; }`;
+}
+
+/**
  * Source a `KEY='value'` file with auto-export so build-time secrets land
  * in the shell env before prepareWorktree runs. The `-f` guard keeps it a
  * no-op if the file disappeared between staging and launch.
@@ -440,6 +454,14 @@ interface LaunchCommandArguments {
    */
   prepareWorktreeCommand?: string | undefined;
   /**
+   * Operator-only, per-repository setup command run on the HOST shell (never a
+   * sandbox), before `prepareWorktreeCommand` and the agent. Resolved by the
+   * caller from `knownRepositories[].unsandboxedHooks.prepareWorktree` in
+   * crew.config.ts. Emitted for the safehouse, srt, and none runners; the sdx
+   * runner rejects it (no host to run it on).
+   */
+  prepareWorktreeUnsandboxedCommand?: string | undefined;
+  /**
    * Concrete local isolation backend chosen for this launch. Resolved
    * from `config.local.runner` via `resolveLocalRunner` before this
    * function is called — `auto` is never seen here.
@@ -556,6 +578,11 @@ export function buildLaunchCommand(arguments_: LaunchCommandArguments): string {
         "preLaunchEnv is not yet supported for runner='sdx'. Set local.runner to 'safehouse' or 'none', or open an issue for sdx support.",
       );
     }
+    if (arguments_.prepareWorktreeUnsandboxedCommand !== undefined) {
+      throw new Error(
+        "unsandboxedHooks.prepareWorktree is not supported for runner='sdx': the sdx container has no host to run it on. Remove unsandboxedHooks for this repo, or use runner 'safehouse', 'srt', or 'none'.",
+      );
+    }
     return buildSdxLaunchCommand(arguments_);
   }
   if (shouldWrapWithSafehouse(arguments_)) {
@@ -609,6 +636,14 @@ function buildUnwrappedHostLaunchCommand(arguments_: LaunchCommandArguments): st
     ...hostTrapAndCd({ workingDir: arguments_.workingDir, promptDir }),
     ...hostSourceSecrets(arguments_.secretsFile),
   ];
+  if (arguments_.prepareWorktreeUnsandboxedCommand !== undefined) {
+    lines.push(
+      hostPrepareWorktreeLine(
+        arguments_.prepareWorktreeUnsandboxedCommand,
+        arguments_.definition.preLaunchEnv ?? [],
+      ),
+    );
+  }
   if (arguments_.prepareWorktreeCommand !== undefined) {
     lines.push(prepareWorktreeWithStatusReporting(arguments_.prepareWorktreeCommand));
   }
@@ -726,6 +761,14 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
       secretsFile: arguments_.secretsFile,
     }),
   );
+  if (arguments_.prepareWorktreeUnsandboxedCommand !== undefined) {
+    lines.push(
+      hostPrepareWorktreeLine(
+        arguments_.prepareWorktreeUnsandboxedCommand,
+        arguments_.definition.preLaunchEnv ?? [],
+      ),
+    );
+  }
   if (prepareWorktreeCommand !== undefined) {
     lines.push(
       `${safehouseWrapper} ${safehouseAddDirsFlag}${prepareWorktreeEnvPassFlag}sh -c ${shellSingleQuote(prepareWorktreeCommand)}`,
@@ -878,6 +921,14 @@ function buildSrtLaunchCommand(arguments_: LaunchCommandArguments): string {
       secretsFile: arguments_.secretsFile,
     }),
   ];
+  if (arguments_.prepareWorktreeUnsandboxedCommand !== undefined) {
+    lines.push(
+      hostPrepareWorktreeLine(
+        arguments_.prepareWorktreeUnsandboxedCommand,
+        arguments_.definition.preLaunchEnv ?? [],
+      ),
+    );
+  }
   if (prepareWorktreeCommand !== undefined) {
     lines.push(`${prepareWrap} sh -c ${shellSingleQuote(prepareWorktreeCommand)}`);
   }

@@ -245,12 +245,23 @@ export async function openWorkspace(
   });
   let srtSettingsDir: string | undefined;
   try {
+    const repositoryEntry = config.workspace.repositories.find(
+      (entry) => entry.name === repository,
+    );
     const prepareWorktreeCommand = resolvePrepareWorktreeCommand({
       worktreeDir: launchDir,
+      // Spread-conditional: exactOptionalPropertyTypes forbids an explicit
+      // `undefined` for an optional field, and the lookup yields undefined for
+      // repos with no hooks. Mirrors setupWorkspace so `crew open` honors the
+      // same per-repo operator hooks as `crew setup`.
+      ...(repositoryEntry?.hooks === undefined ? {} : { perRepoHooks: repositoryEntry.hooks }),
       defaultHooks: config.defaults.hooks,
     });
+    const prepareWorktreeUnsandboxedCommand = repositoryEntry?.unsandboxedHooks?.prepareWorktree;
     const secretsFile =
-      prepareWorktreeCommand === undefined ? undefined : stageBuildSecrets(stagedPrompt.directory);
+      prepareWorktreeCommand === undefined && prepareWorktreeUnsandboxedCommand === undefined
+        ? undefined
+        : stageBuildSecrets(stagedPrompt.directory);
     seedLaunchWorkspaceTrust({
       agentCommandName: inferAgentCommandName(definition.cmd),
       launchDir,
@@ -266,6 +277,7 @@ export async function openWorkspace(
       workingDir: launchDir,
       secretsFile,
       prepareWorktreeCommand,
+      prepareWorktreeUnsandboxedCommand,
       sandboxName,
       workspaceKind,
       readOnlyDirs: config.local.readOnlyDirs,

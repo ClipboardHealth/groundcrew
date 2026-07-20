@@ -122,6 +122,7 @@
     "sourcegraph",
     "spinup",
     "statusline",
+    "subshell",
     "subshells",
     "teardownreporter",
     "tsgolint",

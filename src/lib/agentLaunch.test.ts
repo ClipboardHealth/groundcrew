@@ -242,6 +242,15 @@ describe(composeAgentLaunch, () => {
 
     expect(launchCommand).not.toContain("--add-dirs-ro");
   });
+
+  it("forwards prepareWorktreeUnsandboxed into the launch command", () => {
+    const launchCommand = compose({
+      runner: "none",
+      prepareWorktreeUnsandboxedCommand: "bin/setup",
+    });
+
+    expect(launchCommand).toContain("(bin/setup); prepare_status=$?");
+  });
 });
 
 function configWithTitleFlag(enabled: boolean): ResolvedConfig {
