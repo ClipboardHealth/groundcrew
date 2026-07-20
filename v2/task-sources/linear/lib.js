@@ -22,6 +22,11 @@ const fs = require("node:fs");
 const DEFAULT_API_URL = "https://api.linear.app/graphql";
 const TERMINAL_STATE_TYPES = new Set(["completed", "canceled"]);
 const REPOS_LINE = /^Repos:\s*(.+)$/im;
+// v1's ticket convention (and the team's ticket-creation tooling) writes a
+// singular `Repository: <name>` line; existing boards are full of it. It is
+// an explicit designation, so honoring it does not resurrect v1's ratified-
+// dead prose inference (design §4). `Repos:` wins when both are present.
+const REPOSITORY_LINE = /^Repository:\s*(.+)$/im;
 const AGENT_LINE = /^Agent:\s*(\S+)/im;
 
 function config() {
@@ -83,14 +88,23 @@ function isTerminalStateType(stateType) {
 }
 
 function parseRepos(description) {
-  const match = description ? REPOS_LINE.exec(description) : null;
+  const match = description
+    ? (REPOS_LINE.exec(description) ?? REPOSITORY_LINE.exec(description))
+    : null;
   if (!match) {
     return [];
   }
   return match[1]
     .split(",")
-    .map((value) => value.trim())
+    .map((value) => repoDirectoryName(value.trim()))
     .filter(Boolean);
+}
+
+// Accept `owner/repo` forms by keeping the directory basename — the repo
+// universe is directory names under workspace.baseDirectory (design §4).
+function repoDirectoryName(value) {
+  const slash = value.lastIndexOf("/");
+  return slash === -1 ? value : value.slice(slash + 1);
 }
 
 function parseAgent(description) {

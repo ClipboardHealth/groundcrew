@@ -210,6 +210,34 @@ describe("linear bundle", () => {
     strictEqual(byId.get("T-3")?.blocked, undefined);
   });
 
+  test("v1's singular Repository: line is an accepted explicit designation", async () => {
+    respond = () => ({
+      issues: {
+        nodes: [
+          issueNode({
+            identifier: "R-1",
+            description: "## Groundcrew\n\nRepository: cbh-admin-frontend\n\nDetails follow.",
+          }),
+          issueNode({
+            identifier: "R-2",
+            description: "Repository: ClipboardHealth/core-utils",
+          }),
+          issueNode({
+            identifier: "R-3",
+            description: "Repos: web, api\nRepository: ignored-when-repos-present",
+          }),
+        ],
+        pageInfo: { hasNextPage: false, endCursor: null },
+      },
+    });
+
+    const tasks = (await invokeOk("list", {})).tasks ?? [];
+    const byId = new Map(tasks.map((task) => [task.id, task]));
+    deepStrictEqual(byId.get("R-1")?.repos, ["cbh-admin-frontend"]);
+    deepStrictEqual(byId.get("R-2")?.repos, ["core-utils"]); // owner/repo → directory basename
+    deepStrictEqual(byId.get("R-3")?.repos, ["web", "api"]); // Repos: wins
+  });
+
   test("a list larger than the 64KB pipe buffer arrives intact", async () => {
     // Regression: `process.exit` right after a large stdout write truncates at
     // the pipe buffer; found live with a 274KB real Linear list.
