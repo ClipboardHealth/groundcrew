@@ -247,6 +247,16 @@ describe("linear bundle", () => {
             state: { type: "completed", name: "Done" },
             description: "no directives here",
           }),
+          issueNode({
+            identifier: "T-4",
+            state: { type: "canceled", name: "Canceled" },
+            description: "no directives here",
+          }),
+          issueNode({
+            identifier: "T-5",
+            state: { type: "duplicate", name: "Duplicate" },
+            description: "no directives here",
+          }),
         ],
         pageInfo: { hasNextPage: false, endCursor: null },
       },
@@ -260,6 +270,13 @@ describe("linear bundle", () => {
     strictEqual(byId.get("T-2")?.blocked, true); // started ⇒ listed, not dispatchable
     strictEqual(byId.get("T-3")?.terminal, true); // done ⇒ listed for the reap sweep
     strictEqual(byId.get("T-3")?.blocked, undefined);
+    // canceled AND duplicate are terminal (v1 parity, fetch.ts:149) — not
+    // "blocked" noise. A board full of canceled/duplicate assigned tickets was
+    // flooding the queue as ineligible.
+    strictEqual(byId.get("T-4")?.terminal, true);
+    strictEqual(byId.get("T-4")?.blocked, undefined);
+    strictEqual(byId.get("T-5")?.terminal, true);
+    strictEqual(byId.get("T-5")?.blocked, undefined);
   });
 
   test("a labelled parent issue with sub-issues is blocked, never dispatched", async () => {

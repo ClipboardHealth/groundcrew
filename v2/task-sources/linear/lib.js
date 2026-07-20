@@ -31,7 +31,7 @@ const DEFAULT_API_URL = "https://api.linear.app/graphql";
 // lowest-position started column, in-review has no fallback.
 const DEFAULT_IN_PROGRESS_NAMES = ["In Progress"];
 const DEFAULT_IN_REVIEW_NAMES = ["In Review"];
-const TERMINAL_STATE_TYPES = new Set(["completed", "canceled"]);
+const TERMINAL_STATE_TYPES = new Set(["completed", "canceled", "duplicate"]);
 const REPOS_LINE = /^Repos:\s*(.+)$/im;
 // v1's ticket convention (and the team's ticket-creation tooling) writes a
 // singular `Repository: <name>` line; existing boards are full of it. It is
