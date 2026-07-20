@@ -106,7 +106,7 @@ function parseRepos(description) {
 // formatting characters are stripped first (v1's word-boundary regex was
 // naturally immune; found live via a "cbh-mobile-app\`" skip detail).
 function repoDirectoryName(value) {
-  const stripped = value.replace(/^[`*_\s]+|[`*_\s.,;]+$/g, "");
+  const stripped = value.replaceAll(/^[`*_\s]+|[`*_\s.,;]+$/g, "");
   const slash = stripped.lastIndexOf("/");
   return slash === -1 ? stripped : stripped.slice(slash + 1);
 }
