@@ -13,7 +13,7 @@ import type { WrapCommandInput, WrappedCommand } from "./types.js";
 import { buildSrtSettings, stageSettings } from "./srtSettings.js";
 
 export type { SandboxPolicy, WrapCommandInput, WrappedCommand } from "./types.js";
-import { composeSrtInvocation, isRunnerAvailable, resolveSrtCli } from "./runner.js";
+import { composeSrtInvocation, describeRunner, resolveSrtCli, type RunnerAvailability } from "./runner.js";
 
 export {
   buildSrtSettings,
@@ -28,11 +28,13 @@ export {
 } from "./srtSettings.js";
 export {
   composeSrtInvocation,
+  describeRunner,
   isPlatformSupported,
   isRunnerAvailable,
   resolveSrtCli,
   shellSingleQuote,
 } from "./runner.js";
+export type { DescribeRunnerOptions, RunnerAvailability } from "./runner.js";
 
 /**
  * Wrap a command in the srt sandbox (`sandbox-exec` on macOS, bubblewrap on
@@ -53,5 +55,14 @@ export async function wrapCommand(input: WrapCommandInput): Promise<WrappedComma
 
 /** Whether the srt runner is usable on this host (doctor's sandbox check). */
 export async function isSandboxRunnerAvailable(): Promise<boolean> {
-  return isRunnerAvailable();
+  return describeRunner().available;
+}
+
+/**
+ * The srt runner's availability plus, on failure, the actionable reason doctor
+ * surfaces (unsupported platform, missing CLI, or — on Linux — missing runtime
+ * dependencies with the apt/apparmor install hint).
+ */
+export async function describeSandboxRunner(): Promise<RunnerAvailability> {
+  return describeRunner();
 }

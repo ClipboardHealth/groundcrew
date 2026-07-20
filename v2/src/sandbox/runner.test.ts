@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   composeSrtInvocation,
+  describeRunner,
   isPlatformSupported,
   isRunnerAvailable,
   resolveSrtCli,
@@ -38,6 +39,54 @@ describe(isRunnerAvailable, () => {
 
   it("is false on an unsupported platform without touching the filesystem", () => {
     expect(isRunnerAvailable({ platform: "win32" })).toBe(false);
+  });
+
+  it("probes the Linux runtime deps and is available when all are on PATH", () => {
+    expect(isRunnerAvailable({ platform: "linux", hasBinary: () => true })).toBe(true);
+  });
+
+  it("is false on Linux when a runtime dep is missing", () => {
+    const present = new Set(["bwrap", "rg"]);
+    expect(
+      isRunnerAvailable({ platform: "linux", hasBinary: (binary) => present.has(binary) }),
+    ).toBe(false);
+  });
+
+  it("does not probe runtime deps on macOS (sandbox-exec needs none)", () => {
+    let probed = false;
+    expect(
+      isRunnerAvailable({
+        platform: "darwin",
+        hasBinary: () => {
+          probed = true;
+          return false;
+        },
+      }),
+    ).toBe(true);
+    expect(probed).toBe(false);
+  });
+});
+
+describe(describeRunner, () => {
+  it("names the missing Linux deps and the apt/apparmor remediation", () => {
+    const present = new Set(["bwrap"]);
+    const result = describeRunner({
+      platform: "linux",
+      hasBinary: (binary) => present.has(binary),
+    });
+
+    expect(result.available).toBe(false);
+    // The "requires ..." clause lists only the missing deps (bubblewrap present).
+    expect(result.detail).toMatch(/requires socat, ripgrep \(rg\) on PATH/u);
+    expect(result.detail).toContain("apt install bubblewrap socat ripgrep");
+    expect(result.detail).toContain("apparmor_restrict_unprivileged_userns");
+  });
+
+  it("explains an unsupported platform", () => {
+    const result = describeRunner({ platform: "win32" });
+
+    expect(result.available).toBe(false);
+    expect(result.detail).toContain("macOS or Linux");
   });
 });
 

@@ -35,6 +35,13 @@ export function resolvePrepareWorktreeCommand(input: {
  * Runs the resolved hook (if any) at the worktree root, with
  * `environment` overlaid on the ambient env. Throws `PrepareWorktreeError` on
  * nonzero exit so provisioning rolls back.
+ *
+ * The hook command can be supplied by a repo-committed `.groundcrew/config.json`,
+ * so when `wrapCommand` is injected the resolved command is sandbox-wrapped
+ * before it runs (the orchestrator composes a profile-neutral, credential-free
+ * policy — architecture keeps this module's imports git-only, so the wrap is
+ * injected rather than imported). Omitted ⇒ the hook runs unwrapped, which is the
+ * `GROUNDCREW_SANDBOX=off` path and the direct-unit-test path.
  */
 export async function runPrepareWorktree(input: {
   readonly worktreeDirectory: string;
@@ -42,15 +49,18 @@ export async function runPrepareWorktree(input: {
   readonly perRepoHook?: string;
   readonly defaultHook?: string;
   readonly environment?: Readonly<Record<string, string>>;
+  readonly wrapCommand?: (command: string) => Promise<string>;
 }): Promise<void> {
-  const command = resolvePrepareWorktreeCommand({
+  const resolved = resolvePrepareWorktreeCommand({
     worktreeDirectory: input.worktreeDirectory,
     ...(input.perRepoHook === undefined ? {} : { perRepoHook: input.perRepoHook }),
     ...(input.defaultHook === undefined ? {} : { defaultHook: input.defaultHook }),
   });
-  if (command === undefined) {
+  if (resolved === undefined) {
     return;
   }
+
+  const command = input.wrapCommand === undefined ? resolved : await input.wrapCommand(resolved);
 
   const result = await execa(command, {
     shell: true,
@@ -64,7 +74,8 @@ export async function runPrepareWorktree(input: {
   if (exitCode !== 0) {
     throw new PrepareWorktreeError({
       repo: input.repo,
-      command,
+      // Report the human-readable hook, not the srt wrapper line.
+      command: resolved,
       exitCode,
       stderr: typeof result.stderr === "string" ? result.stderr : "",
     });

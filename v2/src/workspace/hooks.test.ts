@@ -107,6 +107,49 @@ describe("hooks", () => {
       runPrepareWorktree({ worktreeDirectory, repo: "alpha", perRepoHook: "exit 3" }),
     ).rejects.toBeInstanceOf(PrepareWorktreeError);
   });
+
+  it("runs the injected (sandbox) wrapper's command instead of the raw hook", async () => {
+    let received: string | undefined;
+    await runPrepareWorktree({
+      worktreeDirectory,
+      repo: "alpha",
+      perRepoHook: "touch raw-hook-ran",
+      // Stand in for the srt wrap: swap the command for a different one entirely.
+      wrapCommand: async (command: string): Promise<string> => {
+        received = command;
+        return "touch wrapped-hook-ran";
+      },
+    });
+
+    // The wrapper saw the resolved hook, and its command is what actually ran.
+    expect(received).toBe("touch raw-hook-ran");
+    expect(fs.existsSync(path.join(worktreeDirectory, "wrapped-hook-ran"))).toBe(true);
+    expect(fs.existsSync(path.join(worktreeDirectory, "raw-hook-ran"))).toBe(false);
+  });
+
+  it("does not wrap when no hook resolves (wrapper is never called)", async () => {
+    let called = false;
+    await runPrepareWorktree({
+      worktreeDirectory,
+      repo: "alpha",
+      wrapCommand: async (command: string): Promise<string> => {
+        called = true;
+        return command;
+      },
+    });
+    expect(called).toBe(false);
+  });
+
+  it("reports the human hook (not the srt wrapper line) in the error", async () => {
+    await expect(
+      runPrepareWorktree({
+        worktreeDirectory,
+        repo: "alpha",
+        perRepoHook: "the-human-hook",
+        wrapCommand: async (): Promise<string> => "exit 4",
+      }),
+    ).rejects.toMatchObject({ command: "the-human-hook", exitCode: 4 });
+  });
 });
 
 function writeCommittedHook(input: { readonly worktreeDirectory: string; readonly command: string }): void {

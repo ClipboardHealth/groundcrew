@@ -26,6 +26,20 @@ import {
 
 const MODULE = "workspace";
 
+/**
+ * The sandbox wrapper the orchestrator injects for the `prepareWorktree` hook.
+ * Given the raw hook command and the worktree it runs in, it returns the
+ * sandbox-wrapped command line. Structural (not imported from Session) so this
+ * module's imports stay git-only per the architecture allowlist; the caller —
+ * Dispatch or Shell — supplies it, composing the credential-free hook policy.
+ * Omitted ⇒ the hook runs unwrapped (`GROUNDCREW_SANDBOX=off`).
+ */
+export type PrepareHookSandbox = (input: {
+  readonly command: string;
+  readonly worktreeDirectory: string;
+  readonly cloneGitDirectory: string;
+}) => Promise<string>;
+
 export interface ProvisionResult {
   readonly workspaceDirectory: string;
   readonly branch: string;
@@ -52,6 +66,8 @@ export async function provisionWorkspace(input: {
   readonly taskId: string;
   readonly repos?: readonly string[];
   readonly logger?: Logger;
+  /** Injected sandbox wrapper for the `prepareWorktree` hook; omitted ⇒ unwrapped. */
+  readonly prepareHookSandbox?: PrepareHookSandbox;
 }): Promise<ProvisionResult> {
   const { config, taskId } = input;
   const repos = input.repos ?? [];
@@ -80,7 +96,15 @@ export async function provisionWorkspace(input: {
 
   for (const repo of repos) {
     // eslint-disable-next-line no-await-in-loop -- git worktree adds must be ordered against one clone at a time
-    await acquireWorktree({ config, taskId, repo, ...forwardLogger(input.logger) });
+    await acquireWorktree({
+      config,
+      taskId,
+      repo,
+      ...forwardLogger(input.logger),
+      ...(input.prepareHookSandbox === undefined
+        ? {}
+        : { prepareHookSandbox: input.prepareHookSandbox }),
+    });
   }
 
   return { workspaceDirectory, branch, repos: [...repos].toSorted() };
@@ -98,6 +122,8 @@ export async function acquireWorktree(input: {
   readonly taskId: string;
   readonly repo: string;
   readonly logger?: Logger;
+  /** Injected sandbox wrapper for the `prepareWorktree` hook; omitted ⇒ unwrapped. */
+  readonly prepareHookSandbox?: PrepareHookSandbox;
 }): Promise<AcquireResult> {
   const { config, taskId, repo } = input;
   const cloneDirectory = clonePath({ config, repo });
@@ -125,6 +151,8 @@ export async function acquireWorktree(input: {
     await addWorktree({ repoDirectory: cloneDirectory, worktreePath: worktree, branch, startPoint });
   }
 
+  const cloneGitDirectory = path.join(cloneDirectory, ".git");
+  const { prepareHookSandbox } = input;
   await runPrepareWorktree({
     worktreeDirectory: worktree,
     repo,
@@ -133,6 +161,12 @@ export async function acquireWorktree(input: {
       : { perRepoHook: config.repositories[repo]?.prepareWorktree }),
     ...(config.prepareWorktree === undefined ? {} : { defaultHook: config.prepareWorktree }),
     ...(config.environment === undefined ? {} : { environment: config.environment }),
+    ...(prepareHookSandbox === undefined
+      ? {}
+      : {
+          wrapCommand: async (command: string): Promise<string> =>
+            await prepareHookSandbox({ command, worktreeDirectory: worktree, cloneGitDirectory }),
+        }),
   });
 
   addRepoToMarker({ workspaceDirectory, taskId, branch, repo });

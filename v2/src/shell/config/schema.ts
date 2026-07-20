@@ -78,8 +78,18 @@ export const PRESENTER_NAMES = ["cmux", "tmux", "zellij"] as const;
 
 export const sandboxConfigSchema = z.object({
   readOnlyDirectories: z.array(z.string().min(1)).optional(),
-  /** Agent-session egress allowlist (sources declare their own in manifests). */
+  /**
+   * Agent-session egress allowlist (sources declare their own in manifests).
+   * SPECIFIED replaces the built-in baseline wholesale (contracts §5 principle 1).
+   */
   network: z.array(z.string().min(1)).optional(),
+  /**
+   * Hosts appended to the effective egress list rather than replacing it — the
+   * additive alternative to `network` for the common "baseline plus a couple of
+   * my hosts" case (contracts §5). Appended to the built-in baseline when
+   * `network` is omitted, or to `network` when both are set.
+   */
+  additionalNetwork: z.array(z.string().min(1)).optional(),
 });
 
 export const promptsConfigSchema = z.object({

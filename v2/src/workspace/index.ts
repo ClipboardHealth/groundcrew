@@ -38,7 +38,7 @@ export { addRepoToMarker, markerSchema, readMarker, writeMarker } from "./marker
 export type { WorkspaceMarker } from "./marker.js";
 
 export { acquireWorktree, provisionWorkspace } from "./provision.js";
-export type { AcquireResult, ProvisionResult } from "./provision.js";
+export type { AcquireResult, PrepareHookSandbox, ProvisionResult } from "./provision.js";
 
 export { isWorktreeDirty, observeWorkspace } from "./observe.js";
 export type { RepoObservation, WorkspaceObservation } from "./observe.js";

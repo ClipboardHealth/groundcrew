@@ -324,6 +324,68 @@ describe.runIf(sandboxLaneEnabled)("H. Sandbox posture", () => {
       expect(subjects[0]).toBe(subject);
     }, { sandboxLane: true });
   });
+
+  // Regression for the whole-`.git` write grant: contracts §9 keeps the clone's
+  // `.git` writable so commits land, but the executable surfaces inside it —
+  // `hooks/` (a planted `post-checkout` runs on the user's next host git op) and
+  // `config` (`core.hooksPath`) — must stay unwritable. Here the agent commits
+  // (permitted) but its attempts to plant a hook and rewrite the config are both
+  // denied, proving the carve-out coexists with a working commit.
+  it("SANDBOX-06: denies writing .git/hooks and .git/config while commits still succeed", async () => {
+    await withScenario(async (scenario) => {
+      const { clonePath } = await createRepo({ scenario, name: "alpha" });
+
+      const workspace = workspaceDirectory({ scenario, taskId: TASK_ID });
+      const worktree = path.join(workspace, "alpha");
+      const gitDir = path.join(clonePath, ".git");
+
+      const hookTarget = path.join(gitDir, "hooks", "post-checkout");
+      const configTarget = path.join(gitDir, "config");
+      const hookMarker = path.join(workspace, ".probe", "hook-write.json");
+      const configMarker = path.join(workspace, ".probe", "config-write.json");
+      const commitMarker = path.join(workspace, ".probe", "commit.json");
+
+      const actions: ProbeAction[] = [
+        { kind: "write", path: hookTarget, marker: hookMarker },
+        { kind: "write", path: configTarget, marker: configMarker },
+        {
+          kind: "exec",
+          command: "git",
+          args: ["commit", "--allow-empty", "-m", `carve-out commit ${scenario.id}`],
+          cwd: worktree,
+          marker: commitMarker,
+        },
+      ];
+
+      const crew = configure({
+        scenario,
+        config: {
+          agentProfiles: {
+            scripted: {
+              command: "sandbox-probe",
+              environment: { [PROBE_AGENT_SPEC_ENV]: encodeProbeSpec({ actions }) },
+            },
+          },
+        },
+      });
+      installSandboxProbeAgent({ scenario });
+      crew.seedSource([{ id: "TASK-1", title: "probe", agent: "scripted", repos: ["alpha"] }]);
+
+      await crew.tick();
+
+      const hookWrite = await waitForProbeOutcome({ marker: hookMarker });
+      const configWrite = await waitForProbeOutcome({ marker: configMarker });
+      const commit = await waitForProbeOutcome({ marker: commitMarker });
+
+      // The host-RCE persistence surfaces are denied even though .git is writable…
+      expect(hookWrite.ok).toBe(false);
+      expect(configWrite.ok).toBe(false);
+      // …and the planted hook never made it to disk.
+      expect(fs.existsSync(hookTarget)).toBe(false);
+      // …while a normal commit inside the worktree still succeeds.
+      expect(commit.ok).toBe(true);
+    }, { sandboxLane: true });
+  });
 });
 
 /**

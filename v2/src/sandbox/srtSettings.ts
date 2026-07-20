@@ -5,12 +5,13 @@
  *
  * The mapping, deny-by-default in one place:
  *
- * - **Writes are allow-only.** `writablePaths` become srt `allowWrite`; nothing
- *   else is writable, so a write outside the granted set is denied by omission
- *   (validated live under `sandbox-exec`: an out-of-scope `writeFile` returns
- *   `EPERM`). srt's `denyWrite` is left empty — the policy grants narrowly
- *   rather than granting broad and carving back out, so there is nothing to
- *   subtract.
+ * - **Writes are allow-only, with carve-outs.** `writablePaths` become srt
+ *   `allowWrite`; nothing else is writable, so a write outside the granted set is
+ *   denied by omission (validated live under `sandbox-exec`: an out-of-scope
+ *   `writeFile` returns `EPERM`). Where a grant is necessarily broad — a repo's
+ *   whole `.git`, an agent's config home — `denyWritePaths` maps to srt
+ *   `denyWrite` to carve the executable/persistence surfaces back out; deny wins
+ *   over allow. An empty `denyWritePaths` yields an empty `denyWrite`.
  * - **Reads mask the home region, then re-open explicitly.** `denyRead` covers
  *   the user home (`/Users` on macOS; `/home` + `/root` + `/mnt` on Linux) so
  *   the wrapped process cannot read `~/.ssh`, `~/.aws`, shell history, or
@@ -145,6 +146,7 @@ export function buildSrtSettings(
     ...policy.readOnlyPaths,
   ]);
   const allowWrite = unique(policy.writablePaths);
+  const denyWrite = unique(policy.denyWritePaths ?? []);
 
   const settings: SrtSettings = {
     network: {
@@ -158,7 +160,7 @@ export function buildSrtSettings(
       denyRead: homeReadMask(platform),
       allowRead,
       allowWrite,
-      denyWrite: [],
+      denyWrite,
       allowGitConfig: false,
     },
     allowPty: true,

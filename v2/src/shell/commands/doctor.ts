@@ -8,13 +8,14 @@
  */
 import * as fs from "node:fs";
 
-import { isSandboxRunnerAvailable } from "../../sandbox/index.js";
+import { describeSandboxRunner } from "../../sandbox/index.js";
 import {
   type CheckResult,
   checkAgents,
   checkBaseDirectory,
   checkCredentialsInConfig,
   checkRequiredTools,
+  checkSecretsFilePermissions,
   checkSource,
 } from "../checks.js";
 import { type ContextEnvironment, type Context, loadContext } from "../context.js";
@@ -51,6 +52,12 @@ export async function runDoctor(input: {
   }
 
   checks.push(...(await checkRequiredTools(context)), checkBaseDirectory(context));
+
+  const secretsWarning = checkSecretsFilePermissions(context.secretsFilePath());
+  if (secretsWarning !== undefined) {
+    checks.push(secretsWarning);
+  }
+
   if (context.sandboxDisabled()) {
     checks.push(ok("sandbox: OFF (GROUNDCREW_SANDBOX=off — agents and sources run unwrapped)"));
   }
@@ -114,13 +121,14 @@ async function envToolChecks(environment: ContextEnvironment): Promise<CheckResu
       : bad("git on PATH", "git was not found on PATH"),
   ];
   const presenter = ["cmux", "tmux", "zellij"].find((name) => onPath({ name, pathValue }));
+  const runner = await describeSandboxRunner();
   results.push(
     presenter === undefined
       ? bad("a session presenter on PATH", "none of cmux, tmux, zellij were found")
       : ok(`session presenter "${presenter}" on PATH`),
-    (await isSandboxRunnerAvailable())
+    runner.available
       ? ok("srt sandbox runner available")
-      : bad("srt sandbox runner available", "the srt runner is not usable on this host"),
+      : bad("srt sandbox runner available", runner.detail ?? "the srt runner is not usable on this host"),
   );
   return results;
 }

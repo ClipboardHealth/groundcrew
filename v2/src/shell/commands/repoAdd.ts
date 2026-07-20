@@ -30,12 +30,15 @@ export async function runRepoAdd(input: {
     config: workspaceConfig,
   });
 
-  // RepoNotOnDiskError → exit 2.
+  // RepoNotOnDiskError → exit 2. The prepareWorktree hook is sandboxed with the
+  // credential-free hook policy unless the kill-switch is set (contracts §9).
+  const prepareHookSandbox = context.prepareHookSandbox();
   const result = await acquireWorktree({
     config: workspaceConfig,
     taskId: taskContext.taskId,
     repo: input.repo,
     logger: context.logger,
+    ...(prepareHookSandbox === undefined ? {} : { prepareHookSandbox }),
   });
 
   const slug = taskSlug({ taskId: taskContext.taskId });

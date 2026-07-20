@@ -5,9 +5,10 @@
  * live round-trip) is shared between the two commands (SURFACE-02, SURFACE-07).
  */
 import * as fs from "node:fs";
+import process from "node:process";
 
 import { type ProbeResult, probeSource } from "../acquisition/index.js";
-import { isSandboxRunnerAvailable } from "../sandbox/index.js";
+import { describeSandboxRunner } from "../sandbox/index.js";
 import { isPresetName, resolveProfile } from "../session/index.js";
 import type { Context, ResolvedSource } from "./context.js";
 import { onPath } from "./detect.js";
@@ -59,14 +60,59 @@ export async function checkRequiredTools(context: Context): Promise<CheckResult[
     );
   }
 
-  const runnerAvailable = await isSandboxRunnerAvailable();
+  const runner = await describeSandboxRunner();
   results.push(
-    runnerAvailable
+    runner.available
       ? pass("srt sandbox runner available")
-      : fail("srt sandbox runner available", "the srt runner is not usable on this host"),
+      : fail("srt sandbox runner available", runner.detail ?? "the srt runner is not usable on this host"),
   );
 
   return results;
+}
+
+/**
+ * Warns (never fails) when the optional `secrets.env` exists and is readable or
+ * writable by group/other (contracts §2: doctor warns unless mode 0600). A
+ * world-readable secrets file leaks the tokens sources authenticate with. On a
+ * host with no POSIX permission bits (Windows) the mode is not meaningful, so
+ * the check is skipped there. Returns `undefined` when there is nothing to warn
+ * about, so doctor emits the note only when it applies.
+ */
+export function checkSecretsFilePermissions(
+  secretsPath: string,
+  platform: NodeJS.Platform = process.platform,
+): CheckResult | undefined {
+  if (platform === "win32") {
+    return undefined;
+  }
+
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(secretsPath);
+  } catch {
+    return undefined; // no secrets.env — nothing to warn about
+  }
+  if (!stat.isFile()) {
+    return undefined;
+  }
+
+  // `mode % 0o100` is the low 6 bits (group+other rwx) without a bitwise op;
+  // nonzero ⇒ group/other has some access. `mode % 0o1000` is the 9-bit perm set.
+  const groupOtherBits = stat.mode % 0o100;
+  if (groupOtherBits === 0) {
+    return undefined; // 0600 or tighter — the desired posture
+  }
+
+  const mode = (stat.mode % 0o1000).toString(8).padStart(3, "0");
+  return {
+    label:
+      `secrets.env is group/other-accessible (mode ${mode}) at ${secretsPath}; ` +
+      `run \`chmod 600 ${secretsPath}\` so only you can read it`,
+    ok: true,
+    detail: undefined,
+    source: undefined,
+    note: true,
+  };
 }
 
 /** The configured `workspace.baseDirectory` exists and is a directory (SURFACE-02c). */

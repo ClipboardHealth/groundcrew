@@ -25,7 +25,7 @@ const linuxOptions = {
 };
 
 describe(buildSrtSettings, () => {
-  it("maps writablePaths to allow-only writes (denyWrite stays empty)", () => {
+  it("maps writablePaths to allow writes (denyWrite empty when none carved out)", () => {
     const actual = buildSrtSettings(
       policy({ writablePaths: ["/work/ws", "/state/scratch"] }),
       linuxOptions,
@@ -33,6 +33,20 @@ describe(buildSrtSettings, () => {
 
     expect(actual.filesystem.allowWrite).toStrictEqual(["/work/ws", "/state/scratch"]);
     expect(actual.filesystem.denyWrite).toStrictEqual([]);
+  });
+
+  it("maps denyWritePaths to srt denyWrite (carve-outs under a broad grant)", () => {
+    const actual = buildSrtSettings(
+      policy({
+        writablePaths: ["/repo/.git"],
+        denyWritePaths: ["/repo/.git/hooks", "/repo/.git/config", "/repo/.git/hooks"],
+      }),
+      linuxOptions,
+    );
+
+    expect(actual.filesystem.allowWrite).toStrictEqual(["/repo/.git"]);
+    // De-duplicated, and the whole .git stays writable alongside the denies.
+    expect(actual.filesystem.denyWrite).toStrictEqual(["/repo/.git/hooks", "/repo/.git/config"]);
   });
 
   it("re-opens writablePaths and readOnlyPaths for read, plus the node runtime prefix", () => {
