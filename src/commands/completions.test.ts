@@ -37,7 +37,7 @@ describe("crew completions", () => {
 
       it("completes enum, file, dir, and string flag values", () => {
         expect(script).toContain(
-          '--runner) COMPREPLY=( $(compgen -W "auto safehouse srt sdx none" -- "$cur") ); return ;;',
+          '--runner) COMPREPLY=( $(compgen -W "auto safehouse sdx none" -- "$cur") ); return ;;',
         );
         expect(script).toContain(
           '--status) COMPREPLY=( $(compgen -W "todo in-progress in-review done other"',
@@ -80,7 +80,7 @@ describe("crew completions", () => {
       });
 
       it("completes enum values and files via zsh builtins", () => {
-        expect(script).toContain("--runner) compadd -- auto safehouse srt sdx none; return ;;");
+        expect(script).toContain("--runner) compadd -- auto safehouse sdx none; return ;;");
         expect(script).toContain("--prompt-file) _files; return ;;");
         expect(script).toContain("--project-dir) _files -/; return ;;");
       });

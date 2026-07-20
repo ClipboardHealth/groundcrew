@@ -19,12 +19,6 @@ export interface HostCapabilities {
   hasTmux: boolean;
   /** True when the `zellij` binary is on PATH. */
   hasZellij: boolean;
-  /** True when the `bubblewrap` binary is on PATH (Linux srt dependency). */
-  hasBubblewrap: boolean;
-  /** True when the `socat` binary is on PATH (Linux srt dependency). */
-  hasSocat: boolean;
-  /** True when the `rg` (ripgrep) binary is on PATH (Linux srt dependency). */
-  hasRipgrep: boolean;
   /** True when the host platform is macOS. Safehouse is macOS-only. */
   isMacOS: boolean;
   /** True when the host platform is Linux. */
@@ -35,14 +29,6 @@ export interface HostCapabilities {
    * or WSL before creating a worktree.
    */
   isSafehouseSupported: boolean;
-  /**
-   * True when srt (Anthropic sandbox-runtime) is supportable on this
-   * platform. srt uses `sandbox-exec` on macOS and `bubblewrap` on Linux,
-   * so this tracks "macOS || Linux"; WSL inherits the Linux path. The srt
-   * binary itself ships as a groundcrew dependency, so there is no PATH
-   * probe — but the Linux backend additionally needs bubblewrap/socat/rg.
-   */
-  isSrtSupported: boolean;
   /**
    * True when sdx (Docker Sandboxes) is supportable on this platform —
    * sbx is published for both macOS and Linux, so this stays in sync with
@@ -75,15 +61,12 @@ export async function which(cmd: string, signal?: AbortSignal): Promise<string |
 export async function detectHostCapabilities(signal?: AbortSignal): Promise<HostCapabilities> {
   const isMacOS = process.platform === "darwin";
   const isLinux = process.platform === "linux";
-  const [safehouse, sbx, cmux, tmux, zellij, bubblewrap, socat, ripgrep] = await Promise.all([
+  const [safehouse, sbx, cmux, tmux, zellij] = await Promise.all([
     which("safehouse", signal),
     which("sbx", signal),
     which("cmux", signal),
     which("tmux", signal),
     which("zellij", signal),
-    which("bwrap", signal),
-    which("socat", signal),
-    which("rg", signal),
   ]);
   return {
     hasSafehouse: safehouse !== undefined,
@@ -91,13 +74,9 @@ export async function detectHostCapabilities(signal?: AbortSignal): Promise<Host
     hasCmux: cmux !== undefined,
     hasTmux: tmux !== undefined,
     hasZellij: zellij !== undefined,
-    hasBubblewrap: bubblewrap !== undefined,
-    hasSocat: socat !== undefined,
-    hasRipgrep: ripgrep !== undefined,
     isMacOS,
     isLinux,
     isSafehouseSupported: isMacOS,
-    isSrtSupported: isMacOS || isLinux,
     isSdxSupported: isMacOS || isLinux,
   };
 }

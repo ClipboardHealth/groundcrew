@@ -78,7 +78,6 @@ function compose(overrides: Partial<Parameters<typeof composeAgentLaunch>[0]> = 
   return composeAgentLaunch({
     runner: "safehouse",
     networkEgress: "allowlisted",
-    task: "team-1",
     definition: definition(),
     promptFile: "/tmp/prompt-team-1/prompt.txt",
     worktreeDir: "/work/repo-a-team-1",
@@ -86,7 +85,7 @@ function compose(overrides: Partial<Parameters<typeof composeAgentLaunch>[0]> = 
     workspaceKind: "cmux",
     readOnlyDirs: [],
     ...overrides,
-  }).launchCommand;
+  });
 }
 
 describe(composeAgentLaunch, () => {
