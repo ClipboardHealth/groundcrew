@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# cspell:ignore ttyd
 set -euo pipefail
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"

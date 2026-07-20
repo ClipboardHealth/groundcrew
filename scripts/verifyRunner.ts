@@ -53,7 +53,6 @@ export const DEFAULT_VERIFY_CHECKS = [
   { cmd: "node --run knip", mode: "parallel", name: "knip" },
   { cmd: "node --run lint", mode: "parallel", name: "lint" },
   { cmd: "node --run markdown:lint", mode: "parallel", name: "markdown:lint" },
-  { cmd: "node --run spell:check -- .", mode: "parallel", name: "spell:check" },
   { cmd: "node --run syncpack:lint", mode: "parallel", name: "syncpack:lint" },
   { cmd: "node --run test", mode: "exclusive", name: "test", outputMode: "inherited" },
 ] as const satisfies readonly VerifyCheck[];
