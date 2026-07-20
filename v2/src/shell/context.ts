@@ -23,14 +23,14 @@ import {
 } from "../acquisition/index.js";
 import { type Logger, type LogLevel, createLogger } from "../logging/index.js";
 import type { WritebackCompletion, WritebackPort } from "../run/index.js";
-import { type AgentProfileConfig, type Presenter, detectPresenter } from "../session/index.js";
+import {
+  type AgentProfileConfig,
+  type AgentSandboxConfig,
+  type Presenter,
+  detectPresenter,
+} from "../session/index.js";
 import { wrapCommand as sandboxWrapCommand } from "../sandbox/index.js";
-import type {
-  AgentRouting,
-  DispatchDeps,
-  DispatchSource,
-  LaunchPolicy,
-} from "../dispatch/index.js";
+import type { AgentRouting, DispatchDeps, DispatchSource } from "../dispatch/index.js";
 import type { WorkspaceConfig } from "../workspace/index.js";
 import type { Config, SourceConfigSection } from "./config/schema.js";
 import { loadConfig, type LoadConfigInput } from "./config/load.js";
@@ -318,24 +318,34 @@ export class Context {
       ...(this.config.prompts?.initial === undefined
         ? {}
         : { prompt: this.config.prompts.initial }),
-      // Agent sandbox: omit policy+wrap when the kill-switch is set (unwrapped),
-      // else wrap under the config's egress/read-only policy (contracts §7/§9).
-      // The per-task workspace grant is added at launch (sandbox lane).
+      // Agent sandbox: omit config+wrap when the kill-switch is set (unwrapped),
+      // else pass the config slice + agent kinds so Dispatch can compose the full
+      // per-task policy at launch (workspace/state/repo grants, contracts §7/§9).
       ...(this.sandboxDisabled()
         ? {}
-        : { policy: this.agentSandboxPolicy(), wrapCommand: sandboxWrapCommand }),
+        : {
+            agentSandbox: this.agentSandboxConfig(),
+            agentKinds: Object.keys(profiles),
+            wrapCommand: sandboxWrapCommand,
+          }),
       logger: this.logger,
     };
   }
 
-  /** The agent-session sandbox policy from `sandbox.readOnlyDirectories`/`network`. */
-  public agentSandboxPolicy(): LaunchPolicy {
+  /**
+   * The config-derived agent sandbox slice: the host-wide read-only dirs and the
+   * optional egress allowlist. `network` is present only when the config
+   * specifies it, so `composeAgentPolicy` can tell "omitted (⇒ baseline)" from
+   * "specified empty (⇒ deny all)".
+   */
+  public agentSandboxConfig(): AgentSandboxConfig {
     return {
-      writablePaths: [],
       readOnlyPaths: (this.config.sandbox?.readOnlyDirectories ?? []).map((directory) =>
         this.expand(directory),
       ),
-      network: this.config.sandbox?.network ?? [],
+      ...(this.config.sandbox?.network === undefined
+        ? {}
+        : { network: this.config.sandbox.network }),
     };
   }
 

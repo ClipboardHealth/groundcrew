@@ -21,6 +21,8 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  branchFor,
+  commitSubjects,
   configure,
   createRepo,
   encodeProbeSpec,
@@ -265,6 +267,62 @@ describe.runIf(sandboxLaneEnabled)("H. Sandbox posture", () => {
     } finally {
       await loopback.close();
     }
+  });
+
+  // Regression for the dropped real-agent grants: the initial v2 port never
+  // granted the parent clone's `.git`, so a sandboxed agent could not commit —
+  // and the existing probes never caught it because they only wrote inside the
+  // workspace. Here the agent commits *inside its worktree* and we assert the
+  // object landed in the parent clone's shared object store.
+  it("SANDBOX-05: a sandboxed agent commits in its worktree and the object lands in the parent clone", async () => {
+    await withScenario(async (scenario) => {
+      const { clonePath } = await createRepo({ scenario, name: "alpha" });
+
+      const workspace = workspaceDirectory({ scenario, taskId: TASK_ID });
+      const worktree = path.join(workspace, "alpha");
+      const commitMarker = path.join(workspace, ".probe", "commit.json");
+      const subject = `sandbox commit ${scenario.id}`;
+
+      const actions: ProbeAction[] = [
+        {
+          kind: "exec",
+          command: "git",
+          args: ["commit", "--allow-empty", "-m", subject],
+          cwd: worktree,
+          marker: commitMarker,
+        },
+      ];
+
+      const crew = configure({
+        scenario,
+        config: {
+          agentProfiles: {
+            scripted: {
+              command: "sandbox-probe",
+              environment: { [PROBE_AGENT_SPEC_ENV]: encodeProbeSpec({ actions }) },
+            },
+          },
+        },
+      });
+      installSandboxProbeAgent({ scenario });
+      crew.seedSource([{ id: "TASK-1", title: "probe", agent: "scripted", repos: ["alpha"] }]);
+
+      await crew.tick();
+
+      // The commit succeeded *inside the sandbox* — the parent clone's `.git`
+      // (the shared object store) was granted write.
+      const commit = await waitForProbeOutcome({ marker: commitMarker });
+      expect(commit.ok).toBe(true);
+
+      // And it physically landed in the parent clone: the worktree branch now
+      // carries the commit, read back from the clone itself (outside any sandbox).
+      const subjects = await commitSubjects({
+        scenario,
+        repoDirectory: clonePath,
+        ref: branchFor({ taskId: TASK_ID }),
+      });
+      expect(subjects[0]).toBe(subject);
+    }, { sandboxLane: true });
   });
 });
 

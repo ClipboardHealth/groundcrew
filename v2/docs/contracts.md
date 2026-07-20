@@ -219,6 +219,10 @@ omitted = detected / specified = exactly yours, never merged; no secret values s
   "presenter": "tmux",                            // cmux | tmux | zellij; omitted → first found
   "sandbox": { "readOnlyDirectories": ["~/.config/tfenv"],
                 "network": ["api.github.com"] },   // agent-session egress allowlist (sources declare theirs in manifests).
+                                                    // OMITTED ⇒ a built-in default baseline applies (agent-provider APIs,
+                                                    // package registries, git hosts, common MCP endpoints) so a fresh
+                                                    // install works out of the box; SPECIFIED (even []) replaces the
+                                                    // baseline wholesale (principle 1). [] ⇒ deny all agent egress.
                                                     // srt granularity (validated live): remote hosts domain-matched, ports
                                                     // ignored; any loopback entry enables local traffic as a whole.
   "prompts": { "initial": "…" },                  // or { "promptFile": "…" }
@@ -287,7 +291,12 @@ Agent session environment = the orchestrator's own environment (PATH etc. inheri
 the profile's `environment`, overlaid with the injected `GROUNDCREW_WORKSPACE`/`GROUNDCREW_TASK_ID`
 and `GROUNDCREW_SANDBOX=off` — the outermost wrap is the only wrap: in-session `crew` never nests a
 second srt sandbox inside an already-confined session. The sandbox confines filesystem/network, not
-env visibility. The launch policy = config `sandbox` (read-only dirs, egress) plus the per-task
-grant added by Dispatch: the task workspace and the state root (run records, log file) writable.
+env visibility. The launch policy is composed per task (Session's `composeAgentPolicy`, called by
+Dispatch) from the config `sandbox` slice (read-only dirs; egress = config `network` when specified,
+else the default baseline) plus the grants a real agent CLI needs: the task workspace and state root
+(run records, log file) writable; the agent's own config/state, the toolchains that run it, git/gh
+identity, and the macOS keychain readable under the home mask; and **each provisioned repo clone's
+`.git` directory** writable — a worktree shares the parent clone's object store, so this is what lets
+a sandboxed agent commit.
 
 The default initial prompt ends by instructing the agent to run `crew done` when finished.

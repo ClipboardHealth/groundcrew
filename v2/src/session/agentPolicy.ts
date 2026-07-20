@@ -161,6 +161,16 @@ const SHARED_WRITE_HOME_PATHS: readonly string[] = [".npm"];
 const MACOS_KEYCHAIN_READ_PATH = "Library/Keychains";
 
 /**
+ * System temp dirs granted write so agent shell tools can scratch. On macOS
+ * `/tmp` is a symlink to `/private/tmp`; the sandbox resolves paths, so both are
+ * listed to cover either form.
+ */
+const SYSTEM_TEMP_WRITE_PATHS: Record<"darwin" | "other", readonly string[]> = {
+  darwin: ["/tmp", "/private/tmp"],
+  other: ["/tmp"],
+};
+
+/**
  * Default agent egress allowlist, applied when config omits `sandbox.network`.
  * Curated from v1's `clearance-allow-hosts`: the agent-provider APIs, package
  * registries, git hosts, and the MCP/observability endpoints the shipped agent
@@ -252,6 +262,10 @@ export function composeAgentPolicy(input: ComposeAgentPolicyInput): SandboxPolic
     ...SHARED_WRITE_HOME_PATHS.map(underHome),
     ...input.repoCloneGitDirectories,
     ...(tmpDir === undefined || tmpDir === "" ? [] : [tmpDir]),
+    // Agent shell tools scratch under the system temp dir, and it is not always
+    // `$TMPDIR` — claude's Bash tool writes snapshots to `/tmp/claude-<uid>/…`
+    // (validated live). `/tmp` is shared scratch, not a credential surface.
+    ...SYSTEM_TEMP_WRITE_PATHS[platform === "darwin" ? "darwin" : "other"],
   ]);
 
   const network = input.configPolicy.network ?? DEFAULT_AGENT_EGRESS;

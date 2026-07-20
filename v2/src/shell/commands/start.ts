@@ -14,6 +14,7 @@ import {
 } from "../dispatchAdapter.js";
 import type { Context } from "../context.js";
 import type { Io } from "../io.js";
+import { summarizeTick } from "../render/tick.js";
 
 export interface StartOptions {
   readonly watch?: boolean;
@@ -82,20 +83,8 @@ async function runWatch(input: { readonly context: Context; readonly io: Io }): 
 }
 
 function renderTick(report: TickReport, io: Io): void {
-  if (report.dispatched.length > 0) {
-    io.out(`Dispatched: ${report.dispatched.join(", ")}`);
-  }
-
-  for (const [taskId, verdict] of Object.entries(report.skipped)) {
-    io.out(`Skipped ${taskId}: ${verdict.skipReason}${detailOf(verdict.detail)}`);
-  }
-
-  if (report.reaped.length > 0) {
-    io.out(`Reaped: ${report.reaped.join(", ")}`);
-  }
-
-  if (report.dispatched.length === 0 && Object.keys(report.skipped).length === 0) {
-    io.out("Nothing eligible to dispatch.");
+  for (const line of summarizeTick(report)) {
+    io.out(line);
   }
 }
 

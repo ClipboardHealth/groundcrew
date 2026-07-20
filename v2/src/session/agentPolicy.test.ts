@@ -50,6 +50,13 @@ describe("composeAgentPolicy", () => {
       expect(policy.readOnlyPaths).toContain(under(".claude.json"));
     });
 
+    it("grants the system temp dir write (agent shell tools scratch there)", () => {
+      expect(compose({ platform: "linux" }).writablePaths).toContain("/tmp");
+      const darwin = compose({ platform: "darwin" }).writablePaths;
+      expect(darwin).toContain("/tmp");
+      expect(darwin).toContain("/private/tmp");
+    });
+
     it("grants $TMPDIR write when set, and omits it when unset or blank", () => {
       expect(compose({ environment: { HOME, TMPDIR: "/tmp/x" } }).writablePaths).toContain("/tmp/x");
       expect(compose({ environment: { HOME, TMPDIR: "" } }).writablePaths).not.toContain("");

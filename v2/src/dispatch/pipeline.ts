@@ -16,11 +16,12 @@
  */
 
 import * as fs from "node:fs";
+import path from "node:path";
 
 import type { Task } from "../acquisition/index.js";
 import type { Logger } from "../logging/index.js";
 import { createRun, deleteRun, generateRunId, listRuns, type RunRecord } from "../run/index.js";
-import { LaunchError, launchSession, sessionNameFor } from "../session/index.js";
+import { composeAgentPolicy, LaunchError, launchSession, sessionNameFor } from "../session/index.js";
 import {
   canonicalTaskId,
   clonePath,
@@ -288,20 +289,23 @@ async function provisionAndLaunch(context: {
         : { sessionEnvironment: input.sessionEnvironment }),
       presenter: input.presenter,
       ...(input.prompt === undefined ? {} : { prompt: input.prompt }),
-      // The per-task grant (contracts §9): the config policy names host-wide
-      // read-only dirs and egress; the workspace and the state root (run
-      // records, log file — what in-session `crew` writes) are granted per task.
-      ...(input.policy === undefined
+      // The per-task grant (contracts §9): the config slice names host-wide
+      // read-only dirs and egress; Session composes the full policy — workspace,
+      // state root, agent-home carve-outs, and each repo clone's `.git` (so the
+      // sandboxed agent can commit) — from the per-task values here.
+      ...(input.agentSandbox === undefined
         ? {}
         : {
-            policy: {
-              ...input.policy,
-              writablePaths: [
-                ...input.policy.writablePaths,
-                workspaceDirectory,
-                input.stateRoot,
-              ],
-            },
+            policy: composeAgentPolicy({
+              configPolicy: input.agentSandbox,
+              workspaceDirectory,
+              stateRoot: input.stateRoot,
+              repoCloneGitDirectories: repos.map((repo) =>
+                path.join(clonePath({ config: input.workspaceConfig, repo }), ".git"),
+              ),
+              environment: input.environment,
+              ...(input.agentKinds === undefined ? {} : { agentKinds: input.agentKinds }),
+            }),
           }),
       ...(input.wrapCommand === undefined ? {} : { wrapCommand: input.wrapCommand }),
     });

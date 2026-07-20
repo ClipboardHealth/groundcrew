@@ -132,6 +132,7 @@ export {
 export type {
   LoopbackServer,
   ProbeAction,
+  ProbeExecAction,
   ProbeHttpAction,
   ProbeOutcome,
   ProbeReadAction,

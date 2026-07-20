@@ -15,10 +15,14 @@
 //   { "actions": [
 //       { "kind": "write",   "path": "<abs target>", "marker": "<abs marker>" },
 //       { "kind": "httpGet", "url": "http://…",      "marker": "<abs marker>",
-//         "timeoutMilliseconds": 3000 }
+//         "timeoutMilliseconds": 3000 },
+//       { "kind": "exec",    "command": "git", "args": ["commit", …],
+//         "cwd": "<abs dir>", "marker": "<abs marker>" }
 //   ] }
-// Marker file contents: { "ok": true|false, "detail"?: "<errno|status|message>" }.
+// Marker file contents: { "ok": true|false, "detail"?: "<errno|status|stdout|message>" }.
+// For "exec", ok = (exit code 0) and detail = trimmed stdout (else stderr, else exit).
 
+const cp = require("node:child_process");
 const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
@@ -60,6 +64,26 @@ async function runAction(action) {
   if (action.kind === "httpGet") {
     return doHttpGet(action);
   }
+
+  if (action.kind === "exec") {
+    return doExec(action);
+  }
+}
+
+function doExec(action) {
+  const result = cp.spawnSync(action.command, action.args || [], {
+    cwd: action.cwd,
+    encoding: "utf8",
+  });
+  if (result.error) {
+    record(action.marker, { ok: false, detail: errorDetail(result.error) });
+    return;
+  }
+
+  const ok = result.status === 0;
+  const detail =
+    (result.stdout || "").trim() || (result.stderr || "").trim() || String(result.status);
+  record(action.marker, { ok, detail });
 }
 
 function doWrite(action) {

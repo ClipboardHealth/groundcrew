@@ -9,7 +9,12 @@
 
 import type { SourceHandle, Task } from "../acquisition/index.js";
 import type { Logger } from "../logging/index.js";
-import type { AgentProfileConfig, LaunchSessionInput, Presenter } from "../session/index.js";
+import type {
+  AgentProfileConfig,
+  AgentSandboxConfig,
+  LaunchSessionInput,
+  Presenter,
+} from "../session/index.js";
 import type { WorkspaceConfig } from "../workspace/index.js";
 
 /** The agent sandbox policy, borrowed from Session so Dispatch need not import Sandbox. */
@@ -77,8 +82,14 @@ export interface DispatchDeps {
   sessionEnvironment?: Record<string, string>;
   /** Initial prompt (`prompts.initial`); defaults to the bare `crew done` instruction. */
   prompt?: string;
-  /** Agent sandbox policy; omitted ⇒ the launch is not sandbox-wrapped. */
-  policy?: LaunchPolicy;
+  /**
+   * Config-derived agent sandbox slice (read-only dirs + optional egress);
+   * omitted ⇒ the launch is not sandbox-wrapped. Dispatch composes the full
+   * per-task policy from this via Session's `composeAgentPolicy`.
+   */
+  agentSandbox?: AgentSandboxConfig;
+  /** Agent kinds in play (profile names) — scopes the per-agent home grants. */
+  agentKinds?: readonly string[];
   /** Injected sandbox wrap; omitted ⇒ Session's real `wrapCommand`. */
   wrapCommand?: LaunchWrapCommand;
   logger?: Logger;

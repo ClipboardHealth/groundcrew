@@ -109,7 +109,18 @@ export interface ProbeHttpAction {
   readonly timeoutMilliseconds?: number;
 }
 
-export type ProbeAction = ProbeWriteAction | ProbeReadAction | ProbeHttpAction;
+export interface ProbeExecAction {
+  readonly kind: "exec";
+  /** Executable to run (resolved on the sandboxed PATH). */
+  readonly command: string;
+  readonly args?: readonly string[];
+  /** Working directory for the spawn. */
+  readonly cwd: string;
+  /** Marker records `{ ok: exit===0, detail: stdout|stderr|exit }`. */
+  readonly marker: string;
+}
+
+export type ProbeAction = ProbeWriteAction | ProbeReadAction | ProbeHttpAction | ProbeExecAction;
 
 /** Source manifest as an open key/value map (the harness only rewrites `name`). */
 const manifestSchema = z.record(z.string(), z.unknown());
