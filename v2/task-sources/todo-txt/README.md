@@ -35,7 +35,7 @@ few groundcrew-specific `key:value` tags:
 | `(A)`…`(Z)`    | priority; **`(A)` is highest.** Mapped so a higher protocol number sorts first: `(A)`→26, `(B)`→25, … `(Z)`→1.                                                                               |
 | `YYYY-MM-DD`   | optional creation date (after the priority); ignored for routing                                                                                                                             |
 | `id:<slug>`    | explicit stable id. **Absent → a stable SHA-256 hash of the trimmed line** (12 hex chars). If you plan to edit a line after dispatch, give it an explicit `id:` so the id survives the edit. |
-| `repos:a,b`    | repo designation (comma-separated, repeatable) → task `repos`                                                                                                                                |
+| `repos:a,b` (or v1's singular `repo:a`)    | repo designation (comma-separated, repeatable) → task `repos`                                                                                                                                |
 | `agent:<name>` | agent routing → task `agent`                                                                                                                                                                 |
 | `blocked:<v>`  | blocked unless `v` ∈ {`false`,`0`,`no`} → task `blocked`                                                                                                                                     |
 

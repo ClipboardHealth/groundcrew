@@ -66,6 +66,13 @@ function seed(lines: string[]): void {
 }
 
 describe("todo-txt bundle", () => {
+  test("v1's singular repo: tag is an accepted designation", () => {
+    seed(["(B) Fix the widget repo:alpha agent:claude id:V1REPO"]);
+    const tasks = invokeOk("list", {}).tasks ?? [];
+    const task = tasks.find((entry) => entry.id === "V1REPO");
+    deepStrictEqual(task?.repos, ["alpha"]);
+  });
+
   test("list maps grammar to protocol tasks", () => {
     seed([
       "(A) Ship the login fix id:LOGIN-1 repos:web,api agent:claude",

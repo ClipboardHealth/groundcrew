@@ -14,7 +14,7 @@
 //   - leading `x ` marks the line completed  -> terminal: true
 //   - `(A)`..`(Z)` priority                  -> higher protocol number = first
 //   - `id:<slug>`   explicit id (else a stable content hash of the line)
-//   - `repos:a,b`   repo designation (comma-separated; repeatable)
+//   - `repos:a,b`   repo designation (comma-separated; repeatable; v1's singular `repo:a` also accepted)
 //   - `agent:<name>` agent routing
 //   - `blocked:<v>` blocked unless v ∈ {false,0,no}
 // Blank lines and `#` comments are ignored.
@@ -103,7 +103,10 @@ function parseLine(raw, lineIndex) {
   }
 
   const id = tags["id"]?.[0] ?? hashLine(trimmed);
-  const repos = (tags["repos"] ?? [])
+  // v1 parity: v1's grammar used a singular `repo:<name>` tag
+  // (src/lib/adapters/todo-txt/normalizer.ts:117); existing todo.txt files
+  // carry it. Both forms are explicit designations; `repos:` entries first.
+  const repos = [...(tags["repos"] ?? []), ...(tags["repo"] ?? [])]
     .flatMap((value) => value.split(","))
     .map((value) => value.trim())
     .filter(Boolean);
