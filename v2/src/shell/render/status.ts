@@ -207,10 +207,25 @@ function queueLine(queued: QueuedView): string {
 
   if (queued.verdict !== undefined) {
     const detail = queued.verdict.detail === undefined ? "" : ` ${queued.verdict.detail}`;
-    parts.push(`skip: ${queued.verdict.skipReason}${detail}`);
+    parts.push(`skip: ${queued.verdict.skipReason}${detail}${asOf(queued.verdict.ts)}`);
   }
 
   return parts.join("  ");
+}
+
+/**
+ * The verdict's age as a ` (as of HH:MM UTC)` suffix. A verdict is the *last*
+ * poll's decision, persisted until overwritten — so a `slots-full` skip lingers
+ * even after every run has finished. Stamping it keeps the queue truthful about
+ * how current the reason is. UTC + a direct ISO slice (no `Date`) keeps it
+ * deterministic; absent/unparseable timestamps render nothing.
+ */
+function asOf(ts: string | undefined): string {
+  if (ts === undefined) {
+    return "";
+  }
+  const time = /^\d{4}-\d{2}-\d{2}T(?<hm>\d{2}:\d{2})/u.exec(ts)?.groups?.["hm"];
+  return time === undefined ? "" : ` (as of ${time} UTC)`;
 }
 
 function renderQueueFor(model: StatusModel, taskId: string, lines: string[]): void {
