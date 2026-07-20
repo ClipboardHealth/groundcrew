@@ -103,7 +103,14 @@ export function installFixtureSource(input: {
     fs.chmodSync(destination, 0o755);
   }
 
-  const storeDirectory = path.join(scenario.root, `fixture-store-${name}`);
+  // On the sandbox lane the store + journal must live where the source can
+  // write under real srt: the canonical per-source scratch dir core grants
+  // read-write (contracts §2/§4.1). On the core lane (no sandbox) the store
+  // stays a plain scenario-root dir. Either way the paths flow through the same
+  // store/journal readers, so scenario code is unaffected.
+  const storeDirectory = scenario.sandboxLane
+    ? path.join(scenario.stateRoot, "source-scratch", name)
+    : path.join(scenario.root, `fixture-store-${name}`);
   const storePath = path.join(storeDirectory, "store.json");
   const callsPath = path.join(storeDirectory, "calls.jsonl");
   fs.mkdirSync(storeDirectory, { recursive: true });

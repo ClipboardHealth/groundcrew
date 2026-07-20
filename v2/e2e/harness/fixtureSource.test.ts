@@ -209,4 +209,35 @@ describe("fixture source", () => {
       expect(manifest.environment["FIXTURE_STORE"]).toBe(source.storePath);
     });
   });
+
+  it("keeps the store under scenario.root on the core lane", async () => {
+    await withScenario(async (scenario) => {
+      const source = installFixtureSource({ scenario });
+      expect(source.storePath).toBe(
+        path.join(scenario.root, "fixture-store-fixture", "store.json"),
+      );
+      expect(source.storePath).not.toContain("source-scratch");
+    });
+  });
+
+  it("places the store under the canonical source scratch dir on the sandbox lane", async () => {
+    await withScenario(
+      async (scenario) => {
+        const source = installFixtureSource({ scenario });
+        const scratchDirectory = path.join(scenario.stateRoot, "source-scratch", "fixture");
+        expect(source.storePath).toBe(path.join(scratchDirectory, "store.json"));
+        expect(source.callsPath).toBe(path.join(scratchDirectory, "calls.jsonl"));
+
+        const manifest = JSON.parse(
+          fs.readFileSync(path.join(source.bundleDirectory, "source.json"), "utf8"),
+        ) as { environment: Record<string, string> };
+        expect(manifest.environment["FIXTURE_STORE"]).toBe(source.storePath);
+
+        // Paths still flow through the store/journal readers unchanged.
+        source.seed({ tasks: [{ id: "TASK-1", title: "x" }] });
+        expect(source.readStore().tasks[0]?.id).toBe("TASK-1");
+      },
+      { sandboxLane: true },
+    );
+  });
 });

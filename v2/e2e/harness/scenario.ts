@@ -42,6 +42,8 @@ export interface Scenario {
   /** Where the fake `gh` records its invocations (FLOW-06 assertion point). */
   readonly fakeGhLogPath: string;
   readonly tmuxSocket: string;
+  /** True when this scenario runs on the sandbox lane (see {@link CreateScenarioOptions}). */
+  readonly sandboxLane: boolean;
   /** Hermetic environment for every spawn in this scenario. */
   readonly env: Readonly<Record<string, string>>;
   /** The `crew` binary invocation as `[executable, ...args]`. */
@@ -100,6 +102,7 @@ export function createScenario(options: CreateScenarioOptions = {}): Scenario {
 
   const pathValue = buildHermeticPath([fakesBinDirectory, toolsBinDirectory]);
   const crewBinCommand = resolveCrewBinCommand();
+  const sandboxLane = options.sandboxLane === true;
 
   const env: Record<string, string> = {
     HOME: home,
@@ -114,7 +117,7 @@ export function createScenario(options: CreateScenarioOptions = {}): Scenario {
     GIT_CONFIG_NOSYSTEM: "1",
     GIT_TERMINAL_PROMPT: "0",
     // Core lane pins the kill-switch; the sandbox lane omits it (contracts §7).
-    ...(options.sandboxLane === true ? {} : { GROUNDCREW_SANDBOX: "off" }),
+    ...(sandboxLane ? {} : { GROUNDCREW_SANDBOX: "off" }),
   };
 
   let disposed = false;
@@ -132,6 +135,7 @@ export function createScenario(options: CreateScenarioOptions = {}): Scenario {
     fakesBinDirectory,
     fakeGhLogPath,
     tmuxSocket: id,
+    sandboxLane,
     env,
     crewBinCommand,
     async dispose(): Promise<void> {
