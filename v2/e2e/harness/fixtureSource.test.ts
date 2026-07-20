@@ -199,4 +199,14 @@ describe("fixture source", () => {
       expect(manifest.commands["list"]).toBe("./list");
     });
   });
+
+  it("bakes the store path into the installed manifest environment (init reachability)", async () => {
+    await withScenario(async (scenario) => {
+      const source = installFixtureSource({ scenario });
+      const manifest = JSON.parse(
+        fs.readFileSync(path.join(source.bundleDirectory, "source.json"), "utf8"),
+      ) as { environment: Record<string, string> };
+      expect(manifest.environment["FIXTURE_STORE"]).toBe(source.storePath);
+    });
+  });
 });

@@ -103,21 +103,29 @@ export function installFixtureSource(input: {
     fs.chmodSync(destination, 0o755);
   }
 
+  const storeDirectory = path.join(scenario.root, `fixture-store-${name}`);
+  const storePath = path.join(storeDirectory, "store.json");
+  const callsPath = path.join(storeDirectory, "calls.jsonl");
+  fs.mkdirSync(storeDirectory, { recursive: true });
+
   const manifestTemplate = readOnly ? "source.readonly.json" : "source.json";
   const manifestJson: unknown = JSON.parse(
     fs.readFileSync(path.join(templateDirectory, manifestTemplate), "utf8"),
   );
   const manifest = manifestSchema.parse(manifestJson);
   manifest["name"] = name;
+  // The store path lives in the manifest's own `environment` so the bundle is
+  // self-describing. `crew init` discovers the user-dir bundle and copies its
+  // manifest `environment` into the config it writes, and core forwards manifest
+  // env to the source process (contracts §4.1) — that is what lets an
+  // init-produced config, which never goes through bindings.configure, reach the
+  // store (SURFACE-01/05). bindings.configure also sets it via the config
+  // source's `environment`; §4.1 merges config env over manifest env.
+  manifest["environment"] = { FIXTURE_STORE: storePath };
   fs.writeFileSync(
     path.join(bundleDirectory, "source.json"),
     JSON.stringify(manifest, undefined, 2) + "\n",
   );
-
-  const storeDirectory = path.join(scenario.root, `fixture-store-${name}`);
-  const storePath = path.join(storeDirectory, "store.json");
-  const callsPath = path.join(storeDirectory, "calls.jsonl");
-  fs.mkdirSync(storeDirectory, { recursive: true });
 
   const handle: FixtureSource = {
     name,
