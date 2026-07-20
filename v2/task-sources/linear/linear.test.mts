@@ -142,7 +142,8 @@ function issueNode(overrides: Record<string, unknown> = {}): Record<string, unkn
     title: "Do the thing",
     description: "Some prose\nRepos: web, api\nAgent: claude",
     priority: 1,
-    state: { type: "started", name: "In Progress" },
+    state: { type: "unstarted", name: "Todo" },
+    labels: { nodes: [{ name: "agent-claude" }] },
     inverseRelations: { nodes: [] },
     ...overrides,
   };
@@ -166,10 +167,46 @@ describe("linear bundle", () => {
     const [recorded] = requests;
     strictEqual(recorded?.authorization, API_KEY);
     deepStrictEqual(recorded?.variables.filter?.assignee, { isMe: { eq: true } });
+    // v1 parity: dispatch is opt-in via the agent-* label; backlog/triage never
+    // surface, but terminal states DO (the reap sweep observes them).
+    deepStrictEqual(recorded?.variables.filter?.labels, {
+      some: { name: { startsWith: "agent-" } },
+    });
     deepStrictEqual(recorded?.variables.filter?.state?.type?.nin?.toSorted(), [
-      "canceled",
-      "completed",
+      "backlog",
+      "triage",
     ]);
+  });
+
+  test("the agent-* label is the routing and Todo-only gates dispatchability", async () => {
+    respond = () => ({
+      issues: {
+        nodes: [
+          issueNode({ identifier: "T-1" }), // unstarted + agent-claude
+          issueNode({
+            identifier: "T-2",
+            state: { type: "started", name: "In Progress" },
+            labels: { nodes: [{ name: "agent-codex" }] },
+            description: "no directives here",
+          }),
+          issueNode({
+            identifier: "T-3",
+            state: { type: "completed", name: "Done" },
+            description: "no directives here",
+          }),
+        ],
+        pageInfo: { hasNextPage: false, endCursor: null },
+      },
+    });
+
+    const tasks = (await invokeOk("list", {})).tasks ?? [];
+    const byId = new Map(tasks.map((task) => [task.id, task]));
+    strictEqual(byId.get("T-1")?.agent, "claude"); // label wins over description
+    strictEqual(byId.get("T-1")?.blocked, undefined); // Todo ⇒ dispatchable
+    strictEqual(byId.get("T-2")?.agent, "codex");
+    strictEqual(byId.get("T-2")?.blocked, true); // started ⇒ listed, not dispatchable
+    strictEqual(byId.get("T-3")?.terminal, true); // done ⇒ listed for the reap sweep
+    strictEqual(byId.get("T-3")?.blocked, undefined);
   });
 
   test("a list larger than the 64KB pipe buffer arrives intact", async () => {
@@ -245,7 +282,12 @@ describe("linear bundle", () => {
       issues: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } },
     });
     await invokeOk("list", {}, { LINEAR_GROUNDCREW_LABEL: "groundcrew" });
-    deepStrictEqual(requests[0]?.variables.filter?.labels, { some: { name: { eq: "groundcrew" } } });
+    deepStrictEqual(requests[0]?.variables.filter?.labels, {
+      some: { name: { startsWith: "agent-" } },
+    });
+    deepStrictEqual(requests[0]?.variables.filter?.and, [
+      { labels: { some: { name: { eq: "groundcrew" } } } },
+    ]);
   });
 
   test("get resolves by identifier via team key + number", async () => {

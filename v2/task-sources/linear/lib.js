@@ -33,6 +33,7 @@ function config() {
     apiKey,
     apiUrl: process.env["LINEAR_API_URL"] || DEFAULT_API_URL,
     label: process.env["LINEAR_GROUNDCREW_LABEL"] || undefined,
+    labelPrefix: process.env["LINEAR_GROUNDCREW_LABEL_PREFIX"] || "agent-",
     completedStateId: process.env["LINEAR_COMPLETED_STATE_ID"] || undefined,
     timeoutMs: Number(process.env["LINEAR_HTTP_TIMEOUT_MS"]) || 20000,
   };
@@ -104,10 +105,20 @@ const ISSUE_FIELDS = `
   description
   priority
   state { type name }
+  labels(first: 20) { nodes { name } }
   inverseRelations(first: 50, includeArchived: false) {
     nodes { type issue { identifier state { type } } }
   }
 `;
+
+function agentFromLabels(labels) {
+  const { labelPrefix } = config();
+  const match = (labels ?? []).find(
+    (label) => typeof label?.name === "string" && label.name.startsWith(labelPrefix),
+  );
+  const agent = match?.name.slice(labelPrefix.length);
+  return agent ? agent : undefined;
+}
 
 function taskFromNode(node) {
   const description = node.description ?? undefined;
@@ -116,8 +127,11 @@ function taskFromNode(node) {
       relation.type === "blocks" && !isTerminalStateType(relation.issue?.state?.type),
   );
   const repos = parseRepos(description);
-  const agent = parseAgent(description);
+  const agent = agentFromLabels(node.labels?.nodes) ?? parseAgent(description);
   const priority = priorityToProtocol(node.priority);
+  // v1 parity: only Todo (state.type "unstarted") is dispatchable; anything
+  // else is surfaced but ineligible, exactly like an open blocker.
+  const dispatchable = node.state?.type === "unstarted";
 
   const task = {
     id: node.identifier,
@@ -130,7 +144,7 @@ function taskFromNode(node) {
   if (priority !== undefined) {
     task.priority = priority;
   }
-  if (blockers.length > 0) {
+  if (blockers.length > 0 || (!dispatchable && task.terminal !== true)) {
     task.blocked = true;
   }
   if (agent !== undefined) {
@@ -143,13 +157,17 @@ function taskFromNode(node) {
 }
 
 async function listTasks() {
-  const { label } = config();
+  const { label, labelPrefix } = config();
+  // v1 parity (src/lib/adapters/linear/fetch.ts): dispatch is OPT-IN via the
+  // `agent-*` label; only viewer-assigned, labelled issues surface. Terminal
+  // states stay listed (the reap sweep observes them); backlog/triage never do.
   const filter = {
     assignee: { isMe: { eq: true } },
-    state: { type: { nin: [...TERMINAL_STATE_TYPES] } },
+    labels: { some: { name: { startsWith: labelPrefix } } },
+    state: { type: { nin: ["backlog", "triage"] } },
   };
   if (label) {
-    filter.labels = { some: { name: { eq: label } } };
+    filter.and = [{ labels: { some: { name: { eq: label } } } }];
   }
 
   const tasks = [];
