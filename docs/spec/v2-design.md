@@ -23,7 +23,7 @@ Locked constraints, not to be re-litigated during implementation:
 
 - The locked decisions kill or fundamentally reshape most of v1 (~21K source lines, ~38K test lines): `config.ts` dies with the TS-config format, the reviewer PR-polling loop dies, clearance/safehouse/sbx die, several commands die, and the core nouns are redefined. Every external surface breaks: config, CLI, source contract, sandbox posture, completion model.
 - Evolve's safety-net premise was stale: the acceptance suite never runs against v1 (green-on-v1 dropped), so in-place evolution gets zero protection from it. "Evolve" would be the same rewrite executed as a thousand PRs fighting 38K test lines that assert dying behavior.
-- Roughly 15–25% of v1 survives recognizably (srtPolicy/srtLaunch, the cleaner, tmux/git plumbing, doctor pieces, usage, completions). Surviving code is **ported file-by-file with its unit tests**; `git mv` preserves history.
+- Roughly 15–25% of v1 survives recognizably (sandbox policy and launch composition, the cleaner, tmux/git plumbing, doctor pieces, usage, completions). Surviving code is **ported file-by-file with its unit tests**; `git mv` preserves history.
 
 **Repo strategy: same repo, isolated `v2/` workspace.** v2 grows on `main` under a top-level `v2/` with its own `package.json`, flat `src/<module>` layout, and its own `CLAUDE.md`/`AGENTS.md`/`CONTEXT.md` carrying the v2 ubiquitous language. v1 and v2 use the same nouns with contradictory meanings ("Workspace" means a terminal pane in v1 and a per-task directory of worktrees in v2), so sharing one `src/` was rejected — it would contaminate agent-driven work. dependency-cruiser forbids cross-tree imports in both directions. **Flip condition:** if v2-building agents keep tripping over v1 despite the boundary, escalate mid-build to a new repo initialized from a full clone, then rename old → `groundcrew-v1`, new → `groundcrew`.
 
@@ -96,14 +96,14 @@ Single-repo tasks stay dead simple as the degenerate case: one designated repo, 
 **"Plugin" means exactly one thing in v2: a task source.** Everything else that looked pluggable is config or core:
 
 - **Agent harnesses are declarative config**, not plugins: `cmd`, resume args, sandbox preferences, plus first-class `model`/`effort` fields. `cmd`-points-at-your-script is the escape hatch for odd agents.
-- **Sandbox runners are core-only**, explicitly not pluggable — a pluggable sandbox is a contradiction under sandboxed-by-default. **v2 ships exactly one runner: srt** (`sandbox-exec` on macOS, bubblewrap on Linux). Safehouse, clearance, and sbx die, including the `crew-clearance-ensure` bin.
+- **Sandbox runners are core-only**, explicitly not pluggable — a pluggable sandbox is a contradiction under sandboxed-by-default. The implementation selects the supported platform runner and keeps its mechanics behind the core sandbox boundary.
 - **No in-process plugin class exists.** The internal `TaskSource` interface survives only as core's private representation of a discovered manifest.
 
 **Packaging:** a plugin is a **directory bundle** — `source.json` plus scripts — discovered under `~/.config/groundcrew/task-sources/<name>/` (user) or bundled in the package (first-party). The directory is the plugin: language-agnostic, no runtime loading. Distribution is deliberately not groundcrew's problem (git clone, `curl | tar`, npm postinstall). No registry or catalog in v2.0; provenance tiers collapse to `package | user`. Review isolation is met structurally: third-party code never enters the core repo and never runs in the core process.
 
 **Versioning:** `source.json` carries a required integer `protocolVersion: 1` naming the contract generation, bumped only on breaking change — capability-by-omission carries all additive change (no version sniffing: `update` absent means read-only). Parseable-but-unsupported version → explicit actionable error in discovery/doctor/status, never a silent skip; unparseable manifests keep skip-plus-warn. Core declares a supported set; v2.0 ships `{1}`. No v1 command aliases.
 
-**Sources are sandboxed by default**, under the same srt machinery as agents: deny-by-default; a source gets its install dir (read), declared secret files, declared env, stdout/stderr, and a per-source scratch dir. The manifest gains a **network egress allowlist** (e.g. `network: ["api.linear.app"]`) alongside `secrets`/`env`/`prerequisites`. Uniform across origins — bundled first-party sources run under the same policy. Per-source opt-out (`sandbox: false`) is loud in status/doctor.
+**Sources are sandboxed by default**, under the same core sandbox boundary as agents: deny-by-default; a source gets its install dir (read), declared secret files, declared env, stdout/stderr, and a per-source scratch dir. The manifest gains a **network egress allowlist** (e.g. `network: ["api.linear.app"]`) alongside `secrets`/`env`/`prerequisites`. Uniform across origins — bundled first-party sources run under the same policy. Per-source opt-out (`sandbox: false`) is loud in status/doctor.
 
 **Batteries included, kernel-pure code paths:** `linear`, `jira`, and `todo-txt` ship as manifest bundles crossing the same process boundary as third-party sources — first-party sources are the protocol's permanent conformance tests. The generic `shell` config-block adapter dies: bring-your-own-scripts is just a user-dir manifest.
 
@@ -190,7 +190,7 @@ Consequences: the session presenter presents sessions, not runs; `status` render
 | **Run**         | The run record: state machine, **reported layer** (`artifact add`/`done` intake), outcomes, writeback point                                                                                | the **Writeback port** (consumer-owned, defined in `src/run/`) |
 | **Workspace**   | Worktrees, branches, **observed layer** (credential-free git facts), `.groundcrew/task.json` and the task-identity resolver; typed errors that Shell maps to exit codes 2/3                | the workspace marker-file format                               |
 | **Session**     | Harness profiles (declarative), launch composition (presenter → sandbox → agent), pause/resume and session-id capture; cmux/tmux/zellij adapters in-core                                   | the **presenter contract seam**                                |
-| **Sandbox**     | Pure library: `wrap(command, policy) → command`; srt mechanics hidden; no lifecycle ownership                                                                                              | nothing pluggable — core-only by decision                      |
+| **Sandbox**     | Pure library: `wrap(command, policy) → command`; runner mechanics hidden; no lifecycle ownership                                                                                           | nothing pluggable — core-only by decision                      |
 | **Shell**       | commander wiring, routing (`repo add` → Workspace; `artifact add`/`done` → Run), rendering, error→exit-code mapping; `status` = read model joining Run (reported) and Workspace (observed) | —                                                              |
 
 The flow model's central invariant gets one owner per layer — **observed = Workspace, reported = Run** — so a lie or missing link is always attributable to exactly one module. Sandbox has two real callers (Session wraps agents, Acquisition wraps sources): a real seam, and the one place that keeps "sandbox runners are not pluggable" enforceable.
@@ -279,7 +279,7 @@ The file sink gets everything, always. Console: `info`+ by default, human-render
 
 ### 10.5 Reconcile and reaping
 
-**Active sweep yes, TTL no.** srt sandboxes are process-scoped — nothing standing to reap except a live agent process, and the interactive baseline forbids killing those on a timer.
+**Active sweep yes, TTL no.** Agent launches are process-scoped, and the interactive baseline forbids killing live agents on a timer. Persistent runner environments remain externally managed.
 
 - **Reconcile is an idempotent library routine with two callers**: startup (the crash-safety guarantee — on-disk git/tmux/sandbox state is the source of truth, compared against expected task state; `using`/signal handlers are the graceful path only) and the dispatcher tick (every Nth poll cycle).
 - Auto-GC only the provably dead: presenter surfaces whose process exited, stale run records, clean worktrees of source-terminal tasks (the cleaner, section 5).
@@ -326,7 +326,7 @@ If Effect is ever reconsidered: gate on v4-stable, follow the opencode pattern (
 1. **Build the acceptance suite red-first from the [E2E scenario catalog](./e2e-scenario-catalog.md)** — the `e2e/` package, fixture source, scripted agent, fake `gh`, harness self-tests. This is the entry point; no v2 code before it.
 2. Fix `main`'s release automation (path/scope filter) so v2 commits don't trigger 4.x publishes (section 2).
 3. Scaffold the `v2/` workspace: seven-module skeleton, dependency-cruiser rules (section 9.6) proven to bite, `CONTEXT.md` from the glossary seed, ADRs seeded from the wayfinder resolutions.
-4. Bring the suite green module by module, porting the surviving v1 code (srtPolicy/srtLaunch, cleaner, tmux/git plumbing, doctor pieces) file-by-file with its tests.
+4. Bring the suite green module by module, porting the surviving v1 code (sandbox policy and launch composition, cleaner, tmux/git plumbing, doctor pieces) file-by-file with its tests.
 5. Before publishing 5.0.0: resolve the `crew upgrade` ambush (section 11) and execute the cutover (section 2).
 
 Post-v2 handoff backlog (deferred by decision): migration easing detail (section 11); presenter bundles and their trust posture (section 8); `crew progress` (section 10.6); an optional repo allowlist (section 4).
@@ -343,7 +343,7 @@ Every map decision, in resolution order. Full rationale lives in the linked tick
 | [Multi-repo task model](https://linear.app/clipboardhealth/issue/DEVOP-5967)                 | One session per task over a workspace of worktrees                                                                     | 4       |
 | [Flow model](https://linear.app/clipboardhealth/issue/DEVOP-5968)                            | Sinks and flows dissolve; `list`/`get`/`update` source contract; run-state machine                                     | 3       |
 | [Effect vs plain TypeScript](https://linear.app/clipboardhealth/issue/DEVOP-5972)            | Plain TypeScript; exceptions inside, result-shaped protocol at the boundary; reconcile-on-startup                      | 12.1    |
-| [Plugin packaging and review isolation](https://linear.app/clipboardhealth/issue/DEVOP-5973) | Task sources are the only plugin kind; directory bundles; `protocolVersion`; sandboxed by default; srt only            | 6       |
+| [Plugin packaging and review isolation](https://linear.app/clipboardhealth/issue/DEVOP-5973) | Task sources are the only plugin kind; directory bundles; `protocolVersion`; sandboxed by default; core runners        | 6       |
 | [CLI surface](https://linear.app/clipboardhealth/issue/DEVOP-5975)                           | 14 commands; `crew.config.jsonc`; install.sh → `crew init`                                                             | 7       |
 | [E2E scenario catalog](https://linear.app/clipboardhealth/issue/DEVOP-5974)                  | v2-only red-first suite; harness self-tests; completion model codified (amends the destination)                        | 5       |
 | [Headless extension point](https://linear.app/clipboardhealth/issue/DEVOP-5976)              | Session-presenter seam; headless = future detached presenter (amends CLI config: `multiplexer` → `presenter`)          | 8       |

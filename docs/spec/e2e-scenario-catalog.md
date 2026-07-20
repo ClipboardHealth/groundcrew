@@ -58,7 +58,7 @@ With no working implementation to validate against (green-on-v1 dropped), the ha
 ### 1.6 Lanes
 
 - **Core lane**: hermetic, no sandbox runner, runs anywhere including CI.
-- **Sandbox lane**: real srt (macOS `sandbox-exec` / Linux bubblewrap), platform-gated; asserts denial behavior that can't be faked honestly. v2-only by definition — v1's posture keeps its existing unit-level coverage.
+- **Sandbox lane**: real platform runner, platform-gated; asserts denial behavior that can't be faked honestly. v2-only by definition — v1's posture keeps its existing unit-level coverage.
 
 ### 1.7 Suite packaging
 

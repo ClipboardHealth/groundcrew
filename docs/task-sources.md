@@ -52,9 +52,9 @@ expected or explicitly allowed.
 Set `sandboxWritePaths` when the shell source owns local files the agent must
 read and update in place, such as a plan directory. Each path may be absolute,
 relative to the agent working directory, or `~`-prefixed. Under the `safehouse`
-and `srt` runners, groundcrew opens those directories for read and write only
-for tasks from that source; an unqualified task id grants every eligible
-source's declared paths. The `sdx` runner does not mount these host paths.
+runner, groundcrew opens those directories for read and write only for tasks
+from that source; an unqualified task id grants every eligible source's
+declared paths. The `sdx` runner does not mount these host paths.
 
 ```json
 [

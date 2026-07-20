@@ -98,9 +98,8 @@ vi.mock(import("../lib/commandRunner.ts"), async (importOriginal) => {
   return { ...actual, runCommand: runCommandMock };
 });
 
-// buildAndStageSrtLaunch resolves the sandbox's gitCommonDir from the worktree
-// via `git rev-parse --git-common-dir`; the worktree dir here is a fixture path,
-// so stub the probe to a non-empty path and return "" for anything else.
+// Safehouse resolves the git common dir from the worktree; the worktree dir here
+// is a fixture path, so stub the probe and return "" for anything else.
 function stubRunCommand(): void {
   runCommandMock.mockImplementation((cmd: string, arguments_: readonly string[]) =>
     cmd === "git" && arguments_.includes("--git-common-dir")
@@ -163,13 +162,9 @@ function host(overrides: Partial<HostCapabilities> = {}): HostCapabilities {
     hasCmux: true,
     hasTmux: false,
     hasZellij: false,
-    hasBubblewrap: false,
-    hasSocat: false,
-    hasRipgrep: false,
     isMacOS: true,
     isLinux: false,
     isSafehouseSupported: true,
-    isSrtSupported: true,
     isSdxSupported: true,
     ...overrides,
   };
@@ -551,32 +546,6 @@ describe(resumeWorkspace, () => {
     expect(getLinearClientMock).not.toHaveBeenCalled();
   });
 
-  it("stages neutral prepare + agent srt settings and wraps the resumed agent under srt", async () => {
-    const srtConfig = {
-      ...makeConfig(),
-      local: {
-        runner: "srt" as const,
-        networkEgress: "allowlisted" as const,
-        safehouse: { enable: [] },
-        readOnlyDirs: [],
-      },
-    };
-
-    await resumeWorkspace(srtConfig, { task: "team-1" });
-
-    expect(writeFileMock).toHaveBeenCalledWith(
-      "/tmp/groundcrew-resume-team-1-x/agent-settings.json",
-      expect.any(String),
-    );
-    // The staged launch script wraps the resumed agent under srt with the agent
-    // settings, not safehouse.
-    const launchScript = stagedLaunchScript();
-    expect(launchScript).toMatch(
-      /sandbox-runtime\/dist\/cli\.js' --settings .*agent-settings\.json/,
-    );
-    expect(launchScript).not.toContain("safehouse-clearance");
-  });
-
   it("wraps with bare safehouse and skips the clearance daemon when networkEgress is open", async () => {
     const openEgress = {
       ...makeConfig(),
@@ -664,28 +633,6 @@ describe(resumeWorkspace, () => {
     await resumeWorkspace(cfg, { task: "team-1" });
 
     expect(stagedLaunchScript()).toContain("cd '/work/repo-a-team-1/services/api'");
-  });
-
-  it("cleans up the staged srt settings dir when the resumed launch fails to open", async () => {
-    const srtConfig = {
-      ...makeConfig(),
-      local: {
-        runner: "srt" as const,
-        networkEgress: "allowlisted" as const,
-        safehouse: { enable: [] },
-        readOnlyDirs: [],
-      },
-    };
-    workspacesOpenMock.mockRejectedValue(new Error("cmux down"));
-
-    await expect(resumeWorkspace(srtConfig, { task: "team-1" })).rejects.toThrow("cmux down");
-
-    // The settings dir is torn down on the pre-launch failure path (the launch
-    // command's own teardown never ran).
-    expect(rmSyncMock).toHaveBeenCalledWith(
-      "/tmp/groundcrew-resume-team-1-x",
-      expect.objectContaining({ recursive: true }),
-    );
   });
 
   it("fails when the worktree is absent", async () => {

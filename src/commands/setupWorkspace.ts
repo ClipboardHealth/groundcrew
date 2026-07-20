@@ -1,5 +1,3 @@
-import { rmSync } from "node:fs";
-
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { composeAgentLaunch, openAgentWorkspace, prepareAgentLaunch } from "../lib/agentLaunch.ts";
 import { inferAgentCommandName, workerEnvironmentForTask } from "../lib/launchCommand.ts";
@@ -10,6 +8,7 @@ import { recordRunState } from "../lib/runState.ts";
 import { seedLaunchWorkspaceTrust } from "../lib/seedLaunchWorkspaceTrust.ts";
 import { sourceSupportsMarkDone } from "../lib/sourceCapabilities.ts";
 import {
+  removeStagedPrompt,
   stageBuildSecrets,
   stagePromptFromTemplate,
   stageWorkspaceLaunchCommand,
@@ -121,7 +120,6 @@ export async function setupWorkspace(
   // Without rollback the next tick hits "Worktree already exists" and
   // the task strands forever.
   let promptDir: string | undefined;
-  let srtSettingsDir: string | undefined;
   try {
     await assertLaunchReady(readinessPromise);
 
@@ -157,7 +155,7 @@ export async function setupWorkspace(
     const completionTaskId = options.completionTaskId ?? task;
     const completionMarkDoneSupported = options.completionMarkDoneSupported ?? true;
     const taskSourceWritePaths =
-      runner === "safehouse" || runner === "srt"
+      runner === "safehouse"
         ? taskSourceWritePathsForCompletion({
             config,
             taskId: completionTaskId,
@@ -168,10 +166,9 @@ export async function setupWorkspace(
       agentCommandName: inferAgentCommandName(definition.cmd),
       launchDir,
     });
-    const { launchCommand, srtSettingsDir: stagedSrtSettingsDir } = composeAgentLaunch({
+    const launchCommand = composeAgentLaunch({
       runner,
       networkEgress,
-      task,
       definition,
       promptFile: stagedPrompt.file,
       worktreeDir,
@@ -189,7 +186,6 @@ export async function setupWorkspace(
       taskSourceWritePaths,
       safehouseEnableFeatures: config.local.safehouse.enable,
     });
-    srtSettingsDir = stagedSrtSettingsDir;
     const launchCmd = stageWorkspaceLaunchCommand(promptDir, launchCommand);
 
     debug("Opening workspace...");
@@ -224,7 +220,7 @@ export async function setupWorkspace(
       logAccessHint(accessHint);
     }
   } catch (error) {
-    await rollbackWorktree({ config, entry: created, promptDir, srtSettingsDir });
+    await rollbackWorktree({ config, entry: created, promptDir });
     recordFailedToLaunch({ config, options, paths: { worktreeDir, branchName }, error });
     throw error;
   }
@@ -390,7 +386,6 @@ async function rollbackWorktree(arguments_: {
   config: ResolvedConfig;
   entry: WorktreeEntry;
   promptDir: string | undefined;
-  srtSettingsDir?: string | undefined;
 }): Promise<void> {
   log(
     `Setup failed; rolling back worktree ${arguments_.entry.repository}-${arguments_.entry.task}...`,
@@ -401,15 +396,13 @@ async function rollbackWorktree(arguments_: {
   } catch (error) {
     log(`Worktree teardown failed during rollback: ${errorMessage(error)}`);
   } finally {
-    // Both temp dirs are normally removed by the launch command; clean them
-    // here for the pre-launch failure path. Silent on retry races.
-    for (const dir of [arguments_.promptDir, arguments_.srtSettingsDir]) {
-      if (dir !== undefined) {
-        try {
-          rmSync(dir, { recursive: true, force: true });
-        } catch {
-          // already gone
-        }
+    // The prompt dir is normally removed by the launch command; clean it here
+    // for the pre-launch failure path. Silent on retry races.
+    if (arguments_.promptDir !== undefined) {
+      try {
+        removeStagedPrompt(arguments_.promptDir);
+      } catch {
+        // already gone
       }
     }
   }

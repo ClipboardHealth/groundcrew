@@ -23,24 +23,17 @@ import {
   type SafehouseAgentIntegration,
   type WorkerEnvironment,
 } from "./launchCommand.ts";
+import { resolveGitCommonDir } from "./gitCommonDir.ts";
 import { assertLocalRunnerRequirements, resolveLocalRunner } from "./localRunner.ts";
 import { sandboxNameFor } from "./sandboxName.ts";
-import { buildAndStageSrtLaunch, resolveGitCommonDir } from "./srtLaunch.ts";
 import { debug, sleep, writeError } from "./util.ts";
 import { resolveWorkspaceKind, workspaces } from "./workspaces.ts";
 import type { WorkspaceKind } from "./workspaceAdapter.ts";
 
-/**
- * Stage any srt settings and build the workspace launch command — the assembly
- * shared verbatim by `setupWorkspace` (fresh runs) and `resumeWorkspace`
- * (resumes). `worktreeDir` is the checkout root (srt grants + `{{worktree}}`);
- * `workingDir` is the agent cwd (the worktree root, or its `workdir` subproject).
- * Returns `srtSettingsDir` so callers can tear it down on a pre-launch failure.
- */
+/** Build the workspace launch command shared by fresh runs and resumes. */
 export function composeAgentLaunch(input: {
   runner: LocalRunner;
   networkEgress: NetworkEgressSetting;
-  task: string;
   definition: AgentDefinition;
   promptFile: string;
   worktreeDir: string;
@@ -55,22 +48,12 @@ export function composeAgentLaunch(input: {
   taskSourceWritePaths?: readonly string[] | undefined;
   safehouseEnableFeatures?: readonly string[] | undefined;
   readOnlyDirs?: readonly string[] | undefined;
-}): { launchCommand: string; srtSettingsDir: string | undefined } {
-  const staged =
-    input.runner === "srt"
-      ? buildAndStageSrtLaunch({
-          task: input.task,
-          worktreeDir: input.worktreeDir,
-          definition: input.definition,
-          taskSourceWritePaths: input.taskSourceWritePaths,
-          readOnlyDirs: input.readOnlyDirs,
-        })
-      : undefined;
+}): string {
   const safehouseAgentIntegration =
     input.runner === "safehouse"
       ? safehouseAgentIntegrationFor(input.workspaceKind, input.definition)
       : undefined;
-  const launchCommand = buildLaunchCommand({
+  return buildLaunchCommand({
     definition: input.definition,
     promptFile: input.promptFile,
     worktreeDir: input.worktreeDir,
@@ -81,10 +64,6 @@ export function composeAgentLaunch(input: {
     runner: input.runner,
     networkEgress: input.networkEgress,
     sandboxName: input.sandboxName,
-    srtPrepareSettingsFile: staged?.prepareFile,
-    srtAgentSettingsFile: staged?.agentFile,
-    srtSettingsDir: staged?.directory,
-    srtAgentConfigDirEnv: staged?.agentConfigDirEnv,
     workerEnvironment: input.workerEnvironment,
     omitPromptArgument: input.omitPromptArgument,
     safehouseAddDirs:
@@ -98,7 +77,6 @@ export function composeAgentLaunch(input: {
       input.runner === "safehouse" ? (input.readOnlyDirs ?? []).filter(existsSync) : undefined,
     safehouseAgentIntegration,
   });
-  return { launchCommand, srtSettingsDir: staged?.directory };
 }
 
 /**
@@ -112,10 +90,8 @@ export function composeAgentLaunch(input: {
  *   whose store lives outside the worktree tree (e.g. graft's `~/carrot/.git`)
  *   gets git access. This is the path the bare cwd grant fundamentally cannot
  *   cover, and the reason this resolution exists.
- * Gated to the safehouse runner at the call site (srt fences its own equivalent
- * surface — worktree root + git common dir — through its settings file; sdx/none
- * don't use it). Deduped defensively in case git resolves either path to the
- * same directory in an unusual checkout shape.
+ * Gated to the safehouse runner at the call site. Deduped defensively in case
+ * git resolves either path to the same directory in an unusual checkout shape.
  */
 function resolveSafehouseAddDirs(worktreeDir: string): readonly string[] {
   return [...new Set([worktreeDir, resolveGitCommonDir(worktreeDir)])];

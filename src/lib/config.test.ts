@@ -985,14 +985,14 @@ describe("loadConfig", () => {
     await expect(loadConfig()).rejects.toThrow(/no longer drives in-sandbox auth flows/);
   });
 
-  it("rejects an invalid local.runner value", async () => {
+  it.each(["nope", "srt"])("rejects invalid local.runner value %s", async (runner) => {
     const configPath = writeConfigFile(
       temporary,
       [
         "export default {",
         `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
         `  agents: { definitions: { claude: {} } },`,
-        `  local: { runner: 'nope' },`,
+        `  local: { runner: '${runner}' },`,
         "};",
       ].join("\n"),
     );
