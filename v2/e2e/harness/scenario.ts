@@ -4,10 +4,12 @@
  *
  * Each scenario owns a fresh tmpdir that backs HOME, XDG_CONFIG_HOME, and
  * XDG_STATE_HOME, a base directory for git clones, an isolated tmux socket, and
- * a fakes bin directory prepended to PATH. PATH is otherwise hermetic — only
- * the directories holding node, git, tmux, and the system utilities they need —
- * so nothing installed on the host leaks in. Cleanup kills the scenario's tmux
- * server and removes the tmpdir, and runs even when a test throws.
+ * a fakes bin directory prepended to PATH. PATH is otherwise hermetic: node,
+ * git, and tmux are exposed via a curated symlink dir (never a raw host bin dir
+ * like /opt/homebrew/bin, which would also leak non-hermetic presenters such as
+ * cmux and zellij), plus the system utility dirs. So `crew init` detects tmux,
+ * and nothing else installed on the host leaks in. Cleanup kills the scenario's
+ * tmux server and removes the tmpdir, and runs even when a test throws.
  */
 
 // cspell:ignore nosystem
@@ -75,6 +77,7 @@ export function createScenario(options: CreateScenarioOptions = {}): Scenario {
   const baseDirectory = path.join(root, "base");
   const remotesDirectory = path.join(root, "remotes");
   const fakesBinDirectory = path.join(root, "fakes-bin");
+  const toolsBinDirectory = path.join(root, "tools-bin");
   const fakeGhLogPath = path.join(root, "fake-gh-calls.jsonl");
 
   for (const directory of [
@@ -86,14 +89,16 @@ export function createScenario(options: CreateScenarioOptions = {}): Scenario {
     baseDirectory,
     remotesDirectory,
     fakesBinDirectory,
+    toolsBinDirectory,
   ]) {
     fs.mkdirSync(directory, { recursive: true });
   }
 
   installFakeBinaries(fakesBinDirectory);
+  installHostTools(toolsBinDirectory);
   writeGlobalGitConfig(home);
 
-  const pathValue = buildHermeticPath(fakesBinDirectory);
+  const pathValue = buildHermeticPath([fakesBinDirectory, toolsBinDirectory]);
   const crewBinCommand = resolveCrewBinCommand();
 
   const env: Record<string, string> = {
@@ -194,17 +199,27 @@ function installFakeBinaries(fakesBinDirectory: string): void {
   }
 }
 
-function buildHermeticPath(fakesBinDirectory: string): string {
-  const directories = [
-    fakesBinDirectory,
-    path.dirname(process.execPath),
-    resolveBinaryDirectory("git"),
-    resolveBinaryDirectory("tmux"),
-    "/usr/bin",
-    "/bin",
-    "/usr/sbin",
-    "/sbin",
-  ];
+/**
+ * Symlinks exactly the host tools the suite needs — node, git, tmux — into a
+ * curated bin directory. The suite never puts a real host bin dir (e.g.
+ * `/opt/homebrew/bin`) on PATH: those dirs also carry presenters like cmux and
+ * zellij, which — unlike tmux with its per-scenario `-L` socket — talk to a
+ * shared host daemon and are not hermetic. Excluding them means `crew init`
+ * detects tmux (the hermetic CI presenter), never cmux/zellij.
+ */
+function installHostTools(toolsBinDirectory: string): void {
+  const tools: Record<string, string> = {
+    node: process.execPath,
+    git: resolveBinaryPath("git"),
+    tmux: resolveBinaryPath("tmux"),
+  };
+  for (const [name, target] of Object.entries(tools)) {
+    fs.symlinkSync(target, path.join(toolsBinDirectory, name));
+  }
+}
+
+function buildHermeticPath(leadingDirectories: readonly string[]): string {
+  const directories = [...leadingDirectories, "/usr/bin", "/bin", "/usr/sbin", "/sbin"];
 
   const seen = new Set<string>();
   const deduped: string[] = [];
@@ -227,6 +242,11 @@ function resolveCrewBinCommand(): readonly string[] {
 
   const runJs = path.resolve(fileDirectory(), "..", "..", "bin", "run.js");
   return [process.execPath, runJs];
+}
+
+/** Full path of the first `name` found on the host PATH (throws if unreachable). */
+function resolveBinaryPath(name: string): string {
+  return path.join(resolveBinaryDirectory(name), name);
 }
 
 /**

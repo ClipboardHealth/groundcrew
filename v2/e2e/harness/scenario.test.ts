@@ -34,6 +34,26 @@ describe("scenario", () => {
     });
   });
 
+  it("exposes node/git/tmux via a curated tools bin and keeps host tool dirs off PATH", async () => {
+    await withScenario(async (scenario) => {
+      const entries = String(scenario.env["PATH"]).split(path.delimiter);
+      // No raw host bin dir that would leak non-hermetic presenters (cmux/zellij).
+      expect(entries).not.toContain("/opt/homebrew/bin");
+      expect(entries).not.toContain("/usr/local/bin");
+
+      const resolved = await Promise.all(
+        ["node", "git", "tmux"].map(
+          async (tool) =>
+            await run({ command: "sh", args: ["-c", `command -v ${tool}`], env: scenario.env }),
+        ),
+      );
+      for (const which of resolved) {
+        expect(which.exitCode).toBe(0);
+        expect(which.stdout.trim().startsWith(scenario.root)).toBe(true);
+      }
+    });
+  });
+
   it("pins GROUNDCREW_SANDBOX=off in the core lane and omits it in the sandbox lane", async () => {
     await withScenario(async (scenario) => {
       expect(scenario.env["GROUNDCREW_SANDBOX"]).toBe("off");
