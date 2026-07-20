@@ -8,7 +8,7 @@
  * logged only.
  */
 import * as fs from "node:fs";
-import * as path from "node:path";
+import path from "node:path";
 
 import { execa } from "execa";
 import type { z } from "zod";
@@ -87,6 +87,7 @@ export interface OpenSourceInput {
 export function openSource(input: OpenSourceInput): SourceHandle {
   const discovered = requireOk(input.discovered);
   const sourceConfig = input.sourceConfig ?? {};
+  // oxlint-disable-next-line node/no-process-env -- default passthrough of the orchestrator env (PATH/HOME, ambient secrets) for source spawns
   const parentEnvironment = input.parentEnvironment ?? process.env;
   const name = sourceConfig.name ?? discovered.name;
 
@@ -296,8 +297,8 @@ async function spawn(input: {
     source: input.source,
     command: input.command,
     exitCode: typeof result.exitCode === "number" ? result.exitCode : undefined,
-    timedOut: result.timedOut === true,
-    failed: result.failed === true,
+    timedOut: result.timedOut,
+    failed: result.failed,
     stdout: asString(result.stdout),
   });
 }

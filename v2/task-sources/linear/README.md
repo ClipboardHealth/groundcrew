@@ -6,12 +6,12 @@ issue comments. Talks to Linear's GraphQL API over https with node's global
 
 ## Configuration
 
-| Env                        | Kind            | Purpose                                                                 |
-| -------------------------- | --------------- | ----------------------------------------------------------------------- |
-| `LINEAR_API_KEY`           | secret (required) | Personal API key; sent verbatim as the `Authorization` header.        |
-| `LINEAR_API_URL`           | env             | GraphQL endpoint. Default `https://api.linear.app/graphql`. Overridable for proxies and tests. |
-| `LINEAR_GROUNDCREW_LABEL`  | env             | Optional issue-label **name**; when set, only issues carrying that label are listed. |
-| `LINEAR_COMPLETED_STATE_ID`| env             | Optional workflow **state id**; when set, a `delivered` completion also moves the issue to that state. |
+| Env                         | Kind              | Purpose                                                                                                |
+| --------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------ |
+| `LINEAR_API_KEY`            | secret (required) | Personal API key; sent verbatim as the `Authorization` header.                                         |
+| `LINEAR_API_URL`            | env               | GraphQL endpoint. Default `https://api.linear.app/graphql`. Overridable for proxies and tests.         |
+| `LINEAR_GROUNDCREW_LABEL`   | env               | Optional issue-label **name**; when set, only issues carrying that label are listed.                   |
+| `LINEAR_COMPLETED_STATE_ID` | env               | Optional workflow **state id**; when set, a `delivered` completion also moves the issue to that state. |
 
 `LINEAR_API_KEY` is declared in the manifest `secrets`; core resolves it from
 the environment / `secrets.env` / `op run` and injects it. The manifest

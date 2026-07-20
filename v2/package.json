@@ -14,6 +14,7 @@
     "typecheck": "tsc --noEmit",
     "architecture:check": "depcruise --config config/dependencyCruiser.cjs src e2e bin",
     "test": "vitest run --coverage",
+    "test:bundles": "node --test 'task-sources/**/*.test.mts'",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "verify": "node --run typecheck && node --run build && node --run architecture:check && node --run test"
   },

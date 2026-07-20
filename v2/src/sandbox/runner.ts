@@ -37,10 +37,17 @@ export function resolveSrtCli(baseUrl: string = import.meta.url): string {
       { cause: error },
     );
   }
-  const manifest = JSON.parse(readFileSync(packageJsonPath, "utf8")) as {
-    bin?: string | Record<string, string>;
-  };
-  const binEntry = typeof manifest.bin === "string" ? manifest.bin : manifest.bin?.["srt"];
+  const manifest: unknown = JSON.parse(readFileSync(packageJsonPath, "utf8"));
+  const bin =
+    typeof manifest === "object" && manifest !== null && "bin" in manifest
+      ? manifest.bin
+      : undefined;
+  const binEntry =
+    typeof bin === "string"
+      ? bin
+      : typeof bin === "object" && bin !== null
+        ? recordString(bin, "srt")
+        : undefined;
   if (binEntry === undefined) {
     throw new Error("@anthropic-ai/sandbox-runtime package.json is missing the `srt` bin entry.");
   }
@@ -82,4 +89,9 @@ export function composeSrtInvocation(input: {
     "-c",
     shellSingleQuote(input.command),
   ].join(" ");
+}
+
+function recordString(value: object, key: string): string | undefined {
+  const entry: unknown = Reflect.get(value, key);
+  return typeof entry === "string" ? entry : undefined;
 }

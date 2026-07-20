@@ -10,7 +10,7 @@
  * representable so `source list` can show it — PLUGIN-02).
  */
 import * as fs from "node:fs";
-import * as path from "node:path";
+import path from "node:path";
 
 import { parseManifest } from "./manifest.js";
 import type { SourceManifest } from "./manifest.js";

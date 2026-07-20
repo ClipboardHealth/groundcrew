@@ -8,7 +8,7 @@
  */
 import * as fs from "node:fs";
 import * as os from "node:os";
-import * as path from "node:path";
+import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -21,6 +21,13 @@ import { parseManifest } from "./manifest.js";
 import { probeSource } from "./probe.js";
 import type { WritebackEvent } from "./protocol.js";
 import { createSecretsResolver, parseDotenv } from "./secrets.js";
+
+// Child bundle spawns need the real PATH/HOME (to find node and expand `~`);
+// forwarding a curated parent env is the whole point of these tests.
+// oxlint-disable-next-line node/no-process-env -- see above
+const REAL_PATH = process.env["PATH"];
+// oxlint-disable-next-line node/no-process-env -- see above
+const REAL_HOME = process.env["HOME"];
 
 const temporaryRoots: string[] = [];
 
@@ -109,11 +116,11 @@ function writeBundle(input: BundleInput): string {
   }
 
   const manifestPath = path.join(bundleDirectory, "source.json");
-  if (input.badManifestJson !== undefined) {
-    fs.writeFileSync(manifestPath, input.badManifestJson);
-  } else {
+  if (input.badManifestJson === undefined) {
     const manifest = input.manifest ?? defaultManifest({ withUpdate: input.withUpdate !== false });
     fs.writeFileSync(manifestPath, JSON.stringify(manifest, undefined, 2) + "\n");
+  } else {
+    fs.writeFileSync(manifestPath, input.badManifestJson);
   }
 
   return bundleDirectory;
@@ -169,8 +176,10 @@ describe("parseManifest", () => {
   it("rejects invalid JSON, naming source.json", () => {
     const actual = parseManifest("{ not json,,, ");
 
-    expect(actual.ok).toBe(false);
-    expect(actual.ok ? "" : actual.reason).toMatch(/source\.json is not valid JSON/);
+    expect(actual).toMatchObject({
+      ok: false,
+      reason: expect.stringMatching(/source\.json is not valid JSON/),
+    });
   });
 
   it("rejects a manifest missing the required list command", () => {
@@ -285,8 +294,8 @@ describe("discoverSources", () => {
     });
 
     expect(entry?.status).toBe("unsupported");
-    expect(entry?.status === "unsupported" ? entry.message : "").toMatch(/99/);
-    expect(entry?.status === "unsupported" ? entry.message : "").toMatch(/\b1\b/);
+    expect(entry).toMatchObject({ status: "unsupported", message: expect.stringMatching(/99/) });
+    expect(entry).toMatchObject({ status: "unsupported", message: expect.stringMatching(/\b1\b/) });
     expect(SUPPORTED_PROTOCOL_VERSIONS).toEqual([1]);
   });
 
@@ -300,7 +309,7 @@ describe("discoverSources", () => {
     });
 
     expect(entry?.status).toBe("invalid");
-    expect(entry?.status === "invalid" ? entry.warning : "").toMatch(/source\.json/);
+    expect(entry).toMatchObject({ status: "invalid", warning: expect.stringMatching(/source\.json/) });
     expect(entry?.name).toBe("broken");
   });
 
@@ -371,7 +380,10 @@ describe("discoverSources", () => {
     });
 
     expect(entry?.status).toBe("invalid");
-    expect(entry?.status === "invalid" ? entry.warning : "").toMatch(/could not read source\.json/);
+    expect(entry).toMatchObject({
+      status: "invalid",
+      warning: expect.stringMatching(/could not read source\.json/),
+    });
   });
 });
 
@@ -480,8 +492,8 @@ describe("openSource — live protocol", () => {
       stateRoot: path.join(root, "state"),
       sourceConfig: baseConfig(root, { OVERRIDE_ME: "config" }),
       parentEnvironment: {
-        PATH: process.env["PATH"],
-        HOME: process.env["HOME"],
+        PATH: REAL_PATH,
+        HOME: REAL_HOME,
         MY_SECRET: "sekret",
         PARENT_LEAK: "should-not-appear",
       },
@@ -508,7 +520,11 @@ describe("openSource — live protocol", () => {
       discovered: discoverOk({ root, name: "alpha" }),
       stateRoot: path.join(root, "state"),
       sourceConfig: baseConfig(root, { LIST_STDERR: "1" }),
-      logger: { log: (entry) => logged.push(entry as unknown as Record<string, unknown>) },
+      logger: {
+        log: (entry) => {
+          logged.push(entry as unknown as Record<string, unknown>);
+        },
+      },
     });
 
     const tasks = await handle.list();
@@ -534,7 +550,7 @@ describe("openSource — live protocol", () => {
       discovered: discoverOk({ root, name: "alpha" }),
       stateRoot: path.join(root, "state"),
       sourceConfig: baseConfig(root),
-      parentEnvironment: { PATH: process.env["PATH"], HOME: process.env["HOME"] },
+      parentEnvironment: { PATH: REAL_PATH, HOME: REAL_HOME },
     });
 
     expect(handle.missingSecrets).toEqual(["ABSENT_SECRET"]);
@@ -773,7 +789,7 @@ describe("probeSource", () => {
       discovered: discoverOk({ root, name: "alpha" }),
       stateRoot: path.join(root, "state"),
       sourceConfig: baseConfig(root),
-      parentEnvironment: { PATH: process.env["PATH"], HOME: process.env["HOME"] },
+      parentEnvironment: { PATH: REAL_PATH, HOME: REAL_HOME },
     });
 
     const actual = await probeSource({ handle });
@@ -795,7 +811,7 @@ describe("missingSecretError", () => {
       discovered: discoverOk({ root, name: "alpha" }),
       stateRoot: path.join(root, "state"),
       sourceConfig: baseConfig(root),
-      parentEnvironment: { PATH: process.env["PATH"], HOME: process.env["HOME"] },
+      parentEnvironment: { PATH: REAL_PATH, HOME: REAL_HOME },
     });
 
     const actual = missingSecretError(handle);

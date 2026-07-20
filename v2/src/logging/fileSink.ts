@@ -6,7 +6,7 @@
  * leak or to close on shutdown.
  */
 import * as fs from "node:fs";
-import * as path from "node:path";
+import path from "node:path";
 
 export interface FileSinkInput {
   /** Absolute path of the active JSON-lines file. */

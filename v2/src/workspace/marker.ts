@@ -68,8 +68,7 @@ export function addRepoToMarker(input: {
   readonly repo: string;
 }): WorkspaceMarker {
   const existing = readMarker({ workspaceDirectory: input.workspaceDirectory });
-  const repos = new Set(existing?.repos ?? []);
-  repos.add(input.repo);
+  const repos = new Set([...(existing?.repos ?? []), input.repo]);
 
   const marker: WorkspaceMarker = {
     version: 1,

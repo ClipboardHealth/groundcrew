@@ -1,9 +1,10 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
-import * as path from "node:path";
+import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { LogEventInput } from "../logging/index.js";
 import { InvalidTransitionError, RunNotFoundError } from "./errors.js";
 import { runRecordPath, type RunRecord } from "./runRecord.js";
 import {
@@ -29,10 +30,11 @@ function recordingWriteback(): { port: WritebackPort; calls: WritebackCompletion
   };
 }
 
+const fixedNow = (): Date => new Date("2026-07-17T00:00:00.000Z");
+
 describe("run lifecycle", () => {
   let stateRoot: string;
   const taskSlug = "fixture-task-1";
-  const fixedNow = (): Date => new Date("2026-07-17T00:00:00.000Z");
 
   function baseInput(overrides: Partial<CreateRunInput> = {}): CreateRunInput {
     return {
@@ -279,7 +281,7 @@ describe("run lifecycle", () => {
 
   describe("logging integration", () => {
     it("emits run-module log lines on transitions when a logger is injected", async () => {
-      const log = vi.fn();
+      const log = vi.fn<(input: LogEventInput) => void>();
       const run = await createRun(baseInput({ logger: { log } }));
 
       await run.markRunning();
@@ -314,7 +316,7 @@ describe("run lifecycle", () => {
 
       const [claimed] = run.snapshot.events;
       expect(claimed?.ts).toMatch(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/);
-      expect(Date.parse(claimed?.ts ?? "")).toBeGreaterThanOrEqual(before);
+      expect(Date.parse(String(claimed?.ts))).toBeGreaterThanOrEqual(before);
     });
   });
 });

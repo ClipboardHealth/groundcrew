@@ -74,6 +74,6 @@ describe("marker", () => {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, JSON.stringify({ version: 2, taskId: TASK_ID }));
 
-    expect(() => readMarker({ workspaceDirectory })).toThrow();
+    expect(() => readMarker({ workspaceDirectory })).toThrow(/marker|version|task\.json/iu);
   });
 });

@@ -103,7 +103,7 @@ export async function loadRun(input: LoadRunInput): Promise<Run> {
 }
 
 export async function runExists(input: { stateRoot: string; taskSlug: string }): Promise<boolean> {
-  return runRecordExists({ path: runRecordPath(input) });
+  return await runRecordExists({ path: runRecordPath(input) });
 }
 
 export async function deleteRun(input: { stateRoot: string; taskSlug: string }): Promise<void> {
@@ -111,7 +111,7 @@ export async function deleteRun(input: { stateRoot: string; taskSlug: string }):
 }
 
 export async function listRuns(input: { stateRoot: string }): Promise<RunRecord[]> {
-  return listRunRecords(input);
+  return await listRunRecords(input);
 }
 
 export function generateRunId(): string {

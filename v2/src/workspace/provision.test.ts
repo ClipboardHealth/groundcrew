@@ -51,10 +51,7 @@ describe("provisionWorkspace", () => {
 
     expect(result.repos).toEqual([]);
     expect(readMarker({ workspaceDirectory: result.workspaceDirectory })?.repos).toEqual([]);
-    const entries = fs
-      .readdirSync(result.workspaceDirectory, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."));
-    expect(entries).toEqual([]);
+    expect(visibleSubdirectories(result.workspaceDirectory)).toEqual([]);
   });
 
   it("bails on a missing designated repo, provisioning nothing", async () => {
@@ -143,3 +140,10 @@ describe("acquireWorktree", () => {
     ]);
   });
 });
+
+function visibleSubdirectories(directory: string): string[] {
+  return fs
+    .readdirSync(directory, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
+    .map((entry) => entry.name);
+}

@@ -95,7 +95,7 @@ export async function git(input: {
   });
   if (result.exitCode !== 0) {
     throw new Error(
-      `git ${input.args.join(" ")} failed in ${input.cwd}: ${String(result.stderr)}`,
+      `git ${input.args.join(" ")} failed in ${input.cwd}: ${result.stderr}`,
     );
   }
 

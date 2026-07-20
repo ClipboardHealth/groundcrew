@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as os from "node:os";
-import * as path from "node:path";
+import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -78,7 +78,7 @@ describe("run record I/O", () => {
     await fsp.mkdir(runsDirectory({ stateRoot }), { recursive: true });
     await fsp.writeFile(recordPath, JSON.stringify({ version: 1, taskId: "x" }));
 
-    await expect(readRunRecord({ path: recordPath })).rejects.toThrow();
+    await expect(readRunRecord({ path: recordPath })).rejects.toThrow(/runId/);
   });
 
   it("reports existence and deletes idempotently", async () => {

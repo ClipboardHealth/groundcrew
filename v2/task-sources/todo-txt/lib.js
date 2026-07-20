@@ -1,5 +1,7 @@
 "use strict";
 
+/* oxlint-disable typescript/no-unsafe-assignment, typescript/no-unsafe-argument, typescript/no-unsafe-return, typescript/strict-boolean-expressions, typescript/no-require-imports, no-implicit-globals, unicorn/no-process-exit, node/no-process-env, no-warning-comments, unicorn/no-useless-undefined -- This bundle is a language-agnostic CommonJS node-shebang protocol script (contracts §4): builtins-only `require`, module-scoped function declarations, `process.exit` for deterministic protocol exit codes, and `process.env` for the config the boundary hands in. It is untyped JS, so the type-aware `no-unsafe-*`/strict-boolean rules have nothing to check; `no-useless-undefined` is disabled because the early `return undefined` in `parseLine` is required for `consistent-return` (the function returns a task object on the other path). */
+
 // todo-txt source bundle — protocol v1 (contracts §4).
 //
 // Task store: a todo.txt-format file at $TODO_FILE (manifest default
@@ -184,8 +186,8 @@ function stripPriorityPrefix(trimmed) {
 function noteSlug(message) {
   return message
     .trim()
-    .replace(/\s+/g, "_")
-    .replace(/[^A-Za-z0-9_.-]/g, "")
+    .replaceAll(/\s+/g, "_")
+    .replaceAll(/[^A-Za-z0-9_.-]/g, "")
     .slice(0, 80);
 }
 

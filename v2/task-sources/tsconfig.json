@@ -1,0 +1,13 @@
+{
+  // Type-context for oxlint's type-aware pass over the bundle test suites only.
+  // The shipped bundles are language-agnostic node-shebang scripts with no
+  // import path (design §9); their `.mts` node:test suites still want node types
+  // (process, Buffer, import.meta.dirname, es2023 Array#toSorted). The root
+  // `tsc` typecheck and the architecture check cover src/e2e and never this dir.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "."
+  },
+  "include": ["**/*.mts"]
+}

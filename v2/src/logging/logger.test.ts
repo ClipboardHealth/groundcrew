@@ -1,16 +1,17 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
-import * as path from "node:path";
+import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createLogger, logLineSchema } from "./index.js";
 
+const fixedNow = (): Date => new Date("2026-07-17T00:00:00.000Z");
+
 describe("createLogger", () => {
   let directory: string;
   let filePath: string;
   let consoleOutput: string[];
-  const fixedNow = (): Date => new Date("2026-07-17T00:00:00.000Z");
 
   beforeEach(() => {
     directory = fs.mkdtempSync(path.join(os.tmpdir(), "crew-logger-"));
@@ -35,7 +36,9 @@ describe("createLogger", () => {
       filePath,
       consoleLevel: "silent",
       now: fixedNow,
-      writeConsole: (text) => consoleOutput.push(text),
+      writeConsole: (text) => {
+        consoleOutput.push(text);
+      },
     });
 
     logger.log({ level: "debug", module: "run", event: "run_created", taskId: "fixture:TASK-1" });
@@ -112,7 +115,9 @@ describe("createLogger", () => {
     const logger = createLogger({
       filePath,
       now: fixedNow,
-      writeConsole: (text) => consoleOutput.push(text),
+      writeConsole: (text) => {
+        consoleOutput.push(text);
+      },
     });
 
     logger.log({ level: "debug", module: "run", event: "run_created" });
@@ -128,7 +133,9 @@ describe("createLogger", () => {
       filePath,
       consoleLevel: "debug",
       now: fixedNow,
-      writeConsole: (text) => consoleOutput.push(text),
+      writeConsole: (text) => {
+        consoleOutput.push(text);
+      },
     });
 
     logger.log({ level: "debug", module: "run", event: "run_created" });
@@ -141,7 +148,9 @@ describe("createLogger", () => {
       filePath,
       consoleLevel: "silent",
       now: fixedNow,
-      writeConsole: (text) => consoleOutput.push(text),
+      writeConsole: (text) => {
+        consoleOutput.push(text);
+      },
     });
 
     logger.log({ level: "error", module: "run", event: "run_completed" });

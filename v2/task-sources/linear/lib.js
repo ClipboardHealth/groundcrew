@@ -1,5 +1,7 @@
 "use strict";
 
+/* oxlint-disable typescript/no-unsafe-assignment, typescript/no-unsafe-return, typescript/no-unsafe-argument, typescript/strict-boolean-expressions, typescript/no-require-imports, no-implicit-globals, unicorn/no-process-exit, node/no-process-env, typescript/prefer-nullish-coalescing, unicorn/no-useless-undefined -- This bundle is a language-agnostic CommonJS node-shebang protocol script (contracts §4): builtins-only `require`, module-scoped function declarations, `process.exit` for deterministic protocol exit codes, and `process.env` for the config the boundary hands in. It is untyped JS, so the type-aware `no-unsafe-*`/strict-boolean rules have nothing to check. The `||`/`|| undefined` env reads in `config()` intentionally treat an empty string as "unset → default", which `??` (prefer-nullish-coalescing) and no-useless-undefined would break. */
+
 // linear source bundle — protocol v1 (contracts §4).
 //
 // Talks to Linear's GraphQL API over https using node's global `fetch` (node

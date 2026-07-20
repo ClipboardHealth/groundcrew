@@ -1,0 +1,16 @@
+{
+  "name": "jira",
+  "protocolVersion": 1,
+  "commands": {
+    "list": "./list",
+    "get": "./get",
+    "update": "./update"
+  },
+  "secrets": ["JIRA_API_TOKEN", "JIRA_EMAIL"],
+  "environment": {
+    "JIRA_BASE_URL": "https://your-domain.atlassian.net",
+    "JIRA_GROUNDCREW_JQL": "assignee = currentUser() AND statusCategory != Done ORDER BY priority DESC, created ASC"
+  },
+  "network": ["your-domain.atlassian.net"],
+  "prerequisites": []
+}

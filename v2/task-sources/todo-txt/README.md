@@ -6,9 +6,9 @@ task. No secrets, no network — it runs entirely against the local filesystem.
 
 ## Configuration
 
-| Env         | Purpose                          | Default      |
-| ----------- | -------------------------------- | ------------ |
-| `TODO_FILE` | Path to the todo.txt task store  | `~/todo.txt` |
+| Env         | Purpose                         | Default      |
+| ----------- | ------------------------------- | ------------ |
+| `TODO_FILE` | Path to the todo.txt task store | `~/todo.txt` |
 
 `TODO_FILE` is declared in the manifest `environment` block; override it per
 source in `crew.config.jsonc`:
@@ -25,26 +25,26 @@ empty (it is created on the first successful writeback).
 Each non-blank, non-`#` line is one task, following the todo.txt format with a
 few groundcrew-specific `key:value` tags:
 
-```
+```text
 [x] [(A)] [YYYY-MM-DD] <title words> [+project] [@context] [key:value ...]
 ```
 
-| Element        | Meaning                                                                    |
-| -------------- | -------------------------------------------------------------------------- |
-| leading `x `   | line is completed → `terminal: true`                                        |
-| `(A)`…`(Z)`    | priority; **`(A)` is highest.** Mapped so a higher protocol number sorts first: `(A)`→26, `(B)`→25, … `(Z)`→1. |
-| `YYYY-MM-DD`   | optional creation date (after the priority); ignored for routing           |
+| Element        | Meaning                                                                                                                                                                                      |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| leading `x`    | line is completed → `terminal: true`                                                                                                                                                         |
+| `(A)`…`(Z)`    | priority; **`(A)` is highest.** Mapped so a higher protocol number sorts first: `(A)`→26, `(B)`→25, … `(Z)`→1.                                                                               |
+| `YYYY-MM-DD`   | optional creation date (after the priority); ignored for routing                                                                                                                             |
 | `id:<slug>`    | explicit stable id. **Absent → a stable SHA-256 hash of the trimmed line** (12 hex chars). If you plan to edit a line after dispatch, give it an explicit `id:` so the id survives the edit. |
-| `repos:a,b`    | repo designation (comma-separated, repeatable) → task `repos`              |
-| `agent:<name>` | agent routing → task `agent`                                               |
-| `blocked:<v>`  | blocked unless `v` ∈ {`false`,`0`,`no`} → task `blocked`                   |
+| `repos:a,b`    | repo designation (comma-separated, repeatable) → task `repos`                                                                                                                                |
+| `agent:<name>` | agent routing → task `agent`                                                                                                                                                                 |
+| `blocked:<v>`  | blocked unless `v` ∈ {`false`,`0`,`no`} → task `blocked`                                                                                                                                     |
 
 Words that are not tags/projects/contexts form the task `title`; the full
 trimmed line is also returned as the task `description`.
 
 Example:
 
-```
+```text
 (A) Ship the login fix id:LOGIN-1 repos:web,api agent:claude
 (C) Write migration notes id:DOCS-2
 x 2026-07-18 (B) Old done task id:OLD-9
