@@ -253,11 +253,19 @@ function preLaunchEnvAdvisories(config: ResolvedConfig): Check[] {
     if (names.length === 0) {
       continue;
     }
+    // The runtime empty-check is spliced only when `preLaunch` is present
+    // (see `hostPreLaunchSourceAndReadPrompt` / `preLaunchPromptAndExec` in
+    // `src/lib/launchCommand.ts`). Without `preLaunch`, forwarded values come
+    // straight from the parent shell and no launch-time guard runs.
+    const warnClause =
+      definition.preLaunch === undefined
+        ? "no preLaunch is set, so empty values are NOT checked at launch"
+        : "empty values are warned at launch";
     advisories.push({
       name: `preLaunchEnv: ${agentName}`,
       ok: true,
       required: false,
-      hint: `forwards ${names.length} var(s): ${names.join(", ")}. Empty values are warned at launch — verify with crew-config's preLaunchEnv editor probe before launching.`,
+      hint: `forwards ${names.length} var(s): ${names.join(", ")}. ${warnClause} — verify with crew-config's preLaunchEnv editor probe before launching.`,
     });
   }
   return advisories;
