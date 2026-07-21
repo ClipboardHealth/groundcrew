@@ -7,6 +7,7 @@ import { BUILD_SECRET_NAMES, type AgentDefinition } from "./config.ts";
 import {
   buildLaunchCommand,
   resolveSafehouseClearancePath,
+  shellSingleQuote,
   withResumeArgs,
 } from "./launchCommand.ts";
 
@@ -711,7 +712,7 @@ describe(buildLaunchCommand, () => {
             promptFile,
             worktreeDir: missingWorktreeDir,
             prepareWorktreeUnsandboxedCommand: "true",
-            definition: { cmd: `touch '${agentMarker}'`, color: "#fff" },
+            definition: { cmd: `touch ${shellSingleQuote(agentMarker)}`, color: "#fff" },
             omitPromptArgument: true,
           }),
         );

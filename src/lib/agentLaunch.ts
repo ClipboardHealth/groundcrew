@@ -38,12 +38,12 @@ import { debug, readEnvironmentVariable, sleep, writeError } from "./util.ts";
 import { resolveWorkspaceKind, workspaces } from "./workspaces.ts";
 import type { WorkspaceKind } from "./workspaceAdapter.ts";
 
-/** Build the workspace launch command shared by fresh runs and resumes. */
 export interface ComposedAgentLaunch {
   command: string;
   cleanup: () => void;
 }
 
+/** Build the workspace launch command shared by fresh runs and resumes. */
 export function composeAgentLaunch(input: {
   runner: LocalRunner;
   networkEgress: NetworkEgressSetting;
