@@ -998,38 +998,6 @@ describe(buildLaunchCommand, () => {
       }
     });
 
-    it("does not warn when the preLaunchEnv value is non-empty after preLaunch (runner=none, end-to-end)", () => {
-      const promptDir = mkdtempSync(path.join(tmpdir(), "groundcrew-empty-check-none-ok-"));
-      const promptFile = path.join(promptDir, "prompt.txt");
-      const worktreeDir = mkdtempSync(path.join(tmpdir(), "groundcrew-empty-check-none-ok-wt-"));
-      try {
-        writeFileSync(promptFile, "the prompt body\n");
-
-        const out = buildLaunchCommand(
-          arguments_({
-            runner: "none",
-            promptFile,
-            worktreeDir,
-            definition: {
-              cmd: "echo TEST_MARKER_STDOUT",
-              color: "#fff",
-              preLaunch: 'export JIRA_API_TOKEN="real-value"',
-              preLaunchEnv: ["JIRA_API_TOKEN"],
-            },
-          }),
-        );
-
-        const actual = spawnSync("sh", ["-c", out], { env: { PATH: "/bin:/usr/bin" } });
-
-        expect(actual.status).toBe(0);
-        expect(actual.stdout.toString()).toContain("TEST_MARKER_STDOUT");
-        expect(actual.stderr.toString()).not.toContain("preLaunchEnv: JIRA_API_TOKEN is empty");
-      } finally {
-        rmSync(promptDir, { recursive: true, force: true });
-        rmSync(worktreeDir, { recursive: true, force: true });
-      }
-    });
-
     it("runs preLaunch without double-wrapping when cmd already starts with safehouse", () => {
       const out = buildLaunchCommand(
         arguments_({

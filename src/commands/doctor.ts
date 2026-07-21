@@ -246,14 +246,6 @@ function gatherToolTargets(config: ResolvedConfig): ToolCheckTarget[] {
   return [...all].map(([token, hint]) => (hint === undefined ? { token } : { token, hint }));
 }
 
-/**
- * Advisory: one `[? ]` line per agent that has `preLaunchEnv` configured,
- * naming the vars that will be forwarded. Empty values are caught at launch
- * time (see `buildPreLaunchEmptyCheckLines` in
- * `src/lib/preLaunchEmptyCheck.ts`) or at edit time via crew-config's TUI
- * probe. Doctor does not run the hook itself — that would be slow,
- * interactive, and side-effectful.
- */
 function preLaunchEnvAdvisories(config: ResolvedConfig): Check[] {
   const advisories: Check[] = [];
   for (const [agentName, definition] of Object.entries(config.agents.definitions)) {
@@ -355,8 +347,6 @@ export async function doctor(): Promise<boolean> {
     checks.push(check);
   }
 
-  // Advisory: operators see which agents will forward env vars from preLaunch.
-  // Runtime empty-value detection lives in `src/lib/preLaunchEmptyCheck.ts`.
   checks.push(...preLaunchEnvAdvisories(config));
 
   const usageGatedAgents = gatedAgents(config);

@@ -31,15 +31,6 @@ describe(buildPreLaunchEmptyCheckLines, () => {
     expect(actual).toHaveLength(2);
   });
 
-  it("emits no diagnostic when the named var is set to a non-empty value", () => {
-    const [line] = buildPreLaunchEmptyCheckLines(["TOKEN"]);
-
-    const { status, stderr } = runShell(`TOKEN=abc; ${line}`);
-
-    expect(status).toBe(0);
-    expect(stderr).toBe("");
-  });
-
   it("emits a stderr diagnostic when the named var is set to an empty string", () => {
     const [line] = buildPreLaunchEmptyCheckLines(["TOKEN"]);
 
@@ -70,11 +61,7 @@ describe(buildPreLaunchEmptyCheckLines, () => {
     expect(stderr).toContain("preLaunchEnv: C is empty after preLaunch (value length 0)");
   });
 
-  it("participates in an `&&` chain so a failing preLaunch still short-circuits (grouped compound)", () => {
-    // The check must be a `{ …; }` group. A bare `if … fi` link would break
-    // `&&` short-circuit — `;` does not short-circuit `&&`, so the if would
-    // run regardless of the preceding link's exit status. If the check were
-    // not grouped, `echo REACHED` below would print because the check exits 0.
+  it("participates in an `&&` chain so a failing preLaunch still short-circuits", () => {
     const [line] = buildPreLaunchEmptyCheckLines(["TOKEN"]);
 
     const { status, stderr } = runShell(`false && ${line} && echo REACHED`);

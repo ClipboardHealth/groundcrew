@@ -162,9 +162,6 @@ function preLaunchPromptAndExec(arguments_: {
   if (arguments_.definition.preLaunch !== undefined) {
     lines.push(
       renderPreLaunch(arguments_.definition.preLaunch, arguments_.worktreeDir),
-      // Warn (stderr, non-fatal) when a preLaunchEnv name resolves to empty
-      // after the hook. Mirrors hostPreLaunchSourceAndReadPrompt (safehouse
-      // chain); the unwrapped-host chain runs preLaunch here.
       ...buildPreLaunchEmptyCheckLines(arguments_.definition.preLaunchEnv ?? []),
     );
   }
@@ -216,13 +213,11 @@ function hostPreLaunchSourceAndReadPrompt(arguments_: {
 }): string[] {
   const lines: string[] = [];
   if (arguments_.definition.preLaunch !== undefined) {
+    const preLaunchEnv = arguments_.definition.preLaunchEnv ?? [];
     lines.push(
-      unsetEnvironmentLine([...BUILD_SECRET_NAMES, ...(arguments_.definition.preLaunchEnv ?? [])]),
+      unsetEnvironmentLine([...BUILD_SECRET_NAMES, ...preLaunchEnv]),
       renderPreLaunch(arguments_.definition.preLaunch, arguments_.worktreeDir),
-      // Warn (stderr, non-fatal) when a preLaunchEnv name resolves to empty after
-      // the hook — catches the `export VAR="$(cat missing)"` failure mode that
-      // masks its substitution's exit status. See preLaunchEmptyCheck.ts.
-      ...buildPreLaunchEmptyCheckLines(arguments_.definition.preLaunchEnv ?? []),
+      ...buildPreLaunchEmptyCheckLines(preLaunchEnv),
     );
   }
   lines.push(
