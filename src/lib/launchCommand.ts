@@ -160,7 +160,13 @@ function preLaunchPromptAndExec(arguments_: {
 }): string[] {
   const lines: string[] = [];
   if (arguments_.definition.preLaunch !== undefined) {
-    lines.push(renderPreLaunch(arguments_.definition.preLaunch, arguments_.worktreeDir));
+    lines.push(
+      renderPreLaunch(arguments_.definition.preLaunch, arguments_.worktreeDir),
+      // Warn (stderr, non-fatal) when a preLaunchEnv name resolves to empty
+      // after the hook. Mirrors hostPreLaunchSourceAndReadPrompt (safehouse
+      // chain); the unwrapped-host chain runs preLaunch here.
+      ...buildPreLaunchEmptyCheckLines(arguments_.definition.preLaunchEnv ?? []),
+    );
   }
   lines.push(
     `_p=$(cat ${shellSingleQuote(arguments_.promptFile)})`,
