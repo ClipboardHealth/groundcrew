@@ -235,15 +235,9 @@ export async function resumeWorkspace(
     text: renderResumePrompt(context),
   });
   const secretsFile = stageBuildSecrets(stagedPrompt.directory);
-  // Resume stages srt settings exactly like setup (a relocating agent such as
-  // codex needs its config home re-seeded to authenticate on the resumed launch).
-  // Composition runs inside the try so a pre-launch failure still cleans up the
-  // staged prompt (and any srt settings) dir.
-  let srtSettingsDir: string | undefined;
   try {
-    let launchCommand: string;
     const taskSourceWritePaths =
-      runner === "safehouse" || runner === "srt"
+      runner === "safehouse"
         ? taskSourceWritePathsForCompletion({
             config,
             taskId: context.completionTaskId,
@@ -254,7 +248,7 @@ export async function resumeWorkspace(
       agentCommandName: inferAgentCommandName(launchDefinition.cmd),
       launchDir,
     });
-    ({ launchCommand, srtSettingsDir } = composeAgentLaunch({
+    const launchCommand = composeAgentLaunch({
       runner,
       networkEgress,
       task,
@@ -272,7 +266,7 @@ export async function resumeWorkspace(
       }),
       taskSourceWritePaths,
       safehouseEnableFeatures: config.local.safehouse.enable,
-    }));
+    });
     const launchCmd = stageWorkspaceLaunchCommand(stagedPrompt.directory, launchCommand);
     await openAgentWorkspace({
       config,
@@ -285,11 +279,6 @@ export async function resumeWorkspace(
     });
   } catch (error) {
     removeStagedPrompt(stagedPrompt.directory);
-    // The launch command tears down the settings dir after srt exits; on the
-    // pre-launch failure path it never ran, so clean it up here.
-    if (srtSettingsDir !== undefined) {
-      removeStagedPrompt(srtSettingsDir);
-    }
     throw error;
   }
   recordRunState({

@@ -84,26 +84,21 @@ export const WORKSPACE_KIND_SETTINGS: readonly WorkspaceKindSetting[] = [
 
 /**
  * Concrete local isolation backend selected for a launch. `safehouse` is
- * macOS-only (clearance HTTP-egress + sandbox profile); `srt` is Anthropic's
- * sandbox-runtime (macOS `sandbox-exec` + Linux `bubblewrap`, with a built-in
- * network allowlist) — a fast, non-Docker option on both macOS and Linux/WSL;
- * `sdx` is Docker Sandboxes (`sbx` CLI) — works on Linux and macOS and is the
- * only known option that lets the agent use Docker safely without exposing the
- * host socket; `none` is an explicit unsandboxed escape hatch.
+ * macOS-only (clearance HTTP-egress + sandbox profile); `sdx` is Docker
+ * Sandboxes (`sbx` CLI) on Linux and macOS; `none` is an explicit unsandboxed
+ * escape hatch.
  */
-export type LocalRunner = "safehouse" | "srt" | "sdx" | "none";
+export type LocalRunner = "safehouse" | "sdx" | "none";
 
 /**
  * User-facing local runner setting. `auto` resolves at launch time:
- * macOS picks `safehouse`, Linux picks `sdx`. `srt` and `none` are never
- * picked implicitly — both are opt-in via an explicit `local.runner`.
+ * macOS picks `safehouse`, Linux picks `sdx`. `none` is never picked implicitly.
  */
 export type LocalRunnerSetting = LocalRunner | "auto";
 
 export const LOCAL_RUNNER_SETTINGS: readonly LocalRunnerSetting[] = [
   "auto",
   "safehouse",
-  "srt",
   "sdx",
   "none",
 ] as const;
@@ -357,7 +352,7 @@ export interface Config {
      * Network egress posture for local launches. Defaults to `"allowlisted"`.
      * With the safehouse runner, `"allowlisted"` uses Clearance and `"open"`
      * keeps the filesystem sandbox while running bare `safehouse` with
-     * unrestricted network egress. `srt`/`sdx`/`none` ignore this setting.
+     * unrestricted network egress. `sdx`/`none` ignore this setting.
      */
     networkEgress?: NetworkEgressSetting;
     /**
@@ -379,8 +374,8 @@ export interface Config {
       enable?: string[];
     };
     /**
-     * Host directories re-opened read-only inside the sandbox (safehouse +
-     * srt), for toolchains the sandbox profile masks but does not re-open.
+     * Host directories re-opened read-only inside the safehouse sandbox, for
+     * toolchains the sandbox profile masks but does not re-open.
      * `~` is expanded. Defaults to tfenv's config root so `terraform`/`tfenv`
      * work in the sandbox; set your own list to add or replace entries.
      */
@@ -509,7 +504,7 @@ const DEFAULT_GIT: ResolvedConfig["git"] = {
 
 /**
  * Read-only sandbox dirs granted by default: tfenv's config root, which the
- * safehouse/srt profiles mask but don't re-open. `~` expands at normalization.
+ * safehouse profiles mask but don't re-open. `~` expands at normalization.
  */
 const DEFAULT_LOCAL_READ_ONLY_DIRS: readonly string[] = ["~/.config/tfenv"];
 

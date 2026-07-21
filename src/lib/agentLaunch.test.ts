@@ -114,7 +114,7 @@ describe(composeAgentLaunch, () => {
       // ~/.codex — see composeAgentLaunch's homeDir input.
       homeDir: fakeHome,
       ...overrides,
-    }).launchCommand;
+    });
   }
 
   beforeEach(() => {

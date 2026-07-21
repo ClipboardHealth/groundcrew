@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 
@@ -53,58 +52,6 @@ export function resolveSafehouseClearancePath(baseUrl: string = import.meta.url)
 }
 
 const SAFEHOUSE_CLEARANCE_WRAPPER_PATH = resolveSafehouseClearancePath();
-
-/**
- * Resolve the `srt` CLI shipped by `@anthropic-ai/sandbox-runtime` (a pinned
- * groundcrew dependency) via Node's module resolution, reading the package's
- * `bin` field so the path survives version bumps that move the entry point.
- * The resolved `dist/cli.js` carries a `#!/usr/bin/env node` shebang and npm
- * marks it executable, so it is exec'd directly like the safehouse wrapper.
- *
- * @param baseUrl - **Test-only seam.** Production callers must omit this so the
- *   helper resolves from this module's URL. Tests pass an invalid value to
- *   exercise the catch branch.
- */
-export function resolveSrtBinPath(baseUrl: string = import.meta.url): string {
-  let packageJsonPath: string;
-  try {
-    packageJsonPath = createRequire(baseUrl).resolve("@anthropic-ai/sandbox-runtime/package.json");
-  } catch (error) {
-    throw new Error(
-      "@anthropic-ai/sandbox-runtime is required by @clipboard-health/groundcrew for the srt runner but could not be resolved. " +
-        "Reinstall groundcrew's dependencies (`npm install`), or set local.runner to 'safehouse' or 'sdx'.",
-      { cause: error },
-    );
-  }
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- reading our pinned dependency's well-known `bin` field
-  const manifest = JSON.parse(readFileSync(packageJsonPath, "utf8")) as {
-    bin?: string | Record<string, string>;
-  };
-  return path.resolve(path.dirname(packageJsonPath), srtBinEntry(manifest));
-}
-
-/**
- * Extract the `srt` entry from a package manifest's `bin` field, which npm
- * allows as either a bare string (single-bin packages) or a name→path map.
- */
-export function srtBinEntry(manifest: { bin?: string | Record<string, string> }): string {
-  const binEntry = typeof manifest.bin === "string" ? manifest.bin : manifest.bin?.["srt"];
-  if (binEntry === undefined) {
-    throw new Error("@anthropic-ai/sandbox-runtime package.json is missing the `srt` bin entry.");
-  }
-  return binEntry;
-}
-
-/**
- * Lazily resolved + memoized srt bin path. Unlike the safehouse wrapper (eager
- * at module load), this defers the `package.json` read until an srt launch is
- * actually built — srt is opt-in, so non-srt runs never pay for it.
- */
-let srtBinPathCache: string | undefined;
-function srtBinPath(): string {
-  srtBinPathCache ??= resolveSrtBinPath();
-  return srtBinPathCache;
-}
 
 function renderAgentCommand(arguments_: {
   agentCmd: string;
@@ -223,9 +170,9 @@ function preLaunchPromptAndExec(arguments_: {
 }
 
 /**
- * Shared by the safehouse, srt, and sdx builders: render the `exec <agent> "$@"`
+ * Shared by the safehouse and sdx builders: render the `exec <agent> "$@"`
  * inner command and the optional status-reported prepareWorktree hook. The
- * `{{sandbox}}` template is filled from `sandboxName` (empty for safehouse/srt).
+ * `{{sandbox}}` template is filled from `sandboxName` (empty for safehouse).
  */
 function renderPrepareAndAgentCommand(arguments_: LaunchCommandArguments): {
   agentCommand: string;
@@ -248,7 +195,7 @@ function renderPrepareAndAgentCommand(arguments_: LaunchCommandArguments): {
 }
 
 /**
- * Shared host-shell prologue for the in-sandbox runners (safehouse, srt): when a
+ * Shared host-shell prologue for the safehouse runner: when a
  * `preLaunch` hook is present, scrub build-secret and `preLaunchEnv` names so it
  * cannot see them; then source build secrets, read the staged prompt into `$_p`,
  * and wipe the prompt dir. The caller arms the EXIT trap and `cd`s first.
@@ -324,7 +271,7 @@ export function isEnvironmentAssignment(token: string): boolean {
 /**
  * Infer the agent's command basename from a agent `cmd` (skipping a leading
  * `env`/`KEY=val` prefix). Safehouse uses it to pick the matching `.sb`
- * profile; srt uses it to pick the agent's credential profile in `srtPolicy`.
+ * profile.
  */
 export function inferAgentCommandName(agentCmd: string): string {
   const tokens = tokenizeShellPrefix(agentCmd);
@@ -451,8 +398,8 @@ interface LaunchCommandArguments {
   /**
    * Directory the agent and prepareWorktree hook cwd into (the `cd`/`-w`
    * target). Equals `worktreeDir` unless the repo recipe sets a `workdir`, in
-   * which case it is the subproject dir. The `{{worktree}}` template and the srt
-   * filesystem grants keep using `worktreeDir` (the whole checkout).
+   * which case it is the subproject dir. The `{{worktree}}` template keeps using
+   * `worktreeDir` (the whole checkout).
    */
   workingDir: string;
   /**
@@ -473,7 +420,7 @@ interface LaunchCommandArguments {
    * Operator-only, per-repository setup command run on the HOST shell (never a
    * sandbox), before `prepareWorktreeCommand` and the agent. Resolved by the
    * caller from `knownRepositories[].unsandboxedHooks.prepareWorktree` in
-   * crew.config.ts. Emitted for the safehouse, srt, and none runners; the sdx
+   * crew.config.ts. Emitted for the safehouse and none runners; the sdx
    * runner rejects it (no host to run it on).
    */
   prepareWorktreeUnsandboxedCommand?: string | undefined;
@@ -485,7 +432,7 @@ interface LaunchCommandArguments {
   runner: LocalRunner;
   /**
    * Network egress posture. The safehouse runner uses `"allowlisted"` for the
-   * Clearance shim and `"open"` for bare `safehouse`; srt/sdx/unwrapped paths
+   * Clearance shim and `"open"` for bare `safehouse`; sdx/unwrapped paths
    * ignore it.
    */
   networkEgress: NetworkEgressSetting;
@@ -496,31 +443,6 @@ interface LaunchCommandArguments {
    * on one host and sdx on another without config edits.
    */
   sandboxName?: string | undefined;
-  /**
-   * Absolute path to the profile-neutral srt settings JSON for the
-   * prepareWorktree wrap (no agent credential grants). Required when
-   * `runner === "srt"`. Staged in `srtSettingsDir`.
-   */
-  srtPrepareSettingsFile?: string | undefined;
-  /**
-   * Absolute path to the full agent srt settings JSON for the agent wrap.
-   * Required when `runner === "srt"`. Staged in `srtSettingsDir`.
-   */
-  srtAgentSettingsFile?: string | undefined;
-  /**
-   * Absolute temp dir holding the srt settings files. Required when
-   * `runner === "srt"`; torn down by the launch command after srt exits.
-   */
-  srtSettingsDir?: string | undefined;
-  /**
-   * Env var that points the agent at its relocated, writable config home
-   * (e.g. `{ name: "CODEX_HOME", value: "<settingsDir>/codex-home" }`).
-   * Injected into the agent wrap's `env -i` (with an explicit value, not a
-   * host-env passthrough) so the agent writes state to the staged dir instead
-   * of its read-only real home. Only the agent wrap gets it — the prepare wrap
-   * runs the repo hook, not the agent. Undefined for read-only agents (claude).
-   */
-  srtAgentConfigDirEnv?: { name: string; value: string } | undefined;
   /**
    * Extra filesystem paths granted read/write to the safehouse sandbox via
    * `--add-dirs`, beyond safehouse's automatic cwd grant. Resolved (and deduped)
@@ -580,9 +502,6 @@ interface LaunchCommandArguments {
  * prompt in hand.
  */
 export function buildLaunchCommand(arguments_: LaunchCommandArguments): string {
-  if (arguments_.runner === "srt") {
-    return buildSrtLaunchCommand(arguments_);
-  }
   if (arguments_.runner === "sdx") {
     if (arguments_.definition.preLaunch !== undefined) {
       throw new Error(
@@ -596,7 +515,7 @@ export function buildLaunchCommand(arguments_: LaunchCommandArguments): string {
     }
     if (arguments_.prepareWorktreeUnsandboxedCommand !== undefined) {
       throw new Error(
-        "unsandboxedHooks.prepareWorktree is not supported for runner='sdx': the sdx container has no host to run it on. Remove unsandboxedHooks for this repo, or use runner 'safehouse', 'srt', or 'none'.",
+        "unsandboxedHooks.prepareWorktree is not supported for runner='sdx': the sdx container has no host to run it on. Remove unsandboxedHooks for this repo, or use runner 'safehouse' or 'none'.",
       );
     }
     return buildSdxLaunchCommand(arguments_);
@@ -883,138 +802,6 @@ function safehouseEnableFeaturesFlag(features: readonly string[]): string {
 
 function uniqueStrings(values: readonly string[]): string[] {
   return [...new Set(values)];
-}
-
-/**
- * Benign baseline env the srt wraps run under (via `env -i`). This is an
- * allowlist on purpose: srt's CLI spawns its child with the *inherited* host
- * env, so — unlike safehouse (`--env=FILE` sanitized baseline) and sdx (clean
- * container env) — ambient secrets in the launch shell would otherwise reach
- * the agent and bypass the filesystem read mask. A denylist can't enumerate
- * every secret var, so we clear the env and re-add only these known-benign
- * names plus per-wrap forwarded vars (build secrets / `preLaunchEnv`). Values
- * are read from the host shell at runtime. Vars unset on the host become empty
- * (harmless for these). srt injects proxy + TMPDIR vars into the child itself.
- */
-const SRT_ENV_BASELINE: readonly string[] = [
-  "PATH",
-  "HOME",
-  "USER",
-  "LOGNAME",
-  "SHELL",
-  "TERM",
-  "COLORTERM",
-  "LANG",
-  "LC_ALL",
-  "LC_CTYPE",
-  "TZ",
-  "PWD",
-];
-
-/** Render `env -i` forwarded assignments: ` NAME="$NAME"` per name (value taken from the host shell at runtime). */
-function srtForwardedEnv(names: readonly string[]): string {
-  return names.map((name) => ` ${name}="$${name}"`).join("");
-}
-
-/**
- * srt launch. Two srt wraps mirror the safehouse two-wrap design, so the
- * dependency/build phase is sandboxed too — not just the agent:
- *
- *   1. **prepareWorktree wrap**: `env -i <baseline+secrets> srt --settings <file> sh -c '<hook>'`.
- *   2. **Agent wrap**: `env -i <baseline+preLaunchEnv> srt --settings <file> sh -c 'exec <agent> "$@"' sh "$_p"`.
- *
- * Unlike safehouse there is no profile-by-basename selection, so no symlink
- * shim is needed — srt takes the policy as an explicit `--settings` file. Each
- * srt invocation runs under `env -i` (see `SRT_ENV_BASELINE`) so the agent gets
- * a sanitized env instead of the inherited host env: the prepareWorktree wrap
- * additionally forwards build secrets (for `npm ci` auth) and the agent wrap
- * forwards the user's opt-in `preLaunchEnv` names — matching safehouse's
- * sanitized baseline plus explicit pass-list posture. `preLaunch` and secret
- * sourcing still run on the host shell (full env), exactly as under safehouse.
- *
- * The settings file lives in `srtSettingsDir` (a dedicated temp dir, never the
- * prompt dir, which is wiped before the agent execs). The EXIT trap covers both
- * the settings dir and the prompt dir for every failure window; the happy path
- * removes the prompt dir before the agent wrap and the settings dir after it.
- */
-function buildSrtLaunchCommand(arguments_: LaunchCommandArguments): string {
-  if (
-    arguments_.srtPrepareSettingsFile === undefined ||
-    arguments_.srtAgentSettingsFile === undefined ||
-    arguments_.srtSettingsDir === undefined
-  ) {
-    throw new Error(
-      "buildLaunchCommand: runner='srt' requires srtPrepareSettingsFile, srtAgentSettingsFile, and srtSettingsDir (generate them with buildSrtSettings + stageSrtSettings before calling).",
-    );
-  }
-  const promptDir = path.dirname(arguments_.promptFile);
-  const { agentCommand, prepareWorktreeCommand } = renderPrepareAndAgentCommand(arguments_);
-  const srtBin = shellSingleQuote(srtBinPath());
-  // Distinct policies per wrap: the prepareWorktree hook is repo-controlled, so
-  // it runs under the profile-neutral settings (no agent credential grants);
-  // only the agent wrap gets the full agent policy.
-  //
-  // The trailing `--` is load-bearing: srt's CLI (commander) has its own `-c`,
-  // `--settings`, `--debug`, and `--control-fd` options. Without `--`, srt would
-  // capture the child's `sh -c '<cmd>'` as its OWN `-c` (dropping the trailing
-  // prompt positionals entirely), and an option-looking prompt/hook value could
-  // mutate srt's options (e.g. redirect `--settings`). `--` ends srt option
-  // parsing so everything after is the child argv.
-  const prepareTarget = `${srtBin} --settings ${shellSingleQuote(arguments_.srtPrepareSettingsFile)} --`;
-  const agentTarget = `${srtBin} --settings ${shellSingleQuote(arguments_.srtAgentSettingsFile)} --`;
-
-  // `env -i <baseline>` drops the inherited host env; each wrap re-adds only the
-  // benign baseline plus its forwarded names (`VAR="$VAR"` — value from the host
-  // shell at runtime; the names are safe identifiers, validated for
-  // preLaunchEnv). env -i isolates the agent wrap from build secrets, so no
-  // `unset` dance between wraps is needed.
-  const baseline = SRT_ENV_BASELINE.map((name) => `${name}="$${name}"`).join(" ");
-  const prepareForward =
-    arguments_.secretsFile === undefined ? "" : srtForwardedEnv(BUILD_SECRET_NAMES);
-  const prepareWrap = `env -i ${baseline}${prepareForward} ${prepareTarget}`;
-  // The relocated config-home env (e.g. CODEX_HOME) is an explicit value, not a
-  // `VAR="$VAR"` host passthrough — groundcrew computed the staged path, it is
-  // not in the launch shell's env. The name is a fixed identifier; the value is
-  // single-quoted. Only the agent wrap gets it.
-  const agentConfigDirAssignment =
-    arguments_.srtAgentConfigDirEnv === undefined
-      ? ""
-      : ` ${arguments_.srtAgentConfigDirEnv.name}=${shellSingleQuote(arguments_.srtAgentConfigDirEnv.value)}`;
-  const agentWrap = `env -i ${baseline}${agentConfigDirAssignment}${srtForwardedEnv([
-    ...(arguments_.definition.preLaunchEnv ?? []),
-    ...workerEnvironmentNames(arguments_.workerEnvironment),
-  ])} ${agentTarget}`;
-
-  // One EXIT trap wipes both the settings dir and the prompt dir, covering
-  // every failure window between here and the post-wrap cleanup.
-  const cleanup = `rm -rf ${shellSingleQuote(arguments_.srtSettingsDir)}; rm -rf ${shellSingleQuote(promptDir)}`;
-  const lines = [
-    `trap ${shellSingleQuote(cleanup)} EXIT`,
-    `cd ${shellSingleQuote(arguments_.workingDir)}`,
-    ...hostPreLaunchSourceAndReadPrompt({
-      definition: arguments_.definition,
-      worktreeDir: arguments_.worktreeDir,
-      promptFile: arguments_.promptFile,
-      promptDir,
-      secretsFile: arguments_.secretsFile,
-    }),
-  ];
-  if (arguments_.prepareWorktreeUnsandboxedCommand !== undefined) {
-    lines.push(
-      hostPrepareWorktreeLine(
-        arguments_.prepareWorktreeUnsandboxedCommand,
-        arguments_.definition.preLaunchEnv ?? [],
-      ),
-    );
-  }
-  if (prepareWorktreeCommand !== undefined) {
-    lines.push(`${prepareWrap} sh -c ${shellSingleQuote(prepareWorktreeCommand)}`);
-  }
-  lines.push(
-    ...workerEnvironmentExports(arguments_.workerEnvironment),
-    `{ ${agentWrap} sh -c ${shellSingleQuote(agentCommand)} sh${promptPositional(arguments_.omitPromptArgument)}; _srt_status=$?; rm -rf ${shellSingleQuote(arguments_.srtSettingsDir)}; trap - EXIT; exit "$_srt_status"; }`,
-  );
-  return lines.join(" && ");
 }
 
 function buildSdxLaunchCommand(arguments_: LaunchCommandArguments): string {

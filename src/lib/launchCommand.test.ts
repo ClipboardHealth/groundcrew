@@ -7,19 +7,13 @@ import { BUILD_SECRET_NAMES, type AgentDefinition } from "./config.ts";
 import {
   buildLaunchCommand,
   resolveSafehouseClearancePath,
-  resolveSrtBinPath,
   shellSingleQuote,
-  srtBinEntry,
   withResumeArgs,
 } from "./launchCommand.ts";
 
 const WORKER_ENVIRONMENT = {
   GROUNDCREW_TASK_ID: "todo:gc-1",
   GROUNDCREW_COMPLETE: "crew task done todo:gc-1",
-} as const;
-
-const WORKER_ENVIRONMENT_WITHOUT_COMPLETION = {
-  GROUNDCREW_TASK_ID: "linear:team-1",
 } as const;
 
 function arguments_(
@@ -52,230 +46,6 @@ describe(resolveSafehouseClearancePath, () => {
     expect(() => resolveSafehouseClearancePath("relative/path/that/createRequire/rejects")).toThrow(
       /@clipboard-health\/clearance.*groundcrew/,
     );
-  });
-});
-
-describe(resolveSrtBinPath, () => {
-  it("resolves through Node module resolution to the real srt cli entry point", () => {
-    const binPath = resolveSrtBinPath();
-
-    expect(binPath).toMatch(/sandbox-runtime\/dist\/cli\.js$/);
-    expect(statSync(binPath).isFile()).toBe(true);
-  });
-
-  it("wraps resolution failure in a guidance error naming sandbox-runtime", () => {
-    expect(() => resolveSrtBinPath("relative/path/that/createRequire/rejects")).toThrow(
-      /@anthropic-ai\/sandbox-runtime/,
-    );
-  });
-});
-
-describe(srtBinEntry, () => {
-  it("reads the `srt` entry from a name→path bin map", () => {
-    expect(srtBinEntry({ bin: { srt: "dist/cli.js" } })).toBe("dist/cli.js");
-  });
-
-  it("accepts a bare string bin (single-bin packages)", () => {
-    expect(srtBinEntry({ bin: "dist/cli.js" })).toBe("dist/cli.js");
-  });
-
-  it("throws when no srt bin entry is present", () => {
-    expect(() => srtBinEntry({})).toThrow(/missing the `srt` bin entry/);
-    expect(() => srtBinEntry({ bin: { other: "x" } })).toThrow(/missing the `srt` bin entry/);
-  });
-});
-
-describe(`${buildLaunchCommand.name} (runner='srt')`, () => {
-  function srtArguments(
-    overrides: Partial<Parameters<typeof buildLaunchCommand>[0]> = {},
-  ): Parameters<typeof buildLaunchCommand>[0] {
-    return arguments_({
-      runner: "srt",
-      srtPrepareSettingsFile: "/tmp/groundcrew-srt-team-1/prepare-settings.json",
-      srtAgentSettingsFile: "/tmp/groundcrew-srt-team-1/agent-settings.json",
-      srtSettingsDir: "/tmp/groundcrew-srt-team-1",
-      ...overrides,
-    });
-  }
-
-  it("runs prepareWorktree under the profile-neutral prepare settings, the agent under the agent settings", () => {
-    const out = buildLaunchCommand(srtArguments({ prepareWorktreeCommand: "npm ci" }));
-
-    const prepareFlag = "--settings '/tmp/groundcrew-srt-team-1/prepare-settings.json'";
-    const agentFlag = "--settings '/tmp/groundcrew-srt-team-1/agent-settings.json'";
-    const prepareWrapIndex = out.indexOf(`${prepareFlag} -- sh -c`);
-    const setupIndex = out.indexOf("npm ci");
-    const agentIndex = out.indexOf(`${agentFlag} -- sh -c 'exec claude "$@"' sh "$_p"`);
-
-    expect(out).toMatch(/sandbox-runtime\/dist\/cli\.js' --settings/);
-    expect(out).toContain("cd '/work/repo-a-team-1'");
-    expect(out).toContain("_p=$(cat '/tmp/prompt-team-1/prompt.txt')");
-    expect(out).toContain("rm -rf '/tmp/prompt-team-1'");
-    // The repo-controlled prepare hook gets the neutral policy; only the agent
-    // wrap gets the agent policy — they must be different files.
-    expect(out).toContain(`${prepareFlag} -- sh -c`);
-    expect(out).toContain(`${agentFlag} -- sh -c 'exec claude "$@"' sh "$_p"`);
-    expect(out.slice(setupIndex)).not.toContain("prepare-settings.json");
-    expect(out).not.toContain("safehouse-clearance");
-    expect(out).not.toContain("_safehouse_shim");
-    expect(prepareWrapIndex).toBeGreaterThan(-1);
-    expect(setupIndex).toBeGreaterThan(prepareWrapIndex);
-    expect(agentIndex).toBeGreaterThan(setupIndex);
-  });
-
-  it("separates srt options from the child argv with `--` so option-looking values can't mutate srt flags", () => {
-    const out = buildLaunchCommand(srtArguments({ prepareWorktreeCommand: "--debug ; echo x" }));
-
-    // Both wraps end srt option parsing with `--` before the child `sh -c`...
-    expect(out).toContain("agent-settings.json' -- sh -c");
-    expect(out).toContain("prepare-settings.json' -- sh -c");
-    // ...so srt never sees a bare `--settings <file> sh` (which would let it
-    // swallow the child `-c`), and an option-looking hook value lands inside the
-    // child sh -c rather than mutating srt's own flags.
-    expect(out).not.toMatch(/--settings '[^']*' sh -c/);
-    expect(out).toMatch(/-- sh -c '\(--debug ; echo x\)/);
-  });
-
-  it("tears down the settings dir after the agent exits and traps both temp dirs", () => {
-    const out = buildLaunchCommand(srtArguments());
-
-    expect(out).toContain(
-      String.raw`trap 'rm -rf '\''/tmp/groundcrew-srt-team-1'\''; rm -rf '\''/tmp/prompt-team-1'\''' EXIT`,
-    );
-    expect(out).toContain(`sh "$_p"; _srt_status=$?; rm -rf '/tmp/groundcrew-srt-team-1'`);
-    expect(out).toContain('trap - EXIT; exit "$_srt_status"');
-  });
-
-  it("requires the staged prepare + agent settings files and dir", () => {
-    expect(() => buildLaunchCommand(arguments_({ runner: "srt" }))).toThrow(
-      /requires srtPrepareSettingsFile, srtAgentSettingsFile, and srtSettingsDir/,
-    );
-  });
-
-  it("supports preLaunch and preLaunchEnv (unlike sdx)", () => {
-    const out = buildLaunchCommand(
-      srtArguments({
-        definition: {
-          cmd: "claude",
-          color: "#fff",
-          preLaunch: "export TOKEN=abc",
-          preLaunchEnv: ["TOKEN"],
-        },
-        secretsFile: "/tmp/prompt-team-1/secrets.env",
-      }),
-    );
-
-    const preLaunchIndex = out.indexOf("export TOKEN=abc");
-    const sourceIndex = out.indexOf("secrets.env");
-    expect(out).toContain(`unset ${BUILD_SECRET_NAMES.join(" ")} TOKEN`);
-    expect(preLaunchIndex).toBeGreaterThan(-1);
-    expect(sourceIndex).toBeGreaterThan(preLaunchIndex);
-    // preLaunchEnv is forwarded into the agent wrap's sanitized env.
-    expect(out).toContain(`TOKEN="$TOKEN"`);
-  });
-
-  it("runs each srt wrap under a sanitized `env -i` baseline, not the inherited host env", () => {
-    const out = buildLaunchCommand(srtArguments());
-
-    expect(out).toContain(`env -i PATH="$PATH" HOME="$HOME"`);
-    expect(out).toContain(`TZ="$TZ" PWD="$PWD"`);
-  });
-
-  it("forwards build secrets into the prepareWorktree wrap only, never the agent wrap", () => {
-    const out = buildLaunchCommand(
-      srtArguments({
-        prepareWorktreeCommand: "npm ci",
-        secretsFile: "/tmp/prompt-team-1/secrets.env",
-      }),
-    );
-    const afterPrepare = out.slice(out.indexOf("npm ci"));
-
-    expect(out).toContain(`NPM_TOKEN="$NPM_TOKEN"`);
-    // The agent wrap (everything from the prepare command onward) never sees it.
-    expect(afterPrepare).not.toContain("NPM_TOKEN");
-  });
-
-  it("omits build-secret forwarding from the prepareWorktree wrap when no secrets are staged", () => {
-    const out = buildLaunchCommand(srtArguments({ prepareWorktreeCommand: "npm ci" }));
-
-    expect(out).not.toContain("NPM_TOKEN");
-  });
-
-  it("injects the relocated config-home env into the agent wrap with an explicit value", () => {
-    const out = buildLaunchCommand(
-      srtArguments({
-        prepareWorktreeCommand: "npm ci",
-        srtAgentConfigDirEnv: {
-          name: "CODEX_HOME",
-          value: "/tmp/groundcrew-srt-team-1/codex-home",
-        },
-      }),
-    );
-
-    // Explicit single-quoted value (not a "$CODEX_HOME" host passthrough), in
-    // the agent wrap's env -i right before the agent settings flag.
-    expect(out).toMatch(/CODEX_HOME='[^']*\/codex-home' [^&]*agent-settings\.json/);
-    // The prepareWorktree wrap (everything up to the hook command) never sees it.
-    const prepareSegment = out.slice(0, out.indexOf("npm ci"));
-    expect(prepareSegment).not.toContain("CODEX_HOME");
-  });
-
-  it("forwards worker completion env into the agent wrap only", () => {
-    const out = buildLaunchCommand(
-      srtArguments({
-        prepareWorktreeCommand: "npm ci",
-        workerEnvironment: WORKER_ENVIRONMENT,
-      }),
-    );
-
-    const prepareSegment = out.slice(0, out.indexOf("npm ci"));
-    const afterPrepare = out.slice(out.indexOf("npm ci"));
-    expect(out).toContain("export GROUNDCREW_TASK_ID='todo:gc-1'");
-    expect(out).toContain("export GROUNDCREW_COMPLETE='crew task done todo:gc-1'");
-    expect(afterPrepare).toContain(`GROUNDCREW_TASK_ID="$GROUNDCREW_TASK_ID"`);
-    expect(afterPrepare).toContain(`GROUNDCREW_COMPLETE="$GROUNDCREW_COMPLETE"`);
-    expect(prepareSegment).not.toContain("GROUNDCREW_COMPLETE");
-  });
-
-  it("omits the completion command when the task source cannot mark done", () => {
-    const out = buildLaunchCommand(
-      srtArguments({
-        prepareWorktreeCommand: "npm ci",
-        workerEnvironment: WORKER_ENVIRONMENT_WITHOUT_COMPLETION,
-      }),
-    );
-
-    const afterPrepare = out.slice(out.indexOf("npm ci"));
-    expect(out).toContain("export GROUNDCREW_TASK_ID='linear:team-1'");
-    expect(out).not.toContain("GROUNDCREW_COMPLETE");
-    expect(afterPrepare).toContain(`GROUNDCREW_TASK_ID="$GROUNDCREW_TASK_ID"`);
-  });
-
-  it("omits the config-home env for read-only agents (claude) that don't relocate", () => {
-    const out = buildLaunchCommand(srtArguments());
-
-    expect(out).not.toContain("CODEX_HOME");
-    expect(out).not.toContain("CLAUDE_CONFIG_DIR");
-  });
-
-  it("runs prepareWorktreeUnsandboxed on the host before the srt prepare wrap", () => {
-    const out = buildLaunchCommand(
-      srtArguments({
-        prepareWorktreeUnsandboxedCommand: "bin/setup",
-        prepareWorktreeCommand: "npm ci",
-      }),
-    );
-
-    const unsandboxedIndex = out.indexOf("(bin/setup); prepare_status=$?");
-    const prepareWrapIndex = out.indexOf("prepare-settings.json' -- sh -c");
-    const npmIndex = out.indexOf("npm ci");
-
-    expect(unsandboxedIndex).toBeGreaterThan(-1);
-    // The host command runs before the srt-wrapped prepare hook, and is not itself
-    // wrapped by srt (no `env -i` / `--settings` between it and bin/setup).
-    expect(unsandboxedIndex).toBeLessThan(prepareWrapIndex);
-    expect(npmIndex).toBeGreaterThan(prepareWrapIndex);
-    expect(out).not.toContain("-- sh -c '(bin/setup)");
   });
 });
 
@@ -1645,21 +1415,6 @@ describe("buildLaunchCommand omitPromptArgument (interactive launch)", () => {
     expect(interactive).toContain(`sh; _safehouse_status=$?`);
     expect(interactive).not.toContain(`sh "$_p"`);
     expect(interactive).toContain("_p=$(cat '/tmp/prompt-team-1/prompt.txt')");
-  });
-
-  it("drops the trailing prompt positional from the srt agent wrap", () => {
-    const srtArgs = {
-      runner: "srt" as const,
-      srtPrepareSettingsFile: "/tmp/groundcrew-srt-team-1/prepare-settings.json",
-      srtAgentSettingsFile: "/tmp/groundcrew-srt-team-1/agent-settings.json",
-      srtSettingsDir: "/tmp/groundcrew-srt-team-1",
-    };
-    const withPrompt = buildLaunchCommand(arguments_(srtArgs));
-    const interactive = buildLaunchCommand(arguments_({ ...srtArgs, omitPromptArgument: true }));
-
-    expect(withPrompt).toContain(`sh "$_p"; _srt_status=$?`);
-    expect(interactive).toContain(`sh; _srt_status=$?`);
-    expect(interactive).not.toContain(`sh "$_p"`);
   });
 
   it("drops the trailing prompt positional from the sdx exec", () => {

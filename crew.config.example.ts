@@ -131,7 +131,7 @@ export default {
   //     // Install via task-sources/jira (see task-sources/jira/README.md):
   //     //   cp task-sources/jira/jira.sh ~/.config/groundcrew/jira.sh
   //     // Open local task-store directories for read/write inside the
-  //     // safehouse/srt sandbox when this source owns the launched task.
+  //     // safehouse sandbox when this source owns the launched task.
   //     sandboxWritePaths: ["~/plans"],
   //     commands: {
   //       verify: "~/.config/groundcrew/jira.sh verify",
@@ -179,7 +179,7 @@ export default {
   // // deny-by-default policy. Examples: `agent-browser` so the
   // // chrome-devtools MCP server can drive a headless Chrome;
   // // `browser-native-messaging` for `claude --chrome`. Ignored by the
-  // // srt/sdx/none runners.
+  // // sdx/none runners.
   // local: { safehouse: { enable: ["agent-browser"] } },
   //
   // // Groundcrew does not create or authenticate sdx sandboxes. For an sdx

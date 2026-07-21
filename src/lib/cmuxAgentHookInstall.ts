@@ -1,5 +1,5 @@
+import { agentConfigRelocation } from "./codexConfigRelocation.ts";
 import { runCommand } from "./commandRunner.ts";
-import { agentConfigRelocation } from "./srtPolicy.ts";
 import { errorMessage, logEvent } from "./util.ts";
 
 const CMUX_HOOKS_INSTALL_EVENT = "cmux-agent-hooks-install";

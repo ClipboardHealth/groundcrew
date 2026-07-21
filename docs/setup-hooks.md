@@ -127,7 +127,7 @@ Grant it only to repositories you trust to run arbitrary code on the host.
   (top-level or under `hooks`) is a hard config error.
 - **Per-repository only.** There is no `defaults.unsandboxedHooks`;
   host execution is never a fleet-wide default.
-- **Runner support.** Runs on the host for `safehouse`, `srt`, and `none`. The
+- **Runner support.** Runs on the host for `safehouse` and `none`. The
   `sdx` runner rejects it at launch — a container has no host to run it on.
 - **Credentials.** Build secrets are available so `npm`/`bundle` can
   authenticate; the agent's `preLaunchEnv` names are scrubbed so the command

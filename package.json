@@ -63,14 +63,12 @@
     "markdown:lint": "markdownlint-cli2 --config config/markdownlint-cli2.jsonc",
     "prepack": "node --run build",
     "prepare": "husky",
-    "spell:check": "cspell --config config/cspell.json --no-summary --no-progress --no-must-find-files",
     "sync-ai-rules": "node ./node_modules/@clipboard-health/ai-rules/scripts/sync.js common",
     "syncpack:lint": "syncpack lint --config config/syncpack.config.ts",
     "test": "vitest run --coverage",
     "verify": "node scripts/verifyAll.mts"
   },
   "dependencies": {
-    "@anthropic-ai/sandbox-runtime": "0.0.65",
     "@clipboard-health/clearance": "1.4.7",
     "@linear/sdk": "88.1.0",
     "agent-trust": "1.0.0",
@@ -79,7 +77,7 @@
     "zod": "4.4.3"
   },
   "devDependencies": {
-    "@clipboard-health/ai-rules": "2.37.1",
+    "@clipboard-health/ai-rules": "2.43.4",
     "@clipboard-health/oxlint-config": "1.12.9",
     "@nx/js": "22.7.7",
     "@tsconfig/node24": "24.0.4",
@@ -87,7 +85,6 @@
     "@types/node": "25.9.5",
     "@typescript/native-preview": "7.0.0-dev.20260707.2",
     "@vitest/coverage-v8": "4.1.10",
-    "cspell": "10.0.1",
     "dependency-cruiser": "18.1.0",
     "husky": "9.1.7",
     "jscpd": "5.0.12",

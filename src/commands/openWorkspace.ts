@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import { composeAgentLaunch, openAgentWorkspace, prepareAgentLaunch } from "../lib/agentLaunch.ts";
@@ -9,6 +9,7 @@ import { resolvePrepareWorktreeCommand } from "../lib/repositoryHooks.ts";
 import { recordRunState, readRunState } from "../lib/runState.ts";
 import { seedLaunchWorkspaceTrust } from "../lib/seedLaunchWorkspaceTrust.ts";
 import {
+  removeStagedPrompt,
   stageBuildSecrets,
   stagePromptText,
   stageWorkspaceLaunchCommand,
@@ -172,8 +173,7 @@ async function resolveTarget(
 async function rollback(arguments_: {
   config: ResolvedConfig;
   entry: WorktreeEntry;
-  promptDir: string | undefined;
-  srtSettingsDir: string | undefined;
+  promptDir: string;
 }): Promise<void> {
   log(
     `Open failed; rolling back worktree ${arguments_.entry.repository}-${arguments_.entry.task}...`,
@@ -183,14 +183,10 @@ async function rollback(arguments_: {
   } catch (error) {
     log(`Worktree teardown failed during rollback: ${errorMessage(error)}`);
   }
-  for (const dir of [arguments_.promptDir, arguments_.srtSettingsDir]) {
-    if (dir !== undefined) {
-      try {
-        rmSync(dir, { recursive: true, force: true });
-      } catch {
-        // already gone
-      }
-    }
+  try {
+    removeStagedPrompt(arguments_.promptDir);
+  } catch {
+    // already gone
   }
 }
 
@@ -243,7 +239,6 @@ export async function openWorkspace(
     task: target.task,
     text: options.promptText ?? "",
   });
-  let srtSettingsDir: string | undefined;
   try {
     const repositoryEntry = config.workspace.repositories.find(
       (entry) => entry.name === repository,
@@ -266,8 +261,7 @@ export async function openWorkspace(
       agentCommandName: inferAgentCommandName(definition.cmd),
       launchDir,
     });
-    let launchCommand: string;
-    ({ launchCommand, srtSettingsDir } = composeAgentLaunch({
+    const launchCommand = composeAgentLaunch({
       runner,
       networkEgress,
       task: target.task,
@@ -282,7 +276,7 @@ export async function openWorkspace(
       workspaceKind,
       readOnlyDirs: config.local.readOnlyDirs,
       omitPromptArgument,
-    }));
+    });
     const launchCmd = stageWorkspaceLaunchCommand(stagedPrompt.directory, launchCommand);
     await openAgentWorkspace({
       config,
@@ -294,7 +288,7 @@ export async function openWorkspace(
       color: definition.color,
     });
   } catch (error) {
-    await rollback({ config, entry: created, promptDir: stagedPrompt.directory, srtSettingsDir });
+    await rollback({ config, entry: created, promptDir: stagedPrompt.directory });
     throw error;
   }
 
