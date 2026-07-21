@@ -214,6 +214,8 @@ function hostPreLaunchSourceAndReadPrompt(arguments_: {
   const lines: string[] = [];
   if (arguments_.definition.preLaunch !== undefined) {
     const preLaunchEnv = arguments_.definition.preLaunchEnv ?? [];
+    // Order is load-bearing: unset scrubs inherited values so the empty-check
+    // reads what preLaunch actually produced, not what the parent shell leaked.
     lines.push(
       unsetEnvironmentLine([...BUILD_SECRET_NAMES, ...preLaunchEnv]),
       renderPreLaunch(arguments_.definition.preLaunch, arguments_.worktreeDir),
