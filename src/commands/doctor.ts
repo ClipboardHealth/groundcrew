@@ -265,7 +265,7 @@ function preLaunchEnvAdvisories(config: ResolvedConfig): Check[] {
       name: `preLaunchEnv: ${agentName}`,
       ok: true,
       required: false,
-      hint: `forwards ${names.length} var(s): ${names.join(", ")}. ${warnClause} — verify with crew-config's preLaunchEnv editor probe before launching.`,
+      hint: `forwards ${names.length} var(s): ${names.join(", ")}. ${warnClause}.`,
     });
   }
   return advisories;
