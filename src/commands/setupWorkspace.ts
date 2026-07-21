@@ -120,6 +120,7 @@ export async function setupWorkspace(
   // Without rollback the next tick hits "Worktree already exists" and
   // the task strands forever.
   let promptDir: string | undefined;
+  let cleanupAgentLaunch: (() => void) | undefined;
   try {
     await assertLaunchReady(readinessPromise);
 
@@ -166,7 +167,7 @@ export async function setupWorkspace(
       agentCommandName: inferAgentCommandName(definition.cmd),
       launchDir,
     });
-    const launchCommand = composeAgentLaunch({
+    const launch = composeAgentLaunch({
       runner,
       networkEgress,
       task,
@@ -187,7 +188,8 @@ export async function setupWorkspace(
       taskSourceWritePaths,
       safehouseEnableFeatures: config.local.safehouse.enable,
     });
-    const launchCmd = stageWorkspaceLaunchCommand(promptDir, launchCommand);
+    cleanupAgentLaunch = launch.cleanup;
+    const launchCmd = stageWorkspaceLaunchCommand(promptDir, launch.command);
 
     debug("Opening workspace...");
     await openAgentWorkspace({
@@ -221,6 +223,7 @@ export async function setupWorkspace(
       logAccessHint(accessHint);
     }
   } catch (error) {
+    cleanupAgentLaunch?.();
     await rollbackWorktree({ config, entry: created, promptDir });
     recordFailedToLaunch({ config, options, paths: { worktreeDir, branchName }, error });
     throw error;

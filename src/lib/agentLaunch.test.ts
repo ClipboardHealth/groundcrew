@@ -1,4 +1,13 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -71,13 +80,14 @@ vi.mock(import("./cmuxAgentHookInstall.ts"), async (importOriginal) => {
 });
 
 const ORIGINAL_CMUX_SOCKET_PATH = readEnvironmentVariable("CMUX_SOCKET_PATH");
+const ORIGINAL_CODEX_HOME = readEnvironmentVariable("CODEX_HOME");
 
-function restoreCmuxSocketPath(): void {
-  if (ORIGINAL_CMUX_SOCKET_PATH === undefined) {
-    deleteEnvironmentVariable("CMUX_SOCKET_PATH");
+function restoreEnvironmentVariable(name: string, originalValue: string | undefined): void {
+  if (originalValue === undefined) {
+    deleteEnvironmentVariable(name);
     return;
   }
-  setEnvironmentVariable("CMUX_SOCKET_PATH", ORIGINAL_CMUX_SOCKET_PATH);
+  setEnvironmentVariable(name, originalValue);
 }
 
 function assertDefined<T>(value: T | undefined, label = "value"): T {
@@ -99,7 +109,9 @@ describe(composeAgentLaunch, () => {
   let fakeHome: string;
   const stagedConfigDirs: string[] = [];
 
-  function compose(overrides: Partial<Parameters<typeof composeAgentLaunch>[0]> = {}): string {
+  function composeLaunch(
+    overrides: Partial<Parameters<typeof composeAgentLaunch>[0]> = {},
+  ): ReturnType<typeof composeAgentLaunch> {
     return composeAgentLaunch({
       runner: "safehouse",
       networkEgress: "allowlisted",
@@ -115,6 +127,10 @@ describe(composeAgentLaunch, () => {
       homeDir: fakeHome,
       ...overrides,
     });
+  }
+
+  function compose(overrides: Partial<Parameters<typeof composeAgentLaunch>[0]> = {}): string {
+    return composeLaunch(overrides).command;
   }
 
   beforeEach(() => {
@@ -137,11 +153,13 @@ describe(composeAgentLaunch, () => {
       stagedConfigDirs.push(input.configDir);
     });
     deleteEnvironmentVariable("CMUX_SOCKET_PATH");
+    deleteEnvironmentVariable("CODEX_HOME");
   });
 
   afterEach(() => {
     vi.resetAllMocks();
-    restoreCmuxSocketPath();
+    restoreEnvironmentVariable("CMUX_SOCKET_PATH", ORIGINAL_CMUX_SOCKET_PATH);
+    restoreEnvironmentVariable("CODEX_HOME", ORIGINAL_CODEX_HOME);
     rmSync(fakeHome, { recursive: true, force: true });
     for (const configDir of stagedConfigDirs) {
       rmSync(path.dirname(configDir), { recursive: true, force: true });
@@ -216,8 +234,102 @@ describe(composeAgentLaunch, () => {
       `--add-dirs='/work/repo-a-team-1:/tmp/repo-a.git:${configDir}'`,
     );
     expect(launchCommand).not.toContain(`--add-dirs-ro='${configDir}'`);
-    // ...and torn down alongside the shim dir once the agent wrap exits.
+    // ...refreshed credentials are copied back by the host before the staged
+    // directory is torn down alongside the shim dir.
+    expect(launchCommand).toContain(
+      `/bin/cp -P ${shellSingleQuote(path.join(configDir, "auth.json"))}`,
+    );
+    expect(launchCommand).toContain(
+      `/usr/bin/cmp -s ${shellSingleQuote(realpathSync(path.join(fakeHome, ".codex", "auth.json")))} `,
+    );
     expect(launchCommand).toContain(`rm -rf ${shellSingleQuote(path.dirname(configDir))}`);
+  });
+
+  it("seeds from the configured CODEX_HOME instead of the default ~/.codex", () => {
+    const configuredCodexHome = mkdtempSync(path.join(os.tmpdir(), "agent-launch-codex-home-"));
+    try {
+      writeFileSync(path.join(configuredCodexHome, "auth.json"), '{"token":"custom"}');
+      writeFileSync(path.join(configuredCodexHome, "config.toml"), "model = 'custom'\n");
+      setEnvironmentVariable("CODEX_HOME", configuredCodexHome);
+
+      compose({ definition: definition({ cmd: "codex", color: "#000" }) });
+
+      const call = assertDefined(
+        installCmuxAgentHooksMock.mock.calls[0],
+        "installCmuxAgentHooks call",
+      );
+      const [{ configDir }] = call;
+      expect(readFileSync(path.join(configDir, "auth.json"), "utf8")).toBe('{"token":"custom"}');
+      expect(readFileSync(path.join(configDir, "config.toml"), "utf8")).toBe("model = 'custom'\n");
+    } finally {
+      rmSync(configuredCodexHome, { recursive: true, force: true });
+    }
+  });
+
+  it("returns cleanup ownership for config staged before the workspace starts", () => {
+    const result = composeLaunch({
+      definition: definition({ cmd: "codex", color: "#000" }),
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({ command: expect.any(String), cleanup: expect.any(Function) }),
+    );
+    const call = assertDefined(
+      installCmuxAgentHooksMock.mock.calls[0],
+      "installCmuxAgentHooks call",
+    );
+    const stagedParentDir = path.dirname(call[0].configDir);
+    expect(existsSync(stagedParentDir)).toBe(true);
+
+    result.cleanup();
+
+    expect(existsSync(stagedParentDir)).toBe(false);
+    expect(() => {
+      result.cleanup();
+    }).not.toThrow();
+  });
+
+  it("removes the staged parent when config seeding fails", () => {
+    const sourceConfigDir = path.join(fakeHome, ".codex");
+    mkdirSync(path.join(sourceConfigDir, "config.toml"), { recursive: true });
+    deleteEnvironmentVariable("CODEX_HOME");
+    const prefix = "groundcrew-safehouse-team-1-";
+    const before = new Set(readdirSync(os.tmpdir()).filter((name) => name.startsWith(prefix)));
+
+    expect(() =>
+      compose({
+        definition: definition({ cmd: "codex", color: "#000" }),
+      }),
+    ).toThrow(/config\.toml/);
+
+    const leaked = readdirSync(os.tmpdir())
+      .filter((name) => name.startsWith(prefix))
+      .filter((name) => !before.has(name));
+    try {
+      expect(leaked).toStrictEqual([]);
+    } finally {
+      for (const name of leaked) {
+        rmSync(path.join(os.tmpdir(), name), { recursive: true, force: true });
+      }
+    }
+  });
+
+  it("cleans staged config when launch command construction fails", () => {
+    runCommandMock.mockImplementation(() => {
+      throw new Error("git probe failed");
+    });
+
+    expect(() =>
+      compose({
+        definition: definition({ cmd: "codex", color: "#000" }),
+      }),
+    ).toThrow("git probe failed");
+
+    const call = assertDefined(
+      installCmuxAgentHooksMock.mock.calls.at(-1),
+      "installCmuxAgentHooks call",
+    );
+    expect(existsSync(path.dirname(call[0].configDir))).toBe(false);
   });
 
   it("does not relocate CODEX_HOME or call installCmuxAgentHooks for a Claude agent", () => {

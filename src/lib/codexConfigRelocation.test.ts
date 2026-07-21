@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -19,6 +27,7 @@ describe(agentConfigRelocation, () => {
       configDirEnv: "CODEX_HOME",
       sourceHomeRelativeDir: ".codex",
       seedFiles: ["auth.json", "config.toml"],
+      persistedFiles: ["auth.json"],
     });
   });
 
@@ -46,26 +55,29 @@ describe(stageRelocatedAgentConfigHome, () => {
     rmSync(fakeHome, { recursive: true, force: true });
   });
 
-  it("is a no-op and returns undefined for an agent with no registered config relocation (claude)", () => {
-    const result = stageRelocatedAgentConfigHome({ agent: "claude", parentDir, homeDir: fakeHome });
-
-    expect(result).toBeUndefined();
-  });
-
   it("stages and seeds a writable config home for a relocating agent (codex), exposing its configDirEnv", () => {
     const realCodex = path.join(fakeHome, ".codex");
     mkdirSync(realCodex, { recursive: true });
     writeFileSync(path.join(realCodex, "auth.json"), '{"token":"x"}');
     writeFileSync(path.join(realCodex, "config.toml"), "model = 'gpt'\n");
 
-    const result = assertDefined(
-      stageRelocatedAgentConfigHome({ agent: "codex", parentDir, homeDir: fakeHome }),
-      "staged config home for codex",
-    );
+    const result = stageRelocatedAgentConfigHome({
+      agent: "codex",
+      relocation: assertDefined(agentConfigRelocation("codex"), "codex relocation"),
+      parentDir,
+      sourceConfigDir: realCodex,
+    });
     const expectedDir = path.join(parentDir, "codex-home");
     expect(result).toStrictEqual({
       configDir: expectedDir,
       configDirEnv: { name: "CODEX_HOME", value: expectedDir },
+      writeBackFiles: [
+        {
+          baselinePath: path.join(parentDir, "write-back-baseline", "auth.json"),
+          sourcePath: realpathSync(path.join(realCodex, "auth.json")),
+          stagedPath: path.join(expectedDir, "auth.json"),
+        },
+      ],
     });
     expect(readFileSync(path.join(result.configDir, "auth.json"), "utf8")).toBe('{"token":"x"}');
     expect(readFileSync(path.join(result.configDir, "config.toml"), "utf8")).toBe(
@@ -78,13 +90,42 @@ describe(stageRelocatedAgentConfigHome, () => {
     mkdirSync(realCodex, { recursive: true });
     writeFileSync(path.join(realCodex, "config.toml"), "model = 'gpt'\n");
 
-    const result = assertDefined(
-      stageRelocatedAgentConfigHome({ agent: "codex", parentDir, homeDir: fakeHome }),
-      "staged config home for codex",
-    );
+    const result = stageRelocatedAgentConfigHome({
+      agent: "codex",
+      relocation: assertDefined(agentConfigRelocation("codex"), "codex relocation"),
+      parentDir,
+      sourceConfigDir: realCodex,
+    });
     expect(readFileSync(path.join(result.configDir, "config.toml"), "utf8")).toBe(
       "model = 'gpt'\n",
     );
     expect(existsSync(path.join(result.configDir, "auth.json"))).toBe(false);
+    expect(result.writeBackFiles).toStrictEqual([]);
+  });
+
+  it("returns cross-filesystem-safe copy-back metadata for refreshed credentials", () => {
+    const realCodex = path.join(fakeHome, ".codex");
+    mkdirSync(realCodex, { recursive: true });
+    const sourceAuthFile = path.join(realCodex, "auth.json");
+    writeFileSync(sourceAuthFile, '{"token":"before"}');
+
+    const result = stageRelocatedAgentConfigHome({
+      agent: "codex",
+      relocation: assertDefined(agentConfigRelocation("codex"), "codex relocation"),
+      parentDir,
+      sourceConfigDir: realCodex,
+    });
+    writeFileSync(path.join(result.configDir, "auth.json"), '{"token":"refreshed"}');
+
+    expect(readFileSync(sourceAuthFile, "utf8")).toBe('{"token":"before"}');
+    expect(result.writeBackFiles).toStrictEqual([
+      {
+        baselinePath: path.join(parentDir, "write-back-baseline", "auth.json"),
+        sourcePath: realpathSync(sourceAuthFile),
+        stagedPath: path.join(result.configDir, "auth.json"),
+      },
+    ]);
+    const writeBack = assertDefined(result.writeBackFiles[0], "auth write-back");
+    expect(readFileSync(writeBack.baselinePath, "utf8")).toBe('{"token":"before"}');
   });
 });

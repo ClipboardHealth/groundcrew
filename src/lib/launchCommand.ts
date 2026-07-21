@@ -120,8 +120,18 @@ function safehouseWrapperCommand(networkEgress: NetworkEgressSetting): string {
   return networkEgress === "allowlisted" ? safehouseClearanceWrapperCommand() : "safehouse";
 }
 
-function trapCleanupLine(promptDir: string): string {
-  const cleanupCmd = `rm -rf ${shellSingleQuote(promptDir)}`;
+interface TrapCleanupLineInput {
+  promptDir: string;
+  additionalCleanupCommands?: readonly string[];
+}
+
+function trapCleanupLine({
+  promptDir,
+  additionalCleanupCommands = [],
+}: TrapCleanupLineInput): string {
+  const cleanupCmd = [`rm -rf ${shellSingleQuote(promptDir)}`, ...additionalCleanupCommands].join(
+    "; ",
+  );
   return `trap ${shellSingleQuote(cleanupCmd)} EXIT`;
 }
 
@@ -133,8 +143,19 @@ function trapCleanupLine(promptDir: string): string {
  * splice `preLaunch` between the `cd` and the secrets source — preLaunch must
  * never see build-time secrets in env.
  */
-function hostTrapAndCd(arguments_: { workingDir: string; promptDir: string }): string[] {
-  return [trapCleanupLine(arguments_.promptDir), `cd ${shellSingleQuote(arguments_.workingDir)}`];
+interface HostTrapAndCdInput extends TrapCleanupLineInput {
+  workingDir: string;
+}
+
+function hostTrapAndCd({
+  workingDir,
+  promptDir,
+  additionalCleanupCommands = [],
+}: HostTrapAndCdInput): string[] {
+  return [
+    trapCleanupLine({ promptDir, additionalCleanupCommands }),
+    `cd ${shellSingleQuote(workingDir)}`,
+  ];
 }
 
 /**
@@ -383,12 +404,24 @@ export interface SafehouseAgentIntegration {
    */
   addDirs?: readonly string[];
   /**
+   * Files copied from their staged sandbox location back to the source store
+   * by the host after the agent exits. This keeps credential refreshes without
+   * granting the sandbox write access to the source config home.
+   */
+  writeBackFiles?: readonly SafehouseAgentWriteBack[];
+  /**
    * Extra paths torn down (`rm -rf`) once the agent wrap exits — success or
    * failure — folded into the same EXIT trap that already cleans up the
    * profile-shim dir. Empty/undefined for integrations that stage nothing
    * (Claude), which leaves the trap's shape unchanged.
    */
   teardownPaths?: readonly string[];
+}
+
+interface SafehouseAgentWriteBack {
+  baselinePath: string;
+  sourcePath: string;
+  stagedPath: string;
 }
 
 interface LaunchCommandArguments {
@@ -681,18 +714,25 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
   // relocated CODEX_HOME) and wants removed alongside the shim dir. Rendered
   // once and reused by both the trap (failure path) and the explicit
   // post-wrap cleanup (success path) below, so the two stay in lockstep.
-  const teardownCleanupCmd = safehouseTeardownCleanupCommand(
-    uniqueStrings(safehouseAgentIntegration?.teardownPaths ?? []),
-  );
+  const { teardownCleanupCmd, writeBackCmd } =
+    safehouseIntegrationCleanupCommands(safehouseAgentIntegration);
 
   // Defensive shim+promptDir trap: by the time we arm it, `rm -rf <promptDir>`
   // has already run (line below) so the promptDir wipe is a no-op on the happy
   // path. Keeps the failure-window between shim creation and the explicit
   // post-wrap cleanup covered for both targets without an unarmed window.
-  const shimAndPromptCleanup = safehouseShimAndPromptCleanup({ promptDir, teardownCleanupCmd });
+  const shimAndPromptCleanup = safehouseShimAndPromptCleanup({
+    promptDir,
+    writeBackCmd,
+    teardownCleanupCmd,
+  });
   const shimAndPromptTrap = `trap ${shellSingleQuote(shimAndPromptCleanup)} EXIT`;
 
-  const lines = hostTrapAndCd({ workingDir: arguments_.workingDir, promptDir });
+  const lines = hostTrapAndCd({
+    workingDir: arguments_.workingDir,
+    promptDir,
+    additionalCleanupCommands: teardownCleanupCmd === "" ? [] : [teardownCleanupCmd],
+  });
   // Scrub inherited env before preLaunch (build secrets are copied out of
   // `process.env`, which the launch shell inherits), then source secrets and
   // read the staged prompt. See `hostPreLaunchSourceAndReadPrompt`.
@@ -731,7 +771,7 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
     // Running the real launch chain as `sh -c` would make it see `sh`, so use
     // an agent-named symlink to /bin/sh. This preserves per-agent profile
     // selection without enabling every agent profile.
-    `{ ${safehouseWrapper} ${safehouseAgentAddDirsFlag}${safehouseAgentAddDirsReadOnlyFlag}${safehouseEnableFlag}${agentEnvPassFlag}"$_safehouse_shim" -c ${shellSingleQuote(agentCommand)} sh${promptPositional(arguments_.omitPromptArgument)}; _safehouse_status=$?; rm -rf "$_safehouse_shim_dir";${successPathTeardownSegment(teardownCleanupCmd)} trap - EXIT; exit "$_safehouse_status"; }`,
+    `{ ${safehouseWrapper} ${safehouseAgentAddDirsFlag}${safehouseAgentAddDirsReadOnlyFlag}${safehouseEnableFlag}${agentEnvPassFlag}"$_safehouse_shim" -c ${shellSingleQuote(agentCommand)} sh${promptPositional(arguments_.omitPromptArgument)}; _safehouse_status=$?; rm -rf "$_safehouse_shim_dir";${successPathCleanupSegment(writeBackCmd, teardownCleanupCmd)} trap - EXIT; exit "$_safehouse_status"; }`,
   );
   return lines.join(" && ");
 }
@@ -748,6 +788,31 @@ function safehouseTeardownCleanupCommand(teardownPaths: readonly string[]): stri
     : `rm -rf ${teardownPaths.map((teardownPath) => shellSingleQuote(teardownPath)).join(" ")}`;
 }
 
+function safehouseIntegrationCleanupCommands(integration: SafehouseAgentIntegration | undefined): {
+  teardownCleanupCmd: string;
+  writeBackCmd: string;
+} {
+  return {
+    teardownCleanupCmd: safehouseTeardownCleanupCommand(
+      uniqueStrings(integration?.teardownPaths ?? []),
+    ),
+    writeBackCmd: safehouseWriteBackCommand(integration?.writeBackFiles ?? []),
+  };
+}
+
+function safehouseWriteBackCommand(writeBackFiles: readonly SafehouseAgentWriteBack[]): string {
+  return writeBackFiles
+    .map(({ baselinePath, stagedPath, sourcePath }) => {
+      const temporaryTemplate = shellSingleQuote(`${sourcePath}.groundcrew.XXXXXX`);
+      return [
+        `_groundcrew_write_back_tmp=$(/usr/bin/mktemp ${temporaryTemplate})`,
+        `if [ -n "$_groundcrew_write_back_tmp" ]; then if [ ! -L ${shellSingleQuote(stagedPath)} ] && [ -f ${shellSingleQuote(stagedPath)} ] && /bin/cp -P ${shellSingleQuote(stagedPath)} "$_groundcrew_write_back_tmp" && [ ! -L "$_groundcrew_write_back_tmp" ] && [ -f "$_groundcrew_write_back_tmp" ] && /bin/chmod 600 "$_groundcrew_write_back_tmp"; then if /usr/bin/cmp -s "$_groundcrew_write_back_tmp" ${shellSingleQuote(baselinePath)}; then :; elif ! /usr/bin/cmp -s ${shellSingleQuote(sourcePath)} ${shellSingleQuote(baselinePath)}; then echo 'groundcrew: skipped staged agent config write-back because the source changed concurrently' >&2; elif ! /bin/mv -f "$_groundcrew_write_back_tmp" ${shellSingleQuote(sourcePath)}; then echo 'groundcrew: failed to persist staged agent config' >&2; fi; else echo 'groundcrew: refused unsafe staged agent config write-back' >&2; fi; /bin/rm -f "$_groundcrew_write_back_tmp"; else echo 'groundcrew: failed to create staged agent config write-back file' >&2; fi`,
+        "unset _groundcrew_write_back_tmp",
+      ].join("; ");
+    })
+    .join("; ");
+}
+
 /**
  * The EXIT-trap command that wipes the profile-shim dir, the prompt dir, and
  * any integration teardown paths — the failure-path cleanup. Shared with the
@@ -756,18 +821,21 @@ function safehouseTeardownCleanupCommand(teardownPaths: readonly string[]): stri
  */
 function safehouseShimAndPromptCleanup(input: {
   promptDir: string;
+  writeBackCmd: string;
   teardownCleanupCmd: string;
 }): string {
   return [
     `rm -rf "$_safehouse_shim_dir"`,
     `rm -rf ${shellSingleQuote(input.promptDir)}`,
+    ...(input.writeBackCmd === "" ? [] : [input.writeBackCmd]),
     ...(input.teardownCleanupCmd === "" ? [] : [input.teardownCleanupCmd]),
   ].join("; ");
 }
 
-/** Success-path counterpart to `teardownCleanupCmd`: a leading-space-prefixed `; `-ready segment, or `""` when there's nothing to tear down. */
-function successPathTeardownSegment(teardownCleanupCmd: string): string {
-  return teardownCleanupCmd === "" ? "" : ` ${teardownCleanupCmd};`;
+/** Success-path counterpart to the EXIT-trap integration cleanup. */
+function successPathCleanupSegment(writeBackCmd: string, teardownCleanupCmd: string): string {
+  const commands = [writeBackCmd, teardownCleanupCmd].filter((command) => command !== "");
+  return commands.length === 0 ? "" : ` ${commands.join("; ")};`;
 }
 
 /**
@@ -831,7 +899,7 @@ function buildSdxLaunchCommand(arguments_: LaunchCommandArguments): string {
     sbxEnvironmentNames.length === 0
       ? ""
       : `${sbxEnvironmentNames.map((name) => `-e ${name}`).join(" ")} `;
-  const lines: string[] = [trapCleanupLine(promptDir)];
+  const lines: string[] = [trapCleanupLine({ promptDir })];
   if (arguments_.secretsFile !== undefined) {
     lines.push(sourceSecretsLine(arguments_.secretsFile));
   }

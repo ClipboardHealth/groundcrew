@@ -7,7 +7,6 @@ import { BUILD_SECRET_NAMES, type AgentDefinition } from "./config.ts";
 import {
   buildLaunchCommand,
   resolveSafehouseClearancePath,
-  shellSingleQuote,
   withResumeArgs,
 } from "./launchCommand.ts";
 
@@ -233,7 +232,7 @@ describe(buildLaunchCommand, () => {
     expect(prepareWrap).not.toContain("codex-home");
   });
 
-  it("tears down safehouseAgentIntegration.teardownPaths via the EXIT trap and after a successful agent wrap", () => {
+  it("writes back persisted files and tears down staged paths via the EXIT trap and success path", () => {
     const out = buildLaunchCommand(
       arguments_({
         definition: { cmd: "codex", color: "#000" },
@@ -241,25 +240,51 @@ describe(buildLaunchCommand, () => {
           addDirsReadOnly: [],
           envPass: [],
           commandPreludes: [],
+          writeBackFiles: [
+            {
+              baselinePath: "/tmp/groundcrew-safehouse-team-1/write-back-baseline/auth.json",
+              stagedPath: "/tmp/groundcrew-safehouse-team-1/codex-home/auth.json",
+              sourcePath: "/Users/dev/.codex/auth.json",
+            },
+          ],
           teardownPaths: ["/tmp/groundcrew-safehouse-team-1/codex-home"],
         },
       }),
     );
 
-    const expectedTrap = `trap ${shellSingleQuote(
-      [
-        'rm -rf "$_safehouse_shim_dir"',
-        `rm -rf ${shellSingleQuote("/tmp/prompt-team-1")}`,
-        `rm -rf ${shellSingleQuote("/tmp/groundcrew-safehouse-team-1/codex-home")}`,
-      ].join("; "),
-    )} EXIT`;
-    expect(out).toContain(expectedTrap);
+    const stagedAuth = "/tmp/groundcrew-safehouse-team-1/codex-home/auth.json";
+    const baselineAuth = "/tmp/groundcrew-safehouse-team-1/write-back-baseline/auth.json";
+    const sourceAuth = "/Users/dev/.codex/auth.json";
+    const teardown = "rm -rf '/tmp/groundcrew-safehouse-team-1/codex-home'";
+    const firstTrap = out.slice(0, out.indexOf("cd '/work/repo-a-team-1'"));
+    expect(firstTrap).toContain("/tmp/groundcrew-safehouse-team-1/codex-home");
+    expect(firstTrap).not.toContain("_groundcrew_write_back_tmp");
+    const exitTrapCleanup = out.slice(
+      out.indexOf("_groundcrew_write_back_tmp="),
+      out.indexOf('_safehouse_shim="'),
+    );
+    expect(exitTrapCleanup).toContain("/bin/cp -P");
+    expect(exitTrapCleanup).toContain(stagedAuth);
+    expect(exitTrapCleanup).toContain('[ ! -L "$_groundcrew_write_back_tmp" ]');
+    expect(exitTrapCleanup).toContain("/usr/bin/cmp -s");
+    expect(exitTrapCleanup).toContain(sourceAuth);
+    expect(exitTrapCleanup).toContain(baselineAuth);
+    expect(exitTrapCleanup.indexOf("/bin/cp -P")).toBeLessThan(
+      exitTrapCleanup.lastIndexOf("rm -rf"),
+    );
     // The trap-armed cleanup also runs explicitly right after a successful
     // agent wrap, before the trap is disarmed — so a happy-path run doesn't
     // rely solely on the (now-disarmed) trap to remove the staged dir.
-    expect(out).toMatch(
-      /rm -rf "\$_safehouse_shim_dir"; rm -rf '\/tmp\/groundcrew-safehouse-team-1\/codex-home'; trap - EXIT/,
+    const successCleanup = out.slice(
+      out.lastIndexOf("_groundcrew_write_back_tmp="),
+      out.lastIndexOf("trap - EXIT"),
     );
+    expect(successCleanup).toContain(`/bin/cp -P '${stagedAuth}'`);
+    expect(successCleanup).toContain(`[ ! -L '${stagedAuth}' ] && [ -f '${stagedAuth}' ]`);
+    expect(successCleanup).toContain('[ ! -L "$_groundcrew_write_back_tmp" ]');
+    expect(successCleanup).toContain('/bin/chmod 600 "$_groundcrew_write_back_tmp"');
+    expect(successCleanup).toContain(`/usr/bin/cmp -s '${sourceAuth}' '${baselineAuth}'`);
+    expect(successCleanup.indexOf("/bin/cp -P")).toBeLessThan(successCleanup.indexOf(teardown));
   });
 
   it("leaves the Claude safehouse launch unchanged when the integration carries no addDirs/teardownPaths", () => {

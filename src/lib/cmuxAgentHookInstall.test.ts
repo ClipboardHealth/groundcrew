@@ -6,6 +6,7 @@ const runCommandMock = vi.hoisted(() =>
 const logEventMock = vi.hoisted(() =>
   vi.fn<(event: string, fields: Record<string, unknown>) => void>(),
 );
+const writeErrorMock = vi.hoisted(() => vi.fn<(message: string) => void>());
 
 vi.mock(import("./commandRunner.ts"), async (importOriginal) => {
   const actual = await importOriginal();
@@ -19,6 +20,7 @@ vi.mock(import("./util.ts"), async (importOriginal) => {
   return {
     ...actual,
     logEvent: logEventMock,
+    writeError: writeErrorMock,
   };
 });
 
@@ -65,6 +67,9 @@ describe(installCmuxAgentHooks, () => {
         outcome: "error",
         errorMessage: expect.stringContaining("ENOENT"),
       }),
+    );
+    expect(writeErrorMock).toHaveBeenCalledWith(
+      expect.stringMatching(/cmux hooks.*codex.*ENOENT/i),
     );
   });
 

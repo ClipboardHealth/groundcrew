@@ -239,6 +239,7 @@ export async function openWorkspace(
     task: target.task,
     text: options.promptText ?? "",
   });
+  let cleanupAgentLaunch: (() => void) | undefined;
   try {
     const repositoryEntry = config.workspace.repositories.find(
       (entry) => entry.name === repository,
@@ -261,7 +262,7 @@ export async function openWorkspace(
       agentCommandName: inferAgentCommandName(definition.cmd),
       launchDir,
     });
-    const launchCommand = composeAgentLaunch({
+    const launch = composeAgentLaunch({
       runner,
       networkEgress,
       task: target.task,
@@ -277,7 +278,8 @@ export async function openWorkspace(
       readOnlyDirs: config.local.readOnlyDirs,
       omitPromptArgument,
     });
-    const launchCmd = stageWorkspaceLaunchCommand(stagedPrompt.directory, launchCommand);
+    cleanupAgentLaunch = launch.cleanup;
+    const launchCmd = stageWorkspaceLaunchCommand(stagedPrompt.directory, launch.command);
     await openAgentWorkspace({
       config,
       name: target.task,
@@ -288,6 +290,7 @@ export async function openWorkspace(
       color: definition.color,
     });
   } catch (error) {
+    cleanupAgentLaunch?.();
     await rollback({ config, entry: created, promptDir: stagedPrompt.directory });
     throw error;
   }

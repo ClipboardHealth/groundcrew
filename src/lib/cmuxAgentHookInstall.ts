@@ -1,6 +1,6 @@
 import { agentConfigRelocation } from "./codexConfigRelocation.ts";
 import { runCommand } from "./commandRunner.ts";
-import { errorMessage, logEvent } from "./util.ts";
+import { errorMessage, logEvent, styleWarning, writeError } from "./util.ts";
 
 const CMUX_HOOKS_INSTALL_EVENT = "cmux-agent-hooks-install";
 const CMUX_HOOKS_INSTALL_TIMEOUT_MS = 10_000;
@@ -33,10 +33,14 @@ export function installCmuxAgentHooks(input: { agent: string; configDir: string 
     });
     logEvent(CMUX_HOOKS_INSTALL_EVENT, { ...logContext, outcome: "installed" });
   } catch (error) {
+    const message = errorMessage(error);
+    writeError(
+      styleWarning(`groundcrew: cmux hooks install failed for ${input.agent}: ${message}`),
+    );
     logEvent(CMUX_HOOKS_INSTALL_EVENT, {
       ...logContext,
       outcome: "error",
-      errorMessage: errorMessage(error),
+      errorMessage: message,
     });
   }
 }
