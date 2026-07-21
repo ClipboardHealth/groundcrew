@@ -235,6 +235,7 @@ export async function resumeWorkspace(
     text: renderResumePrompt(context),
   });
   const secretsFile = stageBuildSecrets(stagedPrompt.directory);
+  let cleanupAgentLaunch: (() => void) | undefined;
   try {
     const taskSourceWritePaths =
       runner === "safehouse"
@@ -248,9 +249,10 @@ export async function resumeWorkspace(
       agentCommandName: inferAgentCommandName(launchDefinition.cmd),
       launchDir,
     });
-    const launchCommand = composeAgentLaunch({
+    const launch = composeAgentLaunch({
       runner,
       networkEgress,
+      task,
       definition: launchDefinition,
       promptFile: stagedPrompt.file,
       worktreeDir,
@@ -266,7 +268,8 @@ export async function resumeWorkspace(
       taskSourceWritePaths,
       safehouseEnableFeatures: config.local.safehouse.enable,
     });
-    const launchCmd = stageWorkspaceLaunchCommand(stagedPrompt.directory, launchCommand);
+    cleanupAgentLaunch = launch.cleanup;
+    const launchCmd = stageWorkspaceLaunchCommand(stagedPrompt.directory, launch.command);
     await openAgentWorkspace({
       config,
       name: task,
@@ -277,6 +280,7 @@ export async function resumeWorkspace(
       color: definition.color,
     });
   } catch (error) {
+    cleanupAgentLaunch?.();
     removeStagedPrompt(stagedPrompt.directory);
     throw error;
   }
