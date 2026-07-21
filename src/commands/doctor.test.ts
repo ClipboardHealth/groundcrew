@@ -940,4 +940,33 @@ describe(doctor, () => {
     expect(lines).toMatch(/requested=cmux/);
     expect(lines).toContain("cmux binary is not on PATH");
   });
+
+  it("emits an advisory line for each agent with a non-empty preLaunchEnv", async () => {
+    loadConfigMock.mockResolvedValue(
+      makeConfig({
+        default: "claude",
+        definitions: {
+          claude: {
+            cmd: "claude",
+            color: "#fff",
+            preLaunchEnv: ["JIRA_API_TOKEN", "GITHUB_TOKEN"],
+          },
+          codex: { cmd: "codex", color: "#3267e3" },
+        },
+      }),
+    );
+
+    const actual = await doctor();
+
+    expect(actual).toBe(true);
+    const lines = consoleLog.output();
+    // Advisory renders with the `[ok]` tag (ok=true, required=false) — same
+    // pattern as `local runner (none)`. The informational nature is carried by
+    // the wording (`forwards N var(s): …`), not by a fail tag.
+    expect(lines).toMatch(/\[ok]\s*preLaunchEnv: claude/);
+    expect(lines).toContain("JIRA_API_TOKEN");
+    expect(lines).toContain("GITHUB_TOKEN");
+    // Agent without preLaunchEnv must not appear as an advisory line.
+    expect(lines).not.toMatch(/preLaunchEnv: codex/);
+  });
 });

@@ -246,6 +246,31 @@ function gatherToolTargets(config: ResolvedConfig): ToolCheckTarget[] {
   return [...all].map(([token, hint]) => (hint === undefined ? { token } : { token, hint }));
 }
 
+/**
+ * Advisory: one `[? ]` line per agent that has `preLaunchEnv` configured,
+ * naming the vars that will be forwarded. Empty values are caught at launch
+ * time (see `buildPreLaunchEmptyCheckLines` in
+ * `src/lib/preLaunchEmptyCheck.ts`) or at edit time via crew-config's TUI
+ * probe. Doctor does not run the hook itself — that would be slow,
+ * interactive, and side-effectful.
+ */
+function preLaunchEnvAdvisories(config: ResolvedConfig): Check[] {
+  const advisories: Check[] = [];
+  for (const [agentName, definition] of Object.entries(config.agents.definitions)) {
+    const names = definition.preLaunchEnv ?? [];
+    if (names.length === 0) {
+      continue;
+    }
+    advisories.push({
+      name: `preLaunchEnv: ${agentName}`,
+      ok: true,
+      required: false,
+      hint: `forwards ${names.length} var(s): ${names.join(", ")}. Empty values are warned at launch — verify with crew-config's preLaunchEnv editor probe before launching.`,
+    });
+  }
+  return advisories;
+}
+
 function agentCliHint(agentName: string, token: string): string | undefined {
   if (!isBuiltInAgentName(agentName)) {
     return undefined;
@@ -329,6 +354,10 @@ export async function doctor(): Promise<boolean> {
     const check = await checkCmd(token, required, required ? hint : "required for local runs");
     checks.push(check);
   }
+
+  // Advisory: operators see which agents will forward env vars from preLaunch.
+  // Runtime empty-value detection lives in `src/lib/preLaunchEmptyCheck.ts`.
+  checks.push(...preLaunchEnvAdvisories(config));
 
   const usageGatedAgents = gatedAgents(config);
   if (usageGatedAgents.length > 0) {
