@@ -9,6 +9,7 @@ import {
   type NetworkEgressSetting,
 } from "./config.ts";
 import { clearanceAllowHostsFilesFromEnvironment } from "./clearanceAllowlist.ts";
+import { buildPreLaunchEmptyCheckLines } from "./preLaunchEmptyCheck.ts";
 import { shellSingleQuote } from "./shell.ts";
 
 export { shellSingleQuote } from "./shell.ts";
@@ -212,6 +213,10 @@ function hostPreLaunchSourceAndReadPrompt(arguments_: {
     lines.push(
       unsetEnvironmentLine([...BUILD_SECRET_NAMES, ...(arguments_.definition.preLaunchEnv ?? [])]),
       renderPreLaunch(arguments_.definition.preLaunch, arguments_.worktreeDir),
+      // Warn (stderr, non-fatal) when a preLaunchEnv name resolves to empty after
+      // the hook — catches the `export VAR="$(cat missing)"` failure mode that
+      // masks its substitution's exit status. See preLaunchEmptyCheck.ts.
+      ...buildPreLaunchEmptyCheckLines(arguments_.definition.preLaunchEnv ?? []),
     );
   }
   lines.push(

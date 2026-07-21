@@ -912,6 +912,53 @@ describe(buildLaunchCommand, () => {
       }
     });
 
+    it("splices the empty-value check between preLaunch and the prompt read, one per preLaunchEnv name (safehouse)", () => {
+      const out = buildLaunchCommand(
+        arguments_({
+          runner: "safehouse",
+          definition: {
+            cmd: "claude",
+            color: "#fff",
+            preLaunch: "export JIRA_API_TOKEN=abc && export GITHUB_TOKEN=xyz",
+            preLaunchEnv: ["JIRA_API_TOKEN", "GITHUB_TOKEN"],
+          },
+        }),
+      );
+
+      // End-to-end behavior of the emitted snippet is covered by
+      // preLaunchEmptyCheck.test.ts under `sh -c`; here we assert the wiring:
+      // one check per name, ordered after preLaunch and before the prompt read.
+      const preLaunchIndex = out.indexOf("export JIRA_API_TOKEN=abc");
+      const jiraCheckIndex = out.indexOf(
+        "preLaunchEnv: JIRA_API_TOKEN is empty after preLaunch (value length 0)",
+      );
+      const githubCheckIndex = out.indexOf(
+        "preLaunchEnv: GITHUB_TOKEN is empty after preLaunch (value length 0)",
+      );
+      const promptReadIndex = out.indexOf("_p=$(cat");
+
+      expect(preLaunchIndex).toBeGreaterThan(-1);
+      expect(jiraCheckIndex).toBeGreaterThan(preLaunchIndex);
+      expect(githubCheckIndex).toBeGreaterThan(preLaunchIndex);
+      expect(promptReadIndex).toBeGreaterThan(jiraCheckIndex);
+      expect(promptReadIndex).toBeGreaterThan(githubCheckIndex);
+    });
+
+    it("emits no empty-value check when preLaunchEnv is absent (safehouse)", () => {
+      const out = buildLaunchCommand(
+        arguments_({
+          runner: "safehouse",
+          definition: {
+            cmd: "claude",
+            color: "#fff",
+            preLaunch: "true",
+          },
+        }),
+      );
+
+      expect(out).not.toContain("is empty after preLaunch");
+    });
+
     it("runs preLaunch without double-wrapping when cmd already starts with safehouse", () => {
       const out = buildLaunchCommand(
         arguments_({
