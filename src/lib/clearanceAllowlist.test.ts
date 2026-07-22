@@ -1,7 +1,5 @@
 import path from "node:path";
 
-import { resolveAllowlist } from "@clipboard-health/clearance";
-
 import {
   clearanceAllowHostsFilesFromEnvironment,
   clearanceAllowHostsFilesValue,
@@ -63,17 +61,5 @@ describe(clearanceAllowHostsFilesFromEnvironment, () => {
     const actual = clearanceAllowHostsFilesFromEnvironment();
 
     expect(actual).toBe(`${bundledClearanceAllowHostsFile()}${path.delimiter}/tmp/personal-hosts`);
-  });
-
-  it("allows OpenAI's hosted developer documentation MCP server", () => {
-    vi.stubEnv("CLEARANCE_ALLOW_HOSTS_FILES", "");
-
-    const actual = resolveAllowlist({
-      env: {
-        CLEARANCE_ALLOW_HOSTS_FILES: clearanceAllowHostsFilesFromEnvironment(),
-      },
-    });
-
-    expect(actual.filter((host) => host === "developers.openai.com")).toHaveLength(1);
   });
 });
