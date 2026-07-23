@@ -213,9 +213,51 @@ describe("workspaces.open (cmux)", () => {
     expect(runMock).toHaveBeenCalledWith("cmux", [
       "set-status",
       "task",
-      "TEAM-1",
+      "Linear ↗",
       "--url",
       "https://linear.app/example/issue/TEAM-1/source-slug",
+      "--workspace",
+      "workspace:42",
+    ]);
+  });
+
+  it("uses a source-neutral label for non-Linear task URLs", async () => {
+    runMock.mockReturnValue(JSON.stringify({ ref: "workspace:42" }));
+
+    await workspaces.open(makeConfig(), {
+      name: "ENG-1",
+      url: "https://acme.atlassian.net/browse/ENG-1",
+      cwd: "/work/repo-a-ENG-1",
+      command: "exec claude",
+    });
+
+    expect(runMock).toHaveBeenCalledWith("cmux", [
+      "set-status",
+      "task",
+      "Issue ↗",
+      "--url",
+      "https://acme.atlassian.net/browse/ENG-1",
+      "--workspace",
+      "workspace:42",
+    ]);
+  });
+
+  it("uses a source-neutral label when a source provides a non-standard URL", async () => {
+    runMock.mockReturnValue(JSON.stringify({ ref: "workspace:42" }));
+
+    await workspaces.open(makeConfig(), {
+      name: "CUSTOM-1",
+      url: "open-custom-issue",
+      cwd: "/work/repo-a-CUSTOM-1",
+      command: "exec claude",
+    });
+
+    expect(runMock).toHaveBeenCalledWith("cmux", [
+      "set-status",
+      "task",
+      "Issue ↗",
+      "--url",
+      "open-custom-issue",
       "--workspace",
       "workspace:42",
     ]);

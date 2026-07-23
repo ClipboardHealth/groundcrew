@@ -473,7 +473,7 @@ describe(setupWorkspace, () => {
       expect.arrayContaining([
         "set-status",
         "task",
-        "team-1",
+        "Linear ↗",
         "--url",
         "https://linear.app/example/issue/TEAM-1",
         "--workspace",
