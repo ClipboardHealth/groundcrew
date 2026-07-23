@@ -1,3 +1,7 @@
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { installCmuxAgentHooks } from "./cmuxAgentHookInstall.ts";
 
 const runCommandMock = vi.hoisted(() =>
@@ -50,6 +54,39 @@ describe(installCmuxAgentHooks, () => {
       "cmux-agent-hooks-install",
       expect.objectContaining({ agent: "codex", outcome: "installed" }),
     );
+  });
+
+  it("gives installed hook commands a writable Foundation cache home", () => {
+    const configDir = mkdtempSync(path.join(os.tmpdir(), "cmux-hook-install-"));
+    const hooksPath = path.join(configDir, "hooks.json");
+    const originalCommand = '"$cmux_cli" hooks feed --source codex --event PreToolUse';
+    writeFileSync(
+      hooksPath,
+      JSON.stringify({
+        hooks: {
+          PreToolUse: [{ hooks: [{ type: "command", command: originalCommand }] }],
+        },
+      }),
+    );
+
+    try {
+      installCmuxAgentHooks({ agent: "codex", configDir });
+
+      const installedHooks = readFileSync(hooksPath, "utf8");
+      expect(installedHooks).toContain(`export CFFIXED_USER_HOME='${configDir}'`);
+      expect(installedHooks).toContain("export CMUX_CLI_SENTRY_DISABLED=1");
+      expect(JSON.parse(installedHooks)).toMatchObject({
+        hooks: {
+          PreToolUse: [
+            {
+              hooks: [{ command: expect.stringContaining(originalCommand) }],
+            },
+          ],
+        },
+      });
+    } finally {
+      rmSync(configDir, { recursive: true, force: true });
+    }
   });
 
   it("swallows a failing install (non-zero exit / missing cmux CLI) and logs outcome=error", () => {

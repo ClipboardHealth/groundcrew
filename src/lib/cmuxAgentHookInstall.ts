@@ -1,9 +1,31 @@
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
+
+import { z } from "zod";
+
 import { agentConfigRelocation } from "./codexConfigRelocation.ts";
 import { runCommand } from "./commandRunner.ts";
+import { shellSingleQuote } from "./shell.ts";
 import { errorMessage, logEvent, styleWarning, writeError } from "./util.ts";
 
 const CMUX_HOOKS_INSTALL_EVENT = "cmux-agent-hooks-install";
 const CMUX_HOOKS_INSTALL_TIMEOUT_MS = 10_000;
+const CMUX_HOOKS_FILE_NAME = "hooks.json";
+
+const cmuxHookSettingsSchema = z.looseObject({
+  hooks: z.record(
+    z.string(),
+    z.array(
+      z.looseObject({
+        hooks: z.array(
+          z.looseObject({
+            command: z.string(),
+          }),
+        ),
+      }),
+    ),
+  ),
+});
 
 /**
  * Best-effort `cmux hooks <agent> install --yes` against a relocated,
@@ -31,6 +53,7 @@ export function installCmuxAgentHooks(input: { agent: string; configDir: string 
       env: { ...process.env, [relocation.configDirEnv]: input.configDir },
       timeoutMs: CMUX_HOOKS_INSTALL_TIMEOUT_MS,
     });
+    hardenCmuxAgentHooks({ configDir: input.configDir });
     logEvent(CMUX_HOOKS_INSTALL_EVENT, { ...logContext, outcome: "installed" });
   } catch (error) {
     const message = errorMessage(error);
@@ -43,4 +66,24 @@ export function installCmuxAgentHooks(input: { agent: string; configDir: string 
       errorMessage: message,
     });
   }
+}
+
+function hardenCmuxAgentHooks(input: { configDir: string }): void {
+  const hooksPath = path.join(input.configDir, CMUX_HOOKS_FILE_NAME);
+  if (!existsSync(hooksPath)) {
+    return;
+  }
+
+  const settings = cmuxHookSettingsSchema.parse(JSON.parse(readFileSync(hooksPath, "utf8")));
+  const commandPrefix =
+    `export CFFIXED_USER_HOME=${shellSingleQuote(input.configDir)}; ` +
+    "export CMUX_CLI_SENTRY_DISABLED=1; ";
+  for (const groups of Object.values(settings.hooks)) {
+    for (const group of groups) {
+      for (const hook of group.hooks) {
+        hook.command = `${commandPrefix}${hook.command}`;
+      }
+    }
+  }
+  writeFileSync(hooksPath, `${JSON.stringify(settings, undefined, 2)}\n`);
 }
