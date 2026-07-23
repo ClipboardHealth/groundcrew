@@ -12,16 +12,17 @@ const CMUX_HOOKS_INSTALL_EVENT = "cmux-agent-hooks-install";
 const CMUX_HOOKS_INSTALL_TIMEOUT_MS = 10_000;
 const CMUX_HOOKS_FILE_NAME = "hooks.json";
 
+const commandHookSchema = z.looseObject({
+  type: z.literal("command"),
+  command: z.string(),
+});
+
 const cmuxHookSettingsSchema = z.looseObject({
   hooks: z.record(
     z.string(),
     z.array(
       z.looseObject({
-        hooks: z.array(
-          z.looseObject({
-            command: z.string(),
-          }),
-        ),
+        hooks: z.array(z.unknown()),
       }),
     ),
   ),
@@ -80,10 +81,24 @@ function hardenCmuxAgentHooks(input: { configDir: string }): void {
     "export CMUX_CLI_SENTRY_DISABLED=1; ";
   for (const groups of Object.values(settings.hooks)) {
     for (const group of groups) {
-      for (const hook of group.hooks) {
-        hook.command = `${commandPrefix}${hook.command}`;
-      }
+      group.hooks = group.hooks.map((hook) => hardenCmuxCommandHook({ hook, commandPrefix }));
     }
   }
   writeFileSync(hooksPath, `${JSON.stringify(settings, undefined, 2)}\n`);
+}
+
+function hardenCmuxCommandHook(input: { hook: unknown; commandPrefix: string }): unknown {
+  const parsed = commandHookSchema.safeParse(input.hook);
+  if (
+    !parsed.success ||
+    !isCmuxOwnedHookCommand(parsed.data.command) ||
+    parsed.data.command.startsWith(input.commandPrefix)
+  ) {
+    return input.hook;
+  }
+  return { ...parsed.data, command: `${input.commandPrefix}${parsed.data.command}` };
+}
+
+function isCmuxOwnedHookCommand(command: string): boolean {
+  return command.includes("CMUX_BUNDLED_CLI_PATH") && command.includes(" hooks ");
 }
