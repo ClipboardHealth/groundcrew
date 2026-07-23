@@ -48,7 +48,7 @@ export const cmuxAdapter: Adapter = {
       await applyCmuxStatusBestEffort({
         workspaceId,
         key: "task",
-        status: { text: spec.name },
+        status: { text: cmuxTaskLinkText(spec.url) },
         url: spec.url,
         workspaceName: spec.name,
         signal,
@@ -246,6 +246,14 @@ async function applyCmuxStatus(input: Omit<CmuxStatusInput, "workspaceName">): P
   }
   arguments_.push("--workspace", input.workspaceId);
   await runWorkspaceCommand("cmux", arguments_, input.signal);
+}
+
+function cmuxTaskLinkText(url: string): string {
+  try {
+    return new URL(url).hostname === "linear.app" ? "Linear ↗" : "Issue ↗";
+  } catch {
+    return "Issue ↗";
+  }
 }
 
 /**
