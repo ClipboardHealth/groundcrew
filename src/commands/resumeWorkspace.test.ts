@@ -126,7 +126,11 @@ const createMock = vi.mocked(worktrees.create);
 
 type RecordedRunState = Parameters<typeof recordRunState>[0]["state"];
 type FetchResolvedIssueInput = Parameters<typeof fetchResolvedIssue>[0];
-type IssueLookup = (id: string) => Promise<{ title: string; description?: string | undefined }>;
+type IssueLookup = (id: string) => Promise<{
+  title: string;
+  description?: string | undefined;
+  url?: string | undefined;
+}>;
 
 function lastRecordedRunState(): RecordedRunState {
   const input = recordRunStateMock.mock.calls.at(-1)?.[0];
@@ -288,6 +292,42 @@ describe(resumeWorkspace, () => {
       agentCommandName: "claude",
       launchDir: "/work/repo-a-team-1",
     });
+  });
+
+  it("reuses the exact task URL cached in run state", async () => {
+    readRunStateMock.mockReturnValue(
+      makeRunState({ url: "https://linear.app/example/issue/TEAM-1/source-slug" }),
+    );
+
+    await resumeWorkspace(config, { task: "team-1" });
+
+    expect(workspacesOpenMock).toHaveBeenCalledWith(
+      config,
+      expect.objectContaining({
+        name: "team-1",
+        url: "https://linear.app/example/issue/TEAM-1/source-slug",
+      }),
+    );
+  });
+
+  it("uses the source URL fetched for legacy run state without one", async () => {
+    getLinearClientMock.mockReturnValue({
+      issue: vi.fn<IssueLookup>().mockResolvedValue({
+        title: "Title",
+        description: "Body",
+        url: "https://linear.app/example/issue/TEAM-1/fetched-slug",
+      }),
+    } as unknown as ReturnType<typeof getLinearClient>);
+
+    await resumeWorkspace(config, { task: "team-1" });
+
+    expect(workspacesOpenMock).toHaveBeenCalledWith(
+      config,
+      expect.objectContaining({
+        name: "team-1",
+        url: "https://linear.app/example/issue/TEAM-1/fetched-slug",
+      }),
+    );
   });
 
   function resumeArgsConfig(): ResolvedConfig {
@@ -529,7 +569,10 @@ describe(resumeWorkspace, () => {
     expect(fetchInput.client).toBeDefined();
     expect(workspacesOpenMock).toHaveBeenCalledWith(
       config,
-      expect.objectContaining({ name: "team-1" }),
+      expect.objectContaining({
+        name: "team-1",
+        url: "https://linear.app/example/issue/TEAM-1",
+      }),
     );
   });
 

@@ -196,6 +196,7 @@ export async function setupWorkspace(
       config,
       name: task,
       displayName: taskDetails.title,
+      url: taskDetails.url,
       cwd: launchDir,
       command: launchCmd,
       agent,
