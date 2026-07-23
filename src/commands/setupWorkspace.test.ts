@@ -468,6 +468,18 @@ describe(setupWorkspace, () => {
       state: "running",
       url: "https://linear.app/example/issue/TEAM-1",
     });
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "cmux",
+      expect.arrayContaining([
+        "set-status",
+        "task",
+        "Linear ↗",
+        "--url",
+        "https://linear.app/example/issue/TEAM-1",
+        "--workspace",
+        "workspace:42",
+      ]),
+    );
   });
 
   it("grants matching todo-txt source paths to the worker completion sandbox", async () => {

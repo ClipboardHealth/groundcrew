@@ -34,6 +34,8 @@ export interface OpenSpec {
   name: string;
   /** Optional cmux panel title; other adapters may ignore it. Cmux keeps `name` as the identity marker. */
   displayName?: string;
+  /** Optional source-provided URL used by cmux to link the task metadata. */
+  url?: string;
   /** Working directory the workspace runs in. */
   cwd: string;
   /** Shell string the workspace executes (host setup + agent exec). */
