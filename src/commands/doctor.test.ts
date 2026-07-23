@@ -940,4 +940,53 @@ describe(doctor, () => {
     expect(lines).toMatch(/requested=cmux/);
     expect(lines).toContain("cmux binary is not on PATH");
   });
+
+  it("emits an advisory line for each agent with a non-empty preLaunchEnv", async () => {
+    loadConfigMock.mockResolvedValue(
+      makeConfig({
+        default: "claude",
+        definitions: {
+          claude: {
+            cmd: "claude",
+            color: "#fff",
+            preLaunch: 'export JIRA_API_TOKEN="tok"',
+            preLaunchEnv: ["JIRA_API_TOKEN", "GITHUB_TOKEN"],
+          },
+          codex: { cmd: "codex", color: "#3267e3" },
+        },
+      }),
+    );
+
+    const actual = await doctor();
+
+    expect(actual).toBe(true);
+    const lines = consoleLog.output();
+    expect(lines).toMatch(/\[ok]\s*preLaunchEnv: claude/);
+    expect(lines).toContain("JIRA_API_TOKEN");
+    expect(lines).toContain("GITHUB_TOKEN");
+    expect(lines).toContain("empty values are warned at launch");
+    expect(lines).not.toMatch(/preLaunchEnv: codex/);
+  });
+
+  it("warns in the preLaunchEnv advisory when preLaunch is absent", async () => {
+    loadConfigMock.mockResolvedValue(
+      makeConfig({
+        default: "claude",
+        definitions: {
+          claude: {
+            cmd: "claude",
+            color: "#fff",
+            preLaunchEnv: ["JIRA_API_TOKEN"],
+          },
+        },
+      }),
+    );
+
+    const actual = await doctor();
+
+    expect(actual).toBe(true);
+    const lines = consoleLog.output();
+    expect(lines).toMatch(/\[ok]\s*preLaunchEnv: claude/);
+    expect(lines).toContain("no preLaunch is set, so empty values are NOT checked at launch");
+  });
 });

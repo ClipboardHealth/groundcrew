@@ -246,6 +246,31 @@ function gatherToolTargets(config: ResolvedConfig): ToolCheckTarget[] {
   return [...all].map(([token, hint]) => (hint === undefined ? { token } : { token, hint }));
 }
 
+function preLaunchEnvAdvisories(config: ResolvedConfig): Check[] {
+  const advisories: Check[] = [];
+  for (const [agentName, definition] of Object.entries(config.agents.definitions)) {
+    const names = definition.preLaunchEnv ?? [];
+    if (names.length === 0) {
+      continue;
+    }
+    // The runtime empty-check is spliced only when `preLaunch` is present
+    // (see `hostPreLaunchSourceAndReadPrompt` / `preLaunchPromptAndExec` in
+    // `src/lib/launchCommand.ts`). Without `preLaunch`, forwarded values come
+    // straight from the parent shell and no launch-time guard runs.
+    const warnClause =
+      definition.preLaunch === undefined
+        ? "no preLaunch is set, so empty values are NOT checked at launch"
+        : "empty values are warned at launch";
+    advisories.push({
+      name: `preLaunchEnv: ${agentName}`,
+      ok: true,
+      required: false,
+      hint: `forwards ${names.length} var(s): ${names.join(", ")}. ${warnClause}.`,
+    });
+  }
+  return advisories;
+}
+
 function agentCliHint(agentName: string, token: string): string | undefined {
   if (!isBuiltInAgentName(agentName)) {
     return undefined;
@@ -329,6 +354,8 @@ export async function doctor(): Promise<boolean> {
     const check = await checkCmd(token, required, required ? hint : "required for local runs");
     checks.push(check);
   }
+
+  checks.push(...preLaunchEnvAdvisories(config));
 
   const usageGatedAgents = gatedAgents(config);
   if (usageGatedAgents.length > 0) {

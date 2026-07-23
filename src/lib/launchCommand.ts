@@ -9,6 +9,7 @@ import {
   type NetworkEgressSetting,
 } from "./config.ts";
 import { clearanceAllowHostsFilesFromEnvironment } from "./clearanceAllowlist.ts";
+import { buildPreLaunchEmptyCheckLines } from "./preLaunchEmptyCheck.ts";
 import { shellSingleQuote } from "./shell.ts";
 
 export { shellSingleQuote } from "./shell.ts";
@@ -180,7 +181,10 @@ function preLaunchPromptAndExec(arguments_: {
 }): string[] {
   const lines: string[] = [];
   if (arguments_.definition.preLaunch !== undefined) {
-    lines.push(renderPreLaunch(arguments_.definition.preLaunch, arguments_.worktreeDir));
+    lines.push(
+      renderPreLaunch(arguments_.definition.preLaunch, arguments_.worktreeDir),
+      ...buildPreLaunchEmptyCheckLines(arguments_.definition.preLaunchEnv ?? []),
+    );
   }
   lines.push(
     `_p=$(cat ${shellSingleQuote(arguments_.promptFile)})`,
@@ -230,9 +234,13 @@ function hostPreLaunchSourceAndReadPrompt(arguments_: {
 }): string[] {
   const lines: string[] = [];
   if (arguments_.definition.preLaunch !== undefined) {
+    const preLaunchEnv = arguments_.definition.preLaunchEnv ?? [];
+    // Order is load-bearing: unset scrubs inherited values so the empty-check
+    // reads what preLaunch actually produced, not what the parent shell leaked.
     lines.push(
-      unsetEnvironmentLine([...BUILD_SECRET_NAMES, ...(arguments_.definition.preLaunchEnv ?? [])]),
+      unsetEnvironmentLine([...BUILD_SECRET_NAMES, ...preLaunchEnv]),
       renderPreLaunch(arguments_.definition.preLaunch, arguments_.worktreeDir),
+      ...buildPreLaunchEmptyCheckLines(preLaunchEnv),
     );
   }
   lines.push(
