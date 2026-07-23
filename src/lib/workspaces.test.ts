@@ -200,6 +200,42 @@ describe("workspaces.open (cmux)", () => {
     ]);
   });
 
+  it("links the task metadata to the exact source URL when provided", async () => {
+    runMock.mockReturnValue(JSON.stringify({ ref: "workspace:42" }));
+
+    await workspaces.open(makeConfig(), {
+      name: "TEAM-1",
+      url: "https://linear.app/example/issue/TEAM-1/source-slug",
+      cwd: "/work/repo-a-TEAM-1",
+      command: "exec claude",
+    });
+
+    expect(runMock).toHaveBeenCalledWith("cmux", [
+      "set-status",
+      "task",
+      "TEAM-1",
+      "--url",
+      "https://linear.app/example/issue/TEAM-1/source-slug",
+      "--workspace",
+      "workspace:42",
+    ]);
+  });
+
+  it("does not add task metadata when the source URL is absent", async () => {
+    runMock.mockReturnValue(JSON.stringify({ ref: "workspace:42" }));
+
+    await workspaces.open(makeConfig(), {
+      name: "TEAM-1",
+      cwd: "/work/repo-a-TEAM-1",
+      command: "exec claude",
+    });
+
+    expect(runMock).not.toHaveBeenCalledWith(
+      "cmux",
+      expect.arrayContaining(["set-status", "task"]),
+    );
+  });
+
   it("calls cmux set-status with status text, color, icon when status is provided", async () => {
     runMock.mockReturnValue(JSON.stringify({ ref: "workspace:42" }));
 

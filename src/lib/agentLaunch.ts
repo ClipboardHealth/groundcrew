@@ -328,6 +328,7 @@ export async function openAgentWorkspace(input: {
   config: ResolvedConfig;
   name: string;
   displayName?: string;
+  url?: string | undefined;
   cwd: string;
   command: string;
   agent: string;
@@ -339,6 +340,7 @@ export async function openAgentWorkspace(input: {
   const spec = {
     name: input.name,
     ...(panelTitle === undefined ? {} : { displayName: panelTitle }),
+    ...(input.url === undefined ? {} : { url: input.url }),
     cwd: input.cwd,
     command: input.command,
     status: { text: input.agent, color: input.color, icon: "sparkle" },

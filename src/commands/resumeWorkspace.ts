@@ -36,6 +36,7 @@ export interface ResumeWorkspaceOptions {
 interface TaskDetails {
   title: string;
   description: string;
+  url?: string;
 }
 
 interface ResumeContext {
@@ -45,6 +46,7 @@ interface ResumeContext {
   worktree: WorktreeEntry;
   title: string;
   description: string;
+  url?: string;
   completionTaskId: string;
   completionMarkDoneSupported: boolean;
   reason?: string;
@@ -74,6 +76,7 @@ async function fetchTaskDetails(task: string): Promise<TaskDetails | undefined> 
     return {
       title: issue.title,
       description: issue.description ?? "",
+      url: issue.url,
     };
   } catch (error) {
     log(`Resume Linear detail lookup failed for ${task}: ${errorMessage(error)}`);
@@ -95,6 +98,7 @@ async function contextFromLinear(
     worktree,
     title: resolved.title,
     description: resolved.description,
+    url: resolved.url,
     completionTaskId,
     completionMarkDoneSupported: taskSupportsCompletionCommand({
       rawSources: sourcesFromConfig(config),
@@ -115,6 +119,7 @@ async function contextFromState(
   // enrich the prompt title/description (which falls back to the task id).
   const details = isLinearEnabled(config) ? await fetchTaskDetails(task) : undefined;
   const completionTaskId = state.completionTaskId ?? task;
+  const url = state.url ?? details?.url;
   return {
     task,
     repository: state.repository,
@@ -125,6 +130,7 @@ async function contextFromState(
     worktree: { ...worktree, branchName: state.branchName },
     title: details?.title ?? state.title ?? task.toUpperCase(),
     description: details?.description ?? "",
+    ...(url === undefined ? {} : { url }),
     completionTaskId,
     completionMarkDoneSupported: taskSupportsCompletionCommand({
       rawSources: sourcesFromConfig(config),
@@ -274,6 +280,7 @@ export async function resumeWorkspace(
       config,
       name: task,
       displayName: context.title,
+      ...(context.url === undefined ? {} : { url: context.url }),
       cwd: launchDir,
       command: launchCmd,
       agent: context.agent,
@@ -296,6 +303,7 @@ export async function resumeWorkspace(
       state: "resumed",
       resumeCount: context.resumeCount + 1,
       completionTaskId: context.completionTaskId,
+      ...(context.url === undefined ? {} : { url: context.url }),
       ...(context.reason === undefined ? {} : { reason: context.reason }),
     },
   });
