@@ -52,6 +52,23 @@ Scope and limits:
 - **Ignored by `sdx` / `none`.** The other runners ignore it, so you can leave `networkEgress` set while switching `local.runner`.
 - **No additional effect when `cmd` already starts with `safehouse`:** that command owns its own wrap, so groundcrew injects nothing. Groundcrew-managed setup/resume launches still reject cmd-owned Safehouse wraps because worker self-completion env cannot be injected.
 
+## Pi on Safehouse
+
+Current Agent Safehouse releases ship a dedicated [`pi.sb` profile](https://github.com/eugene1g/agent-safehouse/blob/main/profiles/60-agents/pi.sb) that grants Pi's default `~/.pi` state while keeping the worktree boundary in Groundcrew's composed sandbox. Its bundled runtime grants cover system package roots, common Node version managers, and `~/.local` npm installs. If `command -v pi` resolves through another home-directory prefix such as `~/.npm-global`, add that prefix to `local.readOnlyDirs` so Safehouse can read both the launcher and package files:
+
+```ts
+local: {
+  runner: "safehouse",
+  readOnlyDirs: ["~/.config/tfenv", "~/.npm-global"],
+},
+```
+
+Update Safehouse if a Pi launch reports that its profile or `~/.pi/agent` is unavailable. The profile also assumes Pi's default state directory; a custom `PI_CODING_AGENT_DIR` needs corresponding Safehouse environment and writable-path grants.
+
+Safehouse's Pi profile exposes the real `~/.pi` state read/write, so use it only with repositories whose project-local Pi resources you trust. Use Docker Sandboxes when unattended repository code must be isolated from the host's Pi settings, extensions, credentials, and session state.
+
+Groundcrew's bundled Clearance allowlist covers Pi's startup service, Anthropic, OpenAI, and their subscription-authentication hosts. Pi supports many additional providers; add the selected provider's hosts with `CLEARANCE_ALLOW_HOSTS` / `CLEARANCE_ALLOW_HOSTS_FILES`, or explicitly choose `local.networkEgress: "open"`.
+
 ## Docker Sandboxes Setup
 
 `sdx` does not support `unsandboxedHooks`. The sdx container has no
@@ -69,3 +86,15 @@ sbx exec -it groundcrew-claude gh auth login
 ```
 
 Replace `claude` with the sbx agent name for your agent and `<projectDir>` with `workspace.projectDir` from `crew.config.ts`. Manage lifecycle and auth with `sbx` directly (`sbx ls`, `sbx exec`, `sbx rm`). Groundcrew does not create, authenticate, regenerate, list, or remove sandboxes.
+
+Pi is available as a contributed Docker Sandbox agent kit. Its supported default routes Anthropic requests through Docker Sandboxes' [credential proxy](https://docs.docker.com/ai/sandboxes/security/credentials/), so the real key remains on the host. Store that credential, then create the exact sandbox name Groundcrew addresses:
+
+```bash
+sbx secret set -g anthropic
+sbx create --name groundcrew-pi \
+  --kit "git+https://github.com/docker/sbx-kits-contrib.git#ref=v0.12.0&dir=pi" \
+  pi <projectDir>
+sbx exec -it groundcrew-pi gh auth login
+```
+
+The example pins the reviewed `v0.12.0` kit; review upstream changes before moving the `ref` to a newer release. Enable it in Groundcrew with `pi: { sandbox: { agent: "pi" } }`. The sandbox is persistent, so Pi's per-worktree sessions remain available to later `crew resume` launches. The contributed kit's default network and credential policy supports Anthropic; use a reviewed custom kit or policy before selecting another provider or storing its credentials inside the sandbox.

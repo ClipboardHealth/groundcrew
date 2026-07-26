@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import {
@@ -8,6 +9,14 @@ import {
 function bundledClearanceAllowHostsFile(): string {
   return path.resolve(import.meta.dirname, "..", "..", "clearance-allow-hosts");
 }
+
+describe("bundled Clearance allowlist", () => {
+  it("allows Pi startup and subscription authentication hosts", () => {
+    const actual = readFileSync(bundledClearanceAllowHostsFile(), "utf8").split("\n");
+
+    expect(actual).toEqual(expect.arrayContaining(["auth.openai.com", "claude.ai", "pi.dev"]));
+  });
+});
 
 describe(clearanceAllowHostsFilesValue, () => {
   it("uses groundcrew's shipped allowlist when the user has no files configured", () => {

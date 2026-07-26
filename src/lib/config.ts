@@ -181,8 +181,9 @@ export interface AgentDefinition {
 }
 
 /**
- * User-facing agent entry shape. Built-in agent names (`claude`, `codex`)
- * accept empty or partial entries because they merge over built-in presets.
+ * User-facing agent entry shape. Built-in agent names (`claude`, `codex`,
+ * `cursor`, `cursor-grok`, `pi`) accept empty or partial entries because they
+ * merge over built-in presets.
  * Brand-new agent names must supply enough fields to satisfy `validate()`.
  *
  * `usage` accepts an extra `{ disabled: true }` sentinel that strips the
@@ -319,7 +320,7 @@ export interface Config {
     default?: string;
     /**
      * Explicit enabled agent set. Built-in keys (`claude`, `codex`, `cursor`,
-     * `cursor-grok`) merge over their presets, so `{ claude: {} }` enables
+     * `cursor-grok`, `pi`) merge over their presets, so `{ claude: {} }` enables
      * Claude with the shipped command/color/usage. Brand-new agent names must
      * supply enough fields to satisfy `validate()`.
      */
@@ -584,6 +585,16 @@ const BUILT_IN_AGENT_DEFINITIONS: Record<string, AgentDefinition> = {
     cmd: "cursor-agent --model grok-4.5-xhigh --sandbox disabled --force --approve-mcps",
     color: "#16A34A",
     // No `usage`: cursor-agent has no codexbar provider.
+    resumeArgs: "--continue",
+  },
+  pi: {
+    // Groundcrew worktrees are unattended. Pi's project trust prompt would
+    // otherwise stop the initial positional prompt before the agent can act.
+    // `--approve` trusts project-local Pi resources for this launch; the
+    // groundcrew runner remains the filesystem/network security boundary.
+    cmd: "pi --approve",
+    color: "#6B7280",
+    // Pi stores sessions by working directory, matching the one-worktree-per-task model.
     resumeArgs: "--continue",
   },
 };
