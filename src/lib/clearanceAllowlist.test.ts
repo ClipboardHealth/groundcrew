@@ -14,7 +14,9 @@ describe("bundled Clearance allowlist", () => {
   it("allows Pi startup and subscription authentication hosts", () => {
     const actual = readFileSync(bundledClearanceAllowHostsFile(), "utf8").split("\n");
 
-    expect(actual).toEqual(expect.arrayContaining(["auth.openai.com", "claude.ai", "pi.dev"]));
+    expect(actual).toEqual(
+      expect.arrayContaining(["auth.openai.com", "claude.ai", "console.anthropic.com", "pi.dev"]),
+    );
   });
 });
 

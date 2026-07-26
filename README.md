@@ -72,7 +72,7 @@ set -g extended-keys on
 set -g extended-keys-format csi-u
 ```
 
-After saving work in any active tmux sessions, run `tmux kill-server` so the change takes effect the next time tmux starts. These are server-wide options, so Groundcrew deliberately does not change them for you: its default tmux server may also contain unrelated user sessions. With tmux 3.2–3.4, omit `extended-keys-format`; see [Pi's tmux setup](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/tmux.md).
+Stop or finish every active Groundcrew task and save work in every other tmux session before running `tmux kill-server`; it terminates the entire shared tmux server, including unrelated user sessions. The change takes effect the next time tmux starts. These are server-wide options, so Groundcrew deliberately does not change them for you. With tmux 3.2–3.4, omit `extended-keys-format`; see [Pi's tmux setup](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/tmux.md).
 
 ## Task Pickup
 

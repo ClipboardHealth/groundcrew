@@ -36,7 +36,7 @@ Credential handling depends on the runner:
 
 - `none`: Pi uses the host's auth file. Ambient provider API-key environment variables are also inherited.
 - `safehouse`: current Safehouse releases include a Pi profile that grants access to the default `~/.pi` directory. Authenticate on the host first and keep the default directory when using that profile. To pass an ambient provider API key instead, list its name in the Pi definition's `preLaunchEnv`; Safehouse otherwise sanitizes it. See [Pi on Safehouse](./runners.md#pi-on-safehouse) for nonstandard install prefixes.
-- `sdx`: the contributed Pi kit's supported default keeps an Anthropic key on the host and injects it through Docker Sandboxes' credential proxy. Configure it with `sbx secret set -g anthropic` before creating the sandbox. Host Pi auth files are not copied into the sandbox. Other providers require corresponding sandbox network and credential policy; see [Docker Sandboxes Setup](./runners.md#docker-sandboxes-setup).
+- `sdx`: the contributed Pi kit's supported default keeps an Anthropic key on the host and injects it through Docker Sandboxes' credential proxy. After creating the sandbox, configure the credential specifically for it with `sbx secret set groundcrew-pi anthropic`. Host Pi auth files are not copied into the sandbox. Other providers require corresponding sandbox network and credential policy; see [Docker Sandboxes Setup](./runners.md#docker-sandboxes-setup).
 
 The built-in command is `pi --approve`. Here `--approve` resolves Pi's **project trust** prompt so an unattended task can load project-local Pi resources; it does not authenticate an AI provider and does not bypass Groundcrew's Safehouse or Docker Sandbox boundary.
 

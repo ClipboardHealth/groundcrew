@@ -87,13 +87,13 @@ sbx exec -it groundcrew-claude gh auth login
 
 Replace `claude` with the sbx agent name for your agent and `<projectDir>` with `workspace.projectDir` from `crew.config.ts`. Manage lifecycle and auth with `sbx` directly (`sbx ls`, `sbx exec`, `sbx rm`). Groundcrew does not create, authenticate, regenerate, list, or remove sandboxes.
 
-Pi is available as a contributed Docker Sandbox agent kit. Its supported default routes Anthropic requests through Docker Sandboxes' [credential proxy](https://docs.docker.com/ai/sandboxes/security/credentials/), so the real key remains on the host. Store that credential, then create the exact sandbox name Groundcrew addresses:
+Pi is available as a contributed Docker Sandbox agent kit. Its supported default routes Anthropic requests through Docker Sandboxes' [credential proxy](https://docs.docker.com/ai/sandboxes/security/credentials/), so the real key remains on the host. Create the exact sandbox name Groundcrew addresses, then scope that credential to this sandbox:
 
 ```bash
-sbx secret set -g anthropic
 sbx create --name groundcrew-pi \
   --kit "git+https://github.com/docker/sbx-kits-contrib.git#ref=v0.12.0&dir=pi" \
   pi <projectDir>
+sbx secret set groundcrew-pi anthropic
 sbx exec -it groundcrew-pi gh auth login
 ```
 
