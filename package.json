@@ -79,7 +79,7 @@
   "devDependencies": {
     "@clipboard-health/ai-rules": "2.43.4",
     "@clipboard-health/oxlint-config": "1.14.1",
-    "@nx/js": "22.7.7",
+    "@nx/js": "23.1.0",
     "@tsconfig/node24": "24.0.4",
     "@tsconfig/strictest": "2.0.8",
     "@types/node": "25.9.5",
@@ -91,7 +91,7 @@
     "knip": "6.27.0",
     "lint-staged": "17.1.0",
     "markdownlint-cli2": "0.23.1",
-    "nx": "22.7.7",
+    "nx": "23.1.0",
     "oxfmt": "0.60.0",
     "oxlint": "1.74.0",
     "oxlint-tsgolint": "7.0.2001",
