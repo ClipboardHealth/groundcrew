@@ -36,7 +36,10 @@ describe(installCmuxAgentHooks, () => {
       "cmux",
       ["hooks", "codex", "install", "--yes"],
       expect.objectContaining({
-        env: expect.objectContaining({ CODEX_HOME: "/tmp/gc-codex-home" }),
+        env: expect.objectContaining({
+          CODEX_HOME: "/tmp/gc-codex-home",
+          HOME: "/tmp/gc-codex-home",
+        }),
       }),
     );
   });

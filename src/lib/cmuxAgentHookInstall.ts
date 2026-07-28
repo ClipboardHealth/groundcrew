@@ -27,8 +27,12 @@ export function installCmuxAgentHooks(input: { agent: string; configDir: string 
 
   try {
     runCommand("cmux", ["hooks", input.agent, "install", "--yes"], {
-      // oxlint-disable-next-line node/no-process-env -- the cmux CLI must inherit PATH etc.; only the agent's config-dir var is overridden
-      env: { ...process.env, [relocation.configDirEnv]: input.configDir },
+      env: {
+        // oxlint-disable-next-line node/no-process-env -- inherit PATH etc.; relocate HOME so generated hook scripts stay inside the granted config dir
+        ...process.env,
+        HOME: input.configDir,
+        [relocation.configDirEnv]: input.configDir,
+      },
       timeoutMs: CMUX_HOOKS_INSTALL_TIMEOUT_MS,
     });
     logEvent(CMUX_HOOKS_INSTALL_EVENT, { ...logContext, outcome: "installed" });
