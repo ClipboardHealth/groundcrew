@@ -56,6 +56,8 @@ Groundcrew creates isolated per-task worktrees for unattended runs, so the shipp
 
 Groundcrew provisions each worktree and records workspace trust for `claude`, `codex`, and `cursor-agent` before the agent starts (via [`agent-trust`](https://www.npmjs.com/package/agent-trust)), so unattended launches do not stall on first-run trust dialogs. There is no config toggle: if groundcrew created the worktree, trust is recorded in the agent's local store (`~/.claude.json` for Claude, `~/.codex/config.toml` for Codex, `~/.cursor/projects/<slug>/.workspace-trusted` for Cursor) for the worktree launch directory. Cursor markers use `trustMethod: "groundcrew-auto-trust"` for auditability. This applies only to groundcrew-provisioned worktrees at launch time; it does not trust arbitrary paths you open manually. Permission mode (`claude --permission-mode auto`) and Codex approval bypass (`--dangerously-bypass-approvals-and-sandbox`) are separate from workspace trust.
 
+Pi's trust store is not supported by `agent-trust`, so its built-in preset passes `pi --approve` on every launch instead. This approves project-local Pi settings, packages, extensions, and skills for that process. If you override `agents.definitions.pi.cmd`, keep `--approve` for the same unattended behavior or use `--no-approve` to ignore protected project resources without prompting. Provider login is separate; see [Pi Provider Authentication](./credentials.md#pi-provider-authentication).
+
 Inspect or clean trust entries with the published CLI:
 
 ```bash
@@ -82,4 +84,4 @@ Set `workspaceKind: "zellij"` to run agents as tabs in a shared `groundcrew` zel
 
 ## Agent CLI Must Accept A Positional Prompt
 
-The handoff is `<your cmd> "<prompt>"`. `claude`, `codex`, and `cursor-agent` all support this.
+The handoff is `<your cmd> "<prompt>"`. `claude`, `codex`, `cursor-agent`, and `pi` all support this.

@@ -64,8 +64,10 @@ export default {
     default: "claude",
     // `definitions` is the enabled launch profile set. Built-in keys can use
     // `{}` to opt into the shipped command/color/usage preset. Add
-    // `codex: {}`, `cursor: {}`, or `"cursor-grok": {}` for the other shipped
-    // agents (`cursor` runs Cursor's composer-2.5, `cursor-grok` runs grok-4.5).
+    // `codex: {}`, `cursor: {}`, `"cursor-grok": {}`, or `pi: {}` for the other
+    // shipped agents (`cursor` runs Cursor's composer-2.5, `cursor-grok` runs
+    // grok-4.5). Pi authenticates only the selected model's provider; see
+    // docs/credentials.md#pi-provider-authentication.
     // Agent names are launch profiles: add custom entries such as `claude-fable`
     // or `claude-opus` to pin a model per task, then tag tasks with `agent-<name>`.
     definitions: {
@@ -73,6 +75,7 @@ export default {
       // codex: {},
       // cursor: {},
       // "cursor-grok": {},
+      // pi: {},
       // "claude-fable": {
       //   cmd: "claude --model claude-fable-5 --permission-mode auto",
       //   color: "#C15F3C",
@@ -162,8 +165,9 @@ export default {
   //   sandbox: { agent: "claude" },
   //   // Args appended on `crew resume` so the agent reopens its previous
   //   // conversation in the worktree (`crew resume --new` starts fresh). The
-  //   // built-in claude/codex presets default this ("--continue" / "resume
-  //   // --last"); set it for custom agents or to override the preset default.
+  //   // built-in claude/codex/pi presets default this ("--continue" /
+  //   // "resume --last" / "--continue"); set it for custom agents or to
+  //   // override the preset default.
   //   resumeArgs: "--continue",
   // },
   //

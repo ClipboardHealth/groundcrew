@@ -51,7 +51,7 @@ describe("crew completions", () => {
         // `--agent` is enum under `init` but free-form under `open`/`task`; the
         // global prev-based case must still offer the enum values.
         expect(script).toContain(
-          '--agent) COMPREPLY=( $(compgen -W "claude codex cursor" -- "$cur") ); return ;;',
+          '--agent) COMPREPLY=( $(compgen -W "claude codex cursor pi" -- "$cur") ); return ;;',
         );
       });
 

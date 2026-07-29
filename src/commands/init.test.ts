@@ -315,8 +315,26 @@ describe("crew init", () => {
 
     it("rejects unsupported agent values", async () => {
       await expect(initConfigCli(["--agent", "grok"])).rejects.toThrow(
-        /--agent must be one of claude, codex, cursor/,
+        /--agent must be one of claude, codex, cursor, pi/,
       );
+    });
+
+    it("supports Pi-only quickstart config", async () => {
+      await initConfigCli([
+        "--global",
+        "--project-dir",
+        "~/dev",
+        "--repo",
+        "OWNER/REPO",
+        "--agent",
+        "pi",
+      ]);
+
+      const destination = path.join(xdgHome, "groundcrew", "crew.config.ts");
+      const actual = readFileSync(destination, "utf8");
+      expect(actual).toContain('default: "pi"');
+      expect(actual).toContain("pi: {}");
+      expect(actual).not.toContain("// pi: {}");
     });
 
     it("supports cursor-only quickstart config", async () => {

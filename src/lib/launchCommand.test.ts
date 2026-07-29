@@ -389,6 +389,21 @@ describe(buildLaunchCommand, () => {
     expect(out).toContain('exec env -- claude --permission-mode auto "$@"');
   });
 
+  it("selects the Pi Safehouse profile and passes the prompt positionally", () => {
+    const out = buildLaunchCommand(
+      arguments_({
+        definition: {
+          cmd: "pi --approve",
+          color: "#6B7280",
+        },
+      }),
+    );
+
+    expect(out).toContain('_safehouse_shim="$_safehouse_shim_dir/pi"');
+    expect(out).toContain('exec pi --approve "$@"');
+    expect(out).toContain('sh "$_p"');
+  });
+
   it("skips leading environment assignments when inferring the Safehouse profile command", () => {
     const out = buildLaunchCommand(
       arguments_({

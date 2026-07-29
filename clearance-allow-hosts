@@ -11,10 +11,14 @@
 ab.chatgpt.com
 api.anthropic.com
 api.openai.com
+auth.openai.com
 chatgpt.com
+claude.ai
+console.anthropic.com
 docs.anthropic.com
 docs.claude.com
 downloads.claude.ai
+pi.dev
 platform.claude.com
 
 # Cursor (cursor-agent: composer, grok models). Wildcard covers the numbered API hosts

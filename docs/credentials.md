@@ -16,6 +16,30 @@ echo "GROUNDCREW_LINEAR_API_KEY='op://<vault>/LINEAR_API_KEY/credential'" > .env
 op run --env-file .env.1password -- crew doctor
 ```
 
+## Pi Provider Authentication
+
+Pi does **not** require authentication with every provider it supports. It only needs credentials for the provider used by the selected model. The built-in Groundcrew preset does not force a provider or model, so Pi uses the defaults from its own settings.
+
+Authenticate the provider before the first unattended launch:
+
+```bash
+pi
+# In Pi: /login, select and authenticate the provider Groundcrew tasks will use,
+# then /quit.
+```
+
+By default, Pi stores provider API keys and subscription tokens in `~/.pi/agent/auth.json`; `PI_CODING_AGENT_DIR` changes that base directory. You can authenticate several providers for interactive model switching, but a fixed Pi launch profile only needs its configured provider. `crew doctor` verifies that the `pi` executable exists; it cannot verify provider credentials without making a model request.
+
+If you use a Claude Pro/Max subscription, Pi's [provider documentation](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/providers.md#claude-promax) warns that third-party harness usage is billed as extra usage per token rather than against normal plan limits.
+
+Credential handling depends on the runner:
+
+- `none`: Pi uses the host's auth file. Ambient provider API-key environment variables are also inherited.
+- `safehouse`: current Safehouse releases include a Pi profile that grants access to the default `~/.pi` directory. Authenticate on the host first and keep the default directory when using that profile. To pass an ambient provider API key instead, list its name in the Pi definition's `preLaunchEnv`; Safehouse otherwise sanitizes it. See [Pi on Safehouse](./runners.md#pi-on-safehouse) for nonstandard install prefixes.
+- `sdx`: the contributed Pi kit's supported default keeps an Anthropic key on the host and injects it through Docker Sandboxes' credential proxy. After creating the sandbox, configure the credential specifically for it with `sbx secret set groundcrew-pi anthropic`. Host Pi auth files are not copied into the sandbox. Other providers require corresponding sandbox network and credential policy; see [Docker Sandboxes Setup](./runners.md#docker-sandboxes-setup).
+
+The built-in command is `pi --approve`. Here `--approve` resolves Pi's **project trust** prompt so an unattended task can load project-local Pi resources; it does not authenticate an AI provider and does not bypass Groundcrew's Safehouse or Docker Sandbox boundary.
+
 ## Build-Time Secrets
 
 Groundcrew forwards a small allowlist of build-time secrets from your shell into the `prepareWorktree` phase so package installs can authenticate against private registries. The agent process never inherits these values.

@@ -464,6 +464,25 @@ describe(doctor, () => {
     );
   });
 
+  it("hints how to stop probing a missing Pi CLI", async () => {
+    loadConfigMock.mockResolvedValue(
+      makeConfig({
+        default: "pi",
+        definitions: {
+          pi: { cmd: "pi --approve", color: "#6B7280" },
+        },
+      }),
+    );
+    mockWhichFailure("pi", "not installed");
+
+    const actual = await doctor();
+
+    expect(actual).toBe(false);
+    expect(consoleLog.output()).toContain(
+      "install pi or remove `agents.definitions.pi` from crew.config.ts",
+    );
+  });
+
   it("hints how to stop probing a missing cursor CLI (cursor-agent)", async () => {
     loadConfigMock.mockResolvedValue(
       makeConfig({
