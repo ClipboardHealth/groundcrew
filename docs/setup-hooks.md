@@ -33,6 +33,20 @@ Hook failures are advisory. Groundcrew logs the non-zero exit and still launches
 the agent so a flaky package registry or stale lockfile does not block the
 session.
 
+## Task-level opt-out
+
+Some tasks need the repository checkout but not its dependency installation or
+code generation. Add the exact Linear label `groundcrew-skip-prepare` to skip
+worktree preparation for that task. Shell task sources can emit
+`"worktreePreparation": "skip"` in the issue JSON for the same behavior.
+
+The opt-out skips every preparation layer, including the operator-only
+`unsandboxedHooks.prepareWorktree` hook. Groundcrew still creates the worktree
+and launches the agent normally. This policy does not make the worktree
+read-only; it only skips preparation commands.
+
+Dry-run output includes `prepareWorktree skipped` when the policy applies.
+
 ## Precedence
 
 `prepareWorktree` resolves through three layers, highest priority first:

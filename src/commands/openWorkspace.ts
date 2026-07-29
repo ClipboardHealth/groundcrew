@@ -5,7 +5,7 @@ import { composeAgentLaunch, openAgentWorkspace, prepareAgentLaunch } from "../l
 import { inferAgentCommandName } from "../lib/launchCommand.ts";
 import { loadConfig, repositoryBaseDir, type ResolvedConfig } from "../lib/config.ts";
 import { resolvePullRequest } from "../lib/pullRequests.ts";
-import { resolvePrepareWorktreeCommand } from "../lib/repositoryHooks.ts";
+import { resolveRepositoryPreparationCommands } from "../lib/repositoryHooks.ts";
 import { recordRunState, readRunState } from "../lib/runState.ts";
 import { seedLaunchWorkspaceTrust } from "../lib/seedLaunchWorkspaceTrust.ts";
 import {
@@ -241,19 +241,12 @@ export async function openWorkspace(
   });
   let cleanupAgentLaunch: (() => void) | undefined;
   try {
-    const repositoryEntry = config.workspace.repositories.find(
-      (entry) => entry.name === repository,
-    );
-    const prepareWorktreeCommand = resolvePrepareWorktreeCommand({
-      worktreeDir: launchDir,
-      // Spread-conditional: exactOptionalPropertyTypes forbids an explicit
-      // `undefined` for an optional field, and the lookup yields undefined for
-      // repos with no hooks. Mirrors setupWorkspace so `crew open` honors the
-      // same per-repo operator hooks as `crew setup`.
-      ...(repositoryEntry?.hooks === undefined ? {} : { perRepoHooks: repositoryEntry.hooks }),
-      defaultHooks: config.defaults.hooks,
-    });
-    const prepareWorktreeUnsandboxedCommand = repositoryEntry?.unsandboxedHooks?.prepareWorktree;
+    const { prepareWorktreeCommand, prepareWorktreeUnsandboxedCommand } =
+      resolveRepositoryPreparationCommands({
+        config,
+        repository,
+        worktreeDir: launchDir,
+      });
     const secretsFile =
       prepareWorktreeCommand === undefined && prepareWorktreeUnsandboxedCommand === undefined
         ? undefined

@@ -296,6 +296,34 @@ describe(createBoardSource, () => {
       expect(issue?.agent).toBe("claude");
     });
 
+    it("maps the groundcrew-skip-prepare label to the skip preparation policy", async () => {
+      const node = issueNode({
+        identifier: "TEAM-1",
+        labels: {
+          nodes: [{ name: "agent-claude" }, { name: "groundcrew-skip-prepare" }],
+        },
+      });
+      const { source } = makeBoardSource(makeClient({ pages: [[node]] }));
+
+      const state = await source.fetch();
+
+      expect(state.issues[0]?.worktreePreparation).toBe("skip");
+    });
+
+    it("does not skip preparation for similar Linear labels", async () => {
+      const node = issueNode({
+        identifier: "TEAM-1",
+        labels: {
+          nodes: [{ name: "agent-claude" }, { name: "groundcrew-skip-prepare-later" }],
+        },
+      });
+      const { source } = makeBoardSource(makeClient({ pages: [[node]] }));
+
+      const state = await source.fetch();
+
+      expect(state.issues[0]?.worktreePreparation).toBeUndefined();
+    });
+
     it("skips parent tasks with children and surfaces them as parentSkips when unstarted", async () => {
       const parent = issueNode({
         identifier: "TEAM-1",
@@ -429,6 +457,30 @@ describe(fetchResolvedIssue, () => {
       task: "TEAM-1",
     });
     expect(resolved.agent).toBe("codex");
+  });
+
+  it("maps the skip preparation label during a single-task lookup", async () => {
+    const client = {
+      client: {
+        rawRequest: vi.fn<RawRequest>(async () => ({
+          data: {
+            issue: issueNode({
+              labels: {
+                nodes: [{ name: "agent-claude" }, { name: "groundcrew-skip-prepare" }],
+              },
+            }),
+          },
+        })),
+      },
+    };
+
+    const resolved = await fetchResolvedIssue({
+      client: client as unknown as LinearClient,
+      config: makeConfig(),
+      task: "TEAM-1",
+    });
+
+    expect(resolved.worktreePreparation).toBe("skip");
   });
 
   it("falls back to agents.default when the label refers to a built-in agent that is not enabled", async () => {
