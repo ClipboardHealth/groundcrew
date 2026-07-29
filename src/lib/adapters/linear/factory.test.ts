@@ -75,6 +75,9 @@ function linearIssue(overrides: Partial<LinearIssue> = {}): LinearIssue {
     hasMoreBlockers: overrides.hasMoreBlockers ?? false,
     url: overrides.url ?? "https://linear.app/example/issue/TEAM-1",
     priority: overrides.priority ?? 0,
+    ...(overrides.worktreePreparation === undefined
+      ? {}
+      : { worktreePreparation: overrides.worktreePreparation }),
   };
 }
 
@@ -347,6 +350,12 @@ describe(toCanonicalIssue, () => {
     expect(result.description).toBe("Body of the task.");
   });
 
+  it("preserves the worktree preparation policy", () => {
+    const result = toCanonicalIssue(linearIssue({ worktreePreparation: "skip" }), "linear");
+
+    expect(result.worktreePreparation).toBe("skip");
+  });
+
   it("source-prefixes blocker ids and canonicalizes their statuses via stateType", () => {
     const issue = linearIssue({
       blockers: [
@@ -597,6 +606,7 @@ describe(createLinearTaskSource, () => {
       hasMoreBlockers: false,
       url: "https://linear.app/example/issue/TEAM-1",
       priority: 0,
+      worktreePreparation: "skip",
     });
     const source = createLinearTaskSource({ kind: "linear" }, {
       globalConfig: makeConfig(),
@@ -608,6 +618,7 @@ describe(createLinearTaskSource, () => {
     expect(issue?.repository).toBe("repo-a");
     expect(issue?.agent).toBe("claude");
     expect(issue?.status).toBe("todo");
+    expect(issue?.worktreePreparation).toBe("skip");
   });
 
   it("getTask() returns a canonical Issue with description populated from fetchResolvedIssue", async () => {

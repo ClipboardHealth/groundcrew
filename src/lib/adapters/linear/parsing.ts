@@ -4,9 +4,10 @@
  */
 
 import { AGENT_ANY, isBuiltInAgentNotEnabled, type ResolvedConfig } from "../../config.ts";
-import { RepositoryResolutionError } from "../../taskSource.ts";
+import { RepositoryResolutionError, type WorktreePreparation } from "../../taskSource.ts";
 
 export const AGENT_LABEL_PREFIX = "agent-";
+const SKIP_PREPARE_WORKTREE_LABEL = "groundcrew-skip-prepare";
 
 export type RepositoryResolution = { kind: "ok"; repository: string } | { kind: "missing" };
 
@@ -15,6 +16,14 @@ export type AgentResolution =
   | { kind: "no-label" }
   | { kind: "agent-any" }
   | { kind: "not-enabled-fallback"; requestedAgent: string; fallbackAgent: string };
+
+export function resolveWorktreePreparation(arguments_: {
+  labels: Array<{ name: string }>;
+}): WorktreePreparation | undefined {
+  return arguments_.labels.some((label) => label.name === SKIP_PREPARE_WORKTREE_LABEL)
+    ? "skip"
+    : undefined;
+}
 
 function escapeRegex(value: string): string {
   return value.replaceAll(/[$()*+.?[\\\]^{|}]/g, String.raw`\$&`);

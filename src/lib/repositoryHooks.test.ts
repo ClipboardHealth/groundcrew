@@ -2,7 +2,11 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { resolvePrepareWorktreeCommand } from "./repositoryHooks.ts";
+import type { ResolvedConfig } from "./config.ts";
+import {
+  resolvePrepareWorktreeCommand,
+  resolveRepositoryPreparationCommands,
+} from "./repositoryHooks.ts";
 
 function temporaryWorktree(): string {
   return mkdtempSync(path.join(tmpdir(), "groundcrew-hooks-"));
@@ -15,6 +19,63 @@ function writeRepositoryConfig(worktreeDir: string, config: unknown): void {
     `${JSON.stringify(config, undefined, 2)}\n`,
   );
 }
+
+function preparationConfig(): ResolvedConfig {
+  return {
+    sources: [],
+    defaults: { hooks: { prepareWorktree: "npm ci" } },
+    git: { remote: "origin", defaultBranch: "main" },
+    workspace: {
+      projectDir: "/work",
+      knownRepositories: ["acme/widgets"],
+      repositories: [
+        {
+          name: "acme/widgets",
+          hooks: { prepareWorktree: "make setup" },
+          unsandboxedHooks: { prepareWorktree: "bin/setup" },
+        },
+      ],
+    },
+    orchestrator: {
+      maximumInProgress: 4,
+      pollIntervalMilliseconds: 1000,
+      sessionLimitPercentage: 85,
+    },
+    agents: {
+      default: "claude",
+      definitions: { claude: { cmd: "claude", color: "#fff" } },
+    },
+    prompts: { initial: "x" },
+    workspaceKind: "auto",
+    local: {
+      runner: "auto",
+      networkEgress: "allowlisted",
+      safehouse: { enable: [] },
+      readOnlyDirs: [],
+    },
+    logging: { file: "/tmp/groundcrew-test.log" },
+  };
+}
+
+describe(resolveRepositoryPreparationCommands, () => {
+  it("resolves sandboxed and unsandboxed commands for a repository", () => {
+    const worktreeDir = temporaryWorktree();
+    try {
+      expect(
+        resolveRepositoryPreparationCommands({
+          config: preparationConfig(),
+          repository: "acme/widgets",
+          worktreeDir,
+        }),
+      ).toStrictEqual({
+        prepareWorktreeCommand: "make setup",
+        prepareWorktreeUnsandboxedCommand: "bin/setup",
+      });
+    } finally {
+      rmSync(worktreeDir, { recursive: true, force: true });
+    }
+  });
+});
 
 describe(resolvePrepareWorktreeCommand, () => {
   it("returns undefined when neither repo config nor defaults define prepareWorktree", () => {

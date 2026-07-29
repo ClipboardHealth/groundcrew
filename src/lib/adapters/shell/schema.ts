@@ -37,6 +37,7 @@ export const shellIssueSchema = z.object({
    * breaking; `crew status` falls back to displaying just the id.
    */
   url: z.url().optional(),
+  worktreePreparation: z.literal("skip").optional(),
   sourceRef: z.unknown(),
 });
 

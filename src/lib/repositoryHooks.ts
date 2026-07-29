@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import type { HookCommands } from "./config.ts";
+import type { HookCommands, ResolvedConfig } from "./config.ts";
 
 const REPOSITORY_CONFIG_RELATIVE_PATH = ".groundcrew/config.json";
 
@@ -15,6 +15,33 @@ interface ResolvePrepareWorktreeCommandArguments {
    */
   perRepoHooks?: HookCommands;
   defaultHooks: HookCommands;
+}
+
+interface ResolveRepositoryPreparationCommandsArguments {
+  config: ResolvedConfig;
+  repository: string;
+  worktreeDir: string;
+}
+
+interface RepositoryPreparationCommands {
+  prepareWorktreeCommand: string | undefined;
+  prepareWorktreeUnsandboxedCommand: string | undefined;
+}
+
+export function resolveRepositoryPreparationCommands(
+  arguments_: ResolveRepositoryPreparationCommandsArguments,
+): RepositoryPreparationCommands {
+  const repositoryEntry = arguments_.config.workspace.repositories.find(
+    (entry) => entry.name === arguments_.repository,
+  );
+  return {
+    prepareWorktreeCommand: resolvePrepareWorktreeCommand({
+      worktreeDir: arguments_.worktreeDir,
+      ...(repositoryEntry?.hooks === undefined ? {} : { perRepoHooks: repositoryEntry.hooks }),
+      defaultHooks: arguments_.config.defaults.hooks,
+    }),
+    prepareWorktreeUnsandboxedCommand: repositoryEntry?.unsandboxedHooks?.prepareWorktree,
+  };
 }
 
 // Flat precedence cascade, highest priority first: the repo-committed

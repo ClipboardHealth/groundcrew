@@ -57,6 +57,42 @@ describe("shell issue schema", () => {
     expect(parsed.hasMoreBlockers).toBe(false);
   });
 
+  it("accepts the skip worktree preparation policy", () => {
+    const input = {
+      id: "x",
+      title: "t",
+      description: "",
+      status: "todo",
+      repository: "org/repo",
+      agent: "claude",
+      assignee: "u",
+      updatedAt: "2026-01-01T00:00:00Z",
+      blockers: [],
+      worktreePreparation: "skip",
+      sourceRef: null,
+    };
+
+    expect(shellIssueSchema.parse(input).worktreePreparation).toBe("skip");
+  });
+
+  it("rejects an explicit run worktree preparation policy", () => {
+    const input = {
+      id: "x",
+      title: "t",
+      description: "",
+      status: "todo",
+      repository: "org/repo",
+      agent: "claude",
+      assignee: "u",
+      updatedAt: "2026-01-01T00:00:00Z",
+      blockers: [],
+      worktreePreparation: "run",
+      sourceRef: null,
+    };
+
+    expect(() => shellIssueSchema.parse(input)).toThrow(/Invalid input/);
+  });
+
   it("validates blockers' canonical status field", () => {
     const issueWithBadBlocker = {
       id: "x",

@@ -134,6 +134,9 @@ export function toCanonicalIssue(shellIssue: ShellIssue, sourceName: string): Ca
     blockers,
     hasMoreBlockers: shellIssue.hasMoreBlockers,
     ...(shellIssue.url === undefined ? {} : { url: shellIssue.url }),
+    ...(shellIssue.worktreePreparation === undefined
+      ? {}
+      : { worktreePreparation: shellIssue.worktreePreparation }),
     sourceRef: shellIssue.sourceRef,
   };
 }

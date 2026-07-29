@@ -164,6 +164,23 @@ describe(createDispatcher, () => {
       expect(setupCall?.[1]?.details.url).toBe("https://linear.app/example/issue/TEAM-1");
     });
 
+    it("forwards the task's worktree preparation policy", async () => {
+      const board = makeBoard();
+      const dispatcher = createDispatcher({ config: makeConfig(), board });
+
+      await dispatcher.runOnce({
+        state: boardOf([todoIssue({ worktreePreparation: "skip" })]),
+        worktreeEntries: [],
+        usage: async () => ({}),
+        dryRun: false,
+      });
+
+      expect(setupMock).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ worktreePreparation: "skip" }),
+      );
+    });
+
     it("logs `At capacity` when no slots remain", async () => {
       const config = makeConfig({
         orchestrator: {
@@ -686,6 +703,20 @@ describe(createDispatcher, () => {
       expect(setupMock).not.toHaveBeenCalled();
       expect(consoleLog.output()).toContain("[dry-run] Would start team-1");
       expect(consoleLog.output()).toContain("(claude)");
+    });
+
+    it("dry-run reports when prepareWorktree would be skipped", async () => {
+      const board = makeBoard();
+      const dispatcher = createDispatcher({ config: makeConfig(), board });
+
+      await dispatcher.runOnce({
+        state: boardOf([todoIssue({ worktreePreparation: "skip" })]),
+        worktreeEntries: [],
+        usage: async () => ({}),
+        dryRun: true,
+      });
+
+      expect(consoleLog.output()).toContain("prepareWorktree skipped");
     });
 
     it("rethrows workspace probe failures after attaching a usage rejection handler", async () => {

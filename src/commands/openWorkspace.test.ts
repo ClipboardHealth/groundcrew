@@ -5,7 +5,7 @@ import { ensureClearance } from "@clipboard-health/clearance";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
 import { resolvePullRequest } from "../lib/pullRequests.ts";
-import { resolvePrepareWorktreeCommand } from "../lib/repositoryHooks.ts";
+import { resolveRepositoryPreparationCommands } from "../lib/repositoryHooks.ts";
 import { readRunState, recordRunState } from "../lib/runState.ts";
 import { seedLaunchWorkspaceTrust } from "../lib/seedLaunchWorkspaceTrust.ts";
 import { workspaces } from "../lib/workspaces.ts";
@@ -52,7 +52,7 @@ vi.mock(import("../lib/repositoryHooks.ts"), async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,
-    resolvePrepareWorktreeCommand: vi.fn<typeof resolvePrepareWorktreeCommand>(),
+    resolveRepositoryPreparationCommands: vi.fn<typeof resolveRepositoryPreparationCommands>(),
   };
 });
 vi.mock(import("../lib/runState.ts"), async (importOriginal) => {
@@ -114,7 +114,7 @@ const ensureClearanceMock = vi.mocked(ensureClearance);
 const loadConfigMock = vi.mocked(loadConfig);
 const detectHostMock = vi.mocked(detectHostCapabilities);
 const resolvePullRequestMock = vi.mocked(resolvePullRequest);
-const resolvePrepareWorktreeCommandMock = vi.mocked(resolvePrepareWorktreeCommand);
+const resolveRepositoryPreparationCommandsMock = vi.mocked(resolveRepositoryPreparationCommands);
 const readRunStateMock = vi.mocked(readRunState);
 const recordRunStateMock = vi.mocked(recordRunState);
 const workspacesOpenMock = vi.mocked(workspaces.open);
@@ -372,6 +372,10 @@ describe(openWorkspace, () => {
     });
     workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set<string>() });
     workspacesOpenMock.mockResolvedValue();
+    resolveRepositoryPreparationCommandsMock.mockReturnValue({
+      prepareWorktreeCommand: undefined,
+      prepareWorktreeUnsandboxedCommand: undefined,
+    });
     stubRunCommand();
     detectHostMock.mockResolvedValue(host());
     ensureClearanceMock.mockResolvedValue({
@@ -402,8 +406,11 @@ describe(openWorkspace, () => {
       config,
       expect.objectContaining({ name: "pr-42", cwd: "/work/acme/widgets-pr-42" }),
     );
-    expect(resolvePrepareWorktreeCommandMock).toHaveBeenCalledWith(
-      expect.objectContaining({ worktreeDir: "/work/acme/widgets-pr-42" }),
+    expect(resolveRepositoryPreparationCommandsMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repository: "acme/widgets",
+        worktreeDir: "/work/acme/widgets-pr-42",
+      }),
     );
     expect(lastRecordedRunState()).toMatchObject({
       task: "pr-42",
@@ -523,7 +530,10 @@ describe(openWorkspace, () => {
   });
 
   it("stages the prepareWorktree hook into the launch when one is configured", async () => {
-    resolvePrepareWorktreeCommandMock.mockReturnValue("npm ci");
+    resolveRepositoryPreparationCommandsMock.mockReturnValue({
+      prepareWorktreeCommand: "npm ci",
+      prepareWorktreeUnsandboxedCommand: undefined,
+    });
 
     await openWorkspace(config, {
       input: { kind: "pr", pr: "42" },
@@ -534,12 +544,15 @@ describe(openWorkspace, () => {
     expect(stagedLaunchScript()).toContain("npm ci");
   });
 
-  it("forwards per-repo hooks to resolvePrepareWorktreeCommand when opening", async () => {
+  it("forwards repository context when resolving preparation commands", async () => {
     const repoConfig = makeConfigWithRepositories(["acme/widgets"]);
     repoConfig.workspace.repositories = [
       { name: "acme/widgets", hooks: { prepareWorktree: "npm ci" } },
     ];
-    resolvePrepareWorktreeCommandMock.mockReturnValue("npm ci");
+    resolveRepositoryPreparationCommandsMock.mockReturnValue({
+      prepareWorktreeCommand: "npm ci",
+      prepareWorktreeUnsandboxedCommand: undefined,
+    });
 
     await openWorkspace(repoConfig, {
       input: { kind: "pr", pr: "42" },
@@ -547,9 +560,11 @@ describe(openWorkspace, () => {
       promptText: "go",
     });
 
-    expect(resolvePrepareWorktreeCommandMock).toHaveBeenCalledWith(
-      expect.objectContaining({ perRepoHooks: { prepareWorktree: "npm ci" } }),
-    );
+    expect(resolveRepositoryPreparationCommandsMock).toHaveBeenCalledWith({
+      config: repoConfig,
+      repository: "acme/widgets",
+      worktreeDir: "/work/acme/widgets-pr-42",
+    });
   });
 
   it("runs a per-repo unsandboxedHooks.prepareWorktree command on the host when opening", async () => {
@@ -557,6 +572,10 @@ describe(openWorkspace, () => {
     repoConfig.workspace.repositories = [
       { name: "acme/widgets", unsandboxedHooks: { prepareWorktree: "bin/setup" } },
     ];
+    resolveRepositoryPreparationCommandsMock.mockReturnValue({
+      prepareWorktreeCommand: undefined,
+      prepareWorktreeUnsandboxedCommand: "bin/setup",
+    });
 
     await openWorkspace(repoConfig, {
       input: { kind: "pr", pr: "42" },
@@ -722,6 +741,10 @@ describe(openWorkspaceCli, () => {
 
   beforeEach(() => {
     loadConfigMock.mockResolvedValue(config);
+    resolveRepositoryPreparationCommandsMock.mockReturnValue({
+      prepareWorktreeCommand: undefined,
+      prepareWorktreeUnsandboxedCommand: undefined,
+    });
     mkdtempMock.mockReturnValue("/tmp/groundcrew-open-pr-42-x");
     existsSyncMock.mockReturnValue(true);
     resolvePullRequestMock.mockResolvedValue({
