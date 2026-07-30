@@ -157,6 +157,11 @@ export async function invokeShellCommand(args: InvokeArgs): Promise<InvokeResult
       reject(error);
     });
 
+    child.stdin.on("error", (err) => {
+      if ((err as NodeJS.ErrnoException).code !== "EPIPE") {
+        throw err;
+      }
+    });
     if (args.stdin !== undefined) {
       child.stdin.write(args.stdin);
     }
