@@ -115,6 +115,17 @@ describe(invokeShellCommand, () => {
     expect(result.stdout).toContain("hello stdin");
   });
 
+  it("does not throw when the child exits before stdin is consumed", async () => {
+    const script = dir.writeScript("exit-early.sh", "exit 0");
+    const result = await invokeShellCommand({
+      command: script,
+      timeoutMs: 30_000,
+      stdin: "a".repeat(1_000_000),
+      sourceName: "test",
+    });
+    expect(result.exitCode).toBe(0);
+  });
+
   it("applies ${id} substitution and shell-quotes the value", async () => {
     const script = dir.writeScript("show.sh", 'echo "$1"');
     const result = await invokeShellCommand({

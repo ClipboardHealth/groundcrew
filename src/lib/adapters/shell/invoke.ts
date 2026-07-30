@@ -157,11 +157,9 @@ export async function invokeShellCommand(args: InvokeArgs): Promise<InvokeResult
       reject(error);
     });
 
-    child.stdin.on("error", (err) => {
-      if ((err as NodeJS.ErrnoException).code !== "EPIPE") {
-        throw err;
-      }
-    });
+    // Ignore stdin errors (e.g. EPIPE when the child exits before consuming input).
+    // The process result already captures success/failure via exit code and stderr.
+    child.stdin.on("error", () => {});
     if (args.stdin !== undefined) {
       child.stdin.write(args.stdin);
     }
