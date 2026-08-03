@@ -39,12 +39,22 @@ success.
 - Linear desktop app for the ticket links, which use the `linear://` scheme against the
   `clipboardhealth` workspace.
 
-## Known limits
+## Status pills
 
-Status pills and PR buttons only render when cmux populates `status` and `pr` on the workspace.
-`applyCmuxStatus` in `src/lib/cmuxAdapter.ts` still shells out to `cmux set-status`, which cmux v2
-removed, so the status pill is currently dormant and rows fall back to title, directory, and ticket.
-The `stateColor` / `stateIcon` helpers are wired for a status feed that does not exist yet.
+The pill on each row comes from cmux's native status entries, which `cmux set-status <key> <value>`
+writes and `cmux list-status` reads back. Entries are keyed so several tools can register their own:
+`applyCmuxStatus` in `src/lib/cmuxAdapter.ts` registers `agent`, and the Claude Code cmux hooks
+register `claude_code`. The sidebar reads `w.status` and falls back to its own `stateColor` /
+`stateIcon` mapping when an entry arrives without a color or icon.
+
+The comment above the `applyCmuxStatus` call site claims cmux v2 dropped `set-status`. That is stale
+as of cmux 0.64.19, where the command is present and succeeds.
+
+## Known limits
 
 Task detection depends on the naming conventions above. Workspaces created outside crew, or with
 renamed titles and directories, render in the task list without a ticket link.
+
+`cmux workspace list --json` reports `status` and `pr` as null regardless of what is set, since
+status entries are a separate surface reached through `cmux list-status`. The CLI JSON is not a way
+to check what the sidebar will render.
