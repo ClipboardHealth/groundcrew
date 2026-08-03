@@ -183,6 +183,20 @@ describe(composeAgentLaunch, () => {
     expect(launchCommand).toContain('"$@"');
   });
 
+  it("adds cmux writable Safehouse grants supplied by clearance", () => {
+    resolveSafehouseCmuxIntegrationMock.mockReturnValue(
+      safehouseCmuxIntegrationFixture({
+        addDirs: ["/Users/dev/Library/Caches/io.sentry"],
+      }),
+    );
+
+    const launchCommand = compose();
+
+    expect(launchCommand).toContain(
+      "--add-dirs='/work/repo-a-team-1:/tmp/repo-a.git:/Users/dev/Library/Caches/io.sentry'",
+    );
+  });
+
   it("injects cmux activity-reporting hooks for a cmux-hosted Claude agent", () => {
     const launchCommand = compose();
 
