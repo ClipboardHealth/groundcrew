@@ -143,7 +143,15 @@ function resolveCreateRepository(arguments_: {
     description: `Repository: ${input.repository}`,
     config,
   });
-  if (resolution.kind === "missing") {
+  // `resolveRepositoryFor` reports an unconfigured *declared* repo as
+  // { kind: "ok", repository: <asserted name> } (the dispatch path relies on
+  // that so the host can WARN+skip it by name). Create is a manual, must-be-
+  // valid operation, so reject anything that didn't canonicalize to a known
+  // repository rather than routing a task at an unconfigured worktree.
+  if (
+    resolution.kind === "missing" ||
+    !config.workspace.knownRepositories.includes(resolution.repository)
+  ) {
     throw new Error(
       `linear: repository "${input.repository}" is not in workspace.knownRepositories`,
     );

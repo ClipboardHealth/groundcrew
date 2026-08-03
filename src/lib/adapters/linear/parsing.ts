@@ -57,6 +57,37 @@ type CanonicalizedRepositoryMatch =
   | { kind: "missing" }
   | { kind: "ambiguous" };
 
+// An explicit `Repository: <owner/repo>` (or bare `<repo>`) line is the
+// author's authoritative target: it is the format `create.ts` emits and the
+// one humans use in hand-written tickets. Anchored to a line start so prose
+// that merely contains the word "repository" can't trip it; optional wrapping
+// backticks are tolerated.
+const DECLARED_REPOSITORY_PATTERN = /^[^\S\n]*Repository:[^\S\n]*`?([^\s`]+)`?/im;
+
+function extractDeclaredRepository(description: string): string | undefined {
+  return DECLARED_REPOSITORY_PATTERN.exec(description)?.[1];
+}
+
+// Resolve one candidate name (full `owner/repo` or bare `repo`) against
+// knownRepositories: a bare name canonicalizes to its full entry, a bare name
+// matching several entries is ambiguous, and anything unconfigured is
+// `unknown` (the caller decides whether that WARN+skips or errors).
+function canonicalizeKnownRepositoryName(
+  name: string,
+  knownRepositories: readonly string[],
+): CanonicalizedRepositoryMatch {
+  const candidates = knownRepositories.filter((repo) => repo === name || repo.endsWith(`/${name}`));
+  if (candidates.length > 1) {
+    return { kind: "ambiguous" };
+  }
+  if (candidates.length === 1) {
+    /* v8 ignore next @preserve -- length-1 guarantees [0] defined */
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- length-1 guarantees [0] is defined
+    return { kind: "canonical", repository: candidates[0]! };
+  }
+  return { kind: "unknown", repository: name };
+}
+
 function canonicalizeRepositoryMatch(
   description: string | undefined,
   config: ResolvedConfig,
@@ -73,22 +104,22 @@ function canonicalizeRepositoryMatch(
   if (config.workspace.knownRepositories.length === 0) {
     return { kind: "missing" };
   }
+  // An explicit `Repository:` line is authoritative — resolve on it alone and
+  // never fall through to the whole-description scan. That fall-through is how
+  // a task whose real target repo is unconfigured (so it can't be scanned for)
+  // gets hijacked by an incidental known-repo mention elsewhere in the body
+  // (e.g. a "contrast with X" note). An unconfigured declared repo returns
+  // `unknown` so the dispatcher WARN+skips it by name instead of silently
+  // running against the wrong worktree.
+  const declared = extractDeclaredRepository(description);
+  if (declared !== undefined) {
+    return canonicalizeKnownRepositoryName(declared, config.workspace.knownRepositories);
+  }
   const matched = repositoryRegex.exec(description)?.[1];
   if (matched === undefined) {
     return { kind: "missing" };
   }
-  const candidates = config.workspace.knownRepositories.filter(
-    (r) => r === matched || r.endsWith(`/${matched}`),
-  );
-  if (candidates.length > 1) {
-    return { kind: "ambiguous" };
-  }
-  if (candidates.length === 1) {
-    /* v8 ignore next @preserve -- length-1 guarantees [0] defined */
-    // oxlint-disable-next-line typescript/no-non-null-assertion -- length-1 guarantees [0] is defined
-    return { kind: "canonical", repository: candidates[0]! };
-  }
-  return { kind: "unknown", repository: matched };
+  return canonicalizeKnownRepositoryName(matched, config.workspace.knownRepositories);
 }
 
 export function resolveRepositoryFor(arguments_: {

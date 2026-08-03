@@ -235,6 +235,71 @@ describe(resolveRepositoryFor, () => {
       "missing",
     );
   });
+
+  it("prefers an explicit `Repository:` line over an incidental known-repo mention", () => {
+    // Regression: a ticket declared `Repository: <unconfigured>` at the top but
+    // its body also name-dropped a *configured* repo in a contrast note. The
+    // incidental mention must not win — the declared (unconfigured) target does,
+    // so the dispatcher WARN+skips it by name instead of running the wrong repo.
+    const config = makeConfig({
+      workspace: {
+        projectDir: "/work",
+        knownRepositories: ["org/repo-a"],
+        repositories: [{ name: "org/repo-a" }],
+      },
+    });
+    const result = resolveRepositoryFor({
+      description: [
+        "Repository: other-org/unlisted-service",
+        "",
+        "Worth contrasting with the handler in `repo-a`, which is different.",
+      ].join("\n"),
+      config,
+    });
+    expect(result).toStrictEqual({ kind: "ok", repository: "other-org/unlisted-service" });
+  });
+
+  it("honors a configured explicit `Repository:` line even when another repo is mentioned later", () => {
+    const config = makeConfig({
+      workspace: {
+        projectDir: "/work",
+        knownRepositories: ["org/repo-a", "org/repo-b"],
+        repositories: [{ name: "org/repo-a" }, { name: "org/repo-b" }],
+      },
+    });
+    const result = resolveRepositoryFor({
+      description: "Repository: org/repo-b\n\nSee also org/repo-a for context.",
+      config,
+    });
+    expect(result).toStrictEqual({ kind: "ok", repository: "org/repo-b" });
+  });
+
+  it("canonicalizes a bare name in an explicit `Repository:` line", () => {
+    const config = makeConfig({
+      workspace: {
+        projectDir: "/work",
+        knownRepositories: ["org/repo-a"],
+        repositories: [{ name: "org/repo-a" }],
+      },
+    });
+    const result = resolveRepositoryFor({
+      description: "Repository: repo-a\n\nDetails follow.",
+      config,
+    });
+    expect(result).toStrictEqual({ kind: "ok", repository: "org/repo-a" });
+  });
+
+  it("still scans the description when there is no explicit `Repository:` line", () => {
+    const config = makeConfig({
+      workspace: {
+        projectDir: "/work",
+        knownRepositories: ["org/repo-a"],
+        repositories: [{ name: "org/repo-a" }],
+      },
+    });
+    const result = resolveRepositoryFor({ description: "fix the org/repo-a bug", config });
+    expect(result).toStrictEqual({ kind: "ok", repository: "org/repo-a" });
+  });
 });
 
 describe(resolveAgentFor, () => {
