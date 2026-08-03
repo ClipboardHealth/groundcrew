@@ -59,9 +59,10 @@ type CanonicalizedRepositoryMatch =
 
 // An explicit `Repository: <owner/repo>` (or bare `<repo>`) line is the
 // author's authoritative target: it is the format `create.ts` emits and the
-// one humans use in hand-written tickets. Anchored to a line start so prose
-// that merely contains the word "repository" can't trip it; optional wrapping
-// backticks are tolerated.
+// one humans use in hand-written tickets. Case-insensitive (`i`) so
+// `repository:` / `REPOSITORY:` are all honored; anchored to a line start so
+// prose that merely contains the word "repository" can't trip it; optional
+// wrapping backticks are tolerated.
 const DECLARED_REPOSITORY_PATTERN = /^[^\S\n]*Repository:[^\S\n]*`?([^\s`]+)`?/im;
 
 function extractDeclaredRepository(description: string): string | undefined {
@@ -71,12 +72,19 @@ function extractDeclaredRepository(description: string): string | undefined {
 // Resolve one candidate name (full `owner/repo` or bare `repo`) against
 // knownRepositories: a bare name canonicalizes to its full entry, a bare name
 // matching several entries is ambiguous, and anything unconfigured is
-// `unknown` (the caller decides whether that WARN+skips or errors).
+// `unknown` (the caller decides whether that WARN+skips or errors). GitHub
+// owners and repository names are case-insensitive, so the match ignores case
+// (a mis-cased declared repo still resolves) while always returning the
+// configured spelling.
 function canonicalizeKnownRepositoryName(
   name: string,
   knownRepositories: readonly string[],
 ): CanonicalizedRepositoryMatch {
-  const candidates = knownRepositories.filter((repo) => repo === name || repo.endsWith(`/${name}`));
+  const lowerName = name.toLowerCase();
+  const candidates = knownRepositories.filter((repo) => {
+    const lowerRepo = repo.toLowerCase();
+    return lowerRepo === lowerName || lowerRepo.endsWith(`/${lowerName}`);
+  });
   if (candidates.length > 1) {
     return { kind: "ambiguous" };
   }

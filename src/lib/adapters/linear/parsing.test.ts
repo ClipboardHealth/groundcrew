@@ -300,6 +300,39 @@ describe(resolveRepositoryFor, () => {
     const result = resolveRepositoryFor({ description: "fix the org/repo-a bug", config });
     expect(result).toStrictEqual({ kind: "ok", repository: "org/repo-a" });
   });
+
+  it("matches the `Repository:` keyword case-insensitively", () => {
+    const config = makeConfig({
+      workspace: {
+        projectDir: "/work",
+        knownRepositories: ["org/repo-a"],
+        repositories: [{ name: "org/repo-a" }],
+      },
+    });
+    const result = resolveRepositoryFor({ description: "REPOSITORY: org/repo-a\n\nbody", config });
+    expect(result).toStrictEqual({ kind: "ok", repository: "org/repo-a" });
+  });
+
+  it("resolves a mis-cased declared repo to the configured spelling", () => {
+    // GitHub owners/repos are case-insensitive, so a ticket may spell the org
+    // or repo differently than knownRepositories. It must still resolve — and
+    // to the configured casing so downstream worktree paths match.
+    const config = makeConfig({
+      workspace: {
+        projectDir: "/work",
+        knownRepositories: ["ClipboardHealth/shift-reviews-service"],
+        repositories: [{ name: "ClipboardHealth/shift-reviews-service" }],
+      },
+    });
+    const result = resolveRepositoryFor({
+      description: "Repository: clipboardhealth/Shift-Reviews-Service\n\nbody",
+      config,
+    });
+    expect(result).toStrictEqual({
+      kind: "ok",
+      repository: "ClipboardHealth/shift-reviews-service",
+    });
+  });
 });
 
 describe(resolveAgentFor, () => {
