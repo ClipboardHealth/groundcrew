@@ -200,6 +200,121 @@ describe("workspaces.open (cmux)", () => {
     ]);
   });
 
+  it("links the task metadata to the exact source URL when provided", async () => {
+    runMock.mockReturnValue(JSON.stringify({ ref: "workspace:42" }));
+
+    await workspaces.open(makeConfig(), {
+      name: "TEAM-1",
+      url: "https://linear.app/example/issue/TEAM-1/source-slug",
+      cwd: "/work/repo-a-TEAM-1",
+      command: "exec claude",
+    });
+
+    expect(runMock).toHaveBeenCalledWith("cmux", [
+      "set-status",
+      "task",
+      "[Linear ↗](https://linear.app/example/issue/TEAM-1/source-slug)",
+      "--format",
+      "markdown",
+      "--workspace",
+      "workspace:42",
+    ]);
+  });
+
+  it.each([
+    {
+      character: "closing parenthesis",
+      url: "https://linear.app/example/issue/TEAM-1/source)-slug",
+      expected: "[Linear ↗](https://linear.app/example/issue/TEAM-1/source\\)-slug)",
+    },
+    {
+      character: "backslash",
+      url: "https://linear.app/example/issue/TEAM-1/source\\slug",
+      expected: "[Linear ↗](https://linear.app/example/issue/TEAM-1/source\\\\slug)",
+    },
+    {
+      character: "line break",
+      url: "https://linear.app/example/issue/TEAM-1/source\nslug",
+      expected: "[Linear ↗](https://linear.app/example/issue/TEAM-1/source%0Aslug)",
+    },
+  ])("escapes a $character in the task URL Markdown destination", async ({ url, expected }) => {
+    runMock.mockReturnValue(JSON.stringify({ ref: "workspace:42" }));
+
+    await workspaces.open(makeConfig(), {
+      name: "TEAM-1",
+      url,
+      cwd: "/work/repo-a-TEAM-1",
+      command: "exec claude",
+    });
+
+    expect(runMock).toHaveBeenCalledWith("cmux", [
+      "set-status",
+      "task",
+      expected,
+      "--format",
+      "markdown",
+      "--workspace",
+      "workspace:42",
+    ]);
+  });
+
+  it("uses a source-neutral label for non-Linear task URLs", async () => {
+    runMock.mockReturnValue(JSON.stringify({ ref: "workspace:42" }));
+
+    await workspaces.open(makeConfig(), {
+      name: "ENG-1",
+      url: "https://acme.atlassian.net/browse/ENG-1",
+      cwd: "/work/repo-a-ENG-1",
+      command: "exec claude",
+    });
+
+    expect(runMock).toHaveBeenCalledWith("cmux", [
+      "set-status",
+      "task",
+      "[Issue ↗](https://acme.atlassian.net/browse/ENG-1)",
+      "--format",
+      "markdown",
+      "--workspace",
+      "workspace:42",
+    ]);
+  });
+
+  it("uses a source-neutral label when a source provides a non-standard URL", async () => {
+    runMock.mockReturnValue(JSON.stringify({ ref: "workspace:42" }));
+
+    await workspaces.open(makeConfig(), {
+      name: "CUSTOM-1",
+      url: "open-custom-issue",
+      cwd: "/work/repo-a-CUSTOM-1",
+      command: "exec claude",
+    });
+
+    expect(runMock).toHaveBeenCalledWith("cmux", [
+      "set-status",
+      "task",
+      "[Issue ↗](open-custom-issue)",
+      "--format",
+      "markdown",
+      "--workspace",
+      "workspace:42",
+    ]);
+  });
+
+  it("does not add task metadata when the source URL is absent", async () => {
+    runMock.mockReturnValue(JSON.stringify({ ref: "workspace:42" }));
+
+    await workspaces.open(makeConfig(), {
+      name: "TEAM-1",
+      cwd: "/work/repo-a-TEAM-1",
+      command: "exec claude",
+    });
+
+    expect(runMock).not.toHaveBeenCalledWith(
+      "cmux",
+      expect.arrayContaining(["set-status", "task"]),
+    );
+  });
+
   it("calls cmux set-status with status text, color, icon when status is provided", async () => {
     runMock.mockReturnValue(JSON.stringify({ ref: "workspace:42" }));
 
