@@ -49,7 +49,6 @@ export const cmuxAdapter: Adapter = {
         workspaceId,
         key: "task",
         status: { text: cmuxTaskLinkText(spec.url) },
-        url: spec.url,
         workspaceName: spec.name,
         signal,
       });
@@ -212,7 +211,6 @@ interface CmuxStatusInput {
   workspaceId: string;
   key: "agent" | "task";
   status: WorkspaceStatus;
-  url?: string;
   workspaceName: string;
   signal?: AbortSignal | undefined;
 }
@@ -241,19 +239,18 @@ async function applyCmuxStatus(input: Omit<CmuxStatusInput, "workspaceName">): P
   if (status.color !== undefined) {
     arguments_.push("--color", status.color);
   }
-  if (input.url !== undefined) {
-    arguments_.push("--url", input.url);
-  }
   arguments_.push("--workspace", input.workspaceId);
   await runWorkspaceCommand("cmux", arguments_, input.signal);
 }
 
 function cmuxTaskLinkText(url: string): string {
+  let label: string;
   try {
-    return new URL(url).hostname === "linear.app" ? "Linear ↗" : "Issue ↗";
+    label = new URL(url).hostname === "linear.app" ? "Linear ↗" : "Issue ↗";
   } catch {
-    return "Issue ↗";
+    label = "Issue ↗";
   }
+  return `[${label}](${url})`;
 }
 
 /**

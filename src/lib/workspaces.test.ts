@@ -213,9 +213,7 @@ describe("workspaces.open (cmux)", () => {
     expect(runMock).toHaveBeenCalledWith("cmux", [
       "set-status",
       "task",
-      "Linear ↗",
-      "--url",
-      "https://linear.app/example/issue/TEAM-1/source-slug",
+      "[Linear ↗](https://linear.app/example/issue/TEAM-1/source-slug)",
       "--workspace",
       "workspace:42",
     ]);
@@ -234,9 +232,7 @@ describe("workspaces.open (cmux)", () => {
     expect(runMock).toHaveBeenCalledWith("cmux", [
       "set-status",
       "task",
-      "Issue ↗",
-      "--url",
-      "https://acme.atlassian.net/browse/ENG-1",
+      "[Issue ↗](https://acme.atlassian.net/browse/ENG-1)",
       "--workspace",
       "workspace:42",
     ]);
@@ -255,9 +251,7 @@ describe("workspaces.open (cmux)", () => {
     expect(runMock).toHaveBeenCalledWith("cmux", [
       "set-status",
       "task",
-      "Issue ↗",
-      "--url",
-      "open-custom-issue",
+      "[Issue ↗](open-custom-issue)",
       "--workspace",
       "workspace:42",
     ]);
