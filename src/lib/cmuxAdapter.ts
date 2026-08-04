@@ -49,6 +49,7 @@ export const cmuxAdapter: Adapter = {
         workspaceId,
         key: "task",
         status: { text: cmuxTaskLinkText(spec.url) },
+        format: "markdown",
         workspaceName: spec.name,
         signal,
       });
@@ -211,6 +212,7 @@ interface CmuxStatusInput {
   workspaceId: string;
   key: "agent" | "task";
   status: WorkspaceStatus;
+  format?: "plain" | "markdown";
   workspaceName: string;
   signal?: AbortSignal | undefined;
 }
@@ -238,6 +240,9 @@ async function applyCmuxStatus(input: Omit<CmuxStatusInput, "workspaceName">): P
   }
   if (status.color !== undefined) {
     arguments_.push("--color", status.color);
+  }
+  if (input.format !== undefined) {
+    arguments_.push("--format", input.format);
   }
   arguments_.push("--workspace", input.workspaceId);
   await runWorkspaceCommand("cmux", arguments_, input.signal);

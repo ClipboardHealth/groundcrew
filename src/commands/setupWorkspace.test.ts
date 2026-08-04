@@ -474,6 +474,8 @@ describe(setupWorkspace, () => {
         "set-status",
         "task",
         "[Linear ↗](https://linear.app/example/issue/TEAM-1)",
+        "--format",
+        "markdown",
         "--workspace",
         "workspace:42",
       ]),

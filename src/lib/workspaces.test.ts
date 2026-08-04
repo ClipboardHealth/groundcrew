@@ -214,6 +214,8 @@ describe("workspaces.open (cmux)", () => {
       "set-status",
       "task",
       "[Linear ↗](https://linear.app/example/issue/TEAM-1/source-slug)",
+      "--format",
+      "markdown",
       "--workspace",
       "workspace:42",
     ]);
@@ -233,6 +235,8 @@ describe("workspaces.open (cmux)", () => {
       "set-status",
       "task",
       "[Issue ↗](https://acme.atlassian.net/browse/ENG-1)",
+      "--format",
+      "markdown",
       "--workspace",
       "workspace:42",
     ]);
@@ -252,6 +256,8 @@ describe("workspaces.open (cmux)", () => {
       "set-status",
       "task",
       "[Issue ↗](open-custom-issue)",
+      "--format",
+      "markdown",
       "--workspace",
       "workspace:42",
     ]);
