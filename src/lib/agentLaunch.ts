@@ -160,6 +160,10 @@ function safehouseAgentIntegrationFor(input: {
   });
 
   return {
+    addDirs: [
+      ...cmuxIntegration.addDirs,
+      ...(relocatedCmuxHooksHome === undefined ? [] : [relocatedCmuxHooksHome.configDir]),
+    ],
     addDirsReadOnly: cmuxIntegration.addDirsReadOnly,
     envPass: cmuxIntegration.envPass,
     commandPreludes: [
@@ -181,7 +185,6 @@ function safehouseAgentIntegrationFor(input: {
     ...(relocatedCmuxHooksHome === undefined
       ? {}
       : {
-          addDirs: [relocatedCmuxHooksHome.configDir],
           writeBackFiles: relocatedCmuxHooksHome.writeBackFiles,
           teardownPaths: [relocatedCmuxHooksHome.parentDir],
         }),
