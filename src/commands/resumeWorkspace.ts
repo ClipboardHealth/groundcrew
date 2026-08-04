@@ -10,7 +10,7 @@ import {
 } from "../lib/launchCommand.ts";
 import { readRunState, recordRunState, type RunState } from "../lib/runState.ts";
 import { seedLaunchWorkspaceTrust } from "../lib/seedLaunchWorkspaceTrust.ts";
-import { taskSupportsCompletionCommand } from "../lib/sourceCapabilities.ts";
+import { summarizeSource, taskSupportsCompletionCommand } from "../lib/sourceCapabilities.ts";
 import {
   removeStagedPrompt,
   stageBuildSecrets,
@@ -119,7 +119,9 @@ async function contextFromState(
   // enrich the prompt title/description (which falls back to the task id).
   const details = isLinearEnabled(config) ? await fetchTaskDetails(task) : undefined;
   const completionTaskId = state.completionTaskId ?? task;
-  const url = state.url ?? details?.url;
+  const url =
+    state.url ??
+    (taskUsesLinearSource({ config, taskId: completionTaskId }) ? details?.url : undefined);
   return {
     task,
     repository: state.repository,
@@ -139,6 +141,25 @@ async function contextFromState(
     ...(state.reason === undefined ? {} : { reason: state.reason }),
     resumeCount: state.resumeCount,
   };
+}
+
+function taskUsesLinearSource(arguments_: { config: ResolvedConfig; taskId: string }): boolean {
+  const { config, taskId } = arguments_;
+  const rawSources = sourcesFromConfig(config);
+  const colonIndex = taskId.indexOf(":");
+  if (colonIndex === -1) {
+    const [singleSource] = rawSources;
+    return (
+      rawSources.length === 1 &&
+      singleSource !== undefined &&
+      summarizeSource(singleSource).kind === "linear"
+    );
+  }
+  const sourceName = taskId.slice(0, colonIndex);
+  return rawSources.some((rawSource) => {
+    const source = summarizeSource(rawSource);
+    return source.name === sourceName && source.kind === "linear";
+  });
 }
 
 async function buildResumeContext(config: ResolvedConfig, task: string): Promise<ResumeContext> {

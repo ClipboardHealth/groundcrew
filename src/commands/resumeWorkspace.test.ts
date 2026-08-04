@@ -330,6 +330,36 @@ describe(resumeWorkspace, () => {
     );
   });
 
+  it("does not attach a colliding Linear URL to a URL-less task from another source", async () => {
+    const multiSourceConfig: ResolvedConfig = {
+      ...config,
+      sources: [
+        { kind: "linear" },
+        {
+          kind: "todo-txt",
+          name: "todo",
+          todoPath: "todo.txt",
+          tasksDir: ".tasks",
+          idPrefix: "TEAM",
+          timezone: "UTC",
+        },
+      ],
+    };
+    readRunStateMock.mockReturnValue(makeRunState({ completionTaskId: "todo:team-1" }));
+    getLinearClientMock.mockReturnValue({
+      issue: vi.fn<IssueLookup>().mockResolvedValue({
+        title: "Unrelated Linear task",
+        description: "Body",
+        url: "https://linear.app/example/issue/TEAM-1/unrelated",
+      }),
+    } as unknown as ReturnType<typeof getLinearClient>);
+
+    await resumeWorkspace(multiSourceConfig, { task: "team-1" });
+
+    expect(workspacesOpenMock.mock.calls[0]?.[1]).not.toHaveProperty("url");
+    expect(lastRecordedRunState()).not.toHaveProperty("url");
+  });
+
   function resumeArgsConfig(): ResolvedConfig {
     return {
       ...config,
