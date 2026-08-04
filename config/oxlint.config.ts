@@ -20,9 +20,18 @@ export default defineConfig(
         {
           files: ["**/bin/**/*.js", "**/bin/**/*.cjs"],
           rules: {
+            "node/no-top-level-await": "off",
             "typescript/no-unsafe-argument": "off",
             "typescript/no-unsafe-assignment": "off",
             "typescript/strict-boolean-expressions": "off",
+          },
+        },
+        {
+          // src/main.ts is the CLI entry point loaded by bin scripts;
+          // top-level await is intentional in this ESM module.
+          files: ["**/src/main.ts"],
+          rules: {
+            "node/no-top-level-await": "off",
           },
         },
         {
