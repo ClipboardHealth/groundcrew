@@ -221,6 +221,43 @@ describe("workspaces.open (cmux)", () => {
     ]);
   });
 
+  it.each([
+    {
+      character: "closing parenthesis",
+      url: "https://linear.app/example/issue/TEAM-1/source)-slug",
+      expected: "[Linear ↗](https://linear.app/example/issue/TEAM-1/source\\)-slug)",
+    },
+    {
+      character: "backslash",
+      url: "https://linear.app/example/issue/TEAM-1/source\\slug",
+      expected: "[Linear ↗](https://linear.app/example/issue/TEAM-1/source\\\\slug)",
+    },
+    {
+      character: "line break",
+      url: "https://linear.app/example/issue/TEAM-1/source\nslug",
+      expected: "[Linear ↗](https://linear.app/example/issue/TEAM-1/source%0Aslug)",
+    },
+  ])("escapes a $character in the task URL Markdown destination", async ({ url, expected }) => {
+    runMock.mockReturnValue(JSON.stringify({ ref: "workspace:42" }));
+
+    await workspaces.open(makeConfig(), {
+      name: "TEAM-1",
+      url,
+      cwd: "/work/repo-a-TEAM-1",
+      command: "exec claude",
+    });
+
+    expect(runMock).toHaveBeenCalledWith("cmux", [
+      "set-status",
+      "task",
+      expected,
+      "--format",
+      "markdown",
+      "--workspace",
+      "workspace:42",
+    ]);
+  });
+
   it("uses a source-neutral label for non-Linear task URLs", async () => {
     runMock.mockReturnValue(JSON.stringify({ ref: "workspace:42" }));
 

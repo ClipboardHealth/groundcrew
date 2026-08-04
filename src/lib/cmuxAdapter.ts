@@ -255,7 +255,12 @@ function cmuxTaskLinkText(url: string): string {
   } catch {
     label = "Issue ↗";
   }
-  return `[${label}](${url})`;
+  const markdownUrl = url
+    .replaceAll("\\", "\\\\")
+    .replaceAll(")", "\\)")
+    .replaceAll("\r", "%0D")
+    .replaceAll("\n", "%0A");
+  return `[${label}](${markdownUrl})`;
 }
 
 /**
