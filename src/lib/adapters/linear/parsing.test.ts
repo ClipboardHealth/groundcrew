@@ -201,6 +201,19 @@ describe(resolveRepositoryFor, () => {
     expect(resolveRepositoryFor({ description: "anything at all", config }).kind).toBe("missing");
   });
 
+  it("still honors an explicit declaration when knownRepositories is empty", () => {
+    // The empty-list guard exists only to keep the /\b()\b/ description scan
+    // from matching the empty string; it must not swallow an explicit
+    // declaration, which needs no regex. Surfacing the declared name lets the
+    // dispatcher WARN and skip by name instead of reporting "no repo found".
+    const config = makeConfig({
+      workspace: { projectDir: "/work", knownRepositories: [], repositories: [] },
+    });
+    expect(resolveRepositoryFor({ description: "Repository: acme/widgets", config })).toStrictEqual(
+      { kind: "ok", repository: "acme/widgets" },
+    );
+  });
+
   it("canonicalizes a bare match back to the configured `owner/repo` entry", async () => {
     // A Linear description that mentions only `repo-a` must resolve to the
     // exact knownRepositories entry `org/repo-a` so `crew run --task ...`
@@ -234,6 +247,104 @@ describe(resolveRepositoryFor, () => {
     expect(resolveRepositoryFor({ description: "touches repo-a somewhere", config }).kind).toBe(
       "missing",
     );
+  });
+
+  it("prefers an explicit `Repository:` line over an incidental known-repo mention", () => {
+    // Regression: a ticket declared `Repository: <unconfigured>` at the top but
+    // its body also name-dropped a *configured* repo in a contrast note. The
+    // incidental mention must not win — the declared (unconfigured) target does,
+    // so the dispatcher WARN+skips it by name instead of running the wrong repo.
+    const config = makeConfig({
+      workspace: {
+        projectDir: "/work",
+        knownRepositories: ["org/repo-a"],
+        repositories: [{ name: "org/repo-a" }],
+      },
+    });
+    const result = resolveRepositoryFor({
+      description: [
+        "Repository: other-org/unlisted-service",
+        "",
+        "Worth contrasting with the handler in `repo-a`, which is different.",
+      ].join("\n"),
+      config,
+    });
+    expect(result).toStrictEqual({ kind: "ok", repository: "other-org/unlisted-service" });
+  });
+
+  it("honors a configured explicit `Repository:` line even when another repo is mentioned later", () => {
+    const config = makeConfig({
+      workspace: {
+        projectDir: "/work",
+        knownRepositories: ["org/repo-a", "org/repo-b"],
+        repositories: [{ name: "org/repo-a" }, { name: "org/repo-b" }],
+      },
+    });
+    const result = resolveRepositoryFor({
+      description: "Repository: org/repo-b\n\nSee also org/repo-a for context.",
+      config,
+    });
+    expect(result).toStrictEqual({ kind: "ok", repository: "org/repo-b" });
+  });
+
+  it("canonicalizes a bare name in an explicit `Repository:` line", () => {
+    const config = makeConfig({
+      workspace: {
+        projectDir: "/work",
+        knownRepositories: ["org/repo-a"],
+        repositories: [{ name: "org/repo-a" }],
+      },
+    });
+    const result = resolveRepositoryFor({
+      description: "Repository: repo-a\n\nDetails follow.",
+      config,
+    });
+    expect(result).toStrictEqual({ kind: "ok", repository: "org/repo-a" });
+  });
+
+  it("still scans the description when there is no explicit `Repository:` line", () => {
+    const config = makeConfig({
+      workspace: {
+        projectDir: "/work",
+        knownRepositories: ["org/repo-a"],
+        repositories: [{ name: "org/repo-a" }],
+      },
+    });
+    const result = resolveRepositoryFor({ description: "fix the org/repo-a bug", config });
+    expect(result).toStrictEqual({ kind: "ok", repository: "org/repo-a" });
+  });
+
+  it("matches the `Repository:` keyword case-insensitively", () => {
+    const config = makeConfig({
+      workspace: {
+        projectDir: "/work",
+        knownRepositories: ["org/repo-a"],
+        repositories: [{ name: "org/repo-a" }],
+      },
+    });
+    const result = resolveRepositoryFor({ description: "REPOSITORY: org/repo-a\n\nbody", config });
+    expect(result).toStrictEqual({ kind: "ok", repository: "org/repo-a" });
+  });
+
+  it("resolves a mis-cased declared repo to the configured spelling", () => {
+    // GitHub owners/repos are case-insensitive, so a ticket may spell the org
+    // or repo differently than knownRepositories. It must still resolve — and
+    // to the configured casing so downstream worktree paths match.
+    const config = makeConfig({
+      workspace: {
+        projectDir: "/work",
+        knownRepositories: ["ClipboardHealth/shift-reviews-service"],
+        repositories: [{ name: "ClipboardHealth/shift-reviews-service" }],
+      },
+    });
+    const result = resolveRepositoryFor({
+      description: "Repository: clipboardhealth/Shift-Reviews-Service\n\nbody",
+      config,
+    });
+    expect(result).toStrictEqual({
+      kind: "ok",
+      repository: "ClipboardHealth/shift-reviews-service",
+    });
   });
 });
 
