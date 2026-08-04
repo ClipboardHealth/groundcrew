@@ -201,6 +201,19 @@ describe(resolveRepositoryFor, () => {
     expect(resolveRepositoryFor({ description: "anything at all", config }).kind).toBe("missing");
   });
 
+  it("still honors an explicit declaration when knownRepositories is empty", () => {
+    // The empty-list guard exists only to keep the /\b()\b/ description scan
+    // from matching the empty string; it must not swallow an explicit
+    // declaration, which needs no regex. Surfacing the declared name lets the
+    // dispatcher WARN and skip by name instead of reporting "no repo found".
+    const config = makeConfig({
+      workspace: { projectDir: "/work", knownRepositories: [], repositories: [] },
+    });
+    expect(resolveRepositoryFor({ description: "Repository: acme/widgets", config })).toStrictEqual(
+      { kind: "ok", repository: "acme/widgets" },
+    );
+  });
+
   it("canonicalizes a bare match back to the configured `owner/repo` entry", async () => {
     // A Linear description that mentions only `repo-a` must resolve to the
     // exact knownRepositories entry `org/repo-a` so `crew run --task ...`

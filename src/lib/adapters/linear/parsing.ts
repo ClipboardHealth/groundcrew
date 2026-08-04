@@ -104,6 +104,19 @@ function canonicalizeRepositoryMatch(
   if (description === undefined || description.length === 0) {
     return { kind: "missing" };
   }
+  // An explicit `Repository:` line is authoritative — resolve on it alone and
+  // never fall through to the whole-description scan. That fall-through is how
+  // a task whose real target repo is unconfigured (so it can't be scanned for)
+  // gets hijacked by an incidental known-repo mention elsewhere in the body
+  // (e.g. a "contrast with X" note). An unconfigured declared repo returns
+  // `unknown` so the dispatcher WARN+skips it by name instead of silently
+  // running against the wrong worktree. Resolved before the empty-config guard
+  // below because canonicalization needs no regex, so an empty
+  // knownRepositories must not discard a name the author stated outright.
+  const declared = extractDeclaredRepository(description);
+  if (declared !== undefined) {
+    return canonicalizeKnownRepositoryName(declared, config.workspace.knownRepositories);
+  }
   // Guard against an empty knownRepositories config: buildRepositoryRegex
   // would produce /\b()\b/, which matches the empty string at any word
   // boundary and returns a bogus "" match. Treat that as "no repo could
@@ -111,17 +124,6 @@ function canonicalizeRepositoryMatch(
   // a spurious empty-string repository.
   if (config.workspace.knownRepositories.length === 0) {
     return { kind: "missing" };
-  }
-  // An explicit `Repository:` line is authoritative — resolve on it alone and
-  // never fall through to the whole-description scan. That fall-through is how
-  // a task whose real target repo is unconfigured (so it can't be scanned for)
-  // gets hijacked by an incidental known-repo mention elsewhere in the body
-  // (e.g. a "contrast with X" note). An unconfigured declared repo returns
-  // `unknown` so the dispatcher WARN+skips it by name instead of silently
-  // running against the wrong worktree.
-  const declared = extractDeclaredRepository(description);
-  if (declared !== undefined) {
-    return canonicalizeKnownRepositoryName(declared, config.workspace.knownRepositories);
   }
   const matched = repositoryRegex.exec(description)?.[1];
   if (matched === undefined) {
