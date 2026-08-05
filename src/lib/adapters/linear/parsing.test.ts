@@ -302,6 +302,23 @@ describe(resolveRepositoryFor, () => {
     expect(result).toStrictEqual({ kind: "ok", repository: "org/repo-a" });
   });
 
+  it("canonicalizes a full name in an explicit `Repository:` line to a configured bare name", () => {
+    const config = makeConfig({
+      workspace: {
+        projectDir: "/work",
+        knownRepositories: ["repo-a"],
+        repositories: [{ name: "repo-a" }],
+      },
+    });
+
+    const result = resolveRepositoryFor({
+      description: "Repository: org/repo-a\n\nDetails follow.",
+      config,
+    });
+
+    expect(result).toStrictEqual({ kind: "ok", repository: "repo-a" });
+  });
+
   it("still scans the description when there is no explicit `Repository:` line", () => {
     const config = makeConfig({
       workspace: {

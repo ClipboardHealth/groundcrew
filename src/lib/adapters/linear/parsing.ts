@@ -71,20 +71,27 @@ function extractDeclaredRepository(description: string): string | undefined {
 
 // Resolve one candidate name (full `owner/repo` or bare `repo`) against
 // knownRepositories: a bare name canonicalizes to its full entry, a bare name
-// matching several entries is ambiguous, and anything unconfigured is
-// `unknown` (the caller decides whether that WARN+skips or errors). GitHub
-// owners and repository names are case-insensitive, so the match ignores case
-// (a mis-cased declared repo still resolves) while always returning the
-// configured spelling.
+// matching several entries is ambiguous, a full name canonicalizes to a bare
+// configured entry, and anything unconfigured is `unknown` (the caller decides
+// whether that WARN+skips or errors). GitHub owners and repository names are
+// case-insensitive, so the match ignores case (a mis-cased declared repo still
+// resolves) while always returning the configured spelling.
 function canonicalizeKnownRepositoryName(
   name: string,
   knownRepositories: readonly string[],
 ): CanonicalizedRepositoryMatch {
   const lowerName = name.toLowerCase();
-  const candidates = knownRepositories.filter((repo) => {
+  const directCandidates = knownRepositories.filter((repo) => {
     const lowerRepo = repo.toLowerCase();
     return lowerRepo === lowerName || lowerRepo.endsWith(`/${lowerName}`);
   });
+  const candidates =
+    directCandidates.length > 0
+      ? directCandidates
+      : knownRepositories.filter((repo) => {
+          const lowerRepo = repo.toLowerCase();
+          return !lowerRepo.includes("/") && lowerName.endsWith(`/${lowerRepo}`);
+        });
   if (candidates.length > 1) {
     return { kind: "ambiguous" };
   }
