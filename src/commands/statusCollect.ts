@@ -6,16 +6,28 @@
 
 import { readFileSync } from "node:fs";
 
+import { createBoard } from "../lib/board.ts";
+import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
 import type { ResolvedConfig } from "../lib/config.ts";
+import { findPullRequestsForBranch, type PullRequestSummary } from "../lib/pullRequests.ts";
 import { readRunState, type RunState } from "../lib/runState.ts";
 import {
   type LocalStatusDocument,
+  type RemoteFetchResult,
   STATUS_SNAPSHOT_SCHEMA_VERSION,
+  type StatusBlockedIssue,
+  type StatusBoardIssue,
   type StatusLifecycle,
   type StatusSessionState,
   type StatusTask,
   type StatusWorktree,
 } from "../lib/statusSnapshot.ts";
+import {
+  type CanonicalStatus,
+  isGroundcrewIssue,
+  type Issue as SourceIssue,
+  naturalIdFromCanonical,
+} from "../lib/taskSource.ts";
 import { errorMessage, withLogOutputSuppressed } from "../lib/util.ts";
 import { type WorkspaceProbe, workspaces } from "../lib/workspaces.ts";
 import { effectiveBranchNameFromRunState } from "../lib/worktreeRunState.ts";
@@ -86,6 +98,55 @@ export async function collectLocalStatus(
     workspaceProbe: probeState(probe),
     tasks,
     orphanedSessions: orphanedSessions({ probe, entries }),
+  };
+}
+
+export interface CollectRemoteStatusInput {
+  config: ResolvedConfig;
+  /** Lowercased task ids with a local worktree, used only to scope PR lookups. */
+  localTasks: readonly string[];
+}
+
+/**
+ * Remote tier: the board fetch and the pull request lookups. Board-side
+ * classification is applied here, but the local worktree subtraction
+ * deliberately is not — `joinStatus` does that against the freshest local
+ * document, because this tier refreshes far more slowly.
+ *
+ * A failed fetch is a result, not a throw: the caller merges it into the
+ * previous document so last-known-good data survives an outage.
+ */
+export async function collectRemoteStatus(
+  input: CollectRemoteStatusInput,
+): Promise<RemoteFetchResult> {
+  const { config, localTasks } = input;
+  let issues: readonly SourceIssue[];
+  try {
+    const sources = await buildSources(sourcesFromConfig(config), { globalConfig: config });
+    const board = createBoard(sources);
+    const state = await withLogOutputSuppressed(async () => await board.fetch());
+    issues = state.issues;
+  } catch (error) {
+    return { kind: "error", message: errorMessage(error) };
+  }
+
+  // Only groundcrew-eligible todos are dispatchable; the rest lack a repo or
+  // an agent, so `crew run` would skip them.
+  const todos = issues.filter((issue) => issue.status === "todo").filter(isGroundcrewIssue);
+
+  return {
+    kind: "ok",
+    payload: {
+      capturedAt: new Date().toISOString(),
+      statusByTask: statusByTask(issues),
+      pullRequestsByTask: await collectPullRequests({ config, localTasks }),
+      inProgress: issues
+        .filter((issue) => issue.status === "in-progress")
+        .toSorted((left, right) => left.id.localeCompare(right.id))
+        .map((issue) => toBoardIssue(issue)),
+      queueReady: todos.filter((issue) => !hasOpenBlocker(issue)).map((issue) => toBoardIssue(issue)),
+      queueBlocked: todos.filter((issue) => hasOpenBlocker(issue)).map((issue) => toBlockedIssue(issue)),
+    },
   };
 }
 
@@ -278,6 +339,81 @@ function readLogTail(config: ResolvedConfig): string[] {
   }
   const tail = raw.length > LOG_TAIL_BYTES ? raw.slice(-LOG_TAIL_BYTES) : raw;
   return tail.split("\n");
+}
+
+function hasOpenBlocker(issue: SourceIssue): boolean {
+  return issue.blockers.some((blocker) => blocker.status !== "done");
+}
+
+function toBoardIssue(issue: SourceIssue): StatusBoardIssue {
+  return {
+    id: issue.id,
+    naturalId: naturalIdFromCanonical(issue.id),
+    title: issue.title,
+    url: issue.url,
+    repository: issue.repository,
+    agent: issue.agent,
+  };
+}
+
+function toBlockedIssue(issue: SourceIssue): StatusBlockedIssue {
+  return {
+    ...toBoardIssue(issue),
+    blockedBy: issue.blockers
+      .filter((blocker) => blocker.status !== "done")
+      .map((blocker) => ({
+        id: blocker.id,
+        status: blocker.status,
+        nativeStatus: blocker.nativeStatus,
+      })),
+  };
+}
+
+/**
+ * Lowercased natural id to canonical status, omitting any id claimed by more
+ * than one source rather than guessing which one a worktree row means.
+ */
+function statusByTask(issues: readonly SourceIssue[]): Record<string, CanonicalStatus> {
+  const statuses = new Map<string, CanonicalStatus>();
+  const matchCounts = new Map<string, number>();
+  for (const issue of issues) {
+    const task = naturalIdFromCanonical(issue.id).toLowerCase();
+    matchCounts.set(task, (matchCounts.get(task) ?? 0) + 1);
+    statuses.set(task, issue.status);
+  }
+  for (const [task, matchCount] of matchCounts) {
+    if (matchCount > 1) {
+      statuses.delete(task);
+    }
+  }
+  return Object.fromEntries(statuses);
+}
+
+async function collectPullRequests(input: {
+  config: ResolvedConfig;
+  localTasks: readonly string[];
+}): Promise<Record<string, PullRequestSummary[]>> {
+  const { config, localTasks } = input;
+  const wanted = new Set(localTasks);
+  const entries = worktrees.list(config).filter((entry) => wanted.has(entry.task));
+  const results = await Promise.allSettled(
+    entries.map(async (entry) => {
+      const branchName = await effectiveBranchNameFromRunState({
+        entry,
+        runState: readRunState(config, entry.task),
+      });
+      return [entry.task, await findPullRequestsForBranch({ cwd: entry.dir, branchName })] as const;
+    }),
+  );
+  const byTask: Record<string, PullRequestSummary[]> = {};
+  for (const result of results) {
+    if (result.status !== "fulfilled") {
+      continue;
+    }
+    const [task, pullRequests] = result.value;
+    byTask[task] = [...(byTask[task] ?? []), ...pullRequests];
+  }
+  return byTask;
 }
 
 function escapeRegExp(value: string): string {
