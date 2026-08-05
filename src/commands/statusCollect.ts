@@ -460,11 +460,6 @@ function escapeRegExp(value: string): string {
 }
 
 /**
- * The most recent log lines mentioning `task`. Callers supply the lines so the
- * pollable collector can pass a bounded tail while the one-shot per-task view
- * passes the whole file.
- */
-/**
  * Splits a tail read into log lines.
  *
  * Decodes only `bytesRead`: a log rotated between the stat and the read
@@ -482,6 +477,11 @@ export function decodeLogTail(input: {
   return startedMidFile ? lines.slice(1) : lines;
 }
 
+/**
+ * The most recent log lines mentioning `task`. Callers supply the lines so the
+ * pollable collector can pass a bounded tail while the one-shot per-task view
+ * passes the whole file.
+ */
 export function recentTaskLogLines(input: { lines: readonly string[]; task: string }): string[] {
   const { lines, task } = input;
   // The boundary class is not \b on purpose: task ids contain hyphens, and \b
