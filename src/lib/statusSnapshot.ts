@@ -79,13 +79,22 @@ export interface StatusBoardIssue {
   agent: string | undefined;
 }
 
+/**
+ * A queued issue. Only groundcrew-eligible todos reach a queue, and
+ * eligibility means both fields resolved, so they are required here.
+ */
+export interface StatusQueueIssue extends StatusBoardIssue {
+  repository: string;
+  agent: string;
+}
+
 export interface StatusBlocker {
   id: string;
   status: CanonicalStatus;
   nativeStatus: string | undefined;
 }
 
-export interface StatusBlockedIssue extends StatusBoardIssue {
+export interface StatusBlockedIssue extends StatusQueueIssue {
   blockedBy: StatusBlocker[];
 }
 
@@ -102,7 +111,7 @@ export interface RemoteStatusPayload {
   pullRequestsByTask: Record<string, PullRequestSummary[]>;
   /** Every in-progress issue. Its length is the used slot count. */
   inProgress: StatusBoardIssue[];
-  queueReady: StatusBoardIssue[];
+  queueReady: StatusQueueIssue[];
   queueBlocked: StatusBlockedIssue[];
 }
 

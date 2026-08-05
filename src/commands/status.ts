@@ -5,10 +5,18 @@ import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { findPullRequestsForBranch, type PullRequestSummary } from "../lib/pullRequests.ts";
 import { readRunState, type RunState } from "../lib/runState.ts";
+import { type JoinedStatus, type JoinedTask, joinStatus } from "../lib/statusJoin.ts";
+import {
+  buildRemoteDocument,
+  type LocalStatusDocument,
+  type RemoteFetchResult,
+  type StatusBlockedIssue,
+  type StatusBoardIssue,
+  type StatusQueueIssue,
+  type StatusWorktree,
+} from "../lib/statusSnapshot.ts";
 import {
   type CanonicalStatus,
-  type GroundcrewIssue,
-  isGroundcrewIssue,
   type Issue as SourceIssue,
   naturalIdFromCanonical,
 } from "../lib/taskSource.ts";
@@ -16,6 +24,14 @@ import { errorMessage, withLogOutputSuppressed, writeOutput } from "../lib/util.
 import { type WorkspaceAccessHint, type WorkspaceProbe, workspaces } from "../lib/workspaces.ts";
 import { type WorktreeDirtiness, worktrees } from "../lib/worktrees.ts";
 import { effectiveBranchNameFromRunState } from "../lib/worktreeRunState.ts";
+import {
+  collectLocalStatus,
+  collectRemoteStatus,
+  isWorkspaceExited,
+  type PullRequestTarget,
+  runProbeFlags,
+  workspaceProbeUnavailableText,
+} from "./statusCollect.ts";
 
 export interface StatusOptions {
   task?: string;
@@ -82,26 +98,14 @@ async function writeTaskWorktrees(config: ResolvedConfig, task: string): Promise
   }
 }
 
-function workspaceProbeUnavailableLine(
-  probe: Extract<WorkspaceProbe, { kind: "unavailable" }>,
-): string {
-  return probe.error === undefined
-    ? "Workspace probe unavailable"
-    : `Workspace probe unavailable: ${errorMessage(probe.error)}`;
-}
-
 function taskWorkspaceText(probe: WorkspaceProbe, task: string): string {
   if (probe.kind === "unavailable") {
-    return workspaceProbeUnavailableLine(probe);
+    return workspaceProbeUnavailableText(probe);
   }
-  if (isWorkspaceExited(probe, task)) {
+  if (isWorkspaceExited({ probe, task })) {
     return "exited";
   }
   return probe.names.has(task) ? "live" : "not live";
-}
-
-function isWorkspaceExited(probe: WorkspaceProbe, task: string): boolean {
-  return probe.kind === "ok" && probe.exitedNames?.has(task) === true;
 }
 
 function formatRunState(state: RunState | undefined, flags: readonly string[] = []): string {
@@ -172,7 +176,7 @@ async function exitedWorkspaceAccessHint(
   probe: WorkspaceProbe,
   task: string,
 ): Promise<WorkspaceAccessHint | undefined> {
-  if (!isWorkspaceExited(probe, task)) {
+  if (!isWorkspaceExited({ probe, task })) {
     return undefined;
   }
   try {
@@ -231,7 +235,9 @@ async function writeTaskStatus(config: ResolvedConfig, rawTask: string): Promise
   const accessHint = await exitedWorkspaceAccessHint(config, workspaceProbe, task);
   writeOutput(formatTaskLine(task, runState, sourceStatus));
   writeTaskTitle(runState, sourceStatus);
-  writeOutput(`run: ${formatRunState(runState, runProbeFlags(runState, workspaceProbe, task))}`);
+  writeOutput(
+    `run: ${formatRunState(runState, runProbeFlags({ runState, probe: workspaceProbe, task }))}`,
+  );
   writeOutput(`workspace: ${taskWorkspaceText(workspaceProbe, task)}`);
   if (accessHint !== undefined) {
     writeOutput(`attach: ${accessHint.command}`);
@@ -247,14 +253,19 @@ async function writeTaskStatus(config: ResolvedConfig, rawTask: string): Promise
  * actively running, when no run state exists, or when the timestamp cannot
  * be parsed.
  */
-function runStateDurationMs(runState: RunState | undefined, now: Date): number | undefined {
-  if (runState === undefined) {
+function runDurationMs(input: {
+  lifecycle: string;
+  startedAt: string | undefined;
+  now: Date;
+}): number | undefined {
+  const { lifecycle, startedAt, now } = input;
+  if (lifecycle !== "running" && lifecycle !== "resumed") {
     return undefined;
   }
-  if (runState.state !== "running" && runState.state !== "resumed") {
+  if (startedAt === undefined) {
     return undefined;
   }
-  const created = Date.parse(runState.createdAt);
+  const created = Date.parse(startedAt);
   if (Number.isNaN(created)) {
     return undefined;
   }
@@ -283,95 +294,18 @@ function formatDuration(ms: number): string {
 }
 
 /**
- * Probe-reconciliation flags shared by the inventory row and the per-task
- * `run:` line. Flags the two interesting disagreements between the recorded
- * RunState lifecycle and the live workspace probe: a running/resumed dispatch
- * with a missing or exited session, and an idle row with a stray live or
- * exited session. `probe.kind === "unavailable"` is "we don't know" and yields
- * no flags. Excludes the duration token, which only the inventory row appends.
+ * Combined human-readable state for the inventory row. The collector already
+ * resolved the lifecycle and the probe-disagreement flags; this appends the
+ * elapsed wall-clock time, which is derived at render time so a row never
+ * shows a frozen clock.
  */
-function runProbeFlags(
-  runState: RunState | undefined,
-  probe: WorkspaceProbe,
-  task: string,
-): string[] {
-  if (probe.kind !== "ok") {
-    return [];
-  }
-  const lifecycle = runState?.state ?? "idle";
-  const sessionPresent = probe.names.has(task);
-  const sessionExited = isWorkspaceExited(probe, task);
-  const flags: string[] = [];
-  if (lifecycle === "idle" && sessionPresent) {
-    flags.push(sessionExited ? "stray exited session" : "stray session");
-  }
-  if ((lifecycle === "running" || lifecycle === "resumed") && sessionExited) {
-    flags.push("session exited");
-  } else if ((lifecycle === "running" || lifecycle === "resumed") && !sessionPresent) {
-    flags.push("session dead");
-  }
-  return flags;
-}
-
-/**
- * Combined human-readable state for the inventory row. Surfaces RunState
- * lifecycle and flags the two interesting disagreements with the workspace
- * probe via `runProbeFlags`. When the row is actively running, appends the
- * elapsed wall-clock time since dispatch.
- */
-function inventoryStateText(
-  runState: RunState | undefined,
-  probe: WorkspaceProbe,
-  task: string,
-  now: Date,
-): string {
-  const lifecycle = runState?.state ?? "idle";
-  const flags = runProbeFlags(runState, probe, task);
-  const duration = runStateDurationMs(runState, now);
+function inventoryStateText(task: JoinedTask, now: Date): string {
+  const flags = [...task.flags];
+  const duration = runDurationMs({ lifecycle: task.lifecycle, startedAt: task.startedAt, now });
   if (duration !== undefined) {
     flags.push(formatDuration(duration));
   }
-  return flags.length === 0 ? lifecycle : `${lifecycle} (${flags.join(", ")})`;
-}
-
-/**
- * Hint command for inventory rows where the run-state and the workspace
- * probe disagree. Returned commands are safe defaults; the user is free to
- * ignore them and use `attach:` + `pr:` to investigate first.
- *
- * - Stray session (session present, no run-state record) -> `crew cleanup`
- *   to tear down the orphaned worktree and close the session.
- * - Session exited (run-state says running/resumed, kept dead tmux window)
- *   -> attach first so the failed command remains available for inspection.
- * - Session dead (run-state says running/resumed, no session present) ->
- *   `crew resume` to bring the agent back; the worktree is preserved.
- *
- * No hint when the probe is unavailable (we genuinely don't know whether
- * there's a disagreement) or when the row is healthy.
- */
-function inventoryHint(
-  runState: RunState | undefined,
-  probe: WorkspaceProbe,
-  task: string,
-): string | undefined {
-  if (probe.kind === "unavailable") {
-    return undefined;
-  }
-  const lifecycle = runState?.state ?? "idle";
-  const sessionPresent = probe.names.has(task);
-  const sessionExited = isWorkspaceExited(probe, task);
-  if (lifecycle === "idle" && sessionPresent) {
-    return sessionExited
-      ? `run 'crew cleanup ${task}' to clear this stray exited session`
-      : `run 'crew cleanup ${task}' to clear this stray session`;
-  }
-  if ((lifecycle === "running" || lifecycle === "resumed") && sessionExited) {
-    return `attach to inspect scrollback, then run 'crew resume ${task}'`;
-  }
-  if ((lifecycle === "running" || lifecycle === "resumed") && !sessionPresent) {
-    return `run 'crew resume ${task}' to bring the session back`;
-  }
-  return undefined;
+  return flags.length === 0 ? task.lifecycle : `${task.lifecycle} (${flags.join(", ")})`;
 }
 
 const INVENTORY_LABEL_WIDTH = "worktree:".length;
@@ -386,164 +320,99 @@ function formatPullRequests(prs: readonly PullRequestSummary[]): string {
 
 /**
  * Inventory `task:` value: the worktree's remote canonical status. Slots are
- * consumed solely by `in-progress` issues (see `inProgressCount`), so that one
- * status is spelled out as `slot held` to make the otherwise-implicit rule
- * legible on the row; every other status renders bare.
+ * consumed solely by `in-progress` issues, so that one status is spelled out as
+ * `slot held` to make the otherwise-implicit rule legible on the row; every
+ * other status renders bare.
  */
 function formatTaskStatus(canonicalStatus: CanonicalStatus): string {
   return canonicalStatus === "in-progress" ? "in-progress (slot held)" : canonicalStatus;
 }
 
-async function writeInventoryWorktrees(
-  config: ResolvedConfig,
-  probe: WorkspaceProbe,
-  statusByTask: ReadonlyMap<string, CanonicalStatus> | undefined,
-): Promise<void> {
+/**
+ * One row per worktree. The joined document groups worktrees under their task,
+ * so this flattens them back in collection order.
+ */
+function writeInventoryWorktrees(joined: JoinedStatus, now: Date): void {
   writeSection("Worktrees");
-  const entries = worktrees
-    .list(config)
-    .toSorted((left, right) => left.task.localeCompare(right.task));
-  if (entries.length === 0) {
+  const rows = joined.tasks.flatMap((task) =>
+    task.worktrees.map((worktree) => ({ task, worktree })),
+  );
+  if (rows.length === 0) {
     writeOutput("(none)");
     return;
   }
-  const runStates = new Map<string, RunState | undefined>();
-  for (const entry of entries) {
-    if (!runStates.has(entry.task)) {
-      runStates.set(entry.task, readRunState(config, entry.task));
-    }
-  }
-  const accessHints = await collectAccessHints(config, entries);
-  const pullRequests = await collectPullRequests(
-    await Promise.all(
-      entries.map(async (entry) => ({
-        dir: entry.dir,
-        branchName: await effectiveBranchNameFromRunState({
-          entry,
-          runState: runStates.get(entry.task),
-        }),
-      })),
-    ),
-  );
-  const now = new Date();
-  for (const [index, entry] of entries.entries()) {
-    const runState = runStates.get(entry.task);
-    const accessHint = accessHints.get(entry.task);
-    // `collectPullRequests` guarantees an entry for every worktree dir seen
-    // in `entries`; the lookup always returns the array.
-    /* v8 ignore next @preserve -- defensive fallback for a Map key that collectPullRequests always populates */
-    const prs = pullRequests.get(entry.dir) ?? [];
+  for (const [index, row] of rows.entries()) {
     if (index > 0) {
       writeOutput();
     }
-    writeOutput(runState?.url === undefined ? entry.task : `${entry.task}  ${runState.url}`);
-    if (runState?.title !== undefined) {
-      writeOutput(inventoryField("title", runState.title));
-    }
-    writeOutput(inventoryField("state", inventoryStateText(runState, probe, entry.task, now)));
-    // `state:` is the local run lifecycle; `task:` is the remote status that
-    // actually drives the slot count. They're sourced independently and can
-    // legitimately disagree, so they sit adjacent. Omitted when the board fetch
-    // failed (no map) or the task isn't in the fetched board.
-    const taskStatus = statusByTask?.get(entry.task);
-    if (taskStatus !== undefined) {
-      writeOutput(inventoryField("task", formatTaskStatus(taskStatus)));
-    }
-    writeOutput(inventoryField("repo", entry.repository));
-    writeOutput(inventoryField("worktree", entry.dir));
-    if (accessHint !== undefined) {
-      writeOutput(inventoryField("attach", accessHint.command));
-    }
-    if (prs.length > 0) {
-      writeOutput(inventoryField("pr", formatPullRequests(prs)));
-    }
-    const hint = inventoryHint(runState, probe, entry.task);
-    if (hint !== undefined) {
-      writeOutput(inventoryField("hint", hint));
-    }
+    writeInventoryRow({ ...row, now });
   }
 }
 
-async function collectAccessHints(
-  config: ResolvedConfig,
-  entries: ReadonlyArray<{ task: string }>,
-): Promise<Map<string, WorkspaceAccessHint | undefined>> {
-  const uniqueTasks = [...new Set(entries.map((entry) => entry.task))];
-  const results = await Promise.allSettled(
-    uniqueTasks.map(async (task) => await workspaces.accessHint(config, task)),
-  );
-  return new Map(
-    uniqueTasks.map((task, index) => {
-      const result = results[index];
-      return [task, result?.status === "fulfilled" ? result.value : undefined] as const;
-    }),
-  );
-}
-
-async function collectPullRequests(
-  entries: ReadonlyArray<{ dir: string; branchName: string }>,
-): Promise<Map<string, readonly PullRequestSummary[]>> {
-  // Each worktree dir is unique, so keying by dir collapses nothing in
-  // practice; the Map removes duplicates defensively if the same dir
-  // appears twice.
-  const uniqueByDir = new Map<string, { dir: string; branchName: string }>();
-  for (const entry of entries) {
-    uniqueByDir.set(entry.dir, { dir: entry.dir, branchName: entry.branchName });
+function writeInventoryRow(input: {
+  task: JoinedTask;
+  worktree: StatusWorktree;
+  now: Date;
+}): void {
+  const { task, worktree, now } = input;
+  writeOutput(task.url === undefined ? task.task : `${task.task}  ${task.url}`);
+  if (task.title !== undefined) {
+    writeOutput(inventoryField("title", task.title));
   }
-  const results = await Promise.allSettled(
-    [...uniqueByDir.entries()].map(async ([dir, { branchName }]) => {
-      const prs = await findPullRequestsForBranch({ cwd: dir, branchName });
-      return [dir, prs] as const;
-    }),
-  );
-  return new Map(
-    [...uniqueByDir.keys()].map((dir, index) => {
-      const result = results[index];
-      return [dir, result?.status === "fulfilled" ? result.value[1] : []] as const;
-    }),
-  );
+  writeOutput(inventoryField("state", inventoryStateText(task, now)));
+  // `state:` is the local run lifecycle; `task:` is the remote status that
+  // actually drives the slot count. They're sourced independently and can
+  // legitimately disagree, so they sit adjacent. Omitted when the board fetch
+  // failed or the task isn't in the fetched board.
+  if (task.boardStatus !== undefined) {
+    writeOutput(inventoryField("task", formatTaskStatus(task.boardStatus)));
+  }
+  writeOutput(inventoryField("repo", worktree.repository));
+  writeOutput(inventoryField("worktree", worktree.dir));
+  if (task.attachCommand !== undefined) {
+    writeOutput(inventoryField("attach", task.attachCommand));
+  }
+  if (task.pullRequests.length > 0) {
+    writeOutput(inventoryField("pr", formatPullRequests(task.pullRequests)));
+  }
+  if (task.hint !== undefined) {
+    writeOutput(inventoryField("hint", task.hint));
+  }
 }
 
 const ORPHANED_SESSIONS_HEADER = "Orphaned sessions (no matching worktree)";
 const ORPHANED_SESSIONS_ACTION =
   "What to do: run 'crew stop <task>' to close the session, or 'tmux kill-session -t <task>' if no run-state exists.";
 
-function writeStraySessions(probe: WorkspaceProbe, worktreeTasks: ReadonlySet<string>): void {
-  if (probe.kind === "unavailable") {
+function writeStraySessions(local: LocalStatusDocument): void {
+  if (local.workspaceProbe.status === "unavailable") {
     // Surface probe failures so the user knows we couldn't classify orphans
     // (silently dropping the section would hide that diagnostic). The action
     // hint is omitted here — there's no row to act on.
     writeSection(ORPHANED_SESSIONS_HEADER);
-    writeOutput(workspaceProbeUnavailableLine(probe));
+    writeOutput(
+      local.workspaceProbe.error === undefined
+        ? "Workspace probe unavailable"
+        : `Workspace probe unavailable: ${local.workspaceProbe.error}`,
+    );
     return;
   }
-  const strays = [...probe.names].filter((name) => !worktreeTasks.has(name)).toSorted();
-  if (strays.length === 0) {
+  if (local.orphanedSessions.length === 0) {
     return;
   }
   writeSection(ORPHANED_SESSIONS_HEADER);
   writeOutput(ORPHANED_SESSIONS_ACTION);
-  writeOutput(strays.join("\n"));
+  writeOutput(local.orphanedSessions.join("\n"));
 }
 
-function isTodoSourceIssue(issue: SourceIssue): boolean {
-  return issue.status === "todo";
-}
-
-function hasOpenBlocker(issue: SourceIssue): boolean {
-  return issue.blockers.some((b) => b.status !== "done");
-}
-
-function describeOpenBlockers(issue: SourceIssue): string {
-  return issue.blockers
-    .filter((b) => b.status !== "done")
-    .map((b) => `${naturalIdFromCanonical(b.id)} (${b.nativeStatus ?? b.status})`)
+function describeOpenBlockers(issue: StatusBlockedIssue): string {
+  return issue.blockedBy
+    .map((blocker) => `${naturalIdFromCanonical(blocker.id)} (${blocker.nativeStatus ?? blocker.status})`)
     .join(", ");
 }
 
-function writeQueueIssue(issue: GroundcrewIssue): void {
-  const naturalId = naturalIdFromCanonical(issue.id);
-  writeOutput(issue.url === undefined ? naturalId : `${naturalId}  ${issue.url}`);
+function writeQueueIssue(issue: StatusQueueIssue): void {
+  writeOutput(issue.url === undefined ? issue.naturalId : `${issue.naturalId}  ${issue.url}`);
   writeOutput(inventoryField("title", issue.title));
   writeOutput(inventoryField("repo", issue.repository));
   writeOutput(inventoryField("agent", issue.agent));
@@ -554,78 +423,18 @@ async function buildBoardForStatus(config: ResolvedConfig): Promise<Board> {
   return createBoard(sources);
 }
 
-type BoardFetchResult =
-  | { kind: "ok"; issues: readonly SourceIssue[] }
-  | { kind: "error"; error: unknown };
-
-/**
- * Single board fetch used by both the slot count header and the
- * Queue/Blocked sections. Failures (e.g., missing API key) are captured
- * and rendered later as `unavailable: ...` in the Queue section.
- */
-async function fetchBoardForStatus(config: ResolvedConfig): Promise<BoardFetchResult> {
-  try {
-    const board = await buildBoardForStatus(config);
-    const { issues } = await withLogOutputSuppressed(async () => await board.fetch());
-    return { kind: "ok", issues };
-  } catch (error) {
-    return { kind: "error", error };
-  }
-}
-
-/**
- * Maps each fetched issue's lowercased natural id to its canonical status when
- * exactly one fetched issue has that natural id, so the Worktrees section can
- * show a `task:` field per row without guessing across sources. The key
- * matches the lowercased `WorktreeEntry.task` (same join as
- * `inProgressWithoutWorktree`). `undefined` when the board fetch failed —
- * callers then omit the field rather than guess.
- */
-function statusByWorktreeTask(
-  boardResult: BoardFetchResult,
-): ReadonlyMap<string, CanonicalStatus> | undefined {
-  if (boardResult.kind !== "ok") {
-    return undefined;
-  }
-  const statuses = new Map<string, CanonicalStatus>();
-  const matchCounts = new Map<string, number>();
-  for (const issue of boardResult.issues) {
-    const task = naturalIdFromCanonical(issue.id).toLowerCase();
-    matchCounts.set(task, (matchCounts.get(task) ?? 0) + 1);
-    statuses.set(task, issue.status);
-  }
-  for (const [task, matchCount] of matchCounts) {
-    if (matchCount > 1) {
-      statuses.delete(task);
-    }
-  }
-  return statuses;
-}
-
-function writeQueueSections(
-  boardResult: BoardFetchResult,
-  worktreeTasks: ReadonlySet<string>,
-): void {
-  if (boardResult.kind === "error") {
+function writeQueueSections(input: { joined: JoinedStatus; result: RemoteFetchResult }): void {
+  const { joined, result } = input;
+  if (result.kind === "error") {
     writeSection("Queue");
-    writeOutput(`unavailable: ${errorMessage(boardResult.error)}`);
+    writeOutput(`unavailable: ${result.message}`);
     return;
   }
-  // Only groundcrew-eligible Todos are dispatchable; non-eligible ones lack
-  // a repo or agent, so `crew run` would skip them. Todos whose task already
-  // has a local worktree are omitted so a dispatched-but-not-yet-transitioned
-  // ticket doesn't show as both provisioning and queued.
-  const todos = boardResult.issues
-    .filter(isTodoSourceIssue)
-    .filter(isGroundcrewIssue)
-    .filter((i) => !worktreeTasks.has(naturalIdFromCanonical(i.id).toLowerCase()));
-  const ready = todos.filter((i) => !hasOpenBlocker(i));
-  const blocked = todos.filter(hasOpenBlocker);
 
   // Hide the section entirely when nothing's queued and nothing's blocked.
-  if (ready.length > 0) {
+  if (joined.queueReady.length > 0) {
     writeSection("Queue");
-    for (const [index, issue] of ready.entries()) {
+    for (const [index, issue] of joined.queueReady.entries()) {
       if (index > 0) {
         writeOutput();
       }
@@ -633,9 +442,9 @@ function writeQueueSections(
     }
   }
 
-  if (blocked.length > 0) {
+  if (joined.queueBlocked.length > 0) {
     writeSection("Blocked");
-    for (const [index, issue] of blocked.entries()) {
+    for (const [index, issue] of joined.queueBlocked.entries()) {
       if (index > 0) {
         writeOutput();
       }
@@ -645,57 +454,42 @@ function writeQueueSections(
   }
 }
 
-function inProgressCount(issues: readonly SourceIssue[]): number {
-  return issues.filter((issue) => issue.status === "in-progress").length;
-}
-
-/**
- * In-progress board issues that have no local worktree. These count toward the
- * `slots: N/M used` total but are absent from the Worktrees section (their
- * worktree was removed, or lives outside this config's projectDir /
- * knownRepositories), so without this they'd be counted yet invisible. Worktree
- * tasks are lowercased, so the natural id is lowercased before matching.
- */
-function inProgressWithoutWorktree(
-  issues: readonly SourceIssue[],
-  worktreeTasks: ReadonlySet<string>,
-): SourceIssue[] {
-  return issues
-    .filter((issue) => issue.status === "in-progress")
-    .filter((issue) => !worktreeTasks.has(naturalIdFromCanonical(issue.id).toLowerCase()))
-    .toSorted((left, right) => left.id.localeCompare(right.id));
-}
-
-function writeInProgressIssue(issue: SourceIssue): void {
-  const naturalId = naturalIdFromCanonical(issue.id);
-  writeOutput(issue.url === undefined ? naturalId : `${naturalId}  ${issue.url}`);
+function writeInProgressIssue(issue: StatusBoardIssue): void {
+  writeOutput(issue.url === undefined ? issue.naturalId : `${issue.naturalId}  ${issue.url}`);
   writeOutput(inventoryField("title", issue.title));
   // These are all in-progress by definition, but spell out the slot-held
   // status so every holder row reads the same whether or not it has a worktree.
-  writeOutput(inventoryField("task", formatTaskStatus(issue.status)));
+  writeOutput(inventoryField("task", formatTaskStatus("in-progress")));
   if (issue.repository !== undefined) {
     writeOutput(inventoryField("repo", issue.repository));
   }
+}
+
+/**
+ * Pull request lookups reuse the branches the local pass already resolved, so
+ * the remote pass never re-reads run state or re-resolves a branch.
+ */
+function pullRequestTargetsOf(local: LocalStatusDocument): PullRequestTarget[] {
+  return local.tasks.flatMap((task) =>
+    task.worktrees.map((worktree) => ({
+      task: task.task,
+      dir: worktree.dir,
+      branch: worktree.branch,
+    })),
+  );
 }
 
 const SLOT_HOLDERS_HEADER = "Slot holders with no local worktree";
 const SLOT_HOLDERS_ACTION =
   "What to do: transition the ticket off 'in-progress' on the board, or run 'crew run <task>' to recreate the worktree locally.";
 
-function writeInProgressWithoutWorktree(
-  boardResult: BoardFetchResult,
-  worktreeTasks: ReadonlySet<string>,
-): void {
-  if (boardResult.kind !== "ok") {
-    return;
-  }
-  const issues = inProgressWithoutWorktree(boardResult.issues, worktreeTasks);
-  if (issues.length === 0) {
+function writeInProgressWithoutWorktree(joined: JoinedStatus): void {
+  if (joined.inProgressWithoutWorktree.length === 0) {
     return;
   }
   writeSection(SLOT_HOLDERS_HEADER);
   writeOutput(SLOT_HOLDERS_ACTION);
-  for (const [index, issue] of issues.entries()) {
+  for (const [index, issue] of joined.inProgressWithoutWorktree.entries()) {
     if (index > 0) {
       writeOutput();
     }
@@ -703,28 +497,36 @@ function writeInProgressWithoutWorktree(
   }
 }
 
+/**
+ * Collects both tiers and renders the joined view.
+ *
+ * `previous: undefined` is deliberate. Carry-forward is a monitor concern: a
+ * one-shot text run must report only what this attempt saw, or a failed fetch
+ * would print a queue recovered from an old snapshot where it prints
+ * "unavailable" today.
+ */
 async function writeInventoryStatus(config: ResolvedConfig): Promise<void> {
-  // Banner ("groundcrew status\n=================") dropped: the command
-  // you just ran already tells you what report you're looking at, and the
-  // section headers (`Worktrees`, `Queue`, etc.) carry the visual anchors.
-  // The board fetch runs concurrently with the probe, but we await it before
-  // rendering: each Worktrees row carries the remote task status, so the
-  // inventory can't print until the source resolves. A failed fetch returns
-  // quickly and still renders rows (without the `task:` field).
-  const boardResultPromise = fetchBoardForStatus(config);
-  const probe = await withLogOutputSuppressed(async () => await workspaces.probe(config));
-  const boardResult = await boardResultPromise;
-  await writeInventoryWorktrees(config, probe, statusByWorktreeTask(boardResult));
-  const worktreeTasks = new Set(worktrees.list(config).map((entry) => entry.task));
-  writeStraySessions(probe, worktreeTasks);
+  const local = await collectLocalStatus({ config });
+  const result = await collectRemoteStatus({
+    config,
+    pullRequestTargets: pullRequestTargetsOf(local),
+  });
+  const remote = buildRemoteDocument({
+    previous: undefined,
+    attemptAt: new Date().toISOString(),
+    result,
+  });
+  const joined = joinStatus({ local, remote });
+  const now = new Date();
 
-  writeInProgressWithoutWorktree(boardResult, worktreeTasks);
-  if (boardResult.kind === "ok") {
-    const used = inProgressCount(boardResult.issues);
+  writeInventoryWorktrees(joined, now);
+  writeStraySessions(local);
+  writeInProgressWithoutWorktree(joined);
+  if (joined.slots !== undefined) {
     writeOutput();
-    writeOutput(`slots: ${used}/${config.orchestrator.maximumInProgress} used`);
+    writeOutput(`slots: ${joined.slots.used}/${joined.slots.maximum} used`);
   }
-  writeQueueSections(boardResult, worktreeTasks);
+  writeQueueSections({ joined, result });
 }
 
 export async function status(config: ResolvedConfig, options: StatusOptions = {}): Promise<void> {

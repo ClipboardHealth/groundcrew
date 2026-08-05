@@ -10,6 +10,7 @@ import type {
   RemoteStatusDocument,
   StatusBlockedIssue,
   StatusBoardIssue,
+  StatusQueueIssue,
   StatusTask,
 } from "./statusSnapshot.ts";
 import type { CanonicalStatus } from "./taskSource.ts";
@@ -28,7 +29,7 @@ export interface JoinedStatus {
   tasks: JoinedTask[];
   /** In-progress board issues with no local worktree. */
   inProgressWithoutWorktree: StatusBoardIssue[];
-  queueReady: StatusBoardIssue[];
+  queueReady: StatusQueueIssue[];
   queueBlocked: StatusBlockedIssue[];
   /** Undefined when no board fetch has ever succeeded. */
   slots: JoinedSlots | undefined;

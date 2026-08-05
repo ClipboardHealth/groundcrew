@@ -295,7 +295,7 @@ describe("collectRemoteStatus", () => {
       }),
     ]);
 
-    const actual = await collectRemoteStatus({ config: mockConfig, localTasks: [] });
+    const actual = await collectRemoteStatus({ config: mockConfig, pullRequestTargets: [] });
 
     expect(actual.kind).toBe("ok");
     if (actual.kind !== "ok") {
@@ -309,7 +309,10 @@ describe("collectRemoteStatus", () => {
   it("keeps an in-progress issue in the payload even when it has a local worktree", async () => {
     mockBoardFetch([makeIssue({ id: "linear:eng-220", status: "in-progress" })]);
 
-    const actual = await collectRemoteStatus({ config: mockConfig, localTasks: ["eng-220"] });
+    const actual = await collectRemoteStatus({
+      config: mockConfig,
+      pullRequestTargets: [{ task: "eng-220", dir: "/repos/eng-220", branch: "eng-220" }],
+    });
 
     expect(actual.kind === "ok" && actual.payload.inProgress).toHaveLength(1);
   });
@@ -317,7 +320,7 @@ describe("collectRemoteStatus", () => {
   it("excludes a todo that no agent or repository can dispatch", async () => {
     mockBoardFetch([makeIssue({ id: "linear:eng-225", status: "todo", agent: undefined })]);
 
-    const actual = await collectRemoteStatus({ config: mockConfig, localTasks: [] });
+    const actual = await collectRemoteStatus({ config: mockConfig, pullRequestTargets: [] });
 
     expect(actual.kind === "ok" && actual.payload.queueReady).toEqual([]);
   });
@@ -331,7 +334,7 @@ describe("collectRemoteStatus", () => {
       }),
     ]);
 
-    const actual = await collectRemoteStatus({ config: mockConfig, localTasks: [] });
+    const actual = await collectRemoteStatus({ config: mockConfig, pullRequestTargets: [] });
 
     expect(actual.kind === "ok" && actual.payload.queueReady.map((issue) => issue.naturalId)).toEqual([
       "eng-225",
@@ -350,7 +353,7 @@ describe("collectRemoteStatus", () => {
       }),
     ]);
 
-    const actual = await collectRemoteStatus({ config: mockConfig, localTasks: [] });
+    const actual = await collectRemoteStatus({ config: mockConfig, pullRequestTargets: [] });
 
     expect(actual.kind === "ok" && actual.payload.queueBlocked[0]?.blockedBy).toEqual([
       { id: "linear:eng-201", status: "in-progress", nativeStatus: "In Progress" },
@@ -363,7 +366,7 @@ describe("collectRemoteStatus", () => {
       makeIssue({ id: "shell:eng-220", status: "todo", source: "shell" }),
     ]);
 
-    const actual = await collectRemoteStatus({ config: mockConfig, localTasks: [] });
+    const actual = await collectRemoteStatus({ config: mockConfig, pullRequestTargets: [] });
 
     expect(actual.kind === "ok" && actual.payload.statusByTask["eng-220"]).toBeUndefined();
   });
@@ -374,7 +377,10 @@ describe("collectRemoteStatus", () => {
       { url: "https://example.test/1", number: 1, state: "open", title: "PR" },
     ]);
 
-    const actual = await collectRemoteStatus({ config: mockConfig, localTasks: ["eng-220"] });
+    const actual = await collectRemoteStatus({
+      config: mockConfig,
+      pullRequestTargets: [{ task: "eng-220", dir: "/repos/eng-220", branch: "eng-220" }],
+    });
 
     expect(actual.kind === "ok" && actual.payload.pullRequestsByTask["eng-220"]).toHaveLength(1);
     expect(findPullRequestsForBranch).toHaveBeenCalledTimes(1);
@@ -383,7 +389,7 @@ describe("collectRemoteStatus", () => {
   it("skips pull request lookups entirely when no task has a worktree", async () => {
     mockBoardFetch([]);
 
-    await collectRemoteStatus({ config: mockConfig, localTasks: [] });
+    await collectRemoteStatus({ config: mockConfig, pullRequestTargets: [] });
 
     expect(findPullRequestsForBranch).not.toHaveBeenCalled();
   });
@@ -391,7 +397,7 @@ describe("collectRemoteStatus", () => {
   it("returns an error result rather than throwing when the fetch fails", async () => {
     mockBoardFetchRejection(new Error("Linear: 401 unauthorized"));
 
-    const actual = await collectRemoteStatus({ config: mockConfig, localTasks: [] });
+    const actual = await collectRemoteStatus({ config: mockConfig, pullRequestTargets: [] });
 
     expect(actual).toEqual({ kind: "error", message: "Linear: 401 unauthorized" });
   });

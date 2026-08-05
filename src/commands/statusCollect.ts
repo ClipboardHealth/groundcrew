@@ -18,12 +18,14 @@ import {
   type StatusBlockedIssue,
   type StatusBoardIssue,
   type StatusLifecycle,
+  type StatusQueueIssue,
   type StatusSessionState,
   type StatusTask,
   type StatusWorktree,
 } from "../lib/statusSnapshot.ts";
 import {
   type CanonicalStatus,
+  type GroundcrewIssue,
   isGroundcrewIssue,
   type Issue as SourceIssue,
   naturalIdFromCanonical,
@@ -101,10 +103,21 @@ export async function collectLocalStatus(
   };
 }
 
+/** The subset of a collected worktree a pull request lookup needs. */
+export interface PullRequestTarget {
+  task: string;
+  dir: string;
+  branch: string;
+}
+
 export interface CollectRemoteStatusInput {
   config: ResolvedConfig;
-  /** Lowercased task ids with a local worktree, used only to scope PR lookups. */
-  localTasks: readonly string[];
+  /**
+   * Worktrees from the local tier. Passing the already-resolved branch keeps
+   * this collector from re-reading run state and re-resolving branches that
+   * the local pass just computed.
+   */
+  pullRequestTargets: readonly PullRequestTarget[];
 }
 
 /**
@@ -119,7 +132,7 @@ export interface CollectRemoteStatusInput {
 export async function collectRemoteStatus(
   input: CollectRemoteStatusInput,
 ): Promise<RemoteFetchResult> {
-  const { config, localTasks } = input;
+  const { config, pullRequestTargets } = input;
   let issues: readonly SourceIssue[];
   try {
     const sources = await buildSources(sourcesFromConfig(config), { globalConfig: config });
@@ -139,13 +152,15 @@ export async function collectRemoteStatus(
     payload: {
       capturedAt: new Date().toISOString(),
       statusByTask: statusByTask(issues),
-      pullRequestsByTask: await collectPullRequests({ config, localTasks }),
+      pullRequestsByTask: await collectPullRequests(pullRequestTargets),
       inProgress: issues
         .filter((issue) => issue.status === "in-progress")
         .toSorted((left, right) => left.id.localeCompare(right.id))
         .map((issue) => toBoardIssue(issue)),
-      queueReady: todos.filter((issue) => !hasOpenBlocker(issue)).map((issue) => toBoardIssue(issue)),
-      queueBlocked: todos.filter((issue) => hasOpenBlocker(issue)).map((issue) => toBlockedIssue(issue)),
+      queueReady: todos.filter((issue) => !hasOpenBlocker(issue)).map((issue) => toQueueIssue(issue)),
+      queueBlocked: todos
+        .filter((issue) => hasOpenBlocker(issue))
+        .map((issue) => toBlockedIssue(issue)),
     },
   };
 }
@@ -356,9 +371,13 @@ function toBoardIssue(issue: SourceIssue): StatusBoardIssue {
   };
 }
 
-function toBlockedIssue(issue: SourceIssue): StatusBlockedIssue {
+function toQueueIssue(issue: GroundcrewIssue): StatusQueueIssue {
+  return { ...toBoardIssue(issue), repository: issue.repository, agent: issue.agent };
+}
+
+function toBlockedIssue(issue: GroundcrewIssue): StatusBlockedIssue {
   return {
-    ...toBoardIssue(issue),
+    ...toQueueIssue(issue),
     blockedBy: issue.blockers
       .filter((blocker) => blocker.status !== "done")
       .map((blocker) => ({
@@ -389,21 +408,17 @@ function statusByTask(issues: readonly SourceIssue[]): Record<string, CanonicalS
   return Object.fromEntries(statuses);
 }
 
-async function collectPullRequests(input: {
-  config: ResolvedConfig;
-  localTasks: readonly string[];
-}): Promise<Record<string, PullRequestSummary[]>> {
-  const { config, localTasks } = input;
-  const wanted = new Set(localTasks);
-  const entries = worktrees.list(config).filter((entry) => wanted.has(entry.task));
+async function collectPullRequests(
+  targets: readonly PullRequestTarget[],
+): Promise<Record<string, PullRequestSummary[]>> {
   const results = await Promise.allSettled(
-    entries.map(async (entry) => {
-      const branchName = await effectiveBranchNameFromRunState({
-        entry,
-        runState: readRunState(config, entry.task),
-      });
-      return [entry.task, await findPullRequestsForBranch({ cwd: entry.dir, branchName })] as const;
-    }),
+    targets.map(
+      async (target) =>
+        [
+          target.task,
+          await findPullRequestsForBranch({ cwd: target.dir, branchName: target.branch }),
+        ] as const,
+    ),
   );
   const byTask: Record<string, PullRequestSummary[]> = {};
   for (const result of results) {

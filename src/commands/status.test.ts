@@ -1385,6 +1385,26 @@ describe(status, () => {
     expect(output).not.toContain("session dead");
     expect(output).toContain("Workspace probe unavailable: cmux unavailable");
   });
+
+  // The snapshot document groups worktrees under one task while the inventory
+  // prints one row per worktree. This pins the flatten order across that
+  // regrouping.
+  it("prints one row per worktree, in list order, when a task has two", async () => {
+    listWorktreesMock.mockReturnValue([
+      worktree({ repository: "repo-a", dir: "/work/repo-a-team-1" }),
+      worktree({ repository: "repo-b", dir: "/work/repo-b-team-1" }),
+    ]);
+
+    await status(makeConfig());
+
+    const output = consoleLog.output();
+
+    expect(output).toContain("/work/repo-a-team-1");
+    expect(output).toContain("/work/repo-b-team-1");
+    expect(output.indexOf("/work/repo-a-team-1")).toBeLessThan(
+      output.indexOf("/work/repo-b-team-1"),
+    );
+  });
 });
 
 describe(statusCli, () => {
