@@ -9,7 +9,7 @@
 import type { ResolvedConfig } from "../lib/config.ts";
 import { createRepeatedFailureLog } from "../lib/repeatedFailures.ts";
 import { naturalIdFromCanonical, type BoardState } from "../lib/taskSource.ts";
-import { log, logEvent } from "../lib/util.ts";
+import { debug, log, logEvent } from "../lib/util.ts";
 import type { WorktreeEntry } from "../lib/worktrees.ts";
 import { reapWorktrees } from "./teardownReporter.ts";
 
@@ -68,7 +68,7 @@ export function createCleaner(deps: CleanerDeps): Cleaner {
       return;
     }
 
-    log(`Cleaning up ${stale.length} terminal worktree(s)`);
+    debug(`Cleaning up ${stale.length} terminal worktree(s)`);
     await reapWorktrees(config, stale, { signal, failureLog });
   }
 

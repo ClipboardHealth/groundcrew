@@ -340,4 +340,18 @@ describe(createCleaner, () => {
       linesContaining("Cleanup still blocked for team-1 (host) after 30 attempts"),
     ).toHaveLength(1);
   });
+
+  it("keeps the batch announcement off the console", async () => {
+    setVerbose(false);
+    const cleaner = createCleaner({ config: makeConfig() });
+    teardownMock.mockResolvedValue(
+      emptyTeardownResult({ removed: [hostEntryFor("repo-a", "team-1")] }),
+    );
+
+    await pollTimes(1, cleaner);
+
+    const out = consoleLog.output();
+    expect(out).not.toContain("terminal worktree(s)");
+    expect(out).toContain("Cleanup complete for team-1");
+  });
 });
