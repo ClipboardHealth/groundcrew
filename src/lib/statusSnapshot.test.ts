@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -199,8 +199,8 @@ describe("writeRemoteSnapshot", () => {
 
     writeRemoteSnapshot({ config, document: makeDocument() });
 
-    const actual = readFileSync(remoteSnapshotPath(config), "utf8");
+    const actual = readdirSync(directory);
 
-    expect(JSON.parse(actual).schemaVersion).toBe(STATUS_SNAPSHOT_SCHEMA_VERSION);
+    expect(actual).toEqual(["status-remote.json"]);
   });
 });

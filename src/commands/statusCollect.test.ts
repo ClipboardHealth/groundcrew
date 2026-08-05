@@ -72,6 +72,17 @@ vi.mock(import("../lib/worktreeRunState.ts"), async (importOriginal) => {
 let directory: string;
 let mockConfig: ResolvedConfig;
 
+// The collector reads only these three fields; everything else it receives is
+// passed straight to mocked collaborators. One assertion here beats scattering
+// partial fixtures across the describe blocks.
+function makeConfig(logDirectory: string): ResolvedConfig {
+  return {
+    sources: [],
+    logging: { file: path.join(logDirectory, "groundcrew.log") },
+    orchestrator: { maximumInProgress: 4 },
+  } as unknown as ResolvedConfig;
+}
+
 function makeEntry(overrides: Partial<WorktreeEntry> = {}): WorktreeEntry {
   return {
     repository: "groundcrew",
@@ -103,10 +114,7 @@ function makeRunState(overrides: Partial<RunState> = {}): RunState {
 describe("collectLocalStatus", () => {
   beforeEach(() => {
     directory = mkdtempSync(path.join(tmpdir(), "gc-collect-"));
-    mockConfig = {
-      logging: { file: path.join(directory, "groundcrew.log") },
-      orchestrator: { maximumInProgress: 4 },
-    } as ResolvedConfig;
+    mockConfig = makeConfig(directory);
     vi.mocked(worktrees.list).mockReturnValue([makeEntry()]);
     vi.mocked(worktrees.probeWorkingTree).mockResolvedValue({ kind: "clean" });
     vi.mocked(workspaces.probe).mockResolvedValue({ kind: "ok", names: new Set(["eng-220"]) });
@@ -241,6 +249,21 @@ describe("collectLocalStatus", () => {
     expect(actual.tasks[0]?.recentLogLines).toEqual([]);
   });
 
+  it("discards the partial line a tail read starts in the middle of", async () => {
+    // The cut lands inside this line, and its tail fragment mentions the task.
+    // Treating that fragment as a log line would attribute text to eng-220
+    // that was never written about it.
+    const oversizedLine = `${"x".repeat(300_000)} eng-220 fragment`;
+    writeFileSync(
+      mockConfig.logging.file,
+      [oversizedLine, "[10:00:00] eng-220 real line"].join("\n"),
+    );
+
+    const actual = await collectLocalStatus({ config: mockConfig });
+
+    expect(actual.tasks[0]?.recentLogLines).toEqual(["[10:00:00] eng-220 real line"]);
+  });
+
   it("survives a missing log file", async () => {
     const actual = await collectLocalStatus({ config: mockConfig });
 
@@ -323,11 +346,7 @@ describe("workspaceProbeUnavailableText", () => {
 describe("collectRemoteStatus", () => {
   beforeEach(() => {
     directory = mkdtempSync(path.join(tmpdir(), "gc-remote-"));
-    mockConfig = {
-      logging: { file: path.join(directory, "groundcrew.log") },
-      orchestrator: { maximumInProgress: 4 },
-      sources: [],
-    } as unknown as ResolvedConfig;
+    mockConfig = makeConfig(directory);
   });
 
   afterEach(() => {
@@ -411,7 +430,12 @@ describe("collectRemoteStatus", () => {
     );
 
     expect(actual.queueBlocked[0]?.blockedBy).toEqual([
-      { id: "linear:eng-201", status: "in-progress", nativeStatus: "In Progress" },
+      {
+        id: "linear:eng-201",
+        naturalId: "eng-201",
+        status: "in-progress",
+        nativeStatus: "In Progress",
+      },
     ]);
   });
 

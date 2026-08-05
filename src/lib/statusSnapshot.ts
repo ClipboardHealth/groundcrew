@@ -4,14 +4,16 @@
  * sessions — collectors build these shapes, `statusJoin` combines them.
  */
 
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
+
+import { writeJsonAtomic } from "./atomicJson.ts";
 
 import type { ResolvedConfig } from "./config.ts";
 import type { PullRequestSummary } from "./pullRequests.ts";
 import type { RunLifecycleState } from "./runState.ts";
 import type { CanonicalStatus } from "./taskSource.ts";
-import type { WorktreeDirtiness } from "./worktrees.ts";
+import type { WorktreeDirtiness, WorktreeKind } from "./worktrees.ts";
 
 /**
  * Contract version for both documents. Bump on any breaking shape change;
@@ -25,7 +27,7 @@ export type StatusLifecycle = RunLifecycleState | "idle";
 
 export interface StatusWorktree {
   repository: string;
-  kind: string;
+  kind: WorktreeKind;
   dir: string;
   branch: string;
   git: WorktreeDirtiness;
@@ -36,13 +38,15 @@ export interface StatusTask {
   task: string;
   title: string | undefined;
   url: string | undefined;
-  repository: string;
   agent: string | undefined;
   lifecycle: StatusLifecycle;
   /** Probe-reconciliation flags, e.g. "session dead". Never a duration. */
   flags: string[];
-  /** RunState.createdAt. Readers derive elapsed time; a stored duration in a
-   * cached document shows a frozen clock. */
+  /**
+   * When the run was first recorded. Readers derive elapsed time themselves:
+   * a duration stored in a cached document shows a frozen clock, which reads
+   * as "the agent stopped working" when it did not.
+   */
   startedAt: string | undefined;
   updatedAt: string | undefined;
   resumeCount: number | undefined;
@@ -90,6 +94,7 @@ export interface StatusQueueIssue extends StatusBoardIssue {
 
 export interface StatusBlocker {
   id: string;
+  naturalId: string;
   status: CanonicalStatus;
   nativeStatus: string | undefined;
 }
@@ -184,7 +189,7 @@ export interface WriteLocalSnapshotInput {
 
 export function writeLocalSnapshot(input: WriteLocalSnapshotInput): void {
   const { config, document } = input;
-  writeDocument(localSnapshotPath(config), document);
+  writeJsonAtomic(localSnapshotPath(config), document);
 }
 
 export interface WriteRemoteSnapshotInput {
@@ -209,15 +214,11 @@ export function writeRemoteSnapshot(input: WriteRemoteSnapshotInput): RemoteStat
   if (existing !== undefined && existing.lastAttemptAt > document.lastAttemptAt) {
     return existing;
   }
-  writeDocument(remoteSnapshotPath(config), document);
+  writeJsonAtomic(remoteSnapshotPath(config), document);
   return document;
 }
 
-/**
- * Reads the persisted remote document, or undefined when it is missing,
- * unreadable, corrupt, or written by an incompatible schema version. A
- * missing snapshot is an ordinary first-run state, not an error.
- */
+/** A missing or unreadable snapshot is an ordinary first-run state, not an error. */
 export function readRemoteSnapshot(config: LoggingConfig): RemoteStatusDocument | undefined {
   let raw: string;
   try {
@@ -234,22 +235,17 @@ export function readRemoteSnapshot(config: LoggingConfig): RemoteStatusDocument 
   return isRemoteStatusDocument(parsed) ? parsed : undefined;
 }
 
-function isRemoteStatusDocument(value: unknown): value is RemoteStatusDocument {
-  if (typeof value !== "object" || value === null) {
-    return false;
-  }
-  const candidate: Record<string, unknown> = { ...value };
-  return (
-    candidate["schemaVersion"] === STATUS_SNAPSHOT_SCHEMA_VERSION &&
-    typeof candidate["lastAttemptAt"] === "string" &&
-    (candidate["lastAttemptStatus"] === "ok" || candidate["lastAttemptStatus"] === "unavailable")
-  );
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function writeDocument(filePath: string, document: unknown): void {
-  mkdirSync(path.dirname(filePath), { recursive: true });
-  // Write-then-rename so a concurrent reader never observes a partial file.
-  const tmpPath = `${filePath}.${process.pid}.tmp`;
-  writeFileSync(tmpPath, `${JSON.stringify(document, undefined, 2)}\n`, { mode: 0o600 });
-  renameSync(tmpPath, filePath);
+function isRemoteStatusDocument(value: unknown): value is RemoteStatusDocument {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return (
+    value["schemaVersion"] === STATUS_SNAPSHOT_SCHEMA_VERSION &&
+    typeof value["lastAttemptAt"] === "string" &&
+    (value["lastAttemptStatus"] === "ok" || value["lastAttemptStatus"] === "unavailable")
+  );
 }

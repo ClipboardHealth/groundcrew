@@ -11,7 +11,6 @@ function makeTask(task: string): StatusTask {
     task,
     title: undefined,
     url: undefined,
-    repository: "groundcrew",
     agent: undefined,
     lifecycle: "running",
     flags: [],
@@ -95,7 +94,14 @@ function makeRemote(): RemoteStatusDocument {
           url: undefined,
           repository: "groundcrew",
           agent: "opus",
-          blockedBy: [{ id: "linear:eng-201", status: "in-progress", nativeStatus: undefined }],
+          blockedBy: [
+            {
+              id: "linear:eng-201",
+              naturalId: "eng-201",
+              status: "in-progress",
+              nativeStatus: undefined,
+            },
+          ],
         },
       ],
     },
@@ -135,7 +141,12 @@ describe("joinStatus", () => {
     const actual = joinStatus({ local: makeLocal([]), remote: makeRemote() });
 
     expect(actual.queueBlocked[0]?.blockedBy).toEqual([
-      { id: "linear:eng-201", status: "in-progress", nativeStatus: undefined },
+      {
+        id: "linear:eng-201",
+        naturalId: "eng-201",
+        status: "in-progress",
+        nativeStatus: undefined,
+      },
     ]);
   });
 

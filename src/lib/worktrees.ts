@@ -635,7 +635,10 @@ async function probeWorktreeDirtiness(
   try {
     output = await runCommandAsync(
       "git",
-      ["-C", worktreeDir, "status", "--porcelain"],
+      // --no-optional-locks: `crew status --json` is polled every few seconds,
+      // and without it each poll takes index.lock and rewrites the index,
+      // which can make a live agent's own git commands fail on the lock.
+      ["--no-optional-locks", "-C", worktreeDir, "status", "--porcelain"],
       signalProperty(signal),
     );
   } catch {

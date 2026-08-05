@@ -1,7 +1,5 @@
 import { readFileSync } from "node:fs";
 
-import { type Board, createBoard } from "../lib/board.ts";
-import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { findPullRequestsForBranch, type PullRequestSummary } from "../lib/pullRequests.ts";
 import { readRunState, type RunState } from "../lib/runState.ts";
@@ -10,8 +8,8 @@ import {
   buildRemoteDocument,
   type LocalStatusDocument,
   readRemoteSnapshot,
-  type RemoteFetchResult,
   type StatusBlockedIssue,
+  type StatusLifecycle,
   type StatusBoardIssue,
   type StatusQueueIssue,
   type StatusWorktree,
@@ -28,11 +26,15 @@ import { type WorkspaceAccessHint, type WorkspaceProbe, workspaces } from "../li
 import { type WorktreeDirtiness, worktrees } from "../lib/worktrees.ts";
 import { effectiveBranchNameFromRunState } from "../lib/worktreeRunState.ts";
 import {
+  buildBoard,
   collectLocalStatus,
   collectRemoteStatus,
+  disagreementLabel,
+  fetchBoardIssues,
   isWorkspaceExited,
+  probeDisagreement,
   type PullRequestTarget,
-  runProbeFlags,
+  recentTaskLogLines,
   workspaceProbeUnavailableText,
 } from "./statusCollect.ts";
 
@@ -44,17 +46,7 @@ export interface StatusOptions {
   localOnly?: boolean;
 }
 
-const RECENT_LOG_LINE_COUNT = 10;
-
 const STATUS_USAGE = "Usage: crew status [<task>] [--json [--local-only]]";
-
-function escapeRegExp(value: string): string {
-  return value.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
-}
-
-function taskLinePattern(task: string): RegExp {
-  return new RegExp(`(^|[^a-z0-9])${escapeRegExp(task)}([^a-z0-9]|$)`, "i");
-}
 
 function parseArguments(argv: string[]): StatusOptions {
   const options: StatusOptions = {};
@@ -71,9 +63,6 @@ function parseArguments(argv: string[]): StatusOptions {
       throw new Error(STATUS_USAGE);
     }
     options.task = argument.toLowerCase();
-  }
-  if (options.localOnly === true && options.json !== true) {
-    throw new Error("crew status: --local-only requires --json");
   }
   return options;
 }
@@ -143,25 +132,23 @@ function formatRunState(state: RunState | undefined, flags: readonly string[] = 
   return detail === undefined ? summary : `${summary}; ${detail}`;
 }
 
-function recentTaskLogLines(config: ResolvedConfig, task: string): string[] {
-  let raw: string;
+/**
+ * The one-shot per-task view reads the whole log rather than the bounded tail
+ * the pollable collector uses, so an old task still shows its history.
+ */
+function wholeLogLines(config: ResolvedConfig): string[] {
   try {
-    raw = readFileSync(config.logging.file, "utf8");
+    return readFileSync(config.logging.file, "utf8").split("\n");
   } catch {
     return [];
   }
-  const pattern = taskLinePattern(task);
-  return raw
-    .split("\n")
-    .filter((line) => pattern.test(line))
-    .slice(-RECENT_LOG_LINE_COUNT);
 }
 
 async function resolveTaskSource(
   config: ResolvedConfig,
   task: string,
 ): Promise<SourceIssue | undefined> {
-  const board = await buildBoardForStatus(config);
+  const board = await buildBoard(config);
   return await withLogOutputSuppressed(async () => await board.resolveOne(task));
 }
 
@@ -186,7 +173,7 @@ async function readTaskSourceStatus(
 }
 
 function writeRecentLogs(config: ResolvedConfig, task: string): void {
-  const logLines = recentTaskLogLines(config, task);
+  const logLines = recentTaskLogLines({ lines: wholeLogLines(config), task });
   if (logLines.length === 0) {
     return;
   }
@@ -258,8 +245,13 @@ async function writeTaskStatus(config: ResolvedConfig, rawTask: string): Promise
   const accessHint = await exitedWorkspaceAccessHint(config, workspaceProbe, task);
   writeOutput(formatTaskLine(task, runState, sourceStatus));
   writeTaskTitle(runState, sourceStatus);
+  const disagreement = probeDisagreement({
+    lifecycle: runState?.state ?? "idle",
+    probe: workspaceProbe,
+    task,
+  });
   writeOutput(
-    `run: ${formatRunState(runState, runProbeFlags({ runState, probe: workspaceProbe, task }))}`,
+    `run: ${formatRunState(runState, disagreement === undefined ? [] : [disagreementLabel(disagreement)])}`,
   );
   writeOutput(`workspace: ${taskWorkspaceText(workspaceProbe, task)}`);
   if (accessHint !== undefined) {
@@ -271,13 +263,11 @@ async function writeTaskStatus(config: ResolvedConfig, rawTask: string): Promise
 }
 
 /**
- * Wall-clock elapsed time since the run was first recorded (RunState.createdAt
- * is preserved across resume/interrupt). Returns undefined when the row isn't
- * actively running, when no run state exists, or when the timestamp cannot
- * be parsed.
+ * Wall-clock time since the run was first recorded. Undefined unless the row is
+ * actively running, so an idle or finished row shows no age.
  */
 function runDurationMs(input: {
-  lifecycle: string;
+  lifecycle: StatusLifecycle;
   startedAt: string | undefined;
   now: Date;
 }): number | undefined {
@@ -314,12 +304,7 @@ function formatDuration(ms: number): string {
   return hours === 0 ? `${days}d` : `${days}d ${hours}h`;
 }
 
-/**
- * Combined human-readable state for the inventory row. The collector already
- * resolved the lifecycle and the probe-disagreement flags; this appends the
- * elapsed wall-clock time, which is derived at render time so a row never
- * shows a frozen clock.
- */
+/** Elapsed time is derived here, never stored, so a row cannot show a stale age. */
 function inventoryStateText(task: JoinedTask, now: Date): string {
   const flags = [...task.flags];
   const duration = runDurationMs({ lifecycle: task.lifecycle, startedAt: task.startedAt, now });
@@ -349,10 +334,7 @@ function formatTaskStatus(canonicalStatus: CanonicalStatus): string {
   return canonicalStatus === "in-progress" ? "in-progress (slot held)" : canonicalStatus;
 }
 
-/**
- * One row per worktree. The joined document groups worktrees under their task,
- * so this flattens them back in collection order.
- */
+/** The document groups worktrees by task; rows are per worktree. */
 function writeInventoryWorktrees(joined: JoinedStatus, now: Date): void {
   writeSection("Worktrees");
   const rows = joined.tasks.flatMap((task) =>
@@ -438,16 +420,11 @@ function writeQueueIssue(issue: StatusQueueIssue): void {
   writeOutput(inventoryField("agent", issue.agent));
 }
 
-async function buildBoardForStatus(config: ResolvedConfig): Promise<Board> {
-  const sources = await buildSources(sourcesFromConfig(config), { globalConfig: config });
-  return createBoard(sources);
-}
-
-function writeQueueSections(input: { joined: JoinedStatus; result: RemoteFetchResult }): void {
-  const { joined, result } = input;
-  if (result.kind === "error") {
+function writeQueueSections(input: { joined: JoinedStatus; boardError: string | undefined }): void {
+  const { joined, boardError } = input;
+  if (boardError !== undefined) {
     writeSection("Queue");
-    writeOutput(`unavailable: ${result.message}`);
+    writeOutput(`unavailable: ${boardError}`);
     return;
   }
 
@@ -485,10 +462,7 @@ function writeInProgressIssue(issue: StatusBoardIssue): void {
   }
 }
 
-/**
- * Pull request lookups reuse the branches the local pass already resolved, so
- * the remote pass never re-reads run state or re-resolves a branch.
- */
+/** Reuses the branches the local pass resolved, so the remote pass re-reads nothing. */
 function pullRequestTargetsOf(local: LocalStatusDocument): PullRequestTarget[] {
   return local.tasks.flatMap((task) =>
     task.worktrees.map((worktree) => ({
@@ -518,17 +492,19 @@ function writeInProgressWithoutWorktree(joined: JoinedStatus): void {
 }
 
 /**
- * Collects both tiers and renders the joined view.
- *
  * `previous: undefined` is deliberate. Carry-forward is a monitor concern: a
  * one-shot text run must report only what this attempt saw, or a failed fetch
  * would print a queue recovered from an old snapshot where it prints
  * "unavailable" today.
  */
 async function writeInventoryStatus(config: ResolvedConfig): Promise<void> {
+  // The board fetch needs nothing local, so start it before awaiting the
+  // local pass; only the pull request lookups depend on resolved branches.
+  const boardPromise = fetchBoardIssues(config);
   const local = await collectLocalStatus({ config });
   const result = await collectRemoteStatus({
     config,
+    board: await boardPromise,
     pullRequestTargets: pullRequestTargetsOf(local),
   });
   const remote = buildRemoteDocument({
@@ -546,7 +522,7 @@ async function writeInventoryStatus(config: ResolvedConfig): Promise<void> {
     writeOutput();
     writeOutput(`slots: ${joined.slots.used}/${joined.slots.maximum} used`);
   }
-  writeQueueSections({ joined, result });
+  writeQueueSections({ joined, boardError: result.kind === "error" ? result.message : undefined });
 }
 
 /**
@@ -562,14 +538,17 @@ async function writeJsonStatus(input: {
   localOnly: boolean;
 }): Promise<void> {
   const { config, localOnly } = input;
+  // Started only in the full form, so --local-only never touches the network.
+  const boardPromise = localOnly ? undefined : fetchBoardIssues(config);
   const local = await collectLocalStatus({ config });
   writeLocalSnapshot({ config, document: local });
-  if (localOnly) {
+  if (boardPromise === undefined) {
     writeOutput(JSON.stringify({ local }, undefined, 2));
     return;
   }
   const result = await collectRemoteStatus({
     config,
+    board: await boardPromise,
     pullRequestTargets: pullRequestTargetsOf(local),
   });
   // Print what landed on disk, not what we built. When the monotonic guard
@@ -586,12 +565,24 @@ async function writeJsonStatus(input: {
   writeOutput(JSON.stringify({ local, remote }, undefined, 2));
 }
 
+/**
+ * The option combinations the command refuses. Lives apart from
+ * `parseArguments` so the exported `status` enforces it too: a library caller
+ * passing `localOnly` without `json` must not silently get the text path.
+ */
+function assertSupportedOptions(options: StatusOptions): void {
+  if (options.localOnly === true && options.json !== true) {
+    throw new Error("crew status: --local-only requires --json");
+  }
+  if (options.json === true && options.task !== undefined) {
+    throw new Error("crew status: --json is not supported for a single task");
+  }
+}
+
 export async function status(config: ResolvedConfig, options: StatusOptions = {}): Promise<void> {
+  assertSupportedOptions(options);
   const task = options.task?.trim();
   if (options.json === true) {
-    if (task !== undefined) {
-      throw new Error("crew status: --json is not supported for a single task");
-    }
     await writeJsonStatus({ config, localOnly: options.localOnly === true });
     return;
   }
@@ -607,6 +598,8 @@ export async function status(config: ResolvedConfig, options: StatusOptions = {}
 
 export async function statusCli(argv: string[]): Promise<void> {
   const options = parseArguments(argv);
+  // Validate before loading config so a bad flag combination fails fast.
+  assertSupportedOptions(options);
   const config = await loadConfig();
   await status(config, options);
 }
