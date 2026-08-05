@@ -40,6 +40,8 @@ export {
 } from "./lib/statusJoin.ts";
 export {
   type AvailabilityStatus,
+  type BoardOutcome,
+  type RemoteFetchResult,
   type LocalStatusDocument,
   localSnapshotPath,
   readLocalSnapshot,

@@ -60,7 +60,7 @@ export function joinStatus(input: JoinStatusInput): JoinedStatus {
     boardStatus: payload?.statusByTask[task.task],
     worktrees: task.worktrees.map((worktree) => ({
       ...worktree,
-      pullRequests: payload?.pullRequestsByWorktree[worktree.dir] ?? [],
+      pullRequests: remote?.pullRequestsByWorktree[worktree.dir] ?? [],
     })),
   }));
 

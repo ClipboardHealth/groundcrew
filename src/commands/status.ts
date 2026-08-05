@@ -25,7 +25,6 @@ import {
 import {
   buildRemoteDocument,
   type LocalStatusDocument,
-  readRemoteSnapshot,
   type RemoteFetchResult,
   type RemoteStatusDocument,
   type StatusBlockedIssue,
@@ -485,7 +484,6 @@ function writeInProgressIssue(issue: StatusBoardIssue): void {
 function pullRequestTargetsOf(local: LocalStatusDocument): PullRequestTarget[] {
   return local.tasks.flatMap((task) =>
     task.worktrees.map((worktree) => ({
-      task: task.task,
       dir: worktree.dir,
       branch: worktree.branch,
     })),
@@ -513,6 +511,7 @@ function writeInProgressWithoutWorktree(joined: JoinedStatus): void {
 interface CollectedTiers {
   local: LocalStatusDocument;
   remote: RemoteStatusDocument;
+  attemptAt: string;
   result: RemoteFetchResult;
 }
 
@@ -532,20 +531,15 @@ async function collectBothTiers(input: {
   const boardPromise = fetchBoardIssues(config);
   const local = await collectLocalStatus({ config });
   const result = await collectRemoteStatus({
-    config,
     board: await boardPromise,
     pullRequestTargets: pullRequestTargetsOf(local),
   });
-  const remote = buildRemoteDocument({
-    previous,
-    attemptAt: new Date().toISOString(),
-    result,
-  });
-  return { local, remote, result };
+  const attemptAt = new Date().toISOString();
+  return { local, remote: buildRemoteDocument({ previous, attemptAt, result }), attemptAt, result };
 }
 
 async function writeInventoryStatus(config: ResolvedConfig): Promise<void> {
-  const { local, remote, result } = await collectBothTiers({ config, previous: undefined });
+  const { local, remote } = await collectBothTiers({ config, previous: undefined });
   const joined = joinStatus({ local, remote });
   const now = new Date();
 
@@ -556,7 +550,7 @@ async function writeInventoryStatus(config: ResolvedConfig): Promise<void> {
     writeOutput();
     writeOutput(`slots: ${joined.slots.used}/${joined.slots.maximum} used`);
   }
-  writeQueueSections({ joined, boardError: result.kind === "error" ? result.message : undefined });
+  writeQueueSections({ joined, boardError: remote.lastAttemptError });
 }
 
 /**
@@ -579,12 +573,17 @@ async function writeJsonStatus(input: {
     writeOutput(JSON.stringify({ local }, undefined, 2));
     return;
   }
-  const collected = await collectBothTiers({ config, previous: readRemoteSnapshot(config) });
+  const collected = await collectBothTiers({ config, previous: undefined });
   // Print what landed on disk, not what we built. When a monotonic guard
   // rejects our document because a concurrent run wrote a newer one, the two
-  // differ, and stdout must never contradict the file.
+  // differ, and stdout must never contradict the file. writeRemoteSnapshot
+  // owns the carry-forward merge so it reads the file exactly once.
   const local = writeLocalSnapshot({ config, document: collected.local });
-  const remote = writeRemoteSnapshot({ config, document: collected.remote });
+  const remote = writeRemoteSnapshot({
+    config,
+    attemptAt: collected.attemptAt,
+    result: collected.result,
+  });
   writeOutput(JSON.stringify({ local, remote }, undefined, 2));
 }
 

@@ -115,21 +115,19 @@ export async function collectLocalStatus(
 
 /** The subset of a collected worktree a pull request lookup needs. */
 export interface PullRequestTarget {
-  task: string;
   dir: string;
   branch: string;
 }
 
 export interface CollectRemoteStatusInput {
-  config: ResolvedConfig;
+  /** The board fetch, started by the caller so it can overlap the local pass. */
+  board: BoardFetch;
   /**
    * Worktrees from the local tier. Passing the already-resolved branch keeps
    * this collector from re-reading run state and re-resolving branches that
    * the local pass just computed.
    */
   pullRequestTargets: readonly PullRequestTarget[];
-  /** A board fetch already in flight. Omit to fetch inline. */
-  board?: BoardFetch;
 }
 
 /** One board fetch attempt. A failure is a value here, never a throw. */
@@ -163,10 +161,10 @@ export async function fetchBoardIssues(config: ResolvedConfig): Promise<BoardFet
 export async function collectRemoteStatus(
   input: CollectRemoteStatusInput,
 ): Promise<RemoteFetchResult> {
-  const { config, pullRequestTargets } = input;
-  const board = input.board ?? (await fetchBoardIssues(config));
+  const { board, pullRequestTargets } = input;
+  const pullRequestsByWorktree = await collectPullRequests(pullRequestTargets);
   if (board.kind === "error") {
-    return { kind: "error", message: board.message };
+    return { board, pullRequestsByWorktree };
   }
   const { issues } = board;
 
@@ -175,21 +173,23 @@ export async function collectRemoteStatus(
   const todos = issues.filter((issue) => issue.status === "todo").filter(isGroundcrewIssue);
 
   return {
-    kind: "ok",
-    payload: {
-      capturedAt: new Date().toISOString(),
-      statusByTask: statusByTask(issues),
-      pullRequestsByWorktree: await collectPullRequests(pullRequestTargets),
-      inProgress: issues
-        .filter((issue) => issue.status === "in-progress")
-        .toSorted((left, right) => left.id.localeCompare(right.id))
-        .map((issue) => toBoardIssue(issue)),
-      queueReady: todos
-        .filter((issue) => !hasOpenBlocker(issue))
-        .map((issue) => toQueueIssue(issue)),
-      queueBlocked: todos
-        .filter((issue) => hasOpenBlocker(issue))
-        .map((issue) => toBlockedIssue(issue)),
+    pullRequestsByWorktree,
+    board: {
+      kind: "ok",
+      payload: {
+        capturedAt: new Date().toISOString(),
+        statusByTask: statusByTask(issues),
+        inProgress: issues
+          .filter((issue) => issue.status === "in-progress")
+          .toSorted((left, right) => left.id.localeCompare(right.id))
+          .map((issue) => toBoardIssue(issue)),
+        queueReady: todos
+          .filter((issue) => !hasOpenBlocker(issue))
+          .map((issue) => toQueueIssue(issue)),
+        queueBlocked: todos
+          .filter((issue) => hasOpenBlocker(issue))
+          .map((issue) => toBlockedIssue(issue)),
+      },
     },
   };
 }
@@ -369,8 +369,10 @@ function readLogTail(config: ResolvedConfig): string[] {
     const length = Math.min(size, LOG_TAIL_BYTES);
     const start = size - length;
     const buffer = Buffer.alloc(length);
-    readSync(handle, buffer, 0, length, start);
-    const lines = buffer.toString("utf8").split("\n");
+    const bytesRead = readSync(handle, buffer, 0, length, start);
+    // Decode only what was read: a log rotated between the stat and the read
+    // leaves the rest of the buffer zero-filled, which would publish NULs.
+    const lines = buffer.toString("utf8", 0, bytesRead).split("\n");
     // A bounded read starts mid-line, so the leading fragment is not a log
     // line and must not be matched against a task id.
     return start > 0 ? lines.slice(1) : lines;
@@ -435,6 +437,9 @@ function statusByTask(issues: readonly SourceIssue[]): Record<string, CanonicalS
 async function collectPullRequests(
   targets: readonly PullRequestTarget[],
 ): Promise<Record<string, PullRequestSummary[]>> {
+  // allSettled, not all: one worktree whose lookup throws must not take down
+  // the whole status run, which is what the base command guaranteed. An empty
+  // or missing entry therefore means "none found, or the lookup failed".
   const results = await Promise.allSettled(
     targets.map(
       async (target) =>

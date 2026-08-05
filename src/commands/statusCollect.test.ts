@@ -13,6 +13,8 @@ import type { RemoteFetchResult, RemoteStatusPayload } from "../lib/statusSnapsh
 import {
   collectLocalStatus,
   collectRemoteStatus,
+  fetchBoardIssues,
+  type PullRequestTarget,
   workspaceProbeUnavailableText,
 } from "./statusCollect.ts";
 
@@ -315,15 +317,26 @@ function mockBoardFetchRejection(error: Error): void {
 }
 
 /**
- * Narrows a fetch result to its payload so tests assert without branching.
- * A failed fetch fails the test here rather than inside an `if`.
+ * Narrows a fetch result to its board payload so tests assert without
+ * branching. A failed board fetch fails the test here, not inside an `if`.
  */
 function expectPayload(result: RemoteFetchResult): RemoteStatusPayload {
-  expect(result.kind).toBe("ok");
-  if (result.kind !== "ok") {
+  expect(result.board.kind).toBe("ok");
+  if (result.board.kind !== "ok") {
     throw new Error("unreachable: the assertion above already failed");
   }
-  return result.payload;
+  return result.board.payload;
+}
+
+async function collectWithBoard(
+  issues: SourceIssue[],
+  pullRequestTargets: PullRequestTarget[] = [],
+): Promise<RemoteFetchResult> {
+  mockBoardFetch(issues);
+  return await collectRemoteStatus({
+    board: await fetchBoardIssues(mockConfig),
+    pullRequestTargets,
+  });
 }
 
 describe("workspaceProbeUnavailableText", () => {
@@ -355,18 +368,16 @@ describe("collectRemoteStatus", () => {
   });
 
   it("classifies board issues without subtracting local worktrees", async () => {
-    mockBoardFetch([
-      makeIssue({ id: "linear:eng-220", status: "in-progress" }),
-      makeIssue({ id: "linear:eng-225", status: "todo" }),
-      makeIssue({
-        id: "linear:eng-215",
-        status: "todo",
-        blockers: [makeBlocker({ id: "linear:eng-201" })],
-      }),
-    ]);
-
     const actual = expectPayload(
-      await collectRemoteStatus({ config: mockConfig, pullRequestTargets: [] }),
+      await collectWithBoard([
+        makeIssue({ id: "linear:eng-220", status: "in-progress" }),
+        makeIssue({ id: "linear:eng-225", status: "todo" }),
+        makeIssue({
+          id: "linear:eng-215",
+          status: "todo",
+          blockers: [makeBlocker({ id: "linear:eng-201" })],
+        }),
+      ]),
     );
 
     expect(actual.inProgress.map((issue) => issue.naturalId)).toEqual(["eng-220"]);
@@ -375,58 +386,56 @@ describe("collectRemoteStatus", () => {
   });
 
   it("keeps an in-progress issue in the payload even when it has a local worktree", async () => {
-    mockBoardFetch([makeIssue({ id: "linear:eng-220", status: "in-progress" })]);
-
     const actual = expectPayload(
-      await collectRemoteStatus({
-        config: mockConfig,
-        pullRequestTargets: [{ task: "eng-220", dir: "/repos/eng-220", branch: "eng-220" }],
-      }),
+      await collectWithBoard(
+        [makeIssue({ id: "linear:eng-220", status: "in-progress" })],
+        [{ dir: "/repos/eng-220", branch: "eng-220" }],
+      ),
     );
 
     expect(actual.inProgress).toHaveLength(1);
   });
 
   it("excludes a todo that no agent can dispatch", async () => {
-    mockBoardFetch([makeIssue({ id: "linear:eng-225", status: "todo", agent: undefined })]);
-
     const actual = expectPayload(
-      await collectRemoteStatus({ config: mockConfig, pullRequestTargets: [] }),
+      await collectWithBoard([
+        makeIssue({ id: "linear:eng-225", status: "todo", agent: undefined }),
+      ]),
     );
 
     expect(actual.queueReady).toEqual([]);
   });
 
   it("treats a todo whose blockers are all done as ready", async () => {
-    mockBoardFetch([
-      makeIssue({
-        id: "linear:eng-225",
-        status: "todo",
-        blockers: [makeBlocker({ id: "linear:eng-201", status: "done" })],
-      }),
-    ]);
-
     const actual = expectPayload(
-      await collectRemoteStatus({ config: mockConfig, pullRequestTargets: [] }),
+      await collectWithBoard([
+        makeIssue({
+          id: "linear:eng-225",
+          status: "todo",
+          blockers: [makeBlocker({ id: "linear:eng-201", status: "done" })],
+        }),
+      ]),
     );
 
     expect(actual.queueReady.map((issue) => issue.naturalId)).toEqual(["eng-225"]);
   });
 
   it("keeps only the open blockers on a blocked issue", async () => {
-    mockBoardFetch([
-      makeIssue({
-        id: "linear:eng-215",
-        status: "todo",
-        blockers: [
-          makeBlocker({ id: "linear:eng-200", status: "done" }),
-          makeBlocker({ id: "linear:eng-201", status: "in-progress", nativeStatus: "In Progress" }),
-        ],
-      }),
-    ]);
-
     const actual = expectPayload(
-      await collectRemoteStatus({ config: mockConfig, pullRequestTargets: [] }),
+      await collectWithBoard([
+        makeIssue({
+          id: "linear:eng-215",
+          status: "todo",
+          blockers: [
+            makeBlocker({ id: "linear:eng-200", status: "done" }),
+            makeBlocker({
+              id: "linear:eng-201",
+              status: "in-progress",
+              nativeStatus: "In Progress",
+            }),
+          ],
+        }),
+      ]),
     );
 
     expect(actual.queueBlocked[0]?.blockedBy).toEqual([
@@ -440,29 +449,24 @@ describe("collectRemoteStatus", () => {
   });
 
   it("omits an ambiguous natural id from statusByTask", async () => {
-    mockBoardFetch([
-      makeIssue({ id: "linear:eng-220", status: "in-progress" }),
-      makeIssue({ id: "shell:eng-220", status: "todo", source: "shell" }),
-    ]);
-
     const actual = expectPayload(
-      await collectRemoteStatus({ config: mockConfig, pullRequestTargets: [] }),
+      await collectWithBoard([
+        makeIssue({ id: "linear:eng-220", status: "in-progress" }),
+        makeIssue({ id: "shell:eng-220", status: "todo", source: "shell" }),
+      ]),
     );
 
     expect(actual.statusByTask["eng-220"]).toBeUndefined();
   });
 
   it("looks up pull requests with the branch the local tier already resolved", async () => {
-    mockBoardFetch([]);
     vi.mocked(findPullRequestsForBranch).mockResolvedValue([
       { url: "https://example.test/1", number: 1, state: "open", title: "PR" },
     ]);
 
-    const actual = expectPayload(
-      await collectRemoteStatus({
-        config: mockConfig,
-        pullRequestTargets: [{ task: "eng-220", dir: "/repos/eng-220", branch: "adopted-branch" }],
-      }),
+    const actual = await collectWithBoard(
+      [],
+      [{ dir: "/repos/eng-220", branch: "adopted-branch" }],
     );
 
     expect(actual.pullRequestsByWorktree["/repos/eng-220"]).toHaveLength(1);
@@ -473,29 +477,30 @@ describe("collectRemoteStatus", () => {
   });
 
   it("never reads run state, since the local tier already did", async () => {
-    mockBoardFetch([]);
-
-    await collectRemoteStatus({
-      config: mockConfig,
-      pullRequestTargets: [{ task: "eng-220", dir: "/repos/eng-220", branch: "eng-220" }],
-    });
+    await collectWithBoard([], [{ dir: "/repos/eng-220", branch: "eng-220" }]);
 
     expect(readRunState).not.toHaveBeenCalled();
   });
 
   it("skips pull request lookups entirely when no task has a worktree", async () => {
-    mockBoardFetch([]);
-
-    await collectRemoteStatus({ config: mockConfig, pullRequestTargets: [] });
+    await collectWithBoard([]);
 
     expect(findPullRequestsForBranch).not.toHaveBeenCalled();
   });
 
-  it("returns an error result rather than throwing when the fetch fails", async () => {
+  // The board and `gh` share no data, so one failing must not hide the other.
+  it("still collects pull requests when the board fetch fails", async () => {
     mockBoardFetchRejection(new Error("Linear: 401 unauthorized"));
+    vi.mocked(findPullRequestsForBranch).mockResolvedValue([
+      { url: "https://example.test/1", number: 1, state: "open", title: "PR" },
+    ]);
 
-    const actual = await collectRemoteStatus({ config: mockConfig, pullRequestTargets: [] });
+    const actual = await collectRemoteStatus({
+      board: await fetchBoardIssues(mockConfig),
+      pullRequestTargets: [{ dir: "/repos/eng-220", branch: "eng-220" }],
+    });
 
-    expect(actual).toEqual({ kind: "error", message: "Linear: 401 unauthorized" });
+    expect(actual.board).toEqual({ kind: "error", message: "Linear: 401 unauthorized" });
+    expect(actual.pullRequestsByWorktree["/repos/eng-220"]).toHaveLength(1);
   });
 });

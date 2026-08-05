@@ -155,6 +155,11 @@ Two rules a reader must honor:
   from `inProgress`, `queueReady`, and `queueBlocked` yourself. Precomputing
   that join would report a just-dispatched task as still queued until the next
   slow poll, which is a false statement rather than stale data.
+- **Join pull requests on the worktree directory.** `pullRequestsByWorktree` is
+  keyed by absolute worktree path, not by task, because a task with two
+  worktrees has two branches. An empty or missing entry means no pull requests
+  were found, or the `gh` lookup for that worktree failed; the two are not
+  distinguishable.
 - **Read the right timestamp.** `payload.capturedAt` describes the last
   successful fetch; `lastAttemptAt` describes the most recent try. Read
   `lastAttemptStatus` to answer "is the board healthy", and `capturedAt` to

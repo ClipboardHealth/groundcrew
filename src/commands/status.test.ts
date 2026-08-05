@@ -1487,12 +1487,54 @@ describe(status, () => {
       expect(printed).toEqual(onDisk);
     });
 
+    it("prints exactly what it wrote to the local file", async () => {
+      const config = jsonConfig();
+
+      await status(config, { json: true });
+
+      const printed = parseJsonOutput().local;
+      const onDisk = JSON.parse(
+        readFileSync(path.join(temporaryDirectory, "status-local.json"), "utf8"),
+      );
+
+      expect(printed).toEqual(onDisk);
+    });
+
+    it("prints exactly what it wrote when the board fetch fails", async () => {
+      const config = jsonConfig();
+      buildSourcesMock.mockRejectedValue(new Error("source down"));
+
+      await status(config, { json: true });
+
+      const printed = parseJsonOutput().remote;
+      const onDisk = JSON.parse(
+        readFileSync(path.join(temporaryDirectory, "status-remote.json"), "utf8"),
+      );
+
+      expect(printed).toEqual(onDisk);
+      expect(printed?.lastAttemptStatus).toBe("unavailable");
+    });
+
+    it("prints exactly what it wrote with --local-only", async () => {
+      const config = jsonConfig();
+
+      await status(config, { json: true, localOnly: true });
+
+      const printed = parseJsonOutput().local;
+      const onDisk = JSON.parse(
+        readFileSync(path.join(temporaryDirectory, "status-local.json"), "utf8"),
+      );
+
+      expect(printed).toEqual(onDisk);
+    });
+
     it("writes no snapshot in text mode", async () => {
       const config = jsonConfig();
 
       await status(config);
 
       expect(existsSync(path.join(temporaryDirectory, "status-local.json"))).toBe(false);
+      expect(existsSync(path.join(temporaryDirectory, "status-remote.json"))).toBe(false);
     });
 
     it("rejects --json for a single task", async () => {
@@ -1500,6 +1542,23 @@ describe(status, () => {
         "crew status: --json is not supported for a single task",
       );
     });
+  });
+
+  it("still shows pull request links when the board fetch fails", async () => {
+    // The board and `gh` share no data, so losing one must not hide the other.
+    buildSourcesMock.mockRejectedValue(new Error("source down"));
+    stubPullRequestsByDirectory({
+      "/work/repo-a-team-1": [
+        { url: "https://example.test/a", number: 1, state: "open", title: "A" },
+      ],
+    });
+
+    await status(makeConfig());
+
+    const output = consoleLog.output();
+
+    expect(output).toContain("unavailable: source down");
+    expect(output).toContain("pr:        https://example.test/a (open)");
   });
 
   it("shows each worktree only its own pull requests when a task has two", async () => {

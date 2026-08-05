@@ -52,12 +52,12 @@ function makeRemote(): RemoteStatusDocument {
     lastAttemptAt: "2026-08-04T03:15:00.000Z",
     lastAttemptStatus: "ok",
     lastAttemptError: undefined,
+    pullRequestsByWorktree: {
+      "/work/eng-220": [{ url: "https://example.test/1", number: 1, state: "open", title: "PR" }],
+    },
     payload: {
       capturedAt: "2026-08-04T03:15:00.000Z",
       statusByTask: { "eng-220": "in-progress" },
-      pullRequestsByWorktree: {
-        "/work/eng-220": [{ url: "https://example.test/1", number: 1, state: "open", title: "PR" }],
-      },
       inProgress: [
         {
           id: "linear:eng-220",
@@ -167,6 +167,7 @@ describe("joinStatus", () => {
         lastAttemptStatus: "unavailable",
         lastAttemptError: "no api key",
         payload: undefined,
+        pullRequestsByWorktree: {},
       },
     });
 

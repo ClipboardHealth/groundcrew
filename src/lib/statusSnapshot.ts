@@ -139,9 +139,6 @@ export interface RemoteStatusPayload {
   capturedAt: string;
   /** Lowercased natural id to canonical status. Ambiguous ids are omitted. */
   statusByTask: Record<string, CanonicalStatus>;
-  /** Keyed by worktree dir. A task with two worktrees has two branches, and
-   * each can have its own pull requests. */
-  pullRequestsByWorktree: Record<string, PullRequestSummary[]>;
   /** Every in-progress issue. Its length is the used slot count. */
   inProgress: StatusBoardIssue[];
   queueReady: StatusQueueIssue[];
@@ -154,13 +151,29 @@ export interface RemoteStatusDocument {
   lastAttemptAt: string;
   lastAttemptStatus: AvailabilityStatus;
   lastAttemptError?: string | undefined;
-  /** The last successful fetch. Undefined when none has ever succeeded. */
+  /** The last successful BOARD fetch. Undefined when none has ever succeeded. */
   payload?: RemoteStatusPayload | undefined;
+  /**
+   * Keyed by absolute worktree directory. A task with two worktrees has two
+   * branches, each with its own pull requests.
+   *
+   * Always from the current attempt, never carried forward: the lookups do not
+   * depend on the board, so a board outage must not freeze or hide them. An
+   * empty array means none were found OR the lookup failed; `gh` failures are
+   * not distinguishable here.
+   */
+  pullRequestsByWorktree: Record<string, PullRequestSummary[]>;
 }
 
-export type RemoteFetchResult =
+export type BoardOutcome =
   | { kind: "ok"; payload: RemoteStatusPayload }
   | { kind: "error"; message: string };
+
+/** One remote pass: a board outcome plus pull requests, which succeed or fail apart. */
+export interface RemoteFetchResult {
+  board: BoardOutcome;
+  pullRequestsByWorktree: Record<string, PullRequestSummary[]>;
+}
 
 export interface BuildRemoteDocumentInput {
   previous: RemoteStatusDocument | undefined;
@@ -177,20 +190,24 @@ export interface BuildRemoteDocumentInput {
  */
 export function buildRemoteDocument(input: BuildRemoteDocumentInput): RemoteStatusDocument {
   const { previous, attemptAt, result } = input;
-  if (result.kind === "ok") {
+  const shared = {
+    schemaVersion: STATUS_SNAPSHOT_SCHEMA_VERSION as StatusSchemaVersion,
+    lastAttemptAt: attemptAt,
+    // Never carried forward: these do not depend on the board.
+    pullRequestsByWorktree: result.pullRequestsByWorktree,
+  };
+  if (result.board.kind === "ok") {
     return {
-      schemaVersion: STATUS_SNAPSHOT_SCHEMA_VERSION,
-      lastAttemptAt: attemptAt,
+      ...shared,
       lastAttemptStatus: "ok",
       lastAttemptError: undefined,
-      payload: result.payload,
+      payload: result.board.payload,
     };
   }
   return {
-    schemaVersion: STATUS_SNAPSHOT_SCHEMA_VERSION,
-    lastAttemptAt: attemptAt,
+    ...shared,
     lastAttemptStatus: "unavailable",
-    lastAttemptError: result.message,
+    lastAttemptError: result.board.message,
     payload: previous?.payload,
   };
 }
@@ -252,7 +269,8 @@ function isLocalStatusDocument(value: unknown): value is LocalStatusDocument {
 
 export interface WriteRemoteSnapshotInput {
   config: LoggingConfig;
-  document: RemoteStatusDocument;
+  attemptAt: string;
+  result: RemoteFetchResult;
 }
 
 /**
@@ -270,11 +288,15 @@ export interface WriteRemoteSnapshotInput {
  * their own document, so stdout can never disagree with the file.
  */
 export function writeRemoteSnapshot(input: WriteRemoteSnapshotInput): RemoteStatusDocument {
-  const { config, document } = input;
+  const { config, attemptAt, result } = input;
+  // The merge and the guard share this one read. Reading twice let a failed
+  // run carry forward a payload that a concurrent success had already
+  // replaced, then write it back under a newer timestamp.
   const existing = readRemoteSnapshot(config);
-  if (existing !== undefined && isStrictlyNewer(existing.lastAttemptAt, document.lastAttemptAt)) {
+  if (existing !== undefined && isStrictlyNewer(existing.lastAttemptAt, attemptAt)) {
     return existing;
   }
+  const document = buildRemoteDocument({ previous: existing, attemptAt, result });
   writeJsonAtomic(remoteSnapshotPath(config), document);
   return document;
 }
@@ -295,12 +317,15 @@ function readJsonFile(filePath: string): unknown {
 
 /**
  * True when `existing` is a later instant than `candidate`. An unparseable
- * existing timestamp counts as older, so a file written by something that does
- * not use ISO-8601 gets replaced rather than silently winning forever.
+ * or future-dated existing timestamp counts as older, so neither a foreign
+ * timestamp format nor a clock that jumped forward can pin the file forever.
  */
 function isStrictlyNewer(existing: string, candidate: string): boolean {
   const existingMs = Date.parse(existing);
-  if (Number.isNaN(existingMs)) {
+  // A timestamp that is unparseable, or that this clock has not reached, is
+  // not evidence of a newer run. Without the upper bound one future-dated file
+  // pins the snapshot forever, with no command to clear it.
+  if (Number.isNaN(existingMs) || existingMs > Date.now()) {
     return false;
   }
   return existingMs > Date.parse(candidate);
@@ -311,10 +336,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Structural only: it checks the containers a reader walks, not every issue
- * inside them. That is the level that matters, because the shapes below are
- * what `joinStatus` indexes and iterates; a wrong field inside one issue
- * renders oddly, while a wrong container type throws.
+ * Structural only: it checks the containers a reader walks, not the elements
+ * inside them. That catches the corruption a single writer can plausibly
+ * produce. A hand-edited file with a malformed element still reaches the
+ * reader, so this is a sanity check, not a schema validator.
  */
 function isRemoteStatusPayload(value: unknown): value is RemoteStatusPayload {
   if (!isRecord(value)) {
@@ -323,7 +348,6 @@ function isRemoteStatusPayload(value: unknown): value is RemoteStatusPayload {
   return (
     typeof value["capturedAt"] === "string" &&
     isRecord(value["statusByTask"]) &&
-    isRecord(value["pullRequestsByWorktree"]) &&
     Array.isArray(value["inProgress"]) &&
     Array.isArray(value["queueReady"]) &&
     Array.isArray(value["queueBlocked"])
@@ -339,6 +363,9 @@ function isRemoteStatusDocument(value: unknown): value is RemoteStatusDocument {
     typeof value["lastAttemptAt"] !== "string" ||
     (value["lastAttemptStatus"] !== "ok" && value["lastAttemptStatus"] !== "unavailable")
   ) {
+    return false;
+  }
+  if (!isRecord(value["pullRequestsByWorktree"])) {
     return false;
   }
   const payload = value["payload"];

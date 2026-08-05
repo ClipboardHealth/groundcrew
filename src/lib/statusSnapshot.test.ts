@@ -5,6 +5,7 @@ import path from "node:path";
 import type { ResolvedConfig } from "./config.ts";
 import {
   buildRemoteDocument,
+  type RemoteFetchResult,
   type LocalStatusDocument,
   localSnapshotPath,
   readLocalSnapshot,
@@ -27,11 +28,21 @@ function makePayload(capturedAt: string): RemoteStatusPayload {
   return {
     capturedAt,
     statusByTask: { "eng-220": "in-progress" },
-    pullRequestsByWorktree: {},
     inProgress: [],
     queueReady: [],
     queueBlocked: [],
   };
+}
+
+function okResult(capturedAt: string): RemoteFetchResult {
+  return {
+    board: { kind: "ok", payload: makePayload(capturedAt) },
+    pullRequestsByWorktree: {},
+  };
+}
+
+function errorResult(message: string): RemoteFetchResult {
+  return { board: { kind: "error", message }, pullRequestsByWorktree: {} };
 }
 
 function makeLocal(capturedAt: string): LocalStatusDocument {
@@ -52,6 +63,7 @@ function makeDocument(overrides: Partial<RemoteStatusDocument> = {}): RemoteStat
     lastAttemptStatus: "ok",
     lastAttemptError: undefined,
     payload: makePayload("2026-08-04T03:00:00.000Z"),
+    pullRequestsByWorktree: {},
     ...overrides,
   };
 }
@@ -63,7 +75,7 @@ describe("buildRemoteDocument", () => {
     const actual = buildRemoteDocument({
       previous: undefined,
       attemptAt: "2026-08-04T03:00:00.000Z",
-      result: { kind: "ok", payload: input },
+      result: { board: { kind: "ok", payload: input }, pullRequestsByWorktree: {} },
     });
 
     expect(actual.lastAttemptStatus).toBe("ok");
@@ -77,7 +89,7 @@ describe("buildRemoteDocument", () => {
     const actual = buildRemoteDocument({
       previous: mockPrevious,
       attemptAt: "2026-08-04T03:05:00.000Z",
-      result: { kind: "error", message: "Linear: 401 unauthorized" },
+      result: errorResult("Linear: 401 unauthorized"),
     });
 
     expect(actual.lastAttemptAt).toBe("2026-08-04T03:05:00.000Z");
@@ -90,7 +102,7 @@ describe("buildRemoteDocument", () => {
     const actual = buildRemoteDocument({
       previous: undefined,
       attemptAt: "2026-08-04T03:05:00.000Z",
-      result: { kind: "error", message: "no api key" },
+      result: errorResult("no api key"),
     });
 
     expect(actual.payload).toBeUndefined();
@@ -151,36 +163,49 @@ describe("writeRemoteSnapshot", () => {
 
   it("round-trips a document through disk", () => {
     const config = makeConfig(directory);
-    const input = makeDocument();
 
-    writeRemoteSnapshot({ config, document: input });
-    const actual = readRemoteSnapshot(config);
+    const actual = writeRemoteSnapshot({
+      config,
+      attemptAt: "2026-08-04T03:00:00.000Z",
+      result: okResult("2026-08-04T03:00:00.000Z"),
+    });
 
-    expect(actual).toEqual(input);
+    expect(actual).toEqual(makeDocument());
+    expect(readRemoteSnapshot(config)).toEqual(makeDocument());
   });
 
-  it("returns the document it wrote", () => {
+  // One read serves the merge and the guard, so a failure cannot reinstate a
+  // payload that a concurrent success already replaced.
+  it("merges against the file it guards on, not an earlier read", () => {
     const config = makeConfig(directory);
-    const input = makeDocument();
+    writeRemoteSnapshot({
+      config,
+      attemptAt: "2026-08-04T03:05:00.000Z",
+      result: okResult("2026-08-04T03:05:00.000Z"),
+    });
 
-    const actual = writeRemoteSnapshot({ config, document: input });
+    const actual = writeRemoteSnapshot({
+      config,
+      attemptAt: "2026-08-04T03:06:00.000Z",
+      result: errorResult("source down"),
+    });
 
-    expect(actual).toEqual(input);
+    expect(actual.lastAttemptStatus).toBe("unavailable");
+    expect(actual.payload?.capturedAt).toBe("2026-08-04T03:05:00.000Z");
   });
 
   it("discards a write whose attempt is older than the file's", () => {
     const config = makeConfig(directory);
-    const mockNewer = makeDocument({ lastAttemptAt: "2026-08-04T03:05:00.000Z" });
-    writeRemoteSnapshot({ config, document: mockNewer });
+    const mockNewer = writeRemoteSnapshot({
+      config,
+      attemptAt: "2026-08-04T03:05:00.000Z",
+      result: okResult("2026-08-04T03:05:00.000Z"),
+    });
 
     const actual = writeRemoteSnapshot({
       config,
-      document: makeDocument({
-        lastAttemptAt: "2026-08-04T03:00:00.000Z",
-        lastAttemptStatus: "unavailable",
-        lastAttemptError: "stale writer",
-        payload: undefined,
-      }),
+      attemptAt: "2026-08-04T03:00:00.000Z",
+      result: errorResult("stale writer"),
     });
 
     expect(readRemoteSnapshot(config)).toEqual(mockNewer);
@@ -189,18 +214,37 @@ describe("writeRemoteSnapshot", () => {
 
   it("accepts a write whose attempt matches the file's", () => {
     const config = makeConfig(directory);
-    writeRemoteSnapshot({ config, document: makeDocument() });
+    writeRemoteSnapshot({
+      config,
+      attemptAt: "2026-08-04T03:00:00.000Z",
+      result: okResult("2026-08-04T03:00:00.000Z"),
+    });
 
     const actual = writeRemoteSnapshot({
       config,
-      document: makeDocument({
-        lastAttemptStatus: "unavailable",
-        lastAttemptError: "source down",
-      }),
+      attemptAt: "2026-08-04T03:00:00.000Z",
+      result: errorResult("source down"),
     });
 
     expect(actual.lastAttemptStatus).toBe("unavailable");
     expect(readRemoteSnapshot(config)?.lastAttemptStatus).toBe("unavailable");
+  });
+
+  // Without an upper bound, one future-dated file pins the snapshot forever.
+  it("replaces a file dated in the future", () => {
+    const config = makeConfig(directory);
+    writeFileSync(
+      remoteSnapshotPath(config),
+      JSON.stringify(makeDocument({ lastAttemptAt: "2099-01-01T00:00:00.000Z" })),
+    );
+
+    const actual = writeRemoteSnapshot({
+      config,
+      attemptAt: "2026-08-04T03:00:00.000Z",
+      result: okResult("2026-08-04T03:00:00.000Z"),
+    });
+
+    expect(actual.lastAttemptAt).toBe("2026-08-04T03:00:00.000Z");
   });
 
   it("replaces a file whose attempt timestamp is not ISO-8601", () => {
@@ -210,7 +254,11 @@ describe("writeRemoteSnapshot", () => {
       JSON.stringify({ ...makeDocument(), lastAttemptAt: "not a timestamp" }),
     );
 
-    const actual = writeRemoteSnapshot({ config, document: makeDocument() });
+    const actual = writeRemoteSnapshot({
+      config,
+      attemptAt: "2026-08-04T03:00:00.000Z",
+      result: okResult("2026-08-04T03:00:00.000Z"),
+    });
 
     expect(actual.lastAttemptAt).toBe("2026-08-04T03:00:00.000Z");
   });
@@ -223,7 +271,11 @@ describe("writeRemoteSnapshot", () => {
 
   it("returns undefined for an unparseable file", () => {
     const config = makeConfig(directory);
-    writeRemoteSnapshot({ config, document: makeDocument() });
+    writeRemoteSnapshot({
+      config,
+      attemptAt: "2026-08-04T03:00:00.000Z",
+      result: okResult("2026-08-04T03:00:00.000Z"),
+    });
     writeFileSync(remoteSnapshotPath(config), "not json");
 
     expect(readRemoteSnapshot(config)).toBeUndefined();
@@ -244,11 +296,20 @@ describe("writeRemoteSnapshot", () => {
       }),
     ],
     [
+      "a document with no pull request record",
+      JSON.stringify({
+        schemaVersion: 1,
+        lastAttemptAt: "2026-08-04T03:00:00.000Z",
+        lastAttemptStatus: "ok",
+      }),
+    ],
+    [
       "a document whose payload is not an object",
       JSON.stringify({
         schemaVersion: 1,
         lastAttemptAt: "2026-08-04T03:00:00.000Z",
         lastAttemptStatus: "ok",
+        pullRequestsByWorktree: {},
         payload: "nope",
       }),
     ],
@@ -258,10 +319,10 @@ describe("writeRemoteSnapshot", () => {
         schemaVersion: 1,
         lastAttemptAt: "2026-08-04T03:00:00.000Z",
         lastAttemptStatus: "ok",
+        pullRequestsByWorktree: {},
         payload: {
           capturedAt: "2026-08-04T03:00:00.000Z",
           statusByTask: {},
-          pullRequestsByWorktree: {},
           inProgress: "nope",
           queueReady: [],
           queueBlocked: [],
@@ -277,7 +338,6 @@ describe("writeRemoteSnapshot", () => {
 
   it("returns undefined for a document from an unknown schema version", () => {
     const config = makeConfig(directory);
-    writeRemoteSnapshot({ config, document: makeDocument() });
     writeFileSync(
       remoteSnapshotPath(config),
       JSON.stringify({ ...makeDocument(), schemaVersion: 999 }),
@@ -289,7 +349,11 @@ describe("writeRemoteSnapshot", () => {
   it("leaves no temp file behind", () => {
     const config = makeConfig(directory);
 
-    writeRemoteSnapshot({ config, document: makeDocument() });
+    writeRemoteSnapshot({
+      config,
+      attemptAt: "2026-08-04T03:00:00.000Z",
+      result: okResult("2026-08-04T03:00:00.000Z"),
+    });
 
     const actual = readdirSync(directory);
 
