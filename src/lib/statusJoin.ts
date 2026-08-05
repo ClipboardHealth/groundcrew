@@ -12,12 +12,17 @@ import type {
   StatusBoardIssue,
   StatusQueueIssue,
   StatusTask,
+  StatusWorktree,
 } from "./statusSnapshot.ts";
 import type { CanonicalStatus } from "./taskSource.ts";
 
-export interface JoinedTask extends StatusTask {
-  boardStatus: CanonicalStatus | undefined;
+export interface JoinedWorktree extends StatusWorktree {
   pullRequests: PullRequestSummary[];
+}
+
+export interface JoinedTask extends Omit<StatusTask, "worktrees"> {
+  boardStatus: CanonicalStatus | undefined;
+  worktrees: JoinedWorktree[];
 }
 
 export interface JoinedSlots {
@@ -53,7 +58,10 @@ export function joinStatus(input: JoinStatusInput): JoinedStatus {
   const tasks: JoinedTask[] = local.tasks.map((task) => ({
     ...task,
     boardStatus: payload?.statusByTask[task.task],
-    pullRequests: payload?.pullRequestsByTask[task.task] ?? [],
+    worktrees: task.worktrees.map((worktree) => ({
+      ...worktree,
+      pullRequests: payload?.pullRequestsByWorktree[worktree.dir] ?? [],
+    })),
   }));
 
   if (payload === undefined) {

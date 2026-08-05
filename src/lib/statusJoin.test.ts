@@ -22,7 +22,15 @@ function makeTask(task: string): StatusTask {
     session: "live",
     attachCommand: undefined,
     hint: undefined,
-    worktrees: [],
+    worktrees: [
+      {
+        repository: "groundcrew",
+        kind: "host",
+        dir: "/work/eng-220",
+        branch: "eng-220",
+        git: { kind: "clean" },
+      },
+    ],
     recentLogLines: [],
   };
 }
@@ -47,8 +55,8 @@ function makeRemote(): RemoteStatusDocument {
     payload: {
       capturedAt: "2026-08-04T03:15:00.000Z",
       statusByTask: { "eng-220": "in-progress" },
-      pullRequestsByTask: {
-        "eng-220": [{ url: "https://example.test/1", number: 1, state: "open", title: "PR" }],
+      pullRequestsByWorktree: {
+        "/work/eng-220": [{ url: "https://example.test/1", number: 1, state: "open", title: "PR" }],
       },
       inProgress: [
         {
@@ -113,7 +121,7 @@ describe("joinStatus", () => {
     const actual = joinStatus({ local: makeLocal([makeTask("eng-220")]), remote: makeRemote() });
 
     expect(actual.tasks[0]?.boardStatus).toBe("in-progress");
-    expect(actual.tasks[0]?.pullRequests).toHaveLength(1);
+    expect(actual.tasks[0]?.worktrees[0]?.pullRequests).toHaveLength(1);
   });
 
   it("removes tasks with a local worktree from every board list", () => {
@@ -165,7 +173,7 @@ describe("joinStatus", () => {
     expect(actual.slots).toBeUndefined();
     expect(actual.queueReady).toEqual([]);
     expect(actual.tasks[0]?.boardStatus).toBeUndefined();
-    expect(actual.tasks[0]?.pullRequests).toEqual([]);
+    expect(actual.tasks[0]?.worktrees[0]?.pullRequests).toEqual([]);
   });
 
   it("treats an absent remote document the same as an empty payload", () => {

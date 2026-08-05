@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { buildSources } from "../lib/buildSources.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
-import { findPullRequestsForBranch } from "../lib/pullRequests.ts";
+import { findPullRequestsForBranch, type PullRequestSummary } from "../lib/pullRequests.ts";
 import { readRunState, type RunState } from "../lib/runState.ts";
 import type { LocalStatusDocument, RemoteStatusDocument } from "../lib/statusSnapshot.ts";
 import type { Issue as SourceIssue, TaskSource } from "../lib/taskSource.ts";
@@ -179,6 +179,11 @@ function worktree(overrides: Partial<WorktreeEntry> = {}): WorktreeEntry {
     kind: "host",
     ...overrides,
   };
+}
+
+/** Each worktree directory gets its own pull requests; anything else gets none. */
+function stubPullRequestsByDirectory(prsByDirectory: Record<string, PullRequestSummary[]>): void {
+  findPullRequestsMock.mockImplementation(async ({ cwd }) => prsByDirectory[cwd] ?? []);
 }
 
 function runState(overrides: Partial<RunState> = {}): RunState {
@@ -1495,6 +1500,33 @@ describe(status, () => {
         "crew status: --json is not supported for a single task",
       );
     });
+  });
+
+  it("shows each worktree only its own pull requests when a task has two", async () => {
+    listWorktreesMock.mockReturnValue([
+      worktree({ repository: "repo-a", dir: "/work/repo-a-team-1" }),
+      worktree({ repository: "repo-b", dir: "/work/repo-b-team-1" }),
+    ]);
+    stubPullRequestsByDirectory({
+      "/work/repo-a-team-1": [
+        { url: "https://example.test/a", number: 1, state: "open", title: "A" },
+      ],
+      "/work/repo-b-team-1": [
+        { url: "https://example.test/b", number: 2, state: "open", title: "B" },
+      ],
+    });
+
+    await status(makeConfig());
+
+    const output = consoleLog.output();
+    const rowA = output.slice(output.indexOf("/work/repo-a-team-1"));
+    const rowB = output.slice(output.indexOf("/work/repo-b-team-1"));
+
+    expect(rowA).toContain("https://example.test/a");
+    expect(rowA.slice(0, rowA.indexOf("/work/repo-b-team-1"))).not.toContain(
+      "https://example.test/b",
+    );
+    expect(rowB).toContain("https://example.test/b");
   });
 
   // The snapshot document groups worktrees under one task while the inventory

@@ -21,6 +21,16 @@ import type { WorktreeDirtiness, WorktreeKind } from "./worktrees.ts";
  */
 export const STATUS_SNAPSHOT_SCHEMA_VERSION = 1;
 
+/**
+ * Optional fields are written by `JSON.stringify`, which omits a key whose
+ * value is `undefined`. So every `field?:` below is genuinely ABSENT on disk
+ * rather than present-and-null, and a reader must treat absence as "not set".
+ */
+export type StatusSchemaVersion = typeof STATUS_SNAPSHOT_SCHEMA_VERSION;
+
+/** Two-state health verdict shared by the probe and the board attempt. */
+export type AvailabilityStatus = "ok" | "unavailable";
+
 export type StatusSessionState = "live" | "exited" | "not-live" | "unknown";
 
 export type StatusLifecycle = RunLifecycleState | "idle";
@@ -36,9 +46,9 @@ export interface StatusWorktree {
 export interface StatusTask {
   /** Lowercased source task id, matching `WorktreeEntry.task`. */
   task: string;
-  title: string | undefined;
-  url: string | undefined;
-  agent: string | undefined;
+  title?: string | undefined;
+  url?: string | undefined;
+  agent?: string | undefined;
   lifecycle: StatusLifecycle;
   /** Probe-reconciliation flags, e.g. "session dead". Never a duration. */
   flags: string[];
@@ -47,25 +57,37 @@ export interface StatusTask {
    * a duration stored in a cached document shows a frozen clock, which reads
    * as "the agent stopped working" when it did not.
    */
-  startedAt: string | undefined;
-  updatedAt: string | undefined;
-  resumeCount: number | undefined;
-  reason: string | undefined;
-  detail: string | undefined;
+  startedAt?: string | undefined;
+  updatedAt?: string | undefined;
+  resumeCount?: number | undefined;
+  reason?: string | undefined;
+  detail?: string | undefined;
   session: StatusSessionState;
-  attachCommand: string | undefined;
-  hint: string | undefined;
+  attachCommand?: string | undefined;
+  hint?: string | undefined;
   worktrees: StatusWorktree[];
+  /**
+   * Lines mentioning this task, from a bounded tail of the shared log. A line
+   * older than that tail is absent here but still shown by `crew status <task>`.
+   */
   recentLogLines: string[];
 }
 
-interface StatusProbeState {
-  status: "ok" | "unavailable";
-  error: string | undefined;
+export interface StatusProbeState {
+  status: AvailabilityStatus;
+  error?: string | undefined;
 }
 
+/**
+ * The local tier. Every field here comes from a local subprocess or a file
+ * read, so a monitor can poll this document every few seconds.
+ *
+ * Placement rule for a new field: if producing it needs the network, it
+ * belongs in `RemoteStatusPayload`. `--local-only` is a promise about this
+ * whole document, and one network-backed field voids it.
+ */
 export interface LocalStatusDocument {
-  schemaVersion: number;
+  schemaVersion: StatusSchemaVersion;
   capturedAt: string;
   /** From config, never the network, so capacity renders before any fetch. */
   maximumInProgress: number;
@@ -78,9 +100,9 @@ export interface StatusBoardIssue {
   id: string;
   naturalId: string;
   title: string;
-  url: string | undefined;
-  repository: string | undefined;
-  agent: string | undefined;
+  url?: string | undefined;
+  repository?: string | undefined;
+  agent?: string | undefined;
 }
 
 /**
@@ -96,7 +118,7 @@ export interface StatusBlocker {
   id: string;
   naturalId: string;
   status: CanonicalStatus;
-  nativeStatus: string | undefined;
+  nativeStatus?: string | undefined;
 }
 
 export interface StatusBlockedIssue extends StatusQueueIssue {
@@ -104,6 +126,10 @@ export interface StatusBlockedIssue extends StatusQueueIssue {
 }
 
 /**
+ * The remote tier. Placement rule for a new field: it belongs here when
+ * producing it needs the network, because this tier polls slowly, near
+ * `pollIntervalMilliseconds`.
+ *
  * Board-derived facts only. Board-side classification is applied; the local
  * worktree subtraction deliberately is not. Precomputing that join here would
  * make the document assert something false as soon as a worktree appears,
@@ -113,7 +139,9 @@ export interface RemoteStatusPayload {
   capturedAt: string;
   /** Lowercased natural id to canonical status. Ambiguous ids are omitted. */
   statusByTask: Record<string, CanonicalStatus>;
-  pullRequestsByTask: Record<string, PullRequestSummary[]>;
+  /** Keyed by worktree dir. A task with two worktrees has two branches, and
+   * each can have its own pull requests. */
+  pullRequestsByWorktree: Record<string, PullRequestSummary[]>;
   /** Every in-progress issue. Its length is the used slot count. */
   inProgress: StatusBoardIssue[];
   queueReady: StatusQueueIssue[];
@@ -121,13 +149,13 @@ export interface RemoteStatusPayload {
 }
 
 export interface RemoteStatusDocument {
-  schemaVersion: number;
+  schemaVersion: StatusSchemaVersion;
   /** The most recent attempt, successful or not. */
   lastAttemptAt: string;
-  lastAttemptStatus: "ok" | "unavailable";
-  lastAttemptError: string | undefined;
+  lastAttemptStatus: AvailabilityStatus;
+  lastAttemptError?: string | undefined;
   /** The last successful fetch. Undefined when none has ever succeeded. */
-  payload: RemoteStatusPayload | undefined;
+  payload?: RemoteStatusPayload | undefined;
 }
 
 export type RemoteFetchResult =
@@ -187,9 +215,39 @@ export interface WriteLocalSnapshotInput {
   document: LocalStatusDocument;
 }
 
-export function writeLocalSnapshot(input: WriteLocalSnapshotInput): void {
+/**
+ * Same monotonic rule as `writeRemoteSnapshot`, for the same reason: a slow
+ * run must not republish stale session state over a fresher poll. Returns what
+ * is on disk afterwards so callers print the file's true contents.
+ */
+export function writeLocalSnapshot(input: WriteLocalSnapshotInput): LocalStatusDocument {
   const { config, document } = input;
+  const existing = readLocalSnapshot(config);
+  if (existing !== undefined && isStrictlyNewer(existing.capturedAt, document.capturedAt)) {
+    return existing;
+  }
   writeJsonAtomic(localSnapshotPath(config), document);
+  return document;
+}
+
+/** A missing or unreadable snapshot is an ordinary first-run state, not an error. */
+export function readLocalSnapshot(config: LoggingConfig): LocalStatusDocument | undefined {
+  const parsed = readJsonFile(localSnapshotPath(config));
+  return isLocalStatusDocument(parsed) ? parsed : undefined;
+}
+
+function isLocalStatusDocument(value: unknown): value is LocalStatusDocument {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return (
+    value["schemaVersion"] === STATUS_SNAPSHOT_SCHEMA_VERSION &&
+    typeof value["capturedAt"] === "string" &&
+    typeof value["maximumInProgress"] === "number" &&
+    isRecord(value["workspaceProbe"]) &&
+    Array.isArray(value["tasks"]) &&
+    Array.isArray(value["orphanedSessions"])
+  );
 }
 
 export interface WriteRemoteSnapshotInput {
@@ -198,11 +256,14 @@ export interface WriteRemoteSnapshotInput {
 }
 
 /**
- * Monotonic: refuses to write a document whose attempt is strictly older than
- * the one on disk, so two concurrent runs interleaving read and write across
- * processes can never move the remote tier backwards. Equal timestamps are
- * accepted — same-millisecond attempts are equally current, and rejecting them
- * would silently drop a legitimate result.
+ * Refuses to write a document whose attempt is strictly older than the one on
+ * disk. Equal timestamps are accepted: same-millisecond attempts are equally
+ * current, and rejecting them would drop a legitimate result.
+ *
+ * This narrows the race, it does not close it. The read and the rename are
+ * separate syscalls, so two processes can still interleave such that the older
+ * attempt lands last. Closing it would need a lock file, which is not worth it
+ * for a cache whose next poll corrects any regression.
  *
  * Returns whatever is on disk afterwards, which is the caller's document
  * unless the guard rejected it. Callers print the return value rather than
@@ -211,7 +272,7 @@ export interface WriteRemoteSnapshotInput {
 export function writeRemoteSnapshot(input: WriteRemoteSnapshotInput): RemoteStatusDocument {
   const { config, document } = input;
   const existing = readRemoteSnapshot(config);
-  if (existing !== undefined && existing.lastAttemptAt > document.lastAttemptAt) {
+  if (existing !== undefined && isStrictlyNewer(existing.lastAttemptAt, document.lastAttemptAt)) {
     return existing;
   }
   writeJsonAtomic(remoteSnapshotPath(config), document);
@@ -220,32 +281,66 @@ export function writeRemoteSnapshot(input: WriteRemoteSnapshotInput): RemoteStat
 
 /** A missing or unreadable snapshot is an ordinary first-run state, not an error. */
 export function readRemoteSnapshot(config: LoggingConfig): RemoteStatusDocument | undefined {
-  let raw: string;
-  try {
-    raw = readFileSync(remoteSnapshotPath(config), "utf8");
-  } catch {
-    return undefined;
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return undefined;
-  }
+  const parsed = readJsonFile(remoteSnapshotPath(config));
   return isRemoteStatusDocument(parsed) ? parsed : undefined;
+}
+
+function readJsonFile(filePath: string): unknown {
+  try {
+    return JSON.parse(readFileSync(filePath, "utf8"));
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * True when `existing` is a later instant than `candidate`. An unparseable
+ * existing timestamp counts as older, so a file written by something that does
+ * not use ISO-8601 gets replaced rather than silently winning forever.
+ */
+function isStrictlyNewer(existing: string, candidate: string): boolean {
+  const existingMs = Date.parse(existing);
+  if (Number.isNaN(existingMs)) {
+    return false;
+  }
+  return existingMs > Date.parse(candidate);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isRemoteStatusDocument(value: unknown): value is RemoteStatusDocument {
+/**
+ * Structural only: it checks the containers a reader walks, not every issue
+ * inside them. That is the level that matters, because the shapes below are
+ * what `joinStatus` indexes and iterates; a wrong field inside one issue
+ * renders oddly, while a wrong container type throws.
+ */
+function isRemoteStatusPayload(value: unknown): value is RemoteStatusPayload {
   if (!isRecord(value)) {
     return false;
   }
   return (
-    value["schemaVersion"] === STATUS_SNAPSHOT_SCHEMA_VERSION &&
-    typeof value["lastAttemptAt"] === "string" &&
-    (value["lastAttemptStatus"] === "ok" || value["lastAttemptStatus"] === "unavailable")
+    typeof value["capturedAt"] === "string" &&
+    isRecord(value["statusByTask"]) &&
+    isRecord(value["pullRequestsByWorktree"]) &&
+    Array.isArray(value["inProgress"]) &&
+    Array.isArray(value["queueReady"]) &&
+    Array.isArray(value["queueBlocked"])
   );
+}
+
+function isRemoteStatusDocument(value: unknown): value is RemoteStatusDocument {
+  if (!isRecord(value)) {
+    return false;
+  }
+  if (
+    value["schemaVersion"] !== STATUS_SNAPSHOT_SCHEMA_VERSION ||
+    typeof value["lastAttemptAt"] !== "string" ||
+    (value["lastAttemptStatus"] !== "ok" && value["lastAttemptStatus"] !== "unavailable")
+  ) {
+    return false;
+  }
+  const payload = value["payload"];
+  return payload === undefined || isRemoteStatusPayload(payload);
 }

@@ -1,7 +1,10 @@
 /**
- * Gathers the two status tiers that `crew status` renders and that
- * `crew status --json` publishes. Owns every subprocess and network call so
- * the renderers, the join, and the wire format stay free of I/O.
+ * Gathers the two status tiers that the `crew status` inventory renders and
+ * that `crew status --json` publishes. Owns every subprocess and network call
+ * on that path, so the join and the wire format do no I/O.
+ *
+ * The per-task view in status.ts is deliberately not on this path: it reads
+ * its own state, because it reads the whole log where this reads a tail.
  */
 
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
@@ -35,6 +38,7 @@ import { type WorkspaceProbe, workspaces } from "../lib/workspaces.ts";
 import { effectiveBranchNameFromRunState } from "../lib/worktreeRunState.ts";
 import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 
+// Enough lines to show what a task just did, short enough for a status row.
 const RECENT_LOG_LINE_COUNT = 10;
 
 /**
@@ -42,7 +46,8 @@ const RECENT_LOG_LINE_COUNT = 10;
  * is shared across runs and grows without limit, and a monitor polls this
  * every few seconds, so reading it whole would make the fast path scale with
  * the log's lifetime. `crew status <task>` is a one-shot command and still
- * reads the whole file.
+ * reads the whole file. 256 KiB holds several thousand lines, far past the ten
+ * this keeps per task.
  */
 const LOG_TAIL_BYTES = 256 * 1024;
 
@@ -127,15 +132,7 @@ export interface CollectRemoteStatusInput {
   board?: BoardFetch;
 }
 
-/**
- * Remote tier: the board fetch and the pull request lookups. Board-side
- * classification is applied here, but the local worktree subtraction
- * deliberately is not — `joinStatus` does that against the freshest local
- * document, because this tier refreshes far more slowly.
- *
- * A failed fetch is a result, not a throw: the caller merges it into the
- * previous document so last-known-good data survives an outage.
- */
+/** One board fetch attempt. A failure is a value here, never a throw. */
 export type BoardFetch =
   | { kind: "ok"; issues: readonly SourceIssue[] }
   | { kind: "error"; message: string };
@@ -154,6 +151,15 @@ export async function fetchBoardIssues(config: ResolvedConfig): Promise<BoardFet
   }
 }
 
+/**
+ * Remote tier: the board fetch and the pull request lookups. Board-side
+ * classification is applied here, but the local worktree subtraction
+ * deliberately is not — `joinStatus` does that against the freshest local
+ * document, because this tier refreshes far more slowly.
+ *
+ * A failed fetch is a result, not a throw: the caller merges it into the
+ * previous document so last-known-good data survives an outage.
+ */
 export async function collectRemoteStatus(
   input: CollectRemoteStatusInput,
 ): Promise<RemoteFetchResult> {
@@ -173,7 +179,7 @@ export async function collectRemoteStatus(
     payload: {
       capturedAt: new Date().toISOString(),
       statusByTask: statusByTask(issues),
-      pullRequestsByTask: await collectPullRequests(pullRequestTargets),
+      pullRequestsByWorktree: await collectPullRequests(pullRequestTargets),
       inProgress: issues
         .filter((issue) => issue.status === "in-progress")
         .toSorted((left, right) => left.id.localeCompare(right.id))
@@ -433,20 +439,20 @@ async function collectPullRequests(
     targets.map(
       async (target) =>
         [
-          target.task,
+          target.dir,
           await findPullRequestsForBranch({ cwd: target.dir, branchName: target.branch }),
         ] as const,
     ),
   );
-  const byTask: Record<string, PullRequestSummary[]> = {};
+  const byWorktree: Record<string, PullRequestSummary[]> = {};
   for (const result of results) {
     if (result.status !== "fulfilled") {
       continue;
     }
-    const [task, pullRequests] = result.value;
-    byTask[task] = [...(byTask[task] ?? []), ...pullRequests];
+    const [dir, pullRequests] = result.value;
+    byWorktree[dir] = [...pullRequests];
   }
-  return byTask;
+  return byWorktree;
 }
 
 function escapeRegExp(value: string): string {
@@ -460,6 +466,8 @@ function escapeRegExp(value: string): string {
  */
 export function recentTaskLogLines(input: { lines: readonly string[]; task: string }): string[] {
   const { lines, task } = input;
+  // The boundary class is not \b on purpose: task ids contain hyphens, and \b
+  // counts `_` as a word character, so `\btask\b` would match inside `x_eng-220`.
   const pattern = new RegExp(`(^|[^a-z0-9])${escapeRegExp(task)}([^a-z0-9]|$)`, "i");
   return lines.filter((line) => pattern.test(line)).slice(-RECENT_LOG_LINE_COUNT);
 }

@@ -28,6 +28,10 @@ export {
   type RunLifecycleState,
   type RunState,
 } from "./lib/runState.ts";
+// The status snapshot contract. A separate monitor program imports these to
+// read status-local.json and status-remote.json, so removing or renaming any
+// of them is a breaking change, and a shape change needs a bump of
+// STATUS_SNAPSHOT_SCHEMA_VERSION plus a README update.
 export {
   type JoinedSlots,
   type JoinedStatus,
@@ -35,13 +39,17 @@ export {
   joinStatus,
 } from "./lib/statusJoin.ts";
 export {
+  type AvailabilityStatus,
   type LocalStatusDocument,
   localSnapshotPath,
+  readLocalSnapshot,
   readRemoteSnapshot,
   type RemoteStatusDocument,
   type RemoteStatusPayload,
   remoteSnapshotPath,
   STATUS_SNAPSHOT_SCHEMA_VERSION,
+  type StatusSchemaVersion,
+  type StatusProbeState,
   type StatusBlockedIssue,
   type StatusBlocker,
   type StatusBoardIssue,

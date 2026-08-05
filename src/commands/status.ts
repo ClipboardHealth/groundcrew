@@ -1,18 +1,37 @@
+/**
+ * Renderers for `crew status`. Three output modes share this file.
+ *
+ * With no task it renders the inventory: it calls the collectors in
+ * statusCollect.ts, joins the two tiers with joinStatus, and prints text.
+ * With a task it renders that one task, doing its own I/O rather than using
+ * the collectors, because it reads the whole log where they read a tail.
+ * With --json it prints and persists the wire documents from statusSnapshot.ts.
+ * Text mode persists nothing.
+ *
+ * @see README.md#status-snapshots-for-external-monitors for the reader contract.
+ */
+
 import { readFileSync } from "node:fs";
 
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { findPullRequestsForBranch, type PullRequestSummary } from "../lib/pullRequests.ts";
 import { readRunState, type RunState } from "../lib/runState.ts";
-import { type JoinedStatus, type JoinedTask, joinStatus } from "../lib/statusJoin.ts";
+import {
+  type JoinedStatus,
+  type JoinedTask,
+  type JoinedWorktree,
+  joinStatus,
+} from "../lib/statusJoin.ts";
 import {
   buildRemoteDocument,
   type LocalStatusDocument,
   readRemoteSnapshot,
+  type RemoteFetchResult,
+  type RemoteStatusDocument,
   type StatusBlockedIssue,
   type StatusLifecycle,
   type StatusBoardIssue,
   type StatusQueueIssue,
-  type StatusWorktree,
   writeLocalSnapshot,
   writeRemoteSnapshot,
 } from "../lib/statusSnapshot.ts";
@@ -337,7 +356,7 @@ function formatTaskStatus(canonicalStatus: CanonicalStatus): string {
 /** The document groups worktrees by task; rows are per worktree. */
 function writeInventoryWorktrees(joined: JoinedStatus, now: Date): void {
   writeSection("Worktrees");
-  const rows = joined.tasks.flatMap((task) =>
+  const rows: Array<{ task: JoinedTask; worktree: JoinedWorktree }> = joined.tasks.flatMap((task) =>
     task.worktrees.map((worktree) => ({ task, worktree })),
   );
   if (rows.length === 0) {
@@ -352,7 +371,7 @@ function writeInventoryWorktrees(joined: JoinedStatus, now: Date): void {
   }
 }
 
-function writeInventoryRow(input: { task: JoinedTask; worktree: StatusWorktree; now: Date }): void {
+function writeInventoryRow(input: { task: JoinedTask; worktree: JoinedWorktree; now: Date }): void {
   const { task, worktree, now } = input;
   writeOutput(task.url === undefined ? task.task : `${task.task}  ${task.url}`);
   if (task.title !== undefined) {
@@ -371,8 +390,8 @@ function writeInventoryRow(input: { task: JoinedTask; worktree: StatusWorktree; 
   if (task.attachCommand !== undefined) {
     writeOutput(inventoryField("attach", task.attachCommand));
   }
-  if (task.pullRequests.length > 0) {
-    writeOutput(inventoryField("pr", formatPullRequests(task.pullRequests)));
+  if (worktree.pullRequests.length > 0) {
+    writeOutput(inventoryField("pr", formatPullRequests(worktree.pullRequests)));
   }
   if (task.hint !== undefined) {
     writeOutput(inventoryField("hint", task.hint));
@@ -491,15 +510,25 @@ function writeInProgressWithoutWorktree(joined: JoinedStatus): void {
   }
 }
 
+interface CollectedTiers {
+  local: LocalStatusDocument;
+  remote: RemoteStatusDocument;
+  result: RemoteFetchResult;
+}
+
 /**
- * `previous: undefined` is deliberate. Carry-forward is a monitor concern: a
- * one-shot text run must report only what this attempt saw, or a failed fetch
- * would print a queue recovered from an old snapshot where it prints
- * "unavailable" today.
+ * Runs both tiers. The board fetch starts first because it needs nothing
+ * local; only the pull request lookups wait on resolved branches.
+ *
+ * `previous` carries a prior remote document forward when the fetch fails.
+ * Text mode passes undefined so a one-shot run reports only what it just saw,
+ * rather than a queue recovered from an old snapshot.
  */
-async function writeInventoryStatus(config: ResolvedConfig): Promise<void> {
-  // The board fetch needs nothing local, so start it before awaiting the
-  // local pass; only the pull request lookups depend on resolved branches.
+async function collectBothTiers(input: {
+  config: ResolvedConfig;
+  previous: RemoteStatusDocument | undefined;
+}): Promise<CollectedTiers> {
+  const { config, previous } = input;
   const boardPromise = fetchBoardIssues(config);
   const local = await collectLocalStatus({ config });
   const result = await collectRemoteStatus({
@@ -508,10 +537,15 @@ async function writeInventoryStatus(config: ResolvedConfig): Promise<void> {
     pullRequestTargets: pullRequestTargetsOf(local),
   });
   const remote = buildRemoteDocument({
-    previous: undefined,
+    previous,
     attemptAt: new Date().toISOString(),
     result,
   });
+  return { local, remote, result };
+}
+
+async function writeInventoryStatus(config: ResolvedConfig): Promise<void> {
+  const { local, remote, result } = await collectBothTiers({ config, previous: undefined });
   const joined = joinStatus({ local, remote });
   const now = new Date();
 
@@ -538,30 +572,19 @@ async function writeJsonStatus(input: {
   localOnly: boolean;
 }): Promise<void> {
   const { config, localOnly } = input;
-  // Started only in the full form, so --local-only never touches the network.
-  const boardPromise = localOnly ? undefined : fetchBoardIssues(config);
-  const local = await collectLocalStatus({ config });
-  writeLocalSnapshot({ config, document: local });
-  if (boardPromise === undefined) {
+  // --local-only takes its own path rather than a flag inside collectBothTiers,
+  // so this branch provably never starts a board fetch.
+  if (localOnly) {
+    const local = writeLocalSnapshot({ config, document: await collectLocalStatus({ config }) });
     writeOutput(JSON.stringify({ local }, undefined, 2));
     return;
   }
-  const result = await collectRemoteStatus({
-    config,
-    board: await boardPromise,
-    pullRequestTargets: pullRequestTargetsOf(local),
-  });
-  // Print what landed on disk, not what we built. When the monotonic guard
+  const collected = await collectBothTiers({ config, previous: readRemoteSnapshot(config) });
+  // Print what landed on disk, not what we built. When a monotonic guard
   // rejects our document because a concurrent run wrote a newer one, the two
   // differ, and stdout must never contradict the file.
-  const remote = writeRemoteSnapshot({
-    config,
-    document: buildRemoteDocument({
-      previous: readRemoteSnapshot(config),
-      attemptAt: new Date().toISOString(),
-      result,
-    }),
-  });
+  const local = writeLocalSnapshot({ config, document: collected.local });
+  const remote = writeRemoteSnapshot({ config, document: collected.remote });
   writeOutput(JSON.stringify({ local, remote }, undefined, 2));
 }
 

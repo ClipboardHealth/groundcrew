@@ -465,7 +465,7 @@ describe("collectRemoteStatus", () => {
       }),
     );
 
-    expect(actual.pullRequestsByTask["eng-220"]).toHaveLength(1);
+    expect(actual.pullRequestsByWorktree["/repos/eng-220"]).toHaveLength(1);
     expect(findPullRequestsForBranch).toHaveBeenCalledWith({
       cwd: "/repos/eng-220",
       branchName: "adopted-branch",

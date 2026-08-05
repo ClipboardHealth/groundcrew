@@ -5,11 +5,15 @@ import path from "node:path";
 import type { ResolvedConfig } from "./config.ts";
 import {
   buildRemoteDocument,
+  type LocalStatusDocument,
+  localSnapshotPath,
+  readLocalSnapshot,
   readRemoteSnapshot,
   type RemoteStatusDocument,
   type RemoteStatusPayload,
   remoteSnapshotPath,
   STATUS_SNAPSHOT_SCHEMA_VERSION,
+  writeLocalSnapshot,
   writeRemoteSnapshot,
 } from "./statusSnapshot.ts";
 
@@ -23,10 +27,21 @@ function makePayload(capturedAt: string): RemoteStatusPayload {
   return {
     capturedAt,
     statusByTask: { "eng-220": "in-progress" },
-    pullRequestsByTask: {},
+    pullRequestsByWorktree: {},
     inProgress: [],
     queueReady: [],
     queueBlocked: [],
+  };
+}
+
+function makeLocal(capturedAt: string): LocalStatusDocument {
+  return {
+    schemaVersion: STATUS_SNAPSHOT_SCHEMA_VERSION,
+    capturedAt,
+    maximumInProgress: 4,
+    workspaceProbe: { status: "ok" },
+    tasks: [],
+    orphanedSessions: [],
   };
 }
 
@@ -80,6 +95,46 @@ describe("buildRemoteDocument", () => {
 
     expect(actual.payload).toBeUndefined();
     expect(actual.lastAttemptStatus).toBe("unavailable");
+  });
+});
+
+describe("writeLocalSnapshot", () => {
+  let directory: string;
+
+  beforeEach(() => {
+    directory = mkdtempSync(path.join(tmpdir(), "gc-local-"));
+  });
+
+  afterEach(() => {
+    rmSync(directory, { force: true, recursive: true });
+  });
+
+  it("round-trips a document through disk", () => {
+    const config = makeConfig(directory);
+    const input = makeLocal("2026-08-04T03:00:00.000Z");
+
+    const actual = writeLocalSnapshot({ config, document: input });
+
+    expect(actual).toEqual(input);
+    expect(readLocalSnapshot(config)).toEqual(input);
+  });
+
+  it("discards a write captured earlier than the file's", () => {
+    const config = makeConfig(directory);
+    const mockNewer = makeLocal("2026-08-04T03:05:00.000Z");
+    writeLocalSnapshot({ config, document: mockNewer });
+
+    const actual = writeLocalSnapshot({ config, document: makeLocal("2026-08-04T03:00:00.000Z") });
+
+    expect(actual).toEqual(mockNewer);
+    expect(readLocalSnapshot(config)).toEqual(mockNewer);
+  });
+
+  it("returns undefined for a document that is not a local snapshot", () => {
+    const config = makeConfig(directory);
+    writeFileSync(localSnapshotPath(config), JSON.stringify({ schemaVersion: 1 }));
+
+    expect(readLocalSnapshot(config)).toBeUndefined();
   });
 });
 
@@ -148,6 +203,18 @@ describe("writeRemoteSnapshot", () => {
     expect(readRemoteSnapshot(config)?.lastAttemptStatus).toBe("unavailable");
   });
 
+  it("replaces a file whose attempt timestamp is not ISO-8601", () => {
+    const config = makeConfig(directory);
+    writeFileSync(
+      remoteSnapshotPath(config),
+      JSON.stringify({ ...makeDocument(), lastAttemptAt: "not a timestamp" }),
+    );
+
+    const actual = writeRemoteSnapshot({ config, document: makeDocument() });
+
+    expect(actual.lastAttemptAt).toBe("2026-08-04T03:00:00.000Z");
+  });
+
   it("returns undefined for a missing file", () => {
     const config = makeConfig(directory);
 
@@ -174,6 +241,31 @@ describe("writeRemoteSnapshot", () => {
         schemaVersion: 1,
         lastAttemptAt: "2026-08-04T03:00:00.000Z",
         lastAttemptStatus: "maybe",
+      }),
+    ],
+    [
+      "a document whose payload is not an object",
+      JSON.stringify({
+        schemaVersion: 1,
+        lastAttemptAt: "2026-08-04T03:00:00.000Z",
+        lastAttemptStatus: "ok",
+        payload: "nope",
+      }),
+    ],
+    [
+      "a document whose payload lists are not arrays",
+      JSON.stringify({
+        schemaVersion: 1,
+        lastAttemptAt: "2026-08-04T03:00:00.000Z",
+        lastAttemptStatus: "ok",
+        payload: {
+          capturedAt: "2026-08-04T03:00:00.000Z",
+          statusByTask: {},
+          pullRequestsByWorktree: {},
+          inProgress: "nope",
+          queueReady: [],
+          queueBlocked: [],
+        },
       }),
     ],
   ])("returns undefined for %s", (_label, contents) => {
