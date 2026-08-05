@@ -147,6 +147,67 @@ Grant it only to repositories you trust to run arbitrary code on the host.
   authenticate; the agent's `preLaunchEnv` names are scrubbed so the command
   cannot read agent credentials.
 
+## `hookGeneratedPaths` (when the hook dirties the worktree)
+
+Some `prepareWorktree` hooks write files that are neither committed nor
+gitignored — a `postinstall` that regenerates a tracked rules file, or a sync
+script that drops `.agents/skills/` into the checkout. Every worktree is then
+dirty from birth, and the teardown guard refuses to remove it: `crew cleanup`
+reports `worktree has N modified files and M untracked files` on every poll,
+forever, even though the agent never touched them.
+
+Declare those paths so the guard stops counting them:
+
+```ts
+// crew.config.ts (operator only)
+knownRepositories: [
+  {
+    name: "catalog-admin",
+    hooks: { prepareWorktree: "npm ci" },
+    hookGeneratedPaths: [".agents/skills", ".claude/settings.json", ".rules/frontend/x.md"],
+  },
+];
+```
+
+A global fallback for repos that share one hook lives under `defaults`:
+
+```ts
+defaults: {
+  hooks: { prepareWorktree: "npm ci" },
+  hookGeneratedPaths: [".agents/skills"],
+},
+```
+
+**How it behaves.**
+
+- The dirtiness probe passes each path to git as an exclude pathspec, so
+  `crew cleanup`, `crew status`, and `crew task done` all stop seeing them.
+  Teardown then retries `git worktree remove --force` — but only when the
+  filtered probe reads clean **and** the unfiltered one still reports work,
+  proving the declared paths were the sole blocker.
+- Anything undeclared still blocks. Add one file git did not expect under a
+  declared directory and the guard fires again, so real agent work is never
+  discarded silently.
+- With no `hookGeneratedPaths` anywhere, the git command is unchanged and the
+  guard is exactly as strict as before.
+
+**Constraints.**
+
+- **Operator-only.** Honored only from `crew.config.ts`. Setting
+  `hookGeneratedPaths` in a repo-committed `.groundcrew/config.json` (top-level
+  or under `hooks`) is a hard config error — a repository must not get to
+  decide which host files groundcrew may force-discard.
+- **Per-repo overrides, does not merge.** A repo entry's list replaces
+  `defaults.hookGeneratedPaths` wholesale.
+- **Worktree-root-relative, matched literally.** Paths are relative to the
+  worktree root even when the entry sets a `workdir`, matching what
+  `git status` prints — copy them straight out of its output. Wildcards are
+  inert; absolute paths, `.`/`..` segments, and leading-colon pathspec magic
+  are rejected at config load.
+- **Declare narrowly.** A path listed here is force-discarded on teardown.
+  Naming a directory that also holds real work (`src`, or a parent of it)
+  throws that work away with no warning.
+
 ## Examples
 
 Python with uv:

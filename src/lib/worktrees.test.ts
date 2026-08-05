@@ -65,6 +65,7 @@ function makeConfig(overrides: {
   repositoryDirs?: Record<string, string>;
   agents?: ResolvedConfig["agents"]["definitions"];
   repositories?: ResolvedConfig["workspace"]["repositories"];
+  defaults?: ResolvedConfig["defaults"];
 }): ResolvedConfig {
   const knownRepositories = overrides.knownRepositories ?? ["repo-a"];
   const agents = overrides.agents ?? {
@@ -72,7 +73,7 @@ function makeConfig(overrides: {
   };
   return {
     sources: [],
-    defaults: { hooks: {} },
+    defaults: overrides.defaults ?? { hooks: {} },
     git: overrides.git ?? { remote: "origin", defaultBranch: "main" },
     workspace: {
       projectDir: overrides.projectDir,
@@ -107,6 +108,10 @@ function makeUserInfo(username: string): ReturnType<typeof userInfo> {
 
 function hasArguments(arguments_: readonly string[], ...needles: readonly string[]): boolean {
   return needles.every((needle) => arguments_.includes(needle));
+}
+
+function hasExcludePathspec(arguments_: readonly string[]): boolean {
+  return arguments_.some((argument) => argument.startsWith(":(exclude"));
 }
 
 let projectDir: string;
@@ -1041,6 +1046,312 @@ describe(remove, () => {
     ).rejects.toThrow("git worktree remove failed for some other reason");
   });
 
+  it("force-removes a native worktree whose only dirt is declared hook-generated", async () => {
+    mkdirSync(path.join(projectDir, "repo-a"));
+    mkdirSync(path.join(projectDir, "repo-a-team-1"));
+    const config = makeConfig({
+      projectDir,
+      repositories: [
+        {
+          name: "repo-a",
+          hookGeneratedPaths: [".rules/frontend/reactComponents.md", ".claude/settings.json"],
+        },
+      ],
+    });
+
+    runCommandMock.mockImplementation((_command, arguments_) => {
+      // oxlint-disable-next-line vitest/no-conditional-in-test -- the unforced remove fails the way git does on a dirty tree; the forced retry succeeds.
+      if (hasArguments(arguments_, "worktree", "remove") && !arguments_.includes("--force")) {
+        throw new Error("Command failed: git worktree remove\nExit status: 128");
+      }
+      // oxlint-disable-next-line vitest/no-conditional-in-test -- the excluded probe reads clean while the unexcluded one still reports the hook's output.
+      if (hasArguments(arguments_, "status", "--porcelain")) {
+        return hasExcludePathspec(arguments_)
+          ? ""
+          : " M .rules/frontend/reactComponents.md\n?? .claude/settings.json\n";
+      }
+      return "";
+    });
+
+    await remove(config, {
+      repository: "repo-a",
+      task: "team-1",
+      branchName: "dev-team-1",
+      dir: path.join(projectDir, "repo-a-team-1"),
+      kind: "host",
+    });
+
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "git",
+      expect.arrayContaining([
+        "worktree",
+        "remove",
+        "--force",
+        path.join(projectDir, "repo-a-team-1"),
+      ]),
+      expect.anything(),
+    );
+    expect(runCommandMock).toHaveBeenCalledWith("git", [
+      "-C",
+      path.join(projectDir, "repo-a"),
+      "branch",
+      "-D",
+      "dev-team-1",
+    ]);
+  });
+
+  it("passes the declared hook-generated paths to git as exclude pathspecs", async () => {
+    mkdirSync(path.join(projectDir, "repo-a"));
+    mkdirSync(path.join(projectDir, "repo-a-team-1"));
+    const config = makeConfig({
+      projectDir,
+      repositories: [{ name: "repo-a", hookGeneratedPaths: [".claude/settings.json"] }],
+    });
+
+    runCommandMock.mockImplementation((_command, arguments_) => {
+      // oxlint-disable-next-line vitest/no-conditional-in-test -- only the unforced remove fails, so the dirtiness probe runs.
+      if (hasArguments(arguments_, "worktree", "remove") && !arguments_.includes("--force")) {
+        throw new Error("Command failed: git worktree remove\nExit status: 128");
+      }
+      return "";
+    });
+
+    await remove(config, {
+      repository: "repo-a",
+      task: "team-1",
+      branchName: "dev-team-1",
+      dir: path.join(projectDir, "repo-a-team-1"),
+      kind: "host",
+    }).catch(() => undefined);
+
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "git",
+      expect.arrayContaining([
+        "status",
+        "--porcelain",
+        "--",
+        ".",
+        ":(exclude,literal).claude/settings.json",
+      ]),
+      expect.anything(),
+    );
+  });
+
+  it("still blocks teardown when the agent modified a tracked source file", async () => {
+    mkdirSync(path.join(projectDir, "repo-a"));
+    mkdirSync(path.join(projectDir, "repo-a-team-1"));
+    const config = makeConfig({
+      projectDir,
+      repositories: [{ name: "repo-a", hookGeneratedPaths: [".claude/settings.json"] }],
+    });
+
+    runCommandMock.mockImplementation((_command, arguments_) => {
+      // oxlint-disable-next-line vitest/no-conditional-in-test -- the unforced remove fails; the excluded probe still sees genuine agent work.
+      if (hasArguments(arguments_, "worktree", "remove") && !arguments_.includes("--force")) {
+        throw new Error("Command failed: git worktree remove\nExit status: 128");
+      }
+      // oxlint-disable-next-line vitest/no-conditional-in-test -- as above
+      if (hasArguments(arguments_, "status", "--porcelain")) {
+        return " M src/index.ts\n";
+      }
+      return "";
+    });
+
+    await expect(
+      remove(config, {
+        repository: "repo-a",
+        task: "team-1",
+        branchName: "dev-team-1",
+        dir: path.join(projectDir, "repo-a-team-1"),
+        kind: "host",
+      }),
+    ).rejects.toThrow(/1 modified file/);
+
+    expect(runCommandMock).not.toHaveBeenCalledWith(
+      "git",
+      expect.arrayContaining(["worktree", "remove", "--force"]),
+      expect.anything(),
+    );
+  });
+
+  it("still blocks teardown when an undeclared untracked file survives the exclusions", async () => {
+    mkdirSync(path.join(projectDir, "repo-a"));
+    mkdirSync(path.join(projectDir, "repo-a-team-1"));
+    const config = makeConfig({
+      projectDir,
+      repositories: [{ name: "repo-a", hookGeneratedPaths: [".agents/skills"] }],
+    });
+
+    runCommandMock.mockImplementation((_command, arguments_) => {
+      // oxlint-disable-next-line vitest/no-conditional-in-test -- git collapses the untracked directory back into the excluded probe once an undeclared file lands under it.
+      if (hasArguments(arguments_, "worktree", "remove") && !arguments_.includes("--force")) {
+        throw new Error("Command failed: git worktree remove\nExit status: 128");
+      }
+      // oxlint-disable-next-line vitest/no-conditional-in-test -- as above
+      if (hasArguments(arguments_, "status", "--porcelain")) {
+        return "?? .agents/\n";
+      }
+      return "";
+    });
+
+    await expect(
+      remove(config, {
+        repository: "repo-a",
+        task: "team-1",
+        branchName: "dev-team-1",
+        dir: path.join(projectDir, "repo-a-team-1"),
+        kind: "host",
+      }),
+    ).rejects.toThrow(/crew cleanup --force team-1/);
+  });
+
+  it("leaves the git status command unchanged when no hook-generated paths are declared", async () => {
+    mkdirSync(path.join(projectDir, "repo-a"));
+    mkdirSync(path.join(projectDir, "repo-a-team-1"));
+    const config = makeConfig({ projectDir });
+
+    runCommandMock.mockImplementation((_command, arguments_) => {
+      // oxlint-disable-next-line vitest/no-conditional-in-test -- the unforced remove fails so the probe runs; the tree really is dirty.
+      if (hasArguments(arguments_, "worktree", "remove")) {
+        throw new Error("Command failed: git worktree remove\nExit status: 128");
+      }
+      // oxlint-disable-next-line vitest/no-conditional-in-test -- as above
+      if (hasArguments(arguments_, "status", "--porcelain")) {
+        return " M src/index.ts\n";
+      }
+      return "";
+    });
+
+    await expect(
+      remove(config, {
+        repository: "repo-a",
+        task: "team-1",
+        branchName: "dev-team-1",
+        dir: path.join(projectDir, "repo-a-team-1"),
+        kind: "host",
+      }),
+    ).rejects.toThrow(/crew cleanup --force team-1/);
+
+    const statusArguments = runCommandMock.mock.calls
+      .filter(([command, arguments_]) => command === "git" && arguments_.includes("status"))
+      .map(([, arguments_]) => arguments_);
+    expect(statusArguments).toStrictEqual([
+      ["-C", path.join(projectDir, "repo-a-team-1"), "status", "--porcelain"],
+    ]);
+  });
+
+  it("rethrows the original git failure when the worktree is clean with and without exclusions", async () => {
+    mkdirSync(path.join(projectDir, "repo-a"));
+    mkdirSync(path.join(projectDir, "repo-a-team-1"));
+    const config = makeConfig({
+      projectDir,
+      repositories: [{ name: "repo-a", hookGeneratedPaths: [".claude/settings.json"] }],
+    });
+
+    runCommandMock.mockImplementation((_command, arguments_) => {
+      // oxlint-disable-next-line vitest/no-conditional-in-test -- removal fails for a reason git status cannot see (a locked worktree), so escalating to --force would be wrong.
+      if (hasArguments(arguments_, "worktree", "remove")) {
+        throw new Error("some unrelated failure");
+      }
+      return "";
+    });
+
+    await expect(
+      remove(config, {
+        repository: "repo-a",
+        task: "team-1",
+        branchName: "dev-team-1",
+        dir: path.join(projectDir, "repo-a-team-1"),
+        kind: "host",
+      }),
+    ).rejects.toThrow(/some unrelated failure/);
+
+    expect(runCommandMock).not.toHaveBeenCalledWith(
+      "git",
+      expect.arrayContaining(["worktree", "remove", "--force"]),
+      expect.anything(),
+    );
+  });
+
+  it("runs the remove template for a scripted worktree whose only dirt is declared hook-generated", async () => {
+    const worktreeDir = path.join(projectDir, "billing-team-220");
+    mkdirSync(worktreeDir, { recursive: true });
+    userInfoMock.mockReturnValue(makeUserInfo("paul"));
+    const config = makeConfig({
+      projectDir,
+      knownRepositories: ["billing"],
+      repositories: [
+        {
+          name: "billing",
+          provision: { create: "graft new ${branch}", remove: "graft rm ${branch} -f" },
+          hookGeneratedPaths: [".agents/skills"],
+        },
+      ],
+    });
+
+    // Clean excluded probe + successful remove template.
+    runCommandMock.mockReturnValue("");
+
+    await remove(config, {
+      repository: "billing",
+      task: "team-220",
+      branchName: "paul-team-220",
+      dir: worktreeDir,
+      kind: "host",
+    });
+
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "sh",
+      ["-c", "graft rm 'paul-team-220' -f"],
+      expect.objectContaining({ cwd: projectDir, timeoutMs: 0 }),
+    );
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "git",
+      expect.arrayContaining([
+        "status",
+        "--porcelain",
+        "--",
+        ".",
+        ":(exclude,literal).agents/skills",
+      ]),
+      expect.anything(),
+    );
+  });
+
+  it("still refuses a scripted worktree with dirt beyond the declared hook-generated paths", async () => {
+    const worktreeDir = path.join(projectDir, "billing-team-220");
+    mkdirSync(worktreeDir, { recursive: true });
+    userInfoMock.mockReturnValue(makeUserInfo("paul"));
+    const config = makeConfig({
+      projectDir,
+      knownRepositories: ["billing"],
+      repositories: [
+        {
+          name: "billing",
+          provision: { create: "graft new ${branch}", remove: "graft rm ${branch} -f" },
+          hookGeneratedPaths: [".agents/skills"],
+        },
+      ],
+    });
+
+    runCommandMock.mockImplementation((command, arguments_) =>
+      // oxlint-disable-next-line vitest/no-conditional-in-test -- the excluded probe still reports genuine agent work
+      command === "git" && arguments_.includes("status") ? " M src/x.ts" : "",
+    );
+
+    await expect(
+      remove(config, {
+        repository: "billing",
+        task: "team-220",
+        branchName: "paul-team-220",
+        dir: worktreeDir,
+        kind: "host",
+      }),
+    ).rejects.toThrow(/crew cleanup --force team-220/);
+
+    expect(runCommandMock).not.toHaveBeenCalledWith("sh", expect.anything(), expect.anything());
+  });
+
   it("force-removes an orphaned leftover directory when Git no longer has the worktree registered", async () => {
     mkdirSync(path.join(projectDir, "repo-a"));
     mkdirSync(path.join(projectDir, "repo-a-team-1"));
@@ -1497,6 +1808,18 @@ describe("worktrees.predictedEntry", () => {
 });
 
 describe("worktrees.probeWorkingTree", () => {
+  function probeConfig(hookGeneratedPaths?: string[]): ResolvedConfig {
+    return makeConfig({
+      projectDir: tmpdir(),
+      repositories: [
+        {
+          name: "repo-a",
+          ...(hookGeneratedPaths === undefined ? {} : { hookGeneratedPaths }),
+        },
+      ],
+    });
+  }
+
   beforeEach(async () => {
     // Strip inherited GIT_* env vars so probe tests run against the temp repo,
     // not whatever repo invoked vitest (e.g. via a `git push` pre-push hook
@@ -1525,7 +1848,11 @@ describe("worktrees.probeWorkingTree", () => {
     const tempDir = mkdtempSync(path.join(tmpdir(), "groundcrew-probe-"));
     try {
       await runCommandAsync("git", ["-C", tempDir, "init", "-q"]);
-      const probe = await worktrees.probeWorkingTree({ worktreeDir: tempDir });
+      const probe = await worktrees.probeWorkingTree({
+        config: probeConfig(),
+        repository: "repo-a",
+        worktreeDir: tempDir,
+      });
       expect(probe.kind).toBe("clean");
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
@@ -1537,7 +1864,11 @@ describe("worktrees.probeWorkingTree", () => {
     try {
       await runCommandAsync("git", ["-C", tempDir, "init", "-q"]);
       writeFileSync(path.join(tempDir, "new.txt"), "x");
-      const probe = await worktrees.probeWorkingTree({ worktreeDir: tempDir });
+      const probe = await worktrees.probeWorkingTree({
+        config: probeConfig(),
+        repository: "repo-a",
+        worktreeDir: tempDir,
+      });
       expect(probe).toMatchObject({ kind: "dirty", modified: 0, untracked: 1 });
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
@@ -1551,7 +1882,11 @@ describe("worktrees.probeWorkingTree", () => {
     const tempDir = mkdtempSync(path.join(tmpdir(), "groundcrew-probe-"));
     rmSync(tempDir, { recursive: true, force: true });
 
-    const probe = await worktrees.probeWorkingTree({ worktreeDir: tempDir });
+    const probe = await worktrees.probeWorkingTree({
+      config: probeConfig(),
+      repository: "repo-a",
+      worktreeDir: tempDir,
+    });
 
     expect(probe.kind).toBe("unknown");
   });
@@ -1568,11 +1903,43 @@ describe("worktrees.probeWorkingTree", () => {
       controller.abort();
 
       const probe = await worktrees.probeWorkingTree({
+        config: probeConfig(),
+        repository: "repo-a",
         worktreeDir: tempDir,
         signal: controller.signal,
       });
 
       expect(probe.kind).toBe("unknown");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("excludes the repository's declared hook-generated paths", async () => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "groundcrew-probe-"));
+    try {
+      await runCommandAsync("git", ["-C", tempDir, "init", "-q"]);
+      await runCommandAsync("git", ["-C", tempDir, "config", "user.email", "probe@example.com"]);
+      await runCommandAsync("git", ["-C", tempDir, "config", "user.name", "probe"]);
+      writeFileSync(path.join(tempDir, "generated.md"), "committed");
+      await runCommandAsync("git", ["-C", tempDir, "add", "-A"]);
+      await runCommandAsync("git", ["-C", tempDir, "commit", "-qm", "init"]);
+      writeFileSync(path.join(tempDir, "generated.md"), "rewritten by the hook");
+      writeFileSync(path.join(tempDir, "agent-work.ts"), "x");
+
+      const partial = await worktrees.probeWorkingTree({
+        config: probeConfig(["generated.md"]),
+        repository: "repo-a",
+        worktreeDir: tempDir,
+      });
+      const full = await worktrees.probeWorkingTree({
+        config: probeConfig(["generated.md", "agent-work.ts"]),
+        repository: "repo-a",
+        worktreeDir: tempDir,
+      });
+
+      expect(partial).toMatchObject({ kind: "dirty", modified: 0, untracked: 1 });
+      expect(full).toStrictEqual({ kind: "clean" });
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }

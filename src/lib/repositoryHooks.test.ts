@@ -340,6 +340,46 @@ describe(resolvePrepareWorktreeCommand, () => {
     }
   });
 
+  it("rejects a repo config that sets hookGeneratedPaths at the top level", () => {
+    const worktreeDir = temporaryWorktree();
+    try {
+      writeRepositoryConfig(worktreeDir, {
+        version: 1,
+        hookGeneratedPaths: [".claude/settings.json"],
+      });
+
+      expect(() =>
+        resolvePrepareWorktreeCommand({
+          worktreeDir,
+          defaultHooks: {},
+        }),
+      ).toThrow(
+        /hookGeneratedPaths is operator-only and cannot be set in a repository config\. Move it to crew\.config\.ts\./,
+      );
+    } finally {
+      rmSync(worktreeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a repo config that nests hookGeneratedPaths under hooks", () => {
+    const worktreeDir = temporaryWorktree();
+    try {
+      writeRepositoryConfig(worktreeDir, {
+        version: 1,
+        hooks: { hookGeneratedPaths: [".claude/settings.json"] },
+      });
+
+      expect(() =>
+        resolvePrepareWorktreeCommand({
+          worktreeDir,
+          defaultHooks: {},
+        }),
+      ).toThrow(/hookGeneratedPaths is operator-only and cannot be set in a repository config\./);
+    } finally {
+      rmSync(worktreeDir, { recursive: true, force: true });
+    }
+  });
+
   it("rejects a repo config that nests unsandboxedHooks under hooks", () => {
     const worktreeDir = temporaryWorktree();
     try {

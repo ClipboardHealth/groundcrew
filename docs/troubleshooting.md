@@ -48,6 +48,12 @@ Groundcrew marks a task `In Progress` when it provisions a workspace. When a PR 
 
 If the task intentionally has no PR, mark it complete with `crew task done <task-id>`. Groundcrew refuses dirty matching worktrees with no PR unless you pass `--allow-dirty`, so inspect or commit/stash unexpected changes first. For todo-txt tasks with `rec:`, this completion path also lets the source schedule the next recurrence.
 
+## Cleanup Keeps Reporting A Dirty Worktree
+
+If every poll logs `Cleanup failed for <task>: worktree has N modified files and M untracked files`, check whether the files it names are ones your `prepareWorktree` hook created rather than the agent. A `postinstall` that regenerates a tracked file or drops an ungitignored directory into the checkout makes every worktree dirty from birth, so teardown never succeeds and the cleaner retries forever.
+
+Run `git status --porcelain` in the worktree, confirm the output is only hook output, then list those paths in [`hookGeneratedPaths`](./setup-hooks.md#hookgeneratedpaths-when-the-hook-dirties-the-worktree). Teardown then force-removes a worktree whose only remaining dirt is declared — which, like any `crew cleanup --force`, also deletes gitignored files in the tree (`node_modules`, a `.env` the agent wrote). That already happens for a clean worktree today; the difference is it now happens automatically for expendable-only dirt instead of only on an explicit `--force`.
+
 ## Claude Launches In Auto Mode By Default
 
 Groundcrew creates isolated per-task worktrees for unattended runs, so the shipped `claude` command is `claude --permission-mode auto` to let Claude proceed without stopping for clarifying questions while keeping its built-in safety prompts intact. Override `agents.definitions.claude.cmd` for `bypassPermissions` if you need to suppress tool-permission prompts entirely, or for a stricter mode.

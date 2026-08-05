@@ -263,6 +263,22 @@ export interface KnownRepository {
    * granting it is an explicit trust decision.
    */
   unsandboxedHooks?: UnsandboxedHookCommands;
+  /**
+   * Worktree-root-relative paths the `prepareWorktree` hook is expected to
+   * create or rewrite (a postinstall script that regenerates committed rule
+   * files, for example). The dirtiness guard excludes them, so teardown stops
+   * mistaking hook output for the agent's uncommitted work. Overrides
+   * `defaults.hookGeneratedPaths` wholesale rather than merging with it.
+   *
+   * Operator-only, honored ONLY from `crew.config.ts`; a repo-committed
+   * `.groundcrew/config.json` that sets it is a hard config error (see
+   * `repositoryHooks.ts`), because declaring a path here authorizes groundcrew
+   * to force-discard it on teardown.
+   *
+   * Relative to the worktree root even when the entry sets `workdir`, matching
+   * what `git status` prints. Paths are matched literally — no globs, no `..`.
+   */
+  hookGeneratedPaths?: string[];
 }
 
 export interface Config {
@@ -310,6 +326,11 @@ export interface Config {
   };
   defaults?: {
     hooks?: HookCommands;
+    /**
+     * Global fallback for `workspace.knownRepositories[].hookGeneratedPaths`,
+     * used only by repositories that do not declare their own list.
+     */
+    hookGeneratedPaths?: string[];
   };
   orchestrator?: {
     maximumInProgress?: number;
@@ -424,6 +445,8 @@ export interface ResolvedConfig {
   };
   defaults: {
     hooks: HookCommands;
+    /** Present only when the user declared a global list. */
+    hookGeneratedPaths?: string[];
   };
   orchestrator: {
     maximumInProgress: number;
@@ -475,6 +498,22 @@ export interface ResolvedConfig {
  */
 export function repositoryBaseDir(config: ResolvedConfig, repository: string): string {
   return config.workspace.repositoryDirs?.[repository] ?? config.workspace.projectDir;
+}
+
+/**
+ * Worktree-root-relative paths the `prepareWorktree` hook owns for this
+ * repository. The per-repo list replaces `defaults.hookGeneratedPaths` rather
+ * than extending it, so a repository whose hook generates a different set does
+ * not silently inherit the global one.
+ */
+export function resolveHookGeneratedPaths(input: {
+  config: ResolvedConfig;
+  repository: string;
+}): string[] {
+  const entry = input.config.workspace.repositories.find(
+    (recipe) => recipe.name === input.repository,
+  );
+  return entry?.hookGeneratedPaths ?? input.config.defaults.hookGeneratedPaths ?? [];
 }
 
 /**
@@ -788,9 +827,57 @@ function normalizeDefaults(value: unknown): ResolvedConfig["defaults"] {
   if (!isPlainObject(value)) {
     fail("defaults must be an object");
   }
+  const hookGeneratedPaths = normalizeHookGeneratedPaths(
+    value["hookGeneratedPaths"],
+    "defaults.hookGeneratedPaths",
+  );
   return {
     hooks: normalizeHookCommands(value["hooks"], "defaults.hooks"),
+    ...(hookGeneratedPaths === undefined ? {} : { hookGeneratedPaths }),
   };
+}
+
+const TRAILING_SLASHES_RE = /\/+$/;
+
+/**
+ * Declaring a path here authorizes teardown to force-discard it, so the shapes
+ * that could widen one entry into "everything" are rejected outright: absolute
+ * paths, `.`/`..` segments, and leading-colon pathspec magic. Git's `literal`
+ * magic neutralizes wildcards in whatever survives.
+ */
+function normalizeHookGeneratedPaths(value: unknown, configKey: string): string[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(value)) {
+    fail(`${configKey} must be an array of worktree-relative paths`);
+  }
+  const normalized: string[] = [];
+  value.forEach((entry: unknown, index) => {
+    const label = `${configKey}[${index}]`;
+    if (typeof entry !== "string" || entry.trim().length === 0) {
+      fail(`${label} must be a non-empty string (got ${JSON.stringify(entry)})`);
+    }
+    const relativePath = entry.trim().replace(TRAILING_SLASHES_RE, "");
+    if (path.isAbsolute(relativePath)) {
+      fail(
+        `${label} must be a relative path inside the worktree (got ${JSON.stringify(relativePath)})`,
+      );
+    }
+    if (relativePath.startsWith(":")) {
+      fail(
+        `${label} must not start with ':' — git pathspec magic is not allowed (got ${JSON.stringify(relativePath)})`,
+      );
+    }
+    const segments = relativePath.split("/");
+    if (segments.includes(".") || segments.includes("..")) {
+      fail(`${label} must not contain '.' or '..' segments (got ${JSON.stringify(relativePath)})`);
+    }
+    if (!normalized.includes(relativePath)) {
+      normalized.push(relativePath);
+    }
+  });
+  return normalized;
 }
 
 const ENV_VAR_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -1240,6 +1327,13 @@ function normalizeKnownRepository(entry: string | KnownRepository, index: number
       entry.unsandboxedHooks,
       `${label}.unsandboxedHooks`,
     );
+  }
+  const hookGeneratedPaths = normalizeHookGeneratedPaths(
+    entry.hookGeneratedPaths,
+    `${label}.hookGeneratedPaths`,
+  );
+  if (hookGeneratedPaths !== undefined) {
+    recipe.hookGeneratedPaths = hookGeneratedPaths;
   }
   return recipe;
 }

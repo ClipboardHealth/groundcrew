@@ -59,6 +59,20 @@ export default {
     //     name: "other-org/their-repo",
     //     hooks: { prepareWorktree: "uv sync --dev --frozen" },
     //   },
+    //
+    // When that hook writes files the repo neither commits nor gitignores, the
+    // worktree is dirty before the agent starts and `crew cleanup` refuses to
+    // remove it. List those worktree-root-relative paths so the dirtiness
+    // guard skips them; anything undeclared still blocks teardown. Declared
+    // paths are force-discarded on teardown, so name files, not broad parent
+    // directories. Operator-only: a repo-committed `.groundcrew/config.json`
+    // may not set this.
+    //
+    //   {
+    //     name: "other-org/their-repo",
+    //     hooks: { prepareWorktree: "npm ci" },
+    //     hookGeneratedPaths: [".agents/skills", ".claude/settings.json"],
+    //   },
   },
   agents: {
     default: "claude",
@@ -106,6 +120,9 @@ export default {
     hooks: {
       prepareWorktree: "true",
     },
+    // Global fallback for the per-repo `hookGeneratedPaths` above, used only by
+    // repositories that do not declare their own list.
+    // hookGeneratedPaths: [".agents/skills"],
   },
   // Everything below is optional — defaults shown for reference. Uncomment
   // and edit to override.

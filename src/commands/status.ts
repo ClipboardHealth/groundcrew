@@ -65,6 +65,8 @@ async function writeTaskWorktrees(config: ResolvedConfig, task: string): Promise
     const branchName = await effectiveBranchNameFromRunState({ entry, runState });
     // oxlint-disable-next-line no-await-in-loop -- status output is easier to read in worktree order.
     const dirtiness = await worktrees.probeWorkingTree({
+      config,
+      repository: entry.repository,
       worktreeDir: entry.dir,
     });
     // oxlint-disable-next-line no-await-in-loop -- one gh lookup per worktree is acceptable; multi-worktree-per-task is rare.

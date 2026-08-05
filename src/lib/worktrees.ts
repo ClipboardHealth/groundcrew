@@ -20,6 +20,7 @@ import {
   type KnownRepository,
   type ResolvedConfig,
   repositoryBaseDir,
+  resolveHookGeneratedPaths,
   worktreeBaseDir,
 } from "./config.ts";
 import { resolveDefaultBranch } from "./defaultBranch.ts";
@@ -514,43 +515,10 @@ async function removeWorktree(
     try {
       await runLongGitCommand(removeArguments, options.signal);
     } catch (error) {
-      // Under --verbose git's `fatal: ...` streams to the terminal rather than
-      // the captured error, so the failure may surface as just "Exit status:
-      // 128". Probe the worktree ourselves so the failure message names the
-      // condition either way — dirty
-      // (modified/untracked files, fixable with `crew cleanup --force`) or
-      // orphan (directory exists on disk but is not registered with the
-      // parent repo, fixable with `crew cleanup --force` when the path still
-      // matches groundcrew's expected worktree location).
       if (options.signal?.aborted === true) {
         throw error;
       }
-      if (options.force) {
-        const registration = await probeWorktreeRegistration({
-          repoDir,
-          worktreeDir: entry.dir,
-          ...signalProperty(options.signal),
-        });
-        if (registration !== "orphan") {
-          throw error;
-        }
-        await removeOrphanWorktreeDirectory(config, entry);
-      } else {
-        const dirtiness = await throwIfWorktreeDirty(entry, options.signal, error);
-        if (dirtiness.kind === "unknown") {
-          const registration = await probeWorktreeRegistration({
-            repoDir,
-            worktreeDir: entry.dir,
-            ...signalProperty(options.signal),
-          });
-          if (registration === "orphan") {
-            throw new Error(describeOrphanWorktree({ task: entry.task, dir: entry.dir }), {
-              cause: error,
-            });
-          }
-        }
-        throw error;
-      }
+      await recoverFromRemoveFailure({ config, entry, repoDir, error, ...options });
     }
   } else {
     debug(`Worktree directory ${entry.dir} not found, pruning stale refs...`);
@@ -566,6 +534,90 @@ async function removeWorktree(
     branchName: entry.branchName,
     ...signalProperty(options.signal),
   });
+}
+
+/**
+ * Salvage a failed `git worktree remove`, or rethrow when the failure is real.
+ * Returning normally means the worktree is gone and the caller may proceed to
+ * branch cleanup.
+ *
+ * Under --verbose git's `fatal: ...` streams to the terminal rather than the
+ * captured error, so the failure may surface as just "Exit status: 128". Probing
+ * the worktree ourselves names the condition either way: dirty
+ * (modified/untracked files, fixable with `crew cleanup --force`), orphan
+ * (directory exists on disk but is not registered with the parent repo), or
+ * dirty with nothing but declared `hookGeneratedPaths`, which is expendable and
+ * recovered here.
+ */
+async function recoverFromRemoveFailure(arguments_: {
+  config: ResolvedConfig;
+  entry: WorktreeEntry;
+  repoDir: string;
+  error: unknown;
+  force: boolean;
+  signal?: AbortSignal;
+}): Promise<void> {
+  const { config, entry, repoDir, error, force, signal } = arguments_;
+  if (force) {
+    const registration = await probeWorktreeRegistration({
+      repoDir,
+      worktreeDir: entry.dir,
+      ...signalProperty(signal),
+    });
+    if (registration !== "orphan") {
+      throw error;
+    }
+    await removeOrphanWorktreeDirectory(config, entry);
+    return;
+  }
+
+  const dirtiness = await throwIfWorktreeDirty({ config, entry, signal, cause: error });
+  if (
+    dirtiness.kind === "clean" &&
+    (await onlyHookGeneratedDirtIsBlocking({ config, entry, signal }))
+  ) {
+    debug(`Discarding hook-generated files in ${entry.dir} and retrying remove (--force)...`);
+    await runLongGitCommand(["-C", repoDir, "worktree", "remove", "--force", entry.dir], signal);
+    return;
+  }
+  if (dirtiness.kind === "unknown") {
+    const registration = await probeWorktreeRegistration({
+      repoDir,
+      worktreeDir: entry.dir,
+      ...signalProperty(signal),
+    });
+    if (registration === "orphan") {
+      throw new Error(describeOrphanWorktree({ task: entry.task, dir: entry.dir }), {
+        cause: error,
+      });
+    }
+  }
+  throw error;
+}
+
+/**
+ * True only when the declared hook-generated paths are provably the whole
+ * reason git refused: the filtered probe already read clean, and the unfiltered
+ * one still reports work. Without this second probe any removal failure git
+ * status cannot see — a locked worktree, a submodule, bad permissions — would
+ * escalate to a `--force` directory deletion.
+ */
+async function onlyHookGeneratedDirtIsBlocking(arguments_: {
+  config: ResolvedConfig;
+  entry: WorktreeEntry;
+  signal: AbortSignal | undefined;
+}): Promise<boolean> {
+  const { config, entry, signal } = arguments_;
+  const declaredPaths = resolveHookGeneratedPaths({ config, repository: entry.repository });
+  if (declaredPaths.length === 0) {
+    return false;
+  }
+  const unfiltered = await probeWorktreeDirtiness({
+    worktreeDir: entry.dir,
+    excludedPaths: [],
+    signal,
+  });
+  return unfiltered.kind === "dirty";
 }
 
 async function removeScriptedWorktree(
@@ -584,7 +636,7 @@ async function removeScriptedWorktree(
     // Keep the data-loss guard: a dirty worktree is not removed without --force.
     // Fail closed when the dirtiness probe can't confirm the worktree is clean,
     // so the remove template never runs over uncommitted work.
-    const dirtiness = await throwIfWorktreeDirty(entry, options.signal);
+    const dirtiness = await throwIfWorktreeDirty({ config, entry, signal: options.signal });
     if (dirtiness.kind !== "clean") {
       throw new Error(
         `Could not verify ${entry.dir} is clean; rerun with --force after manual inspection.`,
@@ -627,15 +679,29 @@ export type WorktreeDirtiness =
   | { kind: "clean" }
   | { kind: "unknown" };
 
-async function probeWorktreeDirtiness(
-  worktreeDir: string,
-  signal: AbortSignal | undefined,
-): Promise<WorktreeDirtiness> {
+/**
+ * `:(exclude,literal)` drops the declared paths from `git status` without
+ * letting a config value smuggle in a glob. With nothing declared the argument
+ * list is empty and the command stays byte-identical to the unfiltered probe.
+ */
+function excludePathspecArguments(excludedPaths: readonly string[]): string[] {
+  if (excludedPaths.length === 0) {
+    return [];
+  }
+  return ["--", ".", ...excludedPaths.map((entry) => `:(exclude,literal)${entry}`)];
+}
+
+async function probeWorktreeDirtiness(input: {
+  worktreeDir: string;
+  excludedPaths: readonly string[];
+  signal: AbortSignal | undefined;
+}): Promise<WorktreeDirtiness> {
+  const { worktreeDir, excludedPaths, signal } = input;
   let output: string;
   try {
     output = await runCommandAsync(
       "git",
-      ["-C", worktreeDir, "status", "--porcelain"],
+      ["-C", worktreeDir, "status", "--porcelain", ...excludePathspecArguments(excludedPaths)],
       signalProperty(signal),
     );
   } catch {
@@ -664,12 +730,18 @@ async function probeWorktreeDirtiness(
  * error. Returns the dirtiness so the git-native path can still branch on
  * `unknown`. `cause` chains the underlying git failure when called from a catch.
  */
-async function throwIfWorktreeDirty(
-  entry: WorktreeEntry,
-  signal: AbortSignal | undefined,
-  cause?: unknown,
-): Promise<WorktreeDirtiness> {
-  const dirtiness = await probeWorktreeDirtiness(entry.dir, signal);
+async function throwIfWorktreeDirty(input: {
+  config: ResolvedConfig;
+  entry: WorktreeEntry;
+  signal: AbortSignal | undefined;
+  cause?: unknown;
+}): Promise<WorktreeDirtiness> {
+  const { config, entry, signal, cause } = input;
+  const dirtiness = await probeWorktreeDirtiness({
+    worktreeDir: entry.dir,
+    excludedPaths: resolveHookGeneratedPaths({ config, repository: entry.repository }),
+    signal,
+  });
   if (dirtiness.kind === "dirty") {
     const message = describeDirtyWorktree({
       task: entry.task,
@@ -1002,10 +1074,19 @@ async function teardown(
 }
 
 async function probeWorkingTree(input: {
+  config: ResolvedConfig;
+  repository: string;
   worktreeDir: string;
   signal?: AbortSignal;
 }): Promise<WorktreeDirtiness> {
-  return await probeWorktreeDirtiness(input.worktreeDir, input.signal);
+  return await probeWorktreeDirtiness({
+    worktreeDir: input.worktreeDir,
+    excludedPaths: resolveHookGeneratedPaths({
+      config: input.config,
+      repository: input.repository,
+    }),
+    signal: input.signal,
+  });
 }
 
 export const worktrees = {
