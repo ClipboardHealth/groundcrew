@@ -132,6 +132,22 @@ describe("writeRemoteSnapshot", () => {
     expect(actual).toEqual(mockNewer);
   });
 
+  it("accepts a write whose attempt matches the file's", () => {
+    const config = makeConfig(directory);
+    writeRemoteSnapshot({ config, document: makeDocument() });
+
+    const actual = writeRemoteSnapshot({
+      config,
+      document: makeDocument({
+        lastAttemptStatus: "unavailable",
+        lastAttemptError: "source down",
+      }),
+    });
+
+    expect(actual.lastAttemptStatus).toBe("unavailable");
+    expect(readRemoteSnapshot(config)?.lastAttemptStatus).toBe("unavailable");
+  });
+
   it("returns undefined for a missing file", () => {
     const config = makeConfig(directory);
 

@@ -193,9 +193,11 @@ export interface WriteRemoteSnapshotInput {
 }
 
 /**
- * Monotonic: refuses to write a document whose attempt predates the one on
- * disk, so two concurrent runs interleaving read and write across processes
- * can never move the remote tier backwards.
+ * Monotonic: refuses to write a document whose attempt is strictly older than
+ * the one on disk, so two concurrent runs interleaving read and write across
+ * processes can never move the remote tier backwards. Equal timestamps are
+ * accepted — same-millisecond attempts are equally current, and rejecting them
+ * would silently drop a legitimate result.
  *
  * Returns whatever is on disk afterwards, which is the caller's document
  * unless the guard rejected it. Callers print the return value rather than
@@ -204,7 +206,7 @@ export interface WriteRemoteSnapshotInput {
 export function writeRemoteSnapshot(input: WriteRemoteSnapshotInput): RemoteStatusDocument {
   const { config, document } = input;
   const existing = readRemoteSnapshot(config);
-  if (existing !== undefined && existing.lastAttemptAt >= document.lastAttemptAt) {
+  if (existing !== undefined && existing.lastAttemptAt > document.lastAttemptAt) {
     return existing;
   }
   writeDocument(remoteSnapshotPath(config), document);

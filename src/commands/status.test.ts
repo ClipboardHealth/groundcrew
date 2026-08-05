@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -6,6 +6,10 @@ import { buildSources } from "../lib/buildSources.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { findPullRequestsForBranch } from "../lib/pullRequests.ts";
 import { readRunState, type RunState } from "../lib/runState.ts";
+import type {
+  LocalStatusDocument,
+  RemoteStatusDocument,
+} from "../lib/statusSnapshot.ts";
 import type { Issue as SourceIssue, TaskSource } from "../lib/taskSource.ts";
 import { type WorkspaceProbe, workspaces } from "../lib/workspaces.ts";
 import { type WorktreeDirtiness, type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
@@ -1386,6 +1390,116 @@ describe(status, () => {
     expect(output).toContain("Workspace probe unavailable: cmux unavailable");
   });
 
+  describe("--json", () => {
+    function parseJsonOutput(): {
+      local: LocalStatusDocument;
+      remote?: RemoteStatusDocument;
+    } {
+      return JSON.parse(consoleLog.output());
+    }
+
+    // Every --json run persists two files beside the log, so each test needs
+    // its own directory or they read each other's snapshots.
+    function jsonConfig(): ResolvedConfig {
+      return makeConfig({ logging: { file: path.join(temporaryDirectory, "groundcrew.log") } });
+    }
+
+    it("prints both documents under one root", async () => {
+      await status(jsonConfig(), { json: true });
+
+      const actual = parseJsonOutput();
+
+      expect(actual.local.schemaVersion).toBe(1);
+      expect(actual.remote?.lastAttemptStatus).toBe("ok");
+    });
+
+    it("omits the remote key entirely with --local-only", async () => {
+      await status(jsonConfig(), { json: true, localOnly: true });
+
+      const actual = parseJsonOutput();
+
+      expect(actual.local.schemaVersion).toBe(1);
+      expect("remote" in actual).toBe(false);
+    });
+
+    it("never constructs a task source or looks up a pull request with --local-only", async () => {
+      await status(jsonConfig(), { json: true, localOnly: true });
+
+      expect(buildSourcesMock).not.toHaveBeenCalled();
+      expect(findPullRequestsMock).not.toHaveBeenCalled();
+    });
+
+    it("reports an unavailable board without failing the command", async () => {
+      buildSourcesMock.mockRejectedValue(new Error("source down"));
+
+      await status(jsonConfig(), { json: true });
+
+      const actual = parseJsonOutput();
+
+      expect(actual.remote?.lastAttemptStatus).toBe("unavailable");
+      expect(actual.remote?.lastAttemptError).toBe("source down");
+      expect(actual.remote?.payload).toBeUndefined();
+    });
+
+    it("carries the previous payload forward when a later fetch fails", async () => {
+      const config = jsonConfig();
+      await status(config, { json: true });
+      consoleLog.restore();
+      consoleLog = captureConsoleLog();
+      buildSourcesMock.mockRejectedValue(new Error("source down"));
+
+      await status(config, { json: true });
+
+      const actual = parseJsonOutput();
+
+      expect(actual.remote?.lastAttemptStatus).toBe("unavailable");
+      expect(actual.remote?.payload).toBeDefined();
+    });
+
+    it("writes both documents beside the log file", async () => {
+      const config = jsonConfig();
+
+      await status(config, { json: true });
+
+      const localOnDisk = JSON.parse(
+        readFileSync(path.join(temporaryDirectory, "status-local.json"), "utf8"),
+      );
+      const remoteOnDisk = JSON.parse(
+        readFileSync(path.join(temporaryDirectory, "status-remote.json"), "utf8"),
+      );
+
+      expect(localOnDisk.schemaVersion).toBe(1);
+      expect(remoteOnDisk.lastAttemptStatus).toBe("ok");
+    });
+
+    it("prints exactly what it wrote to the remote file", async () => {
+      const config = jsonConfig();
+
+      await status(config, { json: true });
+
+      const printed = parseJsonOutput().remote;
+      const onDisk = JSON.parse(
+        readFileSync(path.join(temporaryDirectory, "status-remote.json"), "utf8"),
+      );
+
+      expect(printed).toEqual(onDisk);
+    });
+
+    it("writes no snapshot in text mode", async () => {
+      const config = jsonConfig();
+
+      await status(config);
+
+      expect(existsSync(path.join(temporaryDirectory, "status-local.json"))).toBe(false);
+    });
+
+    it("rejects --json for a single task", async () => {
+      await expect(status(makeConfig(), { task: "team-1", json: true })).rejects.toThrow(
+        "crew status: --json is not supported for a single task",
+      );
+    });
+  });
+
   // The snapshot document groups worktrees under one task while the inventory
   // prints one row per worktree. This pins the flatten order across that
   // regrouping.
@@ -1453,6 +1567,20 @@ describe(statusCli, () => {
     await expect(statusCli(["--task", "TEAM-1"])).rejects.toThrow(/Usage: crew status/);
 
     expect(loadConfigMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects --local-only without --json", async () => {
+    await expect(statusCli(["--local-only"])).rejects.toThrow(
+      "crew status: --local-only requires --json",
+    );
+
+    expect(loadConfigMock).not.toHaveBeenCalled();
+  });
+
+  it("accepts --json and --local-only in either order", async () => {
+    await statusCli(["--local-only", "--json"]);
+
+    expect(loadConfigMock).toHaveBeenCalled();
   });
 
   it("rejects extra positional arguments", async () => {

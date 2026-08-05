@@ -9,11 +9,14 @@ import { type JoinedStatus, type JoinedTask, joinStatus } from "../lib/statusJoi
 import {
   buildRemoteDocument,
   type LocalStatusDocument,
+  readRemoteSnapshot,
   type RemoteFetchResult,
   type StatusBlockedIssue,
   type StatusBoardIssue,
   type StatusQueueIssue,
   type StatusWorktree,
+  writeLocalSnapshot,
+  writeRemoteSnapshot,
 } from "../lib/statusSnapshot.ts";
 import {
   type CanonicalStatus,
@@ -35,9 +38,15 @@ import {
 
 export interface StatusOptions {
   task?: string;
+  /** Emit the snapshot documents as JSON and persist them. */
+  json?: boolean;
+  /** Collect the local tier only. Guarantees this run makes no network call. */
+  localOnly?: boolean;
 }
 
 const RECENT_LOG_LINE_COUNT = 10;
+
+const STATUS_USAGE = "Usage: crew status [<task>] [--json [--local-only]]";
 
 function escapeRegExp(value: string): string {
   return value.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
@@ -48,11 +57,25 @@ function taskLinePattern(task: string): RegExp {
 }
 
 function parseArguments(argv: string[]): StatusOptions {
-  const [task, ...extras] = argv;
-  if (extras.length > 0 || task?.length === 0 || task?.startsWith("-") === true) {
-    throw new Error("Usage: crew status [<task>]");
+  const options: StatusOptions = {};
+  for (const argument of argv) {
+    if (argument === "--json") {
+      options.json = true;
+      continue;
+    }
+    if (argument === "--local-only") {
+      options.localOnly = true;
+      continue;
+    }
+    if (argument.length === 0 || argument.startsWith("-") || options.task !== undefined) {
+      throw new Error(STATUS_USAGE);
+    }
+    options.task = argument.toLowerCase();
   }
-  return task === undefined ? {} : { task: task.toLowerCase() };
+  if (options.localOnly === true && options.json !== true) {
+    throw new Error("crew status: --local-only requires --json");
+  }
+  return options;
 }
 
 function writeSection(title: string): void {
@@ -529,8 +552,52 @@ async function writeInventoryStatus(config: ResolvedConfig): Promise<void> {
   writeQueueSections({ joined, result });
 }
 
+/**
+ * Emits the snapshot documents on stdout and persists them beside the log
+ * file. The persisted copies let a monitor start warm, and let any other
+ * reader see state without spawning a process.
+ *
+ * `--local-only` omits the `remote` key rather than setting it null: absent
+ * means "not collected", where null would mean "collected and empty".
+ */
+async function writeJsonStatus(input: {
+  config: ResolvedConfig;
+  localOnly: boolean;
+}): Promise<void> {
+  const { config, localOnly } = input;
+  const local = await collectLocalStatus({ config });
+  writeLocalSnapshot({ config, document: local });
+  if (localOnly) {
+    writeOutput(JSON.stringify({ local }, undefined, 2));
+    return;
+  }
+  const result = await collectRemoteStatus({
+    config,
+    pullRequestTargets: pullRequestTargetsOf(local),
+  });
+  // Print what landed on disk, not what we built. When the monotonic guard
+  // rejects our document because a concurrent run wrote a newer one, the two
+  // differ, and stdout must never contradict the file.
+  const remote = writeRemoteSnapshot({
+    config,
+    document: buildRemoteDocument({
+      previous: readRemoteSnapshot(config),
+      attemptAt: new Date().toISOString(),
+      result,
+    }),
+  });
+  writeOutput(JSON.stringify({ local, remote }, undefined, 2));
+}
+
 export async function status(config: ResolvedConfig, options: StatusOptions = {}): Promise<void> {
   const task = options.task?.trim();
+  if (options.json === true) {
+    if (task !== undefined) {
+      throw new Error("crew status: --json is not supported for a single task");
+    }
+    await writeJsonStatus({ config, localOnly: options.localOnly === true });
+    return;
+  }
   if (task === undefined) {
     await writeInventoryStatus(config);
     return;
