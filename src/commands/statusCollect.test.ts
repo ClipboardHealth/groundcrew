@@ -13,6 +13,7 @@ import type { RemoteFetchResult, RemoteStatusPayload } from "../lib/statusSnapsh
 import {
   collectLocalStatus,
   collectRemoteStatus,
+  decodeLogTail,
   fetchBoardIssues,
   type PullRequestTarget,
   workspaceProbeUnavailableText,
@@ -338,6 +339,25 @@ async function collectWithBoard(
     pullRequestTargets,
   });
 }
+
+describe("decodeLogTail", () => {
+  it("decodes only the bytes read, so a shrunken log yields no NUL padding", () => {
+    const buffer = Buffer.alloc(64);
+    const bytesRead = buffer.write("[10:00:00] eng-220 line\n", "utf8");
+
+    const actual = decodeLogTail({ buffer, bytesRead, startedMidFile: false });
+
+    expect(actual).toEqual(["[10:00:00] eng-220 line", ""]);
+  });
+
+  it("drops the partial line a mid-file read starts inside", () => {
+    const buffer = Buffer.from("ragment\n[10:00:00] eng-220 line\n", "utf8");
+
+    const actual = decodeLogTail({ buffer, bytesRead: buffer.length, startedMidFile: true });
+
+    expect(actual).toEqual(["[10:00:00] eng-220 line", ""]);
+  });
+});
 
 describe("workspaceProbeUnavailableText", () => {
   it("names the failure when the probe reports one", () => {

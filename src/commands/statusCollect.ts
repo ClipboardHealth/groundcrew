@@ -370,12 +370,7 @@ function readLogTail(config: ResolvedConfig): string[] {
     const start = size - length;
     const buffer = Buffer.alloc(length);
     const bytesRead = readSync(handle, buffer, 0, length, start);
-    // Decode only what was read: a log rotated between the stat and the read
-    // leaves the rest of the buffer zero-filled, which would publish NULs.
-    const lines = buffer.toString("utf8", 0, bytesRead).split("\n");
-    // A bounded read starts mid-line, so the leading fragment is not a log
-    // line and must not be matched against a task id.
-    return start > 0 ? lines.slice(1) : lines;
+    return decodeLogTail({ buffer, bytesRead, startedMidFile: start > 0 });
   } finally {
     closeSync(handle);
   }
@@ -469,6 +464,24 @@ function escapeRegExp(value: string): string {
  * pollable collector can pass a bounded tail while the one-shot per-task view
  * passes the whole file.
  */
+/**
+ * Splits a tail read into log lines.
+ *
+ * Decodes only `bytesRead`: a log rotated between the stat and the read
+ * returns fewer bytes than requested, and the rest of the buffer is still
+ * zero-filled, which would publish NUL characters. A read that started
+ * mid-file also starts mid-line, so its leading fragment is not a log line.
+ */
+export function decodeLogTail(input: {
+  buffer: Buffer;
+  bytesRead: number;
+  startedMidFile: boolean;
+}): string[] {
+  const { buffer, bytesRead, startedMidFile } = input;
+  const lines = buffer.toString("utf8", 0, bytesRead).split("\n");
+  return startedMidFile ? lines.slice(1) : lines;
+}
+
 export function recentTaskLogLines(input: { lines: readonly string[]; task: string }): string[] {
   const { lines, task } = input;
   // The boundary class is not \b on purpose: task ids contain hyphens, and \b

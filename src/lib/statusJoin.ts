@@ -57,10 +57,10 @@ export function joinStatus(input: JoinStatusInput): JoinedStatus {
 
   const tasks: JoinedTask[] = local.tasks.map((task) => ({
     ...task,
-    boardStatus: payload?.statusByTask[task.task],
+    boardStatus: ownProperty(payload?.statusByTask, task.task),
     worktrees: task.worktrees.map((worktree) => ({
       ...worktree,
-      pullRequests: remote?.pullRequestsByWorktree[worktree.dir] ?? [],
+      pullRequests: ownProperty(remote?.pullRequestsByWorktree, worktree.dir) ?? [],
     })),
   }));
 
@@ -84,6 +84,18 @@ export function joinStatus(input: JoinStatusInput): JoinedStatus {
     // local worktree, so this counts the unsubtracted list.
     slots: { used: payload.inProgress.length, maximum: local.maximumInProgress },
   };
+}
+
+/**
+ * These records arrive from JSON, so they carry Object.prototype. A task named
+ * "constructor" would otherwise resolve to a prototype member rather than a
+ * miss, and the renderer would print it.
+ */
+function ownProperty<T>(record: Record<string, T> | undefined, key: string): T | undefined {
+  if (record === undefined || !Object.hasOwn(record, key)) {
+    return undefined;
+  }
+  return record[key];
 }
 
 function withoutLocalWorktree<T extends StatusBoardIssue>(

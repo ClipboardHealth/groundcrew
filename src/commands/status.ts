@@ -26,7 +26,6 @@ import {
   buildRemoteDocument,
   type LocalStatusDocument,
   type RemoteFetchResult,
-  type RemoteStatusDocument,
   type StatusBlockedIssue,
   type StatusLifecycle,
   type StatusBoardIssue,
@@ -510,7 +509,6 @@ function writeInProgressWithoutWorktree(joined: JoinedStatus): void {
 
 interface CollectedTiers {
   local: LocalStatusDocument;
-  remote: RemoteStatusDocument;
   attemptAt: string;
   result: RemoteFetchResult;
 }
@@ -519,27 +517,26 @@ interface CollectedTiers {
  * Runs both tiers. The board fetch starts first because it needs nothing
  * local; only the pull request lookups wait on resolved branches.
  *
- * `previous` carries a prior remote document forward when the fetch fails.
- * Text mode passes undefined so a one-shot run reports only what it just saw,
- * rather than a queue recovered from an old snapshot.
+ * Returns the raw result rather than a built document: the JSON path needs
+ * `writeRemoteSnapshot` to do the carry-forward merge against the same file
+ * read its guard uses, and the text path deliberately merges against nothing.
  */
-async function collectBothTiers(input: {
-  config: ResolvedConfig;
-  previous: RemoteStatusDocument | undefined;
-}): Promise<CollectedTiers> {
-  const { config, previous } = input;
+async function collectBothTiers(config: ResolvedConfig): Promise<CollectedTiers> {
   const boardPromise = fetchBoardIssues(config);
   const local = await collectLocalStatus({ config });
   const result = await collectRemoteStatus({
     board: await boardPromise,
     pullRequestTargets: pullRequestTargetsOf(local),
   });
-  const attemptAt = new Date().toISOString();
-  return { local, remote: buildRemoteDocument({ previous, attemptAt, result }), attemptAt, result };
+  return { local, attemptAt: new Date().toISOString(), result };
 }
 
 async function writeInventoryStatus(config: ResolvedConfig): Promise<void> {
-  const { local, remote } = await collectBothTiers({ config, previous: undefined });
+  const { local, attemptAt, result } = await collectBothTiers(config);
+  // `previous: undefined` on purpose: a one-shot run reports only what this
+  // attempt saw, so a failed fetch prints "unavailable" rather than a queue
+  // recovered from an old snapshot.
+  const remote = buildRemoteDocument({ previous: undefined, attemptAt, result });
   const joined = joinStatus({ local, remote });
   const now = new Date();
 
@@ -573,7 +570,7 @@ async function writeJsonStatus(input: {
     writeOutput(JSON.stringify({ local }, undefined, 2));
     return;
   }
-  const collected = await collectBothTiers({ config, previous: undefined });
+  const collected = await collectBothTiers(config);
   // Print what landed on disk, not what we built. When a monotonic guard
   // rejects our document because a concurrent run wrote a newer one, the two
   // differ, and stdout must never contradict the file. writeRemoteSnapshot

@@ -148,7 +148,7 @@ crew status --json --local-only   # local tier only; never touches the network
 `--local-only` is a guarantee about that invocation, not a computed outcome, so
 a monitor's fast loop cannot stall on a slow board or a `gh` timeout.
 
-Two rules a reader must honor:
+Three rules a reader must honor:
 
 - **Subtract locally.** `status-remote.json` ships board classification without
   the local worktree subtraction. Remove tasks present in the local document
