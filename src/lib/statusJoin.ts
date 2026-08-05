@@ -1,0 +1,85 @@
+/**
+ * Combines the local and remote status tiers at read time. Lives apart from
+ * the collectors because an external monitor reimplements this step against
+ * the published documents, and the text renderer consumes its output.
+ */
+
+import type { PullRequestSummary } from "./pullRequests.ts";
+import type {
+  LocalStatusDocument,
+  RemoteStatusDocument,
+  StatusBlockedIssue,
+  StatusBoardIssue,
+  StatusTask,
+} from "./statusSnapshot.ts";
+import type { CanonicalStatus } from "./taskSource.ts";
+
+export interface JoinedTask extends StatusTask {
+  boardStatus: CanonicalStatus | undefined;
+  pullRequests: PullRequestSummary[];
+}
+
+export interface JoinedSlots {
+  used: number;
+  maximum: number;
+}
+
+export interface JoinedStatus {
+  tasks: JoinedTask[];
+  /** In-progress board issues with no local worktree. */
+  inProgressWithoutWorktree: StatusBoardIssue[];
+  queueReady: StatusBoardIssue[];
+  queueBlocked: StatusBlockedIssue[];
+  /** Undefined when no board fetch has ever succeeded. */
+  slots: JoinedSlots | undefined;
+}
+
+export interface JoinStatusInput {
+  local: LocalStatusDocument;
+  remote: RemoteStatusDocument | undefined;
+}
+
+/**
+ * The board lists arrive unsubtracted, so this is where the local worktree set
+ * is removed from them. Doing it here rather than at fetch time is what keeps
+ * a fast local poll paired with a slow board poll from reporting a
+ * just-dispatched task as still queued.
+ */
+export function joinStatus(input: JoinStatusInput): JoinedStatus {
+  const { local, remote } = input;
+  const payload = remote?.payload;
+
+  const tasks: JoinedTask[] = local.tasks.map((task) => ({
+    ...task,
+    boardStatus: payload?.statusByTask[task.task],
+    pullRequests: payload?.pullRequestsByTask[task.task] ?? [],
+  }));
+
+  if (payload === undefined) {
+    return {
+      tasks,
+      inProgressWithoutWorktree: [],
+      queueReady: [],
+      queueBlocked: [],
+      slots: undefined,
+    };
+  }
+
+  const localTasks = new Set(local.tasks.map((task) => task.task));
+  return {
+    tasks,
+    inProgressWithoutWorktree: withoutLocalWorktree(payload.inProgress, localTasks),
+    queueReady: withoutLocalWorktree(payload.queueReady, localTasks),
+    queueBlocked: withoutLocalWorktree(payload.queueBlocked, localTasks),
+    // Every in-progress issue holds a slot, including ones that do have a
+    // local worktree, so this counts the unsubtracted list.
+    slots: { used: payload.inProgress.length, maximum: local.maximumInProgress },
+  };
+}
+
+function withoutLocalWorktree<T extends StatusBoardIssue>(
+  issues: readonly T[],
+  localTasks: ReadonlySet<string>,
+): T[] {
+  return issues.filter((issue) => !localTasks.has(issue.naturalId.toLowerCase()));
+}
