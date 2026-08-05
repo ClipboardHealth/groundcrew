@@ -40,7 +40,7 @@ export const cmuxAdapter: Adapter = {
     const workspaceId = extractCmuxOpenId(output);
     if (workspaceId === undefined) {
       log(
-        `cmux new-workspace returned unrecognized output for ${spec.name}; if a workspace was created, run \`cmux close-workspace\` manually.`,
+        `cmux new-workspace returned unrecognized output for ${spec.name}; if a workspace was created, run 'cmux close-workspace' manually.`,
       );
       throw new Error(`Unexpected cmux output: ${output}`);
     }
@@ -355,7 +355,7 @@ async function closeWorkspaceLeakedByFailedOpen(
     );
   } catch (closeError) {
     log(
-      `cmux new-workspace for ${name} exited non-zero and left workspace ${workspaceId}; automatic close failed (${errorMessage(closeError)}). Run \`cmux close-workspace --workspace ${workspaceId}\` by hand.`,
+      `cmux new-workspace for ${name} exited non-zero and left workspace ${workspaceId}; automatic close failed (${errorMessage(closeError)}). Run 'cmux close-workspace --workspace ${workspaceId}' by hand.`,
     );
   }
 }

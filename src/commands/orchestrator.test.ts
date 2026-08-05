@@ -1155,7 +1155,7 @@ describe(orchestrate, () => {
     expect(setupMock).not.toHaveBeenCalled();
     expect(client.updateIssue).not.toHaveBeenCalled();
     const out = consoleLog.output();
-    expect(out).toContain("Run `crew cleanup");
+    expect(out).toContain("Run 'crew cleanup");
   });
 
   it("skips a task when the workspace list is unavailable", async () => {

@@ -69,7 +69,7 @@ describe(assertLocalRunnerRequirements, () => {
   it("throws when safehouse is requested on macOS but the binary is missing", () => {
     expect(() => {
       assertLocalRunnerRequirements(host({ hasSafehouse: false }), "safehouse");
-    }).toThrow(/require `safehouse` on PATH/);
+    }).toThrow(/require 'safehouse' on PATH/);
   });
 
   it("returns silently when sdx is supported and sbx is on PATH", () => {
@@ -82,7 +82,7 @@ describe(assertLocalRunnerRequirements, () => {
   it("throws when sdx is requested but sbx is missing", () => {
     expect(() => {
       assertLocalRunnerRequirements(host(), "sdx");
-    }).toThrow(/sdx runner require `sbx`/);
+    }).toThrow(/sdx runner require 'sbx'/);
   });
 
   it("throws when sdx is requested on an unsupported platform", () => {

@@ -1409,7 +1409,7 @@ describe(setupWorkspace, () => {
         agent: "claude",
         details: { title: "Test Title", description: "Body" },
       }),
-    ).rejects.toThrow(/sdx runner require `sbx`/);
+    ).rejects.toThrow(/sdx runner require 'sbx'/);
 
     expect(createMock).not.toHaveBeenCalled();
     expect(ensureClearanceMock).not.toHaveBeenCalled();
@@ -1584,7 +1584,7 @@ describe(setupWorkspace, () => {
         agent: "claude",
         details: { title: "Test Title", description: "Body" },
       }),
-    ).rejects.toThrow(/require `safehouse` on PATH/);
+    ).rejects.toThrow(/require 'safehouse' on PATH/);
 
     expect(createMock).not.toHaveBeenCalled();
     expect(ensureClearanceMock).not.toHaveBeenCalled();
