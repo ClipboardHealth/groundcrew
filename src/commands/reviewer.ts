@@ -242,7 +242,7 @@ export function createReviewer(deps: ReviewerDeps): Reviewer {
       });
       if (transition === "done" && reviewerConfig !== undefined) {
         try {
-          await reapWorktrees(reviewerConfig, [entry], signal);
+          await reapWorktrees(reviewerConfig, [entry], { signal });
         } catch (teardownError) {
           log(`Teardown failed for ${task}: ${errorMessage(teardownError)}`);
         }

@@ -1,10 +1,13 @@
 /**
  * Per-iteration scanner that closes workspaces and removes worktrees for
  * tasks that have reached a terminal status. One per `orchestrate()`
- * invocation; stateless across iterations. Mirrors `Dispatcher`.
+ * invocation; the only state it carries across iterations is the recurrence
+ * log that keeps a persistent cleanup failure from re-logging every poll.
+ * Mirrors `Dispatcher`.
  */
 
 import type { ResolvedConfig } from "../lib/config.ts";
+import { createRepeatedFailureLog } from "../lib/repeatedFailures.ts";
 import { naturalIdFromCanonical, type BoardState } from "../lib/taskSource.ts";
 import { log, logEvent } from "../lib/util.ts";
 import type { WorktreeEntry } from "../lib/worktrees.ts";
@@ -25,6 +28,7 @@ export interface Cleaner {
 
 export function createCleaner(deps: CleanerDeps): Cleaner {
   const { config } = deps;
+  const failureLog = createRepeatedFailureLog();
 
   async function runOnce(arguments_: {
     state: BoardState;
@@ -65,7 +69,7 @@ export function createCleaner(deps: CleanerDeps): Cleaner {
     }
 
     log(`Cleaning up ${stale.length} terminal worktree(s)`);
-    await reapWorktrees(config, stale, signal);
+    await reapWorktrees(config, stale, { signal, failureLog });
   }
 
   return { runOnce };

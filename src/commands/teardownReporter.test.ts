@@ -1,10 +1,16 @@
 import type { ResolvedConfig } from "../lib/config.ts";
+import { createRepeatedFailureLog } from "../lib/repeatedFailures.ts";
 import { removeRunState } from "../lib/runState.ts";
 import { setVerbose } from "../lib/util.ts";
 import { type TeardownResult, type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCapture.ts";
 import { emptyTeardownResult } from "../testHelpers/teardownResult.ts";
-import { logTeardown, reapWorktrees, recordTeardownEvents } from "./teardownReporter.ts";
+import {
+  logTeardown,
+  reapWorktrees,
+  recordTeardownEvents,
+  type TeardownReportOptions,
+} from "./teardownReporter.ts";
 
 vi.mock(import("../lib/worktrees.ts"), async (importOriginal) => {
   const actual = await importOriginal();
@@ -263,7 +269,7 @@ describe(reapWorktrees, () => {
     const { signal } = new AbortController();
     const entry = hostEntry("team-1");
 
-    await reapWorktrees(makeConfig(), [entry], signal);
+    await reapWorktrees(makeConfig(), [entry], { signal });
 
     expect(teardownMock).toHaveBeenCalledWith(expect.anything(), [entry], { signal });
   });
@@ -294,5 +300,121 @@ describe(reapWorktrees, () => {
     const actual = await reapWorktrees(makeConfig(), [entry]);
 
     expect(actual).toBe(expected);
+  });
+
+  function linesContaining(needle: string): string[] {
+    return consoleLog.calls.map((call) => call.join(" ")).filter((line) => line.includes(needle));
+  }
+
+  function removeFailure(message: string): TeardownResult {
+    return emptyTeardownResult({
+      failures: [
+        { entry: hostEntry("team-1"), step: "worktree_remove", error: new Error(message) },
+      ],
+    });
+  }
+
+  async function reapTimes(count: number, options: TeardownReportOptions): Promise<void> {
+    for (let attempt = 0; attempt < count; attempt += 1) {
+      // oxlint-disable-next-line no-await-in-loop -- each poll must observe the previous poll's outcome
+      await reapWorktrees(makeConfig(), [hostEntry("team-1")], options);
+    }
+  }
+
+  it("logs a repeated worktree_remove failure only once", async () => {
+    const failureLog = createRepeatedFailureLog();
+    teardownMock.mockResolvedValue(removeFailure("worktree has 1 modified file"));
+
+    await reapTimes(2, { failureLog });
+
+    expect(linesContaining("Cleanup failed for team-1")).toHaveLength(1);
+    expect(teardownMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("logs a failure again when its message changes", async () => {
+    const failureLog = createRepeatedFailureLog();
+    teardownMock.mockResolvedValue(removeFailure("worktree has 1 modified file"));
+    await reapWorktrees(makeConfig(), [hostEntry("team-1")], { failureLog });
+    teardownMock.mockResolvedValue(removeFailure("worktree has 2 modified files"));
+
+    await reapWorktrees(makeConfig(), [hostEntry("team-1")], { failureLog });
+
+    expect(linesContaining("Cleanup failed for team-1")).toEqual([
+      expect.stringContaining("worktree has 1 modified file"),
+      expect.stringContaining("worktree has 2 modified files"),
+    ]);
+  });
+
+  it("logs a still-blocked summary on the thirtieth unchanged attempt", async () => {
+    const failureLog = createRepeatedFailureLog();
+    teardownMock.mockResolvedValue(removeFailure("worktree has 1 modified file"));
+
+    await reapTimes(30, { failureLog });
+
+    expect(linesContaining("Cleanup failed for team-1")).toHaveLength(1);
+    expect(linesContaining("Cleanup still blocked for team-1 (host) after 30 attempts")).toEqual([
+      expect.stringContaining("worktree has 1 modified file"),
+    ]);
+  });
+
+  it("logs a still-failing summary for a repeated workspace_close failure", async () => {
+    const failureLog = createRepeatedFailureLog();
+    teardownMock.mockResolvedValue(
+      emptyTeardownResult({
+        failures: [
+          { entry: hostEntry("team-1"), step: "workspace_close", error: new Error("cmux down") },
+        ],
+      }),
+    );
+
+    await reapTimes(30, { failureLog });
+
+    expect(linesContaining("workspace close failed for team-1")).toHaveLength(1);
+    expect(linesContaining("workspace close still failing for team-1 after 30 attempts")).toEqual([
+      expect.stringContaining("cmux down"),
+    ]);
+  });
+
+  it("emits the repeat count on cleanup failure events", async () => {
+    const failureLog = createRepeatedFailureLog();
+    teardownMock.mockResolvedValue(removeFailure("worktree has 1 modified file"));
+
+    await reapWorktrees(makeConfig(), [hostEntry("team-1")], { failureLog });
+    expect(linesContaining("event=cleanup outcome=failed")).toEqual([
+      expect.stringContaining("repeats=1"),
+    ]);
+
+    const beforeSuppressedPoll = consoleLog.calls.length;
+    await reapWorktrees(makeConfig(), [hostEntry("team-1")], { failureLog });
+    expect(consoleLog.calls.slice(beforeSuppressedPoll)).toEqual([]);
+
+    await reapTimes(28, { failureLog });
+    expect(linesContaining("event=cleanup outcome=failed")).toEqual([
+      expect.stringContaining("repeats=1"),
+      expect.stringContaining("repeats=30"),
+    ]);
+  });
+
+  it("reports every occurrence when no failure log is given", async () => {
+    teardownMock.mockResolvedValue(removeFailure("worktree has 1 modified file"));
+
+    await reapWorktrees(makeConfig(), [hostEntry("team-1")]);
+    await reapWorktrees(makeConfig(), [hostEntry("team-1")]);
+
+    expect(linesContaining("Cleanup failed for team-1")).toHaveLength(2);
+  });
+
+  it("announces a repeated workspace list failure once", async () => {
+    const failureLog = createRepeatedFailureLog();
+    teardownMock.mockResolvedValue(
+      emptyTeardownResult({
+        workspaceProbe: { kind: "unavailable", error: new Error("cmux exploded") },
+      }),
+    );
+
+    await reapTimes(2, { failureLog });
+
+    expect(linesContaining("workspace list failed:")).toHaveLength(1);
+    expect(linesContaining("reason=workspace_list_failed")).toHaveLength(1);
   });
 });

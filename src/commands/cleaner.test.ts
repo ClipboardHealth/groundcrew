@@ -6,7 +6,7 @@ import type { BoardState } from "../lib/taskSource.ts";
 import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCapture.ts";
 import { emptyTeardownResult } from "../testHelpers/teardownResult.ts";
-import { createCleaner } from "./cleaner.ts";
+import { type Cleaner, createCleaner } from "./cleaner.ts";
 
 vi.mock(import("../lib/worktrees.ts"), async (importOriginal) => {
   const actual = await importOriginal();
@@ -260,5 +260,84 @@ describe(createCleaner, () => {
     });
 
     expect(teardownMock).toHaveBeenCalledWith(expect.anything(), [entry], { signal });
+  });
+
+  function linesContaining(needle: string): string[] {
+    return consoleLog.calls.map((call) => call.join(" ")).filter((line) => line.includes(needle));
+  }
+
+  function removeFailure(message: string): void {
+    teardownMock.mockResolvedValue(
+      emptyTeardownResult({
+        failures: [
+          {
+            entry: hostEntryFor("repo-a", "team-1"),
+            step: "worktree_remove",
+            error: new Error(message),
+          },
+        ],
+      }),
+    );
+  }
+
+  async function pollTimes(count: number, cleaner: Cleaner): Promise<void> {
+    for (let poll = 0; poll < count; poll += 1) {
+      // oxlint-disable-next-line no-await-in-loop -- each poll must observe the previous poll's outcome
+      await cleaner.runOnce({
+        state: boardOf([canonicalLinearIssue({ naturalId: "team-1", status: "done" })]),
+        worktreeEntries: [hostEntryFor("repo-a", "team-1")],
+        dryRun: false,
+      });
+    }
+  }
+
+  it("logs an unresolvable cleanup failure once across polls", async () => {
+    const cleaner = createCleaner({ config: makeConfig() });
+    removeFailure("worktree has 1 modified file and 2 untracked files");
+
+    await pollTimes(3, cleaner);
+
+    expect(linesContaining("Cleanup failed for team-1")).toHaveLength(1);
+    expect(teardownMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("logs the failure again when the dirty-file count changes", async () => {
+    const cleaner = createCleaner({ config: makeConfig() });
+    removeFailure("worktree has 1 modified file and 2 untracked files");
+    await pollTimes(1, cleaner);
+    removeFailure("worktree has 1 modified file and 3 untracked files");
+
+    await pollTimes(1, cleaner);
+
+    expect(linesContaining("Cleanup failed for team-1")).toEqual([
+      expect.stringContaining("2 untracked files"),
+      expect.stringContaining("3 untracked files"),
+    ]);
+  });
+
+  it("announces the failure again after it clears and recurs", async () => {
+    const cleaner = createCleaner({ config: makeConfig() });
+    removeFailure("worktree has 1 modified file");
+    await pollTimes(1, cleaner);
+    teardownMock.mockResolvedValue(
+      emptyTeardownResult({ removed: [hostEntryFor("repo-a", "team-1")] }),
+    );
+    await pollTimes(1, cleaner);
+    removeFailure("worktree has 1 modified file");
+
+    await pollTimes(1, cleaner);
+
+    expect(linesContaining("Cleanup failed for team-1")).toHaveLength(2);
+  });
+
+  it("summarizes a still-blocked worktree after thirty polls", async () => {
+    const cleaner = createCleaner({ config: makeConfig() });
+    removeFailure("worktree has 1 modified file");
+
+    await pollTimes(30, cleaner);
+
+    expect(
+      linesContaining("Cleanup still blocked for team-1 (host) after 30 attempts"),
+    ).toHaveLength(1);
   });
 });
