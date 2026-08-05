@@ -162,6 +162,27 @@ describe("writeRemoteSnapshot", () => {
     expect(readRemoteSnapshot(config)).toBeUndefined();
   });
 
+  // A snapshot is a contract between two separately versioned programs, so
+  // anything that does not match the shape is rejected rather than misread.
+  it.each([
+    ["a JSON null", "null"],
+    ["a JSON scalar", "42"],
+    ["a document with no attempt timestamp", JSON.stringify({ schemaVersion: 1 })],
+    [
+      "a document with an unknown attempt status",
+      JSON.stringify({
+        schemaVersion: 1,
+        lastAttemptAt: "2026-08-04T03:00:00.000Z",
+        lastAttemptStatus: "maybe",
+      }),
+    ],
+  ])("returns undefined for %s", (_label, contents) => {
+    const config = makeConfig(directory);
+    writeFileSync(remoteSnapshotPath(config), contents);
+
+    expect(readRemoteSnapshot(config)).toBeUndefined();
+  });
+
   it("returns undefined for a document from an unknown schema version", () => {
     const config = makeConfig(directory);
     writeRemoteSnapshot({ config, document: makeDocument() });

@@ -6,10 +6,7 @@ import { buildSources } from "../lib/buildSources.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { findPullRequestsForBranch } from "../lib/pullRequests.ts";
 import { readRunState, type RunState } from "../lib/runState.ts";
-import type {
-  LocalStatusDocument,
-  RemoteStatusDocument,
-} from "../lib/statusSnapshot.ts";
+import type { LocalStatusDocument, RemoteStatusDocument } from "../lib/statusSnapshot.ts";
 import type { Issue as SourceIssue, TaskSource } from "../lib/taskSource.ts";
 import { type WorkspaceProbe, workspaces } from "../lib/workspaces.ts";
 import { type WorktreeDirtiness, type WorktreeEntry, worktrees } from "../lib/worktrees.ts";

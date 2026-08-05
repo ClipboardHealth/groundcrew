@@ -29,6 +29,29 @@ export {
   type RunState,
 } from "./lib/runState.ts";
 export {
+  type JoinedSlots,
+  type JoinedStatus,
+  type JoinedTask,
+  joinStatus,
+} from "./lib/statusJoin.ts";
+export {
+  type LocalStatusDocument,
+  localSnapshotPath,
+  readRemoteSnapshot,
+  type RemoteStatusDocument,
+  type RemoteStatusPayload,
+  remoteSnapshotPath,
+  STATUS_SNAPSHOT_SCHEMA_VERSION,
+  type StatusBlockedIssue,
+  type StatusBlocker,
+  type StatusBoardIssue,
+  type StatusLifecycle,
+  type StatusQueueIssue,
+  type StatusSessionState,
+  type StatusTask,
+  type StatusWorktree,
+} from "./lib/statusSnapshot.ts";
+export {
   fetchBlockersForTask,
   fetchInProgressIssueCount,
   fetchRawLinearIssue,

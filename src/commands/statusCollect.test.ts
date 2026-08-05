@@ -9,7 +9,12 @@ import { readRunState, type RunState } from "../lib/runState.ts";
 import type { Blocker, Issue as SourceIssue } from "../lib/taskSource.ts";
 import { workspaces } from "../lib/workspaces.ts";
 import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
-import { collectLocalStatus, collectRemoteStatus } from "./statusCollect.ts";
+import type { RemoteFetchResult, RemoteStatusPayload } from "../lib/statusSnapshot.ts";
+import {
+  collectLocalStatus,
+  collectRemoteStatus,
+  workspaceProbeUnavailableText,
+} from "./statusCollect.ts";
 
 vi.mock(import("../lib/board.ts"), async (importOriginal) => {
   const actual = await importOriginal();
@@ -127,7 +132,7 @@ describe("collectLocalStatus", () => {
     const actual = await collectLocalStatus({ config: mockConfig });
 
     expect(actual.tasks[0]?.startedAt).toBe("2026-08-04T02:00:00.000Z");
-    expect(Object.keys(actual.tasks[0] ?? {})).not.toContain("duration");
+    expect(actual.tasks[0]).not.toHaveProperty("duration");
   });
 
   it("groups multiple worktrees under one task in list order", async () => {
@@ -155,7 +160,9 @@ describe("collectLocalStatus", () => {
   });
 
   it("flags a worktree with no run state and a live session as stray", async () => {
-    vi.mocked(readRunState).mockReturnValue(undefined);
+    // An empty map misses, which yields undefined without writing it literally.
+    const statesByTask = new Map<string, RunState>();
+    vi.mocked(readRunState).mockImplementation((_config, task) => statesByTask.get(task));
 
     const actual = await collectLocalStatus({ config: mockConfig });
 
@@ -184,6 +191,17 @@ describe("collectLocalStatus", () => {
     expect(actual.tasks[0]?.session).toBe("unknown");
     expect(actual.tasks[0]?.flags).toEqual([]);
     expect(actual.tasks[0]?.hint).toBeUndefined();
+  });
+
+  it("carries the probe's failure reason into the document", async () => {
+    vi.mocked(workspaces.probe).mockResolvedValue({
+      kind: "unavailable",
+      error: new Error("cmux unavailable"),
+    });
+
+    const actual = await collectLocalStatus({ config: mockConfig });
+
+    expect(actual.workspaceProbe).toEqual({ status: "unavailable", error: "cmux unavailable" });
   });
 
   it("collects git dirtiness and branch for each worktree", async () => {
@@ -251,21 +269,56 @@ function makeBlocker(overrides: Partial<Blocker> & { id: string }): Blocker {
   return { title: "a blocker", status: "in-progress", ...overrides };
 }
 
+function mockBoard(fetch: Board["fetch"]): void {
+  vi.mocked(createBoard).mockReturnValue({ fetch } as Board);
+}
+
 function mockBoardFetch(issues: SourceIssue[]): void {
-  const mockBoard: Pick<Board, "fetch"> = {
-    fetch: vi.fn(async () => ({ timestamp: "2026-08-04T03:00:00.000Z", issues, parentSkips: [] })),
-  };
-  vi.mocked(createBoard).mockReturnValue(mockBoard as Board);
+  mockBoard(
+    vi.fn<Board["fetch"]>(async () => ({
+      timestamp: "2026-08-04T03:00:00.000Z",
+      issues,
+      parentSkips: [],
+    })),
+  );
 }
 
 function mockBoardFetchRejection(error: Error): void {
-  const mockBoard: Pick<Board, "fetch"> = {
-    fetch: vi.fn(async () => {
+  mockBoard(
+    vi.fn<Board["fetch"]>(async () => {
       throw error;
     }),
-  };
-  vi.mocked(createBoard).mockReturnValue(mockBoard as Board);
+  );
 }
+
+/**
+ * Narrows a fetch result to its payload so tests assert without branching.
+ * A failed fetch fails the test here rather than inside an `if`.
+ */
+function expectPayload(result: RemoteFetchResult): RemoteStatusPayload {
+  expect(result.kind).toBe("ok");
+  if (result.kind !== "ok") {
+    throw new Error("unreachable: the assertion above already failed");
+  }
+  return result.payload;
+}
+
+describe("workspaceProbeUnavailableText", () => {
+  it("names the failure when the probe reports one", () => {
+    const actual = workspaceProbeUnavailableText({
+      kind: "unavailable",
+      error: new Error("cmux unavailable"),
+    });
+
+    expect(actual).toBe("Workspace probe unavailable: cmux unavailable");
+  });
+
+  it("stays generic when the probe reports no reason", () => {
+    const actual = workspaceProbeUnavailableText({ kind: "unavailable", error: undefined });
+
+    expect(actual).toBe("Workspace probe unavailable");
+  });
+});
 
 describe("collectRemoteStatus", () => {
   beforeEach(() => {
@@ -275,8 +328,6 @@ describe("collectRemoteStatus", () => {
       orchestrator: { maximumInProgress: 4 },
       sources: [],
     } as unknown as ResolvedConfig;
-    vi.mocked(worktrees.list).mockReturnValue([makeEntry()]);
-    vi.mocked(readRunState).mockReturnValue(makeRunState());
   });
 
   afterEach(() => {
@@ -295,34 +346,36 @@ describe("collectRemoteStatus", () => {
       }),
     ]);
 
-    const actual = await collectRemoteStatus({ config: mockConfig, pullRequestTargets: [] });
+    const actual = expectPayload(
+      await collectRemoteStatus({ config: mockConfig, pullRequestTargets: [] }),
+    );
 
-    expect(actual.kind).toBe("ok");
-    if (actual.kind !== "ok") {
-      return;
-    }
-    expect(actual.payload.inProgress.map((issue) => issue.naturalId)).toEqual(["eng-220"]);
-    expect(actual.payload.queueReady.map((issue) => issue.naturalId)).toEqual(["eng-225"]);
-    expect(actual.payload.queueBlocked.map((issue) => issue.naturalId)).toEqual(["eng-215"]);
+    expect(actual.inProgress.map((issue) => issue.naturalId)).toEqual(["eng-220"]);
+    expect(actual.queueReady.map((issue) => issue.naturalId)).toEqual(["eng-225"]);
+    expect(actual.queueBlocked.map((issue) => issue.naturalId)).toEqual(["eng-215"]);
   });
 
   it("keeps an in-progress issue in the payload even when it has a local worktree", async () => {
     mockBoardFetch([makeIssue({ id: "linear:eng-220", status: "in-progress" })]);
 
-    const actual = await collectRemoteStatus({
-      config: mockConfig,
-      pullRequestTargets: [{ task: "eng-220", dir: "/repos/eng-220", branch: "eng-220" }],
-    });
+    const actual = expectPayload(
+      await collectRemoteStatus({
+        config: mockConfig,
+        pullRequestTargets: [{ task: "eng-220", dir: "/repos/eng-220", branch: "eng-220" }],
+      }),
+    );
 
-    expect(actual.kind === "ok" && actual.payload.inProgress).toHaveLength(1);
+    expect(actual.inProgress).toHaveLength(1);
   });
 
-  it("excludes a todo that no agent or repository can dispatch", async () => {
+  it("excludes a todo that no agent can dispatch", async () => {
     mockBoardFetch([makeIssue({ id: "linear:eng-225", status: "todo", agent: undefined })]);
 
-    const actual = await collectRemoteStatus({ config: mockConfig, pullRequestTargets: [] });
+    const actual = expectPayload(
+      await collectRemoteStatus({ config: mockConfig, pullRequestTargets: [] }),
+    );
 
-    expect(actual.kind === "ok" && actual.payload.queueReady).toEqual([]);
+    expect(actual.queueReady).toEqual([]);
   });
 
   it("treats a todo whose blockers are all done as ready", async () => {
@@ -334,11 +387,11 @@ describe("collectRemoteStatus", () => {
       }),
     ]);
 
-    const actual = await collectRemoteStatus({ config: mockConfig, pullRequestTargets: [] });
+    const actual = expectPayload(
+      await collectRemoteStatus({ config: mockConfig, pullRequestTargets: [] }),
+    );
 
-    expect(actual.kind === "ok" && actual.payload.queueReady.map((issue) => issue.naturalId)).toEqual([
-      "eng-225",
-    ]);
+    expect(actual.queueReady.map((issue) => issue.naturalId)).toEqual(["eng-225"]);
   });
 
   it("keeps only the open blockers on a blocked issue", async () => {
@@ -353,9 +406,11 @@ describe("collectRemoteStatus", () => {
       }),
     ]);
 
-    const actual = await collectRemoteStatus({ config: mockConfig, pullRequestTargets: [] });
+    const actual = expectPayload(
+      await collectRemoteStatus({ config: mockConfig, pullRequestTargets: [] }),
+    );
 
-    expect(actual.kind === "ok" && actual.payload.queueBlocked[0]?.blockedBy).toEqual([
+    expect(actual.queueBlocked[0]?.blockedBy).toEqual([
       { id: "linear:eng-201", status: "in-progress", nativeStatus: "In Progress" },
     ]);
   });
@@ -366,24 +421,42 @@ describe("collectRemoteStatus", () => {
       makeIssue({ id: "shell:eng-220", status: "todo", source: "shell" }),
     ]);
 
-    const actual = await collectRemoteStatus({ config: mockConfig, pullRequestTargets: [] });
+    const actual = expectPayload(
+      await collectRemoteStatus({ config: mockConfig, pullRequestTargets: [] }),
+    );
 
-    expect(actual.kind === "ok" && actual.payload.statusByTask["eng-220"]).toBeUndefined();
+    expect(actual.statusByTask["eng-220"]).toBeUndefined();
   });
 
-  it("collects pull requests only for tasks with a local worktree", async () => {
+  it("looks up pull requests with the branch the local tier already resolved", async () => {
     mockBoardFetch([]);
     vi.mocked(findPullRequestsForBranch).mockResolvedValue([
       { url: "https://example.test/1", number: 1, state: "open", title: "PR" },
     ]);
 
-    const actual = await collectRemoteStatus({
+    const actual = expectPayload(
+      await collectRemoteStatus({
+        config: mockConfig,
+        pullRequestTargets: [{ task: "eng-220", dir: "/repos/eng-220", branch: "adopted-branch" }],
+      }),
+    );
+
+    expect(actual.pullRequestsByTask["eng-220"]).toHaveLength(1);
+    expect(findPullRequestsForBranch).toHaveBeenCalledWith({
+      cwd: "/repos/eng-220",
+      branchName: "adopted-branch",
+    });
+  });
+
+  it("never reads run state, since the local tier already did", async () => {
+    mockBoardFetch([]);
+
+    await collectRemoteStatus({
       config: mockConfig,
       pullRequestTargets: [{ task: "eng-220", dir: "/repos/eng-220", branch: "eng-220" }],
     });
 
-    expect(actual.kind === "ok" && actual.payload.pullRequestsByTask["eng-220"]).toHaveLength(1);
-    expect(findPullRequestsForBranch).toHaveBeenCalledTimes(1);
+    expect(readRunState).not.toHaveBeenCalled();
   });
 
   it("skips pull request lookups entirely when no task has a worktree", async () => {

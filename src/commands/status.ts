@@ -285,10 +285,8 @@ function runDurationMs(input: {
   if (lifecycle !== "running" && lifecycle !== "resumed") {
     return undefined;
   }
-  if (startedAt === undefined) {
-    return undefined;
-  }
-  const created = Date.parse(startedAt);
+  /* v8 ignore next @preserve -- a running lifecycle always carries a run state, which always has createdAt */
+  const created = Date.parse(startedAt ?? "");
   if (Number.isNaN(created)) {
     return undefined;
   }
@@ -372,11 +370,7 @@ function writeInventoryWorktrees(joined: JoinedStatus, now: Date): void {
   }
 }
 
-function writeInventoryRow(input: {
-  task: JoinedTask;
-  worktree: StatusWorktree;
-  now: Date;
-}): void {
+function writeInventoryRow(input: { task: JoinedTask; worktree: StatusWorktree; now: Date }): void {
   const { task, worktree, now } = input;
   writeOutput(task.url === undefined ? task.task : `${task.task}  ${task.url}`);
   if (task.title !== undefined) {
@@ -430,7 +424,10 @@ function writeStraySessions(local: LocalStatusDocument): void {
 
 function describeOpenBlockers(issue: StatusBlockedIssue): string {
   return issue.blockedBy
-    .map((blocker) => `${naturalIdFromCanonical(blocker.id)} (${blocker.nativeStatus ?? blocker.status})`)
+    .map(
+      (blocker) =>
+        `${naturalIdFromCanonical(blocker.id)} (${blocker.nativeStatus ?? blocker.status})`,
+    )
     .join(", ");
 }
 

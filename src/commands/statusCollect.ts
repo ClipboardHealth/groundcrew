@@ -68,15 +68,18 @@ export async function collectLocalStatus(
   const runStates = new Map(uniqueTasks.map((task) => [task, readRunState(config, task)]));
   const accessHints = await collectAccessHints({ config, tasks: uniqueTasks });
   const logLines = readLogTail(config);
-  const worktreesByTask = await collectWorktreesByTask({ entries, runStates });
+  const collected = await collectWorktreesByTask({ entries, runStates });
 
-  const tasks: StatusTask[] = uniqueTasks.map((task) => {
+  // Iterating the collected map rather than the task list keeps every task's
+  // repository and worktrees non-optional: the map was built from the entries
+  // those fields come from.
+  const tasks: StatusTask[] = [...collected].map(([task, group]) => {
     const runState = runStates.get(task);
     return {
       task,
       title: runState?.title,
       url: runState?.url,
-      repository: repositoryForTask({ entries, task }),
+      repository: group.repository,
       agent: runState?.agent,
       lifecycle: lifecycleOf(runState),
       flags: runProbeFlags({ runState, probe, task }),
@@ -88,7 +91,7 @@ export async function collectLocalStatus(
       session: sessionState({ probe, task }),
       attachCommand: accessHints.get(task)?.command,
       hint: inventoryHint({ runState, probe, task }),
-      worktrees: worktreesByTask.get(task) ?? [],
+      worktrees: group.worktrees,
       recentLogLines: recentTaskLogLines({ lines: logLines, task }),
     };
   });
@@ -157,7 +160,9 @@ export async function collectRemoteStatus(
         .filter((issue) => issue.status === "in-progress")
         .toSorted((left, right) => left.id.localeCompare(right.id))
         .map((issue) => toBoardIssue(issue)),
-      queueReady: todos.filter((issue) => !hasOpenBlocker(issue)).map((issue) => toQueueIssue(issue)),
+      queueReady: todos
+        .filter((issue) => !hasOpenBlocker(issue))
+        .map((issue) => toQueueIssue(issue)),
       queueBlocked: todos
         .filter((issue) => hasOpenBlocker(issue))
         .map((issue) => toBlockedIssue(issue)),
@@ -165,14 +170,11 @@ export async function collectRemoteStatus(
   };
 }
 
-export function lifecycleOf(runState: RunState | undefined): StatusLifecycle {
+function lifecycleOf(runState: RunState | undefined): StatusLifecycle {
   return runState?.state ?? "idle";
 }
 
-export function sessionState(input: {
-  probe: WorkspaceProbe;
-  task: string;
-}): StatusSessionState {
+function sessionState(input: { probe: WorkspaceProbe; task: string }): StatusSessionState {
   const { probe, task } = input;
   if (probe.kind !== "ok") {
     return "unknown";
@@ -223,7 +225,7 @@ export function runProbeFlags(input: {
  * hint when the probe is unavailable, since we genuinely don't know whether
  * there is a disagreement, or when the row is healthy.
  */
-export function inventoryHint(input: {
+function inventoryHint(input: {
   runState: RunState | undefined;
   probe: WorkspaceProbe;
   task: string;
@@ -267,32 +269,35 @@ function probeState(probe: WorkspaceProbe): LocalStatusDocument["workspaceProbe"
   };
 }
 
+interface CollectedTaskWorktrees {
+  repository: string;
+  worktrees: StatusWorktree[];
+}
+
 /**
- * One entry per task, in worktree-list order. The renderer flattens this back
- * to one row per worktree, so the order must stay stable.
+ * Groups worktrees under their task, in worktree-list order. The renderer
+ * flattens this back to one row per worktree, so the order must stay stable.
+ * The task's repository comes from its first worktree, matching the row a
+ * single-worktree task has always printed.
  */
 async function collectWorktreesByTask(input: {
   entries: readonly WorktreeEntry[];
   runStates: ReadonlyMap<string, RunState | undefined>;
-}): Promise<Map<string, StatusWorktree[]>> {
+}): Promise<Map<string, CollectedTaskWorktrees>> {
   const { entries, runStates } = input;
+  const byTask = new Map<string, CollectedTaskWorktrees>();
   const collected = await Promise.all(
-    entries.map(
-      async (entry) => await collectWorktree({ entry, runState: runStates.get(entry.task) }),
-    ),
+    entries.map(async (entry) => ({
+      entry,
+      worktree: await collectWorktree({ entry, runState: runStates.get(entry.task) }),
+    })),
   );
-  const byTask = new Map<string, StatusWorktree[]>();
-  for (const [index, entry] of entries.entries()) {
-    const worktree = collected[index];
-    /* v8 ignore next 3 @preserve -- Promise.all preserves index alignment with entries */
-    if (worktree === undefined) {
-      continue;
-    }
+  for (const { entry, worktree } of collected) {
     const existing = byTask.get(entry.task);
     if (existing === undefined) {
-      byTask.set(entry.task, [worktree]);
+      byTask.set(entry.task, { repository: entry.repository, worktrees: [worktree] });
     } else {
-      existing.push(worktree);
+      existing.worktrees.push(worktree);
     }
   }
   return byTask;
@@ -324,13 +329,6 @@ async function collectAccessHints(input: {
       return [task, result?.status === "fulfilled" ? result.value : undefined] as const;
     }),
   );
-}
-
-function repositoryForTask(input: { entries: readonly WorktreeEntry[]; task: string }): string {
-  const { entries, task } = input;
-  const entry = entries.find((candidate) => candidate.task === task);
-  /* v8 ignore next @preserve -- tasks are derived from entries, so a match always exists */
-  return entry?.repository ?? "";
 }
 
 function orphanedSessions(input: {

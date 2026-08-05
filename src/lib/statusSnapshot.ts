@@ -55,7 +55,7 @@ export interface StatusTask {
   recentLogLines: string[];
 }
 
-export interface StatusProbeState {
+interface StatusProbeState {
   status: "ok" | "unavailable";
   error: string | undefined;
 }
@@ -165,7 +165,7 @@ export function buildRemoteDocument(input: BuildRemoteDocumentInput): RemoteStat
 type LoggingConfig = Pick<ResolvedConfig, "logging">;
 
 /** Both documents sit beside the log file and the per-task run states. */
-export function statusSnapshotDirectory(config: LoggingConfig): string {
+function statusSnapshotDirectory(config: LoggingConfig): string {
   return path.resolve(path.dirname(config.logging.file));
 }
 
