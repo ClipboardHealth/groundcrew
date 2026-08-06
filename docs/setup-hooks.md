@@ -149,9 +149,9 @@ Grant it only to repositories you trust to run arbitrary code on the host.
 
 ## `hookGeneratedPaths` (when the hook dirties the worktree)
 
-Some `prepareWorktree` hooks write files that are neither committed nor
-gitignored — a `postinstall` that regenerates a tracked rules file, or a sync
-script that drops `.agents/skills/` into the checkout. Every worktree is then
+Some `prepareWorktree` hooks modify tracked files or write untracked files git
+does not ignore — a `postinstall` that regenerates a tracked rules file, or a
+sync script that drops `.agents/skills/` into the checkout. Every worktree is then
 dirty from birth, and the teardown guard refuses to remove it: `crew cleanup`
 reports `worktree has N modified files and M untracked files` on every poll,
 forever, even though the agent never touched them.

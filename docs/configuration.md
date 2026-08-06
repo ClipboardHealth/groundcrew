@@ -309,7 +309,8 @@ the other two layers. This is the additive hook seam: `hooks.*` runs _around_ th
 worktree lifecycle, distinct from `provision.*`, which _replaces_ the git
 worktree porcelain (`create`/`remove`).
 
-When the hook writes files that are neither committed nor gitignored, every
+When the hook modifies tracked files or writes untracked files git does not
+ignore, every
 worktree is dirty before the agent starts and the teardown guard refuses to
 remove it. List those paths in `hookGeneratedPaths` — on the repo entry, or
 under `defaults` as a global fallback — so the guard stops counting them:

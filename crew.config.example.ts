@@ -60,7 +60,8 @@ export default {
     //     hooks: { prepareWorktree: "uv sync --dev --frozen" },
     //   },
     //
-    // When that hook writes files the repo neither commits nor gitignores, the
+    // When that hook modifies tracked files or writes untracked files git does
+    // not ignore, the
     // worktree is dirty before the agent starts and `crew cleanup` refuses to
     // remove it. List those worktree-root-relative paths so the dirtiness
     // guard skips them; anything undeclared still blocks teardown. Declared

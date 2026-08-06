@@ -844,6 +844,11 @@ const TRAILING_SLASHES_RE = /\/+$/;
  * that could widen one entry into "everything" are rejected outright: absolute
  * paths, `.`/`..` segments, and leading-colon pathspec magic. Git's `literal`
  * magic neutralizes wildcards in whatever survives.
+ *
+ * Absoluteness is checked before trailing slashes are stripped: `"/"` strips to
+ * `""`, which `path.isAbsolute` no longer recognizes and which git expands into
+ * a bare `:(exclude,literal)` — a pathspec that excludes the whole worktree and
+ * would make the dirtiness probe report clean over real agent work.
  */
 function normalizeHookGeneratedPaths(value: unknown, configKey: string): string[] | undefined {
   if (value === undefined) {
@@ -858,12 +863,11 @@ function normalizeHookGeneratedPaths(value: unknown, configKey: string): string[
     if (typeof entry !== "string" || entry.trim().length === 0) {
       fail(`${label} must be a non-empty string (got ${JSON.stringify(entry)})`);
     }
-    const relativePath = entry.trim().replace(TRAILING_SLASHES_RE, "");
-    if (path.isAbsolute(relativePath)) {
-      fail(
-        `${label} must be a relative path inside the worktree (got ${JSON.stringify(relativePath)})`,
-      );
+    const trimmed = entry.trim();
+    if (path.isAbsolute(trimmed)) {
+      fail(`${label} must be a relative path inside the worktree (got ${JSON.stringify(trimmed)})`);
     }
+    const relativePath = trimmed.replace(TRAILING_SLASHES_RE, "");
     if (relativePath.startsWith(":")) {
       fail(
         `${label} must not start with ':' — git pathspec magic is not allowed (got ${JSON.stringify(relativePath)})`,

@@ -182,6 +182,11 @@ describe("loadConfig hookGeneratedPaths", () => {
 
   const invalidHookGeneratedPaths: Array<[string, RegExp]> = [
     ["/etc/passwd", /hookGeneratedPaths\[0\] must be a relative path inside the worktree/],
+    // `/` and `//` strip to the empty string, which git expands into a bare
+    // `:(exclude,literal)` — a pathspec that hides the entire worktree from the
+    // dirtiness probe and would let teardown force-remove real agent work.
+    ["/", /hookGeneratedPaths\[0\] must be a relative path inside the worktree/],
+    ["//", /hookGeneratedPaths\[0\] must be a relative path inside the worktree/],
     ["../outside", /hookGeneratedPaths\[0\] must not contain '\.' or '\.\.' segments/],
     [".", /hookGeneratedPaths\[0\] must not contain '\.' or '\.\.' segments/],
     [":(glob)**", /hookGeneratedPaths\[0\] must not start with ':'/],
