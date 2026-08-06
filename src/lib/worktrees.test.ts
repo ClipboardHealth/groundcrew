@@ -837,41 +837,15 @@ describe(remove, () => {
       });
     };
 
-    await expect(callRemove()).rejects.toThrow(/2 modified files and 2 untracked files/);
-    await expect(callRemove()).rejects.toThrow(/Run 'crew cleanup --force team-1'/);
-    await expect(callRemove()).rejects.toThrow(
+    const actual = await callRemove().then(() => "", String);
+
+    expect(actual).toMatch(/2 modified files and 2 untracked files/);
+    expect(actual).toContain("Run 'crew cleanup --force team-1'");
+    expect(actual).toMatch(
       new RegExp(
         `commit/stash in ${path.join(projectDir, "repo-a-team-1").replaceAll("/", String.raw`\/`)}`,
       ),
     );
-  });
-
-  it("renders the dirty-worktree cleanup hint without shell-substituting backticks", async () => {
-    mkdirSync(path.join(projectDir, "repo-a"));
-    mkdirSync(path.join(projectDir, "repo-a-team-1"));
-    const config = makeConfig({ projectDir });
-
-    runCommandMock.mockImplementation((_command, arguments_) => {
-      // oxlint-disable-next-line vitest/no-conditional-in-test -- discriminator selects the worktree-remove call to fail; status --porcelain reports a dirty tree.
-      if (hasArguments(arguments_, "worktree", "remove")) {
-        throw new Error("Command failed: git worktree remove\nExit status: 128");
-      }
-      // oxlint-disable-next-line vitest/no-conditional-in-test -- as above
-      if (hasArguments(arguments_, "status", "--porcelain")) {
-        return " M src/foo.ts\n";
-      }
-      return "";
-    });
-
-    const actual = await remove(config, {
-      repository: "repo-a",
-      task: "team-1",
-      branchName: "dev-team-1",
-      dir: path.join(projectDir, "repo-a-team-1"),
-      kind: "host",
-    }).then(() => "", String);
-
-    expect(actual).toContain("Run 'crew cleanup --force team-1'");
     expect(actual).not.toContain("`");
   });
 
@@ -970,48 +944,16 @@ describe(remove, () => {
       });
     };
 
-    await expect(callRemove()).rejects.toThrow(
-      /directory exists but is not a registered git worktree/,
-    );
-    await expect(callRemove()).rejects.toThrow(/Run 'crew cleanup --force team-1'/);
-    await expect(callRemove()).rejects.toThrow(
+    const actual = await callRemove().then(() => "", String);
+
+    expect(actual).toMatch(/directory exists but is not a registered git worktree/);
+    expect(actual).toContain("Run 'crew cleanup --force team-1'");
+    expect(actual).toMatch(
       new RegExp(
         `remove ${path.join(projectDir, "repo-a-team-1").replaceAll("/", String.raw`\/`)}`,
       ),
     );
-    await expect(callRemove()).rejects.toThrow(/inspect it first/);
-  });
-
-  it("renders the orphan-worktree cleanup hint without shell-substituting backticks", async () => {
-    mkdirSync(path.join(projectDir, "repo-a"));
-    mkdirSync(path.join(projectDir, "repo-a-team-1"));
-    const config = makeConfig({ projectDir });
-
-    runCommandMock.mockImplementation((_command, arguments_) => {
-      // oxlint-disable-next-line vitest/no-conditional-in-test -- discriminator selects the worktree-remove call to fail; status fails because the dir has no .git.
-      if (hasArguments(arguments_, "worktree", "remove")) {
-        throw new Error("Command failed: git worktree remove\nExit status: 128");
-      }
-      // oxlint-disable-next-line vitest/no-conditional-in-test -- as above
-      if (hasArguments(arguments_, "status", "--porcelain")) {
-        throw new Error("not a git repository");
-      }
-      // oxlint-disable-next-line vitest/no-conditional-in-test -- as above
-      if (hasArguments(arguments_, "worktree", "list", "--porcelain")) {
-        return `worktree ${path.join(projectDir, "repo-a")}\nHEAD abc123\nbranch refs/heads/main\n`;
-      }
-      return "";
-    });
-
-    const actual = await remove(config, {
-      repository: "repo-a",
-      task: "team-1",
-      branchName: "dev-team-1",
-      dir: path.join(projectDir, "repo-a-team-1"),
-      kind: "host",
-    }).then(() => "", String);
-
-    expect(actual).toContain("Run 'crew cleanup --force team-1'");
+    expect(actual).toMatch(/inspect it first/);
     expect(actual).not.toContain("`");
   });
 
