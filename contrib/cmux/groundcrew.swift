@@ -59,7 +59,33 @@ func isAlphaOnly(_ s) -> Bool {
   let s24 = s23.replacingOccurrences(of: "X", with: "")
   let s25 = s24.replacingOccurrences(of: "Y", with: "")
   let s26 = s25.replacingOccurrences(of: "Z", with: "")
-  return s26.isEmpty
+  let s27 = s26.replacingOccurrences(of: "a", with: "")
+  let s28 = s27.replacingOccurrences(of: "b", with: "")
+  let s29 = s28.replacingOccurrences(of: "c", with: "")
+  let s30 = s29.replacingOccurrences(of: "d", with: "")
+  let s31 = s30.replacingOccurrences(of: "e", with: "")
+  let s32 = s31.replacingOccurrences(of: "f", with: "")
+  let s33 = s32.replacingOccurrences(of: "g", with: "")
+  let s34 = s33.replacingOccurrences(of: "h", with: "")
+  let s35 = s34.replacingOccurrences(of: "i", with: "")
+  let s36 = s35.replacingOccurrences(of: "j", with: "")
+  let s37 = s36.replacingOccurrences(of: "k", with: "")
+  let s38 = s37.replacingOccurrences(of: "l", with: "")
+  let s39 = s38.replacingOccurrences(of: "m", with: "")
+  let s40 = s39.replacingOccurrences(of: "n", with: "")
+  let s41 = s40.replacingOccurrences(of: "o", with: "")
+  let s42 = s41.replacingOccurrences(of: "p", with: "")
+  let s43 = s42.replacingOccurrences(of: "q", with: "")
+  let s44 = s43.replacingOccurrences(of: "r", with: "")
+  let s45 = s44.replacingOccurrences(of: "s", with: "")
+  let s46 = s45.replacingOccurrences(of: "t", with: "")
+  let s47 = s46.replacingOccurrences(of: "u", with: "")
+  let s48 = s47.replacingOccurrences(of: "v", with: "")
+  let s49 = s48.replacingOccurrences(of: "w", with: "")
+  let s50 = s49.replacingOccurrences(of: "x", with: "")
+  let s51 = s50.replacingOccurrences(of: "y", with: "")
+  let s52 = s51.replacingOccurrences(of: "z", with: "")
+  return s52.isEmpty
 }
 
 func ticketFromDirectory(_ w) -> String {
@@ -69,7 +95,7 @@ func ticketFromDirectory(_ w) -> String {
     return ""
   }
   if let number = Int(segs[segs.count - 1]) {
-    if segs[segs.count - 2].count <= 5 && isAlphaOnly(segs[segs.count - 2].uppercased()) {
+    if segs[segs.count - 2].count <= 5 && isAlphaOnly(segs[segs.count - 2]) {
       return (segs[segs.count - 2] + "-" + segs[segs.count - 1]).uppercased()
     }
   }
@@ -82,7 +108,7 @@ func ticketFromTitle(_ w) -> String {
     return ""
   }
   if let number = Int(segs[1]) {
-    if segs[0].count <= 5 && isAlphaOnly(segs[0].uppercased()) {
+    if segs[0].count <= 5 && isAlphaOnly(segs[0]) {
       return (segs[0] + "-" + segs[1]).uppercased()
     }
   }
