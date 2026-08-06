@@ -1,4 +1,11 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -1413,6 +1420,87 @@ describe(status, () => {
 
       expect(actual.local.schemaVersion).toBe(1);
       expect(actual.remote?.lastAttemptStatus).toBe("ok");
+    });
+
+    it("timestamps each tier when its data collection starts", async () => {
+      const pollStartedAt = "2026-05-26T02:14:30.000Z";
+      const boardCapturedAt = "2026-05-26T02:15:00.000Z";
+      workspaceProbeMock.mockImplementation(async () => {
+        vi.setSystemTime(new Date(boardCapturedAt));
+        return { kind: "ok", names: new Set(["team-1"]) };
+      });
+      findPullRequestsMock.mockImplementation(async () => {
+        vi.setSystemTime(new Date("2026-05-26T02:16:00.000Z"));
+        return [];
+      });
+
+      await status(jsonConfig(), { json: true });
+
+      const actual = parseJsonOutput();
+      expect(actual.local.capturedAt).toBe(pollStartedAt);
+      expect(actual.remote?.lastAttemptAt).toBe(pollStartedAt);
+      expect(actual.remote?.payload?.capturedAt).toBe(boardCapturedAt);
+    });
+
+    it("publishes current source metadata for tasks outside queue states", async () => {
+      readRunStateMock.mockReturnValue(
+        runState({ title: "Title at dispatch", url: "https://example.test/old" }),
+      );
+      buildSourcesMock.mockResolvedValue([
+        fakeSource([
+          sourceIssue({
+            status: "done",
+            title: "Current source title",
+            url: "https://example.test/current",
+          }),
+        ]),
+      ]);
+
+      await status(jsonConfig(), { json: true });
+
+      const actual = parseJsonOutput();
+      expect(actual.remote?.payload?.sourceByTask["team-1"]).toMatchObject({
+        status: "done",
+        title: "Current source title",
+        url: "https://example.test/current",
+      });
+    });
+
+    it("publishes a task's recent lines even when they precede a large unrelated tail", async () => {
+      const config = jsonConfig();
+      const taskLine = "[09:00:00] team-1 dispatched";
+      const unrelatedTail = `${"x".repeat(200)}\n`.repeat(2000);
+      writeFileSync(config.logging.file, `${taskLine}\n${unrelatedTail}`);
+
+      await status(config, { json: true });
+
+      const actual = parseJsonOutput();
+      expect(actual.local.tasks[0]?.recentLogLines).toEqual([taskLine]);
+    });
+
+    it("extends cached task log history from the previous poll's cursor", async () => {
+      const config = jsonConfig();
+      const historicalLine = "[09:00:00] team-1 dispatched";
+      const appendedLine = "[09:15:00] team-1 resumed";
+      const unrelatedTail = `${"x".repeat(200)}\n`.repeat(2000);
+      writeFileSync(config.logging.file, `${historicalLine}\n${unrelatedTail}`);
+
+      await status(config, { json: true });
+
+      const first = parseJsonOutput();
+      const firstOffset = first.local.logCursor?.offset;
+      expect(firstOffset).toBeGreaterThan(0);
+      consoleLog.restore();
+      consoleLog = captureConsoleLog();
+      appendFileSync(config.logging.file, `${appendedLine}\n`);
+
+      await status(config, { json: true });
+
+      const second = parseJsonOutput();
+      expect(second.local.logCursor?.offset).toBe(
+        Buffer.byteLength(`${historicalLine}\n${unrelatedTail}${appendedLine}\n`),
+      );
+      expect(second.local.tasks[0]?.recentLogLines).toEqual([historicalLine, appendedLine]);
     });
 
     it("omits the remote key entirely with --local-only", async () => {

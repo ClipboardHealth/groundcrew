@@ -26,10 +26,10 @@ export const STATUS_SNAPSHOT_SCHEMA_VERSION = 1;
  * value is `undefined`. So every `field?:` below is genuinely ABSENT on disk
  * rather than present-and-null, and a reader must treat absence as "not set".
  */
-export type StatusSchemaVersion = typeof STATUS_SNAPSHOT_SCHEMA_VERSION;
+type StatusSchemaVersion = typeof STATUS_SNAPSHOT_SCHEMA_VERSION;
 
 /** Two-state health verdict shared by the probe and the board attempt. */
-export type AvailabilityStatus = "ok" | "unavailable";
+type AvailabilityStatus = "ok" | "unavailable";
 
 export type StatusSessionState = "live" | "exited" | "not-live" | "unknown";
 
@@ -67,13 +67,20 @@ export interface StatusTask {
   hint?: string | undefined;
   worktrees: StatusWorktree[];
   /**
-   * Lines mentioning this task, from a bounded tail of the shared log. A line
-   * older than that tail is absent here but still shown by `crew status <task>`.
+   * The same ten most recent matching lines shown by `crew status <task>`.
    */
   recentLogLines: string[];
 }
 
-export interface StatusProbeState {
+export interface StatusLogCursor {
+  /** File identity, so a rotated log never reuses lines from its predecessor. */
+  device: number;
+  inode: number;
+  /** Exclusive byte offset covered by `tasks[].recentLogLines`. */
+  offset: number;
+}
+
+interface StatusProbeState {
   status: AvailabilityStatus;
   error?: string | undefined;
 }
@@ -89,6 +96,8 @@ export interface StatusProbeState {
 export interface LocalStatusDocument {
   schemaVersion: StatusSchemaVersion;
   capturedAt: string;
+  /** Incremental progress through the append-only shared log. */
+  logCursor?: StatusLogCursor | undefined;
   /** From config, never the network, so capacity renders before any fetch. */
   maximumInProgress: number;
   workspaceProbe: StatusProbeState;
@@ -105,6 +114,10 @@ export interface StatusBoardIssue {
   agent?: string | undefined;
 }
 
+export interface StatusSourceIssue extends StatusBoardIssue {
+  status: CanonicalStatus;
+}
+
 /**
  * A queued issue. Only groundcrew-eligible todos reach a queue, and
  * eligibility means both fields resolved, so they are required here.
@@ -114,7 +127,7 @@ export interface StatusQueueIssue extends StatusBoardIssue {
   agent: string;
 }
 
-export interface StatusBlocker {
+interface StatusBlocker {
   id: string;
   naturalId: string;
   status: CanonicalStatus;
@@ -137,8 +150,8 @@ export interface StatusBlockedIssue extends StatusQueueIssue {
  */
 export interface RemoteStatusPayload {
   capturedAt: string;
-  /** Lowercased natural id to canonical status. Ambiguous ids are omitted. */
-  statusByTask: Record<string, CanonicalStatus>;
+  /** Lowercased natural id to current source data. Ambiguous ids are omitted. */
+  sourceByTask: Record<string, StatusSourceIssue>;
   /** Every in-progress issue. Its length is the used slot count. */
   inProgress: StatusBoardIssue[];
   queueReady: StatusQueueIssue[];
@@ -165,7 +178,7 @@ export interface RemoteStatusDocument {
   pullRequestsByWorktree: Record<string, PullRequestSummary[]>;
 }
 
-export type BoardOutcome =
+type BoardOutcome =
   | { kind: "ok"; payload: RemoteStatusPayload }
   | { kind: "error"; message: string };
 
@@ -257,9 +270,15 @@ function isLocalStatusDocument(value: unknown): value is LocalStatusDocument {
   if (!isRecord(value)) {
     return false;
   }
+  const logCursor = value["logCursor"];
   return (
     value["schemaVersion"] === STATUS_SNAPSHOT_SCHEMA_VERSION &&
     typeof value["capturedAt"] === "string" &&
+    (logCursor === undefined ||
+      (isRecord(logCursor) &&
+        typeof logCursor["device"] === "number" &&
+        typeof logCursor["inode"] === "number" &&
+        typeof logCursor["offset"] === "number")) &&
     typeof value["maximumInProgress"] === "number" &&
     isRecord(value["workspaceProbe"]) &&
     Array.isArray(value["tasks"]) &&
@@ -347,7 +366,7 @@ function isRemoteStatusPayload(value: unknown): value is RemoteStatusPayload {
   }
   return (
     typeof value["capturedAt"] === "string" &&
-    isRecord(value["statusByTask"]) &&
+    isRecord(value["sourceByTask"]) &&
     Array.isArray(value["inProgress"]) &&
     Array.isArray(value["queueReady"]) &&
     Array.isArray(value["queueBlocked"])

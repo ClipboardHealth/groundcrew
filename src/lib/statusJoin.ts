@@ -25,7 +25,7 @@ export interface JoinedTask extends Omit<StatusTask, "worktrees"> {
   worktrees: JoinedWorktree[];
 }
 
-export interface JoinedSlots {
+interface JoinedSlots {
   used: number;
   maximum: number;
 }
@@ -55,14 +55,17 @@ export function joinStatus(input: JoinStatusInput): JoinedStatus {
   const { local, remote } = input;
   const payload = remote?.payload;
 
-  const tasks: JoinedTask[] = local.tasks.map((task) => ({
-    ...task,
-    boardStatus: ownProperty(payload?.statusByTask, task.task),
-    worktrees: task.worktrees.map((worktree) => ({
-      ...worktree,
-      pullRequests: ownProperty(remote?.pullRequestsByWorktree, worktree.dir) ?? [],
-    })),
-  }));
+  const tasks: JoinedTask[] = local.tasks.map((task) => {
+    const source = ownProperty(payload?.sourceByTask, task.task);
+    return {
+      ...task,
+      boardStatus: source?.status,
+      worktrees: task.worktrees.map((worktree) => ({
+        ...worktree,
+        pullRequests: ownProperty(remote?.pullRequestsByWorktree, worktree.dir) ?? [],
+      })),
+    };
+  });
 
   if (payload === undefined) {
     return {

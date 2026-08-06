@@ -16,18 +16,20 @@ import { findPullRequestsForBranch, type PullRequestSummary } from "../lib/pullR
 import { readRunState, type RunState } from "../lib/runState.ts";
 import {
   type LocalStatusDocument,
+  readLocalSnapshot,
   type RemoteFetchResult,
   STATUS_SNAPSHOT_SCHEMA_VERSION,
   type StatusBlockedIssue,
   type StatusBoardIssue,
   type StatusLifecycle,
+  type StatusLogCursor,
   type StatusQueueIssue,
   type StatusSessionState,
+  type StatusSourceIssue,
   type StatusTask,
   type StatusWorktree,
 } from "../lib/statusSnapshot.ts";
 import {
-  type CanonicalStatus,
   type GroundcrewIssue,
   isGroundcrewIssue,
   type Issue as SourceIssue,
@@ -42,14 +44,11 @@ import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 const RECENT_LOG_LINE_COUNT = 10;
 
 /**
- * Upper bound on how much of the append-only log the collector reads. The log
- * is shared across runs and grows without limit, and a monitor polls this
- * every few seconds, so reading it whole would make the fast path scale with
- * the log's lifetime. `crew status <task>` is a one-shot command and still
- * reads the whole file. 256 KiB holds several thousand lines, far past the ten
- * this keeps per task.
+ * Reverse-scan chunk size for the append-only shared log. Active tasks are
+ * normally found in the first chunk; older tasks make the scan continue only
+ * until their ten most recent matching lines have been found.
  */
-const LOG_TAIL_BYTES = 256 * 1024;
+const LOG_SCAN_CHUNK_BYTES = 256 * 1024;
 
 export interface CollectLocalStatusInput {
   config: ResolvedConfig;
@@ -63,12 +62,14 @@ export async function collectLocalStatus(
   input: CollectLocalStatusInput,
 ): Promise<LocalStatusDocument> {
   const { config } = input;
+  const capturedAt = new Date().toISOString();
+  const previous = readLocalSnapshot(config);
   const entries = worktrees
     .list(config)
     .toSorted((left, right) => left.task.localeCompare(right.task));
   const uniqueTasks = [...new Set(entries.map((entry) => entry.task))];
   const runStates = new Map(uniqueTasks.map((task) => [task, readRunState(config, task)]));
-  const logLines = readLogTail(config);
+  const recentLogs = readRecentLogLines({ config, previous, tasks: uniqueTasks });
 
   // The probe and the git fan-out share no data, so overlap them. Access hints
   // wait for the probe: resolving the workspace adapter is only cached after
@@ -99,13 +100,14 @@ export async function collectLocalStatus(
       attachCommand: accessHints.get(task)?.command,
       hint: disagreement === undefined ? undefined : disagreementHint({ disagreement, task }),
       worktrees: taskWorktrees,
-      recentLogLines: recentTaskLogLines({ lines: logLines, task }),
+      recentLogLines: recentLogs.linesByTask.get(task) ?? [],
     };
   });
 
   return {
     schemaVersion: STATUS_SNAPSHOT_SCHEMA_VERSION,
-    capturedAt: new Date().toISOString(),
+    capturedAt,
+    logCursor: recentLogs.cursor,
     maximumInProgress: config.orchestrator.maximumInProgress,
     workspaceProbe: probeState(probe),
     tasks,
@@ -132,7 +134,7 @@ export interface CollectRemoteStatusInput {
 
 /** One board fetch attempt. A failure is a value here, never a throw. */
 export type BoardFetch =
-  | { kind: "ok"; issues: readonly SourceIssue[] }
+  | { kind: "ok"; capturedAt: string; issues: readonly SourceIssue[] }
   | { kind: "error"; message: string };
 
 /**
@@ -143,7 +145,7 @@ export async function fetchBoardIssues(config: ResolvedConfig): Promise<BoardFet
   try {
     const board = await buildBoard(config);
     const state = await withLogOutputSuppressed(async () => await board.fetch());
-    return { kind: "ok", issues: state.issues };
+    return { kind: "ok", capturedAt: state.timestamp, issues: state.issues };
   } catch (error) {
     return { kind: "error", message: errorMessage(error) };
   }
@@ -177,8 +179,8 @@ export async function collectRemoteStatus(
     board: {
       kind: "ok",
       payload: {
-        capturedAt: new Date().toISOString(),
-        statusByTask: statusByTask(issues),
+        capturedAt: board.capturedAt,
+        sourceByTask: sourceByTask(issues),
         inProgress: issues
           .filter((issue) => issue.status === "in-progress")
           .toSorted((left, right) => left.id.localeCompare(right.id))
@@ -352,28 +354,147 @@ function orphanedSessions(input: {
   return [...probe.names].filter((name) => !worktreeTasks.has(name)).toSorted();
 }
 
-/**
- * Reads at most the last `LOG_TAIL_BYTES` of the log. Seeking rather than
- * reading the whole file and slicing is the point: the log grows without
- * limit, and this runs on every poll.
- */
-function readLogTail(config: ResolvedConfig): string[] {
+interface RecentLogResult {
+  linesByTask: Map<string, string[]>;
+  cursor?: StatusLogCursor | undefined;
+}
+
+function readRecentLogLines(input: {
+  config: ResolvedConfig;
+  previous: LocalStatusDocument | undefined;
+  tasks: readonly string[];
+}): RecentLogResult {
+  const { config, previous, tasks } = input;
+  if (tasks.length === 0) {
+    return { linesByTask: new Map() };
+  }
   let handle: number;
   try {
     handle = openSync(config.logging.file, "r");
   } catch {
-    return [];
+    return { linesByTask: new Map() };
   }
   try {
-    const { size } = fstatSync(handle);
-    const length = Math.min(size, LOG_TAIL_BYTES);
-    const start = size - length;
-    const buffer = Buffer.alloc(length);
-    const bytesRead = readSync(handle, buffer, 0, length, start);
-    return decodeLogTail({ buffer, bytesRead, startedMidFile: start > 0 });
+    const stats = fstatSync(handle);
+    const cursor: StatusLogCursor = {
+      device: stats.dev,
+      inode: stats.ino,
+      offset: stats.size,
+    };
+    const previousCursor = previous?.logCursor;
+    const canResume =
+      previousCursor !== undefined &&
+      previousCursor.device === cursor.device &&
+      previousCursor.inode === cursor.inode &&
+      previousCursor.offset <= cursor.offset;
+    const previousTasks = new Map(previous?.tasks.map((task) => [task.task, task]) ?? []);
+    const reusableTasks = canResume ? tasks.filter((task) => previousTasks.has(task)) : [];
+    const tasksNeedingHistory = tasks.filter((task) => !reusableTasks.includes(task));
+    const appendedLines = scanRecentLogLines({
+      handle,
+      startOffset: previousCursor?.offset ?? 0,
+      endOffset: cursor.offset,
+      tasks: reusableTasks,
+    });
+    const historicalLines = scanRecentLogLines({
+      handle,
+      startOffset: 0,
+      endOffset: cursor.offset,
+      tasks: tasksNeedingHistory,
+    });
+    const linesByTask = new Map<string, string[]>();
+    for (const task of reusableTasks) {
+      const cached = requiredMapValue(previousTasks, task).recentLogLines;
+      linesByTask.set(
+        task,
+        [...cached, ...requiredMapValue(appendedLines, task)].slice(-RECENT_LOG_LINE_COUNT),
+      );
+    }
+    for (const task of tasksNeedingHistory) {
+      linesByTask.set(task, requiredMapValue(historicalLines, task));
+    }
+    return { linesByTask, cursor };
   } finally {
     closeSync(handle);
   }
+}
+
+function scanRecentLogLines(input: {
+  handle: number;
+  startOffset: number;
+  endOffset: number;
+  tasks: readonly string[];
+}): Map<string, string[]> {
+  const { handle, startOffset, endOffset, tasks } = input;
+  const matchers = tasks.map((task) => ({
+    task,
+    pattern: taskLogPattern(task),
+    linesNewestFirst: [] as string[],
+  }));
+  let startsAtLineBoundary = startOffset === 0;
+  if (startOffset > 0) {
+    const priorByte = Buffer.alloc(1);
+    startsAtLineBoundary =
+      readSync(handle, priorByte, 0, 1, startOffset - 1) === 1 && priorByte[0] === 10;
+  }
+  let leadingFragment: Buffer = Buffer.alloc(0);
+  let position = endOffset;
+
+  while (
+    position > startOffset &&
+    matchers.some((matcher) => matcher.linesNewestFirst.length < RECENT_LOG_LINE_COUNT)
+  ) {
+    const length = Math.min(position - startOffset, LOG_SCAN_CHUNK_BYTES);
+    const start = position - length;
+    const buffer = Buffer.alloc(length);
+    const bytesRead = readSync(handle, buffer, 0, length, start);
+    const split = splitLogBuffer(Buffer.concat([buffer.subarray(0, bytesRead), leadingFragment]));
+    const includeFirst = start === startOffset && startsAtLineBoundary;
+    const lines = includeFirst ? [split.first, ...split.rest] : split.rest;
+    leadingFragment = start > startOffset ? split.first : Buffer.alloc(0);
+
+    for (const lineBuffer of lines.toReversed()) {
+      const line = lineBuffer.toString("utf8");
+      for (const matcher of matchers) {
+        if (matcher.linesNewestFirst.length < RECENT_LOG_LINE_COUNT && matcher.pattern.test(line)) {
+          matcher.linesNewestFirst.push(line);
+        }
+      }
+    }
+    position = start;
+  }
+
+  return new Map(
+    matchers.map((matcher) => [matcher.task, matcher.linesNewestFirst.toReversed()] as const),
+  );
+}
+
+function requiredMapValue<Key, Value>(map: ReadonlyMap<Key, Value>, key: Key): Value {
+  const value = map.get(key);
+  /* v8 ignore next @preserve -- callers pass keys used to construct these maps */
+  if (value === undefined) {
+    throw new Error("Missing expected map value");
+  }
+  return value;
+}
+
+function splitLogBuffer(buffer: Buffer): {
+  first: Buffer;
+  rest: Buffer[];
+} {
+  const firstNewline = buffer.indexOf("\n");
+  if (firstNewline === -1) {
+    return { first: buffer, rest: [] };
+  }
+  const rest: Buffer[] = [];
+  let start = firstNewline + 1;
+  for (let newline = buffer.indexOf("\n", start); newline !== -1;) {
+    rest.push(buffer.subarray(start, newline));
+    start = newline + 1;
+    newline = buffer.indexOf("\n", start);
+  }
+  rest.push(buffer.subarray(start));
+  return { first: buffer.subarray(0, firstNewline), rest };
 }
 
 function hasOpenBlocker(issue: SourceIssue): boolean {
@@ -389,6 +510,10 @@ function toBoardIssue(issue: SourceIssue): StatusBoardIssue {
     repository: issue.repository,
     agent: issue.agent,
   };
+}
+
+function toSourceIssue(issue: SourceIssue): StatusSourceIssue {
+  return { ...toBoardIssue(issue), status: issue.status };
 }
 
 function toQueueIssue(issue: GroundcrewIssue): StatusQueueIssue {
@@ -413,20 +538,20 @@ function toBlockedIssue(issue: GroundcrewIssue): StatusBlockedIssue {
  * Lowercased natural id to canonical status, omitting any id claimed by more
  * than one source rather than guessing which one a worktree row means.
  */
-function statusByTask(issues: readonly SourceIssue[]): Record<string, CanonicalStatus> {
-  const statuses = new Map<string, CanonicalStatus>();
+function sourceByTask(issues: readonly SourceIssue[]): Record<string, StatusSourceIssue> {
+  const sources = new Map<string, StatusSourceIssue>();
   const matchCounts = new Map<string, number>();
   for (const issue of issues) {
     const task = naturalIdFromCanonical(issue.id).toLowerCase();
     matchCounts.set(task, (matchCounts.get(task) ?? 0) + 1);
-    statuses.set(task, issue.status);
+    sources.set(task, toSourceIssue(issue));
   }
   for (const [task, matchCount] of matchCounts) {
     if (matchCount > 1) {
-      statuses.delete(task);
+      sources.delete(task);
     }
   }
-  return Object.fromEntries(statuses);
+  return Object.fromEntries(sources);
 }
 
 async function collectPullRequests(
@@ -459,22 +584,8 @@ function escapeRegExp(value: string): string {
   return value.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
 }
 
-/**
- * Splits a tail read into log lines.
- *
- * Decodes only `bytesRead`: a log rotated between the stat and the read
- * returns fewer bytes than requested, and the rest of the buffer is still
- * zero-filled, which would publish NUL characters. A read that started
- * mid-file also starts mid-line, so its leading fragment is not a log line.
- */
-export function decodeLogTail(input: {
-  buffer: Buffer;
-  bytesRead: number;
-  startedMidFile: boolean;
-}): string[] {
-  const { buffer, bytesRead, startedMidFile } = input;
-  const lines = buffer.toString("utf8", 0, bytesRead).split("\n");
-  return startedMidFile ? lines.slice(1) : lines;
+function taskLogPattern(task: string): RegExp {
+  return new RegExp(`(^|[^a-z0-9])${escapeRegExp(task)}([^a-z0-9]|$)`, "i");
 }
 
 /**
@@ -486,7 +597,7 @@ export function recentTaskLogLines(input: { lines: readonly string[]; task: stri
   const { lines, task } = input;
   // The boundary class is not \b on purpose: task ids contain hyphens, and \b
   // counts `_` as a word character, so `\btask\b` would match inside `x_eng-220`.
-  const pattern = new RegExp(`(^|[^a-z0-9])${escapeRegExp(task)}([^a-z0-9]|$)`, "i");
+  const pattern = taskLogPattern(task);
   return lines.filter((line) => pattern.test(line)).slice(-RECENT_LOG_LINE_COUNT);
 }
 

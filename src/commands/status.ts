@@ -522,13 +522,14 @@ interface CollectedTiers {
  * read its guard uses, and the text path deliberately merges against nothing.
  */
 async function collectBothTiers(config: ResolvedConfig): Promise<CollectedTiers> {
+  const attemptAt = new Date().toISOString();
   const boardPromise = fetchBoardIssues(config);
   const local = await collectLocalStatus({ config });
   const result = await collectRemoteStatus({
     board: await boardPromise,
     pullRequestTargets: pullRequestTargetsOf(local),
   });
-  return { local, attemptAt: new Date().toISOString(), result };
+  return { local, attemptAt, result };
 }
 
 async function writeInventoryStatus(config: ResolvedConfig): Promise<void> {

@@ -13,7 +13,6 @@ import type { RemoteFetchResult, RemoteStatusPayload } from "../lib/statusSnapsh
 import {
   collectLocalStatus,
   collectRemoteStatus,
-  decodeLogTail,
   fetchBoardIssues,
   type PullRequestTarget,
   workspaceProbeUnavailableText,
@@ -243,19 +242,16 @@ describe("collectLocalStatus", () => {
     expect(actual.tasks[0]?.recentLogLines).toEqual(["[10:00:00] eng-220 dispatched"]);
   });
 
-  it("reads only the tail of a log larger than the bound", async () => {
+  it("finds a task's recent line before a large unrelated tail", async () => {
     const filler = `${"x".repeat(200)}\n`.repeat(2000);
     writeFileSync(mockConfig.logging.file, `[09:00:00] eng-220 ancient\n${filler}`);
 
     const actual = await collectLocalStatus({ config: mockConfig });
 
-    expect(actual.tasks[0]?.recentLogLines).toEqual([]);
+    expect(actual.tasks[0]?.recentLogLines).toEqual(["[09:00:00] eng-220 ancient"]);
   });
 
-  it("discards the partial line a tail read starts in the middle of", async () => {
-    // The cut lands inside this line, and its tail fragment mentions the task.
-    // Treating that fragment as a log line would attribute text to eng-220
-    // that was never written about it.
+  it("reassembles a matching line split across scan chunks", async () => {
     const oversizedLine = `${"x".repeat(300_000)} eng-220 fragment`;
     writeFileSync(
       mockConfig.logging.file,
@@ -264,7 +260,10 @@ describe("collectLocalStatus", () => {
 
     const actual = await collectLocalStatus({ config: mockConfig });
 
-    expect(actual.tasks[0]?.recentLogLines).toEqual(["[10:00:00] eng-220 real line"]);
+    expect(actual.tasks[0]?.recentLogLines).toEqual([
+      oversizedLine,
+      "[10:00:00] eng-220 real line",
+    ]);
   });
 
   it("survives a missing log file", async () => {
@@ -339,25 +338,6 @@ async function collectWithBoard(
     pullRequestTargets,
   });
 }
-
-describe("decodeLogTail", () => {
-  it("decodes only the bytes read, so a shrunken log yields no NUL padding", () => {
-    const buffer = Buffer.alloc(64);
-    const bytesRead = buffer.write("[10:00:00] eng-220 line\n", "utf8");
-
-    const actual = decodeLogTail({ buffer, bytesRead, startedMidFile: false });
-
-    expect(actual).toEqual(["[10:00:00] eng-220 line", ""]);
-  });
-
-  it("drops the partial line a mid-file read starts inside", () => {
-    const buffer = Buffer.from("ragment\n[10:00:00] eng-220 line\n", "utf8");
-
-    const actual = decodeLogTail({ buffer, bytesRead: buffer.length, startedMidFile: true });
-
-    expect(actual).toEqual(["[10:00:00] eng-220 line", ""]);
-  });
-});
 
 describe("workspaceProbeUnavailableText", () => {
   it("names the failure when the probe reports one", () => {
@@ -468,7 +448,7 @@ describe("collectRemoteStatus", () => {
     ]);
   });
 
-  it("omits an ambiguous natural id from statusByTask", async () => {
+  it("omits an ambiguous natural id from sourceByTask", async () => {
     const actual = expectPayload(
       await collectWithBoard([
         makeIssue({ id: "linear:eng-220", status: "in-progress" }),
@@ -476,7 +456,7 @@ describe("collectRemoteStatus", () => {
       ]),
     );
 
-    expect(actual.statusByTask["eng-220"]).toBeUndefined();
+    expect(actual.sourceByTask["eng-220"]).toBeUndefined();
   });
 
   it("looks up pull requests with the branch the local tier already resolved", async () => {

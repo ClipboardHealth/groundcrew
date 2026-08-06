@@ -57,7 +57,14 @@ function makeRemote(): RemoteStatusDocument {
     },
     payload: {
       capturedAt: "2026-08-04T03:15:00.000Z",
-      statusByTask: { "eng-220": "in-progress" },
+      sourceByTask: {
+        "eng-220": {
+          id: "linear:eng-220",
+          naturalId: "eng-220",
+          title: "A task",
+          status: "in-progress",
+        },
+      },
       inProgress: [
         {
           id: "linear:eng-220",

@@ -28,39 +28,6 @@ export {
   type RunLifecycleState,
   type RunState,
 } from "./lib/runState.ts";
-// The status snapshot contract. A separate monitor program imports these to
-// read status-local.json and status-remote.json, so removing or renaming any
-// of them is a breaking change, and a shape change needs a bump of
-// STATUS_SNAPSHOT_SCHEMA_VERSION plus a README update.
-export {
-  type JoinedSlots,
-  type JoinedStatus,
-  type JoinedTask,
-  joinStatus,
-} from "./lib/statusJoin.ts";
-export {
-  type AvailabilityStatus,
-  type BoardOutcome,
-  type RemoteFetchResult,
-  type LocalStatusDocument,
-  localSnapshotPath,
-  readLocalSnapshot,
-  readRemoteSnapshot,
-  type RemoteStatusDocument,
-  type RemoteStatusPayload,
-  remoteSnapshotPath,
-  STATUS_SNAPSHOT_SCHEMA_VERSION,
-  type StatusSchemaVersion,
-  type StatusProbeState,
-  type StatusBlockedIssue,
-  type StatusBlocker,
-  type StatusBoardIssue,
-  type StatusLifecycle,
-  type StatusQueueIssue,
-  type StatusSessionState,
-  type StatusTask,
-  type StatusWorktree,
-} from "./lib/statusSnapshot.ts";
 export {
   fetchBlockersForTask,
   fetchInProgressIssueCount,
@@ -79,7 +46,6 @@ export {
   type AgentResolution,
   type RepositoryResolution,
 } from "./lib/adapters/linear/parsing.ts";
-export { type PullRequestSummary } from "./lib/pullRequests.ts";
 export { getUsageByAgent, type UsageByAgent } from "./lib/usage.ts";
 export { type Board, createBoard } from "./lib/board.ts";
 export { buildSources, buildSourcesWith } from "./lib/buildSources.ts";
