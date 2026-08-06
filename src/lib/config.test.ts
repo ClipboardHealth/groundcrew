@@ -533,7 +533,7 @@ describe("loadConfig", () => {
       /agents\.definitions\.claude\.sandbox\.template is no longer supported/,
     );
     await expect(loadConfig()).rejects.toThrow(
-      /'sbx create --name groundcrew-<agent> <agent> <projectDir>'/,
+      /for example sbx create --name groundcrew-<agent> <agent> <projectDir>/,
     );
   });
 
