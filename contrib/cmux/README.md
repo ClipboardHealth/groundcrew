@@ -27,8 +27,8 @@ Workspaces split into two sections:
 Ticket ids are read from the worktree directory name (`…-tg-4265`) or the leading token of the
 workspace title (`TG-4265 …`), then linked into the Linear desktop app. The right-click menu offers
 `Close workspace` and, for rows with a ticket, `Cleanup workspace`, which opens a new workspace in
-the groundcrew checkout running `crew cleanup <ticket> --force` and closes the task workspace on
-success.
+the groundcrew checkout running `crew cleanup <ticket>` and closes the task workspace on success.
+Cleanup keeps crew's dirty-worktree guard, so uncommitted changes must be inspected before removal.
 
 ## Requirements
 

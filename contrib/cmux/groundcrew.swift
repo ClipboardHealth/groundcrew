@@ -351,7 +351,7 @@ VStack(alignment: .leading, spacing: 8) {
         Label("Close workspace", systemImage: "xmark.circle")
       }
       if task != "" {
-        Button(action: { cmux("workspace.create", initial_command: "echo '→ crew cleanup " + task + " --force'; crew cleanup " + task + " --force && cmux workspace close " + w.id + "; echo; echo '✓ cleanup finished — close this tab when done'", cwd: "__GROUNDCREW_DIR__", focus: true) }) {
+        Button(action: { cmux("workspace.create", initial_command: "echo '→ crew cleanup " + task + "'; crew cleanup " + task + " && { cmux workspace close " + w.id + "; echo; echo '✓ cleanup finished — close this tab when done'; }", cwd: "__GROUNDCREW_DIR__", focus: true) }) {
           Label("Cleanup workspace", systemImage: "trash")
         }
       }
