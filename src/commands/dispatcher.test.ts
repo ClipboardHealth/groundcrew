@@ -670,7 +670,7 @@ describe(createDispatcher, () => {
 
       expect(setupMock).not.toHaveBeenCalled();
       expect(board.markInProgress).not.toHaveBeenCalled();
-      expect(consoleLog.output()).toContain("Run crew cleanup");
+      expect(consoleLog.output()).toContain("Run 'crew cleanup team-1'");
     });
 
     it("retries next iteration when the workspace list is unavailable", async () => {

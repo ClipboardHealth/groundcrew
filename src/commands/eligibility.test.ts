@@ -322,7 +322,7 @@ describe(classifyEligibility, () => {
       expect(verdicts[0]).toMatchObject({ kind: "skip", eventReason: "workspace_missing" });
       // The suggested cleanup command must use the natural id so it is actually runnable.
       const { message } = verdicts[0] as SkipVerdict;
-      expect(message).toContain("Run crew cleanup team-1");
+      expect(message).toContain("Run 'crew cleanup team-1'");
       expect(message).not.toContain("`");
     });
 

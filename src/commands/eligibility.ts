@@ -253,7 +253,7 @@ function classifyRecovery(
     return {
       kind: "skip",
       issue,
-      message: `Skipping ${issue.id}: worktree exists but no live workspace. Run crew cleanup ${naturalId} to allow re-provisioning.`,
+      message: `Skipping ${issue.id}: worktree exists but no live workspace. Run 'crew cleanup ${naturalId}' to allow re-provisioning.`,
       eventReason: "workspace_missing",
     };
   }
