@@ -25,9 +25,23 @@ if [[ -e "${target}" ]]; then
   echo "backed up existing sidebar to ${backup}"
 fi
 
-sed "s|__GROUNDCREW_DIR__|${groundcrew_dir}|g" "${script_dir}/groundcrew.swift" >"${target}"
+# A sed replacement string interprets &, \, and the delimiter itself, so any
+# of those in groundcrew_dir (e.g. a checkout under a path with & or |) would
+# corrupt the substitution. Bash's ${var//search/replace} treats both sides
+# as literal text, so no escaping is needed here.
+source_content="$(cat "${script_dir}/groundcrew.swift")"
+printf '%s\n' "${source_content//__GROUNDCREW_DIR__/${groundcrew_dir}}" >"${target}"
 
-cmux sidebar validate groundcrew
+if ! cmux sidebar validate groundcrew; then
+  if [[ -n "${backup:-}" ]]; then
+    cp "${backup}" "${target}"
+    echo "validation failed; restored previous sidebar from ${backup}" >&2
+  else
+    rm -f "${target}"
+    echo "validation failed; removed unvalidated sidebar" >&2
+  fi
+  exit 1
+fi
 
 echo "installed ${target}"
 echo "activate it with: cmux sidebar select groundcrew"
