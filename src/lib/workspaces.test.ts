@@ -537,9 +537,10 @@ describe("workspaces.open (cmux)", () => {
       workspaces.open(makeConfig(), { name: "TEAM-1", cwd: "/cwd", command: "x" }),
     ).rejects.toThrow(/Command failed: cmux/);
 
-    expect(logMock).toHaveBeenCalledWith(
-      expect.stringContaining("cmux close-workspace --workspace leaked-id"),
-    );
+    const actual = logMock.mock.calls.map(([message]) => message).join("\n");
+
+    expect(actual).toContain("Run 'cmux close-workspace --workspace leaked-id' by hand.");
+    expect(actual).not.toContain("`");
   });
 
   it("caches the resolved adapter per config so detectHostCapabilities is not re-run", async () => {
@@ -1835,13 +1836,12 @@ describe("workspaces tmux session-per-task env", () => {
       command: "x",
     });
 
-    expect(writeErrorMock).toHaveBeenCalledWith(
-      expect.stringContaining("tmux session-per-task mode will become the default soon"),
-    );
-    expect(writeErrorMock).toHaveBeenCalledWith(
-      expect.stringContaining("GROUNDCREW_TMUX_SESSION_PER_TASK=1"),
-    );
-    expect(writeErrorMock).toHaveBeenCalledWith(expect.stringContaining("tmux attach -t <task>"));
+    const actual = writeErrorMock.mock.calls.map(([message]) => message).join("\n");
+
+    expect(actual).toContain("tmux session-per-task mode will become the default soon");
+    expect(actual).toContain("GROUNDCREW_TMUX_SESSION_PER_TASK=1");
+    expect(actual).toContain("'tmux attach -t <task>'");
+    expect(actual).not.toContain("`");
   });
 
   it("does not warn auto users when auto resolves to cmux", async () => {

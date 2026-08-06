@@ -532,7 +532,9 @@ describe("loadConfig", () => {
     await expect(loadConfig()).rejects.toThrow(
       /agents\.definitions\.claude\.sandbox\.template is no longer supported/,
     );
-    await expect(loadConfig()).rejects.toThrow(/sbx create --name groundcrew-<agent>/);
+    await expect(loadConfig()).rejects.toThrow(
+      /for example 'sbx create --name groundcrew-<agent> <agent> <projectDir>'/,
+    );
   });
 
   it("rejects removed per-agent sandbox.kits with migration guidance", async () => {

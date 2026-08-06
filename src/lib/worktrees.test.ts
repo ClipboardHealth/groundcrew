@@ -410,7 +410,7 @@ describe(remove, () => {
         dir: worktreeDir,
         kind: "host",
       }),
-    ).rejects.toThrow(/crew cleanup --force team-220/);
+    ).rejects.toThrow(/Run 'crew cleanup --force team-220'/);
 
     // The remove template never ran.
     expect(runCommandMock).not.toHaveBeenCalledWith("sh", expect.anything(), expect.anything());
@@ -837,13 +837,16 @@ describe(remove, () => {
       });
     };
 
-    await expect(callRemove()).rejects.toThrow(/2 modified files and 2 untracked files/);
-    await expect(callRemove()).rejects.toThrow(/crew cleanup --force team-1/);
-    await expect(callRemove()).rejects.toThrow(
+    const actual = await callRemove().then(() => "", String);
+
+    expect(actual).toMatch(/2 modified files and 2 untracked files/);
+    expect(actual).toContain("Run 'crew cleanup --force team-1'");
+    expect(actual).toMatch(
       new RegExp(
         `commit/stash in ${path.join(projectDir, "repo-a-team-1").replaceAll("/", String.raw`\/`)}`,
       ),
     );
+    expect(actual).not.toContain("`");
   });
 
   it("uses singular wording when exactly one modified file is dirty", async () => {
@@ -941,16 +944,17 @@ describe(remove, () => {
       });
     };
 
-    await expect(callRemove()).rejects.toThrow(
-      /directory exists but is not a registered git worktree/,
-    );
-    await expect(callRemove()).rejects.toThrow(/crew cleanup --force team-1/);
-    await expect(callRemove()).rejects.toThrow(
+    const actual = await callRemove().then(() => "", String);
+
+    expect(actual).toMatch(/directory exists but is not a registered git worktree/);
+    expect(actual).toContain("Run 'crew cleanup --force team-1'");
+    expect(actual).toMatch(
       new RegExp(
         `remove ${path.join(projectDir, "repo-a-team-1").replaceAll("/", String.raw`\/`)}`,
       ),
     );
-    await expect(callRemove()).rejects.toThrow(/inspect it first/);
+    expect(actual).toMatch(/inspect it first/);
+    expect(actual).not.toContain("`");
   });
 
   it("rethrows the original error when the registration probe itself fails", async () => {

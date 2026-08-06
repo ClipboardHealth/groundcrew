@@ -193,8 +193,8 @@ describe(run, () => {
   it("hard-fails `sandbox <verb> [args...]` with the manual sbx workflow", async () => {
     await run(["sandbox", "auth", "claude"]);
 
-    expect(consoleError.output()).toContain("`crew sandbox` is no longer supported");
-    expect(consoleError.output()).toContain("manual `sbx` workflow");
+    expect(consoleError.output()).toContain("'crew sandbox' is no longer supported");
+    expect(consoleError.output()).toContain("manual 'sbx' workflow");
     expect(consoleError.output()).toContain("agents.definitions.<agent>.sandbox.agent");
     expect(process.exitCode).toBe(1);
   });

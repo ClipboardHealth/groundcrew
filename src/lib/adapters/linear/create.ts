@@ -206,7 +206,7 @@ function buildLinearDescription(arguments_: {
     "## Groundcrew",
     "",
     `Repository: ${repository}`,
-    "Implementation workflow: use the `core:go`/`go` skill when available. If that skill is unavailable, follow this repo's AGENTS.md/CLAUDE.md implementation workflow and run the documented verification.",
+    "Implementation workflow: use the `cb-work` skill. Follow this repo's AGENTS.md/CLAUDE.md implementation workflow and run the documented verification.",
     "",
     "## Task",
     "",

@@ -43,7 +43,7 @@ export function assertLocalRunnerRequirements(host: HostCapabilities, runner: Lo
     }
     if (!host.hasSafehouse) {
       throw new Error(
-        "Local groundcrew runs require `safehouse` on PATH. Install Safehouse from https://agent-safehouse.dev/ and retry.",
+        "Local groundcrew runs require 'safehouse' on PATH. Install Safehouse from https://agent-safehouse.dev/ and retry.",
       );
     }
     return;
@@ -54,7 +54,7 @@ export function assertLocalRunnerRequirements(host: HostCapabilities, runner: Lo
     }
     if (!host.hasSbx) {
       throw new Error(
-        "Local groundcrew runs with the sdx runner require `sbx` (Docker Sandboxes) on PATH. Install from https://docs.docker.com/ai/sandboxes/ and retry.",
+        "Local groundcrew runs with the sdx runner require 'sbx' (Docker Sandboxes) on PATH. Install from https://docs.docker.com/ai/sandboxes/ and retry.",
       );
     }
     return;
