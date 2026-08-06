@@ -20,7 +20,7 @@ fi
 mkdir -p "${sidebar_dir}"
 
 if [[ -e "${target}" ]]; then
-  backup="${target}.$(date +%Y%m%d%H%M%S).$$.bak"
+  backup="$(mktemp "${target}.$(date +%Y%m%d%H%M%S).bak.XXXXXX")"
   cp "${target}" "${backup}"
   echo "backed up existing sidebar to ${backup}"
 fi

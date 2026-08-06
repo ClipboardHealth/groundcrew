@@ -104,7 +104,7 @@ func ticketFromDirectory(_ w) -> String {
 
 func ticketFromTitle(_ w) -> String {
   let segs = firstToken(w.title).split(separator: "-")
-  if segs.count < 2 {
+  if segs.count != 2 {
     return ""
   }
   if let number = Int(segs[1]) {
