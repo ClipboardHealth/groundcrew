@@ -643,10 +643,6 @@ async function repoAdd(input: {
     });
   } catch (error) {
     if (error instanceof PrepareWorktreeError) {
-      await input.runtime.workspaces.finishRepositoryOperation({
-        processId,
-        workspaceDirectory: record.workspaceDirectory,
-      });
       record = await failPrepare({
         canonicalTaskId,
         error,
@@ -700,29 +696,29 @@ async function cleanup(input: {
     if (!input.allowDirty && observed.dirtyPaths.length > 0) {
       throw new DirtyWorkspaceError(observed.dirtyPaths);
     }
-    if (record.state !== "complete") {
+    // The operation check must run under the same run lock as repository reservation, including
+    // for a run that reconciliation completed while acquisition was still active.
+    // eslint-disable-next-line no-await-in-loop
+    let stoppedNow = false;
+    record = await runtime.runs.mutate({
+      canonicalTaskId: record.canonicalTaskId,
+      update: async (current) => {
+        await runtime.workspaces.assertNoActiveRepositoryOperation({
+          workspaceDirectory: current.workspaceDirectory,
+        });
+        if (current.state === "complete") {
+          return current;
+        }
+        stoppedNow = true;
+        return {
+          ...completeRecord({ outcome: "stopped", record: current }),
+          writebackPending: true,
+        };
+      },
+    });
+    if (stoppedNow || record.writebackPending === true) {
       // eslint-disable-next-line no-await-in-loop
-      let stoppedNow = false;
-      record = await runtime.runs.mutate({
-        canonicalTaskId: record.canonicalTaskId,
-        update: async (current) => {
-          if (current.state === "complete") {
-            return current;
-          }
-          await runtime.workspaces.assertNoActiveRepositoryOperation({
-            workspaceDirectory: current.workspaceDirectory,
-          });
-          stoppedNow = true;
-          return {
-            ...completeRecord({ outcome: "stopped", record: current }),
-            writebackPending: true,
-          };
-        },
-      });
-      if (stoppedNow || record.writebackPending === true) {
-        // eslint-disable-next-line no-await-in-loop
-        record = await writeCompletion({ record, runtime });
-      }
+      record = await writeCompletion({ record, runtime });
     }
     const presenter = presenterFor({
       environment: runtime.environment,
@@ -767,8 +763,14 @@ async function reconcile(input: { readonly runtime: Runtime }): Promise<void> {
     const slug = taskSlug({ canonicalTaskId: record.canonicalTaskId });
     // Dead in-session acquisition processes leave a recoverable marker that reconciliation clears.
     // eslint-disable-next-line no-await-in-loop
-    await runtime.workspaces.clearDeadRepositoryOperation({
-      workspaceDirectory: record.workspaceDirectory,
+    record = await runtime.runs.mutate({
+      canonicalTaskId: record.canonicalTaskId,
+      update: async (current) => {
+        await runtime.workspaces.clearDeadRepositoryOperation({
+          workspaceDirectory: current.workspaceDirectory,
+        });
+        return current;
+      },
     });
     // Marker repositories are authoritative after runtime acquisition.
     // eslint-disable-next-line no-await-in-loop

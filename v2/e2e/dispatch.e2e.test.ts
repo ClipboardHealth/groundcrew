@@ -340,7 +340,7 @@ describe("crew start", () => {
     ).toMatchObject({ outcome: "delivered", state: "complete" });
   });
 
-  it("does not hold a stealable run lock while a repository prepare command runs", async () => {
+  it("reserves long repository preparation without exposing cleanup races", async () => {
     const fixture = await createDispatchFixture({
       prepareWorktree:
         "touch ../repo-add-started; while [ ! -f ../repo-add-release ]; do sleep 0.05; done",
@@ -363,8 +363,21 @@ describe("crew start", () => {
     expect(
       JSON.parse(await readFile(join(fixture.runsDirectory, "fixture-eng-123.json"), "utf8")),
     ).toMatchObject({ state: "running" });
+    await writeFile(fixture.cmuxStatePath, '{"workspaces":[]}');
+    await runCrew({
+      arguments: ["status", "ENG-123", "--json"],
+      environment: fixture.environment,
+    });
+    expect(
+      JSON.parse(await readFile(join(fixture.runsDirectory, "fixture-eng-123.json"), "utf8")),
+    ).toMatchObject({ outcome: "failed", reason: "workspace-missing", state: "complete" });
+    await expect(
+      runCrew({ arguments: ["cleanup", "ENG-123"], environment: fixture.environment }),
+    ).rejects.toMatchObject({ code: 1 });
     await writeFile(join(fixture.workspaceDirectory, "repo-add-release"), "release\n");
-    await acquisition;
+    await expect(acquisition).rejects.toMatchObject({ code: 1 });
+    await runCrew({ arguments: ["cleanup", "ENG-123"], environment: fixture.environment });
+    await expect(stat(fixture.workspaceDirectory)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("persists a terminal verdict for a visible task", async () => {
