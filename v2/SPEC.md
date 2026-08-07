@@ -445,6 +445,7 @@ Layout, as a top-level workspace beside the untouched v1 tree:
 v2/
   AGENTS.md
   CONTEXT.md
+  SPEC.md
   package.json
   schema.json
   src/
