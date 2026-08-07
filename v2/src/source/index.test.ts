@@ -1,12 +1,21 @@
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { SourceRegistry } from "./index.js";
+
+const fixtureRoots: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(
+    fixtureRoots.splice(0).map(async (root) => await rm(root, { force: true, recursive: true })),
+  );
+});
 
 describe("SourceRegistry", () => {
   it("rejects update routing when configured source names collide", async () => {
     const root = await mkdtemp(join(tmpdir(), "groundcrew-v2-source-duplicate-"));
+    fixtureRoots.push(root);
     const bundleDirectory = join(root, "task-sources", "fixture");
     const updatesPath = join(root, "updates.jsonl");
     await mkdir(bundleDirectory, { recursive: true });

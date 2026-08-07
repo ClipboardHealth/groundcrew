@@ -39,18 +39,20 @@ describe("withFileLock", () => {
     const lockPath = join(root, "run.lock");
     const operationError = new Error("operation failed");
 
-    await expect(
-      withFileLock({
-        path: lockPath,
-        operation: async () => {
-          await rm(join(lockPath, "owner"));
-          await mkdir(join(lockPath, "owner"));
-          throw operationError;
-        },
-      }),
-    ).rejects.toBe(operationError);
-
-    await rm(lockPath, { force: true, recursive: true });
+    try {
+      await expect(
+        withFileLock({
+          path: lockPath,
+          operation: async () => {
+            await rm(join(lockPath, "owner"));
+            await mkdir(join(lockPath, "owner"));
+            throw operationError;
+          },
+        }),
+      ).rejects.toBe(operationError);
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
   });
 });
 

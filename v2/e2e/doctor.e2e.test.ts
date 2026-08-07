@@ -1,17 +1,24 @@
 import { execFile } from "node:child_process";
-import { cp, mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 const execFileAsync = promisify(execFile);
+const fixtureRoots: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(
+    fixtureRoots.splice(0).map(async (root) => await rm(root, { force: true, recursive: true })),
+  );
+});
 
 describe("crew doctor", () => {
   it("discovers and probes a user source bundle", async () => {
     const fixture = await createFixture();
 
-    const result = await execFileAsync(process.execPath, ["bin/run.js", "doctor"], {
+    const result = await execFileAsync("bin/run.js", ["doctor"], {
       cwd: process.cwd(),
       env: fixture.environment,
     });
@@ -28,7 +35,7 @@ describe("crew doctor", () => {
     });
 
     await expect(
-      execFileAsync(process.execPath, ["bin/run.js", "doctor"], {
+      execFileAsync("bin/run.js", ["doctor"], {
         cwd: process.cwd(),
         env: fixture.environment,
       }),
@@ -41,7 +48,7 @@ describe("crew doctor", () => {
   it("accepts a read-only source with no get or update capability", async () => {
     const fixture = await createFixture({ commands: { list: "./list" } });
 
-    const result = await execFileAsync(process.execPath, ["bin/run.js", "doctor"], {
+    const result = await execFileAsync("bin/run.js", ["doctor"], {
       cwd: process.cwd(),
       env: fixture.environment,
     });
@@ -55,7 +62,7 @@ describe("crew doctor", () => {
     });
 
     await expect(
-      execFileAsync(process.execPath, ["bin/run.js", "doctor"], {
+      execFileAsync("bin/run.js", ["doctor"], {
         cwd: process.cwd(),
         env: fixture.environment,
       }),
@@ -68,7 +75,7 @@ describe("crew doctor", () => {
   it("prefers a user bundle over the package bundle with the same kind", async () => {
     const fixture = await createFixture({ kind: "linear" });
 
-    const result = await execFileAsync(process.execPath, ["bin/run.js", "doctor"], {
+    const result = await execFileAsync("bin/run.js", ["doctor"], {
       cwd: process.cwd(),
       env: fixture.environment,
     });
@@ -81,7 +88,7 @@ describe("crew doctor", () => {
     const fixture = await createFixture({ duplicateSourceName: true });
 
     await expect(
-      execFileAsync(process.execPath, ["bin/run.js", "start"], {
+      execFileAsync("bin/run.js", ["start"], {
         cwd: process.cwd(),
         env: fixture.environment,
       }),
@@ -94,7 +101,7 @@ describe("crew doctor", () => {
   it("resolves prerequisites from the merged source environment", async () => {
     const fixture = await createFixture({ prerequisiteFromManifest: true });
 
-    const result = await execFileAsync(process.execPath, ["bin/run.js", "doctor"], {
+    const result = await execFileAsync("bin/run.js", ["doctor"], {
       cwd: process.cwd(),
       env: fixture.environment,
     });
@@ -115,6 +122,7 @@ async function createFixture(
   } = {},
 ): Promise<{ readonly environment: NodeJS.ProcessEnv }> {
   const root = await mkdtemp(join(tmpdir(), "groundcrew-v2-doctor-"));
+  fixtureRoots.push(root);
   const configHome = join(root, "config");
   const kind = options.kind ?? "fixture";
   const sourceDirectory = join(configHome, "groundcrew", "task-sources", kind);
