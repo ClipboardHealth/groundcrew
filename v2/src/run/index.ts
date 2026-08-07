@@ -275,9 +275,15 @@ export async function launchAgent(input: {
     kind: input.profile.kind,
     workspaceDirectory: record.workspaceDirectory,
   });
+  const inheritedEnvironment = Object.fromEntries(
+    Object.entries(environment).filter(
+      (entry): entry is [string, string] => entry[1] !== undefined,
+    ),
+  );
   await presenter.open({
     command: composeAgentCommand({ profile: input.profile, prompt }),
     environment: {
+      ...inheritedEnvironment,
       GROUNDCREW_TASK_ID: record.canonicalTaskId,
       GROUNDCREW_WORKSPACE: record.workspaceDirectory,
     },

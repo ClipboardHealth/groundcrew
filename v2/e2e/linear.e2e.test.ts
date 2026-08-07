@@ -84,6 +84,13 @@ describe("the shipped Linear source", () => {
     expect(
       fixture.state.comments.filter((comment) => comment.includes(":completed:delivered]")),
     ).toHaveLength(2);
+    const claimRunIds = fixture.state.comments.flatMap(
+      (comment) => comment.match(/\[groundcrew:(r_[0-9a-f]{8}):claimed\]/)?.slice(1) ?? [],
+    );
+    const latestCompletion = fixture.state.comments.findLast((comment) =>
+      comment.includes(":completed:delivered]"),
+    );
+    expect(latestCompletion).toContain(`[groundcrew:${claimRunIds.at(-1)}:completed:delivered]`);
     expect(fixture.state.comments.some((comment) => comment.includes("first-output"))).toBe(true);
     expect(fixture.state.comments.some((comment) => comment.includes("second-output"))).toBe(true);
   });
@@ -216,7 +223,14 @@ function linearIssue(input: {
   const identifier = input.identifier ?? "LIN-1";
   return {
     children: { nodes: [] },
-    comments: { nodes: input.state.comments.map((body) => ({ body })) },
+    comments: {
+      nodes: input.state.comments
+        .map((body, index) => ({
+          body,
+          createdAt: new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString(),
+        }))
+        .toReversed(),
+    },
     description: input.description ?? "A repository-free research task.",
     id: `issue-${identifier}`,
     identifier,

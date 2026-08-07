@@ -57,6 +57,11 @@ describe("crew start", () => {
     expect(command).toContain('model_reasoning_effort="high"');
     expect(command).toContain("Task: fixture:ENG-123");
     expect(launchArguments).toContain("GROUNDCREW_TASK_ID=fixture:ENG-123");
+    expect(launchArguments).toContain(
+      `GROUNDCREW_CONFIG=${fixture.environment["GROUNDCREW_CONFIG"]}`,
+    );
+    expect(launchArguments).toContain(`XDG_STATE_HOME=${fixture.environment["XDG_STATE_HOME"]}`);
+    expect(launchArguments).toContain("AGENT_INHERITED_SENTINEL=present");
     expect(
       await readFile(
         join(dirname(fixture.workspaceDirectory), "..", "codex", "config.toml"),
@@ -1006,6 +1011,7 @@ async function createDispatchFixture(
       FIXTURE_REJECT_CLAIMS: options.rejectClaim,
       FIXTURE_LIST_FAILURE: options.sourceListFailure ? "1" : undefined,
       GROUNDCREW_CONFIG: configPath,
+      AGENT_INHERITED_SENTINEL: "present",
       PATH: `${fakeBin}:${process.env["PATH"]}`,
       XDG_CONFIG_HOME: configHome,
       XDG_STATE_HOME: stateHome,

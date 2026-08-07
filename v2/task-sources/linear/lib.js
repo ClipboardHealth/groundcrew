@@ -10,7 +10,7 @@ const TASK_FIELDS = `
 const ISSUE_FIELDS = `
   ${TASK_FIELDS}
   team { states { nodes { id name type } } }
-  comments { nodes { body } }
+  comments { nodes { body createdAt } }
 `;
 
 export async function run(input) {
@@ -95,13 +95,18 @@ async function updateTask(input) {
 }
 
 function latestClaimRunId(issue) {
-  for (const comment of [...(issue.comments?.nodes ?? [])].reverse()) {
+  let latest;
+  for (const comment of issue.comments?.nodes ?? []) {
     const match = comment.body.match(/\[groundcrew:(r_[0-9a-f]{8}):claimed\]/);
-    if (match) {
-      return match[1];
+    if (!match) {
+      continue;
+    }
+    const timestamp = Date.parse(comment.createdAt ?? "");
+    if (latest === undefined || timestamp > latest.timestamp) {
+      latest = { runId: match[1], timestamp };
     }
   }
-  return undefined;
+  return latest?.runId;
 }
 
 async function loadIssue(id) {
