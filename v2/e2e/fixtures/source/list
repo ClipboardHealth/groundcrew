@@ -1,11 +1,25 @@
 #!/usr/bin/env node
 
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
+import { setTimeout as delay } from "node:timers/promises";
 
 await readStandardInput();
 if (process.env.FIXTURE_LIST_FAILURE === "1") {
   process.stderr.write("fixture list failed\n");
   process.exit(7);
+}
+if (process.env.FIXTURE_LIST_RELEASE !== undefined) {
+  for (;;) {
+    try {
+      await access(process.env.FIXTURE_LIST_RELEASE);
+      break;
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+        throw error;
+      }
+      await delay(10);
+    }
+  }
 }
 const tasks = JSON.parse(
   await readFile(process.env.FIXTURE_LIST_TASKS ?? process.env.FIXTURE_TASKS, "utf8"),
