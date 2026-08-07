@@ -5,6 +5,8 @@ on:
     branches:
       - main
       - "renovate/**"
+    paths-ignore:
+      - "v2/**"
   pull_request:
 
 permissions:
