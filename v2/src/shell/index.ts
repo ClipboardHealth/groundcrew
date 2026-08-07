@@ -65,6 +65,14 @@ const ConfigSchema = z.object({
 
 export type Config = z.output<typeof ConfigSchema>;
 
+export function configurationJsonSchema(): Record<string, unknown> {
+  return {
+    ...z.toJSONSchema(ConfigSchema, { target: "draft-2020-12" }),
+    $id: "https://clipboardhealth.com/schemas/groundcrew-v2.schema.json",
+    title: "Groundcrew v2 configuration",
+  };
+}
+
 interface MainInput {
   readonly arguments: readonly string[];
   readonly environment: NodeJS.ProcessEnv;

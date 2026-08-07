@@ -256,7 +256,7 @@ async function start(input: {
       )
       .map(({ task }) => task);
   } else {
-    tasks = [resolveTask({ query: input.task, tasks })];
+    tasks = [await resolveExplicitTask({ query: input.task, registry: runtime.registry })];
   }
   const started: string[] = [];
   const skipped: string[] = [];
@@ -347,6 +347,7 @@ async function start(input: {
         canonicalTaskId,
         detail: claim.ok ? (claim.data.reason ?? "source rejected claim") : claim.error.message,
         reason: "claim-rejected",
+        runId: record.runId,
         runtime,
       });
       skipped.push(canonicalTaskId);
@@ -398,6 +399,14 @@ async function start(input: {
           ...completeRecord({ outcome: "failed", reason, record: current }),
           writebackPending: true,
         }),
+      });
+      await log({
+        canonicalTaskId,
+        event: "run_failed",
+        level: "error",
+        module: "core",
+        runId: failed.runId,
+        runtime,
       });
       await writeCompletion({ record: failed, runtime });
       throw error;
@@ -478,7 +487,7 @@ async function artifactAdd(input: {
   readonly artifact: Artifact;
 }): Promise<RunRecord> {
   const canonicalTaskId = await resolveRunIdentity({ query: input.task, runtime: input.runtime });
-  return await input.runtime.runs.mutate({
+  const record = await input.runtime.runs.mutate({
     canonicalTaskId,
     update: (record) => ({
       ...record,
@@ -486,6 +495,15 @@ async function artifactAdd(input: {
       events: [...record.events, { event: "artifact-added", timestamp: new Date().toISOString() }],
     }),
   });
+  await log({
+    canonicalTaskId,
+    event: "artifact_added",
+    level: "info",
+    module: "core",
+    runId: record.runId,
+    runtime: input.runtime,
+  });
+  return record;
 }
 
 async function done(input: {
@@ -508,6 +526,14 @@ async function done(input: {
       message: input.message,
       writebackPending: true,
     }),
+  });
+  await log({
+    canonicalTaskId,
+    event: "run_completed",
+    level: "info",
+    module: "core",
+    runId: record.runId,
+    runtime,
   });
   const presenter = presenterFor({
     environment: runtime.environment,
@@ -540,7 +566,7 @@ async function repoAdd(input: {
     repository: input.repository,
     slug,
   });
-  return await input.runtime.runs.mutate({
+  const updated = await input.runtime.runs.mutate({
     canonicalTaskId,
     update: (current) => ({
       ...current,
@@ -551,6 +577,16 @@ async function repoAdd(input: {
       repositories: updatedMarker.repositories,
     }),
   });
+  await log({
+    canonicalTaskId,
+    event: "repository_added",
+    level: "info",
+    module: "core",
+    repository: input.repository,
+    runId: updated.runId,
+    runtime: input.runtime,
+  });
+  return updated;
 }
 
 async function cleanup(input: {
@@ -607,6 +643,15 @@ async function cleanup(input: {
       // eslint-disable-next-line no-await-in-loop
       await runtime.runs.remove({ canonicalTaskId: record.canonicalTaskId });
     }
+    // eslint-disable-next-line no-await-in-loop
+    await log({
+      canonicalTaskId: record.canonicalTaskId,
+      event: "cleanup_completed",
+      level: "info",
+      module: "core",
+      runId: record.runId,
+      runtime,
+    });
     cleaned.push(record.canonicalTaskId);
   }
   return { cleaned, preservedBranches };
@@ -636,6 +681,15 @@ async function reconcile(input: { readonly runtime: Runtime }): Promise<void> {
         canonicalTaskId: record.canonicalTaskId,
         update: (current) => ({ ...current, repositories: marker.repositories }),
       });
+      // eslint-disable-next-line no-await-in-loop
+      await log({
+        canonicalTaskId: record.canonicalTaskId,
+        event: "run_repaired",
+        level: "info",
+        module: "core",
+        runId: record.runId,
+        runtime,
+      });
     }
     if (record.writebackPending === true) {
       // eslint-disable-next-line no-await-in-loop
@@ -652,9 +706,18 @@ async function reconcile(input: { readonly runtime: Runtime }): Promise<void> {
     );
     if (record.state === "provisioning" && exists) {
       // eslint-disable-next-line no-await-in-loop
-      await runtime.runs.mutate({
+      const running = await runtime.runs.mutate({
         canonicalTaskId: record.canonicalTaskId,
         update: (current) => transition({ event: "running", record: current, state: "running" }),
+      });
+      // eslint-disable-next-line no-await-in-loop
+      await log({
+        canonicalTaskId: running.canonicalTaskId,
+        event: "run_reconciled",
+        level: "info",
+        module: "core",
+        runId: running.runId,
+        runtime,
       });
     } else if (!exists) {
       const reason =
@@ -666,6 +729,15 @@ async function reconcile(input: { readonly runtime: Runtime }): Promise<void> {
           ...completeRecord({ outcome: "failed", reason, record: current }),
           writebackPending: true,
         }),
+      });
+      // eslint-disable-next-line no-await-in-loop
+      await log({
+        canonicalTaskId: failed.canonicalTaskId,
+        event: "run_failed",
+        level: "error",
+        module: "core",
+        runId: failed.runId,
+        runtime,
       });
       // eslint-disable-next-line no-await-in-loop
       await writeCompletion({ record: failed, runtime });
@@ -721,12 +793,29 @@ async function writeCompletion(input: {
     },
   });
   if (!result.ok || result.data.result === "rejected") {
+    await log({
+      canonicalTaskId: record.canonicalTaskId,
+      event: "writeback_pending",
+      level: "warn",
+      module: "core",
+      runId: record.runId,
+      runtime,
+    });
     return record;
   }
-  return await runtime.runs.mutate({
+  const updated = await runtime.runs.mutate({
     canonicalTaskId: record.canonicalTaskId,
     update: (current) => ({ ...current, writebackPending: false }),
   });
+  await log({
+    canonicalTaskId: record.canonicalTaskId,
+    event: "writeback_completed",
+    level: "info",
+    module: "core",
+    runId: record.runId,
+    runtime,
+  });
+  return updated;
 }
 
 async function resolveRunIdentity(input: {
@@ -757,12 +846,26 @@ async function requireRun(input: {
   return record;
 }
 
-function resolveTask(input: { readonly query: string; readonly tasks: readonly Task[] }): Task {
-  const matches = input.tasks.filter(
-    (task) =>
-      canonicalId({ task }) === input.query ||
-      (!input.query.includes(":") && task.id === input.query),
-  );
+async function resolveExplicitTask(input: {
+  readonly query: string;
+  readonly registry: SourceRegistry;
+}): Promise<Task> {
+  if (input.query.includes(":")) {
+    const result = await input.registry.get({ canonicalTaskId: input.query });
+    if (!result.ok) {
+      throw new Error(result.error.message);
+    }
+    return result.data.task;
+  }
+  const matches: Task[] = [];
+  for (const sourceName of input.registry.sourceNames()) {
+    // Sources are queried independently to disambiguate a source-local task ID.
+    // eslint-disable-next-line no-await-in-loop
+    const result = await input.registry.get({ canonicalTaskId: `${sourceName}:${input.query}` });
+    if (result.ok) {
+      matches.push(result.data.task);
+    }
+  }
   const match = matches.at(0);
   if (matches.length !== 1 || match === undefined) {
     throw new Error(`could not resolve exactly one task for ${input.query}`);
@@ -823,6 +926,7 @@ async function writeVerdict(input: {
   readonly canonicalTaskId: string;
   readonly reason: VerdictReason;
   readonly detail: string;
+  readonly runId?: string | undefined;
 }): Promise<void> {
   const verdicts = await readVerdicts({ runtime: input.runtime });
   verdicts[input.canonicalTaskId] = {
@@ -833,6 +937,14 @@ async function writeVerdict(input: {
   await atomicWrite({
     path: join(input.runtime.paths.stateRoot, "dispatch.json"),
     value: `${JSON.stringify(verdicts, undefined, 2)}\n`,
+  });
+  await log({
+    canonicalTaskId: input.canonicalTaskId,
+    event: "dispatch_verdict",
+    level: "warn",
+    module: "core",
+    runId: input.runId,
+    runtime: input.runtime,
   });
 }
 
@@ -857,6 +969,7 @@ async function log(input: {
   readonly module: string;
   readonly event: string;
   readonly canonicalTaskId?: string | undefined;
+  readonly repository?: string | undefined;
   readonly runId?: string | undefined;
 }): Promise<void> {
   const path =
@@ -885,7 +998,9 @@ async function log(input: {
       event: input.event,
       level: input.level,
       module: input.module,
+      repository: input.repository,
       runId: input.runId,
+      sourceName: input.canonicalTaskId?.slice(0, input.canonicalTaskId.indexOf(":")),
       timestamp: new Date().toISOString(),
     })}\n`,
   );

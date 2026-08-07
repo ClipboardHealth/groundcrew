@@ -14,10 +14,12 @@
     "crew": "node --run build && node ./bin/run.js",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
+    "schema:check": "node config/generate-schema.mjs --check",
+    "schema:generate": "node config/generate-schema.mjs",
     "test": "vitest run",
     "test:e2e": "vitest run e2e",
     "typecheck": "tsc --noEmit",
-    "verify": "node --run format:check && node --run typecheck && node --run build && node --run architecture:check && node --run test"
+    "verify": "node --run format:check && node --run typecheck && node --run build && node --run schema:check && node --run architecture:check && node --run test"
   },
   "dependencies": {
     "@commander-js/extra-typings": "15.0.0",

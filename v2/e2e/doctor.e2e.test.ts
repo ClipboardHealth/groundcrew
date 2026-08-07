@@ -56,11 +56,28 @@ describe("crew doctor", () => {
 
     expect(result.stdout).toContain("live list probe: healthy");
   });
+
+  it("reports invalid source manifests with their path and validation error", async () => {
+    const fixture = await createFixture({
+      manifestContents: JSON.stringify({ commands: {}, protocolVersion: "one" }),
+    });
+
+    await expect(
+      execFileAsync(process.execPath, ["bin/run.js", "doctor"], {
+        cwd: process.cwd(),
+        env: fixture.environment,
+      }),
+    ).rejects.toMatchObject({
+      code: 1,
+      stdout: expect.stringMatching(/invalid source manifest .*source\.json.*protocolVersion/s),
+    });
+  });
 });
 
 async function createFixture(
   options: {
     readonly commands?: Readonly<Record<string, string>> | undefined;
+    readonly manifestContents?: string | undefined;
     readonly protocolVersion?: number | undefined;
     readonly secrets?: readonly string[] | undefined;
   } = {},
@@ -72,7 +89,9 @@ async function createFixture(
   const updatesPath = join(root, "updates.jsonl");
   await mkdir(dirname(sourceDirectory), { recursive: true });
   await cp("e2e/fixtures/source", sourceDirectory, { recursive: true });
-  if (Object.keys(options).length > 0) {
+  if (options.manifestContents !== undefined) {
+    await writeFile(join(sourceDirectory, "source.json"), options.manifestContents);
+  } else if (Object.keys(options).length > 0) {
     await writeFile(
       join(sourceDirectory, "source.json"),
       JSON.stringify({

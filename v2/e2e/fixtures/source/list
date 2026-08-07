@@ -3,7 +3,9 @@
 import { readFile } from "node:fs/promises";
 
 await readStandardInput();
-const tasks = JSON.parse(await readFile(process.env.FIXTURE_TASKS, "utf8"));
+const tasks = JSON.parse(
+  await readFile(process.env.FIXTURE_LIST_TASKS ?? process.env.FIXTURE_TASKS, "utf8"),
+);
 process.stdout.write(`${JSON.stringify({ ok: true, data: { tasks } })}\n`);
 
 async function readStandardInput() {

@@ -61,30 +61,35 @@ export class RunStore {
     readonly repositories: readonly string[];
   }): Promise<RunRecord> {
     const slug = taskSlug({ canonicalTaskId: input.canonicalTaskId });
-    const path = this.path({ slug });
-    try {
-      await stat(path);
-      throw new Error(`run already exists for ${input.canonicalTaskId}`);
-    } catch (error) {
-      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
-        throw error;
-      }
-    }
-    const record: RunRecord = {
-      agentProfile: input.agentProfile,
-      artifacts: [],
-      canonicalTaskId: input.canonicalTaskId,
-      events: [{ event: "provisioning", timestamp: new Date().toISOString() }],
-      presentedWorkspaceName: `crew-${slug}`,
-      presenter: "cmux",
-      repositories: input.repositories,
-      runId: `r_${randomBytes(4).toString("hex")}`,
-      state: "provisioning",
-      version: 1,
-      workspaceDirectory: input.workspaceDirectory,
-    };
-    await this.write({ path, record });
-    return record;
+    return await this.withLock({
+      operation: async () => {
+        const path = this.path({ slug });
+        try {
+          await stat(path);
+          throw new Error(`run already exists for ${input.canonicalTaskId}`);
+        } catch (error) {
+          if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+            throw error;
+          }
+        }
+        const record: RunRecord = {
+          agentProfile: input.agentProfile,
+          artifacts: [],
+          canonicalTaskId: input.canonicalTaskId,
+          events: [{ event: "provisioning", timestamp: new Date().toISOString() }],
+          presentedWorkspaceName: `crew-${slug}`,
+          presenter: "cmux",
+          repositories: input.repositories,
+          runId: `r_${randomBytes(4).toString("hex")}`,
+          state: "provisioning",
+          version: 1,
+          workspaceDirectory: input.workspaceDirectory,
+        };
+        await this.write({ path, record });
+        return record;
+      },
+      slug,
+    });
   }
 
   public async get(input: { readonly canonicalTaskId: string }): Promise<RunRecord | undefined> {

@@ -107,6 +107,24 @@ describe("crew start", () => {
     await expect(stat(join(fixture.runsDirectory, "fixture-eng-123.json"))).rejects.toMatchObject({
       code: "ENOENT",
     });
+    const logs = (await readFile(join(dirname(fixture.runsDirectory), "groundcrew.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(logs.map((entry) => entry.event)).toEqual(
+      expect.arrayContaining([
+        "run_started",
+        "artifact_added",
+        "writeback_completed",
+        "run_completed",
+        "cleanup_completed",
+      ]),
+    );
+    expect(
+      logs
+        .filter((entry) => entry.canonicalTaskId === "fixture:ENG-123")
+        .every((entry) => entry.runId === runIdFrom(logs)),
+    ).toBe(true);
   });
 
   it("persists a missing-repository verdict without creating a partial workspace", async () => {
@@ -193,6 +211,17 @@ describe("crew start", () => {
       code: "ENOENT",
     });
   });
+
+  it("uses source get when an explicitly requested task is absent from list", async () => {
+    const fixture = await createDispatchFixture({ listedTasks: [], repositories: [] });
+
+    const result = await runCrew({
+      arguments: ["start", "ENG-123"],
+      environment: fixture.environment,
+    });
+
+    expect(result.stdout).toContain("Started fixture:ENG-123");
+  });
 });
 
 interface DispatchFixture {
@@ -207,6 +236,7 @@ async function createDispatchFixture(
   options: {
     readonly repository?: string | undefined;
     readonly repositories?: readonly string[] | undefined;
+    readonly listedTasks?: ReadonlyArray<Record<string, unknown>> | undefined;
     readonly tasks?: ReadonlyArray<Record<string, unknown>> | undefined;
     readonly rejectClaim?: string | undefined;
   } = {},
@@ -217,6 +247,7 @@ async function createDispatchFixture(
   const baseDirectory = join(root, "dev");
   const worktreeDirectory = join(root, "worktrees");
   const tasksPath = join(root, "tasks.json");
+  const listedTasksPath = join(root, "listed-tasks.json");
   const updatesPath = join(root, "updates.jsonl");
   const cmuxStatePath = join(root, "cmux-state.json");
   const cmuxCallsPath = join(root, "cmux-calls.jsonl");
@@ -239,6 +270,15 @@ async function createDispatchFixture(
       ],
     ),
   );
+  await writeFile(
+    listedTasksPath,
+    JSON.stringify(
+      options.listedTasks ??
+        options.tasks ?? [
+          task({ repositories: options.repositories ?? [options.repository ?? "sample"] }),
+        ],
+    ),
+  );
   const configPath = join(root, "crew.config.jsonc");
   await writeFile(
     configPath,
@@ -257,6 +297,7 @@ async function createDispatchFixture(
       FAKE_CMUX_CALLS: cmuxCallsPath,
       FAKE_CMUX_STATE: cmuxStatePath,
       FIXTURE_TASKS: tasksPath,
+      FIXTURE_LIST_TASKS: listedTasksPath,
       FIXTURE_UPDATES: updatesPath,
       FIXTURE_REJECT_CLAIMS: options.rejectClaim,
       GROUNDCREW_CONFIG: configPath,
@@ -329,4 +370,8 @@ async function runGit(input: {
   readonly cwd: string;
 }): Promise<void> {
   await execFileAsync("git", [...input.arguments], { cwd: input.cwd });
+}
+
+function runIdFrom(logs: ReadonlyArray<Record<string, unknown>>): unknown {
+  return logs.find((entry) => entry["event"] === "run_started")?.["runId"];
 }

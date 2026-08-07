@@ -1,42 +1,219 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://clipboardhealth.com/schemas/groundcrew-v2.schema.json",
-  "title": "Groundcrew v2 configuration",
   "type": "object",
-  "required": ["workspace", "sources"],
   "properties": {
-    "$schema": { "type": "string" },
+    "$schema": {
+      "type": "string"
+    },
     "workspace": {
       "type": "object",
-      "required": ["baseDirectory"],
       "properties": {
-        "baseDirectory": { "type": "string", "minLength": 1 },
-        "worktreeDirectory": { "type": "string", "minLength": 1 },
-        "prepareWorktree": { "type": "string" },
-        "repositories": { "type": "object" }
+        "baseDirectory": {
+          "type": "string",
+          "minLength": 1
+        },
+        "worktreeDirectory": {
+          "type": "string",
+          "minLength": 1
+        },
+        "prepareWorktree": {
+          "type": "string"
+        },
+        "repositories": {
+          "default": {},
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "prepareWorktree": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        }
       },
+      "required": ["baseDirectory", "repositories"],
       "additionalProperties": false
     },
     "sources": {
-      "type": "array",
       "minItems": 1,
+      "type": "array",
       "items": {
         "type": "object",
-        "required": ["kind"],
         "properties": {
-          "kind": { "type": "string", "minLength": 1 },
-          "name": { "type": "string", "minLength": 1 },
-          "agentProfile": { "type": "string", "minLength": 1 },
-          "environment": { "type": "object", "additionalProperties": { "type": "string" } }
+          "kind": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "agentProfile": {
+            "type": "string",
+            "minLength": 1
+          },
+          "environment": {
+            "default": {},
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "type": "string"
+            }
+          }
         },
+        "required": ["kind", "environment"],
         "additionalProperties": false
       }
     },
-    "agents": { "type": "object" },
-    "orchestrator": { "type": "object" },
-    "git": { "type": "object" },
-    "presenter": { "const": "cmux" },
-    "logging": { "type": "object" }
+    "agents": {
+      "default": {
+        "default": "claude-fable",
+        "profiles": {
+          "claude-fable": {
+            "effort": "high",
+            "kind": "claude",
+            "model": "fable"
+          },
+          "claude-opus": {
+            "effort": "high",
+            "kind": "claude",
+            "model": "opus"
+          },
+          "codex": {
+            "effort": "high",
+            "kind": "codex"
+          }
+        }
+      },
+      "type": "object",
+      "properties": {
+        "default": {
+          "default": "claude-fable",
+          "type": "string",
+          "minLength": 1
+        },
+        "profiles": {
+          "default": {
+            "claude-fable": {
+              "effort": "high",
+              "kind": "claude",
+              "model": "fable"
+            },
+            "claude-opus": {
+              "effort": "high",
+              "kind": "claude",
+              "model": "opus"
+            },
+            "codex": {
+              "effort": "high",
+              "kind": "codex"
+            }
+          },
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": ["claude", "codex"]
+              },
+              "model": {
+                "type": "string",
+                "minLength": 1
+              },
+              "effort": {
+                "default": "high",
+                "type": "string",
+                "enum": ["low", "medium", "high", "xhigh", "max"]
+              }
+            },
+            "required": ["kind", "effort"],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": ["default", "profiles"],
+      "additionalProperties": false
+    },
+    "orchestrator": {
+      "default": {
+        "maximumInProgress": 4,
+        "pollIntervalMilliseconds": 120000
+      },
+      "type": "object",
+      "properties": {
+        "maximumInProgress": {
+          "default": 4,
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "pollIntervalMilliseconds": {
+          "default": 120000,
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": ["maximumInProgress", "pollIntervalMilliseconds"],
+      "additionalProperties": false
+    },
+    "git": {
+      "default": {
+        "branchPrefix": "crew",
+        "defaultBranch": "main",
+        "remote": "origin"
+      },
+      "type": "object",
+      "properties": {
+        "remote": {
+          "default": "origin",
+          "type": "string",
+          "minLength": 1
+        },
+        "defaultBranch": {
+          "default": "main",
+          "type": "string",
+          "minLength": 1
+        },
+        "branchPrefix": {
+          "default": "crew",
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": ["remote", "defaultBranch", "branchPrefix"],
+      "additionalProperties": false
+    },
+    "presenter": {
+      "default": "cmux",
+      "type": "string",
+      "const": "cmux"
+    },
+    "logging": {
+      "default": {},
+      "type": "object",
+      "properties": {
+        "file": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    }
   },
-  "additionalProperties": false
+  "required": ["workspace", "sources", "agents", "orchestrator", "git", "presenter", "logging"],
+  "additionalProperties": false,
+  "$id": "https://clipboardhealth.com/schemas/groundcrew-v2.schema.json",
+  "title": "Groundcrew v2 configuration"
 }

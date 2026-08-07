@@ -88,10 +88,17 @@ interface Bundle {
   readonly manifest: z.output<typeof ManifestSchema>;
 }
 
+interface DiscoveredBundle {
+  readonly bundle?: Bundle | undefined;
+  readonly errors: readonly string[];
+  readonly origin: "package" | "user";
+}
+
 interface RegisteredSource {
   readonly bundle: Bundle | undefined;
   readonly instance: SourceInstance;
   readonly name: string;
+  readonly origin: "package" | "user";
   readonly discoveryErrors: readonly string[];
   lastTasks: readonly Task[];
 }
@@ -116,11 +123,21 @@ export class SourceRegistry {
   }): Promise<SourceRegistry> {
     const bundles = await discoverBundles(input);
     const sources = input.instances.map((instance) => {
-      const bundle = bundles.get(instance.kind);
+      const discovered = bundles.get(instance.kind);
+      const bundle = discovered?.bundle;
       const name = instance.name ?? bundle?.manifest.name ?? instance.kind;
       const discoveryErrors =
-        bundle === undefined ? [`source bundle '${instance.kind}' not found`] : [];
-      return { bundle, discoveryErrors, instance, lastTasks: [], name };
+        discovered === undefined
+          ? [`source bundle '${instance.kind}' not found`]
+          : discovered.errors;
+      return {
+        bundle,
+        discoveryErrors,
+        instance,
+        lastTasks: [],
+        name,
+        origin: discovered?.origin ?? "package",
+      };
     });
     return new SourceRegistry({ environment: input.environment, sources });
   }
@@ -129,13 +146,17 @@ export class SourceRegistry {
     return this.#sources.find((source) => source.name === input.sourceName)?.instance.agentProfile;
   }
 
+  public sourceNames(): readonly string[] {
+    return this.#sources.map((source) => source.name);
+  }
+
   public async health(): Promise<readonly SourceHealth[]> {
     return await Promise.all(
       this.#sources.map(async (source) => {
         const errors = [...source.discoveryErrors];
         const bundle = source.bundle;
         if (bundle === undefined) {
-          return { errors, kind: source.instance.kind, name: source.name, origin: "package" };
+          return { errors, kind: source.instance.kind, name: source.name, origin: source.origin };
         }
         if (bundle.manifest.protocolVersion !== 1) {
           errors.push(
@@ -332,8 +353,8 @@ export class SourceRegistry {
 async function discoverBundles(input: {
   readonly packageRoot: string;
   readonly configHome: string;
-}): Promise<Map<string, Bundle>> {
-  const bundles = new Map<string, Bundle>();
+}): Promise<Map<string, DiscoveredBundle>> {
+  const bundles = new Map<string, DiscoveredBundle>();
   await discoverDirectory({
     bundles,
     directory: join(input.packageRoot, "task-sources"),
@@ -348,7 +369,7 @@ async function discoverBundles(input: {
 }
 
 async function discoverDirectory(input: {
-  readonly bundles: Map<string, Bundle>;
+  readonly bundles: Map<string, DiscoveredBundle>;
   readonly directory: string;
   readonly origin: "package" | "user";
 }): Promise<void> {
@@ -366,23 +387,50 @@ async function discoverDirectory(input: {
       continue;
     }
     const directory = join(input.directory, entry.name);
+    const manifestPath = join(directory, "source.json");
     try {
-      // Invalid manifests are deliberately skipped; configured instances surface not-found.
       // eslint-disable-next-line no-await-in-loop
-      const raw = await readFile(join(directory, "source.json"), "utf8");
+      const raw = await readFile(manifestPath, "utf8");
       const parsed = ManifestSchema.safeParse(JSON.parse(raw));
       if (parsed.success) {
         input.bundles.set(entry.name, {
-          directory,
-          kind: entry.name,
-          manifest: parsed.data,
+          bundle: {
+            directory,
+            kind: entry.name,
+            manifest: parsed.data,
+            origin: input.origin,
+          },
+          errors: [],
+          origin: input.origin,
+        });
+      } else {
+        input.bundles.set(entry.name, {
+          errors: [formatManifestError({ error: parsed.error, manifestPath })],
           origin: input.origin,
         });
       }
-    } catch {
-      continue;
+    } catch (error) {
+      input.bundles.set(entry.name, {
+        errors: [formatManifestError({ error, manifestPath })],
+        origin: input.origin,
+      });
     }
   }
+}
+
+function formatManifestError(input: {
+  readonly error: unknown;
+  readonly manifestPath: string;
+}): string {
+  const detail =
+    input.error instanceof z.ZodError
+      ? input.error.issues
+          .map((issue) => `${issue.path.join(".") || "manifest"}: ${issue.message}`)
+          .join("; ")
+      : input.error instanceof Error
+        ? input.error.message
+        : String(input.error);
+  return `invalid source manifest ${input.manifestPath}: ${detail}`;
 }
 
 function normalizeTask(input: {
