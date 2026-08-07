@@ -75,19 +75,33 @@ describe("crew doctor", () => {
       stdout: expect.stringMatching(/invalid source manifest .*source\.json.*protocolVersion/s),
     });
   });
+
+  it("prefers a user bundle over the package bundle with the same kind", async () => {
+    const fixture = await createFixture({ kind: "linear" });
+
+    const result = await execFileAsync(process.execPath, ["bin/run.js", "doctor"], {
+      cwd: process.cwd(),
+      env: fixture.environment,
+    });
+
+    expect(result.stdout).toContain("linear (user, protocol 1)");
+    expect(result.stdout).toContain("live list probe: healthy");
+  });
 });
 
 async function createFixture(
   options: {
     readonly commands?: Readonly<Record<string, string>> | undefined;
     readonly manifestContents?: string | undefined;
+    readonly kind?: string | undefined;
     readonly protocolVersion?: number | undefined;
     readonly secrets?: readonly string[] | undefined;
   } = {},
 ): Promise<{ readonly environment: NodeJS.ProcessEnv }> {
   const root = await mkdtemp(join(tmpdir(), "groundcrew-v2-doctor-"));
   const configHome = join(root, "config");
-  const sourceDirectory = join(configHome, "groundcrew", "task-sources", "fixture");
+  const kind = options.kind ?? "fixture";
+  const sourceDirectory = join(configHome, "groundcrew", "task-sources", kind);
   const tasksPath = join(root, "tasks.json");
   const updatesPath = join(root, "updates.jsonl");
   const fakeBin = join(process.cwd(), "e2e", "fixtures", "fake-bin");
@@ -114,7 +128,7 @@ async function createFixture(
     configPath,
     JSON.stringify({
       agents: { default: "codex", profiles: { codex: { kind: "codex" } } },
-      sources: [{ kind: "fixture" }],
+      sources: [{ kind, name: kind }],
       workspace: { baseDirectory: join(root, "dev") },
     }),
   );

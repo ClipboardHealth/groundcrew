@@ -3,6 +3,10 @@
 import { readFile } from "node:fs/promises";
 
 await readStandardInput();
+if (process.env.FIXTURE_LIST_FAILURE === "1") {
+  process.stderr.write("fixture list failed\n");
+  process.exit(7);
+}
 const tasks = JSON.parse(
   await readFile(process.env.FIXTURE_LIST_TASKS ?? process.env.FIXTURE_TASKS, "utf8"),
 );

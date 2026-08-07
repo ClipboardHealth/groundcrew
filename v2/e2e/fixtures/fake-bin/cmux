@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { spawn } from "node:child_process";
 import { appendFile, readFile, writeFile } from "node:fs/promises";
 
 const [command, ...arguments_] = process.argv.slice(2);
@@ -20,6 +21,22 @@ if (command === "new-workspace") {
   };
   state.workspaces.push(workspace);
   await writeFile(statePath, JSON.stringify(state));
+  if (process.env.FAKE_CMUX_EXECUTE_COMMAND === "1") {
+    const childEnvironment = { ...process.env };
+    for (let index = 0; index < arguments_.length; index += 1) {
+      if (arguments_[index] !== "--env") continue;
+      const entry = arguments_[index + 1];
+      const separator = entry.indexOf("=");
+      childEnvironment[entry.slice(0, separator)] = entry.slice(separator + 1);
+    }
+    const child = spawn("/bin/sh", ["-c", valueAfter("--command")], {
+      cwd: valueAfter("--cwd"),
+      detached: true,
+      env: childEnvironment,
+      stdio: "ignore",
+    });
+    child.unref();
+  }
 } else if (command === "--json" && arguments_[0] === "list-workspaces") {
   if (process.env.FAKE_CMUX_UNAVAILABLE === "1") {
     process.stderr.write("fake cmux unavailable\n");

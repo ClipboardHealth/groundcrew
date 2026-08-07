@@ -1,2 +1,23 @@
-#!/bin/sh
-exit 0
+#!/usr/bin/env node
+
+import { spawnSync } from "node:child_process";
+import { appendFile } from "node:fs/promises";
+
+if (process.env.FAKE_AGENT_CAPTURE) {
+  await appendFile(
+    process.env.FAKE_AGENT_CAPTURE,
+    `${JSON.stringify({
+      arguments: process.argv.slice(2),
+      cwd: process.cwd(),
+      taskId: process.env.GROUNDCREW_TASK_ID,
+      workspace: process.env.GROUNDCREW_WORKSPACE,
+    })}\n`,
+  );
+}
+if (process.env.FAKE_AGENT_SCRIPT) {
+  const result = spawnSync("/bin/sh", ["-c", process.env.FAKE_AGENT_SCRIPT], {
+    env: process.env,
+    stdio: "inherit",
+  });
+  process.exitCode = result.status ?? 1;
+}

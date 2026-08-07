@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { chmod, cp, mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdir, mkdtemp, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
@@ -166,6 +166,32 @@ describe("crew start", () => {
     );
   });
 
+  it("acquires multiple repositories at runtime", async () => {
+    const fixture = await createDispatchFixture({
+      additionalRepositories: ["second"],
+      repositories: [],
+    });
+    await runCrew({ arguments: ["start"], environment: fixture.environment });
+
+    await runCrew({
+      arguments: ["repo", "add", "sample", "--task", "ENG-123"],
+      environment: fixture.environment,
+    });
+    await runCrew({
+      arguments: ["repo", "add", "second", "--task", "ENG-123"],
+      environment: fixture.environment,
+    });
+
+    const marker = JSON.parse(
+      await readFile(join(fixture.workspaceDirectory, ".groundcrew", "task.json"), "utf8"),
+    );
+    const run = JSON.parse(
+      await readFile(join(fixture.runsDirectory, "fixture-eng-123.json"), "utf8"),
+    );
+    expect(marker.repositories).toEqual(["sample", "second"]);
+    expect(run.repositories).toEqual(["sample", "second"]);
+  });
+
   it("refuses delivered completion and cleanup while a worktree is dirty", async () => {
     const fixture = await createDispatchFixture();
     await runCrew({ arguments: ["start"], environment: fixture.environment });
@@ -202,6 +228,46 @@ describe("crew start", () => {
     expect(dispatch["fixture:LOW-1"].reason).toBe("slots-full");
   });
 
+  it("skips a blocked task unless an explicit start uses force", async () => {
+    const fixture = await createDispatchFixture({
+      tasks: [task({ blocked: true, repositories: [] })],
+    });
+
+    await runCrew({ arguments: ["start"], environment: fixture.environment });
+    expect(
+      JSON.parse(await readFile(join(dirname(fixture.runsDirectory), "dispatch.json"), "utf8"))[
+        "fixture:ENG-123"
+      ],
+    ).toMatchObject({ reason: "blocked" });
+
+    const forced = await runCrew({
+      arguments: ["start", "ENG-123", "--force"],
+      environment: fixture.environment,
+    });
+    expect(forced.stdout).toContain("Started fixture:ENG-123");
+  });
+
+  it("keeps the first slug holder and records a collision for the other task", async () => {
+    const fixture = await createDispatchFixture({
+      maximumInProgress: 2,
+      tasks: [task({ id: "ENG.1", repositories: [] }), task({ id: "ENG-1", repositories: [] })],
+    });
+
+    await runCrew({ arguments: ["start"], environment: fixture.environment });
+
+    const run = JSON.parse(
+      await readFile(join(fixture.runsDirectory, "fixture-eng-1.json"), "utf8"),
+    );
+    const verdicts = JSON.parse(
+      await readFile(join(dirname(fixture.runsDirectory), "dispatch.json"), "utf8"),
+    );
+    expect(run.canonicalTaskId).toBe("fixture:ENG.1");
+    expect(verdicts["fixture:ENG-1"]).toMatchObject({
+      detail: "fixture:ENG.1",
+      reason: "slug-collision",
+    });
+  });
+
   it("removes the provisional run and records a rejected claim", async () => {
     const fixture = await createDispatchFixture({ rejectClaim: "ENG-123" });
 
@@ -225,6 +291,19 @@ describe("crew start", () => {
     });
 
     expect(result.stdout).toContain("Started fixture:ENG-123");
+  });
+
+  it("surfaces source list failure without creating local task state", async () => {
+    const fixture = await createDispatchFixture({ sourceListFailure: true });
+
+    await expect(
+      runCrew({ arguments: ["start"], environment: fixture.environment }),
+    ).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining("fixture list failed"),
+    });
+    await expect(stat(fixture.runsDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(fixture.workspaceDirectory)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("preserves and reports a dirty partial worktree when initial prepare fails", async () => {
@@ -467,6 +546,75 @@ describe("crew start", () => {
     await expect(stat(fixture.workspaceDirectory)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("updates a reusable branch to the fetched tip during repo add", async () => {
+    const fixture = await createDispatchFixture({ repositories: [] });
+    const repository = join(fixture.baseDirectory, "sample");
+    await runGit({ arguments: ["branch", "crew/fixture-eng-123"], cwd: repository });
+    await writeFile(join(repository, "README.md"), "runtime fetched tip\n");
+    await runGit({ arguments: ["add", "README.md"], cwd: repository });
+    await runGit({
+      arguments: [
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+        "commit",
+        "-m",
+        "advance runtime main",
+      ],
+      cwd: repository,
+    });
+    await runGit({ arguments: ["push", "origin", "main"], cwd: repository });
+    await runCrew({ arguments: ["start"], environment: fixture.environment });
+
+    await runCrew({
+      arguments: ["repo", "add", "sample", "--task", "ENG-123"],
+      environment: fixture.environment,
+    });
+
+    expect(await readFile(join(fixture.workspaceDirectory, "sample", "README.md"), "utf8")).toBe(
+      "runtime fetched tip\n",
+    );
+  });
+
+  it("refuses unique task-branch commits during repo add", async () => {
+    const fixture = await createDispatchFixture({ repositories: [] });
+    const repository = join(fixture.baseDirectory, "sample");
+    await runGit({ arguments: ["switch", "-c", "crew/fixture-eng-123"], cwd: repository });
+    await writeFile(join(repository, "unique-runtime.txt"), "preserve me\n");
+    await runGit({ arguments: ["add", "unique-runtime.txt"], cwd: repository });
+    await runGit({
+      arguments: [
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+        "commit",
+        "-m",
+        "unique runtime work",
+      ],
+      cwd: repository,
+    });
+    const uniqueTip = await gitOutput({ arguments: ["rev-parse", "HEAD"], cwd: repository });
+    await runGit({ arguments: ["switch", "main"], cwd: repository });
+    await runCrew({ arguments: ["start"], environment: fixture.environment });
+
+    await expect(
+      runCrew({
+        arguments: ["repo", "add", "sample", "--task", "ENG-123"],
+        environment: fixture.environment,
+      }),
+    ).rejects.toMatchObject({ code: 1 });
+
+    expect(
+      await gitOutput({ arguments: ["rev-parse", "crew/fixture-eng-123"], cwd: repository }),
+    ).toBe(uniqueTip);
+    const marker = JSON.parse(
+      await readFile(join(fixture.workspaceDirectory, ".groundcrew", "task.json"), "utf8"),
+    );
+    expect(marker.repositories).toEqual([]);
+  });
+
   it("routes two profiles sharing Codex and preserves existing trust configuration", async () => {
     const fixture = await createDispatchFixture({
       maximumInProgress: 2,
@@ -535,6 +683,27 @@ describe("crew start", () => {
     });
   });
 
+  it("executes a scripted agent with the composed cwd, environment, prompt, and commands", async () => {
+    const fixture = await createDispatchFixture({ repositories: [], scriptedAgent: true });
+
+    await runCrew({ arguments: ["start"], environment: fixture.environment });
+    await waitForRunState({ fixture, state: "complete" });
+
+    const capture = JSON.parse((await readFile(fixture.agentCapturePath, "utf8")).trim());
+    expect(await realpath(capture.cwd)).toBe(await realpath(fixture.workspaceDirectory));
+    expect(capture.taskId).toBe("fixture:ENG-123");
+    expect(capture.workspace).toBe(fixture.workspaceDirectory);
+    expect(capture.arguments.join(" ")).toContain("Task: fixture:ENG-123");
+    const run = JSON.parse(
+      await readFile(join(fixture.runsDirectory, "fixture-eng-123.json"), "utf8"),
+    );
+    expect(run).toMatchObject({
+      artifacts: [{ kind: "file", locator: "scripted-output" }],
+      outcome: "delivered",
+      state: "complete",
+    });
+  });
+
   it("records a diagnosable failed run when the presenter cannot open", async () => {
     const fixture = await createDispatchFixture({ failPresenterOpen: true, repositories: [] });
 
@@ -592,6 +761,18 @@ describe("crew start", () => {
     expect(await stat(fixture.workspaceDirectory)).toBeDefined();
   });
 
+  it("does not treat an unavailable presenter probe as an empty workspace list", async () => {
+    const fixture = await createDispatchFixture({ repositories: [] });
+    await runCrew({ arguments: ["start"], environment: fixture.environment });
+    fixture.environment["FAKE_CMUX_UNAVAILABLE"] = "1";
+
+    await runCrew({ arguments: ["status", "ENG-123", "--json"], environment: fixture.environment });
+
+    expect(
+      JSON.parse(await readFile(join(fixture.runsDirectory, "fixture-eng-123.json"), "utf8")),
+    ).toMatchObject({ state: "running" });
+  });
+
   it("reconciles a missing workspace before delivered completion", async () => {
     const fixture = await createDispatchFixture({ repositories: [] });
     await runCrew({ arguments: ["start"], environment: fixture.environment });
@@ -633,6 +814,25 @@ describe("crew start", () => {
       reason: "provisioning-interrupted",
       state: "complete",
     });
+  });
+
+  it("ignores an interrupted atomic-write sibling and preserves the durable run", async () => {
+    const fixture = await createDispatchFixture({ repositories: [] });
+    await runCrew({ arguments: ["start"], environment: fixture.environment });
+    const interrupted = join(fixture.runsDirectory, "fixture-eng-123.json.interrupted.tmp");
+    await writeFile(interrupted, '{"state":"complete"');
+
+    const status = JSON.parse(
+      (
+        await runCrew({
+          arguments: ["status", "ENG-123", "--json"],
+          environment: fixture.environment,
+        })
+      ).stdout,
+    );
+
+    expect(status.tasks[0].run).toMatchObject({ state: "running" });
+    expect(await readFile(interrupted, "utf8")).toBe('{"state":"complete"');
   });
 
   it("removes a clean worktree but preserves its branch when it has unique commits", async () => {
@@ -694,6 +894,7 @@ describe("crew start", () => {
 });
 
 interface DispatchFixture {
+  readonly agentCapturePath: string;
   readonly baseDirectory: string;
   readonly cmuxCallsPath: string;
   readonly cmuxStatePath: string;
@@ -716,6 +917,9 @@ async function createDispatchFixture(
     readonly failPresenterOpen?: boolean | undefined;
     readonly maximumInProgress?: number | undefined;
     readonly profiles?: Readonly<Record<string, Record<string, unknown>>> | undefined;
+    readonly additionalRepositories?: readonly string[] | undefined;
+    readonly scriptedAgent?: boolean | undefined;
+    readonly sourceListFailure?: boolean | undefined;
   } = {},
 ): Promise<DispatchFixture> {
   const root = await mkdtemp(join(tmpdir(), "groundcrew-v2-dispatch-"));
@@ -728,6 +932,7 @@ async function createDispatchFixture(
   const updatesPath = join(root, "updates.jsonl");
   const cmuxStatePath = join(root, "cmux-state.json");
   const cmuxCallsPath = join(root, "cmux-calls.jsonl");
+  const agentCapturePath = join(root, "agent-capture.jsonl");
   const fakeBin = join(process.cwd(), "e2e", "fixtures", "fake-bin");
   const sourceDirectory = join(configHome, "groundcrew", "task-sources", "fixture");
   await Promise.all([
@@ -735,10 +940,16 @@ async function createDispatchFixture(
     mkdir(baseDirectory, { recursive: true }),
     writeFile(cmuxStatePath, '{"workspaces":[]}'),
     writeFile(cmuxCallsPath, ""),
+    writeFile(agentCapturePath, ""),
     writeFile(updatesPath, ""),
   ]);
   await cp("e2e/fixtures/source", sourceDirectory, { recursive: true });
   await createRepository({ baseDirectory, root });
+  for (const repository of options.additionalRepositories ?? []) {
+    // Fixture repositories are created in stable order for deterministic Git diagnostics.
+    // eslint-disable-next-line no-await-in-loop
+    await createRepository({ baseDirectory, name: repository, root });
+  }
   await writeFile(
     tasksPath,
     JSON.stringify(
@@ -774,6 +985,7 @@ async function createDispatchFixture(
     }),
   );
   return {
+    agentCapturePath,
     baseDirectory,
     cmuxCallsPath,
     cmuxStatePath,
@@ -782,11 +994,17 @@ async function createDispatchFixture(
       CODEX_HOME: join(root, "codex"),
       FAKE_CMUX_CALLS: cmuxCallsPath,
       FAKE_CMUX_FAIL_OPEN: options.failPresenterOpen ? "1" : undefined,
+      FAKE_CMUX_EXECUTE_COMMAND: options.scriptedAgent ? "1" : undefined,
       FAKE_CMUX_STATE: cmuxStatePath,
+      FAKE_AGENT_CAPTURE: options.scriptedAgent ? agentCapturePath : undefined,
+      FAKE_AGENT_SCRIPT: options.scriptedAgent
+        ? `sleep 0.2; until ${JSON.stringify(process.execPath)} ${JSON.stringify(join(process.cwd(), "bin", "run.js"))} artifact add scripted-output --kind file; do sleep 0.05; done; ${JSON.stringify(process.execPath)} ${JSON.stringify(join(process.cwd(), "bin", "run.js"))} done`
+        : undefined,
       FIXTURE_TASKS: tasksPath,
       FIXTURE_LIST_TASKS: listedTasksPath,
       FIXTURE_UPDATES: updatesPath,
       FIXTURE_REJECT_CLAIMS: options.rejectClaim,
+      FIXTURE_LIST_FAILURE: options.sourceListFailure ? "1" : undefined,
       GROUNDCREW_CONFIG: configPath,
       PATH: `${fakeBin}:${process.env["PATH"]}`,
       XDG_CONFIG_HOME: configHome,
@@ -802,6 +1020,7 @@ async function createDispatchFixture(
 
 function task(input: {
   readonly agentProfile?: string | undefined;
+  readonly blocked?: boolean | undefined;
   readonly id?: string | undefined;
   readonly priority?: number | undefined;
   readonly repositories: readonly string[];
@@ -809,7 +1028,7 @@ function task(input: {
 }): Record<string, unknown> {
   return {
     agentProfile: input.agentProfile ?? "codex",
-    blocked: false,
+    blocked: input.blocked ?? false,
     description: "Implement the requested change.",
     id: input.id ?? "ENG-123",
     priority: input.priority ?? 1,
@@ -831,13 +1050,15 @@ async function runCrew(input: {
 
 async function createRepository(input: {
   readonly baseDirectory: string;
+  readonly name?: string | undefined;
   readonly root: string;
 }): Promise<void> {
-  const remote = join(input.root, "sample.git");
-  const repository = join(input.baseDirectory, "sample");
+  const name = input.name ?? "sample";
+  const remote = join(input.root, `${name}.git`);
+  const repository = join(input.baseDirectory, name);
   await runGit({ arguments: ["init", "--bare", remote], cwd: input.root });
   await runGit({ arguments: ["clone", remote, repository], cwd: input.root });
-  await writeFile(join(repository, "README.md"), "sample\n");
+  await writeFile(join(repository, "README.md"), `${name}\n`);
   await runGit({ arguments: ["add", "README.md"], cwd: repository });
   await runGit({
     arguments: [
@@ -885,6 +1106,23 @@ async function waitForPath(path: string): Promise<void> {
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 25));
   }
   throw new Error(`timed out waiting for ${path}`);
+}
+
+async function waitForRunState(input: {
+  readonly fixture: DispatchFixture;
+  readonly state: string;
+}): Promise<void> {
+  const path = join(input.fixture.runsDirectory, "fixture-eng-123.json");
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const record = JSON.parse(await readFile(path, "utf8"));
+    if (record.state === input.state) {
+      return;
+    }
+    // Scripted agents run outside the presenter process and report completion asynchronously.
+    // eslint-disable-next-line no-await-in-loop
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 25));
+  }
+  throw new Error(`timed out waiting for run state ${input.state}`);
 }
 
 function runIdFrom(logs: ReadonlyArray<Record<string, unknown>>): unknown {
