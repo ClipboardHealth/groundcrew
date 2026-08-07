@@ -167,6 +167,7 @@ export async function createApplication(input: {
     git: config.git,
   });
   const runtime: Runtime = { config, environment, paths, registry, runs, workspaces };
+  await reconcile({ runtime });
   return {
     async doctor(): Promise<DoctorResult> {
       return await doctor({ runtime });
@@ -216,7 +217,7 @@ async function doctor(input: { readonly runtime: Runtime }): Promise<DoctorResul
   ]) {
     // Prerequisite probes stay ordered for stable human output.
     // eslint-disable-next-line no-await-in-loop
-    const available = await commandExists({ command });
+    const available = await commandExists({ command, environment: runtime.environment });
     checks.push({
       detail: available ? "available" : `missing executable ${command}`,
       name: command,
@@ -311,6 +312,16 @@ async function start(input: {
       skipped.push(canonicalTaskId);
       continue;
     }
+    if (!(await commandExists({ command: profile.kind, environment: runtime.environment }))) {
+      await writeVerdict({
+        canonicalTaskId,
+        detail: `missing harness executable ${profile.kind}`,
+        reason: "agent-unavailable",
+        runtime,
+      });
+      skipped.push(canonicalTaskId);
+      continue;
+    }
     const repositoryCheck = await runtime.workspaces.validateRepositories({
       repositories: task.repositories,
       slug,
@@ -381,10 +392,20 @@ async function start(input: {
           title: task.title,
         },
       });
+      let transitioned = false;
       await runtime.runs.mutate({
         canonicalTaskId,
-        update: (current) => transition({ event: "running", record: current, state: "running" }),
+        update: (current) => {
+          if (current.state !== "provisioning") {
+            return current;
+          }
+          transitioned = true;
+          return transition({ event: "running", record: current, state: "running" });
+        },
       });
+      if (!transitioned) {
+        continue;
+      }
       await clearVerdict({ canonicalTaskId, runtime });
       await log({
         canonicalTaskId,
@@ -398,25 +419,32 @@ async function start(input: {
       activeCount += 1;
     } catch (error) {
       const reason =
-        error instanceof PrepareWorktreeError
-          ? `prepare-failed:${error.repository}`
-          : errorMessage(error);
+        error instanceof PrepareWorktreeError ? prepareFailureReason(error) : errorMessage(error);
+      let failedNow = false;
       const failed = await runtime.runs.mutate({
         canonicalTaskId,
-        update: (current) => ({
-          ...completeRecord({ outcome: "failed", reason, record: current }),
-          writebackPending: true,
-        }),
+        update: (current) => {
+          if (current.state === "complete") {
+            return current;
+          }
+          failedNow = true;
+          return {
+            ...completeRecord({ outcome: "failed", reason, record: current }),
+            writebackPending: true,
+          };
+        },
       });
-      await log({
-        canonicalTaskId,
-        event: "run_failed",
-        level: "error",
-        module: "core",
-        runId: failed.runId,
-        runtime,
-      });
-      await writeCompletion({ record: failed, runtime });
+      if (failedNow) {
+        await log({
+          canonicalTaskId,
+          event: "run_failed",
+          level: "error",
+          module: "core",
+          runId: failed.runId,
+          runtime,
+        });
+        await writeCompletion({ record: failed, runtime });
+      }
       throw error;
     }
   }
@@ -498,7 +526,7 @@ async function artifactAdd(input: {
   const record = await input.runtime.runs.mutate({
     canonicalTaskId,
     update: (record) => {
-      requireActiveRun(record);
+      requireRunningRun(record);
       return {
         ...record,
         artifacts: [...record.artifacts, input.artifact],
@@ -535,11 +563,17 @@ async function done(input: {
   }
   let record = await runtime.runs.mutate({
     canonicalTaskId,
-    update: (current) => ({
-      ...completeRecord({ outcome: input.outcome, record: current }),
-      message: input.message,
-      writebackPending: true,
-    }),
+    update: async (current) => {
+      requireRunningRun(current);
+      await runtime.workspaces.assertNoActiveRepositoryOperation({
+        workspaceDirectory: current.workspaceDirectory,
+      });
+      return {
+        ...completeRecord({ outcome: input.outcome, record: current }),
+        message: input.message,
+        writebackPending: true,
+      };
+    },
   });
   await log({
     canonicalTaskId,
@@ -568,41 +602,74 @@ async function repoAdd(input: {
 }): Promise<RunRecord> {
   const canonicalTaskId = await resolveRunIdentity({ query: input.task, runtime: input.runtime });
   const slug = taskSlug({ canonicalTaskId });
-  const updated = await input.runtime.runs.mutate({
+  const processId = process.pid;
+  let record = await input.runtime.runs.mutate({
     canonicalTaskId,
     update: async (current) => {
-      requireActiveRun(current);
-      const marker = await input.runtime.workspaces.readMarker({
+      requireRunningRun(current);
+      await input.runtime.workspaces.reserveRepositoryOperation({
+        processId,
+        repository: input.repository,
         workspaceDirectory: current.workspaceDirectory,
       });
-      if (marker === undefined) {
-        throw new Error(`task marker missing for ${canonicalTaskId}`);
-      }
-      const updatedMarker = await input.runtime.workspaces.addRepository({
-        marker,
-        repository: input.repository,
-        slug,
-      });
-      return {
-        ...current,
-        events: [
-          ...current.events,
-          { event: `repository-added:${input.repository}`, timestamp: new Date().toISOString() },
-        ],
-        repositories: updatedMarker.repositories,
-      };
+      return current;
     },
   });
+  try {
+    const marker = await input.runtime.workspaces.readMarker({
+      workspaceDirectory: record.workspaceDirectory,
+    });
+    if (marker === undefined) {
+      throw new Error(`task marker missing for ${canonicalTaskId}`);
+    }
+    const updatedMarker = await input.runtime.workspaces.addRepository({
+      marker,
+      repository: input.repository,
+      slug,
+    });
+    record = await input.runtime.runs.mutate({
+      canonicalTaskId,
+      update: (current) => {
+        requireRunningRun(current);
+        return {
+          ...current,
+          events: [
+            ...current.events,
+            { event: `repository-added:${input.repository}`, timestamp: new Date().toISOString() },
+          ],
+          repositories: updatedMarker.repositories,
+        };
+      },
+    });
+  } catch (error) {
+    if (error instanceof PrepareWorktreeError) {
+      await input.runtime.workspaces.finishRepositoryOperation({
+        processId,
+        workspaceDirectory: record.workspaceDirectory,
+      });
+      record = await failPrepare({
+        canonicalTaskId,
+        error,
+        runtime: input.runtime,
+      });
+    }
+    throw error;
+  } finally {
+    await input.runtime.workspaces.finishRepositoryOperation({
+      processId,
+      workspaceDirectory: record.workspaceDirectory,
+    });
+  }
   await log({
     canonicalTaskId,
     event: "repository_added",
     level: "info",
     module: "core",
     repository: input.repository,
-    runId: updated.runId,
+    runId: record.runId,
     runtime: input.runtime,
   });
-  return updated;
+  return record;
 }
 
 async function cleanup(input: {
@@ -635,15 +702,27 @@ async function cleanup(input: {
     }
     if (record.state !== "complete") {
       // eslint-disable-next-line no-await-in-loop
+      let stoppedNow = false;
       record = await runtime.runs.mutate({
         canonicalTaskId: record.canonicalTaskId,
-        update: (current) => ({
-          ...completeRecord({ outcome: "stopped", record: current }),
-          writebackPending: true,
-        }),
+        update: async (current) => {
+          if (current.state === "complete") {
+            return current;
+          }
+          await runtime.workspaces.assertNoActiveRepositoryOperation({
+            workspaceDirectory: current.workspaceDirectory,
+          });
+          stoppedNow = true;
+          return {
+            ...completeRecord({ outcome: "stopped", record: current }),
+            writebackPending: true,
+          };
+        },
       });
-      // eslint-disable-next-line no-await-in-loop
-      record = await writeCompletion({ record, runtime });
+      if (stoppedNow || record.writebackPending === true) {
+        // eslint-disable-next-line no-await-in-loop
+        record = await writeCompletion({ record, runtime });
+      }
     }
     const presenter = presenterFor({
       environment: runtime.environment,
@@ -686,6 +765,11 @@ async function reconcile(input: { readonly runtime: Runtime }): Promise<void> {
   const probe = await presenter.probe();
   for (let record of records) {
     const slug = taskSlug({ canonicalTaskId: record.canonicalTaskId });
+    // Dead in-session acquisition processes leave a recoverable marker that reconciliation clears.
+    // eslint-disable-next-line no-await-in-loop
+    await runtime.workspaces.clearDeadRepositoryOperation({
+      workspaceDirectory: record.workspaceDirectory,
+    });
     // Marker repositories are authoritative after runtime acquisition.
     // eslint-disable-next-line no-await-in-loop
     const marker = await runtime.workspaces.readMarker({
@@ -721,42 +805,60 @@ async function reconcile(input: { readonly runtime: Runtime }): Promise<void> {
         workspace.description === `groundcrew:${record.canonicalTaskId}`,
     );
     if (record.state === "provisioning" && exists) {
+      let reconciledNow = false;
       // eslint-disable-next-line no-await-in-loop
       const running = await runtime.runs.mutate({
         canonicalTaskId: record.canonicalTaskId,
-        update: (current) => transition({ event: "running", record: current, state: "running" }),
+        update: (current) => {
+          if (current.state !== "provisioning") {
+            return current;
+          }
+          reconciledNow = true;
+          return transition({ event: "running", record: current, state: "running" });
+        },
       });
-      // eslint-disable-next-line no-await-in-loop
-      await log({
-        canonicalTaskId: running.canonicalTaskId,
-        event: "run_reconciled",
-        level: "info",
-        module: "core",
-        runId: running.runId,
-        runtime,
-      });
+      if (reconciledNow) {
+        // eslint-disable-next-line no-await-in-loop
+        await log({
+          canonicalTaskId: running.canonicalTaskId,
+          event: "run_reconciled",
+          level: "info",
+          module: "core",
+          runId: running.runId,
+          runtime,
+        });
+      }
     } else if (!exists) {
       const reason =
         record.state === "provisioning" ? "provisioning-interrupted" : "workspace-missing";
       // eslint-disable-next-line no-await-in-loop
+      let failedNow = false;
       const failed = await runtime.runs.mutate({
         canonicalTaskId: record.canonicalTaskId,
-        update: (current) => ({
-          ...completeRecord({ outcome: "failed", reason, record: current }),
-          writebackPending: true,
-        }),
+        update: (current) => {
+          if (current.state === "complete") {
+            return current;
+          }
+          failedNow = true;
+          return {
+            ...completeRecord({ outcome: "failed", reason, record: current }),
+            writebackPending: true,
+          };
+        },
       });
-      // eslint-disable-next-line no-await-in-loop
-      await log({
-        canonicalTaskId: failed.canonicalTaskId,
-        event: "run_failed",
-        level: "error",
-        module: "core",
-        runId: failed.runId,
-        runtime,
-      });
-      // eslint-disable-next-line no-await-in-loop
-      await writeCompletion({ record: failed, runtime });
+      if (failedNow) {
+        // eslint-disable-next-line no-await-in-loop
+        await log({
+          canonicalTaskId: failed.canonicalTaskId,
+          event: "run_failed",
+          level: "error",
+          module: "core",
+          runId: failed.runId,
+          runtime,
+        });
+        // eslint-disable-next-line no-await-in-loop
+        await writeCompletion({ record: failed, runtime });
+      }
     }
     // Observe on every reconciliation so corrupt/missing worktrees fail loudly without mutation.
     // eslint-disable-next-line no-await-in-loop
@@ -851,9 +953,11 @@ async function resolveRunIdentity(input: {
   return match.canonicalTaskId;
 }
 
-function requireActiveRun(record: RunRecord): void {
-  if (record.state === "complete") {
-    throw new Error(`run ${record.runId} is complete; cleanup before starting another run`);
+function requireRunningRun(record: RunRecord): void {
+  if (record.state !== "running") {
+    throw new Error(
+      `run ${record.runId} is ${record.state}; in-session commands require a running run`,
+    );
   }
 }
 
@@ -893,6 +997,9 @@ function transition(input: {
   readonly state: "running";
   readonly event: string;
 }): RunRecord {
+  if (input.record.state !== "provisioning") {
+    throw new Error(`cannot transition ${input.record.state} run ${input.record.runId} to running`);
+  }
   return {
     ...input.record,
     events: [...input.record.events, { event: input.event, timestamp: new Date().toISOString() }],
@@ -905,6 +1012,9 @@ function completeRecord(input: {
   readonly outcome: "delivered" | "failed" | "stopped";
   readonly reason?: string | undefined;
 }): RunRecord {
+  if (input.record.state === "complete") {
+    throw new Error(`run ${input.record.runId} is already complete`);
+  }
   return {
     ...input.record,
     events: [
@@ -915,6 +1025,46 @@ function completeRecord(input: {
     reason: input.reason,
     state: "complete",
   };
+}
+
+async function failPrepare(input: {
+  readonly canonicalTaskId: string;
+  readonly error: PrepareWorktreeError;
+  readonly runtime: Runtime;
+}): Promise<RunRecord> {
+  const reason = prepareFailureReason(input.error);
+  let failedNow = false;
+  let record = await input.runtime.runs.mutate({
+    canonicalTaskId: input.canonicalTaskId,
+    update: (current) => {
+      if (current.state === "complete") {
+        return current;
+      }
+      failedNow = true;
+      return {
+        ...completeRecord({ outcome: "failed", reason, record: current }),
+        writebackPending: true,
+      };
+    },
+  });
+  if (!failedNow) {
+    return record;
+  }
+  await log({
+    canonicalTaskId: input.canonicalTaskId,
+    event: "run_failed",
+    level: "error",
+    module: "core",
+    repository: input.error.repository,
+    runId: record.runId,
+    runtime: input.runtime,
+  });
+  record = await writeCompletion({ record, runtime: input.runtime });
+  return record;
+}
+
+function prepareFailureReason(error: PrepareWorktreeError): string {
+  return `prepare-failed:${error.repository}: ${error.command}`;
 }
 
 async function readVerdicts(input: {
@@ -1027,8 +1177,14 @@ async function atomicWrite(input: {
   await rename(temporaryPath, input.path);
 }
 
-async function commandExists(input: { readonly command: string }): Promise<boolean> {
-  const result = await execa("/usr/bin/env", ["which", input.command], { reject: false });
+async function commandExists(input: {
+  readonly command: string;
+  readonly environment: NodeJS.ProcessEnv;
+}): Promise<boolean> {
+  const result = await execa("/usr/bin/env", ["which", input.command], {
+    env: input.environment,
+    reject: false,
+  });
   return result.exitCode === 0;
 }
 

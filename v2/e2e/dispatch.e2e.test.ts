@@ -9,7 +9,11 @@ const execFileAsync = promisify(execFile);
 
 describe("crew start", () => {
   beforeAll(async () => {
-    await chmod("e2e/fixtures/fake-bin/cmux", 0o755);
+    await Promise.all(
+      ["claude", "cmux", "codex"].map(
+        async (executable) => await chmod(`e2e/fixtures/fake-bin/${executable}`, 0o755),
+      ),
+    );
   });
 
   it("claims, provisions, and launches a ready task exactly once", async () => {
@@ -280,6 +284,11 @@ describe("crew start", () => {
     expect(status.tasks[0].observed.repositories).toMatchObject([
       { dirtyPaths: ["prepare-output.txt"], repository: "sample" },
     ]);
+    expect(status.tasks[0].run).toMatchObject({
+      outcome: "failed",
+      reason: expect.stringContaining("touch prepare-output.txt; exit 23"),
+      state: "complete",
+    });
     await expect(
       runCrew({ arguments: ["cleanup", "ENG-123"], environment: fixture.environment }),
     ).rejects.toMatchObject({ code: 1 });
@@ -312,6 +321,50 @@ describe("crew start", () => {
     expect(run.artifacts).toEqual([]);
     expect(run.repositories).toEqual([]);
     expect(marker.repositories).toEqual([]);
+  });
+
+  it("does not overwrite a terminal outcome when done is repeated", async () => {
+    const fixture = await createDispatchFixture({ repositories: [] });
+    await runCrew({ arguments: ["start"], environment: fixture.environment });
+    await runCrew({ arguments: ["done", "--task", "ENG-123"], environment: fixture.environment });
+
+    await expect(
+      runCrew({
+        arguments: ["done", "--outcome", "failed", "--task", "ENG-123"],
+        environment: fixture.environment,
+      }),
+    ).rejects.toMatchObject({ code: 1 });
+
+    expect(
+      JSON.parse(await readFile(join(fixture.runsDirectory, "fixture-eng-123.json"), "utf8")),
+    ).toMatchObject({ outcome: "delivered", state: "complete" });
+  });
+
+  it("does not hold a stealable run lock while a repository prepare command runs", async () => {
+    const fixture = await createDispatchFixture({
+      prepareWorktree:
+        "touch ../repo-add-started; while [ ! -f ../repo-add-release ]; do sleep 0.05; done",
+      repositories: [],
+    });
+    await runCrew({ arguments: ["start"], environment: fixture.environment });
+
+    const acquisition = runCrew({
+      arguments: ["repo", "add", "sample", "--task", "ENG-123"],
+      environment: fixture.environment,
+    });
+    await waitForPath(join(fixture.workspaceDirectory, "repo-add-started"));
+
+    await expect(stat(join(fixture.runsDirectory, "fixture-eng-123.lock"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(
+      runCrew({ arguments: ["done", "--task", "ENG-123"], environment: fixture.environment }),
+    ).rejects.toMatchObject({ code: 1 });
+    expect(
+      JSON.parse(await readFile(join(fixture.runsDirectory, "fixture-eng-123.json"), "utf8")),
+    ).toMatchObject({ state: "running" });
+    await writeFile(join(fixture.workspaceDirectory, "repo-add-release"), "release\n");
+    await acquisition;
   });
 
   it("persists a terminal verdict for a visible task", async () => {
@@ -485,6 +538,29 @@ describe("crew start", () => {
     expect(run.reason).toContain("fake cmux open failure");
   });
 
+  it("records agent-unavailable without claiming when the profile harness is absent", async () => {
+    const fixture = await createDispatchFixture({
+      profiles: { missing: { effort: "high", kind: "claude" } },
+      repositories: [],
+      tasks: [task({ agentProfile: "missing", repositories: [] })],
+    });
+    fixture.environment["PATH"] = [dirname(process.execPath), "/usr/bin", "/bin"].join(":");
+
+    await runCrew({ arguments: ["start"], environment: fixture.environment });
+
+    const verdicts = JSON.parse(
+      await readFile(join(dirname(fixture.runsDirectory), "dispatch.json"), "utf8"),
+    );
+    expect(verdicts["fixture:ENG-123"]).toMatchObject({
+      detail: "missing harness executable claude",
+      reason: "agent-unavailable",
+    });
+    expect(await readFile(fixture.updatesPath, "utf8")).toBe("");
+    await expect(stat(join(fixture.runsDirectory, "fixture-eng-123.json"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
   it("fails a running run when its presented workspace disappears", async () => {
     const fixture = await createDispatchFixture({ repositories: [] });
     await runCrew({ arguments: ["start"], environment: fixture.environment });
@@ -501,6 +577,20 @@ describe("crew start", () => {
       state: "complete",
     });
     expect(await stat(fixture.workspaceDirectory)).toBeDefined();
+  });
+
+  it("reconciles a missing workspace before delivered completion", async () => {
+    const fixture = await createDispatchFixture({ repositories: [] });
+    await runCrew({ arguments: ["start"], environment: fixture.environment });
+    await writeFile(fixture.cmuxStatePath, '{"workspaces":[]}');
+
+    await expect(
+      runCrew({ arguments: ["done", "--task", "ENG-123"], environment: fixture.environment }),
+    ).rejects.toMatchObject({ code: 1 });
+
+    expect(
+      JSON.parse(await readFile(join(fixture.runsDirectory, "fixture-eng-123.json"), "utf8")),
+    ).toMatchObject({ outcome: "failed", reason: "workspace-missing", state: "complete" });
   });
 
   it("resolves interrupted provisioning from presenter workspace existence", async () => {
@@ -765,6 +855,23 @@ async function gitOutput(input: {
   readonly cwd: string;
 }): Promise<string> {
   return (await execFileAsync("git", [...input.arguments], { cwd: input.cwd })).stdout.trim();
+}
+
+async function waitForPath(path: string): Promise<void> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    try {
+      await stat(path);
+      return;
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+        throw error;
+      }
+    }
+    // The child process must reach its prepare command before the assertion runs.
+    // eslint-disable-next-line no-await-in-loop
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 25));
+  }
+  throw new Error(`timed out waiting for ${path}`);
 }
 
 function runIdFrom(logs: ReadonlyArray<Record<string, unknown>>): unknown {

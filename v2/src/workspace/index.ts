@@ -45,6 +45,11 @@ interface ResolvedRepository {
   readonly worktree: string;
 }
 
+interface RepositoryOperation {
+  readonly processId: number;
+  readonly repository: string;
+}
+
 export class WorkspaceService {
   readonly #config: WorkspaceConfig;
   readonly #git: GitConfig;
@@ -181,6 +186,57 @@ export class WorkspaceService {
         return undefined;
       }
       throw error;
+    }
+  }
+
+  public async reserveRepositoryOperation(input: {
+    readonly workspaceDirectory: string;
+    readonly repository: string;
+    readonly processId: number;
+  }): Promise<void> {
+    const current = await this.readRepositoryOperation(input);
+    if (current !== undefined && processExists(current.processId)) {
+      throw new Error(`repository acquisition for ${current.repository} is already in progress`);
+    }
+    await atomicWrite({
+      path: this.repositoryOperationPath(input),
+      value: `${JSON.stringify({
+        processId: input.processId,
+        repository: input.repository,
+      })}\n`,
+    });
+  }
+
+  public async assertNoActiveRepositoryOperation(input: {
+    readonly workspaceDirectory: string;
+  }): Promise<void> {
+    const operation = await this.readRepositoryOperation(input);
+    if (operation === undefined) {
+      return;
+    }
+    if (!processExists(operation.processId)) {
+      await rm(this.repositoryOperationPath(input), { force: true });
+      return;
+    }
+    throw new Error(`repository acquisition for ${operation.repository} is in progress; retry`);
+  }
+
+  public async finishRepositoryOperation(input: {
+    readonly workspaceDirectory: string;
+    readonly processId: number;
+  }): Promise<void> {
+    const operation = await this.readRepositoryOperation(input);
+    if (operation?.processId === input.processId) {
+      await rm(this.repositoryOperationPath(input), { force: true });
+    }
+  }
+
+  public async clearDeadRepositoryOperation(input: {
+    readonly workspaceDirectory: string;
+  }): Promise<void> {
+    const operation = await this.readRepositoryOperation(input);
+    if (operation !== undefined && !processExists(operation.processId)) {
+      await rm(this.repositoryOperationPath(input), { force: true });
     }
   }
 
@@ -432,6 +488,25 @@ export class WorkspaceService {
     }
   }
 
+  private async readRepositoryOperation(input: {
+    readonly workspaceDirectory: string;
+  }): Promise<RepositoryOperation | undefined> {
+    try {
+      return JSON.parse(
+        await readFile(this.repositoryOperationPath(input), "utf8"),
+      ) as RepositoryOperation;
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+        return undefined;
+      }
+      throw error;
+    }
+  }
+
+  private repositoryOperationPath(input: { readonly workspaceDirectory: string }): string {
+    return join(input.workspaceDirectory, ".groundcrew", "repository-operation.json");
+  }
+
   private async readWorkspaceMetadata(input: {
     readonly workspaceDirectory: string;
   }): Promise<TaskMarker | undefined> {
@@ -581,4 +656,13 @@ async function atomicWrite(input: {
 
 function stripOwner(repository: string): string {
   return basename(repository);
+}
+
+function processExists(processId: number): boolean {
+  try {
+    process.kill(processId, 0);
+    return true;
+  } catch (error) {
+    return !(error instanceof Error && "code" in error && error.code === "ESRCH");
+  }
 }

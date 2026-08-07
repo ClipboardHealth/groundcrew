@@ -1,10 +1,10 @@
 import { execFile } from "node:child_process";
 import { createServer } from "node:http";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 const execFileAsync = promisify(execFile);
 
@@ -246,3 +246,10 @@ async function runCrew(input: {
     env: input.environment,
   });
 }
+beforeAll(async () => {
+  await Promise.all(
+    ["claude", "cmux", "codex"].map(
+      async (executable) => await chmod(`e2e/fixtures/fake-bin/${executable}`, 0o755),
+    ),
+  );
+});

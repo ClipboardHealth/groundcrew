@@ -10,6 +10,9 @@ const execFileAsync = promisify(execFile);
 describe("crew doctor", () => {
   beforeAll(async () => {
     await Promise.all([
+      chmod("e2e/fixtures/fake-bin/claude", 0o755),
+      chmod("e2e/fixtures/fake-bin/cmux", 0o755),
+      chmod("e2e/fixtures/fake-bin/codex", 0o755),
       chmod("e2e/fixtures/source/list", 0o755),
       chmod("e2e/fixtures/source/get", 0o755),
       chmod("e2e/fixtures/source/update", 0o755),
@@ -87,6 +90,7 @@ async function createFixture(
   const sourceDirectory = join(configHome, "groundcrew", "task-sources", "fixture");
   const tasksPath = join(root, "tasks.json");
   const updatesPath = join(root, "updates.jsonl");
+  const fakeBin = join(process.cwd(), "e2e", "fixtures", "fake-bin");
   await mkdir(dirname(sourceDirectory), { recursive: true });
   await cp("e2e/fixtures/source", sourceDirectory, { recursive: true });
   if (options.manifestContents !== undefined) {
@@ -120,6 +124,7 @@ async function createFixture(
       FIXTURE_TASKS: tasksPath,
       FIXTURE_UPDATES: updatesPath,
       GROUNDCREW_CONFIG: configPath,
+      PATH: `${fakeBin}:${process.env["PATH"]}`,
       XDG_CONFIG_HOME: configHome,
       XDG_STATE_HOME: join(root, "state"),
     },
