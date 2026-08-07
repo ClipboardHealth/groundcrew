@@ -12,13 +12,10 @@ interface ChildProcessMockModule {
   spawn: typeof spawnMock;
 }
 
-vi.mock(
-  "node:child_process",
-  (): ChildProcessMockModule => ({
-    execFileSync: vi.fn<typeof execFileSync>(),
-    spawn: spawnMock,
-  }),
-);
+vi.mock("node:child_process", (): ChildProcessMockModule => ({
+  execFileSync: vi.fn<typeof execFileSync>(),
+  spawn: spawnMock,
+}));
 
 const execFileMock = vi.mocked(execFileSync);
 
