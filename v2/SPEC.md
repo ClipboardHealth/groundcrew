@@ -29,6 +29,8 @@ Use four domain nouns consistently:
 
 Canonical task identity is `<sourceName>:<sourceLocalId>`. Derive a task slug by lowercasing the canonical identity, replacing each run of non-alphanumeric characters with `-`, and trimming leading or trailing `-`.
 
+Slug derivation is not injective. When two distinct canonical task identities derive the same slug, dispatch keeps the task that already holds the slug and records a `slug-collision` verdict for the other; it never reuses the first task's paths.
+
 Use the slug consistently:
 
 - branch: `<branchPrefix>/<taskSlug>`, where `branchPrefix` defaults to `crew`
@@ -134,14 +136,14 @@ Each tick:
 2. Poll all configured sources.
 3. Reap clean workspaces whose source task is terminal.
 4. Sort eligible tasks by ascending priority value with missing priority last, then stable source order.
-5. For each open slot, claim one task, create its provisioning run record, provision its workspace, and launch its agent through the presenter.
+5. For each open slot, create a provisioning run record, claim the task, provision its workspace, and launch its agent through the presenter. The record exists before the claim so a crash can never leave a source task claimed without a durable local run; a rejected or failed claim removes the record and records the `claim-rejected` verdict.
 6. Persist a verdict for every task that was visible but not dispatched.
 
 A task is eligible when it is not terminal, is unblocked, has no active or lingering run, resolves to an installed agent profile, and all designated repositories exist under `baseDirectory`.
 
 `crew start <task>` resolves one task and dispatches it. Accept a canonical task ID, or a source-local ID when it matches exactly one configured source. Agent routing is `--agent`, task profile, source default profile, then `agents.default`. `--force` bypasses blocked status and the concurrency limit. It still requires agent routing, prevents a duplicate active run, and enforces designated repository presence.
 
-Persist the latest skipped-task verdict in `<stateRoot>/dispatch.json` with a timestamp, reason, and detail. Reasons are `blocked`, `slots-full`, `claim-rejected`, `repo-not-on-disk`, `agent-unavailable`, and `run-exists`.
+Persist the latest skipped-task verdict in `<stateRoot>/dispatch.json` with a timestamp, reason, and detail. Reasons are `blocked`, `slots-full`, `claim-rejected`, `repo-not-on-disk`, `agent-unavailable`, `run-exists`, and `slug-collision`.
 
 ## 5. Workspaces and Git
 
@@ -157,7 +159,7 @@ For a task with designated repositories:
 6. Run the configured prepare command from each new worktree.
 7. Write the task marker only after provisioning succeeds.
 
-A task without designated repositories starts in an empty workspace. The agent may add a repository later with `crew repo add <repo>`. That command fetches the configured remote default branch immediately before creating the worktree, applies the same safe branch-reuse rule, creates the worktree from the fetched tip, runs the prepare command, then updates the marker and run record atomically.
+A task without designated repositories starts in an empty workspace. The agent may add a repository later with `crew repo add <repo>`. That command fetches the configured remote default branch immediately before creating the worktree, applies the same safe branch-reuse rule, creates the worktree from the fetched tip, runs the prepare command, then updates the marker and finally the run record. The marker is authoritative for acquired repositories; reconciliation repairs a run record that disagrees with it.
 
 The task marker is `<taskWorkspace>/.groundcrew/task.json`:
 
@@ -211,7 +213,7 @@ Presenters report workspace existence, not process liveness: `probe()` cannot sa
 
 Presenter adapters are in-process TypeScript modules registered by name. The presenter module registers only the cmux adapter. Adding another presenter means implementing this interface, registering its name, and adding conformance tests.
 
-The cmux adapter uses stable workspace references returned by `cmux --json list-workspaces`. Stamp the canonical task ID into the workspace description so reconciliation does not depend on the display name. `probe()` returns `available: false` when cmux cannot be reached; callers must not treat that result as an empty workspace list.
+The cmux adapter uses stable workspace references returned by `cmux --json list-workspaces`, resolving a presented name to its cmux id at call time for `close` and `setStatus`; it never caches ids across invocations, so the adapter works identically after a restart. Stamp the canonical task ID into the workspace description so reconciliation does not depend on the display name. `probe()` returns `available: false` when cmux cannot be reached; callers must not treat that result as an empty workspace list.
 
 The cmux CLI covers the whole adapter surface: `new-workspace` accepts `--name`, `--description`, `--cwd`, and `--command`; `close-workspace` takes a workspace id; `set-progress --label` backs `setStatus`; `--json list-workspaces` returns each workspace's id, title, directory, and description.
 
@@ -412,6 +414,8 @@ Omit `outcome`, `reason`, and `writebackPending` when they do not apply. Keep ev
 Append one JSON object per line to the log. Every line contains `timestamp`, `level`, `module`, and `event`; add `canonicalTaskId`, `runId`, `sourceName`, and `repository` when known. Log levels are `debug`, `info`, `warn`, and `error`. Console output is human-readable at `info` and above; `--verbose` includes debug. Rotate at 10 MB and retain three files.
 
 Reconciliation runs at startup and before every dispatch tick. It compares run records with presenter and Git state, repairs safe derived state, fails running runs whose presented workspace disappeared, and reports ambiguous or dirty state without destroying it.
+
+A run still in `provisioning` at reconciliation is an interrupted dispatch, because dispatch completes the transition to `running` synchronously within its tick. When its presented workspace exists, the agent was launched: move the run to `running`. Otherwise complete it as failed with reason `provisioning-interrupted`, preserving any created worktrees for inspection.
 
 ## 11. Architecture
 
