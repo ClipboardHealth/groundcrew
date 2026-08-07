@@ -1,10 +1,10 @@
 import { execFile } from "node:child_process";
 import { createServer } from "node:http";
-import { chmod, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const execFileAsync = promisify(execFile);
 
@@ -112,56 +112,66 @@ async function createLinearFixture(
   const listedTaskCount = input.listedTaskCount ?? 1;
   const state: LinearState = { comments: [], stateName: "Todo", stateType: "unstarted" };
   const server = createServer(async (request, response) => {
-    let raw = "";
-    for await (const chunk of request) {
-      raw += chunk;
-    }
-    const body = JSON.parse(raw);
-    const issue = linearIssue({ description: input.issueDescription, state });
-    let data;
-    if (body.operationName === "GroundcrewList") {
-      if (listedTaskCount > 20 && body.query.includes("first: 100")) {
-        response.statusCode = 400;
-        response.setHeader("Content-Type", "application/json");
-        response.end(JSON.stringify({ errors: [{ message: "Query too complex" }] }));
-        return;
+    try {
+      let raw = "";
+      for await (const chunk of request) {
+        raw += chunk;
       }
-      const pageStart = body.variables.after === undefined ? 0 : Number(body.variables.after);
-      const pageEnd = Math.min(pageStart + 20, listedTaskCount);
-      const nodes = Array.from({ length: pageEnd - pageStart }, (_, offset) =>
-        linearIssue({
-          description: input.issueDescription,
-          identifier: `LIN-${pageStart + offset + 1}`,
-          state,
-        }),
-      );
-      data = {
-        viewer: {
-          assignedIssues: {
-            nodes,
-            pageInfo: {
-              endCursor: pageEnd < listedTaskCount ? String(pageEnd) : undefined,
-              hasNextPage: pageEnd < listedTaskCount,
+      const body = JSON.parse(raw);
+      const issue = linearIssue({ description: input.issueDescription, state });
+      let data;
+      if (body.operationName === "GroundcrewList") {
+        if (listedTaskCount > 20 && !body.query.includes("first: 20")) {
+          response.statusCode = 400;
+          response.setHeader("Content-Type", "application/json");
+          response.end(JSON.stringify({ errors: [{ message: "Unexpected page size" }] }));
+          return;
+        }
+        const pageStart = body.variables.after === undefined ? 0 : Number(body.variables.after);
+        const pageEnd = Math.min(pageStart + 20, listedTaskCount);
+        const nodes = Array.from({ length: pageEnd - pageStart }, (_, offset) =>
+          linearIssue({
+            description: input.issueDescription,
+            identifier: `LIN-${pageStart + offset + 1}`,
+            state,
+          }),
+        );
+        data = {
+          viewer: {
+            assignedIssues: {
+              nodes,
+              pageInfo: {
+                endCursor: pageEnd < listedTaskCount ? String(pageEnd) : undefined,
+                hasNextPage: pageEnd < listedTaskCount,
+              },
             },
           },
-        },
-      };
-    } else if (body.operationName === "GroundcrewIssue") {
-      data = { issue };
-    } else if (body.operationName === "GroundcrewComment") {
-      state.comments.push(body.variables.input.body);
-      data = { commentCreate: { success: true } };
-    } else if (body.operationName === "GroundcrewMove") {
-      const stateId = body.variables.input.stateId;
-      state.stateName = stateId === "state-review" ? "In Review" : "In Progress";
-      state.stateType = "started";
-      data = { issueUpdate: { success: true } };
-    } else {
-      response.statusCode = 400;
-      data = {};
+        };
+      } else if (body.operationName === "GroundcrewIssue") {
+        data = { issue };
+      } else if (body.operationName === "GroundcrewComment") {
+        state.comments.push(body.variables.input.body);
+        data = { commentCreate: { success: true } };
+      } else if (body.operationName === "GroundcrewMove") {
+        const stateId = body.variables.input.stateId;
+        state.stateName = stateId === "state-review" ? "In Review" : "In Progress";
+        state.stateType = "started";
+        data = { issueUpdate: { success: true } };
+      } else {
+        response.statusCode = 400;
+        data = {};
+      }
+      response.setHeader("Content-Type", "application/json");
+      response.end(JSON.stringify({ data }));
+    } catch (error) {
+      response.statusCode = 500;
+      response.setHeader("Content-Type", "application/json");
+      response.end(
+        JSON.stringify({
+          errors: [{ message: error instanceof Error ? error.message : String(error) }],
+        }),
+      );
     }
-    response.setHeader("Content-Type", "application/json");
-    response.end(JSON.stringify({ data }));
   });
   await new Promise<void>((resolvePromise) => {
     server.listen(0, "127.0.0.1", () => {
@@ -260,10 +270,3 @@ async function runCrew(input: {
     env: input.environment,
   });
 }
-beforeAll(async () => {
-  await Promise.all(
-    ["claude", "cmux", "codex"].map(
-      async (executable) => await chmod(`e2e/fixtures/fake-bin/${executable}`, 0o755),
-    ),
-  );
-});

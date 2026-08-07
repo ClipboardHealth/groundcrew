@@ -24,7 +24,13 @@ describe("Groundcrew configuration schema", () => {
     const publishedSchema = JSON.parse(await readFile("schema.json", "utf8"));
     const schemaValidator = z.fromJSONSchema(publishedSchema);
 
-    expect(schemaValidator.safeParse(invalidConfig).success).toBe(false);
+    const schemaResult = schemaValidator.safeParse(invalidConfig);
+    expect(schemaResult.success).toBe(false);
+    if (!schemaResult.success) {
+      expect(schemaResult.error.issues.map((issue) => issue.path.join("."))).toEqual(
+        expect.arrayContaining(["agents.profiles.broken.effort", "agents.profiles.broken.kind"]),
+      );
+    }
     await expect(
       execFileAsync(process.execPath, ["bin/run.js", "doctor"], {
         cwd: process.cwd(),

@@ -48,16 +48,6 @@ jobs:
         name: Detect releasable v1 changes
         run: |
           should_release=false
-          if ! git diff --quiet "${{ github.event.before }}" "${{ github.sha }}" -- \
-            . \
-            ':(exclude)v2/**' \
-            ':(exclude).github/workflows/ci.yml' \
-            ':(exclude).github/workflows/v2-ci.yml' \
-            ':(exclude).nxignore' \
-            ':(exclude)config/knip.json' \
-            ':(exclude)package.json'; then
-            should_release=true
-          fi
           release_pattern='^(feat|fix)(\([^)]*\))?!?:'
           v2_pattern='^(feat|fix)\(v2\)!?:'
           while IFS= read -r subject; do

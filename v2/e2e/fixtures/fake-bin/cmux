@@ -42,11 +42,18 @@ if (command === "new-workspace") {
     process.stderr.write("fake cmux unavailable\n");
     process.exit(1);
   }
+  if (process.env.FAKE_CMUX_INVALID_JSON === "1") {
+    process.stdout.write("not json");
+    process.exit(0);
+  }
   process.stdout.write(JSON.stringify({ workspaces: state.workspaces }));
 } else if (command === "close-workspace") {
   const id = valueAfter("--workspace");
   state.workspaces = state.workspaces.filter((workspace) => workspace.id !== id);
   await writeFile(statePath, JSON.stringify(state));
+} else if (command !== "set-progress") {
+  process.stderr.write(`unsupported fake cmux command: ${process.argv.slice(2).join(" ")}\n`);
+  process.exitCode = 1;
 }
 
 async function readState() {

@@ -132,13 +132,18 @@ export class SourceRegistry {
           : discovered.errors;
       return {
         bundle,
-        discoveryErrors,
+        discoveryErrors: [...discoveryErrors],
         instance,
         lastTasks: [],
         name,
         origin: discovered?.origin ?? "package",
       };
     });
+    for (const source of sources) {
+      if (sources.filter((candidate) => candidate.name === source.name).length > 1) {
+        source.discoveryErrors.push(`duplicate configured source name '${source.name}'`);
+      }
+    }
     return new SourceRegistry({ environment: input.environment, sources });
   }
 
@@ -169,7 +174,7 @@ export class SourceRegistry {
           }
         }
         for (const prerequisite of bundle.manifest.prerequisites) {
-          if (!(await commandExists({ command: prerequisite }))) {
+          if (!(await commandExists({ command: prerequisite, environment: this.#environment }))) {
             errors.push(`missing prerequisite ${prerequisite}`);
           }
         }
@@ -313,6 +318,7 @@ export class SourceRegistry {
         },
         input: JSON.stringify(payload),
         reject: false,
+        timeout: 120_000,
       });
       if (result.exitCode !== 0) {
         return failure({
@@ -444,7 +450,13 @@ function failure(input: { readonly message: string }): Result<never> {
   return { error: { message: input.message }, ok: false };
 }
 
-async function commandExists(input: { readonly command: string }): Promise<boolean> {
-  const result = await execa("/usr/bin/env", ["which", input.command], { reject: false });
+async function commandExists(input: {
+  readonly command: string;
+  readonly environment: NodeJS.ProcessEnv;
+}): Promise<boolean> {
+  const result = await execa("/usr/bin/env", ["which", input.command], {
+    env: input.environment,
+    reject: false,
+  });
   return result.exitCode === 0;
 }

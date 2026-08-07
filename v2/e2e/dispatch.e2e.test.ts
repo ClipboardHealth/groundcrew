@@ -1,21 +1,13 @@
 import { execFile } from "node:child_process";
-import { chmod, cp, mkdir, mkdtemp, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import { beforeAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 const execFileAsync = promisify(execFile);
 
 describe("crew start", () => {
-  beforeAll(async () => {
-    await Promise.all(
-      ["claude", "cmux", "codex"].map(
-        async (executable) => await chmod(`e2e/fixtures/fake-bin/${executable}`, 0o755),
-      ),
-    );
-  });
-
   it("claims, provisions, and launches a ready task exactly once", async () => {
     const fixture = await createDispatchFixture();
 
@@ -311,13 +303,32 @@ describe("crew start", () => {
     await expect(stat(fixture.workspaceDirectory)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("continues batch dispatch after one task fails provisioning", async () => {
+    const fixture = await createDispatchFixture({
+      prepareWorktree: 'if [[ "$PWD" == *fixture-eng-1* ]]; then exit 23; fi',
+      tasks: [
+        task({ id: "ENG-1", repositories: ["sample"] }),
+        task({ id: "ENG-2", repositories: ["sample"] }),
+      ],
+    });
+
+    const result = await runCrew({ arguments: ["start"], environment: fixture.environment });
+
+    const runsDirectory = fixture.runsDirectory;
+    const failed = JSON.parse(await readFile(join(runsDirectory, "fixture-eng-1.json"), "utf8"));
+    const running = JSON.parse(await readFile(join(runsDirectory, "fixture-eng-2.json"), "utf8"));
+    expect(failed).toMatchObject({ outcome: "failed", state: "complete" });
+    expect(running).toMatchObject({ state: "running" });
+    expect(result.stdout).toContain("Started fixture:ENG-2");
+  });
+
   it("preserves and reports a dirty partial worktree when initial prepare fails", async () => {
     const fixture = await createDispatchFixture({
       prepareWorktree: "touch prepare-output.txt; exit 23",
     });
 
     await expect(
-      runCrew({ arguments: ["start"], environment: fixture.environment }),
+      runCrew({ arguments: ["start", "ENG-123"], environment: fixture.environment }),
     ).rejects.toMatchObject({
       code: 1,
     });
@@ -540,7 +551,7 @@ describe("crew start", () => {
     await runGit({ arguments: ["switch", "main"], cwd: repository });
 
     await expect(
-      runCrew({ arguments: ["start"], environment: fixture.environment }),
+      runCrew({ arguments: ["start", "ENG-123"], environment: fixture.environment }),
     ).rejects.toMatchObject({
       code: 1,
     });
@@ -713,7 +724,7 @@ describe("crew start", () => {
     const fixture = await createDispatchFixture({ failPresenterOpen: true, repositories: [] });
 
     await expect(
-      runCrew({ arguments: ["start"], environment: fixture.environment }),
+      runCrew({ arguments: ["start", "ENG-123"], environment: fixture.environment }),
     ).rejects.toMatchObject({
       code: 1,
     });

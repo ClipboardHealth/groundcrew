@@ -1,24 +1,13 @@
 import { execFile } from "node:child_process";
-import { chmod, cp, mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import { beforeAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 const execFileAsync = promisify(execFile);
 
 describe("crew doctor", () => {
-  beforeAll(async () => {
-    await Promise.all([
-      chmod("e2e/fixtures/fake-bin/claude", 0o755),
-      chmod("e2e/fixtures/fake-bin/cmux", 0o755),
-      chmod("e2e/fixtures/fake-bin/codex", 0o755),
-      chmod("e2e/fixtures/source/list", 0o755),
-      chmod("e2e/fixtures/source/get", 0o755),
-      chmod("e2e/fixtures/source/update", 0o755),
-    ]);
-  });
-
   it("discovers and probes a user source bundle", async () => {
     const fixture = await createFixture();
 
@@ -109,7 +98,11 @@ async function createFixture(
   await cp("e2e/fixtures/source", sourceDirectory, { recursive: true });
   if (options.manifestContents !== undefined) {
     await writeFile(join(sourceDirectory, "source.json"), options.manifestContents);
-  } else if (Object.keys(options).length > 0) {
+  } else if (
+    options.commands !== undefined ||
+    options.protocolVersion !== undefined ||
+    options.secrets !== undefined
+  ) {
     await writeFile(
       join(sourceDirectory, "source.json"),
       JSON.stringify({
@@ -143,8 +136,4 @@ async function createFixture(
       XDG_STATE_HOME: join(root, "state"),
     },
   };
-}
-
-function dirname(path: string): string {
-  return path.slice(0, path.lastIndexOf("/"));
 }

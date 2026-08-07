@@ -1,8 +1,8 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { RunStore } from "./index.js";
+import { RunStore, seedWorkspaceTrust } from "./index.js";
 
 describe("RunStore", () => {
   it("creates one durable run when initial writers race", async () => {
@@ -30,5 +30,26 @@ describe("RunStore", () => {
     });
     const stored = await store.get({ canonicalTaskId: "fixture:ENG-123" });
     expect(stored?.runId).toBe(fulfilled[0]?.value.runId);
+  });
+});
+
+describe("seedWorkspaceTrust", () => {
+  it("preserves every Claude project when launches race", async () => {
+    const homeDirectory = await mkdtemp(join(tmpdir(), "groundcrew-v2-claude-trust-race-"));
+    const workspaces = Array.from({ length: 20 }, (_, index) => `/workspace/${index}`);
+
+    await Promise.all(
+      workspaces.map(
+        async (workspaceDirectory) =>
+          await seedWorkspaceTrust({
+            environment: { HOME: homeDirectory },
+            kind: "claude",
+            workspaceDirectory,
+          }),
+      ),
+    );
+
+    const configuration = JSON.parse(await readFile(join(homeDirectory, ".claude.json"), "utf8"));
+    expect(Object.keys(configuration.projects).toSorted()).toEqual(workspaces.toSorted());
   });
 });

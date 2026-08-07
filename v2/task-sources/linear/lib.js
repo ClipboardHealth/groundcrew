@@ -102,6 +102,9 @@ function latestClaimRunId(issue) {
       continue;
     }
     const timestamp = Date.parse(comment.createdAt ?? "");
+    if (Number.isNaN(timestamp)) {
+      continue;
+    }
     if (latest === undefined || timestamp > latest.timestamp) {
       latest = { runId: match[1], timestamp };
     }
@@ -201,6 +204,7 @@ async function graphql(input) {
     body: JSON.stringify(input),
     headers: { Authorization: apiKey, "Content-Type": "application/json" },
     method: "POST",
+    signal: AbortSignal.timeout(30_000),
   });
   if (!response.ok) {
     throw new Error(`Linear API returned HTTP ${response.status}`);

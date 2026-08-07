@@ -1,4 +1,5 @@
 import { Command } from "@commander-js/extra-typings";
+import { CommanderError } from "commander";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -99,8 +100,8 @@ export async function main(input: MainInput): Promise<void> {
     .description("detect prerequisites and write a minimal config")
     .option("--yes", "accept detected defaults")
     .option("--verbose", "include debug diagnostics")
-    .action(async () => {
-      await initialize({ paths });
+    .action(async (options) => {
+      await initialize({ overwrite: options.yes === true, paths });
     });
 
   program
@@ -269,13 +270,17 @@ export async function main(input: MainInput): Promise<void> {
     await program.parseAsync([...cliArguments]);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    process.stderr.write(`${message}\n`);
+    if (!(error instanceof CommanderError && error.exitCode === 0)) {
+      process.stderr.write(`${message}\n`);
+    }
     process.exitCode =
-      error instanceof TaskContextError
-        ? 3
-        : error instanceof Error && error.name === "RepositoryMissingError"
-          ? 2
-          : 1;
+      error instanceof CommanderError
+        ? error.exitCode
+        : error instanceof TaskContextError
+          ? 3
+          : error instanceof Error && error.name === "RepositoryMissingError"
+            ? 2
+            : 1;
   }
 }
 
@@ -320,9 +325,22 @@ function resolvePaths(input: { readonly environment: NodeJS.ProcessEnv }): PathC
   return { configHome, homeDirectory, packageRoot, stateRoot: join(stateHome, "groundcrew") };
 }
 
-async function initialize(input: { readonly paths: PathContext }): Promise<void> {
+async function initialize(input: {
+  readonly paths: PathContext;
+  readonly overwrite: boolean;
+}): Promise<void> {
   const { paths } = input;
   const configPath = join(paths.configHome, "groundcrew", "crew.config.jsonc");
+  if (!input.overwrite) {
+    try {
+      await readFile(configPath, "utf8");
+      throw new Error(`${configPath} already exists; pass --yes to replace it`);
+    } catch (error) {
+      if (!isMissingFileError(error)) {
+        throw error;
+      }
+    }
+  }
   const schemaPath = join(paths.packageRoot, "schema.json");
   const baseDirectory = join(paths.homeDirectory, "dev");
   const config = {

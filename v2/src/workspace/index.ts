@@ -655,7 +655,11 @@ async function atomicWrite(input: {
 }
 
 function stripOwner(repository: string): string {
-  return basename(repository);
+  const name = basename(repository);
+  if (name === "." || name === "..") {
+    throw new RepositoryMissingError([repository]);
+  }
+  return name;
 }
 
 function processExists(processId: number): boolean {

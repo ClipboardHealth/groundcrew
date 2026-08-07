@@ -82,20 +82,13 @@ export class CmuxPresenter implements Presenter {
     readonly available: boolean;
     readonly workspaces: readonly PresentedWorkspace[];
   }> {
-    const result = await execa("cmux", ["--json", "list-workspaces"], {
-      env: { ...this.#environment, CMUX_QUIET: "1" },
-      reject: false,
-    });
-    if (result.exitCode !== 0) {
-      return { available: false, workspaces: [] };
-    }
-    const parsed = WorkspaceListSchema.safeParse(JSON.parse(result.stdout));
-    if (!parsed.success) {
+    const workspaces = await this.listWorkspaces();
+    if (workspaces === undefined) {
       return { available: false, workspaces: [] };
     }
     return {
       available: true,
-      workspaces: parsed.data.workspaces.map((workspace) => ({
+      workspaces: workspaces.map((workspace) => ({
         description: workspace.description ?? undefined,
         name: workspace.title,
       })),
@@ -146,6 +139,20 @@ export class CmuxPresenter implements Presenter {
   private async resolve(input: {
     readonly name: string;
   }): Promise<{ readonly id: string; readonly title: string } | undefined> {
+    const workspaces = await this.listWorkspaces();
+    return workspaces?.find(
+      (workspace) => workspace.title === input.name || workspace.description === input.name,
+    );
+  }
+
+  private async listWorkspaces(): Promise<
+    | readonly {
+        readonly id: string;
+        readonly title: string;
+        readonly description?: string | null | undefined;
+      }[]
+    | undefined
+  > {
     const result = await execa("cmux", ["--json", "list-workspaces"], {
       env: { ...this.#environment, CMUX_QUIET: "1" },
       reject: false,
@@ -153,13 +160,12 @@ export class CmuxPresenter implements Presenter {
     if (result.exitCode !== 0) {
       return undefined;
     }
-    const parsed = WorkspaceListSchema.safeParse(JSON.parse(result.stdout));
-    if (!parsed.success) {
+    try {
+      const parsed = WorkspaceListSchema.safeParse(JSON.parse(result.stdout));
+      return parsed.success ? parsed.data.workspaces : undefined;
+    } catch {
       return undefined;
     }
-    return parsed.data.workspaces.find(
-      (workspace) => workspace.title === input.name || workspace.description === input.name,
-    );
   }
 }
 

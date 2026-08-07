@@ -174,27 +174,66 @@ export class RunStore {
     readonly operation: () => Promise<T>;
   }): Promise<T> {
     const lockPath = join(this.#runsDirectory, `${input.slug}.lock`);
-    await mkdir(this.#runsDirectory, { recursive: true });
-    for (;;) {
+    return await withFileLock({ operation: input.operation, path: lockPath });
+  }
+}
+
+export async function withFileLock<T>(input: {
+  readonly path: string;
+  readonly operation: () => Promise<T>;
+}): Promise<T> {
+  const owner = randomUUID();
+  const ownerPath = join(input.path, "owner");
+  await mkdir(dirname(input.path), { recursive: true });
+  for (;;) {
+    try {
+      await mkdir(input.path);
+      await writeFile(ownerPath, owner, "utf8");
+      break;
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) {
+        throw error;
+      }
+      let metadata;
       try {
-        await mkdir(lockPath);
-        break;
-      } catch (error) {
-        if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) {
-          throw error;
-        }
-        const metadata = await stat(lockPath);
-        if (Date.now() - metadata.mtimeMs > 30_000) {
-          await rm(lockPath, { recursive: true, force: true });
+        metadata = await stat(input.path);
+      } catch (statError) {
+        if (statError instanceof Error && "code" in statError && statError.code === "ENOENT") {
           continue;
         }
-        await new Promise((resolvePromise) => setTimeout(resolvePromise, 25));
+        throw statError;
       }
+      if (Date.now() - metadata.mtimeMs > 30_000) {
+        const stalePath = `${input.path}.${randomUUID()}.stale`;
+        try {
+          await rename(input.path, stalePath);
+        } catch (renameError) {
+          if (
+            renameError instanceof Error &&
+            "code" in renameError &&
+            renameError.code === "ENOENT"
+          ) {
+            continue;
+          }
+          throw renameError;
+        }
+        await rm(stalePath, { recursive: true, force: true });
+        continue;
+      }
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 25));
     }
+  }
+  try {
+    return await input.operation();
+  } finally {
     try {
-      return await input.operation();
-    } finally {
-      await rm(lockPath, { recursive: true, force: true });
+      if ((await readFile(ownerPath, "utf8")) === owner) {
+        await rm(input.path, { recursive: true, force: true });
+      }
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+        throw error;
+      }
     }
   }
 }
@@ -301,61 +340,74 @@ export async function seedWorkspaceTrust(input: {
   const homeDirectory = input.environment["HOME"] ?? homedir();
   if (input.kind === "claude") {
     const path = join(homeDirectory, ".claude.json");
-    let existing: Record<string, unknown> = {};
-    try {
-      existing = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
-    } catch (error) {
-      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
-        throw error;
-      }
-    }
-    const projects = isObject(existing["projects"]) ? existing["projects"] : {};
-    const current = isObject(projects[input.workspaceDirectory])
-      ? projects[input.workspaceDirectory]
-      : {};
-    projects[input.workspaceDirectory] = {
-      ...current,
-      hasCompletedProjectOnboarding: true,
-      hasTrustDialogAccepted: true,
-    };
-    await atomicWrite({
-      path,
-      value: `${JSON.stringify({ ...existing, projects }, undefined, 2)}\n`,
+    await withFileLock({
+      path: `${path}.groundcrew.lock`,
+      operation: async () => {
+        let existing: Record<string, unknown> = {};
+        try {
+          existing = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+        } catch (error) {
+          if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+            throw error;
+          }
+        }
+        const projects = isObject(existing["projects"]) ? existing["projects"] : {};
+        const current = isObject(projects[input.workspaceDirectory])
+          ? projects[input.workspaceDirectory]
+          : {};
+        projects[input.workspaceDirectory] = {
+          ...current,
+          hasCompletedProjectOnboarding: true,
+          hasTrustDialogAccepted: true,
+        };
+        await atomicWrite({
+          path,
+          value: `${JSON.stringify({ ...existing, projects }, undefined, 2)}\n`,
+        });
+      },
     });
     return;
   }
   const codexHome = input.environment["CODEX_HOME"] ?? join(homeDirectory, ".codex");
   const path = join(codexHome, "config.toml");
-  let existing = "";
-  try {
-    existing = await readFile(path, "utf8");
-  } catch (error) {
-    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
-      throw error;
-    }
-  }
-  const header = `[projects.${JSON.stringify(input.workspaceDirectory)}]`;
-  const lines = existing.split("\n");
-  const start = lines.indexOf(header);
-  if (start < 0) {
-    const separator = existing.length > 0 && !existing.endsWith("\n\n") ? "\n" : "";
-    existing = `${existing}${separator}${header}\ntrust_level = "trusted"\n`;
-  } else {
-    let end = lines.findIndex((line, index) => index > start && line.startsWith("["));
-    if (end < 0) {
-      end = lines.length;
-    }
-    const trustIndex = lines.findIndex(
-      (line, index) => index > start && index < end && line.startsWith("trust_level ="),
-    );
-    if (trustIndex < 0) {
-      lines.splice(start + 1, 0, 'trust_level = "trusted"');
-    } else {
-      lines[trustIndex] = 'trust_level = "trusted"';
-    }
-    existing = lines.join("\n");
-  }
-  await atomicWrite({ path, value: existing });
+  await withFileLock({
+    path: `${path}.groundcrew.lock`,
+    operation: async () => {
+      let existing = "";
+      try {
+        existing = await readFile(path, "utf8");
+      } catch (error) {
+        if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+          throw error;
+        }
+      }
+      const header = `[projects.${JSON.stringify(input.workspaceDirectory)}]`;
+      const lines = existing.split("\n");
+      const start = lines.findIndex((line) => line.trim() === header);
+      if (start < 0) {
+        const separator = existing.length > 0 && !existing.endsWith("\n\n") ? "\n" : "";
+        existing = `${existing}${separator}${header}\ntrust_level = "trusted"\n`;
+      } else {
+        let end = lines.findIndex(
+          (line, index) => index > start && line.trimStart().startsWith("["),
+        );
+        if (end < 0) {
+          end = lines.length;
+        }
+        const trustIndex = lines.findIndex(
+          (line, index) =>
+            index > start && index < end && line.trimStart().startsWith("trust_level ="),
+        );
+        if (trustIndex < 0) {
+          lines.splice(start + 1, 0, 'trust_level = "trusted"');
+        } else {
+          lines[trustIndex] = 'trust_level = "trusted"';
+        }
+        existing = lines.join("\n");
+      }
+      await atomicWrite({ path, value: existing });
+    },
+  });
 }
 
 export function presenterFor(input: {

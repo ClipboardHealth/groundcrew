@@ -13,6 +13,7 @@ import {
   presenterFor,
   RunStore,
   taskSlug,
+  withFileLock,
   type AgentProfile,
   type Artifact,
   type RunRecord,
@@ -445,7 +446,9 @@ async function start(input: {
         });
         await writeCompletion({ record: failed, runtime });
       }
-      throw error;
+      if (input.task !== undefined) {
+        throw error;
+      }
     }
   }
   return { skipped, started };
@@ -1091,15 +1094,18 @@ async function writeVerdict(input: {
   readonly detail: string;
   readonly runId?: string | undefined;
 }): Promise<void> {
-  const verdicts = await readVerdicts({ runtime: input.runtime });
-  verdicts[input.canonicalTaskId] = {
-    detail: input.detail,
-    reason: input.reason,
-    timestamp: new Date().toISOString(),
-  };
-  await atomicWrite({
-    path: join(input.runtime.paths.stateRoot, "dispatch.json"),
-    value: `${JSON.stringify(verdicts, undefined, 2)}\n`,
+  const path = join(input.runtime.paths.stateRoot, "dispatch.json");
+  await withFileLock({
+    path: `${path}.lock`,
+    operation: async () => {
+      const verdicts = await readVerdicts({ runtime: input.runtime });
+      verdicts[input.canonicalTaskId] = {
+        detail: input.detail,
+        reason: input.reason,
+        timestamp: new Date().toISOString(),
+      };
+      await atomicWrite({ path, value: `${JSON.stringify(verdicts, undefined, 2)}\n` });
+    },
   });
   await log({
     canonicalTaskId: input.canonicalTaskId,
@@ -1115,14 +1121,17 @@ async function clearVerdict(input: {
   readonly runtime: Runtime;
   readonly canonicalTaskId: string;
 }): Promise<void> {
-  const verdicts = await readVerdicts({ runtime: input.runtime });
-  if (!(input.canonicalTaskId in verdicts)) {
-    return;
-  }
-  delete verdicts[input.canonicalTaskId];
-  await atomicWrite({
-    path: join(input.runtime.paths.stateRoot, "dispatch.json"),
-    value: `${JSON.stringify(verdicts, undefined, 2)}\n`,
+  const path = join(input.runtime.paths.stateRoot, "dispatch.json");
+  await withFileLock({
+    path: `${path}.lock`,
+    operation: async () => {
+      const verdicts = await readVerdicts({ runtime: input.runtime });
+      if (!(input.canonicalTaskId in verdicts)) {
+        return;
+      }
+      delete verdicts[input.canonicalTaskId];
+      await atomicWrite({ path, value: `${JSON.stringify(verdicts, undefined, 2)}\n` });
+    },
   });
 }
 
@@ -1137,36 +1146,41 @@ async function log(input: {
 }): Promise<void> {
   const path =
     input.runtime.config.logging.file ?? join(input.runtime.paths.stateRoot, "groundcrew.jsonl");
-  await mkdir(dirname(path), { recursive: true });
-  try {
-    const metadata = await stat(path);
-    if (metadata.size >= 10 * 1024 * 1024) {
-      await rm(`${path}.3`, { force: true });
-      for (const number of [2, 1]) {
-        // Log rotation is intentionally newest-to-oldest.
-        // eslint-disable-next-line no-await-in-loop
-        await rename(`${path}.${number}`, `${path}.${number + 1}`).catch(() => {});
+  await withFileLock({
+    path: `${path}.lock`,
+    operation: async () => {
+      await mkdir(dirname(path), { recursive: true });
+      try {
+        const metadata = await stat(path);
+        if (metadata.size >= 10 * 1024 * 1024) {
+          await rm(`${path}.3`, { force: true });
+          for (const number of [2, 1]) {
+            // Log rotation is intentionally newest-to-oldest.
+            // eslint-disable-next-line no-await-in-loop
+            await rename(`${path}.${number}`, `${path}.${number + 1}`).catch(() => {});
+          }
+          await rename(path, `${path}.1`);
+        }
+      } catch (error) {
+        if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+          throw error;
+        }
       }
-      await rename(path, `${path}.1`);
-    }
-  } catch (error) {
-    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
-      throw error;
-    }
-  }
-  await appendFile(
-    path,
-    `${JSON.stringify({
-      canonicalTaskId: input.canonicalTaskId,
-      event: input.event,
-      level: input.level,
-      module: input.module,
-      repository: input.repository,
-      runId: input.runId,
-      sourceName: input.canonicalTaskId?.slice(0, input.canonicalTaskId.indexOf(":")),
-      timestamp: new Date().toISOString(),
-    })}\n`,
-  );
+      await appendFile(
+        path,
+        `${JSON.stringify({
+          canonicalTaskId: input.canonicalTaskId,
+          event: input.event,
+          level: input.level,
+          module: input.module,
+          repository: input.repository,
+          runId: input.runId,
+          sourceName: input.canonicalTaskId?.slice(0, input.canonicalTaskId.indexOf(":")),
+          timestamp: new Date().toISOString(),
+        })}\n`,
+      );
+    },
+  });
 }
 
 async function atomicWrite(input: {
@@ -1195,8 +1209,5 @@ function sameStrings(left: readonly string[], right: readonly string[]): boolean
 }
 
 function errorMessage(error: unknown): string {
-  if (error instanceof RepositoryMissingError) {
-    return error.message;
-  }
   return error instanceof Error ? error.message : String(error);
 }
