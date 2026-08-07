@@ -1,10 +1,14 @@
-const ISSUE_FIELDS = `
+const TASK_FIELDS = `
   id identifier title description priority
   state { id name type }
   labels { nodes { name } }
   children { nodes { id state { type } } }
   relations { nodes { type relatedIssue { id state { type } } } }
   inverseRelations { nodes { type issue { id state { type } } } }
+`;
+
+const ISSUE_FIELDS = `
+  ${TASK_FIELDS}
   team { states { nodes { id name type } } }
   comments { nodes { body } }
 `;
@@ -27,12 +31,24 @@ export async function run(input) {
 }
 
 async function listTasks() {
-  const data = await graphql({
-    operationName: "GroundcrewList",
-    query: `query GroundcrewList { viewer { assignedIssues(first: 100) { nodes { ${ISSUE_FIELDS} } } } }`,
-    variables: {},
-  });
-  const issues = data.viewer?.assignedIssues?.nodes ?? [];
+  const issues = [];
+  let after;
+  for (;;) {
+    const data = await graphql({
+      operationName: "GroundcrewList",
+      query: `query GroundcrewList($after: String) { viewer { assignedIssues(first: 20, after: $after) { nodes { ${TASK_FIELDS} } pageInfo { endCursor hasNextPage } } } }`,
+      variables: { after },
+    });
+    const page = data.viewer?.assignedIssues;
+    issues.push(...(page?.nodes ?? []));
+    if (page?.pageInfo?.hasNextPage !== true) {
+      break;
+    }
+    if (!page.pageInfo.endCursor) {
+      throw new Error("Linear returned another issue page without an end cursor");
+    }
+    after = page.pageInfo.endCursor;
+  }
   return { tasks: issues.map(normalizeIssue).filter((task) => task !== undefined) };
 }
 
@@ -121,7 +137,7 @@ function normalizeIssue(issue) {
 }
 
 function parseRepositories(description) {
-  const match = description.match(/^Repositories?:\s*(.+)$/im);
+  const match = description.match(/^Repositor(?:y|ies):\s*(.+)$/im);
   if (!match) {
     return [];
   }

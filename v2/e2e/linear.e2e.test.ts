@@ -44,6 +44,24 @@ describe("the shipped Linear source", () => {
     expect(fixture.state.comments[0]).toContain("Claimed by Groundcrew");
     expect(fixture.state.comments[1]).toContain("https://example.test/pr/1");
   });
+
+  it("paginates list queries beneath Linear's complexity limit", async () => {
+    await fixture.close();
+    fixture = await createLinearFixture({ listedTaskCount: 21 });
+
+    const doctor = await runCrew({ arguments: ["doctor"], environment: fixture.environment });
+
+    expect(doctor.stdout).toContain("live list probe: healthy (21 tasks)");
+  });
+
+  it("recognizes a singular Repository header", async () => {
+    await fixture.close();
+    fixture = await createLinearFixture({ issueDescription: "Repository: missing" });
+
+    await expect(
+      runCrew({ arguments: ["start", "LIN-1"], environment: fixture.environment }),
+    ).rejects.toMatchObject({ code: 2 });
+  });
 });
 
 interface LinearState {
@@ -52,11 +70,14 @@ interface LinearState {
   stateType: string;
 }
 
-async function createLinearFixture(): Promise<{
+async function createLinearFixture(
+  input: { readonly issueDescription?: string; readonly listedTaskCount?: number } = {},
+): Promise<{
   readonly close: () => Promise<void>;
   readonly environment: NodeJS.ProcessEnv;
   readonly state: LinearState;
 }> {
+  const listedTaskCount = input.listedTaskCount ?? 1;
   const state: LinearState = { comments: [], stateName: "Todo", stateType: "unstarted" };
   const server = createServer(async (request, response) => {
     let raw = "";
@@ -64,10 +85,35 @@ async function createLinearFixture(): Promise<{
       raw += chunk;
     }
     const body = JSON.parse(raw);
-    const issue = linearIssue({ state });
+    const issue = linearIssue({ description: input.issueDescription, state });
     let data;
     if (body.operationName === "GroundcrewList") {
-      data = { viewer: { assignedIssues: { nodes: [issue] } } };
+      if (listedTaskCount > 20 && body.query.includes("first: 100")) {
+        response.statusCode = 400;
+        response.setHeader("Content-Type", "application/json");
+        response.end(JSON.stringify({ errors: [{ message: "Query too complex" }] }));
+        return;
+      }
+      const pageStart = body.variables.after === undefined ? 0 : Number(body.variables.after);
+      const pageEnd = Math.min(pageStart + 20, listedTaskCount);
+      const nodes = Array.from({ length: pageEnd - pageStart }, (_, offset) =>
+        linearIssue({
+          description: input.issueDescription,
+          identifier: `LIN-${pageStart + offset + 1}`,
+          state,
+        }),
+      );
+      data = {
+        viewer: {
+          assignedIssues: {
+            nodes,
+            pageInfo: {
+              endCursor: pageEnd < listedTaskCount ? String(pageEnd) : undefined,
+              hasNextPage: pageEnd < listedTaskCount,
+            },
+          },
+        },
+      };
     } else if (body.operationName === "GroundcrewIssue") {
       data = { issue };
     } else if (body.operationName === "GroundcrewComment") {
@@ -137,13 +183,18 @@ async function createLinearFixture(): Promise<{
   };
 }
 
-function linearIssue(input: { readonly state: LinearState }) {
+function linearIssue(input: {
+  readonly description?: string | undefined;
+  readonly identifier?: string;
+  readonly state: LinearState;
+}) {
+  const identifier = input.identifier ?? "LIN-1";
   return {
     children: { nodes: [] },
     comments: { nodes: input.state.comments.map((body) => ({ body })) },
-    description: "A repository-free research task.",
-    id: "issue-1",
-    identifier: "LIN-1",
+    description: input.description ?? "A repository-free research task.",
+    id: `issue-${identifier}`,
+    identifier,
     inverseRelations: { nodes: [] },
     labels: { nodes: [{ name: "agent-codex" }] },
     priority: 1,
