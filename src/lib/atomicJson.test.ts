@@ -22,7 +22,7 @@ describe(writeJsonAtomic, () => {
 
     expect(() => {
       writeJsonAtomic(targetPath, { ok: true });
-    }).toThrow(/EISDIR|ENOTDIR/);
+    }).toThrow(expect.objectContaining({ syscall: "rename" }));
 
     expect(existsSync(temporaryPath)).toBe(false);
   });
