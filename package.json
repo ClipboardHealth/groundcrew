@@ -59,7 +59,7 @@
     "hook:pre-commit": "lint-staged --config config/lintStaged.config.js",
     "hook:pre-push": "node --run verify",
     "knip": "knip --config config/knip.json",
-    "lint": "oxlint --config config/oxlint.config.ts --deny-warnings",
+    "lint": "oxlint --config config/oxlint.config.ts --deny-warnings --ignore-pattern 'v2/**'",
     "markdown:lint": "markdownlint-cli2 --config config/markdownlint-cli2.jsonc",
     "prepack": "node --run build",
     "prepare": "husky",

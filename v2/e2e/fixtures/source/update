@@ -1,0 +1,20 @@
+#!/usr/bin/env node
+
+import { appendFile } from "node:fs/promises";
+
+const input = await readStandardInput();
+await appendFile(process.env.FIXTURE_UPDATES, `${JSON.stringify(input)}\n`);
+const rejected =
+  input.event.type === "claimed" && process.env.FIXTURE_REJECT_CLAIMS === input.id;
+process.stdout.write(
+  `${JSON.stringify({
+    ok: true,
+    data: rejected ? { reason: "fixture rejected claim", result: "rejected" } : { result: "ok" },
+  })}\n`,
+);
+
+async function readStandardInput() {
+  let raw = "";
+  for await (const chunk of process.stdin) raw += chunk;
+  return JSON.parse(raw);
+}

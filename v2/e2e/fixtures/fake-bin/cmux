@@ -1,0 +1,37 @@
+#!/usr/bin/env node
+
+import { appendFile, readFile, writeFile } from "node:fs/promises";
+
+const [command, ...arguments_] = process.argv.slice(2);
+const statePath = process.env.FAKE_CMUX_STATE;
+const callsPath = process.env.FAKE_CMUX_CALLS;
+await appendFile(callsPath, `${JSON.stringify({ arguments: process.argv.slice(2) })}\n`);
+const state = await readState();
+
+if (command === "new-workspace") {
+  const workspace = {
+    description: valueAfter("--description"),
+    id: `workspace-${state.workspaces.length + 1}`,
+    title: valueAfter("--name"),
+  };
+  state.workspaces.push(workspace);
+  await writeFile(statePath, JSON.stringify(state));
+} else if (command === "--json" && arguments_[0] === "list-workspaces") {
+  process.stdout.write(JSON.stringify({ workspaces: state.workspaces }));
+} else if (command === "close-workspace") {
+  const id = valueAfter("--workspace");
+  state.workspaces = state.workspaces.filter((workspace) => workspace.id !== id);
+  await writeFile(statePath, JSON.stringify(state));
+}
+
+async function readState() {
+  try {
+    return JSON.parse(await readFile(statePath, "utf8"));
+  } catch {
+    return { workspaces: [] };
+  }
+}
+
+function valueAfter(flag) {
+  return arguments_[arguments_.indexOf(flag) + 1];
+}
