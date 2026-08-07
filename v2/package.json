@@ -1,0 +1,43 @@
+{
+  "name": "@clipboard-health/groundcrew-v2",
+  "version": "2.0.0",
+  "private": true,
+  "description": "A local Linear-to-agent dispatcher for macOS",
+  "license": "MIT",
+  "bin": {
+    "crew": "./bin/run.js"
+  },
+  "type": "module",
+  "scripts": {
+    "architecture:check": "depcruise --config config/dependencyCruiser.cjs src e2e bin",
+    "build": "tsc --build --force tsconfig.lib.json",
+    "crew": "node --run build && node ./bin/run.js",
+    "format": "oxfmt --write .",
+    "format:check": "oxfmt --check .",
+    "schema:check": "node config/generate-schema.mjs --check",
+    "schema:generate": "node config/generate-schema.mjs",
+    "test": "vitest run",
+    "test:e2e": "vitest run e2e",
+    "typecheck": "tsc --noEmit",
+    "verify": "node --run format:check && node --run typecheck && node --run build && node --run schema:check && node --run architecture:check && node --run test"
+  },
+  "dependencies": {
+    "@commander-js/extra-typings": "15.0.0",
+    "commander": "15.0.0",
+    "execa": "10.0.1",
+    "jsonc-parser": "3.3.1",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@tsconfig/node24": "24.0.4",
+    "@tsconfig/strictest": "2.0.8",
+    "@types/node": "24.13.3",
+    "dependency-cruiser": "18.1.1",
+    "oxfmt": "0.61.0",
+    "typescript": "5.9.3",
+    "vitest": "4.1.10"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

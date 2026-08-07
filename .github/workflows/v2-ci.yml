@@ -1,0 +1,42 @@
+name: V2 CI
+
+on:
+  push:
+    branches:
+      - main
+      - "renovate/**"
+    paths:
+      - "v2/**"
+      - ".github/workflows/v2-ci.yml"
+  pull_request:
+    paths:
+      - "v2/**"
+      - ".github/workflows/v2-ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v2-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  main:
+    runs-on: macos-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: v2
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          cache: npm
+          cache-dependency-path: v2/package-lock.json
+          node-version-file: .nvmrc
+
+      - run: npm ci
+      - run: node --run verify
