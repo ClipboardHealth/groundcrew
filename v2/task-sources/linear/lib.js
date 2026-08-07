@@ -13,6 +13,8 @@ const ISSUE_FIELDS = `
   comments { nodes { body createdAt } }
 `;
 
+const LIST_STATE_TYPES = ["unstarted", "started", "completed", "canceled", "duplicate"];
+
 export async function run(input) {
   try {
     const payload = await readStandardInput();
@@ -32,14 +34,29 @@ export async function run(input) {
 
 async function listTasks() {
   const issues = [];
+  const agentLabelPrefix = environment("LINEAR_GROUNDCREW_LABEL_PREFIX", "agent-");
   let after;
   for (;;) {
     const data = await graphql({
       operationName: "GroundcrewList",
-      query: `query GroundcrewList($after: String) { viewer { assignedIssues(first: 20, after: $after) { nodes { ${TASK_FIELDS} } pageInfo { endCursor hasNextPage } } } }`,
-      variables: { after },
+      query: `query GroundcrewList($after: String, $stateTypes: [String!]!, $agentLabelPrefix: String!) {
+        issues(
+          filter: {
+            assignee: { isMe: { eq: true } }
+            state: { type: { in: $stateTypes } }
+            labels: { some: { name: { startsWith: $agentLabelPrefix } } }
+          }
+          first: 250
+          after: $after
+          includeArchived: false
+        ) {
+          nodes { ${TASK_FIELDS} }
+          pageInfo { endCursor hasNextPage }
+        }
+      }`,
+      variables: { after, agentLabelPrefix, stateTypes: LIST_STATE_TYPES },
     });
-    const page = data.viewer?.assignedIssues;
+    const page = data.issues;
     issues.push(...(page?.nodes ?? []));
     if (page?.pageInfo?.hasNextPage !== true) {
       break;

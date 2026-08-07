@@ -47,11 +47,38 @@ describe("the shipped Linear source", () => {
 
   it("paginates list queries beneath Linear's complexity limit", async () => {
     await fixture.close();
-    fixture = await createLinearFixture({ listedTaskCount: 21 });
+    fixture = await createLinearFixture({ listedTaskCount: 251 });
 
     const doctor = await runCrew({ arguments: ["doctor"], environment: fixture.environment });
 
-    expect(doctor.stdout).toContain("live list probe: healthy (21 tasks)");
+    expect(doctor.stdout).toContain("live list probe: healthy (251 tasks)");
+  });
+
+  it("filters list queries before paginating while retaining actionable and terminal tasks", async () => {
+    await fixture.close();
+    fixture = await createLinearFixture({ filteringScenario: true, labelPrefix: "crew-" });
+
+    const result = await runLinearList({ environment: fixture.environment });
+    const response = JSON.parse(result.stdout);
+
+    expect(response.error).toBeUndefined();
+    expect(response.data.tasks).toEqual([
+      expect.objectContaining({ id: "LIN-ELIGIBLE", terminal: false }),
+      expect.objectContaining({ id: "LIN-COMPLETED", terminal: true }),
+    ]);
+    expect(fixture.state.listRequests).toHaveLength(1);
+    const request = fixture.state.listRequests[0];
+    expect(request?.query).toContain("assignee: { isMe: { eq: true } }");
+    expect(request?.query).toContain(
+      "labels: { some: { name: { startsWith: $agentLabelPrefix } } }",
+    );
+    expect(request?.query).toContain("state: { type: { in: $stateTypes } }");
+    expect(request?.query).toContain("first: 250");
+    expect(request?.query).toContain("includeArchived: false");
+    expect(request?.variables).toMatchObject({
+      agentLabelPrefix: "crew-",
+      stateTypes: ["unstarted", "started", "completed", "canceled", "duplicate"],
+    });
   });
 
   it("recognizes a singular Repository header", async () => {
@@ -98,19 +125,31 @@ describe("the shipped Linear source", () => {
 
 interface LinearState {
   comments: string[];
+  listRequests: Array<{ query: string; variables: Record<string, unknown> }>;
   stateName: string;
   stateType: string;
 }
 
 async function createLinearFixture(
-  input: { readonly issueDescription?: string; readonly listedTaskCount?: number } = {},
+  input: {
+    readonly filteringScenario?: boolean;
+    readonly issueDescription?: string;
+    readonly labelPrefix?: string;
+    readonly listedTaskCount?: number;
+  } = {},
 ): Promise<{
   readonly close: () => Promise<void>;
   readonly environment: NodeJS.ProcessEnv;
   readonly state: LinearState;
 }> {
   const listedTaskCount = input.listedTaskCount ?? 1;
-  const state: LinearState = { comments: [], stateName: "Todo", stateType: "unstarted" };
+  const state: LinearState = {
+    comments: [],
+    listRequests: [],
+    stateName: "Todo",
+    stateType: "unstarted",
+  };
+  const labelPrefix = input.labelPrefix ?? "agent-";
   const server = createServer(async (request, response) => {
     try {
       let raw = "";
@@ -121,32 +160,41 @@ async function createLinearFixture(
       const issue = linearIssue({ description: input.issueDescription, state });
       let data;
       if (body.operationName === "GroundcrewList") {
-        if (listedTaskCount > 20 && !body.query.includes("first: 20")) {
-          response.statusCode = 400;
-          response.setHeader("Content-Type", "application/json");
-          response.end(JSON.stringify({ errors: [{ message: "Unexpected page size" }] }));
-          return;
-        }
+        state.listRequests.push({ query: body.query, variables: body.variables });
+        const listedIssues = input.filteringScenario
+          ? filteringScenarioIssues({ labelPrefix, state })
+          : Array.from({ length: listedTaskCount }, (_, index) =>
+              linearIssue({
+                description: input.issueDescription,
+                identifier: `LIN-${index + 1}`,
+                state,
+              }),
+            );
+        const usesServerFilters = body.query.includes("issues(");
+        const stateTypes = Array.isArray(body.variables.stateTypes)
+          ? body.variables.stateTypes
+          : [];
+        const requestedLabelPrefix = body.variables.agentLabelPrefix;
+        const candidateIssues = usesServerFilters
+          ? listedIssues.filter(
+              (listedIssue) =>
+                stateTypes.includes(listedIssue.state.type) &&
+                listedIssue.labels.nodes.some((label) =>
+                  label.name.startsWith(requestedLabelPrefix),
+                ),
+            )
+          : listedIssues;
+        const pageSize = body.query.includes("first: 250") ? 250 : 20;
         const pageStart = body.variables.after === undefined ? 0 : Number(body.variables.after);
-        const pageEnd = Math.min(pageStart + 20, listedTaskCount);
-        const nodes = Array.from({ length: pageEnd - pageStart }, (_, offset) =>
-          linearIssue({
-            description: input.issueDescription,
-            identifier: `LIN-${pageStart + offset + 1}`,
-            state,
-          }),
-        );
-        data = {
-          viewer: {
-            assignedIssues: {
-              nodes,
-              pageInfo: {
-                endCursor: pageEnd < listedTaskCount ? String(pageEnd) : undefined,
-                hasNextPage: pageEnd < listedTaskCount,
-              },
-            },
+        const pageEnd = Math.min(pageStart + pageSize, candidateIssues.length);
+        const page = {
+          nodes: candidateIssues.slice(pageStart, pageEnd),
+          pageInfo: {
+            endCursor: pageEnd < candidateIssues.length ? String(pageEnd) : undefined,
+            hasNextPage: pageEnd < candidateIssues.length,
           },
         };
+        data = usesServerFilters ? { issues: page } : { viewer: { assignedIssues: page } };
       } else if (body.operationName === "GroundcrewIssue") {
         data = { issue };
       } else if (body.operationName === "GroundcrewComment") {
@@ -217,6 +265,8 @@ async function createLinearFixture(
       FAKE_CMUX_STATE: join(root, "cmux-state.json"),
       GROUNDCREW_CONFIG: configPath,
       LINEAR_API_KEY: "test-key",
+      LINEAR_API_URL: `http://127.0.0.1:${address.port}/graphql`,
+      LINEAR_GROUNDCREW_LABEL_PREFIX: labelPrefix,
       PATH: `${fakeBin}:${process.env["PATH"]}`,
       XDG_CONFIG_HOME: join(root, "config"),
       XDG_STATE_HOME: join(root, "state"),
@@ -228,7 +278,10 @@ async function createLinearFixture(
 function linearIssue(input: {
   readonly description?: string | undefined;
   readonly identifier?: string;
+  readonly labelNames?: readonly string[];
   readonly state: LinearState;
+  readonly stateName?: string;
+  readonly stateType?: string;
 }) {
   const identifier = input.identifier ?? "LIN-1";
   return {
@@ -245,10 +298,14 @@ function linearIssue(input: {
     id: `issue-${identifier}`,
     identifier,
     inverseRelations: { nodes: [] },
-    labels: { nodes: [{ name: "agent-codex" }] },
+    labels: { nodes: (input.labelNames ?? ["agent-codex"]).map((name) => ({ name })) },
     priority: 1,
     relations: { nodes: [] },
-    state: { id: "state-current", name: input.state.stateName, type: input.state.stateType },
+    state: {
+      id: "state-current",
+      name: input.stateName ?? input.state.stateName,
+      type: input.stateType ?? input.state.stateType,
+    },
     team: {
       states: {
         nodes: [
@@ -261,6 +318,43 @@ function linearIssue(input: {
   };
 }
 
+function filteringScenarioIssues(input: {
+  readonly labelPrefix: string;
+  readonly state: LinearState;
+}) {
+  return [
+    linearIssue({
+      identifier: "LIN-ELIGIBLE",
+      labelNames: [`${input.labelPrefix}codex`],
+      state: input.state,
+    }),
+    linearIssue({
+      identifier: "LIN-COMPLETED",
+      labelNames: [`${input.labelPrefix}codex`],
+      state: input.state,
+      stateName: "Done",
+      stateType: "completed",
+    }),
+    linearIssue({
+      identifier: "LIN-BACKLOG",
+      labelNames: [`${input.labelPrefix}codex`],
+      state: input.state,
+      stateName: "Backlog",
+      stateType: "backlog",
+    }),
+    linearIssue({
+      identifier: "LIN-TRIAGE",
+      labelNames: [`${input.labelPrefix}codex`],
+      state: input.state,
+      stateName: "Triage",
+      stateType: "triage",
+    }),
+    ...Array.from({ length: 247 }, (_, index) =>
+      linearIssue({ identifier: `LIN-UNRELATED-${index + 1}`, labelNames: [], state: input.state }),
+    ),
+  ];
+}
+
 async function runCrew(input: {
   readonly arguments: readonly string[];
   readonly environment: NodeJS.ProcessEnv;
@@ -268,5 +362,25 @@ async function runCrew(input: {
   return await execFileAsync(process.execPath, ["bin/run.js", ...input.arguments], {
     cwd: process.cwd(),
     env: input.environment,
+  });
+}
+
+async function runLinearList(input: {
+  readonly environment: NodeJS.ProcessEnv;
+}): Promise<{ readonly stdout: string; readonly stderr: string }> {
+  return await new Promise((resolvePromise, reject) => {
+    const child = execFile(
+      process.execPath,
+      ["task-sources/linear/list"],
+      { cwd: process.cwd(), env: input.environment },
+      (error, stdout, stderr) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolvePromise({ stderr, stdout });
+      },
+    );
+    child.stdin?.end("{}");
   });
 }
