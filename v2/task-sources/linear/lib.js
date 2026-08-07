@@ -77,19 +77,31 @@ async function updateTask(input) {
     (artifact) =>
       `- ${artifact.kind}: ${artifact.locator}${artifact.title ? ` — ${artifact.title}` : ""}`,
   );
+  const claimRunId = latestClaimRunId(issue);
+  const completionMarker = `[groundcrew:${claimRunId ?? "unclaimed"}:completed:${input.event.outcome}]`;
   const text = [
-    `[groundcrew:completed:${input.event.outcome}]`,
+    completionMarker,
     `Groundcrew completed this run as ${input.event.outcome}.`,
     input.event.message,
     artifactLines.length > 0 ? `Artifacts:\n${artifactLines.join("\n")}` : undefined,
   ]
     .filter(Boolean)
     .join("\n\n");
-  await addCommentOnce({ issue, marker: `[groundcrew:completed:${input.event.outcome}]`, text });
+  await addCommentOnce({ issue, marker: completionMarker, text });
   if (input.event.outcome === "delivered") {
     await moveIssue({ issue, stateName: environment("LINEAR_STATUS_IN_REVIEW", "In Review") });
   }
   return { result: "ok" };
+}
+
+function latestClaimRunId(issue) {
+  for (const comment of [...(issue.comments?.nodes ?? [])].reverse()) {
+    const match = comment.body.match(/\[groundcrew:(r_[0-9a-f]{8}):claimed\]/);
+    if (match) {
+      return match[1];
+    }
+  }
+  return undefined;
 }
 
 async function loadIssue(id) {

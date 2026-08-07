@@ -131,7 +131,7 @@ export class RunStore {
 
   public async mutate(input: {
     readonly canonicalTaskId: string;
-    readonly update: (record: RunRecord) => RunRecord;
+    readonly update: (record: RunRecord) => RunRecord | Promise<RunRecord>;
   }): Promise<RunRecord> {
     const slug = taskSlug(input);
     return await this.withLock({
@@ -140,7 +140,7 @@ export class RunStore {
         if (current === undefined) {
           throw new Error(`no run exists for ${input.canonicalTaskId}`);
         }
-        const updated = input.update(current);
+        const updated = await input.update(current);
         await this.write({ path: this.path({ slug }), record: updated });
         return updated;
       },

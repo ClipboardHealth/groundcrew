@@ -77,7 +77,8 @@ export type VerdictReason =
   | "repo-not-on-disk"
   | "agent-unavailable"
   | "run-exists"
-  | "slug-collision";
+  | "slug-collision"
+  | "terminal";
 
 export interface Verdict {
   readonly timestamp: string;
@@ -275,6 +276,13 @@ async function start(input: {
       continue;
     }
     if (task.terminal) {
+      await writeVerdict({
+        canonicalTaskId,
+        detail: "source reports the task as terminal",
+        reason: "terminal",
+        runtime,
+      });
+      skipped.push(canonicalTaskId);
       continue;
     }
     if (task.blocked && !input.force) {
@@ -489,11 +497,17 @@ async function artifactAdd(input: {
   const canonicalTaskId = await resolveRunIdentity({ query: input.task, runtime: input.runtime });
   const record = await input.runtime.runs.mutate({
     canonicalTaskId,
-    update: (record) => ({
-      ...record,
-      artifacts: [...record.artifacts, input.artifact],
-      events: [...record.events, { event: "artifact-added", timestamp: new Date().toISOString() }],
-    }),
+    update: (record) => {
+      requireActiveRun(record);
+      return {
+        ...record,
+        artifacts: [...record.artifacts, input.artifact],
+        events: [
+          ...record.events,
+          { event: "artifact-added", timestamp: new Date().toISOString() },
+        ],
+      };
+    },
   });
   await log({
     canonicalTaskId,
@@ -554,28 +568,30 @@ async function repoAdd(input: {
 }): Promise<RunRecord> {
   const canonicalTaskId = await resolveRunIdentity({ query: input.task, runtime: input.runtime });
   const slug = taskSlug({ canonicalTaskId });
-  const record = await requireRun({ canonicalTaskId, runtime: input.runtime });
-  const marker = await input.runtime.workspaces.readMarker({
-    workspaceDirectory: record.workspaceDirectory,
-  });
-  if (marker === undefined) {
-    throw new Error(`task marker missing for ${canonicalTaskId}`);
-  }
-  const updatedMarker = await input.runtime.workspaces.addRepository({
-    marker,
-    repository: input.repository,
-    slug,
-  });
   const updated = await input.runtime.runs.mutate({
     canonicalTaskId,
-    update: (current) => ({
-      ...current,
-      events: [
-        ...current.events,
-        { event: `repository-added:${input.repository}`, timestamp: new Date().toISOString() },
-      ],
-      repositories: updatedMarker.repositories,
-    }),
+    update: async (current) => {
+      requireActiveRun(current);
+      const marker = await input.runtime.workspaces.readMarker({
+        workspaceDirectory: current.workspaceDirectory,
+      });
+      if (marker === undefined) {
+        throw new Error(`task marker missing for ${canonicalTaskId}`);
+      }
+      const updatedMarker = await input.runtime.workspaces.addRepository({
+        marker,
+        repository: input.repository,
+        slug,
+      });
+      return {
+        ...current,
+        events: [
+          ...current.events,
+          { event: `repository-added:${input.repository}`, timestamp: new Date().toISOString() },
+        ],
+        repositories: updatedMarker.repositories,
+      };
+    },
   });
   await log({
     canonicalTaskId,
@@ -835,15 +851,10 @@ async function resolveRunIdentity(input: {
   return match.canonicalTaskId;
 }
 
-async function requireRun(input: {
-  readonly canonicalTaskId: string;
-  readonly runtime: Runtime;
-}): Promise<RunRecord> {
-  const record = await input.runtime.runs.get({ canonicalTaskId: input.canonicalTaskId });
-  if (record === undefined) {
-    throw new Error(`no run exists for ${input.canonicalTaskId}`);
+function requireActiveRun(record: RunRecord): void {
+  if (record.state === "complete") {
+    throw new Error(`run ${record.runId} is complete; cleanup before starting another run`);
   }
-  return record;
 }
 
 async function resolveExplicitTask(input: {

@@ -62,6 +62,31 @@ describe("the shipped Linear source", () => {
       runCrew({ arguments: ["start", "LIN-1"], environment: fixture.environment }),
     ).rejects.toMatchObject({ code: 2 });
   });
+
+  it("writes completion artifacts again after cleanup and redispatch", async () => {
+    await runCrew({ arguments: ["start", "LIN-1"], environment: fixture.environment });
+    await runCrew({
+      arguments: ["artifact", "add", "first-output", "--task", "LIN-1"],
+      environment: fixture.environment,
+    });
+    await runCrew({ arguments: ["done", "--task", "LIN-1"], environment: fixture.environment });
+    await runCrew({ arguments: ["cleanup", "LIN-1"], environment: fixture.environment });
+
+    fixture.state.stateName = "Todo";
+    fixture.state.stateType = "unstarted";
+    await runCrew({ arguments: ["start", "LIN-1"], environment: fixture.environment });
+    await runCrew({
+      arguments: ["artifact", "add", "second-output", "--task", "LIN-1"],
+      environment: fixture.environment,
+    });
+    await runCrew({ arguments: ["done", "--task", "LIN-1"], environment: fixture.environment });
+
+    expect(
+      fixture.state.comments.filter((comment) => comment.includes(":completed:delivered]")),
+    ).toHaveLength(2);
+    expect(fixture.state.comments.some((comment) => comment.includes("first-output"))).toBe(true);
+    expect(fixture.state.comments.some((comment) => comment.includes("second-output"))).toBe(true);
+  });
 });
 
 interface LinearState {

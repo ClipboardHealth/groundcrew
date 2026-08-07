@@ -9,6 +9,10 @@ await appendFile(callsPath, `${JSON.stringify({ arguments: process.argv.slice(2)
 const state = await readState();
 
 if (command === "new-workspace") {
+  if (process.env.FAKE_CMUX_FAIL_OPEN === "1") {
+    process.stderr.write("fake cmux open failure\n");
+    process.exit(1);
+  }
   const workspace = {
     description: valueAfter("--description"),
     id: `workspace-${state.workspaces.length + 1}`,
@@ -17,6 +21,10 @@ if (command === "new-workspace") {
   state.workspaces.push(workspace);
   await writeFile(statePath, JSON.stringify(state));
 } else if (command === "--json" && arguments_[0] === "list-workspaces") {
+  if (process.env.FAKE_CMUX_UNAVAILABLE === "1") {
+    process.stderr.write("fake cmux unavailable\n");
+    process.exit(1);
+  }
   process.stdout.write(JSON.stringify({ workspaces: state.workspaces }));
 } else if (command === "close-workspace") {
   const id = valueAfter("--workspace");

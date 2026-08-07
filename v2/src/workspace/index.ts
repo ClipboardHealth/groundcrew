@@ -104,7 +104,21 @@ export class WorkspaceService {
     );
     const workspaceDirectory = this.workspaceDirectory({ slug: input.slug });
     await mkdir(workspaceDirectory, { recursive: true });
+    const partialRepositories: string[] = [];
     for (const branchState of branchStates) {
+      partialRepositories.push(branchState.repository.name);
+      // Recovery metadata is written before Git mutation. The task marker remains reserved for a
+      // fully prepared workspace, while status and cleanup can still see interrupted worktrees.
+      // eslint-disable-next-line no-await-in-loop
+      await this.writeRecoveryMarker({
+        marker: {
+          branch,
+          canonicalTaskId: input.canonicalTaskId,
+          repositories: partialRepositories,
+          version: 1,
+        },
+        workspaceDirectory,
+      });
       // Worktree creation and prepare commands are intentionally sequential and diagnosable.
       // eslint-disable-next-line no-await-in-loop
       await this.createWorktree({ branch, ...branchState });
@@ -118,6 +132,7 @@ export class WorkspaceService {
       version: 1,
     };
     await this.writeMarker({ marker, workspaceDirectory });
+    await this.removeRecoveryMarker({ workspaceDirectory });
     return marker;
   }
 
@@ -141,16 +156,16 @@ export class WorkspaceService {
       branch: input.marker.branch,
       repository: resolved,
     });
-    await this.createWorktree({ branch: input.marker.branch, existing, repository: resolved });
-    await this.prepareWorktree({ repository: resolved });
+    const workspaceDirectory = this.workspaceDirectory({ slug: input.slug });
     const marker: TaskMarker = {
       ...input.marker,
       repositories: [...input.marker.repositories, resolved.name],
     };
-    await this.writeMarker({
-      marker,
-      workspaceDirectory: this.workspaceDirectory({ slug: input.slug }),
-    });
+    await this.writeRecoveryMarker({ marker, workspaceDirectory });
+    await this.createWorktree({ branch: input.marker.branch, existing, repository: resolved });
+    await this.prepareWorktree({ repository: resolved });
+    await this.writeMarker({ marker, workspaceDirectory });
+    await this.removeRecoveryMarker({ workspaceDirectory });
     return marker;
   }
 
@@ -171,13 +186,19 @@ export class WorkspaceService {
 
   public async observe(input: { readonly slug: string }): Promise<ObservedWorkspace> {
     const workspaceDirectory = this.workspaceDirectory(input);
-    const marker = await this.readMarker({ workspaceDirectory });
+    const marker = await this.readWorkspaceMetadata({ workspaceDirectory });
     if (marker === undefined) {
       return { dirtyPaths: [], exists: await pathExists(workspaceDirectory), repositories: [] };
     }
     const repositories: ObservedRepository[] = [];
     for (const repositoryName of marker.repositories) {
       const worktree = join(workspaceDirectory, repositoryName);
+      // A recovery marker is deliberately written before worktree creation, so an interrupted Git
+      // command may leave a planned entry without a directory to observe.
+      // eslint-disable-next-line no-await-in-loop
+      if (!(await pathExists(worktree))) {
+        continue;
+      }
       // Git observations are kept ordered to preserve marker order.
       // eslint-disable-next-line no-await-in-loop
       const statusResult = await git({ arguments: ["status", "--porcelain"], cwd: worktree });
@@ -216,7 +237,7 @@ export class WorkspaceService {
     readonly removedRepositories: readonly string[];
   }> {
     const workspaceDirectory = this.workspaceDirectory(input);
-    const marker = await this.readMarker({ workspaceDirectory });
+    const marker = await this.readWorkspaceMetadata({ workspaceDirectory });
     if (marker === undefined) {
       await rm(workspaceDirectory, { recursive: true, force: true });
       return { preservedBranches: [], removedRepositories: [] };
@@ -232,11 +253,23 @@ export class WorkspaceService {
       const worktree = join(workspaceDirectory, repositoryName);
       // Cleanup is sequential so a partial failure remains obvious and recoverable.
       // eslint-disable-next-line no-await-in-loop
-      await git({
-        arguments: ["worktree", "remove", ...(input.allowDirty ? ["--force"] : []), worktree],
+      if (await pathExists(worktree)) {
+        // eslint-disable-next-line no-await-in-loop
+        await git({
+          arguments: ["worktree", "remove", ...(input.allowDirty ? ["--force"] : []), worktree],
+          cwd: checkout,
+        });
+        removedRepositories.push(repositoryName);
+      }
+      // A failed worktree creation may not have created the local branch.
+      // eslint-disable-next-line no-await-in-loop
+      const branchExists = await gitSucceeds({
+        arguments: ["show-ref", "--verify", `refs/heads/${marker.branch}`],
         cwd: checkout,
       });
-      removedRepositories.push(repositoryName);
+      if (!branchExists) {
+        continue;
+      }
       // eslint-disable-next-line no-await-in-loop
       const safe =
         input.allowDirty || (await this.branchHasNoUniqueWork({ branch: marker.branch, checkout }));
@@ -382,6 +415,56 @@ export class WorkspaceService {
       path: join(input.workspaceDirectory, ".groundcrew", "task.json"),
       value: `${JSON.stringify(input.marker, undefined, 2)}\n`,
     });
+  }
+
+  private async readRecoveryMarker(input: {
+    readonly workspaceDirectory: string;
+  }): Promise<TaskMarker | undefined> {
+    try {
+      return JSON.parse(
+        await readFile(join(input.workspaceDirectory, ".groundcrew", "provisioning.json"), "utf8"),
+      ) as TaskMarker;
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+        return undefined;
+      }
+      throw error;
+    }
+  }
+
+  private async readWorkspaceMetadata(input: {
+    readonly workspaceDirectory: string;
+  }): Promise<TaskMarker | undefined> {
+    const [marker, recovery] = await Promise.all([
+      this.readMarker(input),
+      this.readRecoveryMarker(input),
+    ]);
+    if (marker === undefined) {
+      return recovery;
+    }
+    if (recovery === undefined) {
+      return marker;
+    }
+    return {
+      ...marker,
+      repositories: [...new Set([...marker.repositories, ...recovery.repositories])],
+    };
+  }
+
+  private async writeRecoveryMarker(input: {
+    readonly workspaceDirectory: string;
+    readonly marker: TaskMarker;
+  }): Promise<void> {
+    await atomicWrite({
+      path: join(input.workspaceDirectory, ".groundcrew", "provisioning.json"),
+      value: `${JSON.stringify(input.marker, undefined, 2)}\n`,
+    });
+  }
+
+  private async removeRecoveryMarker(input: {
+    readonly workspaceDirectory: string;
+  }): Promise<void> {
+    await rm(join(input.workspaceDirectory, ".groundcrew", "provisioning.json"), { force: true });
   }
 
   private async branchHasNoUniqueWork(input: {
