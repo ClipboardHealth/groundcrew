@@ -10,7 +10,7 @@ import {
 } from "../lib/launchCommand.ts";
 import { readRunState, recordRunState, type RunState } from "../lib/runState.ts";
 import { seedLaunchWorkspaceTrust } from "../lib/seedLaunchWorkspaceTrust.ts";
-import { taskSupportsCompletionCommand } from "../lib/sourceCapabilities.ts";
+import { summarizeSource, taskSupportsCompletionCommand } from "../lib/sourceCapabilities.ts";
 import {
   removeStagedPrompt,
   stageBuildSecrets,
@@ -36,6 +36,7 @@ export interface ResumeWorkspaceOptions {
 interface TaskDetails {
   title: string;
   description: string;
+  url?: string;
 }
 
 interface ResumeContext {
@@ -45,6 +46,7 @@ interface ResumeContext {
   worktree: WorktreeEntry;
   title: string;
   description: string;
+  url?: string;
   completionTaskId: string;
   completionMarkDoneSupported: boolean;
   reason?: string;
@@ -74,6 +76,7 @@ async function fetchTaskDetails(task: string): Promise<TaskDetails | undefined> 
     return {
       title: issue.title,
       description: issue.description ?? "",
+      url: issue.url,
     };
   } catch (error) {
     log(`Resume Linear detail lookup failed for ${task}: ${errorMessage(error)}`);
@@ -95,6 +98,7 @@ async function contextFromLinear(
     worktree,
     title: resolved.title,
     description: resolved.description,
+    url: resolved.url,
     completionTaskId,
     completionMarkDoneSupported: taskSupportsCompletionCommand({
       rawSources: sourcesFromConfig(config),
@@ -115,6 +119,9 @@ async function contextFromState(
   // enrich the prompt title/description (which falls back to the task id).
   const details = isLinearEnabled(config) ? await fetchTaskDetails(task) : undefined;
   const completionTaskId = state.completionTaskId ?? task;
+  const url =
+    state.url ??
+    (taskUsesLinearSource({ config, taskId: completionTaskId }) ? details?.url : undefined);
   return {
     task,
     repository: state.repository,
@@ -125,6 +132,7 @@ async function contextFromState(
     worktree: { ...worktree, branchName: state.branchName },
     title: details?.title ?? state.title ?? task.toUpperCase(),
     description: details?.description ?? "",
+    ...(url === undefined ? {} : { url }),
     completionTaskId,
     completionMarkDoneSupported: taskSupportsCompletionCommand({
       rawSources: sourcesFromConfig(config),
@@ -133,6 +141,25 @@ async function contextFromState(
     ...(state.reason === undefined ? {} : { reason: state.reason }),
     resumeCount: state.resumeCount,
   };
+}
+
+function taskUsesLinearSource(arguments_: { config: ResolvedConfig; taskId: string }): boolean {
+  const { config, taskId } = arguments_;
+  const rawSources = sourcesFromConfig(config);
+  const colonIndex = taskId.indexOf(":");
+  if (colonIndex === -1) {
+    const [singleSource] = rawSources;
+    return (
+      rawSources.length === 1 &&
+      singleSource !== undefined &&
+      summarizeSource(singleSource).kind === "linear"
+    );
+  }
+  const sourceName = taskId.slice(0, colonIndex);
+  return rawSources.some((rawSource) => {
+    const source = summarizeSource(rawSource);
+    return source.name === sourceName && source.kind === "linear";
+  });
 }
 
 async function buildResumeContext(config: ResolvedConfig, task: string): Promise<ResumeContext> {
@@ -274,6 +301,7 @@ export async function resumeWorkspace(
       config,
       name: task,
       displayName: context.title,
+      ...(context.url === undefined ? {} : { url: context.url }),
       cwd: launchDir,
       command: launchCmd,
       agent: context.agent,
@@ -296,6 +324,7 @@ export async function resumeWorkspace(
       state: "resumed",
       resumeCount: context.resumeCount + 1,
       completionTaskId: context.completionTaskId,
+      ...(context.url === undefined ? {} : { url: context.url }),
       ...(context.reason === undefined ? {} : { reason: context.reason }),
     },
   });

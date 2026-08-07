@@ -45,7 +45,7 @@ export function resolveSafehouseClearancePath(baseUrl: string = import.meta.url)
   } catch (error) {
     throw new Error(
       "@clipboard-health/clearance is required by @clipboard-health/groundcrew but could not be resolved. " +
-        "Install it alongside groundcrew (for example: `npm install -g @clipboard-health/clearance`).",
+        "Install it alongside groundcrew (for example: 'npm install -g @clipboard-health/clearance').",
       { cause: error },
     );
   }
@@ -569,12 +569,12 @@ export function buildLaunchCommand(arguments_: LaunchCommandArguments): string {
     // user owns env forwarding in that case, so there's no wrap flag for us to
     // inject into. Fail loudly instead of silently dropping the contract.
     throw new Error(
-      "preLaunchEnv cannot be injected when `cmd` starts with `safehouse` — your cmd owns the wrap, so add the names to its own `--env-pass=` flag, or drop the `safehouse` prefix from `cmd` to let groundcrew compose the flag for you.",
+      "preLaunchEnv cannot be injected when 'cmd' starts with 'safehouse' — your cmd owns the wrap, so add the names to its own '--env-pass=' flag, or drop the 'safehouse' prefix from 'cmd' to let groundcrew compose the flag for you.",
     );
   }
   if (arguments_.workerEnvironment !== undefined && arguments_.runner === "safehouse") {
     throw new Error(
-      "workerEnvironment cannot be injected when `cmd` starts with `safehouse` — your cmd owns the wrap, so add GROUNDCREW_TASK_ID,GROUNDCREW_COMPLETE to its own `--env-pass=` flag, or drop the `safehouse` prefix from `cmd` to let groundcrew compose the flag for you.",
+      "workerEnvironment cannot be injected when 'cmd' starts with 'safehouse' — your cmd owns the wrap, so add GROUNDCREW_TASK_ID,GROUNDCREW_COMPLETE to its own '--env-pass=' flag, or drop the 'safehouse' prefix from 'cmd' to let groundcrew compose the flag for you.",
     );
   }
   return buildUnwrappedHostLaunchCommand(arguments_);

@@ -698,7 +698,7 @@ function describeDirtyWorktree(arguments_: {
   }
   const summary = parts.join(" and ");
   const pronoun = modified + untracked === 1 ? "it" : "them";
-  return `worktree has ${summary}. Run \`crew cleanup --force ${task}\` to discard ${pronoun}, or commit/stash in ${dir} first.`;
+  return `worktree has ${summary}. Run 'crew cleanup --force ${task}' to discard ${pronoun}, or commit/stash in ${dir} first.`;
 }
 
 type WorktreeRegistration = "registered" | "orphan" | "unknown";
@@ -732,7 +732,7 @@ async function probeWorktreeRegistration(arguments_: {
 
 function describeOrphanWorktree(arguments_: { task: string; dir: string }): string {
   const { task, dir } = arguments_;
-  return `directory exists but is not a registered git worktree. Run \`crew cleanup --force ${task}\` to remove ${dir}, or inspect it first if it may contain valuable files.`;
+  return `directory exists but is not a registered git worktree. Run 'crew cleanup --force ${task}' to remove ${dir}, or inspect it first if it may contain valuable files.`;
 }
 
 function expectedHostWorktreeDir(config: ResolvedConfig, entry: WorktreeEntry): string {

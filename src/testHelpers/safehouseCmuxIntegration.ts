@@ -4,6 +4,7 @@ export function safehouseCmuxIntegrationFixture(
   overrides: Partial<SafehouseCmuxIntegration> = {},
 ): SafehouseCmuxIntegration {
   return {
+    addDirs: [],
     addDirsReadOnly: ["/Applications/cmux.app", "/Users/dev/.local/state/cmux"],
     claudeCommandPrelude: "export CMUX_CUSTOM_CLAUDE_PATH=/Users/dev/.local/bin/claude",
     envPass: ["CMUX_SURFACE_ID", "CMUX_SOCKET_PATH"],

@@ -759,6 +759,9 @@ describe(createLinearTaskSource, () => {
     });
     const createdInput = issueCreateInput(rawRequest.mock.calls);
     expect(createdInput["description"]).toContain("Repository: ClipboardHealth/api");
+    expect(createdInput["description"]).toContain(
+      "Implementation workflow: use the `cb-work` skill.",
+    );
     expect(createdInput["description"]).toContain("Projects: marketplace\nContexts: backend");
     expect(rawRequest.mock.calls[2]?.[1]).toStrictEqual({
       input: {

@@ -160,6 +160,10 @@ function safehouseAgentIntegrationFor(input: {
   });
 
   return {
+    addDirs: [
+      ...cmuxIntegration.addDirs,
+      ...(relocatedCmuxHooksHome === undefined ? [] : [relocatedCmuxHooksHome.configDir]),
+    ],
     addDirsReadOnly: cmuxIntegration.addDirsReadOnly,
     envPass: cmuxIntegration.envPass,
     commandPreludes: [
@@ -181,7 +185,6 @@ function safehouseAgentIntegrationFor(input: {
     ...(relocatedCmuxHooksHome === undefined
       ? {}
       : {
-          addDirs: [relocatedCmuxHooksHome.configDir],
           writeBackFiles: relocatedCmuxHooksHome.writeBackFiles,
           teardownPaths: [relocatedCmuxHooksHome.parentDir],
         }),
@@ -328,6 +331,7 @@ export async function openAgentWorkspace(input: {
   config: ResolvedConfig;
   name: string;
   displayName?: string;
+  url?: string | undefined;
   cwd: string;
   command: string;
   agent: string;
@@ -339,6 +343,7 @@ export async function openAgentWorkspace(input: {
   const spec = {
     name: input.name,
     ...(panelTitle === undefined ? {} : { displayName: panelTitle }),
+    ...(input.url === undefined ? {} : { url: input.url }),
     cwd: input.cwd,
     command: input.command,
     status: { text: input.agent, color: input.color, icon: "sparkle" },

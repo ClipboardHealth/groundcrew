@@ -670,7 +670,7 @@ describe(doctor, () => {
     expect(actual).toBe(true);
     expect(consoleLog.output()).toContain("local runner (safehouse)");
     expect(consoleLog.output()).toContain(
-      "safehouse runner requires macOS with `safehouse` on PATH",
+      "safehouse runner requires macOS with 'safehouse' on PATH",
     );
     expect(consoleLog.output().match(/local runner \(safehouse\)/g)).toHaveLength(1);
   });
@@ -694,7 +694,7 @@ describe(doctor, () => {
     expect(actual).toBe(true);
     expect(consoleLog.output()).toContain("requested: auto → resolved: sdx");
     expect(consoleLog.output()).toContain("local runner (sdx)");
-    expect(consoleLog.output()).not.toContain("sdx runner requires `sbx`");
+    expect(consoleLog.output()).not.toContain("sdx runner requires 'sbx'");
   });
 
   it("reports the sdx runner as missing when sbx is not on PATH", async () => {
@@ -715,7 +715,7 @@ describe(doctor, () => {
 
     expect(actual).toBe(true);
     expect(consoleLog.output()).toContain("local runner (sdx)");
-    expect(consoleLog.output()).toContain("sdx runner requires `sbx`");
+    expect(consoleLog.output()).toContain("sdx runner requires 'sbx'");
   });
 
   it("surfaces a WARNING when local.runner is configured to 'none'", async () => {
@@ -925,7 +925,7 @@ describe(doctor, () => {
     expect(actual).toBe(true);
     const lines = consoleLog.output();
     expect(lines).toContain("Local runner");
-    expect(lines).toContain("sdx runner requires `sbx`");
+    expect(lines).toContain("sdx runner requires 'sbx'");
     expect(lines).toMatch(/requested=auto, resolved=cmux/);
     expect(checkedCommands()).toContain("cmux");
     expect(checkedCommands()).not.toContain("tmux");

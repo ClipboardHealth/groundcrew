@@ -1316,7 +1316,7 @@ describe(buildLaunchCommand, () => {
             },
           }),
         ),
-      ).toThrow(/preLaunchEnv cannot be injected when `cmd` starts with `safehouse`/);
+      ).toThrow(/preLaunchEnv cannot be injected when 'cmd' starts with 'safehouse'/);
     });
 
     it("throws when workerEnvironment is set with a cmd that already starts with safehouse", () => {
@@ -1330,7 +1330,7 @@ describe(buildLaunchCommand, () => {
             workerEnvironment: WORKER_ENVIRONMENT,
           }),
         ),
-      ).toThrow(/workerEnvironment cannot be injected when `cmd` starts with `safehouse`/);
+      ).toThrow(/workerEnvironment cannot be injected when 'cmd' starts with 'safehouse'/);
     });
 
     it("treats preLaunchEnv: [] as a no-op when cmd already starts with safehouse", () => {
