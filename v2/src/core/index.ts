@@ -71,6 +71,10 @@ export interface DoctorResult {
   readonly sources: readonly SourceHealth[];
 }
 
+export interface DoctorInput {
+  readonly onPrerequisiteChecks?: ((checks: readonly HealthCheck[]) => void) | undefined;
+}
+
 export type VerdictReason =
   | "blocked"
   | "slots-full"
@@ -105,7 +109,7 @@ export interface StatusEntry {
 }
 
 export interface Application {
-  doctor(): Promise<DoctorResult>;
+  doctor(input?: DoctorInput): Promise<DoctorResult>;
   start(input: {
     readonly task?: string | undefined;
     readonly force: boolean;
@@ -170,8 +174,8 @@ export async function createApplication(input: {
   const runtime: Runtime = { config, environment, paths, registry, runs, workspaces };
   await reconcile({ runtime });
   return {
-    async doctor(): Promise<DoctorResult> {
-      return await doctor({ runtime });
+    async doctor(doctorInput = {}): Promise<DoctorResult> {
+      return await doctor({ ...doctorInput, runtime });
     },
     async start(
       startInput,
@@ -202,7 +206,7 @@ export async function createApplication(input: {
   };
 }
 
-async function doctor(input: { readonly runtime: Runtime }): Promise<DoctorResult> {
+async function doctor(input: DoctorInput & { readonly runtime: Runtime }): Promise<DoctorResult> {
   const { runtime } = input;
   const checks: HealthCheck[] = [
     {
@@ -225,6 +229,7 @@ async function doctor(input: { readonly runtime: Runtime }): Promise<DoctorResul
       ok: available,
     });
   }
+  input.onPrerequisiteChecks?.(checks);
   const sources = await runtime.registry.health();
   return {
     checks,

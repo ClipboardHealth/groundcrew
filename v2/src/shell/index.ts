@@ -115,10 +115,14 @@ export async function main(input: MainInput): Promise<void> {
         environment,
         paths: loaded.paths,
       });
-      const result = await application.doctor();
-      for (const check of result.checks) {
-        process.stdout.write(`${check.ok ? "✓" : "✗"} ${check.name}: ${check.detail}\n`);
-      }
+      const result = await application.doctor({
+        onPrerequisiteChecks(checks) {
+          for (const check of checks) {
+            process.stdout.write(`${check.ok ? "✓" : "✗"} ${check.name}: ${check.detail}\n`);
+          }
+          process.stdout.write("… waiting for live source probes\n");
+        },
+      });
       for (const source of result.sources) {
         process.stdout.write(
           `${source.name} (${source.origin}, protocol ${source.protocolVersion ?? "unknown"})\n`,

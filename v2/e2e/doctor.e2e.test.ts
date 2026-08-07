@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -26,6 +26,37 @@ describe("crew doctor", () => {
     expect(result.stdout).toContain("fixture (user, protocol 1)");
     expect(result.stdout).toContain("live list probe");
     expect(result.stdout).toContain("healthy");
+  });
+
+  it("shows prerequisite checks while live source probes are still running", async () => {
+    const fixture = await createFixture({ waitForListRelease: true });
+    const child = spawn("bin/run.js", ["doctor"], {
+      cwd: process.cwd(),
+      env: fixture.environment,
+    });
+    let stdout = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    const completed = new Promise<number | null>((resolvePromise, reject) => {
+      child.once("error", reject);
+      child.once("close", resolvePromise);
+    });
+
+    try {
+      await waitForOutput({ expected: "waiting for live source probes", read: () => stdout });
+
+      expect(child.exitCode).toBeNull();
+      expect(stdout).toContain("✓ Node.js 24+");
+      expect(stdout).toContain("✓ git: available");
+      expect(stdout).not.toContain("live list probe: healthy");
+    } finally {
+      await writeFile(fixture.listReleasePath, "release\n");
+    }
+
+    const exitCode = await completed;
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("live list probe: healthy");
   });
 
   it("names missing secrets and unsupported protocol versions", async () => {
@@ -119,14 +150,16 @@ async function createFixture(
     readonly prerequisiteFromManifest?: boolean | undefined;
     readonly protocolVersion?: number | undefined;
     readonly secrets?: readonly string[] | undefined;
+    readonly waitForListRelease?: boolean | undefined;
   } = {},
-): Promise<{ readonly environment: NodeJS.ProcessEnv }> {
+): Promise<{ readonly environment: NodeJS.ProcessEnv; readonly listReleasePath: string }> {
   const root = await mkdtemp(join(tmpdir(), "groundcrew-v2-doctor-"));
   fixtureRoots.push(root);
   const configHome = join(root, "config");
   const kind = options.kind ?? "fixture";
   const sourceDirectory = join(configHome, "groundcrew", "task-sources", kind);
   const tasksPath = join(root, "tasks.json");
+  const listReleasePath = join(root, "list-release");
   const updatesPath = join(root, "updates.jsonl");
   const prerequisiteDirectory = join(root, "prerequisites");
   const fakeBin = join(process.cwd(), "e2e", "fixtures", "fake-bin");
@@ -181,10 +214,27 @@ async function createFixture(
       ...process.env,
       FIXTURE_TASKS: tasksPath,
       FIXTURE_UPDATES: updatesPath,
+      ...(options.waitForListRelease === true ? { FIXTURE_LIST_RELEASE: listReleasePath } : {}),
       GROUNDCREW_CONFIG: configPath,
       PATH: `${fakeBin}:${process.env["PATH"]}`,
       XDG_CONFIG_HOME: configHome,
       XDG_STATE_HOME: join(root, "state"),
     },
+    listReleasePath,
   };
+}
+
+async function waitForOutput(input: {
+  readonly expected: string;
+  readonly read: () => string;
+}): Promise<void> {
+  const deadline = Date.now() + 2_000;
+  while (!input.read().includes(input.expected)) {
+    if (Date.now() >= deadline) {
+      throw new Error(`timed out waiting for output: ${input.expected}`);
+    }
+    await new Promise((resolvePromise) => {
+      setTimeout(resolvePromise, 10);
+    });
+  }
 }
