@@ -112,7 +112,7 @@ crew task get <TASK> [--source <name>] [--prompt]        # inspect one task or i
 crew task create "Title" --source <name> [--agent <name>] # create a source task
 crew task done <TASK> [--allow-dirty]                    # mark a no-PR task done
 crew task validate [<source>]                            # validate task content
-crew status [<TASK>]                                   # inspect current state or one task
+crew status [<TASK>] [--json [--local-only]]           # inspect current state, or emit it as JSON
 crew run [--watch]                                       # one-shot or --watch forever
 crew start <TASK>                                      # provision + launch one task now
 crew stop <TASK> [--reason <text>]                     # stop workspace, keep worktree
@@ -126,6 +126,50 @@ crew completions <bash|zsh|fish>                        # print a shell completi
 ```
 
 See [command details](./docs/commands.md) for status output, doctor behavior, and the stop/resume workflow.
+
+### Status snapshots for external monitors
+
+`crew status --json` prints two documents and writes them beside the log file:
+
+```text
+<state-dir>/status-local.json     # worktrees, run states, sessions, git status
+<state-dir>/status-remote.json    # board, pull requests
+```
+
+The two are split by cost. The local tier is local subprocess work, so it is
+safe to poll every few seconds. The remote tier is network-bound and
+rate-limited, so poll it near your `pollIntervalMilliseconds`.
+
+```bash
+crew status --json                # both tiers
+crew status --json --local-only   # local tier only; never touches the network
+```
+
+`--local-only` is a guarantee about that invocation, not a computed outcome, so
+a monitor's fast loop cannot stall on a slow board or a `gh` timeout.
+
+Three rules a reader must honor:
+
+- **Subtract locally.** `status-remote.json` ships board classification without
+  the local worktree subtraction. Remove tasks present in the local document
+  from `inProgress`, `queueReady`, and `queueBlocked` yourself. Precomputing
+  that join would report a just-dispatched task as still queued until the next
+  slow poll, which is a false statement rather than stale data.
+- **Join pull requests on the worktree directory.** `pullRequestsByWorktree` is
+  keyed by absolute worktree path, not by task, because a task with two
+  worktrees has two branches. An empty or missing entry means no pull requests
+  were found, or the `gh` lookup for that worktree failed; the two are not
+  distinguishable.
+- **Read the right timestamp.** `payload.capturedAt` describes the last
+  successful fetch; `lastAttemptAt` describes the most recent try. Read
+  `lastAttemptStatus` to answer "is the board healthy", and `capturedAt` to
+  answer "how old is this queue". A failed fetch keeps the previous payload, so
+  last-known-good data survives an outage while the document still says the
+  board is unreachable.
+
+Durations are never stored, only start instants, so a reader must derive
+elapsed time itself. A cached duration would show a frozen clock, which reads
+as "the agent stopped working" when it did not.
 
 ## Configuration
 

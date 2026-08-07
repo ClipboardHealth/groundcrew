@@ -190,7 +190,7 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
   },
   status: {
     summary: "Print read-only groundcrew state, or one task's local/Linear status",
-    usage: "[<task>]",
+    usage: "[<task>] [--json [--local-only]]",
     invoke: statusCli,
   },
   cleanup: {
