@@ -31,7 +31,7 @@ If a referenced skill is missing or unreadable, run `npm ci` from the repository
 
 1. Use red, green, refactor test-driven development
 2. Validate changes with at least `node --run verify`
-3. Invoke core:go skill for ALL code changes
+3. Invoke cb-work skill for ALL code changes
 4. To exercise the `crew` CLI against the local checkout, run it via the npm script: `node --run crew -- <args>` (e.g. `node --run crew -- cleanup ENG-123`). The globally-installed `crew` binary runs the published version and will not reflect your in-progress changes. See [Development](./README.md#development) for the `crew:op` 1Password variant.
 
 ### Vitest coverage ignores

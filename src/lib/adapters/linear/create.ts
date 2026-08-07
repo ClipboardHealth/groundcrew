@@ -143,7 +143,15 @@ function resolveCreateRepository(arguments_: {
     description: `Repository: ${input.repository}`,
     config,
   });
-  if (resolution.kind === "missing") {
+  // `resolveRepositoryFor` reports an unconfigured *declared* repo as
+  // { kind: "ok", repository: <asserted name> } (the dispatch path relies on
+  // that so the host can WARN+skip it by name). Create is a manual, must-be-
+  // valid operation, so reject anything that didn't canonicalize to a known
+  // repository rather than routing a task at an unconfigured worktree.
+  if (
+    resolution.kind === "missing" ||
+    !config.workspace.knownRepositories.includes(resolution.repository)
+  ) {
     throw new Error(
       `linear: repository "${input.repository}" is not in workspace.knownRepositories`,
     );
@@ -198,7 +206,7 @@ function buildLinearDescription(arguments_: {
     "## Groundcrew",
     "",
     `Repository: ${repository}`,
-    "Implementation workflow: use the `core:go`/`go` skill when available. If that skill is unavailable, follow this repo's AGENTS.md/CLAUDE.md implementation workflow and run the documented verification.",
+    "Implementation workflow: use the `cb-work` skill. Follow this repo's AGENTS.md/CLAUDE.md implementation workflow and run the documented verification.",
     "",
     "## Task",
     "",

@@ -40,21 +40,28 @@ export const cmuxAdapter: Adapter = {
     const workspaceId = extractCmuxOpenId(output);
     if (workspaceId === undefined) {
       log(
-        `cmux new-workspace returned unrecognized output for ${spec.name}; if a workspace was created, run \`cmux close-workspace\` manually.`,
+        `cmux new-workspace returned unrecognized output for ${spec.name}; if a workspace was created, run 'cmux close-workspace' manually.`,
       );
       throw new Error(`Unexpected cmux output: ${output}`);
     }
+    if (spec.url !== undefined) {
+      await applyCmuxStatusBestEffort({
+        workspaceId,
+        key: "task",
+        status: { text: cmuxTaskLinkText(spec.url) },
+        format: "markdown",
+        workspaceName: spec.name,
+        signal,
+      });
+    }
     if (spec.status !== undefined) {
-      try {
-        await applyCmuxStatus(workspaceId, spec.status, signal);
-      } catch (error) {
-        // Status pills are best-effort. cmux v2+ dropped `set-status` entirely,
-        // so swallow that specific gap silently; surface anything else so a real
-        // regression doesn't hide behind the same swallow.
-        if (!isCmuxSetStatusUnsupported(error)) {
-          debug(`cmux set-status failed for ${spec.name} (continuing): ${errorMessage(error)}`);
-        }
-      }
+      await applyCmuxStatusBestEffort({
+        workspaceId,
+        key: "agent",
+        status: spec.status,
+        workspaceName: spec.name,
+        signal,
+      });
     }
   },
   async list(signal) {
@@ -201,20 +208,59 @@ function extractCmuxOpenId(output: string): string | undefined {
   return match ? match[0] : undefined;
 }
 
-async function applyCmuxStatus(
-  workspaceId: string,
-  status: WorkspaceStatus,
-  signal?: AbortSignal,
-): Promise<void> {
-  const arguments_ = ["set-status", "agent", status.text];
+interface CmuxStatusInput {
+  workspaceId: string;
+  key: "agent" | "task";
+  status: WorkspaceStatus;
+  format?: "plain" | "markdown";
+  workspaceName: string;
+  signal?: AbortSignal | undefined;
+}
+
+async function applyCmuxStatusBestEffort(input: CmuxStatusInput): Promise<void> {
+  try {
+    await applyCmuxStatus(input);
+  } catch (error) {
+    // Sidebar metadata is best-effort. cmux v2+ dropped `set-status` entirely,
+    // so swallow that specific gap silently; surface anything else so a real
+    // regression doesn't hide behind the same swallow.
+    if (!isCmuxSetStatusUnsupported(error)) {
+      debug(
+        `cmux set-status failed for ${input.workspaceName} (continuing): ${errorMessage(error)}`,
+      );
+    }
+  }
+}
+
+async function applyCmuxStatus(input: Omit<CmuxStatusInput, "workspaceName">): Promise<void> {
+  const arguments_ = ["set-status", input.key, input.status.text];
+  const { status } = input;
   if (status.icon !== undefined) {
     arguments_.push("--icon", status.icon);
   }
   if (status.color !== undefined) {
     arguments_.push("--color", status.color);
   }
-  arguments_.push("--workspace", workspaceId);
-  await runWorkspaceCommand("cmux", arguments_, signal);
+  if (input.format !== undefined) {
+    arguments_.push("--format", input.format);
+  }
+  arguments_.push("--workspace", input.workspaceId);
+  await runWorkspaceCommand("cmux", arguments_, input.signal);
+}
+
+function cmuxTaskLinkText(url: string): string {
+  let label: string;
+  try {
+    label = new URL(url).hostname === "linear.app" ? "Linear ↗" : "Issue ↗";
+  } catch {
+    label = "Issue ↗";
+  }
+  const markdownUrl = url
+    .replaceAll("\\", "\\\\")
+    .replaceAll(")", "\\)")
+    .replaceAll("\r", "%0D")
+    .replaceAll("\n", "%0A");
+  return `[${label}](${markdownUrl})`;
 }
 
 /**
@@ -309,7 +355,7 @@ async function closeWorkspaceLeakedByFailedOpen(
     );
   } catch (closeError) {
     log(
-      `cmux new-workspace for ${name} exited non-zero and left workspace ${workspaceId}; automatic close failed (${errorMessage(closeError)}). Run \`cmux close-workspace --workspace ${workspaceId}\` by hand.`,
+      `cmux new-workspace for ${name} exited non-zero and left workspace ${workspaceId}; automatic close failed (${errorMessage(closeError)}). Run 'cmux close-workspace --workspace ${workspaceId}' by hand.`,
     );
   }
 }

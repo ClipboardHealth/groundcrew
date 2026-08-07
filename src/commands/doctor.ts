@@ -400,7 +400,7 @@ function localCapabilityCheck(host: HostCapabilities, resolved: LocalRunner): Ch
       required: false,
       hint: ok
         ? "ready"
-        : "safehouse runner requires macOS with `safehouse` on PATH (install from https://agent-safehouse.dev/)",
+        : "safehouse runner requires macOS with 'safehouse' on PATH (install from https://agent-safehouse.dev/)",
     };
   }
   if (resolved === "sdx") {
@@ -411,7 +411,7 @@ function localCapabilityCheck(host: HostCapabilities, resolved: LocalRunner): Ch
       required: false,
       hint: ok
         ? "ready"
-        : "sdx runner requires `sbx` (Docker Sandboxes) on PATH (install from https://docs.docker.com/ai/sandboxes/)",
+        : "sdx runner requires 'sbx' (Docker Sandboxes) on PATH (install from https://docs.docker.com/ai/sandboxes/)",
     };
   }
   // resolved === "none"

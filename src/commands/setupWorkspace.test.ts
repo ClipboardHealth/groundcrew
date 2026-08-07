@@ -468,6 +468,18 @@ describe(setupWorkspace, () => {
       state: "running",
       url: "https://linear.app/example/issue/TEAM-1",
     });
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "cmux",
+      expect.arrayContaining([
+        "set-status",
+        "task",
+        "[Linear ↗](https://linear.app/example/issue/TEAM-1)",
+        "--format",
+        "markdown",
+        "--workspace",
+        "workspace:42",
+      ]),
+    );
   });
 
   it("grants matching todo-txt source paths to the worker completion sandbox", async () => {
@@ -1397,7 +1409,7 @@ describe(setupWorkspace, () => {
         agent: "claude",
         details: { title: "Test Title", description: "Body" },
       }),
-    ).rejects.toThrow(/sdx runner require `sbx`/);
+    ).rejects.toThrow(/sdx runner require 'sbx'/);
 
     expect(createMock).not.toHaveBeenCalled();
     expect(ensureClearanceMock).not.toHaveBeenCalled();
@@ -1572,7 +1584,7 @@ describe(setupWorkspace, () => {
         agent: "claude",
         details: { title: "Test Title", description: "Body" },
       }),
-    ).rejects.toThrow(/require `safehouse` on PATH/);
+    ).rejects.toThrow(/require 'safehouse' on PATH/);
 
     expect(createMock).not.toHaveBeenCalled();
     expect(ensureClearanceMock).not.toHaveBeenCalled();

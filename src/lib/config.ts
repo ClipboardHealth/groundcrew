@@ -964,7 +964,7 @@ function normalizeSandbox(value: unknown, configKey: string): SandboxDefinition 
 function failRemovedConfigKey(configKey: string, reason: string): never {
   fail(
     `${configKey} is no longer supported: ${reason} ` +
-      "Provision and manage the sandbox yourself with `sbx` (for example `sbx create --name groundcrew-<agent> <agent> <projectDir>`), then keep only `agents.definitions.<agent>.sandbox.agent` in crew.config.ts.",
+      "Provision and manage the sandbox yourself with 'sbx' (for example 'sbx create --name groundcrew-<agent> <agent> <projectDir>'), then keep only 'agents.definitions.<agent>.sandbox.agent' in crew.config.ts.",
   );
 }
 
