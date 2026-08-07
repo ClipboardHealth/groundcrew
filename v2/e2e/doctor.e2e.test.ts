@@ -76,13 +76,40 @@ describe("crew doctor", () => {
     expect(result.stdout).toContain("linear (user, protocol 1)");
     expect(result.stdout).toContain("live list probe: healthy");
   });
+
+  it("rejects duplicate source names before dispatch", async () => {
+    const fixture = await createFixture({ duplicateSourceName: true });
+
+    await expect(
+      execFileAsync(process.execPath, ["bin/run.js", "start"], {
+        cwd: process.cwd(),
+        env: fixture.environment,
+      }),
+    ).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining("duplicate configured source name 'fixture'"),
+    });
+  });
+
+  it("resolves prerequisites from the merged source environment", async () => {
+    const fixture = await createFixture({ prerequisiteFromManifest: true });
+
+    const result = await execFileAsync(process.execPath, ["bin/run.js", "doctor"], {
+      cwd: process.cwd(),
+      env: fixture.environment,
+    });
+
+    expect(result.stdout).toContain("live list probe: healthy");
+  });
 });
 
 async function createFixture(
   options: {
     readonly commands?: Readonly<Record<string, string>> | undefined;
+    readonly duplicateSourceName?: boolean | undefined;
     readonly manifestContents?: string | undefined;
     readonly kind?: string | undefined;
+    readonly prerequisiteFromManifest?: boolean | undefined;
     readonly protocolVersion?: number | undefined;
     readonly secrets?: readonly string[] | undefined;
   } = {},
@@ -93,23 +120,34 @@ async function createFixture(
   const sourceDirectory = join(configHome, "groundcrew", "task-sources", kind);
   const tasksPath = join(root, "tasks.json");
   const updatesPath = join(root, "updates.jsonl");
+  const prerequisiteDirectory = join(root, "prerequisites");
   const fakeBin = join(process.cwd(), "e2e", "fixtures", "fake-bin");
   await mkdir(dirname(sourceDirectory), { recursive: true });
   await cp("e2e/fixtures/source", sourceDirectory, { recursive: true });
+  if (options.prerequisiteFromManifest === true) {
+    await mkdir(prerequisiteDirectory, { recursive: true });
+    await writeFile(join(prerequisiteDirectory, "fixture-prerequisite"), "#!/bin/sh\nexit 0\n", {
+      mode: 0o755,
+    });
+  }
   if (options.manifestContents !== undefined) {
     await writeFile(join(sourceDirectory, "source.json"), options.manifestContents);
   } else if (
     options.commands !== undefined ||
     options.protocolVersion !== undefined ||
+    options.prerequisiteFromManifest === true ||
     options.secrets !== undefined
   ) {
     await writeFile(
       join(sourceDirectory, "source.json"),
       JSON.stringify({
         commands: options.commands ?? { get: "./get", list: "./list", update: "./update" },
-        environment: {},
+        environment:
+          options.prerequisiteFromManifest === true
+            ? { PATH: `${prerequisiteDirectory}:${process.env["PATH"]}` }
+            : {},
         name: "fixture",
-        prerequisites: [],
+        prerequisites: options.prerequisiteFromManifest === true ? ["fixture-prerequisite"] : [],
         protocolVersion: options.protocolVersion ?? 1,
         secrets: options.secrets ?? [],
       }),
@@ -121,7 +159,12 @@ async function createFixture(
     configPath,
     JSON.stringify({
       agents: { default: "codex", profiles: { codex: { kind: "codex" } } },
-      sources: [{ kind, name: kind }],
+      sources: options.duplicateSourceName
+        ? [
+            { kind, name: kind },
+            { kind, name: kind },
+          ]
+        : [{ kind, name: kind }],
       workspace: { baseDirectory: join(root, "dev") },
     }),
   );

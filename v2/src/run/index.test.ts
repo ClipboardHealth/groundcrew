@@ -1,8 +1,8 @@
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { RunStore, seedWorkspaceTrust } from "./index.js";
+import { RunStore, seedWorkspaceTrust, withFileLock } from "./index.js";
 
 describe("RunStore", () => {
   it("creates one durable run when initial writers race", async () => {
@@ -30,6 +30,27 @@ describe("RunStore", () => {
     });
     const stored = await store.get({ canonicalTaskId: "fixture:ENG-123" });
     expect(stored?.runId).toBe(fulfilled[0]?.value.runId);
+  });
+});
+
+describe("withFileLock", () => {
+  it("preserves the operation failure when releasing the lock also fails", async () => {
+    const root = await mkdtemp(join(tmpdir(), "groundcrew-v2-lock-release-"));
+    const lockPath = join(root, "run.lock");
+    const operationError = new Error("operation failed");
+
+    await expect(
+      withFileLock({
+        path: lockPath,
+        operation: async () => {
+          await rm(join(lockPath, "owner"));
+          await mkdir(join(lockPath, "owner"));
+          throw operationError;
+        },
+      }),
+    ).rejects.toBe(operationError);
+
+    await rm(lockPath, { force: true, recursive: true });
   });
 });
 

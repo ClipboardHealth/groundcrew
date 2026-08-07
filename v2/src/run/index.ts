@@ -223,9 +223,7 @@ export async function withFileLock<T>(input: {
       await new Promise((resolvePromise) => setTimeout(resolvePromise, 25));
     }
   }
-  try {
-    return await input.operation();
-  } finally {
+  const release = async (): Promise<void> => {
     try {
       if ((await readFile(ownerPath, "utf8")) === owner) {
         await rm(input.path, { recursive: true, force: true });
@@ -235,7 +233,16 @@ export async function withFileLock<T>(input: {
         throw error;
       }
     }
+  };
+  let result: T;
+  try {
+    result = await input.operation();
+  } catch (operationError) {
+    await release().catch(() => {});
+    throw operationError;
   }
+  await release();
+  return result;
 }
 
 export function taskSlug(input: { readonly canonicalTaskId: string }): string {

@@ -174,7 +174,16 @@ export class SourceRegistry {
           }
         }
         for (const prerequisite of bundle.manifest.prerequisites) {
-          if (!(await commandExists({ command: prerequisite, environment: this.#environment }))) {
+          if (
+            !(await commandExists({
+              command: prerequisite,
+              environment: {
+                ...this.#environment,
+                ...bundle.manifest.environment,
+                ...source.instance.environment,
+              },
+            }))
+          ) {
             errors.push(`missing prerequisite ${prerequisite}`);
           }
         }
@@ -229,7 +238,12 @@ export class SourceRegistry {
         ? failure({ message: `task ${input.canonicalTaskId} was not present in the latest list` })
         : { data: { task }, ok: true };
     }
-    const invoked = await this.invoke({ command, payload: { id: localId }, source });
+    const invoked = await this.invoke({
+      command,
+      payload: { id: localId },
+      source,
+      timeoutMilliseconds: 120_000,
+    });
     if (!invoked.ok) {
       return invoked;
     }
@@ -257,6 +271,8 @@ export class SourceRegistry {
     if (command === undefined) {
       return { data: { result: "ok" }, ok: true };
     }
+    // A mutation may have committed before its process exits. Do not turn that into an
+    // ambiguous timeout that reconciliation would retry without a protocol idempotency key.
     const invoked = await this.invoke({
       command,
       payload: { event: input.event, id: localId },
@@ -275,6 +291,9 @@ export class SourceRegistry {
     readonly source: RegisteredSource;
   }): Promise<Result<readonly Task[]>> {
     const { source } = input;
+    if (source.discoveryErrors.length > 0) {
+      return failure({ message: source.discoveryErrors.join("; ") });
+    }
     const command = source.bundle?.manifest.commands.list;
     if (command === undefined) {
       return failure({ message: source.discoveryErrors.join("; ") });
@@ -282,7 +301,12 @@ export class SourceRegistry {
     if (source.bundle?.manifest.protocolVersion !== 1) {
       return failure({ message: `source ${source.name} uses unsupported protocol version` });
     }
-    const invoked = await this.invoke({ command, payload: {}, source });
+    const invoked = await this.invoke({
+      command,
+      payload: {},
+      source,
+      timeoutMilliseconds: 120_000,
+    });
     if (!invoked.ok) {
       return invoked;
     }
@@ -300,6 +324,7 @@ export class SourceRegistry {
     readonly source: RegisteredSource;
     readonly command: string;
     readonly payload: unknown;
+    readonly timeoutMilliseconds?: number | undefined;
   }): Promise<Result<unknown>> {
     const { command, payload, source } = input;
     const bundle = source.bundle;
@@ -318,7 +343,7 @@ export class SourceRegistry {
         },
         input: JSON.stringify(payload),
         reject: false,
-        timeout: 120_000,
+        ...(input.timeoutMilliseconds === undefined ? {} : { timeout: input.timeoutMilliseconds }),
       });
       if (result.exitCode !== 0) {
         return failure({
@@ -350,8 +375,11 @@ export class SourceRegistry {
     const sourceName = input.canonicalTaskId.slice(0, separator);
     const localId = input.canonicalTaskId.slice(separator + 1);
     const source = this.#sources.find((candidate) => candidate.name === sourceName);
-    return source === undefined
-      ? failure({ message: `source ${sourceName} is not configured` })
+    if (source === undefined) {
+      return failure({ message: `source ${sourceName} is not configured` });
+    }
+    return source.discoveryErrors.length > 0
+      ? failure({ message: source.discoveryErrors.join("; ") })
       : { data: { localId, source }, ok: true };
   }
 }

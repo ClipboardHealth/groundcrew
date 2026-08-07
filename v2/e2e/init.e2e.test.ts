@@ -42,9 +42,19 @@ describe("crew init", () => {
         cwd: process.cwd(),
         env: { ...process.env, HOME: temporaryDirectory, XDG_CONFIG_HOME: configHome },
       }),
-    ).rejects.toMatchObject({ code: 1 });
+    ).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining("already exists; pass --yes to replace it"),
+    });
 
     expect(await readFile(configPath, "utf8")).toBe("existing config\n");
+
+    await execFileAsync(process.execPath, ["bin/run.js", "init", "--yes"], {
+      cwd: process.cwd(),
+      env: { ...process.env, HOME: temporaryDirectory, XDG_CONFIG_HOME: configHome },
+    });
+
+    expect(await readFile(configPath, "utf8")).toContain('"kind": "linear"');
   });
 
   it("prints help with a successful exit code", async () => {
