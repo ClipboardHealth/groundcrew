@@ -8,6 +8,33 @@ import { describe, expect, it } from "vitest";
 const execFileAsync = promisify(execFile);
 
 describe("crew start", () => {
+  it("reports open slots and the task being dispatched", async () => {
+    const fixture = await createDispatchFixture();
+
+    const result = await runCrew({ arguments: ["start"], environment: fixture.environment });
+
+    expect(result.stdout).toContain("Slots 0/1 used (1 open)");
+    expect(result.stdout).toContain("Dispatching fixture:ENG-123(codex) into slot 1/1");
+  });
+
+  it("summarizes full capacity without generic skipped-task lines", async () => {
+    const fixture = await createDispatchFixture({
+      tasks: [
+        task({ id: "LOW-1", priority: 4, repositories: [] }),
+        task({ id: "URGENT-1", priority: 1, repositories: [] }),
+      ],
+    });
+
+    const first = await runCrew({ arguments: ["start"], environment: fixture.environment });
+    const second = await runCrew({ arguments: ["start"], environment: fixture.environment });
+
+    expect(first.stdout).not.toContain("Skipped");
+    expect(second.stdout).toContain(
+      "At capacity (1/1) [fixture:URGENT-1(codex)], no new work to start",
+    );
+    expect(second.stdout).not.toContain("Skipped");
+  });
+
   it("claims, provisions, and launches a ready task exactly once", async () => {
     const fixture = await createDispatchFixture();
 
@@ -488,7 +515,7 @@ describe("crew start", () => {
       tasks: [task({ repositories: [], terminal: true })],
     });
 
-    const result = await runCrew({ arguments: ["start"], environment: fixture.environment });
+    await runCrew({ arguments: ["start"], environment: fixture.environment });
     const status = JSON.parse(
       (
         await runCrew({
@@ -498,7 +525,6 @@ describe("crew start", () => {
       ).stdout,
     );
 
-    expect(result.stdout).toContain("Skipped fixture:ENG-123");
     expect(status.tasks[0].verdict).toMatchObject({ reason: "terminal" });
   });
 

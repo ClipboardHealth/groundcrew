@@ -75,6 +75,27 @@ export interface DoctorInput {
   readonly onPrerequisiteChecks?: ((checks: readonly HealthCheck[]) => void) | undefined;
 }
 
+export interface DispatchSlotOccupant {
+  readonly canonicalTaskId: string;
+  readonly agentProfile: string;
+}
+
+export type DispatchProgress =
+  | {
+      readonly type: "slots";
+      readonly active: readonly DispatchSlotOccupant[];
+      readonly maximum: number;
+      readonly force: boolean;
+    }
+  | {
+      readonly type: "dispatching";
+      readonly canonicalTaskId: string;
+      readonly agentProfile: string;
+      readonly slot: number;
+      readonly maximum: number;
+      readonly forced: boolean;
+    };
+
 export type VerdictReason =
   | "blocked"
   | "slots-full"
@@ -114,6 +135,7 @@ export interface Application {
     readonly task?: string | undefined;
     readonly force: boolean;
     readonly agent?: string | undefined;
+    readonly onProgress?: ((progress: DispatchProgress) => void) | undefined;
   }): Promise<{ readonly started: readonly string[]; readonly skipped: readonly string[] }>;
   status(input: {
     readonly task?: string | undefined;
@@ -245,6 +267,7 @@ async function start(input: {
   readonly task?: string | undefined;
   readonly force: boolean;
   readonly agent?: string | undefined;
+  readonly onProgress?: ((progress: DispatchProgress) => void) | undefined;
 }): Promise<{ readonly started: readonly string[]; readonly skipped: readonly string[] }> {
   const { runtime } = input;
   await reconcile({ runtime });
@@ -268,9 +291,19 @@ async function start(input: {
   }
   const started: string[] = [];
   const skipped: string[] = [];
-  let activeCount = (await runtime.runs.list()).filter(
-    (run) => run.state === "provisioning" || run.state === "running",
-  ).length;
+  const active = (await runtime.runs.list())
+    .filter((run) => run.state === "provisioning" || run.state === "running")
+    .map((run) => ({
+      agentProfile: run.agentProfile,
+      canonicalTaskId: run.canonicalTaskId,
+    }));
+  let activeCount = active.length;
+  input.onProgress?.({
+    active,
+    force: input.force,
+    maximum: runtime.config.orchestrator.maximumInProgress,
+    type: "slots",
+  });
   for (const task of tasks) {
     const canonicalTaskId = canonicalId({ task });
     const slug = taskSlug({ canonicalTaskId });
@@ -355,6 +388,14 @@ async function start(input: {
       skipped.push(canonicalTaskId);
       continue;
     }
+    input.onProgress?.({
+      agentProfile: profileName,
+      canonicalTaskId,
+      forced: input.force && activeCount >= runtime.config.orchestrator.maximumInProgress,
+      maximum: runtime.config.orchestrator.maximumInProgress,
+      slot: activeCount + 1,
+      type: "dispatching",
+    });
     const workspaceDirectory = runtime.workspaces.workspaceDirectory({ slug });
     const record = await runtime.runs.create({
       agentProfile: profileName,
