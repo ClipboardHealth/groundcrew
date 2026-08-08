@@ -45,6 +45,19 @@ describe("the shipped Linear source", () => {
     expect(fixture.state.comments[1]).toContain("https://example.test/pr/1");
   });
 
+  it("returns a failed run to Todo", async () => {
+    await runCrew({ arguments: ["start", "LIN-1"], environment: fixture.environment });
+
+    await runCrew({
+      arguments: ["done", "--outcome", "failed", "--task", "LIN-1"],
+      environment: fixture.environment,
+    });
+
+    expect(fixture.state.stateName).toBe("Todo");
+    expect(fixture.state.stateType).toBe("unstarted");
+    expect(fixture.state.comments.at(-1)).toContain(":completed:failed]");
+  });
+
   it("paginates list queries beneath Linear's complexity limit", async () => {
     await fixture.close();
     fixture = await createLinearFixture({ listedTaskCount: 251 });
@@ -202,8 +215,13 @@ async function createLinearFixture(
         data = { commentCreate: { success: true } };
       } else if (body.operationName === "GroundcrewMove") {
         const stateId = body.variables.input.stateId;
-        state.stateName = stateId === "state-review" ? "In Review" : "In Progress";
-        state.stateType = "started";
+        state.stateName =
+          stateId === "state-review"
+            ? "In Review"
+            : stateId === "state-todo"
+              ? "Todo"
+              : "In Progress";
+        state.stateType = stateId === "state-todo" ? "unstarted" : "started";
         data = { issueUpdate: { success: true } };
       } else {
         response.statusCode = 400;
@@ -309,6 +327,7 @@ function linearIssue(input: {
     team: {
       states: {
         nodes: [
+          { id: "state-todo", name: "Todo", type: "unstarted" },
           { id: "state-progress", name: "In Progress", type: "started" },
           { id: "state-review", name: "In Review", type: "started" },
         ],

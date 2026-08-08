@@ -317,8 +317,16 @@ describe("crew start", () => {
     const runsDirectory = fixture.runsDirectory;
     const failed = JSON.parse(await readFile(join(runsDirectory, "fixture-eng-1.json"), "utf8"));
     const running = JSON.parse(await readFile(join(runsDirectory, "fixture-eng-2.json"), "utf8"));
+    const updates = (await readFile(fixture.updatesPath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
     expect(failed).toMatchObject({ outcome: "failed", state: "complete" });
     expect(running).toMatchObject({ state: "running" });
+    expect(updates).toContainEqual({
+      event: { artifacts: [], outcome: "failed", type: "completed" },
+      id: "ENG-1",
+    });
     expect(result.stdout).toContain("Started fixture:ENG-2");
   });
 
