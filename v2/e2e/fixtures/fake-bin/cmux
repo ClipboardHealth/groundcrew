@@ -49,6 +49,9 @@ if (command === "new-workspace") {
   process.stdout.write(JSON.stringify({ workspaces: state.workspaces }));
 } else if (command === "close-workspace") {
   const id = valueAfter("--workspace");
+  if (process.env.FAKE_CMUX_DIRTY_ON_CLOSE !== undefined) {
+    await writeFile(process.env.FAKE_CMUX_DIRTY_ON_CLOSE, "uncommitted\n");
+  }
   state.workspaces = state.workspaces.filter((workspace) => workspace.id !== id);
   await writeFile(statePath, JSON.stringify(state));
 } else if (command !== "set-progress") {

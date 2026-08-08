@@ -791,9 +791,20 @@ async function cleanup(input: {
     // Presenter closes before its underlying directories disappear.
     // eslint-disable-next-line no-await-in-loop
     await presenter.close({ name: record.presentedWorkspaceName });
-    // eslint-disable-next-line no-await-in-loop
-    const result = await runtime.workspaces.cleanup({ allowDirty: input.allowDirty, slug });
-    preservedBranches.push(...result.preservedBranches);
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const result = await runtime.workspaces.cleanup({ allowDirty: input.allowDirty, slug });
+      preservedBranches.push(...result.preservedBranches);
+    } catch (error) {
+      if (error instanceof DirtyWorkspaceError) {
+        throw cleanupRefusedError({
+          canonicalTaskId: record.canonicalTaskId,
+          paths: error.paths,
+          query: input.task,
+        });
+      }
+      throw error;
+    }
     if (record.writebackPending !== true) {
       // eslint-disable-next-line no-await-in-loop
       await runtime.runs.remove({ canonicalTaskId: record.canonicalTaskId });

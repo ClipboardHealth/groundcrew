@@ -315,6 +315,23 @@ describe("crew start", () => {
     await expect(stat(fixture.workspaceDirectory)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("explains how to force cleanup when the workspace becomes dirty while stopping", async () => {
+    const fixture = await createDispatchFixture();
+    await runCrew({ arguments: ["start"], environment: fixture.environment });
+    fixture.environment["FAKE_CMUX_DIRTY_ON_CLOSE"] = join(
+      fixture.workspaceDirectory,
+      "sample",
+      "late-dirty.txt",
+    );
+
+    await expect(
+      runCrew({ arguments: ["cleanup", "eng-123"], environment: fixture.environment }),
+    ).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringMatching(/late-dirty\.txt[\s\S]*crew cleanup eng-123 --force/),
+    });
+  });
+
   it("dispatches urgent tasks first and records the concurrency verdict", async () => {
     const fixture = await createDispatchFixture({
       tasks: [
