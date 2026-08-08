@@ -7,7 +7,7 @@ import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parse } from "jsonc-parser";
 import { z } from "zod";
-import { createApplication } from "../core/index.js";
+import { createApplication, type DispatchProgress } from "../core/index.js";
 
 const AgentProfileSchema = z.object({
   kind: z.enum(["claude", "codex"]),
@@ -77,6 +77,11 @@ export function configurationJsonSchema(): Record<string, unknown> {
 interface MainInput {
   readonly arguments: readonly string[];
   readonly environment: NodeJS.ProcessEnv;
+}
+
+interface RenderDispatchProgressInput {
+  readonly progress: DispatchProgress;
+  readonly showRoutineSkips: boolean;
 }
 
 interface PathContext {
@@ -158,13 +163,15 @@ export async function main(input: MainInput): Promise<void> {
         const result = await application.start({
           agent: options.agent,
           force: options.force === true,
+          onProgress: (progress) =>
+            renderDispatchProgress({
+              progress,
+              showRoutineSkips: task !== undefined && options.watch !== true,
+            }),
           task,
         });
         for (const canonicalTaskId of result.started) {
           process.stdout.write(`Started ${canonicalTaskId}\n`);
-        }
-        for (const canonicalTaskId of result.skipped) {
-          process.stdout.write(`Skipped ${canonicalTaskId}\n`);
         }
         if (options.watch !== true) {
           break;
@@ -457,6 +464,50 @@ async function readTaskMarker(input: {
     }
     throw error;
   }
+}
+
+function renderDispatchProgress(input: RenderDispatchProgressInput): void {
+  const { progress, showRoutineSkips } = input;
+  if (progress.type === "skipped") {
+    if (
+      progress.reason === "slots-full" ||
+      (progress.reason === "run-exists" && !showRoutineSkips)
+    ) {
+      return;
+    }
+    process.stdout.write(
+      `Skipping ${progress.canonicalTaskId}: ${progress.reason} — ${progress.detail}\n`,
+    );
+    return;
+  }
+  if (progress.type === "dispatching") {
+    const task = `${progress.canonicalTaskId}(${progress.agentProfile})`;
+    process.stdout.write(
+      progress.forced
+        ? `Dispatching ${task} with concurrency override (${progress.slot - 1}/${progress.maximum} slots used)\n`
+        : `Dispatching ${task} into slot ${progress.slot}/${progress.maximum}\n`,
+    );
+    return;
+  }
+
+  const activeTasks =
+    progress.active.length === 0
+      ? ""
+      : ` [${progress.active
+          .map(({ agentProfile, canonicalTaskId }) => `${canonicalTaskId}(${agentProfile})`)
+          .join(", ")}]`;
+  const activeCount = progress.active.length;
+  if (activeCount >= progress.maximum && !progress.force) {
+    process.stdout.write(
+      `At capacity (${activeCount}/${progress.maximum})${activeTasks}, no new work to start\n`,
+    );
+    return;
+  }
+
+  const openCount = Math.max(0, progress.maximum - activeCount);
+  process.stdout.write(
+    `Slots ${activeCount}/${progress.maximum} used${activeTasks} (${openCount} open)\n`,
+  );
 }
 
 function renderStatus(input: {

@@ -8,6 +8,60 @@ import { describe, expect, it } from "vitest";
 const execFileAsync = promisify(execFile);
 
 describe("crew start", () => {
+  it("reports open slots and the task being dispatched", async () => {
+    const fixture = await createDispatchFixture();
+
+    const result = await runCrew({ arguments: ["start"], environment: fixture.environment });
+
+    expect(result.stdout).toContain("Slots 0/1 used (1 open)");
+    expect(result.stdout).toContain("Dispatching fixture:ENG-123(codex) into slot 1/1");
+  });
+
+  it("summarizes full capacity without generic skipped-task lines", async () => {
+    const fixture = await createDispatchFixture({
+      tasks: [
+        task({ id: "LOW-1", priority: 4, repositories: [] }),
+        task({ id: "URGENT-1", priority: 1, repositories: [] }),
+      ],
+    });
+
+    const first = await runCrew({ arguments: ["start"], environment: fixture.environment });
+    const second = await runCrew({ arguments: ["start"], environment: fixture.environment });
+
+    expect(first.stdout).not.toMatch(/\bSkipp(?:ed|ing)\b/);
+    expect(second.stdout).toContain(
+      "At capacity (1/1) [fixture:URGENT-1(codex)], no new work to start",
+    );
+    expect(second.stdout).not.toMatch(/\bSkipp(?:ed|ing)\b/);
+  });
+
+  it("does not repeat routine skip lines while watching an explicit task", async () => {
+    const fixture = await createDispatchFixture({ pollIntervalMilliseconds: 10 });
+    let stdout = "";
+
+    try {
+      await execFileAsync(process.execPath, ["bin/run.js", "start", "ENG-123", "--watch"], {
+        cwd: process.cwd(),
+        env: fixture.environment,
+        timeout: 2_000,
+      });
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        !("killed" in error) ||
+        error.killed !== true ||
+        !("stdout" in error) ||
+        typeof error.stdout !== "string"
+      ) {
+        throw error;
+      }
+      stdout = error.stdout;
+    }
+
+    expect(stdout).toContain("Started fixture:ENG-123");
+    expect(stdout).not.toMatch(/\bSkipp(?:ed|ing)\b/);
+  });
+
   it("claims, provisions, and launches a ready task exactly once", async () => {
     const fixture = await createDispatchFixture();
 
@@ -230,7 +284,10 @@ describe("crew start", () => {
       tasks: [task({ blocked: true, repositories: [] })],
     });
 
-    await runCrew({ arguments: ["start"], environment: fixture.environment });
+    const skipped = await runCrew({ arguments: ["start"], environment: fixture.environment });
+    expect(skipped.stdout).toContain(
+      "Skipping fixture:ENG-123: blocked — task reports an open blocker",
+    );
     expect(
       JSON.parse(await readFile(join(dirname(fixture.runsDirectory), "dispatch.json"), "utf8"))[
         "fixture:ENG-123"
@@ -268,11 +325,15 @@ describe("crew start", () => {
   it("removes the provisional run and records a rejected claim", async () => {
     const fixture = await createDispatchFixture({ rejectClaim: "ENG-123" });
 
-    await runCrew({ arguments: ["start"], environment: fixture.environment });
+    const result = await runCrew({ arguments: ["start"], environment: fixture.environment });
 
     const dispatch = JSON.parse(
       await readFile(join(dirname(fixture.runsDirectory), "dispatch.json"), "utf8"),
     );
+    expect(result.stdout).toContain(
+      "Skipping fixture:ENG-123: claim-rejected — fixture rejected claim",
+    );
+    expect(result.stdout).not.toContain("Dispatching fixture:ENG-123");
     expect(dispatch["fixture:ENG-123"].reason).toBe("claim-rejected");
     await expect(stat(join(fixture.runsDirectory, "fixture-eng-123.json"))).rejects.toMatchObject({
       code: "ENOENT",
@@ -488,7 +549,7 @@ describe("crew start", () => {
       tasks: [task({ repositories: [], terminal: true })],
     });
 
-    const result = await runCrew({ arguments: ["start"], environment: fixture.environment });
+    await runCrew({ arguments: ["start"], environment: fixture.environment });
     const status = JSON.parse(
       (
         await runCrew({
@@ -498,7 +559,6 @@ describe("crew start", () => {
       ).stdout,
     );
 
-    expect(result.stdout).toContain("Skipped fixture:ENG-123");
     expect(status.tasks[0].verdict).toMatchObject({ reason: "terminal" });
   });
 
@@ -940,6 +1000,7 @@ async function createDispatchFixture(
     readonly prepareWorktree?: string | undefined;
     readonly failPresenterOpen?: boolean | undefined;
     readonly maximumInProgress?: number | undefined;
+    readonly pollIntervalMilliseconds?: number | undefined;
     readonly profiles?: Readonly<Record<string, Record<string, unknown>>> | undefined;
     readonly additionalRepositories?: readonly string[] | undefined;
     readonly scriptedAgent?: boolean | undefined;
@@ -999,7 +1060,10 @@ async function createDispatchFixture(
         default: Object.keys(options.profiles ?? { codex: {} })[0],
         profiles: options.profiles ?? { codex: { effort: "high", kind: "codex" } },
       },
-      orchestrator: { maximumInProgress: options.maximumInProgress ?? 1 },
+      orchestrator: {
+        maximumInProgress: options.maximumInProgress ?? 1,
+        pollIntervalMilliseconds: options.pollIntervalMilliseconds ?? 120_000,
+      },
       sources: [{ kind: "fixture" }],
       workspace: {
         baseDirectory,
