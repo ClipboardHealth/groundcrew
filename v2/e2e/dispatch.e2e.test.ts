@@ -35,6 +35,29 @@ describe("crew start", () => {
     expect(second.stdout).not.toMatch(/\bSkipp(?:ed|ing)\b/);
   });
 
+  it("omits routine eligibility skips from batch output", async () => {
+    const fixture = await createDispatchFixture({
+      maximumInProgress: 2,
+      tasks: [
+        task({ id: "TERMINAL-1", priority: 1, repositories: [], terminal: true }),
+        task({ blocked: true, id: "BLOCKED-1", priority: 2, repositories: [] }),
+        task({ agentProfile: "any", id: "UNAVAILABLE-1", priority: 3, repositories: [] }),
+        task({ id: "READY-1", priority: 4, repositories: [] }),
+      ],
+    });
+
+    const result = await runCrew({ arguments: ["start"], environment: fixture.environment });
+
+    expect(result.stdout).toBe(
+      [
+        "Slots 0/2 used (2 open)",
+        "Dispatching fixture:READY-1(codex) into slot 1/2",
+        "Started fixture:READY-1",
+        "",
+      ].join("\n"),
+    );
+  });
+
   it("does not repeat routine skip lines while watching an explicit task", async () => {
     const fixture = await createDispatchFixture({ pollIntervalMilliseconds: 10 });
     let stdout = "";
@@ -284,7 +307,10 @@ describe("crew start", () => {
       tasks: [task({ blocked: true, repositories: [] })],
     });
 
-    const skipped = await runCrew({ arguments: ["start"], environment: fixture.environment });
+    const skipped = await runCrew({
+      arguments: ["start", "ENG-123"],
+      environment: fixture.environment,
+    });
     expect(skipped.stdout).toContain(
       "Skipping fixture:ENG-123: blocked — task reports an open blocker",
     );
