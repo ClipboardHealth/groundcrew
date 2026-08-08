@@ -121,6 +121,7 @@ describe("crew start", () => {
     expect(calls.filter((call) => call.arguments[0] === "new-workspace")).toHaveLength(1);
     expect(calls.at(-1).arguments).toContain("running");
     const launchArguments = calls.find((call) => call.arguments[0] === "new-workspace").arguments;
+    expect(launchArguments[launchArguments.indexOf("--name") + 1]).toBe("eng-123");
     const command = launchArguments[launchArguments.indexOf("--command") + 1];
     expect(command).toContain("codex");
     expect(command).toContain('model_reasoning_effort="high"');
@@ -205,6 +206,30 @@ describe("crew start", () => {
     ).toBe(true);
   });
 
+  it("cleans a run using the lowercase task ID shown by cmux", async () => {
+    const fixture = await createDispatchFixture();
+    await runCrew({ arguments: ["start"], environment: fixture.environment });
+
+    const result = await runCrew({
+      arguments: ["cleanup", "eng-123"],
+      environment: fixture.environment,
+    });
+
+    expect(result.stdout).toContain("Cleaned fixture:ENG-123");
+    await expect(stat(fixture.workspaceDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("explains how to find a task when cleanup has no matching run", async () => {
+    const fixture = await createDispatchFixture();
+
+    await expect(
+      runCrew({ arguments: ["cleanup", "missing-123"], environment: fixture.environment }),
+    ).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining("Run crew status to list local runs"),
+    });
+  });
+
   it("persists a missing-repository verdict without creating a partial workspace", async () => {
     const fixture = await createDispatchFixture({ repository: "missing" });
 
@@ -276,10 +301,15 @@ describe("crew start", () => {
     ).rejects.toMatchObject({ code: 1 });
     await expect(
       runCrew({ arguments: ["cleanup", "ENG-123"], environment: fixture.environment }),
-    ).rejects.toMatchObject({ code: 1 });
+    ).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringMatching(
+        /Cleanup refused[\s\S]*sample\/dirty\.txt[\s\S]*permanently discard[\s\S]*crew cleanup ENG-123 --force/,
+      ),
+    });
 
     await runCrew({
-      arguments: ["cleanup", "ENG-123", "--allow-dirty"],
+      arguments: ["cleanup", "ENG-123", "--force"],
       environment: fixture.environment,
     });
     await expect(stat(fixture.workspaceDirectory)).rejects.toMatchObject({ code: "ENOENT" });
@@ -443,7 +473,7 @@ describe("crew start", () => {
       runCrew({ arguments: ["cleanup", "ENG-123"], environment: fixture.environment }),
     ).rejects.toMatchObject({ code: 1 });
     await runCrew({
-      arguments: ["cleanup", "ENG-123", "--allow-dirty"],
+      arguments: ["cleanup", "ENG-123", "--force"],
       environment: fixture.environment,
     });
     await expect(stat(fixture.workspaceDirectory)).rejects.toMatchObject({ code: "ENOENT" });

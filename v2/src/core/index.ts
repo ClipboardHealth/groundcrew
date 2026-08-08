@@ -754,7 +754,11 @@ async function cleanup(input: {
     // eslint-disable-next-line no-await-in-loop
     const observed = await runtime.workspaces.observe({ slug });
     if (!input.allowDirty && observed.dirtyPaths.length > 0) {
-      throw new DirtyWorkspaceError(observed.dirtyPaths);
+      throw cleanupRefusedError({
+        canonicalTaskId: record.canonicalTaskId,
+        paths: observed.dirtyPaths,
+        query: input.task,
+      });
     }
     // The operation check must run under the same run lock as repository reservation, including
     // for a run that reconciliation completed while acquisition was still active.
@@ -1003,14 +1007,25 @@ async function resolveRunIdentity(input: {
   readonly runtime: Runtime;
 }): Promise<string> {
   const records = await input.runtime.runs.list();
-  const matches = records.filter(
-    (record) =>
-      record.canonicalTaskId === input.query ||
-      record.canonicalTaskId.slice(record.canonicalTaskId.indexOf(":") + 1) === input.query,
-  );
+  const normalizedQuery = input.query.toLowerCase();
+  const matches = records.filter((record) => {
+    const canonicalTaskId = record.canonicalTaskId.toLowerCase();
+    return (
+      canonicalTaskId === normalizedQuery ||
+      canonicalTaskId.slice(canonicalTaskId.indexOf(":") + 1) === normalizedQuery
+    );
+  });
+  if (matches.length === 0) {
+    throw new Error(`No local run matches ${input.query}. Run crew status to list local runs.`);
+  }
+  if (matches.length > 1) {
+    throw new Error(
+      `Multiple local runs match ${input.query}: ${matches.map((record) => record.canonicalTaskId).join(", ")}. Retry with a canonical task ID.`,
+    );
+  }
   const match = matches.at(0);
-  if (matches.length !== 1 || match === undefined) {
-    throw new Error(`could not resolve exactly one run for ${input.query}`);
+  if (match === undefined) {
+    throw new Error(`Local run ${input.query} disappeared during lookup.`);
   }
   return match.canonicalTaskId;
 }
@@ -1052,6 +1067,22 @@ async function resolveExplicitTask(input: {
 
 function canonicalId(input: { readonly task: Task }): string {
   return `${input.task.sourceName}:${input.task.id}`;
+}
+
+function cleanupRefusedError(input: {
+  readonly canonicalTaskId: string;
+  readonly paths: readonly string[];
+  readonly query?: string | undefined;
+}): Error {
+  const task = input.query ?? input.canonicalTaskId;
+  return new Error(
+    [
+      `Cleanup refused because ${input.canonicalTaskId} has uncommitted changes:`,
+      ...input.paths.map((path) => `  ${path}`),
+      "Review, commit, or stash them. To permanently discard these changes and any unique task-branch commits, rerun:",
+      `  crew cleanup ${task} --force`,
+    ].join("\n"),
+  );
 }
 
 function transition(input: {

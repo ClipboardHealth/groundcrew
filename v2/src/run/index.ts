@@ -77,7 +77,7 @@ export class RunStore {
           artifacts: [],
           canonicalTaskId: input.canonicalTaskId,
           events: [{ event: "provisioning", timestamp: new Date().toISOString() }],
-          presentedWorkspaceName: `crew-${slug}`,
+          presentedWorkspaceName: `groundcrew:${input.canonicalTaskId}`,
           presenter: "cmux",
           repositories: input.repositories,
           runId: `r_${randomBytes(4).toString("hex")}`,
@@ -328,6 +328,7 @@ export async function launchAgent(input: {
   );
   await presenter.open({
     command: composeAgentCommand({ profile: input.profile, prompt }),
+    displayName: presenterWorkspaceName({ canonicalTaskId: record.canonicalTaskId }),
     environment: {
       ...inheritedEnvironment,
       GROUNDCREW_TASK_ID: record.canonicalTaskId,
@@ -422,6 +423,12 @@ export function presenterFor(input: {
   readonly name: "cmux";
 }): Presenter {
   return createPresenter(input);
+}
+
+function presenterWorkspaceName(input: { readonly canonicalTaskId: string }): string {
+  const separatorIndex = input.canonicalTaskId.indexOf(":");
+  const sourceLocalTaskId = input.canonicalTaskId.slice(separatorIndex + 1);
+  return taskSlug({ canonicalTaskId: sourceLocalTaskId });
 }
 
 async function atomicWrite(input: {
