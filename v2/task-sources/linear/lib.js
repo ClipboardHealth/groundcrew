@@ -107,6 +107,8 @@ async function updateTask(input) {
   await addCommentOnce({ issue, marker: completionMarker, text });
   if (input.event.outcome === "delivered") {
     await moveIssue({ issue, stateName: environment("LINEAR_STATUS_IN_REVIEW", "In Review") });
+  } else if (input.event.outcome === "failed") {
+    await moveIssue({ issue, stateName: environment("LINEAR_STATUS_TODO", "Todo") });
   }
   return { result: "ok" };
 }
