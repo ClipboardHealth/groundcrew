@@ -471,7 +471,11 @@ function renderDispatchProgress(input: RenderDispatchProgressInput): void {
   if (progress.type === "skipped") {
     if (
       progress.reason === "slots-full" ||
-      (progress.reason === "run-exists" && !showRoutineSkips)
+      (!showRoutineSkips &&
+        (progress.reason === "agent-unavailable" ||
+          progress.reason === "blocked" ||
+          progress.reason === "run-exists" ||
+          progress.reason === "terminal"))
     ) {
       return;
     }
