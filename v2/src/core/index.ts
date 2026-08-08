@@ -94,6 +94,12 @@ export type DispatchProgress =
       readonly slot: number;
       readonly maximum: number;
       readonly forced: boolean;
+    }
+  | {
+      readonly type: "skipped";
+      readonly canonicalTaskId: string;
+      readonly detail: string;
+      readonly reason: VerdictReason;
     };
 
 export type VerdictReason =
@@ -166,6 +172,13 @@ interface Runtime {
   readonly registry: SourceRegistry;
   readonly runs: RunStore;
   readonly workspaces: WorkspaceService;
+}
+
+interface SkipTaskInput {
+  readonly canonicalTaskId: string;
+  readonly detail: string;
+  readonly reason: VerdictReason;
+  readonly runId?: string | undefined;
 }
 
 export async function createApplication(input: {
@@ -291,6 +304,16 @@ async function start(input: {
   }
   const started: string[] = [];
   const skipped: string[] = [];
+  async function skipTask(skipInput: SkipTaskInput): Promise<void> {
+    await writeVerdict({ ...skipInput, runtime });
+    input.onProgress?.({
+      canonicalTaskId: skipInput.canonicalTaskId,
+      detail: skipInput.detail,
+      reason: skipInput.reason,
+      type: "skipped",
+    });
+    skipped.push(skipInput.canonicalTaskId);
+  }
   const active = (await runtime.runs.list())
     .filter((run) => run.state === "provisioning" || run.state === "running")
     .map((run) => ({
@@ -311,28 +334,23 @@ async function start(input: {
     if (existing !== undefined) {
       const reason: VerdictReason =
         existing.canonicalTaskId === canonicalTaskId ? "run-exists" : "slug-collision";
-      await writeVerdict({ canonicalTaskId, detail: existing.canonicalTaskId, reason, runtime });
-      skipped.push(canonicalTaskId);
+      await skipTask({ canonicalTaskId, detail: existing.canonicalTaskId, reason });
       continue;
     }
     if (task.terminal) {
-      await writeVerdict({
+      await skipTask({
         canonicalTaskId,
         detail: "source reports the task as terminal",
         reason: "terminal",
-        runtime,
       });
-      skipped.push(canonicalTaskId);
       continue;
     }
     if (task.blocked && !input.force) {
-      await writeVerdict({
+      await skipTask({
         canonicalTaskId,
         detail: "task reports an open blocker",
         reason: "blocked",
-        runtime,
       });
-      skipped.push(canonicalTaskId);
       continue;
     }
     const profileName =
@@ -342,23 +360,19 @@ async function start(input: {
       runtime.config.agents.default;
     const profile = runtime.config.agents.profiles[profileName];
     if (profile === undefined) {
-      await writeVerdict({
+      await skipTask({
         canonicalTaskId,
         detail: profileName,
         reason: "agent-unavailable",
-        runtime,
       });
-      skipped.push(canonicalTaskId);
       continue;
     }
     if (!(await commandExists({ command: profile.kind, environment: runtime.environment }))) {
-      await writeVerdict({
+      await skipTask({
         canonicalTaskId,
         detail: `missing harness executable ${profile.kind}`,
         reason: "agent-unavailable",
-        runtime,
       });
-      skipped.push(canonicalTaskId);
       continue;
     }
     const repositoryCheck = await runtime.workspaces.validateRepositories({
@@ -366,36 +380,24 @@ async function start(input: {
       slug,
     });
     if (!repositoryCheck.ok) {
-      await writeVerdict({
+      await skipTask({
         canonicalTaskId,
         detail: repositoryCheck.missing.join(", "),
         reason: "repo-not-on-disk",
-        runtime,
       });
       if (input.task !== undefined) {
         throw new RepositoryMissingError(repositoryCheck.missing);
       }
-      skipped.push(canonicalTaskId);
       continue;
     }
     if (!input.force && activeCount >= runtime.config.orchestrator.maximumInProgress) {
-      await writeVerdict({
+      await skipTask({
         canonicalTaskId,
         detail: "concurrency limit reached",
         reason: "slots-full",
-        runtime,
       });
-      skipped.push(canonicalTaskId);
       continue;
     }
-    input.onProgress?.({
-      agentProfile: profileName,
-      canonicalTaskId,
-      forced: input.force && activeCount >= runtime.config.orchestrator.maximumInProgress,
-      maximum: runtime.config.orchestrator.maximumInProgress,
-      slot: activeCount + 1,
-      type: "dispatching",
-    });
     const workspaceDirectory = runtime.workspaces.workspaceDirectory({ slug });
     const record = await runtime.runs.create({
       agentProfile: profileName,
@@ -409,16 +411,25 @@ async function start(input: {
     });
     if (!claim.ok || claim.data.result === "rejected") {
       await runtime.runs.remove({ canonicalTaskId });
-      await writeVerdict({
+      const detail = claim.ok
+        ? (claim.data.reason ?? "source rejected claim")
+        : claim.error.message;
+      await skipTask({
         canonicalTaskId,
-        detail: claim.ok ? (claim.data.reason ?? "source rejected claim") : claim.error.message,
+        detail,
         reason: "claim-rejected",
         runId: record.runId,
-        runtime,
       });
-      skipped.push(canonicalTaskId);
       continue;
     }
+    input.onProgress?.({
+      agentProfile: profileName,
+      canonicalTaskId,
+      forced: input.force && activeCount >= runtime.config.orchestrator.maximumInProgress,
+      maximum: runtime.config.orchestrator.maximumInProgress,
+      slot: activeCount + 1,
+      type: "dispatching",
+    });
     try {
       const marker = await runtime.workspaces.provision({
         canonicalTaskId,

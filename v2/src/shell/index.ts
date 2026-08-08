@@ -79,6 +79,11 @@ interface MainInput {
   readonly environment: NodeJS.ProcessEnv;
 }
 
+interface RenderDispatchProgressInput {
+  readonly progress: DispatchProgress;
+  readonly showRoutineSkips: boolean;
+}
+
 interface PathContext {
   readonly configHome: string;
   readonly stateRoot: string;
@@ -158,7 +163,11 @@ export async function main(input: MainInput): Promise<void> {
         const result = await application.start({
           agent: options.agent,
           force: options.force === true,
-          onProgress: (progress) => renderDispatchProgress({ progress }),
+          onProgress: (progress) =>
+            renderDispatchProgress({
+              progress,
+              showRoutineSkips: task !== undefined && options.watch !== true,
+            }),
           task,
         });
         for (const canonicalTaskId of result.started) {
@@ -457,8 +466,20 @@ async function readTaskMarker(input: {
   }
 }
 
-function renderDispatchProgress(input: { readonly progress: DispatchProgress }): void {
-  const { progress } = input;
+function renderDispatchProgress(input: RenderDispatchProgressInput): void {
+  const { progress, showRoutineSkips } = input;
+  if (progress.type === "skipped") {
+    if (
+      progress.reason === "slots-full" ||
+      (progress.reason === "run-exists" && !showRoutineSkips)
+    ) {
+      return;
+    }
+    process.stdout.write(
+      `Skipping ${progress.canonicalTaskId}: ${progress.reason} — ${progress.detail}\n`,
+    );
+    return;
+  }
   if (progress.type === "dispatching") {
     const task = `${progress.canonicalTaskId}(${progress.agentProfile})`;
     process.stdout.write(
