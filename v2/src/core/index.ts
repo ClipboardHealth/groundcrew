@@ -1026,17 +1026,14 @@ async function resolveRunIdentity(input: {
       canonicalTaskId.slice(canonicalTaskId.indexOf(":") + 1) === normalizedQuery
     );
   });
-  if (matches.length === 0) {
+  const match = matches.at(0);
+  if (match === undefined) {
     throw new Error(`No local run matches ${input.query}. Run crew status to list local runs.`);
   }
   if (matches.length > 1) {
     throw new Error(
       `Multiple local runs match ${input.query}: ${matches.map((record) => record.canonicalTaskId).join(", ")}. Retry with a canonical task ID.`,
     );
-  }
-  const match = matches.at(0);
-  if (match === undefined) {
-    throw new Error(`Local run ${input.query} disappeared during lookup.`);
   }
   return match.canonicalTaskId;
 }
