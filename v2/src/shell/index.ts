@@ -7,7 +7,7 @@ import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parse } from "jsonc-parser";
 import { z } from "zod";
-import { createApplication, type DispatchProgress } from "../core/index.js";
+import { createApplication, type DispatchProgress, type VerdictReason } from "../core/index.js";
 
 const AgentProfileSchema = z.object({
   kind: z.enum(["claude", "codex"]),
@@ -20,6 +20,12 @@ const DEFAULT_AGENT_PROFILES = {
   "claude-opus": { effort: "high", kind: "claude", model: "opus" },
   codex: { effort: "high", kind: "codex" },
 } as const;
+
+const BATCH_REPORTED_SKIP_REASONS = new Set<VerdictReason>([
+  "claim-rejected",
+  "repo-not-on-disk",
+  "slug-collision",
+]);
 
 const ConfigSchema = z.object({
   $schema: z.string().optional(),
@@ -471,11 +477,7 @@ function renderDispatchProgress(input: RenderDispatchProgressInput): void {
   if (progress.type === "skipped") {
     if (
       progress.reason === "slots-full" ||
-      (!showRoutineSkips &&
-        (progress.reason === "agent-unavailable" ||
-          progress.reason === "blocked" ||
-          progress.reason === "run-exists" ||
-          progress.reason === "terminal"))
+      (!showRoutineSkips && !BATCH_REPORTED_SKIP_REASONS.has(progress.reason))
     ) {
       return;
     }
