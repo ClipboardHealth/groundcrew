@@ -2,7 +2,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { createPresenter, type Presenter } from "../presenter/index.js";
+import { createPresenter, type Presenter, type PresentedWorkspace } from "../presenter/index.js";
 
 export interface Artifact {
   readonly kind: string;
@@ -120,6 +120,15 @@ export type PresentationChange =
       readonly reason: "provisioning-interrupted" | "workspace-missing";
     };
 
+const presentedWorkspaceSnapshot = Symbol("presentedWorkspaceSnapshot");
+
+export interface PresentedWorkspaceSnapshot {
+  readonly [presentedWorkspaceSnapshot]: {
+    readonly available: boolean;
+    readonly workspaces: readonly PresentedWorkspace[];
+  };
+}
+
 export class RunModule {
   readonly #store: RunStore;
   readonly #environment: NodeJS.ProcessEnv;
@@ -180,78 +189,69 @@ export class RunModule {
     return (await this.#store.list()).map((record) => createRunHandle({ module: this, record }));
   }
 
-  public async reconcilePresentedWorkspaces(input: {
-    readonly expectedRunIds: readonly string[];
-  }): Promise<readonly PresentationChange[]> {
-    const expectedRunIds = new Set(input.expectedRunIds);
+  public async capturePresentedWorkspaces(): Promise<PresentedWorkspaceSnapshot> {
     const probe = await this.#presenter.probe();
-    if (!probe.available) {
-      return [];
+    return { [presentedWorkspaceSnapshot]: probe };
+  }
+
+  public async reconcilePresentedWorkspace(input: {
+    readonly run: RunHandle;
+    readonly snapshot: PresentedWorkspaceSnapshot;
+  }): Promise<PresentationChange | undefined> {
+    const probe = input.snapshot[presentedWorkspaceSnapshot];
+    if (!probe.available || input.run.state === "complete") {
+      return undefined;
     }
-    const changes: PresentationChange[] = [];
-    for (const existing of await this.#store.list()) {
-      if (existing.state === "complete" || !expectedRunIds.has(existing.runId)) {
-        continue;
-      }
-      const presented = probe.workspaces.some(
-        (workspace) =>
-          workspace.name === existing.presentedWorkspaceName ||
-          workspace.description === existing.presentedWorkspaceName ||
-          workspace.description === `groundcrew:${existing.canonicalTaskId}`,
-      );
-      if (existing.state === "provisioning" && presented) {
-        let transitioned = false;
-        // Reconciliation is ordered by canonical Task identity for deterministic changes.
-        // eslint-disable-next-line no-await-in-loop
-        const record = await this.#store.mutate({
-          canonicalTaskId: existing.canonicalTaskId,
-          update: (current) => {
-            if (current.runId !== existing.runId || current.state !== "provisioning") {
-              return current;
-            }
-            transitioned = true;
-            return {
-              ...current,
-              events: [
-                ...current.events,
-                { event: "running", timestamp: new Date().toISOString() },
-              ],
-              state: "running",
-            };
-          },
-        });
-        if (transitioned) {
-          changes.push({ run: new RunningRunHandle({ module: this, record }), type: "running" });
-        }
-        continue;
-      }
-      if (presented) {
-        continue;
-      }
-      const reason =
-        existing.state === "provisioning" ? "provisioning-interrupted" : "workspace-missing";
+    const expected = input.run.record;
+    const presented = probe.workspaces.some(
+      (workspace) =>
+        workspace.name === expected.presentedWorkspaceName ||
+        workspace.description === expected.presentedWorkspaceName ||
+        workspace.description === `groundcrew:${expected.canonicalTaskId}`,
+    );
+    if (expected.state === "provisioning" && presented) {
       let transitioned = false;
-      // Reconciliation is ordered by canonical Task identity for deterministic changes.
-      // eslint-disable-next-line no-await-in-loop
       const record = await this.#store.mutate({
-        canonicalTaskId: existing.canonicalTaskId,
+        canonicalTaskId: expected.canonicalTaskId,
         update: (current) => {
-          if (current.runId !== existing.runId || current.state === "complete") {
+          if (current.runId !== expected.runId || current.state !== "provisioning") {
             return current;
           }
           transitioned = true;
-          return completeRunRecord({ outcome: "failed", reason, record: current });
+          return {
+            ...current,
+            events: [...current.events, { event: "running", timestamp: new Date().toISOString() }],
+            state: "running",
+          };
         },
       });
-      if (transitioned) {
-        changes.push({
+      return transitioned
+        ? { run: new RunningRunHandle({ module: this, record }), type: "running" }
+        : undefined;
+    }
+    if (presented) {
+      return undefined;
+    }
+    const reason =
+      expected.state === "provisioning" ? "provisioning-interrupted" : "workspace-missing";
+    let transitioned = false;
+    const record = await this.#store.mutate({
+      canonicalTaskId: expected.canonicalTaskId,
+      update: (current) => {
+        if (current.runId !== expected.runId || current.state === "complete") {
+          return current;
+        }
+        transitioned = true;
+        return completeRunRecord({ outcome: "failed", reason, record: current });
+      },
+    });
+    return transitioned
+      ? {
           reason,
           run: new CompletedRunHandle({ module: this, record }),
           type: "failed",
-        });
-      }
-    }
-    return changes;
+        }
+      : undefined;
   }
 
   public async fail(input: {
@@ -285,6 +285,21 @@ export class RunModule {
     readonly branch: string;
     readonly acquiredRepositories: readonly string[];
   }): Promise<RunChange<RunningRun>> {
+    const current = await this.#store.getBySlug({
+      slug: taskSlug({ canonicalTaskId: input.record.canonicalTaskId }),
+    });
+    if (current === undefined || current.runId !== input.record.runId) {
+      throw new Error(`run ${input.record.runId} is stale`);
+    }
+    if (current.state === "running") {
+      return {
+        run: new RunningRunHandle({ module: this, record: current }),
+        transitioned: false,
+      };
+    }
+    if (current.state !== "provisioning") {
+      throw new Error(`run ${input.record.runId} is no longer provisioning`);
+    }
     await launchAgent({
       acquiredRepositories: input.acquiredRepositories,
       branch: input.branch,
@@ -294,12 +309,20 @@ export class RunModule {
       record: input.record,
       task: input.task,
     });
+    let transitioned = false;
     const record = await this.#store.mutate({
       canonicalTaskId: input.record.canonicalTaskId,
       update: (current) => {
-        if (current.runId !== input.record.runId || current.state !== "provisioning") {
+        if (current.runId !== input.record.runId) {
+          throw new Error(`run ${input.record.runId} is stale`);
+        }
+        if (current.state === "running") {
+          return current;
+        }
+        if (current.state !== "provisioning") {
           throw new Error(`run ${input.record.runId} is no longer provisioning`);
         }
+        transitioned = true;
         return {
           ...current,
           events: [...current.events, { event: "running", timestamp: new Date().toISOString() }],
@@ -307,7 +330,7 @@ export class RunModule {
         };
       },
     });
-    return { run: new RunningRunHandle({ module: this, record }), transitioned: true };
+    return { run: new RunningRunHandle({ module: this, record }), transitioned };
   }
 
   public async discardUnclaimed(input: { readonly record: Readonly<RunRecord> }): Promise<void> {
@@ -484,6 +507,7 @@ export class RunModule {
 
   public async remove(input: { readonly record: Readonly<RunRecord> }): Promise<void> {
     await this.#store.removeWhen({
+      allowMissing: true,
       canonicalTaskId: input.record.canonicalTaskId,
       validate: (current) => {
         if (current.runId !== input.record.runId) {
@@ -621,6 +645,7 @@ class RunStore {
   }
 
   public async removeWhen(input: {
+    readonly allowMissing?: boolean | undefined;
     readonly canonicalTaskId: string;
     readonly validate: (record: RunRecord) => void;
   }): Promise<void> {
@@ -629,6 +654,9 @@ class RunStore {
       operation: async () => {
         const current = await this.getBySlug({ slug });
         if (current === undefined) {
+          if (input.allowMissing === true) {
+            return;
+          }
           throw new Error(`no run exists for ${input.canonicalTaskId}`);
         }
         input.validate(current);

@@ -256,27 +256,97 @@ describe("RunModule lifecycle", () => {
       workspaceDirectory: join(stateRoot, "workspace"),
     });
 
-    const started = await runs.reconcilePresentedWorkspaces({
-      expectedRunIds: [provisioning.record.runId],
+    const started = await runs.reconcilePresentedWorkspace({
+      run: provisioning,
+      snapshot: await runs.capturePresentedWorkspaces(),
     });
     await writeFile(presentedWorkspaceStatePath, '{"workspaces":[]}');
-    const failed = await runs.reconcilePresentedWorkspaces({
-      expectedRunIds: [provisioning.record.runId],
+    if (started?.type !== "running") {
+      throw new Error("provisioning run was not reconciled");
+    }
+    const failed = await runs.reconcilePresentedWorkspace({
+      run: started.run,
+      snapshot: await runs.capturePresentedWorkspaces(),
     });
 
-    expect(started).toMatchObject([
-      { run: { record: { state: "running" }, state: "running" }, type: "running" },
-    ]);
-    expect(failed).toMatchObject([
-      {
-        reason: "workspace-missing",
-        run: {
-          record: { outcome: "failed", state: "complete", writebackPending: true },
-          state: "complete",
-        },
-        type: "failed",
+    expect(started).toMatchObject({
+      run: { record: { state: "running" }, state: "running" },
+      type: "running",
+    });
+    expect(failed).toMatchObject({
+      reason: "workspace-missing",
+      run: {
+        record: { outcome: "failed", state: "complete", writebackPending: true },
+        state: "complete",
       },
+      type: "failed",
+    });
+  });
+
+  it("treats a reconciliation-won launch transition as unchanged", async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), "groundcrew-v2-run-launch-race-"));
+    const presentedWorkspaceStatePath = join(stateRoot, "presented-workspaces.json");
+    const presenterCallsPath = join(stateRoot, "presenter-calls.jsonl");
+    const fakeBin = join(process.cwd(), "e2e", "fixtures", "fake-bin");
+    await Promise.all([
+      writeFile(
+        presentedWorkspaceStatePath,
+        JSON.stringify({
+          workspaces: [
+            {
+              description: "groundcrew:fixture:ENG-123",
+              id: "workspace-1",
+              title: "eng-123",
+            },
+          ],
+        }),
+      ),
+      writeFile(presenterCallsPath, ""),
     ]);
+    const workspaceDirectory = join(stateRoot, "workspace");
+    await mkdir(workspaceDirectory);
+    const runs = new RunModule({
+      environment: {
+        ...process.env,
+        FAKE_CMUX_CALLS: presenterCallsPath,
+        FAKE_CMUX_STATE: presentedWorkspaceStatePath,
+        HOME: stateRoot,
+        PATH: `${fakeBin}:${process.env["PATH"]}`,
+      },
+      presenterName: "cmux",
+      stateRoot,
+    });
+    const provisioning = await runs.beginDispatch({
+      agentProfile: "codex",
+      canonicalTaskId: "fixture:ENG-123",
+      repositories: [],
+      workspaceDirectory,
+    });
+    await runs.reconcilePresentedWorkspace({
+      run: provisioning,
+      snapshot: await runs.capturePresentedWorkspaces(),
+    });
+
+    const launched = await provisioning.launch({
+      acquiredRepositories: [],
+      branch: "agent/fixture-eng-123",
+      profile: { effort: "high", kind: "codex" },
+      task: {
+        canonicalTaskId: "fixture:ENG-123",
+        repositories: [],
+        title: "Deepen the Run module",
+      },
+    });
+
+    expect(launched).toMatchObject({
+      run: { record: { state: "running" }, state: "running" },
+      transitioned: false,
+    });
+    expect(launched.run.record.events.map(({ event }) => event)).toEqual([
+      "provisioning",
+      "running",
+    ]);
+    expect(await readFile(presenterCallsPath, "utf8")).not.toContain("new-workspace");
   });
 });
 
@@ -310,6 +380,35 @@ describe("RunModule concurrency", () => {
     });
     const stored = await runs.findBySlug({ slug: "fixture-eng-123" });
     expect(stored?.record.runId).toBe(fulfilled[0]?.value.record.runId);
+  });
+
+  it("allows concurrent cleanup removals to converge", async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), "groundcrew-v2-run-remove-race-"));
+    const runs = new RunModule({
+      environment: process.env,
+      presenterName: "cmux",
+      stateRoot,
+    });
+    const provisioning = await runs.beginDispatch({
+      agentProfile: "codex",
+      canonicalTaskId: "fixture:ENG-123",
+      repositories: [],
+      workspaceDirectory: join(stateRoot, "workspace"),
+    });
+    const stopped = await provisioning.stopForCleanup({ assertWorkspaceIdle: async () => {} });
+    const completion = stopped.run.record.events.at(-1);
+    if (completion === undefined) {
+      throw new Error("completion event missing");
+    }
+    const acknowledged = await stopped.run.acknowledgeSourceWriteback({
+      expectedCompletionTimestamp: completion.timestamp,
+      expectedRunId: stopped.run.record.runId,
+    });
+
+    await expect(Promise.all([acknowledged.remove(), acknowledged.remove()])).resolves.toEqual([
+      undefined,
+      undefined,
+    ]);
   });
 });
 

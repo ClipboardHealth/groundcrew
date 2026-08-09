@@ -930,6 +930,46 @@ describe("crew start", () => {
     ).toMatchObject({ state: "running" });
   });
 
+  it("stops per-run reconciliation before mutating later runs", async () => {
+    const fixture = await createDispatchFixture({
+      maximumInProgress: 2,
+      tasks: [
+        task({ id: "A-1", priority: 1, repositories: ["sample"] }),
+        task({ id: "B-1", priority: 2, repositories: ["sample"] }),
+      ],
+    });
+    await runCrew({ arguments: ["start"], environment: fixture.environment });
+    const workspacesDirectory = dirname(fixture.workspaceDirectory);
+    const secondRunPath = join(fixture.runsDirectory, "fixture-b-1.json");
+    const secondRun = JSON.parse(await readFile(secondRunPath, "utf8"));
+    await Promise.all([
+      writeFile(
+        secondRunPath,
+        JSON.stringify({
+          ...secondRun,
+          events: [
+            ...secondRun.events,
+            { event: "complete:failed", timestamp: new Date().toISOString() },
+          ],
+          outcome: "failed",
+          state: "complete",
+          writebackPending: true,
+        }),
+      ),
+      writeFile(join(workspacesDirectory, "fixture-a-1", "sample", ".git"), "invalid\n"),
+      writeFile(fixture.updatesPath, ""),
+    ]);
+
+    await expect(
+      runCrew({ arguments: ["status", "--json"], environment: fixture.environment }),
+    ).rejects.toMatchObject({ code: 1 });
+
+    expect(await readFile(fixture.updatesPath, "utf8")).toBe("");
+    expect(JSON.parse(await readFile(secondRunPath, "utf8"))).toMatchObject({
+      writebackPending: true,
+    });
+  });
+
   it("reconciles a missing workspace before delivered completion", async () => {
     const fixture = await createDispatchFixture({ repositories: [] });
     await runCrew({ arguments: ["start"], environment: fixture.environment });

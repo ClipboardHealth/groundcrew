@@ -763,7 +763,7 @@ async function reconcile(input: { readonly runtime: Runtime }): Promise<void> {
   if (runs.length === 0) {
     return;
   }
-  const canonicalTaskIds = runs.map((run) => run.record.canonicalTaskId);
+  const presentation = await runtime.runs.capturePresentedWorkspaces();
   for (let run of runs) {
     // Dead in-session acquisition processes leave a recoverable marker that reconciliation clears.
     // eslint-disable-next-line no-await-in-loop
@@ -800,30 +800,30 @@ async function reconcile(input: { readonly runtime: Runtime }): Promise<void> {
     }
     if (run.state === "complete" && run.record.writebackPending === true) {
       // eslint-disable-next-line no-await-in-loop
-      await writeCompletion({ run, runtime });
+      run = await writeCompletion({ run, runtime });
     }
-  }
-  for (const change of await runtime.runs.reconcilePresentedWorkspaces({
-    expectedRunIds: runs.map((run) => run.record.runId),
-  })) {
     // eslint-disable-next-line no-await-in-loop
-    await log({
-      canonicalTaskId: change.run.record.canonicalTaskId,
-      event: change.type === "running" ? "run_reconciled" : "run_failed",
-      level: change.type === "running" ? "info" : "error",
-      module: "core",
-      runId: change.run.record.runId,
-      runtime,
-    });
-    if (change.type === "failed") {
+    const change = await runtime.runs.reconcilePresentedWorkspace({ run, snapshot: presentation });
+    if (change !== undefined) {
       // eslint-disable-next-line no-await-in-loop
-      await writeCompletion({ run: change.run, runtime });
+      await log({
+        canonicalTaskId: change.run.record.canonicalTaskId,
+        event: change.type === "running" ? "run_reconciled" : "run_failed",
+        level: change.type === "running" ? "info" : "error",
+        module: "core",
+        runId: change.run.record.runId,
+        runtime,
+      });
+      if (change.type === "failed") {
+        // eslint-disable-next-line no-await-in-loop
+        await writeCompletion({ run: change.run, runtime });
+      }
     }
-  }
-  for (const canonicalTaskId of canonicalTaskIds) {
     // Observe on every reconciliation so corrupt/missing worktrees fail loudly without mutation.
     // eslint-disable-next-line no-await-in-loop
-    await runtime.workspaces.observe({ slug: taskSlug({ canonicalTaskId }) });
+    await runtime.workspaces.observe({
+      slug: taskSlug({ canonicalTaskId: run.record.canonicalTaskId }),
+    });
   }
 }
 
