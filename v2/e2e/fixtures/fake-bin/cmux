@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
-import { appendFile, readFile, writeFile } from "node:fs/promises";
+import { access, appendFile, readFile, writeFile } from "node:fs/promises";
+import { setTimeout as delay } from "node:timers/promises";
 
 const [command, ...arguments_] = process.argv.slice(2);
 const statePath = process.env.FAKE_CMUX_STATE;
@@ -21,6 +22,20 @@ if (command === "new-workspace") {
   };
   state.workspaces.push(workspace);
   await writeFile(statePath, JSON.stringify(state));
+  if (process.env.FAKE_CMUX_OPEN_RELEASE !== undefined) {
+    await writeFile(`${process.env.FAKE_CMUX_OPEN_RELEASE}.ready`, "ready\n");
+    for (;;) {
+      try {
+        await access(process.env.FAKE_CMUX_OPEN_RELEASE);
+        break;
+      } catch (error) {
+        if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+          throw error;
+        }
+      }
+      await delay(10);
+    }
+  }
   if (process.env.FAKE_CMUX_EXECUTE_COMMAND === "1") {
     const childEnvironment = { ...process.env };
     for (let index = 0; index < arguments_.length; index += 1) {

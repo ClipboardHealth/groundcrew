@@ -452,10 +452,10 @@ async function start(input: {
           title: task.title,
         },
       });
+      await clearVerdict({ canonicalTaskId, runtime });
       if (!launched.transitioned) {
         continue;
       }
-      await clearVerdict({ canonicalTaskId, runtime });
       await log({
         canonicalTaskId,
         event: "run_started",
@@ -783,8 +783,12 @@ async function reconcile(input: { readonly runtime: Runtime }): Promise<void> {
       // eslint-disable-next-line no-await-in-loop
       const repaired = await runtime.runs.repairRepositories({
         canonicalTaskId: run.record.canonicalTaskId,
+        expectedRunId: run.record.runId,
         repositories: marker.repositories,
       });
+      if (repaired.run.record.runId !== run.record.runId) {
+        continue;
+      }
       run = repaired.run;
       if (repaired.transitioned) {
         // eslint-disable-next-line no-await-in-loop

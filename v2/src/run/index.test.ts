@@ -219,6 +219,25 @@ describe("RunModule lifecycle", () => {
     await expect(runs.findBySlug({ slug: "fixture-eng-123" })).resolves.toBeUndefined();
   });
 
+  it("discards an unclaimed Run after recovery already completed it", async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), "groundcrew-v2-run-rejected-race-"));
+    const runs = new RunModule({
+      environment: process.env,
+      presenterName: "cmux",
+      stateRoot,
+    });
+    const provisioning = await runs.beginDispatch({
+      agentProfile: "codex",
+      canonicalTaskId: "fixture:ENG-123",
+      repositories: [],
+      workspaceDirectory: join(stateRoot, "workspace"),
+    });
+    await provisioning.fail({ reason: "provisioning-interrupted" });
+
+    await expect(provisioning.discardUnclaimed()).resolves.toBeUndefined();
+    await expect(runs.findBySlug({ slug: "fixture-eng-123" })).resolves.toBeUndefined();
+  });
+
   it("reconciles Run state from one presented Workspace probe", async () => {
     const stateRoot = await mkdtemp(join(tmpdir(), "groundcrew-v2-run-reconcile-"));
     const presentedWorkspaceStatePath = join(stateRoot, "presented-workspaces.json");
@@ -409,6 +428,41 @@ describe("RunModule concurrency", () => {
       undefined,
       undefined,
     ]);
+  });
+
+  it("does not repair repositories on a replacement Run", async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), "groundcrew-v2-run-repair-race-"));
+    const runs = new RunModule({
+      environment: process.env,
+      presenterName: "cmux",
+      stateRoot,
+    });
+    const first = await runs.beginDispatch({
+      agentProfile: "codex",
+      canonicalTaskId: "fixture:ENG-123",
+      repositories: ["old"],
+      workspaceDirectory: join(stateRoot, "old-workspace"),
+    });
+    await first.discardUnclaimed();
+    const replacement = await runs.beginDispatch({
+      agentProfile: "codex",
+      canonicalTaskId: "fixture:ENG-123",
+      repositories: ["replacement"],
+      workspaceDirectory: join(stateRoot, "replacement-workspace"),
+    });
+
+    const repaired = await runs.repairRepositories({
+      canonicalTaskId: first.record.canonicalTaskId,
+      expectedRunId: first.record.runId,
+      repositories: ["stale"],
+    });
+
+    expect(repaired).toMatchObject({
+      run: {
+        record: { repositories: ["replacement"], runId: replacement.record.runId },
+      },
+      transitioned: false,
+    });
   });
 });
 

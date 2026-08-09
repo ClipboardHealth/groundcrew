@@ -374,6 +374,34 @@ describe("crew start", () => {
     expect(forced.stdout).toContain("Started fixture:ENG-123");
   });
 
+  it("clears a stale verdict when reconciliation wins the launch transition", async () => {
+    const fixture = await createDispatchFixture({
+      repositories: [],
+      tasks: [task({ blocked: true, repositories: [] })],
+    });
+    await runCrew({ arguments: ["start"], environment: fixture.environment });
+    await writeFile(
+      fixture.listedTasksPath,
+      JSON.stringify([task({ blocked: false, repositories: [] })]),
+    );
+    const releasePath = join(fixture.root, "release-presenter-open");
+    fixture.environment["FAKE_CMUX_OPEN_RELEASE"] = releasePath;
+
+    const start = runCrew({ arguments: ["start"], environment: fixture.environment });
+    await waitForPath(`${releasePath}.ready`);
+    try {
+      await runCrew({ arguments: ["status", "--json"], environment: fixture.environment });
+    } finally {
+      await writeFile(releasePath, "release\n");
+    }
+    await start;
+
+    const verdicts = JSON.parse(
+      await readFile(join(dirname(fixture.runsDirectory), "dispatch.json"), "utf8"),
+    );
+    expect(verdicts).not.toHaveProperty("fixture:ENG-123");
+  });
+
   it("keeps the first slug holder and records a collision for the other task", async () => {
     const fixture = await createDispatchFixture({
       maximumInProgress: 2,

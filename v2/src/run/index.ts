@@ -337,7 +337,9 @@ export class RunModule {
     await this.#store.removeWhen({
       canonicalTaskId: input.record.canonicalTaskId,
       validate: (current) => {
-        requireCurrentRun({ current, expected: input.record, state: "provisioning" });
+        if (current.runId !== input.record.runId) {
+          throw new Error(`run ${input.record.runId} is stale`);
+        }
       },
     });
   }
@@ -424,13 +426,17 @@ export class RunModule {
 
   public async repairRepositories(input: {
     readonly canonicalTaskId: string;
+    readonly expectedRunId: string;
     readonly repositories: readonly string[];
   }): Promise<RunChange<RunHandle>> {
     let transitioned = false;
     const record = await this.#store.mutate({
       canonicalTaskId: input.canonicalTaskId,
       update: (current) => {
-        if (sameStrings(current.repositories, input.repositories)) {
+        if (
+          current.runId !== input.expectedRunId ||
+          sameStrings(current.repositories, input.repositories)
+        ) {
           return current;
         }
         transitioned = true;
