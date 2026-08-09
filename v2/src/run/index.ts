@@ -47,7 +47,483 @@ export interface LaunchTask {
   readonly repositories: readonly string[];
 }
 
-export class RunStore {
+export interface RunChange<T extends RunHandle> {
+  readonly run: T;
+  readonly transitioned: boolean;
+}
+
+export interface BaseRun {
+  readonly record: Readonly<RunRecord>;
+  readonly state: RunRecord["state"];
+
+  stopForCleanup(input: {
+    readonly assertWorkspaceIdle: (record: Readonly<RunRecord>) => Promise<void>;
+  }): Promise<RunChange<CompletedRun>>;
+  reconcileWorkspaceOperation(input: {
+    readonly clearDeadWhileLocked: (record: Readonly<RunRecord>) => Promise<void>;
+  }): Promise<RunHandle>;
+}
+
+export interface ProvisioningRun extends BaseRun {
+  readonly state: "provisioning";
+
+  fail(input: { readonly reason: string }): Promise<RunChange<CompletedRun>>;
+  discardUnclaimed(): Promise<void>;
+  launch(input: {
+    readonly task: LaunchTask;
+    readonly profile: AgentProfile;
+    readonly branch: string;
+    readonly acquiredRepositories: readonly string[];
+  }): Promise<RunChange<RunningRun>>;
+}
+
+export interface RunningRun extends BaseRun {
+  readonly state: "running";
+
+  reportArtifact(input: { readonly artifact: Artifact }): Promise<RunningRun>;
+  finish(input: {
+    readonly outcome: "delivered" | "failed" | "stopped";
+    readonly message?: string | undefined;
+    readonly assertWorkspaceIdle: (record: Readonly<RunRecord>) => Promise<void>;
+  }): Promise<CompletedRun>;
+  fail(input: { readonly reason: string }): Promise<RunChange<CompletedRun>>;
+  reserveRepositoryOperation(input: {
+    readonly repository: string;
+    readonly reserveWhileLocked: (record: Readonly<RunRecord>) => Promise<void>;
+  }): Promise<RunningRun>;
+  recordRepositories(input: {
+    readonly repository: string;
+    readonly repositories: readonly string[];
+  }): Promise<RunningRun>;
+  accessHint(): Promise<string | undefined>;
+}
+
+export interface CompletedRun extends BaseRun {
+  readonly state: "complete";
+
+  acknowledgeSourceWriteback(input: {
+    readonly expectedRunId: string;
+    readonly expectedCompletionTimestamp: string;
+  }): Promise<CompletedRun>;
+  setPresentedStatus(): Promise<void>;
+  closePresentedWorkspace(): Promise<void>;
+  remove(): Promise<void>;
+}
+
+export type RunHandle = ProvisioningRun | RunningRun | CompletedRun;
+
+export type PresentationChange =
+  | { readonly type: "running"; readonly run: RunningRun }
+  | {
+      readonly type: "failed";
+      readonly run: CompletedRun;
+      readonly reason: "provisioning-interrupted" | "workspace-missing";
+    };
+
+export class RunModule {
+  readonly #store: RunStore;
+  readonly #environment: NodeJS.ProcessEnv;
+  readonly #presenterName: "cmux";
+  readonly #presenter: Presenter;
+
+  public constructor(input: {
+    readonly stateRoot: string;
+    readonly environment: NodeJS.ProcessEnv;
+    readonly presenterName: "cmux";
+  }) {
+    this.#store = new RunStore({ stateRoot: input.stateRoot });
+    this.#environment = input.environment;
+    this.#presenterName = input.presenterName;
+    this.#presenter = createPresenter({
+      environment: input.environment,
+      name: input.presenterName,
+    });
+  }
+
+  public async beginDispatch(input: {
+    readonly canonicalTaskId: string;
+    readonly agentProfile: string;
+    readonly workspaceDirectory: string;
+    readonly repositories: readonly string[];
+  }): Promise<ProvisioningRun> {
+    const record = await this.#store.create(input);
+    return new ProvisioningRunHandle({ module: this, record });
+  }
+
+  public async findBySlug(input: { readonly slug: string }): Promise<RunHandle | undefined> {
+    const record = await this.#store.getBySlug(input);
+    return record === undefined ? undefined : createRunHandle({ module: this, record });
+  }
+
+  public async resolve(input: { readonly query: string }): Promise<RunHandle> {
+    const normalizedQuery = input.query.toLowerCase();
+    const matches = (await this.#store.list()).filter((record) => {
+      const canonicalTaskId = record.canonicalTaskId.toLowerCase();
+      return (
+        canonicalTaskId === normalizedQuery ||
+        canonicalTaskId.slice(canonicalTaskId.indexOf(":") + 1) === normalizedQuery
+      );
+    });
+    const match = matches.at(0);
+    if (match === undefined) {
+      throw new Error(`No local run matches ${input.query}. Run crew status to list local runs.`);
+    }
+    if (matches.length > 1) {
+      throw new Error(
+        `Multiple local runs match ${input.query}: ${matches.map((record) => record.canonicalTaskId).join(", ")}. Retry with a canonical task ID.`,
+      );
+    }
+    return createRunHandle({ module: this, record: match });
+  }
+
+  public async list(): Promise<readonly RunHandle[]> {
+    return (await this.#store.list()).map((record) => createRunHandle({ module: this, record }));
+  }
+
+  public async reconcilePresentedWorkspaces(input: {
+    readonly expectedRunIds: readonly string[];
+  }): Promise<readonly PresentationChange[]> {
+    const expectedRunIds = new Set(input.expectedRunIds);
+    const probe = await this.#presenter.probe();
+    if (!probe.available) {
+      return [];
+    }
+    const changes: PresentationChange[] = [];
+    for (const existing of await this.#store.list()) {
+      if (existing.state === "complete" || !expectedRunIds.has(existing.runId)) {
+        continue;
+      }
+      const presented = probe.workspaces.some(
+        (workspace) =>
+          workspace.name === existing.presentedWorkspaceName ||
+          workspace.description === existing.presentedWorkspaceName ||
+          workspace.description === `groundcrew:${existing.canonicalTaskId}`,
+      );
+      if (existing.state === "provisioning" && presented) {
+        let transitioned = false;
+        // Reconciliation is ordered by canonical Task identity for deterministic changes.
+        // eslint-disable-next-line no-await-in-loop
+        const record = await this.#store.mutate({
+          canonicalTaskId: existing.canonicalTaskId,
+          update: (current) => {
+            if (current.runId !== existing.runId || current.state !== "provisioning") {
+              return current;
+            }
+            transitioned = true;
+            return {
+              ...current,
+              events: [
+                ...current.events,
+                { event: "running", timestamp: new Date().toISOString() },
+              ],
+              state: "running",
+            };
+          },
+        });
+        if (transitioned) {
+          changes.push({ run: new RunningRunHandle({ module: this, record }), type: "running" });
+        }
+        continue;
+      }
+      if (presented) {
+        continue;
+      }
+      const reason =
+        existing.state === "provisioning" ? "provisioning-interrupted" : "workspace-missing";
+      let transitioned = false;
+      // Reconciliation is ordered by canonical Task identity for deterministic changes.
+      // eslint-disable-next-line no-await-in-loop
+      const record = await this.#store.mutate({
+        canonicalTaskId: existing.canonicalTaskId,
+        update: (current) => {
+          if (current.runId !== existing.runId || current.state === "complete") {
+            return current;
+          }
+          transitioned = true;
+          return completeRunRecord({ outcome: "failed", reason, record: current });
+        },
+      });
+      if (transitioned) {
+        changes.push({
+          reason,
+          run: new CompletedRunHandle({ module: this, record }),
+          type: "failed",
+        });
+      }
+    }
+    return changes;
+  }
+
+  public async fail(input: {
+    readonly record: Readonly<RunRecord>;
+    readonly reason: string;
+  }): Promise<RunChange<CompletedRun>> {
+    let transitioned = false;
+    const record = await this.#store.mutate({
+      canonicalTaskId: input.record.canonicalTaskId,
+      update: (current) => {
+        if (current.runId !== input.record.runId) {
+          throw new Error(`run ${input.record.runId} is stale`);
+        }
+        if (current.state === "complete") {
+          return current;
+        }
+        transitioned = true;
+        return completeRunRecord({ outcome: "failed", reason: input.reason, record: current });
+      },
+    });
+    return {
+      run: new CompletedRunHandle({ module: this, record }),
+      transitioned,
+    };
+  }
+
+  public async launch(input: {
+    readonly record: RunRecord;
+    readonly task: LaunchTask;
+    readonly profile: AgentProfile;
+    readonly branch: string;
+    readonly acquiredRepositories: readonly string[];
+  }): Promise<RunChange<RunningRun>> {
+    await launchAgent({
+      acquiredRepositories: input.acquiredRepositories,
+      branch: input.branch,
+      environment: this.#environment,
+      presenterName: this.#presenterName,
+      profile: input.profile,
+      record: input.record,
+      task: input.task,
+    });
+    const record = await this.#store.mutate({
+      canonicalTaskId: input.record.canonicalTaskId,
+      update: (current) => {
+        if (current.runId !== input.record.runId || current.state !== "provisioning") {
+          throw new Error(`run ${input.record.runId} is no longer provisioning`);
+        }
+        return {
+          ...current,
+          events: [...current.events, { event: "running", timestamp: new Date().toISOString() }],
+          state: "running",
+        };
+      },
+    });
+    return { run: new RunningRunHandle({ module: this, record }), transitioned: true };
+  }
+
+  public async discardUnclaimed(input: { readonly record: Readonly<RunRecord> }): Promise<void> {
+    await this.#store.removeWhen({
+      canonicalTaskId: input.record.canonicalTaskId,
+      validate: (current) => {
+        requireCurrentRun({ current, expected: input.record, state: "provisioning" });
+      },
+    });
+  }
+
+  public async reportArtifact(input: {
+    readonly record: Readonly<RunRecord>;
+    readonly artifact: Artifact;
+  }): Promise<RunningRun> {
+    const record = await this.#store.mutate({
+      canonicalTaskId: input.record.canonicalTaskId,
+      update: (current) => {
+        requireCurrentRun({ current, expected: input.record, state: "running" });
+        return {
+          ...current,
+          artifacts: [...current.artifacts, input.artifact],
+          events: [
+            ...current.events,
+            { event: "artifact-added", timestamp: new Date().toISOString() },
+          ],
+        };
+      },
+    });
+    return new RunningRunHandle({ module: this, record });
+  }
+
+  public async finish(input: {
+    readonly record: Readonly<RunRecord>;
+    readonly outcome: "delivered" | "failed" | "stopped";
+    readonly message?: string | undefined;
+    readonly assertWorkspaceIdle: (record: Readonly<RunRecord>) => Promise<void>;
+  }): Promise<CompletedRun> {
+    const record = await this.#store.mutate({
+      canonicalTaskId: input.record.canonicalTaskId,
+      update: async (current) => {
+        requireCurrentRun({ current, expected: input.record, state: "running" });
+        await input.assertWorkspaceIdle(current);
+        return completeRunRecord({
+          message: input.message,
+          outcome: input.outcome,
+          record: current,
+        });
+      },
+    });
+    return new CompletedRunHandle({ module: this, record });
+  }
+
+  public async reserveRepositoryOperation(input: {
+    readonly record: Readonly<RunRecord>;
+    readonly repository: string;
+    readonly reserveWhileLocked: (record: Readonly<RunRecord>) => Promise<void>;
+  }): Promise<RunningRun> {
+    const record = await this.#store.mutate({
+      canonicalTaskId: input.record.canonicalTaskId,
+      update: async (current) => {
+        requireCurrentRun({ current, expected: input.record, state: "running" });
+        await input.reserveWhileLocked(current);
+        return current;
+      },
+    });
+    return new RunningRunHandle({ module: this, record });
+  }
+
+  public async recordRepositories(input: {
+    readonly record: Readonly<RunRecord>;
+    readonly repository: string;
+    readonly repositories: readonly string[];
+  }): Promise<RunningRun> {
+    const record = await this.#store.mutate({
+      canonicalTaskId: input.record.canonicalTaskId,
+      update: (current) => {
+        requireCurrentRun({ current, expected: input.record, state: "running" });
+        return {
+          ...current,
+          events: [
+            ...current.events,
+            { event: `repository-added:${input.repository}`, timestamp: new Date().toISOString() },
+          ],
+          repositories: input.repositories,
+        };
+      },
+    });
+    return new RunningRunHandle({ module: this, record });
+  }
+
+  public async repairRepositories(input: {
+    readonly canonicalTaskId: string;
+    readonly repositories: readonly string[];
+  }): Promise<RunChange<RunHandle>> {
+    let transitioned = false;
+    const record = await this.#store.mutate({
+      canonicalTaskId: input.canonicalTaskId,
+      update: (current) => {
+        if (sameStrings(current.repositories, input.repositories)) {
+          return current;
+        }
+        transitioned = true;
+        return { ...current, repositories: input.repositories };
+      },
+    });
+    return { run: createRunHandle({ module: this, record }), transitioned };
+  }
+
+  public async acknowledgeSourceWriteback(input: {
+    readonly record: Readonly<RunRecord>;
+    readonly expectedRunId: string;
+    readonly expectedCompletionTimestamp: string;
+  }): Promise<CompletedRun> {
+    const record = await this.#store.mutate({
+      canonicalTaskId: input.record.canonicalTaskId,
+      update: (current) => {
+        const currentCompletionTimestamp = completionTimestamp({ record: current });
+        if (
+          current.runId !== input.expectedRunId ||
+          currentCompletionTimestamp !== input.expectedCompletionTimestamp
+        ) {
+          throw new Error(`stale source writeback acknowledgement for ${current.canonicalTaskId}`);
+        }
+        if (current.state !== "complete" || current.outcome === undefined) {
+          throw new Error(`run ${current.runId} is not complete`);
+        }
+        return current.writebackPending === false
+          ? current
+          : { ...current, writebackPending: false };
+      },
+    });
+    return new CompletedRunHandle({ module: this, record });
+  }
+
+  public async stopForCleanup(input: {
+    readonly record: Readonly<RunRecord>;
+    readonly assertWorkspaceIdle: (record: Readonly<RunRecord>) => Promise<void>;
+  }): Promise<RunChange<CompletedRun>> {
+    let transitioned = false;
+    const record = await this.#store.mutate({
+      canonicalTaskId: input.record.canonicalTaskId,
+      update: async (current) => {
+        if (current.runId !== input.record.runId) {
+          throw new Error(`run ${input.record.runId} is stale`);
+        }
+        await input.assertWorkspaceIdle(current);
+        if (current.state === "complete") {
+          return current;
+        }
+        transitioned = true;
+        return completeRunRecord({ outcome: "stopped", record: current });
+      },
+    });
+    return { run: new CompletedRunHandle({ module: this, record }), transitioned };
+  }
+
+  public async reconcileWorkspaceOperation(input: {
+    readonly record: Readonly<RunRecord>;
+    readonly clearDeadWhileLocked: (record: Readonly<RunRecord>) => Promise<void>;
+  }): Promise<RunHandle> {
+    const record = await this.#store.mutate({
+      canonicalTaskId: input.record.canonicalTaskId,
+      update: async (current) => {
+        if (current.runId !== input.record.runId) {
+          throw new Error(`run ${input.record.runId} is stale`);
+        }
+        await input.clearDeadWhileLocked(current);
+        return current;
+      },
+    });
+    return createRunHandle({ module: this, record });
+  }
+
+  public async remove(input: { readonly record: Readonly<RunRecord> }): Promise<void> {
+    await this.#store.removeWhen({
+      canonicalTaskId: input.record.canonicalTaskId,
+      validate: (current) => {
+        if (current.runId !== input.record.runId) {
+          throw new Error(`run ${input.record.runId} is stale`);
+        }
+        if (current.state !== "complete") {
+          throw new Error(`run ${current.runId} is not complete`);
+        }
+        if (current.writebackPending === true) {
+          throw new Error(`run ${current.runId} source writeback is pending`);
+        }
+      },
+    });
+  }
+
+  public async accessHint(input: {
+    readonly record: Readonly<RunRecord>;
+  }): Promise<string | undefined> {
+    requireState({ record: input.record, state: "running" });
+    return await this.#presenter.accessHint({ name: input.record.presentedWorkspaceName });
+  }
+
+  public async setPresentedStatus(input: { readonly record: Readonly<RunRecord> }): Promise<void> {
+    if (input.record.state !== "complete" || input.record.outcome === undefined) {
+      throw new Error(`run ${input.record.runId} is not complete`);
+    }
+    await this.#presenter.setStatus?.({
+      name: input.record.presentedWorkspaceName,
+      text: input.record.outcome,
+    });
+  }
+
+  public async closePresentedWorkspace(input: {
+    readonly record: Readonly<RunRecord>;
+  }): Promise<void> {
+    await this.#presenter.close({ name: input.record.presentedWorkspaceName });
+  }
+}
+
+class RunStore {
   readonly #runsDirectory: string;
 
   public constructor(input: { readonly stateRoot: string }) {
@@ -90,10 +566,6 @@ export class RunStore {
       },
       slug,
     });
-  }
-
-  public async get(input: { readonly canonicalTaskId: string }): Promise<RunRecord | undefined> {
-    return await this.getBySlug({ slug: taskSlug(input) });
   }
 
   public async getBySlug(input: { readonly slug: string }): Promise<RunRecord | undefined> {
@@ -148,10 +620,18 @@ export class RunStore {
     });
   }
 
-  public async remove(input: { readonly canonicalTaskId: string }): Promise<void> {
+  public async removeWhen(input: {
+    readonly canonicalTaskId: string;
+    readonly validate: (record: RunRecord) => void;
+  }): Promise<void> {
     const slug = taskSlug(input);
     await this.withLock({
       operation: async () => {
+        const current = await this.getBySlug({ slug });
+        if (current === undefined) {
+          throw new Error(`no run exists for ${input.canonicalTaskId}`);
+        }
+        input.validate(current);
         await rm(this.path({ slug }), { force: true });
       },
       slug,
@@ -176,6 +656,158 @@ export class RunStore {
     const lockPath = join(this.#runsDirectory, `${input.slug}.lock`);
     return await withFileLock({ operation: input.operation, path: lockPath });
   }
+}
+
+class ProvisioningRunHandle implements ProvisioningRun {
+  public readonly record: Readonly<RunRecord>;
+  public readonly state = "provisioning" as const;
+  readonly #module: RunModule;
+
+  public constructor(input: { readonly module: RunModule; readonly record: RunRecord }) {
+    this.#module = input.module;
+    this.record = input.record;
+  }
+
+  public async fail(input: { readonly reason: string }): Promise<RunChange<CompletedRun>> {
+    return await this.#module.fail({ reason: input.reason, record: this.record });
+  }
+
+  public async discardUnclaimed(): Promise<void> {
+    await this.#module.discardUnclaimed({ record: this.record });
+  }
+
+  public async launch(input: {
+    readonly task: LaunchTask;
+    readonly profile: AgentProfile;
+    readonly branch: string;
+    readonly acquiredRepositories: readonly string[];
+  }): Promise<RunChange<RunningRun>> {
+    return await this.#module.launch({ ...input, record: this.record });
+  }
+
+  public async stopForCleanup(input: {
+    readonly assertWorkspaceIdle: (record: Readonly<RunRecord>) => Promise<void>;
+  }): Promise<RunChange<CompletedRun>> {
+    return await this.#module.stopForCleanup({ ...input, record: this.record });
+  }
+
+  public async reconcileWorkspaceOperation(input: {
+    readonly clearDeadWhileLocked: (record: Readonly<RunRecord>) => Promise<void>;
+  }): Promise<RunHandle> {
+    return await this.#module.reconcileWorkspaceOperation({ ...input, record: this.record });
+  }
+}
+
+class RunningRunHandle implements RunningRun {
+  public readonly record: Readonly<RunRecord>;
+  public readonly state = "running" as const;
+  readonly #module: RunModule;
+
+  public constructor(input: { readonly module: RunModule; readonly record: RunRecord }) {
+    this.#module = input.module;
+    this.record = input.record;
+  }
+
+  public async reportArtifact(input: { readonly artifact: Artifact }): Promise<RunningRun> {
+    return await this.#module.reportArtifact({ artifact: input.artifact, record: this.record });
+  }
+
+  public async finish(input: {
+    readonly outcome: "delivered" | "failed" | "stopped";
+    readonly message?: string | undefined;
+    readonly assertWorkspaceIdle: (record: Readonly<RunRecord>) => Promise<void>;
+  }): Promise<CompletedRun> {
+    return await this.#module.finish({ ...input, record: this.record });
+  }
+
+  public async fail(input: { readonly reason: string }): Promise<RunChange<CompletedRun>> {
+    return await this.#module.fail({ reason: input.reason, record: this.record });
+  }
+
+  public async reserveRepositoryOperation(input: {
+    readonly repository: string;
+    readonly reserveWhileLocked: (record: Readonly<RunRecord>) => Promise<void>;
+  }): Promise<RunningRun> {
+    return await this.#module.reserveRepositoryOperation({ ...input, record: this.record });
+  }
+
+  public async recordRepositories(input: {
+    readonly repository: string;
+    readonly repositories: readonly string[];
+  }): Promise<RunningRun> {
+    return await this.#module.recordRepositories({ ...input, record: this.record });
+  }
+
+  public async accessHint(): Promise<string | undefined> {
+    return await this.#module.accessHint({ record: this.record });
+  }
+
+  public async stopForCleanup(input: {
+    readonly assertWorkspaceIdle: (record: Readonly<RunRecord>) => Promise<void>;
+  }): Promise<RunChange<CompletedRun>> {
+    return await this.#module.stopForCleanup({ ...input, record: this.record });
+  }
+
+  public async reconcileWorkspaceOperation(input: {
+    readonly clearDeadWhileLocked: (record: Readonly<RunRecord>) => Promise<void>;
+  }): Promise<RunHandle> {
+    return await this.#module.reconcileWorkspaceOperation({ ...input, record: this.record });
+  }
+}
+
+class CompletedRunHandle implements CompletedRun {
+  public readonly record: Readonly<RunRecord>;
+  public readonly state = "complete" as const;
+  readonly #module: RunModule;
+
+  public constructor(input: { readonly module: RunModule; readonly record: RunRecord }) {
+    this.#module = input.module;
+    this.record = input.record;
+  }
+
+  public async acknowledgeSourceWriteback(input: {
+    readonly expectedRunId: string;
+    readonly expectedCompletionTimestamp: string;
+  }): Promise<CompletedRun> {
+    return await this.#module.acknowledgeSourceWriteback({ ...input, record: this.record });
+  }
+
+  public async remove(): Promise<void> {
+    await this.#module.remove({ record: this.record });
+  }
+
+  public async setPresentedStatus(): Promise<void> {
+    await this.#module.setPresentedStatus({ record: this.record });
+  }
+
+  public async closePresentedWorkspace(): Promise<void> {
+    await this.#module.closePresentedWorkspace({ record: this.record });
+  }
+
+  public async stopForCleanup(input: {
+    readonly assertWorkspaceIdle: (record: Readonly<RunRecord>) => Promise<void>;
+  }): Promise<RunChange<CompletedRun>> {
+    return await this.#module.stopForCleanup({ ...input, record: this.record });
+  }
+
+  public async reconcileWorkspaceOperation(input: {
+    readonly clearDeadWhileLocked: (record: Readonly<RunRecord>) => Promise<void>;
+  }): Promise<RunHandle> {
+    return await this.#module.reconcileWorkspaceOperation({ ...input, record: this.record });
+  }
+}
+
+function createRunHandle(input: {
+  readonly module: RunModule;
+  readonly record: RunRecord;
+}): RunHandle {
+  if (input.record.state === "provisioning") {
+    return new ProvisioningRunHandle(input);
+  }
+  if (input.record.state === "running") {
+    return new RunningRunHandle(input);
+  }
+  return new CompletedRunHandle(input);
 }
 
 export async function withFileLock<T>(input: {
@@ -252,7 +884,7 @@ export function taskSlug(input: { readonly canonicalTaskId: string }): string {
     .replaceAll(/^-|-$/g, "");
 }
 
-export function composeAgentCommand(input: {
+function composeAgentCommand(input: {
   readonly profile: AgentProfile;
   readonly prompt: string;
 }): readonly string[] {
@@ -273,7 +905,7 @@ export function composeAgentCommand(input: {
   return command;
 }
 
-export function renderPrompt(input: {
+function renderPrompt(input: {
   readonly task: LaunchTask;
   readonly workspaceDirectory: string;
   readonly branch: string;
@@ -299,7 +931,7 @@ export function renderPrompt(input: {
   ].join("\n");
 }
 
-export async function launchAgent(input: {
+async function launchAgent(input: {
   readonly environment: NodeJS.ProcessEnv;
   readonly presenterName: "cmux";
   readonly record: RunRecord;
@@ -418,17 +1050,70 @@ export async function seedWorkspaceTrust(input: {
   });
 }
 
-export function presenterFor(input: {
-  readonly environment: NodeJS.ProcessEnv;
-  readonly name: "cmux";
-}): Presenter {
-  return createPresenter(input);
-}
-
 function presenterWorkspaceName(input: { readonly canonicalTaskId: string }): string {
   const separatorIndex = input.canonicalTaskId.indexOf(":");
   const sourceLocalTaskId = input.canonicalTaskId.slice(separatorIndex + 1);
   return taskSlug({ canonicalTaskId: sourceLocalTaskId });
+}
+
+function completeRunRecord(input: {
+  readonly record: RunRecord;
+  readonly outcome: "delivered" | "failed" | "stopped";
+  readonly reason?: string | undefined;
+  readonly message?: string | undefined;
+}): RunRecord {
+  if (input.record.state === "complete") {
+    throw new Error(`run ${input.record.runId} is already complete`);
+  }
+  return {
+    ...input.record,
+    events: [
+      ...input.record.events,
+      { event: `complete:${input.outcome}`, timestamp: new Date().toISOString() },
+    ],
+    message: input.message,
+    outcome: input.outcome,
+    reason: input.reason,
+    state: "complete",
+    writebackPending: true,
+  };
+}
+
+function requireCurrentRun(input: {
+  readonly current: RunRecord;
+  readonly expected: Readonly<RunRecord>;
+  readonly state: RunRecord["state"];
+}): void {
+  if (input.current.runId !== input.expected.runId) {
+    throw new Error(`run ${input.expected.runId} is stale`);
+  }
+  if (input.current.state !== input.state) {
+    if (input.state === "running") {
+      throw new Error(
+        `run ${input.current.runId} is ${input.current.state}; in-session commands require a running run`,
+      );
+    }
+    throw new Error(
+      `run ${input.current.runId} is ${input.current.state}; expected ${input.state}`,
+    );
+  }
+}
+
+function requireState(input: {
+  readonly record: Readonly<RunRecord>;
+  readonly state: RunRecord["state"];
+}): void {
+  if (input.record.state !== input.state) {
+    throw new Error(`run ${input.record.runId} is ${input.record.state}; expected ${input.state}`);
+  }
+}
+
+function completionTimestamp(input: { readonly record: RunRecord }): string | undefined {
+  return input.record.events.findLast(({ event }) => event.startsWith("complete:"))?.timestamp;
+}
+
+function sameStrings(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 async function atomicWrite(input: {
