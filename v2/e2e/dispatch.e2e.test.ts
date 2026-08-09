@@ -380,6 +380,10 @@ describe("crew start", () => {
       tasks: [task({ blocked: true, repositories: [] })],
     });
     await runCrew({ arguments: ["start"], environment: fixture.environment });
+    const initialVerdicts = JSON.parse(
+      await readFile(join(dirname(fixture.runsDirectory), "dispatch.json"), "utf8"),
+    );
+    expect(initialVerdicts).toHaveProperty("fixture:ENG-123");
     await writeFile(
       fixture.listedTasksPath,
       JSON.stringify([task({ blocked: false, repositories: [] })]),
