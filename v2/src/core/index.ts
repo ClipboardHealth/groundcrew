@@ -9,14 +9,15 @@ import {
   type Task,
 } from "../source/index.js";
 import {
-  launchAgent,
-  presenterFor,
-  RunStore,
+  RunModule,
   taskSlug,
   withFileLock,
   type AgentProfile,
   type Artifact,
+  type CompletedRun,
+  type RunHandle,
   type RunRecord,
+  type RunningRun,
 } from "../run/index.js";
 import {
   DirtyWorkspaceError,
@@ -170,7 +171,7 @@ interface Runtime {
   readonly environment: NodeJS.ProcessEnv;
   readonly paths: ApplicationPaths;
   readonly registry: SourceRegistry;
-  readonly runs: RunStore;
+  readonly runs: RunModule;
   readonly workspaces: WorkspaceService;
 }
 
@@ -193,7 +194,11 @@ export async function createApplication(input: {
     instances: config.sources,
     packageRoot: paths.packageRoot,
   });
-  const runs = new RunStore({ stateRoot: paths.stateRoot });
+  const runs = new RunModule({
+    environment,
+    presenterName: config.presenter,
+    stateRoot: paths.stateRoot,
+  });
   const workspaces = new WorkspaceService({
     config: {
       baseDirectory: config.workspace.baseDirectory,
@@ -317,8 +322,8 @@ async function start(input: {
   const active = (await runtime.runs.list())
     .filter((run) => run.state === "provisioning" || run.state === "running")
     .map((run) => ({
-      agentProfile: run.agentProfile,
-      canonicalTaskId: run.canonicalTaskId,
+      agentProfile: run.record.agentProfile,
+      canonicalTaskId: run.record.canonicalTaskId,
     }));
   let activeCount = active.length;
   input.onProgress?.({
@@ -330,11 +335,11 @@ async function start(input: {
   for (const task of tasks) {
     const canonicalTaskId = canonicalId({ task });
     const slug = taskSlug({ canonicalTaskId });
-    const existing = await runtime.runs.getBySlug({ slug });
+    const existing = await runtime.runs.findBySlug({ slug });
     if (existing !== undefined) {
       const reason: VerdictReason =
-        existing.canonicalTaskId === canonicalTaskId ? "run-exists" : "slug-collision";
-      await skipTask({ canonicalTaskId, detail: existing.canonicalTaskId, reason });
+        existing.record.canonicalTaskId === canonicalTaskId ? "run-exists" : "slug-collision";
+      await skipTask({ canonicalTaskId, detail: existing.record.canonicalTaskId, reason });
       continue;
     }
     if (task.terminal) {
@@ -399,7 +404,7 @@ async function start(input: {
       continue;
     }
     const workspaceDirectory = runtime.workspaces.workspaceDirectory({ slug });
-    const record = await runtime.runs.create({
+    const provisioning = await runtime.runs.beginDispatch({
       agentProfile: profileName,
       canonicalTaskId,
       repositories: task.repositories,
@@ -407,10 +412,10 @@ async function start(input: {
     });
     const claim = await runtime.registry.update({
       canonicalTaskId,
-      event: { runId: record.runId, type: "claimed" },
+      event: { runId: provisioning.record.runId, type: "claimed" },
     });
     if (!claim.ok || claim.data.result === "rejected") {
-      await runtime.runs.remove({ canonicalTaskId });
+      await provisioning.discardUnclaimed();
       const detail = claim.ok
         ? (claim.data.reason ?? "source rejected claim")
         : claim.error.message;
@@ -418,7 +423,7 @@ async function start(input: {
         canonicalTaskId,
         detail,
         reason: "claim-rejected",
-        runId: record.runId,
+        runId: provisioning.record.runId,
       });
       continue;
     }
@@ -436,13 +441,10 @@ async function start(input: {
         repositories: task.repositories,
         slug,
       });
-      await launchAgent({
+      const launched = await provisioning.launch({
         acquiredRepositories: marker.repositories,
         branch: marker.branch,
-        environment: runtime.environment,
-        presenterName: runtime.config.presenter,
         profile,
-        record,
         task: {
           canonicalTaskId,
           description: task.description,
@@ -450,27 +452,16 @@ async function start(input: {
           title: task.title,
         },
       });
-      let transitioned = false;
-      await runtime.runs.mutate({
-        canonicalTaskId,
-        update: (current) => {
-          if (current.state !== "provisioning") {
-            return current;
-          }
-          transitioned = true;
-          return transition({ event: "running", record: current, state: "running" });
-        },
-      });
-      if (!transitioned) {
+      await clearVerdict({ canonicalTaskId, runtime });
+      if (!launched.transitioned) {
         continue;
       }
-      await clearVerdict({ canonicalTaskId, runtime });
       await log({
         canonicalTaskId,
         event: "run_started",
         level: "info",
         module: "core",
-        runId: record.runId,
+        runId: launched.run.record.runId,
         runtime,
       });
       started.push(canonicalTaskId);
@@ -478,30 +469,17 @@ async function start(input: {
     } catch (error) {
       const reason =
         error instanceof PrepareWorktreeError ? prepareFailureReason(error) : errorMessage(error);
-      let failedNow = false;
-      const failed = await runtime.runs.mutate({
-        canonicalTaskId,
-        update: (current) => {
-          if (current.state === "complete") {
-            return current;
-          }
-          failedNow = true;
-          return {
-            ...completeRecord({ outcome: "failed", reason, record: current }),
-            writebackPending: true,
-          };
-        },
-      });
-      if (failedNow) {
+      const failed = await provisioning.fail({ reason });
+      if (failed.transitioned) {
         await log({
           canonicalTaskId,
           event: "run_failed",
           level: "error",
           module: "core",
-          runId: failed.runId,
+          runId: failed.run.record.runId,
           runtime,
         });
-        await writeCompletion({ record: failed, runtime });
+        await writeCompletion({ run: failed.run, runtime });
       }
       if (input.task !== undefined) {
         throw error;
@@ -532,7 +510,7 @@ async function status(input: {
   const visibleTasks = listed.ok ? listed.data.tasks.map((task) => canonicalId({ task })) : [];
   const identities = new Set([
     ...visibleTasks,
-    ...runs.map((run) => run.canonicalTaskId),
+    ...runs.map((run) => run.record.canonicalTaskId),
     ...Object.keys(verdicts),
   ]);
   let selected = [...identities];
@@ -545,21 +523,15 @@ async function status(input: {
       selected = [input.task];
     }
   }
-  const presenter = presenterFor({
-    environment: runtime.environment,
-    name: runtime.config.presenter,
-  });
   const entries = await Promise.all(
     selected.toSorted().map(async (canonicalTaskId): Promise<StatusEntry> => {
-      const run = runs.find((candidate) => candidate.canonicalTaskId === canonicalTaskId);
+      const run = runs.find((candidate) => candidate.record.canonicalTaskId === canonicalTaskId);
+      const record = run?.record;
       const observed =
-        run === undefined
+        record === undefined
           ? undefined
           : await runtime.workspaces.observe({ slug: taskSlug({ canonicalTaskId }) });
-      const accessHint =
-        run?.state === "running"
-          ? await presenter.accessHint({ name: run.presentedWorkspaceName })
-          : undefined;
+      const accessHint = run?.state === "running" ? await run.accessHint() : undefined;
       return {
         accessHint,
         canonicalTaskId,
@@ -568,8 +540,12 @@ async function status(input: {
           wouldRemove: observed?.repositories.map((repository) => repository.path) ?? [],
         },
         observed,
-        reported: { artifacts: run?.artifacts ?? [], outcome: run?.outcome, reason: run?.reason },
-        run,
+        reported: {
+          artifacts: record?.artifacts ?? [],
+          outcome: record?.outcome,
+          reason: record?.reason,
+        },
+        run: record,
         verdict: verdicts[canonicalTaskId],
       };
     }),
@@ -582,30 +558,18 @@ async function artifactAdd(input: {
   readonly task: string;
   readonly artifact: Artifact;
 }): Promise<RunRecord> {
-  const canonicalTaskId = await resolveRunIdentity({ query: input.task, runtime: input.runtime });
-  const record = await input.runtime.runs.mutate({
-    canonicalTaskId,
-    update: (record) => {
-      requireRunningRun(record);
-      return {
-        ...record,
-        artifacts: [...record.artifacts, input.artifact],
-        events: [
-          ...record.events,
-          { event: "artifact-added", timestamp: new Date().toISOString() },
-        ],
-      };
-    },
-  });
+  const run = await input.runtime.runs.resolve({ query: input.task });
+  requireRunningRun(run);
+  const updated = await run.reportArtifact({ artifact: input.artifact });
   await log({
-    canonicalTaskId,
+    canonicalTaskId: updated.record.canonicalTaskId,
     event: "artifact_added",
     level: "info",
     module: "core",
-    runId: record.runId,
+    runId: updated.record.runId,
     runtime: input.runtime,
   });
-  return record;
+  return updated.record;
 }
 
 async function done(input: {
@@ -616,43 +580,36 @@ async function done(input: {
   readonly allowDirty: boolean;
 }): Promise<RunRecord> {
   const { runtime } = input;
-  const canonicalTaskId = await resolveRunIdentity({ query: input.task, runtime });
+  const run = await runtime.runs.resolve({ query: input.task });
+  requireRunningRun(run);
+  const canonicalTaskId = run.record.canonicalTaskId;
   const observed = await runtime.workspaces.observe({ slug: taskSlug({ canonicalTaskId }) });
   if (input.outcome === "delivered" && !input.allowDirty && observed.dirtyPaths.length > 0) {
     throw new DirtyWorkspaceError(observed.dirtyPaths);
   }
-  let record = await runtime.runs.mutate({
-    canonicalTaskId,
-    update: async (current) => {
-      requireRunningRun(current);
+  let completed = await run.finish({
+    assertWorkspaceIdle: async (record) => {
       await runtime.workspaces.assertNoActiveRepositoryOperation({
-        workspaceDirectory: current.workspaceDirectory,
+        workspaceDirectory: record.workspaceDirectory,
       });
-      return {
-        ...completeRecord({ outcome: input.outcome, record: current }),
-        message: input.message,
-        writebackPending: true,
-      };
     },
+    message: input.message,
+    outcome: input.outcome,
   });
   await log({
     canonicalTaskId,
     event: "run_completed",
     level: "info",
     module: "core",
-    runId: record.runId,
+    runId: completed.record.runId,
     runtime,
   });
-  const presenter = presenterFor({
-    environment: runtime.environment,
-    name: runtime.config.presenter,
-  });
-  await presenter.setStatus?.({ name: record.presentedWorkspaceName, text: input.outcome });
-  record = await writeCompletion({ record, runtime });
-  if (record.writebackPending === true) {
+  await completed.setPresentedStatus();
+  completed = await writeCompletion({ run: completed, runtime });
+  if (completed.record.writebackPending === true) {
     throw new Error("completion saved locally; source writeback is pending and will be retried");
   }
-  return record;
+  return completed.record;
 }
 
 async function repoAdd(input: {
@@ -660,24 +617,24 @@ async function repoAdd(input: {
   readonly task: string;
   readonly repository: string;
 }): Promise<RunRecord> {
-  const canonicalTaskId = await resolveRunIdentity({ query: input.task, runtime: input.runtime });
+  const resolved = await input.runtime.runs.resolve({ query: input.task });
+  requireRunningRun(resolved);
+  const canonicalTaskId = resolved.record.canonicalTaskId;
   const slug = taskSlug({ canonicalTaskId });
   const processId = process.pid;
-  let record = await input.runtime.runs.mutate({
-    canonicalTaskId,
-    update: async (current) => {
-      requireRunningRun(current);
+  let run = await resolved.reserveRepositoryOperation({
+    repository: input.repository,
+    reserveWhileLocked: async (record) => {
       await input.runtime.workspaces.reserveRepositoryOperation({
         processId,
         repository: input.repository,
-        workspaceDirectory: current.workspaceDirectory,
+        workspaceDirectory: record.workspaceDirectory,
       });
-      return current;
     },
   });
   try {
     const marker = await input.runtime.workspaces.readMarker({
-      workspaceDirectory: record.workspaceDirectory,
+      workspaceDirectory: run.record.workspaceDirectory,
     });
     if (marker === undefined) {
       throw new Error(`task marker missing for ${canonicalTaskId}`);
@@ -687,25 +644,15 @@ async function repoAdd(input: {
       repository: input.repository,
       slug,
     });
-    record = await input.runtime.runs.mutate({
-      canonicalTaskId,
-      update: (current) => {
-        requireRunningRun(current);
-        return {
-          ...current,
-          events: [
-            ...current.events,
-            { event: `repository-added:${input.repository}`, timestamp: new Date().toISOString() },
-          ],
-          repositories: updatedMarker.repositories,
-        };
-      },
+    run = await run.recordRepositories({
+      repositories: updatedMarker.repositories,
+      repository: input.repository,
     });
   } catch (error) {
     if (error instanceof PrepareWorktreeError) {
-      record = await failPrepare({
-        canonicalTaskId,
+      await failPrepare({
         error,
+        run,
         runtime: input.runtime,
       });
     }
@@ -713,7 +660,7 @@ async function repoAdd(input: {
   } finally {
     await input.runtime.workspaces.finishRepositoryOperation({
       processId,
-      workspaceDirectory: record.workspaceDirectory,
+      workspaceDirectory: run.record.workspaceDirectory,
     });
   }
   await log({
@@ -722,10 +669,10 @@ async function repoAdd(input: {
     level: "info",
     module: "core",
     repository: input.repository,
-    runId: record.runId,
+    runId: run.record.runId,
     runtime: input.runtime,
   });
-  return record;
+  return run.record;
 }
 
 async function cleanup(input: {
@@ -738,24 +685,24 @@ async function cleanup(input: {
   readonly preservedBranches: readonly string[];
 }> {
   const { runtime } = input;
-  let records = await runtime.runs.list();
+  let runs = await runtime.runs.list();
   if (!input.all) {
     if (input.task === undefined) {
       throw new Error("cleanup requires a task or --all");
     }
-    const canonicalTaskId = await resolveRunIdentity({ query: input.task, runtime });
-    records = records.filter((record) => record.canonicalTaskId === canonicalTaskId);
+    runs = [await runtime.runs.resolve({ query: input.task })];
   }
   const cleaned: string[] = [];
   const preservedBranches: string[] = [];
-  for (let record of records) {
-    const slug = taskSlug({ canonicalTaskId: record.canonicalTaskId });
+  for (const run of runs) {
+    const canonicalTaskId = run.record.canonicalTaskId;
+    const slug = taskSlug({ canonicalTaskId });
     // Check dirty state before stopping a running task.
     // eslint-disable-next-line no-await-in-loop
     const observed = await runtime.workspaces.observe({ slug });
     if (!input.allowDirty && observed.dirtyPaths.length > 0) {
       throw cleanupRefusedError({
-        canonicalTaskId: record.canonicalTaskId,
+        canonicalTaskId,
         paths: observed.dirtyPaths,
         query: input.task,
       });
@@ -763,34 +710,21 @@ async function cleanup(input: {
     // The operation check must run under the same run lock as repository reservation, including
     // for a run that reconciliation completed while acquisition was still active.
     // eslint-disable-next-line no-await-in-loop
-    let stoppedNow = false;
-    record = await runtime.runs.mutate({
-      canonicalTaskId: record.canonicalTaskId,
-      update: async (current) => {
+    const stopped = await run.stopForCleanup({
+      assertWorkspaceIdle: async (record) => {
         await runtime.workspaces.assertNoActiveRepositoryOperation({
-          workspaceDirectory: current.workspaceDirectory,
+          workspaceDirectory: record.workspaceDirectory,
         });
-        if (current.state === "complete") {
-          return current;
-        }
-        stoppedNow = true;
-        return {
-          ...completeRecord({ outcome: "stopped", record: current }),
-          writebackPending: true,
-        };
       },
     });
-    if (stoppedNow || record.writebackPending === true) {
+    let completed = stopped.run;
+    if (stopped.transitioned || completed.record.writebackPending === true) {
       // eslint-disable-next-line no-await-in-loop
-      record = await writeCompletion({ record, runtime });
+      completed = await writeCompletion({ run: completed, runtime });
     }
-    const presenter = presenterFor({
-      environment: runtime.environment,
-      name: runtime.config.presenter,
-    });
     // Presenter closes before its underlying directories disappear.
     // eslint-disable-next-line no-await-in-loop
-    await presenter.close({ name: record.presentedWorkspaceName });
+    await completed.closePresentedWorkspace();
     try {
       // eslint-disable-next-line no-await-in-loop
       const result = await runtime.workspaces.cleanup({ allowDirty: input.allowDirty, slug });
@@ -798,148 +732,102 @@ async function cleanup(input: {
     } catch (error) {
       if (error instanceof DirtyWorkspaceError) {
         throw cleanupRefusedError({
-          canonicalTaskId: record.canonicalTaskId,
+          canonicalTaskId,
           paths: error.paths,
           query: input.task,
         });
       }
       throw error;
     }
-    if (record.writebackPending !== true) {
+    if (completed.record.writebackPending !== true) {
       // eslint-disable-next-line no-await-in-loop
-      await runtime.runs.remove({ canonicalTaskId: record.canonicalTaskId });
+      await completed.remove();
     }
     // eslint-disable-next-line no-await-in-loop
     await log({
-      canonicalTaskId: record.canonicalTaskId,
+      canonicalTaskId,
       event: "cleanup_completed",
       level: "info",
       module: "core",
-      runId: record.runId,
+      runId: completed.record.runId,
       runtime,
     });
-    cleaned.push(record.canonicalTaskId);
+    cleaned.push(canonicalTaskId);
   }
   return { cleaned, preservedBranches };
 }
 
 async function reconcile(input: { readonly runtime: Runtime }): Promise<void> {
   const { runtime } = input;
-  const records = await runtime.runs.list();
-  if (records.length === 0) {
+  const runs = await runtime.runs.list();
+  if (runs.length === 0) {
     return;
   }
-  const presenter = presenterFor({
-    environment: runtime.environment,
-    name: runtime.config.presenter,
-  });
-  const probe = await presenter.probe();
-  for (let record of records) {
-    const slug = taskSlug({ canonicalTaskId: record.canonicalTaskId });
+  const presentation = await runtime.runs.capturePresentedWorkspaces();
+  for (let run of runs) {
     // Dead in-session acquisition processes leave a recoverable marker that reconciliation clears.
     // eslint-disable-next-line no-await-in-loop
-    record = await runtime.runs.mutate({
-      canonicalTaskId: record.canonicalTaskId,
-      update: async (current) => {
+    run = await run.reconcileWorkspaceOperation({
+      clearDeadWhileLocked: async (record) => {
         await runtime.workspaces.clearDeadRepositoryOperation({
-          workspaceDirectory: current.workspaceDirectory,
+          workspaceDirectory: record.workspaceDirectory,
         });
-        return current;
       },
     });
     // Marker repositories are authoritative after runtime acquisition.
     // eslint-disable-next-line no-await-in-loop
     const marker = await runtime.workspaces.readMarker({
-      workspaceDirectory: record.workspaceDirectory,
+      workspaceDirectory: run.record.workspaceDirectory,
     });
-    if (marker !== undefined && !sameStrings(marker.repositories, record.repositories)) {
+    if (marker !== undefined) {
       // eslint-disable-next-line no-await-in-loop
-      record = await runtime.runs.mutate({
-        canonicalTaskId: record.canonicalTaskId,
-        update: (current) => ({ ...current, repositories: marker.repositories }),
+      const repaired = await runtime.runs.repairRepositories({
+        canonicalTaskId: run.record.canonicalTaskId,
+        expectedRunId: run.record.runId,
+        repositories: marker.repositories,
       });
-      // eslint-disable-next-line no-await-in-loop
-      await log({
-        canonicalTaskId: record.canonicalTaskId,
-        event: "run_repaired",
-        level: "info",
-        module: "core",
-        runId: record.runId,
-        runtime,
-      });
-    }
-    if (record.writebackPending === true) {
-      // eslint-disable-next-line no-await-in-loop
-      record = await writeCompletion({ record, runtime });
-    }
-    if (!probe.available || record.state === "complete") {
-      continue;
-    }
-    const exists = probe.workspaces.some(
-      (workspace) =>
-        workspace.name === record.presentedWorkspaceName ||
-        workspace.description === record.presentedWorkspaceName ||
-        workspace.description === `groundcrew:${record.canonicalTaskId}`,
-    );
-    if (record.state === "provisioning" && exists) {
-      let reconciledNow = false;
-      // eslint-disable-next-line no-await-in-loop
-      const running = await runtime.runs.mutate({
-        canonicalTaskId: record.canonicalTaskId,
-        update: (current) => {
-          if (current.state !== "provisioning") {
-            return current;
-          }
-          reconciledNow = true;
-          return transition({ event: "running", record: current, state: "running" });
-        },
-      });
-      if (reconciledNow) {
+      if (repaired.run.record.runId !== run.record.runId) {
+        continue;
+      }
+      run = repaired.run;
+      if (repaired.transitioned) {
         // eslint-disable-next-line no-await-in-loop
         await log({
-          canonicalTaskId: running.canonicalTaskId,
-          event: "run_reconciled",
+          canonicalTaskId: run.record.canonicalTaskId,
+          event: "run_repaired",
           level: "info",
           module: "core",
-          runId: running.runId,
+          runId: run.record.runId,
           runtime,
         });
       }
-    } else if (!exists) {
-      const reason =
-        record.state === "provisioning" ? "provisioning-interrupted" : "workspace-missing";
+    }
+    if (run.state === "complete" && run.record.writebackPending === true) {
       // eslint-disable-next-line no-await-in-loop
-      let failedNow = false;
-      const failed = await runtime.runs.mutate({
-        canonicalTaskId: record.canonicalTaskId,
-        update: (current) => {
-          if (current.state === "complete") {
-            return current;
-          }
-          failedNow = true;
-          return {
-            ...completeRecord({ outcome: "failed", reason, record: current }),
-            writebackPending: true,
-          };
-        },
+      run = await writeCompletion({ run, runtime });
+    }
+    // eslint-disable-next-line no-await-in-loop
+    const change = await runtime.runs.reconcilePresentedWorkspace({ run, snapshot: presentation });
+    if (change !== undefined) {
+      // eslint-disable-next-line no-await-in-loop
+      await log({
+        canonicalTaskId: change.run.record.canonicalTaskId,
+        event: change.type === "running" ? "run_reconciled" : "run_failed",
+        level: change.type === "running" ? "info" : "error",
+        module: "core",
+        runId: change.run.record.runId,
+        runtime,
       });
-      if (failedNow) {
+      if (change.type === "failed") {
         // eslint-disable-next-line no-await-in-loop
-        await log({
-          canonicalTaskId: failed.canonicalTaskId,
-          event: "run_failed",
-          level: "error",
-          module: "core",
-          runId: failed.runId,
-          runtime,
-        });
-        // eslint-disable-next-line no-await-in-loop
-        await writeCompletion({ record: failed, runtime });
+        await writeCompletion({ run: change.run, runtime });
       }
     }
     // Observe on every reconciliation so corrupt/missing worktrees fail loudly without mutation.
     // eslint-disable-next-line no-await-in-loop
-    await runtime.workspaces.observe({ slug });
+    await runtime.workspaces.observe({
+      slug: taskSlug({ canonicalTaskId: run.record.canonicalTaskId }),
+    });
   }
 }
 
@@ -950,11 +838,11 @@ async function reapTerminalTasks(input: {
   const terminal = new Set(
     input.tasks.filter((task) => task.terminal).map((task) => canonicalId({ task })),
   );
-  for (const record of await input.runtime.runs.list()) {
-    if (!terminal.has(record.canonicalTaskId)) {
+  for (const run of await input.runtime.runs.list()) {
+    if (!terminal.has(run.record.canonicalTaskId)) {
       continue;
     }
-    const slug = taskSlug({ canonicalTaskId: record.canonicalTaskId });
+    const slug = taskSlug({ canonicalTaskId: run.record.canonicalTaskId });
     // eslint-disable-next-line no-await-in-loop
     const observed = await input.runtime.workspaces.observe({ slug });
     if (observed.dirtyPaths.length > 0) {
@@ -965,18 +853,19 @@ async function reapTerminalTasks(input: {
       allowDirty: false,
       all: false,
       runtime: input.runtime,
-      task: record.canonicalTaskId,
+      task: run.record.canonicalTaskId,
     });
   }
 }
 
 async function writeCompletion(input: {
   readonly runtime: Runtime;
-  readonly record: RunRecord;
-}): Promise<RunRecord> {
-  const { record, runtime } = input;
+  readonly run: CompletedRun;
+}): Promise<CompletedRun> {
+  const { run, runtime } = input;
+  const { record } = run;
   if (record.outcome === undefined) {
-    return record;
+    return run;
   }
   const result = await runtime.registry.update({
     canonicalTaskId: record.canonicalTaskId,
@@ -996,11 +885,15 @@ async function writeCompletion(input: {
       runId: record.runId,
       runtime,
     });
-    return record;
+    return run;
   }
-  const updated = await runtime.runs.mutate({
-    canonicalTaskId: record.canonicalTaskId,
-    update: (current) => ({ ...current, writebackPending: false }),
+  const completion = record.events.findLast(({ event }) => event.startsWith("complete:"));
+  if (completion === undefined) {
+    throw new Error(`completion event missing for ${record.canonicalTaskId}`);
+  }
+  const updated = await run.acknowledgeSourceWriteback({
+    expectedCompletionTimestamp: completion.timestamp,
+    expectedRunId: record.runId,
   });
   await log({
     canonicalTaskId: record.canonicalTaskId,
@@ -1013,35 +906,10 @@ async function writeCompletion(input: {
   return updated;
 }
 
-async function resolveRunIdentity(input: {
-  readonly query: string;
-  readonly runtime: Runtime;
-}): Promise<string> {
-  const records = await input.runtime.runs.list();
-  const normalizedQuery = input.query.toLowerCase();
-  const matches = records.filter((record) => {
-    const canonicalTaskId = record.canonicalTaskId.toLowerCase();
-    return (
-      canonicalTaskId === normalizedQuery ||
-      canonicalTaskId.slice(canonicalTaskId.indexOf(":") + 1) === normalizedQuery
-    );
-  });
-  const match = matches.at(0);
-  if (match === undefined) {
-    throw new Error(`No local run matches ${input.query}. Run crew status to list local runs.`);
-  }
-  if (matches.length > 1) {
+function requireRunningRun(run: RunHandle): asserts run is RunningRun {
+  if (run.state !== "running") {
     throw new Error(
-      `Multiple local runs match ${input.query}: ${matches.map((record) => record.canonicalTaskId).join(", ")}. Retry with a canonical task ID.`,
-    );
-  }
-  return match.canonicalTaskId;
-}
-
-function requireRunningRun(record: RunRecord): void {
-  if (record.state !== "running") {
-    throw new Error(
-      `run ${record.runId} is ${record.state}; in-session commands require a running run`,
+      `run ${run.record.runId} is ${run.state}; in-session commands require a running run`,
     );
   }
 }
@@ -1093,75 +961,26 @@ function cleanupRefusedError(input: {
   );
 }
 
-function transition(input: {
-  readonly record: RunRecord;
-  readonly state: "running";
-  readonly event: string;
-}): RunRecord {
-  if (input.record.state !== "provisioning") {
-    throw new Error(`cannot transition ${input.record.state} run ${input.record.runId} to running`);
-  }
-  return {
-    ...input.record,
-    events: [...input.record.events, { event: input.event, timestamp: new Date().toISOString() }],
-    state: input.state,
-  };
-}
-
-function completeRecord(input: {
-  readonly record: RunRecord;
-  readonly outcome: "delivered" | "failed" | "stopped";
-  readonly reason?: string | undefined;
-}): RunRecord {
-  if (input.record.state === "complete") {
-    throw new Error(`run ${input.record.runId} is already complete`);
-  }
-  return {
-    ...input.record,
-    events: [
-      ...input.record.events,
-      { event: `complete:${input.outcome}`, timestamp: new Date().toISOString() },
-    ],
-    outcome: input.outcome,
-    reason: input.reason,
-    state: "complete",
-  };
-}
-
 async function failPrepare(input: {
-  readonly canonicalTaskId: string;
   readonly error: PrepareWorktreeError;
+  readonly run: RunningRun;
   readonly runtime: Runtime;
-}): Promise<RunRecord> {
+}): Promise<CompletedRun> {
   const reason = prepareFailureReason(input.error);
-  let failedNow = false;
-  let record = await input.runtime.runs.mutate({
-    canonicalTaskId: input.canonicalTaskId,
-    update: (current) => {
-      if (current.state === "complete") {
-        return current;
-      }
-      failedNow = true;
-      return {
-        ...completeRecord({ outcome: "failed", reason, record: current }),
-        writebackPending: true,
-      };
-    },
-  });
-  if (!failedNow) {
-    return record;
+  const failed = await input.run.fail({ reason });
+  if (!failed.transitioned) {
+    return failed.run;
   }
   await log({
-    canonicalTaskId: input.canonicalTaskId,
+    canonicalTaskId: failed.run.record.canonicalTaskId,
     event: "run_failed",
     level: "error",
     module: "core",
     repository: input.error.repository,
-    runId: record.runId,
+    runId: failed.run.record.runId,
     runtime: input.runtime,
   });
-  record = await writeCompletion({ record, runtime: input.runtime });
-  return record;
+  return await writeCompletion({ run: failed.run, runtime: input.runtime });
 }
 
 function prepareFailureReason(error: PrepareWorktreeError): string {
@@ -1298,10 +1117,6 @@ async function commandExists(input: {
     reject: false,
   });
   return result.exitCode === 0;
-}
-
-function sameStrings(left: readonly string[], right: readonly string[]): boolean {
-  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 function errorMessage(error: unknown): string {
