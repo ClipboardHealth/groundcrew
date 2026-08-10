@@ -9,6 +9,7 @@ import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
 import { readRunState, recordRunState, type RunState } from "../lib/runState.ts";
 import { seedLaunchWorkspaceTrust } from "../lib/seedLaunchWorkspaceTrust.ts";
 import { safehouseCmuxIntegrationFixture } from "../testHelpers/safehouseCmuxIntegration.ts";
+import { log } from "../lib/util.ts";
 import { workspaces } from "../lib/workspaces.ts";
 import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 import { resumeWorkspace, resumeWorkspaceCli } from "./resumeWorkspace.ts";
@@ -64,6 +65,10 @@ vi.mock(import("../lib/runState.ts"), async (importOriginal) => {
     recordRunState: vi.fn<typeof recordRunState>(),
   };
 });
+vi.mock(import("../lib/util.ts"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, log: vi.fn<typeof actual.log>() };
+});
 vi.mock(import("../lib/workspaces.ts"), async (importOriginal) => {
   const actual = await importOriginal();
   return {
@@ -118,6 +123,7 @@ const loadConfigMock = vi.mocked(loadConfig);
 const detectHostMock = vi.mocked(detectHostCapabilities);
 const readRunStateMock = vi.mocked(readRunState);
 const recordRunStateMock = vi.mocked(recordRunState);
+const logMock = vi.mocked(log);
 const getLinearClientMock = vi.mocked(getLinearClient);
 const seedLaunchWorkspaceTrustMock = vi.mocked(seedLaunchWorkspaceTrust);
 const workspacesCloseMock = vi.mocked(workspaces.close);
@@ -792,6 +798,9 @@ describe(resumeWorkspace, () => {
     await expect(resumeWorkspace(config, { task: "team-1" })).rejects.toThrow(
       "state directory is read-only",
     );
+    expect(logMock).toHaveBeenCalledWith(
+      "Workspace close failed during resume rollback for team-1: cmux close failed. Close it manually in the configured workspace backend.",
+    );
   });
 
   it("surfaces the state failure when resumed workspace closure is unavailable", async () => {
@@ -806,6 +815,9 @@ describe(resumeWorkspace, () => {
     await expect(resumeWorkspace(config, { task: "team-1" })).rejects.toThrow(
       "state directory is read-only",
     );
+    expect(logMock).toHaveBeenCalledWith(
+      "Workspace close was not confirmed during resume rollback for team-1: cmux unavailable. Close it manually in the configured workspace backend.",
+    );
   });
 
   it("surfaces the state failure when resumed workspace closure has no diagnostic", async () => {
@@ -816,6 +828,9 @@ describe(resumeWorkspace, () => {
 
     await expect(resumeWorkspace(config, { task: "team-1" })).rejects.toThrow(
       "state directory is read-only",
+    );
+    expect(logMock).toHaveBeenCalledWith(
+      "Workspace close was not confirmed during resume rollback for team-1: workspace backend unavailable. Close it manually in the configured workspace backend.",
     );
   });
 });
