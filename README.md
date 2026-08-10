@@ -32,7 +32,7 @@ Groundcrew watches assigned tasks, creates isolated worktrees, launches agent CL
 
 `crew doctor` checks all of these, so you can install as you go.
 
-- **Node >= 24:** [nvm](https://github.com/nvm-sh/nvm): `nvm install 24`.
+- **Node 24.14.1:** [nvm](https://github.com/nvm-sh/nvm): `nvm install 24.14.1`.
 - **git:** e.g., `brew install git`, `apt install git`.
 - **A terminal multiplexer:** [tmux](https://github.com/tmux/tmux/wiki/Installing) (cross-platform), [cmux](https://cmux.com/) (macOS), or [zellij](https://zellij.dev/).
 - **An agent CLI:** [Claude Code](https://code.claude.com/docs/en/quickstart), [Codex](https://developers.openai.com/codex/quickstart?setup=cli), the [Cursor CLI](https://docs.cursor.com/en/cli/overview) (`cursor-agent`, for the `cursor` and `cursor-grok` presets), and/or [Pi](https://pi.dev/).
