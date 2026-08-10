@@ -154,6 +154,9 @@ export async function resolvePullRequest(
       options,
     );
   } catch (error) {
+    if (signal?.aborted === true) {
+      throw error;
+    }
     throw new Error(
       `Could not look up pull request ${pr} from ${repoDir}. Ensure 'gh' is installed and authenticated (gh auth status) and the PR exists.`,
       { cause: error },
@@ -203,7 +206,10 @@ export async function findPullRequestsForBranch(
       options,
     );
     return parsePullRequests(output);
-  } catch {
+  } catch (error) {
+    if (signal?.aborted === true) {
+      throw error;
+    }
     // gh not installed / not authenticated / non-GitHub remote / network
     // error / etc. All resolve to "no PR info available" for display.
     return [];
