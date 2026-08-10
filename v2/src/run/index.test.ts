@@ -575,6 +575,71 @@ describe("RunModule lifecycle", () => {
     });
   });
 
+  it("releases the launch reservation when presenter launch fails", async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), "groundcrew-v2-run-retry-launch-"));
+    const presentedWorkspaceStatePath = join(stateRoot, "presented-workspaces.json");
+    const presenterCallsPath = join(stateRoot, "presenter-calls.jsonl");
+    const fakeBin = join(process.cwd(), "e2e", "fixtures", "fake-bin");
+    await Promise.all([
+      writeFile(presentedWorkspaceStatePath, '{"workspaces":[]}'),
+      writeFile(presenterCallsPath, ""),
+    ]);
+    const environment = {
+      ...process.env,
+      FAKE_CMUX_CALLS: presenterCallsPath,
+      FAKE_CMUX_STATE: presentedWorkspaceStatePath,
+      HOME: stateRoot,
+      PATH: `${fakeBin}:${process.env["PATH"]}`,
+    };
+    const workspaceDirectory = join(stateRoot, "workspace");
+    await mkdir(workspaceDirectory);
+    const failingRuns = new RunModule({
+      environment: { ...environment, FAKE_CMUX_FAIL_OPEN: "1" },
+      presenterName: "cmux",
+      stateRoot,
+    });
+    const provisioning = await failingRuns.beginDispatch({
+      agentProfile: "codex",
+      canonicalTaskId: "fixture:ENG-123",
+      repositories: [],
+      workspaceDirectory,
+    });
+
+    await expect(
+      provisioning.launch({
+        acquiredRepositories: [],
+        branch: "agent/fixture-eng-123",
+        profile: { effort: "high", kind: "codex" },
+        task: {
+          canonicalTaskId: "fixture:ENG-123",
+          repositories: [],
+          title: "Deepen the Run module",
+        },
+      }),
+    ).rejects.toThrow("fake cmux open failure");
+    const retryingRuns = new RunModule({ environment, presenterName: "cmux", stateRoot });
+    const retrying = await retryingRuns.findBySlug({ slug: "fixture-eng-123" });
+    if (retrying?.state !== "provisioning") {
+      throw new Error("provisioning run missing");
+    }
+
+    const launched = await retrying.launch({
+      acquiredRepositories: [],
+      branch: "agent/fixture-eng-123",
+      profile: { effort: "high", kind: "codex" },
+      task: {
+        canonicalTaskId: "fixture:ENG-123",
+        repositories: [],
+        title: "Deepen the Run module",
+      },
+    });
+
+    expect(launched).toMatchObject({
+      run: { record: { state: "running" }, state: "running" },
+      transitioned: true,
+    });
+  });
+
   it("treats a reconciliation-won launch transition as unchanged", async () => {
     const stateRoot = await mkdtemp(join(tmpdir(), "groundcrew-v2-run-launch-race-"));
     const presentedWorkspaceStatePath = join(stateRoot, "presented-workspaces.json");

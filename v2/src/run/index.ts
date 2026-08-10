@@ -366,6 +366,22 @@ export class RunModule {
       return { run: new RunningRunHandle({ module: this, record }), transitioned };
     } catch (launchError) {
       try {
+        await this.#store.mutate({
+          canonicalTaskId: input.record.canonicalTaskId,
+          update: (current) => {
+            if (
+              current.runId !== input.record.runId ||
+              current.state !== "provisioning" ||
+              !matchesProvisioningGeneration({ current, expected: launchRecord })
+            ) {
+              return current;
+            }
+            return {
+              ...current,
+              provisioningOwner: { phase: "preparing", processId: process.pid },
+            };
+          },
+        });
         await this.#presenter.close({ name: launchRecord.presentedWorkspaceName });
       } catch (closeError) {
         throw new AggregateError(
