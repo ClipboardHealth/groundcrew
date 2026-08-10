@@ -32,6 +32,12 @@ export interface RunRecord {
   readonly repositories: readonly string[];
   readonly artifacts: readonly Artifact[];
   readonly events: readonly RunEvent[];
+  readonly provisioningOwner?:
+    | {
+        readonly processId: number;
+        readonly phase: "preparing" | "launching";
+      }
+    | undefined;
 }
 
 export interface AgentProfile {
@@ -240,13 +246,14 @@ export class RunModule {
       const record = await this.#store.mutate({
         canonicalTaskId: expected.canonicalTaskId,
         update: (current) => {
-          if (current.runId !== expected.runId || current.state !== "provisioning") {
+          if (!matchesRunSnapshot({ current, expected })) {
             return current;
           }
           transitioned = true;
           return {
             ...current,
             events: [...current.events, { event: "running", timestamp: new Date().toISOString() }],
+            provisioningOwner: undefined,
             state: "running",
           };
         },
@@ -264,7 +271,10 @@ export class RunModule {
     const record = await this.#store.mutate({
       canonicalTaskId: expected.canonicalTaskId,
       update: (current) => {
-        if (current.runId !== expected.runId || current.state === "complete") {
+        if (!matchesRunSnapshot({ current, expected })) {
+          return current;
+        }
+        if (current.state === "provisioning" && provisioningOwnerIsAlive({ record: current })) {
           return current;
         }
         transitioned = true;
@@ -311,32 +321,8 @@ export class RunModule {
     readonly branch: string;
     readonly acquiredRepositories: readonly string[];
   }): Promise<RunChange<RunningRun>> {
-    const current = await this.#store.getBySlug({
-      slug: taskSlug({ canonicalTaskId: input.record.canonicalTaskId }),
-    });
-    if (current === undefined || current.runId !== input.record.runId) {
-      throw new Error(`run ${input.record.runId} is stale`);
-    }
-    if (current.state === "running") {
-      return {
-        run: new RunningRunHandle({ module: this, record: current }),
-        transitioned: false,
-      };
-    }
-    if (current.state !== "provisioning") {
-      throw new Error(`run ${input.record.runId} is no longer provisioning`);
-    }
-    await launchAgent({
-      acquiredRepositories: input.acquiredRepositories,
-      branch: input.branch,
-      environment: this.#environment,
-      presenterName: this.#presenterName,
-      profile: input.profile,
-      record: input.record,
-      task: input.task,
-    });
-    let transitioned = false;
-    const record = await this.#store.mutate({
+    let reserved = false;
+    const launchRecord = await this.#store.mutate({
       canonicalTaskId: input.record.canonicalTaskId,
       update: (current) => {
         if (current.runId !== input.record.runId) {
@@ -348,15 +334,89 @@ export class RunModule {
         if (current.state !== "provisioning") {
           throw new Error(`run ${input.record.runId} is no longer provisioning`);
         }
-        transitioned = true;
+        const owner = current.provisioningOwner;
+        if (owner !== undefined && owner.processId !== process.pid) {
+          throw new Error(`run ${input.record.runId} is owned by another provisioning process`);
+        }
+        if (owner?.phase === "launching") {
+          throw new Error(`run ${input.record.runId} is already launching`);
+        }
+        reserved = true;
         return {
           ...current,
-          events: [...current.events, { event: "running", timestamp: new Date().toISOString() }],
-          state: "running",
+          provisioningOwner: { phase: "launching", processId: process.pid },
         };
       },
     });
-    return { run: new RunningRunHandle({ module: this, record }), transitioned };
+    if (!reserved) {
+      return {
+        run: new RunningRunHandle({ module: this, record: launchRecord }),
+        transitioned: false,
+      };
+    }
+    try {
+      await launchAgent({
+        acquiredRepositories: input.acquiredRepositories,
+        branch: input.branch,
+        environment: this.#environment,
+        presenterName: this.#presenterName,
+        profile: input.profile,
+        record: launchRecord,
+        task: input.task,
+      });
+      let transitioned = false;
+      const record = await this.#store.mutate({
+        canonicalTaskId: input.record.canonicalTaskId,
+        update: (current) => {
+          if (current.runId !== input.record.runId) {
+            throw new Error(`run ${input.record.runId} is stale`);
+          }
+          if (current.state === "running") {
+            return current;
+          }
+          if (
+            current.state !== "provisioning" ||
+            !matchesProvisioningGeneration({ current, expected: launchRecord })
+          ) {
+            throw new Error(`run ${input.record.runId} is no longer provisioning`);
+          }
+          transitioned = true;
+          return {
+            ...current,
+            events: [...current.events, { event: "running", timestamp: new Date().toISOString() }],
+            provisioningOwner: undefined,
+            state: "running",
+          };
+        },
+      });
+      return { run: new RunningRunHandle({ module: this, record }), transitioned };
+    } catch (launchError) {
+      try {
+        await this.#store.mutate({
+          canonicalTaskId: input.record.canonicalTaskId,
+          update: (current) => {
+            if (
+              current.runId !== input.record.runId ||
+              current.state !== "provisioning" ||
+              !matchesProvisioningGeneration({ current, expected: launchRecord })
+            ) {
+              return current;
+            }
+            return {
+              ...current,
+              provisioningOwner: { phase: "preparing", processId: process.pid },
+            };
+          },
+        });
+        await this.#presenter.close({ name: launchRecord.presentedWorkspaceName });
+      } catch (closeError) {
+        throw new AggregateError(
+          [launchError, closeError],
+          `run ${input.record.runId} failed to launch and its presented Workspace could not be closed`,
+        );
+      }
+      throw launchError;
+    }
   }
 
   public async discardUnclaimed(input: { readonly record: Readonly<RunRecord> }): Promise<void> {
@@ -611,6 +671,7 @@ class RunStore {
           events: [{ event: "provisioning", timestamp: new Date().toISOString() }],
           presentedWorkspaceName: `groundcrew:${input.canonicalTaskId}`,
           presenter: "cmux",
+          provisioningOwner: { phase: "preparing", processId: process.pid },
           repositories: input.repositories,
           runId: `r_${randomBytes(4).toString("hex")}`,
           state: "provisioning",
@@ -1156,10 +1217,47 @@ function completeRunRecord(input: {
     ],
     message: input.message,
     outcome: input.outcome,
+    provisioningOwner: undefined,
     reason: input.reason,
     state: "complete",
     writebackPending: true,
   };
+}
+
+function matchesRunSnapshot(input: {
+  readonly current: RunRecord;
+  readonly expected: Readonly<RunRecord>;
+}): boolean {
+  return (
+    input.current.runId === input.expected.runId &&
+    input.current.state === input.expected.state &&
+    (input.current.state !== "provisioning" || matchesProvisioningGeneration(input))
+  );
+}
+
+function matchesProvisioningGeneration(input: {
+  readonly current: RunRecord;
+  readonly expected: Readonly<RunRecord>;
+}): boolean {
+  const currentOwner = input.current.provisioningOwner;
+  const expectedOwner = input.expected.provisioningOwner;
+  return (
+    currentOwner?.processId === expectedOwner?.processId &&
+    currentOwner?.phase === expectedOwner?.phase
+  );
+}
+
+function provisioningOwnerIsAlive(input: { readonly record: RunRecord }): boolean {
+  const processId = input.record.provisioningOwner?.processId;
+  if (processId === undefined) {
+    return false;
+  }
+  try {
+    process.kill(processId, 0);
+    return true;
+  } catch (error) {
+    return !(error instanceof Error && "code" in error && error.code === "ESRCH");
+  }
 }
 
 function requireCurrentRun(input: {
