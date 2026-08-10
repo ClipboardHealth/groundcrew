@@ -338,7 +338,10 @@ async function start(input: {
     });
     skipped.push(skipInput.canonicalTaskId);
   }
-  const active = (await runtime.runs.list())
+  const activeRuns = input.dryRun
+    ? await listActiveAfterPreviewReconciliation({ runtime, tasks: listed.data.tasks })
+    : await runtime.runs.list();
+  const active = activeRuns
     .filter((run) => run.state === "provisioning" || run.state === "running")
     .map((run) => ({
       agentProfile: run.record.agentProfile,
@@ -908,6 +911,31 @@ async function reapTerminalTasks(input: {
       task: run.record.canonicalTaskId,
     });
   }
+}
+
+async function listActiveAfterPreviewReconciliation(input: {
+  readonly runtime: Runtime;
+  readonly tasks: readonly Task[];
+}): Promise<readonly RunHandle[]> {
+  const active = await input.runtime.runs.listActiveAfterPresentationReconciliation();
+  const terminal = new Set(
+    input.tasks.filter((task) => task.terminal).map((task) => canonicalId({ task })),
+  );
+  const remaining: RunHandle[] = [];
+  for (const run of active) {
+    if (!terminal.has(run.record.canonicalTaskId)) {
+      remaining.push(run);
+      continue;
+    }
+    const slug = taskSlug({ canonicalTaskId: run.record.canonicalTaskId });
+    // Repository observations stay ordered with lifecycle reconciliation.
+    // eslint-disable-next-line no-await-in-loop
+    const observed = await input.runtime.workspaces.observe({ slug });
+    if (observed.dirtyPaths.length > 0) {
+      remaining.push(run);
+    }
+  }
+  return remaining;
 }
 
 async function writeCompletion(input: {

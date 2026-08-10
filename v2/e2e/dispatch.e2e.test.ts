@@ -45,6 +45,66 @@ describe("crew start", () => {
     await expect(stat(fixture.runsDirectory)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("previews capacity after read-only reconciliation without changing the stale run", async () => {
+    const fixture = await createDispatchFixture({
+      maximumInProgress: 1,
+      tasks: [
+        task({ id: "ACTIVE-1", priority: 1, repositories: [] }),
+        task({ id: "READY-1", priority: 2, repositories: [] }),
+      ],
+    });
+    await runCrew({ arguments: ["start"], environment: fixture.environment });
+    const runPath = join(fixture.runsDirectory, "fixture-active-1.json");
+    const runBeforePreview = await readFile(runPath, "utf8");
+    await Promise.all([
+      writeFile(fixture.cmuxCallsPath, ""),
+      writeFile(fixture.cmuxStatePath, '{"workspaces":[]}'),
+      writeFile(fixture.updatesPath, ""),
+    ]);
+
+    const result = await runCrew({
+      arguments: ["start", "--dry-run"],
+      environment: fixture.environment,
+    });
+
+    expect(result.stdout).toBe(
+      ["Slots 0/1 used (1 open)", "Would start fixture:READY-1(codex) in slot 1/1", ""].join("\n"),
+    );
+    expect(await readFile(runPath, "utf8")).toBe(runBeforePreview);
+    expect(await readFile(fixture.updatesPath, "utf8")).toBe("");
+  });
+
+  it("previews the slot a clean terminal run would release without reaping it", async () => {
+    const activeTask = task({ id: "ACTIVE-1", priority: 1, repositories: [] });
+    const readyTask = task({ id: "READY-1", priority: 2, repositories: [] });
+    const fixture = await createDispatchFixture({
+      maximumInProgress: 1,
+      tasks: [activeTask, readyTask],
+    });
+    await runCrew({ arguments: ["start"], environment: fixture.environment });
+    const runPath = join(fixture.runsDirectory, "fixture-active-1.json");
+    const runBeforePreview = await readFile(runPath, "utf8");
+    await Promise.all([
+      writeFile(
+        fixture.listedTasksPath,
+        JSON.stringify([
+          task({ id: "ACTIVE-1", priority: 1, repositories: [], terminal: true }),
+          readyTask,
+        ]),
+      ),
+      writeFile(fixture.updatesPath, ""),
+    ]);
+
+    const result = await runCrew({
+      arguments: ["start", "--dry-run"],
+      environment: fixture.environment,
+    });
+
+    expect(result.stdout).toContain("Would start fixture:READY-1(codex) in slot 1/1");
+    expect(await readFile(runPath, "utf8")).toBe(runBeforePreview);
+    expect(await readFile(fixture.updatesPath, "utf8")).toBe("");
+  });
+
   it("reports open slots and the task being dispatched", async () => {
     const fixture = await createDispatchFixture();
 
