@@ -604,6 +604,25 @@ describe(openWorkspace, () => {
     expect(recordRunStateMock).not.toHaveBeenCalled();
   });
 
+  it("rolls back the live workspace and worktree when recording run state fails", async () => {
+    recordRunStateMock.mockImplementation(() => {
+      throw new Error("state directory is read-only");
+    });
+
+    await expect(
+      openWorkspace(config, {
+        input: { kind: "pr", pr: "42" },
+        repository: "acme/widgets",
+        promptText: "go",
+      }),
+    ).rejects.toThrow("state directory is read-only");
+    expect(teardownMock).toHaveBeenCalledWith(
+      config,
+      [expect.objectContaining({ task: "pr-42" })],
+      { force: true },
+    );
+  });
+
   it("still surfaces the original failure when rollback teardown also fails", async () => {
     workspacesOpenMock.mockRejectedValue(new Error("cmux down"));
     teardownMock.mockRejectedValue(new Error("teardown blew up"));

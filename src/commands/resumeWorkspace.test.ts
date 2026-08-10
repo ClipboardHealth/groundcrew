@@ -70,6 +70,7 @@ vi.mock(import("../lib/workspaces.ts"), async (importOriginal) => {
     ...actual,
     workspaces: {
       ...actual.workspaces,
+      close: vi.fn<typeof actual.workspaces.close>(),
       open: vi.fn<typeof actual.workspaces.open>(),
       probe: vi.fn<typeof actual.workspaces.probe>(),
     },
@@ -119,6 +120,7 @@ const readRunStateMock = vi.mocked(readRunState);
 const recordRunStateMock = vi.mocked(recordRunState);
 const getLinearClientMock = vi.mocked(getLinearClient);
 const seedLaunchWorkspaceTrustMock = vi.mocked(seedLaunchWorkspaceTrust);
+const workspacesCloseMock = vi.mocked(workspaces.close);
 const workspacesOpenMock = vi.mocked(workspaces.open);
 const workspacesProbeMock = vi.mocked(workspaces.probe);
 const findByTaskMock = vi.mocked(worktrees.findByTask);
@@ -256,6 +258,7 @@ describe(resumeWorkspace, () => {
     readRunStateMock.mockReturnValue(makeRunState());
     findByTaskMock.mockReturnValue([makeWorktree()]);
     workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set<string>() });
+    workspacesCloseMock.mockResolvedValue({ kind: "closed" });
     workspacesOpenMock.mockResolvedValue();
     detectHostMock.mockResolvedValue(host());
     ensureClearanceMock.mockResolvedValue({
@@ -762,6 +765,33 @@ describe(resumeWorkspace, () => {
       force: true,
     });
     expect(recordRunStateMock).not.toHaveBeenCalled();
+  });
+
+  it("closes the live workspace when recording resumed run state fails", async () => {
+    recordRunStateMock.mockImplementation(() => {
+      throw new Error("state directory is read-only");
+    });
+
+    await expect(resumeWorkspace(config, { task: "team-1" })).rejects.toThrow(
+      "state directory is read-only",
+    );
+    expect(workspacesCloseMock).toHaveBeenCalledWith(config, "team-1");
+    expect(rmSyncMock).toHaveBeenCalledWith("/tmp/groundcrew-resume-team-1-x", {
+      recursive: true,
+      force: true,
+    });
+    expect(createMock).not.toHaveBeenCalled();
+  });
+
+  it("surfaces the state failure when closing the resumed workspace also fails", async () => {
+    recordRunStateMock.mockImplementation(() => {
+      throw new Error("state directory is read-only");
+    });
+    workspacesCloseMock.mockRejectedValue(new Error("cmux close failed"));
+
+    await expect(resumeWorkspace(config, { task: "team-1" })).rejects.toThrow(
+      "state directory is read-only",
+    );
   });
 });
 

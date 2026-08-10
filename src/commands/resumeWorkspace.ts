@@ -21,6 +21,7 @@ import { taskSourceWritePathsForCompletion } from "../lib/taskSourceFilesystem.t
 import { naturalIdFromCanonical, toCanonicalId } from "../lib/taskSource.ts";
 import { errorMessage, log } from "../lib/util.ts";
 import { failIfWorkspaceAlreadyLive } from "../lib/workspaceLiveness.ts";
+import { workspaces } from "../lib/workspaces.ts";
 import { resolveLaunchDir, type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 
 export interface ResumeWorkspaceOptions {
@@ -263,6 +264,7 @@ export async function resumeWorkspace(
   });
   const secretsFile = stageBuildSecrets(stagedPrompt.directory);
   let cleanupAgentLaunch: (() => void) | undefined;
+  let workspaceOpened = false;
   try {
     const taskSourceWritePaths =
       runner === "safehouse"
@@ -307,27 +309,35 @@ export async function resumeWorkspace(
       agent: context.agent,
       color: definition.color,
     });
+    workspaceOpened = true;
+    recordRunState({
+      config,
+      state: {
+        task,
+        repository: context.repository,
+        agent: context.agent,
+        worktreeDir: context.worktree.dir,
+        branchName: context.worktree.branchName,
+        workspaceName: task,
+        state: "resumed",
+        resumeCount: context.resumeCount + 1,
+        completionTaskId: context.completionTaskId,
+        ...(context.url === undefined ? {} : { url: context.url }),
+        ...(context.reason === undefined ? {} : { reason: context.reason }),
+      },
+    });
   } catch (error) {
+    if (workspaceOpened) {
+      try {
+        await workspaces.close(config, task);
+      } catch (closeError) {
+        log(`Workspace close failed during resume rollback: ${errorMessage(closeError)}`);
+      }
+    }
     cleanupAgentLaunch?.();
     removeStagedPrompt(stagedPrompt.directory);
     throw error;
   }
-  recordRunState({
-    config,
-    state: {
-      task,
-      repository: context.repository,
-      agent: context.agent,
-      worktreeDir: context.worktree.dir,
-      branchName: context.worktree.branchName,
-      workspaceName: task,
-      state: "resumed",
-      resumeCount: context.resumeCount + 1,
-      completionTaskId: context.completionTaskId,
-      ...(context.url === undefined ? {} : { url: context.url }),
-      ...(context.reason === undefined ? {} : { reason: context.reason }),
-    },
-  });
   log(`Resumed ${task} in ${context.worktree.dir} (${context.agent})`);
 }
 

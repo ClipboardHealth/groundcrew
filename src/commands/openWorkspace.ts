@@ -282,27 +282,26 @@ export async function openWorkspace(
       agent,
       color: definition.color,
     });
+    recordRunState({
+      config,
+      state: {
+        task: target.task,
+        repository,
+        agent,
+        worktreeDir: created.dir,
+        branchName: target.branch,
+        workspaceName: target.task,
+        state: "running",
+        title: target.title,
+        adoptedBranch: true,
+        ...(target.url === undefined ? {} : { url: target.url }),
+      },
+    });
   } catch (error) {
     cleanupAgentLaunch?.();
     await rollback({ config, entry: created, promptDir: stagedPrompt.directory });
     throw error;
   }
-
-  recordRunState({
-    config,
-    state: {
-      task: target.task,
-      repository,
-      agent,
-      worktreeDir: created.dir,
-      branchName: target.branch,
-      workspaceName: target.task,
-      state: "running",
-      title: target.title,
-      adoptedBranch: true,
-      ...(target.url === undefined ? {} : { url: target.url }),
-    },
-  });
 
   log(`${okMark()} "${target.task}" opened on branch ${target.branch} (${agent})`);
   debug(`  Worktree: ${launchDir}`);
