@@ -4,6 +4,7 @@ import path from "node:path";
 import {
   BUILD_SECRET_NAMES,
   hasPreLaunchEnv,
+  WORKER_ENVIRONMENT_NAMES,
   type LocalRunner,
   type AgentDefinition,
   type NetworkEgressSetting,
@@ -181,9 +182,11 @@ function preLaunchPromptAndExec(arguments_: {
 }): string[] {
   const lines: string[] = [];
   if (arguments_.definition.preLaunch !== undefined) {
+    const preLaunchEnv = arguments_.definition.preLaunchEnv ?? [];
     lines.push(
+      ...(preLaunchEnv.length === 0 ? [] : [unsetEnvironmentLine(preLaunchEnv)]),
       renderPreLaunch(arguments_.definition.preLaunch, arguments_.worktreeDir),
-      ...buildPreLaunchEmptyCheckLines(arguments_.definition.preLaunchEnv ?? []),
+      ...buildPreLaunchEmptyCheckLines(preLaunchEnv),
     );
   }
   lines.push(
@@ -333,8 +336,6 @@ export function inferAgentCommandName(agentCmd: string): string {
   }
   return commandName;
 }
-
-const WORKER_ENVIRONMENT_NAMES = ["GROUNDCREW_TASK_ID", "GROUNDCREW_COMPLETE"] as const;
 
 type WorkerEnvironmentName = (typeof WORKER_ENVIRONMENT_NAMES)[number];
 

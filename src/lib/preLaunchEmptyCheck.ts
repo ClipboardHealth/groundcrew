@@ -12,14 +12,9 @@
  * Returns `[]` for an empty input list so callers can splat unconditionally
  * into their `&&` chain.
  *
- * Caveat: the check reads the shell's post-preLaunch view of the var. On the
- * safehouse chain (`hostPreLaunchSourceAndReadPrompt`) the caller unsets each
- * `preLaunchEnv` name before running `preLaunch`, so the check truly reflects
- * what `preLaunch` produced. On the unwrapped-host chain
- * (`preLaunchPromptAndExec`) no unset happens first, so a value inherited
- * from the parent shell can survive `preLaunch` and mask a failed `export`.
- * That asymmetry is a property of the runners; closing it requires an env
- * scrub on the runner=none path, tracked as a follow-up.
+ * The safehouse and unwrapped-host chains both unset each `preLaunchEnv` name
+ * before running `preLaunch`, so the check reflects what `preLaunch` produced
+ * instead of a value inherited from the parent shell.
  *
  * Names must be POSIX identifiers (`[A-Za-z_][A-Za-z0-9_]*`); groundcrew's
  * `validatePreLaunchEnv` in `src/lib/config.ts` enforces that, so no shell
