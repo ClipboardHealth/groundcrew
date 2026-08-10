@@ -2,12 +2,14 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import type * as nodeFs from "node:fs";
 
 import { ensureClearance } from "@clipboard-health/clearance";
+import * as agentLaunch from "../lib/agentLaunch.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
 import { resolvePullRequest } from "../lib/pullRequests.ts";
 import { resolveRepositoryPreparationCommands } from "../lib/repositoryHooks.ts";
 import { readRunState, recordRunState } from "../lib/runState.ts";
 import { seedLaunchWorkspaceTrust } from "../lib/seedLaunchWorkspaceTrust.ts";
+import { log } from "../lib/util.ts";
 import { workspaces } from "../lib/workspaces.ts";
 import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 import { openWorkspace, openWorkspaceCli, parseOpenWorkspaceArgs } from "./openWorkspace.ts";
@@ -63,6 +65,10 @@ vi.mock(import("../lib/runState.ts"), async (importOriginal) => {
     recordRunState: vi.fn<typeof recordRunState>(),
   };
 });
+vi.mock(import("../lib/util.ts"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, log: vi.fn<typeof actual.log>() };
+});
 vi.mock(import("../lib/workspaces.ts"), async (importOriginal) => {
   const actual = await importOriginal();
   return {
@@ -117,6 +123,7 @@ const resolvePullRequestMock = vi.mocked(resolvePullRequest);
 const resolveRepositoryPreparationCommandsMock = vi.mocked(resolveRepositoryPreparationCommands);
 const readRunStateMock = vi.mocked(readRunState);
 const recordRunStateMock = vi.mocked(recordRunState);
+const logMock = vi.mocked(log);
 const workspacesOpenMock = vi.mocked(workspaces.open);
 const seedLaunchWorkspaceTrustMock = vi.mocked(seedLaunchWorkspaceTrust);
 const workspacesProbeMock = vi.mocked(workspaces.probe);
@@ -602,6 +609,77 @@ describe(openWorkspace, () => {
       { force: true },
     );
     expect(recordRunStateMock).not.toHaveBeenCalled();
+  });
+
+  it("rolls back the live workspace and worktree when recording run state fails", async () => {
+    recordRunStateMock.mockImplementation(() => {
+      throw new Error("state directory is read-only");
+    });
+    teardownMock.mockResolvedValue({
+      closed: [],
+      removed: [openedWorktree()],
+      failures: [
+        {
+          entry: openedWorktree(),
+          step: "workspace_close",
+          error: new Error("workspace backend unavailable"),
+        },
+      ],
+      workspaceProbe: { kind: "unavailable" },
+    });
+
+    await expect(
+      openWorkspace(config, {
+        input: { kind: "pr", pr: "42" },
+        repository: "acme/widgets",
+        promptText: "go",
+      }),
+    ).rejects.toThrow("state directory is read-only");
+    expect(teardownMock).toHaveBeenCalledWith(
+      config,
+      [expect.objectContaining({ task: "pr-42" })],
+      { force: true },
+    );
+    expect(logMock).toHaveBeenCalledWith(
+      "Worktree teardown workspace_close failed during rollback: workspace backend unavailable",
+    );
+    expect(logMock).toHaveBeenCalledWith(
+      "Workspace close was not confirmed during open rollback for pr-42. Close it manually in the configured workspace backend.",
+    );
+  });
+
+  it("still rolls back when agent launch cleanup fails", async () => {
+    const cleanup = vi.fn<() => void>(() => {
+      throw new Error("launch cleanup failed");
+    });
+    const composeAgentLaunchMock = vi
+      .spyOn(agentLaunch, "composeAgentLaunch")
+      .mockReturnValue({ command: "claude", cleanup });
+    recordRunStateMock.mockImplementation(() => {
+      throw new Error("state directory is read-only");
+    });
+
+    try {
+      await expect(
+        openWorkspace(config, {
+          input: { kind: "pr", pr: "42" },
+          repository: "acme/widgets",
+          promptText: "go",
+        }),
+      ).rejects.toThrow("state directory is read-only");
+    } finally {
+      composeAgentLaunchMock.mockRestore();
+    }
+
+    expect(cleanup).toHaveBeenCalledOnce();
+    expect(teardownMock).toHaveBeenCalledWith(
+      config,
+      [expect.objectContaining({ task: "pr-42" })],
+      { force: true },
+    );
+    expect(logMock).toHaveBeenCalledWith(
+      "Agent launch cleanup failed during open rollback: launch cleanup failed",
+    );
   });
 
   it("still surfaces the original failure when rollback teardown also fails", async () => {

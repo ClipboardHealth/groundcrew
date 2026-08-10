@@ -21,7 +21,9 @@ import { taskSourceWritePathsForCompletion } from "../lib/taskSourceFilesystem.t
 import { naturalIdFromCanonical, toCanonicalId } from "../lib/taskSource.ts";
 import { errorMessage, log } from "../lib/util.ts";
 import { failIfWorkspaceAlreadyLive } from "../lib/workspaceLiveness.ts";
+import { workspaces } from "../lib/workspaces.ts";
 import { resolveLaunchDir, type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
+import { cleanupAgentLaunchBestEffort } from "./agentLaunchCleanup.ts";
 
 export interface ResumeWorkspaceOptions {
   task: string;
@@ -263,6 +265,7 @@ export async function resumeWorkspace(
   });
   const secretsFile = stageBuildSecrets(stagedPrompt.directory);
   let cleanupAgentLaunch: (() => void) | undefined;
+  let workspaceOpened = false;
   try {
     const taskSourceWritePaths =
       runner === "safehouse"
@@ -307,27 +310,55 @@ export async function resumeWorkspace(
       agent: context.agent,
       color: definition.color,
     });
+    workspaceOpened = true;
+    recordRunState({
+      config,
+      state: {
+        task,
+        repository: context.repository,
+        agent: context.agent,
+        worktreeDir: context.worktree.dir,
+        branchName: context.worktree.branchName,
+        workspaceName: task,
+        state: "resumed",
+        resumeCount: context.resumeCount + 1,
+        completionTaskId: context.completionTaskId,
+        ...(context.url === undefined ? {} : { url: context.url }),
+        ...(context.reason === undefined ? {} : { reason: context.reason }),
+      },
+    });
   } catch (error) {
-    cleanupAgentLaunch?.();
-    removeStagedPrompt(stagedPrompt.directory);
+    if (workspaceOpened) {
+      try {
+        const result = await workspaces.close(config, task);
+        if (result.kind === "unavailable") {
+          const detail =
+            result.error === undefined
+              ? "workspace backend unavailable"
+              : errorMessage(result.error);
+          log(
+            `Workspace close was not confirmed during resume rollback for ${task}: ${detail}. Close it manually in the configured workspace backend.`,
+          );
+        }
+      } catch (closeError) {
+        log(
+          `Workspace close failed during resume rollback for ${task}: ${errorMessage(closeError)}. Close it manually in the configured workspace backend.`,
+        );
+      }
+    }
+    cleanupAgentLaunchBestEffort({
+      cleanup: cleanupAgentLaunch,
+      context: `resume rollback for ${task}`,
+    });
+    try {
+      removeStagedPrompt(stagedPrompt.directory);
+    } catch (cleanupError) {
+      log(
+        `Staged prompt cleanup failed during resume rollback for ${task}: ${errorMessage(cleanupError)}`,
+      );
+    }
     throw error;
   }
-  recordRunState({
-    config,
-    state: {
-      task,
-      repository: context.repository,
-      agent: context.agent,
-      worktreeDir: context.worktree.dir,
-      branchName: context.worktree.branchName,
-      workspaceName: task,
-      state: "resumed",
-      resumeCount: context.resumeCount + 1,
-      completionTaskId: context.completionTaskId,
-      ...(context.url === undefined ? {} : { url: context.url }),
-      ...(context.reason === undefined ? {} : { reason: context.reason }),
-    },
-  });
   log(`Resumed ${task} in ${context.worktree.dir} (${context.agent})`);
 }
 

@@ -18,6 +18,7 @@ import { normalizePlainTaskId } from "../lib/taskId.ts";
 import { debug, errorMessage, log, okMark } from "../lib/util.ts";
 import { failIfWorkspaceAlreadyLive } from "../lib/workspaceLiveness.ts";
 import { resolveLaunchDir, type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
+import { cleanupAgentLaunchBestEffort } from "./agentLaunchCleanup.ts";
 
 interface PullRequestInput {
   kind: "pr";
@@ -174,12 +175,30 @@ async function rollback(arguments_: {
   config: ResolvedConfig;
   entry: WorktreeEntry;
   promptDir: string;
+  workspaceOpened: boolean;
 }): Promise<void> {
   log(
     `Open failed; rolling back worktree ${arguments_.entry.repository}-${arguments_.entry.task}...`,
   );
   try {
-    await worktrees.teardown(arguments_.config, [arguments_.entry], { force: true });
+    const result = await worktrees.teardown(arguments_.config, [arguments_.entry], { force: true });
+    for (const failure of result.failures) {
+      log(
+        `Worktree teardown ${failure.step} failed during rollback: ${errorMessage(failure.error)}`,
+      );
+    }
+    const workspaceAbsent =
+      result.workspaceProbe.kind === "ok" &&
+      !result.workspaceProbe.names.has(arguments_.entry.task);
+    if (
+      arguments_.workspaceOpened &&
+      !workspaceAbsent &&
+      !result.closed.includes(arguments_.entry.task)
+    ) {
+      log(
+        `Workspace close was not confirmed during open rollback for ${arguments_.entry.task}. Close it manually in the configured workspace backend.`,
+      );
+    }
   } catch (error) {
     log(`Worktree teardown failed during rollback: ${errorMessage(error)}`);
   }
@@ -240,6 +259,7 @@ export async function openWorkspace(
     text: options.promptText ?? "",
   });
   let cleanupAgentLaunch: (() => void) | undefined;
+  let workspaceOpened = false;
   try {
     const { prepareWorktreeCommand, prepareWorktreeUnsandboxedCommand } =
       resolveRepositoryPreparationCommands({
@@ -282,27 +302,32 @@ export async function openWorkspace(
       agent,
       color: definition.color,
     });
+    workspaceOpened = true;
+    recordRunState({
+      config,
+      state: {
+        task: target.task,
+        repository,
+        agent,
+        worktreeDir: created.dir,
+        branchName: target.branch,
+        workspaceName: target.task,
+        state: "running",
+        title: target.title,
+        adoptedBranch: true,
+        ...(target.url === undefined ? {} : { url: target.url }),
+      },
+    });
   } catch (error) {
-    cleanupAgentLaunch?.();
-    await rollback({ config, entry: created, promptDir: stagedPrompt.directory });
+    cleanupAgentLaunchBestEffort({ cleanup: cleanupAgentLaunch, context: "open rollback" });
+    await rollback({
+      config,
+      entry: created,
+      promptDir: stagedPrompt.directory,
+      workspaceOpened,
+    });
     throw error;
   }
-
-  recordRunState({
-    config,
-    state: {
-      task: target.task,
-      repository,
-      agent,
-      worktreeDir: created.dir,
-      branchName: target.branch,
-      workspaceName: target.task,
-      state: "running",
-      title: target.title,
-      adoptedBranch: true,
-      ...(target.url === undefined ? {} : { url: target.url }),
-    },
-  });
 
   log(`${okMark()} "${target.task}" opened on branch ${target.branch} (${agent})`);
   debug(`  Worktree: ${launchDir}`);
