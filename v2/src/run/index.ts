@@ -144,6 +144,14 @@ export type DispatchReservation =
       readonly type: "reserved";
     };
 
+type PresentationReconciliation =
+  | { readonly type: "unchanged" }
+  | { readonly type: "running" }
+  | {
+      readonly type: "failed";
+      readonly reason: "provisioning-interrupted" | "workspace-missing";
+    };
+
 export class RunModule {
   readonly #store: RunStore;
   readonly #environment: NodeJS.ProcessEnv;
@@ -227,22 +235,30 @@ export class RunModule {
     return { [presentedWorkspaceSnapshot]: probe };
   }
 
+  public async listActiveAfterPresentationReconciliation(): Promise<readonly RunHandle[]> {
+    const runs = await this.list();
+    if (runs.length === 0) {
+      return [];
+    }
+    const snapshot = await this.capturePresentedWorkspaces();
+    return runs.filter((run) => {
+      if (run.state === "complete") {
+        return false;
+      }
+      return classifyPresentationReconciliation({ run, snapshot }).type !== "failed";
+    });
+  }
+
   public async reconcilePresentedWorkspace(input: {
     readonly run: RunHandle;
     readonly snapshot: PresentedWorkspaceSnapshot;
   }): Promise<PresentationChange | undefined> {
-    const probe = input.snapshot[presentedWorkspaceSnapshot];
-    if (!probe.available || input.run.state === "complete") {
+    const reconciliation = classifyPresentationReconciliation(input);
+    if (reconciliation.type === "unchanged") {
       return undefined;
     }
     const expected = input.run.record;
-    const presented = probe.workspaces.some(
-      (workspace) =>
-        workspace.name === expected.presentedWorkspaceName ||
-        workspace.description === expected.presentedWorkspaceName ||
-        workspace.description === `groundcrew:${expected.canonicalTaskId}`,
-    );
-    if (expected.state === "provisioning" && presented) {
+    if (reconciliation.type === "running") {
       let transitioned = false;
       const record = await this.#store.mutate({
         canonicalTaskId: expected.canonicalTaskId,
@@ -263,11 +279,7 @@ export class RunModule {
         ? { run: new RunningRunHandle({ module: this, record }), type: "running" }
         : undefined;
     }
-    if (presented) {
-      return undefined;
-    }
-    const reason =
-      expected.state === "provisioning" ? "provisioning-interrupted" : "workspace-missing";
+    const { reason } = reconciliation;
     let transitioned = false;
     const record = await this.#store.mutate({
       canonicalTaskId: expected.canonicalTaskId,
@@ -1256,6 +1268,33 @@ function matchesProvisioningGeneration(input: {
     currentOwner?.processId === expectedOwner?.processId &&
     currentOwner?.phase === expectedOwner?.phase
   );
+}
+
+function classifyPresentationReconciliation(input: {
+  readonly run: RunHandle;
+  readonly snapshot: PresentedWorkspaceSnapshot;
+}): PresentationReconciliation {
+  const probe = input.snapshot[presentedWorkspaceSnapshot];
+  if (!probe.available || input.run.state === "complete") {
+    return { type: "unchanged" };
+  }
+  const record = input.run.record;
+  const presented = probe.workspaces.some(
+    (workspace) =>
+      workspace.name === record.presentedWorkspaceName ||
+      workspace.description === record.presentedWorkspaceName ||
+      workspace.description === `groundcrew:${record.canonicalTaskId}`,
+  );
+  if (record.state === "provisioning" && presented) {
+    return { type: "running" };
+  }
+  if (presented || (record.state === "provisioning" && provisioningOwnerIsAlive({ record }))) {
+    return { type: "unchanged" };
+  }
+  return {
+    reason: record.state === "provisioning" ? "provisioning-interrupted" : "workspace-missing",
+    type: "failed",
+  };
 }
 
 function provisioningOwnerIsAlive(input: { readonly record: RunRecord }): boolean {

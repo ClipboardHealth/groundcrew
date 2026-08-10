@@ -97,6 +97,14 @@ export type DispatchProgress =
       readonly forced: boolean;
     }
   | {
+      readonly type: "previewing";
+      readonly canonicalTaskId: string;
+      readonly agentProfile: string;
+      readonly slot: number;
+      readonly maximum: number;
+      readonly forced: boolean;
+    }
+  | {
       readonly type: "skipped";
       readonly canonicalTaskId: string;
       readonly detail: string;
@@ -141,6 +149,7 @@ export interface Application {
   start(input: {
     readonly task?: string | undefined;
     readonly force: boolean;
+    readonly dryRun: boolean;
     readonly agent?: string | undefined;
     readonly onProgress?: ((progress: DispatchProgress) => void) | undefined;
   }): Promise<{ readonly started: readonly string[]; readonly skipped: readonly string[] }>;
@@ -186,6 +195,7 @@ export async function createApplication(input: {
   readonly config: CoreConfig;
   readonly paths: ApplicationPaths;
   readonly environment: NodeJS.ProcessEnv;
+  readonly reconcileOnCreate?: boolean | undefined;
 }): Promise<Application> {
   const { config, environment, paths } = input;
   const registry = await SourceRegistry.create({
@@ -212,7 +222,9 @@ export async function createApplication(input: {
     git: config.git,
   });
   const runtime: Runtime = { config, environment, paths, registry, runs, workspaces };
-  await reconcile({ runtime });
+  if (input.reconcileOnCreate !== false) {
+    await reconcile({ runtime });
+  }
   return {
     async doctor(doctorInput = {}): Promise<DoctorResult> {
       return await doctor({ ...doctorInput, runtime });
@@ -284,16 +296,21 @@ async function start(input: {
   readonly runtime: Runtime;
   readonly task?: string | undefined;
   readonly force: boolean;
+  readonly dryRun: boolean;
   readonly agent?: string | undefined;
   readonly onProgress?: ((progress: DispatchProgress) => void) | undefined;
 }): Promise<{ readonly started: readonly string[]; readonly skipped: readonly string[] }> {
   const { runtime } = input;
-  await reconcile({ runtime });
+  if (!input.dryRun) {
+    await reconcile({ runtime });
+  }
   const listed = await runtime.registry.list();
   if (!listed.ok) {
     throw new Error(listed.error.message);
   }
-  await reapTerminalTasks({ runtime, tasks: listed.data.tasks });
+  if (!input.dryRun) {
+    await reapTerminalTasks({ runtime, tasks: listed.data.tasks });
+  }
   let tasks = listed.data.tasks;
   if (input.task === undefined) {
     tasks = tasks
@@ -310,7 +327,9 @@ async function start(input: {
   const started: string[] = [];
   const skipped: string[] = [];
   async function skipTask(skipInput: SkipTaskInput): Promise<void> {
-    await writeVerdict({ ...skipInput, runtime });
+    if (!input.dryRun) {
+      await writeVerdict({ ...skipInput, runtime });
+    }
     input.onProgress?.({
       canonicalTaskId: skipInput.canonicalTaskId,
       detail: skipInput.detail,
@@ -319,7 +338,10 @@ async function start(input: {
     });
     skipped.push(skipInput.canonicalTaskId);
   }
-  const active = (await runtime.runs.list())
+  const activeRuns = input.dryRun
+    ? await listActiveAfterPreviewReconciliation({ runtime, tasks: listed.data.tasks })
+    : await runtime.runs.list();
+  const active = activeRuns
     .filter((run) => run.state === "provisioning" || run.state === "running")
     .map((run) => ({
       agentProfile: run.record.agentProfile,
@@ -331,6 +353,7 @@ async function start(input: {
     maximum: runtime.config.orchestrator.maximumInProgress,
     type: "slots",
   });
+  let previewedCount = 0;
   for (const task of tasks) {
     const canonicalTaskId = canonicalId({ task });
     const slug = taskSlug({ canonicalTaskId });
@@ -392,6 +415,27 @@ async function start(input: {
       if (input.task !== undefined) {
         throw new RepositoryMissingError(repositoryCheck.missing);
       }
+      continue;
+    }
+    if (input.dryRun) {
+      const activeCount = active.length + previewedCount;
+      if (!input.force && activeCount >= runtime.config.orchestrator.maximumInProgress) {
+        await skipTask({
+          canonicalTaskId,
+          detail: "concurrency limit reached",
+          reason: "slots-full",
+        });
+        continue;
+      }
+      input.onProgress?.({
+        agentProfile: profileName,
+        canonicalTaskId,
+        forced: input.force && activeCount >= runtime.config.orchestrator.maximumInProgress,
+        maximum: runtime.config.orchestrator.maximumInProgress,
+        slot: activeCount + 1,
+        type: "previewing",
+      });
+      previewedCount += 1;
       continue;
     }
     const workspaceDirectory = runtime.workspaces.workspaceDirectory({ slug });
@@ -867,6 +911,31 @@ async function reapTerminalTasks(input: {
       task: run.record.canonicalTaskId,
     });
   }
+}
+
+async function listActiveAfterPreviewReconciliation(input: {
+  readonly runtime: Runtime;
+  readonly tasks: readonly Task[];
+}): Promise<readonly RunHandle[]> {
+  const active = await input.runtime.runs.listActiveAfterPresentationReconciliation();
+  const terminal = new Set(
+    input.tasks.filter((task) => task.terminal).map((task) => canonicalId({ task })),
+  );
+  const remaining: RunHandle[] = [];
+  for (const run of active) {
+    if (!terminal.has(run.record.canonicalTaskId)) {
+      remaining.push(run);
+      continue;
+    }
+    const slug = taskSlug({ canonicalTaskId: run.record.canonicalTaskId });
+    // Repository observations stay ordered with lifecycle reconciliation.
+    // eslint-disable-next-line no-await-in-loop
+    const observed = await input.runtime.workspaces.observe({ slug });
+    if (observed.dirtyPaths.length > 0) {
+      remaining.push(run);
+    }
+  }
+  return remaining;
 }
 
 async function writeCompletion(input: {
