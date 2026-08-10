@@ -10,7 +10,7 @@ node --run crew -- doctor
 node --run crew:op -- run --watch
 ```
 
-Both forms discover config through cosmiconfig. Source edits in `src/**` are picked up on the next invocation. Requires Node >= 24.
+Both forms discover config through cosmiconfig. Source edits in `src/**` are picked up on the next invocation. Requires Node 24.14.1.
 
 Regenerate the README demo with VHS:
 
