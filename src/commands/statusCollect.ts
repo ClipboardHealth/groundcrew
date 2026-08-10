@@ -498,7 +498,7 @@ function splitLogBuffer(buffer: Buffer): {
 }
 
 function hasOpenBlocker(issue: SourceIssue): boolean {
-  return issue.blockers.some((blocker) => blocker.status !== "done");
+  return issue.hasMoreBlockers || issue.blockers.some((blocker) => blocker.status !== "done");
 }
 
 function toBoardIssue(issue: SourceIssue): StatusBoardIssue {
