@@ -329,9 +329,20 @@ export async function resumeWorkspace(
   } catch (error) {
     if (workspaceOpened) {
       try {
-        await workspaces.close(config, task);
+        const result = await workspaces.close(config, task);
+        if (result.kind === "unavailable") {
+          const detail =
+            result.error === undefined
+              ? "workspace backend unavailable"
+              : errorMessage(result.error);
+          log(
+            `Workspace close was not confirmed during resume rollback for ${task}: ${detail}. Close it manually in the configured workspace backend.`,
+          );
+        }
       } catch (closeError) {
-        log(`Workspace close failed during resume rollback: ${errorMessage(closeError)}`);
+        log(
+          `Workspace close failed during resume rollback for ${task}: ${errorMessage(closeError)}. Close it manually in the configured workspace backend.`,
+        );
       }
     }
     cleanupAgentLaunch?.();

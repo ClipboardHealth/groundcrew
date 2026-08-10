@@ -608,6 +608,18 @@ describe(openWorkspace, () => {
     recordRunStateMock.mockImplementation(() => {
       throw new Error("state directory is read-only");
     });
+    teardownMock.mockResolvedValue({
+      closed: [],
+      removed: [openedWorktree()],
+      failures: [
+        {
+          entry: openedWorktree(),
+          step: "workspace_close",
+          error: new Error("workspace backend unavailable"),
+        },
+      ],
+      workspaceProbe: { kind: "unavailable" },
+    });
 
     await expect(
       openWorkspace(config, {

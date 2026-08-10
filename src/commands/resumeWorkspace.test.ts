@@ -793,6 +793,31 @@ describe(resumeWorkspace, () => {
       "state directory is read-only",
     );
   });
+
+  it("surfaces the state failure when resumed workspace closure is unavailable", async () => {
+    recordRunStateMock.mockImplementation(() => {
+      throw new Error("state directory is read-only");
+    });
+    workspacesCloseMock.mockResolvedValue({
+      kind: "unavailable",
+      error: new Error("cmux unavailable"),
+    });
+
+    await expect(resumeWorkspace(config, { task: "team-1" })).rejects.toThrow(
+      "state directory is read-only",
+    );
+  });
+
+  it("surfaces the state failure when resumed workspace closure has no diagnostic", async () => {
+    recordRunStateMock.mockImplementation(() => {
+      throw new Error("state directory is read-only");
+    });
+    workspacesCloseMock.mockResolvedValue({ kind: "unavailable" });
+
+    await expect(resumeWorkspace(config, { task: "team-1" })).rejects.toThrow(
+      "state directory is read-only",
+    );
+  });
 });
 
 describe(resumeWorkspaceCli, () => {
