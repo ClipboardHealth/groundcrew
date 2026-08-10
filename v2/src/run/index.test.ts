@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { RunModule, seedWorkspaceTrust, withFileLock } from "./index.js";
 
 describe("RunModule lifecycle", () => {
@@ -370,6 +370,33 @@ describe("RunModule lifecycle", () => {
 });
 
 describe("RunModule concurrency", () => {
+  it("reserves dispatch without colliding with a matching task lock name", async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), "groundcrew-v2-run-admission-lock-"));
+    const runs = new RunModule({
+      environment: process.env,
+      presenterName: "cmux",
+      stateRoot,
+    });
+    const currentTime = Date.now();
+    const mockDateNow = vi.spyOn(Date, "now").mockReturnValue(currentTime + 31_000);
+
+    try {
+      const reservation = await runs.reserveDispatch({
+        agentProfile: "codex",
+        canonicalTaskId: "dispatch:admission",
+        force: false,
+        maximumInProgress: 1,
+        repositories: [],
+        workspaceDirectory: join(stateRoot, "workspace"),
+      });
+
+      expect(reservation).toMatchObject({ type: "reserved" });
+      expect(mockDateNow).not.toHaveBeenCalled();
+    } finally {
+      mockDateNow.mockRestore();
+    }
+  });
+
   it("creates one durable run when initial writers race", async () => {
     const stateRoot = await mkdtemp(join(tmpdir(), "groundcrew-v2-run-race-"));
     const runs = new RunModule({
