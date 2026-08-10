@@ -862,6 +862,25 @@ describe("loadConfig", () => {
     );
   });
 
+  it("rejects a preLaunchEnv entry that overlaps managed worker environment names", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      configSource({
+        workspace: VALID_WORKSPACE(temporary),
+        agents: {
+          definitions: {
+            claude: { preLaunchEnv: ["SESSION_TOKEN", "GROUNDCREW_TASK_ID"] },
+          },
+        },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(
+      /agents\.definitions\.claude\.preLaunchEnv\[1\] cannot be a managed worker environment name/,
+    );
+  });
+
   it("rejects legacy disabled agent entries even when combined with other fields", async () => {
     const configPath = writeConfigFile(
       temporary,

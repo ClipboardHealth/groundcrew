@@ -15,6 +15,8 @@ import { BUILD_SECRET_NAMES } from "./buildSecrets.ts";
 
 export { BUILD_SECRET_NAMES } from "./buildSecrets.ts";
 
+export const WORKER_ENVIRONMENT_NAMES = ["GROUNDCREW_TASK_ID", "GROUNDCREW_COMPLETE"] as const;
+
 /**
  * Authoring shape for a manifest-backed (discovered) task source: enable by
  * kind, with light overrides. The concrete per-source schema is built at
@@ -154,7 +156,8 @@ export interface AgentDefinition {
    * so the unsupported-runner guards do not fire). A non-empty list is
    * rejected when `local.runner` resolves to `sdx` in v1, and when `cmd`
    * already starts with `safehouse` (the user owns env forwarding in that
-   * case). Each name must match `[A-Za-z_][A-Za-z0-9_]*` (POSIX env var name).
+   * case). Groundcrew-managed worker environment names are also rejected.
+   * Each name must match `[A-Za-z_][A-Za-z0-9_]*` (POSIX env var name).
    */
   preLaunchEnv?: string[];
   color: string;
@@ -815,6 +818,12 @@ function validatePreLaunchEnv(agentName: string, value: unknown): asserts value 
       fail(
         `${configPath}[${index}] cannot be a BUILD_SECRET_NAMES entry (${BUILD_SECRET_NAMES.join(", ")}); ` +
           "those are unset on the host before the agent wrap is exec'd, so forwarding them via --env-pass would be a no-op.",
+      );
+    }
+    if ((WORKER_ENVIRONMENT_NAMES as readonly string[]).includes(entry)) {
+      fail(
+        `${configPath}[${index}] cannot be a managed worker environment name (${WORKER_ENVIRONMENT_NAMES.join(", ")}); ` +
+          "groundcrew sets those values for the launched worker, so preLaunchEnv cannot own them.",
       );
     }
   }

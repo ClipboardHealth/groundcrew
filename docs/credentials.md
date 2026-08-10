@@ -95,7 +95,7 @@ agents: {
 
 `&&` ensures `export` only runs when the mint succeeds. A failed mint propagates non-zero out of `preLaunch` and aborts launch before the agent starts. `{{worktree}}` is substituted the same way as in `cmd`.
 
-Under `runner: "none"`, groundcrew clears each listed `preLaunchEnv` name immediately before `preLaunch`, then exports from the snippet flow through unchanged to the agent. Clearing inherited values ensures the launch-time empty check reflects what `preLaunch` produced instead of silently reusing an ambient credential. A non-empty `preLaunchEnv` is not supported when `local.runner` resolves to `sdx` in v1. An empty `preLaunchEnv: []` is a uniform no-op in every runner.
+Under `runner: "none"`, groundcrew clears each listed `preLaunchEnv` name immediately before `preLaunch`, then exports from the snippet flow through unchanged to the agent. Clearing inherited values ensures the launch-time empty check reflects what `preLaunch` produced instead of silently reusing an ambient credential. Groundcrew-managed worker metadata (`GROUNDCREW_TASK_ID` and `GROUNDCREW_COMPLETE`) cannot be listed because hooks may read those values and groundcrew owns what the agent receives. A non-empty `preLaunchEnv` is not supported when `local.runner` resolves to `sdx` in v1. An empty `preLaunchEnv: []` is a uniform no-op in every runner.
 
 <details>
 <summary>Manual fallback when <code>cmd</code> brings its own <code>safehouse</code> wrap</summary>
