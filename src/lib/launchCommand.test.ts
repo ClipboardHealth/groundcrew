@@ -1146,6 +1146,38 @@ describe(buildLaunchCommand, () => {
       }
     });
 
+    it("preserves managed worker environment after preLaunchEnv scrubbing (runner=none, end-to-end)", () => {
+      const promptDir = mkdtempSync(path.join(tmpdir(), "groundcrew-prelaunch-worker-none-"));
+      const promptFile = path.join(promptDir, "prompt.txt");
+      const worktreeDir = mkdtempSync(path.join(tmpdir(), "groundcrew-prelaunch-worker-none-wt-"));
+      try {
+        writeFileSync(promptFile, "the prompt body\n");
+
+        const out = buildLaunchCommand(
+          arguments_({
+            runner: "none",
+            promptFile,
+            worktreeDir,
+            workerEnvironment: WORKER_ENVIRONMENT,
+            definition: {
+              cmd: `sh -c 'printf "GROUNDCREW_TASK_ID=%s\\n" "\${GROUNDCREW_TASK_ID-}"'`,
+              color: "#fff",
+              preLaunch: "true",
+              preLaunchEnv: ["GROUNDCREW_TASK_ID"],
+            },
+          }),
+        );
+
+        const actual = spawnSync("sh", ["-c", out], { env: { PATH: "/bin:/usr/bin" } });
+
+        expect(actual.status).toBe(0);
+        expect(actual.stdout.toString()).toContain("GROUNDCREW_TASK_ID=todo:gc-1\n");
+      } finally {
+        rmSync(promptDir, { recursive: true, force: true });
+        rmSync(worktreeDir, { recursive: true, force: true });
+      }
+    });
+
     it("runs preLaunch without double-wrapping when cmd already starts with safehouse", () => {
       const out = buildLaunchCommand(
         arguments_({

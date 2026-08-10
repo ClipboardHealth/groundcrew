@@ -168,15 +168,17 @@ function hostSourceSecrets(secretsFile: string | undefined): string[] {
 }
 
 /**
- * Shared tail of every host-shell `&&` chain: optional `preLaunch`, then the
- * staged prompt read, the explicit success-path `rm -rf` (the trap covers the
- * failure path), and the final `exec` of whatever wraps (or is) the agent.
+ * Shared tail of every host-shell `&&` chain: optional `preLaunch`, managed
+ * worker environment exports, the staged prompt read, the explicit success-
+ * path `rm -rf` (the trap covers the failure path), and the final `exec` of
+ * whatever wraps (or is) the agent.
  */
 function preLaunchPromptAndExec(arguments_: {
   definition: AgentDefinition;
   worktreeDir: string;
   promptFile: string;
   promptDir: string;
+  workerEnvironment: WorkerEnvironment | undefined;
   execLine: string;
 }): string[] {
   const lines: string[] = [];
@@ -189,6 +191,7 @@ function preLaunchPromptAndExec(arguments_: {
     );
   }
   lines.push(
+    ...workerEnvironmentExports(arguments_.workerEnvironment),
     `_p=$(cat ${shellSingleQuote(arguments_.promptFile)})`,
     `rm -rf ${shellSingleQuote(arguments_.promptDir)}`,
     arguments_.execLine,
@@ -629,12 +632,12 @@ function buildUnwrappedHostLaunchCommand(arguments_: LaunchCommandArguments): st
     lines.push(unsetSecretsLine());
   }
   lines.push(
-    ...workerEnvironmentExports(arguments_.workerEnvironment),
     ...preLaunchPromptAndExec({
       definition: arguments_.definition,
       worktreeDir: arguments_.worktreeDir,
       promptFile: arguments_.promptFile,
       promptDir,
+      workerEnvironment: arguments_.workerEnvironment,
       execLine: `exec ${agentCmd}${promptPositional(arguments_.omitPromptArgument)}`,
     }),
   );
