@@ -420,6 +420,17 @@ describe("collectRemoteStatus", () => {
     expect(actual.queueReady.map((issue) => issue.naturalId)).toEqual(["eng-225"]);
   });
 
+  it("blocks a todo whose blocker relation has more pages", async () => {
+    const actual = expectPayload(
+      await collectWithBoard([
+        makeIssue({ id: "linear:eng-225", status: "todo", hasMoreBlockers: true }),
+      ]),
+    );
+
+    expect(actual.queueReady).toEqual([]);
+    expect(actual.queueBlocked.map((issue) => issue.naturalId)).toEqual(["eng-225"]);
+  });
+
   it("keeps only the open blockers on a blocked issue", async () => {
     const actual = expectPayload(
       await collectWithBoard([
