@@ -18,7 +18,7 @@
     "schema:generate": "node config/generate-schema.mjs",
     "test": "vitest run",
     "test:e2e": "vitest run e2e",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit --project tsconfig.json && tsc --noEmit --project tsconfig.test.json",
     "verify": "node --run format:check && node --run typecheck && node --run build && node --run schema:check && node --run architecture:check && node --run test"
   },
   "dependencies": {
