@@ -24,6 +24,7 @@ import {
   type WorktreeEntry,
   worktrees,
 } from "../lib/worktrees.ts";
+import { cleanupAgentLaunchBestEffort } from "./agentLaunchCleanup.ts";
 
 export interface TaskDetails {
   title: string;
@@ -224,7 +225,7 @@ export async function setupWorkspace(
       logAccessHint(accessHint);
     }
   } catch (error) {
-    cleanupAgentLaunch?.();
+    cleanupAgentLaunchBestEffort({ cleanup: cleanupAgentLaunch, context: "setup rollback" });
     await rollbackWorktree({ config, entry: created, promptDir });
     recordFailedToLaunch({ config, options, paths: { worktreeDir, branchName }, error });
     throw error;

@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import type * as nodeFs from "node:fs";
 
 import { ensureClearance, type SafehouseCmuxIntegration } from "@clipboard-health/clearance";
+import * as agentLaunch from "../lib/agentLaunch.ts";
 import { fetchResolvedIssue } from "../lib/adapters/linear/fetch.ts";
 import { getLinearClient } from "../lib/adapters/linear/client.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
@@ -831,6 +832,38 @@ describe(resumeWorkspace, () => {
     );
     expect(logMock).toHaveBeenCalledWith(
       "Workspace close was not confirmed during resume rollback for team-1: workspace backend unavailable. Close it manually in the configured workspace backend.",
+    );
+  });
+
+  it("preserves the state failure when launch and prompt cleanup fail", async () => {
+    const cleanup = vi.fn<() => void>(() => {
+      throw new Error("launch cleanup failed");
+    });
+    const composeAgentLaunchMock = vi
+      .spyOn(agentLaunch, "composeAgentLaunch")
+      .mockReturnValue({ command: "claude", cleanup });
+    recordRunStateMock.mockImplementation(() => {
+      throw new Error("state directory is read-only");
+    });
+    rmSyncMock.mockImplementation(() => {
+      throw new Error("prompt cleanup failed");
+    });
+
+    try {
+      await expect(resumeWorkspace(config, { task: "team-1" })).rejects.toThrow(
+        "state directory is read-only",
+      );
+    } finally {
+      composeAgentLaunchMock.mockRestore();
+    }
+
+    expect(workspacesCloseMock).toHaveBeenCalledWith(config, "team-1");
+    expect(cleanup).toHaveBeenCalledOnce();
+    expect(logMock).toHaveBeenCalledWith(
+      "Agent launch cleanup failed during resume rollback for team-1: launch cleanup failed",
+    );
+    expect(logMock).toHaveBeenCalledWith(
+      "Staged prompt cleanup failed during resume rollback for team-1: prompt cleanup failed",
     );
   });
 });

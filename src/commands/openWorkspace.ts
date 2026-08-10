@@ -18,6 +18,7 @@ import { normalizePlainTaskId } from "../lib/taskId.ts";
 import { debug, errorMessage, log, okMark } from "../lib/util.ts";
 import { failIfWorkspaceAlreadyLive } from "../lib/workspaceLiveness.ts";
 import { resolveLaunchDir, type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
+import { cleanupAgentLaunchBestEffort } from "./agentLaunchCleanup.ts";
 
 interface PullRequestInput {
   kind: "pr";
@@ -318,7 +319,7 @@ export async function openWorkspace(
       },
     });
   } catch (error) {
-    cleanupAgentLaunch?.();
+    cleanupAgentLaunchBestEffort({ cleanup: cleanupAgentLaunch, context: "open rollback" });
     await rollback({
       config,
       entry: created,

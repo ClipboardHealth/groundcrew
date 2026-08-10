@@ -23,6 +23,7 @@ import { errorMessage, log } from "../lib/util.ts";
 import { failIfWorkspaceAlreadyLive } from "../lib/workspaceLiveness.ts";
 import { workspaces } from "../lib/workspaces.ts";
 import { resolveLaunchDir, type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
+import { cleanupAgentLaunchBestEffort } from "./agentLaunchCleanup.ts";
 
 export interface ResumeWorkspaceOptions {
   task: string;
@@ -345,8 +346,17 @@ export async function resumeWorkspace(
         );
       }
     }
-    cleanupAgentLaunch?.();
-    removeStagedPrompt(stagedPrompt.directory);
+    cleanupAgentLaunchBestEffort({
+      cleanup: cleanupAgentLaunch,
+      context: `resume rollback for ${task}`,
+    });
+    try {
+      removeStagedPrompt(stagedPrompt.directory);
+    } catch (cleanupError) {
+      log(
+        `Staged prompt cleanup failed during resume rollback for ${task}: ${errorMessage(cleanupError)}`,
+      );
+    }
     throw error;
   }
   log(`Resumed ${task} in ${context.worktree.dir} (${context.agent})`);
