@@ -18,6 +18,33 @@ import { describe, expect, it } from "vitest";
 const execFileAsync = promisify(execFile);
 
 describe("crew start", () => {
+  it("previews the prioritized tasks that would start without dispatching them", async () => {
+    const fixture = await createDispatchFixture({
+      maximumInProgress: 2,
+      tasks: [
+        task({ id: "LOW-1", priority: 4, repositories: [] }),
+        task({ id: "URGENT-1", priority: 1, repositories: [] }),
+      ],
+    });
+
+    const result = await runCrew({
+      arguments: ["start", "--dry-run"],
+      environment: fixture.environment,
+    });
+
+    expect(result.stdout).toBe(
+      [
+        "Slots 0/2 used (2 open)",
+        "Would start fixture:URGENT-1(codex) in slot 1/2",
+        "Would start fixture:LOW-1(codex) in slot 2/2",
+        "",
+      ].join("\n"),
+    );
+    expect(await readFile(fixture.updatesPath, "utf8")).toBe("");
+    expect(await readFile(fixture.cmuxCallsPath, "utf8")).toBe("");
+    await expect(stat(fixture.runsDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("reports open slots and the task being dispatched", async () => {
     const fixture = await createDispatchFixture();
 

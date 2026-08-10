@@ -159,15 +159,21 @@ export async function main(input: MainInput): Promise<void> {
     .description("dispatch eligible tasks")
     .argument("[task]", "canonical or source-local task ID")
     .option("--watch", "repeat at the configured polling interval")
+    .option("--dry-run", "show which tasks would start without dispatching")
     .option("--force", "bypass blocked status and the concurrency limit")
     .option("--agent <profile>", "override agent routing")
     .option("--verbose", "include debug diagnostics")
     .action(async (task, options) => {
       const loaded = await loadConfig({ environment });
-      const application = await createConfiguredApplication({ environment, loaded });
+      const application = await createConfiguredApplication({
+        environment,
+        loaded,
+        reconcileOnCreate: options.dryRun !== true,
+      });
       do {
         const result = await application.start({
           agent: options.agent,
+          dryRun: options.dryRun === true,
           force: options.force === true,
           onProgress: (progress) =>
             renderDispatchProgress({
@@ -419,11 +425,13 @@ async function configuredApplication(input: { readonly environment: NodeJS.Proce
 async function createConfiguredApplication(input: {
   readonly environment: NodeJS.ProcessEnv;
   readonly loaded: Awaited<ReturnType<typeof loadConfig>>;
+  readonly reconcileOnCreate?: boolean | undefined;
 }) {
   return await createApplication({
     config: input.loaded.config,
     environment: input.environment,
     paths: input.loaded.paths,
+    reconcileOnCreate: input.reconcileOnCreate,
   });
 }
 
@@ -492,6 +500,15 @@ function renderDispatchProgress(input: RenderDispatchProgressInput): void {
       progress.forced
         ? `Dispatching ${task} with concurrency override (${progress.slot - 1}/${progress.maximum} slots used)\n`
         : `Dispatching ${task} into slot ${progress.slot}/${progress.maximum}\n`,
+    );
+    return;
+  }
+  if (progress.type === "previewing") {
+    const task = `${progress.canonicalTaskId}(${progress.agentProfile})`;
+    process.stdout.write(
+      progress.forced
+        ? `Would start ${task} with concurrency override in slot ${progress.slot}/${progress.maximum}\n`
+        : `Would start ${task} in slot ${progress.slot}/${progress.maximum}\n`,
     );
     return;
   }
