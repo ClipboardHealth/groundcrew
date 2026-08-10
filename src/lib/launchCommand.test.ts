@@ -1109,6 +1109,43 @@ describe(buildLaunchCommand, () => {
       }
     });
 
+    it("scrubs stale inherited preLaunchEnv values before preLaunch (runner=none, end-to-end)", () => {
+      const promptDir = mkdtempSync(path.join(tmpdir(), "groundcrew-prelaunch-scrub-none-"));
+      const promptFile = path.join(promptDir, "prompt.txt");
+      const worktreeDir = mkdtempSync(path.join(tmpdir(), "groundcrew-prelaunch-scrub-none-wt-"));
+      try {
+        writeFileSync(promptFile, "the prompt body\n");
+
+        const out = buildLaunchCommand(
+          arguments_({
+            runner: "none",
+            promptFile,
+            worktreeDir,
+            definition: {
+              cmd: `sh -c 'printf "SESSION_TOKEN=%s\\n" "\${SESSION_TOKEN-}"'`,
+              color: "#fff",
+              preLaunch: "true",
+              preLaunchEnv: ["SESSION_TOKEN"],
+            },
+          }),
+        );
+
+        const actual = spawnSync("sh", ["-c", out], {
+          env: { PATH: "/bin:/usr/bin", SESSION_TOKEN: "stale-token" },
+        });
+
+        expect(actual.status).toBe(0);
+        expect(actual.stdout.toString()).toContain("SESSION_TOKEN=\n");
+        expect(actual.stdout.toString()).not.toContain("stale-token");
+        expect(actual.stderr.toString()).toContain(
+          "preLaunchEnv: SESSION_TOKEN is empty after preLaunch (value length 0)",
+        );
+      } finally {
+        rmSync(promptDir, { recursive: true, force: true });
+        rmSync(worktreeDir, { recursive: true, force: true });
+      }
+    });
+
     it("runs preLaunch without double-wrapping when cmd already starts with safehouse", () => {
       const out = buildLaunchCommand(
         arguments_({

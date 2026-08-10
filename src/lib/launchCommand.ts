@@ -181,9 +181,11 @@ function preLaunchPromptAndExec(arguments_: {
 }): string[] {
   const lines: string[] = [];
   if (arguments_.definition.preLaunch !== undefined) {
+    const preLaunchEnv = arguments_.definition.preLaunchEnv ?? [];
     lines.push(
+      ...(preLaunchEnv.length === 0 ? [] : [unsetEnvironmentLine(preLaunchEnv)]),
       renderPreLaunch(arguments_.definition.preLaunch, arguments_.worktreeDir),
-      ...buildPreLaunchEmptyCheckLines(arguments_.definition.preLaunchEnv ?? []),
+      ...buildPreLaunchEmptyCheckLines(preLaunchEnv),
     );
   }
   lines.push(
