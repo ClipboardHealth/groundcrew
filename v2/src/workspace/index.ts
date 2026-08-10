@@ -334,6 +334,7 @@ export class WorkspaceService {
       actual: workspaceDirectory,
       expected: input.record.workspaceDirectory,
       label: "run workspace directory",
+      recovery: "restore the previous workspace.worktreeDirectory before cleanup",
     });
     const metadata = await this.readWorkspaceMetadata({ workspaceDirectory });
     if (metadata === undefined) {
@@ -366,6 +367,10 @@ export class WorkspaceService {
         label: "repository worktree",
         parent: workspaceDirectory,
       });
+      // eslint-disable-next-line no-await-in-loop
+      if (!(await pathExists(checkout))) {
+        continue;
+      }
       // Git resolves symbolic links before operating, so lexical containment is not enough.
       // eslint-disable-next-line no-await-in-loop
       await assertExistingPathContained({
@@ -863,9 +868,11 @@ function assertSamePath(input: {
   readonly actual: string;
   readonly expected: string;
   readonly label: string;
+  readonly recovery?: string | undefined;
 }): void {
   if (resolve(input.actual) !== resolve(input.expected)) {
-    throw new WorkspaceMetadataError(`${input.label} does not match its durable run`);
+    const recovery = input.recovery === undefined ? "" : `; ${input.recovery}`;
+    throw new WorkspaceMetadataError(`${input.label} does not match its durable run${recovery}`);
   }
 }
 

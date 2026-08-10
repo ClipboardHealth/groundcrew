@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -40,29 +40,55 @@ describe("WorkspaceService cleanup", () => {
     );
     const workspaces = createWorkspaceService({ baseDirectory, worktreeDirectory });
 
-    const rejected = await workspaces
-      .cleanup({
-        allowDirty: true,
-        record: {
-          canonicalTaskId: "fixture:ENG-123",
-          repositories: ["target"],
-          workspaceDirectory,
-        },
-        slug: "fixture-eng-123",
-      })
-      .then(
-        () => false,
-        () => true,
-      );
-    const outsideBranchExists = await gitBranchExists({
-      branch: "attacker-selected",
-      cwd: outsideRepository,
+    const cleanup = workspaces.cleanup({
+      allowDirty: true,
+      record: {
+        canonicalTaskId: "fixture:ENG-123",
+        repositories: ["target"],
+        workspaceDirectory,
+      },
+      slug: "fixture-eng-123",
     });
 
-    expect({ outsideBranchExists, rejected }).toEqual({
-      outsideBranchExists: true,
-      rejected: true,
+    await expect(cleanup).rejects.toBeInstanceOf(WorkspaceMetadataError);
+    await expect(
+      gitBranchExists({ branch: "attacker-selected", cwd: outsideRepository }),
+    ).resolves.toBe(true);
+  });
+
+  it("removes the workspace when a durable repository checkout is missing", async () => {
+    const root = await mkdtemp(join(tmpdir(), "groundcrew-workspace-missing-checkout-"));
+    fixtureRoots.push(root);
+    const baseDirectory = join(root, "repositories");
+    const worktreeDirectory = join(root, "worktrees");
+    const workspaceDirectory = join(worktreeDirectory, "fixture-eng-123");
+    await Promise.all([
+      mkdir(baseDirectory, { recursive: true }),
+      mkdir(join(workspaceDirectory, ".groundcrew"), { recursive: true }),
+    ]);
+    await writeFile(
+      join(workspaceDirectory, ".groundcrew", "task.json"),
+      JSON.stringify({
+        branch: "crew/fixture-eng-123",
+        canonicalTaskId: "fixture:ENG-123",
+        repositories: ["missing"],
+        version: 1,
+      }),
+    );
+    const workspaces = createWorkspaceService({ baseDirectory, worktreeDirectory });
+
+    const result = await workspaces.cleanup({
+      allowDirty: true,
+      record: {
+        canonicalTaskId: "fixture:ENG-123",
+        repositories: ["missing"],
+        workspaceDirectory,
+      },
+      slug: "fixture-eng-123",
     });
+
+    expect(result).toEqual({ preservedBranches: [], removedRepositories: [] });
+    await expect(stat(workspaceDirectory)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it.each(["task.json", "provisioning.json"])(

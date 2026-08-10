@@ -464,6 +464,66 @@ describe("RunModule concurrency", () => {
       transitioned: false,
     });
   });
+
+  it("normalizes repository names while repairing a reserved repository", async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), "groundcrew-v2-run-repair-normalization-"));
+    const presentedWorkspaceStatePath = join(stateRoot, "presented-workspaces.json");
+    const presenterCallsPath = join(stateRoot, "presenter-calls.jsonl");
+    const fakeBin = join(process.cwd(), "e2e", "fixtures", "fake-bin");
+    await Promise.all([
+      writeFile(
+        presentedWorkspaceStatePath,
+        JSON.stringify({
+          workspaces: [
+            {
+              description: "groundcrew:fixture:ENG-123",
+              id: "workspace-1",
+              title: "eng-123",
+            },
+          ],
+        }),
+      ),
+      writeFile(presenterCallsPath, ""),
+    ]);
+    const runs = new RunModule({
+      environment: {
+        ...process.env,
+        FAKE_CMUX_CALLS: presenterCallsPath,
+        FAKE_CMUX_STATE: presentedWorkspaceStatePath,
+        PATH: `${fakeBin}:${process.env["PATH"]}`,
+      },
+      presenterName: "cmux",
+      stateRoot,
+    });
+    const provisioning = await runs.beginDispatch({
+      agentProfile: "codex",
+      canonicalTaskId: "fixture:ENG-123",
+      repositories: ["owner/sample"],
+      workspaceDirectory: join(stateRoot, "workspace"),
+    });
+    const reconciled = await runs.reconcilePresentedWorkspace({
+      run: provisioning,
+      snapshot: await runs.capturePresentedWorkspaces(),
+    });
+    if (reconciled?.type !== "running") {
+      throw new Error("provisioning run was not reconciled");
+    }
+    const reserved = await reconciled.run.reserveRepositoryOperation({
+      repository: "owner/extra",
+      reserveWhileLocked: async () => {},
+    });
+
+    const repaired = await runs.repairRepositories({
+      canonicalTaskId: reserved.record.canonicalTaskId,
+      expectedRunId: reserved.record.runId,
+      repositories: ["owner/sample", "owner/extra"],
+    });
+
+    expect(repaired).toMatchObject({
+      run: { record: { repositories: ["sample", "extra"] } },
+      transitioned: true,
+    });
+  });
 });
 
 describe("withFileLock", () => {

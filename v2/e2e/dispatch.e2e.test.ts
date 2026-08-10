@@ -219,6 +219,32 @@ describe("crew start", () => {
     await expect(stat(fixture.workspaceDirectory)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("explains how to recover cleanup after worktreeDirectory changes", async () => {
+    const fixture = await createDispatchFixture();
+    await runCrew({ arguments: ["start"], environment: fixture.environment });
+    const configPath = join(fixture.root, "crew.config.jsonc");
+    const previousConfig = await readFile(configPath, "utf8");
+    const changedConfig = previousConfig.replace(
+      join(fixture.root, "worktrees"),
+      join(fixture.root, "moved-worktrees"),
+    );
+    if (changedConfig === previousConfig) {
+      throw new Error("fixture worktreeDirectory was not changed");
+    }
+    await writeFile(configPath, changedConfig);
+
+    const cleanup = runCrew({
+      arguments: ["cleanup", "ENG-123", "--force"],
+      environment: fixture.environment,
+    });
+
+    await expect(cleanup).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining("restore the previous workspace.worktreeDirectory"),
+    });
+    await expect(stat(fixture.workspaceDirectory)).resolves.toBeDefined();
+  });
+
   it("does not adopt tampered marker repositories before destructive cleanup", async () => {
     const fixture = await createDispatchFixture({ additionalRepositories: ["target"] });
     await runCrew({ arguments: ["start"], environment: fixture.environment });
@@ -238,7 +264,10 @@ describe("crew start", () => {
       environment: fixture.environment,
     });
 
-    await expect(cleanup).rejects.toMatchObject({ code: 1 });
+    await expect(cleanup).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining("workspace repositories do not match its durable run"),
+    });
     await expect(
       gitOutput({ arguments: ["rev-parse", branch], cwd: targetRepository }),
     ).resolves.toBe(targetBranchTip);

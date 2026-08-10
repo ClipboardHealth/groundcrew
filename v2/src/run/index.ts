@@ -432,6 +432,7 @@ export class RunModule {
     readonly repositories: readonly string[];
   }): Promise<RunChange<RunHandle>> {
     let transitioned = false;
+    const repositories = input.repositories.map(repositoryName);
     const record = await this.#store.mutate({
       canonicalTaskId: input.canonicalTaskId,
       update: (current) => {
@@ -439,7 +440,7 @@ export class RunModule {
           current.runId !== input.expectedRunId ||
           current.pendingRepository === undefined ||
           !sameStringSets({
-            left: input.repositories,
+            left: repositories,
             right: [...current.repositories, current.pendingRepository].map(repositoryName),
           })
         ) {
@@ -449,7 +450,7 @@ export class RunModule {
         return {
           ...current,
           pendingRepository: undefined,
-          repositories: input.repositories,
+          repositories,
         };
       },
     });
