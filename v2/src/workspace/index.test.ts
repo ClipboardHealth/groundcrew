@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -95,6 +95,52 @@ describe("WorkspaceService cleanup", () => {
     },
   );
 
+  it("rejects a checkout symlink that resolves outside the configured root", async () => {
+    const root = await mkdtemp(join(tmpdir(), "groundcrew-workspace-symlink-"));
+    fixtureRoots.push(root);
+    const baseDirectory = join(root, "repositories");
+    const outsideRepository = join(root, "target");
+    const worktreeDirectory = join(root, "worktrees");
+    const workspaceDirectory = join(worktreeDirectory, "fixture-eng-123");
+    await Promise.all([
+      mkdir(baseDirectory, { recursive: true }),
+      mkdir(join(workspaceDirectory, ".groundcrew"), { recursive: true }),
+      createRepository({ path: outsideRepository }),
+    ]);
+    await Promise.all([
+      runGit({
+        arguments: ["branch", "crew/fixture-eng-123"],
+        cwd: outsideRepository,
+      }),
+      symlink(outsideRepository, join(baseDirectory, "linked"), "dir"),
+    ]);
+    await writeFile(
+      join(workspaceDirectory, ".groundcrew", "task.json"),
+      JSON.stringify({
+        branch: "crew/fixture-eng-123",
+        canonicalTaskId: "fixture:ENG-123",
+        repositories: ["linked"],
+        version: 1,
+      }),
+    );
+    const workspaces = createWorkspaceService({ baseDirectory, worktreeDirectory });
+
+    const cleanup = workspaces.cleanup({
+      allowDirty: true,
+      record: {
+        canonicalTaskId: "fixture:ENG-123",
+        repositories: ["linked"],
+        workspaceDirectory,
+      },
+      slug: "fixture-eng-123",
+    });
+
+    await expect(cleanup).rejects.toBeInstanceOf(WorkspaceMetadataError);
+    await expect(
+      gitBranchExists({ branch: "crew/fixture-eng-123", cwd: outsideRepository }),
+    ).resolves.toBe(true);
+  });
+
   it.each([
     {
       branchToPreserve: "crew/fixture-eng-123",
@@ -102,7 +148,7 @@ describe("WorkspaceService cleanup", () => {
         branch: "crew/fixture-eng-123",
         canonicalTaskId: "fixture:OTHER",
         repositories: ["safe"],
-        version: 1 as const,
+        version: 1,
       },
       fileName: "task.json",
       repositoryToPreserve: "safe",
@@ -114,7 +160,7 @@ describe("WorkspaceService cleanup", () => {
         branch: "attacker-selected",
         canonicalTaskId: "fixture:ENG-123",
         repositories: ["safe"],
-        version: 1 as const,
+        version: 1,
       },
       fileName: "task.json",
       repositoryToPreserve: "safe",
@@ -126,7 +172,7 @@ describe("WorkspaceService cleanup", () => {
         branch: "crew/fixture-eng-123",
         canonicalTaskId: "fixture:ENG-123",
         repositories: ["target"],
-        version: 1 as const,
+        version: 1,
       },
       fileName: "task.json",
       repositoryToPreserve: "target",
@@ -139,7 +185,7 @@ describe("WorkspaceService cleanup", () => {
         branch: "crew/fixture-eng-123",
         canonicalTaskId: "fixture:ENG-123",
         repositories: ["target"],
-        version: 1 as const,
+        version: 1,
       },
       repositoryToPreserve: "target",
       subject: "recovery repository set",

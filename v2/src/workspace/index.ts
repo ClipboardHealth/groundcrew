@@ -337,11 +337,13 @@ export class WorkspaceService {
     });
     const metadata = await this.readWorkspaceMetadata({ workspaceDirectory });
     if (metadata === undefined) {
-      await assertExistingPathContained({
-        child: workspaceDirectory,
-        label: "workspace directory",
-        parent: this.#config.worktreeDirectory,
-      });
+      if (await pathExists(workspaceDirectory)) {
+        await assertExistingPathContained({
+          child: workspaceDirectory,
+          label: "workspace directory",
+          parent: this.#config.worktreeDirectory,
+        });
+      }
       await rm(workspaceDirectory, { recursive: true, force: true });
       return { preservedBranches: [], removedRepositories: [] };
     }
@@ -381,6 +383,12 @@ export class WorkspaceService {
           parent: workspaceDirectory,
         });
         // eslint-disable-next-line no-await-in-loop
+        await assertExistingPathContained({
+          child: checkout,
+          label: "repository checkout",
+          parent: this.#config.baseDirectory,
+        });
+        // eslint-disable-next-line no-await-in-loop
         await git({
           arguments: ["worktree", "remove", ...(input.allowDirty ? ["--force"] : []), worktree],
           cwd: checkout,
@@ -400,6 +408,12 @@ export class WorkspaceService {
       const safe =
         input.allowDirty || (await this.branchHasNoUniqueWork({ branch: marker.branch, checkout }));
       if (safe) {
+        // eslint-disable-next-line no-await-in-loop
+        await assertExistingPathContained({
+          child: checkout,
+          label: "repository checkout",
+          parent: this.#config.baseDirectory,
+        });
         // eslint-disable-next-line no-await-in-loop
         await git({ arguments: ["branch", "-D", marker.branch], cwd: checkout });
       } else {
@@ -822,9 +836,6 @@ async function assertExistingPathContained(input: {
   readonly parent: string;
 }): Promise<void> {
   assertPathContained(input);
-  if (!(await pathExists(input.child))) {
-    return;
-  }
   const [canonicalChild, canonicalParent] = await Promise.all([
     realpath(input.child),
     realpath(input.parent),
