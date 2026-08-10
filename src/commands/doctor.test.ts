@@ -18,13 +18,10 @@ interface NodeFsMock {
   statSync: ReturnType<typeof vi.fn<typeof statSync>>;
 }
 
-vi.mock(
-  "node:fs",
-  (): NodeFsMock => ({
-    existsSync: vi.fn<typeof existsSync>(),
-    statSync: vi.fn<typeof statSync>(),
-  }),
-);
+vi.mock("node:fs", (): NodeFsMock => ({
+  existsSync: vi.fn<typeof existsSync>(),
+  statSync: vi.fn<typeof statSync>(),
+}));
 vi.mock(import("../lib/config.ts"), async (importOriginal) => {
   const actual = await importOriginal();
   return {
