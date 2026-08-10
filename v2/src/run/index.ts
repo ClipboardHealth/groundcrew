@@ -129,6 +129,14 @@ export interface PresentedWorkspaceSnapshot {
   };
 }
 
+export type DispatchReservation =
+  | { readonly activeCount: number; readonly type: "full" }
+  | {
+      readonly activeCount: number;
+      readonly run: ProvisioningRun;
+      readonly type: "reserved";
+    };
+
 export class RunModule {
   readonly #store: RunStore;
   readonly #environment: NodeJS.ProcessEnv;
@@ -157,6 +165,24 @@ export class RunModule {
   }): Promise<ProvisioningRun> {
     const record = await this.#store.create(input);
     return new ProvisioningRunHandle({ module: this, record });
+  }
+
+  public async reserveDispatch(input: {
+    readonly canonicalTaskId: string;
+    readonly agentProfile: string;
+    readonly workspaceDirectory: string;
+    readonly repositories: readonly string[];
+    readonly force: boolean;
+    readonly maximumInProgress: number;
+  }): Promise<DispatchReservation> {
+    const reservation = await this.#store.reserveDispatch(input);
+    return reservation.record === undefined
+      ? { activeCount: reservation.activeCount, type: "full" }
+      : {
+          activeCount: reservation.activeCount,
+          run: new ProvisioningRunHandle({ module: this, record: reservation.record }),
+          type: "reserved",
+        };
   }
 
   public async findBySlug(input: { readonly slug: string }): Promise<RunHandle | undefined> {
@@ -595,6 +621,29 @@ class RunStore {
         return record;
       },
       slug,
+    });
+  }
+
+  public async reserveDispatch(input: {
+    readonly canonicalTaskId: string;
+    readonly agentProfile: string;
+    readonly workspaceDirectory: string;
+    readonly repositories: readonly string[];
+    readonly force: boolean;
+    readonly maximumInProgress: number;
+  }): Promise<{ readonly activeCount: number; readonly record?: RunRecord | undefined }> {
+    return await withFileLock({
+      operation: async () => {
+        const activeCount = (await this.list()).filter(
+          (record) => record.state === "provisioning" || record.state === "running",
+        ).length;
+        if (!input.force && activeCount >= input.maximumInProgress) {
+          return { activeCount };
+        }
+        const record = await this.create(input);
+        return { activeCount, record };
+      },
+      path: join(this.#runsDirectory, "dispatch-admission.lock"),
     });
   }
 

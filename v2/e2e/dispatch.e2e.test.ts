@@ -1,5 +1,15 @@
 import { execFile } from "node:child_process";
-import { cp, mkdir, mkdtemp, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
@@ -347,6 +357,68 @@ describe("crew start", () => {
 
     expect(result.stdout).toContain("Started fixture:URGENT-1");
     expect(dispatch["fixture:LOW-1"].reason).toBe("slots-full");
+  });
+
+  it("reserves one shared slot across concurrent starts for distinct tasks", async () => {
+    const fixture = await createDispatchFixture({
+      maximumInProgress: 1,
+      tasks: [task({ id: "A-1", repositories: [] }), task({ id: "B-1", repositories: [] })],
+    });
+    const barrierDirectory = join(fixture.root, "which-barrier");
+    const releasePath = join(barrierDirectory, "release");
+    const firstReadyPath = join(barrierDirectory, "first-ready");
+    const secondReadyPath = join(barrierDirectory, "second-ready");
+    await mkdir(barrierDirectory);
+    const whichPath = join(barrierDirectory, "which");
+    await writeFile(
+      whichPath,
+      [
+        "#!/bin/sh",
+        'if [ "$1" = "codex" ]; then',
+        '  touch "$FAKE_WHICH_READY"',
+        '  while [ ! -e "$FAKE_WHICH_RELEASE" ]; do sleep 0.01; done',
+        "fi",
+        'exec /usr/bin/which "$@"',
+        "",
+      ].join("\n"),
+    );
+    await chmod(whichPath, 0o755);
+    const environment = {
+      ...fixture.environment,
+      FAKE_WHICH_RELEASE: releasePath,
+      PATH: `${barrierDirectory}:${fixture.environment["PATH"]}`,
+    };
+
+    const firstStart = runCrew({
+      arguments: ["start", "A-1"],
+      environment: { ...environment, FAKE_WHICH_READY: firstReadyPath },
+    });
+    const secondStart = runCrew({
+      arguments: ["start", "B-1"],
+      environment: { ...environment, FAKE_WHICH_READY: secondReadyPath },
+    });
+    await Promise.all([waitForPath(firstReadyPath), waitForPath(secondReadyPath)]);
+    await writeFile(releasePath, "release\n");
+
+    const results = await Promise.all([firstStart, secondStart]);
+    const records = (await readdir(fixture.runsDirectory)).filter((entry) =>
+      entry.endsWith(".json"),
+    );
+    expect(results.filter((result) => result.stdout.includes("Started fixture:"))).toHaveLength(1);
+    expect(records).toHaveLength(1);
+
+    const verdicts = Object.values(
+      JSON.parse(await readFile(join(dirname(fixture.runsDirectory), "dispatch.json"), "utf8")),
+    );
+    const updates = (await readFile(fixture.updatesPath, "utf8")).trim().split("\n");
+    const calls = (await readFile(fixture.cmuxCallsPath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+
+    expect(verdicts).toContainEqual(expect.objectContaining({ reason: "slots-full" }));
+    expect(updates).toHaveLength(1);
+    expect(calls.filter((call) => call.arguments[0] === "new-workspace")).toHaveLength(1);
   });
 
   it("skips a blocked task unless an explicit start uses force", async () => {

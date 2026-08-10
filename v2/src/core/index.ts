@@ -325,7 +325,6 @@ async function start(input: {
       agentProfile: run.record.agentProfile,
       canonicalTaskId: run.record.canonicalTaskId,
     }));
-  let activeCount = active.length;
   input.onProgress?.({
     active,
     force: input.force,
@@ -395,7 +394,16 @@ async function start(input: {
       }
       continue;
     }
-    if (!input.force && activeCount >= runtime.config.orchestrator.maximumInProgress) {
+    const workspaceDirectory = runtime.workspaces.workspaceDirectory({ slug });
+    const reservation = await runtime.runs.reserveDispatch({
+      agentProfile: profileName,
+      canonicalTaskId,
+      force: input.force,
+      maximumInProgress: runtime.config.orchestrator.maximumInProgress,
+      repositories: task.repositories,
+      workspaceDirectory,
+    });
+    if (reservation.type === "full") {
       await skipTask({
         canonicalTaskId,
         detail: "concurrency limit reached",
@@ -403,13 +411,7 @@ async function start(input: {
       });
       continue;
     }
-    const workspaceDirectory = runtime.workspaces.workspaceDirectory({ slug });
-    const provisioning = await runtime.runs.beginDispatch({
-      agentProfile: profileName,
-      canonicalTaskId,
-      repositories: task.repositories,
-      workspaceDirectory,
-    });
+    const provisioning = reservation.run;
     const claim = await runtime.registry.update({
       canonicalTaskId,
       event: { runId: provisioning.record.runId, type: "claimed" },
@@ -430,9 +432,10 @@ async function start(input: {
     input.onProgress?.({
       agentProfile: profileName,
       canonicalTaskId,
-      forced: input.force && activeCount >= runtime.config.orchestrator.maximumInProgress,
+      forced:
+        input.force && reservation.activeCount >= runtime.config.orchestrator.maximumInProgress,
       maximum: runtime.config.orchestrator.maximumInProgress,
-      slot: activeCount + 1,
+      slot: reservation.activeCount + 1,
       type: "dispatching",
     });
     try {
@@ -465,7 +468,6 @@ async function start(input: {
         runtime,
       });
       started.push(canonicalTaskId);
-      activeCount += 1;
     } catch (error) {
       const reason =
         error instanceof PrepareWorktreeError ? prepareFailureReason(error) : errorMessage(error);
