@@ -96,6 +96,7 @@ interface DiscoveredBundle {
 
 interface RegisteredSource {
   readonly bundle: Bundle | undefined;
+  readonly environment: NodeJS.ProcessEnv;
   readonly instance: SourceInstance;
   readonly name: string;
   readonly origin: "package" | "user";
@@ -105,14 +106,9 @@ interface RegisteredSource {
 
 export class SourceRegistry {
   readonly #sources: readonly RegisteredSource[];
-  readonly #environment: NodeJS.ProcessEnv;
 
-  private constructor(input: {
-    readonly sources: readonly RegisteredSource[];
-    readonly environment: NodeJS.ProcessEnv;
-  }) {
+  private constructor(input: { readonly sources: readonly RegisteredSource[] }) {
     this.#sources = input.sources;
-    this.#environment = input.environment;
   }
 
   public static async create(input: {
@@ -133,6 +129,11 @@ export class SourceRegistry {
       return {
         bundle,
         discoveryErrors: [...discoveryErrors],
+        environment: {
+          ...input.environment,
+          ...bundle?.manifest.environment,
+          ...instance.environment,
+        },
         instance,
         lastTasks: [],
         name,
@@ -144,7 +145,7 @@ export class SourceRegistry {
         source.discoveryErrors.push(`duplicate configured source name '${source.name}'`);
       }
     }
-    return new SourceRegistry({ environment: input.environment, sources });
+    return new SourceRegistry({ sources });
   }
 
   public sourceDefaultProfile(input: { readonly sourceName: string }): string | undefined {
@@ -169,7 +170,7 @@ export class SourceRegistry {
           );
         }
         for (const secret of bundle.manifest.secrets) {
-          if (this.#environment[secret] === undefined) {
+          if (source.environment[secret] === undefined) {
             errors.push(`missing secret ${secret}`);
           }
         }
@@ -177,11 +178,7 @@ export class SourceRegistry {
           if (
             !(await commandExists({
               command: prerequisite,
-              environment: {
-                ...this.#environment,
-                ...bundle.manifest.environment,
-                ...source.instance.environment,
-              },
+              environment: source.environment,
             }))
           ) {
             errors.push(`missing prerequisite ${prerequisite}`);
@@ -336,11 +333,7 @@ export class SourceRegistry {
       await access(executable, constants.X_OK);
       const result = await execa(executable, [], {
         cwd: bundle.directory,
-        env: {
-          ...this.#environment,
-          ...bundle.manifest.environment,
-          ...source.instance.environment,
-        },
+        env: source.environment,
         input: JSON.stringify(payload),
         reject: false,
         ...(input.timeoutMilliseconds === undefined ? {} : { timeout: input.timeoutMilliseconds }),
