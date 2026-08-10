@@ -1124,7 +1124,7 @@ describe(buildLaunchCommand, () => {
             definition: {
               cmd: `sh -c 'printf "SESSION_TOKEN=%s\\n" "\${SESSION_TOKEN-}"'`,
               color: "#fff",
-              preLaunch: "true",
+              preLaunch: `test -z "\${SESSION_TOKEN-}"`,
               preLaunchEnv: ["SESSION_TOKEN"],
             },
           }),
