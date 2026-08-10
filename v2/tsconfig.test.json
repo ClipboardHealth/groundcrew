@@ -1,7 +1,9 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
+    "composite": false,
     "types": ["node", "vitest/globals"]
   },
-  "include": ["e2e/**/*.ts", "vitest.config.ts"]
+  "include": ["src/**/*.test.ts", "e2e/**/*.ts", "vitest.config.ts"],
+  "exclude": []
 }

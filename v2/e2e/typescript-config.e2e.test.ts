@@ -7,6 +7,34 @@ import { describe, expect, it } from "vitest";
 const execFileAsync = promisify(execFile);
 
 describe("TypeScript configuration", () => {
+  it("checks source test files only with the test project", async () => {
+    const [productionConfig, testConfig] = await Promise.all([
+      execFileAsync(
+        process.execPath,
+        [
+          join(process.cwd(), "node_modules/typescript/bin/tsc"),
+          "--showConfig",
+          "--project",
+          "tsconfig.json",
+        ],
+        { cwd: process.cwd() },
+      ),
+      execFileAsync(
+        process.execPath,
+        [
+          join(process.cwd(), "node_modules/typescript/bin/tsc"),
+          "--showConfig",
+          "--project",
+          "tsconfig.test.json",
+        ],
+        { cwd: process.cwd() },
+      ),
+    ]);
+
+    expect(productionConfig.stdout).not.toContain("src/run/index.test.ts");
+    expect(testConfig.stdout).toContain("src/run/index.test.ts");
+  });
+
   it("rejects Vitest globals in production source files", async () => {
     const fixtureRoot = await mkdtemp(join(process.cwd(), ".typescript-config-"));
 
