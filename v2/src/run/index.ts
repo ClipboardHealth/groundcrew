@@ -643,7 +643,7 @@ class RunStore {
         const record = await this.create(input);
         return { activeCount, record };
       },
-      path: join(this.#runsDirectory, "dispatch-admission.lock"),
+      path: join(this.#runsDirectory, ".locks", "dispatch-admission.lock"),
     });
   }
 
