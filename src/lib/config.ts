@@ -148,13 +148,13 @@ export interface AgentDefinition {
    * the agent under the safehouse runner. Companion to `preLaunch` —
    * names exported by `preLaunch` go here so groundcrew appends them to the
    * Safehouse wrap's `--env-pass=` flag without forcing the user to rewrite
-   * `cmd`. Under `local.runner: "none"` exports flow through unchanged, so
-   * `preLaunchEnv` is a no-op. An empty array is a uniform no-op in every
-   * runner (it forwards zero names, so the unsupported-runner guards do not
-   * fire). A non-empty list is rejected when `local.runner` resolves to `sdx`
-   * in v1, and when `cmd` already starts with `safehouse` (the user owns env
-   * forwarding in that case). Each name must match `[A-Za-z_][A-Za-z0-9_]*`
-   * (POSIX env var name).
+   * `cmd`. Under `local.runner: "none"`, listed names are cleared immediately
+   * before `preLaunch`, then its exports flow through unchanged to the agent.
+   * An empty array is a uniform no-op in every runner (it forwards zero names,
+   * so the unsupported-runner guards do not fire). A non-empty list is
+   * rejected when `local.runner` resolves to `sdx` in v1, and when `cmd`
+   * already starts with `safehouse` (the user owns env forwarding in that
+   * case). Each name must match `[A-Za-z_][A-Za-z0-9_]*` (POSIX env var name).
    */
   preLaunchEnv?: string[];
   color: string;

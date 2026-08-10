@@ -1389,7 +1389,7 @@ describe(buildLaunchCommand, () => {
       expect(out).not.toContain("--env-pass");
     });
 
-    it("does not throw on runner='none' with preLaunchEnv (exports already inherit)", () => {
+    it("does not add a forwarding flag on runner='none' with preLaunchEnv", () => {
       const out = buildLaunchCommand(
         arguments_({
           runner: "none",
