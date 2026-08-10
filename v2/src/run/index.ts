@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { createPresenter, type Presenter, type PresentedWorkspace } from "../presenter/index.js";
 
 export interface Artifact {
@@ -30,6 +30,7 @@ export interface RunRecord {
   readonly presentedWorkspaceName: string;
   readonly workspaceDirectory: string;
   readonly repositories: readonly string[];
+  readonly pendingRepository?: string | undefined;
   readonly artifacts: readonly Artifact[];
   readonly events: readonly RunEvent[];
 }
@@ -396,7 +397,7 @@ export class RunModule {
       update: async (current) => {
         requireCurrentRun({ current, expected: input.record, state: "running" });
         await input.reserveWhileLocked(current);
-        return current;
+        return { ...current, pendingRepository: input.repository };
       },
     });
     return new RunningRunHandle({ module: this, record });
@@ -417,6 +418,7 @@ export class RunModule {
             ...current.events,
             { event: `repository-added:${input.repository}`, timestamp: new Date().toISOString() },
           ],
+          pendingRepository: undefined,
           repositories: input.repositories,
         };
       },
@@ -435,12 +437,20 @@ export class RunModule {
       update: (current) => {
         if (
           current.runId !== input.expectedRunId ||
-          sameStrings(current.repositories, input.repositories)
+          current.pendingRepository === undefined ||
+          !sameStringSets({
+            left: input.repositories,
+            right: [...current.repositories, current.pendingRepository].map(repositoryName),
+          })
         ) {
           return current;
         }
         transitioned = true;
-        return { ...current, repositories: input.repositories };
+        return {
+          ...current,
+          pendingRepository: undefined,
+          repositories: input.repositories,
+        };
       },
     });
     return { run: createRunHandle({ module: this, record }), transitioned };
@@ -1146,8 +1156,17 @@ function completionTimestamp(input: { readonly record: RunRecord }): string | un
   return input.record.events.findLast(({ event }) => event.startsWith("complete:"))?.timestamp;
 }
 
-function sameStrings(left: readonly string[], right: readonly string[]): boolean {
-  return left.length === right.length && left.every((value, index) => value === right[index]);
+function repositoryName(repository: string): string {
+  return basename(repository);
+}
+
+function sameStringSets(input: {
+  readonly left: readonly string[];
+  readonly right: readonly string[];
+}): boolean {
+  const left = new Set(input.left);
+  const right = new Set(input.right);
+  return left.size === right.size && [...left].every((value) => right.has(value));
 }
 
 async function atomicWrite(input: {

@@ -219,6 +219,31 @@ describe("crew start", () => {
     await expect(stat(fixture.workspaceDirectory)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("does not adopt tampered marker repositories before destructive cleanup", async () => {
+    const fixture = await createDispatchFixture({ additionalRepositories: ["target"] });
+    await runCrew({ arguments: ["start"], environment: fixture.environment });
+    const targetRepository = join(fixture.baseDirectory, "target");
+    const branch = "crew/fixture-eng-123";
+    await runGit({ arguments: ["branch", branch], cwd: targetRepository });
+    const targetBranchTip = await gitOutput({
+      arguments: ["rev-parse", branch],
+      cwd: targetRepository,
+    });
+    const markerPath = join(fixture.workspaceDirectory, ".groundcrew", "task.json");
+    const marker = JSON.parse(await readFile(markerPath, "utf8"));
+    await writeFile(markerPath, JSON.stringify({ ...marker, repositories: ["target"] }));
+
+    const cleanup = runCrew({
+      arguments: ["cleanup", "ENG-123", "--force"],
+      environment: fixture.environment,
+    });
+
+    await expect(cleanup).rejects.toMatchObject({ code: 1 });
+    await expect(
+      gitOutput({ arguments: ["rev-parse", branch], cwd: targetRepository }),
+    ).resolves.toBe(targetBranchTip);
+  });
+
   it("explains how to find a task when cleanup has no matching run", async () => {
     const fixture = await createDispatchFixture();
 

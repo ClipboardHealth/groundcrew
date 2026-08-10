@@ -1,7 +1,19 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { execa } from "execa";
+import { z } from "zod";
+
+const TaskMarkerSchema = z
+  .object({
+    version: z.literal(1),
+    canonicalTaskId: z.string().min(1),
+    branch: z.string().min(1),
+    repositories: z.array(
+      z.string().min(1).refine(isRepositoryName, "repository must be a basename"),
+    ),
+  })
+  .strict();
 
 export interface WorkspaceConfig {
   readonly baseDirectory: string;
@@ -23,6 +35,13 @@ export interface TaskMarker {
   readonly canonicalTaskId: string;
   readonly branch: string;
   readonly repositories: readonly string[];
+}
+
+export interface CleanupWorkspaceRecord {
+  readonly canonicalTaskId: string;
+  readonly pendingRepository?: string | undefined;
+  readonly repositories: readonly string[];
+  readonly workspaceDirectory: string;
 }
 
 export interface ObservedRepository {
@@ -50,6 +69,11 @@ interface RepositoryOperation {
   readonly repository: string;
 }
 
+interface WorkspaceMetadata {
+  readonly complete: boolean;
+  readonly marker: TaskMarker;
+}
+
 export class WorkspaceService {
   readonly #config: WorkspaceConfig;
   readonly #git: GitConfig;
@@ -66,7 +90,11 @@ export class WorkspaceService {
   }
 
   public workspaceDirectory(input: { readonly slug: string }): string {
-    return join(this.#config.worktreeDirectory, input.slug);
+    return resolveContainedChild({
+      child: input.slug,
+      label: "workspace slug",
+      parent: this.#config.worktreeDirectory,
+    });
   }
 
   public branch(input: { readonly slug: string }): string {
@@ -178,9 +206,13 @@ export class WorkspaceService {
     readonly workspaceDirectory: string;
   }): Promise<TaskMarker | undefined> {
     try {
-      return JSON.parse(
-        await readFile(join(input.workspaceDirectory, ".groundcrew", "task.json"), "utf8"),
-      ) as TaskMarker;
+      return parseTaskMarker({
+        contents: await readFile(
+          join(input.workspaceDirectory, ".groundcrew", "task.json"),
+          "utf8",
+        ),
+        label: "task marker",
+      });
     } catch (error) {
       if (error instanceof Error && "code" in error && error.code === "ENOENT") {
         return undefined;
@@ -242,10 +274,11 @@ export class WorkspaceService {
 
   public async observe(input: { readonly slug: string }): Promise<ObservedWorkspace> {
     const workspaceDirectory = this.workspaceDirectory(input);
-    const marker = await this.readWorkspaceMetadata({ workspaceDirectory });
-    if (marker === undefined) {
+    const metadata = await this.readWorkspaceMetadata({ workspaceDirectory });
+    if (metadata === undefined) {
       return { dirtyPaths: [], exists: await pathExists(workspaceDirectory), repositories: [] };
     }
+    const { marker } = metadata;
     const repositories: ObservedRepository[] = [];
     for (const repositoryName of marker.repositories) {
       const worktree = join(workspaceDirectory, repositoryName);
@@ -288,16 +321,32 @@ export class WorkspaceService {
     };
   }
 
-  public async cleanup(input: { readonly slug: string; readonly allowDirty: boolean }): Promise<{
+  public async cleanup(input: {
+    readonly slug: string;
+    readonly allowDirty: boolean;
+    readonly record: CleanupWorkspaceRecord;
+  }): Promise<{
     readonly preservedBranches: readonly string[];
     readonly removedRepositories: readonly string[];
   }> {
     const workspaceDirectory = this.workspaceDirectory(input);
-    const marker = await this.readWorkspaceMetadata({ workspaceDirectory });
-    if (marker === undefined) {
+    assertSamePath({
+      actual: workspaceDirectory,
+      expected: input.record.workspaceDirectory,
+      label: "run workspace directory",
+    });
+    const metadata = await this.readWorkspaceMetadata({ workspaceDirectory });
+    if (metadata === undefined) {
+      await assertExistingPathContained({
+        child: workspaceDirectory,
+        label: "workspace directory",
+        parent: this.#config.worktreeDirectory,
+      });
       await rm(workspaceDirectory, { recursive: true, force: true });
       return { preservedBranches: [], removedRepositories: [] };
     }
+    const { marker } = metadata;
+    this.assertCleanupMetadata({ metadata, record: input.record, slug: input.slug });
     const observed = await this.observe(input);
     if (!input.allowDirty && observed.dirtyPaths.length > 0) {
       throw new DirtyWorkspaceError(observed.dirtyPaths);
@@ -305,11 +354,32 @@ export class WorkspaceService {
     const preservedBranches: string[] = [];
     const removedRepositories: string[] = [];
     for (const repositoryName of marker.repositories) {
-      const checkout = join(this.#config.baseDirectory, repositoryName);
-      const worktree = join(workspaceDirectory, repositoryName);
+      const checkout = resolveContainedChild({
+        child: repositoryName,
+        label: "repository checkout",
+        parent: this.#config.baseDirectory,
+      });
+      const worktree = resolveContainedChild({
+        child: repositoryName,
+        label: "repository worktree",
+        parent: workspaceDirectory,
+      });
+      // Git resolves symbolic links before operating, so lexical containment is not enough.
+      // eslint-disable-next-line no-await-in-loop
+      await assertExistingPathContained({
+        child: checkout,
+        label: "repository checkout",
+        parent: this.#config.baseDirectory,
+      });
       // Cleanup is sequential so a partial failure remains obvious and recoverable.
       // eslint-disable-next-line no-await-in-loop
       if (await pathExists(worktree)) {
+        // eslint-disable-next-line no-await-in-loop
+        await assertExistingPathContained({
+          child: worktree,
+          label: "repository worktree",
+          parent: workspaceDirectory,
+        });
         // eslint-disable-next-line no-await-in-loop
         await git({
           arguments: ["worktree", "remove", ...(input.allowDirty ? ["--force"] : []), worktree],
@@ -336,8 +406,40 @@ export class WorkspaceService {
         preservedBranches.push(`${repositoryName}:${marker.branch}`);
       }
     }
+    await assertExistingPathContained({
+      child: workspaceDirectory,
+      label: "workspace directory",
+      parent: this.#config.worktreeDirectory,
+    });
     await rm(workspaceDirectory, { recursive: true, force: true });
     return { preservedBranches, removedRepositories };
+  }
+
+  private assertCleanupMetadata(input: {
+    readonly metadata: WorkspaceMetadata;
+    readonly record: CleanupWorkspaceRecord;
+    readonly slug: string;
+  }): void {
+    const expectedBranch = this.branch({ slug: input.slug });
+    if (
+      input.metadata.marker.canonicalTaskId !== input.record.canonicalTaskId ||
+      input.metadata.marker.branch !== expectedBranch
+    ) {
+      throw new WorkspaceMetadataError("workspace metadata does not match its durable run");
+    }
+    const expectedRepositories = new Set(input.record.repositories.map(stripOwner));
+    const allowedRepositories = new Set(expectedRepositories);
+    if (input.record.pendingRepository !== undefined) {
+      allowedRepositories.add(stripOwner(input.record.pendingRepository));
+    }
+    const actualRepositories = new Set(input.metadata.marker.repositories);
+    const repositoriesMatch = input.metadata.complete
+      ? sameSet({ left: actualRepositories, right: expectedRepositories }) ||
+        sameSet({ left: actualRepositories, right: allowedRepositories })
+      : [...actualRepositories].every((repository) => allowedRepositories.has(repository));
+    if (!repositoriesMatch) {
+      throw new WorkspaceMetadataError("workspace repositories do not match its durable run");
+    }
   }
 
   private async resolveAll(input: {
@@ -477,9 +579,13 @@ export class WorkspaceService {
     readonly workspaceDirectory: string;
   }): Promise<TaskMarker | undefined> {
     try {
-      return JSON.parse(
-        await readFile(join(input.workspaceDirectory, ".groundcrew", "provisioning.json"), "utf8"),
-      ) as TaskMarker;
+      return parseTaskMarker({
+        contents: await readFile(
+          join(input.workspaceDirectory, ".groundcrew", "provisioning.json"),
+          "utf8",
+        ),
+        label: "workspace recovery marker",
+      });
     } catch (error) {
       if (error instanceof Error && "code" in error && error.code === "ENOENT") {
         return undefined;
@@ -509,20 +615,26 @@ export class WorkspaceService {
 
   private async readWorkspaceMetadata(input: {
     readonly workspaceDirectory: string;
-  }): Promise<TaskMarker | undefined> {
+  }): Promise<WorkspaceMetadata | undefined> {
     const [marker, recovery] = await Promise.all([
       this.readMarker(input),
       this.readRecoveryMarker(input),
     ]);
     if (marker === undefined) {
-      return recovery;
+      return recovery === undefined ? undefined : { complete: false, marker: recovery };
     }
     if (recovery === undefined) {
-      return marker;
+      return { complete: true, marker };
+    }
+    if (marker.canonicalTaskId !== recovery.canonicalTaskId || marker.branch !== recovery.branch) {
+      throw new WorkspaceMetadataError("task and recovery markers do not describe one workspace");
     }
     return {
-      ...marker,
-      repositories: [...new Set([...marker.repositories, ...recovery.repositories])],
+      complete: true,
+      marker: {
+        ...marker,
+        repositories: [...new Set([...marker.repositories, ...recovery.repositories])],
+      },
     };
   }
 
@@ -582,6 +694,13 @@ export class RepositoryMissingError extends Error {
     super(`designated repositories not present: ${repositories.join(", ")}`);
     this.name = "RepositoryMissingError";
     this.repositories = repositories;
+  }
+}
+
+export class WorkspaceMetadataError extends Error {
+  public constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "WorkspaceMetadataError";
   }
 }
 
@@ -660,6 +779,92 @@ function stripOwner(repository: string): string {
     throw new RepositoryMissingError([repository]);
   }
   return name;
+}
+
+function isRepositoryName(repository: string): boolean {
+  return (
+    repository !== "." &&
+    repository !== ".." &&
+    !isAbsolute(repository) &&
+    basename(repository) === repository
+  );
+}
+
+function parseTaskMarker(input: { readonly contents: string; readonly label: string }): TaskMarker {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(input.contents);
+  } catch (error) {
+    throw new WorkspaceMetadataError(`${input.label} is not valid JSON`, {
+      cause: error,
+    });
+  }
+  const result = TaskMarkerSchema.safeParse(parsed);
+  if (!result.success) {
+    throw new WorkspaceMetadataError(`${input.label} is invalid: ${z.prettifyError(result.error)}`);
+  }
+  return result.data;
+}
+
+function resolveContainedChild(input: {
+  readonly child: string;
+  readonly label: string;
+  readonly parent: string;
+}): string {
+  const path = resolve(input.parent, input.child);
+  assertPathContained({ child: path, label: input.label, parent: input.parent });
+  return path;
+}
+
+async function assertExistingPathContained(input: {
+  readonly child: string;
+  readonly label: string;
+  readonly parent: string;
+}): Promise<void> {
+  assertPathContained(input);
+  if (!(await pathExists(input.child))) {
+    return;
+  }
+  const [canonicalChild, canonicalParent] = await Promise.all([
+    realpath(input.child),
+    realpath(input.parent),
+  ]);
+  assertPathContained({ child: canonicalChild, label: input.label, parent: canonicalParent });
+}
+
+function assertPathContained(input: {
+  readonly child: string;
+  readonly label: string;
+  readonly parent: string;
+}): void {
+  const relativePath = relative(resolve(input.parent), resolve(input.child));
+  if (
+    relativePath.length === 0 ||
+    relativePath === ".." ||
+    relativePath.startsWith(`..${sep}`) ||
+    isAbsolute(relativePath)
+  ) {
+    throw new WorkspaceMetadataError(`${input.label} escapes its configured root`);
+  }
+}
+
+function assertSamePath(input: {
+  readonly actual: string;
+  readonly expected: string;
+  readonly label: string;
+}): void {
+  if (resolve(input.actual) !== resolve(input.expected)) {
+    throw new WorkspaceMetadataError(`${input.label} does not match its durable run`);
+  }
+}
+
+function sameSet(input: {
+  readonly left: ReadonlySet<string>;
+  readonly right: ReadonlySet<string>;
+}): boolean {
+  return (
+    input.left.size === input.right.size && [...input.left].every((value) => input.right.has(value))
+  );
 }
 
 function processExists(processId: number): boolean {
