@@ -229,6 +229,60 @@ describe("crew start", () => {
     await expect(stat(fixture.workspaceDirectory)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("explains how to recover cleanup after worktreeDirectory changes", async () => {
+    const fixture = await createDispatchFixture();
+    await runCrew({ arguments: ["start"], environment: fixture.environment });
+    const configPath = join(fixture.root, "crew.config.jsonc");
+    const previousConfig = await readFile(configPath, "utf8");
+    const changedConfig = previousConfig.replace(
+      join(fixture.root, "worktrees"),
+      join(fixture.root, "moved-worktrees"),
+    );
+    if (changedConfig === previousConfig) {
+      throw new Error("fixture worktreeDirectory was not changed");
+    }
+    await writeFile(configPath, changedConfig);
+
+    const cleanup = runCrew({
+      arguments: ["cleanup", "ENG-123", "--force"],
+      environment: fixture.environment,
+    });
+
+    await expect(cleanup).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining("restore the previous workspace.worktreeDirectory"),
+    });
+    await expect(stat(fixture.workspaceDirectory)).resolves.toBeDefined();
+  });
+
+  it("does not adopt tampered marker repositories before destructive cleanup", async () => {
+    const fixture = await createDispatchFixture({ additionalRepositories: ["target"] });
+    await runCrew({ arguments: ["start"], environment: fixture.environment });
+    const targetRepository = join(fixture.baseDirectory, "target");
+    const branch = "crew/fixture-eng-123";
+    await runGit({ arguments: ["branch", branch], cwd: targetRepository });
+    const targetBranchTip = await gitOutput({
+      arguments: ["rev-parse", branch],
+      cwd: targetRepository,
+    });
+    const markerPath = join(fixture.workspaceDirectory, ".groundcrew", "task.json");
+    const marker = JSON.parse(await readFile(markerPath, "utf8"));
+    await writeFile(markerPath, JSON.stringify({ ...marker, repositories: ["target"] }));
+
+    const cleanup = runCrew({
+      arguments: ["cleanup", "ENG-123", "--force"],
+      environment: fixture.environment,
+    });
+
+    await expect(cleanup).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining("workspace repositories do not match its durable run"),
+    });
+    await expect(
+      gitOutput({ arguments: ["rev-parse", branch], cwd: targetRepository }),
+    ).resolves.toBe(targetBranchTip);
+  });
+
   it("explains how to find a task when cleanup has no matching run", async () => {
     const fixture = await createDispatchFixture();
 

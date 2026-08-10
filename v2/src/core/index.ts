@@ -729,7 +729,16 @@ async function cleanup(input: {
     await completed.closePresentedWorkspace();
     try {
       // eslint-disable-next-line no-await-in-loop
-      const result = await runtime.workspaces.cleanup({ allowDirty: input.allowDirty, slug });
+      const result = await runtime.workspaces.cleanup({
+        allowDirty: input.allowDirty,
+        record: {
+          canonicalTaskId: completed.record.canonicalTaskId,
+          pendingRepository: completed.record.pendingRepository,
+          repositories: completed.record.repositories,
+          workspaceDirectory: completed.record.workspaceDirectory,
+        },
+        slug,
+      });
       preservedBranches.push(...result.preservedBranches);
     } catch (error) {
       if (error instanceof DirtyWorkspaceError) {
@@ -776,7 +785,7 @@ async function reconcile(input: { readonly runtime: Runtime }): Promise<void> {
         });
       },
     });
-    // Marker repositories are authoritative after runtime acquisition.
+    // A marker can recover only a repository that was durably reserved before acquisition.
     // eslint-disable-next-line no-await-in-loop
     const marker = await runtime.workspaces.readMarker({
       workspaceDirectory: run.record.workspaceDirectory,
