@@ -87,6 +87,7 @@ interface MainInput {
 
 interface RenderDispatchProgressInput {
   readonly progress: DispatchProgress;
+  readonly showAllSkips: boolean;
   readonly showRoutineSkips: boolean;
 }
 
@@ -171,19 +172,29 @@ export async function main(input: MainInput): Promise<void> {
         reconcileOnCreate: options.dryRun !== true,
       });
       do {
+        let previewedCount = 0;
         const result = await application.start({
           agent: options.agent,
           dryRun: options.dryRun === true,
           force: options.force === true,
-          onProgress: (progress) =>
+          onProgress: (progress) => {
+            if (progress.type === "previewing") {
+              previewedCount += 1;
+            }
             renderDispatchProgress({
               progress,
-              showRoutineSkips: task !== undefined && options.watch !== true,
-            }),
+              showAllSkips: options.dryRun === true,
+              showRoutineSkips:
+                options.dryRun === true || (task !== undefined && options.watch !== true),
+            });
+          },
           task,
         });
         for (const canonicalTaskId of result.started) {
           process.stdout.write(`Started ${canonicalTaskId}\n`);
+        }
+        if (options.dryRun === true && previewedCount === 0) {
+          process.stdout.write("No tasks would start\n");
         }
         if (options.watch !== true) {
           break;
@@ -481,11 +492,12 @@ async function readTaskMarker(input: {
 }
 
 function renderDispatchProgress(input: RenderDispatchProgressInput): void {
-  const { progress, showRoutineSkips } = input;
+  const { progress, showAllSkips, showRoutineSkips } = input;
   if (progress.type === "skipped") {
     if (
-      progress.reason === "slots-full" ||
-      (!showRoutineSkips && !BATCH_REPORTED_SKIP_REASONS.has(progress.reason))
+      !showAllSkips &&
+      (progress.reason === "slots-full" ||
+        (!showRoutineSkips && !BATCH_REPORTED_SKIP_REASONS.has(progress.reason)))
     ) {
       return;
     }

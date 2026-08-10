@@ -18,6 +18,78 @@ import { describe, expect, it } from "vitest";
 const execFileAsync = promisify(execFile);
 
 describe("crew start", () => {
+  it("explains every decision when a dry run would start no tasks", async () => {
+    const fixture = await createDispatchFixture({
+      maximumInProgress: 15,
+      tasks: [task({ blocked: true, id: "BLOCKED-1", repositories: [] })],
+    });
+
+    const result = await runCrew({
+      arguments: ["start", "--dry-run"],
+      environment: fixture.environment,
+    });
+
+    expect(result.stdout).toBe(
+      [
+        "Slots 0/15 used (15 open)",
+        "Skipping fixture:BLOCKED-1: blocked — task reports an open blocker",
+        "No tasks would start",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  it("shows tasks excluded from a dry run by the concurrency limit", async () => {
+    const fixture = await createDispatchFixture({
+      maximumInProgress: 1,
+      tasks: [
+        task({ id: "FIRST-1", priority: 1, repositories: [] }),
+        task({ id: "SECOND-1", priority: 2, repositories: [] }),
+      ],
+    });
+
+    const result = await runCrew({
+      arguments: ["start", "--dry-run"],
+      environment: fixture.environment,
+    });
+
+    expect(result.stdout).toContain(
+      "Skipping fixture:SECOND-1: slots-full — concurrency limit reached",
+    );
+  });
+
+  it("repeats dry-run decisions while watching", async () => {
+    const fixture = await createDispatchFixture({
+      maximumInProgress: 15,
+      pollIntervalMilliseconds: 10,
+      tasks: [task({ blocked: true, id: "BLOCKED-1", repositories: [] })],
+    });
+    let stdout = "";
+
+    try {
+      await execFileAsync(process.execPath, ["bin/run.js", "start", "--watch", "--dry-run"], {
+        cwd: process.cwd(),
+        env: fixture.environment,
+        timeout: 1_000,
+      });
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        !("killed" in error) ||
+        error.killed !== true ||
+        !("stdout" in error) ||
+        typeof error.stdout !== "string"
+      ) {
+        throw error;
+      }
+      stdout = error.stdout;
+    }
+
+    expect(stdout.match(/Skipping fixture:BLOCKED-1: blocked/g)?.length).toBeGreaterThan(1);
+    expect(stdout.match(/No tasks would start/g)?.length).toBeGreaterThan(1);
+    expect(await readFile(fixture.updatesPath, "utf8")).toBe("");
+  });
+
   it("previews the prioritized tasks that would start without dispatching them", async () => {
     const fixture = await createDispatchFixture({
       maximumInProgress: 2,
@@ -68,7 +140,12 @@ describe("crew start", () => {
     });
 
     expect(result.stdout).toBe(
-      ["Slots 0/1 used (1 open)", "Would start fixture:READY-1(codex) in slot 1/1", ""].join("\n"),
+      [
+        "Slots 0/1 used (1 open)",
+        "Skipping fixture:ACTIVE-1: run-exists — fixture:ACTIVE-1",
+        "Would start fixture:READY-1(codex) in slot 1/1",
+        "",
+      ].join("\n"),
     );
     expect(await readFile(runPath, "utf8")).toBe(runBeforePreview);
     expect(await readFile(fixture.updatesPath, "utf8")).toBe("");
