@@ -1542,6 +1542,26 @@ describe("crew continue", () => {
     expect(types.filter((type) => type === "completed").length).toBeGreaterThanOrEqual(2);
   });
 
+  it("reverts the continuation when the source rejects the continued event", async () => {
+    const fixture = await createDispatchFixture();
+    await runCrew({ arguments: ["start"], environment: fixture.environment });
+    await runCrew({ arguments: ["done", "--task", "ENG-123"], environment: fixture.environment });
+    const runPath = join(fixture.runsDirectory, "fixture-eng-123.json");
+    const completed = await readFile(runPath, "utf8");
+
+    await expect(
+      runCrew({
+        arguments: ["continue", "ENG-123"],
+        environment: { ...fixture.environment, FIXTURE_REJECT_CONTINUATIONS: "ENG-123" },
+      }),
+    ).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining("rejected"),
+    });
+
+    expect(await readFile(runPath, "utf8")).toBe(completed);
+  });
+
   it("refuses to continue a run that is still running", async () => {
     const fixture = await createDispatchFixture();
     await runCrew({ arguments: ["start"], environment: fixture.environment });

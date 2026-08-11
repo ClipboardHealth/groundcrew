@@ -267,6 +267,31 @@ describe("RunModule lifecycle", () => {
     ).rejects.toThrow("stale");
   });
 
+  it("reverts a continuation to its prior completed record", async () => {
+    const fixture = await continuationFixture({ prefix: "groundcrew-v2-run-continue-revert-" });
+    const acknowledged = await completeAndAcknowledge({ fixture, task: "fixture:ENG-123" });
+    const continued = await acknowledged.continueRun({
+      continuationRunId: "r_00c0ffee",
+      force: false,
+      maximumInProgress: 4,
+      repositories: ["sample"],
+    });
+
+    await fixture.runs.revertContinuation({
+      continuationRunId: continued.record.runId,
+      priorRecord: acknowledged.record,
+    });
+
+    const restored = await fixture.runs.findBySlug({ slug: "fixture-eng-123" });
+    expect(restored?.record).toEqual(acknowledged.record);
+    await expect(
+      fixture.runs.revertContinuation({
+        continuationRunId: continued.record.runId,
+        priorRecord: acknowledged.record,
+      }),
+    ).rejects.toThrow("stale");
+  });
+
   it("refuses to continue while source writeback is pending", async () => {
     const fixture = await continuationFixture({ prefix: "groundcrew-v2-run-continue-pending-" });
     const completed = await completeRun({ fixture, task: "fixture:ENG-123" });

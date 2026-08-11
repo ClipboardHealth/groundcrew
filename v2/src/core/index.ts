@@ -768,30 +768,27 @@ async function continueRun(input: {
   if (marker === undefined) {
     throw new Error(`task marker missing for ${canonicalTaskId}`);
   }
-  // Refuse a full roster before notifying the source; the admission lock re-checks below.
-  await runtime.runs.assertContinuationAdmission({
-    force: input.force,
-    maximumInProgress: runtime.config.orchestrator.maximumInProgress,
-  });
+  // The local transition commits first, so the source is never told about a continuation
+  // that admission (or a concurrent mutation) then refuses; a source rejection reverts it.
   const continuationRunId = mintRunId();
-  const authorized = await runtime.registry.update({
-    canonicalTaskId,
-    event: { previousRunId: run.record.runId, runId: continuationRunId, type: "continued" },
-  });
-  if (!authorized.ok) {
-    throw new Error(
-      `source did not accept the continued event (its bundle may predate crew continue): ${authorized.error.message}`,
-    );
-  }
-  if (authorized.data.result === "rejected") {
-    throw new Error(authorized.data.reason ?? "source rejected the continuation");
-  }
   const running = await run.continueRun({
     continuationRunId,
     force: input.force,
     maximumInProgress: runtime.config.orchestrator.maximumInProgress,
     repositories: marker.repositories,
   });
+  const authorized = await runtime.registry.update({
+    canonicalTaskId,
+    event: { previousRunId: run.record.runId, runId: continuationRunId, type: "continued" },
+  });
+  if (!authorized.ok || authorized.data.result === "rejected") {
+    await runtime.runs.revertContinuation({ continuationRunId, priorRecord: run.record });
+    throw new Error(
+      authorized.ok
+        ? (authorized.data.reason ?? "source rejected the continuation")
+        : `source did not accept the continued event (its bundle may predate crew continue): ${authorized.error.message}`,
+    );
+  }
   await log({
     canonicalTaskId,
     event: "run_continued",

@@ -572,19 +572,6 @@ export class RunModule {
     return { run: createRunHandle({ module: this, record }), transitioned };
   }
 
-  public async assertContinuationAdmission(input: {
-    readonly force: boolean;
-    readonly maximumInProgress: number;
-  }): Promise<void> {
-    if (input.force) {
-      return;
-    }
-    const activeCount = await this.#store.activeCount();
-    if (activeCount >= input.maximumInProgress) {
-      throw admissionRefusedError({ activeCount, maximumInProgress: input.maximumInProgress });
-    }
-  }
-
   public async continueRun(input: {
     readonly record: Readonly<RunRecord>;
     readonly continuationRunId: string;
@@ -604,6 +591,27 @@ export class RunModule {
       text: "running",
     });
     return new RunningRunHandle({ module: this, record: reservation.record });
+  }
+
+  public async revertContinuation(input: {
+    readonly continuationRunId: string;
+    readonly priorRecord: Readonly<RunRecord>;
+  }): Promise<void> {
+    await this.#store.mutate({
+      canonicalTaskId: input.priorRecord.canonicalTaskId,
+      update: (current) => {
+        if (current.runId !== input.continuationRunId || current.state !== "running") {
+          throw new Error(`continuation ${input.continuationRunId} is stale; cannot revert`);
+        }
+        return input.priorRecord;
+      },
+    });
+    if (input.priorRecord.outcome !== undefined) {
+      await this.#presenter.setStatus?.({
+        name: input.priorRecord.presentedWorkspaceName,
+        text: input.priorRecord.outcome,
+      });
+    }
   }
 
   public async acknowledgeSourceWriteback(input: {
