@@ -198,14 +198,14 @@ interface SkipTaskInput {
   readonly runId?: string | undefined;
 }
 
-interface ListReapableTerminalRunsInput {
+interface PrepareTerminalRunsForCleanupInput {
   readonly runtime: Runtime;
   readonly tasks: readonly Task[];
 }
 
 interface ReapTerminalTasksInput {
   readonly onProgress?: ((progress: DispatchProgress) => void) | undefined;
-  readonly runs: readonly RunHandle[];
+  readonly runs: readonly CompletedRun[];
   readonly runtime: Runtime;
 }
 
@@ -329,12 +329,9 @@ async function start(input: {
   if (!listed.ok) {
     throw new Error(listed.error.message);
   }
-  const terminalRunsToReap = input.dryRun
+  const terminalRunsToClean = input.dryRun
     ? []
-    : await listReapableTerminalRuns({ runtime, tasks: listed.data.tasks });
-  const reapableTerminalTaskIds = new Set(
-    terminalRunsToReap.map((run) => run.record.canonicalTaskId),
-  );
+    : await prepareTerminalRunsForCleanup({ runtime, tasks: listed.data.tasks });
   let tasks = listed.data.tasks;
   if (input.task === undefined) {
     tasks = tasks
@@ -366,11 +363,7 @@ async function start(input: {
     ? await listActiveAfterPreviewReconciliation({ runtime, tasks: listed.data.tasks })
     : await runtime.runs.list();
   const active = activeRuns
-    .filter(
-      (run) =>
-        (run.state === "provisioning" || run.state === "running") &&
-        !reapableTerminalTaskIds.has(run.record.canonicalTaskId),
-    )
+    .filter((run) => run.state === "provisioning" || run.state === "running")
     .map((run) => ({
       agentProfile: run.record.agentProfile,
       canonicalTaskId: run.record.canonicalTaskId,
@@ -470,7 +463,6 @@ async function start(input: {
     const reservation = await runtime.runs.reserveDispatch({
       agentProfile: profileName,
       canonicalTaskId,
-      excludedCanonicalTaskIds: reapableTerminalTaskIds,
       force: input.force,
       maximumInProgress: runtime.config.orchestrator.maximumInProgress,
       repositories: task.repositories,
@@ -564,7 +556,7 @@ async function start(input: {
   if (!input.dryRun) {
     await reapTerminalTasks({
       onProgress: input.onProgress,
-      runs: terminalRunsToReap,
+      runs: terminalRunsToClean,
       runtime,
     });
   }
@@ -997,13 +989,13 @@ async function reconcile(input: { readonly runtime: Runtime }): Promise<void> {
   }
 }
 
-async function listReapableTerminalRuns(
-  input: ListReapableTerminalRunsInput,
-): Promise<readonly RunHandle[]> {
+async function prepareTerminalRunsForCleanup(
+  input: PrepareTerminalRunsForCleanupInput,
+): Promise<readonly CompletedRun[]> {
   const terminal = new Set(
     input.tasks.filter((task) => task.terminal).map((task) => canonicalId({ task })),
   );
-  const reapable: RunHandle[] = [];
+  const prepared: CompletedRun[] = [];
   for (const run of await input.runtime.runs.list()) {
     if (!terminal.has(run.record.canonicalTaskId)) {
       continue;
@@ -1014,13 +1006,27 @@ async function listReapableTerminalRuns(
     if (observed.dirtyPaths.length > 0) {
       continue;
     }
-    reapable.push(run);
+    // eslint-disable-next-line no-await-in-loop
+    const stopped = await run.stopForCleanup({
+      assertWorkspaceIdle: async (record) => {
+        await input.runtime.workspaces.assertNoActiveRepositoryOperation({
+          workspaceDirectory: record.workspaceDirectory,
+        });
+      },
+    });
+    prepared.push(stopped.run);
   }
-  return reapable;
+  return prepared;
 }
 
 async function reapTerminalTasks(input: ReapTerminalTasksInput): Promise<void> {
   for (const run of input.runs) {
+    const slug = taskSlug({ canonicalTaskId: run.record.canonicalTaskId });
+    // eslint-disable-next-line no-await-in-loop
+    const observed = await input.runtime.workspaces.observe({ slug });
+    if (observed.dirtyPaths.length > 0) {
+      continue;
+    }
     input.onProgress?.({ canonicalTaskId: run.record.canonicalTaskId, type: "cleaning" });
     // eslint-disable-next-line no-await-in-loop
     await cleanup({

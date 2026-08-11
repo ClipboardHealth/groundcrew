@@ -285,21 +285,25 @@ describe("crew start", () => {
     child.stdout.on("data", (chunk: string) => {
       stdout += chunk;
     });
+    const childClosed = new Promise<void>((resolvePromise) => {
+      child.once("close", () => resolvePromise());
+    });
 
     try {
       await waitForPath(`${closeReleasePath}.ready`);
 
       expect(stdout).toContain("Dispatching fixture:READY-1(codex) into slot 1/1");
       expect(stdout).toContain("Cleaning fixture:ENG-123");
+      expect(
+        JSON.parse(await readFile(join(fixture.runsDirectory, "fixture-eng-123.json"), "utf8")),
+      ).toMatchObject({ state: "complete" });
       expect(stdout.indexOf("Dispatching fixture:READY-1")).toBeLessThan(
         stdout.indexOf("Cleaning fixture:ENG-123"),
       );
     } finally {
       await writeFile(closeReleasePath, "release\n");
       child.kill();
-      await new Promise<void>((resolvePromise) => {
-        child.once("close", () => resolvePromise());
-      });
+      await childClosed;
     }
   });
 
@@ -321,6 +325,35 @@ describe("crew start", () => {
       "At capacity (1/1) [fixture:ENG-123(codex)], no new work to start",
     );
     expect(result.stdout).not.toContain("Dispatching fixture:READY-1");
+  });
+
+  it("keeps terminal capacity released when the workspace becomes dirty during dispatch", async () => {
+    const fixture = await createDispatchFixture({ maximumInProgress: 1 });
+    await runCrew({ arguments: ["start"], environment: fixture.environment });
+    await writeFile(
+      fixture.listedTasksPath,
+      JSON.stringify([
+        task({ id: "ENG-123", repositories: ["sample"], terminal: true }),
+        task({ id: "READY-1", priority: 2, repositories: [] }),
+      ]),
+    );
+    const openReleasePath = join(fixture.root, "open-release");
+    fixture.environment["FAKE_CMUX_OPEN_RELEASE"] = openReleasePath;
+    const start = runCrew({ arguments: ["start"], environment: fixture.environment });
+    await waitForPath(`${openReleasePath}.ready`);
+    await writeFile(join(fixture.workspaceDirectory, "sample", "dirty.txt"), "late change\n");
+    await writeFile(openReleasePath, "release\n");
+
+    const result = await start;
+
+    expect(result.stdout).toContain("Started fixture:READY-1");
+    expect(
+      JSON.parse(await readFile(join(fixture.runsDirectory, "fixture-eng-123.json"), "utf8")),
+    ).toMatchObject({ state: "complete" });
+    expect(
+      JSON.parse(await readFile(join(fixture.runsDirectory, "fixture-ready-1.json"), "utf8")),
+    ).toMatchObject({ state: "running" });
+    await expect(stat(fixture.workspaceDirectory)).resolves.toBeDefined();
   });
 
   it("claims, provisions, and launches a ready task exactly once", async () => {

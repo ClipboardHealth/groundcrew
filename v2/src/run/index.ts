@@ -159,10 +159,6 @@ type PresentationReconciliation =
       readonly reason: "provisioning-interrupted" | "workspace-missing";
     };
 
-interface ActiveCountInput {
-  readonly excludedCanonicalTaskIds?: ReadonlySet<string> | undefined;
-}
-
 export class RunModule {
   readonly #store: RunStore;
   readonly #environment: NodeJS.ProcessEnv;
@@ -198,7 +194,6 @@ export class RunModule {
     readonly agentProfile: string;
     readonly workspaceDirectory: string;
     readonly repositories: readonly string[];
-    readonly excludedCanonicalTaskIds?: ReadonlySet<string> | undefined;
     readonly force: boolean;
     readonly maximumInProgress: number;
   }): Promise<DispatchReservation> {
@@ -777,24 +772,19 @@ class RunStore {
     readonly agentProfile: string;
     readonly workspaceDirectory: string;
     readonly repositories: readonly string[];
-    readonly excludedCanonicalTaskIds?: ReadonlySet<string> | undefined;
     readonly force: boolean;
     readonly maximumInProgress: number;
   }): Promise<{ readonly activeCount: number; readonly record?: RunRecord | undefined }> {
     return await this.reserveAdmission({
-      excludedCanonicalTaskIds: input.excludedCanonicalTaskIds,
       force: input.force,
       maximumInProgress: input.maximumInProgress,
       whileAdmitted: async () => await this.create(input),
     });
   }
 
-  public async activeCount(input: ActiveCountInput): Promise<number> {
-    const { excludedCanonicalTaskIds } = input;
+  public async activeCount(): Promise<number> {
     return (await this.list()).filter(
-      (record) =>
-        (record.state === "provisioning" || record.state === "running") &&
-        excludedCanonicalTaskIds?.has(record.canonicalTaskId) !== true,
+      (record) => record.state === "provisioning" || record.state === "running",
     ).length;
   }
 
@@ -845,16 +835,13 @@ class RunStore {
   }
 
   private async reserveAdmission(input: {
-    readonly excludedCanonicalTaskIds?: ReadonlySet<string> | undefined;
     readonly force: boolean;
     readonly maximumInProgress: number;
     readonly whileAdmitted: () => Promise<RunRecord>;
   }): Promise<{ readonly activeCount: number; readonly record?: RunRecord | undefined }> {
     return await withFileLock({
       operation: async () => {
-        const activeCount = await this.activeCount({
-          excludedCanonicalTaskIds: input.excludedCanonicalTaskIds,
-        });
+        const activeCount = await this.activeCount();
         if (!input.force && activeCount >= input.maximumInProgress) {
           return { activeCount };
         }
