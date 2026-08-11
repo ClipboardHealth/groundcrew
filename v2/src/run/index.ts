@@ -572,6 +572,19 @@ export class RunModule {
     return { run: createRunHandle({ module: this, record }), transitioned };
   }
 
+  public async assertContinuationAdmission(input: {
+    readonly force: boolean;
+    readonly maximumInProgress: number;
+  }): Promise<void> {
+    if (input.force) {
+      return;
+    }
+    const activeCount = await this.#store.activeCount();
+    if (activeCount >= input.maximumInProgress) {
+      throw admissionRefusedError({ activeCount, maximumInProgress: input.maximumInProgress });
+    }
+  }
+
   public async continueRun(input: {
     readonly record: Readonly<RunRecord>;
     readonly continuationRunId: string;
@@ -581,9 +594,10 @@ export class RunModule {
   }): Promise<RunningRun> {
     const reservation = await this.#store.continueRun(input);
     if (reservation.record === undefined) {
-      throw new Error(
-        `concurrency limit reached (${reservation.activeCount}/${input.maximumInProgress}); pass --force to continue anyway`,
-      );
+      throw admissionRefusedError({
+        activeCount: reservation.activeCount,
+        maximumInProgress: input.maximumInProgress,
+      });
     }
     await this.#presenter.setStatus?.({
       name: reservation.record.presentedWorkspaceName,
@@ -753,19 +767,17 @@ class RunStore {
     readonly force: boolean;
     readonly maximumInProgress: number;
   }): Promise<{ readonly activeCount: number; readonly record?: RunRecord | undefined }> {
-    return await withFileLock({
-      operation: async () => {
-        const activeCount = (await this.list()).filter(
-          (record) => record.state === "provisioning" || record.state === "running",
-        ).length;
-        if (!input.force && activeCount >= input.maximumInProgress) {
-          return { activeCount };
-        }
-        const record = await this.create(input);
-        return { activeCount, record };
-      },
-      path: join(this.#runsDirectory, ".locks", "dispatch-admission.lock"),
+    return await this.reserveAdmission({
+      force: input.force,
+      maximumInProgress: input.maximumInProgress,
+      whileAdmitted: async () => await this.create(input),
     });
+  }
+
+  public async activeCount(): Promise<number> {
+    return (await this.list()).filter(
+      (record) => record.state === "provisioning" || record.state === "running",
+    ).length;
   }
 
   public async continueRun(input: {
@@ -775,15 +787,11 @@ class RunStore {
     readonly maximumInProgress: number;
     readonly repositories: readonly string[];
   }): Promise<{ readonly activeCount: number; readonly record?: RunRecord | undefined }> {
-    return await withFileLock({
-      operation: async () => {
-        const activeCount = (await this.list()).filter(
-          (record) => record.state === "provisioning" || record.state === "running",
-        ).length;
-        if (!input.force && activeCount >= input.maximumInProgress) {
-          return { activeCount };
-        }
-        const record = await this.mutate({
+    return await this.reserveAdmission({
+      force: input.force,
+      maximumInProgress: input.maximumInProgress,
+      whileAdmitted: async () =>
+        await this.mutate({
           canonicalTaskId: input.record.canonicalTaskId,
           update: (current) => {
             if (current.runId !== input.record.runId) {
@@ -814,8 +822,22 @@ class RunStore {
               writebackPending: undefined,
             };
           },
-        });
-        return { activeCount, record };
+        }),
+    });
+  }
+
+  private async reserveAdmission(input: {
+    readonly force: boolean;
+    readonly maximumInProgress: number;
+    readonly whileAdmitted: () => Promise<RunRecord>;
+  }): Promise<{ readonly activeCount: number; readonly record?: RunRecord | undefined }> {
+    return await withFileLock({
+      operation: async () => {
+        const activeCount = await this.activeCount();
+        if (!input.force && activeCount >= input.maximumInProgress) {
+          return { activeCount };
+        }
+        return { activeCount, record: await input.whileAdmitted() };
       },
       path: join(this.#runsDirectory, ".locks", "dispatch-admission.lock"),
     });
@@ -1147,6 +1169,24 @@ export function mintRunId(): string {
   return `r_${randomBytes(4).toString("hex")}`;
 }
 
+export function completedRunRefusal(input: {
+  readonly runId: string;
+  readonly canonicalTaskId: string;
+}): Error {
+  return new Error(
+    `run ${input.runId} is complete; continue this session in a new run with: crew continue ${input.canonicalTaskId}`,
+  );
+}
+
+function admissionRefusedError(input: {
+  readonly activeCount: number;
+  readonly maximumInProgress: number;
+}): Error {
+  return new Error(
+    `concurrency limit reached (${input.activeCount}/${input.maximumInProgress}); pass --force to continue anyway`,
+  );
+}
+
 export function taskSlug(input: { readonly canonicalTaskId: string }): string {
   return input.canonicalTaskId
     .toLowerCase()
@@ -1433,9 +1473,7 @@ function requireCurrentRun(input: {
   if (input.current.state !== input.state) {
     if (input.state === "running") {
       if (input.current.state === "complete") {
-        throw new Error(
-          `run ${input.current.runId} is complete; continue this session in a new run with: crew continue ${input.current.canonicalTaskId}`,
-        );
+        throw completedRunRefusal(input.current);
       }
       throw new Error(
         `run ${input.current.runId} is ${input.current.state}; in-session commands require a running run`,

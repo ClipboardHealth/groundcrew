@@ -1603,12 +1603,24 @@ describe("crew continue", () => {
       code: 1,
       stderr: expect.stringContaining("concurrency limit reached (1/1)"),
     });
+    const updatesAfterRefusal = (await readFile(fixture.updatesPath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(updatesAfterRefusal.filter((update) => update.event.type === "continued")).toHaveLength(
+      0,
+    );
     const forced = await runCrew({
       arguments: ["continue", "ENG-1", "--force"],
       environment: fixture.environment,
     });
 
     expect(forced.stdout).toContain("Continuing fixture:ENG-1 as run ");
+    const updatesAfterForce = (await readFile(fixture.updatesPath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(updatesAfterForce.filter((update) => update.event.type === "continued")).toHaveLength(1);
   });
 });
 

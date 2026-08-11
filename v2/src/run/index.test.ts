@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   RunModule,
   seedWorkspaceTrust,
+  taskSlug,
   withFileLock,
   type CompletedRun,
   type RunningRun,
@@ -1054,7 +1055,8 @@ async function launchRun(input: {
   readonly fixture: ContinuationFixture;
   readonly task: string;
 }): Promise<RunningRun> {
-  const workspaceDirectory = join(input.fixture.stateRoot, `workspace-${taskSlug(input)}`);
+  const slug = taskSlug({ canonicalTaskId: input.task });
+  const workspaceDirectory = join(input.fixture.stateRoot, `workspace-${slug}`);
   await mkdir(workspaceDirectory, { recursive: true });
   const provisioning = await input.fixture.runs.beginDispatch({
     agentProfile: "codex",
@@ -1064,7 +1066,7 @@ async function launchRun(input: {
   });
   const launched = await provisioning.launch({
     acquiredRepositories: [],
-    branch: `agent/${taskSlug(input)}`,
+    branch: `agent/${slug}`,
     profile: { effort: "high", kind: "codex" },
     task: { canonicalTaskId: input.task, repositories: ["sample"], title: "Continuation task" },
   });
@@ -1096,10 +1098,6 @@ async function completeAndAcknowledge(input: {
     expectedCompletionTimestamp: completion.timestamp,
     expectedRunId: completed.record.runId,
   });
-}
-
-function taskSlug(input: { readonly task: string }): string {
-  return input.task.toLowerCase().replaceAll(/[^a-z0-9]+/g, "-");
 }
 
 function deadProcessId(): number {

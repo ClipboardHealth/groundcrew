@@ -10,6 +10,7 @@ import {
 } from "../source/index.js";
 import {
   RunModule,
+  completedRunRefusal,
   mintRunId,
   taskSlug,
   withFileLock,
@@ -767,13 +768,20 @@ async function continueRun(input: {
   if (marker === undefined) {
     throw new Error(`task marker missing for ${canonicalTaskId}`);
   }
+  // Refuse a full roster before notifying the source; the admission lock re-checks below.
+  await runtime.runs.assertContinuationAdmission({
+    force: input.force,
+    maximumInProgress: runtime.config.orchestrator.maximumInProgress,
+  });
   const continuationRunId = mintRunId();
   const authorized = await runtime.registry.update({
     canonicalTaskId,
     event: { previousRunId: run.record.runId, runId: continuationRunId, type: "continued" },
   });
   if (!authorized.ok) {
-    throw new Error(authorized.error.message);
+    throw new Error(
+      `source did not accept the continued event (its bundle may predate crew continue): ${authorized.error.message}`,
+    );
   }
   if (authorized.data.result === "rejected") {
     throw new Error(authorized.data.reason ?? "source rejected the continuation");
@@ -1065,9 +1073,7 @@ async function writeCompletion(input: {
 
 function requireRunningRun(run: RunHandle): asserts run is RunningRun {
   if (run.state === "complete") {
-    throw new Error(
-      `run ${run.record.runId} is complete; continue this session in a new run with: crew continue ${run.record.canonicalTaskId}`,
-    );
+    throw completedRunRefusal(run.record);
   }
   if (run.state !== "running") {
     throw new Error(
