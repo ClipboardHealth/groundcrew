@@ -1222,22 +1222,55 @@ describe("crew start", () => {
     });
   });
 
-  it("fails a running run when its presented workspace disappears", async () => {
+  it("fails an established run when its presented workspace disappears", async () => {
     const fixture = await createDispatchFixture({ repositories: [] });
     await runCrew({ arguments: ["start"], environment: fixture.environment });
-    await writeFile(fixture.cmuxStatePath, '{"workspaces":[]}');
+    const runPath = join(fixture.runsDirectory, "fixture-eng-123.json");
+    await writeFile(
+      fixture.cmuxStatePath,
+      JSON.stringify({
+        ...JSON.parse(await readFile(fixture.cmuxStatePath, "utf8")),
+        hiddenListResponsesRemaining: 1,
+      }),
+    );
+
+    await runCrew({ arguments: ["status", "ENG-123", "--json"], environment: fixture.environment });
+
+    const run = JSON.parse(await readFile(runPath, "utf8"));
+    expect(run).toMatchObject({
+      outcome: "failed",
+      reason: "workspace-missing",
+      state: "complete",
+    });
+    const presenterCalls = (await readFile(fixture.cmuxCallsPath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(presenterCalls.map((call) => call.arguments)).toContainEqual([
+      "set-progress",
+      "1",
+      "--workspace",
+      "workspace-1",
+      "--label",
+      "failed",
+    ]);
+    expect(await stat(fixture.workspaceDirectory)).toBeDefined();
+  });
+
+  it("keeps a newly launched run active while its presented workspace becomes visible", async () => {
+    const fixture = await createDispatchFixture({
+      hiddenPresenterListResponses: 2,
+      repositories: [],
+    });
+    await runCrew({ arguments: ["start"], environment: fixture.environment });
 
     await runCrew({ arguments: ["status", "ENG-123", "--json"], environment: fixture.environment });
 
     const run = JSON.parse(
       await readFile(join(fixture.runsDirectory, "fixture-eng-123.json"), "utf8"),
     );
-    expect(run).toMatchObject({
-      outcome: "failed",
-      reason: "workspace-missing",
-      state: "complete",
-    });
-    expect(await stat(fixture.workspaceDirectory)).toBeDefined();
+    expect(run).toMatchObject({ state: "running" });
+    expect(run.events).not.toContainEqual(expect.objectContaining({ event: "complete:failed" }));
   });
 
   it("does not treat an unavailable presenter probe as an empty workspace list", async () => {
@@ -1434,6 +1467,7 @@ async function createDispatchFixture(
     readonly rejectClaim?: string | undefined;
     readonly prepareWorktree?: string | undefined;
     readonly failPresenterOpen?: boolean | undefined;
+    readonly hiddenPresenterListResponses?: number | undefined;
     readonly maximumInProgress?: number | undefined;
     readonly pollIntervalMilliseconds?: number | undefined;
     readonly profiles?: Readonly<Record<string, Record<string, unknown>>> | undefined;
@@ -1464,6 +1498,15 @@ async function createDispatchFixture(
     writeFile(updatesPath, ""),
   ]);
   await cp("e2e/fixtures/source", sourceDirectory, { recursive: true });
+  if (options.hiddenPresenterListResponses !== undefined) {
+    await writeFile(
+      cmuxStatePath,
+      JSON.stringify({
+        hiddenListResponsesRemaining: options.hiddenPresenterListResponses,
+        workspaces: [],
+      }),
+    );
+  }
   await createRepository({ baseDirectory, root });
   for (const repository of options.additionalRepositories ?? []) {
     // Fixture repositories are created in stable order for deterministic Git diagnostics.

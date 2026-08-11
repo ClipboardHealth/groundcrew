@@ -61,6 +61,12 @@ if (command === "new-workspace") {
     process.stdout.write("not json");
     process.exit(0);
   }
+  if (state.hiddenListResponsesRemaining > 0) {
+    state.hiddenListResponsesRemaining -= 1;
+    await writeFile(statePath, JSON.stringify(state));
+    process.stdout.write('{"workspaces":[]}');
+    process.exit(0);
+  }
   process.stdout.write(JSON.stringify({ workspaces: state.workspaces }));
 } else if (command === "close-workspace") {
   const id = valueAfter("--workspace");

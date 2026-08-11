@@ -1,5 +1,9 @@
 import { execa } from "execa";
+import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
+
+const WORKSPACE_VISIBILITY_ATTEMPTS = 40;
+const WORKSPACE_VISIBILITY_INTERVAL_MILLISECONDS = 50;
 
 const WorkspaceListSchema = z.object({
   workspaces: z.array(
@@ -73,8 +77,9 @@ export class CmuxPresenter implements Presenter {
     if (result.exitCode !== 0) {
       throw new Error(result.stderr.trim() || "cmux failed to create workspace");
     }
+    const workspace = await this.waitUntilVisible({ name: input.name });
     if (input.status !== undefined) {
-      await this.setStatus({ name: input.name, text: input.status });
+      await this.setWorkspaceStatus({ text: input.status, workspaceId: workspace.id });
     }
   }
 
@@ -123,17 +128,47 @@ export class CmuxPresenter implements Presenter {
     if (workspace === undefined) {
       return;
     }
+    await this.setWorkspaceStatus({
+      color: input.color,
+      text: input.text,
+      workspaceId: workspace.id,
+    });
+  }
+
+  private async setWorkspaceStatus(input: {
+    readonly workspaceId: string;
+    readonly text: string;
+    readonly color?: string | undefined;
+  }): Promise<void> {
     const progress = ["complete", "delivered", "failed", "stopped"].includes(input.text)
       ? "1"
       : "0.5";
     const result = await execa(
       "cmux",
-      ["set-progress", progress, "--workspace", workspace.id, "--label", input.text],
+      ["set-progress", progress, "--workspace", input.workspaceId, "--label", input.text],
       { env: this.#environment, reject: false },
     );
     if (result.exitCode !== 0) {
       throw new Error(result.stderr.trim() || "cmux status failed");
     }
+  }
+
+  private async waitUntilVisible(input: {
+    readonly name: string;
+  }): Promise<{ readonly id: string; readonly title: string }> {
+    let previousWorkspaceId: string | undefined;
+    for (let attempt = 0; attempt < WORKSPACE_VISIBILITY_ATTEMPTS; attempt += 1) {
+      // cmux may acknowledge creation before the workspace reaches its list API.
+      // eslint-disable-next-line no-await-in-loop
+      const workspace = await this.resolve(input);
+      if (workspace !== undefined && workspace.id === previousWorkspaceId) {
+        return workspace;
+      }
+      previousWorkspaceId = workspace?.id;
+      // eslint-disable-next-line no-await-in-loop
+      await delay(WORKSPACE_VISIBILITY_INTERVAL_MILLISECONDS);
+    }
+    throw new Error(`cmux workspace ${input.name} did not become visible after creation`);
   }
 
   private async resolve(input: {
