@@ -261,7 +261,7 @@ describe("crew start", () => {
 
   it("dispatches new work before cleaning terminal workspaces while watching", async () => {
     const fixture = await createDispatchFixture({
-      maximumInProgress: 2,
+      maximumInProgress: 1,
       pollIntervalMilliseconds: 10,
       repositories: [],
     });
@@ -289,7 +289,11 @@ describe("crew start", () => {
     try {
       await waitForPath(`${closeReleasePath}.ready`);
 
-      expect(stdout).toContain("Dispatching fixture:READY-1(codex) into slot 2/2");
+      expect(stdout).toContain("Dispatching fixture:READY-1(codex) into slot 1/1");
+      expect(stdout).toContain("Cleaning fixture:ENG-123");
+      expect(stdout.indexOf("Dispatching fixture:READY-1")).toBeLessThan(
+        stdout.indexOf("Cleaning fixture:ENG-123"),
+      );
     } finally {
       await writeFile(closeReleasePath, "release\n");
       child.kill();

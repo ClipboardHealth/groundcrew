@@ -194,6 +194,7 @@ export class RunModule {
     readonly agentProfile: string;
     readonly workspaceDirectory: string;
     readonly repositories: readonly string[];
+    readonly excludedCanonicalTaskIds?: ReadonlySet<string> | undefined;
     readonly force: boolean;
     readonly maximumInProgress: number;
   }): Promise<DispatchReservation> {
@@ -772,19 +773,25 @@ class RunStore {
     readonly agentProfile: string;
     readonly workspaceDirectory: string;
     readonly repositories: readonly string[];
+    readonly excludedCanonicalTaskIds?: ReadonlySet<string> | undefined;
     readonly force: boolean;
     readonly maximumInProgress: number;
   }): Promise<{ readonly activeCount: number; readonly record?: RunRecord | undefined }> {
     return await this.reserveAdmission({
+      excludedCanonicalTaskIds: input.excludedCanonicalTaskIds,
       force: input.force,
       maximumInProgress: input.maximumInProgress,
       whileAdmitted: async () => await this.create(input),
     });
   }
 
-  public async activeCount(): Promise<number> {
+  public async activeCount(input: {
+    readonly excludedCanonicalTaskIds?: ReadonlySet<string> | undefined;
+  }): Promise<number> {
     return (await this.list()).filter(
-      (record) => record.state === "provisioning" || record.state === "running",
+      (record) =>
+        (record.state === "provisioning" || record.state === "running") &&
+        input.excludedCanonicalTaskIds?.has(record.canonicalTaskId) !== true,
     ).length;
   }
 
@@ -835,13 +842,16 @@ class RunStore {
   }
 
   private async reserveAdmission(input: {
+    readonly excludedCanonicalTaskIds?: ReadonlySet<string> | undefined;
     readonly force: boolean;
     readonly maximumInProgress: number;
     readonly whileAdmitted: () => Promise<RunRecord>;
   }): Promise<{ readonly activeCount: number; readonly record?: RunRecord | undefined }> {
     return await withFileLock({
       operation: async () => {
-        const activeCount = await this.activeCount();
+        const activeCount = await this.activeCount({
+          excludedCanonicalTaskIds: input.excludedCanonicalTaskIds,
+        });
         if (!input.force && activeCount >= input.maximumInProgress) {
           return { activeCount };
         }

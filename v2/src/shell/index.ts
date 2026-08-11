@@ -509,6 +509,10 @@ async function readTaskMarker(input: {
 
 function renderDispatchProgress(input: RenderDispatchProgressInput): void {
   const { progress, showAllSkips, showRoutineSkips } = input;
+  if (progress.type === "cleaning") {
+    process.stdout.write(`Cleaning ${progress.canonicalTaskId}\n`);
+    return;
+  }
   if (progress.type === "skipped") {
     if (
       !showAllSkips &&

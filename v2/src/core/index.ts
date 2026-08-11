@@ -111,6 +111,10 @@ export type DispatchProgress =
       readonly canonicalTaskId: string;
       readonly detail: string;
       readonly reason: VerdictReason;
+    }
+  | {
+      readonly type: "cleaning";
+      readonly canonicalTaskId: string;
     };
 
 export type VerdictReason =
@@ -314,6 +318,9 @@ async function start(input: {
   if (!listed.ok) {
     throw new Error(listed.error.message);
   }
+  const terminalTaskIds = new Set(
+    listed.data.tasks.filter((task) => task.terminal).map((task) => canonicalId({ task })),
+  );
   let tasks = listed.data.tasks;
   if (input.task === undefined) {
     tasks = tasks
@@ -345,7 +352,11 @@ async function start(input: {
     ? await listActiveAfterPreviewReconciliation({ runtime, tasks: listed.data.tasks })
     : await runtime.runs.list();
   const active = activeRuns
-    .filter((run) => run.state === "provisioning" || run.state === "running")
+    .filter(
+      (run) =>
+        (run.state === "provisioning" || run.state === "running") &&
+        !terminalTaskIds.has(run.record.canonicalTaskId),
+    )
     .map((run) => ({
       agentProfile: run.record.agentProfile,
       canonicalTaskId: run.record.canonicalTaskId,
@@ -445,6 +456,7 @@ async function start(input: {
     const reservation = await runtime.runs.reserveDispatch({
       agentProfile: profileName,
       canonicalTaskId,
+      excludedCanonicalTaskIds: terminalTaskIds,
       force: input.force,
       maximumInProgress: runtime.config.orchestrator.maximumInProgress,
       repositories: task.repositories,
@@ -536,7 +548,11 @@ async function start(input: {
     }
   }
   if (!input.dryRun) {
-    await reapTerminalTasks({ runtime, tasks: listed.data.tasks });
+    await reapTerminalTasks({
+      onProgress: input.onProgress,
+      runtime,
+      tasks: listed.data.tasks,
+    });
   }
   return { skipped, started };
 }
@@ -968,6 +984,7 @@ async function reconcile(input: { readonly runtime: Runtime }): Promise<void> {
 }
 
 async function reapTerminalTasks(input: {
+  readonly onProgress?: ((progress: DispatchProgress) => void) | undefined;
   readonly runtime: Runtime;
   readonly tasks: readonly Task[];
 }): Promise<void> {
@@ -984,6 +1001,7 @@ async function reapTerminalTasks(input: {
     if (observed.dirtyPaths.length > 0) {
       continue;
     }
+    input.onProgress?.({ canonicalTaskId: run.record.canonicalTaskId, type: "cleaning" });
     // eslint-disable-next-line no-await-in-loop
     await cleanup({
       allowDirty: false,
