@@ -303,6 +303,26 @@ describe("crew start", () => {
     }
   });
 
+  it("keeps a dirty terminal workspace in capacity until it can be cleaned", async () => {
+    const fixture = await createDispatchFixture({ maximumInProgress: 1 });
+    await runCrew({ arguments: ["start"], environment: fixture.environment });
+    await writeFile(join(fixture.workspaceDirectory, "sample", "dirty.txt"), "keep me\n");
+    await writeFile(
+      fixture.listedTasksPath,
+      JSON.stringify([
+        task({ id: "ENG-123", repositories: ["sample"], terminal: true }),
+        task({ id: "READY-1", priority: 2, repositories: [] }),
+      ]),
+    );
+
+    const result = await runCrew({ arguments: ["start"], environment: fixture.environment });
+
+    expect(result.stdout).toContain(
+      "At capacity (1/1) [fixture:ENG-123(codex)], no new work to start",
+    );
+    expect(result.stdout).not.toContain("Dispatching fixture:READY-1");
+  });
+
   it("claims, provisions, and launches a ready task exactly once", async () => {
     const fixture = await createDispatchFixture();
 

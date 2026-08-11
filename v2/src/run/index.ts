@@ -159,6 +159,10 @@ type PresentationReconciliation =
       readonly reason: "provisioning-interrupted" | "workspace-missing";
     };
 
+interface ActiveCountInput {
+  readonly excludedCanonicalTaskIds?: ReadonlySet<string> | undefined;
+}
+
 export class RunModule {
   readonly #store: RunStore;
   readonly #environment: NodeJS.ProcessEnv;
@@ -785,13 +789,12 @@ class RunStore {
     });
   }
 
-  public async activeCount(input: {
-    readonly excludedCanonicalTaskIds?: ReadonlySet<string> | undefined;
-  }): Promise<number> {
+  public async activeCount(input: ActiveCountInput): Promise<number> {
+    const { excludedCanonicalTaskIds } = input;
     return (await this.list()).filter(
       (record) =>
         (record.state === "provisioning" || record.state === "running") &&
-        input.excludedCanonicalTaskIds?.has(record.canonicalTaskId) !== true,
+        excludedCanonicalTaskIds?.has(record.canonicalTaskId) !== true,
     ).length;
   }
 
