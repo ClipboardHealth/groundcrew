@@ -662,11 +662,7 @@ async function done(input: {
     throw new DirtyWorkspaceError(observed.dirtyPaths);
   }
   let completed = await run.finish({
-    assertWorkspaceIdle: async (record) => {
-      await runtime.workspaces.assertNoActiveRepositoryOperation({
-        workspaceDirectory: record.workspaceDirectory,
-      });
-    },
+    assertWorkspaceIdle: workspaceIdleAssertion({ runtime }),
     message: input.message,
     outcome: input.outcome,
   });
@@ -828,6 +824,16 @@ async function continueRun(input: {
   return running.record;
 }
 
+function workspaceIdleAssertion(input: {
+  readonly runtime: Runtime;
+}): (record: Readonly<RunRecord>) => Promise<void> {
+  return async (record) => {
+    await input.runtime.workspaces.assertNoActiveRepositoryOperation({
+      workspaceDirectory: record.workspaceDirectory,
+    });
+  };
+}
+
 async function cleanup(input: {
   readonly runtime: Runtime;
   readonly task?: string | undefined;
@@ -864,11 +870,7 @@ async function cleanup(input: {
     // for a run that reconciliation completed while acquisition was still active.
     // eslint-disable-next-line no-await-in-loop
     const stopped = await run.stopForCleanup({
-      assertWorkspaceIdle: async (record) => {
-        await runtime.workspaces.assertNoActiveRepositoryOperation({
-          workspaceDirectory: record.workspaceDirectory,
-        });
-      },
+      assertWorkspaceIdle: workspaceIdleAssertion({ runtime }),
     });
     let completed = stopped.run;
     if (stopped.transitioned || completed.record.writebackPending === true) {
@@ -1014,11 +1016,7 @@ async function prepareTerminalRunsForCleanup(
     }
     // eslint-disable-next-line no-await-in-loop
     const stopped = await run.stopForCleanup({
-      assertWorkspaceIdle: async (record) => {
-        await input.runtime.workspaces.assertNoActiveRepositoryOperation({
-          workspaceDirectory: record.workspaceDirectory,
-        });
-      },
+      assertWorkspaceIdle: workspaceIdleAssertion({ runtime: input.runtime }),
     });
     prepared.push(stopped.run);
   }
@@ -1042,8 +1040,8 @@ async function reapTerminalTasks(input: ReapTerminalTasksInput): Promise<void> {
     try {
       // eslint-disable-next-line no-await-in-loop
       await cleanup({
-        allowDirty: false,
         all: false,
+        allowDirty: false,
         runtime: input.runtime,
         task: run.record.canonicalTaskId,
       });

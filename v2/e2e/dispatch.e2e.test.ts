@@ -291,6 +291,7 @@ describe("crew start", () => {
 
     try {
       await waitForPath(`${closeReleasePath}.ready`);
+      await waitFor(() => stdout.includes("Cleaning fixture:ENG-123"));
 
       expect(stdout).toContain("Dispatching fixture:READY-1(codex) into slot 1/1");
       expect(stdout).toContain("Cleaning fixture:ENG-123");
@@ -357,10 +358,39 @@ describe("crew start", () => {
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line));
-    expect(calls.filter((call) => call.arguments[0] === "set-progress").at(-1).arguments).toContain(
-      "stopped",
-    );
+    const lastSetProgressCall = calls.filter((call) => call.arguments[0] === "set-progress").at(-1);
+    expect(lastSetProgressCall).toBeDefined();
+    expect(lastSetProgressCall?.arguments).toContain("stopped");
     await expect(stat(fixture.workspaceDirectory)).resolves.toBeDefined();
+  });
+
+  it("does not release cleanup ownership acquired by another process", async () => {
+    const fixture = await createDispatchFixture({ maximumInProgress: 1 });
+    await runCrew({ arguments: ["start"], environment: fixture.environment });
+    await writeFile(
+      fixture.listedTasksPath,
+      JSON.stringify([
+        task({ id: "ENG-123", repositories: ["sample"], terminal: true }),
+        task({ id: "READY-1", priority: 2, repositories: [] }),
+      ]),
+    );
+    const openReleasePath = join(fixture.root, "open-release");
+    fixture.environment["FAKE_CMUX_OPEN_RELEASE"] = openReleasePath;
+    const start = runCrew({ arguments: ["start"], environment: fixture.environment });
+    await waitForPath(`${openReleasePath}.ready`);
+    const runPath = join(fixture.runsDirectory, "fixture-eng-123.json");
+    const run = JSON.parse(await readFile(runPath, "utf8"));
+    await writeFile(runPath, JSON.stringify({ ...run, cleanupOwnerProcessId: process.pid }));
+    await writeFile(join(fixture.workspaceDirectory, "sample", "dirty.txt"), "late change\n");
+    await writeFile(openReleasePath, "release\n");
+
+    await start;
+
+    expect(JSON.parse(await readFile(runPath, "utf8"))).toMatchObject({
+      cleanupOwnerProcessId: process.pid,
+      cleanupPending: true,
+      state: "complete",
+    });
   });
 
   it("does not clean a resumed generation while replacement dispatch is blocked", async () => {
@@ -2081,6 +2111,17 @@ async function waitForPath(path: string): Promise<void> {
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 25));
   }
   throw new Error(`timed out waiting for ${path}`);
+}
+
+async function waitFor(condition: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    if (condition()) {
+      return;
+    }
+    // eslint-disable-next-line no-await-in-loop
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 25));
+  }
+  throw new Error("timed out waiting for expected condition");
 }
 
 async function waitForRunState(input: {

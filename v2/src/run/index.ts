@@ -686,7 +686,9 @@ export class RunModule {
       canonicalTaskId: input.record.canonicalTaskId,
       update: (current) => {
         requireCurrentRun({ current, expected: input.record, state: "complete" });
-        return current.cleanupPending === true
+        return current.cleanupPending === true &&
+          (current.cleanupOwnerProcessId === undefined ||
+            current.cleanupOwnerProcessId === process.pid)
           ? { ...current, cleanupOwnerProcessId: undefined, cleanupPending: undefined }
           : current;
       },
@@ -869,8 +871,8 @@ class RunStore {
             return {
               ...current,
               artifacts: [],
-              cleanupPending: undefined,
               cleanupOwnerProcessId: undefined,
+              cleanupPending: undefined,
               events: [
                 ...current.events,
                 { event: `continued-from:${current.runId}`, timestamp: new Date().toISOString() },
