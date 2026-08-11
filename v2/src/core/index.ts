@@ -111,10 +111,6 @@ export type DispatchProgress =
       readonly canonicalTaskId: string;
       readonly detail: string;
       readonly reason: VerdictReason;
-    }
-  | {
-      readonly type: "cleaning";
-      readonly canonicalTaskId: string;
     };
 
 export type VerdictReason =
@@ -174,6 +170,7 @@ export interface Application {
   cleanup(input: {
     readonly task?: string | undefined;
     readonly all: boolean;
+    readonly completed: boolean;
     readonly allowDirty: boolean;
   }): Promise<{
     readonly cleaned: readonly string[];
@@ -196,17 +193,6 @@ interface SkipTaskInput {
   readonly detail: string;
   readonly reason: VerdictReason;
   readonly runId?: string | undefined;
-}
-
-interface PrepareTerminalRunsForCleanupInput {
-  readonly runtime: Runtime;
-  readonly tasks: readonly Task[];
-}
-
-interface ReapTerminalTasksInput {
-  readonly onProgress?: ((progress: DispatchProgress) => void) | undefined;
-  readonly runs: readonly CompletedRun[];
-  readonly runtime: Runtime;
 }
 
 export async function createApplication(input: {
@@ -329,9 +315,6 @@ async function start(input: {
   if (!listed.ok) {
     throw new Error(listed.error.message);
   }
-  const terminalRunsToClean = input.dryRun
-    ? []
-    : await prepareTerminalRunsForCleanup({ runtime, tasks: listed.data.tasks });
   let tasks = listed.data.tasks;
   if (input.task === undefined) {
     tasks = tasks
@@ -360,7 +343,7 @@ async function start(input: {
     skipped.push(skipInput.canonicalTaskId);
   }
   const activeRuns = input.dryRun
-    ? await listActiveAfterPreviewReconciliation({ runtime, tasks: listed.data.tasks })
+    ? await runtime.runs.listActiveAfterPresentationReconciliation()
     : await runtime.runs.list();
   const active = activeRuns
     .filter((run) => run.state === "provisioning" || run.state === "running")
@@ -552,13 +535,6 @@ async function start(input: {
         throw error;
       }
     }
-  }
-  if (!input.dryRun) {
-    await reapTerminalTasks({
-      onProgress: input.onProgress,
-      runs: terminalRunsToClean,
-      runtime,
-    });
   }
   return { skipped, started };
 }
@@ -838,18 +814,28 @@ async function cleanup(input: {
   readonly runtime: Runtime;
   readonly task?: string | undefined;
   readonly all: boolean;
+  readonly completed: boolean;
   readonly allowDirty: boolean;
 }): Promise<{
   readonly cleaned: readonly string[];
   readonly preservedBranches: readonly string[];
 }> {
   const { runtime } = input;
-  let runs = await runtime.runs.list();
-  if (!input.all) {
-    if (input.task === undefined) {
-      throw new Error("cleanup requires a task or --all");
-    }
+  const selectorCount =
+    Number(input.task !== undefined) + Number(input.all) + Number(input.completed);
+  if (selectorCount !== 1) {
+    throw new Error("cleanup requires exactly one of a task, --all, or --completed");
+  }
+  const localRuns = await runtime.runs.list();
+  let runs: readonly RunHandle[];
+  if (input.all) {
+    runs = localRuns;
+  } else if (input.completed) {
+    runs = localRuns.filter((run) => run.state === "complete");
+  } else if (input.task !== undefined) {
     runs = [await runtime.runs.resolve({ query: input.task })];
+  } else {
+    throw new Error("cleanup requires exactly one of a task, --all, or --completed");
   }
   const cleaned: string[] = [];
   const preservedBranches: string[] = [];
@@ -995,101 +981,6 @@ async function reconcile(input: { readonly runtime: Runtime }): Promise<void> {
       slug: taskSlug({ canonicalTaskId: run.record.canonicalTaskId }),
     });
   }
-}
-
-async function prepareTerminalRunsForCleanup(
-  input: PrepareTerminalRunsForCleanupInput,
-): Promise<readonly CompletedRun[]> {
-  const terminal = new Set(
-    input.tasks.filter((task) => task.terminal).map((task) => canonicalId({ task })),
-  );
-  const prepared: CompletedRun[] = [];
-  for (const run of await input.runtime.runs.list()) {
-    if (!terminal.has(run.record.canonicalTaskId)) {
-      continue;
-    }
-    const slug = taskSlug({ canonicalTaskId: run.record.canonicalTaskId });
-    // eslint-disable-next-line no-await-in-loop
-    const observed = await input.runtime.workspaces.observe({ slug });
-    if (observed.dirtyPaths.length > 0) {
-      continue;
-    }
-    // eslint-disable-next-line no-await-in-loop
-    const stopped = await run.stopForCleanup({
-      assertWorkspaceIdle: workspaceIdleAssertion({ runtime: input.runtime }),
-    });
-    prepared.push(stopped.run);
-  }
-  return prepared;
-}
-
-async function reapTerminalTasks(input: ReapTerminalTasksInput): Promise<void> {
-  for (const run of input.runs) {
-    const slug = taskSlug({ canonicalTaskId: run.record.canonicalTaskId });
-    // eslint-disable-next-line no-await-in-loop
-    const observed = await input.runtime.workspaces.observe({ slug });
-    if (observed.dirtyPaths.length > 0) {
-      // Keep the presented workspace legible before allowing a later continuation.
-      // eslint-disable-next-line no-await-in-loop
-      await run.setPresentedStatus();
-      // eslint-disable-next-line no-await-in-loop
-      await run.cancelCleanup();
-      continue;
-    }
-    input.onProgress?.({ canonicalTaskId: run.record.canonicalTaskId, type: "cleaning" });
-    try {
-      // eslint-disable-next-line no-await-in-loop
-      await cleanup({
-        all: false,
-        allowDirty: false,
-        runtime: input.runtime,
-        task: run.record.canonicalTaskId,
-      });
-    } catch (cleanupError) {
-      try {
-        // eslint-disable-next-line no-await-in-loop
-        await run.cancelCleanup();
-      } catch (cancelError) {
-        throw new AggregateError(
-          [cleanupError, cancelError],
-          `cleanup failed for ${run.record.canonicalTaskId} and its reservation could not be released`,
-        );
-      }
-      throw cleanupError;
-    }
-    // eslint-disable-next-line no-await-in-loop
-    await writeVerdict({
-      canonicalTaskId: run.record.canonicalTaskId,
-      detail: "source reports the task as terminal",
-      reason: "terminal",
-      runtime: input.runtime,
-    });
-  }
-}
-
-async function listActiveAfterPreviewReconciliation(input: {
-  readonly runtime: Runtime;
-  readonly tasks: readonly Task[];
-}): Promise<readonly RunHandle[]> {
-  const active = await input.runtime.runs.listActiveAfterPresentationReconciliation();
-  const terminal = new Set(
-    input.tasks.filter((task) => task.terminal).map((task) => canonicalId({ task })),
-  );
-  const remaining: RunHandle[] = [];
-  for (const run of active) {
-    if (!terminal.has(run.record.canonicalTaskId)) {
-      remaining.push(run);
-      continue;
-    }
-    const slug = taskSlug({ canonicalTaskId: run.record.canonicalTaskId });
-    // Repository observations stay ordered with lifecycle reconciliation.
-    // eslint-disable-next-line no-await-in-loop
-    const observed = await input.runtime.workspaces.observe({ slug });
-    if (observed.dirtyPaths.length > 0) {
-      remaining.push(run);
-    }
-  }
-  return remaining;
 }
 
 async function writeCompletion(input: {

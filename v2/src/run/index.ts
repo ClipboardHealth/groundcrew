@@ -111,7 +111,6 @@ export interface RunningRun extends BaseRun {
 export interface CompletedRun extends BaseRun {
   readonly state: "complete";
 
-  cancelCleanup(): Promise<CompletedRun>;
   recoverAbandonedCleanup(): Promise<CompletedRun>;
   acknowledgeSourceWriteback(input: {
     readonly expectedRunId: string;
@@ -679,23 +678,6 @@ export class RunModule {
     return { run: new CompletedRunHandle({ module: this, record }), transitioned };
   }
 
-  public async cancelCleanup(input: {
-    readonly record: Readonly<RunRecord>;
-  }): Promise<CompletedRun> {
-    const record = await this.#store.mutate({
-      canonicalTaskId: input.record.canonicalTaskId,
-      update: (current) => {
-        requireCurrentRun({ current, expected: input.record, state: "complete" });
-        return current.cleanupPending === true &&
-          (current.cleanupOwnerProcessId === undefined ||
-            current.cleanupOwnerProcessId === process.pid)
-          ? { ...current, cleanupOwnerProcessId: undefined, cleanupPending: undefined }
-          : current;
-      },
-    });
-    return new CompletedRunHandle({ module: this, record });
-  }
-
   public async recoverAbandonedCleanup(input: {
     readonly record: Readonly<RunRecord>;
   }): Promise<CompletedRun> {
@@ -1116,10 +1098,6 @@ class CompletedRunHandle implements CompletedRun {
     readonly expectedCompletionTimestamp: string;
   }): Promise<CompletedRun> {
     return await this.#module.acknowledgeSourceWriteback({ ...input, record: this.record });
-  }
-
-  public async cancelCleanup(): Promise<CompletedRun> {
-    return await this.#module.cancelCleanup({ record: this.record });
   }
 
   public async recoverAbandonedCleanup(): Promise<CompletedRun> {
