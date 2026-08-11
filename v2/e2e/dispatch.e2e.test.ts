@@ -353,7 +353,54 @@ describe("crew start", () => {
     expect(
       JSON.parse(await readFile(join(fixture.runsDirectory, "fixture-ready-1.json"), "utf8")),
     ).toMatchObject({ state: "running" });
+    const calls = (await readFile(fixture.cmuxCallsPath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(calls.filter((call) => call.arguments[0] === "set-progress").at(-1).arguments).toContain(
+      "stopped",
+    );
     await expect(stat(fixture.workspaceDirectory)).resolves.toBeDefined();
+  });
+
+  it("does not clean a resumed generation while replacement dispatch is blocked", async () => {
+    const fixture = await createDispatchFixture({ maximumInProgress: 1 });
+    await runCrew({ arguments: ["start"], environment: fixture.environment });
+    await writeFile(
+      fixture.listedTasksPath,
+      JSON.stringify([
+        task({ id: "ENG-123", repositories: ["sample"], terminal: true }),
+        task({ id: "READY-1", priority: 2, repositories: [] }),
+      ]),
+    );
+    const openReleasePath = join(fixture.root, "open-release");
+    fixture.environment["FAKE_CMUX_OPEN_RELEASE"] = openReleasePath;
+    const start = runCrew({ arguments: ["start"], environment: fixture.environment });
+    await waitForPath(`${openReleasePath}.ready`);
+    const tasksPath = fixture.environment["FIXTURE_TASKS"];
+    if (tasksPath === undefined) {
+      throw new Error("fixture tasks path is missing");
+    }
+    await writeFile(tasksPath, JSON.stringify([task({ repositories: ["sample"] })]));
+
+    try {
+      await expect(
+        runCrew({
+          arguments: ["continue", "ENG-123", "--force"],
+          environment: fixture.environment,
+        }),
+      ).rejects.toMatchObject({
+        code: 1,
+        stderr: expect.stringContaining("cleanup is pending"),
+      });
+    } finally {
+      await writeFile(openReleasePath, "release\n");
+      await start;
+    }
+
+    await expect(stat(join(fixture.runsDirectory, "fixture-eng-123.json"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 
   it("claims, provisions, and launches a ready task exactly once", async () => {

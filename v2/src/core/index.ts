@@ -763,6 +763,9 @@ async function continueRun(input: {
   }
   let run: CompletedRun = resolved;
   const canonicalTaskId = run.record.canonicalTaskId;
+  if (run.record.cleanupPending === true) {
+    throw new Error(`run ${run.record.runId} cleanup is pending`);
+  }
   // A pending completion must land under the prior run ID before a new attempt can claim.
   if (run.record.writebackPending === true) {
     run = await writeCompletion({ run, runtime });
@@ -1025,6 +1028,11 @@ async function reapTerminalTasks(input: ReapTerminalTasksInput): Promise<void> {
     // eslint-disable-next-line no-await-in-loop
     const observed = await input.runtime.workspaces.observe({ slug });
     if (observed.dirtyPaths.length > 0) {
+      // Keep the presented workspace legible before allowing a later continuation.
+      // eslint-disable-next-line no-await-in-loop
+      await run.setPresentedStatus();
+      // eslint-disable-next-line no-await-in-loop
+      await run.cancelCleanup();
       continue;
     }
     input.onProgress?.({ canonicalTaskId: run.record.canonicalTaskId, type: "cleaning" });
