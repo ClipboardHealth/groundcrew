@@ -875,6 +875,8 @@ async function reconcile(input: { readonly runtime: Runtime }): Promise<void> {
       });
       if (change.type === "failed") {
         // eslint-disable-next-line no-await-in-loop
+        await change.run.setPresentedStatus();
+        // eslint-disable-next-line no-await-in-loop
         await writeCompletion({ run: change.run, runtime });
       }
     }
