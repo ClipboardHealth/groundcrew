@@ -70,6 +70,20 @@ if (command === "new-workspace") {
   process.stdout.write(JSON.stringify({ workspaces: state.workspaces }));
 } else if (command === "close-workspace") {
   const id = valueAfter("--workspace");
+  if (process.env.FAKE_CMUX_CLOSE_RELEASE !== undefined) {
+    await writeFile(`${process.env.FAKE_CMUX_CLOSE_RELEASE}.ready`, "ready\n");
+    for (;;) {
+      try {
+        await access(process.env.FAKE_CMUX_CLOSE_RELEASE);
+        break;
+      } catch (error) {
+        if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+          throw error;
+        }
+      }
+      await delay(10);
+    }
+  }
   if (process.env.FAKE_CMUX_DIRTY_ON_CLOSE !== undefined) {
     await writeFile(process.env.FAKE_CMUX_DIRTY_ON_CLOSE, "uncommitted\n");
   }

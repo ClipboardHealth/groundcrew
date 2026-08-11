@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import {
   chmod,
   cp,
@@ -257,6 +257,46 @@ describe("crew start", () => {
 
     expect(stdout).toContain("Started fixture:ENG-123");
     expect(stdout).not.toMatch(/\bSkipp(?:ed|ing)\b/);
+  });
+
+  it("dispatches new work before cleaning terminal workspaces while watching", async () => {
+    const fixture = await createDispatchFixture({
+      maximumInProgress: 2,
+      pollIntervalMilliseconds: 10,
+      repositories: [],
+    });
+    await runCrew({ arguments: ["start"], environment: fixture.environment });
+    await writeFile(
+      fixture.listedTasksPath,
+      JSON.stringify([
+        task({ id: "ENG-123", repositories: [], terminal: true }),
+        task({ id: "READY-1", priority: 2, repositories: [] }),
+      ]),
+    );
+    const closeReleasePath = join(fixture.root, "close-release");
+    fixture.environment["FAKE_CMUX_CLOSE_RELEASE"] = closeReleasePath;
+    const child = spawn(process.execPath, ["bin/run.js", "start", "--watch"], {
+      cwd: process.cwd(),
+      env: fixture.environment,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+
+    try {
+      await waitForPath(`${closeReleasePath}.ready`);
+
+      expect(stdout).toContain("Dispatching fixture:READY-1(codex) into slot 2/2");
+    } finally {
+      await writeFile(closeReleasePath, "release\n");
+      child.kill();
+      await new Promise<void>((resolvePromise) => {
+        child.once("close", () => resolvePromise());
+      });
+    }
   });
 
   it("claims, provisions, and launches a ready task exactly once", async () => {

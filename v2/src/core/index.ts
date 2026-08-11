@@ -314,9 +314,6 @@ async function start(input: {
   if (!listed.ok) {
     throw new Error(listed.error.message);
   }
-  if (!input.dryRun) {
-    await reapTerminalTasks({ runtime, tasks: listed.data.tasks });
-  }
   let tasks = listed.data.tasks;
   if (input.task === undefined) {
     tasks = tasks
@@ -537,6 +534,9 @@ async function start(input: {
         throw error;
       }
     }
+  }
+  if (!input.dryRun) {
+    await reapTerminalTasks({ runtime, tasks: listed.data.tasks });
   }
   return { skipped, started };
 }
