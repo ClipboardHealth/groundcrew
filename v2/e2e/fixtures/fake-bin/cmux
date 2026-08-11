@@ -70,6 +70,10 @@ if (command === "new-workspace") {
   process.stdout.write(JSON.stringify({ workspaces: state.workspaces }));
 } else if (command === "close-workspace") {
   const id = valueAfter("--workspace");
+  if (process.env.FAKE_CMUX_FAIL_CLOSE === "1") {
+    process.stderr.write("fake cmux close failure\n");
+    process.exit(1);
+  }
   if (process.env.FAKE_CMUX_CLOSE_RELEASE !== undefined) {
     await writeFile(`${process.env.FAKE_CMUX_CLOSE_RELEASE}.ready`, "ready\n");
     for (;;) {

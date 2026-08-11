@@ -1036,12 +1036,32 @@ async function reapTerminalTasks(input: ReapTerminalTasksInput): Promise<void> {
       continue;
     }
     input.onProgress?.({ canonicalTaskId: run.record.canonicalTaskId, type: "cleaning" });
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      await cleanup({
+        allowDirty: false,
+        all: false,
+        runtime: input.runtime,
+        task: run.record.canonicalTaskId,
+      });
+    } catch (cleanupError) {
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        await run.cancelCleanup();
+      } catch (cancelError) {
+        throw new AggregateError(
+          [cleanupError, cancelError],
+          `cleanup failed for ${run.record.canonicalTaskId} and its reservation could not be released`,
+        );
+      }
+      throw cleanupError;
+    }
     // eslint-disable-next-line no-await-in-loop
-    await cleanup({
-      allowDirty: false,
-      all: false,
+    await writeVerdict({
+      canonicalTaskId: run.record.canonicalTaskId,
+      detail: "source reports the task as terminal",
+      reason: "terminal",
       runtime: input.runtime,
-      task: run.record.canonicalTaskId,
     });
   }
 }

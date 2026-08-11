@@ -403,6 +403,28 @@ describe("crew start", () => {
     });
   });
 
+  it("releases cleanup ownership when automatic cleanup fails", async () => {
+    const fixture = await createDispatchFixture();
+    await runCrew({ arguments: ["start"], environment: fixture.environment });
+    await writeFile(
+      fixture.listedTasksPath,
+      JSON.stringify([task({ repositories: ["sample"], terminal: true })]),
+    );
+    fixture.environment["FAKE_CMUX_FAIL_CLOSE"] = "1";
+
+    await expect(
+      runCrew({ arguments: ["start"], environment: fixture.environment }),
+    ).rejects.toMatchObject({ code: 1, stderr: expect.stringContaining("close failure") });
+    fixture.environment["FAKE_CMUX_FAIL_CLOSE"] = undefined;
+
+    const result = await runCrew({
+      arguments: ["continue", "ENG-123"],
+      environment: fixture.environment,
+    });
+
+    expect(result.stdout).toContain("Continuing fixture:ENG-123 as run ");
+  });
+
   it("claims, provisions, and launches a ready task exactly once", async () => {
     const fixture = await createDispatchFixture();
 
@@ -1594,6 +1616,15 @@ describe("crew start", () => {
 
     await runCrew({ arguments: ["start"], environment: fixture.environment });
     await expect(stat(fixture.workspaceDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+    const status = JSON.parse(
+      (
+        await runCrew({
+          arguments: ["status", "ENG-123", "--json"],
+          environment: fixture.environment,
+        })
+      ).stdout,
+    );
+    expect(status.tasks[0].verdict).toMatchObject({ reason: "terminal" });
   });
 });
 
