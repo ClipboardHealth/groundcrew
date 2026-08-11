@@ -425,6 +425,40 @@ describe("crew start", () => {
     expect(result.stdout).toContain("Continuing fixture:ENG-123 as run ");
   });
 
+  it("reclaims cleanup ownership after an interrupted watch process", async () => {
+    const fixture = await createDispatchFixture({ maximumInProgress: 1 });
+    await runCrew({ arguments: ["start"], environment: fixture.environment });
+    await writeFile(
+      fixture.listedTasksPath,
+      JSON.stringify([
+        task({ id: "ENG-123", repositories: ["sample"], terminal: true }),
+        task({ id: "READY-1", priority: 2, repositories: [] }),
+      ]),
+    );
+    const openReleasePath = join(fixture.root, "open-release");
+    fixture.environment["FAKE_CMUX_OPEN_RELEASE"] = openReleasePath;
+    const child = spawn(process.execPath, ["bin/run.js", "start", "--watch"], {
+      cwd: process.cwd(),
+      env: fixture.environment,
+      stdio: "ignore",
+    });
+    const childClosed = new Promise<void>((resolvePromise) => {
+      child.once("close", () => resolvePromise());
+    });
+    await waitForPath(`${openReleasePath}.ready`);
+    child.kill();
+    await writeFile(openReleasePath, "release\n");
+    await childClosed;
+    await writeFile(join(fixture.workspaceDirectory, "sample", "dirty.txt"), "preserve me\n");
+
+    const result = await runCrew({
+      arguments: ["continue", "ENG-123", "--force"],
+      environment: fixture.environment,
+    });
+
+    expect(result.stdout).toContain("Continuing fixture:ENG-123 as run ");
+  });
+
   it("claims, provisions, and launches a ready task exactly once", async () => {
     const fixture = await createDispatchFixture();
 

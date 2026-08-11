@@ -764,7 +764,10 @@ async function continueRun(input: {
   let run: CompletedRun = resolved;
   const canonicalTaskId = run.record.canonicalTaskId;
   if (run.record.cleanupPending === true) {
-    throw new Error(`run ${run.record.runId} cleanup is pending`);
+    run = await run.recoverAbandonedCleanup();
+    if (run.record.cleanupPending === true) {
+      throw new Error(`run ${run.record.runId} cleanup is pending`);
+    }
   }
   // A pending completion must land under the prior run ID before a new attempt can claim.
   if (run.record.writebackPending === true) {
