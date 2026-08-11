@@ -202,9 +202,10 @@ function safehouseAgentIntegrationFor(input: {
 
 /**
  * Let Codex-launched `mb` processes use the operator's existing Metabase CLI
- * profile without exposing any sibling XDG config. Authentication is managed
- * outside the sandbox, so the resolved `metabase-cli` directory stays
- * read-only while API-key-backed queries and content management can use it.
+ * API-key profile without exposing sibling XDG config. Profiles are managed
+ * outside Safehouse: `mb auth list` and OAuth refresh write profile state, so
+ * this intentionally read-only grant supports queries and content management
+ * but not those commands.
  */
 function metabaseCliSafehouseIntegrationFor(input: {
   agentCommandName: string;
