@@ -50,6 +50,9 @@ app.datadoghq.com
 datadoghq.com
 docs.datadoghq.com
 
+# Metabase
+metabase.cbh.rocks
+
 # GitHub + GHA artifact storage (Azure blobs)
 api.github.com
 cafe.github.com

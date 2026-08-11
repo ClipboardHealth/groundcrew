@@ -143,10 +143,14 @@ function safehouseAgentIntegrationFor(input: {
   task: string;
   homeDir: string;
 }): SafehouseAgentIntegration | undefined {
-  if (input.workspaceKind !== "cmux") {
-    return undefined;
-  }
   const agentCommandName = inferAgentCommandName(input.definition.cmd);
+  const metabaseCliIntegration = metabaseCliSafehouseIntegrationFor({
+    agentCommandName,
+    homeDir: input.homeDir,
+  });
+  if (input.workspaceKind !== "cmux") {
+    return metabaseCliIntegration;
+  }
   const isClaudeAgent = agentCommandName === "claude";
   const cmuxIntegration = resolveSafehouseCmuxIntegration();
   if (isClaudeAgent) {
@@ -163,10 +167,15 @@ function safehouseAgentIntegrationFor(input: {
     addDirs: [
       ...cmuxIntegration.addDirs,
       ...(relocatedCmuxHooksHome === undefined ? [] : [relocatedCmuxHooksHome.configDir]),
+      ...(metabaseCliIntegration?.addDirs ?? []),
     ],
-    addDirsReadOnly: cmuxIntegration.addDirsReadOnly,
-    envPass: cmuxIntegration.envPass,
+    addDirsReadOnly: [
+      ...cmuxIntegration.addDirsReadOnly,
+      ...(metabaseCliIntegration?.addDirsReadOnly ?? []),
+    ],
+    envPass: [...cmuxIntegration.envPass, ...(metabaseCliIntegration?.envPass ?? [])],
     commandPreludes: [
+      ...(metabaseCliIntegration?.commandPreludes ?? []),
       ...(isClaudeAgent ? [cmuxIntegration.claudeCommandPrelude] : []),
       ...(relocatedCmuxHooksHome === undefined
         ? []
@@ -188,6 +197,37 @@ function safehouseAgentIntegrationFor(input: {
           writeBackFiles: relocatedCmuxHooksHome.writeBackFiles,
           teardownPaths: [relocatedCmuxHooksHome.parentDir],
         }),
+  };
+}
+
+/**
+ * Let Codex-launched `mb` processes use the operator's existing Metabase CLI
+ * profile without exposing any sibling XDG config. The CLI atomically rewrites
+ * `profiles.json` after auth probes and OAuth refreshes, so the containing
+ * directory must be writable; granting only the resolved `metabase-cli`
+ * directory is the narrowest access that preserves those normal operations.
+ */
+function metabaseCliSafehouseIntegrationFor(input: {
+  agentCommandName: string;
+  homeDir: string;
+}): SafehouseAgentIntegration | undefined {
+  if (input.agentCommandName !== "codex") {
+    return undefined;
+  }
+  const xdgConfigHome = readEnvironmentVariable("XDG_CONFIG_HOME");
+  const configHome =
+    xdgConfigHome === undefined || xdgConfigHome === ""
+      ? path.join(input.homeDir, ".config")
+      : xdgConfigHome;
+  const configDir = path.join(configHome, "metabase-cli");
+  if (!existsSync(configDir)) {
+    return undefined;
+  }
+  return {
+    addDirs: [configDir],
+    addDirsReadOnly: [],
+    envPass: xdgConfigHome === undefined || xdgConfigHome === "" ? [] : ["XDG_CONFIG_HOME"],
+    commandPreludes: [],
   };
 }
 

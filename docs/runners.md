@@ -32,6 +32,14 @@ Watch `${XDG_CACHE_HOME:-$HOME/.cache}/clearance/clearance.log` for `DENY` lines
 
 `@clipboard-health/clearance` is pulled in transitively when you install groundcrew, but npm links its `clearance` / `clearance-ensure` bins only into the nested `node_modules/.bin/`, never onto your shell `PATH`. So groundcrew exposes its own first-class `crew-clearance-ensure` command (installed alongside `crew`) that dispatches straight to clearance's `clearance-ensure` entrypoint, forwarding all args, stdio, and exit code unchanged. See the [clearance README](https://github.com/ClipboardHealth/core-utils/tree/main/packages/clearance) for proxy env vars, log paths, and DNS rules.
 
+### Metabase CLI from Codex
+
+Groundcrew-launched Codex agents can use an existing authenticated [`mb`](https://www.npmjs.com/package/@metabase/cli) profile. For Safehouse launches, Groundcrew resolves `${XDG_CONFIG_HOME:-$HOME/.config}/metabase-cli` and grants that exact directory to the Codex agent wrap. A custom `XDG_CONFIG_HOME` is forwarded to that wrap so `mb` resolves the same directory. The repo-controlled `prepareWorktree` wrap and other agent profiles receive neither the path nor the environment variable. If the directory does not exist, Groundcrew adds nothing and launches Codex normally.
+
+The grant is read/write because routine CLI operations are not read-only on disk: `mb auth list` records probe results, and OAuth authentication can rotate and persist tokens. Limiting the grant to the `metabase-cli` directory preserves those operations without granting all of `~/.config`, `wide-read`, or unrelated credential directories. Safehouse's existing Codex profile continues to provide its scoped macOS Keychain integration; Groundcrew does not copy, print, or otherwise handle profile contents or credentials.
+
+The shipped Clearance allowlist permits only `metabase.cbh.rocks`, so authenticated queries and card/dashboard list, create, and update commands can reach Clipboard's production Metabase API. Clearance reads its allowlist only at startup. After installing a Groundcrew version with an updated allowlist, stop an already-running proxy with `crew-clearance-ensure stop`; the next Groundcrew Safehouse launch starts it again with the shipped allowlist.
+
 ### Opening network egress (`local.networkEgress: "open"`)
 
 `local.networkEgress` defaults to `"allowlisted"`, which makes the `safehouse` runner wrap agents with Clearance. Set it to `"open"` to keep the Safehouse **filesystem sandbox** while opening **network egress**: groundcrew runs the bare `safehouse` binary instead of the `safehouse-clearance` shim, so there is no egress allowlist, no proxy env, and no clearance daemon to start.
