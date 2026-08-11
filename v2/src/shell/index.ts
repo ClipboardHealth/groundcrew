@@ -279,6 +279,22 @@ export async function main(input: MainInput): Promise<void> {
     });
 
   program
+    .command("continue")
+    .description("continue a completed run in its existing agent session")
+    .argument("[task]", "canonical or source-local task ID")
+    .option("--force", "bypass the concurrency limit")
+    .option("--verbose", "include debug diagnostics")
+    .action(async (task, options) => {
+      const resolvedTask = await resolveTaskContext({ environment, explicitTask: task });
+      const application = await configuredApplication({ environment });
+      const record = await application.continueRun({
+        force: options.force === true,
+        task: resolvedTask,
+      });
+      process.stdout.write(`Continuing ${record.canonicalTaskId} as run ${record.runId}\n`);
+    });
+
+  program
     .command("done")
     .description("complete the active run and write back to its source")
     .option("--outcome <outcome>", "delivered, failed, or stopped", "delivered")

@@ -7,7 +7,9 @@ Four nouns form the model:
 - **Workspace**: a per-task directory containing a task marker and zero or more Git
   worktrees. It is not a terminal workspace.
 - **Run**: one claim-and-execution attempt. Its durable record is Groundcrew's source of truth
-  and moves `provisioning -> running -> complete`.
+  and moves `provisioning -> running -> complete`. `crew continue` resumes a completed Run's
+  session as a new attempt on the same record: fresh run ID, prior IDs kept in
+  `previousRunIds`, once the prior completion's source writeback has settled.
 - **Artifact**: an output the agent reports, such as a pull request, branch, document, file,
   or ticket. Artifacts are reported claims, never inferred Git facts.
 

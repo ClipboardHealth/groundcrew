@@ -2,7 +2,14 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { RunModule, seedWorkspaceTrust, withFileLock } from "./index.js";
+import {
+  RunModule,
+  seedWorkspaceTrust,
+  taskSlug,
+  withFileLock,
+  type CompletedRun,
+  type RunningRun,
+} from "./index.js";
 
 describe("RunModule lifecycle", () => {
   it("owns failure transitions and preserves the first terminal outcome", async () => {
@@ -217,6 +224,109 @@ describe("RunModule lifecycle", () => {
       transitioned: false,
     });
     await expect(runs.findBySlug({ slug: "fixture-eng-123" })).resolves.toBeUndefined();
+  });
+
+  it("continues an acknowledged completed Run with a fresh run ID in the same session", async () => {
+    const fixture = await continuationFixture({ prefix: "groundcrew-v2-run-continue-" });
+    const acknowledged = await completeAndAcknowledge({ fixture, task: "fixture:ENG-123" });
+    await writeFile(fixture.presenterCallsPath, "");
+
+    const continued = await acknowledged.continueRun({
+      continuationRunId: "r_00c0ffee",
+      force: false,
+      maximumInProgress: 4,
+      repositories: ["sample", "second"],
+    });
+
+    expect(continued.state).toBe("running");
+    expect(continued.record).toMatchObject({
+      artifacts: [],
+      canonicalTaskId: "fixture:ENG-123",
+      previousRunIds: [acknowledged.record.runId],
+      repositories: ["sample", "second"],
+      runId: "r_00c0ffee",
+      state: "running",
+    });
+    expect(continued.record.outcome).toBeUndefined();
+    expect(continued.record.writebackPending).toBeUndefined();
+    expect(continued.record.events.map(({ event }) => event)).toEqual([
+      "provisioning",
+      "running",
+      "complete:delivered",
+      `continued-from:${acknowledged.record.runId}`,
+    ]);
+    const presenterCalls = await readFile(fixture.presenterCallsPath, "utf8");
+    expect(presenterCalls).toContain("set-progress");
+    await expect(
+      acknowledged.continueRun({
+        continuationRunId: "r_11223344",
+        force: false,
+        maximumInProgress: 4,
+        repositories: [],
+      }),
+    ).rejects.toThrow("stale");
+  });
+
+  it("reverts a continuation to its prior completed record", async () => {
+    const fixture = await continuationFixture({ prefix: "groundcrew-v2-run-continue-revert-" });
+    const acknowledged = await completeAndAcknowledge({ fixture, task: "fixture:ENG-123" });
+    const continued = await acknowledged.continueRun({
+      continuationRunId: "r_00c0ffee",
+      force: false,
+      maximumInProgress: 4,
+      repositories: ["sample"],
+    });
+
+    await fixture.runs.revertContinuation({
+      continuationRunId: continued.record.runId,
+      priorRecord: acknowledged.record,
+    });
+
+    const restored = await fixture.runs.findBySlug({ slug: "fixture-eng-123" });
+    expect(restored?.record).toEqual(acknowledged.record);
+    await expect(
+      fixture.runs.revertContinuation({
+        continuationRunId: continued.record.runId,
+        priorRecord: acknowledged.record,
+      }),
+    ).rejects.toThrow("stale");
+  });
+
+  it("refuses to continue while source writeback is pending", async () => {
+    const fixture = await continuationFixture({ prefix: "groundcrew-v2-run-continue-pending-" });
+    const completed = await completeRun({ fixture, task: "fixture:ENG-123" });
+
+    await expect(
+      completed.continueRun({
+        continuationRunId: "r_00c0ffee",
+        force: false,
+        maximumInProgress: 4,
+        repositories: [],
+      }),
+    ).rejects.toThrow("source writeback is pending");
+  });
+
+  it("counts continued Runs against the concurrency limit unless forced", async () => {
+    const fixture = await continuationFixture({ prefix: "groundcrew-v2-run-continue-slots-" });
+    const acknowledged = await completeAndAcknowledge({ fixture, task: "fixture:ENG-123" });
+    await launchRun({ fixture, task: "fixture:ENG-999" });
+
+    await expect(
+      acknowledged.continueRun({
+        continuationRunId: "r_00c0ffee",
+        force: false,
+        maximumInProgress: 1,
+        repositories: [],
+      }),
+    ).rejects.toThrow("concurrency limit reached (1/1)");
+    const forced = await acknowledged.continueRun({
+      continuationRunId: "r_00c0ffee",
+      force: true,
+      maximumInProgress: 1,
+      repositories: [],
+    });
+
+    expect(forced.record).toMatchObject({ runId: "r_00c0ffee", state: "running" });
   });
 
   it("discards an unclaimed Run after recovery already completed it", async () => {
@@ -934,6 +1044,86 @@ describe("seedWorkspaceTrust", () => {
     expect(Object.keys(configuration.projects).toSorted()).toEqual(workspaces.toSorted());
   });
 });
+
+interface ContinuationFixture {
+  readonly presenterCallsPath: string;
+  readonly runs: RunModule;
+  readonly stateRoot: string;
+}
+
+async function continuationFixture(input: {
+  readonly prefix: string;
+}): Promise<ContinuationFixture> {
+  const stateRoot = await mkdtemp(join(tmpdir(), input.prefix));
+  const presentedWorkspaceStatePath = join(stateRoot, "presented-workspaces.json");
+  const presenterCallsPath = join(stateRoot, "presenter-calls.jsonl");
+  const fakeBin = join(process.cwd(), "e2e", "fixtures", "fake-bin");
+  await Promise.all([
+    writeFile(presentedWorkspaceStatePath, '{"workspaces":[]}'),
+    writeFile(presenterCallsPath, ""),
+  ]);
+  const runs = new RunModule({
+    environment: {
+      ...process.env,
+      FAKE_CMUX_CALLS: presenterCallsPath,
+      FAKE_CMUX_STATE: presentedWorkspaceStatePath,
+      HOME: stateRoot,
+      PATH: `${fakeBin}:${process.env["PATH"]}`,
+    },
+    presenterName: "cmux",
+    stateRoot,
+  });
+  return { presenterCallsPath, runs, stateRoot };
+}
+
+async function launchRun(input: {
+  readonly fixture: ContinuationFixture;
+  readonly task: string;
+}): Promise<RunningRun> {
+  const slug = taskSlug({ canonicalTaskId: input.task });
+  const workspaceDirectory = join(input.fixture.stateRoot, `workspace-${slug}`);
+  await mkdir(workspaceDirectory, { recursive: true });
+  const provisioning = await input.fixture.runs.beginDispatch({
+    agentProfile: "codex",
+    canonicalTaskId: input.task,
+    repositories: ["sample"],
+    workspaceDirectory,
+  });
+  const launched = await provisioning.launch({
+    acquiredRepositories: [],
+    branch: `agent/${slug}`,
+    profile: { effort: "high", kind: "codex" },
+    task: { canonicalTaskId: input.task, repositories: ["sample"], title: "Continuation task" },
+  });
+  return launched.run;
+}
+
+async function completeRun(input: {
+  readonly fixture: ContinuationFixture;
+  readonly task: string;
+}): Promise<CompletedRun> {
+  const running = await launchRun(input);
+  return await running.finish({
+    assertWorkspaceIdle: async () => {},
+    message: "Shipped",
+    outcome: "delivered",
+  });
+}
+
+async function completeAndAcknowledge(input: {
+  readonly fixture: ContinuationFixture;
+  readonly task: string;
+}): Promise<CompletedRun> {
+  const completed = await completeRun(input);
+  const completion = completed.record.events.at(-1);
+  if (completion === undefined) {
+    throw new Error("completion event missing");
+  }
+  return await completed.acknowledgeSourceWriteback({
+    expectedCompletionTimestamp: completion.timestamp,
+    expectedRunId: completed.record.runId,
+  });
+}
 
 function deadProcessId(): number {
   for (let candidate = 2_147_483_647; candidate > 2_147_483_547; candidate -= 1) {

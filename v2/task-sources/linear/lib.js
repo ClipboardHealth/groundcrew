@@ -90,12 +90,26 @@ async function updateTask(input) {
     await moveIssue({ issue, stateName: environment("LINEAR_STATUS_IN_PROGRESS", "In Progress") });
     return { result: "ok" };
   }
+  if (input.event.type === "continued") {
+    const task = normalizeIssue(issue);
+    if (task === undefined || task.terminal) {
+      return { reason: "issue is no longer continuable", result: "rejected" };
+    }
+    const marker = `[groundcrew:${input.event.runId}:claimed]`;
+    await addCommentOnce({
+      issue,
+      marker,
+      text: `${marker}\nContinued by Groundcrew from ${input.event.previousRunId}.`,
+    });
+    await moveIssue({ issue, stateName: environment("LINEAR_STATUS_IN_PROGRESS", "In Progress") });
+    return { result: "ok" };
+  }
   const artifactLines = input.event.artifacts.map(
     (artifact) =>
       `- ${artifact.kind}: ${artifact.locator}${artifact.title ? ` — ${artifact.title}` : ""}`,
   );
-  const claimRunId = latestClaimRunId(issue);
-  const completionMarker = `[groundcrew:${claimRunId ?? "unclaimed"}:completed:${input.event.outcome}]`;
+  const completionRunId = input.event.runId ?? latestClaimRunId(issue);
+  const completionMarker = `[groundcrew:${completionRunId ?? "unclaimed"}:completed:${input.event.outcome}]`;
   const text = [
     completionMarker,
     `Groundcrew completed this run as ${input.event.outcome}.`,

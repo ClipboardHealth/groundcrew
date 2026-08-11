@@ -33,6 +33,7 @@ export interface RunRecord {
   readonly pendingRepository?: string | undefined;
   readonly artifacts: readonly Artifact[];
   readonly events: readonly RunEvent[];
+  readonly previousRunIds?: readonly string[] | undefined;
   readonly provisioningOwner?:
     | {
         readonly processId: number;
@@ -112,6 +113,12 @@ export interface CompletedRun extends BaseRun {
     readonly expectedRunId: string;
     readonly expectedCompletionTimestamp: string;
   }): Promise<CompletedRun>;
+  continueRun(input: {
+    readonly continuationRunId: string;
+    readonly force: boolean;
+    readonly maximumInProgress: number;
+    readonly repositories: readonly string[];
+  }): Promise<RunningRun>;
   setPresentedStatus(): Promise<void>;
   closePresentedWorkspace(): Promise<void>;
   remove(): Promise<void>;
@@ -233,6 +240,16 @@ export class RunModule {
   public async capturePresentedWorkspaces(): Promise<PresentedWorkspaceSnapshot> {
     const probe = await this.#presenter.probe();
     return { [presentedWorkspaceSnapshot]: probe };
+  }
+
+  public async presentedWorkspaceExists(input: {
+    readonly record: Readonly<RunRecord>;
+  }): Promise<boolean> {
+    const probe = await this.#presenter.probe();
+    if (!probe.available) {
+      throw new Error("presenter is unavailable; cannot verify the presented workspace");
+    }
+    return isPresented({ record: input.record, workspaces: probe.workspaces });
   }
 
   public async listActiveAfterPresentationReconciliation(): Promise<readonly RunHandle[]> {
@@ -555,6 +572,48 @@ export class RunModule {
     return { run: createRunHandle({ module: this, record }), transitioned };
   }
 
+  public async continueRun(input: {
+    readonly record: Readonly<RunRecord>;
+    readonly continuationRunId: string;
+    readonly force: boolean;
+    readonly maximumInProgress: number;
+    readonly repositories: readonly string[];
+  }): Promise<RunningRun> {
+    const reservation = await this.#store.continueRun(input);
+    if (reservation.record === undefined) {
+      throw admissionRefusedError({
+        activeCount: reservation.activeCount,
+        maximumInProgress: input.maximumInProgress,
+      });
+    }
+    await this.#presenter.setStatus?.({
+      name: reservation.record.presentedWorkspaceName,
+      text: "running",
+    });
+    return new RunningRunHandle({ module: this, record: reservation.record });
+  }
+
+  public async revertContinuation(input: {
+    readonly continuationRunId: string;
+    readonly priorRecord: Readonly<RunRecord>;
+  }): Promise<void> {
+    await this.#store.mutate({
+      canonicalTaskId: input.priorRecord.canonicalTaskId,
+      update: (current) => {
+        if (current.runId !== input.continuationRunId || current.state !== "running") {
+          throw new Error(`continuation ${input.continuationRunId} is stale; cannot revert`);
+        }
+        return input.priorRecord;
+      },
+    });
+    if (input.priorRecord.outcome !== undefined) {
+      await this.#presenter.setStatus?.({
+        name: input.priorRecord.presentedWorkspaceName,
+        text: input.priorRecord.outcome,
+      });
+    }
+  }
+
   public async acknowledgeSourceWriteback(input: {
     readonly record: Readonly<RunRecord>;
     readonly expectedRunId: string;
@@ -696,7 +755,7 @@ class RunStore {
           presenter: "cmux",
           provisioningOwner: { phase: "preparing", processId: process.pid },
           repositories: input.repositories,
-          runId: `r_${randomBytes(4).toString("hex")}`,
+          runId: mintRunId(),
           state: "provisioning",
           version: 1,
           workspaceDirectory: input.workspaceDirectory,
@@ -716,16 +775,77 @@ class RunStore {
     readonly force: boolean;
     readonly maximumInProgress: number;
   }): Promise<{ readonly activeCount: number; readonly record?: RunRecord | undefined }> {
+    return await this.reserveAdmission({
+      force: input.force,
+      maximumInProgress: input.maximumInProgress,
+      whileAdmitted: async () => await this.create(input),
+    });
+  }
+
+  public async activeCount(): Promise<number> {
+    return (await this.list()).filter(
+      (record) => record.state === "provisioning" || record.state === "running",
+    ).length;
+  }
+
+  public async continueRun(input: {
+    readonly record: Readonly<RunRecord>;
+    readonly continuationRunId: string;
+    readonly force: boolean;
+    readonly maximumInProgress: number;
+    readonly repositories: readonly string[];
+  }): Promise<{ readonly activeCount: number; readonly record?: RunRecord | undefined }> {
+    return await this.reserveAdmission({
+      force: input.force,
+      maximumInProgress: input.maximumInProgress,
+      whileAdmitted: async () =>
+        await this.mutate({
+          canonicalTaskId: input.record.canonicalTaskId,
+          update: (current) => {
+            if (current.runId !== input.record.runId) {
+              throw new Error(`run ${input.record.runId} is stale`);
+            }
+            if (current.state !== "complete" || current.outcome === undefined) {
+              throw new Error(`run ${current.runId} is not complete`);
+            }
+            if (current.writebackPending === true) {
+              throw new Error(`run ${current.runId} source writeback is pending`);
+            }
+            return {
+              ...current,
+              artifacts: [],
+              events: [
+                ...current.events,
+                { event: `continued-from:${current.runId}`, timestamp: new Date().toISOString() },
+              ],
+              message: undefined,
+              outcome: undefined,
+              pendingRepository: undefined,
+              previousRunIds: [...(current.previousRunIds ?? []), current.runId],
+              provisioningOwner: undefined,
+              reason: undefined,
+              repositories: input.repositories,
+              runId: input.continuationRunId,
+              state: "running",
+              writebackPending: undefined,
+            };
+          },
+        }),
+    });
+  }
+
+  private async reserveAdmission(input: {
+    readonly force: boolean;
+    readonly maximumInProgress: number;
+    readonly whileAdmitted: () => Promise<RunRecord>;
+  }): Promise<{ readonly activeCount: number; readonly record?: RunRecord | undefined }> {
     return await withFileLock({
       operation: async () => {
-        const activeCount = (await this.list()).filter(
-          (record) => record.state === "provisioning" || record.state === "running",
-        ).length;
+        const activeCount = await this.activeCount();
         if (!input.force && activeCount >= input.maximumInProgress) {
           return { activeCount };
         }
-        const record = await this.create(input);
-        return { activeCount, record };
+        return { activeCount, record: await input.whileAdmitted() };
       },
       path: join(this.#runsDirectory, ".locks", "dispatch-admission.lock"),
     });
@@ -939,6 +1059,15 @@ class CompletedRunHandle implements CompletedRun {
     return await this.#module.acknowledgeSourceWriteback({ ...input, record: this.record });
   }
 
+  public async continueRun(input: {
+    readonly continuationRunId: string;
+    readonly force: boolean;
+    readonly maximumInProgress: number;
+    readonly repositories: readonly string[];
+  }): Promise<RunningRun> {
+    return await this.#module.continueRun({ ...input, record: this.record });
+  }
+
   public async remove(): Promise<void> {
     await this.#module.remove({ record: this.record });
   }
@@ -1044,6 +1173,28 @@ export async function withFileLock<T>(input: {
   return result;
 }
 
+export function mintRunId(): string {
+  return `r_${randomBytes(4).toString("hex")}`;
+}
+
+export function completedRunRefusal(input: {
+  readonly runId: string;
+  readonly canonicalTaskId: string;
+}): Error {
+  return new Error(
+    `run ${input.runId} is complete; continue this session in a new run with: crew continue ${input.canonicalTaskId}`,
+  );
+}
+
+function admissionRefusedError(input: {
+  readonly activeCount: number;
+  readonly maximumInProgress: number;
+}): Error {
+  return new Error(
+    `concurrency limit reached (${input.activeCount}/${input.maximumInProgress}); pass --force to continue anyway`,
+  );
+}
+
 export function taskSlug(input: { readonly canonicalTaskId: string }): string {
   return input.canonicalTaskId
     .toLowerCase()
@@ -1095,6 +1246,7 @@ function renderPrompt(input: {
     "Report every durable output with: crew artifact add <locator> --kind <kind>",
     "Complete the run with: crew done [--outcome delivered|failed|stopped]",
     "Report each durable output before completing.",
+    "If more task work is requested after completion, run crew continue before making or reporting further changes; questions alone need no new run.",
   ].join("\n");
 }
 
@@ -1279,12 +1431,7 @@ function classifyPresentationReconciliation(input: {
     return { type: "unchanged" };
   }
   const record = input.run.record;
-  const presented = probe.workspaces.some(
-    (workspace) =>
-      workspace.name === record.presentedWorkspaceName ||
-      workspace.description === record.presentedWorkspaceName ||
-      workspace.description === `groundcrew:${record.canonicalTaskId}`,
-  );
+  const presented = isPresented({ record, workspaces: probe.workspaces });
   if (record.state === "provisioning" && presented) {
     return { type: "running" };
   }
@@ -1295,6 +1442,19 @@ function classifyPresentationReconciliation(input: {
     reason: record.state === "provisioning" ? "provisioning-interrupted" : "workspace-missing",
     type: "failed",
   };
+}
+
+function isPresented(input: {
+  readonly record: Readonly<RunRecord>;
+  readonly workspaces: readonly PresentedWorkspace[];
+}): boolean {
+  const { record } = input;
+  return input.workspaces.some(
+    (workspace) =>
+      workspace.name === record.presentedWorkspaceName ||
+      workspace.description === record.presentedWorkspaceName ||
+      workspace.description === `groundcrew:${record.canonicalTaskId}`,
+  );
 }
 
 function provisioningOwnerIsAlive(input: { readonly record: RunRecord }): boolean {
@@ -1320,6 +1480,9 @@ function requireCurrentRun(input: {
   }
   if (input.current.state !== input.state) {
     if (input.state === "running") {
+      if (input.current.state === "complete") {
+        throw completedRunRefusal(input.current);
+      }
       throw new Error(
         `run ${input.current.runId} is ${input.current.state}; in-session commands require a running run`,
       );

@@ -10,6 +10,8 @@ import {
 } from "../source/index.js";
 import {
   RunModule,
+  completedRunRefusal,
+  mintRunId,
   taskSlug,
   withFileLock,
   type AgentProfile,
@@ -164,6 +166,7 @@ export interface Application {
     readonly allowDirty: boolean;
   }): Promise<RunRecord>;
   repoAdd(input: { readonly task: string; readonly repository: string }): Promise<RunRecord>;
+  continueRun(input: { readonly task: string; readonly force: boolean }): Promise<RunRecord>;
   cleanup(input: {
     readonly task?: string | undefined;
     readonly all: boolean;
@@ -245,6 +248,9 @@ export async function createApplication(input: {
     },
     async repoAdd(repoInput): Promise<RunRecord> {
       return await repoAdd({ ...repoInput, runtime });
+    },
+    async continueRun(continueInput): Promise<RunRecord> {
+      return await continueRun({ ...continueInput, runtime });
     },
     async cleanup(cleanupInput): Promise<{
       readonly cleaned: readonly string[];
@@ -721,6 +727,79 @@ async function repoAdd(input: {
   return run.record;
 }
 
+async function continueRun(input: {
+  readonly runtime: Runtime;
+  readonly task: string;
+  readonly force: boolean;
+}): Promise<RunRecord> {
+  const { runtime } = input;
+  const resolved = await runtime.runs.resolve({ query: input.task });
+  if (resolved.state !== "complete") {
+    throw new Error(
+      `run ${resolved.record.runId} is ${resolved.state}; crew continue resumes a completed run`,
+    );
+  }
+  let run: CompletedRun = resolved;
+  const canonicalTaskId = run.record.canonicalTaskId;
+  // A pending completion must land under the prior run ID before a new attempt can claim.
+  if (run.record.writebackPending === true) {
+    run = await writeCompletion({ run, runtime });
+    if (run.record.writebackPending === true) {
+      throw new Error(
+        `run ${run.record.runId} completion writeback is still pending; retry when the source accepts it`,
+      );
+    }
+  }
+  if (!(await runtime.runs.presentedWorkspaceExists({ record: run.record }))) {
+    throw new Error(
+      `presented workspace for ${canonicalTaskId} is gone; run crew cleanup and dispatch again instead`,
+    );
+  }
+  const sourceTask = await runtime.registry.get({ canonicalTaskId });
+  if (!sourceTask.ok) {
+    throw new Error(sourceTask.error.message);
+  }
+  if (sourceTask.data.task.terminal) {
+    throw new Error(`${canonicalTaskId} is terminal at its source; dispatch a new task instead`);
+  }
+  const marker = await runtime.workspaces.readMarker({
+    workspaceDirectory: run.record.workspaceDirectory,
+  });
+  if (marker === undefined) {
+    throw new Error(`task marker missing for ${canonicalTaskId}`);
+  }
+  // The local transition commits first, so the source is never told about a continuation
+  // that admission (or a concurrent mutation) then refuses; a source rejection reverts it.
+  const continuationRunId = mintRunId();
+  const running = await run.continueRun({
+    continuationRunId,
+    force: input.force,
+    maximumInProgress: runtime.config.orchestrator.maximumInProgress,
+    repositories: marker.repositories,
+  });
+  const authorized = await runtime.registry.update({
+    canonicalTaskId,
+    event: { previousRunId: run.record.runId, runId: continuationRunId, type: "continued" },
+  });
+  if (!authorized.ok || authorized.data.result === "rejected") {
+    await runtime.runs.revertContinuation({ continuationRunId, priorRecord: run.record });
+    throw new Error(
+      authorized.ok
+        ? (authorized.data.reason ?? "source rejected the continuation")
+        : `source did not accept the continued event (its bundle may predate crew continue): ${authorized.error.message}`,
+    );
+  }
+  await log({
+    canonicalTaskId,
+    event: "run_continued",
+    level: "info",
+    module: "core",
+    runId: running.record.runId,
+    runtime,
+  });
+  return running.record;
+}
+
 async function cleanup(input: {
   readonly runtime: Runtime;
   readonly task?: string | undefined;
@@ -955,6 +1034,7 @@ async function writeCompletion(input: {
       artifacts: record.artifacts,
       message: record.message,
       outcome: record.outcome,
+      runId: record.runId,
       type: "completed",
     },
   });
@@ -989,6 +1069,9 @@ async function writeCompletion(input: {
 }
 
 function requireRunningRun(run: RunHandle): asserts run is RunningRun {
+  if (run.state === "complete") {
+    throw completedRunRefusal(run.record);
+  }
   if (run.state !== "running") {
     throw new Error(
       `run ${run.record.runId} is ${run.state}; in-session commands require a running run`,
