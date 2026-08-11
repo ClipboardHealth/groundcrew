@@ -224,6 +224,7 @@ export async function main(input: MainInput): Promise<void> {
     .description("close presenters and safely remove task worktrees")
     .argument("[task]", "canonical or source-local task ID")
     .option("--all", "clean every local task")
+    .option("--completed", "clean every completed local run")
     .option("--force", "permanently delete dirty worktrees and unique task branches")
     .option("--verbose", "include debug diagnostics")
     .action(async (task, options) => {
@@ -231,6 +232,7 @@ export async function main(input: MainInput): Promise<void> {
       const result = await application.cleanup({
         all: options.all === true,
         allowDirty: options.force === true,
+        completed: options.completed === true,
         task,
       });
       for (const canonicalTaskId of result.cleaned) {
@@ -509,10 +511,6 @@ async function readTaskMarker(input: {
 
 function renderDispatchProgress(input: RenderDispatchProgressInput): void {
   const { progress, showAllSkips, showRoutineSkips } = input;
-  if (progress.type === "cleaning") {
-    process.stdout.write(`Cleaning ${progress.canonicalTaskId}\n`);
-    return;
-  }
   if (progress.type === "skipped") {
     if (
       !showAllSkips &&
