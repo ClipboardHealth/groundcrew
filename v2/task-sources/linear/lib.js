@@ -120,7 +120,11 @@ async function updateTask(input) {
     .join("\n\n");
   await addCommentOnce({ issue, marker: completionMarker, text });
   if (input.event.outcome === "delivered") {
-    await moveIssue({ issue, stateName: environment("LINEAR_STATUS_IN_REVIEW", "In Review") });
+    await moveIssue({
+      allowMissing: true,
+      issue,
+      stateName: environment("LINEAR_STATUS_IN_REVIEW", "In Review"),
+    });
   } else if (input.event.outcome === "failed") {
     await moveIssue({ issue, stateName: environment("LINEAR_STATUS_TODO", "Todo") });
   }
@@ -219,6 +223,9 @@ async function moveIssue(input) {
     (candidate) => candidate.name === input.stateName,
   );
   if (!state) {
+    if (input.allowMissing === true) {
+      return;
+    }
     throw new Error(`Linear workflow state '${input.stateName}' was not found`);
   }
   await graphql({

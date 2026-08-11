@@ -58,6 +58,18 @@ describe("the shipped Linear source", () => {
     expect(fixture.state.comments.at(-1)).toContain(":completed:failed]");
   });
 
+  it("leaves a delivered run unchanged when In Review is unavailable", async () => {
+    await fixture.close();
+    fixture = await createLinearFixture({ includeInReviewState: false });
+    await runCrew({ arguments: ["start", "LIN-1"], environment: fixture.environment });
+    expect(fixture.state.stateName).toBe("In Progress");
+
+    await runCrew({ arguments: ["done", "--task", "LIN-1"], environment: fixture.environment });
+
+    expect(fixture.state.stateName).toBe("In Progress");
+    expect(fixture.state.comments.at(-1)).toContain(":completed:delivered]");
+  });
+
   it("stamps a completion with its own run ID despite a newer claim comment", async () => {
     await runCrew({ arguments: ["start", "LIN-1"], environment: fixture.environment });
     const claimRunId = fixture.state.comments[0]?.match(
@@ -221,6 +233,7 @@ interface LinearState {
 async function createLinearFixture(
   input: {
     readonly filteringScenario?: boolean;
+    readonly includeInReviewState?: boolean;
     readonly issueDescription?: string;
     readonly labelPrefix?: string;
     readonly listedTaskCount?: number;
@@ -245,7 +258,11 @@ async function createLinearFixture(
         raw += chunk;
       }
       const body = JSON.parse(raw);
-      const issue = linearIssue({ description: input.issueDescription, state });
+      const issue = linearIssue({
+        description: input.issueDescription,
+        includeInReviewState: input.includeInReviewState,
+        state,
+      });
       let data;
       if (body.operationName === "GroundcrewList") {
         state.listRequests.push({ query: body.query, variables: body.variables });
@@ -255,6 +272,7 @@ async function createLinearFixture(
               linearIssue({
                 description: input.issueDescription,
                 identifier: `LIN-${index + 1}`,
+                includeInReviewState: input.includeInReviewState,
                 state,
               }),
             );
@@ -371,6 +389,7 @@ async function createLinearFixture(
 function linearIssue(input: {
   readonly description?: string | undefined;
   readonly identifier?: string;
+  readonly includeInReviewState?: boolean | undefined;
   readonly labelNames?: readonly string[];
   readonly state: LinearState;
   readonly stateName?: string;
@@ -404,7 +423,9 @@ function linearIssue(input: {
         nodes: [
           { id: "state-todo", name: "Todo", type: "unstarted" },
           { id: "state-progress", name: "In Progress", type: "started" },
-          { id: "state-review", name: "In Review", type: "started" },
+          ...(input.includeInReviewState === false
+            ? []
+            : [{ id: "state-review", name: "In Review", type: "started" }]),
         ],
       },
     },
