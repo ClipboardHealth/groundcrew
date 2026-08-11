@@ -26,6 +26,8 @@ export interface RunRecord {
   readonly reason?: string | undefined;
   readonly message?: string | undefined;
   readonly writebackPending?: boolean | undefined;
+  readonly cleanupPending?: boolean | undefined;
+  readonly cleanupOwnerProcessId?: number | undefined;
   readonly presenter: "cmux";
   readonly presentedWorkspaceName: string;
   readonly workspaceDirectory: string;
@@ -109,6 +111,8 @@ export interface RunningRun extends BaseRun {
 export interface CompletedRun extends BaseRun {
   readonly state: "complete";
 
+  cancelCleanup(): Promise<CompletedRun>;
+  recoverAbandonedCleanup(): Promise<CompletedRun>;
   acknowledgeSourceWriteback(input: {
     readonly expectedRunId: string;
     readonly expectedCompletionTimestamp: string;
@@ -652,14 +656,64 @@ export class RunModule {
           throw new Error(`run ${input.record.runId} is stale`);
         }
         await input.assertWorkspaceIdle(current);
-        if (current.state === "complete") {
-          return current;
+        const completed =
+          current.state === "complete"
+            ? current
+            : completeRunRecord({ outcome: "stopped", record: current });
+        transitioned = current.state !== "complete";
+        if (
+          completed.cleanupPending === true &&
+          completed.cleanupOwnerProcessId !== process.pid &&
+          completed.cleanupOwnerProcessId !== undefined &&
+          processIsAlive({ processId: completed.cleanupOwnerProcessId })
+        ) {
+          throw new Error(`run ${current.runId} cleanup is owned by another process`);
         }
-        transitioned = true;
-        return completeRunRecord({ outcome: "stopped", record: current });
+        return {
+          ...completed,
+          cleanupOwnerProcessId: process.pid,
+          cleanupPending: true,
+        };
       },
     });
     return { run: new CompletedRunHandle({ module: this, record }), transitioned };
+  }
+
+  public async cancelCleanup(input: {
+    readonly record: Readonly<RunRecord>;
+  }): Promise<CompletedRun> {
+    const record = await this.#store.mutate({
+      canonicalTaskId: input.record.canonicalTaskId,
+      update: (current) => {
+        requireCurrentRun({ current, expected: input.record, state: "complete" });
+        return current.cleanupPending === true &&
+          (current.cleanupOwnerProcessId === undefined ||
+            current.cleanupOwnerProcessId === process.pid)
+          ? { ...current, cleanupOwnerProcessId: undefined, cleanupPending: undefined }
+          : current;
+      },
+    });
+    return new CompletedRunHandle({ module: this, record });
+  }
+
+  public async recoverAbandonedCleanup(input: {
+    readonly record: Readonly<RunRecord>;
+  }): Promise<CompletedRun> {
+    const record = await this.#store.mutate({
+      canonicalTaskId: input.record.canonicalTaskId,
+      update: (current) => {
+        requireCurrentRun({ current, expected: input.record, state: "complete" });
+        if (
+          current.cleanupPending !== true ||
+          (current.cleanupOwnerProcessId !== undefined &&
+            processIsAlive({ processId: current.cleanupOwnerProcessId }))
+        ) {
+          return current;
+        }
+        return { ...current, cleanupOwnerProcessId: undefined, cleanupPending: undefined };
+      },
+    });
+    return new CompletedRunHandle({ module: this, record });
   }
 
   public async reconcileWorkspaceOperation(input: {
@@ -811,9 +865,14 @@ class RunStore {
             if (current.writebackPending === true) {
               throw new Error(`run ${current.runId} source writeback is pending`);
             }
+            if (current.cleanupPending === true) {
+              throw new Error(`run ${current.runId} cleanup is pending`);
+            }
             return {
               ...current,
               artifacts: [],
+              cleanupOwnerProcessId: undefined,
+              cleanupPending: undefined,
               events: [
                 ...current.events,
                 { event: `continued-from:${current.runId}`, timestamp: new Date().toISOString() },
@@ -1057,6 +1116,14 @@ class CompletedRunHandle implements CompletedRun {
     readonly expectedCompletionTimestamp: string;
   }): Promise<CompletedRun> {
     return await this.#module.acknowledgeSourceWriteback({ ...input, record: this.record });
+  }
+
+  public async cancelCleanup(): Promise<CompletedRun> {
+    return await this.#module.cancelCleanup({ record: this.record });
+  }
+
+  public async recoverAbandonedCleanup(): Promise<CompletedRun> {
+    return await this.#module.recoverAbandonedCleanup({ record: this.record });
   }
 
   public async continueRun(input: {
@@ -1462,8 +1529,12 @@ function provisioningOwnerIsAlive(input: { readonly record: RunRecord }): boolea
   if (processId === undefined) {
     return false;
   }
+  return processIsAlive({ processId });
+}
+
+function processIsAlive(input: { readonly processId: number }): boolean {
   try {
-    process.kill(processId, 0);
+    process.kill(input.processId, 0);
     return true;
   } catch (error) {
     return !(error instanceof Error && "code" in error && error.code === "ESRCH");

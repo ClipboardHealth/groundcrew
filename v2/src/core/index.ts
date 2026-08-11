@@ -111,6 +111,10 @@ export type DispatchProgress =
       readonly canonicalTaskId: string;
       readonly detail: string;
       readonly reason: VerdictReason;
+    }
+  | {
+      readonly type: "cleaning";
+      readonly canonicalTaskId: string;
     };
 
 export type VerdictReason =
@@ -192,6 +196,17 @@ interface SkipTaskInput {
   readonly detail: string;
   readonly reason: VerdictReason;
   readonly runId?: string | undefined;
+}
+
+interface PrepareTerminalRunsForCleanupInput {
+  readonly runtime: Runtime;
+  readonly tasks: readonly Task[];
+}
+
+interface ReapTerminalTasksInput {
+  readonly onProgress?: ((progress: DispatchProgress) => void) | undefined;
+  readonly runs: readonly CompletedRun[];
+  readonly runtime: Runtime;
 }
 
 export async function createApplication(input: {
@@ -314,9 +329,9 @@ async function start(input: {
   if (!listed.ok) {
     throw new Error(listed.error.message);
   }
-  if (!input.dryRun) {
-    await reapTerminalTasks({ runtime, tasks: listed.data.tasks });
-  }
+  const terminalRunsToClean = input.dryRun
+    ? []
+    : await prepareTerminalRunsForCleanup({ runtime, tasks: listed.data.tasks });
   let tasks = listed.data.tasks;
   if (input.task === undefined) {
     tasks = tasks
@@ -538,6 +553,13 @@ async function start(input: {
       }
     }
   }
+  if (!input.dryRun) {
+    await reapTerminalTasks({
+      onProgress: input.onProgress,
+      runs: terminalRunsToClean,
+      runtime,
+    });
+  }
   return { skipped, started };
 }
 
@@ -640,11 +662,7 @@ async function done(input: {
     throw new DirtyWorkspaceError(observed.dirtyPaths);
   }
   let completed = await run.finish({
-    assertWorkspaceIdle: async (record) => {
-      await runtime.workspaces.assertNoActiveRepositoryOperation({
-        workspaceDirectory: record.workspaceDirectory,
-      });
-    },
+    assertWorkspaceIdle: workspaceIdleAssertion({ runtime }),
     message: input.message,
     outcome: input.outcome,
   });
@@ -741,6 +759,12 @@ async function continueRun(input: {
   }
   let run: CompletedRun = resolved;
   const canonicalTaskId = run.record.canonicalTaskId;
+  if (run.record.cleanupPending === true) {
+    run = await run.recoverAbandonedCleanup();
+    if (run.record.cleanupPending === true) {
+      throw new Error(`run ${run.record.runId} cleanup is pending`);
+    }
+  }
   // A pending completion must land under the prior run ID before a new attempt can claim.
   if (run.record.writebackPending === true) {
     run = await writeCompletion({ run, runtime });
@@ -800,6 +824,16 @@ async function continueRun(input: {
   return running.record;
 }
 
+function workspaceIdleAssertion(input: {
+  readonly runtime: Runtime;
+}): (record: Readonly<RunRecord>) => Promise<void> {
+  return async (record) => {
+    await input.runtime.workspaces.assertNoActiveRepositoryOperation({
+      workspaceDirectory: record.workspaceDirectory,
+    });
+  };
+}
+
 async function cleanup(input: {
   readonly runtime: Runtime;
   readonly task?: string | undefined;
@@ -836,11 +870,7 @@ async function cleanup(input: {
     // for a run that reconciliation completed while acquisition was still active.
     // eslint-disable-next-line no-await-in-loop
     const stopped = await run.stopForCleanup({
-      assertWorkspaceIdle: async (record) => {
-        await runtime.workspaces.assertNoActiveRepositoryOperation({
-          workspaceDirectory: record.workspaceDirectory,
-        });
-      },
+      assertWorkspaceIdle: workspaceIdleAssertion({ runtime }),
     });
     let completed = stopped.run;
     if (stopped.transitioned || completed.record.writebackPending === true) {
@@ -967,13 +997,13 @@ async function reconcile(input: { readonly runtime: Runtime }): Promise<void> {
   }
 }
 
-async function reapTerminalTasks(input: {
-  readonly runtime: Runtime;
-  readonly tasks: readonly Task[];
-}): Promise<void> {
+async function prepareTerminalRunsForCleanup(
+  input: PrepareTerminalRunsForCleanupInput,
+): Promise<readonly CompletedRun[]> {
   const terminal = new Set(
     input.tasks.filter((task) => task.terminal).map((task) => canonicalId({ task })),
   );
+  const prepared: CompletedRun[] = [];
   for (const run of await input.runtime.runs.list()) {
     if (!terminal.has(run.record.canonicalTaskId)) {
       continue;
@@ -985,11 +1015,54 @@ async function reapTerminalTasks(input: {
       continue;
     }
     // eslint-disable-next-line no-await-in-loop
-    await cleanup({
-      allowDirty: false,
-      all: false,
+    const stopped = await run.stopForCleanup({
+      assertWorkspaceIdle: workspaceIdleAssertion({ runtime: input.runtime }),
+    });
+    prepared.push(stopped.run);
+  }
+  return prepared;
+}
+
+async function reapTerminalTasks(input: ReapTerminalTasksInput): Promise<void> {
+  for (const run of input.runs) {
+    const slug = taskSlug({ canonicalTaskId: run.record.canonicalTaskId });
+    // eslint-disable-next-line no-await-in-loop
+    const observed = await input.runtime.workspaces.observe({ slug });
+    if (observed.dirtyPaths.length > 0) {
+      // Keep the presented workspace legible before allowing a later continuation.
+      // eslint-disable-next-line no-await-in-loop
+      await run.setPresentedStatus();
+      // eslint-disable-next-line no-await-in-loop
+      await run.cancelCleanup();
+      continue;
+    }
+    input.onProgress?.({ canonicalTaskId: run.record.canonicalTaskId, type: "cleaning" });
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      await cleanup({
+        all: false,
+        allowDirty: false,
+        runtime: input.runtime,
+        task: run.record.canonicalTaskId,
+      });
+    } catch (cleanupError) {
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        await run.cancelCleanup();
+      } catch (cancelError) {
+        throw new AggregateError(
+          [cleanupError, cancelError],
+          `cleanup failed for ${run.record.canonicalTaskId} and its reservation could not be released`,
+        );
+      }
+      throw cleanupError;
+    }
+    // eslint-disable-next-line no-await-in-loop
+    await writeVerdict({
+      canonicalTaskId: run.record.canonicalTaskId,
+      detail: "source reports the task as terminal",
+      reason: "terminal",
       runtime: input.runtime,
-      task: run.record.canonicalTaskId,
     });
   }
 }
