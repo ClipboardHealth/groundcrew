@@ -376,7 +376,7 @@ describe(composeAgentLaunch, () => {
     );
   });
 
-  it("grants Codex writable access to the fallback Metabase CLI config directory only in the agent wrap", () => {
+  it("grants Codex read-only access to the fallback Metabase CLI config directory only in the agent wrap", () => {
     const metabaseConfigDir = path.join(fakeHome, ".config", "metabase-cli");
     mkdirSync(metabaseConfigDir, { recursive: true });
 
@@ -389,10 +389,10 @@ describe(composeAgentLaunch, () => {
     const prepareWrap = launchCommand.slice(0, launchCommand.indexOf("_safehouse_shim_dir="));
     const agentWrap = launchCommand.slice(launchCommand.indexOf("_safehouse_shim_dir="));
     expect(prepareWrap).not.toContain(metabaseConfigDir);
-    expect(agentWrap).toContain(
+    expect(agentWrap).toContain(`--add-dirs-ro='${metabaseConfigDir}'`);
+    expect(agentWrap).not.toContain(
       `--add-dirs='/work/repo-a-team-1:/tmp/repo-a.git:${metabaseConfigDir}'`,
     );
-    expect(agentWrap).not.toContain(`--add-dirs-ro='${metabaseConfigDir}'`);
   });
 
   it("uses XDG_CONFIG_HOME for Codex's Metabase CLI grant and forwards it only to the agent wrap", () => {

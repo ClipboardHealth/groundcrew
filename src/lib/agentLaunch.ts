@@ -202,10 +202,9 @@ function safehouseAgentIntegrationFor(input: {
 
 /**
  * Let Codex-launched `mb` processes use the operator's existing Metabase CLI
- * profile without exposing any sibling XDG config. The CLI atomically rewrites
- * `profiles.json` after auth probes and OAuth refreshes, so the containing
- * directory must be writable; granting only the resolved `metabase-cli`
- * directory is the narrowest access that preserves those normal operations.
+ * profile without exposing any sibling XDG config. Authentication is managed
+ * outside the sandbox, so the resolved `metabase-cli` directory stays
+ * read-only while API-key-backed queries and content management can use it.
  */
 function metabaseCliSafehouseIntegrationFor(input: {
   agentCommandName: string;
@@ -224,8 +223,8 @@ function metabaseCliSafehouseIntegrationFor(input: {
     return undefined;
   }
   return {
-    addDirs: [configDir],
-    addDirsReadOnly: [],
+    addDirs: [],
+    addDirsReadOnly: [configDir],
     envPass: xdgConfigHome === undefined || xdgConfigHome === "" ? [] : ["XDG_CONFIG_HOME"],
     commandPreludes: [],
   };
