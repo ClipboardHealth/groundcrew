@@ -5,7 +5,8 @@ import { appendFile } from "node:fs/promises";
 const input = await readStandardInput();
 await appendFile(process.env.FIXTURE_UPDATES, `${JSON.stringify(input)}\n`);
 const rejected =
-  input.event.type === "claimed" && process.env.FIXTURE_REJECT_CLAIMS === input.id;
+  (input.event.type === "claimed" && process.env.FIXTURE_REJECT_CLAIMS === input.id) ||
+  (input.event.type === "completed" && process.env.FIXTURE_REJECT_COMPLETIONS === input.id);
 process.stdout.write(
   `${JSON.stringify({
     ok: true,

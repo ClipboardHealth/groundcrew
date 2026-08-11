@@ -54,8 +54,10 @@ export interface Task {
 
 export type SourceEvent =
   | { readonly type: "claimed"; readonly runId: string }
+  | { readonly type: "continued"; readonly runId: string; readonly previousRunId: string }
   | {
       readonly type: "completed";
+      readonly runId: string;
       readonly outcome: "delivered" | "failed" | "stopped";
       readonly artifacts: readonly Artifact[];
       readonly message?: string | undefined;

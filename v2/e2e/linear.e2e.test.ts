@@ -58,6 +58,81 @@ describe("the shipped Linear source", () => {
     expect(fixture.state.comments.at(-1)).toContain(":completed:failed]");
   });
 
+  it("stamps a completion with its own run ID despite a newer claim comment", async () => {
+    await runCrew({ arguments: ["start", "LIN-1"], environment: fixture.environment });
+    const claimRunId = fixture.state.comments[0]?.match(
+      /\[groundcrew:(r_[0-9a-f]{8}):claimed\]/,
+    )?.[1];
+    fixture.state.comments.push("[groundcrew:r_deadbeef:claimed]\nClaimed by Groundcrew.");
+
+    await runCrew({ arguments: ["done", "--task", "LIN-1"], environment: fixture.environment });
+
+    expect(claimRunId).toBeDefined();
+    expect(fixture.state.comments.at(-1)).toContain(
+      `[groundcrew:${claimRunId}:completed:delivered]`,
+    );
+  });
+
+  it("continues a delivered run from In Review and completes under the new run ID", async () => {
+    await runCrew({ arguments: ["start", "LIN-1"], environment: fixture.environment });
+    await runCrew({ arguments: ["done", "--task", "LIN-1"], environment: fixture.environment });
+    expect(fixture.state.stateName).toBe("In Review");
+
+    await runCrew({ arguments: ["continue", "LIN-1"], environment: fixture.environment });
+
+    expect(fixture.state.stateName).toBe("In Progress");
+    await runCrew({ arguments: ["done", "--task", "LIN-1"], environment: fixture.environment });
+    expect(fixture.state.stateName).toBe("In Review");
+    const claimRunIds = fixture.state.comments.flatMap(
+      (comment) => comment.match(/\[groundcrew:(r_[0-9a-f]{8}):claimed\]/)?.slice(1) ?? [],
+    );
+    const completionRunIds = fixture.state.comments.flatMap(
+      (comment) =>
+        comment.match(/\[groundcrew:(r_[0-9a-f]{8}):completed:delivered\]/)?.slice(1) ?? [],
+    );
+    expect(claimRunIds).toHaveLength(2);
+    expect(completionRunIds).toEqual(claimRunIds);
+  });
+
+  it("continues an In Review issue with a fresh claim marker", async () => {
+    fixture.state.stateName = "In Review";
+    fixture.state.stateType = "started";
+    fixture.state.comments.push("[groundcrew:r_00112233:claimed]\nClaimed by Groundcrew.");
+
+    const result = await runLinearUpdate({
+      environment: fixture.environment,
+      payload: {
+        event: { previousRunId: "r_00112233", runId: "r_44556677", type: "continued" },
+        id: "LIN-1",
+      },
+    });
+
+    expect(JSON.parse(result.stdout)).toEqual({ data: { result: "ok" }, ok: true });
+    expect(fixture.state.comments.at(-1)).toContain("[groundcrew:r_44556677:claimed]");
+    expect(fixture.state.comments.at(-1)).toContain("r_00112233");
+    expect(fixture.state.stateName).toBe("In Progress");
+  });
+
+  it("rejects continuing a terminal issue", async () => {
+    fixture.state.stateName = "Done";
+    fixture.state.stateType = "completed";
+
+    const result = await runLinearUpdate({
+      environment: fixture.environment,
+      payload: {
+        event: { previousRunId: "r_00112233", runId: "r_44556677", type: "continued" },
+        id: "LIN-1",
+      },
+    });
+
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      data: { result: "rejected" },
+      ok: true,
+    });
+    expect(fixture.state.comments).toHaveLength(0);
+    expect(fixture.state.stateName).toBe("Done");
+  });
+
   it("paginates list queries beneath Linear's complexity limit", async () => {
     await fixture.close();
     fixture = await createLinearFixture({ listedTaskCount: 251 });
@@ -387,10 +462,29 @@ async function runCrew(input: {
 async function runLinearList(input: {
   readonly environment: NodeJS.ProcessEnv;
 }): Promise<{ readonly stdout: string; readonly stderr: string }> {
+  return await runLinearCommand({ command: "list", environment: input.environment, payload: {} });
+}
+
+async function runLinearUpdate(input: {
+  readonly environment: NodeJS.ProcessEnv;
+  readonly payload: Record<string, unknown>;
+}): Promise<{ readonly stdout: string; readonly stderr: string }> {
+  return await runLinearCommand({
+    command: "update",
+    environment: input.environment,
+    payload: input.payload,
+  });
+}
+
+async function runLinearCommand(input: {
+  readonly command: "list" | "update";
+  readonly environment: NodeJS.ProcessEnv;
+  readonly payload: Record<string, unknown>;
+}): Promise<{ readonly stdout: string; readonly stderr: string }> {
   return await new Promise((resolvePromise, reject) => {
     const child = execFile(
       process.execPath,
-      ["task-sources/linear/list"],
+      [`task-sources/linear/${input.command}`],
       { cwd: process.cwd(), env: input.environment },
       (error, stdout, stderr) => {
         if (error) {
@@ -400,6 +494,6 @@ async function runLinearList(input: {
         resolvePromise({ stderr, stdout });
       },
     );
-    child.stdin?.end("{}");
+    child.stdin?.end(JSON.stringify(input.payload));
   });
 }

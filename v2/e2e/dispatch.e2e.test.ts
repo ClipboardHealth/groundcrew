@@ -300,6 +300,7 @@ describe("crew start", () => {
     expect(command).toContain("codex");
     expect(command).toContain('model_reasoning_effort="high"');
     expect(command).toContain("Task: fixture:ENG-123");
+    expect(command).toContain("crew continue");
     expect(launchArguments).toContain("GROUNDCREW_TASK_ID=fixture:ENG-123");
     expect(launchArguments).toContain(
       `GROUNDCREW_CONFIG=${fixture.environment["GROUNDCREW_CONFIG"]}`,
@@ -350,6 +351,7 @@ describe("crew start", () => {
       event: {
         artifacts: [{ kind: "pr", locator: "https://github.com/example/pull/1" }],
         outcome: "delivered",
+        runId: updates[0].event.runId,
         type: "completed",
       },
       id: "ENG-123",
@@ -780,7 +782,7 @@ describe("crew start", () => {
     expect(failed).toMatchObject({ outcome: "failed", state: "complete" });
     expect(running).toMatchObject({ state: "running" });
     expect(updates).toContainEqual({
-      event: { artifacts: [], outcome: "failed", type: "completed" },
+      event: { artifacts: [], outcome: "failed", runId: failed.runId, type: "completed" },
       id: "ENG-1",
     });
     expect(result.stdout).toContain("Started fixture:ENG-2");
@@ -863,13 +865,19 @@ describe("crew start", () => {
         arguments: ["artifact", "add", "late-output", "--task", "ENG-123"],
         environment: fixture.environment,
       }),
-    ).rejects.toMatchObject({ code: 1 });
+    ).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining("crew continue fixture:ENG-123"),
+    });
     await expect(
       runCrew({
         arguments: ["repo", "add", "sample", "--task", "ENG-123"],
         environment: fixture.environment,
       }),
-    ).rejects.toMatchObject({ code: 1 });
+    ).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining("crew continue fixture:ENG-123"),
+    });
 
     const run = JSON.parse(
       await readFile(join(fixture.runsDirectory, "fixture-eng-123.json"), "utf8"),
@@ -1442,6 +1450,165 @@ describe("crew start", () => {
 
     await runCrew({ arguments: ["start"], environment: fixture.environment });
     await expect(stat(fixture.workspaceDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+});
+
+describe("crew continue", () => {
+  it("continues a completed run in its existing session with a fresh run ID", async () => {
+    const fixture = await createDispatchFixture({ additionalRepositories: ["second"] });
+    await runCrew({ arguments: ["start"], environment: fixture.environment });
+    await runCrew({ arguments: ["done", "--task", "ENG-123"], environment: fixture.environment });
+    const runPath = join(fixture.runsDirectory, "fixture-eng-123.json");
+    const completed = JSON.parse(await readFile(runPath, "utf8"));
+
+    const result = await runCrew({
+      arguments: ["continue", "ENG-123"],
+      environment: fixture.environment,
+    });
+
+    expect(result.stdout).toContain("Continuing fixture:ENG-123 as run ");
+    const continued = JSON.parse(await readFile(runPath, "utf8"));
+    expect(continued).toMatchObject({
+      artifacts: [],
+      previousRunIds: [completed.runId],
+      state: "running",
+    });
+    expect(continued.runId).not.toBe(completed.runId);
+    expect(continued.outcome).toBeUndefined();
+    expect(continued.writebackPending).toBeUndefined();
+
+    await runCrew({
+      arguments: ["repo", "add", "second", "--task", "ENG-123"],
+      environment: fixture.environment,
+    });
+    await runCrew({
+      arguments: ["artifact", "add", "follow-up-output", "--task", "ENG-123"],
+      environment: fixture.environment,
+    });
+    await runCrew({ arguments: ["done", "--task", "ENG-123"], environment: fixture.environment });
+    const updates = (await readFile(fixture.updatesPath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(updates.map((update) => update.event.type)).toEqual([
+      "claimed",
+      "completed",
+      "continued",
+      "completed",
+    ]);
+    expect(updates[2].event).toMatchObject({
+      previousRunId: completed.runId,
+      runId: continued.runId,
+    });
+    expect(updates[3].event).toMatchObject({
+      artifacts: [{ kind: "file", locator: "follow-up-output" }],
+      outcome: "delivered",
+      runId: continued.runId,
+    });
+  });
+
+  it("settles a pending completion writeback before continuing", async () => {
+    const fixture = await createDispatchFixture();
+    await runCrew({ arguments: ["start"], environment: fixture.environment });
+    const rejectingEnvironment = {
+      ...fixture.environment,
+      FIXTURE_REJECT_COMPLETIONS: "ENG-123",
+    };
+    await expect(
+      runCrew({ arguments: ["done", "--task", "ENG-123"], environment: rejectingEnvironment }),
+    ).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining("writeback is pending"),
+    });
+    await expect(
+      runCrew({ arguments: ["continue", "ENG-123"], environment: rejectingEnvironment }),
+    ).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining("writeback"),
+    });
+
+    const result = await runCrew({
+      arguments: ["continue", "ENG-123"],
+      environment: fixture.environment,
+    });
+
+    expect(result.stdout).toContain("Continuing fixture:ENG-123 as run ");
+    const updates = (await readFile(fixture.updatesPath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    const types = updates.map((update) => update.event.type);
+    expect(types.at(-1)).toBe("continued");
+    expect(types.filter((type) => type === "completed").length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("refuses to continue a run that is still running", async () => {
+    const fixture = await createDispatchFixture();
+    await runCrew({ arguments: ["start"], environment: fixture.environment });
+
+    await expect(
+      runCrew({ arguments: ["continue", "ENG-123"], environment: fixture.environment }),
+    ).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining("running"),
+    });
+  });
+
+  it("refuses to continue when the source task is terminal", async () => {
+    const fixture = await createDispatchFixture();
+    await runCrew({ arguments: ["start"], environment: fixture.environment });
+    await runCrew({ arguments: ["done", "--task", "ENG-123"], environment: fixture.environment });
+    await writeFile(
+      join(fixture.root, "tasks.json"),
+      JSON.stringify([task({ repositories: ["sample"], terminal: true })]),
+    );
+
+    await expect(
+      runCrew({ arguments: ["continue", "ENG-123"], environment: fixture.environment }),
+    ).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining("terminal"),
+    });
+  });
+
+  it("refuses to continue when the presented workspace is gone", async () => {
+    const fixture = await createDispatchFixture();
+    await runCrew({ arguments: ["start"], environment: fixture.environment });
+    await runCrew({ arguments: ["done", "--task", "ENG-123"], environment: fixture.environment });
+    await writeFile(fixture.cmuxStatePath, '{"workspaces":[]}');
+
+    await expect(
+      runCrew({ arguments: ["continue", "ENG-123"], environment: fixture.environment }),
+    ).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining("presented workspace"),
+    });
+  });
+
+  it("counts continued runs against the concurrency limit unless forced", async () => {
+    const fixture = await createDispatchFixture({
+      maximumInProgress: 1,
+      tasks: [
+        task({ id: "ENG-1", priority: 1, repositories: ["sample"] }),
+        task({ id: "ENG-2", priority: 2, repositories: ["sample"] }),
+      ],
+    });
+    await runCrew({ arguments: ["start"], environment: fixture.environment });
+    await runCrew({ arguments: ["done", "--task", "ENG-1"], environment: fixture.environment });
+    await runCrew({ arguments: ["start"], environment: fixture.environment });
+
+    await expect(
+      runCrew({ arguments: ["continue", "ENG-1"], environment: fixture.environment }),
+    ).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining("concurrency limit reached (1/1)"),
+    });
+    const forced = await runCrew({
+      arguments: ["continue", "ENG-1", "--force"],
+      environment: fixture.environment,
+    });
+
+    expect(forced.stdout).toContain("Continuing fixture:ENG-1 as run ");
   });
 });
 
