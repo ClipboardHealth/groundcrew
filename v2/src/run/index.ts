@@ -1242,7 +1242,7 @@ export function mintRunId(): string {
 }
 
 function mintPresentationId(): string {
-  return `p_${randomBytes(4).toString("hex")}`;
+  return `p_${randomBytes(16).toString("hex")}`;
 }
 
 export function completedRunRefusal(input: {

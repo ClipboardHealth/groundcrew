@@ -306,7 +306,7 @@ describe("crew start", () => {
     expect(result.stdout).toContain("Started fixture:ENG-123");
     expect(run.state).toBe("running");
     expect(run.runId).toMatch(/^r_[0-9a-f]{8}$/);
-    expect(run.presentationId).toMatch(/^p_[0-9a-f]{8}$/);
+    expect(run.presentationId).toMatch(/^p_[0-9a-f]{32}$/);
     expect(run.presenterHandle).toBe("workspace-1");
     expect(run).not.toHaveProperty("presentedWorkspaceName");
     expect(marker).toEqual({
