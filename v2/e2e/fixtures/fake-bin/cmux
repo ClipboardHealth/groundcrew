@@ -16,7 +16,7 @@ if (command === "new-workspace") {
     process.exit(1);
   }
   const workspace = {
-    description: valueAfter("--description"),
+    environment: presentationEnvironment(),
     id: `workspace-${state.workspaces.length + 1}`,
     title: valueAfter("--name"),
   };
@@ -37,13 +37,7 @@ if (command === "new-workspace") {
     }
   }
   if (process.env.FAKE_CMUX_EXECUTE_COMMAND === "1") {
-    const childEnvironment = { ...process.env };
-    for (let index = 0; index < arguments_.length; index += 1) {
-      if (arguments_[index] !== "--env") continue;
-      const entry = arguments_[index + 1];
-      const separator = entry.indexOf("=");
-      childEnvironment[entry.slice(0, separator)] = entry.slice(separator + 1);
-    }
+    const childEnvironment = { ...process.env, ...workspaceEnvironment() };
     const child = spawn("/bin/sh", ["-c", valueAfter("--command")], {
       cwd: valueAfter("--cwd"),
       detached: true,
@@ -68,6 +62,26 @@ if (command === "new-workspace") {
     process.exit(0);
   }
   process.stdout.write(JSON.stringify({ workspaces: state.workspaces }));
+} else if (command === "workspace" && arguments_[0] === "env") {
+  const workspace = state.workspaces.find(({ id }) => id === arguments_[1]);
+  if (
+    workspace !== undefined &&
+    process.env.FAKE_CMUX_DELETE_BEFORE_ENV_READ === workspace.id
+  ) {
+    state.workspaces = state.workspaces.filter(({ id }) => id !== workspace.id);
+    await writeFile(statePath, JSON.stringify(state));
+    process.stderr.write(`workspace not found: ${arguments_[1]}\n`);
+    process.exit(1);
+  }
+  if (workspace === undefined) {
+    process.stderr.write(`workspace not found: ${arguments_[1]}\n`);
+    process.exit(1);
+  }
+  process.stdout.write(
+    Object.entries(workspace.environment ?? {})
+      .map(([key, value]) => `${key}=${value}`)
+      .join("\n"),
+  );
 } else if (command === "close-workspace") {
   const id = valueAfter("--workspace");
   if (process.env.FAKE_CMUX_FAIL_CLOSE === "1") {
@@ -108,4 +122,20 @@ async function readState() {
 
 function valueAfter(flag) {
   return arguments_[arguments_.indexOf(flag) + 1];
+}
+
+function workspaceEnvironment() {
+  const environment = {};
+  for (let index = 0; index < arguments_.length; index += 1) {
+    if (arguments_[index] !== "--env") continue;
+    const entry = arguments_[index + 1];
+    const separator = entry.indexOf("=");
+    environment[entry.slice(0, separator)] = entry.slice(separator + 1);
+  }
+  return environment;
+}
+
+function presentationEnvironment() {
+  const presentationId = workspaceEnvironment().GROUNDCREW_PRESENTATION_ID;
+  return presentationId === undefined ? {} : { GROUNDCREW_PRESENTATION_ID: presentationId };
 }

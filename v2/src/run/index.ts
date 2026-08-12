@@ -29,7 +29,8 @@ export interface RunRecord {
   readonly cleanupPending?: boolean | undefined;
   readonly cleanupOwnerProcessId?: number | undefined;
   readonly presenter: "cmux";
-  readonly presentedWorkspaceName: string;
+  readonly presentationId: string;
+  readonly presenterHandle?: string | undefined;
   readonly workspaceDirectory: string;
   readonly repositories: readonly string[];
   readonly pendingRepository?: string | undefined;
@@ -156,7 +157,7 @@ export type DispatchReservation =
 
 type PresentationReconciliation =
   | { readonly type: "unchanged" }
-  | { readonly type: "running" }
+  | { readonly type: "running"; readonly workspace: PresentedWorkspace }
   | {
       readonly type: "failed";
       readonly reason: "provisioning-interrupted" | "workspace-missing";
@@ -287,9 +288,14 @@ export class RunModule {
             return current;
           }
           transitioned = true;
+          const events =
+            current.state === "provisioning"
+              ? [...current.events, { event: "running", timestamp: new Date().toISOString() }]
+              : current.events;
           return {
             ...current,
-            events: [...current.events, { event: "running", timestamp: new Date().toISOString() }],
+            events,
+            presenterHandle: reconciliation.workspace.presenterHandle,
             provisioningOwner: undefined,
             state: "running",
           };
@@ -388,7 +394,7 @@ export class RunModule {
       };
     }
     try {
-      await launchAgent({
+      const presentation = await launchAgent({
         acquiredRepositories: input.acquiredRepositories,
         branch: input.branch,
         environment: this.#environment,
@@ -417,6 +423,7 @@ export class RunModule {
           return {
             ...current,
             events: [...current.events, { event: "running", timestamp: new Date().toISOString() }],
+            presenterHandle: presentation.presenterHandle,
             provisioningOwner: undefined,
             state: "running",
           };
@@ -441,7 +448,10 @@ export class RunModule {
             };
           },
         });
-        await this.#presenter.close({ name: launchRecord.presentedWorkspaceName });
+        await this.#presenter.close({
+          presentationId: launchRecord.presentationId,
+          presenterHandle: launchRecord.presenterHandle,
+        });
       } catch (closeError) {
         throw new AggregateError(
           [launchError, closeError],
@@ -590,7 +600,8 @@ export class RunModule {
       });
     }
     await this.#presenter.setStatus?.({
-      name: reservation.record.presentedWorkspaceName,
+      presentationId: reservation.record.presentationId,
+      presenterHandle: reservation.record.presenterHandle,
       text: "running",
     });
     return new RunningRunHandle({ module: this, record: reservation.record });
@@ -611,7 +622,8 @@ export class RunModule {
     });
     if (input.priorRecord.outcome !== undefined) {
       await this.#presenter.setStatus?.({
-        name: input.priorRecord.presentedWorkspaceName,
+        presentationId: input.priorRecord.presentationId,
+        presenterHandle: input.priorRecord.presenterHandle,
         text: input.priorRecord.outcome,
       });
     }
@@ -737,7 +749,10 @@ export class RunModule {
     readonly record: Readonly<RunRecord>;
   }): Promise<string | undefined> {
     requireState({ record: input.record, state: "running" });
-    return await this.#presenter.accessHint({ name: input.record.presentedWorkspaceName });
+    return await this.#presenter.accessHint({
+      presentationId: input.record.presentationId,
+      presenterHandle: input.record.presenterHandle,
+    });
   }
 
   public async setPresentedStatus(input: { readonly record: Readonly<RunRecord> }): Promise<void> {
@@ -745,7 +760,8 @@ export class RunModule {
       throw new Error(`run ${input.record.runId} is not complete`);
     }
     await this.#presenter.setStatus?.({
-      name: input.record.presentedWorkspaceName,
+      presentationId: input.record.presentationId,
+      presenterHandle: input.record.presenterHandle,
       text: input.record.outcome,
     });
   }
@@ -753,7 +769,10 @@ export class RunModule {
   public async closePresentedWorkspace(input: {
     readonly record: Readonly<RunRecord>;
   }): Promise<void> {
-    await this.#presenter.close({ name: input.record.presentedWorkspaceName });
+    await this.#presenter.close({
+      presentationId: input.record.presentationId,
+      presenterHandle: input.record.presenterHandle,
+    });
   }
 }
 
@@ -787,7 +806,7 @@ class RunStore {
           artifacts: [],
           canonicalTaskId: input.canonicalTaskId,
           events: [{ event: "provisioning", timestamp: new Date().toISOString() }],
-          presentedWorkspaceName: `groundcrew:${input.canonicalTaskId}`,
+          presentationId: mintPresentationId(),
           presenter: "cmux",
           provisioningOwner: { phase: "preparing", processId: process.pid },
           repositories: input.repositories,
@@ -1222,6 +1241,10 @@ export function mintRunId(): string {
   return `r_${randomBytes(4).toString("hex")}`;
 }
 
+function mintPresentationId(): string {
+  return `p_${randomBytes(16).toString("hex")}`;
+}
+
 export function completedRunRefusal(input: {
   readonly runId: string;
   readonly canonicalTaskId: string;
@@ -1303,7 +1326,7 @@ async function launchAgent(input: {
   readonly task: LaunchTask;
   readonly branch: string;
   readonly acquiredRepositories: readonly string[];
-}): Promise<void> {
+}): Promise<PresentedWorkspace> {
   const { environment, record } = input;
   const presenter = createPresenter({ environment, name: input.presenterName });
   const prompt = renderPrompt({
@@ -1322,7 +1345,7 @@ async function launchAgent(input: {
       (entry): entry is [string, string] => entry[1] !== undefined,
     ),
   );
-  await presenter.open({
+  return await presenter.open({
     command: composeAgentCommand({ profile: input.profile, prompt }),
     displayName: presenterWorkspaceName({ canonicalTaskId: record.canonicalTaskId }),
     environment: {
@@ -1330,7 +1353,7 @@ async function launchAgent(input: {
       GROUNDCREW_TASK_ID: record.canonicalTaskId,
       GROUNDCREW_WORKSPACE: record.workspaceDirectory,
     },
-    name: record.presentedWorkspaceName,
+    presentationId: record.presentationId,
     status: "running",
     workingDirectory: record.workspaceDirectory,
   });
@@ -1476,9 +1499,12 @@ function classifyPresentationReconciliation(input: {
     return { type: "unchanged" };
   }
   const record = input.run.record;
-  const presented = isPresented({ record, workspaces: probe.workspaces });
+  const presented = findPresented({ record, workspaces: probe.workspaces });
   if (record.state === "provisioning" && presented) {
-    return { type: "running" };
+    return { type: "running", workspace: presented };
+  }
+  if (presented !== undefined && record.presenterHandle !== presented.presenterHandle) {
+    return { type: "running", workspace: presented };
   }
   if (presented || (record.state === "provisioning" && provisioningOwnerIsAlive({ record }))) {
     return { type: "unchanged" };
@@ -1493,12 +1519,15 @@ function isPresented(input: {
   readonly record: Readonly<RunRecord>;
   readonly workspaces: readonly PresentedWorkspace[];
 }): boolean {
-  const { record } = input;
-  return input.workspaces.some(
-    (workspace) =>
-      workspace.name === record.presentedWorkspaceName ||
-      workspace.description === record.presentedWorkspaceName ||
-      workspace.description === `groundcrew:${record.canonicalTaskId}`,
+  return findPresented(input) !== undefined;
+}
+
+function findPresented(input: {
+  readonly record: Readonly<RunRecord>;
+  readonly workspaces: readonly PresentedWorkspace[];
+}): PresentedWorkspace | undefined {
+  return input.workspaces.find(
+    (workspace) => workspace.presentationId === input.record.presentationId,
   );
 }
 

@@ -306,6 +306,9 @@ describe("crew start", () => {
     expect(result.stdout).toContain("Started fixture:ENG-123");
     expect(run.state).toBe("running");
     expect(run.runId).toMatch(/^r_[0-9a-f]{8}$/);
+    expect(run.presentationId).toMatch(/^p_[0-9a-f]{32}$/);
+    expect(run.presenterHandle).toBe("workspace-1");
+    expect(run).not.toHaveProperty("presentedWorkspaceName");
     expect(marker).toEqual({
       branch: "crew/fixture-eng-123",
       canonicalTaskId: "fixture:ENG-123",
@@ -317,12 +320,14 @@ describe("crew start", () => {
     expect(calls.at(-1).arguments).toContain("running");
     const launchArguments = calls.find((call) => call.arguments[0] === "new-workspace").arguments;
     expect(launchArguments[launchArguments.indexOf("--name") + 1]).toBe("eng-123");
+    expect(launchArguments).not.toContain("--description");
     const command = launchArguments[launchArguments.indexOf("--command") + 1];
     expect(command).toContain("codex");
     expect(command).toContain('model_reasoning_effort="high"');
     expect(command).toContain("Task: fixture:ENG-123");
     expect(command).toContain("crew continue");
     expect(launchArguments).toContain("GROUNDCREW_TASK_ID=fixture:ENG-123");
+    expect(launchArguments).toContain(`GROUNDCREW_PRESENTATION_ID=${run.presentationId}`);
     expect(launchArguments).toContain(
       `GROUNDCREW_CONFIG=${fixture.environment["GROUNDCREW_CONFIG"]}`,
     );
@@ -403,9 +408,12 @@ describe("crew start", () => {
     ).toBe(true);
   });
 
-  it("cleans a run using the lowercase task ID shown by cmux", async () => {
+  it("cleans a run after its cmux title is edited", async () => {
     const fixture = await createDispatchFixture();
     await runCrew({ arguments: ["start"], environment: fixture.environment });
+    const cmuxState = JSON.parse(await readFile(fixture.cmuxStatePath, "utf8"));
+    cmuxState.workspaces[0].title = "personal-label";
+    await writeFile(fixture.cmuxStatePath, JSON.stringify(cmuxState));
 
     const result = await runCrew({
       arguments: ["cleanup", "eng-123"],

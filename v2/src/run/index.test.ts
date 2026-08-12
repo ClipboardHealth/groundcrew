@@ -348,24 +348,13 @@ describe("RunModule lifecycle", () => {
     await expect(runs.findBySlug({ slug: "fixture-eng-123" })).resolves.toBeUndefined();
   });
 
-  it("reconciles Run state from one presented Workspace probe", async () => {
+  it("recovers a presenter handle after creation wins the durable launch race", async () => {
     const stateRoot = await mkdtemp(join(tmpdir(), "groundcrew-v2-run-reconcile-"));
     const presentedWorkspaceStatePath = join(stateRoot, "presented-workspaces.json");
     const presenterCallsPath = join(stateRoot, "presenter-calls.jsonl");
     const fakeBin = join(process.cwd(), "e2e", "fixtures", "fake-bin");
     await Promise.all([
-      writeFile(
-        presentedWorkspaceStatePath,
-        JSON.stringify({
-          workspaces: [
-            {
-              description: "groundcrew:fixture:ENG-123",
-              id: "workspace-1",
-              title: "eng-123",
-            },
-          ],
-        }),
-      ),
+      writeFile(presentedWorkspaceStatePath, '{"workspaces":[]}'),
       writeFile(presenterCallsPath, ""),
     ]);
     const runs = new RunModule({
@@ -384,6 +373,18 @@ describe("RunModule lifecycle", () => {
       repositories: [],
       workspaceDirectory: join(stateRoot, "workspace"),
     });
+    await writeFile(
+      presentedWorkspaceStatePath,
+      JSON.stringify({
+        workspaces: [
+          {
+            environment: { GROUNDCREW_PRESENTATION_ID: provisioning.record.presentationId },
+            id: "workspace-1",
+            title: "a user-edited-title",
+          },
+        ],
+      }),
+    );
 
     const started = await runs.reconcilePresentedWorkspace({
       run: provisioning,
@@ -399,7 +400,7 @@ describe("RunModule lifecycle", () => {
     });
 
     expect(started).toMatchObject({
-      run: { record: { state: "running" }, state: "running" },
+      run: { record: { presenterHandle: "workspace-1", state: "running" }, state: "running" },
       type: "running",
     });
     expect(failed).toMatchObject({
@@ -555,7 +556,13 @@ describe("RunModule lifecycle", () => {
       state: "running",
     });
     expect(JSON.parse(await readFile(presentedWorkspaceStatePath, "utf8"))).toMatchObject({
-      workspaces: [{ description: "groundcrew:fixture:ENG-123" }],
+      workspaces: [
+        {
+          environment: {
+            GROUNDCREW_PRESENTATION_ID: provisioning.record.presentationId,
+          },
+        },
+      ],
     });
   });
 
@@ -625,7 +632,13 @@ describe("RunModule lifecycle", () => {
       transitioned: true,
     });
     expect(JSON.parse(await readFile(presentedWorkspaceStatePath, "utf8"))).toMatchObject({
-      workspaces: [{ description: "groundcrew:fixture:ENG-123" }],
+      workspaces: [
+        {
+          environment: {
+            GROUNDCREW_PRESENTATION_ID: provisioning.record.presentationId,
+          },
+        },
+      ],
     });
   });
 
@@ -756,18 +769,7 @@ describe("RunModule lifecycle", () => {
     const presenterCallsPath = join(stateRoot, "presenter-calls.jsonl");
     const fakeBin = join(process.cwd(), "e2e", "fixtures", "fake-bin");
     await Promise.all([
-      writeFile(
-        presentedWorkspaceStatePath,
-        JSON.stringify({
-          workspaces: [
-            {
-              description: "groundcrew:fixture:ENG-123",
-              id: "workspace-1",
-              title: "eng-123",
-            },
-          ],
-        }),
-      ),
+      writeFile(presentedWorkspaceStatePath, '{"workspaces":[]}'),
       writeFile(presenterCallsPath, ""),
     ]);
     const workspaceDirectory = join(stateRoot, "workspace");
@@ -789,6 +791,18 @@ describe("RunModule lifecycle", () => {
       repositories: [],
       workspaceDirectory,
     });
+    await writeFile(
+      presentedWorkspaceStatePath,
+      JSON.stringify({
+        workspaces: [
+          {
+            environment: { GROUNDCREW_PRESENTATION_ID: provisioning.record.presentationId },
+            id: "workspace-1",
+            title: "edited-title",
+          },
+        ],
+      }),
+    );
     await runs.reconcilePresentedWorkspace({
       run: provisioning,
       snapshot: await runs.capturePresentedWorkspaces(),
@@ -946,18 +960,7 @@ describe("RunModule concurrency", () => {
     const presenterCallsPath = join(stateRoot, "presenter-calls.jsonl");
     const fakeBin = join(process.cwd(), "e2e", "fixtures", "fake-bin");
     await Promise.all([
-      writeFile(
-        presentedWorkspaceStatePath,
-        JSON.stringify({
-          workspaces: [
-            {
-              description: "groundcrew:fixture:ENG-123",
-              id: "workspace-1",
-              title: "eng-123",
-            },
-          ],
-        }),
-      ),
+      writeFile(presentedWorkspaceStatePath, '{"workspaces":[]}'),
       writeFile(presenterCallsPath, ""),
     ]);
     const runs = new RunModule({
@@ -976,6 +979,18 @@ describe("RunModule concurrency", () => {
       repositories: ["owner/sample"],
       workspaceDirectory: join(stateRoot, "workspace"),
     });
+    await writeFile(
+      presentedWorkspaceStatePath,
+      JSON.stringify({
+        workspaces: [
+          {
+            environment: { GROUNDCREW_PRESENTATION_ID: provisioning.record.presentationId },
+            id: "workspace-1",
+            title: "edited-title",
+          },
+        ],
+      }),
+    );
     const reconciled = await runs.reconcilePresentedWorkspace({
       run: provisioning,
       snapshot: await runs.capturePresentedWorkspaces(),
