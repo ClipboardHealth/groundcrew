@@ -14,7 +14,9 @@ Four nouns form the model:
   or ticket. Artifacts are reported claims, never inferred Git facts.
 
 The **presented workspace** is the cmux surface that hosts an interactive agent. A presenter
-reports surface existence, not process liveness. **Observed facts** come from Git;
+reports surface existence, not process liveness. A Run owns an immutable, presenter-neutral
+presentation ID and may store an opaque presenter handle; the human-editable title is never an
+identity. **Observed facts** come from Git;
 **reported claims** come from the run record; **source facts** come from source processes.
 Status keeps those layers separate.
 

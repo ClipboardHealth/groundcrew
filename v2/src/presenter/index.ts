@@ -4,19 +4,18 @@ import { z } from "zod";
 
 const WORKSPACE_VISIBILITY_ATTEMPTS = 40;
 const WORKSPACE_VISIBILITY_INTERVAL_MILLISECONDS = 50;
+const PRESENTATION_ID_ENVIRONMENT_KEY = "GROUNDCREW_PRESENTATION_ID";
 
 const WorkspaceListSchema = z.object({
   workspaces: z.array(
     z.object({
       id: z.string(),
-      title: z.string(),
-      description: z.string().nullable().optional(),
     }),
   ),
 });
 
 export interface PresenterOpenInput {
-  readonly name: string;
+  readonly presentationId: string;
   readonly displayName?: string | undefined;
   readonly workingDirectory: string;
   readonly command: readonly string[];
@@ -25,20 +24,26 @@ export interface PresenterOpenInput {
 }
 
 export interface PresentedWorkspace {
-  readonly name: string;
-  readonly description?: string | undefined;
+  readonly presentationId: string;
+  readonly presenterHandle: string;
+}
+
+export interface PresentationTarget {
+  readonly presentationId: string;
+  readonly presenterHandle?: string | undefined;
 }
 
 export interface Presenter {
-  open(input: PresenterOpenInput): Promise<void>;
+  open(input: PresenterOpenInput): Promise<PresentedWorkspace>;
   probe(): Promise<{
     readonly available: boolean;
     readonly workspaces: readonly PresentedWorkspace[];
   }>;
-  close(input: { readonly name: string }): Promise<void>;
-  accessHint(input: { readonly name: string }): Promise<string | undefined>;
+  close(input: PresentationTarget): Promise<void>;
+  accessHint(input: PresentationTarget): Promise<string | undefined>;
   setStatus?(input: {
-    readonly name: string;
+    readonly presentationId: string;
+    readonly presenterHandle?: string | undefined;
     readonly text: string;
     readonly color?: string | undefined;
   }): Promise<void>;
@@ -58,29 +63,32 @@ export class CmuxPresenter implements Presenter {
     this.#environment = input.environment;
   }
 
-  public async open(input: PresenterOpenInput): Promise<void> {
+  public async open(input: PresenterOpenInput): Promise<PresentedWorkspace> {
     const arguments_ = [
       "new-workspace",
       "--name",
-      input.displayName ?? input.name,
-      "--description",
-      `groundcrew:${input.environment["GROUNDCREW_TASK_ID"] ?? input.name}`,
+      input.displayName ?? input.presentationId,
       "--cwd",
       input.workingDirectory,
       "--command",
       input.command.map(shellQuote).join(" "),
     ];
-    for (const [key, value] of Object.entries(input.environment)) {
+    const workspaceEnvironment = {
+      ...input.environment,
+      [PRESENTATION_ID_ENVIRONMENT_KEY]: input.presentationId,
+    };
+    for (const [key, value] of Object.entries(workspaceEnvironment)) {
       arguments_.push("--env", `${key}=${value}`);
     }
     const result = await execa("cmux", arguments_, { env: this.#environment, reject: false });
     if (result.exitCode !== 0) {
       throw new Error(result.stderr.trim() || "cmux failed to create workspace");
     }
-    const workspace = await this.waitUntilVisible({ name: input.name });
+    const workspace = await this.waitUntilVisible({ presentationId: input.presentationId });
     if (input.status !== undefined) {
-      await this.setWorkspaceStatus({ text: input.status, workspaceId: workspace.id });
+      await this.setWorkspaceStatus({ text: input.status, workspaceId: workspace.presenterHandle });
     }
+    return workspace;
   }
 
   public async probe(): Promise<{
@@ -91,47 +99,59 @@ export class CmuxPresenter implements Presenter {
     if (workspaces === undefined) {
       return { available: false, workspaces: [] };
     }
+    const presentations = await Promise.all(
+      workspaces.map(
+        async (workspace) => await this.readPresentation({ presenterHandle: workspace.id }),
+      ),
+    );
+    if (presentations.some((presentation) => !presentation.available)) {
+      return { available: false, workspaces: [] };
+    }
     return {
       available: true,
-      workspaces: workspaces.map((workspace) => ({
-        description: workspace.description ?? undefined,
-        name: workspace.title,
-      })),
+      workspaces: presentations.flatMap((presentation) =>
+        presentation.workspace === undefined ? [] : [presentation.workspace],
+      ),
     };
   }
 
-  public async close(input: { readonly name: string }): Promise<void> {
-    const workspace = await this.resolve({ name: input.name });
+  public async close(input: PresentationTarget): Promise<void> {
+    const workspace = await this.resolve(input);
     if (workspace === undefined) {
       return;
     }
-    const result = await execa("cmux", ["close-workspace", "--workspace", workspace.id], {
-      env: this.#environment,
-      reject: false,
-    });
+    const result = await execa(
+      "cmux",
+      ["close-workspace", "--workspace", workspace.presenterHandle],
+      {
+        env: this.#environment,
+        reject: false,
+      },
+    );
     if (result.exitCode !== 0) {
       throw new Error(result.stderr.trim() || "cmux close failed");
     }
   }
 
-  public async accessHint(input: { readonly name: string }): Promise<string | undefined> {
-    const workspace = await this.resolve({ name: input.name });
-    return workspace === undefined ? undefined : `cmux workspace ${workspace.id}`;
+  public async accessHint(input: PresentationTarget): Promise<string | undefined> {
+    const workspace = await this.resolve(input);
+    return workspace === undefined ? undefined : `cmux workspace ${workspace.presenterHandle}`;
   }
 
   public async setStatus(input: {
-    readonly name: string;
+    readonly presentationId: string;
+    readonly presenterHandle?: string | undefined;
     readonly text: string;
     readonly color?: string | undefined;
   }): Promise<void> {
-    const workspace = await this.resolve({ name: input.name });
+    const workspace = await this.resolve(input);
     if (workspace === undefined) {
       return;
     }
     await this.setWorkspaceStatus({
       color: input.color,
       text: input.text,
-      workspaceId: workspace.id,
+      workspaceId: workspace.presenterHandle,
     });
   }
 
@@ -154,37 +174,67 @@ export class CmuxPresenter implements Presenter {
   }
 
   private async waitUntilVisible(input: {
-    readonly name: string;
-  }): Promise<{ readonly id: string; readonly title: string }> {
-    let previousWorkspaceId: string | undefined;
+    readonly presentationId: string;
+  }): Promise<PresentedWorkspace> {
+    let previousPresenterHandle: string | undefined;
     for (let attempt = 0; attempt < WORKSPACE_VISIBILITY_ATTEMPTS; attempt += 1) {
       // cmux may acknowledge creation before the workspace reaches its list API.
       // eslint-disable-next-line no-await-in-loop
       const workspace = await this.resolve(input);
-      if (workspace !== undefined && workspace.id === previousWorkspaceId) {
+      if (workspace !== undefined && workspace.presenterHandle === previousPresenterHandle) {
         return workspace;
       }
-      previousWorkspaceId = workspace?.id;
+      previousPresenterHandle = workspace?.presenterHandle;
       // eslint-disable-next-line no-await-in-loop
       await delay(WORKSPACE_VISIBILITY_INTERVAL_MILLISECONDS);
     }
-    throw new Error(`cmux workspace ${input.name} did not become visible after creation`);
+    throw new Error(
+      `cmux presentation ${input.presentationId} did not become visible after creation`,
+    );
   }
 
-  private async resolve(input: {
-    readonly name: string;
-  }): Promise<{ readonly id: string; readonly title: string } | undefined> {
-    const workspaces = await this.listWorkspaces();
-    return workspaces?.find(
-      (workspace) => workspace.title === input.name || workspace.description === input.name,
-    );
+  private async resolve(input: PresentationTarget): Promise<PresentedWorkspace | undefined> {
+    if (input.presenterHandle !== undefined) {
+      const workspaces = await this.listWorkspaces();
+      if (workspaces?.some((workspace) => workspace.id === input.presenterHandle)) {
+        return {
+          presentationId: input.presentationId,
+          presenterHandle: input.presenterHandle,
+        };
+      }
+    }
+    const probe = await this.probe();
+    return probe.workspaces.find((workspace) => workspace.presentationId === input.presentationId);
+  }
+
+  private async readPresentation(input: { readonly presenterHandle: string }): Promise<{
+    readonly available: boolean;
+    readonly workspace?: PresentedWorkspace | undefined;
+  }> {
+    const result = await execa("cmux", ["workspace", "env", input.presenterHandle], {
+      env: { ...this.#environment, CMUX_QUIET: "1" },
+      reject: false,
+    });
+    if (result.exitCode !== 0) {
+      return { available: false };
+    }
+    const prefix = `${PRESENTATION_ID_ENVIRONMENT_KEY}=`;
+    const entry = result.stdout.split("\n").find((line) => line.startsWith(prefix));
+    return {
+      available: true,
+      workspace:
+        entry === undefined
+          ? undefined
+          : {
+              presentationId: entry.slice(prefix.length),
+              presenterHandle: input.presenterHandle,
+            },
+    };
   }
 
   private async listWorkspaces(): Promise<
     | readonly {
         readonly id: string;
-        readonly title: string;
-        readonly description?: string | null | undefined;
       }[]
     | undefined
   > {

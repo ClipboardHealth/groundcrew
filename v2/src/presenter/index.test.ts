@@ -53,25 +53,22 @@ describe("cmux presenter conformance", () => {
 });
 
 async function exercisePresenter(input: { readonly name: string; readonly presenter: Presenter }) {
-  await input.presenter.open({
+  const presentation = await input.presenter.open({
     command: ["/usr/bin/true"],
+    displayName: input.name,
     environment: { GROUNDCREW_TASK_ID: `conformance:${input.name}` },
-    name: input.name,
+    presentationId: input.name,
     workingDirectory: process.cwd(),
   });
   try {
     const opened = await input.presenter.probe();
     expect(opened.available).toBe(true);
-    expect(opened.workspaces).toEqual(
-      expect.arrayContaining([expect.objectContaining({ name: input.name })]),
-    );
-    expect(await input.presenter.accessHint({ name: input.name })).toContain("workspace");
-    await input.presenter.setStatus?.({ name: input.name, text: "running" });
+    expect(opened.workspaces).toEqual(expect.arrayContaining([presentation]));
+    expect(await input.presenter.accessHint(presentation)).toContain("workspace");
+    await input.presenter.setStatus?.({ ...presentation, text: "running" });
   } finally {
-    await input.presenter.close({ name: input.name });
+    await input.presenter.close(presentation);
   }
   const closed = await input.presenter.probe();
-  expect(closed.workspaces).not.toEqual(
-    expect.arrayContaining([expect.objectContaining({ name: input.name })]),
-  );
+  expect(closed.workspaces).not.toEqual(expect.arrayContaining([presentation]));
 }
