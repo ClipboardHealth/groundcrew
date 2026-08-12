@@ -64,6 +64,12 @@ if (command === "new-workspace") {
   process.stdout.write(JSON.stringify({ workspaces: state.workspaces }));
 } else if (command === "workspace" && arguments_[0] === "env") {
   const workspace = state.workspaces.find(({ id }) => id === arguments_[1]);
+  if (process.env.FAKE_CMUX_DELETE_BEFORE_ENV_READ === workspace?.id) {
+    state.workspaces = state.workspaces.filter(({ id }) => id !== workspace.id);
+    await writeFile(statePath, JSON.stringify(state));
+    process.stderr.write(`workspace not found: ${arguments_[1]}\n`);
+    process.exit(1);
+  }
   if (workspace === undefined) {
     process.stderr.write(`workspace not found: ${arguments_[1]}\n`);
     process.exit(1);

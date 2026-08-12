@@ -44,6 +44,35 @@ describe("cmux presenter conformance", () => {
     await expect(presenter.probe()).resolves.toEqual({ available: false, workspaces: [] });
   });
 
+  it("stays available when a listed workspace disappears before its environment is read", async () => {
+    const root = await mkdtemp(join(tmpdir(), "groundcrew-presenter-disappearing-workspace-"));
+    const statePath = join(root, "state.json");
+    const fakeBin = join(process.cwd(), "e2e", "fixtures", "fake-bin");
+    await writeFile(
+      statePath,
+      JSON.stringify({
+        workspaces: [
+          {
+            environment: { GROUNDCREW_PRESENTATION_ID: "presentation-1" },
+            id: "workspace-1",
+            title: "workspace",
+          },
+        ],
+      }),
+    );
+    const presenter = new CmuxPresenter({
+      environment: {
+        ...process.env,
+        FAKE_CMUX_CALLS: join(root, "calls.jsonl"),
+        FAKE_CMUX_DELETE_BEFORE_ENV_READ: "workspace-1",
+        FAKE_CMUX_STATE: statePath,
+        PATH: `${fakeBin}:${process.env["PATH"]}`,
+      },
+    });
+
+    await expect(presenter.probe()).resolves.toEqual({ available: true, workspaces: [] });
+  });
+
   it.runIf(process.env["GROUNDCREW_LIVE_CMUX"] === "1")("conforms through live cmux", async () => {
     await exercisePresenter({
       name: `crew-conformance-live-${process.pid}`,

@@ -104,8 +104,18 @@ export class CmuxPresenter implements Presenter {
         async (workspace) => await this.readPresentation({ presenterHandle: workspace.id }),
       ),
     );
-    if (presentations.some((presentation) => !presentation.available)) {
-      return { available: false, workspaces: [] };
+    const unreadWorkspaces = workspaces.filter(
+      (_, index) => presentations[index]?.available === false,
+    );
+    if (unreadWorkspaces.length > 0) {
+      const currentWorkspaces = await this.listWorkspaces();
+      if (currentWorkspaces === undefined) {
+        return { available: false, workspaces: [] };
+      }
+      const currentPresenterHandles = new Set(currentWorkspaces.map((workspace) => workspace.id));
+      if (unreadWorkspaces.some((workspace) => currentPresenterHandles.has(workspace.id))) {
+        return { available: false, workspaces: [] };
+      }
     }
     return {
       available: true,
