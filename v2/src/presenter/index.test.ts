@@ -1,3 +1,4 @@
+import { execa } from "execa";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -71,6 +72,28 @@ describe("cmux presenter conformance", () => {
     });
 
     await expect(presenter.probe()).resolves.toEqual({ available: true, workspaces: [] });
+  });
+
+  it("reports an already-missing workspace through the fake cmux process", async () => {
+    const root = await mkdtemp(join(tmpdir(), "groundcrew-presenter-missing-workspace-"));
+    const fakeCmux = join(process.cwd(), "e2e", "fixtures", "fake-bin", "cmux");
+    const statePath = join(root, "state.json");
+    await writeFile(
+      statePath,
+      JSON.stringify({ workspaces: [{ environment: {}, id: "workspace-2", title: "other" }] }),
+    );
+
+    const result = await execa(fakeCmux, ["workspace", "env", "workspace-1"], {
+      env: {
+        ...process.env,
+        FAKE_CMUX_CALLS: join(root, "calls.jsonl"),
+        FAKE_CMUX_STATE: statePath,
+      },
+      reject: false,
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toBe("workspace not found: workspace-1");
   });
 
   it.runIf(process.env["GROUNDCREW_LIVE_CMUX"] === "1")("conforms through live cmux", async () => {
