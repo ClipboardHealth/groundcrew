@@ -452,6 +452,15 @@ describe("crew start", () => {
       JSON.parse(await readFile(join(fixture.runsDirectory, "fixture-active-1.json"), "utf8")),
     ).toMatchObject({ state: "running" });
     expect(JSON.parse(await readFile(fixture.cmuxStatePath, "utf8")).workspaces).toHaveLength(1);
+    const cmuxCalls = (await readFile(fixture.cmuxCallsPath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(cmuxCalls.map((call) => call.arguments)).toContainEqual([
+      "workspace",
+      "close",
+      "workspace-1",
+    ]);
   });
 
   it("requires exactly one cleanup selector", async () => {
