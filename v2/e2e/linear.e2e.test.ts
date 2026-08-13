@@ -1,12 +1,13 @@
 import { execFile } from "node:child_process";
 import { createServer } from "node:http";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const execFileAsync = promisify(execFile);
+const fixtureRoots: string[] = [];
 
 describe("the shipped Linear source", () => {
   let fixture: Awaited<ReturnType<typeof createLinearFixture>>;
@@ -17,6 +18,57 @@ describe("the shipped Linear source", () => {
 
   afterEach(async () => {
     await fixture.close();
+    await Promise.all(
+      fixtureRoots.splice(0).map(async (root) => await rm(root, { force: true, recursive: true })),
+    );
+  });
+
+  it("uses portable CA stores when the runtime build default cannot validate Linear", async () => {
+    const shimDirectory = await mkdtemp(join(tmpdir(), "groundcrew-v2-linear-node-shim-"));
+    fixtureRoots.push(shimDirectory);
+    const shimInvocationPath = join(shimDirectory, "invocation");
+    await writeFile(
+      join(shimDirectory, "node"),
+      [
+        "#!/bin/sh",
+        'printf \'%s\\n\' "$*" > "$NODE_SHIM_INVOCATION_PATH"',
+        'case " $* " in *" --use-bundled-ca "*) ;; *) printf \'%s\\n\' \'{"ok":false,"error":{"message":"bundled CA store not enabled"}}\'; exit 0 ;; esac',
+        'case " $* " in *" --use-system-ca "*) ;; *) printf \'%s\\n\' \'{"ok":false,"error":{"message":"system CA store not enabled"}}\'; exit 0 ;; esac',
+        'exec "$REAL_NODE_PATH" "$@"',
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const doctor = await runCrew({
+      arguments: ["doctor"],
+      environment: {
+        ...fixture.environment,
+        PATH: `${shimDirectory}:${fixture.environment["PATH"]}`,
+        REAL_NODE_PATH: process.execPath,
+        NODE_SHIM_INVOCATION_PATH: shimInvocationPath,
+      },
+    });
+
+    expect(doctor.stdout).toContain("live list probe: healthy (1 tasks)");
+    const shimInvocation = await readFile(shimInvocationPath, "utf8");
+    expect(shimInvocation).toContain("--use-bundled-ca");
+    expect(shimInvocation).toContain("--use-system-ca");
+  });
+
+  it("reports the underlying network cause when Linear cannot be reached", async () => {
+    const refusalPort = await closedLoopbackPort();
+    const result = await runLinearList({
+      environment: {
+        ...fixture.environment,
+        LINEAR_API_URL: `http://127.0.0.1:${refusalPort}/graphql`,
+      },
+    });
+
+    expect(JSON.parse(result.stdout)).toEqual({
+      error: { message: expect.stringContaining("ECONNREFUSED") },
+      ok: false,
+    });
   });
 
   it("probes, claims, comments, moves, and completes through the process protocol", async () => {
@@ -351,6 +403,7 @@ async function createLinearFixture(
     throw new Error("test server did not bind TCP");
   }
   const root = await mkdtemp(join(tmpdir(), "groundcrew-v2-linear-"));
+  fixtureRoots.push(root);
   const configPath = join(root, "crew.config.jsonc");
   const fakeBin = join(process.cwd(), "e2e", "fixtures", "fake-bin");
   await Promise.all([
@@ -393,6 +446,23 @@ async function createLinearFixture(
     },
     state,
   };
+}
+
+async function closedLoopbackPort(): Promise<number> {
+  const server = createServer();
+  await new Promise<void>((resolvePromise) => {
+    server.listen(0, "127.0.0.1", resolvePromise);
+  });
+  const address = server.address();
+  await new Promise<void>((resolvePromise, reject) => {
+    server.close((error) => {
+      error ? reject(error) : resolvePromise();
+    });
+  });
+  if (address === null || typeof address === "string") {
+    throw new Error("refusal server did not bind TCP");
+  }
+  return address.port;
 }
 
 function linearIssue(input: {
