@@ -1,12 +1,13 @@
 import { execFile } from "node:child_process";
 import { createServer } from "node:http";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const execFileAsync = promisify(execFile);
+const fixtureRoots: string[] = [];
 
 describe("the shipped Linear source", () => {
   let fixture: Awaited<ReturnType<typeof createLinearFixture>>;
@@ -17,6 +18,50 @@ describe("the shipped Linear source", () => {
 
   afterEach(async () => {
     await fixture.close();
+    await Promise.all(
+      fixtureRoots.splice(0).map(async (root) => await rm(root, { force: true, recursive: true })),
+    );
+  });
+
+  it("uses portable CA stores when the runtime build default cannot validate Linear", async () => {
+    const shimDirectory = await mkdtemp(join(tmpdir(), "groundcrew-v2-linear-node-shim-"));
+    fixtureRoots.push(shimDirectory);
+    await writeFile(
+      join(shimDirectory, "node"),
+      [
+        "#!/bin/sh",
+        'case " $* " in *" --use-bundled-ca "*) ;; *) printf \'%s\\n\' \'{"ok":false,"error":{"message":"bundled CA store not enabled"}}\'; exit 0 ;; esac',
+        'case " $* " in *" --use-system-ca "*) ;; *) printf \'%s\\n\' \'{"ok":false,"error":{"message":"system CA store not enabled"}}\'; exit 0 ;; esac',
+        'exec "$REAL_NODE_PATH" "$@"',
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const doctor = await runCrew({
+      arguments: ["doctor"],
+      environment: {
+        ...fixture.environment,
+        PATH: `${shimDirectory}:${fixture.environment["PATH"]}`,
+        REAL_NODE_PATH: process.execPath,
+      },
+    });
+
+    expect(doctor.stdout).toContain("live list probe: healthy (1 tasks)");
+  });
+
+  it("reports the underlying network cause when Linear cannot be reached", async () => {
+    const result = await runLinearList({
+      environment: {
+        ...fixture.environment,
+        LINEAR_API_URL: "http://127.0.0.1:65535/graphql",
+      },
+    });
+
+    expect(JSON.parse(result.stdout)).toEqual({
+      error: { message: expect.stringContaining("ECONNREFUSED") },
+      ok: false,
+    });
   });
 
   it("probes, claims, comments, moves, and completes through the process protocol", async () => {

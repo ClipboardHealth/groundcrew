@@ -27,9 +27,21 @@ export async function run(input) {
     process.stdout.write(`${JSON.stringify({ data, ok: true })}\n`);
   } catch (error) {
     process.stdout.write(
-      `${JSON.stringify({ error: { message: error instanceof Error ? error.message : String(error) }, ok: false })}\n`,
+      `${JSON.stringify({ error: { message: errorMessage(error) }, ok: false })}\n`,
     );
   }
+}
+
+function errorMessage(error) {
+  if (!(error instanceof Error)) {
+    return String(error);
+  }
+  const cause = error.cause;
+  if (!(cause instanceof Error)) {
+    return error.message;
+  }
+  const code = "code" in cause && typeof cause.code === "string" ? ` (${cause.code})` : "";
+  return `${error.message}: ${cause.message}${code}`;
 }
 
 async function listTasks() {
