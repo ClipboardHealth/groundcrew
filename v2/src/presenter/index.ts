@@ -130,14 +130,10 @@ export class CmuxPresenter implements Presenter {
     if (workspace === undefined) {
       return;
     }
-    const result = await execa(
-      "cmux",
-      ["close-workspace", "--workspace", workspace.presenterHandle],
-      {
-        env: this.#environment,
-        reject: false,
-      },
-    );
+    const result = await execa("cmux", ["workspace", "close", workspace.presenterHandle], {
+      env: this.#environment,
+      reject: false,
+    });
     if (result.exitCode !== 0) {
       throw new Error(result.stderr.trim() || "cmux close failed");
     }

@@ -26,7 +26,7 @@ describe("cmux presenter conformance", () => {
     const calls = await readFile(callsPath, "utf8");
     expect(calls).toContain("new-workspace");
     expect(calls).toContain("set-progress");
-    expect(calls).toContain("close-workspace");
+    expect(calls).toContain('"workspace","close"');
   });
 
   it("reports malformed cmux output as unavailable", async () => {

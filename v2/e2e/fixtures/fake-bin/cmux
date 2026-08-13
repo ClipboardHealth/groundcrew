@@ -82,8 +82,8 @@ if (command === "new-workspace") {
       .map(([key, value]) => `${key}=${value}`)
       .join("\n"),
   );
-} else if (command === "close-workspace") {
-  const id = valueAfter("--workspace");
+} else if (command === "workspace" && arguments_[0] === "close") {
+  const id = arguments_[1];
   if (process.env.FAKE_CMUX_FAIL_CLOSE === "1") {
     process.stderr.write("fake cmux close failure\n");
     process.exit(1);
