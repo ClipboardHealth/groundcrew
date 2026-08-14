@@ -110,6 +110,31 @@ describe("the shipped Linear source", () => {
     expect(fixture.state.comments.at(-1)).toContain(":completed:failed]");
   });
 
+  it("preserves a terminal issue when delivered completion writeback settles", async () => {
+    fixture.state.stateName = "Done";
+    fixture.state.stateType = "completed";
+
+    const result = await runLinearUpdate({
+      environment: fixture.environment,
+      payload: {
+        event: {
+          artifacts: [],
+          message: "Delivered after the issue reached Done.",
+          outcome: "delivered",
+          runId: "r_00112233",
+          type: "completed",
+        },
+        id: "LIN-1",
+      },
+    });
+
+    expect(JSON.parse(result.stdout)).toEqual({ data: { result: "ok" }, ok: true });
+    expect(fixture.state.moveRequests).toEqual([]);
+    expect(fixture.state.stateName).toBe("Done");
+    expect(fixture.state.stateType).toBe("completed");
+    expect(fixture.state.comments.at(-1)).toContain("[groundcrew:r_00112233:completed:delivered]");
+  });
+
   it("leaves a delivered run unchanged when In Review is unavailable", async () => {
     await fixture.close();
     fixture = await createLinearFixture({ includeInReviewState: false });
