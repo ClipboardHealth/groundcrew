@@ -131,6 +131,9 @@ async function updateTask(input) {
     .filter(Boolean)
     .join("\n\n");
   await addCommentOnce({ issue, marker: completionMarker, text });
+  if (["completed", "canceled", "duplicate"].includes(issue.state?.type)) {
+    return { result: "ok" };
+  }
   if (input.event.outcome === "delivered") {
     await moveIssue({
       allowMissing: true,
