@@ -85,7 +85,7 @@
     "@types/node": "25.9.5",
     "@typescript/native-preview": "7.0.0-dev.20260707.2",
     "@vitest/coverage-v8": "4.1.10",
-    "dependency-cruiser": "18.1.1",
+    "dependency-cruiser": "18.2.0",
     "husky": "9.1.7",
     "jscpd": "5.0.14",
     "knip": "6.32.2",

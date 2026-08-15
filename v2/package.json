@@ -32,7 +32,7 @@
     "@tsconfig/node24": "24.0.4",
     "@tsconfig/strictest": "2.0.8",
     "@types/node": "24.13.3",
-    "dependency-cruiser": "18.1.1",
+    "dependency-cruiser": "18.2.0",
     "oxfmt": "0.62.0",
     "typescript": "7.0.2",
     "vitest": "4.1.10"
