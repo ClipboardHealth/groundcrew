@@ -24,6 +24,7 @@ describe("bundled Clearance allowlist", () => {
 
     expect(actual).toEqual(
       expect.arrayContaining([
+        "*.grok.com",
         "api.x.ai",
         "auth.x.ai",
         "console.x.ai",

@@ -159,7 +159,6 @@ function grokHomeWritePaths(input: {
   if (inferAgentCommandName(input.definition.cmd) !== "grok") {
     return [];
   }
-  // Grok Build reads $GROK_HOME, else ~/.grok.
   const configured = readEnvironmentVariable("GROK_HOME");
   const grokHome =
     configured !== undefined && configured.length > 0

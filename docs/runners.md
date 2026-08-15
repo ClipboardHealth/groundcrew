@@ -82,7 +82,7 @@ local: {
 },
 ```
 
-Groundcrew's bundled Clearance allowlist covers `api.x.ai`, `auth.x.ai`, `console.x.ai`, `docs.x.ai`, `grok.com`, and `x.ai`. Add more with `CLEARANCE_ALLOW_HOSTS` / `CLEARANCE_ALLOW_HOSTS_FILES` if a later Grok release needs them, or set `local.networkEgress: "open"`.
+Groundcrew's bundled Clearance allowlist covers `auth.x.ai`, `api.x.ai`, `*.grok.com` (including `cli-chat-proxy.grok.com`), `grok.com`, and `x.ai`. Add more with `CLEARANCE_ALLOW_HOSTS` / `CLEARANCE_ALLOW_HOSTS_FILES` if a later Grok release needs them, or set `local.networkEgress: "open"`.
 
 There is no reviewed Docker Sandboxes kit for Grok Build. Leave `sandbox` unset on the `grok` profile.
 
