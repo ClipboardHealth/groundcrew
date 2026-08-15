@@ -89,7 +89,10 @@ export function composeAgentLaunch(input: {
   try {
     return {
       command: buildLaunchCommand({
-        definition: input.definition,
+        definition: withGrokHomeEnvPass({
+          definition: input.definition,
+          runner: input.runner,
+        }),
         promptFile: input.promptFile,
         worktreeDir: input.worktreeDir,
         workingDir: input.workingDir,
@@ -165,6 +168,27 @@ function grokHomeWritePaths(input: {
       ? expandHome(configured)
       : path.join(input.homeDir, ".grok");
   return existsSync(grokHome) ? [grokHome] : [];
+}
+
+function withGrokHomeEnvPass(input: {
+  definition: AgentDefinition;
+  runner: LocalRunner;
+}): AgentDefinition {
+  if (input.runner !== "safehouse") {
+    return input.definition;
+  }
+  if (inferAgentCommandName(input.definition.cmd) !== "grok") {
+    return input.definition;
+  }
+  const configured = readEnvironmentVariable("GROK_HOME");
+  if (configured === undefined || configured.length === 0) {
+    return input.definition;
+  }
+  const existing = input.definition.preLaunchEnv ?? [];
+  if (existing.includes("GROK_HOME")) {
+    return input.definition;
+  }
+  return { ...input.definition, preLaunchEnv: [...existing, "GROK_HOME"] };
 }
 
 function safehouseAgentIntegrationFor(input: {

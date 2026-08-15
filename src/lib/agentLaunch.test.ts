@@ -403,6 +403,7 @@ describe(composeAgentLaunch, () => {
     });
 
     expect(launchCommand).toContain(grokHome);
+    expect(launchCommand).toContain("GROK_HOME");
   });
 
   it("does not grant a missing Grok home", () => {

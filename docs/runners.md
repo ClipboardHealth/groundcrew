@@ -71,7 +71,7 @@ Groundcrew's bundled Clearance allowlist covers Pi's startup service, Anthropic,
 
 ## Grok on Safehouse
 
-Safehouse 0.11.1 has no `grok.sb` profile. Groundcrew still wraps `grok` through Safehouse and grants the Grok home (`$GROK_HOME` when set, otherwise `~/.grok`) as writable `--add-dirs` on the agent wrap. That grant is required so `auth.json` and per-cwd sessions stay readable and writable. It also exposes host Grok plugins, hooks, and credentials to the sandbox. Authenticate on the host first. Prefer this grant over relocating `GROK_HOME` into a temp dir: `crew resume` needs the real session store.
+Safehouse 0.11.1 has no `grok.sb` profile. Groundcrew still wraps `grok` through Safehouse and grants the Grok home (`$GROK_HOME` when set, otherwise `~/.grok`) as writable `--add-dirs` on the agent wrap. That grant is required so `auth.json` and per-cwd sessions stay readable and writable. It also exposes host Grok plugins, hooks, credentials, and sessions to the sandbox. Use it only with repositories whose project-local Grok resources you trust. Authenticate on the host first. When `GROK_HOME` is set, Groundcrew also forwards that name into the Safehouse agent wrap so Grok reads the granted directory. Prefer this grant over relocating `GROK_HOME` into a temp dir: `crew resume` needs the real session store. An ephemeral home would drop the previous conversation.
 
 If `command -v grok` resolves outside `~/.grok/bin`, add that prefix to `local.readOnlyDirs` so Safehouse can read the binary:
 
