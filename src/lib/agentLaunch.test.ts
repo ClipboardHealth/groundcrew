@@ -388,6 +388,7 @@ describe(composeAgentLaunch, () => {
     });
 
     expect(launchCommand).toContain(grokHome);
+    expect(launchCommand).not.toMatch(/--env-pass=[^\s']*GROK_HOME/);
   });
 
   it("grants GROK_HOME when it is set and exists", () => {
@@ -418,6 +419,38 @@ describe(composeAgentLaunch, () => {
     });
 
     expect(launchCommand).not.toContain(missing);
+  });
+
+  it("does not duplicate GROK_HOME when preLaunchEnv already lists it", () => {
+    const grokHome = path.join(fakeHome, "custom-grok-home");
+    mkdirSync(grokHome, { recursive: true });
+    setEnvironmentVariable("GROK_HOME", grokHome);
+
+    const launchCommand = compose({
+      definition: definition({
+        cmd: "grok --sandbox off --always-approve --no-plan",
+        color: "#CA8A04",
+        preLaunchEnv: ["GROK_HOME"],
+      }),
+    });
+
+    expect(launchCommand.match(/GROK_HOME/g)).toHaveLength(1);
+  });
+
+  it("does not forward GROK_HOME when the runner is not safehouse", () => {
+    const grokHome = path.join(fakeHome, "custom-grok-home");
+    mkdirSync(grokHome, { recursive: true });
+    setEnvironmentVariable("GROK_HOME", grokHome);
+
+    const launchCommand = compose({
+      runner: "none",
+      definition: definition({
+        cmd: "grok --sandbox off --always-approve --no-plan",
+        color: "#CA8A04",
+      }),
+    });
+
+    expect(launchCommand).not.toMatch(/--env-pass=[^\s']*GROK_HOME/);
   });
 
   it("warns when clearance reports unreviewed cmux Claude wrapper env names", () => {
