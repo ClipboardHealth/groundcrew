@@ -64,9 +64,10 @@ export default {
     default: "claude",
     // `definitions` is the enabled launch profile set. Built-in keys can use
     // `{}` to opt into the shipped command/color/usage preset. Add
-    // `codex: {}`, `cursor: {}`, `"cursor-grok": {}`, or `pi: {}` for the other
-    // shipped agents (`cursor` runs Cursor's composer-2.5, `cursor-grok` runs
-    // grok-4.5). Pi authenticates only the selected model's provider; see
+    // `codex: {}`, `cursor: {}`, `"cursor-grok": {}`, `grok: {}`, or `pi: {}`
+    // for the other shipped agents (`cursor` runs Cursor's composer-2.5,
+    // `cursor-grok` runs grok-4.5 through Cursor, `grok` is native Grok Build).
+    // Pi authenticates only the selected model's provider; see
     // docs/credentials.md#pi-provider-authentication.
     // Agent names are launch profiles: add custom entries such as `claude-fable`
     // or `claude-opus` to pin a model per task, then tag tasks with `agent-<name>`.
@@ -75,6 +76,7 @@ export default {
       // codex: {},
       // cursor: {},
       // "cursor-grok": {},
+      // grok: {},
       // pi: {},
       // "claude-fable": {
       //   cmd: "claude --model claude-fable-5 --permission-mode auto",

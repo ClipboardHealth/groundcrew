@@ -81,6 +81,7 @@ vi.mock(import("./cmuxAgentHookInstall.ts"), async (importOriginal) => {
 
 const ORIGINAL_CMUX_SOCKET_PATH = readEnvironmentVariable("CMUX_SOCKET_PATH");
 const ORIGINAL_CODEX_HOME = readEnvironmentVariable("CODEX_HOME");
+const ORIGINAL_GROK_HOME = readEnvironmentVariable("GROK_HOME");
 
 function restoreEnvironmentVariable(name: string, originalValue: string | undefined): void {
   if (originalValue === undefined) {
@@ -154,12 +155,14 @@ describe(composeAgentLaunch, () => {
     });
     deleteEnvironmentVariable("CMUX_SOCKET_PATH");
     deleteEnvironmentVariable("CODEX_HOME");
+    deleteEnvironmentVariable("GROK_HOME");
   });
 
   afterEach(() => {
     vi.resetAllMocks();
     restoreEnvironmentVariable("CMUX_SOCKET_PATH", ORIGINAL_CMUX_SOCKET_PATH);
     restoreEnvironmentVariable("CODEX_HOME", ORIGINAL_CODEX_HOME);
+    restoreEnvironmentVariable("GROK_HOME", ORIGINAL_GROK_HOME);
     rmSync(fakeHome, { recursive: true, force: true });
     for (const configDir of stagedConfigDirs) {
       rmSync(path.dirname(configDir), { recursive: true, force: true });
@@ -371,6 +374,49 @@ describe(composeAgentLaunch, () => {
     expect(agentWrap).toContain(
       "--add-dirs='/work/repo-a-team-1:/tmp/repo-a.git:/Users/dev/v:/Users/dev/v/.tasks'",
     );
+  });
+
+  it("grants the default Grok home to the safehouse agent wrap", () => {
+    const grokHome = path.join(fakeHome, ".grok");
+    mkdirSync(grokHome, { recursive: true });
+
+    const launchCommand = compose({
+      definition: definition({
+        cmd: "grok --sandbox off --always-approve --no-plan",
+        color: "#CA8A04",
+      }),
+    });
+
+    expect(launchCommand).toContain(grokHome);
+  });
+
+  it("grants GROK_HOME when it is set and exists", () => {
+    const grokHome = path.join(fakeHome, "custom-grok-home");
+    mkdirSync(grokHome, { recursive: true });
+    setEnvironmentVariable("GROK_HOME", grokHome);
+
+    const launchCommand = compose({
+      definition: definition({
+        cmd: "grok --sandbox off --always-approve --no-plan",
+        color: "#CA8A04",
+      }),
+    });
+
+    expect(launchCommand).toContain(grokHome);
+  });
+
+  it("does not grant a missing Grok home", () => {
+    const missing = path.join(fakeHome, "missing-grok-home");
+    setEnvironmentVariable("GROK_HOME", missing);
+
+    const launchCommand = compose({
+      definition: definition({
+        cmd: "grok --sandbox off --always-approve --no-plan",
+        color: "#CA8A04",
+      }),
+    });
+
+    expect(launchCommand).not.toContain(missing);
   });
 
   it("warns when clearance reports unreviewed cmux Claude wrapper env names", () => {

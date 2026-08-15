@@ -84,4 +84,8 @@ Set `workspaceKind: "zellij"` to run agents as tabs in a shared `groundcrew` zel
 
 ## Agent CLI Must Accept A Positional Prompt
 
-The handoff is `<your cmd> "<prompt>"`. `claude`, `codex`, `cursor-agent`, and `pi` all support this.
+The handoff is `<your cmd> "<prompt>"`. `claude`, `codex`, `cursor-agent`, `grok`, and `pi` all support this.
+
+## Grok Build Runs Unattended
+
+The shipped `grok` command is `grok --sandbox off --always-approve --no-plan`. `--sandbox off` leaves isolation to the Groundcrew runner. `--always-approve` skips tool-permission prompts. `--no-plan` blocks Grok plan mode, which waits for a human even under always-approve. Override `agents.definitions.grok.cmd` to restore prompts or plan mode. `grok` is the native Grok Build CLI. `cursor-grok` is Cursor's CLI running a Grok model.

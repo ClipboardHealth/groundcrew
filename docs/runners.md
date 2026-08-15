@@ -69,6 +69,23 @@ Safehouse's Pi profile exposes the real `~/.pi` state read/write, so use it only
 
 Groundcrew's bundled Clearance allowlist covers Pi's startup service, Anthropic, OpenAI, and their subscription-authentication hosts. Pi supports many additional providers; add the selected provider's hosts with `CLEARANCE_ALLOW_HOSTS` / `CLEARANCE_ALLOW_HOSTS_FILES`, or explicitly choose `local.networkEgress: "open"`.
 
+## Grok on Safehouse
+
+Safehouse 0.11.1 has no `grok.sb` profile. Groundcrew still wraps `grok` through Safehouse and grants the Grok home (`$GROK_HOME` when set, otherwise `~/.grok`) as writable `--add-dirs` on the agent wrap. That grant is required so `auth.json` and per-cwd sessions stay readable and writable. It also exposes host Grok plugins, hooks, and credentials to the sandbox. Authenticate on the host first. Prefer this grant over relocating `GROK_HOME` into a temp dir: `crew resume` needs the real session store.
+
+If `command -v grok` resolves outside `~/.grok/bin`, add that prefix to `local.readOnlyDirs` so Safehouse can read the binary:
+
+```ts
+local: {
+  runner: "safehouse",
+  readOnlyDirs: ["~/.config/tfenv", "~/.local/bin"],
+},
+```
+
+Groundcrew's bundled Clearance allowlist covers `api.x.ai`, `auth.x.ai`, `console.x.ai`, `docs.x.ai`, `grok.com`, and `x.ai`. Add more with `CLEARANCE_ALLOW_HOSTS` / `CLEARANCE_ALLOW_HOSTS_FILES` if a later Grok release needs them, or set `local.networkEgress: "open"`.
+
+There is no reviewed Docker Sandboxes kit for Grok Build. Leave `sandbox` unset on the `grok` profile.
+
 ## Docker Sandboxes Setup
 
 `sdx` does not support `unsandboxedHooks`. The sdx container has no

@@ -314,8 +314,8 @@ describe("crew init", () => {
     });
 
     it("rejects unsupported agent values", async () => {
-      await expect(initConfigCli(["--agent", "grok"])).rejects.toThrow(
-        /--agent must be one of claude, codex, cursor, pi/,
+      await expect(initConfigCli(["--agent", "banana"])).rejects.toThrow(
+        /--agent must be one of claude, codex, cursor, grok, pi/,
       );
     });
 
@@ -353,6 +353,24 @@ describe("crew init", () => {
       expect(actual).toContain('default: "cursor"');
       expect(actual).toContain("cursor: {}");
       expect(actual).not.toContain("// cursor: {}");
+    });
+
+    it("supports grok-only quickstart config", async () => {
+      await initConfigCli([
+        "--global",
+        "--project-dir",
+        "~/dev",
+        "--repo",
+        "OWNER/REPO",
+        "--agent",
+        "grok",
+      ]);
+
+      const destination = path.join(xdgHome, "groundcrew", "crew.config.ts");
+      const actual = readFileSync(destination, "utf8");
+      expect(actual).toContain('default: "grok"');
+      expect(actual).toContain("grok: {}");
+      expect(actual).not.toContain("// grok: {}");
     });
 
     it("rejects --global and --local passed together", async () => {

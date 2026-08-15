@@ -18,6 +18,21 @@ describe("bundled Clearance allowlist", () => {
       expect.arrayContaining(["auth.openai.com", "claude.ai", "console.anthropic.com", "pi.dev"]),
     );
   });
+
+  it("allows Grok Build authentication and inference hosts", () => {
+    const actual = readFileSync(bundledClearanceAllowHostsFile(), "utf8").split("\n");
+
+    expect(actual).toEqual(
+      expect.arrayContaining([
+        "api.x.ai",
+        "auth.x.ai",
+        "console.x.ai",
+        "docs.x.ai",
+        "grok.com",
+        "x.ai",
+      ]),
+    );
+  });
 });
 
 describe(clearanceAllowHostsFilesValue, () => {
