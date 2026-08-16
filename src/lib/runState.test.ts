@@ -468,4 +468,95 @@ describe("run state store", () => {
       state: "running",
     });
   });
+
+  describe("token usage", () => {
+    const usage = {
+      inputTokens: 11,
+      cacheCreationInputTokens: 22,
+      cacheReadInputTokens: 33,
+      outputTokens: 44,
+      messages: 5,
+    };
+
+    function seed(): void {
+      recordRunState({
+        config,
+        state: {
+          task: "TEAM-9",
+          repository: "repo-a",
+          agent: "claude",
+          worktreeDir: "/work/repo-a-team-9",
+          branchName: "dev-team-9",
+          workspaceName: "team-9",
+          state: "running",
+        },
+      });
+    }
+
+    it("round-trips through a write and a read", () => {
+      // The parser builds RunState field by field, so a field it forgets is
+      // written to disk and silently dropped on the way back.
+      seed();
+      updateRunState({ config, task: "TEAM-9", patch: { state: "running", usage } });
+
+      expect(readRunState(config, "TEAM-9")?.usage).toStrictEqual(usage);
+    });
+
+    it("survives a lifecycle transition that does not mention it", () => {
+      seed();
+      updateRunState({ config, task: "TEAM-9", patch: { state: "running", usage } });
+
+      updateRunState({ config, task: "TEAM-9", patch: { state: "interrupted" } });
+
+      expect(readRunState(config, "TEAM-9")?.usage).toStrictEqual(usage);
+    });
+
+    it("survives a resume that rebuilds the record", () => {
+      // recordRunState reconstructs the state rather than spreading it, so the
+      // counts have to be carried forward explicitly.
+      seed();
+      updateRunState({ config, task: "TEAM-9", patch: { state: "running", usage } });
+
+      recordRunState({
+        config,
+        state: {
+          task: "TEAM-9",
+          repository: "repo-a",
+          agent: "claude",
+          worktreeDir: "/work/repo-a-team-9",
+          branchName: "dev-team-9",
+          workspaceName: "team-9",
+          state: "resumed",
+          resumeCount: 1,
+        },
+      });
+
+      expect(readRunState(config, "TEAM-9")?.usage).toStrictEqual(usage);
+    });
+
+    it("is absent rather than zero when nothing was recorded", () => {
+      // Consumers must be able to tell "no transcript" from "cost nothing".
+      seed();
+
+      expect(readRunState(config, "TEAM-9")?.usage).toBeUndefined();
+    });
+
+    it("reads a malformed total on disk as zeroes rather than failing the record", () => {
+      seed();
+      const statePath = runStatePath(config, "TEAM-9");
+      const onDisk: unknown = JSON.parse(readFileSync(statePath, "utf8"));
+      writeFileSync(
+        statePath,
+        JSON.stringify({ ...(onDisk as object), usage: { outputTokens: "lots" } }),
+      );
+
+      expect(readRunState(config, "TEAM-9")?.usage).toStrictEqual({
+        inputTokens: 0,
+        cacheCreationInputTokens: 0,
+        cacheReadInputTokens: 0,
+        outputTokens: 0,
+        messages: 0,
+      });
+    });
+  });
 });

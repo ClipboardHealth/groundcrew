@@ -1,6 +1,7 @@
 import {
   addTokenUsage,
   emptyTokenUsage,
+  parseTokenUsage,
   sumTranscriptUsage,
   type TokenUsage,
   transcriptPathFromHookPayload,
@@ -188,5 +189,49 @@ describe(addTokenUsage, () => {
     const usage = sumTranscriptUsage(assistantLine({ id: "m1", outputTokens: 4 }));
 
     expect(addTokenUsage(usage, emptyTokenUsage())).toStrictEqual(usage);
+  });
+});
+
+describe(parseTokenUsage, () => {
+  it("reads a persisted total back", () => {
+    const usage: TokenUsage = {
+      inputTokens: 1,
+      cacheCreationInputTokens: 2,
+      cacheReadInputTokens: 3,
+      outputTokens: 4,
+      messages: 5,
+    };
+
+    expect(parseTokenUsage(JSON.parse(JSON.stringify(usage)))).toStrictEqual(usage);
+  });
+
+  it.each([
+    ["undefined", undefined],
+    ["null", null],
+    ["a number", 42],
+    ["a string", "usage"],
+    ["an array", [1, 2, 3]],
+  ])("returns undefined for %s, so absent stays distinguishable from zero", (_label, value) => {
+    expect(parseTokenUsage(value)).toBeUndefined();
+  });
+
+  it("zeroes fields that are missing or the wrong type rather than rejecting the record", () => {
+    // A record that fails to parse would lose every count; a field that fails to
+    // parse should lose only itself.
+    expect(parseTokenUsage({ outputTokens: 7, inputTokens: "many", messages: null })).toStrictEqual(
+      {
+        inputTokens: 0,
+        cacheCreationInputTokens: 0,
+        cacheReadInputTokens: 0,
+        outputTokens: 7,
+        messages: 0,
+      } satisfies TokenUsage,
+    );
+  });
+
+  it("round-trips whatever sumTranscriptUsage produced", () => {
+    const summed = sumTranscriptUsage(assistantLine({ id: "m1", inputTokens: 9, outputTokens: 2 }));
+
+    expect(parseTokenUsage(JSON.parse(JSON.stringify(summed)))).toStrictEqual(summed);
   });
 });

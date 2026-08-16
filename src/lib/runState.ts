@@ -5,7 +5,7 @@ import { writeJsonAtomic } from "./atomicJson.ts";
 
 import type { ResolvedConfig } from "./config.ts";
 import { normalizePlainTaskId } from "./taskId.ts";
-import type { TokenUsage } from "./tokenUsage.ts";
+import { parseTokenUsage, type TokenUsage } from "./tokenUsage.ts";
 
 export type RunLifecycleState =
   | "provisioning"
@@ -129,6 +129,31 @@ function isValidResumeCount(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 0;
 }
 
+/**
+ * The fields that are absent rather than defaulted. Split out of parseRunState
+ * so that adding one does not push that function past the complexity ceiling,
+ * and so "absent" keeps meaning absent rather than a zero value.
+ */
+function optionalFields(value: Record<string, unknown>): Partial<RunState> {
+  const reason = stringField(value, "reason");
+  const detail = stringField(value, "detail");
+  const title = stringField(value, "title");
+  const url = stringField(value, "url");
+  const completionTaskId = stringField(value, "completionTaskId");
+  const adoptedBranch = value["adoptedBranch"] === true ? true : undefined;
+  const usage = parseTokenUsage(value["usage"]);
+
+  return {
+    ...(reason === undefined ? {} : { reason }),
+    ...(detail === undefined ? {} : { detail }),
+    ...(title === undefined ? {} : { title }),
+    ...(url === undefined ? {} : { url }),
+    ...(completionTaskId === undefined ? {} : { completionTaskId }),
+    ...(adoptedBranch === undefined ? {} : { adoptedBranch }),
+    ...(usage === undefined ? {} : { usage }),
+  };
+}
+
 function parseRunState(value: unknown): RunState | undefined {
   if (!isPlainObject(value)) {
     return undefined;
@@ -142,12 +167,6 @@ function parseRunState(value: unknown): RunState | undefined {
   const { state, resumeCount } = value;
   const createdAt = stringField(value, "createdAt");
   const updatedAt = stringField(value, "updatedAt");
-  const reason = stringField(value, "reason");
-  const detail = stringField(value, "detail");
-  const title = stringField(value, "title");
-  const url = stringField(value, "url");
-  const completionTaskId = stringField(value, "completionTaskId");
-  const adoptedBranch = value["adoptedBranch"] === true ? true : undefined;
   if (
     task === undefined ||
     repository === undefined ||
@@ -173,12 +192,7 @@ function parseRunState(value: unknown): RunState | undefined {
     createdAt,
     updatedAt,
     resumeCount,
-    ...(reason === undefined ? {} : { reason }),
-    ...(detail === undefined ? {} : { detail }),
-    ...(title === undefined ? {} : { title }),
-    ...(url === undefined ? {} : { url }),
-    ...(completionTaskId === undefined ? {} : { completionTaskId }),
-    ...(adoptedBranch === undefined ? {} : { adoptedBranch }),
+    ...optionalFields(value),
   };
 }
 
@@ -200,16 +214,40 @@ export function readRunState(config: ResolvedConfig, task: string): RunState | u
   }
 }
 
+/**
+ * Fields a caller may omit that must survive the transition anyway.
+ *
+ * Resume and interrupt callers do not know the title or url, so they fall back
+ * to what is already on disk. Token counts go further: they are only ever
+ * accumulated by `record-usage` and never supplied by a dispatch caller, so
+ * they come from disk alone. Rebuilding the record without them silently resets
+ * a task's spend to zero.
+ */
+function carriedFields(fields: {
+  input: RunStateDraft;
+  existing: RunState | undefined;
+}): Partial<RunState> {
+  const { input, existing } = fields;
+  const title = input.title ?? existing?.title;
+  const url = input.url ?? existing?.url;
+  const completionTaskId = input.completionTaskId ?? existing?.completionTaskId;
+  const adoptedBranch = input.adoptedBranch ?? existing?.adoptedBranch;
+  const usage = existing?.usage;
+
+  return {
+    ...(input.reason === undefined ? {} : { reason: input.reason }),
+    ...(input.detail === undefined ? {} : { detail: input.detail }),
+    ...(title === undefined ? {} : { title }),
+    ...(url === undefined ? {} : { url }),
+    ...(completionTaskId === undefined ? {} : { completionTaskId }),
+    ...(adoptedBranch === undefined ? {} : { adoptedBranch }),
+    ...(usage === undefined ? {} : { usage }),
+  };
+}
+
 export function recordRunState(input: RecordRunStateInput): RunState {
   const existing = readRunState(input.config, input.state.task);
   const timestamp = nowIso();
-  // Resume/interrupt callers don't know the title or url, so they omit
-  // them. Fall back to the on-disk value so cached display fields survive
-  // transitions.
-  const title = input.state.title ?? existing?.title;
-  const url = input.state.url ?? existing?.url;
-  const completionTaskId = input.state.completionTaskId ?? existing?.completionTaskId;
-  const adoptedBranch = input.state.adoptedBranch ?? existing?.adoptedBranch;
   const state: RunState = {
     task: taskKey(input.state.task),
     repository: input.state.repository,
@@ -221,12 +259,7 @@ export function recordRunState(input: RecordRunStateInput): RunState {
     createdAt: existing?.createdAt ?? timestamp,
     updatedAt: timestamp,
     resumeCount: input.state.resumeCount ?? existing?.resumeCount ?? 0,
-    ...(input.state.reason === undefined ? {} : { reason: input.state.reason }),
-    ...(input.state.detail === undefined ? {} : { detail: input.state.detail }),
-    ...(title === undefined ? {} : { title }),
-    ...(url === undefined ? {} : { url }),
-    ...(completionTaskId === undefined ? {} : { completionTaskId }),
-    ...(adoptedBranch === undefined ? {} : { adoptedBranch }),
+    ...carriedFields({ input: input.state, existing }),
   };
   writeState(input.config, state);
   return state;

@@ -133,6 +133,28 @@ export function sumTranscriptUsage(transcript: string): TokenUsage {
   return total;
 }
 
+/**
+ * Read a persisted total back off disk.
+ *
+ * Lives here rather than in the run state parser so that the field names exist
+ * in exactly one place: a reader that drifts from the writer loses counts
+ * silently, which is the failure this function is guarding against.
+ */
+export function parseTokenUsage(value: unknown): TokenUsage | undefined {
+  const usage = asRecord(value);
+  if (usage === undefined) {
+    return undefined;
+  }
+
+  return {
+    inputTokens: count(usage["inputTokens"]),
+    cacheCreationInputTokens: count(usage["cacheCreationInputTokens"]),
+    cacheReadInputTokens: count(usage["cacheReadInputTokens"]),
+    outputTokens: count(usage["outputTokens"]),
+    messages: count(usage["messages"]),
+  };
+}
+
 /** Fold a resumed session's counts into the ones already recorded. */
 export function addTokenUsage(left: TokenUsage, right: TokenUsage): TokenUsage {
   return {
