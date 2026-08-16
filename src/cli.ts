@@ -6,6 +6,7 @@ import { doctor } from "./commands/doctor.ts";
 import { initConfigCli } from "./commands/init.ts";
 import { interruptWorkspaceCli } from "./commands/interruptWorkspace.ts";
 import { openWorkspaceCli } from "./commands/openWorkspace.ts";
+import { recordUsageCli } from "./commands/recordUsage.ts";
 import { orchestrate } from "./commands/orchestrator.ts";
 import { resumeWorkspaceCli } from "./commands/resumeWorkspace.ts";
 import { setupWorkspaceCli } from "./commands/setupWorkspace.ts";
@@ -187,6 +188,12 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
     summary: "List, get, create, and complete tasks across configured sources",
     usage: "<list|get|create|done|validate> [...]",
     invoke: taskCli,
+  },
+  "record-usage": {
+    summary: "Record an agent session's token usage against a task",
+    usage: "--task <task> [--transcript <path>]",
+    hidden: true,
+    invoke: recordUsageCli,
   },
   status: {
     summary: "Print read-only groundcrew state, or one task's local/Linear status",

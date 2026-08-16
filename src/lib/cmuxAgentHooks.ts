@@ -37,7 +37,15 @@ export function buildCmuxAgentHookSettings(input: { agent: string }): CmuxAgentH
 
   const hooks: Record<string, readonly CmuxAgentHookGroup[]> = {};
   for (const phase of phases) {
-    hooks[phase.event] = [{ hooks: [{ type: "command", command: setProgressCommand(phase) }] }];
+    const commands: CmuxAgentHookCommand[] = [
+      { type: "command", command: setProgressCommand(phase) },
+    ];
+
+    if (phase.event === "SessionEnd") {
+      commands.push({ type: "command", command: recordUsageCommand() });
+    }
+
+    hooks[phase.event] = [{ hooks: commands }];
   }
 
   return { hooks };
@@ -57,4 +65,23 @@ function setProgressCommand(phase: CmuxAgentHookPhase): string {
   const setProgress = `"\${CMUX_BUNDLED_CLI_PATH:-cmux}" set-progress ${phase.value} --label ${shellSingleQuote(phase.label)} --workspace "$CMUX_WORKSPACE_ID" >/dev/null 2>&1 || true`;
 
   return `if [ -n "$CMUX_WORKSPACE_ID" ]; then ${setProgress}; fi`;
+}
+
+/**
+ * Record the session's token usage once the agent is finished with it.
+ *
+ * Claude hands a hook `{"transcript_path":..}` on stdin, and the transcript
+ * already carries a `usage` block per assistant message, so the counts cost
+ * nothing extra to collect. `groundcrew record-usage` reads that payload and
+ * folds the totals into the task's run state, which is what makes cost per task
+ * computable alongside the wall clock and pull request outcome already tracked.
+ *
+ * Guarded on `GROUNDCREW_TASK_ID` and swallowing every failure, matching the
+ * progress hook above: a hook must never be able to break the agent it watches,
+ * and a missing token count is a gap in reporting rather than a broken run.
+ */
+function recordUsageCommand(): string {
+  const record = `groundcrew record-usage --task "$GROUNDCREW_TASK_ID" >/dev/null 2>&1 || true`;
+
+  return `if [ -n "$GROUNDCREW_TASK_ID" ]; then ${record}; fi`;
 }

@@ -5,6 +5,7 @@ import { writeJsonAtomic } from "./atomicJson.ts";
 
 import type { ResolvedConfig } from "./config.ts";
 import { normalizePlainTaskId } from "./taskId.ts";
+import type { TokenUsage } from "./tokenUsage.ts";
 
 export type RunLifecycleState =
   | "provisioning"
@@ -49,6 +50,12 @@ export interface RunState {
    * rather than created by groundcrew. Teardown must preserve such branches.
    */
   adoptedBranch?: boolean;
+  /**
+   * Tokens the agent spent on this task, summed from its session transcripts
+   * and folded across resumes. Absent when the agent reports no transcript, so
+   * consumers must treat missing as unknown rather than as zero.
+   */
+  usage?: TokenUsage;
 }
 
 export interface RunStateDraft {
