@@ -532,7 +532,9 @@ describe("loadConfig", () => {
     await expect(loadConfig()).rejects.toThrow(
       /agents\.definitions\.claude\.sandbox\.template is no longer supported/,
     );
-    await expect(loadConfig()).rejects.toThrow(/sbx create --name groundcrew-<agent>/);
+    await expect(loadConfig()).rejects.toThrow(
+      /for example 'sbx create --name groundcrew-<agent> <agent> <projectDir>'/,
+    );
   });
 
   it("rejects removed per-agent sandbox.kits with migration guidance", async () => {
@@ -857,6 +859,25 @@ describe("loadConfig", () => {
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(
       /agents\.definitions\.claude\.preLaunchEnv\[1\] cannot be a BUILD_SECRET_NAMES entry/,
+    );
+  });
+
+  it("rejects a preLaunchEnv entry that overlaps managed worker environment names", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      configSource({
+        workspace: VALID_WORKSPACE(temporary),
+        agents: {
+          definitions: {
+            claude: { preLaunchEnv: ["SESSION_TOKEN", "GROUNDCREW_TASK_ID"] },
+          },
+        },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(
+      /agents\.definitions\.claude\.preLaunchEnv\[1\] cannot be a managed worker environment name/,
     );
   });
 

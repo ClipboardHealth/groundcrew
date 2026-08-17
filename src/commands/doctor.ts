@@ -25,7 +25,7 @@ import { resolveWorkspaceKind, type WorkspaceResolution } from "../lib/workspace
 // Tokenization stops after this many non-flag tokens. Two is enough to
 // catch wrapper + wrapped CLI commands like `safehouse claude --foo`.
 const MAX_TOKENS_PER_CMD = 2;
-const BUILT_IN_AGENT_NAMES = ["claude", "codex", "cursor", "cursor-grok"] as const;
+const BUILT_IN_AGENT_NAMES = ["claude", "codex", "cursor", "cursor-grok", "pi"] as const;
 
 // Primary CLI binary probed on PATH for each built-in agent. Usually equal to
 // the agent name, but the cursor and cursor-grok presets both launch Cursor's
@@ -35,6 +35,7 @@ const BUILT_IN_AGENT_BINARIES: Record<(typeof BUILT_IN_AGENT_NAMES)[number], str
   codex: "codex",
   cursor: "cursor-agent",
   "cursor-grok": "cursor-agent",
+  pi: "pi",
 };
 
 const CONFIG_SOURCE_LABELS: Record<ConfigSourceKind, string> = {
@@ -246,6 +247,31 @@ function gatherToolTargets(config: ResolvedConfig): ToolCheckTarget[] {
   return [...all].map(([token, hint]) => (hint === undefined ? { token } : { token, hint }));
 }
 
+function preLaunchEnvAdvisories(config: ResolvedConfig): Check[] {
+  const advisories: Check[] = [];
+  for (const [agentName, definition] of Object.entries(config.agents.definitions)) {
+    const names = definition.preLaunchEnv ?? [];
+    if (names.length === 0) {
+      continue;
+    }
+    // The runtime empty-check is spliced only when `preLaunch` is present
+    // (see `hostPreLaunchSourceAndReadPrompt` / `preLaunchPromptAndExec` in
+    // `src/lib/launchCommand.ts`). Without `preLaunch`, forwarded values come
+    // straight from the parent shell and no launch-time guard runs.
+    const warnClause =
+      definition.preLaunch === undefined
+        ? "no preLaunch is set, so empty values are NOT checked at launch"
+        : "empty values are warned at launch";
+    advisories.push({
+      name: `preLaunchEnv: ${agentName}`,
+      ok: true,
+      required: false,
+      hint: `forwards ${names.length} var(s): ${names.join(", ")}. ${warnClause}.`,
+    });
+  }
+  return advisories;
+}
+
 function agentCliHint(agentName: string, token: string): string | undefined {
   if (!isBuiltInAgentName(agentName)) {
     return undefined;
@@ -330,6 +356,8 @@ export async function doctor(): Promise<boolean> {
     checks.push(check);
   }
 
+  checks.push(...preLaunchEnvAdvisories(config));
+
   const usageGatedAgents = gatedAgents(config);
   if (usageGatedAgents.length > 0) {
     const codexbarPath = await which("codexbar");
@@ -372,7 +400,7 @@ function localCapabilityCheck(host: HostCapabilities, resolved: LocalRunner): Ch
       required: false,
       hint: ok
         ? "ready"
-        : "safehouse runner requires macOS with `safehouse` on PATH (install from https://agent-safehouse.dev/)",
+        : "safehouse runner requires macOS with 'safehouse' on PATH (install from https://agent-safehouse.dev/)",
     };
   }
   if (resolved === "sdx") {
@@ -383,7 +411,7 @@ function localCapabilityCheck(host: HostCapabilities, resolved: LocalRunner): Ch
       required: false,
       hint: ok
         ? "ready"
-        : "sdx runner requires `sbx` (Docker Sandboxes) on PATH (install from https://docs.docker.com/ai/sandboxes/)",
+        : "sdx runner requires 'sbx' (Docker Sandboxes) on PATH (install from https://docs.docker.com/ai/sandboxes/)",
     };
   }
   // resolved === "none"

@@ -24,9 +24,9 @@ import {
 } from "./lib/util.ts";
 
 const REMOVED_SANDBOX_COMMAND_MESSAGE = [
-  "`crew sandbox` is no longer supported.",
+  "'crew sandbox' is no longer supported.",
   "Groundcrew now launches agents inside existing sbx sandboxes but does not list, create, regenerate, authenticate, or remove them.",
-  "Use the manual `sbx` workflow in README.md#docker-sandboxes-sdx-setup, then keep `agents.definitions.<agent>.sandbox.agent` in crew.config.ts so launches can address the existing sandbox.",
+  "Use the manual 'sbx' workflow in README.md#docker-sandboxes-sdx-setup, then keep 'agents.definitions.<agent>.sandbox.agent' in crew.config.ts so launches can address the existing sandbox.",
 ].join("\n");
 
 interface PackageMetadata {
@@ -190,7 +190,7 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
   },
   status: {
     summary: "Print read-only groundcrew state, or one task's local/Linear status",
-    usage: "[<task>]",
+    usage: "[<task>] [--json [--local-only]]",
     invoke: statusCli,
   },
   cleanup: {
@@ -204,7 +204,7 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
     invoke: interruptWorkspaceCli,
   },
   interrupt: {
-    summary: "Deprecated alias for `crew stop`",
+    summary: "Deprecated alias for 'crew stop'",
     usage: "<task> [--reason <text>]",
     deprecated: true,
     invoke: async (argv) => {

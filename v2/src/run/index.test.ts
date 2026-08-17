@@ -1,0 +1,1155 @@
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it, vi } from "vitest";
+import {
+  RunModule,
+  seedWorkspaceTrust,
+  taskSlug,
+  withFileLock,
+  type CompletedRun,
+  type RunningRun,
+} from "./index.js";
+
+describe("RunModule lifecycle", () => {
+  it("owns failure transitions and preserves the first terminal outcome", async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), "groundcrew-v2-run-lifecycle-"));
+    const runs = new RunModule({
+      environment: process.env,
+      presenterName: "cmux",
+      stateRoot,
+    });
+    const provisioning = await runs.beginDispatch({
+      agentProfile: "codex",
+      canonicalTaskId: "fixture:ENG-123",
+      repositories: ["sample"],
+      workspaceDirectory: join(stateRoot, "workspace"),
+    });
+
+    const failed = await provisioning.fail({ reason: "prepare-failed:sample" });
+    const repeated = await provisioning.fail({ reason: "workspace-missing" });
+
+    expect(failed).toMatchObject({
+      run: {
+        record: {
+          canonicalTaskId: "fixture:ENG-123",
+          outcome: "failed",
+          reason: "prepare-failed:sample",
+          state: "complete",
+          version: 1,
+          writebackPending: true,
+        },
+        state: "complete",
+      },
+      transitioned: true,
+    });
+    expect(failed.run.record.events.map(({ event }) => event)).toEqual([
+      "provisioning",
+      "complete:failed",
+    ]);
+    expect(repeated).toMatchObject({
+      run: { record: { reason: "prepare-failed:sample" }, state: "complete" },
+      transitioned: false,
+    });
+  });
+
+  it("launches the presented workspace before returning a running Run", async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), "groundcrew-v2-run-launch-"));
+    const presentedWorkspaceStatePath = join(stateRoot, "presented-workspaces.json");
+    const presenterCallsPath = join(stateRoot, "presenter-calls.jsonl");
+    const fakeBin = join(process.cwd(), "e2e", "fixtures", "fake-bin");
+    await Promise.all([
+      writeFile(presentedWorkspaceStatePath, '{"workspaces":[]}'),
+      writeFile(presenterCallsPath, ""),
+    ]);
+    const environment = {
+      ...process.env,
+      FAKE_CMUX_CALLS: presenterCallsPath,
+      FAKE_CMUX_STATE: presentedWorkspaceStatePath,
+      HOME: stateRoot,
+      PATH: `${fakeBin}:${process.env["PATH"]}`,
+    };
+    const workspaceDirectory = join(stateRoot, "workspace");
+    await mkdir(workspaceDirectory);
+    const runs = new RunModule({ environment, presenterName: "cmux", stateRoot });
+    const provisioning = await runs.beginDispatch({
+      agentProfile: "codex",
+      canonicalTaskId: "fixture:ENG-123",
+      repositories: [],
+      workspaceDirectory,
+    });
+
+    const launched = await provisioning.launch({
+      acquiredRepositories: [],
+      branch: "agent/fixture-eng-123",
+      profile: { effort: "high", kind: "codex" },
+      task: {
+        canonicalTaskId: "fixture:ENG-123",
+        repositories: [],
+        title: "Deepen the Run module",
+      },
+    });
+
+    expect(launched).toMatchObject({
+      run: { record: { state: "running" }, state: "running" },
+      transitioned: true,
+    });
+    expect(launched.run.record.events.map(({ event }) => event)).toEqual([
+      "provisioning",
+      "running",
+    ]);
+    expect(await readFile(presenterCallsPath, "utf8")).toContain("new-workspace");
+  });
+
+  it("owns reported Artifacts, completion, and writeback acknowledgement", async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), "groundcrew-v2-run-completion-"));
+    const presentedWorkspaceStatePath = join(stateRoot, "presented-workspaces.json");
+    const presenterCallsPath = join(stateRoot, "presenter-calls.jsonl");
+    const fakeBin = join(process.cwd(), "e2e", "fixtures", "fake-bin");
+    await Promise.all([
+      writeFile(presentedWorkspaceStatePath, '{"workspaces":[]}'),
+      writeFile(presenterCallsPath, ""),
+    ]);
+    const workspaceDirectory = join(stateRoot, "workspace");
+    await mkdir(workspaceDirectory);
+    const runs = new RunModule({
+      environment: {
+        ...process.env,
+        FAKE_CMUX_CALLS: presenterCallsPath,
+        FAKE_CMUX_STATE: presentedWorkspaceStatePath,
+        HOME: stateRoot,
+        PATH: `${fakeBin}:${process.env["PATH"]}`,
+      },
+      presenterName: "cmux",
+      stateRoot,
+    });
+    const provisioning = await runs.beginDispatch({
+      agentProfile: "codex",
+      canonicalTaskId: "fixture:ENG-123",
+      repositories: [],
+      workspaceDirectory,
+    });
+    const launched = await provisioning.launch({
+      acquiredRepositories: [],
+      branch: "agent/fixture-eng-123",
+      profile: { effort: "high", kind: "codex" },
+      task: {
+        canonicalTaskId: "fixture:ENG-123",
+        repositories: [],
+        title: "Deepen the Run module",
+      },
+    });
+
+    const withArtifact = await launched.run.reportArtifact({
+      artifact: { kind: "pull-request", locator: "https://example.test/pull/123" },
+    });
+    let assertedWorkspaceIdle = false;
+    const completed = await withArtifact.finish({
+      assertWorkspaceIdle: async (record) => {
+        assertedWorkspaceIdle = record.workspaceDirectory === workspaceDirectory;
+      },
+      message: "Shipped",
+      outcome: "delivered",
+    });
+    const completion = completed.record.events.at(-1);
+    if (completion === undefined) {
+      throw new Error("completion event missing");
+    }
+
+    await expect(
+      completed.acknowledgeSourceWriteback({
+        expectedCompletionTimestamp: "stale",
+        expectedRunId: completed.record.runId,
+      }),
+    ).rejects.toThrow("stale source writeback acknowledgement");
+    const acknowledged = await completed.acknowledgeSourceWriteback({
+      expectedCompletionTimestamp: completion.timestamp,
+      expectedRunId: completed.record.runId,
+    });
+
+    expect(assertedWorkspaceIdle).toBe(true);
+    expect(completed.record).toMatchObject({
+      artifacts: [{ kind: "pull-request", locator: "https://example.test/pull/123" }],
+      message: "Shipped",
+      outcome: "delivered",
+      state: "complete",
+      writebackPending: true,
+    });
+    expect(completed.record.events.map(({ event }) => event)).toEqual([
+      "provisioning",
+      "running",
+      "artifact-added",
+      "complete:delivered",
+    ]);
+    expect(acknowledged.record.writebackPending).toBe(false);
+  });
+
+  it("stops for cleanup and removes only an acknowledged completed Run", async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), "groundcrew-v2-run-cleanup-"));
+    const runs = new RunModule({
+      environment: process.env,
+      presenterName: "cmux",
+      stateRoot,
+    });
+    const provisioning = await runs.beginDispatch({
+      agentProfile: "codex",
+      canonicalTaskId: "fixture:ENG-123",
+      repositories: [],
+      workspaceDirectory: join(stateRoot, "workspace"),
+    });
+
+    const stopped = await provisioning.stopForCleanup({
+      assertWorkspaceIdle: async () => {},
+    });
+    const repeated = await provisioning.stopForCleanup({
+      assertWorkspaceIdle: async () => {},
+    });
+    await expect(stopped.run.remove()).rejects.toThrow("source writeback is pending");
+    const completion = stopped.run.record.events.at(-1);
+    if (completion === undefined) {
+      throw new Error("completion event missing");
+    }
+    const acknowledged = await stopped.run.acknowledgeSourceWriteback({
+      expectedCompletionTimestamp: completion.timestamp,
+      expectedRunId: stopped.run.record.runId,
+    });
+    await acknowledged.remove();
+
+    expect(stopped).toMatchObject({
+      run: { record: { outcome: "stopped", writebackPending: true }, state: "complete" },
+      transitioned: true,
+    });
+    expect(repeated).toMatchObject({
+      run: { record: { outcome: "stopped" }, state: "complete" },
+      transitioned: false,
+    });
+    await expect(runs.findBySlug({ slug: "fixture-eng-123" })).resolves.toBeUndefined();
+  });
+
+  it("continues an acknowledged completed Run with a fresh run ID in the same session", async () => {
+    const fixture = await continuationFixture({ prefix: "groundcrew-v2-run-continue-" });
+    const acknowledged = await completeAndAcknowledge({ fixture, task: "fixture:ENG-123" });
+    await writeFile(fixture.presenterCallsPath, "");
+
+    const continued = await acknowledged.continueRun({
+      continuationRunId: "r_00c0ffee",
+      force: false,
+      maximumInProgress: 4,
+      repositories: ["sample", "second"],
+    });
+
+    expect(continued.state).toBe("running");
+    expect(continued.record).toMatchObject({
+      artifacts: [],
+      canonicalTaskId: "fixture:ENG-123",
+      previousRunIds: [acknowledged.record.runId],
+      repositories: ["sample", "second"],
+      runId: "r_00c0ffee",
+      state: "running",
+    });
+    expect(continued.record.outcome).toBeUndefined();
+    expect(continued.record.writebackPending).toBeUndefined();
+    expect(continued.record.events.map(({ event }) => event)).toEqual([
+      "provisioning",
+      "running",
+      "complete:delivered",
+      `continued-from:${acknowledged.record.runId}`,
+    ]);
+    const presenterCalls = await readFile(fixture.presenterCallsPath, "utf8");
+    expect(presenterCalls).toContain("set-progress");
+    await expect(
+      acknowledged.continueRun({
+        continuationRunId: "r_11223344",
+        force: false,
+        maximumInProgress: 4,
+        repositories: [],
+      }),
+    ).rejects.toThrow("stale");
+  });
+
+  it("reverts a continuation to its prior completed record", async () => {
+    const fixture = await continuationFixture({ prefix: "groundcrew-v2-run-continue-revert-" });
+    const acknowledged = await completeAndAcknowledge({ fixture, task: "fixture:ENG-123" });
+    const continued = await acknowledged.continueRun({
+      continuationRunId: "r_00c0ffee",
+      force: false,
+      maximumInProgress: 4,
+      repositories: ["sample"],
+    });
+
+    await fixture.runs.revertContinuation({
+      continuationRunId: continued.record.runId,
+      priorRecord: acknowledged.record,
+    });
+
+    const restored = await fixture.runs.findBySlug({ slug: "fixture-eng-123" });
+    expect(restored?.record).toEqual(acknowledged.record);
+    await expect(
+      fixture.runs.revertContinuation({
+        continuationRunId: continued.record.runId,
+        priorRecord: acknowledged.record,
+      }),
+    ).rejects.toThrow("stale");
+  });
+
+  it("refuses to continue while source writeback is pending", async () => {
+    const fixture = await continuationFixture({ prefix: "groundcrew-v2-run-continue-pending-" });
+    const completed = await completeRun({ fixture, task: "fixture:ENG-123" });
+
+    await expect(
+      completed.continueRun({
+        continuationRunId: "r_00c0ffee",
+        force: false,
+        maximumInProgress: 4,
+        repositories: [],
+      }),
+    ).rejects.toThrow("source writeback is pending");
+  });
+
+  it("counts continued Runs against the concurrency limit unless forced", async () => {
+    const fixture = await continuationFixture({ prefix: "groundcrew-v2-run-continue-slots-" });
+    const acknowledged = await completeAndAcknowledge({ fixture, task: "fixture:ENG-123" });
+    await launchRun({ fixture, task: "fixture:ENG-999" });
+
+    await expect(
+      acknowledged.continueRun({
+        continuationRunId: "r_00c0ffee",
+        force: false,
+        maximumInProgress: 1,
+        repositories: [],
+      }),
+    ).rejects.toThrow("concurrency limit reached (1/1)");
+    const forced = await acknowledged.continueRun({
+      continuationRunId: "r_00c0ffee",
+      force: true,
+      maximumInProgress: 1,
+      repositories: [],
+    });
+
+    expect(forced.record).toMatchObject({ runId: "r_00c0ffee", state: "running" });
+  });
+
+  it("discards an unclaimed Run after recovery already completed it", async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), "groundcrew-v2-run-rejected-race-"));
+    const runs = new RunModule({
+      environment: process.env,
+      presenterName: "cmux",
+      stateRoot,
+    });
+    const provisioning = await runs.beginDispatch({
+      agentProfile: "codex",
+      canonicalTaskId: "fixture:ENG-123",
+      repositories: [],
+      workspaceDirectory: join(stateRoot, "workspace"),
+    });
+    await provisioning.fail({ reason: "provisioning-interrupted" });
+
+    await expect(provisioning.discardUnclaimed()).resolves.toBeUndefined();
+    await expect(runs.findBySlug({ slug: "fixture-eng-123" })).resolves.toBeUndefined();
+  });
+
+  it("recovers a presenter handle after creation wins the durable launch race", async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), "groundcrew-v2-run-reconcile-"));
+    const presentedWorkspaceStatePath = join(stateRoot, "presented-workspaces.json");
+    const presenterCallsPath = join(stateRoot, "presenter-calls.jsonl");
+    const fakeBin = join(process.cwd(), "e2e", "fixtures", "fake-bin");
+    await Promise.all([
+      writeFile(presentedWorkspaceStatePath, '{"workspaces":[]}'),
+      writeFile(presenterCallsPath, ""),
+    ]);
+    const runs = new RunModule({
+      environment: {
+        ...process.env,
+        FAKE_CMUX_CALLS: presenterCallsPath,
+        FAKE_CMUX_STATE: presentedWorkspaceStatePath,
+        PATH: `${fakeBin}:${process.env["PATH"]}`,
+      },
+      presenterName: "cmux",
+      stateRoot,
+    });
+    const provisioning = await runs.beginDispatch({
+      agentProfile: "codex",
+      canonicalTaskId: "fixture:ENG-123",
+      repositories: [],
+      workspaceDirectory: join(stateRoot, "workspace"),
+    });
+    await writeFile(
+      presentedWorkspaceStatePath,
+      JSON.stringify({
+        workspaces: [
+          {
+            environment: { GROUNDCREW_PRESENTATION_ID: provisioning.record.presentationId },
+            id: "workspace-1",
+            title: "a user-edited-title",
+          },
+        ],
+      }),
+    );
+
+    const started = await runs.reconcilePresentedWorkspace({
+      run: provisioning,
+      snapshot: await runs.capturePresentedWorkspaces(),
+    });
+    await writeFile(presentedWorkspaceStatePath, '{"workspaces":[]}');
+    if (started?.type !== "running") {
+      throw new Error("provisioning run was not reconciled");
+    }
+    const failed = await runs.reconcilePresentedWorkspace({
+      run: started.run,
+      snapshot: await runs.capturePresentedWorkspaces(),
+    });
+
+    expect(started).toMatchObject({
+      run: { record: { presenterHandle: "workspace-1", state: "running" }, state: "running" },
+      type: "running",
+    });
+    expect(failed).toMatchObject({
+      reason: "workspace-missing",
+      run: {
+        record: { outcome: "failed", state: "complete", writebackPending: true },
+        state: "complete",
+      },
+      type: "failed",
+    });
+  });
+
+  it("does not fail a presenter-less Run while its provisioning owner is alive", async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), "groundcrew-v2-run-live-provisioning-"));
+    const presentedWorkspaceStatePath = join(stateRoot, "presented-workspaces.json");
+    const presenterCallsPath = join(stateRoot, "presenter-calls.jsonl");
+    const fakeBin = join(process.cwd(), "e2e", "fixtures", "fake-bin");
+    await Promise.all([
+      writeFile(presentedWorkspaceStatePath, '{"workspaces":[]}'),
+      writeFile(presenterCallsPath, ""),
+    ]);
+    const environment = {
+      ...process.env,
+      FAKE_CMUX_CALLS: presenterCallsPath,
+      FAKE_CMUX_STATE: presentedWorkspaceStatePath,
+      PATH: `${fakeBin}:${process.env["PATH"]}`,
+    };
+    const owner = new RunModule({ environment, presenterName: "cmux", stateRoot });
+    const reconciler = new RunModule({ environment, presenterName: "cmux", stateRoot });
+    await owner.beginDispatch({
+      agentProfile: "codex",
+      canonicalTaskId: "fixture:ENG-123",
+      repositories: [],
+      workspaceDirectory: join(stateRoot, "workspace"),
+    });
+    const provisioning = await reconciler.findBySlug({ slug: "fixture-eng-123" });
+    if (provisioning === undefined) {
+      throw new Error("provisioning run missing");
+    }
+
+    const change = await reconciler.reconcilePresentedWorkspace({
+      run: provisioning,
+      snapshot: await reconciler.capturePresentedWorkspaces(),
+    });
+
+    expect(change).toBeUndefined();
+    await expect(owner.findBySlug({ slug: "fixture-eng-123" })).resolves.toMatchObject({
+      record: { state: "provisioning" },
+      state: "provisioning",
+    });
+  });
+
+  it("fails a presenter-less Run after its provisioning owner exits", async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), "groundcrew-v2-run-dead-provisioning-"));
+    const presentedWorkspaceStatePath = join(stateRoot, "presented-workspaces.json");
+    const presenterCallsPath = join(stateRoot, "presenter-calls.jsonl");
+    const fakeBin = join(process.cwd(), "e2e", "fixtures", "fake-bin");
+    await Promise.all([
+      writeFile(presentedWorkspaceStatePath, '{"workspaces":[]}'),
+      writeFile(presenterCallsPath, ""),
+    ]);
+    const environment = {
+      ...process.env,
+      FAKE_CMUX_CALLS: presenterCallsPath,
+      FAKE_CMUX_STATE: presentedWorkspaceStatePath,
+      PATH: `${fakeBin}:${process.env["PATH"]}`,
+    };
+    const owner = new RunModule({ environment, presenterName: "cmux", stateRoot });
+    const provisioning = await owner.beginDispatch({
+      agentProfile: "codex",
+      canonicalTaskId: "fixture:ENG-123",
+      repositories: [],
+      workspaceDirectory: join(stateRoot, "workspace"),
+    });
+    await writeFile(
+      join(stateRoot, "runs", "fixture-eng-123.json"),
+      `${JSON.stringify(
+        {
+          ...provisioning.record,
+          provisioningOwner: {
+            phase: "preparing",
+            processId: deadProcessId(),
+          },
+        },
+        undefined,
+        2,
+      )}\n`,
+    );
+    const reconciler = new RunModule({ environment, presenterName: "cmux", stateRoot });
+    const interrupted = await reconciler.findBySlug({ slug: "fixture-eng-123" });
+    if (interrupted === undefined) {
+      throw new Error("provisioning run missing");
+    }
+
+    const change = await reconciler.reconcilePresentedWorkspace({
+      run: interrupted,
+      snapshot: await reconciler.capturePresentedWorkspaces(),
+    });
+
+    expect(change).toMatchObject({
+      reason: "provisioning-interrupted",
+      run: { record: { outcome: "failed", state: "complete" }, state: "complete" },
+      type: "failed",
+    });
+  });
+
+  it("rejects an empty snapshot captured before a Run launches", async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), "groundcrew-v2-run-stale-snapshot-"));
+    const presentedWorkspaceStatePath = join(stateRoot, "presented-workspaces.json");
+    const presenterCallsPath = join(stateRoot, "presenter-calls.jsonl");
+    const fakeBin = join(process.cwd(), "e2e", "fixtures", "fake-bin");
+    await Promise.all([
+      writeFile(presentedWorkspaceStatePath, '{"workspaces":[]}'),
+      writeFile(presenterCallsPath, ""),
+    ]);
+    const environment = {
+      ...process.env,
+      FAKE_CMUX_CALLS: presenterCallsPath,
+      FAKE_CMUX_STATE: presentedWorkspaceStatePath,
+      HOME: stateRoot,
+      PATH: `${fakeBin}:${process.env["PATH"]}`,
+    };
+    const owner = new RunModule({ environment, presenterName: "cmux", stateRoot });
+    const reconciler = new RunModule({ environment, presenterName: "cmux", stateRoot });
+    const workspaceDirectory = join(stateRoot, "workspace");
+    await mkdir(workspaceDirectory);
+    const provisioning = await owner.beginDispatch({
+      agentProfile: "codex",
+      canonicalTaskId: "fixture:ENG-123",
+      repositories: [],
+      workspaceDirectory,
+    });
+    const emptySnapshot = await reconciler.capturePresentedWorkspaces();
+
+    await provisioning.launch({
+      acquiredRepositories: [],
+      branch: "agent/fixture-eng-123",
+      profile: { effort: "high", kind: "codex" },
+      task: {
+        canonicalTaskId: "fixture:ENG-123",
+        repositories: [],
+        title: "Deepen the Run module",
+      },
+    });
+    const change = await reconciler.reconcilePresentedWorkspace({
+      run: provisioning,
+      snapshot: emptySnapshot,
+    });
+
+    expect(change).toBeUndefined();
+    await expect(owner.findBySlug({ slug: "fixture-eng-123" })).resolves.toMatchObject({
+      record: { state: "running" },
+      state: "running",
+    });
+    expect(JSON.parse(await readFile(presentedWorkspaceStatePath, "utf8"))).toMatchObject({
+      workspaces: [
+        {
+          environment: {
+            GROUNDCREW_PRESENTATION_ID: provisioning.record.presentationId,
+          },
+        },
+      ],
+    });
+  });
+
+  it("rejects a stale empty snapshot while the presenter is opening", async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), "groundcrew-v2-run-opening-snapshot-"));
+    const presentedWorkspaceStatePath = join(stateRoot, "presented-workspaces.json");
+    const presenterCallsPath = join(stateRoot, "presenter-calls.jsonl");
+    const openReleasePath = join(stateRoot, "release-open");
+    const fakeBin = join(process.cwd(), "e2e", "fixtures", "fake-bin");
+    await Promise.all([
+      writeFile(presentedWorkspaceStatePath, '{"workspaces":[]}'),
+      writeFile(presenterCallsPath, ""),
+    ]);
+    const environment = {
+      ...process.env,
+      FAKE_CMUX_CALLS: presenterCallsPath,
+      FAKE_CMUX_OPEN_RELEASE: openReleasePath,
+      FAKE_CMUX_STATE: presentedWorkspaceStatePath,
+      HOME: stateRoot,
+      PATH: `${fakeBin}:${process.env["PATH"]}`,
+    };
+    const workspaceDirectory = join(stateRoot, "workspace");
+    await mkdir(workspaceDirectory);
+    const owner = new RunModule({ environment, presenterName: "cmux", stateRoot });
+    const reconciler = new RunModule({ environment, presenterName: "cmux", stateRoot });
+    const provisioning = await owner.beginDispatch({
+      agentProfile: "codex",
+      canonicalTaskId: "fixture:ENG-123",
+      repositories: [],
+      workspaceDirectory,
+    });
+    const emptySnapshot = await reconciler.capturePresentedWorkspaces();
+
+    const launch = provisioning.launch({
+      acquiredRepositories: [],
+      branch: "agent/fixture-eng-123",
+      profile: { effort: "high", kind: "codex" },
+      task: {
+        canonicalTaskId: "fixture:ENG-123",
+        repositories: [],
+        title: "Deepen the Run module",
+      },
+    });
+    let change;
+    try {
+      await expect
+        .poll(async () => {
+          try {
+            return await readFile(`${openReleasePath}.ready`, "utf8");
+          } catch {
+            return undefined;
+          }
+        })
+        .toBe("ready\n");
+      change = await reconciler.reconcilePresentedWorkspace({
+        run: provisioning,
+        snapshot: emptySnapshot,
+      });
+    } finally {
+      await writeFile(openReleasePath, "release\n");
+    }
+    const launched = await launch;
+
+    expect(change).toBeUndefined();
+    expect(launched).toMatchObject({
+      run: { record: { state: "running" }, state: "running" },
+      transitioned: true,
+    });
+    expect(JSON.parse(await readFile(presentedWorkspaceStatePath, "utf8"))).toMatchObject({
+      workspaces: [
+        {
+          environment: {
+            GROUNDCREW_PRESENTATION_ID: provisioning.record.presentationId,
+          },
+        },
+      ],
+    });
+  });
+
+  it("closes the presented Workspace when launch loses its durable transition", async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), "groundcrew-v2-run-lost-launch-"));
+    const presentedWorkspaceStatePath = join(stateRoot, "presented-workspaces.json");
+    const presenterCallsPath = join(stateRoot, "presenter-calls.jsonl");
+    const openReleasePath = join(stateRoot, "release-open");
+    const fakeBin = join(process.cwd(), "e2e", "fixtures", "fake-bin");
+    await Promise.all([
+      writeFile(presentedWorkspaceStatePath, '{"workspaces":[]}'),
+      writeFile(presenterCallsPath, ""),
+    ]);
+    const environment = {
+      ...process.env,
+      FAKE_CMUX_CALLS: presenterCallsPath,
+      FAKE_CMUX_OPEN_RELEASE: openReleasePath,
+      FAKE_CMUX_STATE: presentedWorkspaceStatePath,
+      HOME: stateRoot,
+      PATH: `${fakeBin}:${process.env["PATH"]}`,
+    };
+    const workspaceDirectory = join(stateRoot, "workspace");
+    await mkdir(workspaceDirectory);
+    const runs = new RunModule({ environment, presenterName: "cmux", stateRoot });
+    const provisioning = await runs.beginDispatch({
+      agentProfile: "codex",
+      canonicalTaskId: "fixture:ENG-123",
+      repositories: [],
+      workspaceDirectory,
+    });
+
+    const launch = provisioning.launch({
+      acquiredRepositories: [],
+      branch: "agent/fixture-eng-123",
+      profile: { effort: "high", kind: "codex" },
+      task: {
+        canonicalTaskId: "fixture:ENG-123",
+        repositories: [],
+        title: "Deepen the Run module",
+      },
+    });
+    await expect
+      .poll(async () => {
+        try {
+          return await readFile(`${openReleasePath}.ready`, "utf8");
+        } catch {
+          return undefined;
+        }
+      })
+      .toBe("ready\n");
+    await provisioning.fail({ reason: "launch-cancelled" });
+    await writeFile(openReleasePath, "release\n");
+
+    await expect(launch).rejects.toThrow("no longer provisioning");
+    expect(JSON.parse(await readFile(presentedWorkspaceStatePath, "utf8"))).toEqual({
+      workspaces: [],
+    });
+  });
+
+  it("releases the launch reservation when presenter launch fails", async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), "groundcrew-v2-run-retry-launch-"));
+    const presentedWorkspaceStatePath = join(stateRoot, "presented-workspaces.json");
+    const presenterCallsPath = join(stateRoot, "presenter-calls.jsonl");
+    const fakeBin = join(process.cwd(), "e2e", "fixtures", "fake-bin");
+    await Promise.all([
+      writeFile(presentedWorkspaceStatePath, '{"workspaces":[]}'),
+      writeFile(presenterCallsPath, ""),
+    ]);
+    const environment = {
+      ...process.env,
+      FAKE_CMUX_CALLS: presenterCallsPath,
+      FAKE_CMUX_STATE: presentedWorkspaceStatePath,
+      HOME: stateRoot,
+      PATH: `${fakeBin}:${process.env["PATH"]}`,
+    };
+    const workspaceDirectory = join(stateRoot, "workspace");
+    await mkdir(workspaceDirectory);
+    const failingRuns = new RunModule({
+      environment: { ...environment, FAKE_CMUX_FAIL_OPEN: "1" },
+      presenterName: "cmux",
+      stateRoot,
+    });
+    const provisioning = await failingRuns.beginDispatch({
+      agentProfile: "codex",
+      canonicalTaskId: "fixture:ENG-123",
+      repositories: [],
+      workspaceDirectory,
+    });
+
+    await expect(
+      provisioning.launch({
+        acquiredRepositories: [],
+        branch: "agent/fixture-eng-123",
+        profile: { effort: "high", kind: "codex" },
+        task: {
+          canonicalTaskId: "fixture:ENG-123",
+          repositories: [],
+          title: "Deepen the Run module",
+        },
+      }),
+    ).rejects.toThrow("fake cmux open failure");
+    const retryingRuns = new RunModule({ environment, presenterName: "cmux", stateRoot });
+    const retrying = await retryingRuns.findBySlug({ slug: "fixture-eng-123" });
+    if (retrying?.state !== "provisioning") {
+      throw new Error("provisioning run missing");
+    }
+
+    const launched = await retrying.launch({
+      acquiredRepositories: [],
+      branch: "agent/fixture-eng-123",
+      profile: { effort: "high", kind: "codex" },
+      task: {
+        canonicalTaskId: "fixture:ENG-123",
+        repositories: [],
+        title: "Deepen the Run module",
+      },
+    });
+
+    expect(launched).toMatchObject({
+      run: { record: { state: "running" }, state: "running" },
+      transitioned: true,
+    });
+  });
+
+  it("treats a reconciliation-won launch transition as unchanged", async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), "groundcrew-v2-run-launch-race-"));
+    const presentedWorkspaceStatePath = join(stateRoot, "presented-workspaces.json");
+    const presenterCallsPath = join(stateRoot, "presenter-calls.jsonl");
+    const fakeBin = join(process.cwd(), "e2e", "fixtures", "fake-bin");
+    await Promise.all([
+      writeFile(presentedWorkspaceStatePath, '{"workspaces":[]}'),
+      writeFile(presenterCallsPath, ""),
+    ]);
+    const workspaceDirectory = join(stateRoot, "workspace");
+    await mkdir(workspaceDirectory);
+    const runs = new RunModule({
+      environment: {
+        ...process.env,
+        FAKE_CMUX_CALLS: presenterCallsPath,
+        FAKE_CMUX_STATE: presentedWorkspaceStatePath,
+        HOME: stateRoot,
+        PATH: `${fakeBin}:${process.env["PATH"]}`,
+      },
+      presenterName: "cmux",
+      stateRoot,
+    });
+    const provisioning = await runs.beginDispatch({
+      agentProfile: "codex",
+      canonicalTaskId: "fixture:ENG-123",
+      repositories: [],
+      workspaceDirectory,
+    });
+    await writeFile(
+      presentedWorkspaceStatePath,
+      JSON.stringify({
+        workspaces: [
+          {
+            environment: { GROUNDCREW_PRESENTATION_ID: provisioning.record.presentationId },
+            id: "workspace-1",
+            title: "edited-title",
+          },
+        ],
+      }),
+    );
+    await runs.reconcilePresentedWorkspace({
+      run: provisioning,
+      snapshot: await runs.capturePresentedWorkspaces(),
+    });
+
+    const launched = await provisioning.launch({
+      acquiredRepositories: [],
+      branch: "agent/fixture-eng-123",
+      profile: { effort: "high", kind: "codex" },
+      task: {
+        canonicalTaskId: "fixture:ENG-123",
+        repositories: [],
+        title: "Deepen the Run module",
+      },
+    });
+
+    expect(launched).toMatchObject({
+      run: { record: { state: "running" }, state: "running" },
+      transitioned: false,
+    });
+    expect(launched.run.record.events.map(({ event }) => event)).toEqual([
+      "provisioning",
+      "running",
+    ]);
+    expect(await readFile(presenterCallsPath, "utf8")).not.toContain("new-workspace");
+  });
+});
+
+describe("RunModule concurrency", () => {
+  it("reserves dispatch without colliding with a matching task lock name", async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), "groundcrew-v2-run-admission-lock-"));
+    const runs = new RunModule({
+      environment: process.env,
+      presenterName: "cmux",
+      stateRoot,
+    });
+    const currentTime = Date.now();
+    const mockDateNow = vi.spyOn(Date, "now").mockReturnValue(currentTime + 31_000);
+
+    try {
+      const reservation = await runs.reserveDispatch({
+        agentProfile: "codex",
+        canonicalTaskId: "dispatch:admission",
+        force: false,
+        maximumInProgress: 1,
+        repositories: [],
+        workspaceDirectory: join(stateRoot, "workspace"),
+      });
+
+      expect(reservation).toMatchObject({ type: "reserved" });
+      expect(mockDateNow).not.toHaveBeenCalled();
+    } finally {
+      mockDateNow.mockRestore();
+    }
+  });
+
+  it("creates one durable run when initial writers race", async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), "groundcrew-v2-run-race-"));
+    const runs = new RunModule({
+      environment: process.env,
+      presenterName: "cmux",
+      stateRoot,
+    });
+
+    const results = await Promise.allSettled(
+      Array.from(
+        { length: 20 },
+        async () =>
+          await runs.beginDispatch({
+            agentProfile: "codex",
+            canonicalTaskId: "fixture:ENG-123",
+            repositories: [],
+            workspaceDirectory: join(stateRoot, "workspace"),
+          }),
+      ),
+    );
+
+    const fulfilled = results.filter((result) => result.status === "fulfilled");
+    const rejected = results.filter((result) => result.status === "rejected");
+    expect({ fulfilled: fulfilled.length, rejected: rejected.length }).toEqual({
+      fulfilled: 1,
+      rejected: 19,
+    });
+    const stored = await runs.findBySlug({ slug: "fixture-eng-123" });
+    expect(stored?.record.runId).toBe(fulfilled[0]?.value.record.runId);
+  });
+
+  it("allows concurrent cleanup removals to converge", async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), "groundcrew-v2-run-remove-race-"));
+    const runs = new RunModule({
+      environment: process.env,
+      presenterName: "cmux",
+      stateRoot,
+    });
+    const provisioning = await runs.beginDispatch({
+      agentProfile: "codex",
+      canonicalTaskId: "fixture:ENG-123",
+      repositories: [],
+      workspaceDirectory: join(stateRoot, "workspace"),
+    });
+    const stopped = await provisioning.stopForCleanup({ assertWorkspaceIdle: async () => {} });
+    const completion = stopped.run.record.events.at(-1);
+    if (completion === undefined) {
+      throw new Error("completion event missing");
+    }
+    const acknowledged = await stopped.run.acknowledgeSourceWriteback({
+      expectedCompletionTimestamp: completion.timestamp,
+      expectedRunId: stopped.run.record.runId,
+    });
+
+    await expect(Promise.all([acknowledged.remove(), acknowledged.remove()])).resolves.toEqual([
+      undefined,
+      undefined,
+    ]);
+  });
+
+  it("does not repair repositories on a replacement Run", async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), "groundcrew-v2-run-repair-race-"));
+    const runs = new RunModule({
+      environment: process.env,
+      presenterName: "cmux",
+      stateRoot,
+    });
+    const first = await runs.beginDispatch({
+      agentProfile: "codex",
+      canonicalTaskId: "fixture:ENG-123",
+      repositories: ["old"],
+      workspaceDirectory: join(stateRoot, "old-workspace"),
+    });
+    await first.discardUnclaimed();
+    const replacement = await runs.beginDispatch({
+      agentProfile: "codex",
+      canonicalTaskId: "fixture:ENG-123",
+      repositories: ["replacement"],
+      workspaceDirectory: join(stateRoot, "replacement-workspace"),
+    });
+
+    const repaired = await runs.repairRepositories({
+      canonicalTaskId: first.record.canonicalTaskId,
+      expectedRunId: first.record.runId,
+      repositories: ["stale"],
+    });
+
+    expect(repaired).toMatchObject({
+      run: {
+        record: { repositories: ["replacement"], runId: replacement.record.runId },
+      },
+      transitioned: false,
+    });
+  });
+
+  it("normalizes repository names while repairing a reserved repository", async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), "groundcrew-v2-run-repair-normalization-"));
+    const presentedWorkspaceStatePath = join(stateRoot, "presented-workspaces.json");
+    const presenterCallsPath = join(stateRoot, "presenter-calls.jsonl");
+    const fakeBin = join(process.cwd(), "e2e", "fixtures", "fake-bin");
+    await Promise.all([
+      writeFile(presentedWorkspaceStatePath, '{"workspaces":[]}'),
+      writeFile(presenterCallsPath, ""),
+    ]);
+    const runs = new RunModule({
+      environment: {
+        ...process.env,
+        FAKE_CMUX_CALLS: presenterCallsPath,
+        FAKE_CMUX_STATE: presentedWorkspaceStatePath,
+        PATH: `${fakeBin}:${process.env["PATH"]}`,
+      },
+      presenterName: "cmux",
+      stateRoot,
+    });
+    const provisioning = await runs.beginDispatch({
+      agentProfile: "codex",
+      canonicalTaskId: "fixture:ENG-123",
+      repositories: ["owner/sample"],
+      workspaceDirectory: join(stateRoot, "workspace"),
+    });
+    await writeFile(
+      presentedWorkspaceStatePath,
+      JSON.stringify({
+        workspaces: [
+          {
+            environment: { GROUNDCREW_PRESENTATION_ID: provisioning.record.presentationId },
+            id: "workspace-1",
+            title: "edited-title",
+          },
+        ],
+      }),
+    );
+    const reconciled = await runs.reconcilePresentedWorkspace({
+      run: provisioning,
+      snapshot: await runs.capturePresentedWorkspaces(),
+    });
+    if (reconciled?.type !== "running") {
+      throw new Error("provisioning run was not reconciled");
+    }
+    const reserved = await reconciled.run.reserveRepositoryOperation({
+      repository: "owner/extra",
+      reserveWhileLocked: async () => {},
+    });
+
+    const repaired = await runs.repairRepositories({
+      canonicalTaskId: reserved.record.canonicalTaskId,
+      expectedRunId: reserved.record.runId,
+      repositories: ["owner/sample", "owner/extra"],
+    });
+
+    expect(repaired).toMatchObject({
+      run: { record: { repositories: ["sample", "extra"] } },
+      transitioned: true,
+    });
+  });
+});
+
+describe("withFileLock", () => {
+  it("preserves the operation failure when releasing the lock also fails", async () => {
+    const root = await mkdtemp(join(tmpdir(), "groundcrew-v2-lock-release-"));
+    const lockPath = join(root, "run.lock");
+    const operationError = new Error("operation failed");
+
+    try {
+      await expect(
+        withFileLock({
+          path: lockPath,
+          operation: async () => {
+            await rm(join(lockPath, "owner"));
+            await mkdir(join(lockPath, "owner"));
+            throw operationError;
+          },
+        }),
+      ).rejects.toBe(operationError);
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+});
+
+describe("seedWorkspaceTrust", () => {
+  it("preserves every Claude project when launches race", async () => {
+    const homeDirectory = await mkdtemp(join(tmpdir(), "groundcrew-v2-claude-trust-race-"));
+    const workspaces = Array.from({ length: 20 }, (_, index) => `/workspace/${index}`);
+
+    await Promise.all(
+      workspaces.map(
+        async (workspaceDirectory) =>
+          await seedWorkspaceTrust({
+            environment: { HOME: homeDirectory },
+            kind: "claude",
+            workspaceDirectory,
+          }),
+      ),
+    );
+
+    const configuration = JSON.parse(await readFile(join(homeDirectory, ".claude.json"), "utf8"));
+    expect(Object.keys(configuration.projects).toSorted()).toEqual(workspaces.toSorted());
+  });
+});
+
+interface ContinuationFixture {
+  readonly presenterCallsPath: string;
+  readonly runs: RunModule;
+  readonly stateRoot: string;
+}
+
+async function continuationFixture(input: {
+  readonly prefix: string;
+}): Promise<ContinuationFixture> {
+  const stateRoot = await mkdtemp(join(tmpdir(), input.prefix));
+  const presentedWorkspaceStatePath = join(stateRoot, "presented-workspaces.json");
+  const presenterCallsPath = join(stateRoot, "presenter-calls.jsonl");
+  const fakeBin = join(process.cwd(), "e2e", "fixtures", "fake-bin");
+  await Promise.all([
+    writeFile(presentedWorkspaceStatePath, '{"workspaces":[]}'),
+    writeFile(presenterCallsPath, ""),
+  ]);
+  const runs = new RunModule({
+    environment: {
+      ...process.env,
+      FAKE_CMUX_CALLS: presenterCallsPath,
+      FAKE_CMUX_STATE: presentedWorkspaceStatePath,
+      HOME: stateRoot,
+      PATH: `${fakeBin}:${process.env["PATH"]}`,
+    },
+    presenterName: "cmux",
+    stateRoot,
+  });
+  return { presenterCallsPath, runs, stateRoot };
+}
+
+async function launchRun(input: {
+  readonly fixture: ContinuationFixture;
+  readonly task: string;
+}): Promise<RunningRun> {
+  const slug = taskSlug({ canonicalTaskId: input.task });
+  const workspaceDirectory = join(input.fixture.stateRoot, `workspace-${slug}`);
+  await mkdir(workspaceDirectory, { recursive: true });
+  const provisioning = await input.fixture.runs.beginDispatch({
+    agentProfile: "codex",
+    canonicalTaskId: input.task,
+    repositories: ["sample"],
+    workspaceDirectory,
+  });
+  const launched = await provisioning.launch({
+    acquiredRepositories: [],
+    branch: `agent/${slug}`,
+    profile: { effort: "high", kind: "codex" },
+    task: { canonicalTaskId: input.task, repositories: ["sample"], title: "Continuation task" },
+  });
+  return launched.run;
+}
+
+async function completeRun(input: {
+  readonly fixture: ContinuationFixture;
+  readonly task: string;
+}): Promise<CompletedRun> {
+  const running = await launchRun(input);
+  return await running.finish({
+    assertWorkspaceIdle: async () => {},
+    message: "Shipped",
+    outcome: "delivered",
+  });
+}
+
+async function completeAndAcknowledge(input: {
+  readonly fixture: ContinuationFixture;
+  readonly task: string;
+}): Promise<CompletedRun> {
+  const completed = await completeRun(input);
+  const completion = completed.record.events.at(-1);
+  if (completion === undefined) {
+    throw new Error("completion event missing");
+  }
+  return await completed.acknowledgeSourceWriteback({
+    expectedCompletionTimestamp: completion.timestamp,
+    expectedRunId: completed.record.runId,
+  });
+}
+
+function deadProcessId(): number {
+  for (let candidate = 2_147_483_647; candidate > 2_147_483_547; candidate -= 1) {
+    try {
+      process.kill(candidate, 0);
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ESRCH") {
+        return candidate;
+      }
+      throw error;
+    }
+  }
+  throw new Error("could not find an unused process ID");
+}

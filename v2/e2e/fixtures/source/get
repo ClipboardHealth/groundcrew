@@ -1,0 +1,18 @@
+#!/usr/bin/env node
+
+import { readFile } from "node:fs/promises";
+
+const input = await readStandardInput();
+const tasks = JSON.parse(await readFile(process.env.FIXTURE_TASKS, "utf8"));
+const task = tasks.find((candidate) => candidate.id === input.id);
+if (task === undefined) {
+  process.stdout.write(`${JSON.stringify({ ok: false, error: { message: "task not found" } })}\n`);
+} else {
+  process.stdout.write(`${JSON.stringify({ ok: true, data: { task } })}\n`);
+}
+
+async function readStandardInput() {
+  let raw = "";
+  for await (const chunk of process.stdin) raw += chunk;
+  return JSON.parse(raw);
+}

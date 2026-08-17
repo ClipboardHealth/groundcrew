@@ -84,9 +84,18 @@ crew task done todo:flaky-triage-1
 
 `crew status <TASK>` prints a read-only snapshot for one task: cached title and URL when present, recorded run state, live workspace presence, matching worktrees, git dirtiness, PR links for matching branches, recent log lines when present, and the task status from the configured task source.
 
-`crew status` with no task prints the current inventory: known worktrees with cached task metadata, workspace/run-state agreement, attach hints, worktree paths, PR links, and stray sessions reported by the configured backend. Local diagnostics are printed before task-source fetches complete. When the source fetch succeeds, status also prints any in-progress source tasks with no local worktree, slot usage, and Queue/Blocked sections for eligible Todo tasks. Worktree-less in-progress rows include the task title, URL when the source provides one, and repository when the source resolves one. If the source fetch fails, Queue shows `unavailable: <reason>` and the slots line is omitted.
+`crew status` with no task prints the current inventory: known worktrees with cached task metadata, workspace/run-state agreement, attach hints, worktree paths, PR links, and stray sessions reported by the configured backend. When the source fetch succeeds, status also prints any in-progress source tasks with no local worktree, slot usage, and Queue/Blocked sections for eligible Todo tasks. Worktree-less in-progress rows include the task title, URL when the source provides one, and repository when the source resolves one. If the source fetch fails, Queue shows `unavailable: <reason>` and the slots line is omitted.
 
 Status is informational only. Use `crew cleanup <TASK>` to tear down stale worktrees and `crew resume <TASK>` to reopen preserved work.
+
+`crew status --json` emits the same state as two JSON documents instead of text,
+and writes them beside the log file as `status-local.json` and
+`status-remote.json`. The split is by cost: the local document is subprocess
+work only, so an external monitor can poll it every few seconds, while the
+remote document holds the board fetch and PR lookups. `crew status --json
+--local-only` collects the local document alone and never touches the network.
+See [Status snapshots for external monitors](../README.md#status-snapshots-for-external-monitors)
+for the reader contract. Text mode writes nothing.
 
 <details>
 <summary>Sample task status output</summary>
@@ -147,7 +156,7 @@ The command closes the cmux/tmux/zellij workspace if present, records local run 
 
 The resume prompt tells the agent to inspect git status and diff before editing, includes the previous interrupt reason when recorded, and reuses the recorded agent, repository, branch, runner, sandbox, and workspace backend. When no run-state file exists but a worktree does, resume falls back to Linear resolution for the agent and task context.
 
-`crew resume <TASK>` reopens the agent's previous conversation in the worktree by default — the built-in `claude`, `codex`, `cursor`, and `cursor-grok` presets ship a [`resumeArgs`](./configuration.md#resuming-the-agents-conversation) default (`--continue`, `resume --last`, `--continue`, `--continue`) that groundcrew appends to the agent's command. `crew resume --new <TASK>` ignores `resumeArgs` and forces a fresh conversation. Custom agents cold-start unless they set `resumeArgs`. groundcrew stores no session id — it relies on one conversation per worktree.
+`crew resume <TASK>` reopens the agent's previous conversation in the worktree by default — the built-in `claude`, `codex`, `cursor`, `cursor-grok`, and `pi` presets ship a [`resumeArgs`](./configuration.md#resuming-the-agents-conversation) default (`--continue`, `resume --last`, `--continue`, `--continue`, `--continue`) that groundcrew appends to the agent's command. `crew resume --new <TASK>` ignores `resumeArgs` and forces a fresh conversation. Custom agents cold-start unless they set `resumeArgs`. groundcrew stores no session id — it relies on one conversation per worktree.
 
 ## Open
 

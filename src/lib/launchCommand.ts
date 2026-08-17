@@ -4,11 +4,13 @@ import path from "node:path";
 import {
   BUILD_SECRET_NAMES,
   hasPreLaunchEnv,
+  WORKER_ENVIRONMENT_NAMES,
   type LocalRunner,
   type AgentDefinition,
   type NetworkEgressSetting,
 } from "./config.ts";
 import { clearanceAllowHostsFilesFromEnvironment } from "./clearanceAllowlist.ts";
+import { buildPreLaunchEmptyCheckLines } from "./preLaunchEmptyCheck.ts";
 import { shellSingleQuote } from "./shell.ts";
 
 export { shellSingleQuote } from "./shell.ts";
@@ -44,7 +46,7 @@ export function resolveSafehouseClearancePath(baseUrl: string = import.meta.url)
   } catch (error) {
     throw new Error(
       "@clipboard-health/clearance is required by @clipboard-health/groundcrew but could not be resolved. " +
-        "Install it alongside groundcrew (for example: `npm install -g @clipboard-health/clearance`).",
+        "Install it alongside groundcrew (for example: 'npm install -g @clipboard-health/clearance').",
       { cause: error },
     );
   }
@@ -180,7 +182,12 @@ function preLaunchPromptAndExec(arguments_: {
 }): string[] {
   const lines: string[] = [];
   if (arguments_.definition.preLaunch !== undefined) {
-    lines.push(renderPreLaunch(arguments_.definition.preLaunch, arguments_.worktreeDir));
+    const preLaunchEnv = arguments_.definition.preLaunchEnv ?? [];
+    lines.push(
+      ...(preLaunchEnv.length === 0 ? [] : [unsetEnvironmentLine(preLaunchEnv)]),
+      renderPreLaunch(arguments_.definition.preLaunch, arguments_.worktreeDir),
+      ...buildPreLaunchEmptyCheckLines(preLaunchEnv),
+    );
   }
   lines.push(
     `_p=$(cat ${shellSingleQuote(arguments_.promptFile)})`,
@@ -230,9 +237,13 @@ function hostPreLaunchSourceAndReadPrompt(arguments_: {
 }): string[] {
   const lines: string[] = [];
   if (arguments_.definition.preLaunch !== undefined) {
+    const preLaunchEnv = arguments_.definition.preLaunchEnv ?? [];
+    // Order is load-bearing: unset scrubs inherited values so the empty-check
+    // reads what preLaunch actually produced, not what the parent shell leaked.
     lines.push(
-      unsetEnvironmentLine([...BUILD_SECRET_NAMES, ...(arguments_.definition.preLaunchEnv ?? [])]),
+      unsetEnvironmentLine([...BUILD_SECRET_NAMES, ...preLaunchEnv]),
       renderPreLaunch(arguments_.definition.preLaunch, arguments_.worktreeDir),
+      ...buildPreLaunchEmptyCheckLines(preLaunchEnv),
     );
   }
   lines.push(
@@ -325,8 +336,6 @@ export function inferAgentCommandName(agentCmd: string): string {
   }
   return commandName;
 }
-
-const WORKER_ENVIRONMENT_NAMES = ["GROUNDCREW_TASK_ID", "GROUNDCREW_COMPLETE"] as const;
 
 type WorkerEnvironmentName = (typeof WORKER_ENVIRONMENT_NAMES)[number];
 
@@ -561,12 +570,12 @@ export function buildLaunchCommand(arguments_: LaunchCommandArguments): string {
     // user owns env forwarding in that case, so there's no wrap flag for us to
     // inject into. Fail loudly instead of silently dropping the contract.
     throw new Error(
-      "preLaunchEnv cannot be injected when `cmd` starts with `safehouse` — your cmd owns the wrap, so add the names to its own `--env-pass=` flag, or drop the `safehouse` prefix from `cmd` to let groundcrew compose the flag for you.",
+      "preLaunchEnv cannot be injected when 'cmd' starts with 'safehouse' — your cmd owns the wrap, so add the names to its own '--env-pass=' flag, or drop the 'safehouse' prefix from 'cmd' to let groundcrew compose the flag for you.",
     );
   }
   if (arguments_.workerEnvironment !== undefined && arguments_.runner === "safehouse") {
     throw new Error(
-      "workerEnvironment cannot be injected when `cmd` starts with `safehouse` — your cmd owns the wrap, so add GROUNDCREW_TASK_ID,GROUNDCREW_COMPLETE to its own `--env-pass=` flag, or drop the `safehouse` prefix from `cmd` to let groundcrew compose the flag for you.",
+      "workerEnvironment cannot be injected when 'cmd' starts with 'safehouse' — your cmd owns the wrap, so add GROUNDCREW_TASK_ID,GROUNDCREW_COMPLETE to its own '--env-pass=' flag, or drop the 'safehouse' prefix from 'cmd' to let groundcrew compose the flag for you.",
     );
   }
   return buildUnwrappedHostLaunchCommand(arguments_);

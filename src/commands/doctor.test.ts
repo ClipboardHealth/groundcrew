@@ -18,13 +18,10 @@ interface NodeFsMock {
   statSync: ReturnType<typeof vi.fn<typeof statSync>>;
 }
 
-vi.mock(
-  "node:fs",
-  (): NodeFsMock => ({
-    existsSync: vi.fn<typeof existsSync>(),
-    statSync: vi.fn<typeof statSync>(),
-  }),
-);
+vi.mock("node:fs", (): NodeFsMock => ({
+  existsSync: vi.fn<typeof existsSync>(),
+  statSync: vi.fn<typeof statSync>(),
+}));
 vi.mock(import("../lib/config.ts"), async (importOriginal) => {
   const actual = await importOriginal();
   return {
@@ -464,6 +461,25 @@ describe(doctor, () => {
     );
   });
 
+  it("hints how to stop probing a missing Pi CLI", async () => {
+    loadConfigMock.mockResolvedValue(
+      makeConfig({
+        default: "pi",
+        definitions: {
+          pi: { cmd: "pi --approve", color: "#6B7280" },
+        },
+      }),
+    );
+    mockWhichFailure("pi", "not installed");
+
+    const actual = await doctor();
+
+    expect(actual).toBe(false);
+    expect(consoleLog.output()).toContain(
+      "install pi or remove `agents.definitions.pi` from crew.config.ts",
+    );
+  });
+
   it("hints how to stop probing a missing cursor CLI (cursor-agent)", async () => {
     loadConfigMock.mockResolvedValue(
       makeConfig({
@@ -651,7 +667,7 @@ describe(doctor, () => {
     expect(actual).toBe(true);
     expect(consoleLog.output()).toContain("local runner (safehouse)");
     expect(consoleLog.output()).toContain(
-      "safehouse runner requires macOS with `safehouse` on PATH",
+      "safehouse runner requires macOS with 'safehouse' on PATH",
     );
     expect(consoleLog.output().match(/local runner \(safehouse\)/g)).toHaveLength(1);
   });
@@ -675,7 +691,7 @@ describe(doctor, () => {
     expect(actual).toBe(true);
     expect(consoleLog.output()).toContain("requested: auto → resolved: sdx");
     expect(consoleLog.output()).toContain("local runner (sdx)");
-    expect(consoleLog.output()).not.toContain("sdx runner requires `sbx`");
+    expect(consoleLog.output()).not.toContain("sdx runner requires 'sbx'");
   });
 
   it("reports the sdx runner as missing when sbx is not on PATH", async () => {
@@ -696,7 +712,7 @@ describe(doctor, () => {
 
     expect(actual).toBe(true);
     expect(consoleLog.output()).toContain("local runner (sdx)");
-    expect(consoleLog.output()).toContain("sdx runner requires `sbx`");
+    expect(consoleLog.output()).toContain("sdx runner requires 'sbx'");
   });
 
   it("surfaces a WARNING when local.runner is configured to 'none'", async () => {
@@ -906,7 +922,7 @@ describe(doctor, () => {
     expect(actual).toBe(true);
     const lines = consoleLog.output();
     expect(lines).toContain("Local runner");
-    expect(lines).toContain("sdx runner requires `sbx`");
+    expect(lines).toContain("sdx runner requires 'sbx'");
     expect(lines).toMatch(/requested=auto, resolved=cmux/);
     expect(checkedCommands()).toContain("cmux");
     expect(checkedCommands()).not.toContain("tmux");
@@ -939,5 +955,54 @@ describe(doctor, () => {
     const lines = consoleLog.output();
     expect(lines).toMatch(/requested=cmux/);
     expect(lines).toContain("cmux binary is not on PATH");
+  });
+
+  it("emits an advisory line for each agent with a non-empty preLaunchEnv", async () => {
+    loadConfigMock.mockResolvedValue(
+      makeConfig({
+        default: "claude",
+        definitions: {
+          claude: {
+            cmd: "claude",
+            color: "#fff",
+            preLaunch: 'export JIRA_API_TOKEN="tok"',
+            preLaunchEnv: ["JIRA_API_TOKEN", "GITHUB_TOKEN"],
+          },
+          codex: { cmd: "codex", color: "#3267e3" },
+        },
+      }),
+    );
+
+    const actual = await doctor();
+
+    expect(actual).toBe(true);
+    const lines = consoleLog.output();
+    expect(lines).toMatch(/\[ok]\s*preLaunchEnv: claude/);
+    expect(lines).toContain("JIRA_API_TOKEN");
+    expect(lines).toContain("GITHUB_TOKEN");
+    expect(lines).toContain("empty values are warned at launch");
+    expect(lines).not.toMatch(/preLaunchEnv: codex/);
+  });
+
+  it("warns in the preLaunchEnv advisory when preLaunch is absent", async () => {
+    loadConfigMock.mockResolvedValue(
+      makeConfig({
+        default: "claude",
+        definitions: {
+          claude: {
+            cmd: "claude",
+            color: "#fff",
+            preLaunchEnv: ["JIRA_API_TOKEN"],
+          },
+        },
+      }),
+    );
+
+    const actual = await doctor();
+
+    expect(actual).toBe(true);
+    const lines = consoleLog.output();
+    expect(lines).toMatch(/\[ok]\s*preLaunchEnv: claude/);
+    expect(lines).toContain("no preLaunch is set, so empty values are NOT checked at launch");
   });
 });

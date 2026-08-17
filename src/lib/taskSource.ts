@@ -23,6 +23,8 @@
  */
 export type CanonicalStatus = "todo" | "in-progress" | "in-review" | "done" | "other";
 
+export type WorktreePreparation = "skip";
+
 export interface Blocker {
   /** Canonical (source-prefixed) id of the blocking task. */
   id: string;
@@ -85,6 +87,8 @@ export interface Issue {
   priority?: number;
   /** Adapter-private. Consumers MUST NOT inspect; only the producing adapter reads it. */
   sourceRef: unknown;
+  /** Task-level opt-out from configured worktree preparation hooks. */
+  worktreePreparation?: WorktreePreparation;
 }
 
 export type Task = Issue;

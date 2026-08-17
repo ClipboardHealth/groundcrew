@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import type * as nodeFs from "node:fs";
 
 import { ensureClearance, type SafehouseCmuxIntegration } from "@clipboard-health/clearance";
+import * as agentLaunch from "../lib/agentLaunch.ts";
 import { fetchResolvedIssue } from "../lib/adapters/linear/fetch.ts";
 import { getLinearClient } from "../lib/adapters/linear/client.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
@@ -9,6 +10,7 @@ import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
 import { readRunState, recordRunState, type RunState } from "../lib/runState.ts";
 import { seedLaunchWorkspaceTrust } from "../lib/seedLaunchWorkspaceTrust.ts";
 import { safehouseCmuxIntegrationFixture } from "../testHelpers/safehouseCmuxIntegration.ts";
+import { log } from "../lib/util.ts";
 import { workspaces } from "../lib/workspaces.ts";
 import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 import { resumeWorkspace, resumeWorkspaceCli } from "./resumeWorkspace.ts";
@@ -64,12 +66,17 @@ vi.mock(import("../lib/runState.ts"), async (importOriginal) => {
     recordRunState: vi.fn<typeof recordRunState>(),
   };
 });
+vi.mock(import("../lib/util.ts"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, log: vi.fn<typeof actual.log>() };
+});
 vi.mock(import("../lib/workspaces.ts"), async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,
     workspaces: {
       ...actual.workspaces,
+      close: vi.fn<typeof actual.workspaces.close>(),
       open: vi.fn<typeof actual.workspaces.open>(),
       probe: vi.fn<typeof actual.workspaces.probe>(),
     },
@@ -117,8 +124,10 @@ const loadConfigMock = vi.mocked(loadConfig);
 const detectHostMock = vi.mocked(detectHostCapabilities);
 const readRunStateMock = vi.mocked(readRunState);
 const recordRunStateMock = vi.mocked(recordRunState);
+const logMock = vi.mocked(log);
 const getLinearClientMock = vi.mocked(getLinearClient);
 const seedLaunchWorkspaceTrustMock = vi.mocked(seedLaunchWorkspaceTrust);
+const workspacesCloseMock = vi.mocked(workspaces.close);
 const workspacesOpenMock = vi.mocked(workspaces.open);
 const workspacesProbeMock = vi.mocked(workspaces.probe);
 const findByTaskMock = vi.mocked(worktrees.findByTask);
@@ -126,7 +135,11 @@ const createMock = vi.mocked(worktrees.create);
 
 type RecordedRunState = Parameters<typeof recordRunState>[0]["state"];
 type FetchResolvedIssueInput = Parameters<typeof fetchResolvedIssue>[0];
-type IssueLookup = (id: string) => Promise<{ title: string; description?: string | undefined }>;
+type IssueLookup = (id: string) => Promise<{
+  title: string;
+  description?: string | undefined;
+  url?: string | undefined;
+}>;
 
 function lastRecordedRunState(): RecordedRunState {
   const input = recordRunStateMock.mock.calls.at(-1)?.[0];
@@ -252,6 +265,7 @@ describe(resumeWorkspace, () => {
     readRunStateMock.mockReturnValue(makeRunState());
     findByTaskMock.mockReturnValue([makeWorktree()]);
     workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set<string>() });
+    workspacesCloseMock.mockResolvedValue({ kind: "closed" });
     workspacesOpenMock.mockResolvedValue();
     detectHostMock.mockResolvedValue(host());
     ensureClearanceMock.mockResolvedValue({
@@ -288,6 +302,72 @@ describe(resumeWorkspace, () => {
       agentCommandName: "claude",
       launchDir: "/work/repo-a-team-1",
     });
+  });
+
+  it("reuses the exact task URL cached in run state", async () => {
+    readRunStateMock.mockReturnValue(
+      makeRunState({ url: "https://linear.app/example/issue/TEAM-1/source-slug" }),
+    );
+
+    await resumeWorkspace(config, { task: "team-1" });
+
+    expect(workspacesOpenMock).toHaveBeenCalledWith(
+      config,
+      expect.objectContaining({
+        name: "team-1",
+        url: "https://linear.app/example/issue/TEAM-1/source-slug",
+      }),
+    );
+  });
+
+  it("uses the source URL fetched for legacy run state without one", async () => {
+    getLinearClientMock.mockReturnValue({
+      issue: vi.fn<IssueLookup>().mockResolvedValue({
+        title: "Title",
+        description: "Body",
+        url: "https://linear.app/example/issue/TEAM-1/fetched-slug",
+      }),
+    } as unknown as ReturnType<typeof getLinearClient>);
+
+    await resumeWorkspace(config, { task: "team-1" });
+
+    expect(workspacesOpenMock).toHaveBeenCalledWith(
+      config,
+      expect.objectContaining({
+        name: "team-1",
+        url: "https://linear.app/example/issue/TEAM-1/fetched-slug",
+      }),
+    );
+  });
+
+  it("does not attach a colliding Linear URL to a URL-less task from another source", async () => {
+    const multiSourceConfig: ResolvedConfig = {
+      ...config,
+      sources: [
+        { kind: "linear" },
+        {
+          kind: "todo-txt",
+          name: "todo",
+          todoPath: "todo.txt",
+          tasksDir: ".tasks",
+          idPrefix: "TEAM",
+          timezone: "UTC",
+        },
+      ],
+    };
+    readRunStateMock.mockReturnValue(makeRunState({ completionTaskId: "todo:team-1" }));
+    getLinearClientMock.mockReturnValue({
+      issue: vi.fn<IssueLookup>().mockResolvedValue({
+        title: "Unrelated Linear task",
+        description: "Body",
+        url: "https://linear.app/example/issue/TEAM-1/unrelated",
+      }),
+    } as unknown as ReturnType<typeof getLinearClient>);
+
+    await resumeWorkspace(multiSourceConfig, { task: "team-1" });
+
+    expect(workspacesOpenMock.mock.calls[0]?.[1]).not.toHaveProperty("url");
+    expect(lastRecordedRunState()).not.toHaveProperty("url");
   });
 
   function resumeArgsConfig(): ResolvedConfig {
@@ -529,7 +609,10 @@ describe(resumeWorkspace, () => {
     expect(fetchInput.client).toBeDefined();
     expect(workspacesOpenMock).toHaveBeenCalledWith(
       config,
-      expect.objectContaining({ name: "team-1" }),
+      expect.objectContaining({
+        name: "team-1",
+        url: "https://linear.app/example/issue/TEAM-1",
+      }),
     );
   });
 
@@ -689,6 +772,99 @@ describe(resumeWorkspace, () => {
       force: true,
     });
     expect(recordRunStateMock).not.toHaveBeenCalled();
+  });
+
+  it("closes the live workspace when recording resumed run state fails", async () => {
+    recordRunStateMock.mockImplementation(() => {
+      throw new Error("state directory is read-only");
+    });
+
+    await expect(resumeWorkspace(config, { task: "team-1" })).rejects.toThrow(
+      "state directory is read-only",
+    );
+    expect(workspacesCloseMock).toHaveBeenCalledWith(config, "team-1");
+    expect(rmSyncMock).toHaveBeenCalledWith("/tmp/groundcrew-resume-team-1-x", {
+      recursive: true,
+      force: true,
+    });
+    expect(createMock).not.toHaveBeenCalled();
+  });
+
+  it("surfaces the state failure when closing the resumed workspace also fails", async () => {
+    recordRunStateMock.mockImplementation(() => {
+      throw new Error("state directory is read-only");
+    });
+    workspacesCloseMock.mockRejectedValue(new Error("cmux close failed"));
+
+    await expect(resumeWorkspace(config, { task: "team-1" })).rejects.toThrow(
+      "state directory is read-only",
+    );
+    expect(logMock).toHaveBeenCalledWith(
+      "Workspace close failed during resume rollback for team-1: cmux close failed. Close it manually in the configured workspace backend.",
+    );
+  });
+
+  it("surfaces the state failure when resumed workspace closure is unavailable", async () => {
+    recordRunStateMock.mockImplementation(() => {
+      throw new Error("state directory is read-only");
+    });
+    workspacesCloseMock.mockResolvedValue({
+      kind: "unavailable",
+      error: new Error("cmux unavailable"),
+    });
+
+    await expect(resumeWorkspace(config, { task: "team-1" })).rejects.toThrow(
+      "state directory is read-only",
+    );
+    expect(logMock).toHaveBeenCalledWith(
+      "Workspace close was not confirmed during resume rollback for team-1: cmux unavailable. Close it manually in the configured workspace backend.",
+    );
+  });
+
+  it("surfaces the state failure when resumed workspace closure has no diagnostic", async () => {
+    recordRunStateMock.mockImplementation(() => {
+      throw new Error("state directory is read-only");
+    });
+    workspacesCloseMock.mockResolvedValue({ kind: "unavailable" });
+
+    await expect(resumeWorkspace(config, { task: "team-1" })).rejects.toThrow(
+      "state directory is read-only",
+    );
+    expect(logMock).toHaveBeenCalledWith(
+      "Workspace close was not confirmed during resume rollback for team-1: workspace backend unavailable. Close it manually in the configured workspace backend.",
+    );
+  });
+
+  it("preserves the state failure when launch and prompt cleanup fail", async () => {
+    const cleanup = vi.fn<() => void>(() => {
+      throw new Error("launch cleanup failed");
+    });
+    const composeAgentLaunchMock = vi
+      .spyOn(agentLaunch, "composeAgentLaunch")
+      .mockReturnValue({ command: "claude", cleanup });
+    recordRunStateMock.mockImplementation(() => {
+      throw new Error("state directory is read-only");
+    });
+    rmSyncMock.mockImplementation(() => {
+      throw new Error("prompt cleanup failed");
+    });
+
+    try {
+      await expect(resumeWorkspace(config, { task: "team-1" })).rejects.toThrow(
+        "state directory is read-only",
+      );
+    } finally {
+      composeAgentLaunchMock.mockRestore();
+    }
+
+    expect(workspacesCloseMock).toHaveBeenCalledWith(config, "team-1");
+    expect(cleanup).toHaveBeenCalledOnce();
+    expect(logMock).toHaveBeenCalledWith(
+      "Agent launch cleanup failed during resume rollback for team-1: launch cleanup failed",
+    );
+    expect(logMock).toHaveBeenCalledWith(
+      "Staged prompt cleanup failed during resume rollback for team-1: prompt cleanup failed",
+    );
   });
 });
 

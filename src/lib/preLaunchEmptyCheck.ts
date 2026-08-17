@@ -1,0 +1,31 @@
+/**
+ * Emit POSIX-shell lines that WARN (to stderr, never abort) when a
+ * `preLaunchEnv` name resolves to an empty string after `preLaunch` runs.
+ * Length-0 is the reliable tell for the `export VAR="$(cat missing-file)"`
+ * failure mode: `export` masks the substitution's non-zero exit status, so
+ * `set -e` and exit-code checks do not catch it.
+ *
+ * Warn-only is deliberate — a hard-abort mode is a separate opt-in, so the
+ * chain (prompt read, prompt-dir cleanup, exec) must not be short-circuited
+ * by an empty value here.
+ *
+ * Returns `[]` for an empty input list so callers can splat unconditionally
+ * into their `&&` chain.
+ *
+ * The safehouse and unwrapped-host chains both unset each `preLaunchEnv` name
+ * before running `preLaunch`, so the check reflects what `preLaunch` produced
+ * instead of a value inherited from the parent shell.
+ *
+ * Names must be POSIX identifiers (`[A-Za-z_][A-Za-z0-9_]*`); groundcrew's
+ * `validatePreLaunchEnv` in `src/lib/config.ts` enforces that, so no shell
+ * escaping is done here.
+ */
+export function buildPreLaunchEmptyCheckLines(names: readonly string[]): string[] {
+  if (names.length === 0) {
+    return [];
+  }
+  return [...new Set(names)].map(
+    (name) =>
+      `if [ -z "\${${name}-}" ]; then echo "preLaunchEnv: ${name} is empty after preLaunch (value length 0)" >&2; fi`,
+  );
+}

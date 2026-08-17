@@ -468,6 +468,18 @@ describe(setupWorkspace, () => {
       state: "running",
       url: "https://linear.app/example/issue/TEAM-1",
     });
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "cmux",
+      expect.arrayContaining([
+        "set-status",
+        "task",
+        "[Linear ↗](https://linear.app/example/issue/TEAM-1)",
+        "--format",
+        "markdown",
+        "--workspace",
+        "workspace:42",
+      ]),
+    );
   });
 
   it("grants matching todo-txt source paths to the worker completion sandbox", async () => {
@@ -780,6 +792,46 @@ describe(setupWorkspace, () => {
     expect(launchScript).toContain('sh "$_p"');
     // prepareWorktree status guard so a failed install still launches the agent
     expect(launchScript).toContain('"$prepare_status" -ne 0');
+  });
+
+  it("skips every prepareWorktree hook when the task policy opts out", async () => {
+    detectHostMock.mockResolvedValue(host());
+    const base = makeConfig({
+      definitions: {
+        claude: {
+          cmd: "claude --permission-mode auto",
+          color: "#fff",
+        },
+      },
+    });
+    const config: ResolvedConfig = {
+      ...base,
+      defaults: { hooks: { prepareWorktree: "npm ci" } },
+      workspace: {
+        ...base.workspace,
+        repositories: [
+          {
+            name: "repo-a",
+            unsandboxedHooks: { prepareWorktree: "bin/setup" },
+          },
+        ],
+      },
+    };
+    mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
+
+    await setupWorkspace(config, {
+      task: "team-1",
+      repository: "repo-a",
+      agent: "claude",
+      worktreePreparation: "skip",
+      details: { title: "Test Title", description: "Body" },
+    });
+
+    const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
+    expect(createMock).toHaveBeenCalledTimes(1);
+    expect(launchScript).not.toContain("npm ci");
+    expect(launchScript).not.toContain("bin/setup");
+    expect(logMock).toHaveBeenCalledWith("Skipping prepareWorktree for team-1 (task policy)");
   });
 
   it("runs the per-repo operator prepareWorktree hook when defaults define none", async () => {
@@ -1234,6 +1286,29 @@ describe(setupWorkspace, () => {
       expect(launchScript).not.toContain("secrets.env");
       expect(launchScript).not.toContain("unset NPM_TOKEN");
     });
+
+    it("skips secrets.env when task policy skips a configured prepareWorktree hook", async () => {
+      setEnvironmentVariable("NPM_TOKEN", "npm_test_token");
+      deleteEnvironmentVariable("BUF_TOKEN");
+      mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:1" }));
+
+      await setupWorkspace(makeConfigWithPrepareWorktree(), {
+        task: "team-1",
+        repository: "repo-a",
+        agent: "claude",
+        worktreePreparation: "skip",
+        details: { title: "Test Title", description: "Body" },
+      });
+
+      expect(writeFileMock).not.toHaveBeenCalledWith(
+        expect.stringContaining("secrets.env"),
+        expect.anything(),
+        expect.anything(),
+      );
+      const launchScript = writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh");
+      expect(launchScript).not.toContain("secrets.env");
+      expect(launchScript).not.toContain("unset NPM_TOKEN");
+    });
   });
 
   it("logs the tmux access hint after launch so the user knows how to reach the workspace", async () => {
@@ -1334,7 +1409,7 @@ describe(setupWorkspace, () => {
         agent: "claude",
         details: { title: "Test Title", description: "Body" },
       }),
-    ).rejects.toThrow(/sdx runner require `sbx`/);
+    ).rejects.toThrow(/sdx runner require 'sbx'/);
 
     expect(createMock).not.toHaveBeenCalled();
     expect(ensureClearanceMock).not.toHaveBeenCalled();
@@ -1509,7 +1584,7 @@ describe(setupWorkspace, () => {
         agent: "claude",
         details: { title: "Test Title", description: "Body" },
       }),
-    ).rejects.toThrow(/require `safehouse` on PATH/);
+    ).rejects.toThrow(/require 'safehouse' on PATH/);
 
     expect(createMock).not.toHaveBeenCalled();
     expect(ensureClearanceMock).not.toHaveBeenCalled();
@@ -2024,6 +2099,24 @@ describe(setupWorkspaceCli, () => {
     expect(lastRecordedRunState().url).toBe("https://linear.app/example/issue/TEAM-1");
   });
 
+  it("forwards the resolved task's worktree preparation policy", async () => {
+    loadConfigMock.mockResolvedValue(makeConfigWithPrepareWorktree());
+    createBoardMock.mockReturnValue(
+      fakeBoard(
+        canonicalLinearIssue({
+          naturalId: "team-1",
+          repository: "repo-a",
+          agent: "claude",
+          worktreePreparation: "skip",
+        }),
+      ),
+    );
+
+    await setupWorkspaceCli("team-1");
+
+    expect(writtenFileContent("/tmp/groundcrew-team-1-x/launch.sh")).not.toContain("npm ci");
+  });
+
   it("marks the task In Progress via board.markInProgress after launching the workspace", async () => {
     await setupWorkspaceCli("team-1");
 
@@ -2041,6 +2134,24 @@ describe(setupWorkspaceCli, () => {
     expect(defaultBoard.markInProgress).not.toHaveBeenCalled();
     const logged = logMock.mock.calls.map(([message]) => message).join("\n");
     expect(logged).toContain("[dry-run] Would launch team-1 in repo-a (claude)");
+  });
+
+  it("reports skipped worktree preparation in dry-run mode", async () => {
+    createBoardMock.mockReturnValue(
+      fakeBoard(
+        canonicalLinearIssue({
+          naturalId: "team-1",
+          repository: "repo-a",
+          agent: "claude",
+          worktreePreparation: "skip",
+        }),
+      ),
+    );
+
+    await setupWorkspaceCli("team-1", { dryRun: true });
+
+    const logged = logMock.mock.calls.map(([message]) => message).join("\n");
+    expect(logged).toContain("prepareWorktree skipped");
   });
 
   it("does not mark the task In Progress when workspace setup fails", async () => {

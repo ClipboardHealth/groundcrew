@@ -111,9 +111,11 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     }
 
     if (dryRun) {
+      const preparationSuffix =
+        issue.worktreePreparation === "skip" ? "; prepareWorktree skipped" : "";
       log(
         /* v8 ignore next @preserve -- classifyTodo forces recovery=false in dry-run, so the resume branch can't fire here */
-        `[dry-run] Would ${recovery ? "resume" : "start"} ${taskId} in ${issue.repository} (${issue.agent})`,
+        `[dry-run] Would ${recovery ? "resume" : "start"} ${taskId} in ${issue.repository} (${issue.agent})${preparationSuffix}`,
       );
       logEvent("dispatch", {
         outcome: "skipped",
@@ -138,6 +140,9 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
             sourceName: issue.source,
           }),
           agent: issue.agent,
+          ...(issue.worktreePreparation === undefined
+            ? {}
+            : { worktreePreparation: issue.worktreePreparation }),
           details: {
             title: issue.title,
             description: issue.description,

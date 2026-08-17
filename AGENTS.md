@@ -2,23 +2,21 @@
 
 # Coding Rules
 
-IMPORTANT: You MUST read the relevant rule files below before writing or reviewing code.
+Read the rule files relevant to the code you're changing or reviewing.
 
 | Rule                    | File                                  | When to Read                                                                                                          |
 | ----------------------- | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
 | Configuration           | .rules/common/configuration.md        | Adding config, secrets, or third-party dependencies: SSM, LaunchDarkly, DB, NPM packages                              |
 | Core Libraries          | .rules/common/coreLibraries.md        | Adding dependencies, implementing functionality, or debugging errors involving a @clipboard-health/* library          |
+| Date & Time             | .rules/common/dateTime.md             | Working with dates, times, timezones, or date comparisons                                                             |
+| Error Handling          | .rules/common/errorHandling.md        | Returning or throwing errors: ServiceResult, ServiceError, ERROR_CODES, toError                                       |
 | Feature Flags           | .rules/common/featureFlags.md         | Creating or managing feature flags: naming, lifecycle, SDK usage, Zod schemas                                         |
 | Git Workflow            | .rules/common/gitWorkflow.md          | Writing commit messages, PR titles, or reviewing pull requests                                                        |
 | Library Authoring       | .rules/common/libraryAuthoring.md     | Authoring shared library code: @clipboard-health/* packages or shared library modules within services (e.g., src/lib) |
 | Logging & Observability | .rules/common/loggingObservability.md | Adding logging, metrics, monitoring, or observability: levels, context, PII, Datadog                                  |
+| Rules Engine            | .rules/common/rulesEngine.md          | Writing or modifying @clipboard-health/rules-engine rule functions                                                    |
 | Testing                 | .rules/common/testing.md              | Writing unit tests: conventions, naming, structure                                                                    |
 | TypeScript              | .rules/common/typeScript.md           | Writing ANY TypeScript code                                                                                           |
-
-## Agent Skills
-
-Agent skills are linked from `node_modules/@clipboard-health/ai-rules` into `.agents/`.
-If a referenced skill is missing or unreadable, run `npm ci` from the repository root and retry.
 
 <!-- Source: ./OVERLAY.md -->
 
@@ -28,7 +26,7 @@ If a referenced skill is missing or unreadable, run `npm ci` from the repository
 
 1. Use red, green, refactor test-driven development
 2. Validate changes with at least `node --run verify`
-3. Invoke core:go skill for ALL code changes
+3. Invoke cb-work skill for ALL code changes
 4. To exercise the `crew` CLI against the local checkout, run it via the npm script: `node --run crew -- <args>` (e.g. `node --run crew -- cleanup ENG-123`). The globally-installed `crew` binary runs the published version and will not reflect your in-progress changes. See [Development](./README.md#development) for the `crew:op` 1Password variant.
 
 ### Vitest coverage ignores

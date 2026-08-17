@@ -1,11 +1,19 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { buildSources } from "../lib/buildSources.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
-import { findPullRequestsForBranch } from "../lib/pullRequests.ts";
+import { findPullRequestsForBranch, type PullRequestSummary } from "../lib/pullRequests.ts";
 import { readRunState, type RunState } from "../lib/runState.ts";
+import type { LocalStatusDocument, RemoteStatusDocument } from "../lib/statusSnapshot.ts";
 import type { Issue as SourceIssue, TaskSource } from "../lib/taskSource.ts";
 import { type WorkspaceProbe, workspaces } from "../lib/workspaces.ts";
 import { type WorktreeDirtiness, type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
@@ -178,6 +186,11 @@ function worktree(overrides: Partial<WorktreeEntry> = {}): WorktreeEntry {
     kind: "host",
     ...overrides,
   };
+}
+
+/** Each worktree directory gets its own pull requests; anything else gets none. */
+function stubPullRequestsByDirectory(prsByDirectory: Record<string, PullRequestSummary[]>): void {
+  findPullRequestsMock.mockImplementation(async ({ cwd }) => prsByDirectory[cwd] ?? []);
 }
 
 function runState(overrides: Partial<RunState> = {}): RunState {
@@ -1385,6 +1398,303 @@ describe(status, () => {
     expect(output).not.toContain("session dead");
     expect(output).toContain("Workspace probe unavailable: cmux unavailable");
   });
+
+  describe("--json", () => {
+    function parseJsonOutput(): {
+      local: LocalStatusDocument;
+      remote?: RemoteStatusDocument;
+    } {
+      return JSON.parse(consoleLog.output());
+    }
+
+    // Every --json run persists two files beside the log, so each test needs
+    // its own directory or they read each other's snapshots.
+    function jsonConfig(): ResolvedConfig {
+      return makeConfig({ logging: { file: path.join(temporaryDirectory, "groundcrew.log") } });
+    }
+
+    it("prints both documents under one root", async () => {
+      await status(jsonConfig(), { json: true });
+
+      const actual = parseJsonOutput();
+
+      expect(actual.local.schemaVersion).toBe(1);
+      expect(actual.remote?.lastAttemptStatus).toBe("ok");
+    });
+
+    it("timestamps each tier when its data collection starts", async () => {
+      const pollStartedAt = "2026-05-26T02:14:30.000Z";
+      const boardCapturedAt = "2026-05-26T02:15:00.000Z";
+      workspaceProbeMock.mockImplementation(async () => {
+        vi.setSystemTime(new Date(boardCapturedAt));
+        return { kind: "ok", names: new Set(["team-1"]) };
+      });
+      findPullRequestsMock.mockImplementation(async () => {
+        vi.setSystemTime(new Date("2026-05-26T02:16:00.000Z"));
+        return [];
+      });
+
+      await status(jsonConfig(), { json: true });
+
+      const actual = parseJsonOutput();
+      expect(actual.local.capturedAt).toBe(pollStartedAt);
+      expect(actual.remote?.lastAttemptAt).toBe(pollStartedAt);
+      expect(actual.remote?.payload?.capturedAt).toBe(boardCapturedAt);
+    });
+
+    it("publishes current source metadata for tasks outside queue states", async () => {
+      readRunStateMock.mockReturnValue(
+        runState({ title: "Title at dispatch", url: "https://example.test/old" }),
+      );
+      buildSourcesMock.mockResolvedValue([
+        fakeSource([
+          sourceIssue({
+            status: "done",
+            title: "Current source title",
+            url: "https://example.test/current",
+          }),
+        ]),
+      ]);
+
+      await status(jsonConfig(), { json: true });
+
+      const actual = parseJsonOutput();
+      expect(actual.remote?.payload?.sourceByTask["team-1"]).toMatchObject({
+        status: "done",
+        title: "Current source title",
+        url: "https://example.test/current",
+      });
+    });
+
+    it("publishes a task's recent lines even when they precede a large unrelated tail", async () => {
+      const config = jsonConfig();
+      const taskLine = "[09:00:00] team-1 dispatched";
+      const unrelatedTail = `${"x".repeat(200)}\n`.repeat(2000);
+      writeFileSync(config.logging.file, `${taskLine}\n${unrelatedTail}`);
+
+      await status(config, { json: true });
+
+      const actual = parseJsonOutput();
+      expect(actual.local.tasks[0]?.recentLogLines).toEqual([taskLine]);
+    });
+
+    it("extends cached task log history from the previous poll's cursor", async () => {
+      const config = jsonConfig();
+      const historicalLine = "[09:00:00] team-1 dispatched";
+      const appendedLine = "[09:15:00] team-1 resumed";
+      const unrelatedTail = `${"x".repeat(200)}\n`.repeat(2000);
+      writeFileSync(config.logging.file, `${historicalLine}\n${unrelatedTail}`);
+
+      await status(config, { json: true });
+
+      const first = parseJsonOutput();
+      const firstOffset = first.local.logCursor?.offset;
+      expect(firstOffset).toBeGreaterThan(0);
+      consoleLog.restore();
+      consoleLog = captureConsoleLog();
+      appendFileSync(config.logging.file, `${appendedLine}\n`);
+
+      await status(config, { json: true });
+
+      const second = parseJsonOutput();
+      expect(second.local.logCursor?.offset).toBe(
+        Buffer.byteLength(`${historicalLine}\n${unrelatedTail}${appendedLine}\n`),
+      );
+      expect(second.local.tasks[0]?.recentLogLines).toEqual([historicalLine, appendedLine]);
+    });
+
+    it("omits the remote key entirely with --local-only", async () => {
+      await status(jsonConfig(), { json: true, localOnly: true });
+
+      const actual = parseJsonOutput();
+
+      expect(actual.local.schemaVersion).toBe(1);
+      expect("remote" in actual).toBe(false);
+    });
+
+    it("never constructs a task source or looks up a pull request with --local-only", async () => {
+      await status(jsonConfig(), { json: true, localOnly: true });
+
+      expect(buildSourcesMock).not.toHaveBeenCalled();
+      expect(findPullRequestsMock).not.toHaveBeenCalled();
+    });
+
+    it("reports an unavailable board without failing the command", async () => {
+      buildSourcesMock.mockRejectedValue(new Error("source down"));
+
+      await status(jsonConfig(), { json: true });
+
+      const actual = parseJsonOutput();
+
+      expect(actual.remote?.lastAttemptStatus).toBe("unavailable");
+      expect(actual.remote?.lastAttemptError).toBe("source down");
+      expect(actual.remote?.payload).toBeUndefined();
+    });
+
+    it("carries the previous payload forward when a later fetch fails", async () => {
+      const config = jsonConfig();
+      await status(config, { json: true });
+      consoleLog.restore();
+      consoleLog = captureConsoleLog();
+      buildSourcesMock.mockRejectedValue(new Error("source down"));
+
+      await status(config, { json: true });
+
+      const actual = parseJsonOutput();
+
+      expect(actual.remote?.lastAttemptStatus).toBe("unavailable");
+      expect(actual.remote?.payload).toBeDefined();
+    });
+
+    it("writes both documents beside the log file", async () => {
+      const config = jsonConfig();
+
+      await status(config, { json: true });
+
+      const localOnDisk = JSON.parse(
+        readFileSync(path.join(temporaryDirectory, "status-local.json"), "utf8"),
+      );
+      const remoteOnDisk = JSON.parse(
+        readFileSync(path.join(temporaryDirectory, "status-remote.json"), "utf8"),
+      );
+
+      expect(localOnDisk.schemaVersion).toBe(1);
+      expect(remoteOnDisk.lastAttemptStatus).toBe("ok");
+    });
+
+    it("prints exactly what it wrote to the remote file", async () => {
+      const config = jsonConfig();
+
+      await status(config, { json: true });
+
+      const printed = parseJsonOutput().remote;
+      const onDisk = JSON.parse(
+        readFileSync(path.join(temporaryDirectory, "status-remote.json"), "utf8"),
+      );
+
+      expect(printed).toEqual(onDisk);
+    });
+
+    it("prints exactly what it wrote to the local file", async () => {
+      const config = jsonConfig();
+
+      await status(config, { json: true });
+
+      const printed = parseJsonOutput().local;
+      const onDisk = JSON.parse(
+        readFileSync(path.join(temporaryDirectory, "status-local.json"), "utf8"),
+      );
+
+      expect(printed).toEqual(onDisk);
+    });
+
+    it("prints exactly what it wrote when the board fetch fails", async () => {
+      const config = jsonConfig();
+      buildSourcesMock.mockRejectedValue(new Error("source down"));
+
+      await status(config, { json: true });
+
+      const printed = parseJsonOutput().remote;
+      const onDisk = JSON.parse(
+        readFileSync(path.join(temporaryDirectory, "status-remote.json"), "utf8"),
+      );
+
+      expect(printed).toEqual(onDisk);
+      expect(printed?.lastAttemptStatus).toBe("unavailable");
+    });
+
+    it("prints exactly what it wrote with --local-only", async () => {
+      const config = jsonConfig();
+
+      await status(config, { json: true, localOnly: true });
+
+      const printed = parseJsonOutput().local;
+      const onDisk = JSON.parse(
+        readFileSync(path.join(temporaryDirectory, "status-local.json"), "utf8"),
+      );
+
+      expect(printed).toEqual(onDisk);
+    });
+
+    it("writes no snapshot in text mode", async () => {
+      const config = jsonConfig();
+
+      await status(config);
+
+      expect(existsSync(path.join(temporaryDirectory, "status-local.json"))).toBe(false);
+      expect(existsSync(path.join(temporaryDirectory, "status-remote.json"))).toBe(false);
+    });
+
+    it("rejects --json for a single task", async () => {
+      await expect(status(makeConfig(), { task: "team-1", json: true })).rejects.toThrow(
+        "crew status: --json is not supported for a single task",
+      );
+    });
+  });
+
+  it("still shows pull request links when the board fetch fails", async () => {
+    // The board and `gh` share no data, so losing one must not hide the other.
+    buildSourcesMock.mockRejectedValue(new Error("source down"));
+    stubPullRequestsByDirectory({
+      "/work/repo-a-team-1": [
+        { url: "https://example.test/a", number: 1, state: "open", title: "A" },
+      ],
+    });
+
+    await status(makeConfig());
+
+    const output = consoleLog.output();
+
+    expect(output).toContain("unavailable: source down");
+    expect(output).toContain("pr:        https://example.test/a (open)");
+  });
+
+  it("shows each worktree only its own pull requests when a task has two", async () => {
+    listWorktreesMock.mockReturnValue([
+      worktree({ repository: "repo-a", dir: "/work/repo-a-team-1" }),
+      worktree({ repository: "repo-b", dir: "/work/repo-b-team-1" }),
+    ]);
+    stubPullRequestsByDirectory({
+      "/work/repo-a-team-1": [
+        { url: "https://example.test/a", number: 1, state: "open", title: "A" },
+      ],
+      "/work/repo-b-team-1": [
+        { url: "https://example.test/b", number: 2, state: "open", title: "B" },
+      ],
+    });
+
+    await status(makeConfig());
+
+    const output = consoleLog.output();
+    const rowA = output.slice(output.indexOf("/work/repo-a-team-1"));
+    const rowB = output.slice(output.indexOf("/work/repo-b-team-1"));
+
+    expect(rowA).toContain("https://example.test/a");
+    expect(rowA.slice(0, rowA.indexOf("/work/repo-b-team-1"))).not.toContain(
+      "https://example.test/b",
+    );
+    expect(rowB).toContain("https://example.test/b");
+  });
+
+  // The snapshot document groups worktrees under one task while the inventory
+  // prints one row per worktree. This pins the flatten order across that
+  // regrouping.
+  it("prints one row per worktree, in list order, when a task has two", async () => {
+    listWorktreesMock.mockReturnValue([
+      worktree({ repository: "repo-a", dir: "/work/repo-a-team-1" }),
+      worktree({ repository: "repo-b", dir: "/work/repo-b-team-1" }),
+    ]);
+
+    await status(makeConfig());
+
+    const output = consoleLog.output();
+
+    expect(output).toContain("/work/repo-a-team-1");
+    expect(output).toContain("/work/repo-b-team-1");
+    expect(output.indexOf("/work/repo-a-team-1")).toBeLessThan(
+      output.indexOf("/work/repo-b-team-1"),
+    );
+  });
 });
 
 describe(statusCli, () => {
@@ -1433,6 +1743,20 @@ describe(statusCli, () => {
     await expect(statusCli(["--task", "TEAM-1"])).rejects.toThrow(/Usage: crew status/);
 
     expect(loadConfigMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects --local-only without --json", async () => {
+    await expect(statusCli(["--local-only"])).rejects.toThrow(
+      "crew status: --local-only requires --json",
+    );
+
+    expect(loadConfigMock).not.toHaveBeenCalled();
+  });
+
+  it("accepts --json and --local-only in either order", async () => {
+    await statusCli(["--local-only", "--json"]);
+
+    expect(loadConfigMock).toHaveBeenCalled();
   });
 
   it("rejects extra positional arguments", async () => {

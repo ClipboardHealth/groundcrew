@@ -11,12 +11,13 @@
 import type { LinearClient } from "@linear/sdk";
 
 import type { ResolvedConfig } from "../../config.ts";
-import { RepositoryResolutionError } from "../../taskSource.ts";
+import { RepositoryResolutionError, type WorktreePreparation } from "../../taskSource.ts";
 import { log, styleWarning } from "../../util.ts";
 import {
   AGENT_LABEL_PREFIX,
   resolveAgentFor,
   resolveRepositoryFor,
+  resolveWorktreePreparation,
   type AgentResolution,
 } from "./parsing.ts";
 
@@ -71,6 +72,7 @@ export interface Issue {
   url: string;
   /** Linear priority: 1=Urgent, 2=High, 3=Medium, 4=Low, 0=No priority. */
   priority: number;
+  worktreePreparation?: WorktreePreparation;
 }
 
 /**
@@ -336,6 +338,7 @@ function buildLinearIssue(input: {
   teamId: string;
   url: string;
   priority: number;
+  worktreePreparation: WorktreePreparation | undefined;
   inverseRelations: { nodes: IssueRelationNode[]; pageInfo: { hasNextPage: boolean } } | undefined;
 }): Issue {
   return {
@@ -356,6 +359,9 @@ function buildLinearIssue(input: {
     priority: input.priority,
     blockers: blockersFromRelations(input.inverseRelations?.nodes ?? []),
     hasMoreBlockers: input.inverseRelations?.pageInfo.hasNextPage ?? false,
+    ...(input.worktreePreparation === undefined
+      ? {}
+      : { worktreePreparation: input.worktreePreparation }),
   };
 }
 
@@ -389,6 +395,7 @@ function issueFromNode(node: IssueNode, config: ResolvedConfig): Issue {
     teamId: node.team?.id ?? "",
     url: node.url,
     priority: node.priority,
+    worktreePreparation: resolveWorktreePreparation({ labels: node.labels.nodes }),
     inverseRelations: node.inverseRelations,
   });
 }
@@ -409,6 +416,7 @@ interface ResolvedIssue {
   hasMoreBlockers: boolean;
   url: string;
   priority: number;
+  worktreePreparation?: WorktreePreparation;
 }
 
 const ISSUE_LABEL_PAGE_SIZE = 50;
@@ -656,6 +664,7 @@ export async function fetchResolvedIssue(arguments_: {
   } else if (agentResolution.kind === "not-enabled-fallback") {
     agent = agentResolution.fallbackAgent;
   }
+  const worktreePreparation = resolveWorktreePreparation({ labels: raw.labels });
   return {
     uuid: raw.uuid,
     title: raw.title,
@@ -672,6 +681,7 @@ export async function fetchResolvedIssue(arguments_: {
     hasMoreBlockers: raw.hasMoreBlockers,
     url: raw.url,
     priority: raw.priority,
+    ...(worktreePreparation === undefined ? {} : { worktreePreparation }),
   };
 }
 

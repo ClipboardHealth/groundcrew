@@ -1,5 +1,7 @@
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync } from "node:fs";
 import path from "node:path";
+
+import { writeJsonAtomic } from "./atomicJson.ts";
 
 import type { ResolvedConfig } from "./config.ts";
 import { normalizePlainTaskId } from "./taskId.ts";
@@ -174,11 +176,7 @@ function parseRunState(value: unknown): RunState | undefined {
 }
 
 function writeState(config: ResolvedConfig, state: RunState): void {
-  const statePath = runStatePath(config, state.task);
-  mkdirSync(path.dirname(statePath), { recursive: true });
-  const tmpPath = `${statePath}.${process.pid}.tmp`;
-  writeFileSync(tmpPath, `${JSON.stringify(state, undefined, 2)}\n`, { mode: 0o600 });
-  renameSync(tmpPath, statePath);
+  writeJsonAtomic(runStatePath(config, state.task), state);
 }
 
 export function readRunState(config: ResolvedConfig, task: string): RunState | undefined {

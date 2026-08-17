@@ -1,0 +1,14 @@
+{
+  "extends": ["@tsconfig/strictest", "@tsconfig/node24"],
+  "compilerOptions": {
+    "composite": true,
+    "erasableSyntaxOnly": true,
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "noEmit": true,
+    "rootDir": ".",
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/**/*.test.ts"]
+}

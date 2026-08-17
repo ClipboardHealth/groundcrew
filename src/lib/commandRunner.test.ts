@@ -12,13 +12,10 @@ interface ChildProcessMockModule {
   spawn: typeof spawnMock;
 }
 
-vi.mock(
-  "node:child_process",
-  (): ChildProcessMockModule => ({
-    execFileSync: vi.fn<typeof execFileSync>(),
-    spawn: spawnMock,
-  }),
-);
+vi.mock("node:child_process", (): ChildProcessMockModule => ({
+  execFileSync: vi.fn<typeof execFileSync>(),
+  spawn: spawnMock,
+}));
 
 const execFileMock = vi.mocked(execFileSync);
 
@@ -114,7 +111,7 @@ describe(runCommand, () => {
   it("normalizes non-Error thrown values and string stderr", () => {
     const cause = { stderr: "plain stderr\n", stdout: "plain stdout\n" };
     execFileMock.mockImplementation(() => {
-      // oxlint-disable-next-line no-throw-literal, typescript/only-throw-error -- runCommand accepts unknown subprocess failures defensively
+      // oxlint-disable-next-line typescript/only-throw-error -- runCommand accepts unknown subprocess failures defensively
       throw cause;
     });
 

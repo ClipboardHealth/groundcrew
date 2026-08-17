@@ -1,0 +1,5 @@
+#!/usr/bin/env -S node --use-bundled-ca --use-system-ca
+
+import { run } from "./lib.js";
+
+await run({ command: "update" });

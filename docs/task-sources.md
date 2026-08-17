@@ -69,12 +69,17 @@ declared paths. The `sdx` runner does not mount these host paths.
     "updatedAt": "2026-05-22T15:00:00Z",
     "blockers": [{ "id": "JIRA-122", "title": "Schema migration", "status": "done" }],
     "hasMoreBlockers": false,
+    "worktreePreparation": "skip",
     "sourceRef": { "nativeId": "10042" }
   }
 ]
 ```
 
 Allowed `status` values are `todo`, `in-progress`, `in-review`, `done`, and `other`. In shell-script JSON output, emit both `repository` and `agent`; use `null` when a task should not be groundcrew-eligible. `hasMoreBlockers` is optional and defaults to `false`; `sourceRef` is opaque data that groundcrew passes back to your writeback command.
+`worktreePreparation` is optional. Set it to `skip` when the task should create
+its worktree without running any configured `prepareWorktree` or
+`unsandboxedHooks.prepareWorktree` command; omission preserves the default
+preparation behavior.
 
 ## Todo.txt
 
@@ -143,6 +148,10 @@ crew task create "Fix cancellation retry race" \
 ```
 
 Created Linear issues are assigned to the API key's viewer, moved into a Todo workflow state, labeled with exactly one `agent-*` label, and given a description that includes `Repository: <repo>` near the top. Repeated `--dep <ISSUE>` values create Linear blocked-by relations when the dependency is a Linear issue id.
+
+Add the exact `groundcrew-skip-prepare` label to an existing Linear task when it
+should create a worktree without running configured worktree preparation hooks.
+The label does not make the worktree read-only.
 
 ## The `description` is the agent's prompt
 

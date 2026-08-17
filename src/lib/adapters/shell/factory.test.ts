@@ -51,6 +51,9 @@ function shellIssue(overrides: Partial<ShellIssue> = {}): ShellIssue {
     hasMoreBlockers: overrides.hasMoreBlockers ?? false,
     sourceRef: "sourceRef" in overrides ? overrides.sourceRef : { path: "/tmp/p.md" },
     ...("url" in overrides ? { url: overrides.url } : {}),
+    ...("worktreePreparation" in overrides
+      ? { worktreePreparation: overrides.worktreePreparation }
+      : {}),
   };
 }
 
@@ -100,6 +103,12 @@ describe(toCanonicalIssue, () => {
   it("omits the canonical url when the script's payload has none", () => {
     const result = toCanonicalIssue(shellIssue(), "jira");
     expect(result).not.toHaveProperty("url");
+  });
+
+  it("passes the worktree preparation policy through to the canonical Issue", () => {
+    const result = toCanonicalIssue(shellIssue({ worktreePreparation: "skip" }), "jira");
+
+    expect(result.worktreePreparation).toBe("skip");
   });
 
   it("source-prefixes blocker ids", () => {

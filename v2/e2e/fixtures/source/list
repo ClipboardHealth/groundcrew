@@ -1,0 +1,33 @@
+#!/usr/bin/env node
+
+import { access, readFile } from "node:fs/promises";
+import { setTimeout as delay } from "node:timers/promises";
+
+await readStandardInput();
+if (process.env.FIXTURE_LIST_FAILURE === "1") {
+  process.stderr.write("fixture list failed\n");
+  process.exit(7);
+}
+if (process.env.FIXTURE_LIST_RELEASE !== undefined) {
+  for (;;) {
+    try {
+      await access(process.env.FIXTURE_LIST_RELEASE);
+      break;
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+        throw error;
+      }
+      await delay(10);
+    }
+  }
+}
+const tasks = JSON.parse(
+  await readFile(process.env.FIXTURE_LIST_TASKS ?? process.env.FIXTURE_TASKS, "utf8"),
+);
+process.stdout.write(`${JSON.stringify({ ok: true, data: { tasks } })}\n`);
+
+async function readStandardInput() {
+  let input = "";
+  for await (const chunk of process.stdin) input += chunk;
+  JSON.parse(input);
+}

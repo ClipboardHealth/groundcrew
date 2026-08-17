@@ -107,4 +107,24 @@ describe("loadConfig built-in agent presets", () => {
     expect(grok?.resumeArgs).toBe("--continue");
     expect(grok?.usage).toBeUndefined();
   });
+
+  it("enables pi from an empty override using the built-in preset", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      configSource({
+        workspace: VALID_WORKSPACE(temporary),
+        agents: { default: "pi", definitions: { pi: {} } },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+
+    const { pi } = actual.agents.definitions;
+    expect(pi?.cmd).toBe("pi --approve");
+    expect(pi?.color).toBe("#6B7280");
+    expect(pi?.resumeArgs).toBe("--continue");
+    expect(pi?.usage).toBeUndefined();
+  });
 });

@@ -389,6 +389,21 @@ describe(buildLaunchCommand, () => {
     expect(out).toContain('exec env -- claude --permission-mode auto "$@"');
   });
 
+  it("selects the Pi Safehouse profile and passes the prompt positionally", () => {
+    const out = buildLaunchCommand(
+      arguments_({
+        definition: {
+          cmd: "pi --approve",
+          color: "#6B7280",
+        },
+      }),
+    );
+
+    expect(out).toContain('_safehouse_shim="$_safehouse_shim_dir/pi"');
+    expect(out).toContain('exec pi --approve "$@"');
+    expect(out).toContain('sh "$_p"');
+  });
+
   it("skips leading environment assignments when inferring the Safehouse profile command", () => {
     const out = buildLaunchCommand(
       arguments_({
@@ -1008,6 +1023,129 @@ describe(buildLaunchCommand, () => {
       }
     });
 
+    it("splices the empty-value check between preLaunch and the prompt read, one per preLaunchEnv name (safehouse)", () => {
+      const out = buildLaunchCommand(
+        arguments_({
+          runner: "safehouse",
+          definition: {
+            cmd: "claude",
+            color: "#fff",
+            preLaunch: "export JIRA_API_TOKEN=abc && export GITHUB_TOKEN=xyz",
+            preLaunchEnv: ["JIRA_API_TOKEN", "GITHUB_TOKEN"],
+          },
+        }),
+      );
+
+      // End-to-end behavior of the emitted snippet is covered by
+      // preLaunchEmptyCheck.test.ts under `sh -c`; here we assert the wiring:
+      // one check per name, ordered after preLaunch and before the prompt read.
+      const preLaunchIndex = out.indexOf("export JIRA_API_TOKEN=abc");
+      const jiraCheckIndex = out.indexOf(
+        "preLaunchEnv: JIRA_API_TOKEN is empty after preLaunch (value length 0)",
+      );
+      const githubCheckIndex = out.indexOf(
+        "preLaunchEnv: GITHUB_TOKEN is empty after preLaunch (value length 0)",
+      );
+      const promptReadIndex = out.indexOf("_p=$(cat");
+
+      expect(preLaunchIndex).toBeGreaterThan(-1);
+      expect(jiraCheckIndex).toBeGreaterThan(preLaunchIndex);
+      expect(githubCheckIndex).toBeGreaterThan(preLaunchIndex);
+      expect(promptReadIndex).toBeGreaterThan(jiraCheckIndex);
+      expect(promptReadIndex).toBeGreaterThan(githubCheckIndex);
+    });
+
+    it("emits no empty-value check when preLaunchEnv is absent (safehouse)", () => {
+      const out = buildLaunchCommand(
+        arguments_({
+          runner: "safehouse",
+          definition: {
+            cmd: "claude",
+            color: "#fff",
+            preLaunch: "true",
+          },
+        }),
+      );
+
+      expect(out).not.toContain("is empty after preLaunch");
+    });
+
+    it("warns on stderr when a preLaunchEnv value is empty after preLaunch (runner=none, end-to-end)", () => {
+      const promptDir = mkdtempSync(path.join(tmpdir(), "groundcrew-empty-check-none-"));
+      const promptFile = path.join(promptDir, "prompt.txt");
+      const worktreeDir = mkdtempSync(path.join(tmpdir(), "groundcrew-empty-check-none-wt-"));
+      try {
+        writeFileSync(promptFile, "the prompt body\n");
+
+        const out = buildLaunchCommand(
+          arguments_({
+            runner: "none",
+            promptFile,
+            worktreeDir,
+            definition: {
+              // `echo` succeeds and exits 0, so we can run the whole chain past
+              // the empty-check without needing a wrapper — no `exit N` masking.
+              cmd: "echo TEST_MARKER_STDOUT",
+              color: "#fff",
+              // Motivating bug: `cat` on missing file inside `export` masks
+              // the substitution's non-zero status → JIRA_API_TOKEN is
+              // exported empty; `set -e` / exit-code checks miss it.
+              preLaunch: 'export JIRA_API_TOKEN="$(cat /this/path/does/not/exist 2>/dev/null)"',
+              preLaunchEnv: ["JIRA_API_TOKEN"],
+            },
+          }),
+        );
+
+        const actual = spawnSync("sh", ["-c", out], { env: { PATH: "/bin:/usr/bin" } });
+
+        expect(actual.status).toBe(0);
+        expect(actual.stdout.toString()).toContain("TEST_MARKER_STDOUT");
+        expect(actual.stderr.toString()).toContain(
+          "preLaunchEnv: JIRA_API_TOKEN is empty after preLaunch (value length 0)",
+        );
+      } finally {
+        rmSync(promptDir, { recursive: true, force: true });
+        rmSync(worktreeDir, { recursive: true, force: true });
+      }
+    });
+
+    it("scrubs stale inherited preLaunchEnv values before preLaunch (runner=none, end-to-end)", () => {
+      const promptDir = mkdtempSync(path.join(tmpdir(), "groundcrew-prelaunch-scrub-none-"));
+      const promptFile = path.join(promptDir, "prompt.txt");
+      const worktreeDir = mkdtempSync(path.join(tmpdir(), "groundcrew-prelaunch-scrub-none-wt-"));
+      try {
+        writeFileSync(promptFile, "the prompt body\n");
+
+        const out = buildLaunchCommand(
+          arguments_({
+            runner: "none",
+            promptFile,
+            worktreeDir,
+            definition: {
+              cmd: `sh -c 'printf "SESSION_TOKEN=%s\\n" "\${SESSION_TOKEN-}"'`,
+              color: "#fff",
+              preLaunch: `test -z "\${SESSION_TOKEN-}"`,
+              preLaunchEnv: ["SESSION_TOKEN"],
+            },
+          }),
+        );
+
+        const actual = spawnSync("sh", ["-c", out], {
+          env: { PATH: "/bin:/usr/bin", SESSION_TOKEN: "stale-token" },
+        });
+
+        expect(actual.status).toBe(0);
+        expect(actual.stdout.toString()).toContain("SESSION_TOKEN=\n");
+        expect(actual.stdout.toString()).not.toContain("stale-token");
+        expect(actual.stderr.toString()).toContain(
+          "preLaunchEnv: SESSION_TOKEN is empty after preLaunch (value length 0)",
+        );
+      } finally {
+        rmSync(promptDir, { recursive: true, force: true });
+        rmSync(worktreeDir, { recursive: true, force: true });
+      }
+    });
+
     it("runs preLaunch without double-wrapping when cmd already starts with safehouse", () => {
       const out = buildLaunchCommand(
         arguments_({
@@ -1215,7 +1353,7 @@ describe(buildLaunchCommand, () => {
             },
           }),
         ),
-      ).toThrow(/preLaunchEnv cannot be injected when `cmd` starts with `safehouse`/);
+      ).toThrow(/preLaunchEnv cannot be injected when 'cmd' starts with 'safehouse'/);
     });
 
     it("throws when workerEnvironment is set with a cmd that already starts with safehouse", () => {
@@ -1229,7 +1367,7 @@ describe(buildLaunchCommand, () => {
             workerEnvironment: WORKER_ENVIRONMENT,
           }),
         ),
-      ).toThrow(/workerEnvironment cannot be injected when `cmd` starts with `safehouse`/);
+      ).toThrow(/workerEnvironment cannot be injected when 'cmd' starts with 'safehouse'/);
     });
 
     it("treats preLaunchEnv: [] as a no-op when cmd already starts with safehouse", () => {
@@ -1251,7 +1389,7 @@ describe(buildLaunchCommand, () => {
       expect(out).not.toContain("--env-pass");
     });
 
-    it("does not throw on runner='none' with preLaunchEnv (exports already inherit)", () => {
+    it("does not add a forwarding flag on runner='none' with preLaunchEnv", () => {
       const out = buildLaunchCommand(
         arguments_({
           runner: "none",

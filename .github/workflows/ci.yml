@@ -5,6 +5,8 @@ on:
     branches:
       - main
       - "renovate/**"
+    paths-ignore:
+      - "v2/**"
   pull_request:
 
 permissions:
@@ -20,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           filter: tree:0
@@ -32,9 +34,35 @@ jobs:
 
       - run: node --run verify
 
-  release:
+  release-scope:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: main
+    outputs:
+      should-release: ${{ steps.changes.outputs.should-release }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - id: changes
+        name: Detect releasable v1 changes
+        run: |
+          should_release=false
+          release_pattern='^(feat|fix)(\([^)]*\))?!?:'
+          v2_pattern='^(feat|fix)\(v2\)!?:'
+          while IFS= read -r subject; do
+            if [[ "$subject" =~ $release_pattern ]] && [[ ! "$subject" =~ $v2_pattern ]]; then
+              should_release=true
+            fi
+          done < <(git log "${{ github.event.before }}..${{ github.sha }}" --format=%s)
+          echo "should-release=$should_release" >> "$GITHUB_OUTPUT"
+
+  release:
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      needs.release-scope.outputs.should-release == 'true'
+    needs: [main, release-scope]
     permissions:
       actions: read
       contents: write
@@ -48,7 +76,7 @@ jobs:
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
 
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
           token: ${{ steps.token.outputs.token }}

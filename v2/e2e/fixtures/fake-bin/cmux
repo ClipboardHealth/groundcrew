@@ -1,0 +1,141 @@
+#!/usr/bin/env node
+
+import { spawn } from "node:child_process";
+import { access, appendFile, readFile, writeFile } from "node:fs/promises";
+import { setTimeout as delay } from "node:timers/promises";
+
+const [command, ...arguments_] = process.argv.slice(2);
+const statePath = process.env.FAKE_CMUX_STATE;
+const callsPath = process.env.FAKE_CMUX_CALLS;
+await appendFile(callsPath, `${JSON.stringify({ arguments: process.argv.slice(2) })}\n`);
+const state = await readState();
+
+if (command === "new-workspace") {
+  if (process.env.FAKE_CMUX_FAIL_OPEN === "1") {
+    process.stderr.write("fake cmux open failure\n");
+    process.exit(1);
+  }
+  const workspace = {
+    environment: presentationEnvironment(),
+    id: `workspace-${state.workspaces.length + 1}`,
+    title: valueAfter("--name"),
+  };
+  state.workspaces.push(workspace);
+  await writeFile(statePath, JSON.stringify(state));
+  if (process.env.FAKE_CMUX_OPEN_RELEASE !== undefined) {
+    await writeFile(`${process.env.FAKE_CMUX_OPEN_RELEASE}.ready`, "ready\n");
+    for (;;) {
+      try {
+        await access(process.env.FAKE_CMUX_OPEN_RELEASE);
+        break;
+      } catch (error) {
+        if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+          throw error;
+        }
+      }
+      await delay(10);
+    }
+  }
+  if (process.env.FAKE_CMUX_EXECUTE_COMMAND === "1") {
+    const childEnvironment = { ...process.env, ...workspaceEnvironment() };
+    const child = spawn("/bin/sh", ["-c", valueAfter("--command")], {
+      cwd: valueAfter("--cwd"),
+      detached: true,
+      env: childEnvironment,
+      stdio: "ignore",
+    });
+    child.unref();
+  }
+} else if (command === "--json" && arguments_[0] === "list-workspaces") {
+  if (process.env.FAKE_CMUX_UNAVAILABLE === "1") {
+    process.stderr.write("fake cmux unavailable\n");
+    process.exit(1);
+  }
+  if (process.env.FAKE_CMUX_INVALID_JSON === "1") {
+    process.stdout.write("not json");
+    process.exit(0);
+  }
+  if (state.hiddenListResponsesRemaining > 0) {
+    state.hiddenListResponsesRemaining -= 1;
+    await writeFile(statePath, JSON.stringify(state));
+    process.stdout.write('{"workspaces":[]}');
+    process.exit(0);
+  }
+  process.stdout.write(JSON.stringify({ workspaces: state.workspaces }));
+} else if (command === "workspace" && arguments_[0] === "env") {
+  const workspace = state.workspaces.find(({ id }) => id === arguments_[1]);
+  if (
+    workspace !== undefined &&
+    process.env.FAKE_CMUX_DELETE_BEFORE_ENV_READ === workspace.id
+  ) {
+    state.workspaces = state.workspaces.filter(({ id }) => id !== workspace.id);
+    await writeFile(statePath, JSON.stringify(state));
+    process.stderr.write(`workspace not found: ${arguments_[1]}\n`);
+    process.exit(1);
+  }
+  if (workspace === undefined) {
+    process.stderr.write(`workspace not found: ${arguments_[1]}\n`);
+    process.exit(1);
+  }
+  process.stdout.write(
+    Object.entries(workspace.environment ?? {})
+      .map(([key, value]) => `${key}=${value}`)
+      .join("\n"),
+  );
+} else if (command === "workspace" && arguments_[0] === "close") {
+  const id = arguments_[1];
+  if (process.env.FAKE_CMUX_FAIL_CLOSE === "1") {
+    process.stderr.write("fake cmux close failure\n");
+    process.exit(1);
+  }
+  if (process.env.FAKE_CMUX_CLOSE_RELEASE !== undefined) {
+    await writeFile(`${process.env.FAKE_CMUX_CLOSE_RELEASE}.ready`, "ready\n");
+    for (;;) {
+      try {
+        await access(process.env.FAKE_CMUX_CLOSE_RELEASE);
+        break;
+      } catch (error) {
+        if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+          throw error;
+        }
+      }
+      await delay(10);
+    }
+  }
+  if (process.env.FAKE_CMUX_DIRTY_ON_CLOSE !== undefined) {
+    await writeFile(process.env.FAKE_CMUX_DIRTY_ON_CLOSE, "uncommitted\n");
+  }
+  state.workspaces = state.workspaces.filter((workspace) => workspace.id !== id);
+  await writeFile(statePath, JSON.stringify(state));
+} else if (command !== "set-progress") {
+  process.stderr.write(`unsupported fake cmux command: ${process.argv.slice(2).join(" ")}\n`);
+  process.exitCode = 1;
+}
+
+async function readState() {
+  try {
+    return JSON.parse(await readFile(statePath, "utf8"));
+  } catch {
+    return { workspaces: [] };
+  }
+}
+
+function valueAfter(flag) {
+  return arguments_[arguments_.indexOf(flag) + 1];
+}
+
+function workspaceEnvironment() {
+  const environment = {};
+  for (let index = 0; index < arguments_.length; index += 1) {
+    if (arguments_[index] !== "--env") continue;
+    const entry = arguments_[index + 1];
+    const separator = entry.indexOf("=");
+    environment[entry.slice(0, separator)] = entry.slice(separator + 1);
+  }
+  return environment;
+}
+
+function presentationEnvironment() {
+  const presentationId = workspaceEnvironment().GROUNDCREW_PRESENTATION_ID;
+  return presentationId === undefined ? {} : { GROUNDCREW_PRESENTATION_ID: presentationId };
+}

@@ -3,7 +3,7 @@ import { composeAgentLaunch, openAgentWorkspace, prepareAgentLaunch } from "../l
 import { inferAgentCommandName, workerEnvironmentForTask } from "../lib/launchCommand.ts";
 import { type Board, createBoard } from "../lib/board.ts";
 import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
-import { resolvePrepareWorktreeCommand } from "../lib/repositoryHooks.ts";
+import { resolveRepositoryPreparationCommands } from "../lib/repositoryHooks.ts";
 import { recordRunState } from "../lib/runState.ts";
 import { seedLaunchWorkspaceTrust } from "../lib/seedLaunchWorkspaceTrust.ts";
 import { sourceSupportsMarkDone } from "../lib/sourceCapabilities.ts";
@@ -15,7 +15,7 @@ import {
   type StagedPrompt,
 } from "../lib/stagedLaunch.ts";
 import { taskSourceWritePathsForCompletion } from "../lib/taskSourceFilesystem.ts";
-import { naturalIdFromCanonical } from "../lib/taskSource.ts";
+import { naturalIdFromCanonical, type WorktreePreparation } from "../lib/taskSource.ts";
 import { debug, errorMessage, log, okMark } from "../lib/util.ts";
 import { type WorkspaceAccessHint, workspaces } from "../lib/workspaces.ts";
 import {
@@ -24,6 +24,7 @@ import {
   type WorktreeEntry,
   worktrees,
 } from "../lib/worktrees.ts";
+import { cleanupAgentLaunchBestEffort } from "./agentLaunchCleanup.ts";
 
 export interface TaskDetails {
   title: string;
@@ -40,6 +41,8 @@ export interface SetupWorkspaceOptions {
   completionMarkDoneSupported?: boolean;
   repository: string;
   agent: string;
+  /** Set to `skip` to bypass configured prepareWorktree hooks. */
+  worktreePreparation?: WorktreePreparation;
   details: TaskDetails;
 }
 
@@ -136,19 +139,17 @@ export async function setupWorkspace(
     });
     promptDir = stagedPrompt.directory;
 
-    const repositoryEntry = config.workspace.repositories.find(
-      (entry) => entry.name === repository,
-    );
-    const perRepoHooks = repositoryEntry?.hooks;
-    const prepareWorktreeUnsandboxedCommand = repositoryEntry?.unsandboxedHooks?.prepareWorktree;
-    const prepareWorktreeCommand = resolvePrepareWorktreeCommand({
-      worktreeDir: launchDir,
-      // Spread-conditional rather than a direct assignment: under
-      // exactOptionalPropertyTypes an optional field can't take an explicit
-      // `undefined`, and the lookup yields undefined for repos with no hooks.
-      ...(perRepoHooks === undefined ? {} : { perRepoHooks }),
-      defaultHooks: config.defaults.hooks,
-    });
+    const shouldPrepareWorktree = options.worktreePreparation !== "skip";
+    const { prepareWorktreeCommand, prepareWorktreeUnsandboxedCommand } =
+      resolveTaskPreparationCommands({
+        config,
+        repository,
+        launchDir,
+        shouldPrepareWorktree,
+      });
+    if (!shouldPrepareWorktree) {
+      log(`Skipping prepareWorktree for ${task} (task policy)`);
+    }
     const secretsFile =
       prepareWorktreeCommand === undefined && prepareWorktreeUnsandboxedCommand === undefined
         ? undefined
@@ -196,6 +197,7 @@ export async function setupWorkspace(
       config,
       name: task,
       displayName: taskDetails.title,
+      url: taskDetails.url,
       cwd: launchDir,
       command: launchCmd,
       agent,
@@ -223,11 +225,33 @@ export async function setupWorkspace(
       logAccessHint(accessHint);
     }
   } catch (error) {
-    cleanupAgentLaunch?.();
+    cleanupAgentLaunchBestEffort({ cleanup: cleanupAgentLaunch, context: "setup rollback" });
     await rollbackWorktree({ config, entry: created, promptDir });
     recordFailedToLaunch({ config, options, paths: { worktreeDir, branchName }, error });
     throw error;
   }
+}
+
+function resolveTaskPreparationCommands(arguments_: {
+  config: ResolvedConfig;
+  repository: string;
+  launchDir: string;
+  shouldPrepareWorktree: boolean;
+}): {
+  prepareWorktreeCommand: string | undefined;
+  prepareWorktreeUnsandboxedCommand: string | undefined;
+} {
+  if (!arguments_.shouldPrepareWorktree) {
+    return {
+      prepareWorktreeCommand: undefined,
+      prepareWorktreeUnsandboxedCommand: undefined,
+    };
+  }
+  return resolveRepositoryPreparationCommands({
+    config: arguments_.config,
+    repository: arguments_.repository,
+    worktreeDir: arguments_.launchDir,
+  });
 }
 
 /**
@@ -462,7 +486,11 @@ export async function setupWorkspaceCli(
   log(`Resolved ${task}: repository=${resolved.repository}, agent=${resolved.agent}`);
 
   if (options.dryRun === true) {
-    log(`[dry-run] Would launch ${task} in ${resolved.repository} (${resolved.agent})`);
+    const preparationSuffix =
+      resolved.worktreePreparation === "skip" ? "; prepareWorktree skipped" : "";
+    log(
+      `[dry-run] Would launch ${task} in ${resolved.repository} (${resolved.agent})${preparationSuffix}`,
+    );
     return;
   }
 
@@ -477,6 +505,9 @@ export async function setupWorkspaceCli(
     }),
     repository: resolved.repository,
     agent: resolved.agent,
+    ...(resolved.worktreePreparation === undefined
+      ? {}
+      : { worktreePreparation: resolved.worktreePreparation }),
     details: {
       title: resolved.title,
       description: resolved.description,

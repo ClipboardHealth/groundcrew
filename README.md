@@ -22,20 +22,20 @@ Groundcrew watches assigned tasks, creates isolated worktrees, launches agent CL
 ## Why
 
 - **Local.** Agents run on your machine with your tools, shell, and credentials. That makes them more steerable than remote agents, and easy to nudge when they drift.
-- **Interactive.** Each task launches the real `claude`, `codex`, or `cursor-agent` CLI in its own terminal pane, not a wrapper that approximates it. Watch any session live and take over when you need to.
+- **Interactive.** Each task launches the real `claude`, `codex`, `cursor-agent`, or `pi` CLI in its own terminal pane, not a wrapper that approximates it. Watch any session live and take over when you need to.
 - **One worktree per task.** Agents work in parallel without stepping on each other.
 - **Sandboxed by default.** Safehouse or Docker Sandboxes isolate each agent on the host; `none` is an explicit escape hatch.
 - **Pluggable task sources.** Linear by default; Jira and local files via [task sources](./docs/task-sources.md).
-- **Multi-agent routing.** Ships `claude`, `codex`, and `cursor` (plus a `cursor-grok` variant) presets; bring your own CLI in config.
+- **Multi-agent routing.** Ships `claude`, `codex`, `cursor` (plus a `cursor-grok` variant), and `pi` presets; bring your own CLI in config.
 
 ## Prerequisites
 
 `crew doctor` checks all of these, so you can install as you go.
 
-- **Node >= 24:** [nvm](https://github.com/nvm-sh/nvm): `nvm install 24`.
+- **Node 24.14.1:** [nvm](https://github.com/nvm-sh/nvm): `nvm install 24.14.1`.
 - **git:** e.g., `brew install git`, `apt install git`.
 - **A terminal multiplexer:** [tmux](https://github.com/tmux/tmux/wiki/Installing) (cross-platform), [cmux](https://cmux.com/) (macOS), or [zellij](https://zellij.dev/).
-- **An agent CLI:** [Claude Code](https://code.claude.com/docs/en/quickstart), [Codex](https://developers.openai.com/codex/quickstart?setup=cli), and/or the [Cursor CLI](https://docs.cursor.com/en/cli/overview) (`cursor-agent`, for the `cursor` and `cursor-grok` presets).
+- **An agent CLI:** [Claude Code](https://code.claude.com/docs/en/quickstart), [Codex](https://developers.openai.com/codex/quickstart?setup=cli), the [Cursor CLI](https://docs.cursor.com/en/cli/overview) (`cursor-agent`, for the `cursor` and `cursor-grok` presets), and/or [Pi](https://pi.dev/).
 - **A sandbox runner:** [Docker Sandboxes](https://docs.docker.com/ai/sandboxes/) (cross-platform) or [Safehouse](https://agent-safehouse.dev/) on macOS. Skip only with `--runner none`.
 
 ## Quickstart
@@ -61,7 +61,18 @@ crew doctor
 crew run --watch
 ```
 
-`crew init --global` writes config to `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/`. Pass `--repo` more than once for multiple repos. `--agent claude`, `--agent codex`, or `--agent cursor` chooses the single built-in agent preset to enable in the generated config.
+`crew init --global` writes config to `${XDG_CONFIG_HOME:-$HOME/.config}/groundcrew/`. Pass `--repo` more than once for multiple repos. `--agent claude`, `--agent codex`, `--agent cursor`, or `--agent pi` chooses the single built-in agent preset to enable in the generated config.
+
+Pi needs credentials only for the provider its selected model uses—not every provider. Authenticate that provider before unattended use; see [Pi provider authentication](./docs/credentials.md#pi-provider-authentication).
+
+When using Pi through tmux 3.5 or later, add the following to `~/.tmux.conf` so tmux preserves modified keys such as `Shift+Enter` and `Ctrl+Enter`:
+
+```tmux
+set -g extended-keys on
+set -g extended-keys-format csi-u
+```
+
+Stop or finish every active Groundcrew task and save work in every other tmux session before running `tmux kill-server`; it terminates the entire shared tmux server, including unrelated user sessions. The change takes effect the next time tmux starts. These are server-wide options, so Groundcrew deliberately does not change them for you. With tmux 3.2–3.4, omit `extended-keys-format`; see [Pi's tmux setup](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/tmux.md).
 
 ## Task Pickup
 
@@ -69,7 +80,7 @@ crew run --watch
 
 Linear works out of the box: assign tasks to yourself and add an `agent-*` label.
 
-- `agent-claude`, `agent-codex`, or `agent-<name>` routes to that enabled launch profile.
+- `agent-claude`, `agent-codex`, `agent-pi`, or `agent-<name>` routes to that enabled launch profile.
 - `agent-any` routes to the enabled agent with the most session headroom, after skipping agents over their session limit or weekly paced budget.
 - Tasks without an `agent-*` label are ignored by `crew run`; dispatch one manually with `crew start <TASK>`.
 
@@ -93,7 +104,7 @@ Write tasks as complete agent instructions: the goal, the context and constraint
 ```bash
 crew init [--global | --local] [--force] [--dry-run]     # create a crew.config.ts
           [--project-dir <dir>] [--repo <repo>]...
-          [--runner <auto|safehouse|sdx|none>] [--agent <claude|codex|cursor>]
+          [--runner <auto|safehouse|sdx|none>] [--agent <claude|codex|cursor|pi>]
 crew doctor                                              # check setup
 crew source list|verify [<source>]                       # inspect configured task sources
 crew task list [--source <name>]                         # list tasks across sources
@@ -101,7 +112,7 @@ crew task get <TASK> [--source <name>] [--prompt]        # inspect one task or i
 crew task create "Title" --source <name> [--agent <name>] # create a source task
 crew task done <TASK> [--allow-dirty]                    # mark a no-PR task done
 crew task validate [<source>]                            # validate task content
-crew status [<TASK>]                                   # inspect current state or one task
+crew status [<TASK>] [--json [--local-only]]           # inspect current state, or emit it as JSON
 crew run [--watch]                                       # one-shot or --watch forever
 crew start <TASK>                                      # provision + launch one task now
 crew stop <TASK> [--reason <text>]                     # stop workspace, keep worktree
@@ -115,6 +126,50 @@ crew completions <bash|zsh|fish>                        # print a shell completi
 ```
 
 See [command details](./docs/commands.md) for status output, doctor behavior, and the stop/resume workflow.
+
+### Status snapshots for external monitors
+
+`crew status --json` prints two documents and writes them beside the log file:
+
+```text
+<state-dir>/status-local.json     # worktrees, run states, sessions, git status
+<state-dir>/status-remote.json    # board, pull requests
+```
+
+The two are split by cost. The local tier is local subprocess work, so it is
+safe to poll every few seconds. The remote tier is network-bound and
+rate-limited, so poll it near your `pollIntervalMilliseconds`.
+
+```bash
+crew status --json                # both tiers
+crew status --json --local-only   # local tier only; never touches the network
+```
+
+`--local-only` is a guarantee about that invocation, not a computed outcome, so
+a monitor's fast loop cannot stall on a slow board or a `gh` timeout.
+
+Three rules a reader must honor:
+
+- **Subtract locally.** `status-remote.json` ships board classification without
+  the local worktree subtraction. Remove tasks present in the local document
+  from `inProgress`, `queueReady`, and `queueBlocked` yourself. Precomputing
+  that join would report a just-dispatched task as still queued until the next
+  slow poll, which is a false statement rather than stale data.
+- **Join pull requests on the worktree directory.** `pullRequestsByWorktree` is
+  keyed by absolute worktree path, not by task, because a task with two
+  worktrees has two branches. An empty or missing entry means no pull requests
+  were found, or the `gh` lookup for that worktree failed; the two are not
+  distinguishable.
+- **Read the right timestamp.** `payload.capturedAt` describes the last
+  successful fetch; `lastAttemptAt` describes the most recent try. Read
+  `lastAttemptStatus` to answer "is the board healthy", and `capturedAt` to
+  answer "how old is this queue". A failed fetch keeps the previous payload, so
+  last-known-good data survives an outage while the document still says the
+  board is unreachable.
+
+Durations are never stored, only start instants, so a reader must derive
+elapsed time itself. A cached duration would show a frozen clock, which reads
+as "the agent stopped working" when it did not.
 
 ## Configuration
 

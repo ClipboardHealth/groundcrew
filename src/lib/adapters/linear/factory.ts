@@ -144,6 +144,9 @@ export function toCanonicalIssue(
     hasMoreBlockers: linearIssue.hasMoreBlockers,
     url: linearIssue.url,
     ...(linearIssue.priority === 0 ? {} : { priority: linearIssue.priority }),
+    ...(linearIssue.worktreePreparation === undefined
+      ? {}
+      : { worktreePreparation: linearIssue.worktreePreparation }),
     sourceRef,
   };
 }
@@ -225,6 +228,9 @@ export function createLinearTaskSource(
       hasMoreBlockers: resolved.hasMoreBlockers,
       url: resolved.url,
       ...(resolved.priority === 0 ? {} : { priority: resolved.priority }),
+      ...(resolved.worktreePreparation === undefined
+        ? {}
+        : { worktreePreparation: resolved.worktreePreparation }),
       sourceRef,
     };
   }

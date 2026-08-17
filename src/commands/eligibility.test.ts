@@ -320,9 +320,10 @@ describe(classifyEligibility, () => {
       );
 
       expect(verdicts[0]).toMatchObject({ kind: "skip", eventReason: "workspace_missing" });
-      // The suggested `crew cleanup` command must use the natural id so it is actually runnable.
+      // The suggested cleanup command must use the natural id so it is actually runnable.
       const { message } = verdicts[0] as SkipVerdict;
-      expect(message).toMatch(/crew cleanup team-1/);
+      expect(message).toContain("Run 'crew cleanup team-1'");
+      expect(message).not.toContain("`");
     });
 
     it("emits `workspace_list_unavailable` when the workspace adapter probe failed", () => {

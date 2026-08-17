@@ -118,6 +118,23 @@ describe(findPullRequestsForBranch, () => {
     expect(prs).toStrictEqual([]);
   });
 
+  it("rethrows the original error when the lookup is aborted", async () => {
+    const controller = new AbortController();
+    const abortError = new Error("lookup aborted");
+    runCommandMock.mockImplementation(async () => {
+      controller.abort();
+      throw abortError;
+    });
+
+    const actual = findPullRequestsForBranch({
+      cwd: "/work/widgets-team-1",
+      branchName: "x",
+      signal: controller.signal,
+    });
+
+    await expect(actual).rejects.toBe(abortError);
+  });
+
   it("returns empty when gh emits non-JSON output", async () => {
     runCommandMock.mockResolvedValue("not json at all");
 
@@ -298,6 +315,23 @@ describe(resolvePullRequest, () => {
     await expect(resolvePullRequest({ repoDir: "/work/acme/widgets", pr: "42" })).rejects.toThrow(
       /Could not look up pull request 42 from \/work\/acme\/widgets/,
     );
+  });
+
+  it("rethrows the original error when the lookup is aborted", async () => {
+    const controller = new AbortController();
+    const abortError = new Error("lookup aborted");
+    runCommandMock.mockImplementation(async () => {
+      controller.abort();
+      throw abortError;
+    });
+
+    const actual = resolvePullRequest({
+      repoDir: "/work/acme/widgets",
+      pr: "42",
+      signal: controller.signal,
+    });
+
+    await expect(actual).rejects.toBe(abortError);
   });
 
   it("throws when gh emits non-JSON output", async () => {

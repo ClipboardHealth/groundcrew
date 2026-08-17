@@ -10,7 +10,7 @@ import {
 } from "../lib/launchCommand.ts";
 import { readRunState, recordRunState, type RunState } from "../lib/runState.ts";
 import { seedLaunchWorkspaceTrust } from "../lib/seedLaunchWorkspaceTrust.ts";
-import { taskSupportsCompletionCommand } from "../lib/sourceCapabilities.ts";
+import { summarizeSource, taskSupportsCompletionCommand } from "../lib/sourceCapabilities.ts";
 import {
   removeStagedPrompt,
   stageBuildSecrets,
@@ -21,7 +21,9 @@ import { taskSourceWritePathsForCompletion } from "../lib/taskSourceFilesystem.t
 import { naturalIdFromCanonical, toCanonicalId } from "../lib/taskSource.ts";
 import { errorMessage, log } from "../lib/util.ts";
 import { failIfWorkspaceAlreadyLive } from "../lib/workspaceLiveness.ts";
+import { workspaces } from "../lib/workspaces.ts";
 import { resolveLaunchDir, type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
+import { cleanupAgentLaunchBestEffort } from "./agentLaunchCleanup.ts";
 
 export interface ResumeWorkspaceOptions {
   task: string;
@@ -36,6 +38,7 @@ export interface ResumeWorkspaceOptions {
 interface TaskDetails {
   title: string;
   description: string;
+  url?: string;
 }
 
 interface ResumeContext {
@@ -45,6 +48,7 @@ interface ResumeContext {
   worktree: WorktreeEntry;
   title: string;
   description: string;
+  url?: string;
   completionTaskId: string;
   completionMarkDoneSupported: boolean;
   reason?: string;
@@ -74,6 +78,7 @@ async function fetchTaskDetails(task: string): Promise<TaskDetails | undefined> 
     return {
       title: issue.title,
       description: issue.description ?? "",
+      url: issue.url,
     };
   } catch (error) {
     log(`Resume Linear detail lookup failed for ${task}: ${errorMessage(error)}`);
@@ -95,6 +100,7 @@ async function contextFromLinear(
     worktree,
     title: resolved.title,
     description: resolved.description,
+    url: resolved.url,
     completionTaskId,
     completionMarkDoneSupported: taskSupportsCompletionCommand({
       rawSources: sourcesFromConfig(config),
@@ -115,6 +121,9 @@ async function contextFromState(
   // enrich the prompt title/description (which falls back to the task id).
   const details = isLinearEnabled(config) ? await fetchTaskDetails(task) : undefined;
   const completionTaskId = state.completionTaskId ?? task;
+  const url =
+    state.url ??
+    (taskUsesLinearSource({ config, taskId: completionTaskId }) ? details?.url : undefined);
   return {
     task,
     repository: state.repository,
@@ -125,6 +134,7 @@ async function contextFromState(
     worktree: { ...worktree, branchName: state.branchName },
     title: details?.title ?? state.title ?? task.toUpperCase(),
     description: details?.description ?? "",
+    ...(url === undefined ? {} : { url }),
     completionTaskId,
     completionMarkDoneSupported: taskSupportsCompletionCommand({
       rawSources: sourcesFromConfig(config),
@@ -133,6 +143,25 @@ async function contextFromState(
     ...(state.reason === undefined ? {} : { reason: state.reason }),
     resumeCount: state.resumeCount,
   };
+}
+
+function taskUsesLinearSource(arguments_: { config: ResolvedConfig; taskId: string }): boolean {
+  const { config, taskId } = arguments_;
+  const rawSources = sourcesFromConfig(config);
+  const colonIndex = taskId.indexOf(":");
+  if (colonIndex === -1) {
+    const [singleSource] = rawSources;
+    return (
+      rawSources.length === 1 &&
+      singleSource !== undefined &&
+      summarizeSource(singleSource).kind === "linear"
+    );
+  }
+  const sourceName = taskId.slice(0, colonIndex);
+  return rawSources.some((rawSource) => {
+    const source = summarizeSource(rawSource);
+    return source.name === sourceName && source.kind === "linear";
+  });
 }
 
 async function buildResumeContext(config: ResolvedConfig, task: string): Promise<ResumeContext> {
@@ -236,6 +265,7 @@ export async function resumeWorkspace(
   });
   const secretsFile = stageBuildSecrets(stagedPrompt.directory);
   let cleanupAgentLaunch: (() => void) | undefined;
+  let workspaceOpened = false;
   try {
     const taskSourceWritePaths =
       runner === "safehouse"
@@ -274,31 +304,61 @@ export async function resumeWorkspace(
       config,
       name: task,
       displayName: context.title,
+      ...(context.url === undefined ? {} : { url: context.url }),
       cwd: launchDir,
       command: launchCmd,
       agent: context.agent,
       color: definition.color,
     });
+    workspaceOpened = true;
+    recordRunState({
+      config,
+      state: {
+        task,
+        repository: context.repository,
+        agent: context.agent,
+        worktreeDir: context.worktree.dir,
+        branchName: context.worktree.branchName,
+        workspaceName: task,
+        state: "resumed",
+        resumeCount: context.resumeCount + 1,
+        completionTaskId: context.completionTaskId,
+        ...(context.url === undefined ? {} : { url: context.url }),
+        ...(context.reason === undefined ? {} : { reason: context.reason }),
+      },
+    });
   } catch (error) {
-    cleanupAgentLaunch?.();
-    removeStagedPrompt(stagedPrompt.directory);
+    if (workspaceOpened) {
+      try {
+        const result = await workspaces.close(config, task);
+        if (result.kind === "unavailable") {
+          const detail =
+            result.error === undefined
+              ? "workspace backend unavailable"
+              : errorMessage(result.error);
+          log(
+            `Workspace close was not confirmed during resume rollback for ${task}: ${detail}. Close it manually in the configured workspace backend.`,
+          );
+        }
+      } catch (closeError) {
+        log(
+          `Workspace close failed during resume rollback for ${task}: ${errorMessage(closeError)}. Close it manually in the configured workspace backend.`,
+        );
+      }
+    }
+    cleanupAgentLaunchBestEffort({
+      cleanup: cleanupAgentLaunch,
+      context: `resume rollback for ${task}`,
+    });
+    try {
+      removeStagedPrompt(stagedPrompt.directory);
+    } catch (cleanupError) {
+      log(
+        `Staged prompt cleanup failed during resume rollback for ${task}: ${errorMessage(cleanupError)}`,
+      );
+    }
     throw error;
   }
-  recordRunState({
-    config,
-    state: {
-      task,
-      repository: context.repository,
-      agent: context.agent,
-      worktreeDir: context.worktree.dir,
-      branchName: context.worktree.branchName,
-      workspaceName: task,
-      state: "resumed",
-      resumeCount: context.resumeCount + 1,
-      completionTaskId: context.completionTaskId,
-      ...(context.reason === undefined ? {} : { reason: context.reason }),
-    },
-  });
   log(`Resumed ${task} in ${context.worktree.dir} (${context.agent})`);
 }
 

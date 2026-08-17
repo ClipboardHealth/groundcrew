@@ -15,6 +15,8 @@ import { BUILD_SECRET_NAMES } from "./buildSecrets.ts";
 
 export { BUILD_SECRET_NAMES } from "./buildSecrets.ts";
 
+export const WORKER_ENVIRONMENT_NAMES = ["GROUNDCREW_TASK_ID", "GROUNDCREW_COMPLETE"] as const;
+
 /**
  * Authoring shape for a manifest-backed (discovered) task source: enable by
  * kind, with light overrides. The concrete per-source schema is built at
@@ -148,13 +150,14 @@ export interface AgentDefinition {
    * the agent under the safehouse runner. Companion to `preLaunch` —
    * names exported by `preLaunch` go here so groundcrew appends them to the
    * Safehouse wrap's `--env-pass=` flag without forcing the user to rewrite
-   * `cmd`. Under `local.runner: "none"` exports flow through unchanged, so
-   * `preLaunchEnv` is a no-op. An empty array is a uniform no-op in every
-   * runner (it forwards zero names, so the unsupported-runner guards do not
-   * fire). A non-empty list is rejected when `local.runner` resolves to `sdx`
-   * in v1, and when `cmd` already starts with `safehouse` (the user owns env
-   * forwarding in that case). Each name must match `[A-Za-z_][A-Za-z0-9_]*`
-   * (POSIX env var name).
+   * `cmd`. Under `local.runner: "none"`, listed names are cleared immediately
+   * before `preLaunch`, then its exports flow through unchanged to the agent.
+   * An empty array is a uniform no-op in every runner (it forwards zero names,
+   * so the unsupported-runner guards do not fire). A non-empty list is
+   * rejected when `local.runner` resolves to `sdx` in v1, and when `cmd`
+   * already starts with `safehouse` (the user owns env forwarding in that
+   * case). Groundcrew-managed worker environment names are also rejected.
+   * Each name must match `[A-Za-z_][A-Za-z0-9_]*` (POSIX env var name).
    */
   preLaunchEnv?: string[];
   color: string;
@@ -181,8 +184,9 @@ export interface AgentDefinition {
 }
 
 /**
- * User-facing agent entry shape. Built-in agent names (`claude`, `codex`)
- * accept empty or partial entries because they merge over built-in presets.
+ * User-facing agent entry shape. Built-in agent names (`claude`, `codex`,
+ * `cursor`, `cursor-grok`, `pi`) accept empty or partial entries because they
+ * merge over built-in presets.
  * Brand-new agent names must supply enough fields to satisfy `validate()`.
  *
  * `usage` accepts an extra `{ disabled: true }` sentinel that strips the
@@ -319,7 +323,7 @@ export interface Config {
     default?: string;
     /**
      * Explicit enabled agent set. Built-in keys (`claude`, `codex`, `cursor`,
-     * `cursor-grok`) merge over their presets, so `{ claude: {} }` enables
+     * `cursor-grok`, `pi`) merge over their presets, so `{ claude: {} }` enables
      * Claude with the shipped command/color/usage. Brand-new agent names must
      * supply enough fields to satisfy `validate()`.
      */
@@ -586,6 +590,16 @@ const BUILT_IN_AGENT_DEFINITIONS: Record<string, AgentDefinition> = {
     // No `usage`: cursor-agent has no codexbar provider.
     resumeArgs: "--continue",
   },
+  pi: {
+    // Groundcrew worktrees are unattended. Pi's project trust prompt would
+    // otherwise stop the initial positional prompt before the agent can act.
+    // `--approve` trusts project-local Pi resources for this launch; the
+    // groundcrew runner remains the filesystem/network security boundary.
+    cmd: "pi --approve",
+    color: "#6B7280",
+    // Pi stores sessions by working directory, matching the one-worktree-per-task model.
+    resumeArgs: "--continue",
+  },
 };
 
 const MODEL_DEFINITIONS_MIGRATION_MESSAGE = [
@@ -806,6 +820,12 @@ function validatePreLaunchEnv(agentName: string, value: unknown): asserts value 
           "those are unset on the host before the agent wrap is exec'd, so forwarding them via --env-pass would be a no-op.",
       );
     }
+    if ((WORKER_ENVIRONMENT_NAMES as readonly string[]).includes(entry)) {
+      fail(
+        `${configPath}[${index}] cannot be a managed worker environment name (${WORKER_ENVIRONMENT_NAMES.join(", ")}); ` +
+          "groundcrew sets those values for the launched worker, so preLaunchEnv cannot own them.",
+      );
+    }
   }
 }
 
@@ -953,7 +973,7 @@ function normalizeSandbox(value: unknown, configKey: string): SandboxDefinition 
 function failRemovedConfigKey(configKey: string, reason: string): never {
   fail(
     `${configKey} is no longer supported: ${reason} ` +
-      "Provision and manage the sandbox yourself with `sbx` (for example `sbx create --name groundcrew-<agent> <agent> <projectDir>`), then keep only `agents.definitions.<agent>.sandbox.agent` in crew.config.ts.",
+      "Provision and manage the sandbox yourself with 'sbx' (for example 'sbx create --name groundcrew-<agent> <agent> <projectDir>'), then keep only 'agents.definitions.<agent>.sandbox.agent' in crew.config.ts.",
   );
 }
 
