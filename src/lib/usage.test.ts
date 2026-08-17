@@ -234,8 +234,13 @@ describe(getUsageByAgent, () => {
       ]),
     );
 
-    const actual = await getUsageByAgent(makeClaudeConfig("cli"));
+    const actual = await getUsageByAgent(makeClaudeConfig("auto"));
 
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "codexbar",
+      ["usage", "--provider", "claude", "--source", "auto", "--format", "json"],
+      { timeoutMs: 30_000 },
+    );
     expect(actual["claude"]?.session).toBe(0.4);
   });
 
@@ -248,11 +253,11 @@ describe(getUsageByAgent, () => {
       ]),
     );
 
-    const actual = await getUsageByAgent(makeClaudeConfig("cli"));
+    const actual = await getUsageByAgent(makeClaudeConfig("auto"));
 
     expect(actual["claude"]).toMatchObject(EXHAUSTED_USAGE);
     expect(consoleCapture.output()).toContain(
-      "codexbar returned no matching entry for provider=claude, source=cli",
+      "codexbar returned no matching entry for provider=claude, source=auto",
     );
   });
 
