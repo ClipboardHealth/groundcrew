@@ -70,7 +70,7 @@
   },
   "dependencies": {
     "@clipboard-health/clearance": "1.6.6",
-    "@linear/sdk": "89.0.0",
+    "@linear/sdk": "90.0.0",
     "agent-trust": "1.0.0",
     "cosmiconfig": "10.0.0",
     "tslib": "2.8.1",
