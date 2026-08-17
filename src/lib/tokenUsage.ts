@@ -15,8 +15,9 @@
  * were distinct, and summing every record inflated the total 2.13x. The
  * inflation is not uniform across fields either (2.10x on cache reads against
  * 2.64x on output), so it cannot be corrected with a constant factor after the
- * fact: it distorts the mix as well as the total. Usage is therefore counted
- * once per `message.id`.
+ * fact: it distorts the mix as well as the total. Usage is therefore collapsed
+ * per `message.id`, taking the highest value seen for each field. See
+ * `highestPerField` for why the maximum rather than the first or the last.
  *
  * The second is keeping the four fields apart. Cache reads bill at roughly a
  * tenth of fresh input, so a single `totalTokens` would make a cached-heavy
@@ -88,7 +89,7 @@ export function transcriptPathFromHookPayload(stdin: string): string | undefined
  */
 export function sumTranscriptUsage(transcript: string): TokenUsage {
   const total = emptyTokenUsage();
-  const counted = new Set<string>();
+  const counted = new Map<string, TokenUsage>();
 
   for (const line of transcript.split("\n")) {
     const trimmed = line.trim();
@@ -103,34 +104,76 @@ export function sumTranscriptUsage(transcript: string): TokenUsage {
       continue;
     }
 
-    const record = asRecord(entry);
-    if (record === undefined) {
+    const entryRecord = asRecord(entry);
+    if (entryRecord === undefined) {
       continue;
     }
 
-    const message = asRecord(record["message"]);
-    const usage = asRecord(message?.["usage"] ?? record["usage"]);
+    const message = asRecord(entryRecord["message"]);
+    const usage = asRecord(message?.["usage"] ?? entryRecord["usage"]);
     if (usage === undefined) {
       continue;
     }
 
+    const record: TokenUsage = {
+      inputTokens: count(usage["input_tokens"]),
+      cacheCreationInputTokens: count(usage["cache_creation_input_tokens"]),
+      cacheReadInputTokens: count(usage["cache_read_input_tokens"]),
+      outputTokens: count(usage["output_tokens"]),
+      messages: 1,
+    };
+
     const id = message?.["id"];
     if (typeof id === "string" && id.length > 0) {
-      if (counted.has(id)) {
-        continue;
-      }
-
-      counted.add(id);
+      counted.set(id, highestPerField(counted.get(id), record));
+      continue;
     }
 
-    total.inputTokens += count(usage["input_tokens"]);
-    total.cacheCreationInputTokens += count(usage["cache_creation_input_tokens"]);
-    total.cacheReadInputTokens += count(usage["cache_read_input_tokens"]);
-    total.outputTokens += count(usage["output_tokens"]);
-    total.messages += 1;
+    // No id means nothing to collapse against, so it stands on its own.
+    accumulate(total, record);
+  }
+
+  for (const perMessage of counted.values()) {
+    accumulate(total, perMessage);
   }
 
   return total;
+}
+
+function accumulate(total: TokenUsage, record: TokenUsage): void {
+  total.inputTokens += record.inputTokens;
+  total.cacheCreationInputTokens += record.cacheCreationInputTokens;
+  total.cacheReadInputTokens += record.cacheReadInputTokens;
+  total.outputTokens += record.outputTokens;
+  total.messages += record.messages;
+}
+
+/**
+ * Reduce repeated records for one message to a single set of counts.
+ *
+ * Taking the highest value per field is correct under both shapes a transcript
+ * can take, which matters because the shape is not guaranteed across agent
+ * versions. Where repeats are exact duplicates, every candidate is equal and
+ * the maximum is that value. Where they are cumulative streaming snapshots,
+ * the maximum is the final complete count. Keeping the first record would
+ * undercount the second case badly, and keeping the last would undercount the
+ * first if a trailing record were ever partial.
+ */
+function highestPerField(existing: TokenUsage | undefined, record: TokenUsage): TokenUsage {
+  if (existing === undefined) {
+    return record;
+  }
+
+  return {
+    inputTokens: Math.max(existing.inputTokens, record.inputTokens),
+    cacheCreationInputTokens: Math.max(
+      existing.cacheCreationInputTokens,
+      record.cacheCreationInputTokens,
+    ),
+    cacheReadInputTokens: Math.max(existing.cacheReadInputTokens, record.cacheReadInputTokens),
+    outputTokens: Math.max(existing.outputTokens, record.outputTokens),
+    messages: 1,
+  };
 }
 
 /**

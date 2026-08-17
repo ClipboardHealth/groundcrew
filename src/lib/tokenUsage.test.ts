@@ -85,6 +85,45 @@ describe(sumTranscriptUsage, () => {
     expect(actual.messages).toBe(1);
   });
 
+  it("takes the highest value when a repeated record grows", () => {
+    // Some agent versions rewrite a streaming message with cumulative counts
+    // rather than repeating it verbatim. Keeping the first record would report
+    // 2 output tokens for a message that finished at 19.
+    const transcript = [
+      JSON.stringify({ message: { id: "m1", usage: { output_tokens: 2 } } }),
+      JSON.stringify({ message: { id: "m1", usage: { output_tokens: 7 } } }),
+      JSON.stringify({ message: { id: "m1", usage: { output_tokens: 19 } } }),
+    ].join("\n");
+
+    const actual = sumTranscriptUsage(transcript);
+
+    expect(actual.outputTokens).toBe(19);
+    expect(actual.messages).toBe(1);
+  });
+
+  it("takes the highest value even when the last record is smaller", () => {
+    // A trailing partial record must not undo a complete one, which is why
+    // this is a maximum rather than last-wins.
+    const transcript = [
+      JSON.stringify({ message: { id: "m1", usage: { output_tokens: 19 } } }),
+      JSON.stringify({ message: { id: "m1", usage: { output_tokens: 2 } } }),
+    ].join("\n");
+
+    expect(sumTranscriptUsage(transcript).outputTokens).toBe(19);
+  });
+
+  it("compares each field independently across repeats", () => {
+    const transcript = [
+      JSON.stringify({ message: { id: "m1", usage: { input_tokens: 9, output_tokens: 1 } } }),
+      JSON.stringify({ message: { id: "m1", usage: { input_tokens: 1, output_tokens: 8 } } }),
+    ].join("\n");
+
+    const actual = sumTranscriptUsage(transcript);
+
+    expect(actual.inputTokens).toBe(9);
+    expect(actual.outputTokens).toBe(8);
+  });
+
   it("keeps counting after a malformed line", () => {
     // Transcripts are appended to while the agent runs, so a half-written final
     // line is expected rather than exceptional.
