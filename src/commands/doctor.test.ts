@@ -528,6 +528,28 @@ describe(doctor, () => {
     );
   });
 
+  it("hints how to stop probing a missing grok CLI", async () => {
+    loadConfigMock.mockResolvedValue(
+      makeConfig({
+        default: "grok",
+        definitions: {
+          grok: {
+            cmd: "grok --sandbox off --always-approve --no-plan",
+            color: "#CA8A04",
+          },
+        },
+      }),
+    );
+    mockWhichFailure("grok", "not installed");
+
+    const actual = await doctor();
+
+    expect(actual).toBe(false);
+    expect(consoleLog.output()).toContain(
+      "install grok or remove `agents.definitions.grok` from crew.config.ts",
+    );
+  });
+
   it("treats an empty `which` result as missing", async () => {
     loadConfigMock.mockResolvedValue(makeConfig());
     mockWhichEmpty("cmux");

@@ -25,7 +25,7 @@ import { resolveWorkspaceKind, type WorkspaceResolution } from "../lib/workspace
 // Tokenization stops after this many non-flag tokens. Two is enough to
 // catch wrapper + wrapped CLI commands like `safehouse claude --foo`.
 const MAX_TOKENS_PER_CMD = 2;
-const BUILT_IN_AGENT_NAMES = ["claude", "codex", "cursor", "cursor-grok", "pi"] as const;
+const BUILT_IN_AGENT_NAMES = ["claude", "codex", "cursor", "cursor-grok", "grok", "pi"] as const;
 
 // Primary CLI binary probed on PATH for each built-in agent. Usually equal to
 // the agent name, but the cursor and cursor-grok presets both launch Cursor's
@@ -35,6 +35,7 @@ const BUILT_IN_AGENT_BINARIES: Record<(typeof BUILT_IN_AGENT_NAMES)[number], str
   codex: "codex",
   cursor: "cursor-agent",
   "cursor-grok": "cursor-agent",
+  grok: "grok",
   pi: "pi",
 };
 

@@ -34,6 +34,7 @@ import {
 import { resolveGitCommonDir } from "./gitCommonDir.ts";
 import { assertLocalRunnerRequirements, resolveLocalRunner } from "./localRunner.ts";
 import { sandboxNameFor } from "./sandboxName.ts";
+import { expandHome } from "./paths.ts";
 import { debug, readEnvironmentVariable, sleep, writeError } from "./util.ts";
 import { resolveWorkspaceKind, workspaces } from "./workspaces.ts";
 import type { WorkspaceKind } from "./workspaceAdapter.ts";
@@ -63,10 +64,10 @@ export function composeAgentLaunch(input: {
   safehouseEnableFeatures?: readonly string[] | undefined;
   readOnlyDirs?: readonly string[] | undefined;
   /**
-   * Test-only seam: overrides `os.homedir()` when staging a relocated agent
-   * config home (codex's `CODEX_HOME` under safehouse). Production callers
-   * must omit this so specs can seed a fixture home instead of touching the
-   * real `~/.codex`.
+   * Test-only seam: overrides `os.homedir()` when staging a relocated Codex
+   * `CODEX_HOME` or resolving the default Grok home (`~/.grok`). Production
+   * callers must omit this so specs can seed a fixture home instead of
+   * touching the real host homes.
    */
   homeDir?: string;
 }): ComposedAgentLaunch {
@@ -88,7 +89,10 @@ export function composeAgentLaunch(input: {
   try {
     return {
       command: buildLaunchCommand({
-        definition: input.definition,
+        definition: withGrokHomeEnvPass({
+          definition: input.definition,
+          runner: input.runner,
+        }),
         promptFile: input.promptFile,
         worktreeDir: input.worktreeDir,
         workingDir: input.workingDir,
@@ -103,7 +107,12 @@ export function composeAgentLaunch(input: {
         safehouseAddDirs:
           input.runner === "safehouse" ? resolveSafehouseAddDirs(input.worktreeDir) : undefined,
         safehouseAgentAddDirs:
-          input.runner === "safehouse" ? (input.taskSourceWritePaths ?? []) : undefined,
+          input.runner === "safehouse"
+            ? [
+                ...(input.taskSourceWritePaths ?? []),
+                ...grokHomeWritePaths({ definition: input.definition, homeDir }),
+              ]
+            : undefined,
         safehouseEnableFeatures:
           input.runner === "safehouse" ? input.safehouseEnableFeatures : undefined,
         // Safehouse rejects nonexistent --add-dirs-ro paths, so drop absent ones.
@@ -135,6 +144,51 @@ export function composeAgentLaunch(input: {
  */
 function resolveSafehouseAddDirs(worktreeDir: string): readonly string[] {
   return [...new Set([worktreeDir, resolveGitCommonDir(worktreeDir)])];
+}
+
+/**
+ * Safehouse 0.11.1 has no grok.sb profile. Grant the real Grok home so
+ * auth.json and per-cwd sessions stay readable/writable. Do not relocate
+ * GROK_HOME into a temp dir: crew resume needs the host session store.
+ * The grant also exposes host plugins, hooks, and credentials.
+ * Skip missing paths: Safehouse rejects nonexistent --add-dirs entries.
+ */
+function grokHomeWritePaths(input: {
+  definition: AgentDefinition;
+  homeDir: string;
+}): readonly string[] {
+  // Key off the inferred binary so cursor-grok (cursor-agent) is skipped.
+  // A cmd prefix such as `safehouse` or `npx` also skips the grant.
+  if (inferAgentCommandName(input.definition.cmd) !== "grok") {
+    return [];
+  }
+  const configured = readEnvironmentVariable("GROK_HOME");
+  const grokHome =
+    configured !== undefined && configured.length > 0
+      ? expandHome(configured)
+      : path.join(input.homeDir, ".grok");
+  return existsSync(grokHome) ? [grokHome] : [];
+}
+
+function withGrokHomeEnvPass(input: {
+  definition: AgentDefinition;
+  runner: LocalRunner;
+}): AgentDefinition {
+  if (input.runner !== "safehouse") {
+    return input.definition;
+  }
+  if (inferAgentCommandName(input.definition.cmd) !== "grok") {
+    return input.definition;
+  }
+  const configured = readEnvironmentVariable("GROK_HOME");
+  if (configured === undefined || configured.length === 0) {
+    return input.definition;
+  }
+  const existing = input.definition.preLaunchEnv ?? [];
+  if (existing.includes("GROK_HOME")) {
+    return input.definition;
+  }
+  return { ...input.definition, preLaunchEnv: [...existing, "GROK_HOME"] };
 }
 
 function safehouseAgentIntegrationFor(input: {

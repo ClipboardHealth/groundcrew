@@ -127,4 +127,24 @@ describe("loadConfig built-in agent presets", () => {
     expect(pi?.resumeArgs).toBe("--continue");
     expect(pi?.usage).toBeUndefined();
   });
+
+  it("enables grok from an empty override using the built-in preset", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      configSource({
+        workspace: VALID_WORKSPACE(temporary),
+        agents: { default: "grok", definitions: { grok: {} } },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+
+    const { grok } = actual.agents.definitions;
+    expect(grok?.cmd).toBe("grok --sandbox off --always-approve --no-plan");
+    expect(grok?.color).toBe("#CA8A04");
+    expect(grok?.resumeArgs).toBe("--continue");
+    expect(grok?.usage).toBeUndefined();
+  });
 });

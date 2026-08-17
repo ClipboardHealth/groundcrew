@@ -185,7 +185,7 @@ export interface AgentDefinition {
 
 /**
  * User-facing agent entry shape. Built-in agent names (`claude`, `codex`,
- * `cursor`, `cursor-grok`, `pi`) accept empty or partial entries because they
+ * `cursor`, `cursor-grok`, `grok`, `pi`) accept empty or partial entries because they
  * merge over built-in presets.
  * Brand-new agent names must supply enough fields to satisfy `validate()`.
  *
@@ -323,7 +323,7 @@ export interface Config {
     default?: string;
     /**
      * Explicit enabled agent set. Built-in keys (`claude`, `codex`, `cursor`,
-     * `cursor-grok`, `pi`) merge over their presets, so `{ claude: {} }` enables
+     * `cursor-grok`, `grok`, `pi`) merge over their presets, so `{ claude: {} }` enables
      * Claude with the shipped command/color/usage. Brand-new agent names must
      * supply enough fields to satisfy `validate()`.
      */
@@ -542,6 +542,9 @@ const DEFAULT_ORCHESTRATOR: ResolvedConfig["orchestrator"] = {
   sessionLimitPercentage: 85,
 };
 
+// Keep doctor.ts BUILT_IN_AGENT_NAMES / BUILT_IN_AGENT_BINARIES and
+// init.ts INIT_AGENTS in sync when adding a preset. INIT_AGENTS omits
+// hyphenated keys such as cursor-grok (invalid unquoted TS in the example).
 const BUILT_IN_AGENT_DEFINITIONS: Record<string, AgentDefinition> = {
   claude: {
     cmd: "claude --permission-mode auto",
@@ -588,6 +591,19 @@ const BUILT_IN_AGENT_DEFINITIONS: Record<string, AgentDefinition> = {
     cmd: "cursor-agent --model grok-4.5-xhigh --sandbox disabled --force --approve-mcps",
     color: "#16A34A",
     // No `usage`: cursor-agent has no codexbar provider.
+    resumeArgs: "--continue",
+  },
+  grok: {
+    // Native Grok Build CLI (`grok`), not the `cursor-grok` Cursor profile.
+    // `--sandbox off` hands isolation to the groundcrew runner. `--always-approve`
+    // skips tool-permission prompts (Grok `auto` still escalates some calls).
+    // `--no-plan` blocks plan-mode entry/exit, which wait for a human even
+    // under always-approve. Boolean flags trail so `crew doctor` tokenizes
+    // the command as `grok` (it treats every flag as taking a value).
+    cmd: "grok --sandbox off --always-approve --no-plan",
+    color: "#CA8A04",
+    // No `usage`: codexbar has no Grok provider.
+    // Grok stores sessions by working directory, matching one worktree per task.
     resumeArgs: "--continue",
   },
   pi: {
