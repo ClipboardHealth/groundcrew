@@ -224,7 +224,7 @@ export async function main(input: MainInput): Promise<void> {
     .description("close presenters and safely remove task worktrees")
     .argument("[task]", "canonical or source-local task ID")
     .option("--all", "clean every local task")
-    .option("--completed", "clean every completed local run")
+    .option("--delivered", "clean every delivered local run")
     .option("--force", "permanently delete dirty worktrees and unique task branches")
     .option("--verbose", "include debug diagnostics")
     .action(async (task, options) => {
@@ -232,7 +232,7 @@ export async function main(input: MainInput): Promise<void> {
       const result = await application.cleanup({
         all: options.all === true,
         allowDirty: options.force === true,
-        completed: options.completed === true,
+        delivered: options.delivered === true,
         task,
       });
       for (const canonicalTaskId of result.cleaned) {
