@@ -1,20 +1,19 @@
 /**
- * Renderers for `crew status`. Three output modes share this file.
- *
- * With no task it renders the inventory: it calls the collectors in
- * statusCollect.ts, joins the two tiers with joinStatus, and prints text.
- * With a task it renders that one task, doing its own I/O rather than using
- * the collectors, because it reads the whole log where they read a tail.
- * With --json it prints and persists the wire documents from statusSnapshot.ts.
- * Text mode persists nothing.
- *
- * @see README.md#status-snapshots-for-external-monitors for the reader contract.
+ * Deep status module: collection produces one discriminated snapshot without
+ * printing, then either renderer consumes that same snapshot. JSON exposes the
+ * stable integration fields while text keeps operator-only hints and log lines
+ * in private renderer details.
  */
 
 import { readFileSync } from "node:fs";
 
+import type { Board } from "../lib/board.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
-import { findPullRequestsForBranch, type PullRequestSummary } from "../lib/pullRequests.ts";
+import {
+  findPullRequestsForBranch,
+  pullRequestProbeProblem,
+  type PullRequestSummary,
+} from "../lib/pullRequests.ts";
 import { readRunState, type RunState } from "../lib/runState.ts";
 import {
   type JoinedStatus,
@@ -30,8 +29,7 @@ import {
   type StatusLifecycle,
   type StatusBoardIssue,
   type StatusQueueIssue,
-  writeLocalSnapshot,
-  writeRemoteSnapshot,
+  type StatusSourceIssue,
 } from "../lib/statusSnapshot.ts";
 import {
   type CanonicalStatus,
@@ -40,8 +38,8 @@ import {
 } from "../lib/taskSource.ts";
 import { errorMessage, withLogOutputSuppressed, writeOutput } from "../lib/util.ts";
 import { type WorkspaceAccessHint, type WorkspaceProbe, workspaces } from "../lib/workspaces.ts";
-import { type WorktreeDirtiness, worktrees } from "../lib/worktrees.ts";
-import { effectiveBranchNameFromRunState } from "../lib/worktreeRunState.ts";
+import { type WorktreeDirtiness, type WorktreeKind, worktrees } from "../lib/worktrees.ts";
+import { probeEffectiveBranchNameFromRunState } from "../lib/worktreeRunState.ts";
 import {
   buildBoard,
   collectLocalStatus,
@@ -57,13 +55,218 @@ import {
 
 export interface StatusOptions {
   task?: string;
-  /** Emit the snapshot documents as JSON and persist them. */
+  /** Emit one stable status snapshot as JSON. */
   json?: boolean;
-  /** Collect the local tier only. Guarantees this run makes no network call. */
-  localOnly?: boolean;
 }
 
-const STATUS_USAGE = "Usage: crew status [<task>] [--json [--local-only]]";
+export type StatusRecommendedAction =
+  | "stop"
+  | "resume"
+  | "cleanup"
+  | "run"
+  | "open-task"
+  | "open-pr"
+  | "open-worktree";
+
+export type StatusProblemCode =
+  | "source-probe-failed"
+  | "workspace-probe-failed"
+  | "git-probe-failed"
+  | "github-probe-failed";
+
+export interface StatusProblem {
+  code: StatusProblemCode;
+  message: string;
+  task?: string | undefined;
+  source?: string | undefined;
+  worktreeDirectory?: string | undefined;
+}
+
+export interface StatusTaskIdentity {
+  id?: string | undefined;
+  naturalId: string;
+  title?: string | undefined;
+  status?: CanonicalStatus | undefined;
+  url?: string | undefined;
+}
+
+export interface StatusRun {
+  lifecycle: StatusLifecycle;
+  agent?: string | undefined;
+  startedAt?: string | undefined;
+  updatedAt?: string | undefined;
+  resumeCount?: number | undefined;
+  reason?: string | undefined;
+}
+
+export interface StatusWorkspace {
+  state: "live" | "exited" | "not-live" | "unknown";
+}
+
+export interface StatusPullRequest {
+  url: string;
+  number: number;
+  state: string;
+  title: string;
+}
+
+export interface TaskStatusWorktree {
+  repository: string;
+  kind: WorktreeKind;
+  branch: string;
+  directory: string;
+  dirtiness: WorktreeDirtiness;
+  pullRequests: StatusPullRequest[];
+}
+
+export interface StatusWorktreeSnapshot extends TaskStatusWorktree {
+  task: StatusTaskIdentity;
+  run: StatusRun;
+  workspace: StatusWorkspace;
+  recommendedActions: StatusRecommendedAction[];
+}
+
+export interface StatusQueueEntry {
+  task: StatusTaskIdentity;
+  repository?: string | undefined;
+  agent?: string | undefined;
+  recommendedActions: StatusRecommendedAction[];
+}
+
+export interface StatusBlockerSnapshot {
+  id: string;
+  naturalId: string;
+  status: CanonicalStatus;
+  nativeStatus?: string | undefined;
+}
+
+export interface StatusBlockedQueueEntry extends StatusQueueEntry {
+  blockedBy: StatusBlockerSnapshot[];
+}
+
+export interface StatusStraySession {
+  name: string;
+  state: "live" | "exited";
+  recommendedActions: StatusRecommendedAction[];
+}
+
+export interface InventoryStatusSnapshot {
+  kind: "inventory";
+  generatedAt: string;
+  slots: { used?: number | undefined; maximum: number };
+  worktrees: StatusWorktreeSnapshot[];
+  inProgressWithoutWorktrees: StatusQueueEntry[];
+  queue: { ready: StatusQueueEntry[]; blocked: StatusBlockedQueueEntry[] };
+  straySessions: StatusStraySession[];
+  problems: StatusProblem[];
+  text: InventoryTextDetails;
+}
+
+export interface TaskStatusSnapshot {
+  kind: "task";
+  generatedAt: string;
+  task: StatusTaskIdentity;
+  repository?: string | undefined;
+  run: StatusRun;
+  workspace: StatusWorkspace;
+  worktrees: TaskStatusWorktree[];
+  recommendedActions: StatusRecommendedAction[];
+  problems: StatusProblem[];
+  text: TaskTextDetails;
+}
+
+export type StatusSnapshot = InventoryStatusSnapshot | TaskStatusSnapshot;
+
+export async function collectStatus(
+  config: ResolvedConfig,
+  options: StatusOptions = {},
+): Promise<StatusSnapshot> {
+  const task = options.task?.trim().toLowerCase();
+  if (task !== undefined) {
+    if (task.length === 0 || task.startsWith("-")) {
+      throw new Error("task must be a non-empty value");
+    }
+    return await collectTaskSnapshot({ config, task, includeRecentLogs: options.json !== true });
+  }
+  const { local, attemptAt, result } = await collectBothTiers(config);
+  const remote = buildRemoteDocument({ previous: undefined, attemptAt, result });
+  const joined = joinStatus({ local, remote });
+  return inventorySnapshot({
+    generatedAt: attemptAt,
+    local,
+    joined,
+    sources: remote.payload?.sourceByTask ?? {},
+    githubProblems: result.pullRequestProblems,
+    sourceProblems: result.sourceProblems,
+    sourceError: remote.lastAttemptError,
+  });
+}
+
+export function renderStatusJson(snapshot: StatusSnapshot): void {
+  if (snapshot.kind === "inventory") {
+    writeOutput(
+      JSON.stringify(
+        {
+          kind: snapshot.kind,
+          generatedAt: snapshot.generatedAt,
+          slots: snapshot.slots,
+          worktrees: snapshot.worktrees,
+          inProgressWithoutWorktrees: snapshot.inProgressWithoutWorktrees,
+          queue: snapshot.queue,
+          straySessions: snapshot.straySessions,
+          problems: snapshot.problems,
+        },
+        undefined,
+        2,
+      ),
+    );
+    return;
+  }
+  writeOutput(
+    JSON.stringify(
+      {
+        kind: snapshot.kind,
+        generatedAt: snapshot.generatedAt,
+        task: snapshot.task,
+        repository: snapshot.repository,
+        run: snapshot.run,
+        workspace: snapshot.workspace,
+        worktrees: snapshot.worktrees,
+        recommendedActions: snapshot.recommendedActions,
+        problems: snapshot.problems,
+      },
+      undefined,
+      2,
+    ),
+  );
+}
+
+export function renderStatusText(snapshot: StatusSnapshot): void {
+  if (snapshot.kind === "inventory") {
+    writeInventoryStatus(snapshot.text);
+    return;
+  }
+  writeTaskStatus({ snapshot, details: snapshot.text });
+}
+
+interface InventoryTextDetails {
+  local: LocalStatusDocument;
+  joined: JoinedStatus;
+  boardError?: string | undefined;
+  sourceProblems: RemoteFetchResult["sourceProblems"];
+  renderedAt: Date;
+}
+
+interface TaskTextDetails {
+  task: string;
+  runState: RunState | undefined;
+  sourceStatus: TaskSourceStatus;
+  workspaceProbe: WorkspaceProbe;
+  accessHint?: WorkspaceAccessHint | undefined;
+  recentLogLines: string[];
+}
+
+const STATUS_USAGE = "Usage: crew status [<task>] [--json]";
 
 function parseArguments(argv: string[]): StatusOptions {
   const options: StatusOptions = {};
@@ -72,11 +275,10 @@ function parseArguments(argv: string[]): StatusOptions {
       options.json = true;
       continue;
     }
-    if (argument === "--local-only") {
-      options.localOnly = true;
-      continue;
+    if (argument.startsWith("-")) {
+      throw new Error(`crew status: unknown option: ${argument}\n${STATUS_USAGE}`);
     }
-    if (argument.length === 0 || argument.startsWith("-") || options.task !== undefined) {
+    if (argument.length === 0 || options.task !== undefined) {
       throw new Error(STATUS_USAGE);
     }
     options.task = argument.toLowerCase();
@@ -97,32 +299,19 @@ function formatDirtiness(dirtiness: WorktreeDirtiness): string {
   return dirtiness.kind;
 }
 
-async function writeTaskWorktrees(config: ResolvedConfig, task: string): Promise<void> {
+function writeTaskWorktrees(entries: readonly TaskStatusWorktree[]): void {
   writeSection("Worktrees");
-  const entries = worktrees.findByTask(config, task);
   if (entries.length === 0) {
     writeOutput("(none)");
     return;
   }
-  const runState = readRunState(config, task);
   for (const entry of entries) {
-    // oxlint-disable-next-line no-await-in-loop -- status output is easier to read in worktree order.
-    const branchName = await effectiveBranchNameFromRunState({ entry, runState });
-    // oxlint-disable-next-line no-await-in-loop -- status output is easier to read in worktree order.
-    const dirtiness = await worktrees.probeWorkingTree({
-      worktreeDir: entry.dir,
-    });
-    // oxlint-disable-next-line no-await-in-loop -- one gh lookup per worktree is acceptable; multi-worktree-per-task is rare.
-    const prs = await findPullRequestsForBranch({
-      cwd: entry.dir,
-      branchName,
-    });
     writeOutput(`- ${entry.repository} ${entry.kind}`);
-    writeOutput(`  branch: ${branchName}`);
-    writeOutput(`  dir: ${entry.dir}`);
-    writeOutput(`  git: ${formatDirtiness(dirtiness)}`);
-    if (prs.length > 0) {
-      writeOutput(`  pr: ${formatPullRequests(prs)}`);
+    writeOutput(`  branch: ${entry.branch}`);
+    writeOutput(`  dir: ${entry.directory}`);
+    writeOutput(`  git: ${formatDirtiness(entry.dirtiness)}`);
+    if (entry.pullRequests.length > 0) {
+      writeOutput(`  pr: ${formatPullRequests(entry.pullRequests)}`);
     }
   }
 }
@@ -164,13 +353,19 @@ function wholeLogLines(config: ResolvedConfig): string[] {
 async function resolveTaskSource(
   config: ResolvedConfig,
   task: string,
-): Promise<SourceIssue | undefined> {
-  const board = await buildBoard(config);
-  return await withLogOutputSuppressed(async () => await board.resolveOne(task));
+): Promise<Awaited<ReturnType<Board["resolveOneWithFailures"]>>> {
+  return await withLogOutputSuppressed(async () => {
+    const board = await buildBoard(config);
+    return await board.resolveOneWithFailures(task);
+  });
 }
 
 type TaskSourceStatus =
-  | { kind: "found"; issue: SourceIssue }
+  | {
+      kind: "found";
+      issue: SourceIssue;
+      failures: Array<{ source: string; reason: string }>;
+    }
   | { kind: "not-found" }
   | { kind: "unavailable"; reason: string };
 
@@ -179,18 +374,24 @@ async function readTaskSourceStatus(
   task: string,
 ): Promise<TaskSourceStatus> {
   try {
-    const issue = await resolveTaskSource(config, task);
-    if (issue === undefined) {
+    const resolution = await resolveTaskSource(config, task);
+    if (resolution.issue === undefined) {
       return { kind: "not-found" };
     }
-    return { kind: "found", issue };
+    return {
+      kind: "found",
+      issue: resolution.issue,
+      failures: resolution.failures.map((failure) => ({
+        source: failure.source,
+        reason: errorMessage(failure.reason),
+      })),
+    };
   } catch (error) {
     return { kind: "unavailable", reason: errorMessage(error) };
   }
 }
 
-function writeRecentLogs(config: ResolvedConfig, task: string): void {
-  const logLines = recentTaskLogLines({ lines: wholeLogLines(config), task });
+function writeRecentLogs(logLines: readonly string[]): void {
   if (logLines.length === 0) {
     return;
   }
@@ -248,18 +449,13 @@ function writeTaskTitle(runState: RunState | undefined, sourceStatus: TaskSource
   }
 }
 
-async function writeTaskStatus(config: ResolvedConfig, rawTask: string): Promise<void> {
-  const task = rawTask.toLowerCase();
+function writeTaskStatus(input: { snapshot: TaskStatusSnapshot; details: TaskTextDetails }): void {
+  const { snapshot, details } = input;
+  const { task, runState, sourceStatus, workspaceProbe, accessHint, recentLogLines } = details;
   const displayTask = task.toUpperCase();
   writeOutput(`groundcrew status ${displayTask}`);
   writeOutput("=".repeat(`groundcrew status ${displayTask}`.length));
 
-  const runState = readRunState(config, task);
-  const [workspaceProbe, sourceStatus] = await Promise.all([
-    withLogOutputSuppressed(async () => await workspaces.probe(config)),
-    readTaskSourceStatus(config, task),
-  ]);
-  const accessHint = await exitedWorkspaceAccessHint(config, workspaceProbe, task);
   writeOutput(formatTaskLine(task, runState, sourceStatus));
   writeTaskTitle(runState, sourceStatus);
   const disagreement = probeDisagreement({
@@ -275,8 +471,8 @@ async function writeTaskStatus(config: ResolvedConfig, rawTask: string): Promise
     writeOutput(`attach: ${accessHint.command}`);
   }
 
-  await writeTaskWorktrees(config, task);
-  writeRecentLogs(config, task);
+  writeTaskWorktrees(snapshot.worktrees);
+  writeRecentLogs(recentLogLines);
 }
 
 /**
@@ -516,10 +712,6 @@ interface CollectedTiers {
 /**
  * Runs both tiers. The board fetch starts first because it needs nothing
  * local; only the pull request lookups wait on resolved branches.
- *
- * Returns the raw result rather than a built document: the JSON path needs
- * `writeRemoteSnapshot` to do the carry-forward merge against the same file
- * read its guard uses, and the text path deliberately merges against nothing.
  */
 async function collectBothTiers(config: ResolvedConfig): Promise<CollectedTiers> {
   const attemptAt = new Date().toISOString();
@@ -532,94 +724,506 @@ async function collectBothTiers(config: ResolvedConfig): Promise<CollectedTiers>
   return { local, attemptAt, result };
 }
 
-async function writeInventoryStatus(config: ResolvedConfig): Promise<void> {
-  const { local, attemptAt, result } = await collectBothTiers(config);
-  // `previous: undefined` on purpose: a one-shot run reports only what this
-  // attempt saw, so a failed fetch prints "unavailable" rather than a queue
-  // recovered from an old snapshot.
-  const remote = buildRemoteDocument({ previous: undefined, attemptAt, result });
-  const joined = joinStatus({ local, remote });
-  const now = new Date();
+function taskIdentity(input: {
+  naturalId: string;
+  cachedTitle?: string | undefined;
+  cachedUrl?: string | undefined;
+  source?: StatusSourceIssue | undefined;
+}): StatusTaskIdentity {
+  const { naturalId, cachedTitle, cachedUrl, source } = input;
+  return {
+    id: source?.id,
+    naturalId,
+    title: source?.title ?? cachedTitle,
+    status: source?.status,
+    url: source?.url ?? cachedUrl,
+  };
+}
 
-  writeInventoryWorktrees(joined, now);
+function runSnapshot(task: JoinedTask): StatusRun {
+  return {
+    lifecycle: task.lifecycle,
+    agent: task.agent,
+    startedAt: task.startedAt,
+    updatedAt: task.updatedAt,
+    resumeCount: task.resumeCount,
+    reason: task.reason,
+  };
+}
+
+function worktreeActions(input: {
+  task: JoinedTask;
+  identity: StatusTaskIdentity;
+  pullRequests: readonly PullRequestSummary[];
+}): StatusRecommendedAction[] {
+  const { task, identity, pullRequests } = input;
+  const actions: StatusRecommendedAction[] = [];
+  if (task.flags.includes("stray session") || task.flags.includes("stray exited session")) {
+    actions.push("cleanup");
+  } else if (task.flags.includes("session dead") || task.flags.includes("session exited")) {
+    actions.push("resume");
+  } else if (task.session === "live") {
+    actions.push("stop");
+  } else if (task.lifecycle === "interrupted" && task.session !== "unknown") {
+    actions.push("resume");
+  }
+  if (identity.url !== undefined) {
+    actions.push("open-task");
+  }
+  if (pullRequests.length > 0) {
+    actions.push("open-pr");
+  }
+  actions.push("open-worktree");
+  return actions;
+}
+
+interface QueueIdentityInput {
+  issue: StatusBoardIssue | StatusQueueIssue | StatusBlockedIssue;
+  canonicalStatus: CanonicalStatus;
+}
+
+function queueIdentity(input: QueueIdentityInput): StatusTaskIdentity {
+  const { issue, canonicalStatus } = input;
+  return {
+    id: issue.id,
+    naturalId: issue.naturalId,
+    title: issue.title,
+    status: canonicalStatus,
+    url: issue.url,
+  };
+}
+
+function queueEntry(input: QueueIdentityInput): StatusQueueEntry {
+  const { issue, canonicalStatus } = input;
+  const task = queueIdentity({ issue, canonicalStatus });
+  return {
+    task,
+    repository: issue.repository,
+    agent: issue.agent,
+    recommendedActions: task.url === undefined ? [] : ["open-task"],
+  };
+}
+
+function inProgressWithoutWorktreeEntry(issue: StatusBoardIssue): StatusQueueEntry {
+  const entry = queueEntry({ issue, canonicalStatus: "in-progress" });
+  const canRun = issue.repository !== undefined && issue.agent !== undefined;
+  return {
+    ...entry,
+    recommendedActions: canRun ? [...entry.recommendedActions, "run"] : entry.recommendedActions,
+  };
+}
+
+function publicProblemMessage(input: {
+  code: StatusProblemCode;
+  source?: string | undefined;
+}): string {
+  const { code, source } = input;
+  if (code === "source-probe-failed" && source !== undefined) {
+    return `Source "${source}" probe failed`;
+  }
+  return {
+    "source-probe-failed": "Source probe failed",
+    "workspace-probe-failed": "Workspace probe failed",
+    "git-probe-failed": "Git probe failed",
+    "github-probe-failed": "GitHub probe failed",
+  }[code];
+}
+
+function inventoryProblems(input: {
+  local: LocalStatusDocument;
+  joined: JoinedStatus;
+  githubProblems: RemoteFetchResult["pullRequestProblems"];
+  sourceProblems: RemoteFetchResult["sourceProblems"];
+  sourceError?: string | undefined;
+}): StatusProblem[] {
+  const { local, joined, githubProblems, sourceProblems, sourceError } = input;
+  const problems: StatusProblem[] = [];
+  if (sourceError !== undefined) {
+    problems.push({
+      code: "source-probe-failed",
+      message: publicProblemMessage({ code: "source-probe-failed" }),
+    });
+  }
+  for (const problem of sourceProblems) {
+    problems.push({
+      code: "source-probe-failed",
+      source: problem.source,
+      message: publicProblemMessage({ code: "source-probe-failed", source: problem.source }),
+    });
+  }
+  if (local.workspaceProbe.status === "unavailable") {
+    problems.push({
+      code: "workspace-probe-failed",
+      message: publicProblemMessage({ code: "workspace-probe-failed" }),
+    });
+  }
+  for (const task of joined.tasks) {
+    for (const worktree of task.worktrees) {
+      if (worktree.branchProblem !== undefined) {
+        problems.push({
+          code: "git-probe-failed",
+          message: publicProblemMessage({ code: "git-probe-failed" }),
+          task: task.task,
+          worktreeDirectory: worktree.dir,
+        });
+      }
+      if (worktree.git.kind === "unknown") {
+        problems.push({
+          code: "git-probe-failed",
+          message: publicProblemMessage({ code: "git-probe-failed" }),
+          task: task.task,
+          worktreeDirectory: worktree.dir,
+        });
+      }
+    }
+  }
+  for (const problem of githubProblems) {
+    const task = joined.tasks.find((candidate) =>
+      candidate.worktrees.some((worktree) => worktree.dir === problem.directory),
+    );
+    problems.push({
+      code: "github-probe-failed",
+      message: publicProblemMessage({ code: "github-probe-failed" }),
+      task: task?.task,
+      worktreeDirectory: problem.directory,
+    });
+  }
+  return problems;
+}
+
+function inventorySnapshot(input: {
+  generatedAt: string;
+  local: LocalStatusDocument;
+  joined: JoinedStatus;
+  sources: Record<string, StatusSourceIssue>;
+  githubProblems: RemoteFetchResult["pullRequestProblems"];
+  sourceProblems: RemoteFetchResult["sourceProblems"];
+  sourceError?: string | undefined;
+}): InventoryStatusSnapshot {
+  const { generatedAt, local, joined, sources, githubProblems, sourceProblems, sourceError } =
+    input;
+  const worktreeSnapshots = joined.tasks.flatMap((task) => {
+    const source = Object.hasOwn(sources, task.task) ? sources[task.task] : undefined;
+    const identity = taskIdentity({
+      naturalId: task.task,
+      cachedTitle: task.title,
+      cachedUrl: task.url,
+      source,
+    });
+    return task.worktrees.map((worktree) => ({
+      task: identity,
+      run: runSnapshot(task),
+      workspace: { state: task.session },
+      repository: worktree.repository,
+      kind: worktree.kind,
+      branch: worktree.branch,
+      directory: worktree.dir,
+      dirtiness: worktree.git,
+      pullRequests: [...worktree.pullRequests],
+      recommendedActions: worktreeActions({
+        task,
+        identity,
+        pullRequests: worktree.pullRequests,
+      }),
+    }));
+  });
+
+  return {
+    kind: "inventory",
+    generatedAt,
+    slots: {
+      used: sourceProblems.length === 0 ? joined.slots?.used : undefined,
+      maximum: local.maximumInProgress,
+    },
+    worktrees: worktreeSnapshots,
+    inProgressWithoutWorktrees: joined.inProgressWithoutWorktree.map(
+      inProgressWithoutWorktreeEntry,
+    ),
+    queue: {
+      ready: joined.queueReady.map((issue) => queueEntry({ issue, canonicalStatus: "todo" })),
+      blocked: joined.queueBlocked.map((issue) => ({
+        ...queueEntry({ issue, canonicalStatus: "todo" }),
+        blockedBy: issue.blockedBy,
+      })),
+    },
+    straySessions: local.orphanedSessions.map((name) => ({
+      name,
+      state: local.exitedOrphanedSessions?.includes(name) === true ? "exited" : "live",
+      recommendedActions: ["stop"],
+    })),
+    problems: inventoryProblems({
+      local,
+      joined,
+      githubProblems,
+      sourceProblems,
+      sourceError,
+    }),
+    text: {
+      local,
+      joined,
+      boardError: sourceError,
+      sourceProblems,
+      renderedAt: new Date(),
+    },
+  };
+}
+
+function taskIdentityFromStatus(input: {
+  task: string;
+  runState: RunState | undefined;
+  sourceStatus: TaskSourceStatus;
+}): StatusTaskIdentity {
+  const { task, runState, sourceStatus } = input;
+  if (sourceStatus.kind === "found") {
+    return {
+      id: sourceStatus.issue.id,
+      naturalId: naturalIdFromCanonical(sourceStatus.issue.id),
+      title: sourceStatus.issue.title,
+      status: sourceStatus.issue.status,
+      url: sourceStatus.issue.url ?? runState?.url,
+    };
+  }
+  return {
+    naturalId: task,
+    title: runState?.title,
+    url: runState?.url,
+  };
+}
+
+function runSnapshotFromState(runState: RunState | undefined): StatusRun {
+  return {
+    lifecycle: runState?.state ?? "idle",
+    agent: runState?.agent,
+    startedAt: runState?.createdAt,
+    updatedAt: runState?.updatedAt,
+    resumeCount: runState?.resumeCount,
+    reason: runState?.reason,
+  };
+}
+
+function workspaceSnapshot(input: { probe: WorkspaceProbe; task: string }): StatusWorkspace {
+  const { probe, task } = input;
+  if (probe.kind === "unavailable") {
+    return { state: "unknown" };
+  }
+  if (isWorkspaceExited({ probe, task })) {
+    return { state: "exited" };
+  }
+  return { state: probe.names.has(task) ? "live" : "not-live" };
+}
+
+async function collectTaskWorktree(input: {
+  entry: ReturnType<typeof worktrees.findByTask>[number];
+  runState: RunState | undefined;
+}): Promise<{
+  worktree: TaskStatusWorktree;
+  branchProblem?: string | undefined;
+  githubProblem?: string | undefined;
+}> {
+  const { entry, runState } = input;
+  const [branchProbe, dirtiness] = await Promise.all([
+    probeEffectiveBranchNameFromRunState({ entry, runState }),
+    worktrees.probeWorkingTree({ worktreeDir: entry.dir }),
+  ]);
+  let pullRequests: readonly PullRequestSummary[] = [];
+  let githubProblem: string | undefined;
+  try {
+    pullRequests = await findPullRequestsForBranch({
+      cwd: entry.dir,
+      branchName: branchProbe.branch,
+    });
+    githubProblem = pullRequestProbeProblem({ pullRequests }).message;
+  } catch (error) {
+    githubProblem = errorMessage(error);
+  }
+  return {
+    worktree: {
+      repository: entry.repository,
+      kind: entry.kind,
+      branch: branchProbe.branch,
+      directory: entry.dir,
+      dirtiness,
+      pullRequests: [...pullRequests],
+    },
+    branchProblem: branchProbe.problem,
+    githubProblem,
+  };
+}
+
+function taskRecommendedActions(input: {
+  identity: StatusTaskIdentity;
+  run: StatusRun;
+  workspace: StatusWorkspace;
+  worktrees: readonly TaskStatusWorktree[];
+}): StatusRecommendedAction[] {
+  const { identity, run, workspace, worktrees: taskWorktrees } = input;
+  const actions: StatusRecommendedAction[] = [];
+  if (run.lifecycle === "idle" && (workspace.state === "live" || workspace.state === "exited")) {
+    actions.push(taskWorktrees.length === 0 ? "stop" : "cleanup");
+  } else if (workspace.state === "live") {
+    actions.push("stop");
+  } else if (
+    taskWorktrees.length > 0 &&
+    (workspace.state === "not-live" || workspace.state === "exited") &&
+    (run.lifecycle === "interrupted" || run.lifecycle === "running" || run.lifecycle === "resumed")
+  ) {
+    actions.push("resume");
+  }
+  if (identity.url !== undefined) {
+    actions.push("open-task");
+  }
+  if (taskWorktrees.some((worktree) => worktree.pullRequests.length > 0)) {
+    actions.push("open-pr");
+  }
+  if (taskWorktrees.length > 0) {
+    actions.push("open-worktree");
+  }
+  return actions;
+}
+
+async function collectTaskSnapshot(input: {
+  config: ResolvedConfig;
+  task: string;
+  includeRecentLogs: boolean;
+}): Promise<TaskStatusSnapshot> {
+  const { config, task, includeRecentLogs } = input;
+  const generatedAt = new Date().toISOString();
+  const runState = readRunState(config, task);
+  const [workspaceProbe, sourceStatus] = await Promise.all([
+    withLogOutputSuppressed(async () => await workspaces.probe(config)),
+    readTaskSourceStatus(config, task),
+  ]);
+  const accessHint = await exitedWorkspaceAccessHint(config, workspaceProbe, task);
+  const entries = worktrees.findByTask(config, task);
+  const collectedWorktrees = await Promise.all(
+    entries.map(async (entry) => await collectTaskWorktree({ entry, runState })),
+  );
+  const taskWorktrees = collectedWorktrees.map((collected) => collected.worktree);
+  const identity = taskIdentityFromStatus({ task, runState, sourceStatus });
+  const run = runSnapshotFromState(runState);
+  const workspace = workspaceSnapshot({ probe: workspaceProbe, task });
+  const problems: StatusProblem[] = [];
+  if (sourceStatus.kind === "unavailable") {
+    problems.push({
+      code: "source-probe-failed",
+      message: publicProblemMessage({ code: "source-probe-failed" }),
+      task,
+    });
+  } else if (sourceStatus.kind === "found") {
+    for (const failure of sourceStatus.failures) {
+      problems.push({
+        code: "source-probe-failed",
+        message: publicProblemMessage({
+          code: "source-probe-failed",
+          source: failure.source,
+        }),
+        source: failure.source,
+        task,
+      });
+    }
+  }
+  if (workspaceProbe.kind === "unavailable") {
+    problems.push({
+      code: "workspace-probe-failed",
+      message: publicProblemMessage({ code: "workspace-probe-failed" }),
+      task,
+    });
+  }
+  for (const collected of collectedWorktrees) {
+    if (collected.branchProblem !== undefined) {
+      problems.push({
+        code: "git-probe-failed",
+        message: publicProblemMessage({ code: "git-probe-failed" }),
+        task,
+        worktreeDirectory: collected.worktree.directory,
+      });
+    }
+    if (collected.worktree.dirtiness.kind === "unknown") {
+      problems.push({
+        code: "git-probe-failed",
+        message: publicProblemMessage({ code: "git-probe-failed" }),
+        task,
+        worktreeDirectory: collected.worktree.directory,
+      });
+    }
+    if (collected.githubProblem === undefined) {
+      continue;
+    }
+    problems.push({
+      code: "github-probe-failed",
+      message: publicProblemMessage({ code: "github-probe-failed" }),
+      task,
+      worktreeDirectory: collected.worktree.directory,
+    });
+  }
+  const snapshot: TaskStatusSnapshot = {
+    kind: "task",
+    generatedAt,
+    task: identity,
+    repository:
+      sourceStatus.kind === "found"
+        ? (sourceStatus.issue.repository ?? runState?.repository)
+        : runState?.repository,
+    run,
+    workspace,
+    worktrees: taskWorktrees,
+    recommendedActions: taskRecommendedActions({
+      identity,
+      run,
+      workspace,
+      worktrees: taskWorktrees,
+    }),
+    problems,
+    text: {
+      task,
+      runState,
+      sourceStatus,
+      workspaceProbe,
+      accessHint,
+      recentLogLines: includeRecentLogs
+        ? recentTaskLogLines({ lines: wholeLogLines(config), task })
+        : [],
+    },
+  };
+  return snapshot;
+}
+
+function writeInventoryStatus(details: InventoryTextDetails): void {
+  const { local, joined, boardError, sourceProblems, renderedAt } = details;
+  writeInventoryWorktrees(joined, renderedAt);
   writeStraySessions(local);
   writeInProgressWithoutWorktree(joined);
+  if (sourceProblems.length > 0) {
+    writeSection("Source problems");
+    for (const problem of sourceProblems) {
+      writeOutput(`${problem.source}: ${problem.message}`);
+    }
+  }
   if (joined.slots !== undefined) {
     writeOutput();
-    writeOutput(`slots: ${joined.slots.used}/${joined.slots.maximum} used`);
+    writeOutput(
+      sourceProblems.length === 0
+        ? `slots: ${joined.slots.used}/${joined.slots.maximum} used`
+        : `slots: unknown/${joined.slots.maximum} used (source data incomplete)`,
+    );
   }
-  writeQueueSections({ joined, boardError: remote.lastAttemptError });
-}
-
-/**
- * Emits the snapshot documents on stdout and persists them beside the log
- * file. The persisted copies let a monitor start warm, and let any other
- * reader see state without spawning a process.
- *
- * `--local-only` omits the `remote` key rather than setting it null: absent
- * means "not collected", where null would mean "collected and empty".
- */
-async function writeJsonStatus(input: {
-  config: ResolvedConfig;
-  localOnly: boolean;
-}): Promise<void> {
-  const { config, localOnly } = input;
-  // --local-only takes its own path rather than a flag inside collectBothTiers,
-  // so this branch provably never starts a board fetch.
-  if (localOnly) {
-    const local = writeLocalSnapshot({ config, document: await collectLocalStatus({ config }) });
-    writeOutput(JSON.stringify({ local }, undefined, 2));
-    return;
-  }
-  const collected = await collectBothTiers(config);
-  // Print what landed on disk, not what we built. When a monotonic guard
-  // rejects our document because a concurrent run wrote a newer one, the two
-  // differ, and stdout must never contradict the file. writeRemoteSnapshot
-  // owns the carry-forward merge so it reads the file exactly once.
-  const local = writeLocalSnapshot({ config, document: collected.local });
-  const remote = writeRemoteSnapshot({
-    config,
-    attemptAt: collected.attemptAt,
-    result: collected.result,
-  });
-  writeOutput(JSON.stringify({ local, remote }, undefined, 2));
-}
-
-/**
- * The option combinations the command refuses. Lives apart from
- * `parseArguments` so the exported `status` enforces it too: a library caller
- * passing `localOnly` without `json` must not silently get the text path.
- */
-function assertSupportedOptions(options: StatusOptions): void {
-  if (options.localOnly === true && options.json !== true) {
-    throw new Error("crew status: --local-only requires --json");
-  }
-  if (options.json === true && options.task !== undefined) {
-    throw new Error("crew status: --json is not supported for a single task");
-  }
+  writeQueueSections({ joined, boardError });
 }
 
 export async function status(config: ResolvedConfig, options: StatusOptions = {}): Promise<void> {
-  assertSupportedOptions(options);
-  const task = options.task?.trim();
+  const snapshot = await collectStatus(config, options);
   if (options.json === true) {
-    await writeJsonStatus({ config, localOnly: options.localOnly === true });
-    return;
+    renderStatusJson(snapshot);
+  } else {
+    renderStatusText(snapshot);
   }
-  if (task === undefined) {
-    await writeInventoryStatus(config);
-    return;
-  }
-  if (task.length === 0 || task.startsWith("-")) {
-    throw new Error("task must be a non-empty value");
-  }
-  await writeTaskStatus(config, task);
 }
 
 export async function statusCli(argv: string[]): Promise<void> {
   const options = parseArguments(argv);
-  // Validate before loading config so a bad flag combination fails fast.
-  assertSupportedOptions(options);
-  const config = await loadConfig();
+  const config =
+    options.json === true
+      ? await withLogOutputSuppressed(async () => await loadConfig())
+      : await loadConfig();
   await status(config, options);
 }

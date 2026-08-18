@@ -1,3 +1,5 @@
+/* oxlint-disable eslint/max-lines -- setup behavior shares one comprehensive mocked boundary. */
+
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import type * as nodeFs from "node:fs";
 import path from "node:path";
@@ -123,6 +125,9 @@ vi.mock(import("../lib/board.ts"), async (importOriginal) => {
           description: "Body for repo-a",
         }),
       ),
+      resolveOneWithFailures: vi
+        .fn<Board["resolveOneWithFailures"]>()
+        .mockResolvedValue({ issue: undefined, failures: [] }),
       markInProgress: vi.fn<(issue: Issue) => Promise<void>>().mockResolvedValue(),
       markInReview: vi.fn<Board["markInReview"]>().mockResolvedValue({ outcome: "applied" }),
       markDone: vi.fn<Board["markDone"]>().mockResolvedValue({ outcome: "applied" }),
@@ -2028,6 +2033,9 @@ function fakeBoard(resolvedIssue: Issue | undefined): FakeBoard {
     resolveOne: vi
       .fn<(id: string) => Promise<Issue | undefined>>()
       .mockResolvedValue(resolvedIssue),
+    resolveOneWithFailures: vi
+      .fn<Board["resolveOneWithFailures"]>()
+      .mockResolvedValue({ issue: resolvedIssue, failures: [] }),
     markInProgress: vi.fn<(issue: Issue) => Promise<void>>().mockResolvedValue(),
     markInReview: vi.fn<Board["markInReview"]>().mockResolvedValue({ outcome: "applied" }),
     markDone: vi.fn<Board["markDone"]>().mockResolvedValue({ outcome: "applied" }),

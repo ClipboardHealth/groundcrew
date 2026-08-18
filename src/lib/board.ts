@@ -16,6 +16,11 @@ import {
 } from "./taskSource.ts";
 import { resolveTaskIdMatches, type TaskResolutionMatches } from "./taskResolution.ts";
 
+export interface BoardTaskResolution {
+  issue: Issue | undefined;
+  failures: TaskResolutionMatches["sourceFailures"];
+}
+
 export interface Board {
   verify: () => Promise<void>;
   fetch: () => Promise<BoardState>;
@@ -25,6 +30,8 @@ export interface Board {
    * sources; ambiguous matches throw.
    */
   resolveOne: (canonicalOrNaturalId: string) => Promise<Issue | undefined>;
+  /** Resolves one task while retaining failed sibling-source probes for status diagnostics. */
+  resolveOneWithFailures: (canonicalOrNaturalId: string) => Promise<BoardTaskResolution>;
   /** Routes to the adapter whose `name` matches `issue.source`. Unknown source throws. */
   markInProgress: (issue: Issue) => Promise<void>;
   /**
@@ -92,6 +99,28 @@ export function createBoard(sources: readonly TaskSource[]): Board {
     byName.set(source.name, source);
   }
 
+  async function resolveOneWithFailures(idArgument: string): Promise<BoardTaskResolution> {
+    const colonIndex = idArgument.indexOf(":");
+    if (colonIndex !== -1) {
+      const sourceName = idArgument.slice(0, colonIndex);
+      const naturalId = idArgument.slice(colonIndex + 1);
+      const source = byName.get(sourceName);
+      if (!source) {
+        throw new Error(`unknown source "${sourceName}" in canonical id "${idArgument}"`);
+      }
+      const resolution = await resolveTaskIdMatches({ sources: [source], naturalId });
+      return {
+        issue: uniqueResolvedIssue({ idArgument, resolution }),
+        failures: resolution.sourceFailures,
+      };
+    }
+    const resolution = await resolveTaskIdMatches({ sources, naturalId: idArgument });
+    return {
+      issue: uniqueResolvedIssue({ idArgument, resolution }),
+      failures: resolution.sourceFailures,
+    };
+  }
+
   return {
     async verify(): Promise<void> {
       const results = await Promise.allSettled(sources.map(callVerify));
@@ -130,31 +159,10 @@ export function createBoard(sources: readonly TaskSource[]): Board {
     },
 
     async resolveOne(idArgument: string): Promise<Issue | undefined> {
-      const colonIndex = idArgument.indexOf(":");
-      if (colonIndex !== -1) {
-        const sourceName = idArgument.slice(0, colonIndex);
-        const naturalId = idArgument.slice(colonIndex + 1);
-        const source = byName.get(sourceName);
-        if (!source) {
-          throw new Error(`unknown source "${sourceName}" in canonical id "${idArgument}"`);
-        }
-        return uniqueResolvedIssue({
-          idArgument,
-          resolution: await resolveTaskIdMatches({ sources: [source], naturalId }),
-        });
-      }
-      // Per-source resolveOne errors must not poison sibling resolutions.
-      // A source that rejects on a natural-id lookup is treated as "I don't
-      // have this task" (or "I can't say"). If any source resolved we use
-      // it; only when none resolved AND at least one rejected do we surface
-      // the rejection — so the user sees a real Linear/network error when
-      // there's no fallback, but a stray "not found" from one source doesn't
-      // mask a successful match from another.
-      return uniqueResolvedIssue({
-        idArgument,
-        resolution: await resolveTaskIdMatches({ sources, naturalId: idArgument }),
-      });
+      return (await resolveOneWithFailures(idArgument)).issue;
     },
+
+    resolveOneWithFailures,
 
     async markInProgress(issue: Issue): Promise<void> {
       await routeWriteback(byName, issue).markInProgress(issue);

@@ -393,6 +393,16 @@ describe(run, () => {
     expect(process.exitCode).toBeUndefined();
   });
 
+  it("keeps stdout empty and reports a fatal status JSON failure on stderr", async () => {
+    statusMock.mockRejectedValue(new Error("worktree inventory unreadable"));
+
+    await run(["status", "--json"]);
+
+    expect(consoleLog.output()).toBe("");
+    expect(consoleError.output()).toBe("worktree inventory unreadable");
+    expect(process.exitCode).toBe(1);
+  });
+
   it("dispatches task namespace arguments to taskCli", async () => {
     await run(["task", "list", "--source", "todo"]);
 

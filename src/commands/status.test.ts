@@ -1,11 +1,6 @@
-import {
-  appendFileSync,
-  existsSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+/* oxlint-disable eslint/max-lines -- status text and JSON share one mocked collection boundary. */
+
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -13,12 +8,13 @@ import { buildSources } from "../lib/buildSources.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { findPullRequestsForBranch, type PullRequestSummary } from "../lib/pullRequests.ts";
 import { readRunState, type RunState } from "../lib/runState.ts";
-import type { LocalStatusDocument, RemoteStatusDocument } from "../lib/statusSnapshot.ts";
 import type { Issue as SourceIssue, TaskSource } from "../lib/taskSource.ts";
+import { log, setVerbose } from "../lib/util.ts";
 import { type WorkspaceProbe, workspaces } from "../lib/workspaces.ts";
 import { type WorktreeDirtiness, type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
+import { probeEffectiveBranchNameFromRunState } from "../lib/worktreeRunState.ts";
 import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCapture.ts";
-import { status, statusCli } from "./status.ts";
+import { collectStatus, renderStatusJson, renderStatusText, status, statusCli } from "./status.ts";
 
 vi.mock(import("../lib/config.ts"), async (importOriginal) => {
   const actual = await importOriginal();
@@ -64,6 +60,14 @@ vi.mock(import("../lib/pullRequests.ts"), async (importOriginal) => {
       .mockResolvedValue([]),
   };
 });
+vi.mock(import("../lib/worktreeRunState.ts"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    probeEffectiveBranchNameFromRunState:
+      vi.fn<typeof actual.probeEffectiveBranchNameFromRunState>(),
+  };
+});
 
 const loadConfigMock = vi.mocked(loadConfig);
 const readRunStateMock = vi.mocked(readRunState);
@@ -74,6 +78,7 @@ const listWorktreesMock = vi.mocked(worktrees.list);
 const probeWorkingTreeMock = vi.mocked(worktrees.probeWorkingTree);
 const buildSourcesMock = vi.mocked(buildSources);
 const findPullRequestsMock = vi.mocked(findPullRequestsForBranch);
+const probeEffectiveBranchMock = vi.mocked(probeEffectiveBranchNameFromRunState);
 
 function sourceIssue(overrides: Partial<SourceIssue> = {}): SourceIssue {
   return {
@@ -228,6 +233,9 @@ describe(status, () => {
     findByTaskMock.mockReturnValue([worktree()]);
     listWorktreesMock.mockReturnValue([worktree()]);
     probeWorkingTreeMock.mockResolvedValue({ kind: "clean" });
+    probeEffectiveBranchMock.mockImplementation(async ({ entry, runState }) => ({
+      branch: runState?.branchName ?? entry.branchName,
+    }));
   });
 
   afterEach(() => {
@@ -297,6 +305,36 @@ describe(status, () => {
     expect(output).not.toContain("Task source");
     expect(output).toContain("task: team-1  in-progress  https://linear.app/example/issue/TEAM-1");
     expect(output).toContain("title: Fix status");
+  });
+
+  it("collects silently and renders task text and JSON from the same snapshot", async () => {
+    const logFile = path.join(temporaryDirectory, "groundcrew.log");
+    writeFileSync(logFile, "[09:01:00] Workspace team-1 launched\n");
+    buildSourcesMock.mockResolvedValue([
+      fakeSource([
+        sourceIssue({
+          title: "Fix status",
+          status: "in-progress",
+          url: "https://linear.app/example/issue/TEAM-1",
+        }),
+      ]),
+    ]);
+
+    const snapshot = await collectStatus(makeConfig({ logging: { file: logFile } }), {
+      task: "team-1",
+    });
+
+    expect(consoleLog.output()).toBe("");
+    renderStatusText({ ...snapshot });
+    expect(consoleLog.output()).toContain("groundcrew status TEAM-1");
+    expect(consoleLog.output()).toContain("Workspace team-1 launched");
+    consoleLog.restore();
+    consoleLog = captureConsoleLog();
+
+    renderStatusJson(snapshot);
+
+    expect(JSON.parse(consoleLog.output())).toMatchObject({ kind: "task" });
+    expect(consoleLog.output()).not.toContain("Workspace team-1 launched");
   });
 
   it("shows the run-state branch (not the derived one) for an opened PR worktree", async () => {
@@ -373,6 +411,12 @@ describe(status, () => {
 
     expect(findByTaskMock).not.toHaveBeenCalled();
     expect(listWorktreesMock).not.toHaveBeenCalled();
+  });
+
+  it.each(["   ", "-invalid"])("rejects invalid direct collection task %j", async (task) => {
+    await expect(collectStatus(makeConfig(), { task })).rejects.toThrow(
+      "task must be a non-empty value",
+    );
   });
 
   it("prints a run-state summary without optional detail and source status", async () => {
@@ -1367,6 +1411,28 @@ describe(status, () => {
     expect(consoleLog.output()).toContain("Queue\n-----\nunavailable: linear down");
   });
 
+  it("marks partial source inventory as degraded while retaining healthy queue rows", async () => {
+    listWorktreesMock.mockReturnValue([]);
+    workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set() });
+    buildSourcesMock.mockResolvedValue([
+      fakeSource(
+        [sourceIssue({ id: "healthy:team-2", source: "healthy", title: "Healthy task" })],
+        { name: "healthy" },
+      ),
+      fakeSource([], {
+        name: "broken",
+        listTasks: async () => await Promise.reject(new Error("source unavailable")),
+      }),
+    ]);
+
+    await status(makeConfig());
+
+    const output = consoleLog.output();
+    expect(output).toContain("Source problems\n---------------\nbroken: source unavailable");
+    expect(output).toContain("slots: unknown/4 used (source data incomplete)");
+    expect(output).toContain("Healthy task");
+  });
+
   it("prints inventory probe failures and empty worktrees", async () => {
     listWorktreesMock.mockReturnValue([]);
     workspaceProbeMock.mockResolvedValue({
@@ -1400,235 +1466,543 @@ describe(status, () => {
   });
 
   describe("--json", () => {
-    function parseJsonOutput(): {
-      local: LocalStatusDocument;
-      remote?: RemoteStatusDocument;
-    } {
-      return JSON.parse(consoleLog.output());
-    }
-
-    // Every --json run persists two files beside the log, so each test needs
-    // its own directory or they read each other's snapshots.
     function jsonConfig(): ResolvedConfig {
       return makeConfig({ logging: { file: path.join(temporaryDirectory, "groundcrew.log") } });
     }
 
-    it("prints both documents under one root", async () => {
-      await status(jsonConfig(), { json: true });
-
-      const actual = parseJsonOutput();
-
-      expect(actual.local.schemaVersion).toBe(1);
-      expect(actual.remote?.lastAttemptStatus).toBe("ok");
-    });
-
-    it("timestamps each tier when its data collection starts", async () => {
-      const pollStartedAt = "2026-05-26T02:14:30.000Z";
-      const boardCapturedAt = "2026-05-26T02:15:00.000Z";
-      workspaceProbeMock.mockImplementation(async () => {
-        vi.setSystemTime(new Date(boardCapturedAt));
-        return { kind: "ok", names: new Set(["team-1"]) };
+    it("emits one stable inventory snapshot", async () => {
+      probeWorkingTreeMock.mockResolvedValue({ kind: "dirty", modified: 2, untracked: 1 });
+      workspaceProbeMock.mockResolvedValue({
+        kind: "ok",
+        names: new Set(["team-1", "orphan"]),
       });
-      findPullRequestsMock.mockImplementation(async () => {
-        vi.setSystemTime(new Date("2026-05-26T02:16:00.000Z"));
-        return [];
-      });
-
-      await status(jsonConfig(), { json: true });
-
-      const actual = parseJsonOutput();
-      expect(actual.local.capturedAt).toBe(pollStartedAt);
-      expect(actual.remote?.lastAttemptAt).toBe(pollStartedAt);
-      expect(actual.remote?.payload?.capturedAt).toBe(boardCapturedAt);
-    });
-
-    it("publishes current source metadata for tasks outside queue states", async () => {
-      readRunStateMock.mockReturnValue(
-        runState({ title: "Title at dispatch", url: "https://example.test/old" }),
-      );
+      findPullRequestsMock.mockResolvedValue([
+        {
+          url: "https://github.com/acme/widgets/pull/42",
+          number: 42,
+          state: "open",
+          title: "Wire up status JSON",
+        },
+      ]);
       buildSourcesMock.mockResolvedValue([
         fakeSource([
           sourceIssue({
-            status: "done",
-            title: "Current source title",
-            url: "https://example.test/current",
+            status: "in-progress",
+            title: "Active task",
+            url: "https://linear.app/example/issue/TEAM-1",
+          }),
+          sourceIssue({
+            id: "linear:team-2",
+            title: "Ready task",
+            repository: "repo-b",
+          }),
+          sourceIssue({
+            id: "linear:team-3",
+            status: "in-progress",
+            title: "Remote slot holder",
+            repository: "repo-b",
+          }),
+          sourceIssue({
+            id: "linear:team-4",
+            title: "Blocked task",
+            repository: "repo-b",
+            blockers: [
+              {
+                id: "linear:team-0",
+                title: "Blocking task",
+                status: "in-progress",
+              },
+            ],
           }),
         ]),
       ]);
 
       await status(jsonConfig(), { json: true });
 
-      const actual = parseJsonOutput();
-      expect(actual.remote?.payload?.sourceByTask["team-1"]).toMatchObject({
-        status: "done",
-        title: "Current source title",
-        url: "https://example.test/current",
+      const actual: unknown = JSON.parse(consoleLog.output());
+      expect(actual).toMatchObject({
+        kind: "inventory",
+        generatedAt: "2026-05-26T02:14:30.000Z",
+        slots: { used: 2, maximum: 4 },
+        worktrees: [
+          {
+            task: {
+              id: "linear:team-1",
+              naturalId: "team-1",
+              title: "Active task",
+              status: "in-progress",
+              url: "https://linear.app/example/issue/TEAM-1",
+            },
+            run: {
+              lifecycle: "running",
+              agent: "claude",
+              startedAt: "2026-05-26T00:00:00.000Z",
+              updatedAt: "2026-05-26T00:01:00.000Z",
+              resumeCount: 0,
+              reason: "manual pause",
+            },
+            workspace: { state: "live" },
+            repository: "repo-a",
+            branch: "dev-team-1",
+            directory: "/work/repo-a-team-1",
+            dirtiness: { kind: "dirty", modified: 2, untracked: 1 },
+            pullRequests: [
+              {
+                url: "https://github.com/acme/widgets/pull/42",
+                number: 42,
+                state: "open",
+                title: "Wire up status JSON",
+              },
+            ],
+            recommendedActions: ["stop", "open-task", "open-pr", "open-worktree"],
+          },
+        ],
+        inProgressWithoutWorktrees: [
+          {
+            task: {
+              id: "linear:team-3",
+              naturalId: "team-3",
+              title: "Remote slot holder",
+              status: "in-progress",
+            },
+            repository: "repo-b",
+            agent: "claude",
+            recommendedActions: ["run"],
+          },
+        ],
+        queue: {
+          ready: [
+            {
+              task: {
+                id: "linear:team-2",
+                naturalId: "team-2",
+                title: "Ready task",
+                status: "todo",
+              },
+              repository: "repo-b",
+              agent: "claude",
+              recommendedActions: [],
+            },
+          ],
+          blocked: [
+            {
+              task: {
+                id: "linear:team-4",
+                naturalId: "team-4",
+                title: "Blocked task",
+                status: "todo",
+              },
+              repository: "repo-b",
+              agent: "claude",
+              recommendedActions: [],
+              blockedBy: [
+                {
+                  id: "linear:team-0",
+                  naturalId: "team-0",
+                  status: "in-progress",
+                },
+              ],
+            },
+          ],
+        },
+        straySessions: [
+          {
+            name: "orphan",
+            state: "live",
+            recommendedActions: ["stop"],
+          },
+        ],
+        problems: [],
+      });
+      expect(JSON.stringify(actual)).not.toContain("recentLogLines");
+      expect(JSON.stringify(actual)).not.toContain('"text"');
+    });
+
+    it("emits one stable task snapshot without recent logs", async () => {
+      const config = jsonConfig();
+      writeFileSync(config.logging.file, "[09:01:00] team-1 private log contents\n");
+      probeWorkingTreeMock.mockResolvedValue({ kind: "dirty", modified: 1, untracked: 0 });
+      findPullRequestsMock.mockResolvedValue([
+        {
+          url: "https://github.com/acme/widgets/pull/99",
+          number: 99,
+          state: "open",
+          title: "Status contract",
+        },
+      ]);
+      buildSourcesMock.mockResolvedValue([
+        fakeSource([
+          sourceIssue({
+            title: "Current task title",
+            status: "in-progress",
+            url: "https://linear.app/example/issue/TEAM-1",
+          }),
+        ]),
+      ]);
+
+      await status(config, { task: "team-1", json: true });
+
+      const actual: unknown = JSON.parse(consoleLog.output());
+      expect(actual).toEqual({
+        kind: "task",
+        generatedAt: "2026-05-26T02:14:30.000Z",
+        task: {
+          id: "linear:team-1",
+          naturalId: "team-1",
+          title: "Current task title",
+          status: "in-progress",
+          url: "https://linear.app/example/issue/TEAM-1",
+        },
+        repository: "repo-a",
+        run: {
+          lifecycle: "running",
+          agent: "claude",
+          startedAt: "2026-05-26T00:00:00.000Z",
+          updatedAt: "2026-05-26T00:01:00.000Z",
+          resumeCount: 0,
+          reason: "manual pause",
+        },
+        workspace: { state: "live" },
+        worktrees: [
+          {
+            repository: "repo-a",
+            kind: "host",
+            branch: "dev-team-1",
+            directory: "/work/repo-a-team-1",
+            dirtiness: { kind: "dirty", modified: 1, untracked: 0 },
+            pullRequests: [
+              {
+                url: "https://github.com/acme/widgets/pull/99",
+                number: 99,
+                state: "open",
+                title: "Status contract",
+              },
+            ],
+          },
+        ],
+        recommendedActions: ["stop", "open-task", "open-pr", "open-worktree"],
+        problems: [],
+      });
+      expect(consoleLog.output()).not.toContain("private log contents");
+      expect(consoleLog.output()).not.toContain('"text"');
+    });
+
+    it("does not collect recent logs for task JSON", async () => {
+      const config = jsonConfig();
+      writeFileSync(config.logging.file, "[09:01:00] team-1 private log contents\n");
+
+      const snapshot = await collectStatus(config, { task: "team-1", json: true });
+
+      expect(snapshot).toMatchObject({
+        kind: "task",
+        text: { recentLogLines: [] },
       });
     });
 
-    it("publishes a task's recent lines even when they precede a large unrelated tail", async () => {
-      const config = jsonConfig();
-      const taskLine = "[09:00:00] team-1 dispatched";
-      const unrelatedTail = `${"x".repeat(200)}\n`.repeat(2000);
-      writeFileSync(config.logging.file, `${taskLine}\n${unrelatedTail}`);
+    it("falls back to the run repository when the task source omits it", async () => {
+      buildSourcesMock.mockResolvedValue([
+        fakeSource([sourceIssue({ repository: undefined, status: "in-progress" })]),
+      ]);
 
-      await status(config, { json: true });
+      await status(jsonConfig(), { task: "team-1", json: true });
 
-      const actual = parseJsonOutput();
-      expect(actual.local.tasks[0]?.recentLogLines).toEqual([taskLine]);
+      expect(JSON.parse(consoleLog.output())).toMatchObject({ repository: "repo-a" });
     });
 
-    it("extends cached task log history from the previous poll's cursor", async () => {
-      const config = jsonConfig();
-      const historicalLine = "[09:00:00] team-1 dispatched";
-      const appendedLine = "[09:15:00] team-1 resumed";
-      const unrelatedTail = `${"x".repeat(200)}\n`.repeat(2000);
-      writeFileSync(config.logging.file, `${historicalLine}\n${unrelatedTail}`);
-
-      await status(config, { json: true });
-
-      const first = parseJsonOutput();
-      const firstOffset = first.local.logCursor?.offset;
-      expect(firstOffset).toBeGreaterThan(0);
-      consoleLog.restore();
-      consoleLog = captureConsoleLog();
-      appendFileSync(config.logging.file, `${appendedLine}\n`);
-
-      await status(config, { json: true });
-
-      const second = parseJsonOutput();
-      expect(second.local.logCursor?.offset).toBe(
-        Buffer.byteLength(`${historicalLine}\n${unrelatedTail}${appendedLine}\n`),
-      );
-      expect(second.local.tasks[0]?.recentLogLines).toEqual([historicalLine, appendedLine]);
-    });
-
-    it("omits the remote key entirely with --local-only", async () => {
-      await status(jsonConfig(), { json: true, localOnly: true });
-
-      const actual = parseJsonOutput();
-
-      expect(actual.local.schemaVersion).toBe(1);
-      expect("remote" in actual).toBe(false);
-    });
-
-    it("never constructs a task source or looks up a pull request with --local-only", async () => {
-      await status(jsonConfig(), { json: true, localOnly: true });
-
-      expect(buildSourcesMock).not.toHaveBeenCalled();
-      expect(findPullRequestsMock).not.toHaveBeenCalled();
-    });
-
-    it("reports an unavailable board without failing the command", async () => {
+    it("preserves inventory data when source, workspace, git, and GitHub probes fail", async () => {
       buildSourcesMock.mockRejectedValue(new Error("source down"));
+      workspaceProbeMock.mockResolvedValue({
+        kind: "unavailable",
+        error: new Error("workspace down"),
+      });
+      probeWorkingTreeMock.mockResolvedValue({ kind: "unknown" });
+      findPullRequestsMock.mockRejectedValue(new Error("GitHub down"));
 
       await status(jsonConfig(), { json: true });
 
-      const actual = parseJsonOutput();
-
-      expect(actual.remote?.lastAttemptStatus).toBe("unavailable");
-      expect(actual.remote?.lastAttemptError).toBe("source down");
-      expect(actual.remote?.payload).toBeUndefined();
+      const actual: unknown = JSON.parse(consoleLog.output());
+      expect(actual).toMatchObject({
+        kind: "inventory",
+        slots: { maximum: 4 },
+        worktrees: [
+          {
+            directory: "/work/repo-a-team-1",
+            dirtiness: { kind: "unknown" },
+            pullRequests: [],
+          },
+        ],
+        queue: { ready: [], blocked: [] },
+        problems: [
+          { code: "source-probe-failed", message: "Source probe failed" },
+          { code: "workspace-probe-failed", message: "Workspace probe failed" },
+          {
+            code: "git-probe-failed",
+            task: "team-1",
+            worktreeDirectory: "/work/repo-a-team-1",
+          },
+          {
+            code: "github-probe-failed",
+            message: "GitHub probe failed",
+            task: "team-1",
+            worktreeDirectory: "/work/repo-a-team-1",
+          },
+        ],
+      });
+      expect(consoleLog.calls).toHaveLength(1);
     });
 
-    it("carries the previous payload forward when a later fetch fails", async () => {
-      const config = jsonConfig();
-      await status(config, { json: true });
+    it("retains healthy inventory data when one configured source fails", async () => {
+      buildSourcesMock.mockResolvedValue([
+        fakeSource(
+          [
+            sourceIssue({
+              id: "healthy:team-2",
+              source: "healthy",
+              title: "Healthy queue entry",
+            }),
+          ],
+          { name: "healthy" },
+        ),
+        fakeSource([], {
+          name: "broken",
+          listTasks: async () => await Promise.reject(new Error("source unavailable")),
+        }),
+      ]);
+
+      await status(jsonConfig(), { json: true });
+
+      expect(JSON.parse(consoleLog.output())).toMatchObject({
+        queue: {
+          ready: [{ task: { naturalId: "team-2", title: "Healthy queue entry" } }],
+        },
+        slots: { maximum: 4 },
+        problems: [
+          {
+            code: "source-probe-failed",
+            source: "broken",
+            message: 'Source "broken" probe failed',
+          },
+        ],
+      });
+      expect(consoleLog.output()).not.toContain("source unavailable");
+    });
+
+    it("retains a resolved task while reporting a failed sibling source", async () => {
+      buildSourcesMock.mockResolvedValue([
+        fakeSource(
+          [sourceIssue({ id: "healthy:team-1", source: "healthy", title: "Healthy match" })],
+          { name: "healthy" },
+        ),
+        fakeSource([], {
+          name: "broken",
+          getTask: async () => await Promise.reject(new Error("token=private-source-detail")),
+        }),
+      ]);
+
+      await status(jsonConfig(), { task: "team-1", json: true });
+
+      expect(JSON.parse(consoleLog.output())).toMatchObject({
+        task: { id: "healthy:team-1", title: "Healthy match" },
+        problems: [
+          {
+            code: "source-probe-failed",
+            source: "broken",
+            task: "team-1",
+            message: 'Source "broken" probe failed',
+          },
+        ],
+      });
+      expect(consoleLog.output()).not.toContain("private-source-detail");
+    });
+
+    it("preserves task data when source, workspace, git, and GitHub probes fail", async () => {
+      buildSourcesMock.mockRejectedValue(new Error("source down"));
+      workspaceProbeMock.mockResolvedValue({
+        kind: "unavailable",
+        error: new Error("workspace down"),
+      });
+      probeWorkingTreeMock.mockResolvedValue({ kind: "unknown" });
+      findPullRequestsMock.mockRejectedValue(new Error("GitHub down"));
+
+      await status(jsonConfig(), { task: "team-1", json: true });
+
+      const actual: unknown = JSON.parse(consoleLog.output());
+      expect(actual).toMatchObject({
+        kind: "task",
+        task: { naturalId: "team-1" },
+        repository: "repo-a",
+        run: { lifecycle: "running" },
+        workspace: { state: "unknown" },
+        worktrees: [
+          {
+            repository: "repo-a",
+            directory: "/work/repo-a-team-1",
+            dirtiness: { kind: "unknown" },
+            pullRequests: [],
+          },
+        ],
+        problems: [
+          { code: "source-probe-failed", message: "Source probe failed", task: "team-1" },
+          { code: "workspace-probe-failed", message: "Workspace probe failed", task: "team-1" },
+          {
+            code: "git-probe-failed",
+            task: "team-1",
+            worktreeDirectory: "/work/repo-a-team-1",
+          },
+          {
+            code: "github-probe-failed",
+            message: "GitHub probe failed",
+            task: "team-1",
+            worktreeDirectory: "/work/repo-a-team-1",
+          },
+        ],
+      });
+      expect(consoleLog.calls).toHaveLength(1);
+    });
+
+    it("distinguishes live and exited stray sessions", async () => {
+      listWorktreesMock.mockReturnValue([]);
+      workspaceProbeMock.mockResolvedValue({
+        kind: "ok",
+        names: new Set(["live-orphan", "exited-orphan"]),
+        exitedNames: new Set(["exited-orphan"]),
+      });
+
+      await status(jsonConfig(), { json: true });
+
+      const actual: unknown = JSON.parse(consoleLog.output());
+      expect(actual).toMatchObject({
+        straySessions: [
+          { name: "exited-orphan", state: "exited", recommendedActions: ["stop"] },
+          { name: "live-orphan", state: "live", recommendedActions: ["stop"] },
+        ],
+      });
+    });
+
+    it("uses cleanup and resume action codes for workspace reconciliation", async () => {
+      readRunStateMock.mockReset();
+      workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-1"]) });
+
+      await status(jsonConfig(), { json: true });
+
+      const straySnapshot: unknown = JSON.parse(consoleLog.output());
+      expect(straySnapshot).toMatchObject({
+        worktrees: [{ recommendedActions: ["cleanup", "open-worktree"] }],
+      });
       consoleLog.restore();
       consoleLog = captureConsoleLog();
-      buildSourcesMock.mockRejectedValue(new Error("source down"));
+      readRunStateMock.mockReturnValue(runState());
+      workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set() });
 
-      await status(config, { json: true });
+      await status(jsonConfig(), { task: "team-1", json: true });
 
-      const actual = parseJsonOutput();
-
-      expect(actual.remote?.lastAttemptStatus).toBe("unavailable");
-      expect(actual.remote?.payload).toBeDefined();
+      const deadSnapshot: unknown = JSON.parse(consoleLog.output());
+      expect(deadSnapshot).toMatchObject({ recommendedActions: ["resume", "open-worktree"] });
     });
 
-    it("writes both documents beside the log file", async () => {
-      const config = jsonConfig();
+    it("offers resume for interrupted tasks only when the workspace is confirmed absent", async () => {
+      readRunStateMock.mockReturnValue(runState({ state: "interrupted" }));
+      workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set() });
 
-      await status(config, { json: true });
+      await status(jsonConfig(), { task: "team-1", json: true });
 
-      const localOnDisk = JSON.parse(
-        readFileSync(path.join(temporaryDirectory, "status-local.json"), "utf8"),
-      );
-      const remoteOnDisk = JSON.parse(
-        readFileSync(path.join(temporaryDirectory, "status-remote.json"), "utf8"),
-      );
+      expect(JSON.parse(consoleLog.output())).toMatchObject({
+        recommendedActions: ["resume", "open-worktree"],
+      });
+      consoleLog.restore();
+      consoleLog = captureConsoleLog();
+      workspaceProbeMock.mockResolvedValue({ kind: "unavailable", error: new Error("probe down") });
 
-      expect(localOnDisk.schemaVersion).toBe(1);
-      expect(remoteOnDisk.lastAttemptStatus).toBe("ok");
+      await status(jsonConfig(), { task: "team-1", json: true });
+
+      expect(JSON.parse(consoleLog.output())).toMatchObject({
+        recommendedActions: ["open-worktree"],
+      });
+      consoleLog.restore();
+      consoleLog = captureConsoleLog();
+      workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set() });
+
+      await status(jsonConfig(), { json: true });
+
+      expect(JSON.parse(consoleLog.output())).toMatchObject({
+        worktrees: [{ recommendedActions: ["resume", "open-worktree"] }],
+      });
     });
 
-    it("prints exactly what it wrote to the remote file", async () => {
-      const config = jsonConfig();
+    it("uses stop rather than cleanup for a live session with no worktree or run state", async () => {
+      readRunStateMock.mockReset();
+      findByTaskMock.mockReturnValue([]);
+      workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-1"]) });
 
-      await status(config, { json: true });
+      await status(jsonConfig(), { task: "team-1", json: true });
 
-      const printed = parseJsonOutput().remote;
-      const onDisk = JSON.parse(
-        readFileSync(path.join(temporaryDirectory, "status-remote.json"), "utf8"),
-      );
-
-      expect(printed).toEqual(onDisk);
+      expect(JSON.parse(consoleLog.output())).toMatchObject({ recommendedActions: ["stop"] });
     });
 
-    it("prints exactly what it wrote to the local file", async () => {
-      const config = jsonConfig();
+    it("omits queue actions whose required task data is unavailable", async () => {
+      listWorktreesMock.mockReturnValue([]);
+      workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set() });
+      const ineligibleIssue = {
+        ...sourceIssue({ id: "linear:team-2", status: "in-progress" }),
+        repository: undefined,
+        agent: undefined,
+      } satisfies SourceIssue;
+      buildSourcesMock.mockResolvedValue([fakeSource([ineligibleIssue])]);
 
-      await status(config, { json: true });
+      await status(jsonConfig(), { json: true });
 
-      const printed = parseJsonOutput().local;
-      const onDisk = JSON.parse(
-        readFileSync(path.join(temporaryDirectory, "status-local.json"), "utf8"),
-      );
-
-      expect(printed).toEqual(onDisk);
+      expect(JSON.parse(consoleLog.output())).toMatchObject({
+        inProgressWithoutWorktrees: [{ recommendedActions: [] }],
+      });
     });
 
-    it("prints exactly what it wrote when the board fetch fails", async () => {
-      const config = jsonConfig();
-      buildSourcesMock.mockRejectedValue(new Error("source down"));
+    it("reports a degraded branch probe while retaining the fallback branch", async () => {
+      probeEffectiveBranchMock.mockResolvedValue({
+        branch: "dev-team-1",
+        problem: "Could not determine the current branch: HEAD is detached",
+      });
 
-      await status(config, { json: true });
+      await status(jsonConfig(), { json: true });
 
-      const printed = parseJsonOutput().remote;
-      const onDisk = JSON.parse(
-        readFileSync(path.join(temporaryDirectory, "status-remote.json"), "utf8"),
-      );
+      expect(JSON.parse(consoleLog.output())).toMatchObject({
+        worktrees: [{ branch: "dev-team-1" }],
+        problems: [
+          {
+            code: "git-probe-failed",
+            message: "Git probe failed",
+            task: "team-1",
+            worktreeDirectory: "/work/repo-a-team-1",
+          },
+        ],
+      });
+      consoleLog.restore();
+      consoleLog = captureConsoleLog();
 
-      expect(printed).toEqual(onDisk);
-      expect(printed?.lastAttemptStatus).toBe("unavailable");
+      await status(jsonConfig(), { task: "team-1", json: true });
+
+      expect(JSON.parse(consoleLog.output())).toMatchObject({
+        worktrees: [{ branch: "dev-team-1" }],
+        problems: [
+          {
+            code: "git-probe-failed",
+            message: "Git probe failed",
+            task: "team-1",
+            worktreeDirectory: "/work/repo-a-team-1",
+          },
+        ],
+      });
     });
 
-    it("prints exactly what it wrote with --local-only", async () => {
-      const config = jsonConfig();
+    it("writes no JSON when inventory collection fails fatally", async () => {
+      listWorktreesMock.mockImplementation(() => {
+        throw new Error("worktree inventory unreadable");
+      });
 
-      await status(config, { json: true, localOnly: true });
-
-      const printed = parseJsonOutput().local;
-      const onDisk = JSON.parse(
-        readFileSync(path.join(temporaryDirectory, "status-local.json"), "utf8"),
+      await expect(status(jsonConfig(), { json: true })).rejects.toThrow(
+        "worktree inventory unreadable",
       );
 
-      expect(printed).toEqual(onDisk);
-    });
-
-    it("writes no snapshot in text mode", async () => {
-      const config = jsonConfig();
-
-      await status(config);
-
-      expect(existsSync(path.join(temporaryDirectory, "status-local.json"))).toBe(false);
-      expect(existsSync(path.join(temporaryDirectory, "status-remote.json"))).toBe(false);
-    });
-
-    it("rejects --json for a single task", async () => {
-      await expect(status(makeConfig(), { task: "team-1", json: true })).rejects.toThrow(
-        "crew status: --json is not supported for a single task",
-      );
+      expect(consoleLog.output()).toBe("");
     });
   });
 
@@ -1715,6 +2089,7 @@ describe(statusCli, () => {
   afterEach(() => {
     consoleLog.restore();
     vi.resetAllMocks();
+    setVerbose(false);
   });
 
   it("loads config and normalizes a task argument", async () => {
@@ -1733,6 +2108,20 @@ describe(statusCli, () => {
     expect(consoleLog.output()).toContain("Worktrees\n---------\n(none)");
   });
 
+  it("suppresses configuration diagnostics in JSON mode", async () => {
+    setVerbose(true);
+    loadConfigMock.mockImplementation(async () => {
+      log("configuration diagnostic");
+      return makeConfig();
+    });
+
+    await statusCli(["--json"]);
+
+    expect(consoleLog.calls).toHaveLength(1);
+    expect(JSON.parse(consoleLog.output())).toMatchObject({ kind: "inventory" });
+    expect(consoleLog.output()).not.toContain("configuration diagnostic");
+  });
+
   it("rejects an empty task argument", async () => {
     await expect(statusCli([""])).rejects.toThrow(/Usage: crew status/);
 
@@ -1745,18 +2134,12 @@ describe(statusCli, () => {
     expect(loadConfigMock).not.toHaveBeenCalled();
   });
 
-  it("rejects --local-only without --json", async () => {
-    await expect(statusCli(["--local-only"])).rejects.toThrow(
-      "crew status: --local-only requires --json",
+  it("rejects --local-only because status exposes only the two documented JSON modes", async () => {
+    await expect(statusCli(["--json", "--local-only"])).rejects.toThrow(
+      "unknown option: --local-only",
     );
 
     expect(loadConfigMock).not.toHaveBeenCalled();
-  });
-
-  it("accepts --json and --local-only in either order", async () => {
-    await statusCli(["--local-only", "--json"]);
-
-    expect(loadConfigMock).toHaveBeenCalled();
   });
 
   it("rejects extra positional arguments", async () => {

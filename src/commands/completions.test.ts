@@ -17,6 +17,12 @@ describe("crew completions", () => {
 
       expect(actual).toStrictEqual(expected);
     });
+
+    it("offers only --json for status", () => {
+      const statusCommand = COMPLETION_SPEC.find((command) => command.name === "status");
+
+      expect(statusCommand?.options?.map((option) => option.name)).toStrictEqual(["--json"]);
+    });
   });
 
   describe("script generation", () => {

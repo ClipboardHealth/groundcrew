@@ -176,6 +176,7 @@ export const COMPLETION_SPEC: readonly CompletionCommand[] = [
   {
     name: "status",
     summary: "Print groundcrew state or a task status",
+    options: [JSON_OPTION],
   },
   {
     name: "cleanup",

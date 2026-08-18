@@ -31,7 +31,6 @@ function makeTask(task: string): StatusTask {
         git: { kind: "clean" },
       },
     ],
-    recentLogLines: [],
   };
 }
 

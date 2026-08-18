@@ -53,6 +53,11 @@ interface EffectiveBranchNameFromRunStateInput {
   runState: RunState | undefined;
 }
 
+export interface EffectiveBranchNameProbe {
+  branch: string;
+  problem?: string | undefined;
+}
+
 /**
  * Resolves the worktree's checked-out branch name. Git is the source of truth:
  * run state records the branch we *requested* at creation, but a template hook
@@ -65,22 +70,45 @@ interface EffectiveBranchNameFromRunStateInput {
 export async function effectiveBranchNameFromRunState(
   input: EffectiveBranchNameFromRunStateInput,
 ): Promise<string> {
-  const checkedOut = await resolveCheckedOutBranch(input.entry.dir);
-  if (checkedOut !== undefined) {
-    return checkedOut;
+  return (await probeEffectiveBranchNameFromRunState(input)).branch;
+}
+
+export async function probeEffectiveBranchNameFromRunState(
+  input: EffectiveBranchNameFromRunStateInput,
+): Promise<EffectiveBranchNameProbe> {
+  const checkedOut = await probeCheckedOutBranch({ directory: input.entry.dir });
+  if (checkedOut.kind === "found") {
+    return { branch: checkedOut.branch };
   }
+  const branch = fallbackBranch(input);
+  const reason = checkedOut.kind === "detached" ? "HEAD is detached" : "git probe failed";
+  return {
+    branch,
+    problem: `Could not determine the current branch for ${input.entry.dir}: ${reason}`,
+  };
+}
+
+function fallbackBranch(input: EffectiveBranchNameFromRunStateInput): string {
   if (input.runState !== undefined && runStateMatchesEntry(input)) {
     return input.runState.branchName;
   }
   return input.entry.branchName;
 }
 
-async function resolveCheckedOutBranch(dir: string): Promise<string | undefined> {
+type CheckedOutBranchProbe =
+  | { kind: "found"; branch: string }
+  | { kind: "detached" }
+  | { kind: "failed" };
+
+async function probeCheckedOutBranch(input: { directory: string }): Promise<CheckedOutBranchProbe> {
+  const { directory } = input;
   try {
-    const output = await runCommandAsync("git", ["branch", "--show-current"], { cwd: dir });
-    return output === "" ? undefined : output;
+    const output = await runCommandAsync("git", ["branch", "--show-current"], {
+      cwd: directory,
+    });
+    return output === "" ? { kind: "detached" } : { kind: "found", branch: output };
   } catch {
-    return undefined;
+    return { kind: "failed" };
   }
 }
 

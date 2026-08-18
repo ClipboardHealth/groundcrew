@@ -1,31 +1,29 @@
 /**
- * Gathers the two status tiers that the `crew status` inventory renders and
- * that `crew status --json` publishes. Owns every subprocess and network call
- * on that path, so the join and the wire format do no I/O.
- *
- * The per-task view in status.ts is deliberately not on this path: it reads
- * its own state, because it reads the whole log where this reads a tail.
+ * Internal inventory collectors. They normalize local and remote probes for
+ * status.ts; only StatusSnapshot from that module is rendered to users.
  */
-
-import { closeSync, fstatSync, openSync, readSync } from "node:fs";
 
 import { type Board, createBoard } from "../lib/board.ts";
 import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
 import type { ResolvedConfig } from "../lib/config.ts";
-import { findPullRequestsForBranch, type PullRequestSummary } from "../lib/pullRequests.ts";
+import {
+  findPullRequestsForBranch,
+  pullRequestProbeProblem,
+  type PullRequestSummary,
+} from "../lib/pullRequests.ts";
 import { readRunState, type RunState } from "../lib/runState.ts";
 import {
   type LocalStatusDocument,
-  readLocalSnapshot,
   type RemoteFetchResult,
   STATUS_SNAPSHOT_SCHEMA_VERSION,
   type StatusBlockedIssue,
   type StatusBoardIssue,
   type StatusLifecycle,
-  type StatusLogCursor,
+  type StatusPullRequestProblem,
   type StatusQueueIssue,
   type StatusSessionState,
   type StatusSourceIssue,
+  type StatusSourceProbeProblem,
   type StatusTask,
   type StatusWorktree,
 } from "../lib/statusSnapshot.ts";
@@ -37,18 +35,11 @@ import {
 } from "../lib/taskSource.ts";
 import { errorMessage, withLogOutputSuppressed } from "../lib/util.ts";
 import { type WorkspaceProbe, workspaces } from "../lib/workspaces.ts";
-import { effectiveBranchNameFromRunState } from "../lib/worktreeRunState.ts";
+import { probeEffectiveBranchNameFromRunState } from "../lib/worktreeRunState.ts";
 import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 
 // Enough lines to show what a task just did, short enough for a status row.
 const RECENT_LOG_LINE_COUNT = 10;
-
-/**
- * Reverse-scan chunk size for the append-only shared log. Active tasks are
- * normally found in the first chunk; older tasks make the scan continue only
- * until their ten most recent matching lines have been found.
- */
-const LOG_SCAN_CHUNK_BYTES = 256 * 1024;
 
 export interface CollectLocalStatusInput {
   config: ResolvedConfig;
@@ -63,13 +54,11 @@ export async function collectLocalStatus(
 ): Promise<LocalStatusDocument> {
   const { config } = input;
   const capturedAt = new Date().toISOString();
-  const previous = readLocalSnapshot(config);
   const entries = worktrees
     .list(config)
     .toSorted((left, right) => left.task.localeCompare(right.task));
   const uniqueTasks = [...new Set(entries.map((entry) => entry.task))];
   const runStates = new Map(uniqueTasks.map((task) => [task, readRunState(config, task)]));
-  const recentLogs = readRecentLogLines({ config, previous, tasks: uniqueTasks });
 
   // The probe and the git fan-out share no data, so overlap them. Access hints
   // wait for the probe: resolving the workspace adapter is only cached after
@@ -100,18 +89,20 @@ export async function collectLocalStatus(
       attachCommand: accessHints.get(task)?.command,
       hint: disagreement === undefined ? undefined : disagreementHint({ disagreement, task }),
       worktrees: taskWorktrees,
-      recentLogLines: recentLogs.linesByTask.get(task) ?? [],
     };
   });
+  const orphaned = orphanedSessions({ probe, entries });
+  const exitedOrphaned =
+    probe.kind === "ok" ? orphaned.filter((task) => probe.exitedNames?.has(task) === true) : [];
 
   return {
     schemaVersion: STATUS_SNAPSHOT_SCHEMA_VERSION,
     capturedAt,
-    logCursor: recentLogs.cursor,
     maximumInProgress: config.orchestrator.maximumInProgress,
     workspaceProbe: probeState(probe),
     tasks,
-    orphanedSessions: orphanedSessions({ probe, entries }),
+    orphanedSessions: orphaned,
+    ...(exitedOrphaned.length === 0 ? {} : { exitedOrphanedSessions: exitedOrphaned }),
   };
 }
 
@@ -134,7 +125,12 @@ export interface CollectRemoteStatusInput {
 
 /** One board fetch attempt. A failure is a value here, never a throw. */
 export type BoardFetch =
-  | { kind: "ok"; capturedAt: string; issues: readonly SourceIssue[] }
+  | {
+      kind: "ok";
+      capturedAt: string;
+      issues: readonly SourceIssue[];
+      sourceProblems: StatusSourceProbeProblem[];
+    }
   | { kind: "error"; message: string };
 
 /**
@@ -143,9 +139,47 @@ export type BoardFetch =
  */
 export async function fetchBoardIssues(config: ResolvedConfig): Promise<BoardFetch> {
   try {
-    const board = await buildBoard(config);
-    const state = await withLogOutputSuppressed(async () => await board.fetch());
-    return { kind: "ok", capturedAt: state.timestamp, issues: state.issues };
+    const attempts = await withLogOutputSuppressed(async () => {
+      const sources = await buildSources(sourcesFromConfig(config), { globalConfig: config });
+      return await Promise.all(
+        sources.map(async (source) => {
+          try {
+            return { kind: "ok" as const, source: source.name, issues: await source.listTasks() };
+          } catch (error) {
+            return {
+              kind: "error" as const,
+              source: source.name,
+              message: errorMessage(error),
+            };
+          }
+        }),
+      );
+    });
+    const sourceProblems = attempts.flatMap((attempt) =>
+      attempt.kind === "ok"
+        ? []
+        : [
+            {
+              source: attempt.source,
+              message: attempt.message,
+            } satisfies StatusSourceProbeProblem,
+          ],
+    );
+    if (attempts.length > 0 && sourceProblems.length === attempts.length) {
+      return {
+        kind: "error",
+        message:
+          sourceProblems.length === 1
+            ? sourceProblems.map((problem) => problem.message).join("")
+            : sourceProblems.map((problem) => `${problem.source}: ${problem.message}`).join("\n"),
+      };
+    }
+    return {
+      kind: "ok",
+      capturedAt: new Date().toISOString(),
+      issues: attempts.flatMap((attempt) => (attempt.kind === "ok" ? attempt.issues : [])),
+      sourceProblems,
+    };
   } catch (error) {
     return { kind: "error", message: errorMessage(error) };
   }
@@ -164,9 +198,10 @@ export async function collectRemoteStatus(
   input: CollectRemoteStatusInput,
 ): Promise<RemoteFetchResult> {
   const { board, pullRequestTargets } = input;
-  const pullRequestsByWorktree = await collectPullRequests(pullRequestTargets);
+  const { pullRequestsByWorktree, problems: pullRequestProblems } =
+    await collectPullRequests(pullRequestTargets);
   if (board.kind === "error") {
-    return { board, pullRequestsByWorktree };
+    return { board, pullRequestsByWorktree, pullRequestProblems, sourceProblems: [] };
   }
   const { issues } = board;
 
@@ -176,6 +211,8 @@ export async function collectRemoteStatus(
 
   return {
     pullRequestsByWorktree,
+    pullRequestProblems,
+    sourceProblems: board.sourceProblems,
     board: {
       kind: "ok",
       payload: {
@@ -319,11 +356,18 @@ async function collectWorktree(input: {
   runState: RunState | undefined;
 }): Promise<StatusWorktree> {
   const { entry, runState } = input;
-  const [branch, git] = await Promise.all([
-    effectiveBranchNameFromRunState({ entry, runState }),
+  const [branchProbe, git] = await Promise.all([
+    probeEffectiveBranchNameFromRunState({ entry, runState }),
     worktrees.probeWorkingTree({ worktreeDir: entry.dir }),
   ]);
-  return { repository: entry.repository, kind: entry.kind, dir: entry.dir, branch, git };
+  return {
+    repository: entry.repository,
+    kind: entry.kind,
+    dir: entry.dir,
+    branch: branchProbe.branch,
+    branchProblem: branchProbe.problem,
+    git,
+  };
 }
 
 async function collectAccessHints(input: {
@@ -352,149 +396,6 @@ function orphanedSessions(input: {
   }
   const worktreeTasks = new Set(entries.map((entry) => entry.task));
   return [...probe.names].filter((name) => !worktreeTasks.has(name)).toSorted();
-}
-
-interface RecentLogResult {
-  linesByTask: Map<string, string[]>;
-  cursor?: StatusLogCursor | undefined;
-}
-
-function readRecentLogLines(input: {
-  config: ResolvedConfig;
-  previous: LocalStatusDocument | undefined;
-  tasks: readonly string[];
-}): RecentLogResult {
-  const { config, previous, tasks } = input;
-  if (tasks.length === 0) {
-    return { linesByTask: new Map() };
-  }
-  let handle: number;
-  try {
-    handle = openSync(config.logging.file, "r");
-  } catch {
-    return { linesByTask: new Map() };
-  }
-  try {
-    const stats = fstatSync(handle);
-    const cursor: StatusLogCursor = {
-      device: stats.dev,
-      inode: stats.ino,
-      offset: stats.size,
-    };
-    const previousCursor = previous?.logCursor;
-    const canResume =
-      previousCursor !== undefined &&
-      previousCursor.device === cursor.device &&
-      previousCursor.inode === cursor.inode &&
-      previousCursor.offset <= cursor.offset;
-    const previousTasks = new Map(previous?.tasks.map((task) => [task.task, task]) ?? []);
-    const reusableTasks = canResume ? tasks.filter((task) => previousTasks.has(task)) : [];
-    const tasksNeedingHistory = tasks.filter((task) => !reusableTasks.includes(task));
-    const appendedLines = scanRecentLogLines({
-      handle,
-      startOffset: previousCursor?.offset ?? 0,
-      endOffset: cursor.offset,
-      tasks: reusableTasks,
-    });
-    const historicalLines = scanRecentLogLines({
-      handle,
-      startOffset: 0,
-      endOffset: cursor.offset,
-      tasks: tasksNeedingHistory,
-    });
-    const linesByTask = new Map<string, string[]>();
-    for (const task of reusableTasks) {
-      const cached = requiredMapValue(previousTasks, task).recentLogLines;
-      linesByTask.set(
-        task,
-        [...cached, ...requiredMapValue(appendedLines, task)].slice(-RECENT_LOG_LINE_COUNT),
-      );
-    }
-    for (const task of tasksNeedingHistory) {
-      linesByTask.set(task, requiredMapValue(historicalLines, task));
-    }
-    return { linesByTask, cursor };
-  } finally {
-    closeSync(handle);
-  }
-}
-
-function scanRecentLogLines(input: {
-  handle: number;
-  startOffset: number;
-  endOffset: number;
-  tasks: readonly string[];
-}): Map<string, string[]> {
-  const { handle, startOffset, endOffset, tasks } = input;
-  const matchers = tasks.map((task) => ({
-    task,
-    pattern: taskLogPattern(task),
-    linesNewestFirst: [] as string[],
-  }));
-  let startsAtLineBoundary = startOffset === 0;
-  if (startOffset > 0) {
-    const priorByte = Buffer.alloc(1);
-    startsAtLineBoundary =
-      readSync(handle, priorByte, 0, 1, startOffset - 1) === 1 && priorByte[0] === 10;
-  }
-  let leadingFragment: Buffer = Buffer.alloc(0);
-  let position = endOffset;
-
-  while (
-    position > startOffset &&
-    matchers.some((matcher) => matcher.linesNewestFirst.length < RECENT_LOG_LINE_COUNT)
-  ) {
-    const length = Math.min(position - startOffset, LOG_SCAN_CHUNK_BYTES);
-    const start = position - length;
-    const buffer = Buffer.alloc(length);
-    const bytesRead = readSync(handle, buffer, 0, length, start);
-    const split = splitLogBuffer(Buffer.concat([buffer.subarray(0, bytesRead), leadingFragment]));
-    const includeFirst = start === startOffset && startsAtLineBoundary;
-    const lines = includeFirst ? [split.first, ...split.rest] : split.rest;
-    leadingFragment = start > startOffset ? split.first : Buffer.alloc(0);
-
-    for (const lineBuffer of lines.toReversed()) {
-      const line = lineBuffer.toString("utf8");
-      for (const matcher of matchers) {
-        if (matcher.linesNewestFirst.length < RECENT_LOG_LINE_COUNT && matcher.pattern.test(line)) {
-          matcher.linesNewestFirst.push(line);
-        }
-      }
-    }
-    position = start;
-  }
-
-  return new Map(
-    matchers.map((matcher) => [matcher.task, matcher.linesNewestFirst.toReversed()] as const),
-  );
-}
-
-function requiredMapValue<Key, Value>(map: ReadonlyMap<Key, Value>, key: Key): Value {
-  const value = map.get(key);
-  /* v8 ignore next @preserve -- callers pass keys used to construct these maps */
-  if (value === undefined) {
-    throw new Error("Missing expected map value");
-  }
-  return value;
-}
-
-function splitLogBuffer(buffer: Buffer): {
-  first: Buffer;
-  rest: Buffer[];
-} {
-  const firstNewline = buffer.indexOf("\n");
-  if (firstNewline === -1) {
-    return { first: buffer, rest: [] };
-  }
-  const rest: Buffer[] = [];
-  let start = firstNewline + 1;
-  for (let newline = buffer.indexOf("\n", start); newline !== -1;) {
-    rest.push(buffer.subarray(start, newline));
-    start = newline + 1;
-    newline = buffer.indexOf("\n", start);
-  }
-  rest.push(buffer.subarray(start));
-  return { first: buffer.subarray(0, firstNewline), rest };
 }
 
 function hasOpenBlocker(issue: SourceIssue): boolean {
@@ -554,30 +455,41 @@ function sourceByTask(issues: readonly SourceIssue[]): Record<string, StatusSour
   return Object.fromEntries(sources);
 }
 
-async function collectPullRequests(
-  targets: readonly PullRequestTarget[],
-): Promise<Record<string, PullRequestSummary[]>> {
-  // allSettled, not all: one worktree whose lookup throws must not take down
-  // the whole status run, which is what the base command guaranteed. An empty
-  // or missing entry therefore means "none found, or the lookup failed".
-  const results = await Promise.allSettled(
-    targets.map(
-      async (target) =>
-        [
-          target.dir,
-          await findPullRequestsForBranch({ cwd: target.dir, branchName: target.branch }),
-        ] as const,
-    ),
+async function collectPullRequests(targets: readonly PullRequestTarget[]): Promise<{
+  pullRequestsByWorktree: Record<string, PullRequestSummary[]>;
+  problems: StatusPullRequestProblem[];
+}> {
+  // One worktree whose lookup throws must not take down the whole status run.
+  const results = await Promise.all(
+    targets.map(async (target) => {
+      try {
+        return {
+          kind: "ok" as const,
+          target,
+          pullRequests: await findPullRequestsForBranch({
+            cwd: target.dir,
+            branchName: target.branch,
+          }),
+        };
+      } catch (error) {
+        return { kind: "error" as const, target, message: errorMessage(error) };
+      }
+    }),
   );
   const byWorktree: Record<string, PullRequestSummary[]> = {};
+  const problems: StatusPullRequestProblem[] = [];
   for (const result of results) {
-    if (result.status !== "fulfilled") {
+    if (result.kind === "error") {
+      problems.push({ directory: result.target.dir, message: result.message });
       continue;
     }
-    const [dir, pullRequests] = result.value;
-    byWorktree[dir] = [...pullRequests];
+    byWorktree[result.target.dir] = [...result.pullRequests];
+    const { message } = pullRequestProbeProblem({ pullRequests: result.pullRequests });
+    if (message !== undefined) {
+      problems.push({ directory: result.target.dir, message });
+    }
   }
-  return byWorktree;
+  return { pullRequestsByWorktree: byWorktree, problems };
 }
 
 function escapeRegExp(value: string): string {

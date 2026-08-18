@@ -1,14 +1,15 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { type Board, createBoard } from "../lib/board.ts";
+import { buildSources } from "../lib/buildSources.ts";
 import type { ResolvedConfig } from "../lib/config.ts";
-import { findPullRequestsForBranch } from "../lib/pullRequests.ts";
+import { findPullRequestsForBranch, pullRequestProbeProblem } from "../lib/pullRequests.ts";
 import { readRunState, type RunState } from "../lib/runState.ts";
-import type { Blocker, Issue as SourceIssue } from "../lib/taskSource.ts";
+import type { Blocker, Issue as SourceIssue, TaskSource } from "../lib/taskSource.ts";
 import { workspaces } from "../lib/workspaces.ts";
 import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
+import { probeEffectiveBranchNameFromRunState } from "../lib/worktreeRunState.ts";
 import type { RemoteFetchResult, RemoteStatusPayload } from "../lib/statusSnapshot.ts";
 import {
   collectLocalStatus,
@@ -18,10 +19,6 @@ import {
   workspaceProbeUnavailableText,
 } from "./statusCollect.ts";
 
-vi.mock(import("../lib/board.ts"), async (importOriginal) => {
-  const actual = await importOriginal();
-  return { ...actual, createBoard: vi.fn<typeof actual.createBoard>() };
-});
 vi.mock(import("../lib/buildSources.ts"), async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, buildSources: vi.fn<typeof actual.buildSources>().mockResolvedValue([]) };
@@ -33,6 +30,7 @@ vi.mock(import("../lib/pullRequests.ts"), async (importOriginal) => {
     findPullRequestsForBranch: vi
       .fn<typeof actual.findPullRequestsForBranch>()
       .mockResolvedValue([]),
+    pullRequestProbeProblem: vi.fn<typeof actual.pullRequestProbeProblem>().mockReturnValue({}),
   };
 });
 vi.mock(import("../lib/runState.ts"), async (importOriginal) => {
@@ -68,8 +66,14 @@ vi.mock(import("../lib/worktreeRunState.ts"), async (importOriginal) => {
     effectiveBranchNameFromRunState: vi
       .fn<typeof actual.effectiveBranchNameFromRunState>()
       .mockResolvedValue("eng-220"),
+    probeEffectiveBranchNameFromRunState: vi
+      .fn<typeof actual.probeEffectiveBranchNameFromRunState>()
+      .mockResolvedValue({ branch: "eng-220" }),
   };
 });
+
+const buildSourcesMock = vi.mocked(buildSources);
+const probeEffectiveBranchMock = vi.mocked(probeEffectiveBranchNameFromRunState);
 
 let directory: string;
 let mockConfig: ResolvedConfig;
@@ -231,45 +235,25 @@ describe("collectLocalStatus", () => {
     expect(actual.tasks[0]?.worktrees[0]?.branch).toBe("eng-220");
   });
 
-  it("attaches only log lines that mention the task", async () => {
-    writeFileSync(
-      mockConfig.logging.file,
-      ["[10:00:00] eng-220 dispatched", "[10:00:01] eng-999 dispatched"].join("\n"),
-    );
+  it("retains branch-probe degradation beside the fallback branch", async () => {
+    probeEffectiveBranchMock.mockResolvedValue({
+      branch: "eng-220",
+      problem: "Could not determine the current branch: git probe failed",
+    });
 
     const actual = await collectLocalStatus({ config: mockConfig });
 
-    expect(actual.tasks[0]?.recentLogLines).toEqual(["[10:00:00] eng-220 dispatched"]);
+    expect(actual.tasks[0]?.worktrees[0]).toMatchObject({
+      branch: "eng-220",
+      branchProblem: "Could not determine the current branch: git probe failed",
+    });
   });
 
-  it("finds a task's recent line before a large unrelated tail", async () => {
-    const filler = `${"x".repeat(200)}\n`.repeat(2000);
-    writeFileSync(mockConfig.logging.file, `[09:00:00] eng-220 ancient\n${filler}`);
-
+  it("does not scan the shared log for inventory status", async () => {
     const actual = await collectLocalStatus({ config: mockConfig });
 
-    expect(actual.tasks[0]?.recentLogLines).toEqual(["[09:00:00] eng-220 ancient"]);
-  });
-
-  it("reassembles a matching line split across scan chunks", async () => {
-    const oversizedLine = `${"x".repeat(300_000)} eng-220 fragment`;
-    writeFileSync(
-      mockConfig.logging.file,
-      [oversizedLine, "[10:00:00] eng-220 real line"].join("\n"),
-    );
-
-    const actual = await collectLocalStatus({ config: mockConfig });
-
-    expect(actual.tasks[0]?.recentLogLines).toEqual([
-      oversizedLine,
-      "[10:00:00] eng-220 real line",
-    ]);
-  });
-
-  it("survives a missing log file", async () => {
-    const actual = await collectLocalStatus({ config: mockConfig });
-
-    expect(actual.tasks[0]?.recentLogLines).toEqual([]);
+    expect(actual.tasks[0]).not.toHaveProperty("recentLogLines");
+    expect(actual).not.toHaveProperty("logCursor");
   });
 });
 
@@ -294,26 +278,36 @@ function makeBlocker(overrides: Partial<Blocker> & { id: string }): Blocker {
   return { title: "a blocker", status: "in-progress", ...overrides };
 }
 
-function mockBoard(fetch: Board["fetch"]): void {
-  vi.mocked(createBoard).mockReturnValue({ fetch } as Board);
+async function noop(): Promise<void> {
+  await Promise.resolve();
+}
+
+async function noIssue(): Promise<SourceIssue | undefined> {
+  const issues: SourceIssue[] = [];
+  return issues[0];
+}
+
+function source(input: { name: string; listTasks: TaskSource["listTasks"] }): TaskSource {
+  return {
+    name: input.name,
+    verify: noop,
+    listTasks: input.listTasks,
+    getTask: async () => null,
+    fetch: input.listTasks,
+    resolveOne: noIssue,
+    markInProgress: noop,
+    markInReview: async () => ({ outcome: "applied" }),
+  };
 }
 
 function mockBoardFetch(issues: SourceIssue[]): void {
-  mockBoard(
-    vi.fn<Board["fetch"]>(async () => ({
-      timestamp: "2026-08-04T03:00:00.000Z",
-      issues,
-      parentSkips: [],
-    })),
-  );
+  buildSourcesMock.mockResolvedValue([
+    source({ name: "linear", listTasks: async () => await Promise.resolve(issues) }),
+  ]);
 }
 
 function mockBoardFetchRejection(error: Error): void {
-  mockBoard(
-    vi.fn<Board["fetch"]>(async () => {
-      throw error;
-    }),
-  );
+  buildSourcesMock.mockRejectedValue(error);
 }
 
 /**
@@ -383,6 +377,38 @@ describe("collectRemoteStatus", () => {
     expect(actual.inProgress.map((issue) => issue.naturalId)).toEqual(["eng-220"]);
     expect(actual.queueReady.map((issue) => issue.naturalId)).toEqual(["eng-225"]);
     expect(actual.queueBlocked.map((issue) => issue.naturalId)).toEqual(["eng-215"]);
+  });
+
+  it("keeps successful source data when a sibling source fails", async () => {
+    buildSourcesMock.mockResolvedValue([
+      source({
+        name: "healthy",
+        listTasks: async () => [makeIssue({ id: "healthy:eng-225", source: "healthy" })],
+      }),
+      source({
+        name: "broken",
+        listTasks: async () => await Promise.reject(new Error("source unavailable")),
+      }),
+    ]);
+
+    const actual = await collectRemoteStatus({
+      board: await fetchBoardIssues(mockConfig),
+      pullRequestTargets: [],
+    });
+
+    expect(expectPayload(actual).queueReady.map((issue) => issue.naturalId)).toEqual(["eng-225"]);
+    expect(actual.sourceProblems).toEqual([{ source: "broken", message: "source unavailable" }]);
+  });
+
+  it("reports every source when all configured sources fail", async () => {
+    buildSourcesMock.mockResolvedValue([
+      source({ name: "first", listTasks: async () => await Promise.reject(new Error("down")) }),
+      source({ name: "second", listTasks: async () => await Promise.reject(new Error("offline")) }),
+    ]);
+
+    const actual = await fetchBoardIssues(mockConfig);
+
+    expect(actual).toEqual({ kind: "error", message: "first: down\nsecond: offline" });
   });
 
   it("keeps an in-progress issue in the payload even when it has a local worktree", async () => {
@@ -487,6 +513,18 @@ describe("collectRemoteStatus", () => {
     });
   });
 
+  it("keeps GitHub probe failures separate from an empty pull request result", async () => {
+    vi.mocked(findPullRequestsForBranch).mockResolvedValue([]);
+    vi.mocked(pullRequestProbeProblem).mockReturnValue({ message: "gh unavailable" });
+
+    const actual = await collectWithBoard([], [{ dir: "/repos/eng-220", branch: "eng-220" }]);
+
+    expect(actual.pullRequestsByWorktree["/repos/eng-220"]).toEqual([]);
+    expect(actual.pullRequestProblems).toEqual([
+      { directory: "/repos/eng-220", message: "gh unavailable" },
+    ]);
+  });
+
   it("never reads run state, since the local tier already did", async () => {
     await collectWithBoard([], [{ dir: "/repos/eng-220", branch: "eng-220" }]);
 
@@ -512,6 +550,7 @@ describe("collectRemoteStatus", () => {
     });
 
     expect(actual.board).toEqual({ kind: "error", message: "Linear: 401 unauthorized" });
+    expect(actual.sourceProblems).toEqual([]);
     expect(actual.pullRequestsByWorktree["/repos/eng-220"]).toHaveLength(1);
   });
 });

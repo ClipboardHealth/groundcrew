@@ -9,6 +9,9 @@ export function makeBoard(overrides: Partial<Board> = {}): Board {
       .mockResolvedValue({ timestamp: "", issues: [], parentSkips: [] }),
     // eslint-disable-next-line unicorn/no-useless-undefined -- mockResolvedValue requires a value for non-void return type
     resolveOne: vi.fn<() => Promise<undefined>>().mockResolvedValue(undefined),
+    resolveOneWithFailures: vi
+      .fn<Board["resolveOneWithFailures"]>()
+      .mockResolvedValue({ issue: undefined, failures: [] }),
     markInProgress: vi.fn<() => Promise<void>>().mockResolvedValue(),
     markInReview: vi
       .fn<() => Promise<MarkInReviewResult>>()

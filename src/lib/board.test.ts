@@ -161,6 +161,25 @@ describe("Board.resolveOne", () => {
     expect(result?.id).toBe("b:x");
   });
 
+  it("retains a failed sibling source beside a resolved natural id", async () => {
+    const issue = fakeIssue("healthy:x", "healthy");
+    const board = createBoard([
+      fakeSource("healthy", {
+        getTask: vi.fn<(id: string) => Promise<Issue | null>>().mockResolvedValue(issue),
+      }),
+      fakeSource("broken", {
+        getTask: vi
+          .fn<(id: string) => Promise<Issue | null>>()
+          .mockRejectedValue(new Error("token=private-source-detail")),
+      }),
+    ]);
+
+    await expect(board.resolveOneWithFailures("x")).resolves.toEqual({
+      issue,
+      failures: [{ source: "broken", reason: new Error("token=private-source-detail") }],
+    });
+  });
+
   it("resolves a unique natural id prefix from listed current tasks when exact lookup misses", async () => {
     const listTasks = vi
       .fn<() => Promise<Issue[]>>()

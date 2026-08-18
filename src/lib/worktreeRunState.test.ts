@@ -1,6 +1,9 @@
 import type { RunCommandOptions } from "./commandRunner.ts";
 import type { RunState } from "./runState.ts";
-import { effectiveBranchNameFromRunState as resolveBranch } from "./worktreeRunState.ts";
+import {
+  effectiveBranchNameFromRunState as resolveBranch,
+  probeEffectiveBranchNameFromRunState as probeBranch,
+} from "./worktreeRunState.ts";
 
 type RunCommandAsyncMock = (
   command: string,
@@ -152,5 +155,33 @@ describe(resolveBranch, () => {
     });
 
     expect(result).toBe(ENTRY_BRANCH);
+  });
+});
+
+describe(probeBranch, () => {
+  beforeEach(() => {
+    runCommandMock.mockReset();
+  });
+
+  it("marks a detached HEAD fallback as degraded", async () => {
+    mockGitBranch("");
+
+    const actual = await probeBranch({ entry: entry(), runState: runState() });
+
+    expect(actual).toEqual({
+      branch: RUN_STATE_BRANCH,
+      problem: `Could not determine the current branch for ${WORKTREE_DIR}: HEAD is detached`,
+    });
+  });
+
+  it("marks a failed branch command fallback as degraded", async () => {
+    mockGitFailure();
+
+    const actual = await probeBranch({ entry: entry(), runState: undefined });
+
+    expect(actual).toEqual({
+      branch: ENTRY_BRANCH,
+      problem: `Could not determine the current branch for ${WORKTREE_DIR}: git probe failed`,
+    });
   });
 });

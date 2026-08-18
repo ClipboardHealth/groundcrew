@@ -1,8 +1,4 @@
-/**
- * Combines the local and remote status tiers at read time. Lives apart from
- * the collectors because an external monitor reimplements this step against
- * the published documents, and the text renderer consumes its output.
- */
+/** Combines the internal local and remote status collection tiers. */
 
 import type { PullRequestSummary } from "./pullRequests.ts";
 import type {

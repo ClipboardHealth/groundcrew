@@ -11,6 +11,9 @@ describe("package root", () => {
     expect(packageRoot).not.toHaveProperty("readRemoteSnapshot");
     expect(packageRoot).not.toHaveProperty("writeLocalSnapshot");
     expect(packageRoot).not.toHaveProperty("writeRemoteSnapshot");
+    expect(packageRoot).not.toHaveProperty("collectStatus");
+    expect(packageRoot).not.toHaveProperty("renderStatusText");
+    expect(packageRoot).not.toHaveProperty("renderStatusJson");
   });
 
   it("keeps pull-request lookup result types private", () => {

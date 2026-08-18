@@ -84,18 +84,87 @@ crew task done todo:flaky-triage-1
 
 `crew status <TASK>` prints a read-only snapshot for one task: cached title and URL when present, recorded run state, live workspace presence, matching worktrees, git dirtiness, PR links for matching branches, recent log lines when present, and the task status from the configured task source.
 
-`crew status` with no task prints the current inventory: known worktrees with cached task metadata, workspace/run-state agreement, attach hints, worktree paths, PR links, and stray sessions reported by the configured backend. When the source fetch succeeds, status also prints any in-progress source tasks with no local worktree, slot usage, and Queue/Blocked sections for eligible Todo tasks. Worktree-less in-progress rows include the task title, URL when the source provides one, and repository when the source resolves one. If the source fetch fails, Queue shows `unavailable: <reason>` and the slots line is omitted.
+`crew status` with no task prints the current inventory: known worktrees with cached task metadata, workspace/run-state agreement, attach hints, worktree paths, PR links, and stray sessions reported by the configured backend. When the source fetch succeeds, status also prints any in-progress source tasks with no local worktree, slot usage, and Queue/Blocked sections for eligible Todo tasks. Worktree-less in-progress rows include the task title, URL when the source provides one, and repository when the source resolves one. If every source fetch fails, Queue shows `unavailable: <reason>` and the slots line is omitted. If only some sources fail, healthy queue rows remain visible beside a Source problems section and slot usage is marked unknown.
 
 Status is informational only. Use `crew cleanup <TASK>` to tear down stale worktrees and `crew resume <TASK>` to reopen preserved work.
 
-`crew status --json` emits the same state as two JSON documents instead of text,
-and writes them beside the log file as `status-local.json` and
-`status-remote.json`. The split is by cost: the local document is subprocess
-work only, so an external monitor can poll it every few seconds, while the
-remote document holds the board fetch and PR lookups. `crew status --json
---local-only` collects the local document alone and never touches the network.
-See [Status snapshots for external monitors](../README.md#status-snapshots-for-external-monitors)
-for the reader contract. Text mode writes nothing.
+### Status JSON contract
+
+```bash
+crew status --json
+crew status TEAM-123 --json
+```
+
+Each successful command writes exactly one JSON document to stdout. It contains
+no headings, ANSI styling, diagnostic lines, or recent log contents. Status
+does not write snapshot files. A fatal error before a snapshot can be produced
+writes nothing to stdout, reports a human-readable message on stderr, and exits
+non-zero.
+
+Both documents have these required fields:
+
+| Field         | Type                    | Meaning                                            |
+| ------------- | ----------------------- | -------------------------------------------------- |
+| `kind`        | `"inventory" \| "task"` | Selects the document shape.                        |
+| `generatedAt` | ISO-8601 string         | Time collection for this snapshot started.         |
+| `problems`    | problem array           | Partial probe failures; empty when probes succeed. |
+
+An inventory document additionally contains:
+
+| Field                        | Type                  | Meaning                                                                                        |
+| ---------------------------- | --------------------- | ---------------------------------------------------------------------------------------------- |
+| `slots`                      | object                | `maximum` is configured capacity; `used` is present only when every task source was available. |
+| `worktrees`                  | inventory worktree[]  | One entry per local worktree.                                                                  |
+| `inProgressWithoutWorktrees` | queue entry[]         | In-progress source tasks that have no local worktree.                                          |
+| `queue.ready`                | queue entry[]         | Eligible Todo tasks with no open blocker and no local worktree.                                |
+| `queue.blocked`              | blocked queue entry[] | Eligible Todo tasks with open blockers and no local worktree.                                  |
+| `straySessions`              | stray session[]       | Live or exited workspaces with no matching local worktree.                                     |
+
+A task document additionally contains `task`, optional `repository`, `run`,
+`workspace`, `worktrees`, and `recommendedActions`. Its `worktrees` array is
+empty when no local worktree exists.
+
+Task identities contain required `naturalId` and optional canonical `id`,
+`title`, canonical `status`, and `url`. Queue entries add optional `repository`
+and `agent`, plus required `recommendedActions`. Blocked queue entries add
+`blockedBy`; each blocker contains `id`, `naturalId`, canonical `status`, and
+optional source-native `nativeStatus`.
+
+`run.lifecycle` is `idle` or a recorded Groundcrew lifecycle. The remaining run
+fields are optional: `agent`, `startedAt`, `updatedAt`, `resumeCount`, and `reason`.
+Consumers derive elapsed time from `startedAt`; durations are not stored.
+`workspace.state` is `live`, `exited`, `not-live`, or `unknown`.
+
+A task worktree contains `repository`, `kind`, `branch`, absolute `directory`,
+`dirtiness`, and `pullRequests`. Dirtiness has `kind: "clean"`,
+`kind: "unknown"`, or `kind: "dirty"` with `modified` and `untracked` counts.
+Each pull request contains `url`, `number`, lowercase `state`, and `title`.
+Inventory worktrees add their `task`, `run`, `workspace`, and
+`recommendedActions`.
+
+Recommended actions are stable codes: `stop` closes a workspace, `resume`
+reopens preserved work, `cleanup` removes a local worktree, `run` recreates
+work for an eligible in-progress task with no local worktree, and `open-task`,
+`open-pr`, and `open-worktree` navigate to the represented resource. An action
+is omitted when its required target data is unavailable: `run` requires a
+repository and agent, while each `open-*` action requires the represented URL
+or worktree. Consumers must tolerate unknown future action codes. A stray
+session contains its `name`, `state`, and `recommendedActions`.
+
+Problems contain required `code` and human-readable `message`, plus optional
+`source`, `task`, and `worktreeDirectory` context. Current codes are
+`source-probe-failed`, `workspace-probe-failed`, `git-probe-failed`, and
+`github-probe-failed`. A partial failure keeps the command successful and does
+not discard data from probes that succeeded. Consumers must tolerate unknown
+future problem codes. Messages are short public summaries and deliberately do
+not include raw subprocess output; use human-readable status or debug logs for
+detailed diagnostics.
+
+Groundcrew SemVer governs compatibility. Adding optional fields is compatible;
+existing required fields will not be removed, renamed, or change meaning in a
+compatible release. Consumers must ignore unknown fields. There is no embedded
+schema-version negotiation field. A future incompatible format requires either
+a new explicitly selectable JSON version or a Groundcrew major release.
 
 <details>
 <summary>Sample task status output</summary>

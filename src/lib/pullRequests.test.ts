@@ -1,5 +1,9 @@
 import type { RunCommandOptions } from "./commandRunner.ts";
-import { findPullRequestsForBranch, resolvePullRequest } from "./pullRequests.ts";
+import {
+  findPullRequestsForBranch,
+  pullRequestProbeProblem,
+  resolvePullRequest,
+} from "./pullRequests.ts";
 
 type RunCommandAsyncMock = (
   command: string,
@@ -116,6 +120,9 @@ describe(findPullRequestsForBranch, () => {
     });
 
     expect(prs).toStrictEqual([]);
+    expect(pullRequestProbeProblem({ pullRequests: prs })).toEqual({
+      message: "gh: command not found",
+    });
   });
 
   it("rethrows the original error when the lookup is aborted", async () => {

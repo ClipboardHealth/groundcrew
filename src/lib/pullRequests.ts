@@ -19,6 +19,7 @@
  */
 
 import { runCommandAsync } from "./commandRunner.ts";
+import { errorMessage } from "./util.ts";
 
 export interface PullRequestSummary {
   url: string;
@@ -26,6 +27,27 @@ export interface PullRequestSummary {
   /** Lowercased lifecycle: "open" | "merged" | "closed". */
   state: string;
   title: string;
+}
+
+const PULL_REQUEST_PROBE_PROBLEMS = new WeakMap<readonly PullRequestSummary[], string>();
+
+export interface PullRequestProbeProblemInput {
+  pullRequests: readonly PullRequestSummary[];
+}
+
+export interface PullRequestProbeProblemResult {
+  message?: string | undefined;
+}
+
+/**
+ * Returns the command failure hidden by the best-effort PR lookup. Status uses
+ * this to distinguish "no pull requests" from "GitHub could not be probed"
+ * without changing the lookup's long-standing never-throw contract.
+ */
+export function pullRequestProbeProblem(
+  input: PullRequestProbeProblemInput,
+): PullRequestProbeProblemResult {
+  return { message: PULL_REQUEST_PROBE_PROBLEMS.get(input.pullRequests) };
 }
 
 const GH_PR_LIST_LIMIT = 5;
@@ -211,7 +233,10 @@ export async function findPullRequestsForBranch(
       throw error;
     }
     // gh not installed / not authenticated / non-GitHub remote / network
-    // error / etc. All resolve to "no PR info available" for display.
-    return [];
+    // error / etc. All resolve to "no PR info available" for legacy callers;
+    // status can still expose the failure through pullRequestProbeProblem.
+    const pullRequests: PullRequestSummary[] = [];
+    PULL_REQUEST_PROBE_PROBLEMS.set(pullRequests, errorMessage(error));
+    return pullRequests;
   }
 }
