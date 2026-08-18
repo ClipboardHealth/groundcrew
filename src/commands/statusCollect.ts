@@ -6,11 +6,7 @@
 import { type Board, createBoard } from "../lib/board.ts";
 import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
 import type { ResolvedConfig } from "../lib/config.ts";
-import {
-  findPullRequestsForBranch,
-  pullRequestProbeProblem,
-  type PullRequestSummary,
-} from "../lib/pullRequests.ts";
+import { probePullRequestsForBranch, type PullRequestSummary } from "../lib/pullRequests.ts";
 import { readRunState, type RunState } from "../lib/runState.ts";
 import {
   type LocalStatusDocument,
@@ -463,13 +459,14 @@ async function collectPullRequests(targets: readonly PullRequestTarget[]): Promi
   const results = await Promise.all(
     targets.map(async (target) => {
       try {
+        const probe = await probePullRequestsForBranch({
+          cwd: target.dir,
+          branchName: target.branch,
+        });
         return {
           kind: "ok" as const,
           target,
-          pullRequests: await findPullRequestsForBranch({
-            cwd: target.dir,
-            branchName: target.branch,
-          }),
+          ...probe,
         };
       } catch (error) {
         return { kind: "error" as const, target, message: errorMessage(error) };
@@ -484,9 +481,8 @@ async function collectPullRequests(targets: readonly PullRequestTarget[]): Promi
       continue;
     }
     byWorktree[result.target.dir] = [...result.pullRequests];
-    const { message } = pullRequestProbeProblem({ pullRequests: result.pullRequests });
-    if (message !== undefined) {
-      problems.push({ directory: result.target.dir, message });
+    if (result.problem !== undefined) {
+      problems.push({ directory: result.target.dir, message: result.problem });
     }
   }
   return { pullRequestsByWorktree: byWorktree, problems };

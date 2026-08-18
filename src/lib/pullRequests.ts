@@ -29,27 +29,6 @@ export interface PullRequestSummary {
   title: string;
 }
 
-const PULL_REQUEST_PROBE_PROBLEMS = new WeakMap<readonly PullRequestSummary[], string>();
-
-export interface PullRequestProbeProblemInput {
-  pullRequests: readonly PullRequestSummary[];
-}
-
-export interface PullRequestProbeProblemResult {
-  message?: string | undefined;
-}
-
-/**
- * Returns the command failure hidden by the best-effort PR lookup. Status uses
- * this to distinguish "no pull requests" from "GitHub could not be probed"
- * without changing the lookup's long-standing never-throw contract.
- */
-export function pullRequestProbeProblem(
-  input: PullRequestProbeProblemInput,
-): PullRequestProbeProblemResult {
-  return { message: PULL_REQUEST_PROBE_PROBLEMS.get(input.pullRequests) };
-}
-
 const GH_PR_LIST_LIMIT = 5;
 const STATE_MAP: Record<string, string> = {
   OPEN: "open",
@@ -72,12 +51,12 @@ interface RawPullRequest {
   title: string;
 }
 
-interface ParsePullRequestsResult {
-  pullRequests: PullRequestSummary[];
+export interface PullRequestProbeResult {
+  pullRequests: readonly PullRequestSummary[];
   problem?: string | undefined;
 }
 
-function parsePullRequests(output: string): ParsePullRequestsResult {
+function parsePullRequests(output: string): PullRequestProbeResult {
   let parsed: unknown;
   try {
     parsed = JSON.parse(output);
@@ -223,9 +202,13 @@ export async function resolvePullRequest(
   };
 }
 
-export async function findPullRequestsForBranch(
+/**
+ * Best-effort status probe that keeps data and diagnostics together so callers
+ * cannot lose the failure reason when they copy the pull request list.
+ */
+export async function probePullRequestsForBranch(
   arguments_: LookupArgs,
-): Promise<readonly PullRequestSummary[]> {
+): Promise<PullRequestProbeResult> {
   const { cwd, branchName, signal } = arguments_;
   const options = signal === undefined ? { cwd } : { cwd, signal };
   try {
@@ -245,20 +228,20 @@ export async function findPullRequestsForBranch(
       ],
       options,
     );
-    const parsed = parsePullRequests(output);
-    if (parsed.problem !== undefined) {
-      PULL_REQUEST_PROBE_PROBLEMS.set(parsed.pullRequests, parsed.problem);
-    }
-    return parsed.pullRequests;
+    return parsePullRequests(output);
   } catch (error) {
     if (signal?.aborted === true) {
       throw error;
     }
     // gh not installed / not authenticated / non-GitHub remote / network
-    // error / etc. All resolve to "no PR info available" for legacy callers;
-    // status can still expose the failure through pullRequestProbeProblem.
-    const pullRequests: PullRequestSummary[] = [];
-    PULL_REQUEST_PROBE_PROBLEMS.set(pullRequests, errorMessage(error));
-    return pullRequests;
+    // error / etc. All resolve to "no PR info available" for legacy callers.
+    return { pullRequests: [], problem: errorMessage(error) };
   }
+}
+
+/** Legacy never-throw lookup for callers that only need the pull request list. */
+export async function findPullRequestsForBranch(
+  arguments_: LookupArgs,
+): Promise<readonly PullRequestSummary[]> {
+  return (await probePullRequestsForBranch(arguments_)).pullRequests;
 }

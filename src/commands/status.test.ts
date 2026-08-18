@@ -6,7 +6,7 @@ import path from "node:path";
 
 import { buildSources } from "../lib/buildSources.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
-import { findPullRequestsForBranch, type PullRequestSummary } from "../lib/pullRequests.ts";
+import { probePullRequestsForBranch, type PullRequestSummary } from "../lib/pullRequests.ts";
 import { readRunState, type RunState } from "../lib/runState.ts";
 import type { Issue as SourceIssue, TaskSource } from "../lib/taskSource.ts";
 import { log, setVerbose } from "../lib/util.ts";
@@ -55,9 +55,9 @@ vi.mock(import("../lib/pullRequests.ts"), async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,
-    findPullRequestsForBranch: vi
-      .fn<typeof actual.findPullRequestsForBranch>()
-      .mockResolvedValue([]),
+    probePullRequestsForBranch: vi
+      .fn<typeof actual.probePullRequestsForBranch>()
+      .mockResolvedValue({ pullRequests: [] }),
   };
 });
 vi.mock(import("../lib/worktreeRunState.ts"), async (importOriginal) => {
@@ -77,7 +77,7 @@ const findByTaskMock = vi.mocked(worktrees.findByTask);
 const listWorktreesMock = vi.mocked(worktrees.list);
 const probeWorkingTreeMock = vi.mocked(worktrees.probeWorkingTree);
 const buildSourcesMock = vi.mocked(buildSources);
-const findPullRequestsMock = vi.mocked(findPullRequestsForBranch);
+const findPullRequestsMock = vi.mocked(probePullRequestsForBranch);
 const probeEffectiveBranchMock = vi.mocked(probeEffectiveBranchNameFromRunState);
 
 function sourceIssue(overrides: Partial<SourceIssue> = {}): SourceIssue {
@@ -195,7 +195,9 @@ function worktree(overrides: Partial<WorktreeEntry> = {}): WorktreeEntry {
 
 /** Each worktree directory gets its own pull requests; anything else gets none. */
 function stubPullRequestsByDirectory(prsByDirectory: Record<string, PullRequestSummary[]>): void {
-  findPullRequestsMock.mockImplementation(async ({ cwd }) => prsByDirectory[cwd] ?? []);
+  findPullRequestsMock.mockImplementation(async ({ cwd }) => ({
+    pullRequests: prsByDirectory[cwd] ?? [],
+  }));
 }
 
 function runState(overrides: Partial<RunState> = {}): RunState {
@@ -228,7 +230,7 @@ describe(status, () => {
     readRunStateMock.mockReturnValue(runState({ reason: "manual pause" }));
     workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-1"]) });
     workspaceAccessHintMock.mockReset();
-    findPullRequestsMock.mockResolvedValue([]);
+    findPullRequestsMock.mockResolvedValue({ pullRequests: [] });
     buildSourcesMock.mockResolvedValue([]);
     findByTaskMock.mockReturnValue([worktree()]);
     listWorktreesMock.mockReturnValue([worktree()]);
@@ -680,14 +682,16 @@ describe(status, () => {
         branchName: "dev-team-2",
       }),
     ]);
-    findPullRequestsMock.mockRejectedValueOnce(new Error("gh rate limited")).mockResolvedValueOnce([
-      {
-        url: "https://github.com/acme/widgets/pull/42",
-        number: 42,
-        state: "open",
-        title: "Wire up auth",
-      },
-    ]);
+    findPullRequestsMock.mockRejectedValueOnce(new Error("gh rate limited")).mockResolvedValueOnce({
+      pullRequests: [
+        {
+          url: "https://github.com/acme/widgets/pull/42",
+          number: 42,
+          state: "open",
+          title: "Wire up auth",
+        },
+      ],
+    });
 
     await status(makeConfig());
 
@@ -870,14 +874,16 @@ describe(status, () => {
     listWorktreesMock.mockReturnValue([
       worktree({ task: "team-1", repository: "repo-a", dir: "/work/repo-a-team-1" }),
     ]);
-    findPullRequestsMock.mockResolvedValue([
-      {
-        url: "https://github.com/acme/widgets/pull/42",
-        number: 42,
-        state: "open",
-        title: "Wire up auth",
-      },
-    ]);
+    findPullRequestsMock.mockResolvedValue({
+      pullRequests: [
+        {
+          url: "https://github.com/acme/widgets/pull/42",
+          number: 42,
+          state: "open",
+          title: "Wire up auth",
+        },
+      ],
+    });
 
     await status(makeConfig());
 
@@ -892,20 +898,22 @@ describe(status, () => {
 
   it("joins multiple PRs on one line in inventory rows", async () => {
     listWorktreesMock.mockReturnValue([worktree({ task: "team-1", repository: "repo-a" })]);
-    findPullRequestsMock.mockResolvedValue([
-      {
-        url: "https://x/pull/1",
-        number: 1,
-        state: "open",
-        title: "a",
-      },
-      {
-        url: "https://x/pull/2",
-        number: 2,
-        state: "merged",
-        title: "b",
-      },
-    ]);
+    findPullRequestsMock.mockResolvedValue({
+      pullRequests: [
+        {
+          url: "https://x/pull/1",
+          number: 1,
+          state: "open",
+          title: "a",
+        },
+        {
+          url: "https://x/pull/2",
+          number: 2,
+          state: "merged",
+          title: "b",
+        },
+      ],
+    });
 
     await status(makeConfig());
 
@@ -916,7 +924,7 @@ describe(status, () => {
 
   it("omits the `pr:` line in inventory rows when gh returns nothing", async () => {
     listWorktreesMock.mockReturnValue([worktree({ task: "team-1", repository: "repo-a" })]);
-    findPullRequestsMock.mockResolvedValue([]);
+    findPullRequestsMock.mockResolvedValue({ pullRequests: [] });
 
     await status(makeConfig());
 
@@ -927,14 +935,16 @@ describe(status, () => {
     findByTaskMock.mockReturnValue([
       worktree({ task: "team-1", repository: "repo-a", dir: "/work/repo-a-team-1" }),
     ]);
-    findPullRequestsMock.mockResolvedValue([
-      {
-        url: "https://github.com/acme/widgets/pull/99",
-        number: 99,
-        state: "open",
-        title: "Something",
-      },
-    ]);
+    findPullRequestsMock.mockResolvedValue({
+      pullRequests: [
+        {
+          url: "https://github.com/acme/widgets/pull/99",
+          number: 99,
+          state: "open",
+          title: "Something",
+        },
+      ],
+    });
 
     await status(makeConfig(), { task: "team-1" });
 
@@ -1476,14 +1486,16 @@ describe(status, () => {
         kind: "ok",
         names: new Set(["team-1", "orphan"]),
       });
-      findPullRequestsMock.mockResolvedValue([
-        {
-          url: "https://github.com/acme/widgets/pull/42",
-          number: 42,
-          state: "open",
-          title: "Wire up status JSON",
-        },
-      ]);
+      findPullRequestsMock.mockResolvedValue({
+        pullRequests: [
+          {
+            url: "https://github.com/acme/widgets/pull/42",
+            number: 42,
+            state: "open",
+            title: "Wire up status JSON",
+          },
+        ],
+      });
       buildSourcesMock.mockResolvedValue([
         fakeSource([
           sourceIssue({
@@ -1622,14 +1634,16 @@ describe(status, () => {
       const config = jsonConfig();
       writeFileSync(config.logging.file, "[09:01:00] team-1 private log contents\n");
       probeWorkingTreeMock.mockResolvedValue({ kind: "dirty", modified: 1, untracked: 0 });
-      findPullRequestsMock.mockResolvedValue([
-        {
-          url: "https://github.com/acme/widgets/pull/99",
-          number: 99,
-          state: "open",
-          title: "Status contract",
-        },
-      ]);
+      findPullRequestsMock.mockResolvedValue({
+        pullRequests: [
+          {
+            url: "https://github.com/acme/widgets/pull/99",
+            number: 99,
+            state: "open",
+            title: "Status contract",
+          },
+        ],
+      });
       buildSourcesMock.mockResolvedValue([
         fakeSource([
           sourceIssue({
@@ -2130,7 +2144,7 @@ describe(statusCli, () => {
     findByTaskMock.mockReturnValue([]);
     workspaceProbeMock.mockResolvedValue({ kind: "unavailable" });
     workspaceAccessHintMock.mockReset();
-    findPullRequestsMock.mockResolvedValue([]);
+    findPullRequestsMock.mockResolvedValue({ pullRequests: [] });
     readRunStateMock.mockReset();
     buildSourcesMock.mockResolvedValue([]);
   });

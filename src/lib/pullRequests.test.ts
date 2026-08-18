@@ -1,7 +1,7 @@
 import type { RunCommandOptions } from "./commandRunner.ts";
 import {
   findPullRequestsForBranch,
-  pullRequestProbeProblem,
+  probePullRequestsForBranch,
   resolvePullRequest,
 } from "./pullRequests.ts";
 
@@ -114,14 +114,14 @@ describe(findPullRequestsForBranch, () => {
   it("returns empty when gh fails (not installed / not authenticated / network)", async () => {
     runCommandMock.mockRejectedValue(new Error("gh: command not found"));
 
-    const prs = await findPullRequestsForBranch({
+    const result = await probePullRequestsForBranch({
       cwd: "/work/widgets-team-1",
       branchName: "x",
     });
 
-    expect(prs).toStrictEqual([]);
-    expect(pullRequestProbeProblem({ pullRequests: prs })).toEqual({
-      message: "gh: command not found",
+    expect({ ...result, pullRequests: [...result.pullRequests] }).toEqual({
+      pullRequests: [],
+      problem: "gh: command not found",
     });
   });
 
@@ -145,28 +145,28 @@ describe(findPullRequestsForBranch, () => {
   it("returns empty when gh emits non-JSON output", async () => {
     runCommandMock.mockResolvedValue("not json at all");
 
-    const prs = await findPullRequestsForBranch({
+    const result = await probePullRequestsForBranch({
       cwd: "/work/widgets-team-1",
       branchName: "x",
     });
 
-    expect(prs).toStrictEqual([]);
-    expect(pullRequestProbeProblem({ pullRequests: prs })).toEqual({
-      message: "Unexpected non-JSON response from 'gh pr list'.",
+    expect(result).toEqual({
+      pullRequests: [],
+      problem: "Unexpected non-JSON response from 'gh pr list'.",
     });
   });
 
   it("returns empty when gh emits a non-array JSON value", async () => {
     runCommandMock.mockResolvedValue("null");
 
-    const prs = await findPullRequestsForBranch({
+    const result = await probePullRequestsForBranch({
       cwd: "/work/widgets-team-1",
       branchName: "x",
     });
 
-    expect(prs).toStrictEqual([]);
-    expect(pullRequestProbeProblem({ pullRequests: prs })).toEqual({
-      message: "Unexpected response shape from 'gh pr list'.",
+    expect(result).toEqual({
+      pullRequests: [],
+      problem: "Unexpected response shape from 'gh pr list'.",
     });
   });
 
@@ -179,15 +179,13 @@ describe(findPullRequestsForBranch, () => {
       ]),
     );
 
-    const prs = await findPullRequestsForBranch({
+    const result = await probePullRequestsForBranch({
       cwd: "/work/widgets-team-1",
       branchName: "x",
     });
 
-    expect(prs.map((p) => p.number)).toStrictEqual([1]);
-    expect(pullRequestProbeProblem({ pullRequests: prs })).toEqual({
-      message: "Some pull requests from 'gh pr list' had an unexpected shape.",
-    });
+    expect(result.pullRequests.map((pullRequest) => pullRequest.number)).toStrictEqual([1]);
+    expect(result.problem).toBe("Some pull requests from 'gh pr list' had an unexpected shape.");
   });
 
   it("forwards the AbortSignal to runCommandAsync alongside cwd when provided", async () => {

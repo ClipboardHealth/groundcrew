@@ -9,11 +9,7 @@ import { readFileSync } from "node:fs";
 
 import type { Board } from "../lib/board.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
-import {
-  findPullRequestsForBranch,
-  pullRequestProbeProblem,
-  type PullRequestSummary,
-} from "../lib/pullRequests.ts";
+import { probePullRequestsForBranch, type PullRequestSummary } from "../lib/pullRequests.ts";
 import { readRunState, type RunState } from "../lib/runState.ts";
 import {
   type JoinedStatus,
@@ -1020,11 +1016,12 @@ async function collectTaskWorktree(input: {
   let pullRequests: readonly PullRequestSummary[] = [];
   let githubProblem: string | undefined;
   try {
-    pullRequests = await findPullRequestsForBranch({
+    const result = await probePullRequestsForBranch({
       cwd: entry.dir,
       branchName: branchProbe.branch,
     });
-    githubProblem = pullRequestProbeProblem({ pullRequests }).message;
+    pullRequests = result.pullRequests;
+    githubProblem = result.problem;
   } catch (error) {
     githubProblem = errorMessage(error);
   }

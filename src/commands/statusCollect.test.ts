@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { buildSources } from "../lib/buildSources.ts";
 import type { ResolvedConfig } from "../lib/config.ts";
-import { findPullRequestsForBranch, pullRequestProbeProblem } from "../lib/pullRequests.ts";
+import { probePullRequestsForBranch } from "../lib/pullRequests.ts";
 import { readRunState, type RunState } from "../lib/runState.ts";
 import type { Blocker, Issue as SourceIssue, TaskSource } from "../lib/taskSource.ts";
 import { workspaces } from "../lib/workspaces.ts";
@@ -27,10 +27,9 @@ vi.mock(import("../lib/pullRequests.ts"), async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,
-    findPullRequestsForBranch: vi
-      .fn<typeof actual.findPullRequestsForBranch>()
-      .mockResolvedValue([]),
-    pullRequestProbeProblem: vi.fn<typeof actual.pullRequestProbeProblem>().mockReturnValue({}),
+    probePullRequestsForBranch: vi
+      .fn<typeof actual.probePullRequestsForBranch>()
+      .mockResolvedValue({ pullRequests: [] }),
   };
 });
 vi.mock(import("../lib/runState.ts"), async (importOriginal) => {
@@ -497,9 +496,9 @@ describe("collectRemoteStatus", () => {
   });
 
   it("looks up pull requests with the branch the local tier already resolved", async () => {
-    vi.mocked(findPullRequestsForBranch).mockResolvedValue([
-      { url: "https://example.test/1", number: 1, state: "open", title: "PR" },
-    ]);
+    vi.mocked(probePullRequestsForBranch).mockResolvedValue({
+      pullRequests: [{ url: "https://example.test/1", number: 1, state: "open", title: "PR" }],
+    });
 
     const actual = await collectWithBoard(
       [],
@@ -507,15 +506,17 @@ describe("collectRemoteStatus", () => {
     );
 
     expect(actual.pullRequestsByWorktree["/repos/eng-220"]).toHaveLength(1);
-    expect(findPullRequestsForBranch).toHaveBeenCalledWith({
+    expect(probePullRequestsForBranch).toHaveBeenCalledWith({
       cwd: "/repos/eng-220",
       branchName: "adopted-branch",
     });
   });
 
   it("keeps GitHub probe failures separate from an empty pull request result", async () => {
-    vi.mocked(findPullRequestsForBranch).mockResolvedValue([]);
-    vi.mocked(pullRequestProbeProblem).mockReturnValue({ message: "gh unavailable" });
+    vi.mocked(probePullRequestsForBranch).mockResolvedValue({
+      pullRequests: [],
+      problem: "gh unavailable",
+    });
 
     const actual = await collectWithBoard([], [{ dir: "/repos/eng-220", branch: "eng-220" }]);
 
@@ -534,15 +535,15 @@ describe("collectRemoteStatus", () => {
   it("skips pull request lookups entirely when no task has a worktree", async () => {
     await collectWithBoard([]);
 
-    expect(findPullRequestsForBranch).not.toHaveBeenCalled();
+    expect(probePullRequestsForBranch).not.toHaveBeenCalled();
   });
 
   // The board and `gh` share no data, so one failing must not hide the other.
   it("still collects pull requests when the board fetch fails", async () => {
     mockBoardFetchRejection(new Error("Linear: 401 unauthorized"));
-    vi.mocked(findPullRequestsForBranch).mockResolvedValue([
-      { url: "https://example.test/1", number: 1, state: "open", title: "PR" },
-    ]);
+    vi.mocked(probePullRequestsForBranch).mockResolvedValue({
+      pullRequests: [{ url: "https://example.test/1", number: 1, state: "open", title: "PR" }],
+    });
 
     const actual = await collectRemoteStatus({
       board: await fetchBoardIssues(mockConfig),

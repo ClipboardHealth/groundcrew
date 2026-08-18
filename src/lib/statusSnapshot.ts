@@ -138,9 +138,11 @@ export interface RemoteStatusDocument {
    * branches, each with its own pull requests.
    *
    * Always from the current attempt, never carried forward: the lookups do not
-   * depend on the board, so a board outage must not freeze or hide them. An
-   * Empty means no pull requests were found or the lookup failed; callers use
-   * `RemoteFetchResult.pullRequestProblems` to distinguish those outcomes.
+   * depend on the board, so a board outage must not freeze or hide them.
+   *
+   * An empty entry means either no pull requests were found or the lookup
+   * failed. Callers use `RemoteFetchResult.pullRequestProblems` to distinguish
+   * those outcomes.
    */
   pullRequestsByWorktree: Record<string, PullRequestSummary[]>;
 }
