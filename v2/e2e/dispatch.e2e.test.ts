@@ -424,34 +424,51 @@ describe("crew start", () => {
     await expect(stat(fixture.workspaceDirectory)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("cleans only completed runs with --completed", async () => {
+  it("cleans only delivered runs with --delivered", async () => {
     const fixture = await createDispatchFixture({
-      maximumInProgress: 2,
+      maximumInProgress: 4,
       tasks: [
-        task({ id: "DONE-1", priority: 1, repositories: [] }),
-        task({ id: "ACTIVE-1", priority: 2, repositories: [] }),
+        task({ id: "DELIVERED-1", priority: 1, repositories: [] }),
+        task({ id: "FAILED-1", priority: 2, repositories: [] }),
+        task({ id: "STOPPED-1", priority: 3, repositories: [] }),
+        task({ id: "ACTIVE-1", priority: 4, repositories: [] }),
       ],
     });
     await runCrew({ arguments: ["start"], environment: fixture.environment });
     await runCrew({
-      arguments: ["done", "--task", "DONE-1"],
+      arguments: ["done", "--task", "DELIVERED-1", "--outcome", "delivered"],
+      environment: fixture.environment,
+    });
+    await runCrew({
+      arguments: ["done", "--task", "FAILED-1", "--outcome", "failed"],
+      environment: fixture.environment,
+    });
+    await runCrew({
+      arguments: ["done", "--task", "STOPPED-1", "--outcome", "stopped"],
       environment: fixture.environment,
     });
 
     const result = await runCrew({
-      arguments: ["cleanup", "--completed"],
+      arguments: ["cleanup", "--delivered"],
       environment: fixture.environment,
     });
 
-    expect(result.stdout).toContain("Cleaned fixture:DONE-1");
+    expect(result.stdout).toContain("Cleaned fixture:DELIVERED-1");
+    expect(result.stdout).not.toContain("fixture:FAILED-1");
+    expect(result.stdout).not.toContain("fixture:STOPPED-1");
     expect(result.stdout).not.toContain("fixture:ACTIVE-1");
-    await expect(stat(join(fixture.runsDirectory, "fixture-done-1.json"))).rejects.toMatchObject({
-      code: "ENOENT",
-    });
-    expect(
-      JSON.parse(await readFile(join(fixture.runsDirectory, "fixture-active-1.json"), "utf8")),
-    ).toMatchObject({ state: "running" });
-    expect(JSON.parse(await readFile(fixture.cmuxStatePath, "utf8")).workspaces).toHaveLength(1);
+    await expect(
+      stat(join(fixture.runsDirectory, "fixture-delivered-1.json")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    await Promise.all(
+      ["failed-1", "stopped-1", "active-1"].map(
+        async (id) =>
+          await expect(
+            stat(join(fixture.runsDirectory, `fixture-${id}.json`)),
+          ).resolves.toBeDefined(),
+      ),
+    );
+    expect(JSON.parse(await readFile(fixture.cmuxStatePath, "utf8")).workspaces).toHaveLength(3);
     const cmuxCalls = (await readFile(fixture.cmuxCallsPath, "utf8"))
       .trim()
       .split("\n")
@@ -465,20 +482,20 @@ describe("crew start", () => {
 
   it("requires exactly one cleanup selector", async () => {
     const fixture = await createDispatchFixture();
-    const expectedError = "cleanup requires exactly one of a task, --all, or --completed";
+    const expectedError = "cleanup requires exactly one of a task, --all, or --delivered";
 
     await expect(
       runCrew({ arguments: ["cleanup"], environment: fixture.environment }),
     ).rejects.toMatchObject({ code: 1, stderr: expect.stringContaining(expectedError) });
     await expect(
       runCrew({
-        arguments: ["cleanup", "ENG-123", "--completed"],
+        arguments: ["cleanup", "ENG-123", "--delivered"],
         environment: fixture.environment,
       }),
     ).rejects.toMatchObject({ code: 1, stderr: expect.stringContaining(expectedError) });
     await expect(
       runCrew({
-        arguments: ["cleanup", "--all", "--completed"],
+        arguments: ["cleanup", "--all", "--delivered"],
         environment: fixture.environment,
       }),
     ).rejects.toMatchObject({ code: 1, stderr: expect.stringContaining(expectedError) });

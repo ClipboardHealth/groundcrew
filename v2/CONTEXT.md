@@ -22,8 +22,8 @@ Status keeps those layers separate.
 
 Cleanup is always an explicit operator action. Source terminality affects dispatch eligibility
 but never closes a presented workspace or removes local task state. `crew cleanup <task>` tears
-down one Run, `crew cleanup --completed` tears down completed Runs without stopping active Runs,
-and `crew cleanup --all` tears down every local Run.
+down one Run, `crew cleanup --delivered` tears down delivered Runs without stopping active Runs or
+removing failed or stopped Runs, and `crew cleanup --all` tears down every local Run.
 
 A **source bundle** is a directory containing `source.json` and executable protocol commands.
 A configured **source instance** gives that bundle an instance name and environment. A

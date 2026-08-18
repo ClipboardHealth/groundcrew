@@ -170,7 +170,7 @@ export interface Application {
   cleanup(input: {
     readonly task?: string | undefined;
     readonly all: boolean;
-    readonly completed: boolean;
+    readonly delivered: boolean;
     readonly allowDirty: boolean;
   }): Promise<{
     readonly cleaned: readonly string[];
@@ -814,7 +814,7 @@ async function cleanup(input: {
   readonly runtime: Runtime;
   readonly task?: string | undefined;
   readonly all: boolean;
-  readonly completed: boolean;
+  readonly delivered: boolean;
   readonly allowDirty: boolean;
 }): Promise<{
   readonly cleaned: readonly string[];
@@ -822,20 +822,22 @@ async function cleanup(input: {
 }> {
   const { runtime } = input;
   const selectorCount =
-    Number(input.task !== undefined) + Number(input.all) + Number(input.completed);
+    Number(input.task !== undefined) + Number(input.all) + Number(input.delivered);
   if (selectorCount !== 1) {
-    throw new Error("cleanup requires exactly one of a task, --all, or --completed");
+    throw new Error("cleanup requires exactly one of a task, --all, or --delivered");
   }
   const localRuns = await runtime.runs.list();
   let runs: readonly RunHandle[];
   if (input.all) {
     runs = localRuns;
-  } else if (input.completed) {
-    runs = localRuns.filter((run) => run.state === "complete");
+  } else if (input.delivered) {
+    runs = localRuns.filter(
+      (run) => run.state === "complete" && run.record.outcome === "delivered",
+    );
   } else if (input.task !== undefined) {
     runs = [await runtime.runs.resolve({ query: input.task })];
   } else {
-    throw new Error("cleanup requires exactly one of a task, --all, or --completed");
+    throw new Error("cleanup requires exactly one of a task, --all, or --delivered");
   }
   const cleaned: string[] = [];
   const preservedBranches: string[] = [];
