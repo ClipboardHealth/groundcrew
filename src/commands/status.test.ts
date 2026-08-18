@@ -2018,6 +2018,30 @@ describe(status, () => {
       });
     });
 
+    it("reports one git problem when both branch and dirtiness probes fail", async () => {
+      probeEffectiveBranchMock.mockResolvedValue({
+        branch: "dev-team-1",
+        problem: "Could not determine the current branch: HEAD is detached",
+      });
+      probeWorkingTreeMock.mockResolvedValue({ kind: "unknown" });
+      const expectedProblem = {
+        code: "git-probe-failed",
+        message: "Git probe failed",
+        task: "team-1",
+        worktreeDirectory: "/work/repo-a-team-1",
+      };
+
+      await status(jsonConfig(), { json: true });
+
+      expect(JSON.parse(consoleLog.output())).toMatchObject({ problems: [expectedProblem] });
+      consoleLog.restore();
+      consoleLog = captureConsoleLog();
+
+      await status(jsonConfig(), { task: "team-1", json: true });
+
+      expect(JSON.parse(consoleLog.output())).toMatchObject({ problems: [expectedProblem] });
+    });
+
     it("writes no JSON when inventory collection fails fatally", async () => {
       listWorktreesMock.mockImplementation(() => {
         throw new Error("worktree inventory unreadable");

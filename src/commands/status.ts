@@ -859,15 +859,7 @@ function inventoryProblems(input: {
   }
   for (const task of joined.tasks) {
     for (const worktree of task.worktrees) {
-      if (worktree.branchProblem !== undefined) {
-        problems.push({
-          code: "git-probe-failed",
-          message: publicProblemMessage({ code: "git-probe-failed" }),
-          task: task.task,
-          worktreeDirectory: worktree.dir,
-        });
-      }
-      if (worktree.git.kind === "unknown") {
+      if (worktree.branchProblem !== undefined || worktree.git.kind === "unknown") {
         problems.push({
           code: "git-probe-failed",
           message: publicProblemMessage({ code: "git-probe-failed" }),
@@ -1131,15 +1123,7 @@ async function collectTaskSnapshot(input: {
     });
   }
   for (const collected of collectedWorktrees) {
-    if (collected.branchProblem !== undefined) {
-      problems.push({
-        code: "git-probe-failed",
-        message: publicProblemMessage({ code: "git-probe-failed" }),
-        task: localTask,
-        worktreeDirectory: collected.worktree.directory,
-      });
-    }
-    if (collected.worktree.dirtiness.kind === "unknown") {
+    if (collected.branchProblem !== undefined || collected.worktree.dirtiness.kind === "unknown") {
       problems.push({
         code: "git-probe-failed",
         message: publicProblemMessage({ code: "git-probe-failed" }),
