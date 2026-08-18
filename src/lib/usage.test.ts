@@ -96,6 +96,18 @@ function makeCursorConfig(): ResolvedConfig {
   });
 }
 
+function makeClaudeConfig(source?: string): ResolvedConfig {
+  return makeConfig({
+    definitions: {
+      claude: {
+        cmd: "claude --permission-mode bypassPermissions",
+        color: "#C15F3C",
+        usage: { codexbar: { provider: "claude", ...(source === undefined ? {} : { source }) } },
+      },
+    },
+  });
+}
+
 /**
  * Mirrors `normalizeCommandError`: codexbar exits non-zero but still writes its
  * JSON payload to stdout, which `runCommandAsync` attaches to the thrown
@@ -166,35 +178,26 @@ describe(getUsageByAgent, () => {
     );
   });
 
-  it("defaults CodexBar usage to oauth on macOS for the claude provider", async () => {
+  it("defaults CodexBar usage to cli on macOS for the claude provider", async () => {
     stubPlatform("darwin");
     runCommandMock.mockReturnValue(
       JSON.stringify([
         {
           provider: "claude",
-          source: "oauth",
+          source: "claude",
           usage: { primary: { usedPercent: 10, resetsAt: "2099-01-01T00:00:00.000Z" } },
         },
       ]),
     );
 
-    await getUsageByAgent(
-      makeConfig({
-        definitions: {
-          claude: {
-            cmd: "claude --permission-mode bypassPermissions",
-            color: "#C15F3C",
-            usage: { codexbar: { provider: "claude" } },
-          },
-        },
-      }),
-    );
+    const actual = await getUsageByAgent(makeClaudeConfig());
 
     expect(runCommandMock).toHaveBeenCalledWith(
       "codexbar",
-      ["usage", "--provider", "claude", "--source", "oauth", "--format", "json"],
+      ["usage", "--provider", "claude", "--source", "cli", "--format", "json"],
       { timeoutMs: 30_000 },
     );
+    expect(actual["claude"]?.session).toBe(0.1);
   });
 
   it("defaults CodexBar usage to cli outside macOS", async () => {
@@ -217,6 +220,45 @@ describe(getUsageByAgent, () => {
     const actual = await getUsageByAgent(makeCursorConfig());
 
     expect(actual["cursor"]?.session).toBe(0.25);
+  });
+
+  it("accepts CodexBar's resolved source label when the config pins a source", async () => {
+    stubPlatform("darwin");
+    runCommandMock.mockReturnValue(
+      JSON.stringify([
+        {
+          provider: "claude",
+          source: "claude",
+          usage: { primary: { usedPercent: 40, resetsAt: "2099-01-01T00:00:00.000Z" } },
+        },
+      ]),
+    );
+
+    const actual = await getUsageByAgent(makeClaudeConfig("auto"));
+
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "codexbar",
+      ["usage", "--provider", "claude", "--source", "auto", "--format", "json"],
+      { timeoutMs: 30_000 },
+    );
+    expect(actual["claude"]?.session).toBe(0.4);
+  });
+
+  it("fails closed when a pinned source has multiple ambiguous provider matches", async () => {
+    stubPlatform("darwin");
+    runCommandMock.mockReturnValue(
+      JSON.stringify([
+        { provider: "claude", source: "claude", usage: { primary: { usedPercent: 25 } } },
+        { provider: "claude", source: "web", usage: { primary: { usedPercent: 90 } } },
+      ]),
+    );
+
+    const actual = await getUsageByAgent(makeClaudeConfig("auto"));
+
+    expect(actual["claude"]).toMatchObject(EXHAUSTED_USAGE);
+    expect(consoleCapture.output()).toContain(
+      "codexbar returned no matching entry for provider=claude, source=auto",
+    );
   });
 
   it("uses an explicit source from the config without consulting the platform", async () => {

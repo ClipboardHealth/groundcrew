@@ -75,8 +75,16 @@ function defaultCodexbarSource(provider: string): string {
   }
   // codexbar's CLI `auto` for Codex/Claude probes browser sessions before OAuth,
   // while the menu bar app prefers OAuth. Match the app so gates follow the CLI account.
-  if (provider === "codex" || provider === "claude") {
+  if (provider === "codex") {
     return "oauth";
+  }
+  // Claude's OAuth probe dies whenever the token rotates ("Claude OAuth token
+  // expired. CodexBar CLI does not launch Claude to refresh credentials."), and
+  // only the menu bar app can refresh it — a gate that fails closed on a timer
+  // is worse than no gate. `cli` reads the Claude CLI's own rate-limit records,
+  // so it needs no token and reports the account groundcrew actually runs as.
+  if (provider === "claude") {
+    return "cli";
   }
   return "auto";
 }
@@ -126,19 +134,17 @@ async function codexbarUsage(definition: AgentDefinition, signal?: AbortSignal):
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- JSON.parse returns any; codexbar's --format json output matches CodexbarEntry[]
   const parsed = JSON.parse(out) as CodexbarEntry[];
   // codexbar can return multiple entries when a provider has several
-  // accounts/sources. When the user pinned a specific source, only an exact
-  // match counts — falling back to a different account would silently
-  // misreport quotas. When `auto`/`cli` was inferred, fall back to a provider
-  // match only when it is unambiguous (a single entry) so codexbar's resolved
-  // backend label ("openai-web", "local", etc.) doesn't have to equal the
-  // request literal. Ambiguous fallbacks fail closed and the caller surfaces
-  // EXHAUSTED_USAGE.
+  // accounts/sources. Its `source` field is the resolved backend label
+  // ("openai-web", "local", and for claude the bare provider name), never an
+  // echo of the request literal, so requiring equality makes a pinned source
+  // unmatchable. Prefer an exact label match, then fall back to a provider
+  // match when it is unambiguous — a single entry. Pinning stays safe because
+  // codexbar honours an explicit `--source` and reports an error rather than
+  // silently answering from another backend. Ambiguous fallbacks fail closed
+  // and the caller surfaces EXHAUSTED_USAGE.
   const providerMatches = parsed.filter((entry) => entry.provider === provider);
   const exact = providerMatches.find((entry) => entry.source === source);
-  const match =
-    configuredSource === undefined
-      ? (exact ?? (providerMatches.length === 1 ? providerMatches[0] : undefined))
-      : exact;
+  const match = exact ?? (providerMatches.length === 1 ? providerMatches[0] : undefined);
   if (!match) {
     throw new Error(
       `codexbar returned no matching entry for provider=${provider}, source=${source}`,
