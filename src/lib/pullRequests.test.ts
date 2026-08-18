@@ -151,6 +151,9 @@ describe(findPullRequestsForBranch, () => {
     });
 
     expect(prs).toStrictEqual([]);
+    expect(pullRequestProbeProblem({ pullRequests: prs })).toEqual({
+      message: "Unexpected non-JSON response from 'gh pr list'.",
+    });
   });
 
   it("returns empty when gh emits a non-array JSON value", async () => {
@@ -162,14 +165,17 @@ describe(findPullRequestsForBranch, () => {
     });
 
     expect(prs).toStrictEqual([]);
+    expect(pullRequestProbeProblem({ pullRequests: prs })).toEqual({
+      message: "Unexpected response shape from 'gh pr list'.",
+    });
   });
 
   it("skips entries that don't match the expected PR shape", async () => {
     runCommandMock.mockResolvedValue(
       JSON.stringify([
         rawPullRequest({ url: "https://x/pull/1", number: 1, state: "OPEN", title: "valid" }),
-        { url: 42, number: "not a number" }, // malformed; dropped silently
-        null, // also dropped
+        { url: 42, number: "not a number" },
+        null,
       ]),
     );
 
@@ -179,6 +185,9 @@ describe(findPullRequestsForBranch, () => {
     });
 
     expect(prs.map((p) => p.number)).toStrictEqual([1]);
+    expect(pullRequestProbeProblem({ pullRequests: prs })).toEqual({
+      message: "Some pull requests from 'gh pr list' had an unexpected shape.",
+    });
   });
 
   it("forwards the AbortSignal to runCommandAsync alongside cwd when provided", async () => {

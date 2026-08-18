@@ -1087,27 +1087,28 @@ async function collectTaskSnapshot(input: {
   includeRecentLogs: boolean;
 }): Promise<TaskStatusSnapshot> {
   const { config, task, includeRecentLogs } = input;
+  const localTask = naturalIdFromCanonical(task);
   const generatedAt = new Date().toISOString();
-  const runState = readRunState(config, task);
+  const runState = readRunState(config, localTask);
   const [workspaceProbe, sourceStatus] = await Promise.all([
     withLogOutputSuppressed(async () => await workspaces.probe(config)),
     readTaskSourceStatus(config, task),
   ]);
-  const accessHint = await exitedWorkspaceAccessHint(config, workspaceProbe, task);
-  const entries = worktrees.findByTask(config, task);
+  const accessHint = await exitedWorkspaceAccessHint(config, workspaceProbe, localTask);
+  const entries = worktrees.findByTask(config, localTask);
   const collectedWorktrees = await Promise.all(
     entries.map(async (entry) => await collectTaskWorktree({ entry, runState })),
   );
   const taskWorktrees = collectedWorktrees.map((collected) => collected.worktree);
-  const identity = taskIdentityFromStatus({ task, runState, sourceStatus });
+  const identity = taskIdentityFromStatus({ task: localTask, runState, sourceStatus });
   const run = runSnapshotFromState(runState);
-  const workspace = workspaceSnapshot({ probe: workspaceProbe, task });
+  const workspace = workspaceSnapshot({ probe: workspaceProbe, task: localTask });
   const problems: StatusProblem[] = [];
   if (sourceStatus.kind === "unavailable") {
     problems.push({
       code: "source-probe-failed",
       message: publicProblemMessage({ code: "source-probe-failed" }),
-      task,
+      task: localTask,
     });
   } else if (sourceStatus.kind === "found") {
     for (const failure of sourceStatus.failures) {
@@ -1118,7 +1119,7 @@ async function collectTaskSnapshot(input: {
           source: failure.source,
         }),
         source: failure.source,
-        task,
+        task: localTask,
       });
     }
   }
@@ -1126,7 +1127,7 @@ async function collectTaskSnapshot(input: {
     problems.push({
       code: "workspace-probe-failed",
       message: publicProblemMessage({ code: "workspace-probe-failed" }),
-      task,
+      task: localTask,
     });
   }
   for (const collected of collectedWorktrees) {
@@ -1134,7 +1135,7 @@ async function collectTaskSnapshot(input: {
       problems.push({
         code: "git-probe-failed",
         message: publicProblemMessage({ code: "git-probe-failed" }),
-        task,
+        task: localTask,
         worktreeDirectory: collected.worktree.directory,
       });
     }
@@ -1142,7 +1143,7 @@ async function collectTaskSnapshot(input: {
       problems.push({
         code: "git-probe-failed",
         message: publicProblemMessage({ code: "git-probe-failed" }),
-        task,
+        task: localTask,
         worktreeDirectory: collected.worktree.directory,
       });
     }
@@ -1152,7 +1153,7 @@ async function collectTaskSnapshot(input: {
     problems.push({
       code: "github-probe-failed",
       message: publicProblemMessage({ code: "github-probe-failed" }),
-      task,
+      task: localTask,
       worktreeDirectory: collected.worktree.directory,
     });
   }
@@ -1175,13 +1176,13 @@ async function collectTaskSnapshot(input: {
     }),
     problems,
     text: {
-      task,
+      task: localTask,
       runState,
       sourceStatus,
       workspaceProbe,
       accessHint,
       recentLogLines: includeRecentLogs
-        ? recentTaskLogLines({ lines: wholeLogLines(config), task })
+        ? recentTaskLogLines({ lines: wholeLogLines(config), task: localTask })
         : [],
     },
   };

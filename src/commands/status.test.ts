@@ -1687,6 +1687,31 @@ describe(status, () => {
       expect(consoleLog.output()).not.toContain('"text"');
     });
 
+    it("accepts a canonical task id while using its natural id for local lookups", async () => {
+      const config = jsonConfig();
+      buildSourcesMock.mockResolvedValue([
+        fakeSource([
+          sourceIssue({
+            title: "Canonical task",
+            status: "in-progress",
+            url: "https://linear.app/example/issue/TEAM-1",
+          }),
+        ]),
+      ]);
+
+      await status(config, { task: "linear:team-1", json: true });
+
+      expect(JSON.parse(consoleLog.output())).toMatchObject({
+        task: {
+          id: "linear:team-1",
+          naturalId: "team-1",
+          title: "Canonical task",
+        },
+      });
+      expect(readRunStateMock).toHaveBeenCalledWith(config, "team-1");
+      expect(findByTaskMock).toHaveBeenCalledWith(config, "team-1");
+    });
+
     it("does not collect recent logs for task JSON", async () => {
       const config = jsonConfig();
       writeFileSync(config.logging.file, "[09:01:00] team-1 private log contents\n");

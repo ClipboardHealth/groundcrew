@@ -72,19 +72,32 @@ interface RawPullRequest {
   title: string;
 }
 
-function parsePullRequests(output: string): PullRequestSummary[] {
+interface ParsePullRequestsResult {
+  pullRequests: PullRequestSummary[];
+  problem?: string | undefined;
+}
+
+function parsePullRequests(output: string): ParsePullRequestsResult {
   let parsed: unknown;
   try {
     parsed = JSON.parse(output);
   } catch {
-    return [];
+    return {
+      pullRequests: [],
+      problem: "Unexpected non-JSON response from 'gh pr list'.",
+    };
   }
   if (!Array.isArray(parsed)) {
-    return [];
+    return {
+      pullRequests: [],
+      problem: "Unexpected response shape from 'gh pr list'.",
+    };
   }
   const summaries: PullRequestSummary[] = [];
+  let hasInvalidEntry = false;
   for (const entry of parsed) {
     if (!isRawPullRequest(entry)) {
+      hasInvalidEntry = true;
       continue;
     }
     summaries.push({
@@ -94,7 +107,12 @@ function parsePullRequests(output: string): PullRequestSummary[] {
       title: entry.title,
     });
   }
-  return summaries;
+  return {
+    pullRequests: summaries,
+    ...(hasInvalidEntry
+      ? { problem: "Some pull requests from 'gh pr list' had an unexpected shape." }
+      : {}),
+  };
 }
 
 function isRawPullRequest(value: unknown): value is RawPullRequest {
@@ -227,7 +245,11 @@ export async function findPullRequestsForBranch(
       ],
       options,
     );
-    return parsePullRequests(output);
+    const parsed = parsePullRequests(output);
+    if (parsed.problem !== undefined) {
+      PULL_REQUEST_PROBE_PROBLEMS.set(parsed.pullRequests, parsed.problem);
+    }
+    return parsed.pullRequests;
   } catch (error) {
     if (signal?.aborted === true) {
       throw error;
