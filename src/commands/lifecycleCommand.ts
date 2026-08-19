@@ -2,11 +2,12 @@ import { mkdirSync, readFileSync, readlinkSync, symlinkSync, unlinkSync } from "
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 
-import type { ResolvedConfig } from "../lib/config.ts";
+import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { naturalIdFromCanonical } from "../lib/taskSource.ts";
 import { normalizePlainTaskId } from "../lib/taskId.ts";
 import { withConsoleOutputSuppressed } from "../lib/util.ts";
 import {
+  LIFECYCLE_PROBLEM_CODES,
   lifecycleResultExitCode,
   renderLifecycleResult,
   type LifecycleResult,
@@ -127,6 +128,10 @@ export function lifecycleCancellationSuffix(context: LifecycleCancellationContex
   return signal === undefined ? "" : ` by ${signal}`;
 }
 
+export async function loadLifecycleConfig(json: boolean): Promise<ResolvedConfig> {
+  return json ? await withConsoleOutputSuppressed(loadConfig) : await loadConfig();
+}
+
 export async function executeLifecycleMutation<Result extends LifecycleResult>(
   arguments_: ExecuteLifecycleMutationArguments<Result>,
 ): Promise<Result> {
@@ -139,7 +144,10 @@ export async function executeLifecycleMutation<Result extends LifecycleResult>(
     try {
       const run = async (): Promise<Result> => {
         try {
-          return await arguments_.operation(context);
+          const result = await arguments_.operation(context);
+          return context.signal.aborted && lifecycleResultExitCode(result) === 0
+            ? completedResultCancelled(result, context)
+            : result;
         } catch (error) {
           if (!context.signal.aborted) {
             throw error;
@@ -153,6 +161,27 @@ export async function executeLifecycleMutation<Result extends LifecycleResult>(
       lock.release();
     }
   });
+}
+
+function completedResultCancelled<Result extends LifecycleResult>(
+  result: Result,
+  context: LifecycleCancellationContext,
+): Result {
+  return {
+    ...result,
+    outcome: "partial",
+    problems: [
+      ...result.problems,
+      {
+        code: LIFECYCLE_PROBLEM_CODES.cancelled,
+        message: `${capitalize(result.action)} cancelled${lifecycleCancellationSuffix(context)} after completing the observed mutations.`,
+      },
+    ],
+  };
+}
+
+function capitalize(value: string): string {
+  return `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`;
 }
 
 function finishLifecycleMutation<Result extends LifecycleResult>(arguments_: {

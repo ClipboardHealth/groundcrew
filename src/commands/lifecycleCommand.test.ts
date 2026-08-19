@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
-import type { ResolvedConfig } from "../lib/config.ts";
+import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { log } from "../lib/util.ts";
 import { captureConsoleLog } from "../testHelpers/consoleCapture.ts";
 import {
@@ -12,9 +12,18 @@ import {
   executeLifecycleMutation,
   lifecycleCancellationSuffix,
   lifecycleLockPath,
+  loadLifecycleConfig,
+  type LifecycleCancellationContext,
   withLifecycleCancellation,
 } from "./lifecycleCommand.ts";
 import type { StartResult } from "./lifecycleResult.ts";
+
+vi.mock(import("../lib/config.ts"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, loadConfig: vi.fn<typeof loadConfig>() };
+});
+
+const loadConfigMock = vi.mocked(loadConfig);
 
 function loggingConfig(directory: string): { logging: { file: string } } {
   return { logging: { file: path.join(directory, "groundcrew.log") } };
@@ -180,6 +189,40 @@ describe(lifecycleCancellationSuffix, () => {
   });
 });
 
+describe(loadLifecycleConfig, () => {
+  it("suppresses configuration progress in JSON mode", async () => {
+    const config = loggingConfig("/tmp/json-config") as ResolvedConfig;
+    loadConfigMock.mockImplementationOnce(async () => {
+      log("configuration progress");
+      return config;
+    });
+    const consoleLog = captureConsoleLog();
+
+    try {
+      await expect(loadLifecycleConfig(true)).resolves.toBe(config);
+      expect(consoleLog.calls).toHaveLength(0);
+    } finally {
+      consoleLog.restore();
+    }
+  });
+
+  it("preserves configuration progress in human mode", async () => {
+    const config = loggingConfig("/tmp/human-config") as ResolvedConfig;
+    loadConfigMock.mockImplementationOnce(async () => {
+      log("configuration progress");
+      return config;
+    });
+    const consoleLog = captureConsoleLog();
+
+    try {
+      await expect(loadLifecycleConfig(false)).resolves.toBe(config);
+      expect(consoleLog.output()).toContain("configuration progress");
+    } finally {
+      consoleLog.restore();
+    }
+  });
+});
+
 describe(executeLifecycleMutation, () => {
   afterEach(() => {
     process.exitCode = undefined;
@@ -232,6 +275,43 @@ describe(executeLifecycleMutation, () => {
       expect(actual.outcome).toBe("partial");
       expect(consoleLog.calls).toHaveLength(1);
       expect(consoleLog.output()).not.toContain("suppressed progress");
+    } finally {
+      consoleLog.restore();
+    }
+  });
+
+  it("changes a completed mutation to partial when cancellation arrived before return", async () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "groundcrew-lock-test-"));
+    const config = loggingConfig(directory) as ResolvedConfig;
+    const consoleLog = captureConsoleLog();
+    const cancelledResult = vi
+      .fn<(context: LifecycleCancellationContext) => Promise<StartResult>>()
+      .mockResolvedValue(startResult("partial"));
+
+    try {
+      const actual = await executeLifecycleMutation({
+        config,
+        task: "team-1",
+        json: true,
+        conflictResult: () => startResult("conflict"),
+        operation: async (): Promise<StartResult> => {
+          process.listeners("SIGTERM").at(-1)?.("SIGTERM");
+          return {
+            ...startResult(),
+            resources: { repository: "repo-a", worktreeDir: "/work/team-1" },
+          };
+        },
+        cancelledResult,
+      });
+
+      expect(actual).toMatchObject({
+        outcome: "partial",
+        resources: { repository: "repo-a", worktreeDir: "/work/team-1" },
+        problems: [{ code: "cancelled", message: expect.stringContaining("SIGTERM") }],
+      });
+      expect(cancelledResult).not.toHaveBeenCalled();
+      expect(process.exitCode).toBe(1);
+      expect(JSON.parse(consoleLog.output())).toStrictEqual(actual);
     } finally {
       consoleLog.restore();
     }

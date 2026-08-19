@@ -1,6 +1,6 @@
-import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
+import type { ResolvedConfig } from "../lib/config.ts";
 import { readRunState, removeRunState } from "../lib/runState.ts";
-import { recordCleanedUpRuns } from "../lib/runStateCleanup.ts";
+import { recordCleanedUpRuns, type RunStateCleanupFailure } from "../lib/runStateCleanup.ts";
 import { errorMessage, log } from "../lib/util.ts";
 import { type WorkspaceProbe, workspaces } from "../lib/workspaces.ts";
 import {
@@ -14,6 +14,7 @@ import { logTeardown } from "./teardownReporter.ts";
 import {
   executeLifecycleMutation,
   lifecycleCancellationSuffix,
+  loadLifecycleConfig,
   type LifecycleCancellationContext,
 } from "./lifecycleCommand.ts";
 import {
@@ -218,8 +219,8 @@ export async function cleanupWorkspace(
     force,
     ...(runOptions.signal === undefined ? {} : { signal: runOptions.signal }),
   });
-  recordCleanedUpRuns(config, result.removed);
-  return cleanupResultFromTeardown({ task, state, entries, result });
+  const stateFailures = recordCleanedUpRuns(config, result.removed);
+  return cleanupResultFromTeardown({ task, state, entries, result, stateFailures });
 }
 
 /**
@@ -264,7 +265,7 @@ export async function cleanupAllWorkspaces(
 
 export async function cleanupWorkspaceCli(argv: string[]): Promise<CleanupResult | undefined> {
   const parsed = parseArguments(argv);
-  const config = await loadConfig();
+  const config = await loadLifecycleConfig(parsed.mode === "task" && parsed.json);
   if (parsed.mode === "all") {
     await cleanupAllWorkspaces(config, { force: parsed.force });
     return undefined;
@@ -367,9 +368,16 @@ function cleanupResultFromTeardown(arguments_: {
   state: ReturnType<typeof readRunState>;
   entries: readonly WorktreeEntry[];
   result: TeardownResult;
+  stateFailures: readonly RunStateCleanupFailure[];
 }): CleanupResult {
-  const { task, state, entries, result } = arguments_;
+  const { task, state, entries, result, stateFailures } = arguments_;
   const problems = result.failures.map(problemFromTeardownFailure);
+  for (const failure of stateFailures) {
+    problems.push({
+      code: LIFECYCLE_PROBLEM_CODES.stateWriteFailed,
+      message: `Removed resources for ${failure.task}, but run state could not be cleared: ${errorMessage(failure.error)}`,
+    });
+  }
   if (result.workspaceProbe.kind === "unavailable") {
     problems.push({
       code: LIFECYCLE_PROBLEM_CODES.workspaceStatusUnavailable,

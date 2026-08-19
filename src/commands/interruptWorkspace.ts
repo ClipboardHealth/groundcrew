@@ -1,4 +1,4 @@
-import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
+import type { ResolvedConfig } from "../lib/config.ts";
 import { readRunState, recordRunState, type RunState } from "../lib/runState.ts";
 import { errorMessage } from "../lib/util.ts";
 import { workspaces, type WorkspaceInterruptResult } from "../lib/workspaces.ts";
@@ -6,6 +6,7 @@ import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 import {
   executeLifecycleMutation,
   lifecycleCancellationSuffix,
+  loadLifecycleConfig,
   type LifecycleCancellationContext,
 } from "./lifecycleCommand.ts";
 import {
@@ -240,7 +241,7 @@ async function interruptOrphanWorkspace(
 
 export async function interruptWorkspaceCli(argv: string[]): Promise<StopResult> {
   const parsed = parseArguments(argv);
-  const config = await loadConfig();
+  const config = await loadLifecycleConfig(parsed.json);
   return await executeLifecycleMutation({
     config,
     task: parsed.options.task,
@@ -248,7 +249,7 @@ export async function interruptWorkspaceCli(argv: string[]): Promise<StopResult>
     conflictResult: () => stopLockConflictResult({ config, task: parsed.options.task }),
     operation: async ({ signal }) => await interruptWorkspace(config, parsed.options, { signal }),
     cancelledResult: async (context) =>
-      await cancelledStopResult({ config, task: parsed.options.task, context }),
+      await cancelledStopResult({ config, options: parsed.options, context }),
   });
 }
 
@@ -350,39 +351,40 @@ function stopLockConflictResult(arguments_: { config: ResolvedConfig; task: stri
 
 async function cancelledStopResult(arguments_: {
   config: ResolvedConfig;
-  task: string;
+  options: InterruptWorkspaceOptions;
   context: LifecycleCancellationContext;
 }): Promise<StopResult> {
-  const state = readRunState(arguments_.config, arguments_.task);
-  const [entry] = worktrees.findByTask(arguments_.config, arguments_.task);
+  const { config, options, context } = arguments_;
+  const state = readRunState(config, options.task);
+  const [entry] = worktrees.findByTask(config, options.task);
   const source = resolveInterruptSource({
-    config: arguments_.config,
-    task: arguments_.task,
+    config,
+    task: options.task,
     state,
     entry,
   });
-  const probe = await workspaces.probe(arguments_.config);
-  const workspaceAbsent = probe.kind === "ok" && !probe.names.has(arguments_.task);
+  const probe = await workspaces.probe(config);
+  const workspaceAbsent = probe.kind === "ok" && !probe.names.has(options.task);
   let stateProblem: LifecycleProblem | undefined;
   if (workspaceAbsent && source !== undefined) {
     stateProblem = recordInterruptedState({
-      config: arguments_.config,
-      task: arguments_.task,
+      config,
+      task: options.task,
       source,
-      options: { task: arguments_.task },
+      options,
       detail: "workspace missing after cancellation",
     });
   }
   return {
     action: "stop",
-    task: taskIdentity(arguments_.task, state),
+    task: taskIdentity(options.task, state),
     outcome: "partial",
     state: workspaceAbsent ? "interrupted" : (state?.state ?? "unknown"),
     resources: resourcesFromSource(source),
     problems: [
       {
         code: LIFECYCLE_PROBLEM_CODES.cancelled,
-        message: `Stop cancelled${lifecycleCancellationSuffix(arguments_.context)}.`,
+        message: `Stop cancelled${lifecycleCancellationSuffix(context)}.`,
       },
       ...(stateProblem === undefined ? [] : [stateProblem]),
     ],

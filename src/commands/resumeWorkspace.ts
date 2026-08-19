@@ -1,6 +1,6 @@
 import { type Board, createBoard } from "../lib/board.ts";
 import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
-import { type AgentDefinition, loadConfig, type ResolvedConfig } from "../lib/config.ts";
+import type { AgentDefinition, ResolvedConfig } from "../lib/config.ts";
 import { composeAgentLaunch, openAgentWorkspace, prepareAgentLaunch } from "../lib/agentLaunch.ts";
 import {
   inferAgentCommandName,
@@ -25,6 +25,7 @@ import { cleanupAgentLaunchBestEffort } from "./agentLaunchCleanup.ts";
 import {
   executeLifecycleMutation,
   lifecycleCancellationSuffix,
+  loadLifecycleConfig,
   type LifecycleCancellationContext,
 } from "./lifecycleCommand.ts";
 import {
@@ -475,7 +476,7 @@ async function resumeWorkspaceOperation(
 
 export async function resumeWorkspaceCli(argv: string[]): Promise<ResumeResult> {
   const parsed = parseArguments(argv);
-  const config = await loadConfig();
+  const config = await loadLifecycleConfig(parsed.json);
   return await executeLifecycleMutation({
     config,
     task: parsed.options.task,

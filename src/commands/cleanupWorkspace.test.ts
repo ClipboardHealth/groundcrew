@@ -322,15 +322,26 @@ describe(cleanupWorkspace, () => {
     });
   });
 
-  it("logs and continues when marking removed run state fails", async () => {
+  it("returns partial with removed resources when clearing durable run state fails", async () => {
     findByTaskMock.mockReturnValue([hostEntry]);
+    readRunStateMock.mockReturnValue(orphanRunState);
     teardownMock.mockResolvedValue(emptyTeardownResult({ removed: [hostEntry] }));
     removeRunStateMock.mockImplementation(() => {
       throw new Error("state write failed");
     });
 
-    await cleanupWorkspace(config, { task: "team-1" });
+    const actual = await cleanupWorkspace(config, { task: "team-1" });
 
+    expect(actual).toMatchObject({
+      outcome: "partial",
+      state: "running",
+      resources: {
+        worktrees: [{ worktreeDir: hostEntry.dir, removed: true }],
+      },
+      problems: [
+        { code: "state-write-failed", message: expect.stringContaining("state write failed") },
+      ],
+    });
     expect(consoleLog.output()).toContain("Run state cleanup failed");
   });
 

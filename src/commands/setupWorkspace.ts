@@ -1,4 +1,4 @@
-import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
+import type { ResolvedConfig } from "../lib/config.ts";
 import { composeAgentLaunch, openAgentWorkspace, prepareAgentLaunch } from "../lib/agentLaunch.ts";
 import { inferAgentCommandName, workerEnvironmentForTask } from "../lib/launchCommand.ts";
 import { type Board, createBoard } from "../lib/board.ts";
@@ -28,6 +28,7 @@ import { cleanupAgentLaunchBestEffort } from "./agentLaunchCleanup.ts";
 import {
   executeLifecycleMutation,
   lifecycleCancellationSuffix,
+  loadLifecycleConfig,
   type LifecycleCancellationContext,
 } from "./lifecycleCommand.ts";
 import {
@@ -501,7 +502,7 @@ export async function setupWorkspaceCli(
   task: string,
   options: { dryRun?: boolean; json?: boolean } = {},
 ): Promise<StartResult> {
-  const config = await loadConfig();
+  const config = await loadLifecycleConfig(options.json === true);
   const localTask = naturalIdFromCanonical(task).toLowerCase();
   return await executeLifecycleMutation({
     config,

@@ -359,7 +359,12 @@ describe(interruptWorkspaceCli, () => {
     const consoleLog = captureConsoleLog();
 
     try {
-      const actual = await interruptWorkspaceCli(["TEAM-1", "--json"]);
+      const actual = await interruptWorkspaceCli([
+        "TEAM-1",
+        "--reason",
+        "wrong direction",
+        "--json",
+      ]);
 
       expect(actual).toMatchObject({
         action: "stop",
@@ -371,6 +376,7 @@ describe(interruptWorkspaceCli, () => {
         task: "team-1",
         state: "interrupted",
         detail: "workspace missing after cancellation",
+        reason: "wrong direction",
       });
       expect(consoleLog.calls).toHaveLength(1);
       expect(process.exitCode).toBe(1);
