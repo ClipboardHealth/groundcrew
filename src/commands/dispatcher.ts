@@ -31,7 +31,7 @@ import {
   type SkipVerdict,
   type StartVerdict,
 } from "./eligibility.ts";
-import { renderLifecycleResult } from "./lifecycleResult.ts";
+import { renderLifecycleResult, type StartResult } from "./lifecycleResult.ts";
 import { setupWorkspace } from "./setupWorkspace.ts";
 
 interface DispatcherDeps {
@@ -129,6 +129,7 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     }
 
     try {
+      let setupResult: StartResult | undefined;
       if (recovery) {
         log(`Worktree and workspace already exist for ${taskId}; resuming with markInProgress`);
       } else {
@@ -150,12 +151,22 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
             ...(issue.url === undefined ? {} : { url: issue.url }),
           },
         };
-        const result = await (signal === undefined
+        setupResult = await (signal === undefined
           ? setupWorkspace(config, setupOptions)
           : setupWorkspace(config, setupOptions, { signal }));
-        renderLifecycleResult({ result, json: false });
+        renderLifecycleResult({ result: setupResult, json: false });
       }
       await board.markInProgress(issue);
+      if (setupResult?.outcome === "partial") {
+        logEvent("dispatch", {
+          outcome: "failed",
+          task: taskId,
+          agent: issue.agent,
+          repository: issue.repository,
+          problems: setupResult.problems.map((problem) => problem.code),
+        });
+        return;
+      }
       logEvent("dispatch", {
         outcome: recovery ? "resumed" : "started",
         task: taskId,

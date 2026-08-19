@@ -1019,6 +1019,31 @@ describe(createDispatcher, () => {
   });
 
   describe("setup failures", () => {
+    it("marks partial starts in progress while logging their problem codes as failed", async () => {
+      setupMock.mockResolvedValue({
+        ...startedResult(),
+        outcome: "partial",
+        problems: [{ code: "state-write-failed", message: "Could not persist run state." }],
+      });
+      const board = makeBoard();
+      const dispatcher = createDispatcher({ config: makeConfig(), board });
+
+      await dispatcher.runOnce({
+        state: boardOf([todoIssue()]),
+        worktreeEntries: [],
+        usage: async () => ({}),
+        dryRun: false,
+      });
+
+      expect(board.markInProgress).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "linear:team-1" }),
+      );
+      expect(consoleLog.output()).toContain(
+        "event=dispatch outcome=failed task=team-1 agent=claude repository=repo-a problems=state-write-failed",
+      );
+      expect(consoleLog.output()).not.toContain("event=dispatch outcome=started");
+    });
+
     it("logs setupWorkspace failures without crashing the loop", async () => {
       setupMock.mockRejectedValue(new Error("boom"));
       const board = makeBoard();

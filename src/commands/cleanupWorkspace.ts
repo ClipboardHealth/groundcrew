@@ -25,7 +25,7 @@ import {
 } from "./lifecycleResult.ts";
 
 const USAGE = [
-  "Usage: crew cleanup [--force] <task>",
+  "Usage: crew cleanup [--force] <task> [--json]",
   "       crew cleanup [--force] --all",
   "Example: crew cleanup team-220",
 ].join("\n");

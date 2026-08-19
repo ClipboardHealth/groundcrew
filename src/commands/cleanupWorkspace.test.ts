@@ -753,7 +753,9 @@ describe(cleanupWorkspaceCli, () => {
   });
 
   it("throws a usage error when no task is provided", async () => {
-    await expect(cleanupWorkspaceCli([])).rejects.toThrow(/Usage: crew cleanup/);
+    await expect(cleanupWorkspaceCli([])).rejects.toThrow(
+      /Usage: crew cleanup \[--force\] <task> \[--json\]/,
+    );
   });
 
   it("rejects unknown options instead of treating them as the task", async () => {
