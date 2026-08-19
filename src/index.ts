@@ -9,6 +9,23 @@ export { orchestrate, type OrchestratorOptions } from "./commands/orchestrator.t
 export { resumeWorkspace, type ResumeWorkspaceOptions } from "./commands/resumeWorkspace.ts";
 export { setupWorkspace, type SetupWorkspaceOptions } from "./commands/setupWorkspace.ts";
 export { status, type StatusOptions } from "./commands/status.ts";
+export {
+  LIFECYCLE_PROBLEM_CODES,
+  lifecycleResultExitCode,
+  type CleanupResult,
+  type CleanupResources,
+  type CleanupWorkspaceResource,
+  type CleanupWorktreeResource,
+  type LifecycleProblem,
+  type LifecycleResources,
+  type LifecycleResult,
+  type LifecycleState,
+  type LifecycleTaskIdentity,
+  type LifecycleWorkspaceResource,
+  type ResumeResult,
+  type StartResult,
+  type StopResult,
+} from "./commands/lifecycleResult.ts";
 export type {
   Config,
   HookCommands,

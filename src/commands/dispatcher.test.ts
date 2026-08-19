@@ -8,6 +8,7 @@ import type { WorktreeEntry } from "../lib/worktrees.ts";
 import { setVerbose } from "../lib/util.ts";
 import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCapture.ts";
 import { createDispatcher, formatActiveSlotList } from "./dispatcher.ts";
+import type { StartResult } from "./lifecycleResult.ts";
 import { setupWorkspace } from "./setupWorkspace.ts";
 
 vi.mock(import("./setupWorkspace.ts"), async (importOriginal) => {
@@ -101,12 +102,23 @@ function hostEntryFor(repository: string, task: string): WorktreeEntry {
   };
 }
 
+function startedResult(): StartResult {
+  return {
+    action: "start",
+    task: { id: "team-1", canonicalId: "TEAM-1" },
+    outcome: "started",
+    state: "running",
+    resources: {},
+    problems: [],
+  };
+}
+
 describe(createDispatcher, () => {
   let consoleLog: ConsoleCapture;
 
   beforeEach(() => {
     consoleLog = captureConsoleLog();
-    setupMock.mockResolvedValue();
+    setupMock.mockResolvedValue(startedResult());
     workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set<string>() });
     // Dispatch telemetry (event= lines) is diagnostic, so it only reaches the
     // console under verbose — many cases assert that wording.

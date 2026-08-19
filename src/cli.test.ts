@@ -12,6 +12,12 @@ import { resumeWorkspaceCli } from "./commands/resumeWorkspace.ts";
 import { setupWorkspaceCli } from "./commands/setupWorkspace.ts";
 import { statusCli } from "./commands/status.ts";
 import { taskCli } from "./commands/task.ts";
+import type {
+  CleanupResult,
+  ResumeResult,
+  StartResult,
+  StopResult,
+} from "./commands/lifecycleResult.ts";
 import {
   createDefaultUpgradeCliOptions,
   upgradeCli,
@@ -98,6 +104,50 @@ function makeFakeUpgradeOptions(): UpgradeCliOptions {
   };
 }
 
+function fakeStartResult(): StartResult {
+  return {
+    action: "start",
+    task: { id: "team-1" },
+    outcome: "started",
+    state: "running",
+    resources: {},
+    problems: [],
+  };
+}
+
+function fakeStopResult(): StopResult {
+  return {
+    action: "stop",
+    task: { id: "team-1" },
+    outcome: "stopped",
+    state: "interrupted",
+    resources: {},
+    problems: [],
+  };
+}
+
+function fakeResumeResult(): ResumeResult {
+  return {
+    action: "resume",
+    task: { id: "team-1" },
+    outcome: "resumed",
+    state: "resumed",
+    resources: {},
+    problems: [],
+  };
+}
+
+function fakeCleanupResult(): CleanupResult {
+  return {
+    action: "cleanup",
+    task: { id: "team-1" },
+    outcome: "cleaned",
+    state: "absent",
+    resources: { worktrees: [], workspaces: [] },
+    problems: [],
+  };
+}
+
 function expectUpgradeOptionsFactory(
   optionsInput: UpgradeCliOptionsInput,
 ): () => Promise<UpgradeCliOptions> {
@@ -117,10 +167,10 @@ describe(run, () => {
     process.exitCode = undefined;
     orchestrateMock.mockResolvedValue();
     doctorMock.mockResolvedValue(true);
-    interruptMock.mockResolvedValue();
-    resumeMock.mockResolvedValue();
-    setupMock.mockResolvedValue();
-    cleanupMock.mockResolvedValue();
+    interruptMock.mockResolvedValue(fakeStopResult());
+    resumeMock.mockResolvedValue(fakeResumeResult());
+    setupMock.mockResolvedValue(fakeStartResult());
+    cleanupMock.mockResolvedValue(fakeCleanupResult());
     statusMock.mockResolvedValue();
     taskMock.mockResolvedValue();
     upgradeCliMock.mockResolvedValue();
@@ -328,7 +378,7 @@ describe(run, () => {
   it("dispatches `start <task>` to setupWorkspaceCli with no deprecation warning", async () => {
     await run(["start", "team-220"]);
 
-    expect(setupMock).toHaveBeenCalledWith("team-220", { dryRun: false });
+    expect(setupMock).toHaveBeenCalledWith("team-220", { dryRun: false, json: false });
     expect(orchestrateMock).not.toHaveBeenCalled();
     expect(consoleError.calls).toStrictEqual([]);
   });
@@ -336,7 +386,13 @@ describe(run, () => {
   it("forwards --dry-run to setupWorkspaceCli under `start`", async () => {
     await run(["start", "team-220", "--dry-run"]);
 
-    expect(setupMock).toHaveBeenCalledWith("team-220", { dryRun: true });
+    expect(setupMock).toHaveBeenCalledWith("team-220", { dryRun: true, json: false });
+  });
+
+  it("forwards --json to setupWorkspaceCli under `start`", async () => {
+    await run(["start", "team-220", "--json"]);
+
+    expect(setupMock).toHaveBeenCalledWith("team-220", { dryRun: false, json: true });
   });
 
   it("rejects `start` with no task", async () => {

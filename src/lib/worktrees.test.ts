@@ -1334,6 +1334,35 @@ describe(teardown, () => {
     expect(result.removed).toHaveLength(2);
   });
 
+  it("propagates an unexpected exception thrown by the workspace probe", async () => {
+    workspacesProbeMock.mockRejectedValue(new Error("probe crashed"));
+    const config = makeConfig({ projectDir });
+
+    await expect(teardown(config, [hostEntry("team-1")])).rejects.toThrow(/probe crashed/);
+  });
+
+  it("classifies a workspace probe exception after cancellation", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    workspacesProbeMock.mockRejectedValue(new Error("probe interrupted"));
+    const config = makeConfig({ projectDir });
+
+    const actual = await teardown(config, [hostEntry("team-1")], {
+      signal: controller.signal,
+    });
+
+    expect(actual).toMatchObject({
+      closed: [],
+      removed: [],
+      failures: [],
+      cancelled: true,
+      workspaceProbe: {
+        kind: "unavailable",
+        error: expect.objectContaining({ message: "probe interrupted" }),
+      },
+    });
+  });
+
   it("only best-effort closes a task once when duplicate entries exist and probe is unavailable", async () => {
     workspacesProbeMock.mockResolvedValue({ kind: "unavailable" });
     const config = makeConfig({
@@ -1380,7 +1409,7 @@ describe(teardown, () => {
     expect(result.removed).toStrictEqual([entry]);
   });
 
-  it("rethrows workspace_close failures after the shutdown signal fires", async () => {
+  it("returns workspace_close progress after the shutdown signal fires", async () => {
     const controller = new AbortController();
     controller.abort();
     workspacesProbeMock.mockResolvedValue({
@@ -1390,9 +1419,14 @@ describe(teardown, () => {
     workspacesCloseMock.mockRejectedValue(new Error("close interrupted"));
     const config = makeConfig({ projectDir });
 
-    await expect(
-      teardown(config, [hostEntry("team-1")], { signal: controller.signal }),
-    ).rejects.toThrow("close interrupted");
+    const actual = await teardown(config, [hostEntry("team-1")], {
+      signal: controller.signal,
+    });
+
+    expect(actual.cancelled).toBe(true);
+    expect(actual.failures).toMatchObject([
+      { step: "workspace_close", error: expect.objectContaining({ message: "close interrupted" }) },
+    ]);
   });
 
   it("records worktree_remove failures and continues to the next entry", async () => {
@@ -1416,7 +1450,7 @@ describe(teardown, () => {
     expect(result.removed).toStrictEqual([entries[1]]);
   });
 
-  it("rethrows worktree_remove failures after the shutdown signal fires", async () => {
+  it("returns worktree_remove progress after the shutdown signal fires", async () => {
     const controller = new AbortController();
     controller.abort();
     workspacesProbeMock.mockResolvedValue({
@@ -1428,9 +1462,17 @@ describe(teardown, () => {
     });
     const config = makeConfig({ projectDir });
 
-    await expect(
-      teardown(config, [hostEntry("team-1")], { signal: controller.signal }),
-    ).rejects.toThrow("remove interrupted");
+    const actual = await teardown(config, [hostEntry("team-1")], {
+      signal: controller.signal,
+    });
+
+    expect(actual.cancelled).toBe(true);
+    expect(actual.failures).toMatchObject([
+      {
+        step: "worktree_remove",
+        error: expect.objectContaining({ message: "remove interrupted" }),
+      },
+    ]);
   });
 
   it("passes force through to the underlying remove", async () => {

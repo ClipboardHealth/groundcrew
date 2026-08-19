@@ -15,6 +15,7 @@ import { workspaces } from "../lib/workspaces.ts";
 import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCapture.ts";
 import { emptyTeardownResult } from "../testHelpers/teardownResult.ts";
+import type { StartResult } from "./lifecycleResult.ts";
 import { orchestrate } from "./orchestrator.ts";
 import { setupWorkspace } from "./setupWorkspace.ts";
 
@@ -295,6 +296,17 @@ function hostEntryFor(repository: string, task: string): WorktreeEntry {
   };
 }
 
+function startedResult(): StartResult {
+  return {
+    action: "start",
+    task: { id: "team-1", canonicalId: "TEAM-1" },
+    outcome: "started",
+    state: "running",
+    resources: {},
+    problems: [],
+  };
+}
+
 interface InvocationOrderRecorder {
   mock: { invocationCallOrder: readonly number[] };
 }
@@ -367,7 +379,7 @@ describe(orchestrate, () => {
     teardownMock.mockResolvedValue(emptyTeardownResult());
     sleepMock.mockResolvedValue();
     usageMock.mockResolvedValue({});
-    setupMock.mockResolvedValue();
+    setupMock.mockResolvedValue(startedResult());
     workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set<string>() });
     findPullRequestsMock.mockResolvedValue([]);
     // Telemetry (event= lines) and teardown sub-steps are diagnostic, surfacing
@@ -1825,6 +1837,7 @@ JSON
     setupMock.mockImplementation(async (_config, _options, runOptions) => {
       setupSignal = runOptions?.signal;
       process.listeners("SIGINT").at(-1)?.("SIGINT");
+      return startedResult();
     });
 
     await orchestrate({ watch: true, dryRun: false });
@@ -1910,6 +1923,7 @@ JSON
       await new Promise<void>((resolve) => {
         releaseSetup = resolve;
       });
+      return startedResult();
     });
     const exitSpy = vi.spyOn(process, "exit").mockImplementation((): never => {
       throw new Error("__exit__");

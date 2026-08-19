@@ -80,6 +80,7 @@ export function styleDim(text: string): string {
 let logFilePath: string | undefined;
 let logRunStartByte = 0;
 let suppressedLogDepth = 0;
+let suppressedConsoleDepth = 0;
 
 export function setLogFile(filePath: string | undefined): void {
   logFilePath = filePath;
@@ -118,6 +119,16 @@ export async function withLogOutputSuppressed<T>(operation: () => Promise<T>): P
   }
 }
 
+/** Keep lifecycle JSON stdout clean while preserving diagnostics in the log file. */
+export async function withConsoleOutputSuppressed<T>(operation: () => Promise<T>): Promise<T> {
+  suppressedConsoleDepth += 1;
+  try {
+    return await operation();
+  } finally {
+    suppressedConsoleDepth -= 1;
+  }
+}
+
 function appendLogLine(line: string): void {
   if (logFilePath === undefined) {
     return;
@@ -152,7 +163,9 @@ export function log(message: string): void {
     return;
   }
   const { plain, timestamp } = timestamped(message);
-  writeOutput(`${styleDim(`[${timestamp}]`)} ${message}`);
+  if (suppressedConsoleDepth === 0) {
+    writeOutput(`${styleDim(`[${timestamp}]`)} ${message}`);
+  }
   appendLogLine(plain);
 }
 
@@ -166,7 +179,7 @@ export function debug(message: string): void {
     return;
   }
   const { plain } = timestamped(message);
-  if (verboseConsole) {
+  if (verboseConsole && suppressedConsoleDepth === 0) {
     writeOutput(styleDim(plain));
   }
   appendLogLine(plain);
@@ -195,7 +208,7 @@ export function logEvent(event: string, fields: Record<string, LogEventFieldValu
   }
   const line = parts.join(" ");
   // Structured telemetry is diagnostic: file always, console only under --verbose.
-  if (verboseConsole) {
+  if (verboseConsole && suppressedConsoleDepth === 0) {
     writeOutput(styleDim(line));
   }
   appendLogLine(line);
@@ -218,33 +231,6 @@ export function readTaskArgument(argv: string[], index: number, command: string)
     throw new Error(`crew ${command} --task: task id is required`);
   }
   return value;
-}
-
-export interface DryRunPositionals {
-  dryRun: boolean;
-  positionals: string[];
-}
-
-/**
- * Parses an argv that accepts an optional `--dry-run` flag plus free
- * positionals, rejecting any other dash-prefixed token. Shared by the
- * subcommands whose only flag is `--dry-run` so each parser stays DRY; pass the
- * command's `usage` string for the "Unknown option" error.
- */
-export function parseDryRunPositionals(argv: string[], usage: string): DryRunPositionals {
-  let dryRun = false;
-  const positionals: string[] = [];
-  for (const argument of argv) {
-    if (argument === "--dry-run") {
-      dryRun = true;
-      continue;
-    }
-    if (argument.startsWith("-")) {
-      throw new Error(`Unknown option: ${argument}\nUsage: ${usage}`);
-    }
-    positionals.push(argument);
-  }
-  return { dryRun, positionals };
 }
 
 interface SourceFilterArgs {

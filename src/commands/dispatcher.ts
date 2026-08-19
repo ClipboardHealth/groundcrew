@@ -31,6 +31,7 @@ import {
   type SkipVerdict,
   type StartVerdict,
 } from "./eligibility.ts";
+import { renderLifecycleResult } from "./lifecycleResult.ts";
 import { setupWorkspace } from "./setupWorkspace.ts";
 
 interface DispatcherDeps {
@@ -149,9 +150,10 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
             ...(issue.url === undefined ? {} : { url: issue.url }),
           },
         };
-        await (signal === undefined
+        const result = await (signal === undefined
           ? setupWorkspace(config, setupOptions)
           : setupWorkspace(config, setupOptions, { signal }));
+        renderLifecycleResult({ result, json: false });
       }
       await board.markInProgress(issue);
       logEvent("dispatch", {

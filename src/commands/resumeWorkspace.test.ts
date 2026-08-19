@@ -2,18 +2,20 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import type * as nodeFs from "node:fs";
 
 import { ensureClearance, type SafehouseCmuxIntegration } from "@clipboard-health/clearance";
-import * as agentLaunch from "../lib/agentLaunch.ts";
 import { fetchResolvedIssue } from "../lib/adapters/linear/fetch.ts";
 import { getLinearClient } from "../lib/adapters/linear/client.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
+import type { Board } from "../lib/board.ts";
 import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
 import { readRunState, recordRunState, type RunState } from "../lib/runState.ts";
 import { seedLaunchWorkspaceTrust } from "../lib/seedLaunchWorkspaceTrust.ts";
+import { canonicalShellIssue } from "../lib/testing/canonicalFixtures.ts";
 import { safehouseCmuxIntegrationFixture } from "../testHelpers/safehouseCmuxIntegration.ts";
-import { log } from "../lib/util.ts";
 import { workspaces } from "../lib/workspaces.ts";
 import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 import { resumeWorkspace, resumeWorkspaceCli } from "./resumeWorkspace.ts";
+import { captureConsoleLog } from "../testHelpers/consoleCapture.ts";
+import { acquireLifecycleLock } from "./lifecycleCommand.ts";
 
 interface NodeFsMock extends Omit<typeof nodeFs, "mkdtempSync" | "rmSync" | "writeFileSync"> {
   mkdtempSync: ReturnType<typeof vi.fn<typeof mkdtempSync>>;
@@ -124,17 +126,14 @@ const loadConfigMock = vi.mocked(loadConfig);
 const detectHostMock = vi.mocked(detectHostCapabilities);
 const readRunStateMock = vi.mocked(readRunState);
 const recordRunStateMock = vi.mocked(recordRunState);
-const logMock = vi.mocked(log);
 const getLinearClientMock = vi.mocked(getLinearClient);
 const seedLaunchWorkspaceTrustMock = vi.mocked(seedLaunchWorkspaceTrust);
-const workspacesCloseMock = vi.mocked(workspaces.close);
 const workspacesOpenMock = vi.mocked(workspaces.open);
 const workspacesProbeMock = vi.mocked(workspaces.probe);
 const findByTaskMock = vi.mocked(worktrees.findByTask);
 const createMock = vi.mocked(worktrees.create);
 
 type RecordedRunState = Parameters<typeof recordRunState>[0]["state"];
-type FetchResolvedIssueInput = Parameters<typeof fetchResolvedIssue>[0];
 type IssueLookup = (id: string) => Promise<{
   title: string;
   description?: string | undefined;
@@ -147,14 +146,6 @@ function lastRecordedRunState(): RecordedRunState {
     throw new Error("recordRunState was not called");
   }
   return input.state;
-}
-
-function firstFetchResolvedIssueInput(): FetchResolvedIssueInput {
-  const input = fetchResolvedIssueMock.mock.calls[0]?.[0];
-  if (input === undefined) {
-    throw new Error("fetchResolvedIssue was not called");
-  }
-  return input;
 }
 
 function stagedLaunchScript(): string {
@@ -210,7 +201,7 @@ function makeConfig(): ResolvedConfig {
       safehouse: { enable: [] },
       readOnlyDirs: [],
     },
-    logging: { file: "/tmp/groundcrew-test.log" },
+    logging: { file: "/tmp/groundcrew-resume-workspace-test.log" },
   };
 }
 
@@ -222,6 +213,15 @@ function makeWorktree(): WorktreeEntry {
     dir: "/work/repo-a-team-1",
     kind: "host",
   };
+}
+
+function requireAcquiredLock(
+  lock: ReturnType<typeof acquireLifecycleLock>,
+): Extract<ReturnType<typeof acquireLifecycleLock>, { kind: "acquired" }> {
+  if (lock.kind !== "acquired") {
+    throw new Error("test could not acquire lifecycle lock");
+  }
+  return lock;
 }
 
 function makeRunState(overrides: Partial<RunState> = {}): RunState {
@@ -255,6 +255,29 @@ function mockLinearIssue(): void {
   } as unknown as ReturnType<typeof getLinearClient>);
 }
 
+function resolvedLinearTask(
+  overrides: Partial<Awaited<ReturnType<typeof fetchResolvedIssue>>> = {},
+): Awaited<ReturnType<typeof fetchResolvedIssue>> {
+  return {
+    uuid: "uuid-1",
+    title: "Resolved title",
+    description: "Resolved body for repo-a",
+    repository: "repo-a",
+    agent: "claude",
+    teamId: "team-1",
+    stateType: "unstarted",
+    status: "Todo",
+    statusId: "state-todo",
+    assignee: "Alice",
+    updatedAt: "2026-01-01T00:00:00Z",
+    blockers: [],
+    hasMoreBlockers: false,
+    url: "https://linear.app/example/issue/TEAM-1",
+    priority: 0,
+    ...overrides,
+  };
+}
+
 describe(resumeWorkspace, () => {
   const config = makeConfig();
 
@@ -265,7 +288,6 @@ describe(resumeWorkspace, () => {
     readRunStateMock.mockReturnValue(makeRunState());
     findByTaskMock.mockReturnValue([makeWorktree()]);
     workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set<string>() });
-    workspacesCloseMock.mockResolvedValue({ kind: "closed" });
     workspacesOpenMock.mockResolvedValue();
     detectHostMock.mockResolvedValue(host());
     ensureClearanceMock.mockResolvedValue({
@@ -321,13 +343,9 @@ describe(resumeWorkspace, () => {
   });
 
   it("uses the source URL fetched for legacy run state without one", async () => {
-    getLinearClientMock.mockReturnValue({
-      issue: vi.fn<IssueLookup>().mockResolvedValue({
-        title: "Title",
-        description: "Body",
-        url: "https://linear.app/example/issue/TEAM-1/fetched-slug",
-      }),
-    } as unknown as ReturnType<typeof getLinearClient>);
+    fetchResolvedIssueMock.mockResolvedValue(
+      resolvedLinearTask({ url: "https://linear.app/example/issue/TEAM-1/fetched-slug" }),
+    );
 
     await resumeWorkspace(config, { task: "team-1" });
 
@@ -338,6 +356,25 @@ describe(resumeWorkspace, () => {
         url: "https://linear.app/example/issue/TEAM-1/fetched-slug",
       }),
     );
+  });
+
+  it("omits the task URL when an injected Board resolves details without one", async () => {
+    const board: Board = {
+      verify: vi.fn<Board["verify"]>(),
+      fetch: vi.fn<Board["fetch"]>(),
+      resolveOne: vi
+        .fn<Board["resolveOne"]>()
+        .mockResolvedValue(
+          canonicalShellIssue({ naturalId: "team-1", repository: "repo-a", agent: "claude" }),
+        ),
+      markInProgress: vi.fn<Board["markInProgress"]>(),
+      markInReview: vi.fn<Board["markInReview"]>(),
+      markDone: vi.fn<Board["markDone"]>(),
+    };
+
+    await resumeWorkspace(config, { task: "team-1" }, { board });
+
+    expect(workspacesOpenMock.mock.calls[0]?.[1]).not.toHaveProperty("url");
   });
 
   it("does not attach a colliding Linear URL to a URL-less task from another source", async () => {
@@ -581,42 +618,72 @@ describe(resumeWorkspace, () => {
     );
   });
 
-  it("falls back to Linear resolution when state is missing", async () => {
+  it("resolves cold resume through the configured Board", async () => {
     readRunStateMock.mockReset();
-    fetchResolvedIssueMock.mockResolvedValue({
-      uuid: "uuid-1",
-      title: "Resolved title",
-      description: "Resolved body for repo-a",
+    const resolved = canonicalShellIssue({
+      naturalId: "team-1",
+      sourceName: "todo",
       repository: "repo-a",
       agent: "claude",
-      teamId: "team-1",
-      stateType: "unstarted",
-      status: "Todo",
-      statusId: "state-todo",
-      assignee: "Alice",
-      updatedAt: "2026-01-01T00:00:00Z",
-      blockers: [],
-      hasMoreBlockers: false,
-      url: "https://linear.app/example/issue/TEAM-1",
-      priority: 0,
+      title: "Resolved title",
+      description: "Resolved body for repo-a",
+      url: "https://tasks.example/team-1",
     });
+    const board: Board = {
+      verify: vi.fn<Board["verify"]>(),
+      fetch: vi.fn<Board["fetch"]>(),
+      resolveOne: vi.fn<Board["resolveOne"]>().mockResolvedValue(resolved),
+      markInProgress: vi.fn<Board["markInProgress"]>(),
+      markInReview: vi.fn<Board["markInReview"]>(),
+      markDone: vi.fn<Board["markDone"]>(),
+    };
+    const todoConfig: ResolvedConfig = {
+      ...config,
+      sources: [
+        {
+          kind: "todo-txt",
+          name: "todo",
+          todoPath: "todo.txt",
+          tasksDir: ".tasks",
+          idPrefix: "TEAM",
+          timezone: "UTC",
+        },
+      ],
+    };
 
-    await resumeWorkspace(config, { task: "team-1" });
+    await resumeWorkspace(todoConfig, { task: "team-1", taskSourceId: "todo:team-1" }, { board });
 
-    const fetchInput = firstFetchResolvedIssueInput();
-    expect(fetchInput.config).toBe(config);
-    expect(fetchInput.task).toBe("team-1");
-    expect(fetchInput.client).toBeDefined();
+    expect(board.resolveOne).toHaveBeenCalledWith("todo:team-1");
     expect(workspacesOpenMock).toHaveBeenCalledWith(
-      config,
+      todoConfig,
       expect.objectContaining({
         name: "team-1",
-        url: "https://linear.app/example/issue/TEAM-1",
+        url: "https://tasks.example/team-1",
       }),
     );
   });
 
-  it("rejects with a clear error when state is missing and Linear is disabled", async () => {
+  it("cold-resumes an eligible Board task without inventing a URL", async () => {
+    readRunStateMock.mockReset();
+    const board: Board = {
+      verify: vi.fn<Board["verify"]>(),
+      fetch: vi.fn<Board["fetch"]>(),
+      resolveOne: vi
+        .fn<Board["resolveOne"]>()
+        .mockResolvedValue(
+          canonicalShellIssue({ naturalId: "team-1", repository: "repo-a", agent: "claude" }),
+        ),
+      markInProgress: vi.fn<Board["markInProgress"]>(),
+      markInReview: vi.fn<Board["markInReview"]>(),
+      markDone: vi.fn<Board["markDone"]>(),
+    };
+
+    await resumeWorkspace(config, { task: "team-1" }, { board });
+
+    expect(workspacesOpenMock.mock.calls[0]?.[1]).not.toHaveProperty("url");
+  });
+
+  it("rejects clearly when state is missing and no source is configured", async () => {
     readRunStateMock.mockReset();
     const noLinearConfig: ResolvedConfig = {
       ...makeConfig(),
@@ -624,9 +691,80 @@ describe(resumeWorkspace, () => {
     };
 
     await expect(resumeWorkspace(noLinearConfig, { task: "team-1" })).rejects.toThrow(
-      /no run state recorded and Linear is disabled/,
+      /no run state recorded and no task source is configured/,
     );
     expect(getLinearClientMock).not.toHaveBeenCalled();
+  });
+
+  it("builds the configured task sources for a cold resume when no Board is injected", async () => {
+    readRunStateMock.mockReset();
+    fetchResolvedIssueMock.mockResolvedValue(resolvedLinearTask());
+
+    await expect(resumeWorkspace(config, { task: "team-1" })).resolves.toMatchObject({
+      action: "resume",
+      outcome: "resumed",
+      task: { canonicalId: "linear:team-1" },
+    });
+    expect(fetchResolvedIssueMock).toHaveBeenCalled();
+  });
+
+  it("rejects a cold-resolved task that is not groundcrew eligible", async () => {
+    readRunStateMock.mockReset();
+    const board: Board = {
+      verify: vi.fn<Board["verify"]>(),
+      fetch: vi.fn<Board["fetch"]>(),
+      resolveOne: vi
+        .fn<Board["resolveOne"]>()
+        .mockResolvedValue(canonicalShellIssue({ naturalId: "team-1" })),
+      markInProgress: vi.fn<Board["markInProgress"]>(),
+      markInReview: vi.fn<Board["markInReview"]>(),
+      markDone: vi.fn<Board["markDone"]>(),
+    };
+
+    await expect(resumeWorkspace(config, { task: "team-1" }, { board })).rejects.toThrow(
+      /isn't groundcrew-eligible/,
+    );
+  });
+
+  it("rejects a cold task that the configured Board cannot resolve", async () => {
+    readRunStateMock.mockReset();
+    const board: Board = {
+      verify: vi.fn<Board["verify"]>(),
+      fetch: vi.fn<Board["fetch"]>(),
+      // oxlint-disable-next-line unicorn/no-useless-undefined -- explicitly model no task match
+      resolveOne: vi.fn<Board["resolveOne"]>().mockResolvedValue(undefined),
+      markInProgress: vi.fn<Board["markInProgress"]>(),
+      markInReview: vi.fn<Board["markInReview"]>(),
+      markDone: vi.fn<Board["markDone"]>(),
+    };
+
+    await expect(resumeWorkspace(config, { task: "team-1" }, { board })).rejects.toThrow(
+      /Task team-1 not found across configured sources/,
+    );
+  });
+
+  it("returns already-running when the matching workspace is already live", async () => {
+    readRunStateMock.mockReturnValue(makeRunState({ state: "resumed" }));
+    workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-1"]) });
+
+    await expect(resumeWorkspace(config, { task: "team-1" })).resolves.toMatchObject({
+      outcome: "already-running",
+      state: "resumed",
+      resources: { workspace: { name: "team-1" } },
+    });
+    expect(workspacesOpenMock).not.toHaveBeenCalled();
+  });
+
+  it("returns conflict for a live workspace without matching local context", async () => {
+    readRunStateMock.mockReset();
+    findByTaskMock.mockReturnValue([]);
+    workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-1"]) });
+
+    await expect(resumeWorkspace(config, { task: "team-1" })).resolves.toMatchObject({
+      outcome: "conflict",
+      state: "running",
+      problems: [{ code: "workspace-conflict" }],
+    });
   });
 
   it("wraps with bare safehouse and skips the clearance daemon when networkEgress is open", async () => {
@@ -718,10 +856,13 @@ describe(resumeWorkspace, () => {
     expect(stagedLaunchScript()).toContain("cd '/work/repo-a-team-1/services/api'");
   });
 
-  it("fails when the worktree is absent", async () => {
+  it("returns not-found when the worktree is absent", async () => {
     findByTaskMock.mockReturnValue([]);
 
-    await expect(resumeWorkspace(config, { task: "team-1" })).rejects.toThrow(/No worktree found/);
+    await expect(resumeWorkspace(config, { task: "team-1" })).resolves.toMatchObject({
+      outcome: "not-found",
+      state: "absent",
+    });
   });
 
   it("fails when recorded run state refers to an unknown agent", async () => {
@@ -732,19 +873,23 @@ describe(resumeWorkspace, () => {
     );
   });
 
-  it("fails when the workspace is already live", async () => {
+  it("returns already-running when the same workspace is already live", async () => {
     workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-1"]) });
 
-    await expect(resumeWorkspace(config, { task: "team-1" })).rejects.toThrow(/already live/);
+    await expect(resumeWorkspace(config, { task: "team-1" })).resolves.toMatchObject({
+      outcome: "already-running",
+      state: "running",
+    });
     expect(workspacesOpenMock).not.toHaveBeenCalled();
   });
 
-  it("fails closed when workspace liveness cannot be verified", async () => {
+  it("returns conflict when workspace liveness cannot be verified", async () => {
     workspacesProbeMock.mockResolvedValue({ kind: "unavailable" });
 
-    await expect(resumeWorkspace(config, { task: "team-1" })).rejects.toThrow(
-      /Could not verify whether workspace for team-1 is already live/,
-    );
+    await expect(resumeWorkspace(config, { task: "team-1" })).resolves.toMatchObject({
+      outcome: "conflict",
+      problems: [{ code: "workspace-status-unavailable" }],
+    });
     expect(workspacesOpenMock).not.toHaveBeenCalled();
     expect(recordRunStateMock).not.toHaveBeenCalled();
     expect(mkdtempMock).not.toHaveBeenCalled();
@@ -756,11 +901,40 @@ describe(resumeWorkspace, () => {
       error: new Error("cmux down"),
     });
 
-    await expect(resumeWorkspace(config, { task: "team-1" })).rejects.toThrow(
-      /cmux down.*inspect the workspace backend/,
-    );
+    await expect(resumeWorkspace(config, { task: "team-1" })).resolves.toMatchObject({
+      outcome: "conflict",
+      problems: [{ message: expect.stringContaining("cmux down") }],
+    });
     expect(workspacesOpenMock).not.toHaveBeenCalled();
     expect(recordRunStateMock).not.toHaveBeenCalled();
+  });
+
+  it("reports unknown state when liveness fails without persisted state", async () => {
+    readRunStateMock.mockReset();
+    workspacesProbeMock.mockResolvedValue({ kind: "unavailable" });
+
+    await expect(resumeWorkspace(config, { task: "team-1" })).resolves.toMatchObject({
+      outcome: "conflict",
+      state: "unknown",
+    });
+  });
+
+  it("preserves canonical identity when liveness cannot be verified", async () => {
+    readRunStateMock.mockReturnValue(
+      makeRunState({
+        completionTaskId: "linear:TEAM-1",
+        url: "https://example.test/TEAM-1",
+      }),
+    );
+    workspacesProbeMock.mockResolvedValue({ kind: "unavailable" });
+
+    await expect(resumeWorkspace(config, { task: "team-1" })).resolves.toMatchObject({
+      task: {
+        id: "team-1",
+        canonicalId: "linear:TEAM-1",
+        url: "https://example.test/TEAM-1",
+      },
+    });
   });
 
   it("removes the staged prompt directory when opening the workspace fails", async () => {
@@ -774,97 +948,33 @@ describe(resumeWorkspace, () => {
     expect(recordRunStateMock).not.toHaveBeenCalled();
   });
 
-  it("closes the live workspace when recording resumed run state fails", async () => {
+  it("preserves the workspace failure when staged prompt cleanup also fails", async () => {
+    workspacesOpenMock.mockRejectedValue(new Error("cmux failed"));
+    rmSyncMock.mockImplementationOnce(() => {
+      throw new Error("cleanup failed");
+    });
+
+    await expect(resumeWorkspace(config, { task: "team-1" })).rejects.toThrow(/cmux failed/);
+  });
+
+  it("returns partial while preserving the opened workspace when run-state write fails", async () => {
     recordRunStateMock.mockImplementation(() => {
       throw new Error("state directory is read-only");
     });
 
-    await expect(resumeWorkspace(config, { task: "team-1" })).rejects.toThrow(
-      "state directory is read-only",
-    );
-    expect(workspacesCloseMock).toHaveBeenCalledWith(config, "team-1");
-    expect(rmSyncMock).toHaveBeenCalledWith("/tmp/groundcrew-resume-team-1-x", {
-      recursive: true,
-      force: true,
+    await expect(resumeWorkspace(config, { task: "team-1" })).resolves.toMatchObject({
+      outcome: "partial",
+      state: "resumed",
+      problems: [
+        {
+          code: "state-write-failed",
+          message: expect.stringContaining("state directory is read-only"),
+        },
+      ],
     });
+    expect(workspaces.close).not.toHaveBeenCalled();
+    expect(rmSyncMock).not.toHaveBeenCalled();
     expect(createMock).not.toHaveBeenCalled();
-  });
-
-  it("surfaces the state failure when closing the resumed workspace also fails", async () => {
-    recordRunStateMock.mockImplementation(() => {
-      throw new Error("state directory is read-only");
-    });
-    workspacesCloseMock.mockRejectedValue(new Error("cmux close failed"));
-
-    await expect(resumeWorkspace(config, { task: "team-1" })).rejects.toThrow(
-      "state directory is read-only",
-    );
-    expect(logMock).toHaveBeenCalledWith(
-      "Workspace close failed during resume rollback for team-1: cmux close failed. Close it manually in the configured workspace backend.",
-    );
-  });
-
-  it("surfaces the state failure when resumed workspace closure is unavailable", async () => {
-    recordRunStateMock.mockImplementation(() => {
-      throw new Error("state directory is read-only");
-    });
-    workspacesCloseMock.mockResolvedValue({
-      kind: "unavailable",
-      error: new Error("cmux unavailable"),
-    });
-
-    await expect(resumeWorkspace(config, { task: "team-1" })).rejects.toThrow(
-      "state directory is read-only",
-    );
-    expect(logMock).toHaveBeenCalledWith(
-      "Workspace close was not confirmed during resume rollback for team-1: cmux unavailable. Close it manually in the configured workspace backend.",
-    );
-  });
-
-  it("surfaces the state failure when resumed workspace closure has no diagnostic", async () => {
-    recordRunStateMock.mockImplementation(() => {
-      throw new Error("state directory is read-only");
-    });
-    workspacesCloseMock.mockResolvedValue({ kind: "unavailable" });
-
-    await expect(resumeWorkspace(config, { task: "team-1" })).rejects.toThrow(
-      "state directory is read-only",
-    );
-    expect(logMock).toHaveBeenCalledWith(
-      "Workspace close was not confirmed during resume rollback for team-1: workspace backend unavailable. Close it manually in the configured workspace backend.",
-    );
-  });
-
-  it("preserves the state failure when launch and prompt cleanup fail", async () => {
-    const cleanup = vi.fn<() => void>(() => {
-      throw new Error("launch cleanup failed");
-    });
-    const composeAgentLaunchMock = vi
-      .spyOn(agentLaunch, "composeAgentLaunch")
-      .mockReturnValue({ command: "claude", cleanup });
-    recordRunStateMock.mockImplementation(() => {
-      throw new Error("state directory is read-only");
-    });
-    rmSyncMock.mockImplementation(() => {
-      throw new Error("prompt cleanup failed");
-    });
-
-    try {
-      await expect(resumeWorkspace(config, { task: "team-1" })).rejects.toThrow(
-        "state directory is read-only",
-      );
-    } finally {
-      composeAgentLaunchMock.mockRestore();
-    }
-
-    expect(workspacesCloseMock).toHaveBeenCalledWith(config, "team-1");
-    expect(cleanup).toHaveBeenCalledOnce();
-    expect(logMock).toHaveBeenCalledWith(
-      "Agent launch cleanup failed during resume rollback for team-1: launch cleanup failed",
-    );
-    expect(logMock).toHaveBeenCalledWith(
-      "Staged prompt cleanup failed during resume rollback for team-1: prompt cleanup failed",
-    );
   });
 });
 
@@ -889,7 +999,268 @@ describe(resumeWorkspaceCli, () => {
   });
 
   afterEach(() => {
+    process.exitCode = undefined;
     vi.resetAllMocks();
+  });
+
+  it("emits exactly one structured resume receipt in JSON mode", async () => {
+    const consoleLog = captureConsoleLog();
+
+    try {
+      const actual = await resumeWorkspaceCli(["TEAM-1", "--json"]);
+
+      expect(actual).toMatchObject({
+        action: "resume",
+        task: { id: "team-1" },
+        outcome: "resumed",
+        state: "resumed",
+        resources: {
+          repository: "repo-a",
+          branch: "dev-team-1",
+          worktreeDir: "/work/repo-a-team-1",
+          workspace: { name: "team-1" },
+          agent: "claude",
+        },
+        problems: [],
+      });
+      expect(consoleLog.calls).toHaveLength(1);
+      expect(JSON.parse(consoleLog.output())).toStrictEqual(actual);
+    } finally {
+      consoleLog.restore();
+    }
+  });
+
+  it("reconciles a live resumed workspace after cooperative cancellation", async () => {
+    workspacesProbeMock
+      .mockResolvedValueOnce({ kind: "ok", names: new Set() })
+      .mockResolvedValueOnce({ kind: "ok", names: new Set(["team-1"]) });
+    workspacesOpenMock.mockImplementationOnce(async () => {
+      process.listeners("SIGTERM").at(-1)?.("SIGTERM");
+      throw new Error("Signal: SIGTERM");
+    });
+    const consoleLog = captureConsoleLog();
+
+    try {
+      const actual = await resumeWorkspaceCli(["TEAM-1", "--json"]);
+
+      expect(actual).toMatchObject({
+        action: "resume",
+        outcome: "partial",
+        state: "resumed",
+        problems: [{ code: "cancelled", message: expect.stringContaining("SIGTERM") }],
+      });
+      expect(lastRecordedRunState()).toMatchObject({
+        task: "team-1",
+        state: "resumed",
+        resumeCount: 2,
+      });
+      expect(consoleLog.calls).toHaveLength(1);
+      expect(process.exitCode).toBe(1);
+    } finally {
+      consoleLog.restore();
+    }
+  });
+
+  it("finishes durable reconciliation when cancellation arrives after workspace open", async () => {
+    workspacesOpenMock.mockImplementationOnce(async () => {
+      process.listeners("SIGTERM").at(-1)?.("SIGTERM");
+    });
+    const consoleLog = captureConsoleLog();
+
+    try {
+      const actual = await resumeWorkspaceCli(["TEAM-1", "--json"]);
+
+      expect(actual).toMatchObject({
+        outcome: "partial",
+        state: "resumed",
+        problems: [{ code: "cancelled", message: expect.stringContaining("opened") }],
+      });
+      expect(lastRecordedRunState()).toMatchObject({ state: "resumed", resumeCount: 2 });
+    } finally {
+      consoleLog.restore();
+    }
+  });
+
+  it("reports a stable conflict when another lifecycle command owns the task", async () => {
+    const lock = requireAcquiredLock(acquireLifecycleLock({ config, task: "team-1" }));
+    const consoleLog = captureConsoleLog();
+
+    try {
+      const actual = await resumeWorkspaceCli(["TEAM-1", "--json"]);
+
+      expect(actual).toMatchObject({
+        action: "resume",
+        outcome: "conflict",
+        problems: [{ code: "lifecycle-lock-held" }],
+      });
+      expect(workspacesOpenMock).not.toHaveBeenCalled();
+      expect(JSON.parse(consoleLog.output())).toStrictEqual(actual);
+    } finally {
+      consoleLog.restore();
+      lock.release();
+    }
+  });
+
+  it("reports unknown state when a lock is held for a task without local context", async () => {
+    readRunStateMock.mockReset();
+    findByTaskMock.mockReturnValue([]);
+    const lock = requireAcquiredLock(acquireLifecycleLock({ config, task: "unknown-1" }));
+    const consoleLog = captureConsoleLog();
+
+    try {
+      await expect(resumeWorkspaceCli(["unknown-1", "--json"])).resolves.toMatchObject({
+        outcome: "conflict",
+        state: "unknown",
+      });
+    } finally {
+      consoleLog.restore();
+      lock.release();
+    }
+  });
+
+  it("reports state reconciliation failure after a cancelled live resume", async () => {
+    readRunStateMock.mockReturnValue(
+      makeRunState({
+        completionTaskId: "linear:TEAM-1",
+        url: "https://example.test/TEAM-1",
+      }),
+    );
+    workspacesProbeMock
+      .mockResolvedValueOnce({ kind: "ok", names: new Set() })
+      .mockResolvedValueOnce({ kind: "ok", names: new Set(["team-1"]) });
+    workspacesOpenMock.mockImplementationOnce(async () => {
+      process.listeners("SIGINT").at(-1)?.("SIGINT");
+      throw new Error("Signal: SIGINT");
+    });
+    recordRunStateMock.mockImplementation(() => {
+      throw new Error("disk full");
+    });
+    const consoleLog = captureConsoleLog();
+
+    try {
+      const actual = await resumeWorkspaceCli(["TEAM-1", "--json"]);
+
+      expect(actual.problems).toEqual([
+        expect.objectContaining({ code: "cancelled" }),
+        expect.objectContaining({ code: "state-write-failed" }),
+      ]);
+    } finally {
+      consoleLog.restore();
+    }
+  });
+
+  it("preserves the observed interrupted state when cancellation opens no workspace", async () => {
+    workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set() });
+    workspacesOpenMock.mockImplementationOnce(async () => {
+      process.listeners("SIGTERM").at(-1)?.("SIGTERM");
+      throw new Error("Signal: SIGTERM");
+    });
+    const consoleLog = captureConsoleLog();
+
+    try {
+      const actual = await resumeWorkspaceCli(["TEAM-1", "--json"]);
+
+      expect(actual).toMatchObject({ outcome: "partial", state: "interrupted" });
+      expect(recordRunStateMock).not.toHaveBeenCalled();
+    } finally {
+      consoleLog.restore();
+    }
+  });
+
+  it("reports unknown when cancellation loses state and observes no workspace", async () => {
+    readRunStateMock
+      .mockReturnValueOnce(makeRunState())
+      .mockReturnValueOnce(makeRunState())
+      // oxlint-disable-next-line unicorn/no-useless-undefined -- simulate state disappearing during reconciliation
+      .mockReturnValueOnce(undefined);
+    findByTaskMock
+      .mockReturnValueOnce([makeWorktree()])
+      .mockReturnValueOnce([makeWorktree()])
+      .mockReturnValueOnce([]);
+    workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set() });
+    workspacesOpenMock.mockImplementationOnce(async () => {
+      process.listeners("SIGTERM").at(-1)?.("SIGTERM");
+      throw new Error("Signal: SIGTERM");
+    });
+    const consoleLog = captureConsoleLog();
+
+    try {
+      await expect(resumeWorkspaceCli(["TEAM-1", "--json"])).resolves.toMatchObject({
+        outcome: "partial",
+        state: "unknown",
+      });
+    } finally {
+      consoleLog.restore();
+    }
+  });
+
+  it("does not invent durable context when cancellation finds only a live workspace", async () => {
+    readRunStateMock
+      .mockReturnValueOnce(makeRunState())
+      .mockReturnValueOnce(makeRunState())
+      // oxlint-disable-next-line unicorn/no-useless-undefined -- simulate state disappearing during reconciliation
+      .mockReturnValueOnce(undefined);
+    findByTaskMock
+      .mockReturnValueOnce([makeWorktree()])
+      .mockReturnValueOnce([makeWorktree()])
+      .mockReturnValueOnce([]);
+    workspacesProbeMock
+      .mockResolvedValueOnce({ kind: "ok", names: new Set() })
+      .mockResolvedValueOnce({ kind: "ok", names: new Set(["team-1"]) });
+    workspacesOpenMock.mockImplementationOnce(async () => {
+      process.listeners("SIGTERM").at(-1)?.("SIGTERM");
+      throw new Error("Signal: SIGTERM");
+    });
+    const consoleLog = captureConsoleLog();
+
+    try {
+      const actual = await resumeWorkspaceCli(["TEAM-1", "--json"]);
+
+      expect(actual).toMatchObject({
+        outcome: "partial",
+        state: "resumed",
+        resources: { workspace: { name: "team-1" } },
+      });
+      expect(recordRunStateMock).not.toHaveBeenCalled();
+    } finally {
+      consoleLog.restore();
+    }
+  });
+
+  it("reconciles a cancelled live workspace from its remaining worktree context", async () => {
+    readRunStateMock
+      .mockReturnValueOnce(makeRunState())
+      .mockReturnValueOnce(makeRunState())
+      // oxlint-disable-next-line unicorn/no-useless-undefined -- simulate state disappearing during reconciliation
+      .mockReturnValueOnce(undefined);
+    findByTaskMock
+      .mockReturnValueOnce([makeWorktree()])
+      .mockReturnValueOnce([makeWorktree()])
+      .mockReturnValueOnce([makeWorktree()]);
+    workspacesProbeMock
+      .mockResolvedValueOnce({ kind: "ok", names: new Set() })
+      .mockResolvedValueOnce({ kind: "ok", names: new Set(["team-1"]) });
+    workspacesOpenMock.mockImplementationOnce(async () => {
+      process.listeners("SIGINT").at(-1)?.("SIGINT");
+      throw new Error("Signal: SIGINT");
+    });
+    const consoleLog = captureConsoleLog();
+
+    try {
+      await resumeWorkspaceCli(["TEAM-1", "--json"]);
+
+      expect(lastRecordedRunState()).toMatchObject({
+        task: "team-1",
+        repository: "repo-a",
+        agent: "claude",
+        workspaceName: "team-1",
+        state: "resumed",
+        resumeCount: 1,
+      });
+      expect(lastRecordedRunState()).not.toHaveProperty("reason");
+    } finally {
+      consoleLog.restore();
+    }
   });
 
   it("parses the task argument", async () => {
@@ -899,6 +1270,7 @@ describe(resumeWorkspaceCli, () => {
     expect(workspacesOpenMock).toHaveBeenCalledWith(
       config,
       expect.objectContaining({ name: "team-1" }),
+      expect.any(AbortSignal),
     );
   });
 
@@ -909,6 +1281,7 @@ describe(resumeWorkspaceCli, () => {
     expect(workspacesOpenMock).toHaveBeenCalledWith(
       config,
       expect.objectContaining({ name: "team-1" }),
+      expect.any(AbortSignal),
     );
   });
 
@@ -926,6 +1299,7 @@ describe(resumeWorkspaceCli, () => {
     expect(workspacesOpenMock).toHaveBeenCalledWith(
       config,
       expect.objectContaining({ name: "team-1" }),
+      expect.any(AbortSignal),
     );
   });
 
@@ -935,6 +1309,7 @@ describe(resumeWorkspaceCli, () => {
     expect(workspacesOpenMock).toHaveBeenCalledWith(
       config,
       expect.objectContaining({ name: "team-1" }),
+      expect.any(AbortSignal),
     );
   });
 });

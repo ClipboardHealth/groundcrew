@@ -136,6 +136,7 @@ Doctor's command introspection is intentionally shallow. It reports the resolved
 ```bash
 crew start ENG-123
 crew start ENG-123 --dry-run
+crew start ENG-123 --json
 ```
 
 ## Stop
@@ -152,11 +153,23 @@ The command closes the cmux/tmux/zellij workspace if present, records local run 
 
 ## Resume
 
-`crew resume [--new] <TASK>` reopens an existing task worktree with a continuation prompt. Resume never creates a new worktree; if none exists it fails and leaves re-dispatch to `crew start <task>`.
+`crew resume [--new] <TASK>` reopens an existing task worktree with a continuation prompt. Resume never creates a new worktree; if none exists it returns `not-found` and leaves re-dispatch to `crew start <task>`.
 
-The resume prompt tells the agent to inspect git status and diff before editing, includes the previous interrupt reason when recorded, and reuses the recorded agent, repository, branch, runner, sandbox, and workspace backend. When no run-state file exists but a worktree does, resume falls back to Linear resolution for the agent and task context.
+The resume prompt tells the agent to inspect git status and diff before editing, includes the previous interrupt reason when recorded, and reuses the recorded agent, repository, branch, runner, sandbox, and workspace backend. When no run-state file exists but a worktree does, resume resolves the agent and task context through the configured Board/task-source interface.
 
 `crew resume <TASK>` reopens the agent's previous conversation in the worktree by default — the built-in `claude`, `codex`, `cursor`, `cursor-grok`, and `pi` presets ship a [`resumeArgs`](./configuration.md#resuming-the-agents-conversation) default (`--continue`, `resume --last`, `--continue`, `--continue`, `--continue`) that groundcrew appends to the agent's command. `crew resume --new <TASK>` ignores `resumeArgs` and forces a fresh conversation. Custom agents cold-start unless they set `resumeArgs`. groundcrew stores no session id — it relies on one conversation per worktree.
+
+Start, stop, resume, and task-scoped cleanup accept `--json`. See the
+[lifecycle command result contract](./lifecycle-results.md) for fields,
+outcomes, problem codes, exit behavior, cancellation, SemVer compatibility,
+and the required full `crew status --json` refresh after each mutation.
+
+## Cleanup
+
+`crew cleanup <TASK>` tears down the task's local worktrees. Without `--force`,
+it refuses live workspaces, dirty worktrees, and worktrees whose cleanliness
+cannot be verified. `--force` is an operator-only escape hatch and must not be
+used or recommended by automation.
 
 ## Open
 

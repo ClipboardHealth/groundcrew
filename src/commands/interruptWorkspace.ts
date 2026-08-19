@@ -1,12 +1,27 @@
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { readRunState, recordRunState, type RunState } from "../lib/runState.ts";
-import { errorMessage, log } from "../lib/util.ts";
+import { errorMessage } from "../lib/util.ts";
 import { workspaces, type WorkspaceInterruptResult } from "../lib/workspaces.ts";
 import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
+import {
+  executeLifecycleMutation,
+  lifecycleCancellationSuffix,
+  type LifecycleCancellationContext,
+} from "./lifecycleCommand.ts";
+import {
+  LIFECYCLE_PROBLEM_CODES,
+  type LifecycleProblem,
+  type LifecycleResources,
+  type StopResult,
+} from "./lifecycleResult.ts";
 
 export interface InterruptWorkspaceOptions {
   task: string;
   reason?: string;
+}
+
+export interface InterruptWorkspaceRunOptions {
+  signal?: AbortSignal;
 }
 
 interface InterruptSource {
@@ -19,8 +34,9 @@ interface InterruptSource {
   resumeCount: number;
 }
 
-function parseArguments(argv: string[]): InterruptWorkspaceOptions {
+function parseArguments(argv: string[]): { options: InterruptWorkspaceOptions; json: boolean } {
   let reason: string | undefined;
+  let json = false;
   const positionals: string[] = [];
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
@@ -37,6 +53,10 @@ function parseArguments(argv: string[]): InterruptWorkspaceOptions {
       index += 1;
       continue;
     }
+    if (argument === "--json") {
+      json = true;
+      continue;
+    }
     if (argument.startsWith("-")) {
       throw new Error(`Unknown option: ${argument}\nUsage: crew stop <task> [--reason <text>]`);
     }
@@ -46,7 +66,10 @@ function parseArguments(argv: string[]): InterruptWorkspaceOptions {
   if (task === undefined || task.length === 0 || extras.length > 0) {
     throw new Error("Usage: crew stop <task> [--reason <text>]");
   }
-  return { task: task.toLowerCase(), ...(reason === undefined ? {} : { reason }) };
+  return {
+    options: { task: task.toLowerCase(), ...(reason === undefined ? {} : { reason }) },
+    json,
+  };
 }
 
 function sourceFromState(state: RunState): InterruptSource {
@@ -99,65 +122,269 @@ function interruptDetail(result: WorkspaceInterruptResult): string | undefined {
   return undefined;
 }
 
-function failOnUnavailable(result: WorkspaceInterruptResult): void {
-  if (result.kind !== "unavailable") {
-    return;
-  }
-  const detail =
-    result.error === undefined ? "workspace adapter unavailable" : errorMessage(result.error);
-  throw new Error(`Could not interrupt workspace: ${detail}`);
-}
-
 export async function interruptWorkspace(
   config: ResolvedConfig,
   options: InterruptWorkspaceOptions,
-): Promise<void> {
+  runOptions: InterruptWorkspaceRunOptions = {},
+): Promise<StopResult> {
   const task = options.task.toLowerCase();
   const state = readRunState(config, task);
   const [entry] = worktrees.findByTask(config, task);
   const source = resolveInterruptSource({ config, task, state, entry });
   if (source === undefined) {
-    await interruptOrphanWorkspace(config, task);
-    return;
+    return await interruptOrphanWorkspace(config, task, runOptions.signal);
   }
-  const result = await workspaces.interrupt(config, source.workspaceName);
-  failOnUnavailable(result);
-  const detail = interruptDetail(result);
-  recordRunState({
-    config,
-    state: {
-      task,
-      repository: source.repository,
-      agent: source.agent,
-      worktreeDir: source.worktreeDir,
-      branchName: source.branchName,
-      workspaceName: source.workspaceName,
-      state: "interrupted",
-      resumeCount: source.resumeCount,
-      ...(options.reason === undefined ? {} : { reason: options.reason }),
-      ...(detail === undefined ? {} : { detail }),
-    },
-  });
-  log(`Interrupted ${task}; worktree preserved at ${source.worktreeDir}`);
-  log(`Next: crew status ${task}`);
+  const result =
+    runOptions.signal === undefined
+      ? await workspaces.interrupt(config, source.workspaceName)
+      : await workspaces.interrupt(config, source.workspaceName, runOptions.signal);
+  switch (result.kind) {
+    case "unavailable": {
+      const detail =
+        result.error === undefined ? "workspace adapter unavailable" : errorMessage(result.error);
+      return stopResult({
+        task,
+        state,
+        source,
+        outcome: "conflict",
+        lifecycleState: state?.state ?? "unknown",
+        problems: [
+          {
+            code: LIFECYCLE_PROBLEM_CODES.workspaceStatusUnavailable,
+            message: `Could not interrupt workspace: ${detail}`,
+          },
+        ],
+      });
+    }
+    case "interrupted":
+    case "missing": {
+      const detail = interruptDetail(result);
+      const problem = recordInterruptedState({ config, task, source, options, detail });
+      const outcome =
+        problem === undefined
+          ? result.kind === "interrupted"
+            ? "stopped"
+            : state?.state === "interrupted"
+              ? "already-stopped"
+              : "workspace-missing"
+          : "partial";
+      return stopResult({
+        task,
+        state,
+        source,
+        outcome,
+        lifecycleState: "interrupted",
+        problems: problem === undefined ? [] : [problem],
+      });
+    }
+    /* v8 ignore next 2 @preserve -- WorkspaceInterruptResult is exhaustively discriminated above */
+    default:
+      throw new Error("Unexpected workspace interrupt result");
+  }
 }
 
 // Orphan path: a tmux session/window for `task` exists but neither a run-state
 // record nor a worktree does, so there's no lifecycle to record `interrupted`
 // against — just close the workspace. Reported in `crew status` under
 // "Orphaned sessions" and pointed at `crew stop`.
-async function interruptOrphanWorkspace(config: ResolvedConfig, task: string): Promise<void> {
-  const result = await workspaces.interrupt(config, task);
-  failOnUnavailable(result);
-  if (result.kind === "missing") {
-    throw new Error(
-      `No run state, worktree, or live workspace found for ${task}; nothing to interrupt.`,
-    );
+async function interruptOrphanWorkspace(
+  config: ResolvedConfig,
+  task: string,
+  signal: AbortSignal | undefined,
+): Promise<StopResult> {
+  const result =
+    signal === undefined
+      ? await workspaces.interrupt(config, task)
+      : await workspaces.interrupt(config, task, signal);
+  switch (result.kind) {
+    case "unavailable": {
+      const detail =
+        result.error === undefined ? "workspace adapter unavailable" : errorMessage(result.error);
+      return {
+        action: "stop",
+        task: { id: task },
+        outcome: "conflict",
+        state: "unknown",
+        resources: {},
+        problems: [
+          {
+            code: LIFECYCLE_PROBLEM_CODES.workspaceStatusUnavailable,
+            message: `Could not interrupt workspace: ${detail}`,
+          },
+        ],
+      };
+    }
+    case "missing":
+      return {
+        action: "stop",
+        task: { id: task },
+        outcome: "not-found",
+        state: "absent",
+        resources: {},
+        problems: [],
+      };
+    case "interrupted":
+      return {
+        action: "stop",
+        task: { id: task },
+        outcome: "stopped",
+        state: "absent",
+        resources: { workspace: { name: task } },
+        problems: [],
+      };
+    /* v8 ignore next 2 @preserve -- WorkspaceInterruptResult is exhaustively discriminated above */
+    default:
+      throw new Error("Unexpected workspace interrupt result");
   }
-  log(`Closed orphaned workspace ${task}`);
 }
 
-export async function interruptWorkspaceCli(argv: string[]): Promise<void> {
+export async function interruptWorkspaceCli(argv: string[]): Promise<StopResult> {
+  const parsed = parseArguments(argv);
   const config = await loadConfig();
-  await interruptWorkspace(config, parseArguments(argv));
+  return await executeLifecycleMutation({
+    config,
+    task: parsed.options.task,
+    json: parsed.json,
+    conflictResult: () => stopLockConflictResult({ config, task: parsed.options.task }),
+    operation: async ({ signal }) => await interruptWorkspace(config, parsed.options, { signal }),
+    cancelledResult: async (context) =>
+      await cancelledStopResult({ config, task: parsed.options.task, context }),
+  });
+}
+
+function recordInterruptedState(arguments_: {
+  config: ResolvedConfig;
+  task: string;
+  source: InterruptSource;
+  options: InterruptWorkspaceOptions;
+  detail: string | undefined;
+}): LifecycleProblem | undefined {
+  const { config, task, source, options, detail } = arguments_;
+  try {
+    recordRunState({
+      config,
+      state: {
+        task,
+        repository: source.repository,
+        agent: source.agent,
+        worktreeDir: source.worktreeDir,
+        branchName: source.branchName,
+        workspaceName: source.workspaceName,
+        state: "interrupted",
+        resumeCount: source.resumeCount,
+        ...(options.reason === undefined ? {} : { reason: options.reason }),
+        ...(detail === undefined ? {} : { detail }),
+      },
+    });
+    return undefined;
+  } catch (error) {
+    return {
+      code: LIFECYCLE_PROBLEM_CODES.stateWriteFailed,
+      message: `Workspace was stopped but run state could not be updated: ${errorMessage(error)}`,
+    };
+  }
+}
+
+function stopResult(arguments_: {
+  task: string;
+  state: RunState | undefined;
+  source: InterruptSource;
+  outcome: StopResult["outcome"];
+  lifecycleState: StopResult["state"];
+  problems: LifecycleProblem[];
+}): StopResult {
+  return {
+    action: "stop",
+    task: taskIdentity(arguments_.task, arguments_.state),
+    outcome: arguments_.outcome,
+    state: arguments_.lifecycleState,
+    resources: resourcesFromSource(arguments_.source),
+    problems: arguments_.problems,
+  };
+}
+
+function taskIdentity(task: string, state: RunState | undefined): StopResult["task"] {
+  return {
+    id: task,
+    ...(state?.completionTaskId === undefined ? {} : { canonicalId: state.completionTaskId }),
+    ...(state?.url === undefined ? {} : { url: state.url }),
+  };
+}
+
+function resourcesFromSource(source: InterruptSource | undefined): LifecycleResources {
+  if (source === undefined) {
+    return {};
+  }
+  return {
+    repository: source.repository,
+    branch: source.branchName,
+    worktreeDir: source.worktreeDir,
+    workspace: { name: source.workspaceName },
+    agent: source.agent,
+  };
+}
+
+function stopLockConflictResult(arguments_: { config: ResolvedConfig; task: string }): StopResult {
+  const state = readRunState(arguments_.config, arguments_.task);
+  const [entry] = worktrees.findByTask(arguments_.config, arguments_.task);
+  const source = resolveInterruptSource({
+    config: arguments_.config,
+    task: arguments_.task,
+    state,
+    entry,
+  });
+  return {
+    action: "stop",
+    task: taskIdentity(arguments_.task, state),
+    outcome: "conflict",
+    state: state?.state ?? "unknown",
+    resources: resourcesFromSource(source),
+    problems: [
+      {
+        code: LIFECYCLE_PROBLEM_CODES.lifecycleLockHeld,
+        message: "Another lifecycle mutation owns this task.",
+      },
+    ],
+  };
+}
+
+async function cancelledStopResult(arguments_: {
+  config: ResolvedConfig;
+  task: string;
+  context: LifecycleCancellationContext;
+}): Promise<StopResult> {
+  const state = readRunState(arguments_.config, arguments_.task);
+  const [entry] = worktrees.findByTask(arguments_.config, arguments_.task);
+  const source = resolveInterruptSource({
+    config: arguments_.config,
+    task: arguments_.task,
+    state,
+    entry,
+  });
+  const probe = await workspaces.probe(arguments_.config);
+  const workspaceAbsent = probe.kind === "ok" && !probe.names.has(arguments_.task);
+  let stateProblem: LifecycleProblem | undefined;
+  if (workspaceAbsent && source !== undefined) {
+    stateProblem = recordInterruptedState({
+      config: arguments_.config,
+      task: arguments_.task,
+      source,
+      options: { task: arguments_.task },
+      detail: "workspace missing after cancellation",
+    });
+  }
+  return {
+    action: "stop",
+    task: taskIdentity(arguments_.task, state),
+    outcome: "partial",
+    state: workspaceAbsent ? "interrupted" : (state?.state ?? "unknown"),
+    resources: resourcesFromSource(source),
+    problems: [
+      {
+        code: LIFECYCLE_PROBLEM_CODES.cancelled,
+        message: `Stop cancelled${lifecycleCancellationSuffix(arguments_.context)}.`,
+      },
+      ...(stateProblem === undefined ? [] : [stateProblem]),
+    ],
+  };
 }

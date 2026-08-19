@@ -926,6 +926,8 @@ export interface TeardownResult {
   /** Per-entry failures; teardown continues past them. */
   failures: TeardownFailure[];
   workspaceProbe: WorkspaceProbe;
+  /** Present only when cooperative cancellation stopped the remaining teardown steps. */
+  cancelled?: true;
 }
 
 async function closeWorkspaceForTeardown(
@@ -946,6 +948,44 @@ function shouldCloseWorkspaceForTeardown(
   return !closedTasks.has(task) && (workspaceProbe.kind === "unavailable" || liveNames.has(task));
 }
 
+async function teardownEntry(arguments_: {
+  config: ResolvedConfig;
+  entry: WorktreeEntry;
+  force: boolean;
+  signal: AbortSignal | undefined;
+  workspaceProbe: WorkspaceProbe;
+  liveNames: ReadonlySet<string>;
+  closedTasks: Set<string>;
+  result: TeardownResult;
+}): Promise<void> {
+  const { config, entry, force, signal, workspaceProbe, liveNames, closedTasks, result } =
+    arguments_;
+  if (shouldCloseWorkspaceForTeardown(entry.task, workspaceProbe, liveNames, closedTasks)) {
+    try {
+      const closed = await closeWorkspaceForTeardown(config, entry.task, signal);
+      if (closed) {
+        result.closed.push(entry.task);
+      }
+    } catch (error) {
+      result.failures.push({ entry, step: "workspace_close", error });
+      if (signal?.aborted === true) {
+        result.cancelled = true;
+        return;
+      }
+    }
+    closedTasks.add(entry.task);
+  }
+  try {
+    await remove(config, entry, { force, ...signalProperty(signal) });
+    result.removed.push(entry);
+  } catch (error) {
+    result.failures.push({ entry, step: "worktree_remove", error });
+    if (signal?.aborted === true) {
+      result.cancelled = true;
+    }
+  }
+}
+
 // A flaky cmux/tmux must not abort the batch — otherwise every on-disk
 // worktree gets stranded. The probe verdict is captured on the result and
 // removal proceeds with no live-workspace knowledge (so no close attempts).
@@ -963,7 +1003,21 @@ async function teardown(
     };
   }
   const force = options?.force ?? false;
-  const workspaceProbe = await workspaces.probe(config, options?.signal);
+  let workspaceProbe: WorkspaceProbe;
+  try {
+    workspaceProbe = await workspaces.probe(config, options?.signal);
+  } catch (error) {
+    if (options?.signal?.aborted !== true) {
+      throw error;
+    }
+    return {
+      closed: [],
+      removed: [],
+      failures: [],
+      workspaceProbe: { kind: "unavailable", error },
+      cancelled: true,
+    };
+  }
   const liveNames = workspaceProbe.kind === "ok" ? workspaceProbe.names : new Set<string>();
   const closedTasks = new Set<string>();
   const result: TeardownResult = {
@@ -974,30 +1028,19 @@ async function teardown(
   };
 
   for (const entry of entries) {
-    if (shouldCloseWorkspaceForTeardown(entry.task, workspaceProbe, liveNames, closedTasks)) {
-      try {
-        // oxlint-disable-next-line no-await-in-loop -- teardown is intentionally sequential per task
-        const closed = await closeWorkspaceForTeardown(config, entry.task, options?.signal);
-        if (closed) {
-          result.closed.push(entry.task);
-        }
-      } catch (error) {
-        if (options?.signal?.aborted === true) {
-          throw error;
-        }
-        result.failures.push({ entry, step: "workspace_close", error });
-      }
-      closedTasks.add(entry.task);
-    }
-    try {
-      // oxlint-disable-next-line no-await-in-loop -- one worktree at a time avoids racing on git
-      await remove(config, entry, { force, ...signalProperty(options?.signal) });
-      result.removed.push(entry);
-    } catch (error) {
-      if (options?.signal?.aborted === true) {
-        throw error;
-      }
-      result.failures.push({ entry, step: "worktree_remove", error });
+    // oxlint-disable-next-line no-await-in-loop -- one worktree at a time avoids racing on git
+    await teardownEntry({
+      config,
+      entry,
+      force,
+      signal: options?.signal,
+      workspaceProbe,
+      liveNames,
+      closedTasks,
+      result,
+    });
+    if (result.cancelled === true) {
+      break;
     }
   }
 

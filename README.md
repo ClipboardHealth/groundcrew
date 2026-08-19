@@ -114,18 +114,20 @@ crew task done <TASK> [--allow-dirty]                    # mark a no-PR task don
 crew task validate [<source>]                            # validate task content
 crew status [<TASK>] [--json [--local-only]]           # inspect current state, or emit it as JSON
 crew run [--watch]                                       # one-shot or --watch forever
-crew start <TASK>                                      # provision + launch one task now
-crew stop <TASK> [--reason <text>]                     # stop workspace, keep worktree
-crew resume [--new] <TASK>                             # reopen a paused task (--new: fresh conversation)
+crew start <TASK> [--json]                             # provision + launch one task now
+crew stop <TASK> [--reason <text>] [--json]            # stop workspace, keep worktree
+crew resume [--new] <TASK> [--json]                    # reopen a paused task (--new: fresh conversation)
 crew open <pr> | --branch <name> [--repo <owner/repo>] # iterate on an existing PR or branch
          [--prompt <text> | --prompt-file <path>] [--task <id>] [--dry-run]
-crew cleanup [--force] <TASK>                          # tear down every worktree for a task
+crew cleanup [--force] <TASK> [--json]                 # tear down every worktree for a task
 crew cleanup [--force] --all                           # tear down every idle worktree (no live workspace)
 crew upgrade [<version>]                                 # reinstall crew globally through npm
 crew completions <bash|zsh|fish>                        # print a shell completion script
 ```
 
-See [command details](./docs/commands.md) for status output, doctor behavior, and the stop/resume workflow.
+See [command details](./docs/commands.md) for status output, doctor behavior,
+and the stop/resume workflow. Automation should also follow the stable
+[lifecycle JSON result contract](./docs/lifecycle-results.md).
 
 ### Status snapshots for external monitors
 

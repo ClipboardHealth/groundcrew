@@ -16,6 +16,7 @@ import {
   sleep,
   styleDim,
   styleWarning,
+  withConsoleOutputSuppressed,
   withLogOutputSuppressed,
 } from "./util.ts";
 
@@ -221,6 +222,32 @@ describe(withLogOutputSuppressed, () => {
     expect(consoleLog.output()).toMatch(/visible/);
     expect(consoleLog.output()).toMatch(/event=visible-event outcome=ok/);
     expect(consoleLog.output()).not.toMatch(/hidden/);
+    consoleLog.restore();
+  });
+});
+
+describe(withConsoleOutputSuppressed, () => {
+  afterEach(() => {
+    setVerbose(false);
+  });
+
+  it("suppresses every diagnostic tier on stdout and restores them afterwards", async () => {
+    const consoleLog = captureConsoleLog();
+    setVerbose(true);
+
+    await withConsoleOutputSuppressed(async () => {
+      log("hidden-log");
+      debug("hidden-debug");
+      logEvent("hidden-event", {});
+    });
+    log("visible-log");
+    debug("visible-debug");
+    logEvent("visible-event", {});
+
+    expect(consoleLog.output()).not.toContain("hidden");
+    expect(consoleLog.output()).toContain("visible-log");
+    expect(consoleLog.output()).toContain("visible-debug");
+    expect(consoleLog.output()).toContain("event=visible-event");
     consoleLog.restore();
   });
 });

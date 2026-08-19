@@ -1,3 +1,4 @@
+/* oxlint-disable eslint/max-lines -- lifecycle variants share this command's existing setup harness */
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import type * as nodeFs from "node:fs";
 import path from "node:path";
@@ -5,7 +6,7 @@ import { ensureClearance, type SafehouseCmuxIntegration } from "@clipboard-healt
 import type { RunCommandOptions } from "../lib/commandRunner.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
-import { recordRunState } from "../lib/runState.ts";
+import { readRunState, recordRunState, type RunState } from "../lib/runState.ts";
 import { canonicalLinearIssue, canonicalShellIssue } from "../lib/testing/canonicalFixtures.ts";
 import { createBoard, type Board } from "../lib/board.ts";
 import type * as boardModule from "../lib/board.ts";
@@ -17,6 +18,7 @@ import { debug, log } from "../lib/util.ts";
 import { WorktreeAlreadyExistsError, type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 import { deleteEnvironmentVariable, setEnvironmentVariable } from "../testHelpers/env.ts";
 import { safehouseCmuxIntegrationFixture } from "../testHelpers/safehouseCmuxIntegration.ts";
+import { captureConsoleLog } from "../testHelpers/consoleCapture.ts";
 import { emptyTeardownResult } from "../testHelpers/teardownResult.ts";
 import {
   setupWorkspace,
@@ -24,6 +26,7 @@ import {
   type SetupWorkspaceOptions,
   type TaskDetails,
 } from "./setupWorkspace.ts";
+import { acquireLifecycleLock } from "./lifecycleCommand.ts";
 
 interface NodeFsMock extends Omit<
   typeof nodeFs,
@@ -83,7 +86,11 @@ vi.mock(import("../lib/commandRunner.ts"), async (importOriginal) => {
 });
 vi.mock(import("../lib/runState.ts"), async (importOriginal) => {
   const actual = await importOriginal();
-  return { ...actual, recordRunState: vi.fn<typeof recordRunState>() };
+  return {
+    ...actual,
+    readRunState: vi.fn<typeof readRunState>(),
+    recordRunState: vi.fn<typeof recordRunState>(),
+  };
 });
 vi.mock(import("../lib/util.ts"), async (importOriginal) => {
   const actual = await importOriginal<typeof utilModule>();
@@ -143,6 +150,7 @@ const detectHostMock = vi.mocked(detectHostCapabilities);
 const ensureClearanceMock = vi.mocked(ensureClearance);
 const logMock = vi.mocked(log);
 const debugMock = vi.mocked(debug);
+const readRunStateMock = vi.mocked(readRunState);
 const recordRunStateMock = vi.mocked(recordRunState);
 const createMock = vi.mocked(worktrees.create);
 const teardownMock = vi.mocked(worktrees.teardown);
@@ -184,6 +192,15 @@ function hostEntry(): WorktreeEntry {
   };
 }
 
+function requireAcquiredLock(
+  lock: ReturnType<typeof acquireLifecycleLock>,
+): Extract<ReturnType<typeof acquireLifecycleLock>, { kind: "acquired" }> {
+  if (lock.kind !== "acquired") {
+    throw new Error("test could not acquire lifecycle lock");
+  }
+  return lock;
+}
+
 function makeConfig(overrides: Partial<ResolvedConfig["agents"]> = {}): ResolvedConfig {
   return {
     sources: [],
@@ -217,7 +234,7 @@ function makeConfig(overrides: Partial<ResolvedConfig["agents"]> = {}): Resolved
       safehouse: { enable: [] },
       readOnlyDirs: [],
     },
-    logging: { file: "/tmp/groundcrew-test.log" },
+    logging: { file: "/tmp/groundcrew-setup-workspace-test.log" },
   };
 }
 
@@ -1311,35 +1328,40 @@ describe(setupWorkspace, () => {
     });
   });
 
-  it("logs the tmux access hint after launch so the user knows how to reach the workspace", async () => {
+  it("returns the tmux access hint after launch so the renderer can show it", async () => {
     mockTmuxHost();
     const config = makeConfig();
 
-    await setupWorkspace(config, {
+    const actual = await setupWorkspace(config, {
       task: "team-1",
       repository: "repo-a",
       agent: "claude",
       details: { title: "Test Title", description: "Body" },
     });
 
-    expect(debugMock).toHaveBeenCalledWith("  Attach:   tmux attach -t groundcrew:team-1");
+    expect(actual.resources.workspace?.accessCommand).toBe("tmux attach -t groundcrew:team-1");
   });
 
-  it("collapses the launch into a single success line naming agent and worktree", async () => {
+  it("returns the launch resources without printing final result text", async () => {
     mockTmuxHost();
     const config = makeConfig();
 
-    await setupWorkspace(config, {
+    const actual = await setupWorkspace(config, {
       task: "team-1",
       repository: "repo-a",
       agent: "claude",
       details: { title: "Test Title", description: "Body" },
     });
 
-    expect(logMock).toHaveBeenCalledWith('✓ "team-1" launched (claude)  worktree repo-a-team-1');
-    // The verbose-only detail lines must not reach the important (log) tier.
-    expect(logMock).not.toHaveBeenCalledWith(expect.stringMatching(/^ {2}(?:Worktree|Branch):/));
-    expect(logMock).not.toHaveBeenCalledWith("Opening workspace...");
+    expect(actual).toMatchObject({
+      outcome: "started",
+      resources: {
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-1",
+        branch: "dev-team-1",
+      },
+    });
+    expect(logMock).not.toHaveBeenCalledWith(expect.stringContaining("launched"));
   });
 
   it("omits the access hint when the backend has no external hint (cmux)", async () => {
@@ -1805,7 +1827,7 @@ describe(setupWorkspace, () => {
         agent: "claude",
         details: { title: "Test Title", description: "Body" },
       }),
-    ).resolves.toBeUndefined();
+    ).resolves.toMatchObject({ outcome: "started" });
 
     expect(runCommandMock).not.toHaveBeenCalledWith(
       "cmux",
@@ -2063,7 +2085,214 @@ describe(setupWorkspaceCli, () => {
   });
 
   afterEach(() => {
+    process.exitCode = undefined;
     vi.resetAllMocks();
+  });
+
+  it("returns and emits a single structured start receipt in JSON mode", async () => {
+    const consoleLog = captureConsoleLog();
+
+    try {
+      const actual = await setupWorkspaceCli("team-1", { json: true });
+
+      expect(actual).toMatchObject({
+        action: "start",
+        task: { id: "team-1", canonicalId: "linear:team-1" },
+        outcome: "started",
+        state: "running",
+        resources: {
+          repository: "repo-a",
+          branch: "dev-team-1",
+          worktreeDir: "/work/repo-a-team-1",
+          workspace: { name: "team-1" },
+        },
+        problems: [],
+      });
+      expect(consoleLog.calls).toHaveLength(1);
+      expect(JSON.parse(consoleLog.output())).toStrictEqual(actual);
+    } finally {
+      consoleLog.restore();
+    }
+  });
+
+  it("reports task-source writeback failure as partial after local launch", async () => {
+    defaultBoard.markInProgress.mockRejectedValueOnce(new Error("source unavailable"));
+    const consoleLog = captureConsoleLog();
+
+    try {
+      const actual = await setupWorkspaceCli("team-1", { json: true });
+
+      expect(actual).toMatchObject({
+        action: "start",
+        outcome: "partial",
+        state: "running",
+        problems: [
+          {
+            code: "task-status-update-failed",
+            message: expect.stringContaining("source unavailable"),
+          },
+        ],
+      });
+      expect(createMock).toHaveBeenCalledTimes(1);
+      expect(process.exitCode).toBe(1);
+      expect(consoleLog.calls).toHaveLength(1);
+    } finally {
+      consoleLog.restore();
+    }
+  });
+
+  it("returns a stable conflict receipt when another lifecycle command owns the task", async () => {
+    const lock = requireAcquiredLock(
+      acquireLifecycleLock({ config: makeConfig(), task: "team-1" }),
+    );
+    const consoleLog = captureConsoleLog();
+
+    try {
+      const actual = await setupWorkspaceCli("team-1", { json: true });
+
+      expect(actual).toMatchObject({
+        action: "start",
+        outcome: "conflict",
+        problems: [{ code: "lifecycle-lock-held" }],
+      });
+      expect(createBoardMock).not.toHaveBeenCalled();
+      expect(consoleLog.calls).toHaveLength(1);
+      expect(process.exitCode).toBe(1);
+    } finally {
+      consoleLog.restore();
+      lock.release();
+    }
+  });
+
+  it("returns already-running for the same live task", async () => {
+    findByTaskMock.mockReturnValue([hostEntry()]);
+    runCommandMock.mockImplementation((command, arguments_) => {
+      // oxlint-disable-next-line vitest/no-conditional-in-test -- mock routes the workspace inventory command
+      if (command === "cmux" && arguments_.includes("list-workspaces")) {
+        return JSON.stringify({
+          workspaces: [
+            {
+              title: "Task",
+              ref: "workspace:1",
+              description: "groundcrew:team-1",
+            },
+          ],
+        });
+      }
+      return JSON.stringify({ ref: "workspace:1" });
+    });
+
+    const actual = await setupWorkspaceCli("team-1", { json: true });
+
+    expect(actual).toMatchObject({ outcome: "already-running", state: "running" });
+    expect(createMock).not.toHaveBeenCalled();
+    expect(defaultBoard.markInProgress).not.toHaveBeenCalled();
+  });
+
+  it("returns conflict for a stale task worktree", async () => {
+    findByTaskMock.mockReturnValue([hostEntry()]);
+
+    const actual = await setupWorkspaceCli("team-1", { json: true });
+
+    expect(actual).toMatchObject({
+      outcome: "conflict",
+      problems: [{ code: "worktree-conflict" }],
+    });
+    expect(createMock).not.toHaveBeenCalled();
+  });
+
+  it("returns conflict for a live workspace without matching local context", async () => {
+    findByTaskMock.mockReturnValue([]);
+    runCommandMock.mockImplementation((command, arguments_) => {
+      // oxlint-disable-next-line vitest/no-conditional-in-test -- mock routes the workspace inventory command
+      if (command === "cmux" && arguments_.includes("list-workspaces")) {
+        return JSON.stringify({
+          workspaces: [{ title: "Task", ref: "workspace:1", description: "groundcrew:team-1" }],
+        });
+      }
+      return JSON.stringify({ ref: "workspace:1" });
+    });
+
+    const actual = await setupWorkspaceCli("team-1", { json: true });
+
+    expect(actual).toMatchObject({
+      outcome: "conflict",
+      state: "running",
+      problems: [{ code: "workspace-conflict" }],
+    });
+  });
+
+  it("uses persisted state as the best observed context for an already-live task", async () => {
+    const persisted: RunState = {
+      task: "team-1",
+      repository: "repo-a",
+      agent: "claude",
+      worktreeDir: "/persisted/team-1",
+      branchName: "persisted-branch",
+      workspaceName: "team-1",
+      state: "resumed",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      resumeCount: 2,
+    };
+    readRunStateMock.mockReturnValue(persisted);
+    findByTaskMock.mockReturnValue([hostEntry()]);
+    runCommandMock.mockImplementation((command, arguments_) => {
+      // oxlint-disable-next-line vitest/no-conditional-in-test -- mock routes the workspace inventory command
+      if (command === "cmux" && arguments_.includes("list-workspaces")) {
+        return JSON.stringify({
+          workspaces: [{ title: "Task", ref: "workspace:1", description: "groundcrew:team-1" }],
+        });
+      }
+      return JSON.stringify({ ref: "workspace:1" });
+    });
+
+    const actual = await setupWorkspaceCli("team-1", { json: true });
+
+    expect(actual).toMatchObject({
+      outcome: "already-running",
+      state: "resumed",
+      resources: {
+        repository: "repo-a",
+        branch: "persisted-branch",
+        worktreeDir: "/persisted/team-1",
+        workspace: { name: "team-1" },
+        agent: "claude",
+      },
+    });
+  });
+
+  it("falls back to the first worktree when persisted repository context has no match", async () => {
+    readRunStateMock.mockReturnValue({
+      task: "team-1",
+      repository: "repo-b",
+      agent: "claude",
+      worktreeDir: "/persisted/team-1",
+      branchName: "persisted-branch",
+      workspaceName: "team-1",
+      state: "interrupted",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      resumeCount: 0,
+    });
+    findByTaskMock.mockReturnValue([hostEntry()]);
+
+    await expect(setupWorkspaceCli("team-1", { json: true })).resolves.toMatchObject({
+      outcome: "conflict",
+      resources: { repository: "repo-b" },
+    });
+  });
+
+  it("returns conflict when existing workspace status cannot be verified", async () => {
+    mockCmuxFailure();
+
+    const actual = await setupWorkspaceCli("team-1", { json: true });
+
+    expect(actual).toMatchObject({
+      outcome: "conflict",
+      problems: [{ code: "workspace-status-unavailable" }],
+    });
+    expect(createMock).not.toHaveBeenCalled();
   });
 
   it("resolves the task via Board and provisions the workspace", async () => {
@@ -2074,10 +2303,12 @@ describe(setupWorkspaceCli, () => {
     expect(createMock).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ repository: "repo-a", task: "team-1" }),
+      expect.any(AbortSignal),
     );
     expect(runCommandMock).toHaveBeenCalledWith(
       "cmux",
       expect.arrayContaining(["set-status", "agent", "claude"]),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
   });
 
@@ -2127,13 +2358,12 @@ describe(setupWorkspaceCli, () => {
   });
 
   it("does not provision or mark In Progress in dry-run mode", async () => {
-    await setupWorkspaceCli("team-1", { dryRun: true });
+    const actual = await setupWorkspaceCli("team-1", { dryRun: true });
 
     expect(createMock).not.toHaveBeenCalled();
     expect(runCommandMock).not.toHaveBeenCalled();
     expect(defaultBoard.markInProgress).not.toHaveBeenCalled();
-    const logged = logMock.mock.calls.map(([message]) => message).join("\n");
-    expect(logged).toContain("[dry-run] Would launch team-1 in repo-a (claude)");
+    expect(actual).toMatchObject({ outcome: "dry-run" });
   });
 
   it("reports skipped worktree preparation in dry-run mode", async () => {
@@ -2148,10 +2378,9 @@ describe(setupWorkspaceCli, () => {
       ),
     );
 
-    await setupWorkspaceCli("team-1", { dryRun: true });
+    const actual = await setupWorkspaceCli("team-1", { dryRun: true });
 
-    const logged = logMock.mock.calls.map(([message]) => message).join("\n");
-    expect(logged).toContain("prepareWorktree skipped");
+    expect(actual.resources.worktreePreparation).toBe("skip");
   });
 
   it("does not mark the task In Progress when workspace setup fails", async () => {
@@ -2160,6 +2389,53 @@ describe(setupWorkspaceCli, () => {
     await expect(setupWorkspaceCli("team-1")).rejects.toThrow(/worktree failed/);
 
     expect(defaultBoard.markInProgress).not.toHaveBeenCalled();
+  });
+
+  it("returns a partial receipt when cooperative cancellation interrupts provisioning", async () => {
+    createMock.mockImplementationOnce(async () => {
+      process.listeners("SIGTERM").at(-1)?.("SIGTERM");
+      throw new Error("Signal: SIGTERM");
+    });
+    const consoleLog = captureConsoleLog();
+
+    try {
+      const actual = await setupWorkspaceCli("team-1", { json: true });
+
+      expect(actual).toMatchObject({
+        action: "start",
+        outcome: "partial",
+        problems: [{ code: "cancelled", message: expect.stringContaining("SIGTERM") }],
+      });
+      expect(consoleLog.calls).toHaveLength(1);
+      expect(process.exitCode).toBe(1);
+    } finally {
+      consoleLog.restore();
+    }
+  });
+
+  it("reports a live workspace observed during cancellation reconciliation", async () => {
+    runCommandMock.mockReturnValueOnce(JSON.stringify({ workspaces: [] })).mockReturnValue(
+      JSON.stringify({
+        workspaces: [{ title: "Task", ref: "workspace:1", description: "groundcrew:team-1" }],
+      }),
+    );
+    createMock.mockImplementationOnce(async () => {
+      process.listeners("SIGINT").at(-1)?.("SIGINT");
+      throw new Error("Signal: SIGINT");
+    });
+    const consoleLog = captureConsoleLog();
+
+    try {
+      const actual = await setupWorkspaceCli("team-1", { json: true });
+
+      expect(actual).toMatchObject({
+        outcome: "partial",
+        state: "running",
+        resources: { workspace: { name: "team-1" } },
+      });
+    } finally {
+      consoleLog.restore();
+    }
   });
 
   it("throws a clear error when the task is not found", async () => {
@@ -2183,7 +2459,7 @@ describe(setupWorkspaceCli, () => {
     buildSourcesMock.mockRejectedValueOnce(new Error("unknown source kind 'wat'"));
 
     await expect(setupWorkspaceCli("eng-1")).rejects.toThrow(
-      /Could not initialize task sources for 'crew setup eng-1': unknown source kind 'wat'/,
+      /Could not initialize task sources for 'crew start eng-1': unknown source kind 'wat'/,
     );
   });
 
@@ -2205,6 +2481,7 @@ describe(setupWorkspaceCli, () => {
     expect(createMock).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ task: "staff-508" }),
+      expect.any(AbortSignal),
     );
   });
 
@@ -2292,6 +2569,7 @@ describe(setupWorkspaceCli, () => {
     expect(createMock).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ task: "team-1" }),
+      expect.any(AbortSignal),
     );
   });
 });

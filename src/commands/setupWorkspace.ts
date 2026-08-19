@@ -4,7 +4,7 @@ import { inferAgentCommandName, workerEnvironmentForTask } from "../lib/launchCo
 import { type Board, createBoard } from "../lib/board.ts";
 import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
 import { resolveRepositoryPreparationCommands } from "../lib/repositoryHooks.ts";
-import { recordRunState } from "../lib/runState.ts";
+import { readRunState, recordRunState, type RunState } from "../lib/runState.ts";
 import { seedLaunchWorkspaceTrust } from "../lib/seedLaunchWorkspaceTrust.ts";
 import { sourceSupportsMarkDone } from "../lib/sourceCapabilities.ts";
 import {
@@ -16,7 +16,7 @@ import {
 } from "../lib/stagedLaunch.ts";
 import { taskSourceWritePathsForCompletion } from "../lib/taskSourceFilesystem.ts";
 import { naturalIdFromCanonical, type WorktreePreparation } from "../lib/taskSource.ts";
-import { debug, errorMessage, log, okMark } from "../lib/util.ts";
+import { debug, errorMessage, log, withConsoleOutputSuppressed } from "../lib/util.ts";
 import { type WorkspaceAccessHint, workspaces } from "../lib/workspaces.ts";
 import {
   resolveLaunchDir,
@@ -25,6 +25,17 @@ import {
   worktrees,
 } from "../lib/worktrees.ts";
 import { cleanupAgentLaunchBestEffort } from "./agentLaunchCleanup.ts";
+import {
+  executeLifecycleMutation,
+  lifecycleCancellationSuffix,
+  type LifecycleCancellationContext,
+} from "./lifecycleCommand.ts";
+import {
+  LIFECYCLE_PROBLEM_CODES,
+  type LifecycleProblem,
+  type LifecycleResources,
+  type StartResult,
+} from "./lifecycleResult.ts";
 
 export interface TaskDetails {
   title: string;
@@ -75,7 +86,17 @@ export async function setupWorkspace(
   config: ResolvedConfig,
   options: SetupWorkspaceOptions,
   runOptions: SetupWorkspaceRunOptions = {},
-): Promise<void> {
+): Promise<StartResult> {
+  return await withConsoleOutputSuppressed(
+    async () => await setupWorkspaceOperation(config, options, runOptions),
+  );
+}
+
+async function setupWorkspaceOperation(
+  config: ResolvedConfig,
+  options: SetupWorkspaceOptions,
+  runOptions: SetupWorkspaceRunOptions,
+): Promise<StartResult> {
   const { task, repository, agent } = options;
   const { signal } = runOptions;
   const definition = config.agents.definitions[agent];
@@ -124,11 +145,12 @@ export async function setupWorkspace(
   // the task strands forever.
   let promptDir: string | undefined;
   let cleanupAgentLaunch: (() => void) | undefined;
+  let accessHint: WorkspaceAccessHint | undefined;
   try {
     await assertLaunchReady(readinessPromise);
 
     const taskDetails = options.details;
-    const accessHint = await workspaces.accessHint(config, task, signal);
+    accessHint = await workspaces.accessHint(config, task, signal);
 
     const stagedPrompt = stagePrompt({
       config,
@@ -204,7 +226,7 @@ export async function setupWorkspace(
       color: definition.color,
       ...(signal === undefined ? {} : { signal }),
     });
-    recordRunStateBestEffort({
+    const stateProblem = recordRunStateBestEffort({
       config,
       task,
       repository,
@@ -218,12 +240,27 @@ export async function setupWorkspace(
       ...(taskDetails.url === undefined ? {} : { url: taskDetails.url }),
     });
 
-    log(`${okMark()} "${task}" launched (${agent})  worktree ${worktreeName}`);
-    debug(`  Worktree: ${launchDir}`);
-    debug(`  Branch:   ${branchName}`);
-    if (accessHint !== undefined) {
-      logAccessHint(accessHint);
-    }
+    return {
+      action: "start",
+      task: lifecycleTaskIdentity({
+        task,
+        canonicalId: completionTaskId,
+        url: taskDetails.url,
+      }),
+      outcome: stateProblem === undefined ? "started" : "partial",
+      state: "running",
+      resources: {
+        repository,
+        branch: branchName,
+        worktreeDir,
+        workspace: {
+          name: task,
+          ...(accessHint === undefined ? {} : { accessCommand: accessHint.command }),
+        },
+        agent,
+      },
+      problems: stateProblem === undefined ? [] : [stateProblem],
+    };
   } catch (error) {
     cleanupAgentLaunchBestEffort({ cleanup: cleanupAgentLaunch, context: "setup rollback" });
     await rollbackWorktree({ config, entry: created, promptDir });
@@ -387,7 +424,7 @@ function recordRunStateBestEffort(arguments_: {
   detail?: string;
   url?: string;
   completionTaskId: string;
-}): void {
+}): LifecycleProblem | undefined {
   try {
     recordRunState({
       config: arguments_.config,
@@ -405,8 +442,13 @@ function recordRunStateBestEffort(arguments_: {
         ...(arguments_.url === undefined ? {} : { url: arguments_.url }),
       },
     });
+    return undefined;
   } catch (error) {
     log(`Run state update failed for ${arguments_.task}: ${errorMessage(error)}`);
+    return {
+      code: LIFECYCLE_PROBLEM_CODES.stateWriteFailed,
+      message: `Run state update failed: ${errorMessage(error)}`,
+    };
   }
 }
 
@@ -457,9 +499,29 @@ async function rollbackWorktree(arguments_: {
 
 export async function setupWorkspaceCli(
   task: string,
-  options: { dryRun?: boolean } = {},
-): Promise<void> {
+  options: { dryRun?: boolean; json?: boolean } = {},
+): Promise<StartResult> {
   const config = await loadConfig();
+  const localTask = naturalIdFromCanonical(task).toLowerCase();
+  return await executeLifecycleMutation({
+    config,
+    task: localTask,
+    json: options.json === true,
+    conflictResult: () => startLockConflictResult({ config, task: localTask }),
+    operation: async (context) =>
+      await startLifecycle({ config, taskArgument: task, options, context }),
+    cancelledResult: async (context) =>
+      await cancelledStartResult({ config, task: localTask, context }),
+  });
+}
+
+async function startLifecycle(arguments_: {
+  config: ResolvedConfig;
+  taskArgument: string;
+  options: { dryRun?: boolean };
+  context: LifecycleCancellationContext;
+}): Promise<StartResult> {
+  const { config, taskArgument, options, context } = arguments_;
   const rawSources = sourcesFromConfig(config);
   let sources;
   try {
@@ -467,52 +529,276 @@ export async function setupWorkspaceCli(
   } catch (error) {
     /* v8 ignore next @preserve -- catch re-throw always receives an Error; String(error) is an unreachable fallback */
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Could not initialize task sources for 'crew setup ${task}': ${message}`, {
-      cause: error,
-    });
+    throw new Error(
+      `Could not initialize task sources for 'crew start ${taskArgument}': ${message}`,
+      {
+        cause: error,
+      },
+    );
   }
   const board: Board = createBoard(sources);
 
-  const resolved = await board.resolveOne(task);
+  const resolved = await board.resolveOne(taskArgument);
   if (resolved === undefined) {
-    throw new Error(`Task ${task} not found across configured sources.`);
+    throw new Error(`Task ${taskArgument} not found across configured sources.`);
   }
   if (resolved.repository === undefined || resolved.agent === undefined) {
     throw new Error(
-      `Task ${task} resolved but isn't groundcrew-eligible (missing agent-* label or repository/agent).`,
+      `Task ${taskArgument} resolved but isn't groundcrew-eligible (missing agent-* label or repository/agent).`,
     );
   }
 
-  log(`Resolved ${task}: repository=${resolved.repository}, agent=${resolved.agent}`);
+  const naturalId = naturalIdFromCanonical(resolved.id).toLowerCase();
+  log(`Resolved ${taskArgument}: repository=${resolved.repository}, agent=${resolved.agent}`);
 
   if (options.dryRun === true) {
-    const preparationSuffix =
-      resolved.worktreePreparation === "skip" ? "; prepareWorktree skipped" : "";
-    log(
-      `[dry-run] Would launch ${task} in ${resolved.repository} (${resolved.agent})${preparationSuffix}`,
-    );
-    return;
+    const predicted = worktrees.predictedEntry(config, resolved.repository, naturalId);
+    return {
+      action: "start",
+      task: lifecycleTaskIdentity({
+        task: naturalId,
+        canonicalId: resolved.id,
+        url: resolved.url,
+      }),
+      outcome: "dry-run",
+      state: observedState(readRunState(config, naturalId)),
+      resources: {
+        repository: resolved.repository,
+        branch: predicted.branchName,
+        worktreeDir: predicted.worktreeDir,
+        agent: resolved.agent,
+        ...(resolved.worktreePreparation === "skip" ? { worktreePreparation: "skip" } : {}),
+      },
+      problems: [],
+    };
   }
 
-  const naturalId = naturalIdFromCanonical(resolved.id);
-
-  await setupWorkspace(config, {
+  const existing = await existingStartResult({
+    config,
     task: naturalId,
-    completionTaskId: resolved.id,
-    completionMarkDoneSupported: sourceSupportsMarkDone({
-      rawSources,
-      sourceName: resolved.source,
-    }),
+    canonicalId: resolved.id,
+    url: resolved.url,
     repository: resolved.repository,
-    agent: resolved.agent,
-    ...(resolved.worktreePreparation === undefined
-      ? {}
-      : { worktreePreparation: resolved.worktreePreparation }),
-    details: {
-      title: resolved.title,
-      description: resolved.description,
-      ...(resolved.url === undefined ? {} : { url: resolved.url }),
-    },
+    signal: context.signal,
   });
-  await board.markInProgress(resolved);
+  if (existing !== undefined) {
+    return existing;
+  }
+
+  const result = await setupWorkspace(
+    config,
+    {
+      task: naturalId,
+      completionTaskId: resolved.id,
+      completionMarkDoneSupported: sourceSupportsMarkDone({
+        rawSources,
+        sourceName: resolved.source,
+      }),
+      repository: resolved.repository,
+      agent: resolved.agent,
+      ...(resolved.worktreePreparation === undefined
+        ? {}
+        : { worktreePreparation: resolved.worktreePreparation }),
+      details: {
+        title: resolved.title,
+        description: resolved.description,
+        ...(resolved.url === undefined ? {} : { url: resolved.url }),
+      },
+    },
+    { signal: context.signal },
+  );
+  try {
+    await board.markInProgress(resolved);
+    return result;
+  } catch (error) {
+    return {
+      ...result,
+      outcome: "partial",
+      problems: [
+        ...result.problems,
+        {
+          code: LIFECYCLE_PROBLEM_CODES.taskStatusUpdateFailed,
+          message: `Task status update failed: ${errorMessage(error)}`,
+        },
+      ],
+    };
+  }
+}
+
+async function existingStartResult(arguments_: {
+  config: ResolvedConfig;
+  task: string;
+  canonicalId: string;
+  url: string | undefined;
+  repository: string;
+  signal: AbortSignal;
+}): Promise<StartResult | undefined> {
+  const { config, task, canonicalId, url, repository, signal } = arguments_;
+  const state = readRunState(config, task);
+  const entries = worktrees.findByTask(config, task);
+  const probe = await workspaces.probe(config, signal);
+  const resources = startResourcesFromContext({ state, entries });
+  const identity = lifecycleTaskIdentity({ task, canonicalId, url: url ?? state?.url });
+  if (probe.kind === "unavailable") {
+    return {
+      action: "start",
+      task: identity,
+      outcome: "conflict",
+      state: observedState(state),
+      resources,
+      problems: [
+        {
+          code: LIFECYCLE_PROBLEM_CODES.workspaceStatusUnavailable,
+          message: "Could not verify whether the task workspace is already live.",
+        },
+      ],
+    };
+  }
+  if (probe.names.has(task)) {
+    const matchingContext =
+      state?.repository === repository || entries.some((entry) => entry.repository === repository);
+    return matchingContext
+      ? {
+          action: "start",
+          task: identity,
+          outcome: "already-running",
+          state: observedState(state, "running"),
+          resources: { ...resources, workspace: { name: task } },
+          problems: [],
+        }
+      : {
+          action: "start",
+          task: identity,
+          outcome: "conflict",
+          state: observedState(state, "running"),
+          resources: { ...resources, workspace: { name: task } },
+          problems: [
+            {
+              code: LIFECYCLE_PROBLEM_CODES.workspaceConflict,
+              message: "A live workspace exists without matching local task context.",
+            },
+          ],
+        };
+  }
+  if (state !== undefined || entries.length > 0) {
+    return {
+      action: "start",
+      task: identity,
+      outcome: "conflict",
+      state: observedState(state),
+      resources,
+      problems: [
+        {
+          code: LIFECYCLE_PROBLEM_CODES.worktreeConflict,
+          message: "Existing local state or a stale worktree must be reconciled before starting.",
+        },
+      ],
+    };
+  }
+  return undefined;
+}
+
+function startLockConflictResult(arguments_: {
+  config: ResolvedConfig;
+  task: string;
+}): StartResult {
+  const state = readRunState(arguments_.config, arguments_.task);
+  return {
+    action: "start",
+    task: lifecycleTaskIdentity({
+      task: arguments_.task,
+      canonicalId: state?.completionTaskId,
+      url: state?.url,
+    }),
+    outcome: "conflict",
+    state: observedState(state),
+    resources: startResourcesFromContext({
+      state,
+      entries: worktrees.findByTask(arguments_.config, arguments_.task),
+    }),
+    problems: [
+      {
+        code: LIFECYCLE_PROBLEM_CODES.lifecycleLockHeld,
+        message: "Another lifecycle mutation owns this task.",
+      },
+    ],
+  };
+}
+
+async function cancelledStartResult(arguments_: {
+  config: ResolvedConfig;
+  task: string;
+  context: LifecycleCancellationContext;
+}): Promise<StartResult> {
+  const state = readRunState(arguments_.config, arguments_.task);
+  const entries = worktrees.findByTask(arguments_.config, arguments_.task);
+  const probe = await workspaces.probe(arguments_.config);
+  return {
+    action: "start",
+    task: lifecycleTaskIdentity({
+      task: arguments_.task,
+      canonicalId: state?.completionTaskId,
+      url: state?.url,
+    }),
+    outcome: "partial",
+    state: observedState(
+      state,
+      probe.kind === "ok" && probe.names.has(arguments_.task) ? "running" : undefined,
+    ),
+    resources: {
+      ...startResourcesFromContext({ state, entries }),
+      ...(probe.kind === "ok" && probe.names.has(arguments_.task)
+        ? { workspace: { name: arguments_.task } }
+        : {}),
+    },
+    problems: [
+      {
+        code: LIFECYCLE_PROBLEM_CODES.cancelled,
+        message: `Start cancelled${lifecycleCancellationSuffix(arguments_.context)}.`,
+      },
+    ],
+  };
+}
+
+function lifecycleTaskIdentity(arguments_: {
+  task: string;
+  canonicalId?: string | undefined;
+  url?: string | undefined;
+}): StartResult["task"] {
+  return {
+    id: arguments_.task,
+    ...(arguments_.canonicalId === undefined ? {} : { canonicalId: arguments_.canonicalId }),
+    ...(arguments_.url === undefined ? {} : { url: arguments_.url }),
+  };
+}
+
+function startResourcesFromContext(arguments_: {
+  state: RunState | undefined;
+  entries: readonly WorktreeEntry[];
+}): LifecycleResources {
+  const entry =
+    arguments_.state === undefined
+      ? arguments_.entries[0]
+      : (arguments_.entries.find(
+          (candidate) => candidate.repository === arguments_.state?.repository,
+        ) ?? arguments_.entries[0]);
+  const repository = arguments_.state?.repository ?? entry?.repository;
+  const branch = arguments_.state?.branchName ?? entry?.branchName;
+  const worktreeDir = arguments_.state?.worktreeDir ?? entry?.dir;
+  return {
+    ...(repository === undefined ? {} : { repository }),
+    ...(branch === undefined ? {} : { branch }),
+    ...(worktreeDir === undefined ? {} : { worktreeDir }),
+    ...(arguments_.state?.workspaceName === undefined
+      ? {}
+      : { workspace: { name: arguments_.state.workspaceName } }),
+    ...(arguments_.state?.agent === undefined ? {} : { agent: arguments_.state.agent }),
+  };
+}
+
+function observedState(
+  state: RunState | undefined,
+  fallback?: StartResult["state"],
+): StartResult["state"] {
+  return state?.state ?? fallback ?? "absent";
 }

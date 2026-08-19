@@ -15,7 +15,6 @@ import { taskCli } from "./commands/task.ts";
 import { createDefaultUpgradeCliOptions, upgradeCli } from "./commands/upgrade.ts";
 import {
   errorMessage,
-  parseDryRunPositionals,
   readEnvironmentVariable,
   readTaskArgument,
   setVerbose,
@@ -38,7 +37,7 @@ interface Subcommand {
   summary: string;
   usage: string;
   hidden?: boolean;
-  invoke: (argv: string[]) => Promise<void>;
+  invoke: (argv: string[]) => Promise<unknown>;
   // Deprecated aliases keep working but are hidden from `crew --help`.
   deprecated?: boolean;
 }
@@ -108,15 +107,31 @@ async function runCli(argv: string[]): Promise<void> {
   await setupWorkspaceCli(task, { dryRun });
 }
 
-const START_USAGE = "crew start <task> [--dry-run]";
+const START_USAGE = "crew start <task> [--dry-run] [--json]";
 
 async function startCli(argv: string[]): Promise<void> {
-  const { dryRun, positionals } = parseDryRunPositionals(argv, START_USAGE);
+  let dryRun = false;
+  let json = false;
+  const positionals: string[] = [];
+  for (const argument of argv) {
+    if (argument === "--dry-run") {
+      dryRun = true;
+      continue;
+    }
+    if (argument === "--json") {
+      json = true;
+      continue;
+    }
+    if (argument.startsWith("-")) {
+      throw new Error(`Unknown option: ${argument}\nUsage: ${START_USAGE}`);
+    }
+    positionals.push(argument);
+  }
   const [task, ...extras] = positionals;
   if (task === undefined || task.length === 0 || extras.length > 0) {
     throw new Error(`Usage: ${START_USAGE}`);
   }
-  await setupWorkspaceCli(task, { dryRun });
+  await setupWorkspaceCli(task, { dryRun, json });
 }
 
 async function upgradeCliInvoke(argv: string[]): Promise<void> {
@@ -170,7 +185,7 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
   },
   start: {
     summary: "Launch one task immediately, bypassing eligibility",
-    usage: "<task> [--dry-run]",
+    usage: "<task> [--dry-run] [--json]",
     invoke: startCli,
   },
   doctor: {
@@ -195,12 +210,12 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
   },
   cleanup: {
     summary: "Tear down a worktree, or every idle worktree with --all",
-    usage: "[--force] <task> | [--force] --all",
+    usage: "[--force] <task> [--json] | [--force] --all",
     invoke: cleanupWorkspaceCli,
   },
   stop: {
     summary: "Stop a live task workspace while preserving its worktree",
-    usage: "<task> [--reason <text>]",
+    usage: "<task> [--reason <text>] [--json]",
     invoke: interruptWorkspaceCli,
   },
   interrupt: {
@@ -214,7 +229,7 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
   },
   resume: {
     summary: "Reopen an existing task worktree, resuming the agent's chat session",
-    usage: "[--new] <task>",
+    usage: "[--new] <task> [--json]",
     invoke: resumeWorkspaceCli,
   },
   open: {

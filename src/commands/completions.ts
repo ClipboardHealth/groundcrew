@@ -95,7 +95,7 @@ export const COMPLETION_SPEC: readonly CompletionCommand[] = [
   {
     name: "start",
     summary: "Launch one task immediately",
-    options: [DRY_RUN_OPTION],
+    options: [DRY_RUN_OPTION, JSON_OPTION],
   },
   {
     name: "doctor",
@@ -183,17 +183,18 @@ export const COMPLETION_SPEC: readonly CompletionCommand[] = [
     options: [
       { name: "--force", summary: "Skip confirmations" },
       { name: "--all", summary: "Clean up every idle worktree" },
+      JSON_OPTION,
     ],
   },
   {
     name: "stop",
     summary: "Stop a live task workspace",
-    options: [{ name: "--reason", summary: "Reason text", arg: { kind: "string" } }],
+    options: [{ name: "--reason", summary: "Reason text", arg: { kind: "string" } }, JSON_OPTION],
   },
   {
     name: "resume",
     summary: "Reopen an existing task worktree",
-    options: [{ name: "--new", summary: "Start a fresh chat session" }],
+    options: [{ name: "--new", summary: "Start a fresh chat session" }, JSON_OPTION],
   },
   {
     name: "open",
