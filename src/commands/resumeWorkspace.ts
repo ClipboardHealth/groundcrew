@@ -621,6 +621,7 @@ function reconciledResumeRunState(arguments_: {
   const { observed } = arguments_;
   return {
     task: arguments_.task,
+    ...(observed.title === undefined ? {} : { title: observed.title }),
     repository: observed.repository,
     agent: observed.agent,
     worktreeDir: observed.worktreeDir,
@@ -635,6 +636,7 @@ function reconciledResumeRunState(arguments_: {
 }
 
 interface ResumeReconciliationSeed {
+  title?: string;
   repository: string;
   agent: string;
   worktreeDir: string;
@@ -657,6 +659,7 @@ function resumeReconciliationSeed(
     return undefined;
   }
   return {
+    title: context.title,
     repository: context.repository,
     agent: context.agent,
     worktreeDir: context.worktree.dir,

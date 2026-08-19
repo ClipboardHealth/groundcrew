@@ -1257,6 +1257,7 @@ describe(resumeWorkspaceCli, () => {
       });
       expect(lastRecordedRunState()).toMatchObject({
         task: "team-1",
+        title: "Resolved title",
         agent: "codex",
         completionTaskId: "linear:team-1",
         state: "resumed",
