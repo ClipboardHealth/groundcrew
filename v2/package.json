@@ -29,7 +29,7 @@
     "zod": "4.4.3"
   },
   "devDependencies": {
-    "@tsconfig/node24": "24.0.4",
+    "@tsconfig/node24": "24.0.5",
     "@tsconfig/strictest": "2.0.8",
     "@types/node": "24.13.3",
     "dependency-cruiser": "18.2.0",
