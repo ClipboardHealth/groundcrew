@@ -618,7 +618,7 @@ describe(resumeWorkspace, () => {
     );
   });
 
-  it("resolves cold resume through the configured Board", async () => {
+  it("resolves cold resume through an injected Board without configured sources", async () => {
     readRunStateMock.mockReset();
     const resolved = canonicalShellIssue({
       naturalId: "team-1",
@@ -639,16 +639,7 @@ describe(resumeWorkspace, () => {
     };
     const todoConfig: ResolvedConfig = {
       ...config,
-      sources: [
-        {
-          kind: "todo-txt",
-          name: "todo",
-          todoPath: "todo.txt",
-          tasksDir: ".tasks",
-          idPrefix: "TEAM",
-          timezone: "UTC",
-        },
-      ],
+      sources: [],
     };
 
     await resumeWorkspace(todoConfig, { task: "team-1", taskSourceId: "todo:team-1" }, { board });
@@ -660,6 +651,39 @@ describe(resumeWorkspace, () => {
         name: "team-1",
         url: "https://tasks.example/team-1",
       }),
+    );
+  });
+
+  it("preserves a source-qualified id while reconstructing state through an injected Board", async () => {
+    const sourceFreeConfig: ResolvedConfig = { ...config, sources: [] };
+    const board: Board = {
+      verify: vi.fn<Board["verify"]>(),
+      fetch: vi.fn<Board["fetch"]>(),
+      resolveOne: vi.fn<Board["resolveOne"]>().mockResolvedValue(
+        canonicalShellIssue({
+          naturalId: "team-1",
+          sourceName: "todo",
+          repository: "repo-a",
+          agent: "claude",
+          title: "Board title",
+        }),
+      ),
+      markInProgress: vi.fn<Board["markInProgress"]>(),
+      markInReview: vi.fn<Board["markInReview"]>(),
+      markDone: vi.fn<Board["markDone"]>(),
+    };
+
+    await resumeWorkspace(
+      sourceFreeConfig,
+      { task: "team-1", taskSourceId: "todo:team-1" },
+      { board },
+    );
+
+    expect(board.resolveOne).toHaveBeenCalledWith("todo:team-1");
+    expect(lastRecordedRunState()).toMatchObject({ completionTaskId: "todo:team-1" });
+    expect(writeFileMock).toHaveBeenCalledWith(
+      "/tmp/groundcrew-resume-team-1-x/prompt.txt",
+      expect.stringContaining("task team-1 (Board title)"),
     );
   });
 
@@ -1149,6 +1173,49 @@ describe(resumeWorkspaceCli, () => {
     }
   });
 
+  it("reconciles source identity and resolved agent when a cold resume is cancelled before state persistence", async () => {
+    const coldConfig: ResolvedConfig = {
+      ...config,
+      agents: {
+        ...config.agents,
+        definitions: {
+          ...config.agents.definitions,
+          codex: { cmd: "codex --auto", color: "#000" },
+        },
+      },
+    };
+    loadConfigMock.mockResolvedValue(coldConfig);
+    readRunStateMock.mockReset();
+    fetchResolvedIssueMock.mockResolvedValue(resolvedLinearTask({ agent: "codex" }));
+    workspacesProbeMock
+      .mockResolvedValueOnce({ kind: "ok", names: new Set() })
+      .mockResolvedValueOnce({ kind: "ok", names: new Set(["team-1"]) });
+    workspacesOpenMock.mockImplementationOnce(async () => {
+      process.listeners("SIGTERM").at(-1)?.("SIGTERM");
+      throw new Error("Signal: SIGTERM");
+    });
+    const consoleLog = captureConsoleLog();
+
+    try {
+      const actual = await resumeWorkspaceCli(["linear:TEAM-1", "--json"]);
+
+      expect(actual).toMatchObject({
+        outcome: "partial",
+        task: { canonicalId: "linear:team-1" },
+        resources: { agent: "codex", workspace: { name: "team-1" } },
+        problems: [{ code: "cancelled" }],
+      });
+      expect(lastRecordedRunState()).toMatchObject({
+        task: "team-1",
+        agent: "codex",
+        completionTaskId: "linear:team-1",
+        state: "resumed",
+      });
+    } finally {
+      consoleLog.restore();
+    }
+  });
+
   it("preserves the observed interrupted state when cancellation opens no workspace", async () => {
     workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set() });
     workspacesOpenMock.mockImplementationOnce(async () => {
@@ -1194,7 +1261,7 @@ describe(resumeWorkspaceCli, () => {
     }
   });
 
-  it("does not invent durable context when cancellation finds only a live workspace", async () => {
+  it("uses the resolved launch context when cancellation later loses local context", async () => {
     readRunStateMock
       .mockReturnValueOnce(makeRunState())
       .mockReturnValueOnce(makeRunState())
@@ -1221,13 +1288,20 @@ describe(resumeWorkspaceCli, () => {
         state: "resumed",
         resources: { workspace: { name: "team-1" } },
       });
-      expect(recordRunStateMock).not.toHaveBeenCalled();
+      expect(lastRecordedRunState()).toMatchObject({
+        task: "team-1",
+        repository: "repo-a",
+        agent: "claude",
+        completionTaskId: "TEAM-1",
+        state: "resumed",
+        resumeCount: 2,
+      });
     } finally {
       consoleLog.restore();
     }
   });
 
-  it("reconciles a cancelled live workspace from its remaining worktree context", async () => {
+  it("prefers resolved launch context while reconciling a cancelled live workspace", async () => {
     readRunStateMock
       .mockReturnValueOnce(makeRunState())
       .mockReturnValueOnce(makeRunState())
@@ -1255,9 +1329,9 @@ describe(resumeWorkspaceCli, () => {
         agent: "claude",
         workspaceName: "team-1",
         state: "resumed",
-        resumeCount: 1,
+        resumeCount: 2,
+        reason: "wrong direction",
       });
-      expect(lastRecordedRunState()).not.toHaveProperty("reason");
     } finally {
       consoleLog.restore();
     }

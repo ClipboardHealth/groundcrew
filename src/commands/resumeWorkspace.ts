@@ -53,6 +53,10 @@ export interface ResumeWorkspaceRunOptions {
   board?: Board;
 }
 
+interface ResumeWorkspaceOperationOptions extends ResumeWorkspaceRunOptions {
+  contextResolved?: (context: ResumeContext) => void;
+}
+
 interface TaskDetails {
   title: string;
   description: string;
@@ -108,7 +112,7 @@ async function resolveTaskDetails(
   board?: Board,
 ): Promise<TaskDetails | undefined> {
   const rawSources = sourcesFromConfig(config);
-  if (rawSources.length === 0) {
+  if (board === undefined && rawSources.length === 0) {
     return undefined;
   }
   try {
@@ -137,7 +141,7 @@ async function contextFromBoard(
   board?: Board,
 ): Promise<ResumeContext> {
   const rawSources = sourcesFromConfig(config);
-  if (rawSources.length === 0) {
+  if (board === undefined && rawSources.length === 0) {
     throw new Error(
       `Cannot resume ${task}: no run state recorded and no task source is configured.`,
     );
@@ -173,11 +177,12 @@ async function contextFromBoard(
 async function contextFromState(
   config: ResolvedConfig,
   task: string,
+  taskId: string,
   state: RunState,
   worktree: WorktreeEntry,
   board?: Board,
 ): Promise<ResumeContext> {
-  const completionTaskId = state.completionTaskId ?? task;
+  const completionTaskId = state.completionTaskId ?? taskId;
   const details = await resolveTaskDetails(config, completionTaskId, board);
   const url = state.url ?? details?.url;
   return {
@@ -217,7 +222,14 @@ async function buildResumeContext(
     return undefined;
   }
   if (state !== undefined) {
-    return await contextFromState(config, task, state, worktree, board);
+    return await contextFromState(
+      config,
+      task,
+      options.taskSourceId ?? task,
+      state,
+      worktree,
+      board,
+    );
   }
   return await contextFromBoard(config, task, options.taskSourceId ?? task, worktree, board);
 }
@@ -270,6 +282,14 @@ export async function resumeWorkspace(
   options: ResumeWorkspaceOptions,
   runOptions: ResumeWorkspaceRunOptions = {},
 ): Promise<ResumeResult> {
+  return await resumeWorkspaceWithContextObservation(config, options, runOptions);
+}
+
+async function resumeWorkspaceWithContextObservation(
+  config: ResolvedConfig,
+  options: ResumeWorkspaceOptions,
+  runOptions: ResumeWorkspaceOperationOptions,
+): Promise<ResumeResult> {
   return await withConsoleOutputSuppressed(
     async () => await resumeWorkspaceOperation(config, options, runOptions),
   );
@@ -279,7 +299,7 @@ export async function resumeWorkspace(
 async function resumeWorkspaceOperation(
   config: ResolvedConfig,
   options: ResumeWorkspaceOptions,
-  runOptions: ResumeWorkspaceRunOptions,
+  runOptions: ResumeWorkspaceOperationOptions,
 ): Promise<ResumeResult> {
   const task = options.task.toLowerCase();
   const state = readRunState(config, task);
@@ -336,6 +356,7 @@ async function resumeWorkspaceOperation(
       problems: [],
     });
   }
+  runOptions.contextResolved?.(context);
   const definition = config.agents.definitions[context.agent];
   if (definition === undefined) {
     throw new Error(`Unknown agent: ${context.agent}`);
@@ -478,14 +499,27 @@ async function resumeWorkspaceOperation(
 export async function resumeWorkspaceCli(argv: string[]): Promise<ResumeResult> {
   const parsed = parseArguments(argv);
   const config = await loadLifecycleConfig(parsed.json);
+  let resolvedContext: ResumeContext | undefined;
   return await executeLifecycleMutation({
     config,
     task: parsed.options.task,
     json: parsed.json,
     conflictResult: () => resumeLockConflictResult({ config, task: parsed.options.task }),
-    operation: async ({ signal }) => await resumeWorkspace(config, parsed.options, { signal }),
+    operation: async ({ signal }) =>
+      await resumeWorkspaceWithContextObservation(config, parsed.options, {
+        signal,
+        contextResolved: (context) => {
+          resolvedContext = context;
+        },
+      }),
     cancelledResult: async (context) =>
-      await cancelledResumeResult({ config, task: parsed.options.task, context }),
+      await cancelledResumeResult({
+        config,
+        task: parsed.options.task,
+        taskSourceId: parsed.options.taskSourceId,
+        resolvedContext,
+        context,
+      }),
   });
 }
 
@@ -496,10 +530,11 @@ function resumeClassifiedResult(arguments_: {
   outcome: ResumeResult["outcome"];
   lifecycleState: ResumeResult["state"];
   problems: LifecycleProblem[];
+  fallbackIdentity?: { canonicalId?: string; url?: string };
 }): ResumeResult {
   return {
     action: "resume",
-    task: resumeTaskIdentity(arguments_.task, arguments_.state),
+    task: resumeTaskIdentity(arguments_.task, arguments_.state, arguments_.fallbackIdentity),
     outcome: arguments_.outcome,
     state: arguments_.lifecycleState,
     resources: arguments_.resources,
@@ -507,11 +542,17 @@ function resumeClassifiedResult(arguments_: {
   };
 }
 
-function resumeTaskIdentity(task: string, state: RunState | undefined): ResumeResult["task"] {
+function resumeTaskIdentity(
+  task: string,
+  state: RunState | undefined,
+  fallback?: { canonicalId?: string; url?: string },
+): ResumeResult["task"] {
+  const canonicalId = state?.completionTaskId ?? fallback?.canonicalId;
+  const url = state?.url ?? fallback?.url;
   return {
     id: task,
-    ...(state?.completionTaskId === undefined ? {} : { canonicalId: state.completionTaskId }),
-    ...(state?.url === undefined ? {} : { url: state.url }),
+    ...(canonicalId === undefined ? {} : { canonicalId }),
+    ...(url === undefined ? {} : { url }),
   };
 }
 
@@ -576,21 +617,40 @@ function reconciledResumeRunState(arguments_: {
   repository: string;
   worktreeDir: string;
   branchName: string;
+  taskSourceId: string | undefined;
+  resolvedContext: ResumeContext | undefined;
 }): Parameters<typeof recordRunState>[0]["state"] {
+  const observed = {
+    ...resumeContextRunStateSeed(arguments_.resolvedContext),
+    ...arguments_.state,
+  };
+  const completionTaskId = observed.completionTaskId ?? arguments_.taskSourceId;
   return {
     task: arguments_.task,
     repository: arguments_.repository,
-    agent: arguments_.state?.agent ?? arguments_.config.agents.default,
+    agent: observed.agent ?? arguments_.config.agents.default,
     worktreeDir: arguments_.worktreeDir,
     branchName: arguments_.branchName,
-    workspaceName: arguments_.state?.workspaceName ?? arguments_.task,
+    workspaceName: observed.workspaceName ?? arguments_.task,
     state: "resumed",
-    resumeCount: (arguments_.state?.resumeCount ?? 0) + 1,
-    ...(arguments_.state?.completionTaskId === undefined
-      ? {}
-      : { completionTaskId: arguments_.state.completionTaskId }),
-    ...(arguments_.state?.url === undefined ? {} : { url: arguments_.state.url }),
-    ...(arguments_.state?.reason === undefined ? {} : { reason: arguments_.state.reason }),
+    resumeCount: (observed.resumeCount ?? 0) + 1,
+    ...(completionTaskId === undefined ? {} : { completionTaskId }),
+    ...(observed.url === undefined ? {} : { url: observed.url }),
+    ...(observed.reason === undefined ? {} : { reason: observed.reason }),
+  };
+}
+
+function resumeContextRunStateSeed(context: ResumeContext | undefined): Partial<RunState> {
+  if (context === undefined) {
+    return {};
+  }
+  return {
+    agent: context.agent,
+    workspaceName: context.task,
+    resumeCount: context.resumeCount,
+    completionTaskId: context.completionTaskId,
+    ...(context.url === undefined ? {} : { url: context.url }),
+    ...(context.reason === undefined ? {} : { reason: context.reason }),
   };
 }
 
@@ -600,14 +660,13 @@ function reconcileCancelledResumeState(arguments_: {
   state: RunState | undefined;
   entries: readonly WorktreeEntry[];
   isLive: boolean;
+  taskSourceId: string | undefined;
+  resolvedContext: ResumeContext | undefined;
 }): LifecycleProblem | undefined {
   if (!arguments_.isLive) {
     return undefined;
   }
-  const [entry] = arguments_.entries;
-  const repository = arguments_.state?.repository ?? entry?.repository;
-  const worktreeDir = arguments_.state?.worktreeDir ?? entry?.dir;
-  const branchName = arguments_.state?.branchName ?? entry?.branchName;
+  const { repository, worktreeDir, branchName } = resumeReconciliationResourceContext(arguments_);
   if (repository === undefined || worktreeDir === undefined || branchName === undefined) {
     return undefined;
   }
@@ -621,6 +680,8 @@ function reconcileCancelledResumeState(arguments_: {
         repository,
         worktreeDir,
         branchName,
+        taskSourceId: arguments_.taskSourceId,
+        resolvedContext: arguments_.resolvedContext,
       }),
     });
     return undefined;
@@ -632,9 +693,37 @@ function reconcileCancelledResumeState(arguments_: {
   }
 }
 
+function resumeReconciliationResourceContext(arguments_: {
+  state: RunState | undefined;
+  entries: readonly WorktreeEntry[];
+  resolvedContext: ResumeContext | undefined;
+}): {
+  repository: string | undefined;
+  worktreeDir: string | undefined;
+  branchName: string | undefined;
+} {
+  const entry =
+    arguments_.entries.find(
+      (candidate) =>
+        candidate.repository ===
+        (arguments_.state?.repository ?? arguments_.resolvedContext?.repository),
+    ) ?? arguments_.entries[0];
+  const repository =
+    arguments_.state?.repository ?? arguments_.resolvedContext?.repository ?? entry?.repository;
+  const worktreeDir =
+    arguments_.state?.worktreeDir ?? arguments_.resolvedContext?.worktree.dir ?? entry?.dir;
+  const branchName =
+    arguments_.state?.branchName ??
+    arguments_.resolvedContext?.worktree.branchName ??
+    entry?.branchName;
+  return { repository, worktreeDir, branchName };
+}
+
 async function cancelledResumeResult(arguments_: {
   config: ResolvedConfig;
   task: string;
+  taskSourceId: string | undefined;
+  resolvedContext: ResumeContext | undefined;
   context: LifecycleCancellationContext;
 }): Promise<ResumeResult> {
   const state = readRunState(arguments_.config, arguments_.task);
@@ -647,12 +736,23 @@ async function cancelledResumeResult(arguments_: {
     state,
     entries,
     isLive,
+    taskSourceId: arguments_.taskSourceId,
+    resolvedContext: arguments_.resolvedContext,
   });
+  const observedResources =
+    arguments_.resolvedContext === undefined
+      ? resumeResourcesFromLocal({ state, entries })
+      : {
+          repository: arguments_.resolvedContext.repository,
+          branch: arguments_.resolvedContext.worktree.branchName,
+          worktreeDir: arguments_.resolvedContext.worktree.dir,
+          agent: arguments_.resolvedContext.agent,
+        };
   return resumeClassifiedResult({
     task: arguments_.task,
     state,
     resources: {
-      ...resumeResourcesFromLocal({ state, entries }),
+      ...observedResources,
       ...(isLive ? { workspace: { name: arguments_.task } } : {}),
     },
     outcome: "partial",
@@ -664,5 +764,20 @@ async function cancelledResumeResult(arguments_: {
       },
       ...(stateProblem === undefined ? [] : [stateProblem]),
     ],
+    fallbackIdentity: resumeCancellationIdentityFallback(
+      arguments_.taskSourceId,
+      arguments_.resolvedContext,
+    ),
   });
+}
+
+function resumeCancellationIdentityFallback(
+  taskSourceId: string | undefined,
+  context: ResumeContext | undefined,
+): { canonicalId?: string; url?: string } {
+  const canonicalId = context?.completionTaskId ?? taskSourceId;
+  return {
+    ...(canonicalId === undefined ? {} : { canonicalId }),
+    ...(context?.url === undefined ? {} : { url: context.url }),
+  };
 }
