@@ -516,7 +516,7 @@ export async function resumeWorkspaceCli(argv: string[]): Promise<ResumeResult> 
       await cancelledResumeResult({
         config,
         task: parsed.options.task,
-        taskSourceId: parsed.options.taskSourceId,
+        taskSourceId: parsed.options.taskSourceId ?? parsed.options.task,
         resolvedContext,
         context,
       }),
@@ -611,41 +611,53 @@ function resumeLockConflictResult(arguments_: {
 }
 
 function reconciledResumeRunState(arguments_: {
-  config: ResolvedConfig;
   task: string;
-  state: RunState | undefined;
-  repository: string;
-  worktreeDir: string;
-  branchName: string;
-  taskSourceId: string | undefined;
-  resolvedContext: ResumeContext | undefined;
+  observed: ResumeReconciliationSeed;
+  taskSourceId: string;
 }): Parameters<typeof recordRunState>[0]["state"] {
-  const observed = {
-    ...resumeContextRunStateSeed(arguments_.resolvedContext),
-    ...arguments_.state,
-  };
-  const completionTaskId = observed.completionTaskId ?? arguments_.taskSourceId;
+  const { observed } = arguments_;
   return {
     task: arguments_.task,
-    repository: arguments_.repository,
-    agent: observed.agent ?? arguments_.config.agents.default,
-    worktreeDir: arguments_.worktreeDir,
-    branchName: arguments_.branchName,
-    workspaceName: observed.workspaceName ?? arguments_.task,
+    repository: observed.repository,
+    agent: observed.agent,
+    worktreeDir: observed.worktreeDir,
+    branchName: observed.branchName,
+    workspaceName: observed.workspaceName,
     state: "resumed",
-    resumeCount: (observed.resumeCount ?? 0) + 1,
-    ...(completionTaskId === undefined ? {} : { completionTaskId }),
+    resumeCount: observed.resumeCount + 1,
+    completionTaskId: observed.completionTaskId ?? arguments_.taskSourceId,
     ...(observed.url === undefined ? {} : { url: observed.url }),
     ...(observed.reason === undefined ? {} : { reason: observed.reason }),
   };
 }
 
-function resumeContextRunStateSeed(context: ResumeContext | undefined): Partial<RunState> {
+interface ResumeReconciliationSeed {
+  repository: string;
+  agent: string;
+  worktreeDir: string;
+  branchName: string;
+  workspaceName: string;
+  resumeCount: number;
+  completionTaskId?: string;
+  url?: string;
+  reason?: string;
+}
+
+function resumeReconciliationSeed(
+  state: RunState | undefined,
+  context: ResumeContext | undefined,
+): ResumeReconciliationSeed | undefined {
+  if (state !== undefined) {
+    return state;
+  }
   if (context === undefined) {
-    return {};
+    return undefined;
   }
   return {
+    repository: context.repository,
     agent: context.agent,
+    worktreeDir: context.worktree.dir,
+    branchName: context.worktree.branchName,
     workspaceName: context.task,
     resumeCount: context.resumeCount,
     completionTaskId: context.completionTaskId,
@@ -658,30 +670,24 @@ function reconcileCancelledResumeState(arguments_: {
   config: ResolvedConfig;
   task: string;
   state: RunState | undefined;
-  entries: readonly WorktreeEntry[];
   isLive: boolean;
-  taskSourceId: string | undefined;
+  taskSourceId: string;
   resolvedContext: ResumeContext | undefined;
 }): LifecycleProblem | undefined {
   if (!arguments_.isLive) {
     return undefined;
   }
-  const { repository, worktreeDir, branchName } = resumeReconciliationResourceContext(arguments_);
-  if (repository === undefined || worktreeDir === undefined || branchName === undefined) {
+  const observed = resumeReconciliationSeed(arguments_.state, arguments_.resolvedContext);
+  if (observed === undefined) {
     return undefined;
   }
   try {
     recordRunState({
       config: arguments_.config,
       state: reconciledResumeRunState({
-        config: arguments_.config,
         task: arguments_.task,
-        state: arguments_.state,
-        repository,
-        worktreeDir,
-        branchName,
+        observed,
         taskSourceId: arguments_.taskSourceId,
-        resolvedContext: arguments_.resolvedContext,
       }),
     });
     return undefined;
@@ -693,36 +699,10 @@ function reconcileCancelledResumeState(arguments_: {
   }
 }
 
-function resumeReconciliationResourceContext(arguments_: {
-  state: RunState | undefined;
-  entries: readonly WorktreeEntry[];
-  resolvedContext: ResumeContext | undefined;
-}): {
-  repository: string | undefined;
-  worktreeDir: string | undefined;
-  branchName: string | undefined;
-} {
-  const entry =
-    arguments_.entries.find(
-      (candidate) =>
-        candidate.repository ===
-        (arguments_.state?.repository ?? arguments_.resolvedContext?.repository),
-    ) ?? arguments_.entries[0];
-  const repository =
-    arguments_.state?.repository ?? arguments_.resolvedContext?.repository ?? entry?.repository;
-  const worktreeDir =
-    arguments_.state?.worktreeDir ?? arguments_.resolvedContext?.worktree.dir ?? entry?.dir;
-  const branchName =
-    arguments_.state?.branchName ??
-    arguments_.resolvedContext?.worktree.branchName ??
-    entry?.branchName;
-  return { repository, worktreeDir, branchName };
-}
-
 async function cancelledResumeResult(arguments_: {
   config: ResolvedConfig;
   task: string;
-  taskSourceId: string | undefined;
+  taskSourceId: string;
   resolvedContext: ResumeContext | undefined;
   context: LifecycleCancellationContext;
 }): Promise<ResumeResult> {
@@ -734,7 +714,6 @@ async function cancelledResumeResult(arguments_: {
     config: arguments_.config,
     task: arguments_.task,
     state,
-    entries,
     isLive,
     taskSourceId: arguments_.taskSourceId,
     resolvedContext: arguments_.resolvedContext,
@@ -772,12 +751,12 @@ async function cancelledResumeResult(arguments_: {
 }
 
 function resumeCancellationIdentityFallback(
-  taskSourceId: string | undefined,
+  taskSourceId: string,
   context: ResumeContext | undefined,
 ): { canonicalId?: string; url?: string } {
   const canonicalId = context?.completionTaskId ?? taskSourceId;
   return {
-    ...(canonicalId === undefined ? {} : { canonicalId }),
+    canonicalId,
     ...(context?.url === undefined ? {} : { url: context.url }),
   };
 }
