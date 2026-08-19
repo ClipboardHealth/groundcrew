@@ -1173,6 +1173,56 @@ describe(resumeWorkspaceCli, () => {
     }
   });
 
+  it("reconciles existing state when cancellation happens before resume context resolution", async () => {
+    workspacesProbeMock
+      .mockImplementationOnce(async () => {
+        process.listeners("SIGTERM").at(-1)?.("SIGTERM");
+        throw new Error("Signal: SIGTERM");
+      })
+      .mockResolvedValueOnce({ kind: "ok", names: new Set(["team-1"]) });
+    const consoleLog = captureConsoleLog();
+
+    try {
+      await resumeWorkspaceCli(["TEAM-1", "--json"]);
+
+      expect(lastRecordedRunState()).toMatchObject({
+        task: "team-1",
+        repository: "repo-a",
+        agent: "claude",
+        completionTaskId: "TEAM-1",
+        state: "resumed",
+        resumeCount: 2,
+      });
+      expect(workspacesOpenMock).not.toHaveBeenCalled();
+    } finally {
+      consoleLog.restore();
+    }
+  });
+
+  it("does not invent state when pre-context cancellation observes only a live workspace", async () => {
+    readRunStateMock.mockReset();
+    findByTaskMock.mockReturnValue([]);
+    workspacesProbeMock
+      .mockImplementationOnce(async () => {
+        process.listeners("SIGINT").at(-1)?.("SIGINT");
+        throw new Error("Signal: SIGINT");
+      })
+      .mockResolvedValueOnce({ kind: "ok", names: new Set(["team-1"]) });
+    const consoleLog = captureConsoleLog();
+
+    try {
+      await expect(resumeWorkspaceCli(["TEAM-1", "--json"])).resolves.toMatchObject({
+        outcome: "partial",
+        state: "resumed",
+        resources: { workspace: { name: "team-1" } },
+      });
+      expect(recordRunStateMock).not.toHaveBeenCalled();
+      expect(workspacesOpenMock).not.toHaveBeenCalled();
+    } finally {
+      consoleLog.restore();
+    }
+  });
+
   it("reconciles source identity and resolved agent when a cold resume is cancelled before state persistence", async () => {
     const coldConfig: ResolvedConfig = {
       ...config,
