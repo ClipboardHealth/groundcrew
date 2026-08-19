@@ -81,6 +81,7 @@ vi.mock(import("./cmuxAgentHookInstall.ts"), async (importOriginal) => {
 
 const ORIGINAL_CMUX_SOCKET_PATH = readEnvironmentVariable("CMUX_SOCKET_PATH");
 const ORIGINAL_CODEX_HOME = readEnvironmentVariable("CODEX_HOME");
+const ORIGINAL_XDG_CONFIG_HOME = readEnvironmentVariable("XDG_CONFIG_HOME");
 
 function restoreEnvironmentVariable(name: string, originalValue: string | undefined): void {
   if (originalValue === undefined) {
@@ -154,12 +155,14 @@ describe(composeAgentLaunch, () => {
     });
     deleteEnvironmentVariable("CMUX_SOCKET_PATH");
     deleteEnvironmentVariable("CODEX_HOME");
+    deleteEnvironmentVariable("XDG_CONFIG_HOME");
   });
 
   afterEach(() => {
     vi.resetAllMocks();
     restoreEnvironmentVariable("CMUX_SOCKET_PATH", ORIGINAL_CMUX_SOCKET_PATH);
     restoreEnvironmentVariable("CODEX_HOME", ORIGINAL_CODEX_HOME);
+    restoreEnvironmentVariable("XDG_CONFIG_HOME", ORIGINAL_XDG_CONFIG_HOME);
     rmSync(fakeHome, { recursive: true, force: true });
     for (const configDir of stagedConfigDirs) {
       rmSync(path.dirname(configDir), { recursive: true, force: true });
@@ -371,6 +374,66 @@ describe(composeAgentLaunch, () => {
     expect(agentWrap).toContain(
       "--add-dirs='/work/repo-a-team-1:/tmp/repo-a.git:/Users/dev/v:/Users/dev/v/.tasks'",
     );
+  });
+
+  it("grants Codex read-only access to the fallback Metabase CLI config directory only in the agent wrap", () => {
+    const metabaseConfigDir = path.join(fakeHome, ".config", "metabase-cli");
+    mkdirSync(metabaseConfigDir, { recursive: true });
+
+    const launchCommand = compose({
+      definition: definition({ cmd: "codex", color: "#000" }),
+      prepareWorktreeCommand: "npm ci",
+      workspaceKind: "tmux",
+    });
+
+    const prepareWrap = launchCommand.slice(0, launchCommand.indexOf("_safehouse_shim_dir="));
+    const agentWrap = launchCommand.slice(launchCommand.indexOf("_safehouse_shim_dir="));
+    expect(prepareWrap).not.toContain(metabaseConfigDir);
+    expect(agentWrap).toContain(`--add-dirs-ro='${metabaseConfigDir}'`);
+    expect(agentWrap).not.toContain(
+      `--add-dirs='/work/repo-a-team-1:/tmp/repo-a.git:${metabaseConfigDir}'`,
+    );
+  });
+
+  it("uses XDG_CONFIG_HOME for Codex's Metabase CLI grant and forwards it only to the agent wrap", () => {
+    const xdgConfigHome = path.join(fakeHome, "custom-config");
+    const metabaseConfigDir = path.join(xdgConfigHome, "metabase-cli");
+    mkdirSync(metabaseConfigDir, { recursive: true });
+    setEnvironmentVariable("XDG_CONFIG_HOME", xdgConfigHome);
+
+    const launchCommand = compose({
+      definition: definition({ cmd: "codex", color: "#000" }),
+      prepareWorktreeCommand: "npm ci",
+      workspaceKind: "tmux",
+    });
+
+    const prepareWrap = launchCommand.slice(0, launchCommand.indexOf("_safehouse_shim_dir="));
+    const agentWrap = launchCommand.slice(launchCommand.indexOf("_safehouse_shim_dir="));
+    expect(prepareWrap).not.toContain(metabaseConfigDir);
+    expect(prepareWrap).not.toContain("XDG_CONFIG_HOME");
+    expect(agentWrap).toContain(metabaseConfigDir);
+    expect(agentWrap).toContain("--env-pass=XDG_CONFIG_HOME ");
+  });
+
+  it("does not grant an absent Metabase CLI config directory or prevent Codex from launching", () => {
+    const metabaseConfigDir = path.join(fakeHome, ".config", "metabase-cli");
+
+    const launchCommand = compose({
+      definition: definition({ cmd: "codex", color: "#000" }),
+      workspaceKind: "tmux",
+    });
+
+    expect(launchCommand).not.toContain(metabaseConfigDir);
+    expect(launchCommand).toContain('exec codex "$@"');
+  });
+
+  it("does not grant the Metabase CLI config directory to other Safehouse agent profiles", () => {
+    const metabaseConfigDir = path.join(fakeHome, ".config", "metabase-cli");
+    mkdirSync(metabaseConfigDir, { recursive: true });
+
+    const launchCommand = compose({ workspaceKind: "tmux" });
+
+    expect(launchCommand).not.toContain(metabaseConfigDir);
   });
 
   it("warns when clearance reports unreviewed cmux Claude wrapper env names", () => {
