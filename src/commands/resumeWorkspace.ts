@@ -77,7 +77,10 @@ interface ResumeContext {
   resumeCount: number;
 }
 
-function parseArguments(argv: string[]): { options: ResumeWorkspaceOptions; json: boolean } {
+function parseArguments(argv: string[]): {
+  options: ResumeWorkspaceOptions & { taskSourceId: string };
+  json: boolean;
+} {
   let fresh = false;
   let json = false;
   const positionals: string[] = [];
@@ -516,7 +519,7 @@ export async function resumeWorkspaceCli(argv: string[]): Promise<ResumeResult> 
       await cancelledResumeResult({
         config,
         task: parsed.options.task,
-        taskSourceId: parsed.options.taskSourceId ?? parsed.options.task,
+        taskSourceId: parsed.options.taskSourceId,
         resolvedContext,
         context,
       }),
