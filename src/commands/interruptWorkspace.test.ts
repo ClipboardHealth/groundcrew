@@ -521,7 +521,9 @@ describe(interruptWorkspaceCli, () => {
   });
 
   it("rejects missing task", async () => {
-    await expect(interruptWorkspaceCli([])).rejects.toThrow(/Usage: crew stop/);
+    await expect(interruptWorkspaceCli([])).rejects.toThrow(
+      "Usage: crew stop <task> [--reason <text>] [--json]",
+    );
   });
 
   it("rejects missing reason text", async () => {
@@ -532,7 +534,7 @@ describe(interruptWorkspaceCli, () => {
 
   it("rejects unknown options", async () => {
     await expect(interruptWorkspaceCli(["--bogus", "team-1"])).rejects.toThrow(
-      /Unknown option: --bogus/,
+      /Unknown option: --bogus.*\[--json\]/s,
     );
   });
 });

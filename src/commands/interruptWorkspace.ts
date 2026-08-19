@@ -7,6 +7,7 @@ import {
   executeLifecycleMutation,
   lifecycleCancellationSuffix,
   loadLifecycleConfig,
+  probeWorkspaceForLifecycleReconciliation,
   type LifecycleCancellationContext,
 } from "./lifecycleCommand.ts";
 import {
@@ -59,13 +60,15 @@ function parseArguments(argv: string[]): { options: InterruptWorkspaceOptions; j
       continue;
     }
     if (argument.startsWith("-")) {
-      throw new Error(`Unknown option: ${argument}\nUsage: crew stop <task> [--reason <text>]`);
+      throw new Error(
+        `Unknown option: ${argument}\nUsage: crew stop <task> [--reason <text>] [--json]`,
+      );
     }
     positionals.push(argument);
   }
   const [task, ...extras] = positionals;
   if (task === undefined || task.length === 0 || extras.length > 0) {
-    throw new Error("Usage: crew stop <task> [--reason <text>]");
+    throw new Error("Usage: crew stop <task> [--reason <text>] [--json]");
   }
   return {
     options: { task: task.toLowerCase(), ...(reason === undefined ? {} : { reason }) },
@@ -363,7 +366,7 @@ async function cancelledStopResult(arguments_: {
     state,
     entry,
   });
-  const probe = await workspaces.probe(config);
+  const probe = await probeWorkspaceForLifecycleReconciliation(config);
   const workspaceAbsent = probe.kind === "ok" && !probe.names.has(options.task);
   let stateProblem: LifecycleProblem | undefined;
   if (workspaceAbsent && source !== undefined) {

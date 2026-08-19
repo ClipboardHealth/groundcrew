@@ -326,7 +326,7 @@ async function cleanupRefusal(arguments_: {
       worktreeDir: entry.dir,
       ...(signal === undefined ? {} : { signal }),
     });
-    const refusal = dirtinessRefusal({ task, state, entries, dirtiness });
+    const refusal = dirtinessRefusal({ task, state, entries, entry, dirtiness });
     if (refusal !== undefined) {
       return refusal;
     }
@@ -338,6 +338,7 @@ function dirtinessRefusal(arguments_: {
   task: string;
   state: ReturnType<typeof readRunState>;
   entries: readonly WorktreeEntry[];
+  entry: WorktreeEntry;
   dirtiness: WorktreeDirtiness;
 }): CleanupResult | undefined {
   if (arguments_.dirtiness.kind === "clean") {
@@ -347,11 +348,11 @@ function dirtinessRefusal(arguments_: {
     arguments_.dirtiness.kind === "dirty"
       ? {
           code: LIFECYCLE_PROBLEM_CODES.worktreeDirty,
-          message: `Worktree has ${arguments_.dirtiness.modified} modified and ${arguments_.dirtiness.untracked} untracked files; no cleanup was attempted.`,
+          message: `Worktree ${arguments_.entry.dir} has ${arguments_.dirtiness.modified} modified and ${arguments_.dirtiness.untracked} untracked files; no cleanup was attempted.`,
         }
       : {
           code: LIFECYCLE_PROBLEM_CODES.worktreeStatusUnknown,
-          message: "Worktree cleanliness could not be verified; no cleanup was attempted.",
+          message: `Worktree cleanliness could not be verified for ${arguments_.entry.dir}; no cleanup was attempted.`,
         };
   return cleanupClassifiedResult({
     task: arguments_.task,

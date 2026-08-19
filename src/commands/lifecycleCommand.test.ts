@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { log } from "../lib/util.ts";
+import { workspaces } from "../lib/workspaces.ts";
 import { captureConsoleLog } from "../testHelpers/consoleCapture.ts";
 import {
   acquireLifecycleLock,
@@ -13,6 +14,7 @@ import {
   lifecycleCancellationSuffix,
   lifecycleLockPath,
   loadLifecycleConfig,
+  probeWorkspaceForLifecycleReconciliation,
   type LifecycleCancellationContext,
   withLifecycleCancellation,
 } from "./lifecycleCommand.ts";
@@ -22,8 +24,16 @@ vi.mock(import("../lib/config.ts"), async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, loadConfig: vi.fn<typeof loadConfig>() };
 });
+vi.mock(import("../lib/workspaces.ts"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    workspaces: { ...actual.workspaces, probe: vi.fn<typeof actual.workspaces.probe>() },
+  };
+});
 
 const loadConfigMock = vi.mocked(loadConfig);
+const workspaceProbeMock = vi.mocked(workspaces.probe);
 
 function loggingConfig(directory: string): { logging: { file: string } } {
   return { logging: { file: path.join(directory, "groundcrew.log") } };
@@ -220,6 +230,29 @@ describe(loadLifecycleConfig, () => {
     } finally {
       consoleLog.restore();
     }
+  });
+});
+
+describe(probeWorkspaceForLifecycleReconciliation, () => {
+  it("uses a fresh bounded signal after the command signal was cancelled", async () => {
+    const config = loggingConfig("/tmp/reconciliation-probe") as ResolvedConfig;
+    workspaceProbeMock.mockResolvedValueOnce({ kind: "ok", names: new Set(["team-1"]) });
+
+    await expect(probeWorkspaceForLifecycleReconciliation(config)).resolves.toMatchObject({
+      kind: "ok",
+    });
+    expect(workspaceProbeMock).toHaveBeenCalledWith(config, expect.any(AbortSignal));
+    expect(workspaceProbeMock.mock.calls[0]?.[1]?.aborted).toBe(false);
+  });
+
+  it("falls back to unavailable when the bounded reconciliation probe fails", async () => {
+    const config = loggingConfig("/tmp/reconciliation-probe") as ResolvedConfig;
+    workspaceProbeMock.mockRejectedValueOnce(new Error("probe timed out"));
+
+    await expect(probeWorkspaceForLifecycleReconciliation(config)).resolves.toMatchObject({
+      kind: "unavailable",
+      error: expect.objectContaining({ message: "probe timed out" }),
+    });
   });
 });
 

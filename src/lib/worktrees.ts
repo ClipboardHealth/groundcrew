@@ -216,6 +216,10 @@ function signalProperty(signal?: AbortSignal): { signal: AbortSignal } | Record<
   return signal === undefined ? {} : { signal };
 }
 
+function signalIsAborted(signal: AbortSignal | undefined): boolean {
+  return signal?.aborted === true;
+}
+
 function parseWorktreeDirectoryName(
   directoryName: string,
   repositoryEntriesByLongestName: ReadonlyArray<readonly [string, string]>,
@@ -960,6 +964,10 @@ async function teardownEntry(arguments_: {
 }): Promise<void> {
   const { config, entry, force, signal, workspaceProbe, liveNames, closedTasks, result } =
     arguments_;
+  if (signalIsAborted(signal)) {
+    result.cancelled = true;
+    return;
+  }
   if (shouldCloseWorkspaceForTeardown(entry.task, workspaceProbe, liveNames, closedTasks)) {
     try {
       const closed = await closeWorkspaceForTeardown(config, entry.task, signal);
@@ -968,19 +976,23 @@ async function teardownEntry(arguments_: {
       }
     } catch (error) {
       result.failures.push({ entry, step: "workspace_close", error });
-      if (signal?.aborted === true) {
+      if (signalIsAborted(signal)) {
         result.cancelled = true;
-        return;
       }
+      return;
     }
     closedTasks.add(entry.task);
+  }
+  if (signalIsAborted(signal)) {
+    result.cancelled = true;
+    return;
   }
   try {
     await remove(config, entry, { force, ...signalProperty(signal) });
     result.removed.push(entry);
   } catch (error) {
     result.failures.push({ entry, step: "worktree_remove", error });
-    if (signal?.aborted === true) {
+    if (signalIsAborted(signal)) {
       result.cancelled = true;
     }
   }

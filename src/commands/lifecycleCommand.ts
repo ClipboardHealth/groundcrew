@@ -6,6 +6,7 @@ import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { naturalIdFromCanonical } from "../lib/taskSource.ts";
 import { normalizePlainTaskId } from "../lib/taskId.ts";
 import { withConsoleOutputSuppressed } from "../lib/util.ts";
+import { type WorkspaceProbe, workspaces } from "../lib/workspaces.ts";
 import {
   LIFECYCLE_PROBLEM_CODES,
   lifecycleResultExitCode,
@@ -130,6 +131,17 @@ export function lifecycleCancellationSuffix(context: LifecycleCancellationContex
 
 export async function loadLifecycleConfig(json: boolean): Promise<ResolvedConfig> {
   return json ? await withConsoleOutputSuppressed(loadConfig) : await loadConfig();
+}
+
+export async function probeWorkspaceForLifecycleReconciliation(
+  config: ResolvedConfig,
+): Promise<WorkspaceProbe> {
+  const signal = AbortSignal.timeout(5_000);
+  try {
+    return await workspaces.probe(config, signal);
+  } catch (error) {
+    return { kind: "unavailable", error };
+  }
 }
 
 export async function executeLifecycleMutation<Result extends LifecycleResult>(

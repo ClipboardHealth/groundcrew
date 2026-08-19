@@ -172,6 +172,7 @@ describe(cleanupWorkspace, () => {
       outcome: "refused",
       problems: [{ code: "worktree-dirty" }],
     });
+    expect(actual.problems[0]?.message).toContain(hostEntry.dir);
     expect(actual.problems[0]?.message).not.toContain("--force");
     expect(teardownMock).not.toHaveBeenCalled();
   });
@@ -186,6 +187,7 @@ describe(cleanupWorkspace, () => {
       outcome: "refused",
       problems: [{ code: "worktree-status-unknown" }],
     });
+    expect(actual.problems[0]?.message).toContain(hostEntry.dir);
     expect(teardownMock).not.toHaveBeenCalled();
   });
 

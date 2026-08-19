@@ -26,6 +26,7 @@ import {
   executeLifecycleMutation,
   lifecycleCancellationSuffix,
   loadLifecycleConfig,
+  probeWorkspaceForLifecycleReconciliation,
   type LifecycleCancellationContext,
 } from "./lifecycleCommand.ts";
 import {
@@ -89,7 +90,7 @@ function parseArguments(argv: string[]): { options: ResumeWorkspaceOptions; json
   }
   const [task, ...extras] = positionals;
   if (task === undefined || task.length === 0 || extras.length > 0 || task.startsWith("-")) {
-    throw new Error("Usage: crew resume [--new] <task>");
+    throw new Error("Usage: crew resume [--new] [--json] <task>");
   }
   return {
     options: {
@@ -638,7 +639,7 @@ async function cancelledResumeResult(arguments_: {
 }): Promise<ResumeResult> {
   const state = readRunState(arguments_.config, arguments_.task);
   const entries = worktrees.findByTask(arguments_.config, arguments_.task);
-  const probe = await workspaces.probe(arguments_.config);
+  const probe = await probeWorkspaceForLifecycleReconciliation(arguments_.config);
   const isLive = probe.kind === "ok" && probe.names.has(arguments_.task);
   const stateProblem = reconcileCancelledResumeState({
     config: arguments_.config,

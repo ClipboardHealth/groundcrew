@@ -2164,6 +2164,60 @@ describe(setupWorkspaceCli, () => {
     }
   });
 
+  it("contends on the resolved task lock when start was invoked with a unique prefix", async () => {
+    defaultBoard.resolveOne.mockResolvedValueOnce(
+      canonicalLinearIssue({
+        naturalId: "team-1",
+        repository: "repo-a",
+        agent: "claude",
+        url: "https://linear.app/team-1",
+      }),
+    );
+    const resolvedLock = requireAcquiredLock(
+      acquireLifecycleLock({ config: makeConfig(), task: "team-1" }),
+    );
+    const consoleLog = captureConsoleLog();
+
+    try {
+      const actual = await setupWorkspaceCli("team", { json: true });
+
+      expect(defaultBoard.resolveOne).toHaveBeenCalledWith("team");
+      expect(actual).toMatchObject({
+        action: "start",
+        task: {
+          id: "team-1",
+          canonicalId: "linear:team-1",
+          url: "https://linear.app/team-1",
+        },
+        outcome: "conflict",
+        problems: [{ code: "lifecycle-lock-held" }],
+      });
+      expect(createMock).not.toHaveBeenCalled();
+      expect(process.exitCode).toBe(1);
+    } finally {
+      consoleLog.restore();
+      resolvedLock.release();
+    }
+  });
+
+  it("releases the resolved task lock after a unique-prefix start completes", async () => {
+    const consoleLog = captureConsoleLog();
+
+    try {
+      await expect(setupWorkspaceCli("team", { json: true })).resolves.toMatchObject({
+        outcome: "started",
+        task: { id: "team-1" },
+      });
+
+      const next = requireAcquiredLock(
+        acquireLifecycleLock({ config: makeConfig(), task: "team-1" }),
+      );
+      next.release();
+    } finally {
+      consoleLog.restore();
+    }
+  });
+
   it("returns already-running for the same live task", async () => {
     findByTaskMock.mockReturnValue([hostEntry()]);
     runCommandMock.mockImplementation((command, arguments_) => {

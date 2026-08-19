@@ -26,9 +26,11 @@ import {
 } from "../lib/worktrees.ts";
 import { cleanupAgentLaunchBestEffort } from "./agentLaunchCleanup.ts";
 import {
+  acquireLifecycleLock,
   executeLifecycleMutation,
   lifecycleCancellationSuffix,
   loadLifecycleConfig,
+  probeWorkspaceForLifecycleReconciliation,
   type LifecycleCancellationContext,
 } from "./lifecycleCommand.ts";
 import {
@@ -510,7 +512,7 @@ export async function setupWorkspaceCli(
     json: options.json === true,
     conflictResult: () => startLockConflictResult({ config, task: localTask }),
     operation: async (context) =>
-      await startLifecycle({ config, taskArgument: task, options, context }),
+      await startLifecycle({ config, taskArgument: task, lockedTask: localTask, options, context }),
     cancelledResult: async (context) =>
       await cancelledStartResult({ config, task: localTask, context }),
   });
@@ -519,10 +521,11 @@ export async function setupWorkspaceCli(
 async function startLifecycle(arguments_: {
   config: ResolvedConfig;
   taskArgument: string;
+  lockedTask: string;
   options: { dryRun?: boolean };
   context: LifecycleCancellationContext;
 }): Promise<StartResult> {
-  const { config, taskArgument, options, context } = arguments_;
+  const { config, taskArgument, lockedTask, options, context } = arguments_;
   const rawSources = sourcesFromConfig(config);
   let sources;
   try {
@@ -550,79 +553,95 @@ async function startLifecycle(arguments_: {
   }
 
   const naturalId = naturalIdFromCanonical(resolved.id).toLowerCase();
-  log(`Resolved ${taskArgument}: repository=${resolved.repository}, agent=${resolved.agent}`);
-
-  if (options.dryRun === true) {
-    const predicted = worktrees.predictedEntry(config, resolved.repository, naturalId);
-    return {
-      action: "start",
-      task: lifecycleTaskIdentity({
-        task: naturalId,
-        canonicalId: resolved.id,
-        url: resolved.url,
-      }),
-      outcome: "dry-run",
-      state: observedState(readRunState(config, naturalId)),
-      resources: {
-        repository: resolved.repository,
-        branch: predicted.branchName,
-        worktreeDir: predicted.worktreeDir,
-        agent: resolved.agent,
-        ...(resolved.worktreePreparation === "skip" ? { worktreePreparation: "skip" } : {}),
-      },
-      problems: [],
-    };
-  }
-
-  const existing = await existingStartResult({
-    config,
-    task: naturalId,
-    canonicalId: resolved.id,
-    url: resolved.url,
-    repository: resolved.repository,
-    signal: context.signal,
-  });
-  if (existing !== undefined) {
-    return existing;
-  }
-
-  const result = await setupWorkspace(
-    config,
-    {
+  const resolvedLock =
+    naturalId === lockedTask ? undefined : acquireLifecycleLock({ config, task: naturalId });
+  if (resolvedLock?.kind === "conflict") {
+    return startLockConflictResult({
+      config,
       task: naturalId,
-      completionTaskId: resolved.id,
-      completionMarkDoneSupported: sourceSupportsMarkDone({
-        rawSources,
-        sourceName: resolved.source,
-      }),
-      repository: resolved.repository,
-      agent: resolved.agent,
-      ...(resolved.worktreePreparation === undefined
-        ? {}
-        : { worktreePreparation: resolved.worktreePreparation }),
-      details: {
-        title: resolved.title,
-        description: resolved.description,
-        ...(resolved.url === undefined ? {} : { url: resolved.url }),
-      },
-    },
-    { signal: context.signal },
-  );
+      canonicalId: resolved.id,
+      url: resolved.url,
+    });
+  }
   try {
-    await board.markInProgress(resolved);
-    return result;
-  } catch (error) {
-    return {
-      ...result,
-      outcome: "partial",
-      problems: [
-        ...result.problems,
-        {
-          code: LIFECYCLE_PROBLEM_CODES.taskStatusUpdateFailed,
-          message: `Task status update failed: ${errorMessage(error)}`,
+    log(`Resolved ${taskArgument}: repository=${resolved.repository}, agent=${resolved.agent}`);
+
+    if (options.dryRun === true) {
+      const predicted = worktrees.predictedEntry(config, resolved.repository, naturalId);
+      return {
+        action: "start",
+        task: lifecycleTaskIdentity({
+          task: naturalId,
+          canonicalId: resolved.id,
+          url: resolved.url,
+        }),
+        outcome: "dry-run",
+        state: observedState(readRunState(config, naturalId)),
+        resources: {
+          repository: resolved.repository,
+          branch: predicted.branchName,
+          worktreeDir: predicted.worktreeDir,
+          agent: resolved.agent,
+          ...(resolved.worktreePreparation === "skip" ? { worktreePreparation: "skip" } : {}),
         },
-      ],
-    };
+        problems: [],
+      };
+    }
+
+    const existing = await existingStartResult({
+      config,
+      task: naturalId,
+      canonicalId: resolved.id,
+      url: resolved.url,
+      repository: resolved.repository,
+      signal: context.signal,
+    });
+    if (existing !== undefined) {
+      return existing;
+    }
+
+    const result = await setupWorkspace(
+      config,
+      {
+        task: naturalId,
+        completionTaskId: resolved.id,
+        completionMarkDoneSupported: sourceSupportsMarkDone({
+          rawSources,
+          sourceName: resolved.source,
+        }),
+        repository: resolved.repository,
+        agent: resolved.agent,
+        ...(resolved.worktreePreparation === undefined
+          ? {}
+          : { worktreePreparation: resolved.worktreePreparation }),
+        details: {
+          title: resolved.title,
+          description: resolved.description,
+          ...(resolved.url === undefined ? {} : { url: resolved.url }),
+        },
+      },
+      { signal: context.signal },
+    );
+    try {
+      await board.markInProgress(resolved);
+      return result;
+    } catch (error) {
+      return {
+        ...result,
+        outcome: "partial",
+        problems: [
+          ...result.problems,
+          {
+            code: LIFECYCLE_PROBLEM_CODES.taskStatusUpdateFailed,
+            message: `Task status update failed: ${errorMessage(error)}`,
+          },
+        ],
+      };
+    }
+  } finally {
+    if (resolvedLock?.kind === "acquired") {
+      resolvedLock.release();
+    }
   }
 }
 
@@ -702,14 +721,16 @@ async function existingStartResult(arguments_: {
 function startLockConflictResult(arguments_: {
   config: ResolvedConfig;
   task: string;
+  canonicalId?: string;
+  url?: string | undefined;
 }): StartResult {
   const state = readRunState(arguments_.config, arguments_.task);
   return {
     action: "start",
     task: lifecycleTaskIdentity({
       task: arguments_.task,
-      canonicalId: state?.completionTaskId,
-      url: state?.url,
+      canonicalId: arguments_.canonicalId ?? state?.completionTaskId,
+      url: arguments_.url ?? state?.url,
     }),
     outcome: "conflict",
     state: observedState(state),
@@ -733,7 +754,7 @@ async function cancelledStartResult(arguments_: {
 }): Promise<StartResult> {
   const state = readRunState(arguments_.config, arguments_.task);
   const entries = worktrees.findByTask(arguments_.config, arguments_.task);
-  const probe = await workspaces.probe(arguments_.config);
+  const probe = await probeWorkspaceForLifecycleReconciliation(arguments_.config);
   return {
     action: "start",
     task: lifecycleTaskIdentity({

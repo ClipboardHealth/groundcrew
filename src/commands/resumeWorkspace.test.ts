@@ -1286,7 +1286,9 @@ describe(resumeWorkspaceCli, () => {
   });
 
   it("rejects missing task", async () => {
-    await expect(resumeWorkspaceCli([])).rejects.toThrow(/Usage: crew resume/);
+    await expect(resumeWorkspaceCli([])).rejects.toThrow(
+      "Usage: crew resume [--new] [--json] <task>",
+    );
   });
 
   it("rejects extra positional args", async () => {
