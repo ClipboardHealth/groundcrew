@@ -73,6 +73,20 @@ const SKIPPED_DIR_NAMES: ReadonlySet<string> = new Set(["cache", "node_modules"]
 const MAX_AUTO_GRANTS = 256;
 
 /**
+ * Config scopes whose files are host-owned and safe to grant. Repository-local
+ * and per-worktree scopes are excluded: `.git/config` is writable by the
+ * sandboxed agent and by repo-controlled hooks, so an `include.path` there could
+ * name `~/.aws/credentials` and widen the next launch's sandbox to it.
+ */
+const TRUSTED_CONFIG_SCOPES: ReadonlySet<string> = new Set(["system", "global"]);
+const UNTRUSTED_CONFIG_SCOPES: ReadonlySet<string> = new Set([
+  "local",
+  "worktree",
+  "command",
+  "submodule",
+]);
+
+/**
  * How deep the walk descends, counting both real subdirectories and hops across
  * a resolved symlink target. Deep enough for the nested layouts agents ship
  * (`skills/<name>/SKILL.md`) reached through a two-hop dotfiles chain, without
@@ -192,11 +206,19 @@ export function resolveSandboxSymlinkGrants(input: {
 }
 
 /**
- * Every file git actually loads, straight from git. `~/.gitconfig` is commonly a
- * real file that pulls a dotfiles-managed config in through `include.path`, and
- * `includeIf "hasconfig:remote.*.url:..."` adds per-remote files on top — neither
- * is discoverable by walking symlinks, and both are fatal inside the sandbox
- * (git aborts on a config file it cannot read). Asking git removes the guessing.
+ * Every file git actually loads at **system and global scope**, straight from
+ * git. `~/.gitconfig` is commonly a real file that pulls a dotfiles-managed
+ * config in through `include.path`, and `includeIf "hasconfig:remote.*.url:..."`
+ * adds per-remote files on top — neither is discoverable by walking symlinks,
+ * and both are fatal inside the sandbox (git aborts on a config file it cannot
+ * read). Asking git removes the guessing.
+ *
+ * Repository-local and per-worktree scopes are deliberately dropped. `.git/config`
+ * is writable by the sandboxed agent and by repo-controlled hooks, and an
+ * `include.path` there names any file on the host — so honoring local scope would
+ * let a repo widen its own sandbox to `~/.aws/credentials` on the next launch.
+ * Local config lives inside the worktree, which is already granted, so nothing is
+ * lost by ignoring it.
  *
  * Run from the worktree so conditional includes evaluate against the real remote.
  * Best-effort: a git that fails here (not installed, not a repo, broken config)
@@ -211,18 +233,31 @@ function gitConfigOriginPaths(input: {
   // the same "no origins to grant" outcome as a git that refused to run.
   let output: string | undefined;
   try {
-    output = runCommand("git", ["config", "--list", "--show-origin", "--name-only", "-z"], options);
+    output = runCommand(
+      "git",
+      ["config", "--list", "--show-scope", "--show-origin", "--name-only", "-z"],
+      options,
+    );
   } catch {
     return [];
   }
   const origins = new Set<string>();
-  for (const record of (output ?? "").split("\0")) {
-    // Each record is "<origin>\n<name>"; only file origins name a readable path.
-    const [origin] = record.split("\n");
-    if (origin?.startsWith("file:") !== true) {
+  // NUL-separated triples: scope, origin, name. Only the origin of a trusted
+  // scope names a path worth granting.
+  let trustedScope = false;
+  for (const field of (output ?? "").split("\0")) {
+    if (TRUSTED_CONFIG_SCOPES.has(field)) {
+      trustedScope = true;
       continue;
     }
-    const originPath = path.resolve(input.homeDir, origin.slice("file:".length));
+    if (UNTRUSTED_CONFIG_SCOPES.has(field)) {
+      trustedScope = false;
+      continue;
+    }
+    if (!trustedScope || !field.startsWith("file:")) {
+      continue;
+    }
+    const originPath = path.resolve(input.homeDir, field.slice("file:".length));
     const resolved = resolveRealPath(originPath);
     if (resolved !== undefined) {
       origins.add(resolved);
@@ -233,8 +268,9 @@ function gitConfigOriginPaths(input: {
 
 /**
  * Whether an already-granted directory covers this path, so the sandbox reaches
- * it without a second flag. Keeps the list proportional to the number of trees
- * involved rather than repeating a subtree already opened.
+ * it without a second flag. This only collapses a path whose ancestor happens to
+ * be granted; siblings resolved out of the same tree are still granted one by
+ * one, which is the tighter grant. `MAX_AUTO_GRANTS` is what bounds the list.
  */
 function isCoveredByGrantedDir(input: {
   targetPath: string;

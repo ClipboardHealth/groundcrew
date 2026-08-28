@@ -60,9 +60,15 @@ describe(resolveSandboxSymlinkGrants, () => {
     rmSync(dotfiles, { recursive: true, force: true });
   });
 
-  /** Seed the NUL-separated `<origin>\n<name>` records git emits. */
+  /** Seed the NUL-separated `<scope>`, `<origin>`, `<name>` triples git emits. */
   function seedGitConfigOrigins(...files: readonly string[]): void {
-    runCommandMock.mockReturnValue(files.map((file) => `file:${file}\nuser.name`).join("\0"));
+    seedGitConfigScopes(...files.map((file) => ({ scope: "global", file })));
+  }
+
+  function seedGitConfigScopes(...entries: ReadonlyArray<{ scope: string; file: string }>): void {
+    runCommandMock.mockReturnValue(
+      entries.map(({ scope, file }) => `${scope}\0file:${file}\0user.name`).join("\0"),
+    );
   }
 
   function link(entry: string, target: string): void {
@@ -360,8 +366,30 @@ describe(resolveSandboxSymlinkGrants, () => {
     expect(actual).toEqual([home, managed]);
   });
 
+  it("refuses repository-local git config origins", () => {
+    // .git/config is writable by the sandboxed agent and by repo hooks, so an
+    // include.path there must not be able to widen the next launch's sandbox.
+    const secret = path.join(dotfiles, "credentials");
+    writeFileSync(secret, "[default]\n");
+    seedGitConfigScopes({ scope: "local", file: secret }, { scope: "worktree", file: secret });
+
+    const actual = resolveSandboxSymlinkGrants({ agent: "claude", homeDir: fakeHome });
+
+    expect(actual).toEqual([]);
+  });
+
+  it("grants a system-scope origin alongside global ones", () => {
+    const system = path.join(dotfiles, "system-gitconfig");
+    writeFileSync(system, "[core]\n");
+    seedGitConfigScopes({ scope: "system", file: system });
+
+    const actual = resolveSandboxSymlinkGrants({ agent: "claude", homeDir: fakeHome });
+
+    expect(actual).toEqual([system]);
+  });
+
   it("ignores git config origins that are not files", () => {
-    runCommandMock.mockReturnValue("command line:\nuser.name");
+    runCommandMock.mockReturnValue("global\0command line:\0user.name");
 
     const actual = resolveSandboxSymlinkGrants({ agent: "claude", homeDir: fakeHome });
 
