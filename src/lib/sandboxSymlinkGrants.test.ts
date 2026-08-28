@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSyn
 import os from "node:os";
 import path from "node:path";
 
-import { resolveAgentConfigSymlinkGrants } from "./agentConfigSymlinks.ts";
+import { resolveSandboxSymlinkGrants } from "./sandboxSymlinkGrants.ts";
 
 const writeErrorMock = vi.hoisted(() => vi.fn<(message: string) => void>());
 const debugMock = vi.hoisted(() => vi.fn<(message: string) => void>());
@@ -24,7 +24,7 @@ function assertDefined<T>(value: T | undefined): T {
   return value;
 }
 
-describe(resolveAgentConfigSymlinkGrants, () => {
+describe(resolveSandboxSymlinkGrants, () => {
   let fakeHome: string;
   let dotfiles: string;
   let configDir: string;
@@ -68,7 +68,7 @@ describe(resolveAgentConfigSymlinkGrants, () => {
     writeFileSync(settings, "{}");
     link("settings.json", settings);
 
-    const actual = resolveAgentConfigSymlinkGrants({ agent: "claude", homeDir: fakeHome });
+    const actual = resolveSandboxSymlinkGrants({ agent: "claude", homeDir: fakeHome });
 
     expect(actual).toEqual([settings]);
     expect(actual).not.toContain(dotfiles);
@@ -80,7 +80,7 @@ describe(resolveAgentConfigSymlinkGrants, () => {
     writeFileSync(path.join(skills, "SKILL.md"), "# skill");
     link("skills", skills);
 
-    const actual = resolveAgentConfigSymlinkGrants({ agent: "claude", homeDir: fakeHome });
+    const actual = resolveSandboxSymlinkGrants({ agent: "claude", homeDir: fakeHome });
 
     expect(actual).toEqual([skills]);
   });
@@ -93,7 +93,7 @@ describe(resolveAgentConfigSymlinkGrants, () => {
       ...directoryEntries.map((entry) => linkDirectory(entry)),
     ];
 
-    const actual = resolveAgentConfigSymlinkGrants({ agent: "claude", homeDir: fakeHome });
+    const actual = resolveSandboxSymlinkGrants({ agent: "claude", homeDir: fakeHome });
 
     expect([...actual].toSorted()).toEqual(expected.toSorted());
   });
@@ -103,7 +103,7 @@ describe(resolveAgentConfigSymlinkGrants, () => {
     writeFileSync(settings, "{}");
     link("settings.json", settings);
 
-    resolveAgentConfigSymlinkGrants({ agent: "claude", homeDir: fakeHome });
+    resolveSandboxSymlinkGrants({ agent: "claude", homeDir: fakeHome });
 
     expect(debugMock).toHaveBeenCalledWith(expect.stringContaining(settings));
   });
@@ -111,7 +111,7 @@ describe(resolveAgentConfigSymlinkGrants, () => {
   it("refuses a link resolving to $HOME and points at local.readOnlyDirs", () => {
     link("settings.json", fakeHome);
 
-    const actual = resolveAgentConfigSymlinkGrants({ agent: "claude", homeDir: fakeHome });
+    const actual = resolveSandboxSymlinkGrants({ agent: "claude", homeDir: fakeHome });
 
     expect(actual).toEqual([]);
     const [message] = assertDefined(writeErrorMock.mock.calls.at(0));
@@ -122,7 +122,7 @@ describe(resolveAgentConfigSymlinkGrants, () => {
   it("refuses a link resolving to the filesystem root", () => {
     link("commands", "/");
 
-    const actual = resolveAgentConfigSymlinkGrants({ agent: "claude", homeDir: fakeHome });
+    const actual = resolveSandboxSymlinkGrants({ agent: "claude", homeDir: fakeHome });
 
     expect(actual).toEqual([]);
     expect(writeErrorMock).toHaveBeenCalledWith(expect.stringContaining("local.readOnlyDirs"));
@@ -131,7 +131,7 @@ describe(resolveAgentConfigSymlinkGrants, () => {
   it("drops broken links", () => {
     link("settings.json", path.join(dotfiles, "missing.json"));
 
-    const actual = resolveAgentConfigSymlinkGrants({ agent: "claude", homeDir: fakeHome });
+    const actual = resolveSandboxSymlinkGrants({ agent: "claude", homeDir: fakeHome });
 
     expect(actual).toEqual([]);
   });
@@ -142,7 +142,7 @@ describe(resolveAgentConfigSymlinkGrants, () => {
     link("skills", shared);
     link("commands", shared);
 
-    const actual = resolveAgentConfigSymlinkGrants({ agent: "claude", homeDir: fakeHome });
+    const actual = resolveSandboxSymlinkGrants({ agent: "claude", homeDir: fakeHome });
 
     expect(actual).toEqual([shared]);
   });
@@ -153,23 +153,93 @@ describe(resolveAgentConfigSymlinkGrants, () => {
     mkdirSync(path.join(configDir, "skills"));
     symlinkSync(skill, path.join(configDir, "skills", "my-skill"));
 
-    const actual = resolveAgentConfigSymlinkGrants({ agent: "claude", homeDir: fakeHome });
+    const actual = resolveSandboxSymlinkGrants({ agent: "claude", homeDir: fakeHome });
 
     expect(actual).toEqual([skill]);
   });
 
-  it("returns nothing for an agent with no registered config directory", () => {
+  it("resolves a symlinked ~/.config/gh entry so gh can start in the sandbox", () => {
+    const ghConfig = path.join(dotfiles, "gh-config.yml");
+    writeFileSync(ghConfig, "version: 1\n");
+    mkdirSync(path.join(fakeHome, ".config", "gh"), { recursive: true });
+    symlinkSync(ghConfig, path.join(fakeHome, ".config", "gh", "config.yml"));
+
+    const actual = resolveSandboxSymlinkGrants({ agent: "claude", homeDir: fakeHome });
+
+    expect(actual).toEqual([ghConfig]);
+  });
+
+  it("grants a tool config directory that is itself a symlink", () => {
+    const ghDir = path.join(dotfiles, "gh");
+    mkdirSync(ghDir);
+    mkdirSync(path.join(fakeHome, ".config"), { recursive: true });
+    symlinkSync(ghDir, path.join(fakeHome, ".config", "gh"));
+
+    const actual = resolveSandboxSymlinkGrants({ agent: "claude", homeDir: fakeHome });
+
+    expect(actual).toEqual([ghDir]);
+  });
+
+  it("drops a tool config root that is a broken symlink", () => {
+    symlinkSync(path.join(dotfiles, "missing-gitconfig"), path.join(fakeHome, ".gitconfig"));
+
+    const actual = resolveSandboxSymlinkGrants({ agent: "claude", homeDir: fakeHome });
+
+    expect(actual).toEqual([]);
+  });
+
+  it("grants a symlinked ~/.gitconfig file", () => {
+    const gitConfig = path.join(dotfiles, "gitconfig");
+    writeFileSync(gitConfig, "[user]\n");
+    symlinkSync(gitConfig, path.join(fakeHome, ".gitconfig"));
+
+    const actual = resolveSandboxSymlinkGrants({ agent: "claude", homeDir: fakeHome });
+
+    expect(actual).toEqual([gitConfig]);
+  });
+
+  it("grants an agent config directory that is itself a symlink", () => {
+    rmSync(configDir, { recursive: true, force: true });
+    const managed = path.join(dotfiles, "claude");
+    mkdirSync(managed);
+    symlinkSync(managed, configDir);
+
+    const actual = resolveSandboxSymlinkGrants({ agent: "claude", homeDir: fakeHome });
+
+    expect(actual).toEqual([managed]);
+  });
+
+  it("ignores a real, unmanaged tool config file", () => {
+    writeFileSync(path.join(fakeHome, ".gitconfig"), "[user]\n");
+
+    const actual = resolveSandboxSymlinkGrants({ agent: "claude", homeDir: fakeHome });
+
+    expect(actual).toEqual([]);
+  });
+
+  it("still resolves tool configs for an agent with no registered config directory", () => {
+    const ghConfig = path.join(dotfiles, "gh-config.yml");
+    writeFileSync(ghConfig, "version: 1\n");
+    mkdirSync(path.join(fakeHome, ".config", "gh"), { recursive: true });
+    symlinkSync(ghConfig, path.join(fakeHome, ".config", "gh", "config.yml"));
+
+    const actual = resolveSandboxSymlinkGrants({ agent: "codex", homeDir: fakeHome });
+
+    expect(actual).toEqual([ghConfig]);
+  });
+
+  it("ignores the agent config directory of an agent with no registered entry", () => {
     const settings = path.join(dotfiles, "settings.json");
     writeFileSync(settings, "{}");
     link("settings.json", settings);
 
-    const actual = resolveAgentConfigSymlinkGrants({ agent: "codex", homeDir: fakeHome });
+    const actual = resolveSandboxSymlinkGrants({ agent: "codex", homeDir: fakeHome });
 
     expect(actual).toEqual([]);
   });
 
   it("returns nothing when the home directory itself is absent", () => {
-    const actual = resolveAgentConfigSymlinkGrants({
+    const actual = resolveSandboxSymlinkGrants({
       agent: "claude",
       homeDir: path.join(fakeHome, "no-such-home"),
     });
@@ -180,7 +250,7 @@ describe(resolveAgentConfigSymlinkGrants, () => {
   it("returns nothing when the config directory is absent", () => {
     rmSync(configDir, { recursive: true, force: true });
 
-    const actual = resolveAgentConfigSymlinkGrants({ agent: "claude", homeDir: fakeHome });
+    const actual = resolveSandboxSymlinkGrants({ agent: "claude", homeDir: fakeHome });
 
     expect(actual).toEqual([]);
   });

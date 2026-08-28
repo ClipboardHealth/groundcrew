@@ -464,6 +464,22 @@ describe(composeAgentLaunch, () => {
     }
   });
 
+  it("auto-grants a symlinked gh config so the agent can open a PR", () => {
+    const dotfiles = realpathSync(mkdtempSync(path.join(os.tmpdir(), "gc-dotfiles-")));
+    try {
+      const ghConfig = path.join(dotfiles, "gh-config.yml");
+      writeFileSync(ghConfig, "version: 1\n");
+      mkdirSync(path.join(fakeHome, ".config", "gh"), { recursive: true });
+      symlinkSync(ghConfig, path.join(fakeHome, ".config", "gh", "config.yml"));
+
+      const launchCommand = compose({ workspaceKind: "tmux", readOnlyDirs: [] });
+
+      expect(launchCommand).toContain(`--add-dirs-ro='${ghConfig}'`);
+    } finally {
+      rmSync(dotfiles, { recursive: true, force: true });
+    }
+  });
+
   it("keeps an explicit readOnlyDirs entry alongside auto-grants without duplicating it", () => {
     const dotfiles = realpathSync(mkdtempSync(path.join(os.tmpdir(), "gc-dotfiles-")));
     try {

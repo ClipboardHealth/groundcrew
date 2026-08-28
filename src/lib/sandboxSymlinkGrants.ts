@@ -1,4 +1,4 @@
-import { type Dirent, readdirSync, realpathSync } from "node:fs";
+import { type Dirent, lstatSync, readdirSync, realpathSync } from "node:fs";
 import path from "node:path";
 
 import { debug, writeError } from "./util.ts";
@@ -15,22 +15,48 @@ const AGENT_CONFIG_DIRS: Record<string, string> = {
 };
 
 /**
- * How deep the walk descends into real subdirectories of the config dir. Deep
+ * Home-relative config paths of the host tools every agent shells out to,
+ * resolved alongside the agent's own config dir.
+ *
+ * This is an allowlist rather than all of `~/.config` on purpose. Resolving
+ * every `~/.config` entry would silently follow a dozen unrelated links (on the
+ * reporting machine: `nvim`, `ranger`, `raycast`, `opencode`, ...) into
+ * whatever a dotfiles repo happens to contain, which is a large inference to
+ * make without the user writing anything down. Resolving only the agent's own
+ * config dir is too narrow in the other direction: it leaves `gh` unable to
+ * start, so the agent cannot open the PR it was dispatched to open. The
+ * allowlist is the middle position — each entry is a tool groundcrew's own
+ * workflow depends on, and anything outside it stays an explicit
+ * `local.readOnlyDirs` line.
+ */
+const TOOL_CONFIG_PATHS: readonly string[] = [
+  // `gh` refuses to start when it cannot read config.yml, blocking PR creation.
+  ".config/gh",
+  // git reads whichever of these exists; a dotfiles-managed one breaks every
+  // git invocation in the sandbox, not just PR creation.
+  ".config/git",
+  ".gitconfig",
+];
+
+/**
+ * How deep the walk descends into real subdirectories of a config dir. Deep
  * enough for the nested layouts agents ship (`skills/<name>/SKILL.md`) without
  * turning a launch into a full-tree crawl.
  */
 const MAX_WALK_DEPTH = 3;
 
 /**
- * Resolve symlinks under an agent's config directory into read-only sandbox
- * grants.
+ * Resolve symlinked config paths into read-only sandbox grants.
  *
  * Dotfile managers (stow, chezmoi, yadm, dotbot) make every entry under
- * `~/.claude` a symlink into a repo elsewhere on disk. macOS seatbelt resolves
- * symlinks *before* evaluating policy, so granting `~/.claude` leaves the
- * kernel checking an ungranted target path and the agent sees
+ * `~/.claude` and `~/.config` a symlink into a repo elsewhere on disk. macOS
+ * seatbelt resolves symlinks *before* evaluating policy, so granting `~/.claude`
+ * leaves the kernel checking an ungranted target path and the agent sees
  * `EPERM ... stat '~/.claude/settings.json'` for a file that plainly exists.
  * Granting the resolved targets read-only is the only fix seatbelt allows.
+ *
+ * Covers the agent's own config dir plus `TOOL_CONFIG_PATHS` — see there for
+ * why the tool list is an allowlist and not all of `~/.config`.
  *
  * A file link grants the resolved **file**, never its parent directory, so a
  * single symlinked `settings.json` does not re-open the whole dotfiles repo.
@@ -44,32 +70,32 @@ const MAX_WALK_DEPTH = 3;
  * Callers still filter the result through `existsSync`; broken links are
  * dropped here as well since `realpathSync` cannot resolve them.
  */
-export function resolveAgentConfigSymlinkGrants(input: {
+export function resolveSandboxSymlinkGrants(input: {
   agent: string;
   homeDir: string;
 }): readonly string[] {
-  const configDirName = AGENT_CONFIG_DIRS[input.agent.toLowerCase()];
-  if (configDirName === undefined) {
-    return [];
-  }
-  const configDir = path.join(input.homeDir, configDirName);
+  const agentConfigDir = AGENT_CONFIG_DIRS[input.agent.toLowerCase()];
+  const roots = [...(agentConfigDir === undefined ? [] : [agentConfigDir]), ...TOOL_CONFIG_PATHS];
   const guard = degenerateTargets(input.homeDir);
   const grants = new Set<string>();
-  for (const target of walkSymlinkTargets({ dir: configDir, depth: 0 })) {
-    if (guard.has(target)) {
-      writeError(
-        `Skipping auto-grant of ${target} (resolved from a symlink under ${configDir}): ` +
-          "granting the home directory or filesystem root read-only would expose credentials " +
-          "and every other repo to the sandboxed agent. Add it to local.readOnlyDirs in " +
-          "crew.config.ts if you really want it.",
-      );
-      continue;
+  for (const root of roots) {
+    const rootPath = path.join(input.homeDir, root);
+    for (const target of symlinkTargetsAt(rootPath)) {
+      if (guard.has(target)) {
+        writeError(
+          `Skipping auto-grant of ${target} (resolved from a symlink under ${rootPath}): ` +
+            "granting the home directory or filesystem root read-only would expose credentials " +
+            "and every other repo to the sandboxed agent. Add it to local.readOnlyDirs in " +
+            "crew.config.ts if you really want it.",
+        );
+        continue;
+      }
+      if (grants.has(target)) {
+        continue;
+      }
+      grants.add(target);
+      debug(`Auto-granting read-only sandbox access to ${target} (symlinked under ${rootPath})`);
     }
-    if (grants.has(target)) {
-      continue;
-    }
-    grants.add(target);
-    debug(`Auto-granting read-only sandbox access to ${target} (symlinked under ${configDir})`);
   }
   return [...grants];
 }
@@ -91,11 +117,27 @@ function degenerateTargets(homeDir: string): ReadonlySet<string> {
 }
 
 /**
+ * Symlink targets for one configured root. A root that is itself a symlink
+ * (a whole dotfiles-managed `~/.config/gh`, or a bare `~/.gitconfig` file) is
+ * granted directly; a real directory is walked for the links inside it.
+ */
+function* symlinkTargetsAt(rootPath: string): Generator<string> {
+  if (isSymbolicLink(rootPath)) {
+    const target = resolveRealPath(rootPath);
+    if (target !== undefined) {
+      yield target;
+    }
+    return;
+  }
+  yield* walkSymlinkTargets({ dir: rootPath, depth: 0 });
+}
+
+/**
  * Symlink targets found under `dir`. Real subdirectories are descended into so
  * nested links (`skills/<name>` → dotfiles) resolve too; a symlinked directory
  * is granted whole and not descended into, since the grant already covers its
  * contents. Unreadable entries are skipped — a config dir that cannot be walked
- * must not abort a launch.
+ * (or is a plain file, or absent) must not abort a launch.
  */
 function* walkSymlinkTargets(input: { dir: string; depth: number }): Generator<string> {
   let entries: readonly Dirent[];
@@ -116,6 +158,14 @@ function* walkSymlinkTargets(input: { dir: string; depth: number }): Generator<s
     if (input.depth < MAX_WALK_DEPTH && entry.isDirectory()) {
       yield* walkSymlinkTargets({ dir: entryPath, depth: input.depth + 1 });
     }
+  }
+}
+
+function isSymbolicLink(entryPath: string): boolean {
+  try {
+    return lstatSync(entryPath).isSymbolicLink();
+  } catch {
+    return false;
   }
 }
 

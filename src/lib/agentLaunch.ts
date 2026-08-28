@@ -8,7 +8,6 @@ import {
   safehouseCmuxIntegrationWarningLines,
 } from "@clipboard-health/clearance";
 
-import { resolveAgentConfigSymlinkGrants } from "./agentConfigSymlinks.ts";
 import { clearanceAllowHostsFilesFromEnvironment } from "./clearanceAllowlist.ts";
 import { installCmuxAgentHooks } from "./cmuxAgentHookInstall.ts";
 import { cmuxAgentHookSettingsJson } from "./cmuxAgentHooks.ts";
@@ -34,6 +33,7 @@ import {
 } from "./codexConfigRelocation.ts";
 import { resolveGitCommonDir } from "./gitCommonDir.ts";
 import { assertLocalRunnerRequirements, resolveLocalRunner } from "./localRunner.ts";
+import { resolveSandboxSymlinkGrants } from "./sandboxSymlinkGrants.ts";
 import { sandboxNameFor } from "./sandboxName.ts";
 import { debug, readEnvironmentVariable, sleep, writeError } from "./util.ts";
 import { resolveWorkspaceKind, workspaces } from "./workspaces.ts";
@@ -147,7 +147,8 @@ function resolveSafehouseAddDirs(worktreeDir: string): readonly string[] {
 /**
  * Read-only grants for the safehouse agent wrap: the configured
  * `local.readOnlyDirs` plus the symlink targets auto-resolved from the agent's
- * config directory (see `agentConfigSymlinks.ts` for why seatbelt needs them).
+ * config directory and the host tool configs it shells out to (see
+ * `sandboxSymlinkGrants.ts` for why seatbelt needs them).
  * Explicit entries come first so they read as the authoritative list, and both
  * sources are deduped and existence-filtered because safehouse rejects
  * duplicate-free-but-absent `--add-dirs-ro` paths.
@@ -157,7 +158,7 @@ function resolveSafehouseAddDirsReadOnly(input: {
   definition: AgentDefinition;
   homeDir: string;
 }): readonly string[] {
-  const autoGrants = resolveAgentConfigSymlinkGrants({
+  const autoGrants = resolveSandboxSymlinkGrants({
     agent: inferAgentCommandName(input.definition.cmd),
     homeDir: input.homeDir,
   });
