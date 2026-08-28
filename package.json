@@ -82,7 +82,7 @@
     "@nx/js": "23.1.0",
     "@tsconfig/node24": "24.0.5",
     "@tsconfig/strictest": "2.0.8",
-    "@types/node": "26.2.0",
+    "@types/node": "26.3.0",
     "@typescript/native-preview": "7.0.0-dev.20260707.2",
     "@vitest/coverage-v8": "4.1.11",
     "dependency-cruiser": "18.2.0",
