@@ -6,6 +6,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import os from "node:os";
@@ -447,7 +448,45 @@ describe(composeAgentLaunch, () => {
     expect(launchCommand).not.toContain("--add-dirs-ro");
   });
 
+  it("auto-grants symlink targets under the agent config dir read-only", () => {
+    const dotfiles = realpathSync(mkdtempSync(path.join(os.tmpdir(), "gc-dotfiles-")));
+    try {
+      const settings = path.join(dotfiles, "settings.json");
+      writeFileSync(settings, "{}");
+      mkdirSync(path.join(fakeHome, ".claude"), { recursive: true });
+      symlinkSync(settings, path.join(fakeHome, ".claude", "settings.json"));
+
+      const launchCommand = compose({ workspaceKind: "tmux", readOnlyDirs: [] });
+
+      expect(launchCommand).toContain(`--add-dirs-ro='${settings}'`);
+    } finally {
+      rmSync(dotfiles, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps an explicit readOnlyDirs entry alongside auto-grants without duplicating it", () => {
+    const dotfiles = realpathSync(mkdtempSync(path.join(os.tmpdir(), "gc-dotfiles-")));
+    try {
+      mkdirSync(path.join(fakeHome, ".claude"), { recursive: true });
+      symlinkSync(dotfiles, path.join(fakeHome, ".claude", "skills"));
+
+      const launchCommand = compose({
+        workspaceKind: "tmux",
+        readOnlyDirs: [dotfiles, fakeHome],
+      });
+
+      // Explicit `~`-style entries stay granted (the guard only refuses silent
+      // auto-grants) and the auto-resolved target appears exactly once.
+      expect(launchCommand).toContain(`--add-dirs-ro='${dotfiles}:${fakeHome}'`);
+    } finally {
+      rmSync(dotfiles, { recursive: true, force: true });
+    }
+  });
+
   it("omits --add-dirs-ro for non-safehouse runners", () => {
+    mkdirSync(path.join(fakeHome, ".claude"), { recursive: true });
+    symlinkSync(os.tmpdir(), path.join(fakeHome, ".claude", "skills"));
+
     const launchCommand = compose({ runner: "none", readOnlyDirs: [os.tmpdir()] });
 
     expect(launchCommand).not.toContain("--add-dirs-ro");

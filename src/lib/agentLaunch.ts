@@ -8,6 +8,7 @@ import {
   safehouseCmuxIntegrationWarningLines,
 } from "@clipboard-health/clearance";
 
+import { resolveAgentConfigSymlinkGrants } from "./agentConfigSymlinks.ts";
 import { clearanceAllowHostsFilesFromEnvironment } from "./clearanceAllowlist.ts";
 import { installCmuxAgentHooks } from "./cmuxAgentHookInstall.ts";
 import { cmuxAgentHookSettingsJson } from "./cmuxAgentHooks.ts";
@@ -108,7 +109,13 @@ export function composeAgentLaunch(input: {
           input.runner === "safehouse" ? input.safehouseEnableFeatures : undefined,
         // Safehouse rejects nonexistent --add-dirs-ro paths, so drop absent ones.
         safehouseAgentAddDirsReadOnly:
-          input.runner === "safehouse" ? (input.readOnlyDirs ?? []).filter(existsSync) : undefined,
+          input.runner === "safehouse"
+            ? resolveSafehouseAddDirsReadOnly({
+                readOnlyDirs: input.readOnlyDirs,
+                definition: input.definition,
+                homeDir,
+              })
+            : undefined,
         safehouseAgentIntegration,
       }),
       cleanup,
@@ -135,6 +142,26 @@ export function composeAgentLaunch(input: {
  */
 function resolveSafehouseAddDirs(worktreeDir: string): readonly string[] {
   return [...new Set([worktreeDir, resolveGitCommonDir(worktreeDir)])];
+}
+
+/**
+ * Read-only grants for the safehouse agent wrap: the configured
+ * `local.readOnlyDirs` plus the symlink targets auto-resolved from the agent's
+ * config directory (see `agentConfigSymlinks.ts` for why seatbelt needs them).
+ * Explicit entries come first so they read as the authoritative list, and both
+ * sources are deduped and existence-filtered because safehouse rejects
+ * duplicate-free-but-absent `--add-dirs-ro` paths.
+ */
+function resolveSafehouseAddDirsReadOnly(input: {
+  readOnlyDirs: readonly string[] | undefined;
+  definition: AgentDefinition;
+  homeDir: string;
+}): readonly string[] {
+  const autoGrants = resolveAgentConfigSymlinkGrants({
+    agent: inferAgentCommandName(input.definition.cmd),
+    homeDir: input.homeDir,
+  });
+  return [...new Set([...(input.readOnlyDirs ?? []), ...autoGrants])].filter(existsSync);
 }
 
 function safehouseAgentIntegrationFor(input: {
