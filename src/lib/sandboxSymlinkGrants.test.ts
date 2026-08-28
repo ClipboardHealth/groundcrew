@@ -158,6 +158,21 @@ describe(resolveSandboxSymlinkGrants, () => {
     expect(actual).toEqual([skill]);
   });
 
+  it("stops descending past the walk depth bound", () => {
+    const shallow = path.join(dotfiles, "shallow");
+    const deep = path.join(dotfiles, "deep");
+    mkdirSync(shallow);
+    mkdirSync(deep);
+    const atBound = path.join(configDir, "a", "b", "c");
+    mkdirSync(path.join(atBound, "d"), { recursive: true });
+    symlinkSync(shallow, path.join(atBound, "shallow"));
+    symlinkSync(deep, path.join(atBound, "d", "deep"));
+
+    const actual = resolveSandboxSymlinkGrants({ agent: "claude", homeDir: fakeHome });
+
+    expect(actual).toEqual([shallow]);
+  });
+
   it("resolves a symlinked ~/.config/gh entry so gh can start in the sandbox", () => {
     const ghConfig = path.join(dotfiles, "gh-config.yml");
     writeFileSync(ghConfig, "version: 1\n");
