@@ -5,6 +5,8 @@ import path from "node:path";
 import { resolveSandboxSymlinkGrants } from "./sandboxSymlinkGrants.ts";
 
 const writeErrorMock = vi.hoisted(() => vi.fn<(message: string) => void>());
+const logMock = vi.hoisted(() => vi.fn<(message: string) => void>());
+const runCommandMock = vi.hoisted(() => vi.fn<() => string>());
 const debugMock = vi.hoisted(() => vi.fn<(message: string) => void>());
 
 vi.mock(import("./util.ts"), async (importOriginal) => {
@@ -13,6 +15,16 @@ vi.mock(import("./util.ts"), async (importOriginal) => {
     ...actual,
     writeError: writeErrorMock,
     debug: debugMock,
+    log: logMock,
+  };
+});
+// Never read the developer's real git config from a unit test; each case seeds
+// the `git config --list --show-origin --name-only -z` output it needs.
+vi.mock(import("./commandRunner.ts"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    runCommand: runCommandMock,
   };
 });
 
@@ -38,12 +50,20 @@ describe(resolveSandboxSymlinkGrants, () => {
     mkdirSync(configDir, { recursive: true });
     writeErrorMock.mockClear();
     debugMock.mockClear();
+    logMock.mockClear();
+    runCommandMock.mockReset();
+    runCommandMock.mockReturnValue("");
   });
 
   afterEach(() => {
     rmSync(fakeHome, { recursive: true, force: true });
     rmSync(dotfiles, { recursive: true, force: true });
   });
+
+  /** Seed the NUL-separated `<origin>\n<name>` records git emits. */
+  function seedGitConfigOrigins(...files: readonly string[]): void {
+    runCommandMock.mockReturnValue(files.map((file) => `file:${file}\nuser.name`).join("\0"));
+  }
 
   function link(entry: string, target: string): void {
     symlinkSync(target, path.join(configDir, entry));
@@ -266,17 +286,20 @@ describe(resolveSandboxSymlinkGrants, () => {
   });
 
   it("drops a tool config root that is a broken symlink", () => {
-    symlinkSync(path.join(dotfiles, "missing-gitconfig"), path.join(fakeHome, ".gitconfig"));
+    mkdirSync(path.join(fakeHome, ".config"), { recursive: true });
+    symlinkSync(path.join(dotfiles, "missing-gh"), path.join(fakeHome, ".config", "gh"));
 
     const actual = resolveSandboxSymlinkGrants({ agent: "claude", homeDir: fakeHome });
 
     expect(actual).toEqual([]);
   });
 
-  it("grants a symlinked ~/.gitconfig file", () => {
+  it("grants the dotfiles target behind a symlinked ~/.gitconfig", () => {
     const gitConfig = path.join(dotfiles, "gitconfig");
+    const home = path.join(fakeHome, ".gitconfig");
     writeFileSync(gitConfig, "[user]\n");
-    symlinkSync(gitConfig, path.join(fakeHome, ".gitconfig"));
+    symlinkSync(gitConfig, home);
+    seedGitConfigOrigins(home);
 
     const actual = resolveSandboxSymlinkGrants({ agent: "claude", homeDir: fakeHome });
 
@@ -321,6 +344,120 @@ describe(resolveSandboxSymlinkGrants, () => {
     const actual = resolveSandboxSymlinkGrants({ agent: "codex", homeDir: fakeHome });
 
     expect(actual).toEqual([]);
+  });
+
+  it("grants every file git loads, including an include.path target", () => {
+    // ~/.gitconfig is a real file; its indirection is a git directive, not a
+    // symlink, so nothing in the walk can find the file it pulls in.
+    const managed = path.join(dotfiles, "gitconfig");
+    const home = path.join(fakeHome, ".gitconfig");
+    writeFileSync(managed, "[user]\n");
+    writeFileSync(home, "[include]\n");
+    seedGitConfigOrigins(home, managed);
+
+    const actual = resolveSandboxSymlinkGrants({ agent: "claude", homeDir: fakeHome });
+
+    expect(actual).toEqual([home, managed]);
+  });
+
+  it("ignores git config origins that are not files", () => {
+    runCommandMock.mockReturnValue("command line:\nuser.name");
+
+    const actual = resolveSandboxSymlinkGrants({ agent: "claude", homeDir: fakeHome });
+
+    expect(actual).toEqual([]);
+  });
+
+  it("survives a git that cannot report its config", () => {
+    runCommandMock.mockImplementation(() => {
+      throw new Error("not a git repository");
+    });
+
+    const actual = resolveSandboxSymlinkGrants({ agent: "claude", homeDir: fakeHome });
+
+    expect(actual).toEqual([]);
+  });
+
+  it("drops a git config origin that no longer exists", () => {
+    seedGitConfigOrigins(path.join(dotfiles, "deleted-gitconfig"));
+
+    const actual = resolveSandboxSymlinkGrants({ agent: "claude", homeDir: fakeHome });
+
+    expect(actual).toEqual([]);
+  });
+
+  it("refuses a git config origin that resolves to $HOME", () => {
+    seedGitConfigOrigins(fakeHome);
+
+    const actual = resolveSandboxSymlinkGrants({ agent: "claude", homeDir: fakeHome });
+
+    expect(actual).toEqual([]);
+    const [message] = assertDefined(writeErrorMock.mock.calls.at(0));
+    expect(message).toContain("local.readOnlyDirs");
+  });
+
+  it("refuses a link resolving to the directory holding every home", () => {
+    link("settings.json", path.dirname(fakeHome));
+
+    const actual = resolveSandboxSymlinkGrants({ agent: "claude", homeDir: fakeHome });
+
+    expect(actual).toEqual([]);
+  });
+
+  it("drops a target already covered by a granted directory", () => {
+    const tree = path.join(dotfiles, "tree");
+    const inner = path.join(tree, "inner", "settings.json");
+    mkdirSync(path.dirname(inner), { recursive: true });
+    writeFileSync(inner, "{}");
+    link("skills", tree);
+    link("settings.json", inner);
+
+    const actual = resolveSandboxSymlinkGrants({ agent: "claude", homeDir: fakeHome });
+
+    expect(actual).toEqual([tree]);
+  });
+
+  it("does not descend into cached copies of other repositories", () => {
+    const cached = path.join(dotfiles, "cached-plugin");
+    mkdirSync(cached);
+    mkdirSync(path.join(configDir, "plugins", "cache", "some-plugin"), { recursive: true });
+    symlinkSync(cached, path.join(configDir, "plugins", "cache", "some-plugin", "link"));
+
+    const actual = resolveSandboxSymlinkGrants({ agent: "claude", homeDir: fakeHome });
+
+    expect(actual).toEqual([]);
+  });
+
+  it("logs one visible line naming how many paths were auto-granted", () => {
+    const settings = path.join(dotfiles, "settings.json");
+    writeFileSync(settings, "{}");
+    link("settings.json", settings);
+
+    resolveSandboxSymlinkGrants({ agent: "claude", homeDir: fakeHome });
+
+    expect(logMock).toHaveBeenCalledWith(expect.stringContaining("Auto-granted 1 read-only"));
+  });
+
+  it("stays silent when there is nothing to grant", () => {
+    resolveSandboxSymlinkGrants({ agent: "claude", homeDir: fakeHome });
+
+    expect(logMock).not.toHaveBeenCalled();
+  });
+
+  it("stops at the grant cap and says so", () => {
+    const targets = Array.from({ length: 260 }, (_, index) => {
+      const target = path.join(dotfiles, `target-${index}`);
+      mkdirSync(target);
+      symlinkSync(target, path.join(configDir, `link-${index}`));
+      return target;
+    });
+
+    const actual = resolveSandboxSymlinkGrants({ agent: "claude", homeDir: fakeHome });
+
+    expect(actual).toHaveLength(256);
+    expect(targets).toHaveLength(260);
+    const [message] = assertDefined(writeErrorMock.mock.calls.at(0));
+    expect(message).toContain("local.readOnlyDirs");
   });
 
   it("returns nothing when the home directory itself is absent", () => {

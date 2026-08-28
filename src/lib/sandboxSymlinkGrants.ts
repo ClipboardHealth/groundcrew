@@ -1,7 +1,8 @@
 import { type Dirent, lstatSync, readdirSync, realpathSync } from "node:fs";
 import path from "node:path";
 
-import { debug, writeError } from "./util.ts";
+import { runCommand } from "./commandRunner.ts";
+import { debug, log, writeError } from "./util.ts";
 
 /**
  * Home-relative config directory each agent reads its settings, skills, hooks,
@@ -49,10 +50,27 @@ const TOOL_CONFIG_PATHS: readonly string[] = [
   // `gh` refuses to start when it cannot read config.yml, blocking PR creation.
   ".config/gh",
   // git reads whichever of these exists; a dotfiles-managed one breaks every
-  // git invocation in the sandbox, not just PR creation.
+  // git invocation in the sandbox, not just PR creation. `~/.gitconfig` is
+  // covered by `gitConfigOriginPaths` instead, which also catches includes.
   ".config/git",
-  ".gitconfig",
 ];
+
+/**
+ * Directory names never descended into, wherever they appear. These hold cached
+ * copies of other repositories (`~/.claude/plugins/cache` alone can be hundreds
+ * of megabytes), so crawling them costs launch latency proportional to something
+ * groundcrew does not control, and finds no config worth granting.
+ */
+const SKIPPED_DIR_NAMES: ReadonlySet<string> = new Set(["cache", "node_modules"]);
+
+/**
+ * Upper bound on auto-grants. The list is joined into a shell command delivered
+ * through the terminal multiplexer, and its length scales with the size of the
+ * user's dotfiles repo rather than with anything groundcrew bounds. Tripping the
+ * cap is loud: a truncated grant list means EPERM somewhere, and the user needs
+ * to know it was groundcrew that stopped short.
+ */
+const MAX_AUTO_GRANTS = 256;
 
 /**
  * How deep the walk descends, counting both real subdirectories and hops across
@@ -92,17 +110,37 @@ const MAX_WALK_DEPTH = 6;
  * over-eager grant produces no signal at all — so the guard errs toward
  * skipping and points at the explicit `local.readOnlyDirs` escape hatch.
  *
+ * git is handled by asking git itself which files it loads rather than by
+ * walking links: `~/.gitconfig` is routinely a *real* file whose indirection is
+ * an `include.path` directive, which no amount of symlink resolution finds.
+ *
  * Callers still filter the result through `existsSync`; broken links are
  * dropped here as well since `realpathSync` cannot resolve them.
  */
 export function resolveSandboxSymlinkGrants(input: {
   agent: string;
   homeDir: string;
+  /** Repo the launch targets; git config includes are evaluated from here. */
+  worktreeDir?: string | undefined;
 }): readonly string[] {
   const agentConfigDir = AGENT_CONFIG_DIRS[input.agent.toLowerCase()];
   const roots = [...(agentConfigDir === undefined ? [] : [agentConfigDir]), ...TOOL_CONFIG_PATHS];
   const guard = degenerateTargets(input.homeDir);
   const grants = new Set<string>();
+  let capped = false;
+
+  function addGrant(targetPath: string, source: string): void {
+    if (grants.has(targetPath) || isCoveredByGrantedDir({ targetPath, grants })) {
+      return;
+    }
+    if (grants.size >= MAX_AUTO_GRANTS) {
+      capped = true;
+      return;
+    }
+    grants.add(targetPath);
+    debug(`Auto-granting read-only sandbox access to ${targetPath} (${source})`);
+  }
+
   for (const root of roots) {
     const rootPath = path.join(input.homeDir, root);
     const descendNames = root === agentConfigDir ? AGENT_CONFIG_DESCEND_NAMES : undefined;
@@ -116,29 +154,116 @@ export function resolveSandboxSymlinkGrants(input: {
         );
         continue;
       }
-      if (grants.has(targetPath)) {
-        continue;
-      }
-      grants.add(targetPath);
-      debug(
-        `Auto-granting read-only sandbox access to ${targetPath} (symlinked under ${rootPath})`,
-      );
+      addGrant(targetPath, `symlinked under ${rootPath}`);
     }
   }
-  return [...grants];
+
+  for (const originPath of gitConfigOriginPaths({
+    homeDir: input.homeDir,
+    worktreeDir: input.worktreeDir,
+  })) {
+    if (guard.has(originPath)) {
+      writeError(
+        `Skipping auto-grant of ${originPath} (a git config file): granting the home ` +
+          "directory or filesystem root read-only would expose credentials and every other " +
+          "repo to the sandboxed agent. Add it to local.readOnlyDirs in crew.config.ts if you " +
+          "really want it.",
+      );
+      continue;
+    }
+    addGrant(originPath, "git config origin");
+  }
+
+  if (capped) {
+    writeError(
+      `Stopped auto-granting after ${MAX_AUTO_GRANTS} paths; the rest are not readable in the ` +
+        "sandbox. Add the tree they live in to local.readOnlyDirs in crew.config.ts.",
+    );
+  }
+  if (grants.size > 0) {
+    log(
+      `Auto-granted ${grants.size} read-only sandbox path(s) resolved from ${roots.join(", ")} ` +
+        "and git config; run with --verbose to list them.",
+    );
+  }
+  // Pruned at the end, not only as targets arrive: a parent tree can be granted
+  // after a file inside it, and one flag for the tree covers both.
+  return [...grants].filter((targetPath) => !isCoveredByGrantedDir({ targetPath, grants }));
 }
 
 /**
- * Paths never auto-granted: the filesystem root(s) above the config dir and the
- * user's home. Both the literal and the `realpath`-resolved home are guarded so
- * a home that is itself a symlink (`/home/x` → `/System/Volumes/.../x`) cannot
- * slip past under its other name.
+ * Every file git actually loads, straight from git. `~/.gitconfig` is commonly a
+ * real file that pulls a dotfiles-managed config in through `include.path`, and
+ * `includeIf "hasconfig:remote.*.url:..."` adds per-remote files on top — neither
+ * is discoverable by walking symlinks, and both are fatal inside the sandbox
+ * (git aborts on a config file it cannot read). Asking git removes the guessing.
+ *
+ * Run from the worktree so conditional includes evaluate against the real remote.
+ * Best-effort: a git that fails here (not installed, not a repo, broken config)
+ * must not abort the launch — the agent then gets the pre-existing behavior.
+ */
+function gitConfigOriginPaths(input: {
+  homeDir: string;
+  worktreeDir?: string | undefined;
+}): readonly string[] {
+  const options = input.worktreeDir === undefined ? {} : { cwd: input.worktreeDir };
+  // Typed as string, but a test double can hand back nothing; an empty read is
+  // the same "no origins to grant" outcome as a git that refused to run.
+  let output: string | undefined;
+  try {
+    output = runCommand("git", ["config", "--list", "--show-origin", "--name-only", "-z"], options);
+  } catch {
+    return [];
+  }
+  const origins = new Set<string>();
+  for (const record of (output ?? "").split("\0")) {
+    // Each record is "<origin>\n<name>"; only file origins name a readable path.
+    const [origin] = record.split("\n");
+    if (origin?.startsWith("file:") !== true) {
+      continue;
+    }
+    const originPath = path.resolve(input.homeDir, origin.slice("file:".length));
+    const resolved = resolveRealPath(originPath);
+    if (resolved !== undefined) {
+      origins.add(resolved);
+    }
+  }
+  return [...origins];
+}
+
+/**
+ * Whether an already-granted directory covers this path, so the sandbox reaches
+ * it without a second flag. Keeps the list proportional to the number of trees
+ * involved rather than repeating a subtree already opened.
+ */
+function isCoveredByGrantedDir(input: {
+  targetPath: string;
+  grants: ReadonlySet<string>;
+}): boolean {
+  let parent = path.dirname(input.targetPath);
+  while (parent !== path.dirname(parent)) {
+    if (input.grants.has(parent)) {
+      return true;
+    }
+    parent = path.dirname(parent);
+  }
+  return false;
+}
+
+/**
+ * Paths never auto-granted: the filesystem root(s) above the config dir, the
+ * user's home, and the directory holding all homes. Both the literal and the
+ * `realpath`-resolved home are guarded so a home that is itself a symlink
+ * (`/home/x` → `/System/Volumes/.../x`) cannot slip past under its other name.
  */
 function degenerateTargets(homeDir: string): ReadonlySet<string> {
   const targets = new Set<string>([path.parse(homeDir).root, "/"]);
   for (const home of [homeDir, resolveRealPath(homeDir)]) {
     if (home !== undefined) {
-      targets.add(path.resolve(home));
+      const resolvedHome = path.resolve(home);
+      targets.add(resolvedHome);
+      // `/Users` or `/home`: granting it exposes every account on the machine.
+      targets.add(path.dirname(resolvedHome));
     }
   }
   return targets;
@@ -239,7 +364,11 @@ function* walkSymlinkTargets(input: {
       });
       continue;
     }
-    if (entry.isDirectory() && (input.descendNames?.has(entry.name) ?? true)) {
+    if (
+      entry.isDirectory() &&
+      !SKIPPED_DIR_NAMES.has(entry.name) &&
+      (input.descendNames?.has(entry.name) ?? true)
+    ) {
       yield* walkSymlinkTargets({
         dir: entryPath,
         depth: input.depth + 1,

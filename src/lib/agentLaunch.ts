@@ -114,6 +114,7 @@ export function composeAgentLaunch(input: {
                 readOnlyDirs: input.readOnlyDirs,
                 definition: input.definition,
                 homeDir,
+                worktreeDir: input.worktreeDir,
               })
             : undefined,
         safehouseAgentIntegration,
@@ -149,18 +150,20 @@ function resolveSafehouseAddDirs(worktreeDir: string): readonly string[] {
  * `local.readOnlyDirs` plus the symlink targets auto-resolved from the agent's
  * config directory and the host tool configs it shells out to (see
  * `sandboxSymlinkGrants.ts` for why seatbelt needs them).
- * Explicit entries come first so they read as the authoritative list, and both
- * sources are deduped and existence-filtered because safehouse rejects
- * duplicate-free-but-absent `--add-dirs-ro` paths.
+ * Explicit entries come first so they read as the authoritative list. Absent
+ * paths are dropped because safehouse rejects them outright; duplicates are
+ * dropped so an explicit entry and an auto-grant of the same path emit one flag.
  */
 function resolveSafehouseAddDirsReadOnly(input: {
   readOnlyDirs: readonly string[] | undefined;
   definition: AgentDefinition;
   homeDir: string;
+  worktreeDir: string;
 }): readonly string[] {
   const autoGrants = resolveSandboxSymlinkGrants({
     agent: inferAgentCommandName(input.definition.cmd),
     homeDir: input.homeDir,
+    worktreeDir: input.worktreeDir,
   });
   return [...new Set([...(input.readOnlyDirs ?? []), ...autoGrants])].filter(existsSync);
 }
