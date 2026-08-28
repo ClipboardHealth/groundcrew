@@ -163,14 +163,84 @@ describe(resolveSandboxSymlinkGrants, () => {
     const deep = path.join(dotfiles, "deep");
     mkdirSync(shallow);
     mkdirSync(deep);
-    const atBound = path.join(configDir, "a", "b", "c");
-    mkdirSync(path.join(atBound, "d"), { recursive: true });
+    // Six levels below the config dir reach the bound; the seventh is past it.
+    const atBound = path.join(configDir, "skills", "a", "b", "c", "d", "e");
+    mkdirSync(path.join(atBound, "f"), { recursive: true });
     symlinkSync(shallow, path.join(atBound, "shallow"));
-    symlinkSync(deep, path.join(atBound, "d", "deep"));
+    symlinkSync(deep, path.join(atBound, "f", "deep"));
 
     const actual = resolveSandboxSymlinkGrants({ agent: "claude", homeDir: fakeHome });
 
     expect(actual).toEqual([shallow]);
+  });
+
+  it("follows a nested symlink chain into the tree the second hop points at", () => {
+    // The layout that broke skills: ~/.claude/skills -> dotfiles/config/claude/skills,
+    // whose entries link on again into dotfiles/agents/skills/<name>.
+    const managedSkills = path.join(dotfiles, "config", "claude", "skills");
+    const realSkill = path.join(dotfiles, "agents", "skills", "cb-babysit");
+    mkdirSync(managedSkills, { recursive: true });
+    mkdirSync(realSkill, { recursive: true });
+    writeFileSync(path.join(realSkill, "SKILL.md"), "# skill");
+    symlinkSync(realSkill, path.join(managedSkills, "cb-babysit"));
+    link("skills", managedSkills);
+
+    const actual = resolveSandboxSymlinkGrants({ agent: "claude", homeDir: fakeHome });
+
+    // Granting only managedSkills is the partial failure: the agent can list the
+    // directory and see every skill name, but reading SKILL.md returns EPERM.
+    expect(actual).toContain(managedSkills);
+    expect(actual).toContain(realSkill);
+  });
+
+  it("grants the file a chain ends at, not the directory holding the last link", () => {
+    const realSettings = path.join(dotfiles, "real", "settings.json");
+    const hop = path.join(dotfiles, "config", "claude");
+    mkdirSync(path.dirname(realSettings), { recursive: true });
+    mkdirSync(hop, { recursive: true });
+    writeFileSync(realSettings, "{}");
+    symlinkSync(realSettings, path.join(hop, "settings.json"));
+    link("settings.json", path.join(hop, "settings.json"));
+
+    const actual = resolveSandboxSymlinkGrants({ agent: "claude", homeDir: fakeHome });
+
+    expect(actual).toEqual([realSettings]);
+    expect(actual).not.toContain(hop);
+  });
+
+  it("terminates on a symlink cycle", () => {
+    const loop = path.join(dotfiles, "loop");
+    mkdirSync(loop);
+    symlinkSync(loop, path.join(loop, "self"));
+    link("skills", loop);
+
+    const actual = resolveSandboxSymlinkGrants({ agent: "claude", homeDir: fakeHome });
+
+    expect(actual).toEqual([loop]);
+  });
+
+  it("refuses a chain that resolves to $HOME without walking it", () => {
+    const hop = path.join(dotfiles, "hop");
+    mkdirSync(hop);
+    symlinkSync(fakeHome, path.join(hop, "home"));
+    link("skills", hop);
+
+    const actual = resolveSandboxSymlinkGrants({ agent: "claude", homeDir: fakeHome });
+
+    expect(actual).toEqual([hop]);
+    const [message] = assertDefined(writeErrorMock.mock.calls.at(0));
+    expect(message).toContain(fakeHome);
+  });
+
+  it("does not crawl runtime state directories under the agent config dir", () => {
+    const transcript = path.join(dotfiles, "transcript.jsonl");
+    writeFileSync(transcript, "{}");
+    mkdirSync(path.join(configDir, "projects", "some-repo"), { recursive: true });
+    symlinkSync(transcript, path.join(configDir, "projects", "some-repo", "session.jsonl"));
+
+    const actual = resolveSandboxSymlinkGrants({ agent: "claude", homeDir: fakeHome });
+
+    expect(actual).toEqual([]);
   });
 
   it("resolves a symlinked ~/.config/gh entry so gh can start in the sandbox", () => {

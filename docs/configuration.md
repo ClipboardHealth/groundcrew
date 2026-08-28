@@ -326,6 +326,8 @@ That middle scope is deliberate. Resolving only the agent's config directory is 
 Rules:
 
 - A file link grants the resolved **file**; a directory link grants the resolved **directory**. A symlinked `settings.json` does not re-open its whole parent dotfiles repo.
+- Only config entries of the agent dir are crawled — symlinks at its top level whatever they are named, plus the real `agents`, `commands`, `contexts`, `hooks`, `plugins`, and `skills` subdirectories. Runtime state such as `~/.claude/projects` is skipped: it holds every session transcript, so walking it is slow and would auto-grant whatever stray links live there.
+- Chains are followed to their end, and every resolved directory is walked again for the links inside it. Dotfiles layouts nest — `~/.claude/skills` links to `~/.dot_files/config/claude/skills`, whose entries link on again to `~/.dot_files/agents/skills/<name>` — and granting only the first hop is worse than granting nothing: the agent can _list_ the directory and sees every skill name, but reading any `SKILL.md` returns EPERM, so Claude Code reports the skill as merely unavailable and no permission error ever reaches you.
 - A link resolving to `$HOME` or `/` is **refused** and logged, naming the path. A read-only grant of your home directory would expose `~/.ssh`, `~/.aws/credentials`, browser cookies, and every other repo to an agent with network egress. Write `local: { readOnlyDirs: ["~"] }` if you truly want it — the guard does not forbid it, it requires saying so out loud in a file that shows up in review.
 - Every auto-grant is logged (visible with `--verbose`, always written to the log file), so a widened sandbox is never silent.
 - Nonexistent and duplicate targets are dropped before reaching safehouse.

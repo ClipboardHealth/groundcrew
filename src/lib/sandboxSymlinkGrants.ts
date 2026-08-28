@@ -15,6 +15,22 @@ const AGENT_CONFIG_DIRS: Record<string, string> = {
 };
 
 /**
+ * Real subdirectories of the agent config dir worth descending into. Everything
+ * else at that level is runtime state, not config — `projects` alone holds every
+ * session transcript, and walking it both costs seconds and auto-grants whatever
+ * stray links live in it. Symlinked entries are still resolved whatever they are
+ * named; this list only bounds the crawl of *real* directories.
+ */
+const AGENT_CONFIG_DESCEND_NAMES: ReadonlySet<string> = new Set([
+  "agents",
+  "commands",
+  "contexts",
+  "hooks",
+  "plugins",
+  "skills",
+]);
+
+/**
  * Home-relative config paths of the host tools every agent shells out to,
  * resolved alongside the agent's own config dir.
  *
@@ -39,11 +55,12 @@ const TOOL_CONFIG_PATHS: readonly string[] = [
 ];
 
 /**
- * How deep the walk descends into real subdirectories of a config dir. Deep
- * enough for the nested layouts agents ship (`skills/<name>/SKILL.md`) without
+ * How deep the walk descends, counting both real subdirectories and hops across
+ * a resolved symlink target. Deep enough for the nested layouts agents ship
+ * (`skills/<name>/SKILL.md`) reached through a two-hop dotfiles chain, without
  * turning a launch into a full-tree crawl.
  */
-const MAX_WALK_DEPTH = 3;
+const MAX_WALK_DEPTH = 6;
 
 /**
  * Resolve symlinked config paths into read-only sandbox grants.
@@ -57,6 +74,14 @@ const MAX_WALK_DEPTH = 3;
  *
  * Covers the agent's own config dir plus `TOOL_CONFIG_PATHS` — see there for
  * why the tool list is an allowlist and not all of `~/.config`.
+ *
+ * Chains are followed to the end. A dotfiles layout routinely nests — `~/.claude/skills`
+ * links to `~/.dot_files/config/claude/skills`, whose entries link on again to
+ * `~/.dot_files/agents/skills/<name>` — and granting only the first hop is worse
+ * than granting nothing: the agent can *list* the directory and sees every skill
+ * name, but reading any file inside returns EPERM, so Claude Code reports the
+ * skill as merely unavailable with no permission error surfaced. Every resolved
+ * directory is therefore walked in turn for the links it contains.
  *
  * A file link grants the resolved **file**, never its parent directory, so a
  * single symlinked `settings.json` does not re-open the whole dotfiles repo.
@@ -80,21 +105,24 @@ export function resolveSandboxSymlinkGrants(input: {
   const grants = new Set<string>();
   for (const root of roots) {
     const rootPath = path.join(input.homeDir, root);
-    for (const target of symlinkTargetsAt(rootPath)) {
-      if (guard.has(target)) {
+    const descendNames = root === agentConfigDir ? AGENT_CONFIG_DESCEND_NAMES : undefined;
+    for (const { targetPath, refused } of symlinkTargetsAt({ rootPath, guard, descendNames })) {
+      if (refused) {
         writeError(
-          `Skipping auto-grant of ${target} (resolved from a symlink under ${rootPath}): ` +
+          `Skipping auto-grant of ${targetPath} (resolved from a symlink under ${rootPath}): ` +
             "granting the home directory or filesystem root read-only would expose credentials " +
             "and every other repo to the sandboxed agent. Add it to local.readOnlyDirs in " +
             "crew.config.ts if you really want it.",
         );
         continue;
       }
-      if (grants.has(target)) {
+      if (grants.has(targetPath)) {
         continue;
       }
-      grants.add(target);
-      debug(`Auto-granting read-only sandbox access to ${target} (symlinked under ${rootPath})`);
+      grants.add(targetPath);
+      debug(
+        `Auto-granting read-only sandbox access to ${targetPath} (symlinked under ${rootPath})`,
+      );
     }
   }
   return [...grants];
@@ -117,29 +145,83 @@ function degenerateTargets(homeDir: string): ReadonlySet<string> {
 }
 
 /**
+ * One resolved symlink target. `refused` marks a degenerate target the caller
+ * must log instead of grant; the walk also stops there rather than descending,
+ * so a link to `/` never crawls the filesystem.
+ */
+interface ResolvedTarget {
+  targetPath: string;
+  refused: boolean;
+}
+
+/**
  * Symlink targets for one configured root. A root that is itself a symlink
  * (a whole dotfiles-managed `~/.config/gh`, or a bare `~/.gitconfig` file) is
  * granted directly; a real directory is walked for the links inside it.
  */
-function* symlinkTargetsAt(rootPath: string): Generator<string> {
-  if (isSymbolicLink(rootPath)) {
-    const target = resolveRealPath(rootPath);
-    if (target !== undefined) {
-      yield target;
-    }
+function* symlinkTargetsAt(input: {
+  rootPath: string;
+  guard: ReadonlySet<string>;
+  /** When set, only real subdirectories with these names are descended into. */
+  descendNames?: ReadonlySet<string> | undefined;
+}): Generator<ResolvedTarget> {
+  const walk = { depth: 0, visited: new Set<string>(), guard: input.guard };
+  if (isSymbolicLink(input.rootPath)) {
+    yield* resolvedLinkTargets({ ...walk, linkPath: input.rootPath });
     return;
   }
-  yield* walkSymlinkTargets({ dir: rootPath, depth: 0 });
+  yield* walkSymlinkTargets({ ...walk, dir: input.rootPath, descendNames: input.descendNames });
+}
+
+/**
+ * The grant for one symlink, plus everything reachable through it. A resolved
+ * directory is granted and then walked, because its own entries may link on
+ * again into a third tree — the nested case a single `realpath` hop misses.
+ */
+function* resolvedLinkTargets(input: {
+  linkPath: string;
+  depth: number;
+  visited: Set<string>;
+  guard: ReadonlySet<string>;
+}): Generator<ResolvedTarget> {
+  const targetPath = resolveRealPath(input.linkPath);
+  if (targetPath === undefined) {
+    return;
+  }
+  if (input.guard.has(targetPath)) {
+    yield { targetPath, refused: true };
+    return;
+  }
+  yield { targetPath, refused: false };
+  // Walked unconditionally: readdir on a file target fails with ENOTDIR, which
+  // the walk already treats as "nothing further here", so a file link costs one
+  // failed syscall instead of a stat on every link.
+  yield* walkSymlinkTargets({
+    dir: targetPath,
+    depth: input.depth + 1,
+    visited: input.visited,
+    guard: input.guard,
+  });
 }
 
 /**
  * Symlink targets found under `dir`. Real subdirectories are descended into so
- * nested links (`skills/<name>` → dotfiles) resolve too; a symlinked directory
- * is granted whole and not descended into, since the grant already covers its
- * contents. Unreadable entries are skipped — a config dir that cannot be walked
- * (or is a plain file, or absent) must not abort a launch.
+ * nested links (`skills/<name>` → dotfiles) resolve too. `visited` holds the
+ * directories already walked, so a chain that loops back on itself terminates.
+ * Unreadable entries are skipped — a config dir that cannot be walked (or is a
+ * plain file, or absent) must not abort a launch.
  */
-function* walkSymlinkTargets(input: { dir: string; depth: number }): Generator<string> {
+function* walkSymlinkTargets(input: {
+  dir: string;
+  depth: number;
+  visited: Set<string>;
+  guard: ReadonlySet<string>;
+  descendNames?: ReadonlySet<string> | undefined;
+}): Generator<ResolvedTarget> {
+  if (input.depth > MAX_WALK_DEPTH || input.visited.has(input.dir)) {
+    return;
+  }
+  input.visited.add(input.dir);
   let entries: readonly Dirent[];
   try {
     entries = readdirSync(input.dir, { withFileTypes: true });
@@ -149,14 +231,21 @@ function* walkSymlinkTargets(input: { dir: string; depth: number }): Generator<s
   for (const entry of entries) {
     const entryPath = path.join(input.dir, entry.name);
     if (entry.isSymbolicLink()) {
-      const target = resolveRealPath(entryPath);
-      if (target !== undefined) {
-        yield target;
-      }
+      yield* resolvedLinkTargets({
+        linkPath: entryPath,
+        depth: input.depth,
+        visited: input.visited,
+        guard: input.guard,
+      });
       continue;
     }
-    if (input.depth < MAX_WALK_DEPTH && entry.isDirectory()) {
-      yield* walkSymlinkTargets({ dir: entryPath, depth: input.depth + 1 });
+    if (entry.isDirectory() && (input.descendNames?.has(entry.name) ?? true)) {
+      yield* walkSymlinkTargets({
+        dir: entryPath,
+        depth: input.depth + 1,
+        visited: input.visited,
+        guard: input.guard,
+      });
     }
   }
 }
