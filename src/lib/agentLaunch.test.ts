@@ -499,6 +499,26 @@ describe(composeAgentLaunch, () => {
     }
   });
 
+  it("resolves no auto-grants when the agent cmd owns its safehouse wrap", () => {
+    const dotfiles = realpathSync(mkdtempSync(path.join(os.tmpdir(), "gc-dotfiles-")));
+    try {
+      mkdirSync(path.join(fakeHome, ".claude"), { recursive: true });
+      symlinkSync(dotfiles, path.join(fakeHome, ".claude", "skills"));
+
+      const launchCommand = compose({
+        workspaceKind: "tmux",
+        definition: definition({ cmd: "safehouse -- claude --permission-mode auto" }),
+        readOnlyDirs: [],
+      });
+
+      // The cmd's own wrap receives none of groundcrew's flags, so announcing a
+      // grant here would misreport the sandbox.
+      expect(launchCommand).not.toContain(dotfiles);
+    } finally {
+      rmSync(dotfiles, { recursive: true, force: true });
+    }
+  });
+
   it("omits --add-dirs-ro for non-safehouse runners", () => {
     mkdirSync(path.join(fakeHome, ".claude"), { recursive: true });
     symlinkSync(os.tmpdir(), path.join(fakeHome, ".claude", "skills"));

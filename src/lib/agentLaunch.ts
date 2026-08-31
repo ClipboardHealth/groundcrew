@@ -22,6 +22,7 @@ import {
 import { detectHostCapabilities } from "./host.ts";
 import {
   buildLaunchCommand,
+  groundcrewOwnsSafehouseWrap,
   inferAgentCommandName,
   type SafehouseAgentIntegration,
   type WorkerEnvironment,
@@ -160,11 +161,17 @@ function resolveSafehouseAddDirsReadOnly(input: {
   homeDir: string;
   worktreeDir: string;
 }): readonly string[] {
-  const autoGrants = resolveSandboxSymlinkGrants({
-    agent: inferAgentCommandName(input.definition.cmd),
-    homeDir: input.homeDir,
-    worktreeDir: input.worktreeDir,
-  });
+  // A `safehouse …` cmd owns its own wrap, so every flag composed here is
+  // dropped. Resolving anyway would announce grants the sandbox never receives
+  // and point an EPERM investigation at the wrong thing.
+  const autoGrants = groundcrewOwnsSafehouseWrap(input.definition.cmd)
+    ? resolveSandboxSymlinkGrants({
+        agent: inferAgentCommandName(input.definition.cmd),
+        homeDir: input.homeDir,
+        worktreeDir: input.worktreeDir,
+        explicitDirs: input.readOnlyDirs,
+      })
+    : [];
   return [...new Set([...(input.readOnlyDirs ?? []), ...autoGrants])].filter(existsSync);
 }
 

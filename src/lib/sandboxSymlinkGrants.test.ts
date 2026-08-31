@@ -488,6 +488,83 @@ describe(resolveSandboxSymlinkGrants, () => {
     expect(message).toContain("local.readOnlyDirs");
   });
 
+  it("refuses a link into a credential store", () => {
+    const credentials = path.join(fakeHome, ".aws", "credentials");
+    mkdirSync(path.dirname(credentials), { recursive: true });
+    writeFileSync(credentials, "[default]\n");
+    link("settings.json", credentials);
+
+    const actual = resolveSandboxSymlinkGrants({ agent: "claude", homeDir: fakeHome });
+
+    expect(actual).toEqual([]);
+    const [message] = assertDefined(writeErrorMock.mock.calls.at(0));
+    expect(message).toContain("credential store");
+  });
+
+  it("refuses the credential store directory itself", () => {
+    mkdirSync(path.join(fakeHome, ".ssh"), { recursive: true });
+    link("skills", path.join(fakeHome, ".ssh"));
+
+    const actual = resolveSandboxSymlinkGrants({ agent: "claude", homeDir: fakeHome });
+
+    expect(actual).toEqual([]);
+  });
+
+  it("refuses a target holding safehouse's grant-list delimiter", () => {
+    const target = path.join(dotfiles, "with:colon");
+    mkdirSync(target);
+    link("skills", target);
+
+    const actual = resolveSandboxSymlinkGrants({ agent: "claude", homeDir: fakeHome });
+
+    expect(actual).toEqual([]);
+    const [message] = assertDefined(writeErrorMock.mock.calls.at(0));
+    expect(message).toContain("splitting into two");
+  });
+
+  it("resolves pi's config directory", () => {
+    const managed = path.join(dotfiles, "pi-agent");
+    mkdirSync(managed);
+    mkdirSync(path.join(fakeHome, ".pi"), { recursive: true });
+    symlinkSync(managed, path.join(fakeHome, ".pi", "agent"));
+
+    const actual = resolveSandboxSymlinkGrants({ agent: "pi", homeDir: fakeHome });
+
+    expect(actual).toEqual([managed]);
+  });
+
+  it("skips a target an explicit readOnlyDirs entry already covers", () => {
+    const target = path.join(dotfiles, "config", "claude");
+    mkdirSync(target, { recursive: true });
+    link("skills", target);
+
+    const actual = resolveSandboxSymlinkGrants({
+      agent: "claude",
+      homeDir: fakeHome,
+      explicitDirs: [dotfiles],
+    });
+
+    expect(actual).toEqual([]);
+  });
+
+  it("frees cap slots when a later grant subsumes earlier ones", () => {
+    // The parent tree is linked last, so its children are granted first; those
+    // slots must come back rather than counting toward the cap.
+    const tree = path.join(dotfiles, "tree");
+    const children = Array.from({ length: 3 }, (_, index) => {
+      const child = path.join(tree, `child-${index}`);
+      mkdirSync(child, { recursive: true });
+      symlinkSync(child, path.join(configDir, `a-child-${index}`));
+      return child;
+    });
+    symlinkSync(tree, path.join(configDir, "z-tree"));
+
+    const actual = resolveSandboxSymlinkGrants({ agent: "claude", homeDir: fakeHome });
+
+    expect(children).toHaveLength(3);
+    expect(actual).toEqual([tree]);
+  });
+
   it("returns nothing when the home directory itself is absent", () => {
     const actual = resolveSandboxSymlinkGrants({
       agent: "claude",

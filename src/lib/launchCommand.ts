@@ -592,7 +592,17 @@ function shouldWrapWithSafehouse(arguments_: LaunchCommandArguments): boolean {
   if (arguments_.runner !== "safehouse") {
     return false;
   }
-  return !/^safehouse(?:\s|$)/.test(arguments_.definition.cmd);
+  return groundcrewOwnsSafehouseWrap(arguments_.definition.cmd);
+}
+
+/**
+ * Whether groundcrew composes the Safehouse flags for this `cmd`, or the cmd
+ * owns its own wrap. Callers that resolve sandbox grants check this first:
+ * every flag groundcrew would compose is dropped for a `safehouse …` cmd, so
+ * resolving (and announcing) grants for one misreports the sandbox.
+ */
+export function groundcrewOwnsSafehouseWrap(agentCmd: string): boolean {
+  return !/^safehouse(?:\s|$)/.test(agentCmd);
 }
 
 /**
