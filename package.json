@@ -89,7 +89,7 @@
     "husky": "9.1.7",
     "jscpd": "5.0.16",
     "knip": "6.33.0",
-    "lint-staged": "17.3.0",
+    "lint-staged": "17.4.1",
     "markdownlint-cli2": "0.23.2",
     "nx": "23.1.0",
     "oxfmt": "0.63.0",
