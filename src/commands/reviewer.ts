@@ -37,6 +37,7 @@ import {
 import { debug, errorMessage, log, logEvent } from "../lib/util.ts";
 import type { WorktreeEntry } from "../lib/worktrees.ts";
 import { effectiveBranchName } from "../lib/worktreeRunState.ts";
+import { createStackRetarget, type RunGhCommand, type RunGitCommand } from "./stackRetarget.ts";
 import { reapWorktrees } from "./teardownReporter.ts";
 
 /**
@@ -55,6 +56,9 @@ interface ReviewerDeps {
   board: Board;
   findPullRequests: FindPullRequests;
   config?: ResolvedConfig;
+  /** Injection points for the stack-retarget pass's git/gh calls; default to the real implementations. */
+  runGitCommand?: RunGitCommand;
+  runGhCommand?: RunGhCommand;
 }
 
 /** Per-tick inputs, mirroring the other orchestrator steps' shape. */
@@ -115,10 +119,28 @@ function matchingWorktreeEntries(arguments_: {
 }
 
 export function createReviewer(deps: ReviewerDeps): Reviewer {
-  const { board, config, findPullRequests } = deps;
+  const { board, config, findPullRequests, runGitCommand, runGhCommand } = deps;
+  const stackRetarget = createStackRetarget({
+    findPullRequests,
+    ...(runGitCommand === undefined ? {} : { runGit: runGitCommand }),
+    ...(runGhCommand === undefined ? {} : { runGh: runGhCommand }),
+  });
 
   async function runOnce(arguments_: ReviewArguments): Promise<void> {
     const { state, worktreeEntries, dryRun, signal } = arguments_;
+
+    // Independent of the in-progress/in-review candidate scan below: a
+    // stacked task's baseBranch correction must not wait on there being an
+    // ordinary transition to make this tick.
+    if (config !== undefined) {
+      await stackRetarget.runOnce({
+        config,
+        state,
+        worktreeEntries,
+        dryRun,
+        ...(signal === undefined ? {} : { signal }),
+      });
+    }
 
     const candidates = state.issues.filter(
       (issue) => issue.status === "in-progress" || issue.status === "in-review",

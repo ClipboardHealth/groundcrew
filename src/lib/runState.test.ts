@@ -4,6 +4,7 @@ import path from "node:path";
 
 import type { ResolvedConfig } from "./config.ts";
 import {
+  clearBaseBranch,
   readRunState,
   recordRunState,
   removeRunState,
@@ -355,6 +356,38 @@ describe("run state store", () => {
       baseBranch: "dev-team-1",
       parentTask: "team-1",
     });
+  });
+
+  it("clears baseBranch while retaining parentTask and other fields", () => {
+    recordRunState({
+      config,
+      state: {
+        task: "team-2",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-2",
+        branchName: "dev-team-2",
+        workspaceName: "team-2",
+        state: "running",
+        baseBranch: "dev-team-1",
+        parentTask: "team-1",
+      },
+    });
+
+    const cleared = clearBaseBranch(config, "team-2");
+
+    expect(cleared?.baseBranch).toBeUndefined();
+    expect(cleared?.parentTask).toBe("team-1");
+    expect(cleared?.branchName).toBe("dev-team-2");
+    expect(readRunState(config, "team-2")?.baseBranch).toBeUndefined();
+    expect(readRunState(config, "team-2")?.parentTask).toBe("team-1");
+    expect(JSON.parse(readFileSync(runStatePath(config, "team-2"), "utf8"))).not.toHaveProperty(
+      "baseBranch",
+    );
+  });
+
+  it("clearBaseBranch is a no-op returning undefined when no run state exists", () => {
+    expect(clearBaseBranch(config, "team-9")).toBeUndefined();
   });
 
   it("parses an old-shaped run state file with no stacking fields", () => {
