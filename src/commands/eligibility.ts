@@ -3,9 +3,9 @@
  * derived state (worktrees, live workspaces, usage, slot count) and returns
  * a verdict per Todo task. No logging, no Linear calls, no shell-outs of its
  * own: the one exception is the stacking decision in `classifyBlockers`,
- * which reads the blocker's run state and probes whether its branch is
- * pushed. Both effects are routed through the injectable `EligibilityDeps`
- * so callers can fake them the way the rest of the codebase fakes git.
+ * which reads the blocker's run state and probes its branch's availability.
+ * Both effects are routed through the injectable `EligibilityDeps` so
+ * callers can fake them the way the rest of the codebase fakes git.
  *
  * The Dispatcher consumes the verdict list to drive logging and side
  * effects.
@@ -83,25 +83,39 @@ interface StackVerdict extends StackDecision {
 }
 
 /**
+ * Result of probing a parent branch's availability for stacking (spec
+ * section 8's error table):
+ *
+ * - `"pushed"`: `git ls-remote` finds the branch on the remote.
+ * - `"unpushed"`: the branch may still show up — either `ls-remote` came
+ *   back empty but a local branch of the same name exists (the parent's
+ *   agent hasn't pushed yet), or the `ls-remote` probe itself failed
+ *   (network/auth). Both retry next tick under the same optimistic reason.
+ * - `"unknown"`: the branch is missing both locally and on the remote, so it
+ *   will never appear (deleted, or the parent's run-state file is stale).
+ */
+type BranchAvailability = "pushed" | "unpushed" | "unknown";
+
+/**
  * Side-effecting boundary for the stacking decision — the only I/O
  * `classifyBlockers` performs. Production uses the real run-state reader and
- * a `git ls-remote` probe; tests substitute fakes instead of mocking modules.
+ * a `git ls-remote`/local-branch probe; tests substitute fakes instead of
+ * mocking modules.
  */
 export interface EligibilityDeps {
   readParentRunState: (config: ResolvedConfig, task: string) => RunState | undefined;
-  /** True when `branch` exists on `remote` in `repoDir`. A failed or empty `ls-remote` means "not pushed yet". */
-  isBranchPushed: (arguments_: {
+  probeParentBranch: (arguments_: {
     repoDir: string;
     remote: string;
     branch: string;
-  }) => Promise<boolean>;
+  }) => Promise<BranchAvailability>;
 }
 
-async function isBranchPushed(arguments_: {
+async function isBranchOnRemote(arguments_: {
   repoDir: string;
   remote: string;
   branch: string;
-}): Promise<boolean> {
+}): Promise<boolean | undefined> {
   try {
     const output = await runCommandAsync("git", [
       "-C",
@@ -113,13 +127,44 @@ async function isBranchPushed(arguments_: {
     ]);
     return output.length > 0;
   } catch {
+    return undefined;
+  }
+}
+
+async function isBranchLocal(arguments_: { repoDir: string; branch: string }): Promise<boolean> {
+  try {
+    await runCommandAsync("git", [
+      "-C",
+      arguments_.repoDir,
+      "show-ref",
+      "--verify",
+      "--quiet",
+      `refs/heads/${arguments_.branch}`,
+    ]);
+    return true;
+  } catch {
     return false;
   }
 }
 
+async function probeParentBranch(arguments_: {
+  repoDir: string;
+  remote: string;
+  branch: string;
+}): Promise<BranchAvailability> {
+  const onRemote = await isBranchOnRemote(arguments_);
+  if (onRemote === true) {
+    return "pushed";
+  }
+  if (onRemote === undefined) {
+    return "unpushed";
+  }
+  return (await isBranchLocal(arguments_)) ? "unpushed" : "unknown";
+}
+
 export const defaultEligibilityDeps: EligibilityDeps = {
   readParentRunState: readRunState,
-  isBranchPushed,
+  probeParentBranch,
 };
 
 export type AgentUsageExhaustion =
@@ -235,12 +280,20 @@ async function stackDecisionFor(
     );
   }
 
-  const pushed = await deps.isBranchPushed({
+  const availability = await deps.probeParentBranch({
     repoDir: path.resolve(repositoryBaseDir(config, issue.repository), issue.repository),
     remote: config.git.remote,
     branch: parentRunState.branchName,
   });
-  if (!pushed) {
+  if (availability === "unknown") {
+    return stackSkip(
+      issue,
+      blocker,
+      "stack_parent_unknown",
+      `Skipping ${issue.id}: blocker ${parentTask}'s branch ${parentRunState.branchName} is missing locally and on the remote`,
+    );
+  }
+  if (availability === "unpushed") {
     return stackSkip(
       issue,
       blocker,

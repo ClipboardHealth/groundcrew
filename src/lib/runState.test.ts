@@ -409,6 +409,32 @@ describe("run state store", () => {
     );
   });
 
+  it("clears needsRebase along with baseBranch when a deferred rebase later succeeds", () => {
+    recordRunState({
+      config,
+      state: {
+        task: "team-2",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-2",
+        branchName: "dev-team-2",
+        workspaceName: "team-2",
+        state: "running",
+        baseBranch: "dev-team-1",
+        parentTask: "team-1",
+        needsRebase: true,
+      },
+    });
+
+    const cleared = clearBaseBranch(config, "team-2");
+
+    expect(cleared?.needsRebase).toBeUndefined();
+    expect(readRunState(config, "team-2")?.needsRebase).toBeUndefined();
+    expect(JSON.parse(readFileSync(runStatePath(config, "team-2"), "utf8"))).not.toHaveProperty(
+      "needsRebase",
+    );
+  });
+
   it("clearBaseBranch is a no-op returning undefined when no run state exists", () => {
     expect(clearBaseBranch(config, "team-9")).toBeUndefined();
   });

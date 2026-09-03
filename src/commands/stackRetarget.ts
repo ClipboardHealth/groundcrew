@@ -9,7 +9,10 @@
  *   and the child PR is still based on the parent (or GitHub already moved
  *   it to the default branch itself) → `gh pr edit --base <default>`, then
  *   rebase onto the default branch and force-push when the worktree is
- *   clean, or flag `needsRebase` when it isn't.
+ *   clean, or flag `needsRebase` when it isn't. A successful rebase also
+ *   tries to reclaim the parent's now-unreferenced branch (spec section 6) —
+ *   `worktrees.teardown` only checks this at the moment the parent's own
+ *   worktree is torn down, which is usually before this rebase runs.
  *
  * A task with no `baseBranch` in run state, or no open PR yet, is left
  * alone — there is nothing to correct. Every git/gh failure is caught,
@@ -28,7 +31,7 @@ import {
 } from "../lib/taskSource.ts";
 import { debug, errorMessage, log, logEvent } from "../lib/util.ts";
 import { effectiveBranchName } from "../lib/worktreeRunState.ts";
-import type { WorktreeEntry } from "../lib/worktrees.ts";
+import { reclaimStackParentBranch, type WorktreeEntry } from "../lib/worktrees.ts";
 import type { FindPullRequests } from "./reviewer.ts";
 
 type StackRetargetOutcome =
@@ -173,12 +176,14 @@ async function rebaseOntoDefault(arguments_: {
   entry: WorktreeEntry;
   runState: RunState;
   baseBranch: string;
+  parentTask: string;
   defaultBranch: string;
   remote: string;
   runGit: RunGitCommand;
   signal?: AbortSignal;
 }): Promise<StackRetargetOutcome> {
-  const { config, entry, runState, baseBranch, defaultBranch, remote, runGit, signal } = arguments_;
+  const { config, entry, runState, baseBranch, parentTask, defaultBranch, remote, runGit, signal } =
+    arguments_;
   const task = entry.task;
   const signalOption = signal === undefined ? {} : { signal };
 
@@ -248,6 +253,20 @@ async function rebaseOntoDefault(arguments_: {
   }
 
   clearBaseBranch(config, task);
+  // The child no longer references the parent; if no sibling still does
+  // either, and the parent's own worktree is already gone (the common case —
+  // it tore down as soon as its PR merged, well before this rebase ran),
+  // nothing else will ever revisit its preserved branch. Reclaim it now.
+  try {
+    await reclaimStackParentBranch(config, {
+      repository: entry.repository,
+      parentTask,
+      branchName: baseBranch,
+      ...signalOption,
+    });
+  } catch (error) {
+    debug(`Stack parent branch reclaim failed for ${parentTask}: ${errorMessage(error)}`);
+  }
   return "rebased_onto_default";
 }
 
@@ -325,13 +344,15 @@ async function retargetTask(arguments_: {
   }
 
   if (childPullRequest.baseRefName === defaultBranch) {
+    // GitHub's own auto-retarget (fires when the parent's remote branch is
+    // deleted) may already have moved the base here; proceed straight to rebase.
     if (dryRun) {
       logDryRun(logContext, "rebase the branch onto the default branch");
       return;
     }
     log("Stack retarget starting: parent merged, rebasing onto the default branch");
     logEvent("stack-retarget", logContext);
-  } else {
+  } else if (childPullRequest.baseRefName === baseBranch) {
     if (dryRun) {
       logDryRun(logContext, "retarget the pull request onto the default branch and rebase");
       return;
@@ -349,6 +370,11 @@ async function retargetTask(arguments_: {
       logTerminal(logContext, "retarget_failed");
       return;
     }
+  } else {
+    // Based on neither the parent nor the default branch — someone
+    // retargeted it elsewhere after the parent merged. Outside the spec's
+    // covered cases; leave it alone rather than forcing it back.
+    return;
   }
 
   const rebaseOutcome = await rebaseOntoDefault({
@@ -356,6 +382,7 @@ async function retargetTask(arguments_: {
     entry,
     runState,
     baseBranch,
+    parentTask,
     defaultBranch,
     remote,
     runGit,

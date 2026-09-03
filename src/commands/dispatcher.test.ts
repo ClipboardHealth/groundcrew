@@ -106,9 +106,9 @@ function fakeEligibilityDeps(overrides: { pushed?: boolean } = {}): EligibilityD
       updatedAt: "2026-01-01T00:00:00.000Z",
       resumeCount: 0,
     }),
-    isBranchPushed: vi
-      .fn<EligibilityDeps["isBranchPushed"]>()
-      .mockResolvedValue(overrides.pushed ?? true),
+    probeParentBranch: vi
+      .fn<EligibilityDeps["probeParentBranch"]>()
+      .mockResolvedValue((overrides.pushed ?? true) ? "pushed" : "unpushed"),
   };
 }
 

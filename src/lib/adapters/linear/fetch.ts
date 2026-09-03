@@ -11,12 +11,17 @@
 import type { LinearClient } from "@linear/sdk";
 
 import type { ResolvedConfig } from "../../config.ts";
-import { RepositoryResolutionError, type WorktreePreparation } from "../../taskSource.ts";
+import {
+  RepositoryResolutionError,
+  type StackingPreference,
+  type WorktreePreparation,
+} from "../../taskSource.ts";
 import { log, styleWarning } from "../../util.ts";
 import {
   AGENT_LABEL_PREFIX,
   resolveAgentFor,
   resolveRepositoryFor,
+  resolveStackingPreference,
   resolveWorktreePreparation,
   type AgentResolution,
 } from "./parsing.ts";
@@ -73,6 +78,8 @@ export interface Issue {
   /** Linear priority: 1=Urgent, 2=High, 3=Medium, 4=Low, 0=No priority. */
   priority: number;
   worktreePreparation?: WorktreePreparation;
+  /** Undefined means stacking is allowed; `"opted-out"` means the `groundcrew-no-stack` label is present. */
+  stacking?: StackingPreference;
 }
 
 /**
@@ -339,6 +346,7 @@ function buildLinearIssue(input: {
   url: string;
   priority: number;
   worktreePreparation: WorktreePreparation | undefined;
+  stacking: StackingPreference | undefined;
   inverseRelations: { nodes: IssueRelationNode[]; pageInfo: { hasNextPage: boolean } } | undefined;
 }): Issue {
   return {
@@ -362,6 +370,7 @@ function buildLinearIssue(input: {
     ...(input.worktreePreparation === undefined
       ? {}
       : { worktreePreparation: input.worktreePreparation }),
+    ...(input.stacking === undefined ? {} : { stacking: input.stacking }),
   };
 }
 
@@ -396,6 +405,7 @@ function issueFromNode(node: IssueNode, config: ResolvedConfig): Issue {
     url: node.url,
     priority: node.priority,
     worktreePreparation: resolveWorktreePreparation({ labels: node.labels.nodes }),
+    stacking: resolveStackingPreference({ labels: node.labels.nodes }),
     inverseRelations: node.inverseRelations,
   });
 }
@@ -417,6 +427,7 @@ interface ResolvedIssue {
   url: string;
   priority: number;
   worktreePreparation?: WorktreePreparation;
+  stacking?: StackingPreference;
 }
 
 const ISSUE_LABEL_PAGE_SIZE = 50;
@@ -665,6 +676,7 @@ export async function fetchResolvedIssue(arguments_: {
     agent = agentResolution.fallbackAgent;
   }
   const worktreePreparation = resolveWorktreePreparation({ labels: raw.labels });
+  const stacking = resolveStackingPreference({ labels: raw.labels });
   return {
     uuid: raw.uuid,
     title: raw.title,
@@ -682,6 +694,7 @@ export async function fetchResolvedIssue(arguments_: {
     url: raw.url,
     priority: raw.priority,
     ...(worktreePreparation === undefined ? {} : { worktreePreparation }),
+    ...(stacking === undefined ? {} : { stacking }),
   };
 }
 

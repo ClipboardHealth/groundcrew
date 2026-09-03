@@ -103,14 +103,18 @@ function blockedIssue(overrides: Partial<GroundcrewIssue> = {}): GroundcrewIssue
 function realReadDeps(pushed: boolean): EligibilityDeps {
   return {
     readParentRunState: readRunState,
-    isBranchPushed: vi.fn<EligibilityDeps["isBranchPushed"]>().mockResolvedValue(pushed),
+    probeParentBranch: vi
+      .fn<EligibilityDeps["probeParentBranch"]>()
+      .mockResolvedValue(pushed ? "pushed" : "unpushed"),
   };
 }
 
 function fullyFakeDeps(pushed: boolean): EligibilityDeps {
   return {
     readParentRunState: vi.fn<EligibilityDeps["readParentRunState"]>(),
-    isBranchPushed: vi.fn<EligibilityDeps["isBranchPushed"]>().mockResolvedValue(pushed),
+    probeParentBranch: vi
+      .fn<EligibilityDeps["probeParentBranch"]>()
+      .mockResolvedValue(pushed ? "pushed" : "unpushed"),
   };
 }
 
@@ -138,21 +142,21 @@ function defaultArguments(overrides: Partial<ClassifyArguments> = {}): ClassifyA
   };
 }
 
-describe(defaultEligibilityDeps.isBranchPushed, () => {
+describe(defaultEligibilityDeps.probeParentBranch, () => {
   afterEach(() => {
     runCommandMock.mockReset();
   });
 
-  it("returns true when ls-remote reports the branch", async () => {
+  it("returns 'pushed' when ls-remote reports the branch", async () => {
     runCommandMock.mockResolvedValue("abc123\trefs/heads/dev-team-1\n");
 
     await expect(
-      defaultEligibilityDeps.isBranchPushed({
+      defaultEligibilityDeps.probeParentBranch({
         repoDir: "/work/repo-a",
         remote: "origin",
         branch: "dev-team-1",
       }),
-    ).resolves.toBe(true);
+    ).resolves.toBe("pushed");
 
     expect(runCommandMock).toHaveBeenCalledWith("git", [
       "-C",
@@ -164,28 +168,51 @@ describe(defaultEligibilityDeps.isBranchPushed, () => {
     ]);
   });
 
-  it("returns false when ls-remote finds nothing", async () => {
-    runCommandMock.mockResolvedValue("");
+  it("returns 'unpushed' when ls-remote finds nothing but a local branch exists", async () => {
+    runCommandMock.mockResolvedValueOnce("").mockResolvedValueOnce("");
 
     await expect(
-      defaultEligibilityDeps.isBranchPushed({
+      defaultEligibilityDeps.probeParentBranch({
         repoDir: "/work/repo-a",
         remote: "origin",
         branch: "dev-team-1",
       }),
-    ).resolves.toBe(false);
+    ).resolves.toBe("unpushed");
+
+    expect(runCommandMock).toHaveBeenCalledWith("git", [
+      "-C",
+      "/work/repo-a",
+      "show-ref",
+      "--verify",
+      "--quiet",
+      "refs/heads/dev-team-1",
+    ]);
   });
 
-  it("returns false when ls-remote fails (network or auth error)", async () => {
+  it("returns 'unknown' when the branch is missing both on the remote and locally", async () => {
+    runCommandMock.mockResolvedValueOnce("").mockRejectedValueOnce(new Error("not a valid ref"));
+
+    await expect(
+      defaultEligibilityDeps.probeParentBranch({
+        repoDir: "/work/repo-a",
+        remote: "origin",
+        branch: "dev-team-1",
+      }),
+    ).resolves.toBe("unknown");
+  });
+
+  it("returns 'unpushed' when ls-remote fails (network or auth error), without checking locally", async () => {
     runCommandMock.mockRejectedValue(new Error("could not resolve host"));
 
     await expect(
-      defaultEligibilityDeps.isBranchPushed({
+      defaultEligibilityDeps.probeParentBranch({
         repoDir: "/work/repo-a",
         remote: "origin",
         branch: "dev-team-1",
       }),
-    ).resolves.toBe(false);
+    ).resolves.toBe("unpushed");
+
+    expect(runCommandMock).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -375,7 +402,7 @@ describe(classifyBlockers, () => {
         baseBranch: "dev-team-0",
         parentTask: "team-0",
       });
-      expect(deps.isBranchPushed).toHaveBeenCalledWith({
+      expect(deps.probeParentBranch).toHaveBeenCalledWith({
         repoDir: "/work/repo-a",
         remote: "origin",
         branch: "dev-team-0",
@@ -434,6 +461,20 @@ describe(classifyBlockers, () => {
       expect(skips[0]).toMatchObject({ kind: "skip", eventReason: "stack_parent_unpushed" });
     });
 
+    it("emits `stack_parent_unknown` when the blocker's branch is missing locally and on the remote", async () => {
+      recordParentRunState();
+      const deps: EligibilityDeps = {
+        readParentRunState: readRunState,
+        probeParentBranch: vi
+          .fn<EligibilityDeps["probeParentBranch"]>()
+          .mockResolvedValue("unknown"),
+      };
+
+      const { skips } = await classifyBlockers([blockedIssue()], stackingConfig(), deps);
+
+      expect(skips[0]).toMatchObject({ kind: "skip", eventReason: "stack_parent_unknown" });
+    });
+
     it("emits `stack_provisioned_repo` when the child repository is scripted-provisioner", async () => {
       const config = stackingConfig({
         workspace: {
@@ -464,7 +505,7 @@ describe(classifyBlockers, () => {
 
       expect(skips[0]).toMatchObject({ kind: "skip", eventReason: "blocked" });
       expect(deps.readParentRunState).not.toHaveBeenCalled();
-      expect(deps.isBranchPushed).not.toHaveBeenCalled();
+      expect(deps.probeParentBranch).not.toHaveBeenCalled();
     });
   });
 });

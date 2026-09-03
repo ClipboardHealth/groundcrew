@@ -638,6 +638,41 @@ async function removeWorktree(
   });
 }
 
+/**
+ * Deletes a stack parent's local branch once nothing references it anymore.
+ * `removeWorktree` preserves a parent's branch while `isReferencedAsStackParent`
+ * holds, but that check only runs at the moment the parent's own worktree is
+ * torn down — usually before its child gets a chance to rebase. Once the
+ * child rebases and clears its own `baseBranch` (`stackRetarget.ts`), it is
+ * this function's job to reclaim the branch if the parent is by then long
+ * gone: still a no-op (git refuses) if the parent's worktree is somehow
+ * still live, and a no-op if another child still references the parent.
+ */
+export async function reclaimStackParentBranch(
+  config: ResolvedConfig,
+  arguments_: {
+    repository: string;
+    parentTask: string;
+    branchName: string;
+    signal?: AbortSignal;
+  },
+): Promise<void> {
+  const { repository, parentTask, branchName, signal } = arguments_;
+  if (isReferencedAsStackParent({ config, task: parentTask })) {
+    return;
+  }
+  if (findByTask(config, parentTask).length > 0) {
+    return;
+  }
+  const repoDir = path.resolve(repositoryBaseDir(config, repository), repository);
+  await deleteBranchBestEffort({
+    cmd: "git",
+    cmdArgs: ["-C", repoDir, "branch", "-D", branchName],
+    branchName,
+    ...signalProperty(signal),
+  });
+}
+
 async function removeScriptedWorktree(
   config: ResolvedConfig,
   entry: WorktreeEntry,

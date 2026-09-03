@@ -9,7 +9,7 @@ import { readRunState, recordRunState } from "../lib/runState.ts";
 import type { BoardState, Issue } from "../lib/taskSource.ts";
 import { canonicalLinearIssue } from "../lib/testing/canonicalFixtures.ts";
 import { setVerbose } from "../lib/util.ts";
-import type { WorktreeEntry } from "../lib/worktrees.ts";
+import { reclaimStackParentBranch, type WorktreeEntry } from "../lib/worktrees.ts";
 import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCapture.ts";
 import type { FindPullRequests } from "./reviewer.ts";
 import {
@@ -32,6 +32,16 @@ vi.mock(import("../lib/commandRunner.ts"), async (importOriginal) => {
   return {
     ...actual,
     runCommandAsync: runCommandMock as unknown as typeof actual.runCommandAsync,
+  };
+});
+
+const reclaimStackParentBranchMock = vi.hoisted(() => vi.fn<typeof reclaimStackParentBranch>());
+
+vi.mock(import("../lib/worktrees.ts"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    reclaimStackParentBranch: reclaimStackParentBranchMock,
   };
 });
 
@@ -299,6 +309,40 @@ describe(createStackRetarget, () => {
     expect(consoleLog.output()).toContain(
       "event=stack-retarget flow=stack-retarget task=team-2 parentTask=team-1 baseBranch=dev-team-1 outcome=rebased_onto_default",
     );
+    // The parent's worktree is usually gone by the time a child rebases —
+    // nothing else will revisit its preserved branch, so this rebase does.
+    expect(reclaimStackParentBranchMock).toHaveBeenCalledWith(config, {
+      repository: "repo-a",
+      parentTask: "team-1",
+      branchName: "dev-team-1",
+    });
+  });
+
+  it("logs and keeps the rebased_onto_default outcome when the parent branch reclaim fails", async () => {
+    recordChildRunState({ baseBranch: "dev-team-1", parentTask: "team-1" });
+    reclaimStackParentBranchMock.mockRejectedValueOnce(
+      new Error("branch is checked out in another worktree"),
+    );
+    const findPullRequests = findPullRequestsRoutedBy({
+      "dev-team-2": [pullRequest({ baseRefName: "dev-team-1" })],
+      "dev-team-1": [pullRequest({ number: 3, state: "merged" })],
+    });
+    const runGh = vi.fn<RunGhCommand>().mockResolvedValue("");
+    const runGit = gitFake({ status: async () => "" });
+    const stackRetarget = createStackRetarget({ findPullRequests, runGh, runGit });
+
+    await stackRetarget.runOnce({
+      config,
+      state: boardOf([inProgressIssue("team-2")]),
+      worktreeEntries: [hostEntryFor("team-2")],
+      dryRun: false,
+    });
+
+    expect(readRunState(config, "team-2")?.baseBranch).toBeUndefined();
+    expect(consoleLog.output()).toContain(
+      "Stack parent branch reclaim failed for team-1: branch is checked out in another worktree",
+    );
+    expect(consoleLog.output()).toContain("outcome=rebased_onto_default");
   });
 
   it("shells out through the real git and gh runners when neither is injected", async () => {
@@ -381,6 +425,28 @@ describe(createStackRetarget, () => {
 
     expect(findPullRequests).toHaveBeenCalledTimes(1);
     expect(readRunState(config, "team-2")?.baseBranch).toBeUndefined();
+  });
+
+  it("leaves the PR alone when the parent merged but the base is neither the parent nor the default branch", async () => {
+    recordChildRunState({ baseBranch: "dev-team-1", parentTask: "team-1" });
+    const findPullRequests = findPullRequestsRoutedBy({
+      "dev-team-2": [pullRequest({ baseRefName: "some-other-branch" })],
+    });
+    const runGh = vi.fn<RunGhCommand>().mockResolvedValue("");
+    const runGit = gitFake({});
+    const stackRetarget = createStackRetarget({ findPullRequests, runGh, runGit });
+
+    await stackRetarget.runOnce({
+      config,
+      state: boardOf([canonicalLinearIssue({ naturalId: "team-1", status: "done" })]),
+      worktreeEntries: [hostEntryFor("team-2")],
+      dryRun: false,
+    });
+
+    expect(runGh).not.toHaveBeenCalled();
+    expect(runGit.calls).toHaveLength(0);
+    expect(consoleLog.output()).not.toContain("stack-retarget");
+    expect(readRunState(config, "team-2")?.baseBranch).toBe("dev-team-1");
   });
 
   it("retargets but flags needsRebase, without rebasing, when the worktree is dirty", async () => {

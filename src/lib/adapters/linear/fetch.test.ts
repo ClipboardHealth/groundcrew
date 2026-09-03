@@ -324,6 +324,34 @@ describe(createBoardSource, () => {
       expect(state.issues[0]?.worktreePreparation).toBeUndefined();
     });
 
+    it("maps the groundcrew-no-stack label to the opted-out stacking preference", async () => {
+      const node = issueNode({
+        identifier: "TEAM-1",
+        labels: {
+          nodes: [{ name: "agent-claude" }, { name: "groundcrew-no-stack" }],
+        },
+      });
+      const { source } = makeBoardSource(makeClient({ pages: [[node]] }));
+
+      const state = await source.fetch();
+
+      expect(state.issues[0]?.stacking).toBe("opted-out");
+    });
+
+    it("does not opt out of stacking for similar Linear labels", async () => {
+      const node = issueNode({
+        identifier: "TEAM-1",
+        labels: {
+          nodes: [{ name: "agent-claude" }, { name: "groundcrew-no-stack-later" }],
+        },
+      });
+      const { source } = makeBoardSource(makeClient({ pages: [[node]] }));
+
+      const state = await source.fetch();
+
+      expect(state.issues[0]?.stacking).toBeUndefined();
+    });
+
     it("skips parent tasks with children and surfaces them as parentSkips when unstarted", async () => {
       const parent = issueNode({
         identifier: "TEAM-1",
@@ -481,6 +509,30 @@ describe(fetchResolvedIssue, () => {
     });
 
     expect(resolved.worktreePreparation).toBe("skip");
+  });
+
+  it("maps the no-stack label during a single-task lookup", async () => {
+    const client = {
+      client: {
+        rawRequest: vi.fn<RawRequest>(async () => ({
+          data: {
+            issue: issueNode({
+              labels: {
+                nodes: [{ name: "agent-claude" }, { name: "groundcrew-no-stack" }],
+              },
+            }),
+          },
+        })),
+      },
+    };
+
+    const resolved = await fetchResolvedIssue({
+      client: client as unknown as LinearClient,
+      config: makeConfig(),
+      task: "TEAM-1",
+    });
+
+    expect(resolved.stacking).toBe("opted-out");
   });
 
   it("falls back to agents.default when the label refers to a built-in agent that is not enabled", async () => {
