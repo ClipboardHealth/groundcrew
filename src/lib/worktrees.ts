@@ -23,6 +23,7 @@ import {
   worktreeBaseDir,
 } from "./config.ts";
 import { resolveDefaultBranch } from "./defaultBranch.ts";
+import { readRunState } from "./runState.ts";
 import { assertPlainTaskId, isPlainTaskId } from "./taskId.ts";
 import { debug, errorMessage, isVerbose } from "./util.ts";
 import { hasAdoptedBranch } from "./worktreeRunState.ts";
@@ -39,6 +40,33 @@ export class WorktreeAlreadyExistsError extends Error {
     super(`Worktree already exists: ${dir}`);
     this.dir = dir;
     this.name = "WorktreeAlreadyExistsError";
+  }
+}
+
+/**
+ * Thrown when a stacked create() would reattach a surviving local branch
+ * whose run state names a different (or no) baseBranch. Reattaching anyway
+ * would silently drop the stack: the branch stays where it is, but callers
+ * would believe it was rebuilt on the newly requested parent.
+ */
+export class StackedBaseBranchMismatchError extends Error {
+  public readonly task: string;
+  public readonly requestedBaseBranch: string;
+  public readonly recordedBaseBranch: string | undefined;
+
+  public constructor(arguments_: {
+    task: string;
+    requestedBaseBranch: string;
+    recordedBaseBranch: string | undefined;
+  }) {
+    const recorded = arguments_.recordedBaseBranch ?? "none";
+    super(
+      `Branch for "${arguments_.task}" already exists locally, but its run state records baseBranch "${recorded}", not the requested "${arguments_.requestedBaseBranch}". Run 'crew cleanup ${arguments_.task}' first rather than silently reattaching.`,
+    );
+    this.task = arguments_.task;
+    this.requestedBaseBranch = arguments_.requestedBaseBranch;
+    this.recordedBaseBranch = arguments_.recordedBaseBranch;
+    this.name = "StackedBaseBranchMismatchError";
   }
 }
 
@@ -61,6 +89,8 @@ export interface WorktreeEntry {
 export interface WorktreeSpec {
   repository: string;
   task: string;
+  /** Parent branch to base the worktree (and PR) on, when stacking is enabled. */
+  baseBranch?: string;
 }
 
 export interface WorktreeOpenSpec {
@@ -284,6 +314,28 @@ function hostWorktreeEntry(arguments_: {
   return { ...arguments_, kind: "host" };
 }
 
+/**
+ * Refuse to silently reattach a surviving local branch under a different
+ * stack than the one just requested — that would leave the branch based on
+ * whatever it was created from while every caller believes it is now stacked
+ * on `requestedBaseBranch`.
+ */
+function assertReattachableBaseBranch(arguments_: {
+  config: ResolvedConfig;
+  task: string;
+  requestedBaseBranch: string;
+}): void {
+  const recordedBaseBranch = readRunState(arguments_.config, arguments_.task)?.baseBranch;
+  if (recordedBaseBranch === arguments_.requestedBaseBranch) {
+    return;
+  }
+  throw new StackedBaseBranchMismatchError({
+    task: arguments_.task,
+    requestedBaseBranch: arguments_.requestedBaseBranch,
+    recordedBaseBranch,
+  });
+}
+
 async function createWorktree(
   config: ResolvedConfig,
   spec: WorktreeSpec,
@@ -291,6 +343,11 @@ async function createWorktree(
 ): Promise<WorktreeEntry> {
   const base = basePaths(config, spec.repository, spec.task);
   const recipe = recipeFor(config, spec.repository);
+  if (spec.baseBranch !== undefined && recipe.provision !== undefined) {
+    throw new Error(
+      `Stacked worktrees are not supported for provision/sparse-checkout repository "${spec.repository}".`,
+    );
+  }
   if (recipe.provision === undefined) {
     // A prior run can leave the `<prefix>-<task>` branch behind after its
     // worktree directory is gone — teardown deletes the branch only
@@ -298,6 +355,13 @@ async function createWorktree(
     // Attaching the surviving branch reuses its work instead of crashing on
     // `git worktree add -b <existing branch>`.
     if (await localBranchExists(base.repoDir, base.branchName, signal)) {
+      if (spec.baseBranch !== undefined) {
+        assertReattachableBaseBranch({
+          config,
+          task: spec.task,
+          requestedBaseBranch: spec.baseBranch,
+        });
+      }
       debug(
         `Branch ${base.branchName} already exists; attaching it to worktree ${spec.repository}-${spec.task}...`,
       );
@@ -306,16 +370,18 @@ async function createWorktree(
         signal,
       );
     } else {
-      const defaultBranch = await resolveDefaultBranch({
-        repoDir: base.repoDir,
-        remote: config.git.remote,
-        fallback: config.git.defaultBranch,
-        ...signalProperty(signal),
-      });
-      const baseRef = `${config.git.remote}/${defaultBranch}`;
+      const branchToFetch =
+        spec.baseBranch ??
+        (await resolveDefaultBranch({
+          repoDir: base.repoDir,
+          remote: config.git.remote,
+          fallback: config.git.defaultBranch,
+          ...signalProperty(signal),
+        }));
+      const baseRef = `${config.git.remote}/${branchToFetch}`;
       debug(`Fetching ${baseRef} in ${spec.repository}...`);
       await runLongGitCommand(
-        ["-C", base.repoDir, "fetch", config.git.remote, defaultBranch],
+        ["-C", base.repoDir, "fetch", config.git.remote, branchToFetch],
         signal,
       );
       debug(

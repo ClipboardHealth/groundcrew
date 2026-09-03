@@ -342,18 +342,20 @@ type WorkerEnvironmentName = (typeof WORKER_ENVIRONMENT_NAMES)[number];
 export type WorkerEnvironment = Readonly<{
   GROUNDCREW_TASK_ID: string;
   GROUNDCREW_COMPLETE?: string;
-  /** Parent branch to base the PR on. Not yet populated by `workerEnvironmentForTask`; wired by a later stacking slice. */
+  /** Parent branch to base the PR on, set only when the task is stacked. */
   GROUNDCREW_BASE_BRANCH?: string;
 }>;
 
 export function workerEnvironmentForTask(arguments_: {
   taskId: string;
   markDoneSupported: boolean;
+  baseBranch?: string;
 }): WorkerEnvironment {
-  const { taskId, markDoneSupported } = arguments_;
+  const { taskId, markDoneSupported, baseBranch } = arguments_;
   return {
     GROUNDCREW_TASK_ID: taskId,
     ...(markDoneSupported ? { GROUNDCREW_COMPLETE: `crew task done ${taskId}` } : {}),
+    ...(baseBranch === undefined ? {} : { GROUNDCREW_BASE_BRANCH: baseBranch }),
   };
 }
 

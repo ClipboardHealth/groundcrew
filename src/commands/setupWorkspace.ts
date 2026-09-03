@@ -43,6 +43,10 @@ export interface SetupWorkspaceOptions {
   agent: string;
   /** Set to `skip` to bypass configured prepareWorktree hooks. */
   worktreePreparation?: WorktreePreparation;
+  /** Parent branch this task's worktree and PR are based on, when stacked. */
+  baseBranch?: string;
+  /** Canonical id of the blocker task this task is stacked on. */
+  parentTask?: string;
   details: TaskDetails;
 }
 
@@ -93,7 +97,11 @@ export async function setupWorkspace(
 
   await preflightProvisioningGate({ config, options, signal });
 
-  const spec = { repository, task };
+  const spec = {
+    repository,
+    task,
+    ...(options.baseBranch === undefined ? {} : { baseBranch: options.baseBranch }),
+  };
   const createdPromise =
     signal === undefined ? worktrees.create(config, spec) : worktrees.create(config, spec, signal);
   const readinessPromise = startLaunchReadiness(ensureReady);
@@ -185,6 +193,7 @@ export async function setupWorkspace(
       workerEnvironment: workerEnvironmentForTask({
         taskId: completionTaskId,
         markDoneSupported: completionMarkDoneSupported,
+        ...(options.baseBranch === undefined ? {} : { baseBranch: options.baseBranch }),
       }),
       taskSourceWritePaths,
       safehouseEnableFeatures: config.local.safehouse.enable,
@@ -216,6 +225,8 @@ export async function setupWorkspace(
       title: taskDetails.title,
       completionTaskId,
       ...(taskDetails.url === undefined ? {} : { url: taskDetails.url }),
+      ...(options.baseBranch === undefined ? {} : { baseBranch: options.baseBranch }),
+      ...(options.parentTask === undefined ? {} : { parentTask: options.parentTask }),
     });
 
     log(`${okMark()} "${task}" launched (${agent})  worktree ${worktreeName}`);
@@ -289,6 +300,8 @@ async function preflightProvisioningGate(arguments_: {
     title: options.details.title,
     completionTaskId: options.completionTaskId ?? task,
     ...(options.details.url === undefined ? {} : { url: options.details.url }),
+    ...(options.baseBranch === undefined ? {} : { baseBranch: options.baseBranch }),
+    ...(options.parentTask === undefined ? {} : { parentTask: options.parentTask }),
   });
 }
 
@@ -387,6 +400,8 @@ function recordRunStateBestEffort(arguments_: {
   detail?: string;
   url?: string;
   completionTaskId: string;
+  baseBranch?: string;
+  parentTask?: string;
 }): void {
   try {
     recordRunState({
@@ -403,6 +418,8 @@ function recordRunStateBestEffort(arguments_: {
         completionTaskId: arguments_.completionTaskId,
         ...(arguments_.detail === undefined ? {} : { detail: arguments_.detail }),
         ...(arguments_.url === undefined ? {} : { url: arguments_.url }),
+        ...(arguments_.baseBranch === undefined ? {} : { baseBranch: arguments_.baseBranch }),
+        ...(arguments_.parentTask === undefined ? {} : { parentTask: arguments_.parentTask }),
       },
     });
   } catch (error) {
