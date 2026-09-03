@@ -22,6 +22,7 @@ interface RawPullRequestFixture {
   number: number;
   state: string;
   title: string;
+  baseRefName?: string;
 }
 
 function rawPullRequest(overrides: Partial<RawPullRequestFixture> = {}): RawPullRequestFixture {
@@ -30,6 +31,7 @@ function rawPullRequest(overrides: Partial<RawPullRequestFixture> = {}): RawPull
     number: overrides.number ?? 42,
     state: overrides.state ?? "OPEN",
     title: overrides.title ?? "Wire up auth",
+    ...(overrides.baseRefName === undefined ? {} : { baseRefName: overrides.baseRefName }),
   };
 }
 
@@ -72,6 +74,45 @@ describe(findPullRequestsForBranch, () => {
     expect(runCommandMock).toHaveBeenCalledWith("gh", expect.not.arrayContaining(["--repo"]), {
       cwd: "/work/widgets-team-1",
     });
+  });
+
+  it("requests baseRefName in the --json field list", async () => {
+    runCommandMock.mockResolvedValue("[]");
+
+    await findPullRequestsForBranch({
+      cwd: "/work/widgets-team-1",
+      branchName: "feature/auth",
+    });
+
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "gh",
+      [
+        "pr",
+        "list",
+        "--head",
+        "feature/auth",
+        "--state",
+        "all",
+        "--limit",
+        "5",
+        "--json",
+        "url,number,state,title,baseRefName",
+      ],
+      { cwd: "/work/widgets-team-1" },
+    );
+  });
+
+  it("parses baseRefName into the PR summary when gh returns it", async () => {
+    runCommandMock.mockResolvedValue(
+      JSON.stringify([rawPullRequest({ baseRefName: "team-1-branch" })]),
+    );
+
+    const prs = await findPullRequestsForBranch({
+      cwd: "/work/widgets-team-1",
+      branchName: "feature/auth",
+    });
+
+    expect(prs[0]?.baseRefName).toBe("team-1-branch");
   });
 
   it("normalises MERGED and CLOSED states to lowercase", async () => {

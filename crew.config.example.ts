@@ -149,6 +149,14 @@ export default {
   //
   // git: { remote: "origin", defaultBranch: "main" },
   //
+  // Stacked PRs: when a Todo task is blocked by exactly one unresolved
+  // same-repo blocker, dispatch it as a child stacked on the blocker's
+  // branch instead of waiting for the blocker to merge. Off by default.
+  // Config is cached per process, so a running `crew run --watch` needs a
+  // restart before it picks this up. Opt an individual task out with the
+  // `groundcrew-no-stack` Linear label.
+  // git: { stacking: true },
+  //
   // orchestrator: {
   //   maximumInProgress: 4,
   //   pollIntervalMilliseconds: 120_000,

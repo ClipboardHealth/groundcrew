@@ -49,6 +49,19 @@ export interface RunState {
    * rather than created by groundcrew. Teardown must preserve such branches.
    */
   adoptedBranch?: boolean;
+  /**
+   * Parent branch this task's branch and PR are based on, when stacked.
+   * Cleared once the child rebases onto the default branch after the
+   * parent merges; `parentTask` is retained.
+   */
+  baseBranch?: string;
+  /** Canonical id of the blocker task this task is stacked on. */
+  parentTask?: string;
+  /**
+   * True when the parent merged, the PR was retargeted to the default
+   * branch, but the worktree was dirty so the rebase was skipped.
+   */
+  needsRebase?: boolean;
 }
 
 export interface RunStateDraft {
@@ -66,6 +79,9 @@ export interface RunStateDraft {
   url?: string;
   completionTaskId?: string;
   adoptedBranch?: boolean;
+  baseBranch?: string;
+  parentTask?: string;
+  needsRebase?: boolean;
 }
 
 export interface RecordRunStateInput {
@@ -122,10 +138,21 @@ function isValidResumeCount(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 0;
 }
 
-function parseRunState(value: unknown): RunState | undefined {
-  if (!isPlainObject(value)) {
-    return undefined;
-  }
+type RequiredRunStateFields = Pick<
+  RunState,
+  | "task"
+  | "repository"
+  | "agent"
+  | "worktreeDir"
+  | "branchName"
+  | "workspaceName"
+  | "state"
+  | "createdAt"
+  | "updatedAt"
+  | "resumeCount"
+>;
+
+function parseRequiredFields(value: Record<string, unknown>): RequiredRunStateFields | undefined {
   const task = stringField(value, "task");
   const repository = stringField(value, "repository");
   const agent = stringField(value, "agent") ?? stringField(value, "model");
@@ -135,12 +162,6 @@ function parseRunState(value: unknown): RunState | undefined {
   const { state, resumeCount } = value;
   const createdAt = stringField(value, "createdAt");
   const updatedAt = stringField(value, "updatedAt");
-  const reason = stringField(value, "reason");
-  const detail = stringField(value, "detail");
-  const title = stringField(value, "title");
-  const url = stringField(value, "url");
-  const completionTaskId = stringField(value, "completionTaskId");
-  const adoptedBranch = value["adoptedBranch"] === true ? true : undefined;
   if (
     task === undefined ||
     repository === undefined ||
@@ -166,13 +187,54 @@ function parseRunState(value: unknown): RunState | undefined {
     createdAt,
     updatedAt,
     resumeCount,
+  };
+}
+
+type OptionalRunStateFields = Pick<
+  RunState,
+  | "reason"
+  | "detail"
+  | "title"
+  | "url"
+  | "completionTaskId"
+  | "adoptedBranch"
+  | "baseBranch"
+  | "parentTask"
+  | "needsRebase"
+>;
+
+function parseOptionalFields(value: Record<string, unknown>): OptionalRunStateFields {
+  const reason = stringField(value, "reason");
+  const detail = stringField(value, "detail");
+  const title = stringField(value, "title");
+  const url = stringField(value, "url");
+  const completionTaskId = stringField(value, "completionTaskId");
+  const adoptedBranch = value["adoptedBranch"] === true ? true : undefined;
+  const baseBranch = stringField(value, "baseBranch");
+  const parentTask = stringField(value, "parentTask");
+  const needsRebase = value["needsRebase"] === true ? true : undefined;
+  return {
     ...(reason === undefined ? {} : { reason }),
     ...(detail === undefined ? {} : { detail }),
     ...(title === undefined ? {} : { title }),
     ...(url === undefined ? {} : { url }),
     ...(completionTaskId === undefined ? {} : { completionTaskId }),
     ...(adoptedBranch === undefined ? {} : { adoptedBranch }),
+    ...(baseBranch === undefined ? {} : { baseBranch }),
+    ...(parentTask === undefined ? {} : { parentTask }),
+    ...(needsRebase === undefined ? {} : { needsRebase }),
   };
+}
+
+function parseRunState(value: unknown): RunState | undefined {
+  if (!isPlainObject(value)) {
+    return undefined;
+  }
+  const required = parseRequiredFields(value);
+  if (required === undefined) {
+    return undefined;
+  }
+  return { ...required, ...parseOptionalFields(value) };
 }
 
 function writeState(config: ResolvedConfig, state: RunState): void {
@@ -193,16 +255,36 @@ export function readRunState(config: ResolvedConfig, task: string): RunState | u
   }
 }
 
+// Resume/interrupt callers don't know these cached/stacking fields, so they
+// omit them. Fall back to the on-disk value so they survive transitions.
+function carryOptionalFields(
+  draft: RunStateDraft,
+  existing: RunState | undefined,
+): OptionalRunStateFields {
+  const prior: OptionalRunStateFields = existing ?? {};
+  const title = draft.title ?? prior.title;
+  const url = draft.url ?? prior.url;
+  const completionTaskId = draft.completionTaskId ?? prior.completionTaskId;
+  const adoptedBranch = draft.adoptedBranch ?? prior.adoptedBranch;
+  const baseBranch = draft.baseBranch ?? prior.baseBranch;
+  const parentTask = draft.parentTask ?? prior.parentTask;
+  const needsRebase = draft.needsRebase ?? prior.needsRebase;
+  return {
+    ...(draft.reason === undefined ? {} : { reason: draft.reason }),
+    ...(draft.detail === undefined ? {} : { detail: draft.detail }),
+    ...(title === undefined ? {} : { title }),
+    ...(url === undefined ? {} : { url }),
+    ...(completionTaskId === undefined ? {} : { completionTaskId }),
+    ...(adoptedBranch === undefined ? {} : { adoptedBranch }),
+    ...(baseBranch === undefined ? {} : { baseBranch }),
+    ...(parentTask === undefined ? {} : { parentTask }),
+    ...(needsRebase === undefined ? {} : { needsRebase }),
+  };
+}
+
 export function recordRunState(input: RecordRunStateInput): RunState {
   const existing = readRunState(input.config, input.state.task);
   const timestamp = nowIso();
-  // Resume/interrupt callers don't know the title or url, so they omit
-  // them. Fall back to the on-disk value so cached display fields survive
-  // transitions.
-  const title = input.state.title ?? existing?.title;
-  const url = input.state.url ?? existing?.url;
-  const completionTaskId = input.state.completionTaskId ?? existing?.completionTaskId;
-  const adoptedBranch = input.state.adoptedBranch ?? existing?.adoptedBranch;
   const state: RunState = {
     task: taskKey(input.state.task),
     repository: input.state.repository,
@@ -214,12 +296,7 @@ export function recordRunState(input: RecordRunStateInput): RunState {
     createdAt: existing?.createdAt ?? timestamp,
     updatedAt: timestamp,
     resumeCount: input.state.resumeCount ?? existing?.resumeCount ?? 0,
-    ...(input.state.reason === undefined ? {} : { reason: input.state.reason }),
-    ...(input.state.detail === undefined ? {} : { detail: input.state.detail }),
-    ...(title === undefined ? {} : { title }),
-    ...(url === undefined ? {} : { url }),
-    ...(completionTaskId === undefined ? {} : { completionTaskId }),
-    ...(adoptedBranch === undefined ? {} : { adoptedBranch }),
+    ...carryOptionalFields(input.state, existing),
   };
   writeState(input.config, state);
   return state;

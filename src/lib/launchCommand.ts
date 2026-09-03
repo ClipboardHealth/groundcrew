@@ -342,6 +342,8 @@ type WorkerEnvironmentName = (typeof WORKER_ENVIRONMENT_NAMES)[number];
 export type WorkerEnvironment = Readonly<{
   GROUNDCREW_TASK_ID: string;
   GROUNDCREW_COMPLETE?: string;
+  /** Parent branch to base the PR on. Not yet populated by `workerEnvironmentForTask`; wired by a later stacking slice. */
+  GROUNDCREW_BASE_BRANCH?: string;
 }>;
 
 export function workerEnvironmentForTask(arguments_: {

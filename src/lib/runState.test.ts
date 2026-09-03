@@ -285,6 +285,103 @@ describe("run state store", () => {
     });
   });
 
+  it("round-trips stacking fields and preserves them across transitions", () => {
+    recordRunState({
+      config,
+      state: {
+        task: "team-2",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-2",
+        branchName: "dev-team-2",
+        workspaceName: "team-2",
+        state: "running",
+        baseBranch: "dev-team-1",
+        parentTask: "team-1",
+      },
+    });
+
+    expect(readRunState(config, "team-2")).toMatchObject({
+      baseBranch: "dev-team-1",
+      parentTask: "team-1",
+    });
+    expect(readRunState(config, "team-2")?.needsRebase).toBeUndefined();
+
+    // Resume/interrupt callers don't carry stacking fields; they should
+    // survive on disk.
+    recordRunState({
+      config,
+      state: {
+        task: "team-2",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-2",
+        branchName: "dev-team-2",
+        workspaceName: "team-2",
+        state: "interrupted",
+      },
+    });
+
+    expect(readRunState(config, "team-2")).toMatchObject({
+      state: "interrupted",
+      baseBranch: "dev-team-1",
+      parentTask: "team-1",
+    });
+  });
+
+  it("round-trips needsRebase via updateRunState while preserving stacking fields", () => {
+    recordRunState({
+      config,
+      state: {
+        task: "team-2",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-2",
+        branchName: "dev-team-2",
+        workspaceName: "team-2",
+        state: "running",
+        baseBranch: "dev-team-1",
+        parentTask: "team-1",
+      },
+    });
+
+    const flagged = updateRunState({
+      config,
+      task: "team-2",
+      patch: { state: "running", needsRebase: true },
+    });
+    expect(flagged).toMatchObject({
+      needsRebase: true,
+      baseBranch: "dev-team-1",
+      parentTask: "team-1",
+    });
+  });
+
+  it("parses an old-shaped run state file with no stacking fields", () => {
+    mkdirSync(path.dirname(runStatePath(config, "team-1")), { recursive: true });
+    writeFileSync(
+      runStatePath(config, "team-1"),
+      JSON.stringify({
+        task: "team-1",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-1",
+        branchName: "dev-team-1",
+        workspaceName: "team-1",
+        state: "running",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        resumeCount: 0,
+      }),
+    );
+
+    const actual = readRunState(config, "team-1");
+    expect(actual).toMatchObject({ task: "team-1", state: "running" });
+    expect(actual?.baseBranch).toBeUndefined();
+    expect(actual?.parentTask).toBeUndefined();
+    expect(actual?.needsRebase).toBeUndefined();
+  });
+
   it("prefers a freshly provided title over the previously-recorded one", () => {
     recordRunState({
       config,

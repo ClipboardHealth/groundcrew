@@ -26,6 +26,8 @@ export interface PullRequestSummary {
   /** Lowercased lifecycle: "open" | "merged" | "closed". */
   state: string;
   title: string;
+  /** PR's current base branch, when gh returns it. Used to detect stacked PRs that need retargeting. */
+  baseRefName?: string;
 }
 
 const GH_PR_LIST_LIMIT = 5;
@@ -48,6 +50,7 @@ interface RawPullRequest {
   number: number;
   state: string;
   title: string;
+  baseRefName?: string;
 }
 
 function parsePullRequests(output: string): PullRequestSummary[] {
@@ -70,6 +73,7 @@ function parsePullRequests(output: string): PullRequestSummary[] {
       number: entry.number,
       state: STATE_MAP[entry.state] ?? entry.state.toLowerCase(),
       title: entry.title,
+      ...(entry.baseRefName === undefined ? {} : { baseRefName: entry.baseRefName }),
     });
   }
   return summaries;
@@ -85,7 +89,8 @@ function isRawPullRequest(value: unknown): value is RawPullRequest {
     typeof record["url"] === "string" &&
     typeof record["number"] === "number" &&
     typeof record["state"] === "string" &&
-    typeof record["title"] === "string"
+    typeof record["title"] === "string" &&
+    (record["baseRefName"] === undefined || typeof record["baseRefName"] === "string")
   );
 }
 
@@ -201,7 +206,7 @@ export async function findPullRequestsForBranch(
         "--limit",
         String(GH_PR_LIST_LIMIT),
         "--json",
-        "url,number,state,title",
+        "url,number,state,title,baseRefName",
       ],
       options,
     );
