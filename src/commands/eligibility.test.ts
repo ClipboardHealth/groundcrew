@@ -1,4 +1,9 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
 import type { ResolvedConfig } from "../lib/config.ts";
+import { recordRunState, readRunState } from "../lib/runState.ts";
 import { canonicalBlocker, canonicalLinearIssue } from "../lib/testing/canonicalFixtures.ts";
 import { isGroundcrewIssue, type GroundcrewIssue } from "../lib/taskSource.ts";
 import type { UsageByAgent } from "../lib/usage.ts";
@@ -9,6 +14,7 @@ import {
   classifyEligibility,
   classifyUsageExhaustion,
   pickBestAgent,
+  type EligibilityDeps,
   type SkipVerdict,
 } from "./eligibility.ts";
 
@@ -69,6 +75,27 @@ function todoIssue(overrides: Partial<GroundcrewIssue> = {}): GroundcrewIssue {
   );
 }
 
+function blockedIssue(overrides: Partial<GroundcrewIssue> = {}): GroundcrewIssue {
+  return todoIssue({
+    blockers: [canonicalBlocker({ naturalId: "team-0", status: "in-progress" })],
+    ...overrides,
+  });
+}
+
+function realReadDeps(pushed: boolean): EligibilityDeps {
+  return {
+    readParentRunState: readRunState,
+    isBranchPushed: vi.fn<EligibilityDeps["isBranchPushed"]>().mockResolvedValue(pushed),
+  };
+}
+
+function fullyFakeDeps(pushed: boolean): EligibilityDeps {
+  return {
+    readParentRunState: vi.fn<EligibilityDeps["readParentRunState"]>(),
+    isBranchPushed: vi.fn<EligibilityDeps["isBranchPushed"]>().mockResolvedValue(pushed),
+  };
+}
+
 function hostEntryFor(repository: string, task: string): WorktreeEntry {
   return {
     repository,
@@ -94,12 +121,15 @@ function defaultArguments(overrides: Partial<ClassifyArguments> = {}): ClassifyA
 }
 
 describe(classifyBlockers, () => {
-  it("emits a `blocked` skip when a blocker is in a non-terminal state", () => {
-    const { unblocked, skips } = classifyBlockers([
-      todoIssue({
-        blockers: [canonicalBlocker({ naturalId: "team-0", status: "in-progress" })],
-      }),
-    ]);
+  it("emits a `blocked` skip when a blocker is in a non-terminal state", async () => {
+    const { unblocked, skips } = await classifyBlockers(
+      [
+        todoIssue({
+          blockers: [canonicalBlocker({ naturalId: "team-0", status: "in-progress" })],
+        }),
+      ],
+      makeConfig(),
+    );
 
     expect(unblocked).toHaveLength(0);
     expect(skips).toHaveLength(1);
@@ -110,18 +140,21 @@ describe(classifyBlockers, () => {
     });
   });
 
-  it("emits a `blockers_paginated` skip when blocker pagination overflowed", () => {
-    const { skips } = classifyBlockers([todoIssue({ hasMoreBlockers: true })]);
+  it("emits a `blockers_paginated` skip when blocker pagination overflowed", async () => {
+    const { skips } = await classifyBlockers([todoIssue({ hasMoreBlockers: true })], makeConfig());
 
     expect(skips[0]).toMatchObject({ kind: "skip", eventReason: "blockers_paginated" });
   });
 
-  it("emits a `blocked` skip when the blocker status is 'other' (unknown status)", () => {
-    const { skips } = classifyBlockers([
-      todoIssue({
-        blockers: [canonicalBlocker({ naturalId: "team-0", status: "other" })],
-      }),
-    ]);
+  it("emits a `blocked` skip when the blocker status is 'other' (unknown status)", async () => {
+    const { skips } = await classifyBlockers(
+      [
+        todoIssue({
+          blockers: [canonicalBlocker({ naturalId: "team-0", status: "other" })],
+        }),
+      ],
+      makeConfig(),
+    );
 
     expect(skips[0]).toMatchObject({
       kind: "skip",
@@ -130,32 +163,38 @@ describe(classifyBlockers, () => {
     });
   });
 
-  it("returns the issue as unblocked when its blocker status is 'done'", () => {
-    const { unblocked, skips } = classifyBlockers([
-      todoIssue({
-        blockers: [canonicalBlocker({ naturalId: "team-0", status: "done" })],
-      }),
-    ]);
+  it("returns the issue as unblocked when its blocker status is 'done'", async () => {
+    const { unblocked, skips } = await classifyBlockers(
+      [
+        todoIssue({
+          blockers: [canonicalBlocker({ naturalId: "team-0", status: "done" })],
+        }),
+      ],
+      makeConfig(),
+    );
 
     expect(unblocked).toHaveLength(1);
     expect(skips).toHaveLength(0);
   });
 
-  it("partitions a mixed batch into unblocked and skip lists", () => {
-    const { unblocked, skips } = classifyBlockers([
-      todoIssue({ id: "linear:team-1" }),
-      todoIssue({
-        id: "linear:team-2",
-        blockers: [canonicalBlocker({ naturalId: "team-0", status: "in-progress" })],
-      }),
-      todoIssue({ id: "linear:team-3" }),
-    ]);
+  it("partitions a mixed batch into unblocked and skip lists", async () => {
+    const { unblocked, skips } = await classifyBlockers(
+      [
+        todoIssue({ id: "linear:team-1" }),
+        todoIssue({
+          id: "linear:team-2",
+          blockers: [canonicalBlocker({ naturalId: "team-0", status: "in-progress" })],
+        }),
+        todoIssue({ id: "linear:team-3" }),
+      ],
+      makeConfig(),
+    );
 
     expect(unblocked.map((issue) => issue.id)).toStrictEqual(["linear:team-1", "linear:team-3"]);
     expect(skips.map((skip) => skip.issue.id)).toStrictEqual(["linear:team-2"]);
   });
 
-  it("treats a 'done' blocker as cleared (canonical status)", () => {
+  it("treats a 'done' blocker as cleared (canonical status)", async () => {
     const issue = asGroundcrewIssue(
       canonicalLinearIssue({
         naturalId: "eng-100",
@@ -164,13 +203,13 @@ describe(classifyBlockers, () => {
         agent: "claude",
       }),
     );
-    const { unblocked, skips } = classifyBlockers([issue]);
+    const { unblocked, skips } = await classifyBlockers([issue], makeConfig());
 
     expect(unblocked).toHaveLength(1);
     expect(skips).toHaveLength(0);
   });
 
-  it("treats an 'in-progress' blocker as blocking", () => {
+  it("treats an 'in-progress' blocker as blocking", async () => {
     const issue = asGroundcrewIssue(
       canonicalLinearIssue({
         naturalId: "eng-100",
@@ -179,13 +218,13 @@ describe(classifyBlockers, () => {
         agent: "claude",
       }),
     );
-    const { unblocked, skips } = classifyBlockers([issue]);
+    const { unblocked, skips } = await classifyBlockers([issue], makeConfig());
 
     expect(unblocked).toHaveLength(0);
     expect(skips).toHaveLength(1);
   });
 
-  it("treats an 'other' (unknown-status) blocker as blocking", () => {
+  it("treats an 'other' (unknown-status) blocker as blocking", async () => {
     // Previously: status: undefined was blocking. Now: status: "other" represents the same.
     const issue = asGroundcrewIssue(
       canonicalLinearIssue({
@@ -195,13 +234,13 @@ describe(classifyBlockers, () => {
         agent: "claude",
       }),
     );
-    const { unblocked, skips } = classifyBlockers([issue]);
+    const { unblocked, skips } = await classifyBlockers([issue], makeConfig());
 
     expect(unblocked).toHaveLength(0);
     expect(skips).toHaveLength(1);
   });
 
-  it("treats a 'todo' blocker as blocking", () => {
+  it("treats a 'todo' blocker as blocking", async () => {
     const issue = asGroundcrewIssue(
       canonicalLinearIssue({
         naturalId: "eng-100",
@@ -210,10 +249,154 @@ describe(classifyBlockers, () => {
         agent: "claude",
       }),
     );
-    const { unblocked, skips } = classifyBlockers([issue]);
+    const { unblocked, skips } = await classifyBlockers([issue], makeConfig());
 
     expect(unblocked).toHaveLength(0);
     expect(skips).toHaveLength(1);
+  });
+
+  describe("stacking", () => {
+    let tempDir: string;
+
+    function stackingConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
+      return makeConfig({
+        git: { remote: "origin", defaultBranch: "main", stacking: true },
+        logging: { file: path.join(tempDir, "state", "groundcrew.log") },
+        ...overrides,
+      });
+    }
+
+    function recordParentRunState(overrides: { repository?: string } = {}): void {
+      recordRunState({
+        config: stackingConfig(),
+        state: {
+          task: "team-0",
+          repository: overrides.repository ?? "repo-a",
+          agent: "claude",
+          worktreeDir: "/work/repo-a-team-0",
+          branchName: "dev-team-0",
+          workspaceName: "team-0",
+          state: "running",
+        },
+      });
+    }
+
+    beforeEach(() => {
+      tempDir = mkdtempSync(path.join(tmpdir(), "groundcrew-eligibility-stacking-"));
+    });
+
+    afterEach(() => {
+      rmSync(tempDir, { recursive: true, force: true });
+    });
+
+    it("produces a stack decision when every condition holds", async () => {
+      recordParentRunState();
+      const deps = realReadDeps(true);
+      const issue = blockedIssue();
+
+      const { unblocked, stackDecisions, skips } = await classifyBlockers(
+        [issue],
+        stackingConfig(),
+        deps,
+      );
+
+      expect(skips).toHaveLength(0);
+      expect(unblocked).toStrictEqual([issue]);
+      expect(stackDecisions.get(issue.id)).toStrictEqual({
+        baseBranch: "dev-team-0",
+        parentTask: "team-0",
+      });
+      expect(deps.isBranchPushed).toHaveBeenCalledWith({
+        repoDir: "/work/repo-a",
+        remote: "origin",
+        branch: "dev-team-0",
+      });
+    });
+
+    it("emits `stack_multiple_blockers` when more than one blocker is unresolved", async () => {
+      const issue = blockedIssue({
+        blockers: [
+          canonicalBlocker({ naturalId: "team-0", status: "in-progress" }),
+          canonicalBlocker({ naturalId: "team-a", status: "in-progress" }),
+        ],
+      });
+
+      const { unblocked, skips } = await classifyBlockers(
+        [issue],
+        stackingConfig(),
+        realReadDeps(true),
+      );
+
+      expect(unblocked).toHaveLength(0);
+      expect(skips[0]).toMatchObject({ kind: "skip", eventReason: "stack_multiple_blockers" });
+    });
+
+    it("emits `stack_parent_unknown` when the blocker has no run state", async () => {
+      const { skips } = await classifyBlockers(
+        [blockedIssue()],
+        stackingConfig(),
+        realReadDeps(true),
+      );
+
+      expect(skips[0]).toMatchObject({ kind: "skip", eventReason: "stack_parent_unknown" });
+    });
+
+    it("emits `stack_parent_unknown` when the blocker's run state names a different repository", async () => {
+      recordParentRunState({ repository: "repo-b" });
+
+      const { skips } = await classifyBlockers(
+        [blockedIssue()],
+        stackingConfig(),
+        realReadDeps(true),
+      );
+
+      expect(skips[0]).toMatchObject({ kind: "skip", eventReason: "stack_parent_unknown" });
+    });
+
+    it("emits `stack_parent_unpushed` when the blocker's branch isn't pushed", async () => {
+      recordParentRunState();
+
+      const { skips } = await classifyBlockers(
+        [blockedIssue()],
+        stackingConfig(),
+        realReadDeps(false),
+      );
+
+      expect(skips[0]).toMatchObject({ kind: "skip", eventReason: "stack_parent_unpushed" });
+    });
+
+    it("emits `stack_provisioned_repo` when the child repository is scripted-provisioner", async () => {
+      const config = stackingConfig({
+        workspace: {
+          projectDir: "/work",
+          knownRepositories: ["repo-a"],
+          repositories: [{ name: "repo-a", provision: { create: "create", remove: "remove" } }],
+        },
+      });
+
+      const { skips } = await classifyBlockers([blockedIssue()], config, realReadDeps(true));
+
+      expect(skips[0]).toMatchObject({ kind: "skip", eventReason: "stack_provisioned_repo" });
+    });
+
+    it("emits `stack_opted_out` when the issue carries the groundcrew-no-stack label", async () => {
+      const issue = blockedIssue({ stacking: "opted-out" });
+
+      const { skips } = await classifyBlockers([issue], stackingConfig(), realReadDeps(true));
+
+      expect(skips[0]).toMatchObject({ kind: "skip", eventReason: "stack_opted_out" });
+    });
+
+    it("yields the legacy `blocked` reason when stacking is disabled, without any run-state or git access", async () => {
+      const deps = fullyFakeDeps(true);
+      const issue = blockedIssue();
+
+      const { skips } = await classifyBlockers([issue], makeConfig(), deps);
+
+      expect(skips[0]).toMatchObject({ kind: "skip", eventReason: "blocked" });
+      expect(deps.readParentRunState).not.toHaveBeenCalled();
+      expect(deps.isBranchPushed).not.toHaveBeenCalled();
+    });
   });
 });
 

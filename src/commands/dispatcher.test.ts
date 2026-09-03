@@ -8,6 +8,7 @@ import type { WorktreeEntry } from "../lib/worktrees.ts";
 import { setVerbose } from "../lib/util.ts";
 import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCapture.ts";
 import { createDispatcher, formatActiveSlotList } from "./dispatcher.ts";
+import type { EligibilityDeps } from "./eligibility.ts";
 import { setupWorkspace } from "./setupWorkspace.ts";
 
 vi.mock(import("./setupWorkspace.ts"), async (importOriginal) => {
@@ -89,6 +90,26 @@ function boardOf(
   { parentSkips = [] }: { parentSkips?: BoardState["parentSkips"] } = {},
 ): BoardState {
   return { timestamp: "2025-01-01T00:00:00.000Z", issues, parentSkips };
+}
+
+function fakeEligibilityDeps(overrides: { pushed?: boolean } = {}): EligibilityDeps {
+  return {
+    readParentRunState: vi.fn<EligibilityDeps["readParentRunState"]>().mockReturnValue({
+      task: "team-0",
+      repository: "repo-a",
+      agent: "claude",
+      worktreeDir: "/work/repo-a-team-0",
+      branchName: "dev-team-0",
+      workspaceName: "team-0",
+      state: "running",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      resumeCount: 0,
+    }),
+    isBranchPushed: vi
+      .fn<EligibilityDeps["isBranchPushed"]>()
+      .mockResolvedValue(overrides.pushed ?? true),
+  };
 }
 
 function hostEntryFor(repository: string, task: string): WorktreeEntry {
@@ -592,6 +613,68 @@ describe(createDispatcher, () => {
       expect(usageProbe).not.toHaveBeenCalled();
       expect(workspacesProbeMock).not.toHaveBeenCalled();
       expect(consoleLog.output()).toContain("No eligible Todo tasks after blocker filtering");
+    });
+  });
+
+  describe("stacking", () => {
+    it("passes baseBranch/parentTask into setupWorkspace for a stack decision", async () => {
+      const config = makeConfig({
+        git: { remote: "origin", defaultBranch: "main", stacking: true },
+      });
+      const board = makeBoard();
+      const dispatcher = createDispatcher({
+        config,
+        board,
+        eligibilityDeps: fakeEligibilityDeps(),
+      });
+
+      await dispatcher.runOnce({
+        state: boardOf([
+          todoIssue({
+            blockers: [{ id: "linear:team-0", title: "Blocker", status: "in-progress" }],
+          }),
+        ]),
+        worktreeEntries: [],
+        usage: async () => ({}),
+        dryRun: false,
+      });
+
+      expect(setupMock).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ task: "team-1", baseBranch: "dev-team-0", parentTask: "team-0" }),
+      );
+      expect(consoleLog.output()).toContain("Dispatching stacked task on its parent's branch");
+      expect(consoleLog.output()).toContain(
+        "event=dispatch flow=stack-dispatch task=team-1 parentTask=team-0 baseBranch=dev-team-0 outcome=stacking",
+      );
+    });
+
+    it("does not attach baseBranch/parentTask when the blocker's branch isn't pushed yet", async () => {
+      const config = makeConfig({
+        git: { remote: "origin", defaultBranch: "main", stacking: true },
+      });
+      const board = makeBoard();
+      const dispatcher = createDispatcher({
+        config,
+        board,
+        eligibilityDeps: fakeEligibilityDeps({ pushed: false }),
+      });
+
+      await dispatcher.runOnce({
+        state: boardOf([
+          todoIssue({
+            blockers: [{ id: "linear:team-0", title: "Blocker", status: "in-progress" }],
+          }),
+        ]),
+        worktreeEntries: [],
+        usage: async () => ({}),
+        dryRun: false,
+      });
+
+      expect(setupMock).not.toHaveBeenCalled();
+      expect(consoleLog.output()).toContain(
+        "event=dispatch outcome=skipped reason=stack_parent_unpushed task=team-1",
+      );
     });
   });
 

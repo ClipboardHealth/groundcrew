@@ -1,13 +1,21 @@
 /**
  * Pure eligibility classifier — takes the per-iteration board snapshot plus
  * derived state (worktrees, live workspaces, usage, slot count) and returns
- * a verdict per Todo task. No logging, no Linear calls, no shell-outs.
+ * a verdict per Todo task. No logging, no Linear calls, no shell-outs of its
+ * own: the one exception is the stacking decision in `classifyBlockers`,
+ * which reads the blocker's run state and probes whether its branch is
+ * pushed. Both effects are routed through the injectable `EligibilityDeps`
+ * so callers can fake them the way the rest of the codebase fakes git.
  *
  * The Dispatcher consumes the verdict list to drive logging and side
  * effects.
  */
 
-import { AGENT_ANY, type ResolvedConfig } from "../lib/config.ts";
+import path from "node:path";
+
+import { runCommandAsync } from "../lib/commandRunner.ts";
+import { AGENT_ANY, repositoryBaseDir, type ResolvedConfig } from "../lib/config.ts";
+import { readRunState, type RunState } from "../lib/runState.ts";
 import { naturalIdFromCanonical, type Blocker, type GroundcrewIssue } from "../lib/taskSource.ts";
 import type { UsageByAgent } from "../lib/usage.ts";
 import type { WorkspaceProbe } from "../lib/workspaces.ts";
@@ -24,7 +32,12 @@ type SkipReason =
   | "agent_any_capacity"
   | "agent_exhausted"
   | "workspace_list_unavailable"
-  | "workspace_missing";
+  | "workspace_missing"
+  | "stack_multiple_blockers"
+  | "stack_parent_unknown"
+  | "stack_parent_unpushed"
+  | "stack_provisioned_repo"
+  | "stack_opted_out";
 
 export interface StartVerdict {
   kind: "start";
@@ -32,6 +45,10 @@ export interface StartVerdict {
   recovery: boolean;
   /** Set when the verdict resolved an `agent-any` label to a concrete agent. */
   resolvedFromAny: boolean;
+  /** Parent branch this task's worktree and PR should be based on, when stacked. */
+  baseBranch?: string;
+  /** Natural (unprefixed) id of the blocker task this task is stacked on. */
+  parentTask?: string;
 }
 
 export interface SkipVerdict {
@@ -41,7 +58,7 @@ export interface SkipVerdict {
   message: string;
   /** Stable kebab-case enum surfaced as `logEvent.reason`. */
   eventReason: SkipReason;
-  /** Set for `blocked` and `blockers_paginated`. */
+  /** Set for `blocked`, `blockers_paginated`, and every `stack_*` reason. */
   blockers?: string[];
   /**
    * Set when the skip event should carry the resolved agent (i.e. the
@@ -53,6 +70,57 @@ export interface SkipVerdict {
 }
 
 type Verdict = StartVerdict | SkipVerdict;
+
+/** A stacking decision for a single blocked issue: where its branch and PR should be based. */
+export interface StackDecision {
+  baseBranch: string;
+  parentTask: string;
+}
+
+interface StackVerdict extends StackDecision {
+  kind: "stack";
+  issue: GroundcrewIssue;
+}
+
+/**
+ * Side-effecting boundary for the stacking decision — the only I/O
+ * `classifyBlockers` performs. Production uses the real run-state reader and
+ * a `git ls-remote` probe; tests substitute fakes instead of mocking modules.
+ */
+export interface EligibilityDeps {
+  readParentRunState: (config: ResolvedConfig, task: string) => RunState | undefined;
+  /** True when `branch` exists on `remote` in `repoDir`. A failed or empty `ls-remote` means "not pushed yet". */
+  isBranchPushed: (arguments_: {
+    repoDir: string;
+    remote: string;
+    branch: string;
+  }) => Promise<boolean>;
+}
+
+async function isBranchPushed(arguments_: {
+  repoDir: string;
+  remote: string;
+  branch: string;
+}): Promise<boolean> {
+  try {
+    const output = await runCommandAsync("git", [
+      "-C",
+      arguments_.repoDir,
+      "ls-remote",
+      "--heads",
+      arguments_.remote,
+      arguments_.branch,
+    ]);
+    return output.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+export const defaultEligibilityDeps: EligibilityDeps = {
+  readParentRunState: readRunState,
+  isBranchPushed,
+};
 
 export type AgentUsageExhaustion =
   | {
@@ -84,6 +152,8 @@ export interface ClassifyArguments {
    * when every Todo is blocked.
    */
   unblocked: readonly GroundcrewIssue[];
+  /** Stacking decisions from `classifyBlockers`, keyed by `issue.id`. Defaults to empty (no stacking). */
+  stackDecisions?: ReadonlyMap<string, StackDecision>;
   worktreeEntries: readonly WorktreeEntry[];
   workspaceProbe: WorkspaceProbe;
   usage: UsageByAgent;
@@ -94,8 +164,10 @@ export interface ClassifyArguments {
   dryRun: boolean;
 }
 
-interface BlockerClassification {
+export interface BlockerClassification {
   unblocked: GroundcrewIssue[];
+  /** Stacking decisions for issues in `unblocked` that stack on a parent, keyed by `issue.id`. */
+  stackDecisions: ReadonlyMap<string, StackDecision>;
   skips: SkipVerdict[];
 }
 
@@ -103,7 +175,88 @@ function blockerSummary(blocker: Blocker): string {
   return `${blocker.id}:${blocker.status}`;
 }
 
-function blockerVerdictFor(issue: GroundcrewIssue): SkipVerdict | undefined {
+function stackSkip(
+  issue: GroundcrewIssue,
+  blocker: Blocker,
+  eventReason: SkipReason,
+  message: string,
+): SkipVerdict {
+  return {
+    kind: "skip",
+    issue,
+    message,
+    eventReason,
+    blockers: [blockerSummary(blocker)],
+  };
+}
+
+/**
+ * The single-blocker stacking check from the stacked-PRs design (spec
+ * section 1, conditions 2-5; condition 1 — exactly one unresolved blocker —
+ * is enforced by the caller before this runs). Cheap, dependency-free checks
+ * (provisioner, opt-out label) run before the run-state read, which runs
+ * before the `git ls-remote` probe, so a task that fails early never pays
+ * for the network call.
+ */
+async function stackDecisionFor(
+  issue: GroundcrewIssue,
+  blocker: Blocker,
+  config: ResolvedConfig,
+  deps: EligibilityDeps,
+): Promise<StackVerdict | SkipVerdict> {
+  const repositoryEntry = config.workspace.repositories.find(
+    (entry) => entry.name === issue.repository,
+  );
+  if (repositoryEntry?.provision !== undefined) {
+    return stackSkip(
+      issue,
+      blocker,
+      "stack_provisioned_repo",
+      `Skipping ${issue.id}: stacking is refused for scripted-provisioner repositories`,
+    );
+  }
+  if (issue.stacking === "opted-out") {
+    return stackSkip(
+      issue,
+      blocker,
+      "stack_opted_out",
+      `Skipping ${issue.id}: opted out of stacking via the groundcrew-no-stack label`,
+    );
+  }
+
+  const parentTask = naturalIdFromCanonical(blocker.id);
+  const parentRunState = deps.readParentRunState(config, parentTask);
+  if (parentRunState === undefined || parentRunState.repository !== issue.repository) {
+    return stackSkip(
+      issue,
+      blocker,
+      "stack_parent_unknown",
+      `Skipping ${issue.id}: blocker ${parentTask} has no run state in repository ${issue.repository}`,
+    );
+  }
+
+  const pushed = await deps.isBranchPushed({
+    repoDir: path.resolve(repositoryBaseDir(config, issue.repository), issue.repository),
+    remote: config.git.remote,
+    branch: parentRunState.branchName,
+  });
+  if (!pushed) {
+    return stackSkip(
+      issue,
+      blocker,
+      "stack_parent_unpushed",
+      `Skipping ${issue.id}: blocker ${parentTask}'s branch isn't pushed yet`,
+    );
+  }
+
+  return { kind: "stack", issue, baseBranch: parentRunState.branchName, parentTask };
+}
+
+async function blockerVerdictFor(
+  issue: GroundcrewIssue,
+  config: ResolvedConfig,
+  deps: EligibilityDeps,
+): Promise<SkipVerdict | StackVerdict | undefined> {
   if (issue.hasMoreBlockers) {
     const blockers = issue.blockers.map(blockerSummary);
     return {
@@ -119,12 +272,20 @@ function blockerVerdictFor(issue: GroundcrewIssue): SkipVerdict | undefined {
   if (unresolved.length === 0) {
     return undefined;
   }
+
+  if (config.git.stacking === true) {
+    const [singleBlocker, ...remainingBlockers] = unresolved;
+    if (singleBlocker !== undefined && remainingBlockers.length === 0) {
+      return await stackDecisionFor(issue, singleBlocker, config, deps);
+    }
+  }
+
   const blockers = unresolved.map(blockerSummary);
   return {
     kind: "skip",
     issue,
     message: `Skipping ${issue.id}: blocked by ${blockers.join(", ")}`,
-    eventReason: "blocked",
+    eventReason: config.git.stacking === true ? "stack_multiple_blockers" : "blocked",
     blockers,
   };
 }
@@ -261,23 +422,37 @@ function classifyRecovery(
 }
 
 /**
- * Cheap pre-pass — partitions Todo into unblocked issues and blocker
+ * Cheap pre-pass — partitions Todo into unblocked issues (including those
+ * stacking on a single unresolved blocker, per `stackDecisions`) and blocker
  * skip verdicts. Runs before the dispatcher fetches usage or probes the
  * workspace adapter, so a board where every Todo is blocked short-circuits
- * without paying for either.
+ * without paying for either. `config.git.stacking` off reproduces today's
+ * behavior exactly and performs no run-state reads or git calls.
  */
-export function classifyBlockers(todo: readonly GroundcrewIssue[]): BlockerClassification {
+export async function classifyBlockers(
+  todo: readonly GroundcrewIssue[],
+  config: ResolvedConfig,
+  deps: EligibilityDeps = defaultEligibilityDeps,
+): Promise<BlockerClassification> {
   const unblocked: GroundcrewIssue[] = [];
   const skips: SkipVerdict[] = [];
+  const stackDecisions = new Map<string, StackDecision>();
   for (const issue of todo) {
-    const verdict = blockerVerdictFor(issue);
+    // oxlint-disable-next-line no-await-in-loop -- one blocker check at a time mirrors the dispatcher's own "one workspace at a time" git serialization
+    const verdict = await blockerVerdictFor(issue, config, deps);
     if (verdict === undefined) {
       unblocked.push(issue);
+    } else if (verdict.kind === "stack") {
+      unblocked.push(issue);
+      stackDecisions.set(issue.id, {
+        baseBranch: verdict.baseBranch,
+        parentTask: verdict.parentTask,
+      });
     } else {
       skips.push(verdict);
     }
   }
-  return { unblocked, skips };
+  return { unblocked, stackDecisions, skips };
 }
 
 /**
@@ -287,8 +462,17 @@ export function classifyBlockers(todo: readonly GroundcrewIssue[]): BlockerClass
  * the snapshots in.
  */
 export function classifyEligibility(arguments_: ClassifyArguments): Verdict[] {
-  const { config, unblocked, worktreeEntries, workspaceProbe, usage, exhausted, slots, dryRun } =
-    arguments_;
+  const {
+    config,
+    unblocked,
+    stackDecisions = new Map<string, StackDecision>(),
+    worktreeEntries,
+    workspaceProbe,
+    usage,
+    exhausted,
+    slots,
+    dryRun,
+  } = arguments_;
 
   const verdicts: Verdict[] = [];
   let started = 0;
@@ -340,11 +524,15 @@ export function classifyEligibility(arguments_: ClassifyArguments): Verdict[] {
       continue;
     }
 
+    const stackDecision = stackDecisions.get(resolved.id);
     verdicts.push({
       kind: "start",
       issue: resolved,
       recovery: recovery.recovery,
       resolvedFromAny,
+      ...(stackDecision === undefined
+        ? {}
+        : { baseBranch: stackDecision.baseBranch, parentTask: stackDecision.parentTask }),
     });
     started += 1;
   }
