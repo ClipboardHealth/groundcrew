@@ -26,7 +26,7 @@ import { resolveDefaultBranch } from "./defaultBranch.ts";
 import { readRunState } from "./runState.ts";
 import { assertPlainTaskId, isPlainTaskId } from "./taskId.ts";
 import { debug, errorMessage, isVerbose } from "./util.ts";
-import { hasAdoptedBranch } from "./worktreeRunState.ts";
+import { hasAdoptedBranch, isReferencedAsStackParent } from "./worktreeRunState.ts";
 import { type WorkspaceProbe, workspaces } from "./workspaces.ts";
 
 const WORKTREE_LIST_PREFIX = "worktree ";
@@ -624,6 +624,10 @@ async function removeWorktree(
   }
   if (hasAdoptedBranch({ config, entry })) {
     debug(`Preserving adopted branch ${entry.branchName} (not groundcrew-created).`);
+    return;
+  }
+  if (isReferencedAsStackParent({ config, task: entry.task })) {
+    debug(`Preserving branch ${entry.branchName}: a stacked child still references it as parent.`);
     return;
   }
   await deleteBranchBestEffort({

@@ -1,4 +1,4 @@
-import { readFileSync, rmSync } from "node:fs";
+import { readdirSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 
 import { writeJsonAtomic } from "./atomicJson.ts";
@@ -320,6 +320,34 @@ export function updateRunState(input: UpdateRunStateInput): RunState | undefined
 
 export function removeRunState(config: ResolvedConfig, task: string): void {
   rmSync(runStatePath(config, task), { force: true });
+}
+
+/**
+ * Every run state on disk, e.g. for callers that need to find a task by a
+ * field other than its own id (parent-teardown protection scans for a
+ * `parentTask` match). A record that fails to parse is skipped rather than
+ * aborting the scan, matching `readRunState`'s own tolerance for a malformed
+ * or partially-written file.
+ */
+export function listRunStates(config: ResolvedConfig): RunState[] {
+  let fileNames: string[];
+  try {
+    fileNames = readdirSync(runStateDirectory(config));
+  } catch {
+    return [];
+  }
+  const states: RunState[] = [];
+  for (const fileName of fileNames) {
+    if (!fileName.endsWith(".json")) {
+      continue;
+    }
+    const task = fileName.slice(0, -".json".length);
+    const state = readRunState(config, task);
+    if (state !== undefined) {
+      states.push(state);
+    }
+  }
+  return states;
 }
 
 /**

@@ -376,6 +376,12 @@ function writeInventoryRow(input: { task: JoinedTask; worktree: JoinedWorktree; 
     writeOutput(inventoryField("title", task.title));
   }
   writeOutput(inventoryField("state", inventoryStateText(task, now)));
+  if (task.baseBranch !== undefined && task.parentTask !== undefined) {
+    writeOutput(inventoryField("stack", `stacked on ${task.parentTask}`));
+  }
+  if (task.needsRebase === true) {
+    writeOutput(inventoryField("stack", "needs rebase"));
+  }
   // `state:` is the local run lifecycle; `task:` is the remote status that
   // actually drives the slot count. They're sourced independently and can
   // legitimately disagree, so they sit adjacent. Omitted when the board fetch

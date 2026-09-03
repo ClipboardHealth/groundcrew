@@ -5,6 +5,7 @@ import path from "node:path";
 import type { ResolvedConfig } from "./config.ts";
 import {
   clearBaseBranch,
+  listRunStates,
   readRunState,
   recordRunState,
   removeRunState,
@@ -597,5 +598,63 @@ describe("run state store", () => {
       task: "team-1",
       state: "running",
     });
+  });
+
+  it("listRunStates returns every recorded run state", () => {
+    recordRunState({
+      config,
+      state: {
+        task: "team-1",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-1",
+        branchName: "dev-team-1",
+        workspaceName: "team-1",
+        state: "running",
+      },
+    });
+    recordRunState({
+      config,
+      state: {
+        task: "team-2",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-2",
+        branchName: "dev-team-2",
+        workspaceName: "team-2",
+        state: "running",
+        baseBranch: "dev-team-1",
+        parentTask: "team-1",
+      },
+    });
+
+    const states = listRunStates(config).toSorted((left, right) =>
+      left.task.localeCompare(right.task),
+    );
+
+    expect(states).toMatchObject([{ task: "team-1" }, { task: "team-2", parentTask: "team-1" }]);
+  });
+
+  it("listRunStates returns an empty array when the runs directory does not exist", () => {
+    expect(listRunStates(config)).toStrictEqual([]);
+  });
+
+  it("listRunStates skips a malformed run state file rather than throwing", () => {
+    mkdirSync(runStateDirectory(config), { recursive: true });
+    writeFileSync(path.join(runStateDirectory(config), "team-9.json"), "not json");
+    recordRunState({
+      config,
+      state: {
+        task: "team-1",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-1",
+        branchName: "dev-team-1",
+        workspaceName: "team-1",
+        state: "running",
+      },
+    });
+
+    expect(listRunStates(config)).toMatchObject([{ task: "team-1" }]);
   });
 });
