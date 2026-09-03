@@ -72,7 +72,7 @@ export interface SkipVerdict {
 type Verdict = StartVerdict | SkipVerdict;
 
 /** A stacking decision for a single blocked issue: where its branch and PR should be based. */
-export interface StackDecision {
+interface StackDecision {
   baseBranch: string;
   parentTask: string;
 }

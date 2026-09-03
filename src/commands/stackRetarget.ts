@@ -31,7 +31,7 @@ import { effectiveBranchName } from "../lib/worktreeRunState.ts";
 import type { WorktreeEntry } from "../lib/worktrees.ts";
 import type { FindPullRequests } from "./reviewer.ts";
 
-export type StackRetargetOutcome =
+type StackRetargetOutcome =
   | "retargeted_to_parent"
   | "rebased_onto_default"
   | "rebase_conflict"
@@ -63,10 +63,10 @@ export type RunGhCommand = (arguments_: {
   signal?: AbortSignal;
 }) => Promise<string>;
 
-export const runGitCommand: RunGitCommand = async ({ cwd, args, signal }) =>
+const runGitCommand: RunGitCommand = async ({ cwd, args, signal }) =>
   await runCommandAsync("git", args, signal === undefined ? { cwd } : { cwd, signal });
 
-export const runGhCommand: RunGhCommand = async ({ cwd, args, signal }) =>
+const runGhCommand: RunGhCommand = async ({ cwd, args, signal }) =>
   await runCommandAsync("gh", args, signal === undefined ? { cwd } : { cwd, signal });
 
 export interface StackRetargetDeps {
@@ -75,7 +75,7 @@ export interface StackRetargetDeps {
   runGh?: RunGhCommand;
 }
 
-export interface StackRetargetArguments {
+interface StackRetargetArguments {
   config: ResolvedConfig;
   state: BoardState;
   worktreeEntries: readonly WorktreeEntry[];

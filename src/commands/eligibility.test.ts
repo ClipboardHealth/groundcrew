@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+import type { RunCommandOptions } from "../lib/commandRunner.ts";
 import type { ResolvedConfig } from "../lib/config.ts";
 import { recordRunState, readRunState } from "../lib/runState.ts";
 import { canonicalBlocker, canonicalLinearIssue } from "../lib/testing/canonicalFixtures.ts";
@@ -13,10 +14,27 @@ import {
   classifyBlockers,
   classifyEligibility,
   classifyUsageExhaustion,
+  defaultEligibilityDeps,
   pickBestAgent,
   type EligibilityDeps,
   type SkipVerdict,
 } from "./eligibility.ts";
+
+type RunCommandAsyncMock = (
+  command: string,
+  arguments_: readonly string[],
+  options?: RunCommandOptions,
+) => Promise<string>;
+
+const runCommandMock = vi.hoisted(() => vi.fn<RunCommandAsyncMock>());
+
+vi.mock(import("../lib/commandRunner.ts"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    runCommandAsync: runCommandMock as unknown as typeof actual.runCommandAsync,
+  };
+});
 
 /** Assert an Issue is groundcrew-eligible (agent + repository defined) and narrow the type. */
 function asGroundcrewIssue(issue: ReturnType<typeof canonicalLinearIssue>): GroundcrewIssue {
@@ -119,6 +137,57 @@ function defaultArguments(overrides: Partial<ClassifyArguments> = {}): ClassifyA
     ...overrides,
   };
 }
+
+describe(defaultEligibilityDeps.isBranchPushed, () => {
+  afterEach(() => {
+    runCommandMock.mockReset();
+  });
+
+  it("returns true when ls-remote reports the branch", async () => {
+    runCommandMock.mockResolvedValue("abc123\trefs/heads/dev-team-1\n");
+
+    await expect(
+      defaultEligibilityDeps.isBranchPushed({
+        repoDir: "/work/repo-a",
+        remote: "origin",
+        branch: "dev-team-1",
+      }),
+    ).resolves.toBe(true);
+
+    expect(runCommandMock).toHaveBeenCalledWith("git", [
+      "-C",
+      "/work/repo-a",
+      "ls-remote",
+      "--heads",
+      "origin",
+      "dev-team-1",
+    ]);
+  });
+
+  it("returns false when ls-remote finds nothing", async () => {
+    runCommandMock.mockResolvedValue("");
+
+    await expect(
+      defaultEligibilityDeps.isBranchPushed({
+        repoDir: "/work/repo-a",
+        remote: "origin",
+        branch: "dev-team-1",
+      }),
+    ).resolves.toBe(false);
+  });
+
+  it("returns false when ls-remote fails (network or auth error)", async () => {
+    runCommandMock.mockRejectedValue(new Error("could not resolve host"));
+
+    await expect(
+      defaultEligibilityDeps.isBranchPushed({
+        repoDir: "/work/repo-a",
+        remote: "origin",
+        branch: "dev-team-1",
+      }),
+    ).resolves.toBe(false);
+  });
+});
 
 describe(classifyBlockers, () => {
   it("emits a `blocked` skip when a blocker is in a non-terminal state", async () => {

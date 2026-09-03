@@ -37,7 +37,7 @@ import {
 import { debug, errorMessage, log, logEvent } from "../lib/util.ts";
 import type { WorktreeEntry } from "../lib/worktrees.ts";
 import { effectiveBranchName } from "../lib/worktreeRunState.ts";
-import { createStackRetarget, type RunGhCommand, type RunGitCommand } from "./stackRetarget.ts";
+import { createStackRetarget } from "./stackRetarget.ts";
 import { reapWorktrees } from "./teardownReporter.ts";
 
 /**
@@ -56,9 +56,6 @@ interface ReviewerDeps {
   board: Board;
   findPullRequests: FindPullRequests;
   config?: ResolvedConfig;
-  /** Injection points for the stack-retarget pass's git/gh calls; default to the real implementations. */
-  runGitCommand?: RunGitCommand;
-  runGhCommand?: RunGhCommand;
 }
 
 /** Per-tick inputs, mirroring the other orchestrator steps' shape. */
@@ -119,12 +116,8 @@ function matchingWorktreeEntries(arguments_: {
 }
 
 export function createReviewer(deps: ReviewerDeps): Reviewer {
-  const { board, config, findPullRequests, runGitCommand, runGhCommand } = deps;
-  const stackRetarget = createStackRetarget({
-    findPullRequests,
-    ...(runGitCommand === undefined ? {} : { runGit: runGitCommand }),
-    ...(runGhCommand === undefined ? {} : { runGh: runGhCommand }),
-  });
+  const { board, config, findPullRequests } = deps;
+  const stackRetarget = createStackRetarget({ findPullRequests });
 
   async function runOnce(arguments_: ReviewArguments): Promise<void> {
     const { state, worktreeEntries, dryRun, signal } = arguments_;

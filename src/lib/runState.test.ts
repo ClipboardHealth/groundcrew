@@ -357,6 +357,28 @@ describe("run state store", () => {
       baseBranch: "dev-team-1",
       parentTask: "team-1",
     });
+
+    // A resume/interrupt recordRunState call omits needsRebase; it should
+    // survive on disk, the same as the other stacking fields above.
+    recordRunState({
+      config,
+      state: {
+        task: "team-2",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-2",
+        branchName: "dev-team-2",
+        workspaceName: "team-2",
+        state: "interrupted",
+      },
+    });
+
+    expect(readRunState(config, "team-2")).toMatchObject({
+      state: "interrupted",
+      needsRebase: true,
+      baseBranch: "dev-team-1",
+      parentTask: "team-1",
+    });
   });
 
   it("clears baseBranch while retaining parentTask and other fields", () => {
@@ -639,9 +661,10 @@ describe("run state store", () => {
     expect(listRunStates(config)).toStrictEqual([]);
   });
 
-  it("listRunStates skips a malformed run state file rather than throwing", () => {
+  it("listRunStates skips a malformed run state file and a non-JSON file rather than throwing", () => {
     mkdirSync(runStateDirectory(config), { recursive: true });
     writeFileSync(path.join(runStateDirectory(config), "team-9.json"), "not json");
+    writeFileSync(path.join(runStateDirectory(config), "team-9.json.lock"), "");
     recordRunState({
       config,
       state: {

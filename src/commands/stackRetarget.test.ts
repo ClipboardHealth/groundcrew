@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+import type { RunCommandOptions } from "../lib/commandRunner.ts";
 import type { ResolvedConfig } from "../lib/config.ts";
 import type { PullRequestSummary } from "../lib/pullRequests.ts";
 import { readRunState, recordRunState } from "../lib/runState.ts";
@@ -17,6 +18,22 @@ import {
   type RunGitCommand,
   type StackRetarget,
 } from "./stackRetarget.ts";
+
+type RunCommandAsyncMock = (
+  command: string,
+  arguments_: readonly string[],
+  options?: RunCommandOptions,
+) => Promise<string>;
+
+const runCommandMock = vi.hoisted(() => vi.fn<RunCommandAsyncMock>());
+
+vi.mock(import("../lib/commandRunner.ts"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    runCommandAsync: runCommandMock as unknown as typeof actual.runCommandAsync,
+  };
+});
 
 function boardOf(issues: BoardState["issues"]): BoardState {
   return { timestamp: "2025-01-01T00:00:00.000Z", issues, parentSkips: [] };
@@ -65,7 +82,7 @@ function findPullRequestsRoutedBy(routes: Record<string, PullRequestRoute>): Fin
   });
 }
 
-type GitCall = { args: readonly string[] };
+type GitCall = { args: readonly string[]; signal?: AbortSignal };
 
 interface GitFakeHandlers {
   status?: () => Promise<string>;
@@ -94,9 +111,25 @@ function gitFakeHandlerFor(
 
 function gitFake(handlers: GitFakeHandlers): RunGitCommand & { calls: GitCall[] } {
   const calls: GitCall[] = [];
-  const fn = vi.fn<RunGitCommand>(async ({ args }) => {
-    calls.push({ args });
+  const fn = vi.fn<RunGitCommand>(async ({ args, signal }) => {
+    calls.push({ args, ...(signal === undefined ? {} : { signal }) });
     return await (gitFakeHandlerFor(handlers, args)?.() ?? Promise.resolve(""));
+  });
+  return Object.assign(fn, { calls });
+}
+
+type GitRoute = Error | string;
+
+/** Routes a git call by its exact argv, joined with spaces — for scenarios where two calls share a command (e.g. two `fetch`s with different refs) and need different outcomes. */
+function routedGitFake(routes: Record<string, GitRoute>): RunGitCommand & { calls: GitCall[] } {
+  const calls: GitCall[] = [];
+  const fn = vi.fn<RunGitCommand>(async ({ args, signal }) => {
+    calls.push({ args, ...(signal === undefined ? {} : { signal }) });
+    const route = routes[args.join(" ")];
+    if (route instanceof Error) {
+      throw route;
+    }
+    return route ?? "";
   });
   return Object.assign(fn, { calls });
 }
@@ -265,6 +298,69 @@ describe(createStackRetarget, () => {
     expect(state?.needsRebase).toBeUndefined();
     expect(consoleLog.output()).toContain(
       "event=stack-retarget flow=stack-retarget task=team-2 parentTask=team-1 baseBranch=dev-team-1 outcome=rebased_onto_default",
+    );
+  });
+
+  it("shells out through the real git and gh runners when neither is injected", async () => {
+    recordChildRunState({ baseBranch: "dev-team-1", parentTask: "team-1" });
+    const findPullRequests = findPullRequestsRoutedBy({
+      "dev-team-2": [pullRequest({ baseRefName: "dev-team-1" })],
+      "dev-team-1": [pullRequest({ number: 3, state: "merged" })],
+    });
+    runCommandMock.mockResolvedValue("");
+    const stackRetarget = createStackRetarget({ findPullRequests });
+
+    await stackRetarget.runOnce({
+      config,
+      state: boardOf([inProgressIssue("team-2")]),
+      worktreeEntries: [hostEntryFor("team-2")],
+      dryRun: false,
+    });
+
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "gh",
+      ["pr", "edit", "7", "--base", "main"],
+      expect.objectContaining({ cwd: "/work/repo-a-team-2" }),
+    );
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "git",
+      ["fetch", "origin", "main", "dev-team-1"],
+      expect.objectContaining({ cwd: "/work/repo-a-team-2" }),
+    );
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "git",
+      ["push", "--force-with-lease"],
+      expect.objectContaining({ cwd: "/work/repo-a-team-2" }),
+    );
+  });
+
+  it("forwards the abort signal through the real git and gh runners when neither is injected", async () => {
+    recordChildRunState({ baseBranch: "dev-team-1", parentTask: "team-1" });
+    const findPullRequests = findPullRequestsRoutedBy({
+      "dev-team-2": [pullRequest({ baseRefName: "dev-team-1" })],
+      "dev-team-1": [pullRequest({ number: 3, state: "merged" })],
+    });
+    runCommandMock.mockResolvedValue("");
+    const stackRetarget = createStackRetarget({ findPullRequests });
+    const controller = new AbortController();
+
+    await stackRetarget.runOnce({
+      config,
+      state: boardOf([inProgressIssue("team-2")]),
+      worktreeEntries: [hostEntryFor("team-2")],
+      dryRun: false,
+      signal: controller.signal,
+    });
+
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "gh",
+      ["pr", "edit", "7", "--base", "main"],
+      expect.objectContaining({ signal: controller.signal }),
+    );
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "git",
+      ["push", "--force-with-lease"],
+      expect.objectContaining({ signal: controller.signal }),
     );
   });
 
@@ -490,5 +586,248 @@ describe(createStackRetarget, () => {
     expect(runGh).not.toHaveBeenCalled();
     expect(readRunState(config, "team-2")?.baseBranch).toBe("dev-team-1");
     expect(consoleLog.output()).toContain("outcome=skipped reason=dry_run");
+  });
+
+  it("does nothing when the child has no open pull request", async () => {
+    recordChildRunState({ baseBranch: "dev-team-1", parentTask: "team-1" });
+    const findPullRequests = findPullRequestsRoutedBy({
+      "dev-team-2": [pullRequest({ state: "closed", baseRefName: "main" })],
+    });
+    const stackRetarget = createStackRetarget({ findPullRequests });
+
+    await stackRetarget.runOnce({
+      config,
+      state: boardOf([inProgressIssue("team-2")]),
+      worktreeEntries: [hostEntryFor("team-2")],
+      dryRun: false,
+    });
+
+    expect(findPullRequests).toHaveBeenCalledTimes(1);
+    expect(consoleLog.output()).not.toContain("stack-retarget");
+    expect(readRunState(config, "team-2")?.baseBranch).toBe("dev-team-1");
+  });
+
+  it("treats a failed parent-PR lookup as parent-not-merged and retargets to the parent", async () => {
+    recordChildRunState({ baseBranch: "dev-team-1", parentTask: "team-1" });
+    const findPullRequests = findPullRequestsRoutedBy({
+      "dev-team-2": [pullRequest({ baseRefName: "main" })],
+      "dev-team-1": new Error("gh rate limited"),
+    });
+    const runGh = vi.fn<RunGhCommand>().mockResolvedValue("");
+    const stackRetarget = createStackRetarget({ findPullRequests, runGh });
+
+    await stackRetarget.runOnce({
+      config,
+      state: boardOf([inProgressIssue("team-2")]),
+      worktreeEntries: [hostEntryFor("team-2")],
+      dryRun: false,
+    });
+
+    expect(runGh).toHaveBeenCalledWith(
+      expect.objectContaining({ args: ["pr", "edit", "7", "--base", "dev-team-1"] }),
+    );
+    expect(consoleLog.output()).toContain("outcome=retargeted_to_parent");
+  });
+
+  it("logs retarget_failed when gh pr edit fails while retargeting a merged parent's PR onto the default branch", async () => {
+    recordChildRunState({ baseBranch: "dev-team-1", parentTask: "team-1" });
+    const findPullRequests = findPullRequestsRoutedBy({
+      "dev-team-2": [pullRequest({ baseRefName: "dev-team-1" })],
+      "dev-team-1": [pullRequest({ number: 3, state: "merged" })],
+    });
+    const runGh = vi.fn<RunGhCommand>().mockRejectedValue(new Error("gh: not authenticated"));
+    const stackRetarget = createStackRetarget({ findPullRequests, runGh });
+
+    await stackRetarget.runOnce({
+      config,
+      state: boardOf([inProgressIssue("team-2")]),
+      worktreeEntries: [hostEntryFor("team-2")],
+      dryRun: false,
+    });
+
+    expect(consoleLog.output()).toContain("outcome=retarget_failed");
+    expect(readRunState(config, "team-2")?.baseBranch).toBe("dev-team-1");
+  });
+
+  it("dry-run logs the rebase-only plan when GitHub already retargeted the merged parent's PR", async () => {
+    recordChildRunState({ baseBranch: "dev-team-1", parentTask: "team-1" });
+    const findPullRequests = findPullRequestsRoutedBy({
+      "dev-team-2": [pullRequest({ baseRefName: "main" })],
+      "dev-team-1": [pullRequest({ number: 3, state: "merged" })],
+    });
+    const runGit = vi.fn<RunGitCommand>();
+    const stackRetarget = createStackRetarget({ findPullRequests, runGit });
+
+    await stackRetarget.runOnce({
+      config,
+      state: boardOf([inProgressIssue("team-2")]),
+      worktreeEntries: [hostEntryFor("team-2")],
+      dryRun: true,
+    });
+
+    expect(runGit).not.toHaveBeenCalled();
+    expect(consoleLog.output()).toContain("would rebase the branch onto the default branch");
+    expect(readRunState(config, "team-2")?.baseBranch).toBe("dev-team-1");
+  });
+
+  it("dry-run logs the retarget-and-rebase plan when the merged parent's PR still needs retargeting", async () => {
+    recordChildRunState({ baseBranch: "dev-team-1", parentTask: "team-1" });
+    const findPullRequests = findPullRequestsRoutedBy({
+      "dev-team-2": [pullRequest({ baseRefName: "dev-team-1" })],
+      "dev-team-1": [pullRequest({ number: 3, state: "merged" })],
+    });
+    const runGh = vi.fn<RunGhCommand>();
+    const stackRetarget = createStackRetarget({ findPullRequests, runGh });
+
+    await stackRetarget.runOnce({
+      config,
+      state: boardOf([inProgressIssue("team-2")]),
+      worktreeEntries: [hostEntryFor("team-2")],
+      dryRun: true,
+    });
+
+    expect(runGh).not.toHaveBeenCalled();
+    expect(consoleLog.output()).toContain(
+      "would retarget the pull request onto the default branch and rebase",
+    );
+    expect(readRunState(config, "team-2")?.baseBranch).toBe("dev-team-1");
+  });
+
+  it("treats a failed dirty-check probe as dirty and flags needsRebase", async () => {
+    recordChildRunState({ baseBranch: "dev-team-1", parentTask: "team-1" });
+    const findPullRequests = findPullRequestsRoutedBy({
+      "dev-team-2": [pullRequest({ baseRefName: "main" })],
+      "dev-team-1": [pullRequest({ number: 3, state: "merged" })],
+    });
+    const runGit = gitFake({
+      status: async () => {
+        throw new Error("fatal: not a git repository");
+      },
+    });
+    const stackRetarget = createStackRetarget({ findPullRequests, runGit });
+
+    await stackRetarget.runOnce({
+      config,
+      state: boardOf([inProgressIssue("team-2")]),
+      worktreeEntries: [hostEntryFor("team-2")],
+      dryRun: false,
+    });
+
+    const state = readRunState(config, "team-2");
+    expect(state?.needsRebase).toBe(true);
+    expect(state?.baseBranch).toBe("dev-team-1");
+    expect(consoleLog.output()).toContain("outcome=retargeted_needs_rebase");
+  });
+
+  it("falls back to fetching only the default branch when the combined fetch fails, then rebases onto the local parent ref", async () => {
+    recordChildRunState({ baseBranch: "dev-team-1", parentTask: "team-1" });
+    const findPullRequests = findPullRequestsRoutedBy({
+      "dev-team-2": [pullRequest({ baseRefName: "main" })],
+      "dev-team-1": [pullRequest({ number: 3, state: "merged" })],
+    });
+    const runGit = routedGitFake({
+      "--no-optional-locks status --porcelain": "",
+      "fetch origin main dev-team-1": new Error("could not read from remote: dev-team-1 not found"),
+      "fetch origin main": "",
+      "rebase --onto origin/main dev-team-1": "",
+      "push --force-with-lease": "",
+    });
+    const stackRetarget = createStackRetarget({ findPullRequests, runGit });
+
+    await stackRetarget.runOnce({
+      config,
+      state: boardOf([inProgressIssue("team-2")]),
+      worktreeEntries: [hostEntryFor("team-2")],
+      dryRun: false,
+    });
+
+    expect(runGit.calls.map((call) => call.args.join(" "))).toContain("fetch origin main");
+    expect(readRunState(config, "team-2")?.baseBranch).toBeUndefined();
+    expect(consoleLog.output()).toContain("outcome=rebased_onto_default");
+  });
+
+  it("flags needsRebase when both the combined fetch and its default-branch-only fallback fail", async () => {
+    recordChildRunState({ baseBranch: "dev-team-1", parentTask: "team-1" });
+    const findPullRequests = findPullRequestsRoutedBy({
+      "dev-team-2": [pullRequest({ baseRefName: "main" })],
+      "dev-team-1": [pullRequest({ number: 3, state: "merged" })],
+    });
+    const runGit = routedGitFake({
+      "--no-optional-locks status --porcelain": "",
+      "fetch origin main dev-team-1": new Error("network unreachable"),
+      "fetch origin main": new Error("network unreachable"),
+    });
+    const stackRetarget = createStackRetarget({ findPullRequests, runGit });
+
+    await stackRetarget.runOnce({
+      config,
+      state: boardOf([inProgressIssue("team-2")]),
+      worktreeEntries: [hostEntryFor("team-2")],
+      dryRun: false,
+    });
+
+    const state = readRunState(config, "team-2");
+    expect(state?.needsRebase).toBe(true);
+    expect(state?.baseBranch).toBe("dev-team-1");
+    expect(consoleLog.output()).toContain("outcome=retargeted_needs_rebase");
+  });
+
+  it("swallows a failed rebase --abort and still flags needsRebase", async () => {
+    recordChildRunState({ baseBranch: "dev-team-1", parentTask: "team-1" });
+    const findPullRequests = findPullRequestsRoutedBy({
+      "dev-team-2": [pullRequest({ baseRefName: "main" })],
+      "dev-team-1": [pullRequest({ number: 3, state: "merged" })],
+    });
+    const runGit = gitFake({
+      status: async () => "",
+      rebase: async () => {
+        throw new Error("CONFLICT (content): Merge conflict in src/index.ts");
+      },
+      rebaseAbort: async () => {
+        throw new Error("no rebase in progress");
+      },
+    });
+    const stackRetarget = createStackRetarget({ findPullRequests, runGit });
+
+    await expect(
+      stackRetarget.runOnce({
+        config,
+        state: boardOf([inProgressIssue("team-2")]),
+        worktreeEntries: [hostEntryFor("team-2")],
+        dryRun: false,
+      }),
+    ).resolves.toBeUndefined();
+
+    const state = readRunState(config, "team-2");
+    expect(state?.needsRebase).toBe(true);
+    expect(state?.baseBranch).toBe("dev-team-1");
+    expect(consoleLog.output()).toContain("outcome=rebase_conflict");
+  });
+
+  it("forwards the abort signal to every gh and git call along the retarget-and-rebase path", async () => {
+    recordChildRunState({ baseBranch: "dev-team-1", parentTask: "team-1" });
+    const findPullRequests = findPullRequestsRoutedBy({
+      "dev-team-2": [pullRequest({ baseRefName: "dev-team-1" })],
+      "dev-team-1": [pullRequest({ number: 3, state: "merged" })],
+    });
+    const runGh = vi.fn<RunGhCommand>().mockResolvedValue("");
+    const runGit = gitFake({ status: async () => "" });
+    const stackRetarget = createStackRetarget({ findPullRequests, runGh, runGit });
+    const controller = new AbortController();
+
+    await stackRetarget.runOnce({
+      config,
+      state: boardOf([inProgressIssue("team-2")]),
+      worktreeEntries: [hostEntryFor("team-2")],
+      dryRun: false,
+      signal: controller.signal,
+    });
+
+    expect(findPullRequests).toHaveBeenCalledWith(
+      expect.objectContaining({ signal: controller.signal }),
+    );
+    expect(runGh).toHaveBeenCalledWith(expect.objectContaining({ signal: controller.signal }));
+    expect(runGit.calls.length).toBeGreaterThan(0);
+    expect(runGit.calls.every((call) => call.signal === controller.signal)).toBe(true);
   });
 });
