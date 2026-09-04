@@ -6,7 +6,9 @@ import type { RunCommandOptions } from "../lib/commandRunner.ts";
 import type { ResolvedConfig } from "../lib/config.ts";
 import { recordRunState, readRunState } from "../lib/runState.ts";
 import { canonicalBlocker, canonicalLinearIssue } from "../lib/testing/canonicalFixtures.ts";
-import { isGroundcrewIssue, type GroundcrewIssue } from "../lib/taskSource.ts";
+import { isGroundcrewIssue, toCanonicalId, type GroundcrewIssue } from "../lib/taskSource.ts";
+import type * as utilModule from "../lib/util.ts";
+import { log } from "../lib/util.ts";
 import type { UsageByAgent } from "../lib/usage.ts";
 import type { WorktreeEntry } from "../lib/worktrees.ts";
 import {
@@ -35,6 +37,13 @@ vi.mock(import("../lib/commandRunner.ts"), async (importOriginal) => {
     runCommandAsync: runCommandMock as unknown as typeof actual.runCommandAsync,
   };
 });
+
+vi.mock(import("../lib/util.ts"), async (importOriginal) => {
+  const actual = await importOriginal<typeof utilModule>();
+  return { ...actual, log: vi.fn<typeof actual.log>() };
+});
+
+const logMock = vi.mocked(log);
 
 /** Assert an Issue is groundcrew-eligible (agent + repository defined) and narrow the type. */
 function asGroundcrewIssue(issue: ReturnType<typeof canonicalLinearIssue>): GroundcrewIssue {
@@ -145,6 +154,7 @@ function defaultArguments(overrides: Partial<ClassifyArguments> = {}): ClassifyA
 describe(defaultEligibilityDeps.probeParentBranch, () => {
   afterEach(() => {
     runCommandMock.mockReset();
+    logMock.mockReset();
   });
 
   it("returns 'pushed' when ls-remote reports the branch", async () => {
@@ -179,14 +189,11 @@ describe(defaultEligibilityDeps.probeParentBranch, () => {
       }),
     ).resolves.toBe("unpushed");
 
-    expect(runCommandMock).toHaveBeenCalledWith("git", [
-      "-C",
-      "/work/repo-a",
-      "show-ref",
-      "--verify",
-      "--quiet",
-      "refs/heads/dev-team-1",
-    ]);
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "git",
+      ["-C", "/work/repo-a", "show-ref", "--verify", "--quiet", "refs/heads/dev-team-1"],
+      {},
+    );
   });
 
   it("returns 'unknown' when the branch is missing both on the remote and locally", async () => {
@@ -213,6 +220,10 @@ describe(defaultEligibilityDeps.probeParentBranch, () => {
     ).resolves.toBe("unpushed");
 
     expect(runCommandMock).toHaveBeenCalledTimes(1);
+    expect(logMock).toHaveBeenCalledWith(
+      expect.stringContaining("Stack parent branch probe failed for dev-team-1"),
+    );
+    expect(logMock).toHaveBeenCalledWith(expect.stringContaining("could not resolve host"));
   });
 });
 
@@ -407,6 +418,30 @@ describe(classifyBlockers, () => {
         remote: "origin",
         branch: "dev-team-0",
       });
+    });
+
+    it("memoizes probeParentBranch per parent branch within a single classifyBlockers call", async () => {
+      recordParentRunState();
+      const deps = realReadDeps(true);
+      const siblingOne = blockedIssue({ id: toCanonicalId("linear", "team-1") });
+      const siblingTwo = blockedIssue({ id: toCanonicalId("linear", "team-2") });
+
+      const { unblocked, stackDecisions } = await classifyBlockers(
+        [siblingOne, siblingTwo],
+        stackingConfig(),
+        deps,
+      );
+
+      expect(unblocked).toHaveLength(2);
+      expect(stackDecisions.get(siblingOne.id)).toStrictEqual({
+        baseBranch: "dev-team-0",
+        parentTask: "team-0",
+      });
+      expect(stackDecisions.get(siblingTwo.id)).toStrictEqual({
+        baseBranch: "dev-team-0",
+        parentTask: "team-0",
+      });
+      expect(deps.probeParentBranch).toHaveBeenCalledTimes(1);
     });
 
     it("emits `stack_multiple_blockers` when more than one blocker is unresolved", async () => {

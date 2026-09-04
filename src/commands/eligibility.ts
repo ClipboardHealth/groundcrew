@@ -6,20 +6,22 @@
  * which reads the blocker's run state and probes its branch's availability.
  * Both effects are routed through the injectable `EligibilityDeps` so
  * callers can fake them the way the rest of the codebase fakes git.
+ * `probeParentBranch` also logs at WARN on a persistent `ls-remote` failure —
+ * the one logging exception, kept because a silent auth failure would
+ * otherwise hide forever behind the optimistic "unpushed, retry" verdict.
  *
  * The Dispatcher consumes the verdict list to drive logging and side
  * effects.
  */
 
-import path from "node:path";
-
 import { runCommandAsync } from "../lib/commandRunner.ts";
-import { AGENT_ANY, repositoryBaseDir, type ResolvedConfig } from "../lib/config.ts";
+import { AGENT_ANY, type ResolvedConfig } from "../lib/config.ts";
 import { readRunState, type RunState } from "../lib/runState.ts";
 import { naturalIdFromCanonical, type Blocker, type GroundcrewIssue } from "../lib/taskSource.ts";
 import type { UsageByAgent } from "../lib/usage.ts";
+import { errorMessage, log } from "../lib/util.ts";
 import type { WorkspaceProbe } from "../lib/workspaces.ts";
-import type { WorktreeEntry } from "../lib/worktrees.ts";
+import { localBranchExists, resolveRepoDir, type WorktreeEntry } from "../lib/worktrees.ts";
 
 const PERCENT_FRACTION_DIVISOR = 100;
 const DAYS_PER_WEEK = 7;
@@ -126,24 +128,15 @@ async function isBranchOnRemote(arguments_: {
       arguments_.branch,
     ]);
     return output.length > 0;
-  } catch {
+  } catch (error) {
+    // Network/auth failures are common and expected (retried next tick), but
+    // silent forever would hide a persistent auth failure. WARN once per
+    // branch per tick — probeParentBranch is memoized per branch within a
+    // single classifyBlockers call, so this can't spam.
+    log(
+      `Stack parent branch probe failed for ${arguments_.branch}; treating as unpushed and retrying next tick: ${errorMessage(error)}`,
+    );
     return undefined;
-  }
-}
-
-async function isBranchLocal(arguments_: { repoDir: string; branch: string }): Promise<boolean> {
-  try {
-    await runCommandAsync("git", [
-      "-C",
-      arguments_.repoDir,
-      "show-ref",
-      "--verify",
-      "--quiet",
-      `refs/heads/${arguments_.branch}`,
-    ]);
-    return true;
-  } catch {
-    return false;
   }
 }
 
@@ -159,7 +152,29 @@ async function probeParentBranch(arguments_: {
   if (onRemote === undefined) {
     return "unpushed";
   }
-  return (await isBranchLocal(arguments_)) ? "unpushed" : "unknown";
+  return (await localBranchExists(arguments_.repoDir, arguments_.branch)) ? "unpushed" : "unknown";
+}
+
+/**
+ * Memoizes `probeParentBranch` by branch for the lifetime of a single
+ * `classifyBlockers` call, so N siblings blocked by the same parent do one
+ * `git ls-remote` probe instead of N. Wrapping happens fresh per call — the
+ * cache must never survive past one dispatcher tick, or a since-pushed
+ * branch could keep reading as unpushed.
+ */
+function memoizedProbeParentBranch(
+  probeParentBranchDep: EligibilityDeps["probeParentBranch"],
+): EligibilityDeps["probeParentBranch"] {
+  const cache = new Map<string, ReturnType<EligibilityDeps["probeParentBranch"]>>();
+  return async (arguments_) => {
+    const cached = cache.get(arguments_.branch);
+    if (cached !== undefined) {
+      return await cached;
+    }
+    const probe = probeParentBranchDep(arguments_);
+    cache.set(arguments_.branch, probe);
+    return await probe;
+  };
 }
 
 export const defaultEligibilityDeps: EligibilityDeps = {
@@ -281,7 +296,7 @@ async function stackDecisionFor(
   }
 
   const availability = await deps.probeParentBranch({
-    repoDir: path.resolve(repositoryBaseDir(config, issue.repository), issue.repository),
+    repoDir: resolveRepoDir(config, issue.repository),
     remote: config.git.remote,
     branch: parentRunState.branchName,
   });
@@ -490,9 +505,15 @@ export async function classifyBlockers(
   const unblocked: GroundcrewIssue[] = [];
   const skips: SkipVerdict[] = [];
   const stackDecisions = new Map<string, StackDecision>();
+  // Scoped to this call only: memoizing probeParentBranch across ticks would
+  // let a since-pushed branch keep reading as unpushed indefinitely.
+  const memoizedDeps: EligibilityDeps = {
+    ...deps,
+    probeParentBranch: memoizedProbeParentBranch(deps.probeParentBranch),
+  };
   for (const issue of todo) {
     // oxlint-disable-next-line no-await-in-loop -- one blocker check at a time mirrors the dispatcher's own "one workspace at a time" git serialization
-    const verdict = await blockerVerdictFor(issue, config, deps);
+    const verdict = await blockerVerdictFor(issue, config, memoizedDeps);
     if (verdict === undefined) {
       unblocked.push(issue);
     } else if (verdict.kind === "stack") {
