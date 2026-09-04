@@ -1,12 +1,15 @@
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import type * as nodeFs from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { ensureClearance, type SafehouseCmuxIntegration } from "@clipboard-health/clearance";
 import type { RunCommandOptions } from "../lib/commandRunner.ts";
 import type { ResolvedConfig } from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
 import { recordRunState } from "../lib/runState.ts";
 import type * as utilModule from "../lib/util.ts";
-import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
+import { StackedBaseBranchMismatchError, type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
+import type * as worktreesModule from "../lib/worktrees.ts";
 import { safehouseCmuxIntegrationFixture } from "../testHelpers/safehouseCmuxIntegration.ts";
 import { emptyTeardownResult } from "../testHelpers/teardownResult.ts";
 import { setupWorkspace } from "./setupWorkspace.ts";
@@ -90,6 +93,7 @@ vi.mock(import("../lib/worktrees.ts"), async (importOriginal) => {
   };
 });
 
+const existsSyncMock = vi.mocked(existsSync);
 const mkdtempMock = vi.mocked(mkdtempSync);
 const writeFileMock = vi.mocked(writeFileSync);
 const detectHostMock = vi.mocked(detectHostCapabilities);
@@ -279,5 +283,95 @@ describe("setupWorkspace stacking", () => {
     const recorded = lastRecordedRunState();
     expect(recorded).not.toHaveProperty("baseBranch");
     expect(recorded).not.toHaveProperty("parentTask");
+  });
+
+  it("fires the reattach guard through the real dispatch path when the recorded baseBranch differs from the one now requested", async () => {
+    const actualFs = await vi.importActual<typeof nodeFs>("node:fs");
+    const actualRunStateModule =
+      await vi.importActual<typeof import("../lib/runState.ts")>("../lib/runState.ts");
+    const actualWorktreesModule =
+      await vi.importActual<typeof worktreesModule>("../lib/worktrees.ts");
+    const stateRoot = actualFs.mkdtempSync(path.join(tmpdir(), "groundcrew-setup-guard-"));
+    try {
+      const config: ResolvedConfig = {
+        ...makeConfig(),
+        logging: { file: path.join(stateRoot, "groundcrew.log") },
+      };
+
+      // writeJsonAtomic (called by the real recordRunState below) goes
+      // through node:fs's writeFileSync, which this file mocks to a no-op by
+      // default; give it a real implementation so the run-state writes in
+      // this test actually land on disk.
+      writeFileMock.mockImplementation(actualFs.writeFileSync);
+      // existsSync's default `true` stub (set once when the node:fs mock
+      // factory runs) doesn't survive a prior test's vi.resetAllMocks(); the
+      // real create() below needs it to find the repo clone dir.
+      existsSyncMock.mockReturnValue(true);
+
+      // Simulate a prior dispatch attempt that recorded baseBranch "dev-team-0"
+      // on real disk, before this call's preflight overwrites it.
+      actualRunStateModule.recordRunState({
+        config,
+        state: {
+          task: "team-2",
+          repository: "repo-a",
+          agent: "claude",
+          worktreeDir: "/work/repo-a-team-2",
+          branchName: "dev-team-2",
+          workspaceName: "team-2",
+          state: "provisioning",
+          baseBranch: "dev-team-0",
+          parentTask: "team-0",
+        },
+      });
+
+      // preflightProvisioningGate's own "provisioning" stamp must also hit real
+      // disk here so the test can distinguish reading recordedBaseBranch before
+      // that stamp (fixed) from reading it after (buggy: it would trivially
+      // match the requested baseBranch and the guard would never fire).
+      recordRunStateMock.mockImplementation(actualRunStateModule.recordRunState);
+      // Run the real create() so the reattach guard actually executes; the
+      // show-ref probe it calls resolves through the mocked runCommandAsync,
+      // which by default reports the local branch as already existing.
+      createMock.mockImplementation(actualWorktreesModule.worktrees.create);
+
+      const error = await setupWorkspace(config, {
+        task: "team-2",
+        repository: "repo-a",
+        agent: "claude",
+        baseBranch: "dev-team-1",
+        parentTask: "team-1",
+        details: { title: "Test Title", description: "Body" },
+      }).catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(StackedBaseBranchMismatchError);
+      expect((error as Error).message).toContain("crew cleanup team-2");
+    } finally {
+      actualFs.rmSync(stateRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("clears baseBranch/parentTask/needsRebase on the failed-to-launch run state instead of carrying them forward from the provisioning row", async () => {
+    const config = makeConfig();
+    createMock.mockRejectedValueOnce(new Error("boom"));
+
+    await expect(
+      setupWorkspace(config, {
+        task: "team-2",
+        repository: "repo-a",
+        agent: "claude",
+        baseBranch: "dev-team-1",
+        parentTask: "team-1",
+        details: { title: "Test Title", description: "Body" },
+      }),
+    ).rejects.toThrow("boom");
+
+    const failedCall = recordRunStateMock.mock.calls.find(
+      (entry) => entry[0].state.state === "failed-to-launch",
+    );
+    expect(failedCall).toBeDefined();
+    expect(failedCall?.[0].state.clearFields).toEqual(["baseBranch", "parentTask", "needsRebase"]);
+    expect(failedCall?.[0].state).not.toHaveProperty("baseBranch");
+    expect(failedCall?.[0].state).not.toHaveProperty("parentTask");
   });
 });
