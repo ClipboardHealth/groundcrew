@@ -625,7 +625,7 @@ describe(status, () => {
     expect(consoleLog.output()).toContain("  stack:     needs rebase");
   });
 
-  it("shows both stack annotations together when a dirty stacked child couldn't rebase", async () => {
+  it("combines both stack facts into a single `stack:` row when a dirty stacked child couldn't rebase", async () => {
     listWorktreesMock.mockReturnValue([worktree({ task: "team-2", repository: "repo-a" })]);
     readRunStateMock.mockReturnValue(
       runState({
@@ -639,8 +639,8 @@ describe(status, () => {
     await status(makeConfig());
 
     const output = consoleLog.output();
-    expect(output).toContain("  stack:     stacked on team-1");
-    expect(output).toContain("  stack:     needs rebase");
+    expect(output).toContain("  stack:     stacked on team-1, needs rebase");
+    expect(output.match(/ {2}stack:/g)).toHaveLength(1);
   });
 
   it("omits the `stack:` lines for a task with no stacking run-state fields", async () => {

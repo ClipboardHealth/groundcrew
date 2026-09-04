@@ -376,11 +376,15 @@ function writeInventoryRow(input: { task: JoinedTask; worktree: JoinedWorktree; 
     writeOutput(inventoryField("title", task.title));
   }
   writeOutput(inventoryField("state", inventoryStateText(task, now)));
+  const stackParts: string[] = [];
   if (task.baseBranch !== undefined && task.parentTask !== undefined) {
-    writeOutput(inventoryField("stack", `stacked on ${task.parentTask}`));
+    stackParts.push(`stacked on ${task.parentTask}`);
   }
   if (task.needsRebase === true) {
-    writeOutput(inventoryField("stack", "needs rebase"));
+    stackParts.push("needs rebase");
+  }
+  if (stackParts.length > 0) {
+    writeOutput(inventoryField("stack", stackParts.join(", ")));
   }
   // `state:` is the local run lifecycle; `task:` is the remote status that
   // actually drives the slot count. They're sourced independently and can
