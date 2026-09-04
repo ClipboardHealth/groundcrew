@@ -6,7 +6,6 @@ import path from "node:path";
 
 import type { RunCommandOptions } from "./commandRunner.ts";
 import type { ResolvedConfig } from "./config.ts";
-import { recordRunState } from "./runState.ts";
 import { setVerbose } from "./util.ts";
 import { StackedBaseBranchMismatchError, worktrees } from "./worktrees.ts";
 
@@ -202,28 +201,16 @@ describe(create, () => {
     expect(actual.dir).toBe(path.join(projectDir, "repo-a-team-1"));
   });
 
-  it("refuses to reattach a surviving local branch when run state names a different baseBranch", async () => {
+  it("refuses to reattach a surviving local branch when the recorded baseBranch differs from the requested one", async () => {
     mkdirSync(path.join(projectDir, "repo-a"));
     const config = makeConfig({ projectDir });
-    recordRunState({
-      config,
-      state: {
-        task: "team-2",
-        repository: "repo-a",
-        agent: "claude",
-        worktreeDir: path.join(projectDir, "repo-a-team-2"),
-        branchName: "dev-team-2",
-        workspaceName: "team-2",
-        state: "running",
-        baseBranch: "dev-team-0",
-      },
-    });
     // show-ref succeeds (default mock returns ""), so dev-team-2 is already local.
 
     const error = await create(config, {
       repository: "repo-a",
       task: "team-2",
       baseBranch: "dev-team-1",
+      recordedBaseBranch: "dev-team-0",
     }).catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(StackedBaseBranchMismatchError);
@@ -235,48 +222,43 @@ describe(create, () => {
     );
   });
 
-  it("refuses to reattach a surviving local branch when run state records no baseBranch at all", async () => {
+  it("refuses to reattach a surviving local branch when no baseBranch was ever recorded", async () => {
     mkdirSync(path.join(projectDir, "repo-a"));
     const config = makeConfig({ projectDir });
-    recordRunState({
-      config,
-      state: {
-        task: "team-2",
-        repository: "repo-a",
-        agent: "claude",
-        worktreeDir: path.join(projectDir, "repo-a-team-2"),
-        branchName: "dev-team-2",
-        workspaceName: "team-2",
-        state: "running",
-      },
-    });
 
     await expect(
       create(config, { repository: "repo-a", task: "team-2", baseBranch: "dev-team-1" }),
     ).rejects.toThrow(StackedBaseBranchMismatchError);
   });
 
+  it("refuses to reattach a surviving local branch when a baseBranch was recorded but none is requested now", async () => {
+    mkdirSync(path.join(projectDir, "repo-a"));
+    const config = makeConfig({ projectDir });
+
+    const error = await create(config, {
+      repository: "repo-a",
+      task: "team-2",
+      recordedBaseBranch: "dev-team-1",
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(StackedBaseBranchMismatchError);
+    expect((error as Error).message).toContain("crew cleanup team-2");
+    expect(runCommandMock).not.toHaveBeenCalledWith(
+      "git",
+      expect.arrayContaining(["worktree", "add"]),
+      expect.anything(),
+    );
+  });
+
   it("reattaches without complaint when the recorded baseBranch matches the requested one", async () => {
     mkdirSync(path.join(projectDir, "repo-a"));
     const config = makeConfig({ projectDir });
-    recordRunState({
-      config,
-      state: {
-        task: "team-2",
-        repository: "repo-a",
-        agent: "claude",
-        worktreeDir: path.join(projectDir, "repo-a-team-2"),
-        branchName: "dev-team-2",
-        workspaceName: "team-2",
-        state: "running",
-        baseBranch: "dev-team-1",
-      },
-    });
 
     const actual = await create(config, {
       repository: "repo-a",
       task: "team-2",
       baseBranch: "dev-team-1",
+      recordedBaseBranch: "dev-team-1",
     });
 
     expect(runCommandMock).toHaveBeenCalledWith(

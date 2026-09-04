@@ -109,11 +109,16 @@ interface IsReferencedAsStackParentInput {
  * diff. `baseBranch` is cleared once the child rebases onto the default
  * branch post-merge (stackRetarget.ts), so its presence is exactly "still
  * stacked on this branch"; `parentTask` alone is retained afterward and no
- * longer implies preservation.
+ * longer implies preservation. A `failed-to-launch` run state is ignored
+ * outright: its dispatch never produced a worktree, so it can never be a real
+ * stacked child, however stale `baseBranch`/`parentTask` values on it (a
+ * leftover from a "provisioning" row written moments before the failure) can
+ * only be a leak — see setupWorkspace.ts's `recordFailedToLaunch`.
  */
 export function isReferencedAsStackParent(input: IsReferencedAsStackParentInput): boolean {
   return listRunStates(input.config).some(
     (runState) =>
+      runState.state !== "failed-to-launch" &&
       runState.baseBranch !== undefined &&
       runState.parentTask?.toLowerCase() === input.task.toLowerCase(),
   );

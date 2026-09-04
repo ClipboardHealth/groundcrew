@@ -82,6 +82,15 @@ export interface RunStateDraft {
   baseBranch?: string;
   parentTask?: string;
   needsRebase?: boolean;
+  /**
+   * Optional-field names to drop entirely rather than carry forward from the
+   * on-disk record. Used by the failed-to-launch path so a `baseBranch`/
+   * `parentTask` written moments earlier by a "provisioning" row doesn't leak
+   * into a terminal failure state (`worktreeRunState.ts`'s
+   * `isReferencedAsStackParent` scans run state for exactly these fields, so
+   * a leaked value would preserve the parent's branch forever).
+   */
+  clearFields?: ReadonlyArray<"baseBranch" | "parentTask" | "needsRebase">;
 }
 
 export interface RecordRunStateInput {
@@ -255,6 +264,20 @@ export function readRunState(config: ResolvedConfig, task: string): RunState | u
   }
 }
 
+type ClearableOptionalField = "baseBranch" | "parentTask" | "needsRebase";
+
+// Carries a clearable field's draft-or-prior value forward, unless the draft
+// explicitly asked to drop it via `clearFields` (the failed-to-launch path
+// clearing a leaked `baseBranch`/`parentTask`/`needsRebase`).
+function carriedOrCleared<T>(
+  field: ClearableOptionalField,
+  cleared: ReadonlySet<string>,
+  draftValue: T | undefined,
+  priorValue: T | undefined,
+): T | undefined {
+  return cleared.has(field) ? undefined : (draftValue ?? priorValue);
+}
+
 // Resume/interrupt callers don't know these cached/stacking fields, so they
 // omit them. Fall back to the on-disk value so they survive transitions.
 function carryOptionalFields(
@@ -262,13 +285,19 @@ function carryOptionalFields(
   existing: RunState | undefined,
 ): OptionalRunStateFields {
   const prior: OptionalRunStateFields = existing ?? {};
+  const cleared = new Set(draft.clearFields ?? []);
   const title = draft.title ?? prior.title;
   const url = draft.url ?? prior.url;
   const completionTaskId = draft.completionTaskId ?? prior.completionTaskId;
   const adoptedBranch = draft.adoptedBranch ?? prior.adoptedBranch;
-  const baseBranch = draft.baseBranch ?? prior.baseBranch;
-  const parentTask = draft.parentTask ?? prior.parentTask;
-  const needsRebase = draft.needsRebase ?? prior.needsRebase;
+  const baseBranch = carriedOrCleared("baseBranch", cleared, draft.baseBranch, prior.baseBranch);
+  const parentTask = carriedOrCleared("parentTask", cleared, draft.parentTask, prior.parentTask);
+  const needsRebase = carriedOrCleared(
+    "needsRebase",
+    cleared,
+    draft.needsRebase,
+    prior.needsRebase,
+  );
   return {
     ...(draft.reason === undefined ? {} : { reason: draft.reason }),
     ...(draft.detail === undefined ? {} : { detail: draft.detail }),

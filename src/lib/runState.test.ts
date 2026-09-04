@@ -439,6 +439,85 @@ describe("run state store", () => {
     expect(clearBaseBranch(config, "team-9")).toBeUndefined();
   });
 
+  it("clearFields drops baseBranch, parentTask, and needsRebase instead of carrying them forward", () => {
+    recordRunState({
+      config,
+      state: {
+        task: "team-2",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-2",
+        branchName: "dev-team-2",
+        workspaceName: "team-2",
+        state: "provisioning",
+        baseBranch: "dev-team-1",
+        parentTask: "team-1",
+        needsRebase: true,
+      },
+    });
+
+    const cleared = recordRunState({
+      config,
+      state: {
+        task: "team-2",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-2",
+        branchName: "dev-team-2",
+        workspaceName: "team-2",
+        state: "failed-to-launch",
+        clearFields: ["baseBranch", "parentTask", "needsRebase"],
+      },
+    });
+
+    expect(cleared.baseBranch).toBeUndefined();
+    expect(cleared.parentTask).toBeUndefined();
+    expect(cleared.needsRebase).toBeUndefined();
+    expect(readRunState(config, "team-2")?.baseBranch).toBeUndefined();
+    expect(readRunState(config, "team-2")?.parentTask).toBeUndefined();
+    expect(readRunState(config, "team-2")?.needsRebase).toBeUndefined();
+    expect(JSON.parse(readFileSync(runStatePath(config, "team-2"), "utf8"))).not.toHaveProperty(
+      "baseBranch",
+    );
+  });
+
+  it("omitting clearFields still carries baseBranch, parentTask, and needsRebase forward", () => {
+    recordRunState({
+      config,
+      state: {
+        task: "team-2",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-2",
+        branchName: "dev-team-2",
+        workspaceName: "team-2",
+        state: "provisioning",
+        baseBranch: "dev-team-1",
+        parentTask: "team-1",
+        needsRebase: true,
+      },
+    });
+
+    const carried = recordRunState({
+      config,
+      state: {
+        task: "team-2",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-2",
+        branchName: "dev-team-2",
+        workspaceName: "team-2",
+        state: "running",
+      },
+    });
+
+    expect(carried).toMatchObject({
+      baseBranch: "dev-team-1",
+      parentTask: "team-1",
+      needsRebase: true,
+    });
+  });
+
   it("parses an old-shaped run state file with no stacking fields", () => {
     mkdirSync(path.dirname(runStatePath(config, "team-1")), { recursive: true });
     writeFileSync(

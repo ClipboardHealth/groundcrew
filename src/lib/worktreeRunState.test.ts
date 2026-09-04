@@ -261,4 +261,23 @@ describe(isReferencedAsStackParent, () => {
   it("is false when the runs directory does not exist", () => {
     expect(isReferencedAsStackParent({ config, task: "team-1" })).toBe(false);
   });
+
+  it("is false for a failed-to-launch run state even with baseBranch and parentTask set", () => {
+    recordRunState({
+      config,
+      state: {
+        task: "team-2",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-2",
+        branchName: "dev-team-2",
+        workspaceName: "team-2",
+        state: "failed-to-launch",
+        baseBranch: "dev-team-1",
+        parentTask: "team-1",
+      },
+    });
+
+    expect(isReferencedAsStackParent({ config, task: "team-1" })).toBe(false);
+  });
 });
