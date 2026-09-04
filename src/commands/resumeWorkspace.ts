@@ -53,6 +53,8 @@ interface ResumeContext {
   completionMarkDoneSupported: boolean;
   reason?: string;
   resumeCount: number;
+  /** Stacked parent branch, when this task is a stacked child; threaded to the resumed worker's environment. */
+  baseBranch?: string;
 }
 
 function parseArguments(argv: string[]): ResumeWorkspaceOptions {
@@ -142,6 +144,7 @@ async function contextFromState(
     }),
     ...(state.reason === undefined ? {} : { reason: state.reason }),
     resumeCount: state.resumeCount,
+    ...(state.baseBranch === undefined ? {} : { baseBranch: state.baseBranch }),
   };
 }
 
@@ -294,6 +297,7 @@ export async function resumeWorkspace(
       workerEnvironment: workerEnvironmentForTask({
         taskId: context.completionTaskId,
         markDoneSupported: context.completionMarkDoneSupported,
+        ...(context.baseBranch === undefined ? {} : { baseBranch: context.baseBranch }),
       }),
       taskSourceWritePaths,
       safehouseEnableFeatures: config.local.safehouse.enable,
