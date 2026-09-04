@@ -87,7 +87,7 @@
     "@vitest/coverage-v8": "4.1.11",
     "dependency-cruiser": "18.2.0",
     "husky": "9.1.7",
-    "jscpd": "5.0.16",
+    "jscpd": "5.1.1",
     "knip": "6.33.0",
     "lint-staged": "17.4.1",
     "markdownlint-cli2": "0.23.2",
