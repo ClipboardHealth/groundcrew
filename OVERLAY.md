@@ -1,17 +1,9 @@
-## Project-specific rules
+## Repository Context
 
-### Development workflow
-
-1. Use red, green, refactor test-driven development
-2. Validate changes with at least `node --run verify`
-3. Invoke cb-work skill for ALL code changes
-4. To exercise the `crew` CLI against the local checkout, run it via the npm script: `node --run crew -- <args>` (e.g. `node --run crew -- cleanup ENG-123`). The globally-installed `crew` binary runs the published version and will not reflect your in-progress changes. See [Development](./README.md#development) for the `crew:op` 1Password variant.
-
-### Vitest coverage ignores
-
-Vitest uses V8 coverage through Vite/esbuild. Plain coverage comments are stripped before coverage remapping, so use legal preserved hints:
-
-- `/* v8 ignore next @preserve */` for genuinely unreachable statements/functions
-- `/* v8 ignore else @preserve */` before an `if` when only the else branch is unreachable
-
-Prefer tests or restructuring over ignores when the path is reachable.
+- **CLI behavior:** use red-green TDD through the local npm scripts in
+  [`docs/development.md`](./docs/development.md). The globally installed `crew` runs the
+  published version, not the checkout.
+- **Validation:** run `node --run verify` from the repository root.
+- **Coverage exclusions:** Vite/esbuild strips plain V8 hints during coverage remapping. For
+  genuinely unreachable code, use `/* v8 ignore next @preserve */` for a statement or function
+  and `/* v8 ignore else @preserve */` before an `if` whose else branch is unreachable.
