@@ -5,14 +5,21 @@
  *
  * - Parent still open, child PR based on something other than the parent →
  *   `gh pr edit --base <parent>`.
- * - Parent merged (its PR is `merged`, or its issue is canonically `done`)
- *   and the child PR is still based on the parent (or GitHub already moved
- *   it to the default branch itself) → `gh pr edit --base <default>`, then
- *   rebase onto the default branch and force-push when the worktree is
- *   clean, or flag `needsRebase` when it isn't. A successful rebase also
- *   tries to reclaim the parent's now-unreferenced branch (spec section 6) —
- *   `worktrees.teardown` only checks this at the moment the parent's own
- *   worktree is torn down, which is usually before this rebase runs.
+ * - Parent merged (a PR on the parent's branch has state `merged` — the
+ *   parent issue's canonical `done` status is never on its own proof of a
+ *   merge: a ticket closed as duplicate, or completed via `crew task done`
+ *   with an unmerged/closed PR, is `done` but not merged) and the child PR
+ *   is still based on the parent (or GitHub already moved it to the default
+ *   branch itself) → `gh pr edit --base <default>`, then rebase onto the
+ *   default branch and force-push when the worktree is clean, or flag
+ *   `needsRebase` when it isn't. A successful rebase also tries to reclaim
+ *   the parent's now-unreferenced branch (spec section 6) — `worktrees.teardown`
+ *   only checks this at the moment the parent's own worktree is torn down,
+ *   which is usually before this rebase runs.
+ * - Parent not merged, and the parent issue is done (or its worktree is
+ *   gone) — the parent will never merge, so retargeting onto or rebasing
+ *   onto a branch that is about to vanish would be wrong. Leave the child
+ *   untouched (`parent_done_unmerged`).
  *
  * A task with no `baseBranch` in run state, or no open PR yet, is left
  * alone — there is nothing to correct. Every git/gh failure is caught,
@@ -31,7 +38,13 @@ import {
 } from "../lib/taskSource.ts";
 import { debug, errorMessage, log, logEvent } from "../lib/util.ts";
 import { effectiveBranchName } from "../lib/worktreeRunState.ts";
-import { reclaimStackParentBranch, type WorktreeEntry } from "../lib/worktrees.ts";
+import {
+  localBranchExists,
+  reclaimStackParentBranch,
+  signalProperty,
+  worktrees,
+  type WorktreeEntry,
+} from "../lib/worktrees.ts";
 import type { FindPullRequests } from "./reviewer.ts";
 
 type StackRetargetOutcome =
@@ -42,7 +55,20 @@ type StackRetargetOutcome =
   | "retarget_failed"
   // Not one of spec section 8's named outcomes: `--force-with-lease` was
   // rejected after a successful rebase, distinct from a rebase conflict.
-  | "push_rejected";
+  | "push_rejected"
+  // The parent issue is done (or its worktree is gone) but no PR on its
+  // branch ever merged — the parent will never merge, so the child is left
+  // untouched rather than retargeted onto or rebased onto a dead branch.
+  | "parent_done_unmerged"
+  // The child's own PR lookup, or branch resolution, failed.
+  | "lookup_failed"
+  // Post-merge, the child PR's base is neither the parent nor the default
+  // branch — someone retargeted it elsewhere; outside the spec's covered
+  // cases, left alone rather than forced back.
+  | "base_drifted"
+  // The combined fetch failed and its default-branch-only fallback
+  // succeeded, but the local parent ref it was counting on doesn't exist.
+  | "parent_ref_missing";
 
 const TERMINAL_MESSAGES: Record<StackRetargetOutcome, string> = {
   retargeted_to_parent: "Stack retarget corrected the PR base to the parent branch",
@@ -52,6 +78,14 @@ const TERMINAL_MESSAGES: Record<StackRetargetOutcome, string> = {
     "Stack retarget corrected the PR base; rebase deferred until the worktree is clean",
   retarget_failed: "Stack retarget could not edit the pull request's base; will retry next tick",
   push_rejected: "Stack retarget's force-push was rejected; will retry next tick",
+  parent_done_unmerged:
+    "Stack retarget left the pull request alone: the parent task is done but its pull request never merged",
+  lookup_failed:
+    "Stack retarget could not look up the pull request for this task; will retry next tick",
+  base_drifted:
+    "Stack retarget left the pull request alone: its base is neither the parent nor the default branch",
+  parent_ref_missing:
+    "Stack retarget could not find the parent branch locally after the fetch fell back; flagged for rebase next tick",
 };
 
 export type RunGitCommand = (arguments_: {
@@ -67,10 +101,10 @@ export type RunGhCommand = (arguments_: {
 }) => Promise<string>;
 
 const runGitCommand: RunGitCommand = async ({ cwd, args, signal }) =>
-  await runCommandAsync("git", args, signal === undefined ? { cwd } : { cwd, signal });
+  await runCommandAsync("git", args, { cwd, ...signalProperty(signal) });
 
 const runGhCommand: RunGhCommand = async ({ cwd, args, signal }) =>
-  await runCommandAsync("gh", args, signal === undefined ? { cwd } : { cwd, signal });
+  await runCommandAsync("gh", args, { cwd, ...signalProperty(signal) });
 
 export interface StackRetargetDeps {
   findPullRequests: FindPullRequests;
@@ -116,27 +150,53 @@ function logDryRun(logContext: ReturnType<typeof logContextFor>, action: string)
   logEvent("stack-retarget", { ...logContext, outcome: "skipped", reason: "dry_run" });
 }
 
+/** Per-`runOnce`-call cache of a parent branch's pull requests, keyed by branch. */
+type ParentPullRequestCache = Map<string, Promise<readonly PullRequestSummary[]>>;
+
+async function fetchParentPullRequests(arguments_: {
+  cache: ParentPullRequestCache;
+  findPullRequests: FindPullRequests;
+  cwd: string;
+  baseBranch: string;
+  signal?: AbortSignal;
+}): Promise<readonly PullRequestSummary[]> {
+  const { cache, findPullRequests, cwd, baseBranch, signal } = arguments_;
+  const cached = cache.get(baseBranch);
+  if (cached !== undefined) {
+    return await cached;
+  }
+  const pullRequests = findPullRequests({
+    cwd,
+    branchName: baseBranch,
+    ...signalProperty(signal),
+  }).catch(() => [] as readonly PullRequestSummary[]);
+  cache.set(baseBranch, pullRequests);
+  return await pullRequests;
+}
+
+/**
+ * Parent-merged is PR-state-only: a PR on the parent's branch with state
+ * `merged`. The parent issue's canonical `done` status is deliberately not
+ * treated as proof — a ticket closed as duplicate, or completed via
+ * `crew task done` with an unmerged/closed PR, is `done` without ever having
+ * merged, and rebasing the child onto the default branch in that case would
+ * strip the parent's commits out from under it.
+ */
 async function isParentMerged(arguments_: {
+  cache: ParentPullRequestCache;
   entry: WorktreeEntry;
   baseBranch: string;
-  parentStatus: CanonicalStatus | undefined;
   findPullRequests: FindPullRequests;
   signal?: AbortSignal;
 }): Promise<boolean> {
-  const { entry, baseBranch, parentStatus, findPullRequests, signal } = arguments_;
-  if (parentStatus === "done") {
-    return true;
-  }
-  let parentPullRequests: readonly PullRequestSummary[];
-  try {
-    parentPullRequests = await findPullRequests({
-      cwd: entry.dir,
-      branchName: baseBranch,
-      ...(signal === undefined ? {} : { signal }),
-    });
-  } catch {
-    return false;
-  }
+  const { cache, entry, baseBranch, findPullRequests, signal } = arguments_;
+  const parentPullRequests = await fetchParentPullRequests({
+    cache,
+    findPullRequests,
+    cwd: entry.dir,
+    baseBranch,
+    ...signalProperty(signal),
+  });
   return parentPullRequests.some((pr) => pr.state === "merged");
 }
 
@@ -152,7 +212,7 @@ async function editPrBase(arguments_: {
     await runGh({
       cwd: entry.dir,
       args: ["pr", "edit", String(prNumber), "--base", base],
-      ...(signal === undefined ? {} : { signal }),
+      ...signalProperty(signal),
     });
     return true;
   } catch (error) {
@@ -185,23 +245,12 @@ async function rebaseOntoDefault(arguments_: {
   const { config, entry, runState, baseBranch, parentTask, defaultBranch, remote, runGit, signal } =
     arguments_;
   const task = entry.task;
-  const signalOption = signal === undefined ? {} : { signal };
+  const signalOption = signalProperty(signal);
 
-  let statusOutput: string;
-  try {
-    statusOutput = await runGit({
-      cwd: entry.dir,
-      args: ["--no-optional-locks", "status", "--porcelain"],
-      ...signalOption,
-    });
-  } catch (error) {
-    // A failed probe is treated as dirty: safer to defer the rebase than
-    // force-push over a working tree we can't confirm is clean.
-    debug(`Stack retarget status check failed for ${task}: ${errorMessage(error)}`);
-    markNeedsRebase(config, runState);
-    return "retargeted_needs_rebase";
-  }
-  if (statusOutput.trim().length > 0) {
+  const dirtiness = await worktrees.probeWorkingTree({ worktreeDir: entry.dir, ...signalOption });
+  // A failed probe ("unknown") is treated as dirty: safer to defer the
+  // rebase than force-push over a working tree we can't confirm is clean.
+  if (dirtiness.kind !== "clean") {
     markNeedsRebase(config, runState);
     return "retargeted_needs_rebase";
   }
@@ -219,12 +268,16 @@ async function rebaseOntoDefault(arguments_: {
     );
     try {
       await runGit({ cwd: entry.dir, args: ["fetch", remote, defaultBranch], ...signalOption });
-      parentRef = baseBranch;
     } catch (fallbackError) {
       debug(`Fetch of ${defaultBranch} failed for ${task}: ${errorMessage(fallbackError)}`);
       markNeedsRebase(config, runState);
       return "retargeted_needs_rebase";
     }
+    if (!(await localBranchExists(entry.dir, baseBranch, signal))) {
+      markNeedsRebase(config, runState);
+      return "parent_ref_missing";
+    }
+    parentRef = baseBranch;
   }
 
   try {
@@ -245,7 +298,11 @@ async function rebaseOntoDefault(arguments_: {
   }
 
   try {
-    await runGit({ cwd: entry.dir, args: ["push", "--force-with-lease"], ...signalOption });
+    await runGit({
+      cwd: entry.dir,
+      args: ["push", "--force-with-lease", remote, "HEAD"],
+      ...signalOption,
+    });
   } catch (error) {
     debug(`Force-push failed for ${task}: ${errorMessage(error)}`);
     markNeedsRebase(config, runState);
@@ -277,7 +334,9 @@ async function retargetTask(arguments_: {
   baseBranch: string;
   parentTask: string;
   parentStatus: CanonicalStatus | undefined;
+  parentWorktreeExists: boolean;
   findPullRequests: FindPullRequests;
+  parentPullRequestCache: ParentPullRequestCache;
   runGit: RunGitCommand;
   runGh: RunGhCommand;
   dryRun: boolean;
@@ -290,14 +349,16 @@ async function retargetTask(arguments_: {
     baseBranch,
     parentTask,
     parentStatus,
+    parentWorktreeExists,
     findPullRequests,
+    parentPullRequestCache,
     runGit,
     runGh,
     dryRun,
     signal,
   } = arguments_;
   const task = entry.task;
-  const signalOption = signal === undefined ? {} : { signal };
+  const signalOption = signalProperty(signal);
   const logContext = logContextFor({ task, parentTask, baseBranch });
 
   let childPullRequests: readonly PullRequestSummary[];
@@ -306,6 +367,7 @@ async function retargetTask(arguments_: {
     childPullRequests = await findPullRequests({ cwd: entry.dir, branchName, ...signalOption });
   } catch (error) {
     debug(`Stack retarget PR lookup failed for ${task}: ${errorMessage(error)}`);
+    logTerminal(logContext, "lookup_failed");
     return;
   }
   const childPullRequest = childPullRequests.find((pr) => pr.state === "open");
@@ -314,15 +376,19 @@ async function retargetTask(arguments_: {
   }
 
   const parentMerged = await isParentMerged({
+    cache: parentPullRequestCache,
     entry,
     baseBranch,
-    parentStatus,
     findPullRequests,
     ...signalOption,
   });
   const { defaultBranch, remote } = config.git;
 
   if (!parentMerged) {
+    if (parentStatus === "done" || !parentWorktreeExists) {
+      logTerminal(logContext, "parent_done_unmerged");
+      return;
+    }
     if (childPullRequest.baseRefName === baseBranch) {
       return;
     }
@@ -371,9 +437,7 @@ async function retargetTask(arguments_: {
       return;
     }
   } else {
-    // Based on neither the parent nor the default branch — someone
-    // retargeted it elsewhere after the parent merged. Outside the spec's
-    // covered cases; leave it alone rather than forcing it back.
+    logTerminal(logContext, "base_drifted");
     return;
   }
 
@@ -396,8 +460,9 @@ export function createStackRetarget(deps: StackRetargetDeps): StackRetarget {
 
   async function runOnce(arguments_: StackRetargetArguments): Promise<void> {
     const { config, state, worktreeEntries, dryRun, signal } = arguments_;
-    const signalOption = signal === undefined ? {} : { signal };
+    const signalOption = signalProperty(signal);
     const seenTasks = new Set<string>();
+    const parentPullRequestCache: ParentPullRequestCache = new Map();
 
     for (const entry of worktreeEntries) {
       if (seenTasks.has(entry.task)) {
@@ -417,7 +482,9 @@ export function createStackRetarget(deps: StackRetargetDeps): StackRetarget {
         baseBranch,
         parentTask,
         parentStatus: findParentStatus(state, parentTask),
+        parentWorktreeExists: worktreeEntries.some((candidate) => candidate.task === parentTask),
         findPullRequests,
+        parentPullRequestCache,
         runGit,
         runGh,
         dryRun,

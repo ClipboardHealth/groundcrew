@@ -95,7 +95,6 @@ function findPullRequestsRoutedBy(routes: Record<string, PullRequestRoute>): Fin
 type GitCall = { args: readonly string[]; signal?: AbortSignal };
 
 interface GitFakeHandlers {
-  status?: () => Promise<string>;
   fetch?: () => Promise<string>;
   rebase?: () => Promise<string>;
   rebaseAbort?: () => Promise<string>;
@@ -111,7 +110,6 @@ function gitFakeHandlerFor(
     return handlers.rebaseAbort;
   }
   const byCommand: Record<string, (() => Promise<string>) | undefined> = {
-    "--no-optional-locks": handlers.status,
     fetch: handlers.fetch,
     rebase: handlers.rebase,
     push: handlers.push,
@@ -142,6 +140,24 @@ function routedGitFake(routes: Record<string, GitRoute>): RunGitCommand & { call
     return route ?? "";
   });
   return Object.assign(fn, { calls });
+}
+
+/**
+ * Routes the shared `runCommandMock` by a single argv needle, for probes that
+ * bypass the injected git/gh fakes entirely (`effectiveBranchName`'s
+ * `git branch --show-current`, `worktrees.probeWorkingTree`'s dirty-check,
+ * `localBranchExists`' show-ref probe). Every other call still resolves "".
+ */
+function fakeRunCommandProbe(argMatch: string, route: GitRoute): void {
+  runCommandMock.mockImplementation(async (command, arguments_) => {
+    if (command !== "git" || !arguments_.includes(argMatch)) {
+      return "";
+    }
+    if (route instanceof Error) {
+      throw route;
+    }
+    return route;
+  });
 }
 
 function makeConfig(stateRoot: string): ResolvedConfig {
@@ -185,6 +201,11 @@ describe(createStackRetarget, () => {
     stateRoot = mkdtempSync(path.join(tmpdir(), "groundcrew-stack-retarget-"));
     config = makeConfig(stateRoot);
     setVerbose(true);
+    // Covers both worktrees.probeWorkingTree's dirty-check (clean by default)
+    // and localBranchExists' show-ref probe (branch exists by default); tests
+    // that need a dirty worktree, a missing local ref, or a failed probe
+    // override this per-scenario below.
+    runCommandMock.mockResolvedValue("");
   });
 
   afterEach(() => {
@@ -279,7 +300,7 @@ describe(createStackRetarget, () => {
       "dev-team-1": [pullRequest({ number: 3, state: "merged" })],
     });
     const runGh = vi.fn<RunGhCommand>().mockResolvedValue("");
-    const runGit = gitFake({ status: async () => "" });
+    const runGit = gitFake({});
     const stackRetarget = createStackRetarget({ findPullRequests, runGh, runGit });
 
     await stackRetarget.runOnce({
@@ -292,15 +313,10 @@ describe(createStackRetarget, () => {
     expect(runGh).toHaveBeenCalledWith(
       expect.objectContaining({ args: ["pr", "edit", "7", "--base", "main"] }),
     );
-    expect(runGit.calls.map((call) => call.args[0])).toEqual([
-      "--no-optional-locks",
-      "fetch",
-      "rebase",
-      "push",
-    ]);
-    expect(runGit.calls[1]?.args).toEqual(["fetch", "origin", "main", "dev-team-1"]);
-    expect(runGit.calls[2]?.args).toEqual(["rebase", "--onto", "origin/main", "origin/dev-team-1"]);
-    expect(runGit.calls[3]?.args).toEqual(["push", "--force-with-lease"]);
+    expect(runGit.calls.map((call) => call.args[0])).toEqual(["fetch", "rebase", "push"]);
+    expect(runGit.calls[0]?.args).toEqual(["fetch", "origin", "main", "dev-team-1"]);
+    expect(runGit.calls[1]?.args).toEqual(["rebase", "--onto", "origin/main", "origin/dev-team-1"]);
+    expect(runGit.calls[2]?.args).toEqual(["push", "--force-with-lease", "origin", "HEAD"]);
 
     const state = readRunState(config, "team-2");
     expect(state?.baseBranch).toBeUndefined();
@@ -328,7 +344,7 @@ describe(createStackRetarget, () => {
       "dev-team-1": [pullRequest({ number: 3, state: "merged" })],
     });
     const runGh = vi.fn<RunGhCommand>().mockResolvedValue("");
-    const runGit = gitFake({ status: async () => "" });
+    const runGit = gitFake({});
     const stackRetarget = createStackRetarget({ findPullRequests, runGh, runGit });
 
     await stackRetarget.runOnce({
@@ -373,7 +389,7 @@ describe(createStackRetarget, () => {
     );
     expect(runCommandMock).toHaveBeenCalledWith(
       "git",
-      ["push", "--force-with-lease"],
+      ["push", "--force-with-lease", "origin", "HEAD"],
       expect.objectContaining({ cwd: "/work/repo-a-team-2" }),
     );
   });
@@ -403,34 +419,59 @@ describe(createStackRetarget, () => {
     );
     expect(runCommandMock).toHaveBeenCalledWith(
       "git",
-      ["push", "--force-with-lease"],
+      ["push", "--force-with-lease", "origin", "HEAD"],
       expect.objectContaining({ signal: controller.signal }),
     );
   });
 
-  it("detects the parent as merged via its issue's canonical status, without a parent PR lookup", async () => {
+  it("leaves the child untouched when the parent issue is done but its pull request never merged", async () => {
     recordChildRunState({ baseBranch: "dev-team-1", parentTask: "team-1" });
     const findPullRequests = findPullRequestsRoutedBy({
       "dev-team-2": [pullRequest({ baseRefName: "main" })],
+      "dev-team-1": [pullRequest({ number: 3, state: "closed", baseRefName: "main" })],
     });
-    const runGit = gitFake({ status: async () => "" });
-    const stackRetarget = createStackRetarget({ findPullRequests, runGit });
+    const runGh = vi.fn<RunGhCommand>().mockResolvedValue("");
+    const stackRetarget = createStackRetarget({ findPullRequests, runGh });
 
     await stackRetarget.runOnce({
       config,
       state: boardOf([canonicalLinearIssue({ naturalId: "team-1", status: "done" })]),
+      worktreeEntries: [hostEntryFor("team-1"), hostEntryFor("team-2")],
+      dryRun: false,
+    });
+
+    expect(findPullRequests).toHaveBeenCalledTimes(2);
+    expect(runGh).not.toHaveBeenCalled();
+    expect(readRunState(config, "team-2")?.baseBranch).toBe("dev-team-1");
+    expect(consoleLog.output()).toContain("outcome=parent_done_unmerged");
+  });
+
+  it("leaves the child untouched when the parent's worktree is gone even though its issue isn't marked done", async () => {
+    recordChildRunState({ baseBranch: "dev-team-1", parentTask: "team-1" });
+    const findPullRequests = findPullRequestsRoutedBy({
+      "dev-team-2": [pullRequest({ baseRefName: "main" })],
+      "dev-team-1": [pullRequest({ number: 3, baseRefName: "main" })],
+    });
+    const runGh = vi.fn<RunGhCommand>().mockResolvedValue("");
+    const stackRetarget = createStackRetarget({ findPullRequests, runGh });
+
+    await stackRetarget.runOnce({
+      config,
+      state: boardOf([inProgressIssue("team-1")]),
       worktreeEntries: [hostEntryFor("team-2")],
       dryRun: false,
     });
 
-    expect(findPullRequests).toHaveBeenCalledTimes(1);
-    expect(readRunState(config, "team-2")?.baseBranch).toBeUndefined();
+    expect(runGh).not.toHaveBeenCalled();
+    expect(readRunState(config, "team-2")?.baseBranch).toBe("dev-team-1");
+    expect(consoleLog.output()).toContain("outcome=parent_done_unmerged");
   });
 
-  it("leaves the PR alone when the parent merged but the base is neither the parent nor the default branch", async () => {
+  it("still rebases onto the default branch when the parent issue is done and a PR on its branch actually merged", async () => {
     recordChildRunState({ baseBranch: "dev-team-1", parentTask: "team-1" });
     const findPullRequests = findPullRequestsRoutedBy({
-      "dev-team-2": [pullRequest({ baseRefName: "some-other-branch" })],
+      "dev-team-2": [pullRequest({ baseRefName: "dev-team-1" })],
+      "dev-team-1": [pullRequest({ number: 3, state: "merged" })],
     });
     const runGh = vi.fn<RunGhCommand>().mockResolvedValue("");
     const runGit = gitFake({});
@@ -443,9 +484,33 @@ describe(createStackRetarget, () => {
       dryRun: false,
     });
 
+    expect(runGh).toHaveBeenCalledWith(
+      expect.objectContaining({ args: ["pr", "edit", "7", "--base", "main"] }),
+    );
+    expect(readRunState(config, "team-2")?.baseBranch).toBeUndefined();
+    expect(consoleLog.output()).toContain("outcome=rebased_onto_default");
+  });
+
+  it("leaves the PR alone when the parent merged but the base is neither the parent nor the default branch", async () => {
+    recordChildRunState({ baseBranch: "dev-team-1", parentTask: "team-1" });
+    const findPullRequests = findPullRequestsRoutedBy({
+      "dev-team-2": [pullRequest({ baseRefName: "some-other-branch" })],
+      "dev-team-1": [pullRequest({ number: 3, state: "merged" })],
+    });
+    const runGh = vi.fn<RunGhCommand>().mockResolvedValue("");
+    const runGit = gitFake({});
+    const stackRetarget = createStackRetarget({ findPullRequests, runGh, runGit });
+
+    await stackRetarget.runOnce({
+      config,
+      state: boardOf([]),
+      worktreeEntries: [hostEntryFor("team-2")],
+      dryRun: false,
+    });
+
     expect(runGh).not.toHaveBeenCalled();
     expect(runGit.calls).toHaveLength(0);
-    expect(consoleLog.output()).not.toContain("stack-retarget");
+    expect(consoleLog.output()).toContain("outcome=base_drifted");
     expect(readRunState(config, "team-2")?.baseBranch).toBe("dev-team-1");
   });
 
@@ -456,7 +521,8 @@ describe(createStackRetarget, () => {
       "dev-team-1": [pullRequest({ number: 3, state: "merged" })],
     });
     const runGh = vi.fn<RunGhCommand>().mockResolvedValue("");
-    const runGit = gitFake({ status: async () => " M src/index.ts\n" });
+    const runGit = gitFake({});
+    fakeRunCommandProbe("status", " M src/index.ts\n");
     const stackRetarget = createStackRetarget({ findPullRequests, runGh, runGit });
 
     await stackRetarget.runOnce({
@@ -469,7 +535,7 @@ describe(createStackRetarget, () => {
     expect(runGh).toHaveBeenCalledWith(
       expect.objectContaining({ args: ["pr", "edit", "7", "--base", "main"] }),
     );
-    expect(runGit.calls.map((call) => call.args[0])).toEqual(["--no-optional-locks"]);
+    expect(runGit.calls).toHaveLength(0);
     const state = readRunState(config, "team-2");
     expect(state?.needsRebase).toBe(true);
     expect(state?.baseBranch).toBe("dev-team-1");
@@ -483,7 +549,6 @@ describe(createStackRetarget, () => {
       "dev-team-1": [pullRequest({ number: 3, state: "merged" })],
     });
     const runGit = gitFake({
-      status: async () => "",
       rebase: async () => {
         throw new Error("CONFLICT (content): Merge conflict in src/index.ts");
       },
@@ -511,7 +576,6 @@ describe(createStackRetarget, () => {
       "dev-team-1": [pullRequest({ number: 3, state: "merged" })],
     });
     const runGit = gitFake({
-      status: async () => "",
       push: async () => {
         throw new Error("stale info; the remote branch moved");
       },
@@ -538,7 +602,7 @@ describe(createStackRetarget, () => {
       "dev-team-1": [pullRequest({ number: 3, state: "merged" })],
     });
     const runGh = vi.fn<RunGhCommand>().mockResolvedValue("");
-    const runGit = gitFake({ status: async () => "" });
+    const runGit = gitFake({});
     const stackRetarget = createStackRetarget({ findPullRequests, runGh, runGit });
 
     await stackRetarget.runOnce({
@@ -624,7 +688,7 @@ describe(createStackRetarget, () => {
     await stackRetarget.runOnce({
       config,
       state: boardOf([inProgressIssue("team-1"), inProgressIssue("team-2")]),
-      worktreeEntries: [hostEntryFor("team-2"), hostEntryFor("team-2")],
+      worktreeEntries: [hostEntryFor("team-1"), hostEntryFor("team-2"), hostEntryFor("team-2")],
       dryRun: false,
     });
 
@@ -684,8 +748,8 @@ describe(createStackRetarget, () => {
 
     await stackRetarget.runOnce({
       config,
-      state: boardOf([inProgressIssue("team-2")]),
-      worktreeEntries: [hostEntryFor("team-2")],
+      state: boardOf([inProgressIssue("team-1"), inProgressIssue("team-2")]),
+      worktreeEntries: [hostEntryFor("team-1"), hostEntryFor("team-2")],
       dryRun: false,
     });
 
@@ -765,11 +829,8 @@ describe(createStackRetarget, () => {
       "dev-team-2": [pullRequest({ baseRefName: "main" })],
       "dev-team-1": [pullRequest({ number: 3, state: "merged" })],
     });
-    const runGit = gitFake({
-      status: async () => {
-        throw new Error("fatal: not a git repository");
-      },
-    });
+    fakeRunCommandProbe("status", new Error("fatal: not a git repository"));
+    const runGit = gitFake({});
     const stackRetarget = createStackRetarget({ findPullRequests, runGit });
 
     await stackRetarget.runOnce({
@@ -791,12 +852,14 @@ describe(createStackRetarget, () => {
       "dev-team-2": [pullRequest({ baseRefName: "main" })],
       "dev-team-1": [pullRequest({ number: 3, state: "merged" })],
     });
+    // The default runCommandMock resolves "" for everything not routed through
+    // runGit, which covers both the dirty-check probe (clean) and
+    // localBranchExists' show-ref probe (branch exists locally) for this test.
     const runGit = routedGitFake({
-      "--no-optional-locks status --porcelain": "",
       "fetch origin main dev-team-1": new Error("could not read from remote: dev-team-1 not found"),
       "fetch origin main": "",
       "rebase --onto origin/main dev-team-1": "",
-      "push --force-with-lease": "",
+      "push --force-with-lease origin HEAD": "",
     });
     const stackRetarget = createStackRetarget({ findPullRequests, runGit });
 
@@ -812,6 +875,32 @@ describe(createStackRetarget, () => {
     expect(consoleLog.output()).toContain("outcome=rebased_onto_default");
   });
 
+  it("flags parent_ref_missing when the combined fetch fails, the fallback succeeds, but the local parent ref doesn't exist", async () => {
+    recordChildRunState({ baseBranch: "dev-team-1", parentTask: "team-1" });
+    const findPullRequests = findPullRequestsRoutedBy({
+      "dev-team-2": [pullRequest({ baseRefName: "main" })],
+      "dev-team-1": [pullRequest({ number: 3, state: "merged" })],
+    });
+    const runGit = routedGitFake({
+      "fetch origin main dev-team-1": new Error("could not read from remote: dev-team-1 not found"),
+      "fetch origin main": "",
+    });
+    fakeRunCommandProbe("show-ref", new Error("not a valid ref"));
+    const stackRetarget = createStackRetarget({ findPullRequests, runGit });
+
+    await stackRetarget.runOnce({
+      config,
+      state: boardOf([inProgressIssue("team-2")]),
+      worktreeEntries: [hostEntryFor("team-2")],
+      dryRun: false,
+    });
+
+    const state = readRunState(config, "team-2");
+    expect(state?.needsRebase).toBe(true);
+    expect(state?.baseBranch).toBe("dev-team-1");
+    expect(consoleLog.output()).toContain("outcome=parent_ref_missing");
+  });
+
   it("flags needsRebase when both the combined fetch and its default-branch-only fallback fail", async () => {
     recordChildRunState({ baseBranch: "dev-team-1", parentTask: "team-1" });
     const findPullRequests = findPullRequestsRoutedBy({
@@ -819,7 +908,6 @@ describe(createStackRetarget, () => {
       "dev-team-1": [pullRequest({ number: 3, state: "merged" })],
     });
     const runGit = routedGitFake({
-      "--no-optional-locks status --porcelain": "",
       "fetch origin main dev-team-1": new Error("network unreachable"),
       "fetch origin main": new Error("network unreachable"),
     });
@@ -845,7 +933,6 @@ describe(createStackRetarget, () => {
       "dev-team-1": [pullRequest({ number: 3, state: "merged" })],
     });
     const runGit = gitFake({
-      status: async () => "",
       rebase: async () => {
         throw new Error("CONFLICT (content): Merge conflict in src/index.ts");
       },
@@ -877,7 +964,7 @@ describe(createStackRetarget, () => {
       "dev-team-1": [pullRequest({ number: 3, state: "merged" })],
     });
     const runGh = vi.fn<RunGhCommand>().mockResolvedValue("");
-    const runGit = gitFake({ status: async () => "" });
+    const runGit = gitFake({});
     const stackRetarget = createStackRetarget({ findPullRequests, runGh, runGit });
     const controller = new AbortController();
 
@@ -895,5 +982,72 @@ describe(createStackRetarget, () => {
     expect(runGh).toHaveBeenCalledWith(expect.objectContaining({ signal: controller.signal }));
     expect(runGit.calls.length).toBeGreaterThan(0);
     expect(runGit.calls.every((call) => call.signal === controller.signal)).toBe(true);
+    // The dirty-check probe goes through worktrees.probeWorkingTree (real
+    // runCommandAsync) rather than the injected runGit fake; it must still
+    // carry the signal through.
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "git",
+      expect.arrayContaining(["status", "--porcelain"]),
+      expect.objectContaining({ signal: controller.signal }),
+    );
+  });
+
+  it("logs lookup_failed and retries next tick when the child's own PR lookup rejects", async () => {
+    recordChildRunState({ baseBranch: "dev-team-1", parentTask: "team-1" });
+    const findPullRequests = findPullRequestsRoutedBy({
+      "dev-team-2": new Error("gh: rate limited"),
+    });
+    const stackRetarget = createStackRetarget({ findPullRequests });
+
+    await stackRetarget.runOnce({
+      config,
+      state: boardOf([inProgressIssue("team-2")]),
+      worktreeEntries: [hostEntryFor("team-2")],
+      dryRun: false,
+    });
+
+    expect(consoleLog.output()).toContain("outcome=lookup_failed");
+    expect(readRunState(config, "team-2")?.baseBranch).toBe("dev-team-1");
+  });
+
+  it("memoizes the parent PR lookup per runOnce call when two siblings share the same parent branch", async () => {
+    recordChildRunState({ baseBranch: "dev-team-1", parentTask: "team-1" });
+    recordRunState({
+      config,
+      state: {
+        task: "team-3",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-3",
+        branchName: "dev-team-3",
+        workspaceName: "team-3",
+        state: "running",
+        baseBranch: "dev-team-1",
+        parentTask: "team-1",
+      },
+    });
+    const findPullRequests = findPullRequestsRoutedBy({
+      "dev-team-2": [pullRequest({ baseRefName: "main" })],
+      "dev-team-3": [pullRequest({ number: 9, baseRefName: "main" })],
+      "dev-team-1": [pullRequest({ number: 3, baseRefName: "main" })],
+    });
+    const runGh = vi.fn<RunGhCommand>().mockResolvedValue("");
+    const stackRetarget = createStackRetarget({ findPullRequests, runGh });
+
+    await stackRetarget.runOnce({
+      config,
+      state: boardOf([
+        inProgressIssue("team-1"),
+        inProgressIssue("team-2"),
+        inProgressIssue("team-3"),
+      ]),
+      worktreeEntries: [hostEntryFor("team-1"), hostEntryFor("team-2"), hostEntryFor("team-3")],
+      dryRun: false,
+    });
+
+    const parentLookups = vi
+      .mocked(findPullRequests)
+      .mock.calls.filter(([arguments_]) => arguments_.branchName === "dev-team-1");
+    expect(parentLookups).toHaveLength(1);
   });
 });
