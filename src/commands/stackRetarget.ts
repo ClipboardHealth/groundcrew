@@ -29,6 +29,12 @@
 
 import { runCommandAsync } from "../lib/commandRunner.ts";
 import type { ResolvedConfig } from "../lib/config.ts";
+import {
+  createStacksClient,
+  type GitHubStack,
+  type StackListing,
+  type StacksClient,
+} from "../lib/githubStacks.ts";
 import type { PullRequestSummary } from "../lib/pullRequests.ts";
 import { clearBaseBranch, readRunState, type RunState, updateRunState } from "../lib/runState.ts";
 import {
@@ -72,7 +78,11 @@ type StackRetargetOutcome =
   | "base_drifted"
   // The combined fetch failed and its default-branch-only fallback
   // succeeded, but the local parent ref it was counting on doesn't exist.
-  | "parent_ref_missing";
+  | "parent_ref_missing"
+  // The parent merged while the pair was registered as a GitHub stack, so
+  // GitHub retargeted and rebased the child itself; nothing left to do but
+  // stop tracking the parent branch.
+  | "restacked_by_github";
 
 const TERMINAL_MESSAGES: Record<StackRetargetOutcome, string> = {
   retargeted_to_parent: "Stack retarget corrected the PR base to the parent branch",
@@ -92,6 +102,16 @@ const TERMINAL_MESSAGES: Record<StackRetargetOutcome, string> = {
     "Stack retarget left the pull request alone: its base is neither the parent nor the default branch",
   parent_ref_missing:
     "Stack retarget could not find the parent branch locally after the fetch fell back; flagged for rebase next tick",
+  restacked_by_github:
+    "Stack retarget left the branch alone: GitHub restacked the pull request when its parent merged",
+};
+
+type StackRegisterOutcome = "created" | "extended" | "failed";
+
+const REGISTER_MESSAGES: Record<StackRegisterOutcome, string> = {
+  created: "Stack register created a GitHub stack for this pull request and its parent",
+  extended: "Stack register added this pull request to its parent's GitHub stack",
+  failed: "Stack register could not register the pull request as a GitHub stack",
 };
 
 export type RunGitCommand = (arguments_: {
@@ -116,6 +136,7 @@ export interface StackRetargetDeps {
   findPullRequests: FindPullRequests;
   runGit?: RunGitCommand;
   runGh?: RunGhCommand;
+  stacks?: StacksClient;
 }
 
 interface StackRetargetArguments {
@@ -158,6 +179,9 @@ function logDryRun(logContext: ReturnType<typeof logContextFor>, action: string)
 
 /** Per-`runOnce`-call cache of a parent branch's pull requests, keyed by branch. */
 type ParentPullRequestCache = Map<string, Promise<readonly PullRequestSummary[]>>;
+
+/** Per-`runOnce`-call cache of a repository's GitHub stacks, keyed by repository. */
+type StacksCache = Map<string, Promise<StackListing>>;
 
 /** Consecutive force-push rejections per task, for the life of this process. */
 type PushRejectionCounts = Map<string, number>;
@@ -209,6 +233,205 @@ async function isParentMerged(arguments_: {
     ...signalProperty(signal),
   });
   return parentPullRequests.some((pr) => pr.state === "merged");
+}
+
+async function listStacks(arguments_: {
+  stacks: StacksClient;
+  stacksCache: StacksCache;
+  entry: WorktreeEntry;
+  signal?: AbortSignal;
+}): Promise<StackListing> {
+  const { stacks, stacksCache, entry, signal } = arguments_;
+  const cached = stacksCache.get(entry.repository);
+  if (cached !== undefined) {
+    return await cached;
+  }
+  const pending = stacks.listStacks({
+    cwd: entry.dir,
+    repository: entry.repository,
+    ...signalProperty(signal),
+  });
+  stacksCache.set(entry.repository, pending);
+  return await pending;
+}
+
+async function stackContaining(arguments_: {
+  stacks: StacksClient;
+  stacksCache: StacksCache;
+  entry: WorktreeEntry;
+  pullRequestNumber: number;
+  signal?: AbortSignal;
+}): Promise<GitHubStack | undefined> {
+  const { pullRequestNumber, ...listArguments } = arguments_;
+  const listing = await listStacks(listArguments);
+  return listing.stacks.find((stack) => stack.pullRequests.includes(pullRequestNumber));
+}
+
+/**
+ * Registers the child and its parent as a GitHub stack (spec section 5a), the
+ * API behind the pull request page's "Create stack" button. Silent on every
+ * no-op path — this runs each tick for the life of a stacked pair, so only a
+ * state change is worth a log line.
+ */
+async function registerStack(arguments_: {
+  entry: WorktreeEntry;
+  childPullRequest: PullRequestSummary;
+  baseBranch: string;
+  parentTask: string;
+  findPullRequests: FindPullRequests;
+  parentPullRequestCache: ParentPullRequestCache;
+  stacks: StacksClient;
+  stacksCache: StacksCache;
+  dryRun: boolean;
+  signal?: AbortSignal;
+}): Promise<void> {
+  const {
+    entry,
+    childPullRequest,
+    baseBranch,
+    parentTask,
+    findPullRequests,
+    parentPullRequestCache,
+    stacks,
+    stacksCache,
+    dryRun,
+    signal,
+  } = arguments_;
+  const signalOption = signalProperty(signal);
+  const task = entry.task;
+
+  const listing = await listStacks({ stacks, stacksCache, entry, ...signalOption });
+  if (!listing.available) {
+    debug(`GitHub stacks are unavailable for ${entry.repository}; leaving ${task} unregistered`);
+    return;
+  }
+  if (listing.stacks.some((stack) => stack.pullRequests.includes(childPullRequest.number))) {
+    return;
+  }
+
+  const parentPullRequests = await fetchParentPullRequests({
+    cache: parentPullRequestCache,
+    findPullRequests,
+    cwd: entry.dir,
+    baseBranch,
+    ...signalOption,
+  });
+  const parentPullRequest = parentPullRequests.find((pr) => pr.state === "open");
+  if (parentPullRequest === undefined) {
+    debug(`No open parent pull request for ${task}; leaving it unregistered`);
+    return;
+  }
+
+  const parentStack = listing.stacks.find(
+    (stack) => stack.open && stack.pullRequests.includes(parentPullRequest.number),
+  );
+  const logContext = {
+    flow: "stack-register" as const,
+    task,
+    parentTask,
+    pullRequest: childPullRequest.number,
+    parentPullRequest: parentPullRequest.number,
+  };
+  if (dryRun) {
+    log("Stack register dry run: would register the pull request as a GitHub stack");
+    logEvent("stack-register", { ...logContext, outcome: "skipped", reason: "dry_run" });
+    return;
+  }
+
+  const succeeded =
+    parentStack === undefined
+      ? await stacks.createStack({
+          cwd: entry.dir,
+          repository: entry.repository,
+          pullRequests: [parentPullRequest.number, childPullRequest.number],
+          ...signalOption,
+        })
+      : await stacks.addToStack({
+          cwd: entry.dir,
+          repository: entry.repository,
+          stackNumber: parentStack.number,
+          pullRequests: [childPullRequest.number],
+          ...signalOption,
+        });
+  // The cached listing no longer describes the repository, and a sibling task
+  // in the same repository may still be registered this tick.
+  stacksCache.delete(entry.repository);
+
+  const outcome: StackRegisterOutcome = succeeded
+    ? parentStack === undefined
+      ? "created"
+      : "extended"
+    : "failed";
+  log(REGISTER_MESSAGES[outcome]);
+  logEvent("stack-register", { ...logContext, outcome });
+}
+
+/**
+ * Parent still open: keep the child's base pointing at the parent branch, then
+ * make sure the pair is registered as a GitHub stack.
+ */
+async function trackOpenParent(arguments_: {
+  entry: WorktreeEntry;
+  childPullRequest: PullRequestSummary;
+  baseBranch: string;
+  parentTask: string;
+  logContext: ReturnType<typeof logContextFor>;
+  findPullRequests: FindPullRequests;
+  parentPullRequestCache: ParentPullRequestCache;
+  stacks: StacksClient;
+  stacksCache: StacksCache;
+  runGh: RunGhCommand;
+  dryRun: boolean;
+  signal?: AbortSignal;
+}): Promise<void> {
+  const {
+    entry,
+    childPullRequest,
+    baseBranch,
+    parentTask,
+    logContext,
+    findPullRequests,
+    parentPullRequestCache,
+    stacks,
+    stacksCache,
+    runGh,
+    dryRun,
+    signal,
+  } = arguments_;
+  const signalOption = signalProperty(signal);
+
+  if (childPullRequest.baseRefName !== baseBranch) {
+    if (dryRun) {
+      logDryRun(logContext, "retarget the pull request onto the parent branch");
+      return;
+    }
+    log("Stack retarget starting: parent still open, correcting the pull request's base");
+    logEvent("stack-retarget", logContext);
+    const succeeded = await editPrBase({
+      runGh,
+      entry,
+      prNumber: childPullRequest.number,
+      base: baseBranch,
+      ...signalOption,
+    });
+    logTerminal(logContext, succeeded ? "retargeted_to_parent" : "retarget_failed");
+    if (!succeeded) {
+      return;
+    }
+  }
+
+  await registerStack({
+    entry,
+    childPullRequest,
+    baseBranch,
+    parentTask,
+    findPullRequests,
+    parentPullRequestCache,
+    stacks,
+    stacksCache,
+    dryRun,
+    ...signalOption,
+  });
 }
 
 async function editPrBase(arguments_: {
@@ -352,6 +575,8 @@ async function retargetTask(arguments_: {
   parentWorktreeExists: boolean;
   findPullRequests: FindPullRequests;
   parentPullRequestCache: ParentPullRequestCache;
+  stacks: StacksClient;
+  stacksCache: StacksCache;
   pushRejections: PushRejectionCounts;
   runGit: RunGitCommand;
   runGh: RunGhCommand;
@@ -368,6 +593,8 @@ async function retargetTask(arguments_: {
     parentWorktreeExists,
     findPullRequests,
     parentPullRequestCache,
+    stacks,
+    stacksCache,
     pushRejections,
     runGit,
     runGh,
@@ -406,23 +633,37 @@ async function retargetTask(arguments_: {
       logTerminal(logContext, "parent_done_unmerged");
       return;
     }
-    if (childPullRequest.baseRefName === baseBranch) {
-      return;
-    }
-    if (dryRun) {
-      logDryRun(logContext, "retarget the pull request onto the parent branch");
-      return;
-    }
-    log("Stack retarget starting: parent still open, correcting the pull request's base");
-    logEvent("stack-retarget", logContext);
-    const succeeded = await editPrBase({
-      runGh,
+    await trackOpenParent({
       entry,
-      prNumber: childPullRequest.number,
-      base: baseBranch,
+      childPullRequest,
+      baseBranch,
+      parentTask,
+      logContext,
+      findPullRequests,
+      parentPullRequestCache,
+      stacks,
+      stacksCache,
+      runGh,
+      dryRun,
       ...signalOption,
     });
-    logTerminal(logContext, succeeded ? "retargeted_to_parent" : "retarget_failed");
+    return;
+  }
+
+  const childStack = await stackContaining({
+    stacks,
+    stacksCache,
+    entry,
+    pullRequestNumber: childPullRequest.number,
+    ...signalOption,
+  });
+  if (childStack !== undefined) {
+    // GitHub rebases and retargets every pull request above a stack layer that
+    // merges, so a stacked child needs no local rebase or force-push.
+    if (childPullRequest.baseRefName === defaultBranch) {
+      clearBaseBranch(config, task);
+      logTerminal(logContext, "restacked_by_github");
+    }
     return;
   }
 
@@ -489,7 +730,12 @@ async function retargetTask(arguments_: {
 }
 
 export function createStackRetarget(deps: StackRetargetDeps): StackRetarget {
-  const { findPullRequests, runGit = runGitCommand, runGh = runGhCommand } = deps;
+  const {
+    findPullRequests,
+    runGit = runGitCommand,
+    runGh = runGhCommand,
+    stacks = createStacksClient(),
+  } = deps;
   const pushRejections: PushRejectionCounts = new Map();
 
   async function runOnce(arguments_: StackRetargetArguments): Promise<void> {
@@ -497,6 +743,7 @@ export function createStackRetarget(deps: StackRetargetDeps): StackRetarget {
     const signalOption = signalProperty(signal);
     const seenTasks = new Set<string>();
     const parentPullRequestCache: ParentPullRequestCache = new Map();
+    const stacksCache: StacksCache = new Map();
 
     for (const entry of worktreeEntries) {
       if (seenTasks.has(entry.task)) {
@@ -519,6 +766,8 @@ export function createStackRetarget(deps: StackRetargetDeps): StackRetarget {
         parentWorktreeExists: worktreeEntries.some((candidate) => candidate.task === parentTask),
         findPullRequests,
         parentPullRequestCache,
+        stacks,
+        stacksCache,
         pushRejections,
         runGit,
         runGh,
