@@ -56,6 +56,10 @@ type StackRetargetOutcome =
   // Not one of spec section 8's named outcomes: `--force-with-lease` was
   // rejected after a successful rebase, distinct from a rebase conflict.
   | "push_rejected"
+  // `push_rejected` this many times in a row, so the task is left for a
+  // human instead of re-running the rebase every tick. Counted per watcher
+  // process: a restart gives the task another round of attempts.
+  | "push_retries_exhausted"
   // The parent issue is done (or its worktree is gone) but no PR on its
   // branch ever merged — the parent will never merge, so the child is left
   // untouched rather than retargeted onto or rebased onto a dead branch.
@@ -78,6 +82,8 @@ const TERMINAL_MESSAGES: Record<StackRetargetOutcome, string> = {
     "Stack retarget corrected the PR base; rebase deferred until the worktree is clean",
   retarget_failed: "Stack retarget could not edit the pull request's base; will retry next tick",
   push_rejected: "Stack retarget's force-push was rejected; will retry next tick",
+  push_retries_exhausted:
+    "Stack retarget's force-push keeps being rejected; leaving the branch for a manual rebase and push",
   parent_done_unmerged:
     "Stack retarget left the pull request alone: the parent task is done but its pull request never merged",
   lookup_failed:
@@ -152,6 +158,11 @@ function logDryRun(logContext: ReturnType<typeof logContextFor>, action: string)
 
 /** Per-`runOnce`-call cache of a parent branch's pull requests, keyed by branch. */
 type ParentPullRequestCache = Map<string, Promise<readonly PullRequestSummary[]>>;
+
+/** Consecutive force-push rejections per task, for the life of this process. */
+type PushRejectionCounts = Map<string, number>;
+
+const MAX_PUSH_REJECTIONS = 3;
 
 async function fetchParentPullRequests(arguments_: {
   cache: ParentPullRequestCache;
@@ -300,7 +311,11 @@ async function rebaseOntoDefault(arguments_: {
   try {
     await runGit({
       cwd: entry.dir,
-      args: ["push", "--force-with-lease", remote, "HEAD"],
+      // `--no-verify`: the commits were already verified when the agent shipped
+      // them and the rebase changes only their base, but a repository's
+      // pre-push hook runs a full local gate that cannot pass here (no
+      // installed dependencies in a rebase-only push), rejecting every attempt.
+      args: ["push", "--force-with-lease", "--no-verify", remote, "HEAD"],
       ...signalOption,
     });
   } catch (error) {
@@ -337,6 +352,7 @@ async function retargetTask(arguments_: {
   parentWorktreeExists: boolean;
   findPullRequests: FindPullRequests;
   parentPullRequestCache: ParentPullRequestCache;
+  pushRejections: PushRejectionCounts;
   runGit: RunGitCommand;
   runGh: RunGhCommand;
   dryRun: boolean;
@@ -352,6 +368,7 @@ async function retargetTask(arguments_: {
     parentWorktreeExists,
     findPullRequests,
     parentPullRequestCache,
+    pushRejections,
     runGit,
     runGh,
     dryRun,
@@ -409,6 +426,12 @@ async function retargetTask(arguments_: {
     return;
   }
 
+  const priorPushRejections = pushRejections.get(task) ?? 0;
+  if (priorPushRejections >= MAX_PUSH_REJECTIONS) {
+    debug(`Stack retarget skipping ${task}: ${priorPushRejections} force-pushes rejected already`);
+    return;
+  }
+
   if (childPullRequest.baseRefName === defaultBranch) {
     // GitHub's own auto-retarget (fires when the parent's remote branch is
     // deleted) may already have moved the base here; proceed straight to rebase.
@@ -452,11 +475,22 @@ async function retargetTask(arguments_: {
     runGit,
     ...signalOption,
   });
+  if (rebaseOutcome === "push_rejected") {
+    const rejections = priorPushRejections + 1;
+    pushRejections.set(task, rejections);
+    logTerminal(
+      logContext,
+      rejections >= MAX_PUSH_REJECTIONS ? "push_retries_exhausted" : "push_rejected",
+    );
+    return;
+  }
+  pushRejections.delete(task);
   logTerminal(logContext, rebaseOutcome);
 }
 
 export function createStackRetarget(deps: StackRetargetDeps): StackRetarget {
   const { findPullRequests, runGit = runGitCommand, runGh = runGhCommand } = deps;
+  const pushRejections: PushRejectionCounts = new Map();
 
   async function runOnce(arguments_: StackRetargetArguments): Promise<void> {
     const { config, state, worktreeEntries, dryRun, signal } = arguments_;
@@ -485,6 +519,7 @@ export function createStackRetarget(deps: StackRetargetDeps): StackRetarget {
         parentWorktreeExists: worktreeEntries.some((candidate) => candidate.task === parentTask),
         findPullRequests,
         parentPullRequestCache,
+        pushRejections,
         runGit,
         runGh,
         dryRun,

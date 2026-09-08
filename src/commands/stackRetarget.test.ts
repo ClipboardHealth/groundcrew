@@ -316,7 +316,13 @@ describe(createStackRetarget, () => {
     expect(runGit.calls.map((call) => call.args[0])).toEqual(["fetch", "rebase", "push"]);
     expect(runGit.calls[0]?.args).toEqual(["fetch", "origin", "main", "dev-team-1"]);
     expect(runGit.calls[1]?.args).toEqual(["rebase", "--onto", "origin/main", "origin/dev-team-1"]);
-    expect(runGit.calls[2]?.args).toEqual(["push", "--force-with-lease", "origin", "HEAD"]);
+    expect(runGit.calls[2]?.args).toEqual([
+      "push",
+      "--force-with-lease",
+      "--no-verify",
+      "origin",
+      "HEAD",
+    ]);
 
     const state = readRunState(config, "team-2");
     expect(state?.baseBranch).toBeUndefined();
@@ -389,7 +395,7 @@ describe(createStackRetarget, () => {
     );
     expect(runCommandMock).toHaveBeenCalledWith(
       "git",
-      ["push", "--force-with-lease", "origin", "HEAD"],
+      ["push", "--force-with-lease", "--no-verify", "origin", "HEAD"],
       expect.objectContaining({ cwd: "/work/repo-a-team-2" }),
     );
   });
@@ -419,7 +425,7 @@ describe(createStackRetarget, () => {
     );
     expect(runCommandMock).toHaveBeenCalledWith(
       "git",
-      ["push", "--force-with-lease", "origin", "HEAD"],
+      ["push", "--force-with-lease", "--no-verify", "origin", "HEAD"],
       expect.objectContaining({ signal: controller.signal }),
     );
   });
@@ -567,6 +573,36 @@ describe(createStackRetarget, () => {
     expect(state?.needsRebase).toBe(true);
     expect(state?.baseBranch).toBe("dev-team-1");
     expect(consoleLog.output()).toContain("outcome=rebase_conflict");
+  });
+
+  it("stops retrying the rebase once the force-push has been rejected three times", async () => {
+    recordChildRunState({ baseBranch: "dev-team-1", parentTask: "team-1" });
+    const findPullRequests = findPullRequestsRoutedBy({
+      "dev-team-2": [pullRequest({ baseRefName: "main" })],
+      "dev-team-1": [pullRequest({ number: 3, state: "merged" })],
+    });
+    const runGit = gitFake({
+      push: async () => {
+        throw new Error("husky - pre-push script failed (code 1)");
+      },
+    });
+    const stackRetarget = createStackRetarget({ findPullRequests, runGit });
+    const tick = async (): Promise<void> => {
+      await stackRetarget.runOnce({
+        config,
+        state: boardOf([inProgressIssue("team-2")]),
+        worktreeEntries: [hostEntryFor("team-2")],
+        dryRun: false,
+      });
+    };
+
+    await tick();
+    await tick();
+    await tick();
+    await tick();
+
+    expect(runGit.calls.filter((call) => call.args[0] === "push")).toHaveLength(3);
+    expect(consoleLog.output()).toContain("outcome=push_retries_exhausted");
   });
 
   it("flags needsRebase when the force-push is rejected after a clean rebase", async () => {
@@ -859,7 +895,7 @@ describe(createStackRetarget, () => {
       "fetch origin main dev-team-1": new Error("could not read from remote: dev-team-1 not found"),
       "fetch origin main": "",
       "rebase --onto origin/main dev-team-1": "",
-      "push --force-with-lease origin HEAD": "",
+      "push --force-with-lease --no-verify origin HEAD": "",
     });
     const stackRetarget = createStackRetarget({ findPullRequests, runGit });
 
