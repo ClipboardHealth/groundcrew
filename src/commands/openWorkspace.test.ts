@@ -433,6 +433,26 @@ describe(openWorkspace, () => {
     });
   });
 
+  it("passes configured safehouse features to the agent launch", async () => {
+    const configWithSafehouseFeatures: ResolvedConfig = {
+      ...config,
+      local: {
+        ...config.local,
+        safehouse: { enable: ["agent-browser", "docker"] },
+      },
+    };
+    const composeAgentLaunchMock = vi.spyOn(agentLaunch, "composeAgentLaunch");
+
+    await openWorkspace(configWithSafehouseFeatures, {
+      input: { kind: "pr", pr: "42" },
+      repository: "acme/widgets",
+    });
+
+    expect(composeAgentLaunchMock).toHaveBeenCalledWith(
+      expect.objectContaining({ safehouseEnableFeatures: ["agent-browser", "docker"] }),
+    );
+  });
+
   it("resolves a PR URL to a unique bare known repository", async () => {
     const configWithBareRepository = makeConfigWithRepositories(["widgets"]);
     worktreeOpenMock.mockResolvedValue({
