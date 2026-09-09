@@ -35,7 +35,11 @@ import {
   type StackListing,
   type StacksClient,
 } from "../lib/githubStacks.ts";
-import type { PullRequestSummary } from "../lib/pullRequests.ts";
+import {
+  type CountMergeCommits,
+  countMergeCommits as countMergeCommitsForPullRequest,
+  type PullRequestSummary,
+} from "../lib/pullRequests.ts";
 import { clearBaseBranch, readRunState, type RunState, updateRunState } from "../lib/runState.ts";
 import {
   type BoardState,
@@ -137,6 +141,7 @@ export interface StackRetargetDeps {
   runGit?: RunGitCommand;
   runGh?: RunGhCommand;
   stacks?: StacksClient;
+  countMergeCommits?: CountMergeCommits;
 }
 
 interface StackRetargetArguments {
@@ -185,6 +190,9 @@ type StacksCache = Map<string, Promise<StackListing>>;
 
 /** Consecutive force-push rejections per task, for the life of this process. */
 type PushRejectionCounts = Map<string, number>;
+
+/** Merge-commit count already reported per task, for the life of this process. */
+type MergeCommitWarnings = Map<string, number>;
 
 const MAX_PUSH_REJECTIONS = 3;
 
@@ -380,6 +388,8 @@ async function trackOpenParent(arguments_: {
   parentPullRequestCache: ParentPullRequestCache;
   stacks: StacksClient;
   stacksCache: StacksCache;
+  countMergeCommits: CountMergeCommits;
+  mergeCommitWarnings: MergeCommitWarnings;
   runGh: RunGhCommand;
   dryRun: boolean;
   signal?: AbortSignal;
@@ -394,6 +404,8 @@ async function trackOpenParent(arguments_: {
     parentPullRequestCache,
     stacks,
     stacksCache,
+    countMergeCommits,
+    mergeCommitWarnings,
     runGh,
     dryRun,
     signal,
@@ -432,6 +444,62 @@ async function trackOpenParent(arguments_: {
     dryRun,
     ...signalOption,
   });
+  await guardMergeCommits({
+    entry,
+    childPullRequest,
+    parentTask,
+    countMergeCommits,
+    mergeCommitWarnings,
+    ...signalOption,
+  });
+}
+
+/**
+ * GitHub stacks are rebase-only: a merge commit on a stacked child is replayed
+ * as duplicate commits when the parent merges and GitHub restacks it, and
+ * merging the default branch directly drags into the child everything the
+ * parent lacks. This cannot be prevented from here (the agent owns the
+ * branch), so it is surfaced instead — once per change in the count, not
+ * every tick.
+ */
+async function guardMergeCommits(arguments_: {
+  entry: WorktreeEntry;
+  childPullRequest: PullRequestSummary;
+  parentTask: string;
+  countMergeCommits: CountMergeCommits;
+  mergeCommitWarnings: MergeCommitWarnings;
+  signal?: AbortSignal;
+}): Promise<void> {
+  const { entry, childPullRequest, parentTask, countMergeCommits, mergeCommitWarnings, signal } =
+    arguments_;
+  const task = entry.task;
+  const mergeCommits = await countMergeCommits({
+    cwd: entry.dir,
+    repository: entry.repository,
+    pullRequestNumber: childPullRequest.number,
+    ...signalProperty(signal),
+  });
+  if (mergeCommits === undefined || mergeCommits === (mergeCommitWarnings.get(task) ?? 0)) {
+    return;
+  }
+  const logContext = {
+    flow: "stack-guard" as const,
+    task,
+    parentTask,
+    pullRequest: childPullRequest.number,
+    mergeCommits,
+  };
+  if (mergeCommits > 0) {
+    mergeCommitWarnings.set(task, mergeCommits);
+    log(
+      "Stack guard found merge commits on a stacked branch; GitHub stacks are rebase-only, so the branch should be rebased onto its parent instead",
+    );
+    logEvent("stack-guard", { ...logContext, outcome: "merge_commits_on_stack" });
+    return;
+  }
+  mergeCommitWarnings.delete(task);
+  log("Stack guard: the stacked branch no longer carries merge commits");
+  logEvent("stack-guard", { ...logContext, outcome: "merge_commits_cleared" });
 }
 
 async function editPrBase(arguments_: {
@@ -577,6 +645,8 @@ async function retargetTask(arguments_: {
   parentPullRequestCache: ParentPullRequestCache;
   stacks: StacksClient;
   stacksCache: StacksCache;
+  countMergeCommits: CountMergeCommits;
+  mergeCommitWarnings: MergeCommitWarnings;
   pushRejections: PushRejectionCounts;
   runGit: RunGitCommand;
   runGh: RunGhCommand;
@@ -595,6 +665,8 @@ async function retargetTask(arguments_: {
     parentPullRequestCache,
     stacks,
     stacksCache,
+    countMergeCommits,
+    mergeCommitWarnings,
     pushRejections,
     runGit,
     runGh,
@@ -643,6 +715,8 @@ async function retargetTask(arguments_: {
       parentPullRequestCache,
       stacks,
       stacksCache,
+      countMergeCommits,
+      mergeCommitWarnings,
       runGh,
       dryRun,
       ...signalOption,
@@ -735,8 +809,10 @@ export function createStackRetarget(deps: StackRetargetDeps): StackRetarget {
     runGit = runGitCommand,
     runGh = runGhCommand,
     stacks = createStacksClient(),
+    countMergeCommits = countMergeCommitsForPullRequest,
   } = deps;
   const pushRejections: PushRejectionCounts = new Map();
+  const mergeCommitWarnings: MergeCommitWarnings = new Map();
 
   async function runOnce(arguments_: StackRetargetArguments): Promise<void> {
     const { config, state, worktreeEntries, dryRun, signal } = arguments_;
@@ -768,6 +844,8 @@ export function createStackRetarget(deps: StackRetargetDeps): StackRetarget {
         parentPullRequestCache,
         stacks,
         stacksCache,
+        countMergeCommits,
+        mergeCommitWarnings,
         pushRejections,
         runGit,
         runGh,

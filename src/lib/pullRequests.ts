@@ -220,3 +220,59 @@ export async function findPullRequestsForBranch(
     return [];
   }
 }
+
+const GH_PR_COMMITS_PAGE_SIZE = 100;
+
+interface MergeCommitLookupArgs {
+  cwd: string;
+  repository: string;
+  pullRequestNumber: number;
+  signal?: AbortSignal;
+}
+
+/**
+ * Number of merge commits (two or more parents) among a pull request's
+ * commits, or `undefined` when the lookup fails. GitHub stacks are
+ * rebase-only, so a merge commit on a stacked child is worth surfacing before
+ * the parent merges and GitHub replays it as duplicates. Reads one page of
+ * 100 commits, which covers any stacked pull request worth having.
+ */
+export type CountMergeCommits = (arguments_: MergeCommitLookupArgs) => Promise<number | undefined>;
+
+export const countMergeCommits: CountMergeCommits = async (arguments_) => {
+  const { cwd, repository, pullRequestNumber, signal } = arguments_;
+  const options = signal === undefined ? { cwd } : { cwd, signal };
+  const output = await runCommandAsync(
+    "gh",
+    [
+      "api",
+      `repos/${repository}/pulls/${pullRequestNumber}/commits?per_page=${GH_PR_COMMITS_PAGE_SIZE}`,
+    ],
+    options,
+  ).catch((error: unknown) => {
+    if (signal?.aborted === true) {
+      throw error;
+    }
+    return "";
+  });
+  const parsed = parseJsonOrNull(output);
+  return Array.isArray(parsed) ? parsed.filter(isMergeCommit).length : undefined;
+};
+
+function parseJsonOrNull(output: string): unknown {
+  try {
+    return JSON.parse(output);
+  } catch {
+    return null;
+  }
+}
+
+function isMergeCommit(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- narrowing untyped JSON.parse output to a record so we can probe its keys
+  const record = value as Record<string, unknown>;
+  const { parents } = record;
+  return Array.isArray(parents) && parents.length > 1;
+}

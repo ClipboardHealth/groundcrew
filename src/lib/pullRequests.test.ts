@@ -1,5 +1,9 @@
 import type { RunCommandOptions } from "./commandRunner.ts";
-import { findPullRequestsForBranch, resolvePullRequest } from "./pullRequests.ts";
+import {
+  countMergeCommits,
+  findPullRequestsForBranch,
+  resolvePullRequest,
+} from "./pullRequests.ts";
 
 type RunCommandAsyncMock = (
   command: string,
@@ -417,5 +421,60 @@ describe(resolvePullRequest, () => {
     });
 
     expect(actual.state).toBe("draft");
+  });
+});
+
+describe(countMergeCommits, () => {
+  afterEach(() => {
+    vi.resetAllMocks();
+  });
+
+  const lookup = { cwd: "/work/widgets-team-2", repository: "acme/widgets", pullRequestNumber: 42 };
+
+  it("counts the commits with more than one parent", async () => {
+    runCommandMock.mockResolvedValue(
+      JSON.stringify([
+        { parents: [{ sha: "a" }] },
+        { parents: [{ sha: "a" }, { sha: "b" }] },
+        { parents: "not a list" },
+        {},
+        null,
+        { parents: [{ sha: "c" }, { sha: "d" }, { sha: "e" }] },
+      ]),
+    );
+
+    const count = await countMergeCommits(lookup);
+
+    expect(count).toBe(2);
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "gh",
+      ["api", "repos/acme/widgets/pulls/42/commits?per_page=100"],
+      { cwd: "/work/widgets-team-2" },
+    );
+  });
+
+  it("reports no count when gh fails", async () => {
+    runCommandMock.mockRejectedValue(new Error("HTTP 404"));
+
+    await expect(countMergeCommits(lookup)).resolves.toBeUndefined();
+  });
+
+  it.each([
+    ["output that is not JSON", "not json"],
+    ["output that is not a list", '{"parents":[]}'],
+  ])("reports no count for %s", async (_name, output) => {
+    runCommandMock.mockResolvedValue(output);
+
+    await expect(countMergeCommits(lookup)).resolves.toBeUndefined();
+  });
+
+  it("rethrows when the lookup was aborted", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    runCommandMock.mockRejectedValue(new Error("aborted"));
+
+    await expect(countMergeCommits({ ...lookup, signal: controller.signal })).rejects.toThrow(
+      "aborted",
+    );
   });
 });

@@ -5,7 +5,7 @@ import path from "node:path";
 import type { RunCommandOptions } from "../lib/commandRunner.ts";
 import type { ResolvedConfig } from "../lib/config.ts";
 import type { GitHubStack, StacksClient } from "../lib/githubStacks.ts";
-import type { PullRequestSummary } from "../lib/pullRequests.ts";
+import type { CountMergeCommits, PullRequestSummary } from "../lib/pullRequests.ts";
 import { readRunState, recordRunState } from "../lib/runState.ts";
 import type { BoardState, Issue } from "../lib/taskSource.ts";
 import { canonicalLinearIssue } from "../lib/testing/canonicalFixtures.ts";
@@ -78,6 +78,10 @@ function pullRequest(overrides: Partial<PullRequestSummary> = {}): PullRequestSu
     title: overrides.title ?? "PR title",
     ...(overrides.baseRefName === undefined ? {} : { baseRefName: overrides.baseRefName }),
   };
+}
+
+function occurrences(haystack: string, needle: string): number {
+  return haystack.split(needle).length - 1;
 }
 
 interface StacksFakeCalls {
@@ -1128,28 +1132,48 @@ describe(createStackRetarget, () => {
     });
   }
 
-  async function runStackTick(
+  interface StackTickOverrides {
+    findPullRequests?: FindPullRequests;
+    runGit?: RunGitCommand;
+    runGh?: RunGhCommand;
+    countMergeCommits?: CountMergeCommits;
+    dryRun?: boolean;
+  }
+
+  /** One StackRetarget over the child/parent pair; call the returned tick repeatedly to keep its per-process state. */
+  function stackTicker(
     stacks: StacksClient,
-    overrides: {
-      findPullRequests?: FindPullRequests;
-      runGit?: RunGitCommand;
-      runGh?: RunGhCommand;
-      dryRun?: boolean;
-    } = {},
-  ): Promise<void> {
-    const { findPullRequests = stackablePair(), runGit, runGh, dryRun = false } = overrides;
+    overrides: StackTickOverrides = {},
+  ): () => Promise<void> {
+    const {
+      findPullRequests = stackablePair(),
+      runGit,
+      runGh,
+      countMergeCommits,
+      dryRun = false,
+    } = overrides;
     const stackRetarget = createStackRetarget({
       findPullRequests,
       stacks,
       ...(runGit === undefined ? {} : { runGit }),
       ...(runGh === undefined ? {} : { runGh }),
+      ...(countMergeCommits === undefined ? {} : { countMergeCommits }),
     });
-    await stackRetarget.runOnce({
-      config,
-      state: boardOf([inProgressIssue("team-1"), inProgressIssue("team-2")]),
-      worktreeEntries: [hostEntryFor("team-1"), hostEntryFor("team-2")],
-      dryRun,
-    });
+    return async () => {
+      await stackRetarget.runOnce({
+        config,
+        state: boardOf([inProgressIssue("team-1"), inProgressIssue("team-2")]),
+        worktreeEntries: [hostEntryFor("team-1"), hostEntryFor("team-2")],
+        dryRun,
+      });
+    };
+  }
+
+  async function runStackTick(
+    stacks: StacksClient,
+    overrides: StackTickOverrides = {},
+  ): Promise<void> {
+    await stackTicker(stacks, overrides)();
   }
 
   it("registers a GitHub stack for a child whose parent pull request is still open", async () => {
@@ -1257,6 +1281,56 @@ describe(createStackRetarget, () => {
 
     expect(stacks.calls.created).toEqual([]);
     expect(consoleLog.output()).toContain("reason=dry_run");
+  });
+
+  it("warns once when a stacked branch carries merge commits, not every tick", async () => {
+    recordChildRunState({ baseBranch: "dev-team-1", parentTask: "team-1" });
+    const stacks = stacksFake({ listing: [{ number: 55, open: true, pullRequests: [3, 7] }] });
+    const countMergeCommits = vi.fn<CountMergeCommits>().mockResolvedValue(2);
+    const tick = stackTicker(stacks, { countMergeCommits });
+
+    await tick();
+    await tick();
+
+    expect(countMergeCommits).toHaveBeenCalledWith(
+      expect.objectContaining({ repository: "repo-a", pullRequestNumber: 7 }),
+    );
+    expect(occurrences(consoleLog.output(), "outcome=merge_commits_on_stack")).toBe(1);
+    expect(consoleLog.output()).toContain("flow=stack-guard");
+    expect(consoleLog.output()).toContain("mergeCommits=2");
+  });
+
+  it("warns again when the merge-commit count changes, and reports it clearing", async () => {
+    recordChildRunState({ baseBranch: "dev-team-1", parentTask: "team-1" });
+    const stacks = stacksFake({ listing: [{ number: 55, open: true, pullRequests: [3, 7] }] });
+    const countMergeCommits = vi
+      .fn<CountMergeCommits>()
+      .mockResolvedValueOnce(1)
+      .mockResolvedValueOnce(2)
+      .mockResolvedValue(0);
+    const tick = stackTicker(stacks, { countMergeCommits });
+
+    await tick();
+    await tick();
+    await tick();
+    await tick();
+
+    expect(occurrences(consoleLog.output(), "outcome=merge_commits_on_stack")).toBe(2);
+    expect(occurrences(consoleLog.output(), "outcome=merge_commits_cleared")).toBe(1);
+  });
+
+  it("stays quiet when the branch has no merge commits or the lookup fails", async () => {
+    recordChildRunState({ baseBranch: "dev-team-1", parentTask: "team-1" });
+    const stacks = stacksFake({ listing: [{ number: 55, open: true, pullRequests: [3, 7] }] });
+    let lookupResult: number | undefined = 0;
+    const countMergeCommits = vi.fn<CountMergeCommits>(async () => lookupResult);
+    const tick = stackTicker(stacks, { countMergeCommits });
+
+    await tick();
+    lookupResult = undefined;
+    await tick();
+
+    expect(consoleLog.output()).not.toContain("flow=stack-guard");
   });
 
   it("lists a repository's stacks once for two stacked children in the same tick", async () => {
