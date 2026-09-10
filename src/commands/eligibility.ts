@@ -38,6 +38,7 @@ type SkipReason =
   | "stack_multiple_blockers"
   | "stack_parent_unknown"
   | "stack_parent_unpushed"
+  | "stack_cross_repo_blocker"
   | "stack_provisioned_repo"
   | "stack_opted_out";
 
@@ -237,7 +238,7 @@ function blockerSummary(blocker: Blocker): string {
 
 function stackSkip(
   issue: GroundcrewIssue,
-  blocker: Blocker,
+  blockers: readonly Blocker[],
   eventReason: SkipReason,
   message: string,
 ): SkipVerdict {
@@ -246,21 +247,90 @@ function stackSkip(
     issue,
     message,
     eventReason,
-    blockers: [blockerSummary(blocker)],
+    blockers: blockers.map(blockerSummary),
   };
 }
 
+type RunStatesByTask = ReadonlyMap<string, RunState | undefined>;
+
+function normalizedTaskId(task: string): string {
+  return task.toLowerCase();
+}
+
+function readBlockerRunStates(
+  blockers: readonly Blocker[],
+  config: ResolvedConfig,
+  deps: EligibilityDeps,
+): RunStatesByTask {
+  return new Map(
+    blockers.map((blocker) => {
+      const task = naturalIdFromCanonical(blocker.id);
+      return [normalizedTaskId(task), deps.readParentRunState(config, task)];
+    }),
+  );
+}
+
 /**
- * The single-blocker stacking check from the stacked-PRs design (spec
- * section 1, conditions 2-5; condition 1 — exactly one unresolved blocker —
- * is enforced by the caller before this runs). Cheap, dependency-free checks
- * (provisioner, opt-out label) run before the run-state read, which runs
- * before the `git ls-remote` probe, so a task that fails early never pays
- * for the network call.
+ * Every task reachable from `start` by following `parentTask` links, read
+ * lazily so intermediate ancestors that are not themselves blockers (already
+ * merged, or never blocking this issue) still connect the chain. The visited
+ * set is the cycle guard.
+ */
+function stackAncestorsOf(
+  start: string,
+  runStates: RunStatesByTask,
+  config: ResolvedConfig,
+  deps: EligibilityDeps,
+): Set<string> {
+  const ancestors = new Set<string>();
+  let current = runStates.get(start);
+  while (current?.parentTask !== undefined) {
+    const parent = normalizedTaskId(current.parentTask);
+    if (ancestors.has(parent) || parent === start) {
+      break;
+    }
+    ancestors.add(parent);
+    current = runStates.has(parent)
+      ? runStates.get(parent)
+      : deps.readParentRunState(config, current.parentTask);
+  }
+  return ancestors;
+}
+
+/**
+ * With several unresolved blockers, the child can still stack when they form
+ * a chain: exactly one blocker (the tip) has every other blocker among its
+ * stack ancestors, so its branch already carries all of their work. Siblings
+ * off the default branch have no single base and yield `undefined`.
+ */
+function chainTipOf(
+  blockers: readonly Blocker[],
+  runStates: RunStatesByTask,
+  config: ResolvedConfig,
+  deps: EligibilityDeps,
+): Blocker | undefined {
+  const candidates = blockers.map((blocker) => ({
+    blocker,
+    task: normalizedTaskId(naturalIdFromCanonical(blocker.id)),
+  }));
+  const tips = candidates.filter(({ task }) => {
+    const ancestors = stackAncestorsOf(task, runStates, config, deps);
+    return candidates.every((other) => other.task === task || ancestors.has(other.task));
+  });
+  const [tip, ...rest] = tips;
+  return rest.length === 0 ? tip?.blocker : undefined;
+}
+
+/**
+ * The stacking check from the stacked-PRs design (spec section 1). Cheap,
+ * dependency-free checks (provisioner, opt-out label) run before the
+ * run-state reads, which run before the `git ls-remote` probe, so a task that
+ * fails early never pays for the network call. Multiple unresolved blockers
+ * stack only when they form a chain (see `chainTipOf`).
  */
 async function stackDecisionFor(
   issue: GroundcrewIssue,
-  blocker: Blocker,
+  unresolved: readonly Blocker[],
   config: ResolvedConfig,
   deps: EligibilityDeps,
 ): Promise<StackVerdict | SkipVerdict> {
@@ -270,7 +340,7 @@ async function stackDecisionFor(
   if (repositoryEntry?.provision !== undefined) {
     return stackSkip(
       issue,
-      blocker,
+      unresolved,
       "stack_provisioned_repo",
       `Skipping ${issue.id}: stacking is refused for scripted-provisioner repositories`,
     );
@@ -278,18 +348,55 @@ async function stackDecisionFor(
   if (issue.stacking === "opted-out") {
     return stackSkip(
       issue,
-      blocker,
+      unresolved,
       "stack_opted_out",
       `Skipping ${issue.id}: opted out of stacking via the groundcrew-no-stack label`,
     );
   }
 
-  const parentTask = naturalIdFromCanonical(blocker.id);
-  const parentRunState = deps.readParentRunState(config, parentTask);
-  if (parentRunState === undefined || parentRunState.repository !== issue.repository) {
+  const runStates = readBlockerRunStates(unresolved, config, deps);
+  const foreign = unresolved.filter((blocker) => {
+    const repository = runStates.get(
+      normalizedTaskId(naturalIdFromCanonical(blocker.id)),
+    )?.repository;
+    return repository !== undefined && repository !== issue.repository;
+  });
+  if (foreign.length > 0) {
     return stackSkip(
       issue,
-      blocker,
+      unresolved,
+      "stack_cross_repo_blocker",
+      `Skipping ${issue.id}: blocked by ${foreign.map(blockerSummary).join(", ")} in another repository; a branch cannot stack across repositories`,
+    );
+  }
+
+  const [singleBlocker] = unresolved;
+  const blocker =
+    unresolved.length === 1 ? singleBlocker : chainTipOf(unresolved, runStates, config, deps);
+  if (blocker === undefined) {
+    return stackSkip(
+      issue,
+      unresolved,
+      "stack_multiple_blockers",
+      `Skipping ${issue.id}: blocked by ${unresolved.map(blockerSummary).join(", ")}, which do not form a single stack`,
+    );
+  }
+  return await stackOntoBlocker(issue, blocker, runStates, config, deps);
+}
+
+async function stackOntoBlocker(
+  issue: GroundcrewIssue,
+  blocker: Blocker,
+  runStates: RunStatesByTask,
+  config: ResolvedConfig,
+  deps: EligibilityDeps,
+): Promise<StackVerdict | SkipVerdict> {
+  const parentTask = naturalIdFromCanonical(blocker.id);
+  const parentRunState = runStates.get(normalizedTaskId(parentTask));
+  if (parentRunState === undefined) {
+    return stackSkip(
+      issue,
+      [blocker],
       "stack_parent_unknown",
       `Skipping ${issue.id}: blocker ${parentTask} has no run state in repository ${issue.repository}`,
     );
@@ -303,7 +410,7 @@ async function stackDecisionFor(
   if (availability === "unknown") {
     return stackSkip(
       issue,
-      blocker,
+      [blocker],
       "stack_parent_unknown",
       `Skipping ${issue.id}: blocker ${parentTask}'s branch ${parentRunState.branchName} is missing locally and on the remote`,
     );
@@ -311,7 +418,7 @@ async function stackDecisionFor(
   if (availability === "unpushed") {
     return stackSkip(
       issue,
-      blocker,
+      [blocker],
       "stack_parent_unpushed",
       `Skipping ${issue.id}: blocker ${parentTask}'s branch isn't pushed yet`,
     );
@@ -342,10 +449,7 @@ async function blockerVerdictFor(
   }
 
   if (config.git.stacking === true) {
-    const [singleBlocker, ...remainingBlockers] = unresolved;
-    if (singleBlocker !== undefined && remainingBlockers.length === 0) {
-      return await stackDecisionFor(issue, singleBlocker, config, deps);
-    }
+    return await stackDecisionFor(issue, unresolved, config, deps);
   }
 
   const blockers = unresolved.map(blockerSummary);
@@ -353,7 +457,7 @@ async function blockerVerdictFor(
     kind: "skip",
     issue,
     message: `Skipping ${issue.id}: blocked by ${blockers.join(", ")}`,
-    eventReason: config.git.stacking === true ? "stack_multiple_blockers" : "blocked",
+    eventReason: "blocked",
     blockers,
   };
 }

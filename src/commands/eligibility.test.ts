@@ -373,18 +373,28 @@ describe(classifyBlockers, () => {
       });
     }
 
-    function recordParentRunState(overrides: { repository?: string } = {}): void {
+    function recordParentRunState(
+      overrides: { task?: string; repository?: string; parentTask?: string } = {},
+    ): void {
+      const task = overrides.task ?? "team-0";
       recordRunState({
         config: stackingConfig(),
         state: {
-          task: "team-0",
+          task,
           repository: overrides.repository ?? "repo-a",
           agent: "claude",
-          worktreeDir: "/work/repo-a-team-0",
-          branchName: "dev-team-0",
-          workspaceName: "team-0",
+          worktreeDir: `/work/repo-a-${task}`,
+          branchName: `dev-${task}`,
+          workspaceName: task,
           state: "running",
+          ...(overrides.parentTask === undefined ? {} : { parentTask: overrides.parentTask }),
         },
+      });
+    }
+
+    function issueBlockedBy(...tasks: string[]): GroundcrewIssue {
+      return blockedIssue({
+        blockers: tasks.map((naturalId) => canonicalBlocker({ naturalId, status: "in-progress" })),
       });
     }
 
@@ -444,13 +454,10 @@ describe(classifyBlockers, () => {
       expect(deps.probeParentBranch).toHaveBeenCalledTimes(1);
     });
 
-    it("emits `stack_multiple_blockers` when more than one blocker is unresolved", async () => {
-      const issue = blockedIssue({
-        blockers: [
-          canonicalBlocker({ naturalId: "team-0", status: "in-progress" }),
-          canonicalBlocker({ naturalId: "team-a", status: "in-progress" }),
-        ],
-      });
+    it("emits `stack_multiple_blockers` when unresolved blockers are siblings rather than a chain", async () => {
+      recordParentRunState({ task: "team-0" });
+      recordParentRunState({ task: "team-a" });
+      const issue = issueBlockedBy("team-0", "team-a");
 
       const { unblocked, skips } = await classifyBlockers(
         [issue],
@@ -459,7 +466,92 @@ describe(classifyBlockers, () => {
       );
 
       expect(unblocked).toHaveLength(0);
+      expect(skips[0]).toMatchObject({
+        kind: "skip",
+        eventReason: "stack_multiple_blockers",
+        blockers: ["linear:team-0:in-progress", "linear:team-a:in-progress"],
+      });
+    });
+
+    it("emits `stack_multiple_blockers` when no unresolved blocker has run state", async () => {
+      const { skips } = await classifyBlockers(
+        [issueBlockedBy("team-0", "team-a")],
+        stackingConfig(),
+        realReadDeps(true),
+      );
+
       expect(skips[0]).toMatchObject({ kind: "skip", eventReason: "stack_multiple_blockers" });
+    });
+
+    it("stacks on the tip when the unresolved blockers form a chain", async () => {
+      recordParentRunState({ task: "team-0" });
+      recordParentRunState({ task: "team-a", parentTask: "team-0" });
+      const deps = realReadDeps(true);
+      const issue = issueBlockedBy("team-0", "team-a");
+
+      const { unblocked, stackDecisions, skips } = await classifyBlockers(
+        [issue],
+        stackingConfig(),
+        deps,
+      );
+
+      expect(skips).toHaveLength(0);
+      expect(unblocked).toStrictEqual([issue]);
+      expect(stackDecisions.get(issue.id)).toStrictEqual({
+        baseBranch: "dev-team-a",
+        parentTask: "team-a",
+      });
+      expect(deps.probeParentBranch).toHaveBeenCalledTimes(1);
+    });
+
+    it("follows the chain through an intermediate task that is not itself a blocker", async () => {
+      recordParentRunState({ task: "team-0" });
+      recordParentRunState({ task: "team-x", parentTask: "TEAM-0" });
+      recordParentRunState({ task: "team-a", parentTask: "team-x" });
+      const issue = issueBlockedBy("team-0", "team-a");
+
+      const { stackDecisions } = await classifyBlockers(
+        [issue],
+        stackingConfig(),
+        realReadDeps(true),
+      );
+
+      expect(stackDecisions.get(issue.id)).toStrictEqual({
+        baseBranch: "dev-team-a",
+        parentTask: "team-a",
+      });
+    });
+
+    it("emits `stack_multiple_blockers` when the parent chain is cyclic", async () => {
+      recordParentRunState({ task: "team-0", parentTask: "team-a" });
+      recordParentRunState({ task: "team-a", parentTask: "team-0" });
+
+      const { skips } = await classifyBlockers(
+        [issueBlockedBy("team-0", "team-a")],
+        stackingConfig(),
+        realReadDeps(true),
+      );
+
+      expect(skips[0]).toMatchObject({ kind: "skip", eventReason: "stack_multiple_blockers" });
+    });
+
+    it("emits `stack_cross_repo_blocker` when any unresolved blocker runs in another repository", async () => {
+      recordParentRunState({ task: "team-0" });
+      recordParentRunState({ task: "team-a", repository: "repo-b" });
+      const deps = realReadDeps(true);
+
+      const { skips } = await classifyBlockers(
+        [issueBlockedBy("team-0", "team-a")],
+        stackingConfig(),
+        deps,
+      );
+
+      expect(skips[0]).toMatchObject({
+        kind: "skip",
+        eventReason: "stack_cross_repo_blocker",
+        blockers: ["linear:team-0:in-progress", "linear:team-a:in-progress"],
+      });
+      expect(deps.probeParentBranch).not.toHaveBeenCalled();
     });
 
     it("emits `stack_parent_unknown` when the blocker has no run state", async () => {
@@ -472,7 +564,7 @@ describe(classifyBlockers, () => {
       expect(skips[0]).toMatchObject({ kind: "skip", eventReason: "stack_parent_unknown" });
     });
 
-    it("emits `stack_parent_unknown` when the blocker's run state names a different repository", async () => {
+    it("emits `stack_cross_repo_blocker` when the sole blocker's run state names a different repository", async () => {
       recordParentRunState({ repository: "repo-b" });
 
       const { skips } = await classifyBlockers(
@@ -481,7 +573,7 @@ describe(classifyBlockers, () => {
         realReadDeps(true),
       );
 
-      expect(skips[0]).toMatchObject({ kind: "skip", eventReason: "stack_parent_unknown" });
+      expect(skips[0]).toMatchObject({ kind: "skip", eventReason: "stack_cross_repo_blocker" });
     });
 
     it("emits `stack_parent_unpushed` when the blocker's branch isn't pushed", async () => {
