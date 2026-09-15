@@ -4,14 +4,16 @@
  * rebase and retarget the pull requests above one that merges, so a child
  * registered here needs no local rebase or force-push when its parent lands.
  *
- * Every call goes through `gh api`, which supplies auth. A repository whose
+ * Every call goes through `gh api` with the worktree as `cwd`, which supplies
+ * auth and resolves `{owner}/{repo}` from that checkout's own remote, so a bare
+ * config repository name works the same as a full slug. A repository whose
  * organisation has the preview off answers 404, so `listStacks` reports itself
  * unavailable rather than returning an empty list — the caller falls back to
  * the local retarget path instead of trying to create a stack every tick.
  */
 
 import { runCommandAsync } from "./commandRunner.ts";
-import { debug, errorMessage } from "./util.ts";
+import { debug, errorMessage, isRecord } from "./util.ts";
 
 const STACKS_API_VERSION = "2026-03-10";
 
@@ -83,12 +85,10 @@ function parseStacks(output: string): readonly GitHubStack[] {
 }
 
 function toStack(value: unknown): GitHubStack | undefined {
-  if (typeof value !== "object" || value === null) {
+  if (!isRecord(value)) {
     return undefined;
   }
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- narrowing untyped JSON.parse output to a record so we can probe its keys
-  const record = value as Record<string, unknown>;
-  const { number: stackNumber, open, pull_requests: rawPullRequests } = record;
+  const { number: stackNumber, open, pull_requests: rawPullRequests } = value;
   if (typeof stackNumber !== "number" || !Array.isArray(rawPullRequests)) {
     return undefined;
   }
@@ -103,12 +103,10 @@ function toStack(value: unknown): GitHubStack | undefined {
 }
 
 function pullRequestNumberOf(value: unknown): number | undefined {
-  if (typeof value !== "object" || value === null) {
+  if (!isRecord(value)) {
     return undefined;
   }
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- narrowing untyped JSON.parse output to a record so we can probe its keys
-  const record = value as Record<string, unknown>;
-  return typeof record["number"] === "number" ? record["number"] : undefined;
+  return typeof value["number"] === "number" ? value["number"] : undefined;
 }
 
 export function createStacksClient(runGhApi: RunGhApi = runGhApiCommand): StacksClient {
@@ -134,7 +132,7 @@ export function createStacksClient(runGhApi: RunGhApi = runGhApiCommand): Stacks
       try {
         const output = await runGhApi({
           cwd,
-          args: apiArguments(`repos/${repository}/stacks`),
+          args: apiArguments("repos/{owner}/{repo}/stacks"),
           ...(signal === undefined ? {} : { signal }),
         });
         return { available: true, stacks: parseStacks(output) };
@@ -147,7 +145,7 @@ export function createStacksClient(runGhApi: RunGhApi = runGhApiCommand): Stacks
       await post({
         cwd,
         repository,
-        path: `repos/${repository}/stacks`,
+        path: "repos/{owner}/{repo}/stacks",
         pullRequests,
         ...(signal === undefined ? {} : { signal }),
       }),
@@ -155,7 +153,7 @@ export function createStacksClient(runGhApi: RunGhApi = runGhApiCommand): Stacks
       await post({
         cwd,
         repository,
-        path: `repos/${repository}/stacks/${stackNumber}/add`,
+        path: `repos/{owner}/{repo}/stacks/${stackNumber}/add`,
         pullRequests,
         ...(signal === undefined ? {} : { signal }),
       }),

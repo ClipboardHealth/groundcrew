@@ -36,7 +36,7 @@ describe(createStacksClient, () => {
       "api",
       "-H",
       "X-GitHub-Api-Version: 2026-03-10",
-      "repos/acme/repo-a/stacks",
+      "repos/{owner}/{repo}/stacks",
     ]);
   });
 
@@ -99,7 +99,7 @@ describe(createStacksClient, () => {
       "api",
       "-H",
       "X-GitHub-Api-Version: 2026-03-10",
-      "repos/acme/repo-a/stacks",
+      "repos/{owner}/{repo}/stacks",
       "--method",
       "POST",
       "-F",
@@ -126,7 +126,7 @@ describe(createStacksClient, () => {
     });
 
     expect([added, addedWithoutSignal]).toEqual([true, true]);
-    expect(runGh.calls[0]).toContain("repos/acme/repo-a/stacks/1600/add");
+    expect(runGh.calls[0]).toContain("repos/{owner}/{repo}/stacks/1600/add");
   });
 
   it("reports a rejected write rather than throwing", async () => {

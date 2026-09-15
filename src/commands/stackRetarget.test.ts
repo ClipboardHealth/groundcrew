@@ -810,11 +810,11 @@ describe(createStackRetarget, () => {
     expect(readRunState(config, "team-2")?.baseBranch).toBe("dev-team-1");
   });
 
-  it("treats a failed parent-PR lookup as parent-not-merged and retargets to the parent", async () => {
+  it("treats an empty parent-PR lookup (gh failure) as parent-not-merged and retargets to the parent", async () => {
     recordChildRunState({ baseBranch: "dev-team-1", parentTask: "team-1" });
     const findPullRequests = findPullRequestsRoutedBy({
       "dev-team-2": [pullRequest({ baseRefName: "main" })],
-      "dev-team-1": new Error("gh rate limited"),
+      "dev-team-1": [],
     });
     const runGh = vi.fn<RunGhCommand>().mockResolvedValue("");
     const stackRetarget = createStackRetarget({ findPullRequests, runGh });
@@ -1293,7 +1293,7 @@ describe(createStackRetarget, () => {
     await tick();
 
     expect(countMergeCommits).toHaveBeenCalledWith(
-      expect.objectContaining({ repository: "repo-a", pullRequestNumber: 7 }),
+      expect.objectContaining({ cwd: "/work/repo-a-team-2", pullRequestNumber: 7 }),
     );
     expect(occurrences(consoleLog.output(), "outcome=merge_commits_on_stack")).toBe(1);
     expect(consoleLog.output()).toContain("flow=stack-guard");
@@ -1387,6 +1387,11 @@ describe(createStackRetarget, () => {
     expect(runGit.calls).toEqual([]);
     expect(readRunState(config, "team-2")?.baseBranch).toBeUndefined();
     expect(consoleLog.output()).toContain("outcome=restacked_by_github");
+    expect(reclaimStackParentBranchMock).toHaveBeenCalledWith(config, {
+      repository: "repo-a",
+      parentTask: "team-1",
+      branchName: "dev-team-1",
+    });
   });
 
   it("waits for GitHub to retarget a stacked child whose base is still the merged parent", async () => {

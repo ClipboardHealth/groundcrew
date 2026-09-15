@@ -19,6 +19,7 @@
  */
 
 import { runCommandAsync } from "./commandRunner.ts";
+import { isRecord } from "./util.ts";
 
 export interface PullRequestSummary {
   url: string;
@@ -225,7 +226,6 @@ const GH_PR_COMMITS_PAGE_SIZE = 100;
 
 interface MergeCommitLookupArgs {
   cwd: string;
-  repository: string;
   pullRequestNumber: number;
   signal?: AbortSignal;
 }
@@ -240,13 +240,13 @@ interface MergeCommitLookupArgs {
 export type CountMergeCommits = (arguments_: MergeCommitLookupArgs) => Promise<number | undefined>;
 
 export const countMergeCommits: CountMergeCommits = async (arguments_) => {
-  const { cwd, repository, pullRequestNumber, signal } = arguments_;
+  const { cwd, pullRequestNumber, signal } = arguments_;
   const options = signal === undefined ? { cwd } : { cwd, signal };
   const output = await runCommandAsync(
     "gh",
     [
       "api",
-      `repos/${repository}/pulls/${pullRequestNumber}/commits?per_page=${GH_PR_COMMITS_PAGE_SIZE}`,
+      `repos/{owner}/{repo}/pulls/${pullRequestNumber}/commits?per_page=${GH_PR_COMMITS_PAGE_SIZE}`,
     ],
     options,
   ).catch((error: unknown) => {
@@ -268,11 +268,5 @@ function parseJsonOrNull(output: string): unknown {
 }
 
 function isMergeCommit(value: unknown): boolean {
-  if (typeof value !== "object" || value === null) {
-    return false;
-  }
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- narrowing untyped JSON.parse output to a record so we can probe its keys
-  const record = value as Record<string, unknown>;
-  const { parents } = record;
-  return Array.isArray(parents) && parents.length > 1;
+  return isRecord(value) && Array.isArray(value["parents"]) && value["parents"].length > 1;
 }

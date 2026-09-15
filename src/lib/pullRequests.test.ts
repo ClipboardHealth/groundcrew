@@ -429,7 +429,7 @@ describe(countMergeCommits, () => {
     vi.resetAllMocks();
   });
 
-  const lookup = { cwd: "/work/widgets-team-2", repository: "acme/widgets", pullRequestNumber: 42 };
+  const lookup = { cwd: "/work/widgets-team-2", pullRequestNumber: 42 };
 
   it("counts the commits with more than one parent", async () => {
     runCommandMock.mockResolvedValue(
@@ -448,7 +448,7 @@ describe(countMergeCommits, () => {
     expect(count).toBe(2);
     expect(runCommandMock).toHaveBeenCalledWith(
       "gh",
-      ["api", "repos/acme/widgets/pulls/42/commits?per_page=100"],
+      ["api", "repos/{owner}/{repo}/pulls/42/commits?per_page=100"],
       { cwd: "/work/widgets-team-2" },
     );
   });

@@ -212,7 +212,7 @@ async function fetchParentPullRequests(arguments_: {
     cwd,
     branchName: baseBranch,
     ...signalProperty(signal),
-  }).catch(() => [] as readonly PullRequestSummary[]);
+  });
   cache.set(baseBranch, pullRequests);
   return await pullRequests;
 }
@@ -475,7 +475,6 @@ async function guardMergeCommits(arguments_: {
   const task = entry.task;
   const mergeCommits = await countMergeCommits({
     cwd: entry.dir,
-    repository: entry.repository,
     pullRequestNumber: childPullRequest.number,
     ...signalProperty(signal),
   });
@@ -615,22 +614,35 @@ async function rebaseOntoDefault(arguments_: {
     return "push_rejected";
   }
 
-  clearBaseBranch(config, task);
-  // The child no longer references the parent; if no sibling still does
-  // either, and the parent's own worktree is already gone (the common case —
-  // it tore down as soon as its PR merged, well before this rebase ran),
-  // nothing else will ever revisit its preserved branch. Reclaim it now.
+  await releaseParentBranch({ config, entry, parentTask, baseBranch, ...signalOption });
+  return "rebased_onto_default";
+}
+
+/**
+ * The child no longer references the parent; if no sibling still does either,
+ * and the parent's own worktree is already gone (the common case — it tore
+ * down as soon as its PR merged), nothing else will ever revisit its
+ * preserved branch. Reclaim it now.
+ */
+async function releaseParentBranch(arguments_: {
+  config: ResolvedConfig;
+  entry: WorktreeEntry;
+  parentTask: string;
+  baseBranch: string;
+  signal?: AbortSignal;
+}): Promise<void> {
+  const { config, entry, parentTask, baseBranch, signal } = arguments_;
+  clearBaseBranch(config, entry.task);
   try {
     await reclaimStackParentBranch(config, {
       repository: entry.repository,
       parentTask,
       branchName: baseBranch,
-      ...signalOption,
+      ...signalProperty(signal),
     });
   } catch (error) {
     debug(`Stack parent branch reclaim failed for ${parentTask}: ${errorMessage(error)}`);
   }
-  return "rebased_onto_default";
 }
 
 async function retargetTask(arguments_: {
@@ -735,7 +747,7 @@ async function retargetTask(arguments_: {
     // GitHub rebases and retargets every pull request above a stack layer that
     // merges, so a stacked child needs no local rebase or force-push.
     if (childPullRequest.baseRefName === defaultBranch) {
-      clearBaseBranch(config, task);
+      await releaseParentBranch({ config, entry, parentTask, baseBranch, ...signalOption });
       logTerminal(logContext, "restacked_by_github");
     }
     return;
