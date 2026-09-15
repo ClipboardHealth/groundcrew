@@ -508,6 +508,15 @@ interface LaunchCommandArguments {
    */
   safehouseEnableFeatures?: readonly string[] | undefined;
   /**
+   * Extra sandbox-exec profile files layered after the generated policy on the
+   * agent wrap, emitted as one `--append-profile=<path>` per entry. sandbox-exec
+   * resolves by last matching rule, so an appended profile can re-allow
+   * something the base policy denies. Withheld from the repo-controlled
+   * prepareWorktree wrap, which never needs them. Empty/undefined → no
+   * `--append-profile` flag.
+   */
+  safehouseAppendProfiles?: readonly string[] | undefined;
+  /**
    * Extra read-only paths granted only to the Safehouse agent wrap via
    * `--add-dirs-ro` (host toolchains the Safehouse profile masks but doesn't
    * re-open). Read-only so the agent cannot mutate host toolchain state.
@@ -717,6 +726,9 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
   // Optional sandbox integrations (e.g. `agent-browser`) layered onto the agent
   // profile only — the repo-controlled prepareWorktree hook never needs them.
   const safehouseEnableFlag = safehouseEnableFeaturesFlag(arguments_.safehouseEnableFeatures ?? []);
+  const safehouseAppendProfileFlag = safehouseAppendProfilesFlag(
+    arguments_.safehouseAppendProfiles ?? [],
+  );
   const safehouseWrapper = safehouseWrapperCommand(arguments_.networkEgress);
 
   // Extra paths an integration staged for the agent wrap (e.g. codex's
@@ -780,7 +792,7 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
     // Running the real launch chain as `sh -c` would make it see `sh`, so use
     // an agent-named symlink to /bin/sh. This preserves per-agent profile
     // selection without enabling every agent profile.
-    `{ ${safehouseWrapper} ${safehouseAgentAddDirsFlag}${safehouseAgentAddDirsReadOnlyFlag}${safehouseEnableFlag}${agentEnvPassFlag}"$_safehouse_shim" -c ${shellSingleQuote(agentCommand)} sh${promptPositional(arguments_.omitPromptArgument)}; _safehouse_status=$?; rm -rf "$_safehouse_shim_dir";${successPathCleanupSegment(writeBackCmd, teardownCleanupCmd)} trap - EXIT; exit "$_safehouse_status"; }`,
+    `{ ${safehouseWrapper} ${safehouseAgentAddDirsFlag}${safehouseAgentAddDirsReadOnlyFlag}${safehouseEnableFlag}${safehouseAppendProfileFlag}${agentEnvPassFlag}"$_safehouse_shim" -c ${shellSingleQuote(agentCommand)} sh${promptPositional(arguments_.omitPromptArgument)}; _safehouse_status=$?; rm -rf "$_safehouse_shim_dir";${successPathCleanupSegment(writeBackCmd, teardownCleanupCmd)} trap - EXIT; exit "$_safehouse_status"; }`,
   );
   return lines.join(" && ");
 }
@@ -875,6 +887,12 @@ function safehousePathListFlag(
 
 function safehouseEnableFeaturesFlag(features: readonly string[]): string {
   return features.length === 0 ? "" : `--enable=${shellSingleQuote(features.join(","))} `;
+}
+
+function safehouseAppendProfilesFlag(profiles: readonly string[]): string {
+  return uniqueStrings([...profiles])
+    .map((profile) => `--append-profile=${shellSingleQuote(profile)} `)
+    .join("");
 }
 
 function uniqueStrings(values: readonly string[]): string[] {

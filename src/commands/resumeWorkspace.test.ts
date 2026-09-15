@@ -207,7 +207,7 @@ function makeConfig(): ResolvedConfig {
     local: {
       runner: "auto",
       networkEgress: "allowlisted",
-      safehouse: { enable: [] },
+      safehouse: { enable: [], appendProfile: [] },
       readOnlyDirs: [],
     },
     logging: { file: "/tmp/groundcrew-test.log" },
@@ -635,7 +635,7 @@ describe(resumeWorkspace, () => {
       local: {
         runner: "safehouse" as const,
         networkEgress: "open" as const,
-        safehouse: { enable: [] },
+        safehouse: { enable: [], appendProfile: [] },
         readOnlyDirs: [],
       },
     };
@@ -661,7 +661,7 @@ describe(resumeWorkspace, () => {
       local: {
         runner: "safehouse",
         networkEgress: "open",
-        safehouse: { enable: [] },
+        safehouse: { enable: [], appendProfile: [] },
         readOnlyDirs: [],
       },
       agents: {
@@ -681,7 +681,7 @@ describe(resumeWorkspace, () => {
       local: {
         runner: "none",
         networkEgress: "allowlisted",
-        safehouse: { enable: [] },
+        safehouse: { enable: [], appendProfile: [] },
         readOnlyDirs: [],
       },
       sources: [

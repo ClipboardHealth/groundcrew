@@ -123,7 +123,7 @@ function makeConfig(overrides: Partial<ResolvedConfig["agents"]> = {}): Resolved
     local: {
       runner: "auto",
       networkEgress: "allowlisted",
-      safehouse: { enable: [] },
+      safehouse: { enable: [], appendProfile: [] },
       readOnlyDirs: [],
     },
     logging: { file: "/tmp/groundcrew-test.log" },
@@ -722,7 +722,7 @@ describe(doctor, () => {
       local: {
         runner: "none",
         networkEgress: "allowlisted",
-        safehouse: { enable: [] },
+        safehouse: { enable: [], appendProfile: [] },
         readOnlyDirs: [],
       },
     });
@@ -742,7 +742,7 @@ describe(doctor, () => {
       local: {
         runner: "sdx",
         networkEgress: "allowlisted",
-        safehouse: { enable: [] },
+        safehouse: { enable: [], appendProfile: [] },
         readOnlyDirs: [],
       },
     });

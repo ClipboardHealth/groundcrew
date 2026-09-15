@@ -229,7 +229,7 @@ function makeConfig(): ResolvedConfig {
     local: {
       runner: "auto",
       networkEgress: "allowlisted",
-      safehouse: { enable: [] },
+      safehouse: { enable: [], appendProfile: [] },
       readOnlyDirs: [],
     },
     logging: { file: "/tmp/groundcrew-test.log" },
