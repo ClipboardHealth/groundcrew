@@ -2,7 +2,7 @@ import path from "node:path";
 
 import { runCommandAsync } from "./commandRunner.ts";
 import type { ResolvedConfig } from "./config.ts";
-import { readRunState, type RunState } from "./runState.ts";
+import { listRunStates, readRunState, type RunState } from "./runState.ts";
 import type { WorktreeEntry } from "./worktrees.ts";
 
 type RunStateMatchEntry = Pick<WorktreeEntry, "repository" | "task" | "dir">;
@@ -94,4 +94,32 @@ export function hasAdoptedBranch(input: HasAdoptedBranchInput): boolean {
     return true;
   }
   return readMatchingRunState(input)?.adoptedBranch === true;
+}
+
+interface IsReferencedAsStackParentInput {
+  config: ResolvedConfig;
+  task: string;
+}
+
+/**
+ * True while some other task's run state still names `task` as its
+ * `parentTask` with `baseBranch` set — i.e. a stacked child's branch and PR
+ * are still based on it. Teardown must preserve `task`'s local branch in that
+ * case, the same as an adopted branch: deleting it would orphan the child's
+ * diff. `baseBranch` is cleared once the child rebases onto the default
+ * branch post-merge (stackRetarget.ts), so its presence is exactly "still
+ * stacked on this branch"; `parentTask` alone is retained afterward and no
+ * longer implies preservation. A `failed-to-launch` run state is ignored
+ * outright: its dispatch never produced a worktree, so it can never be a real
+ * stacked child, however stale `baseBranch`/`parentTask` values on it (a
+ * leftover from a "provisioning" row written moments before the failure) can
+ * only be a leak — see setupWorkspace.ts's `recordFailedToLaunch`.
+ */
+export function isReferencedAsStackParent(input: IsReferencedAsStackParentInput): boolean {
+  return listRunStates(input.config).some(
+    (runState) =>
+      runState.state !== "failed-to-launch" &&
+      runState.baseBranch !== undefined &&
+      runState.parentTask?.toLowerCase() === input.task.toLowerCase(),
+  );
 }

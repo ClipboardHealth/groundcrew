@@ -5,6 +5,7 @@ import {
   parseRepository,
   resolveAgentFor,
   resolveRepositoryFor,
+  resolveStackingPreference,
 } from "./parsing.ts";
 
 function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
@@ -410,6 +411,28 @@ describe(resolveAgentFor, () => {
       requestedAgent: "codex",
       fallbackAgent: "claude",
     });
+  });
+});
+
+describe(resolveStackingPreference, () => {
+  it("returns opted-out when the groundcrew-no-stack label is present", () => {
+    const result = resolveStackingPreference({ labels: [{ name: "groundcrew-no-stack" }] });
+    expect(result).toBe("opted-out");
+  });
+
+  it("returns undefined when the label is absent", () => {
+    const result = resolveStackingPreference({ labels: [{ name: "agent-claude" }] });
+    expect(result).toBeUndefined();
+  });
+
+  it("returns undefined for an empty labels array", () => {
+    const result = resolveStackingPreference({ labels: [] });
+    expect(result).toBeUndefined();
+  });
+
+  it("does not match on a label that merely starts with the same prefix", () => {
+    const result = resolveStackingPreference({ labels: [{ name: "groundcrew-no-stack-later" }] });
+    expect(result).toBeUndefined();
   });
 });
 

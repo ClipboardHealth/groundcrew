@@ -8,9 +8,15 @@ import { probeError } from "../testHelpers/workspaceProbe.ts";
 import type * as commandRunnerModule from "./commandRunner.ts";
 import { runCommandAsync, type RunCommandOptions } from "./commandRunner.ts";
 import type { ResolvedConfig } from "./config.ts";
+import { recordRunState } from "./runState.ts";
 import { setVerbose } from "./util.ts";
 import { workspaces } from "./workspaces.ts";
-import { resolveLaunchDir, type WorktreeEntry, worktrees } from "./worktrees.ts";
+import {
+  reclaimStackParentBranch,
+  resolveLaunchDir,
+  type WorktreeEntry,
+  worktrees,
+} from "./worktrees.ts";
 
 const { create, findByTask, list, remove, teardown } = worktrees;
 
@@ -728,6 +734,94 @@ describe(remove, () => {
     ]);
   });
 
+  it("preserves a parent branch still referenced by a stacked child's run state", async () => {
+    mkdirSync(path.join(projectDir, "repo-a"));
+    mkdirSync(path.join(projectDir, "repo-a-team-1"));
+    const config = {
+      ...makeConfig({ projectDir }),
+      logging: { file: path.join(projectDir, "groundcrew.log") },
+    };
+    recordRunState({
+      config,
+      state: {
+        task: "team-2",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: path.join(projectDir, "repo-a-team-2"),
+        branchName: "dev-team-2",
+        workspaceName: "team-2",
+        state: "running",
+        baseBranch: "dev-team-1",
+        parentTask: "team-1",
+      },
+    });
+
+    await remove(config, {
+      repository: "repo-a",
+      task: "team-1",
+      branchName: "dev-team-1",
+      dir: path.join(projectDir, "repo-a-team-1"),
+      kind: "host",
+    });
+
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "git",
+      [
+        "-C",
+        path.join(projectDir, "repo-a"),
+        "worktree",
+        "remove",
+        path.join(projectDir, "repo-a-team-1"),
+      ],
+      { stdio: "captured", timeoutMs: 0 },
+    );
+    expect(runCommandMock).not.toHaveBeenCalledWith(
+      "git",
+      expect.arrayContaining(["branch", "-D"]),
+      expect.anything(),
+    );
+  });
+
+  it("deletes the parent branch once no stacked child references it any more", async () => {
+    mkdirSync(path.join(projectDir, "repo-a"));
+    mkdirSync(path.join(projectDir, "repo-a-team-1"));
+    const config = {
+      ...makeConfig({ projectDir }),
+      logging: { file: path.join(projectDir, "groundcrew.log") },
+    };
+    // The child rebased onto the default branch: `parentTask` is retained but
+    // `baseBranch` was cleared, so this task's branch is no longer referenced.
+    recordRunState({
+      config,
+      state: {
+        task: "team-2",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: path.join(projectDir, "repo-a-team-2"),
+        branchName: "dev-team-2",
+        workspaceName: "team-2",
+        state: "running",
+        parentTask: "team-1",
+      },
+    });
+
+    await remove(config, {
+      repository: "repo-a",
+      task: "team-1",
+      branchName: "dev-team-1",
+      dir: path.join(projectDir, "repo-a-team-1"),
+      kind: "host",
+    });
+
+    expect(runCommandMock).toHaveBeenCalledWith("git", [
+      "-C",
+      path.join(projectDir, "repo-a"),
+      "branch",
+      "-D",
+      "dev-team-1",
+    ]);
+  });
+
   it("passes --force when force is set on a host entry", async () => {
     mkdirSync(path.join(projectDir, "repo-a"));
     mkdirSync(path.join(projectDir, "repo-a-team-1"));
@@ -1188,6 +1282,87 @@ describe(remove, () => {
         { signal: controller.signal },
       ),
     ).rejects.toThrow("interrupted branch delete");
+  });
+});
+
+describe(reclaimStackParentBranch, () => {
+  setupTempProjectDir();
+
+  // Run state lives at `<dirname(logging.file)>/runs`; every test here
+  // isolates it under the test's own tmpdir rather than `makeConfig`'s fixed
+  // `/tmp/groundcrew-test.log` default, which is shared (and uncleaned)
+  // across the whole file's test runs.
+  function stackingConfig(): ResolvedConfig {
+    return {
+      ...makeConfig({ projectDir }),
+      logging: { file: path.join(projectDir, "groundcrew.log") },
+    };
+  }
+
+  it("deletes the parent branch once nothing references it and its worktree is gone", async () => {
+    mkdirSync(path.join(projectDir, "repo-a"));
+    const config = stackingConfig();
+
+    await reclaimStackParentBranch(config, {
+      repository: "repo-a",
+      parentTask: "team-1",
+      branchName: "dev-team-1",
+    });
+
+    expect(runCommandMock).toHaveBeenCalledWith("git", [
+      "-C",
+      path.join(projectDir, "repo-a"),
+      "branch",
+      "-D",
+      "dev-team-1",
+    ]);
+  });
+
+  it("does nothing while a child run state still references the parent as its stack parent", async () => {
+    mkdirSync(path.join(projectDir, "repo-a"));
+    const config = stackingConfig();
+    recordRunState({
+      config,
+      state: {
+        task: "team-2",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: path.join(projectDir, "repo-a-team-2"),
+        branchName: "dev-team-2",
+        workspaceName: "team-2",
+        state: "running",
+        baseBranch: "dev-team-1",
+        parentTask: "team-1",
+      },
+    });
+
+    await reclaimStackParentBranch(config, {
+      repository: "repo-a",
+      parentTask: "team-1",
+      branchName: "dev-team-1",
+    });
+
+    expect(runCommandMock).not.toHaveBeenCalledWith(
+      "git",
+      expect.arrayContaining(["branch", "-D"]),
+    );
+  });
+
+  it("does nothing while the parent's own worktree still exists", async () => {
+    mkdirSync(path.join(projectDir, "repo-a"));
+    mkdirSync(path.join(projectDir, "repo-a-team-1"));
+    const config = stackingConfig();
+
+    await reclaimStackParentBranch(config, {
+      repository: "repo-a",
+      parentTask: "team-1",
+      branchName: "dev-team-1",
+    });
+
+    expect(runCommandMock).not.toHaveBeenCalledWith(
+      "git",
+      expect.arrayContaining(["branch", "-D"]),
+    );
   });
 });
 

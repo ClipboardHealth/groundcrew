@@ -111,7 +111,11 @@ describe("loadConfig", () => {
     const actual = await loadConfig();
 
     expect(actual.workspace.useTaskTitleForPanelName).toBe(true);
-    expect(actual.git).toStrictEqual({ remote: "origin", defaultBranch: "main" });
+    expect(actual.git).toStrictEqual({
+      remote: "origin",
+      defaultBranch: "main",
+      stacking: false,
+    });
     expect(actual.orchestrator).toStrictEqual({
       maximumInProgress: 4,
       pollIntervalMilliseconds: 120_000,
@@ -142,8 +146,19 @@ describe("loadConfig", () => {
     expect(actual.prompts.initial).toMatch(/open a PR/i);
     expect(actual.prompts.initial).toContain("GROUNDCREW_COMPLETE");
     expect(actual.prompts.initial).toMatch(/no PR is needed/i);
+    expect(actual.prompts.initial).toContain("If `GROUNDCREW_BASE_BRANCH` is set");
     expect(actual.prompts.initial).toContain("{{workspaceContinuationInstruction}}");
     expect(actual.prompts.initial).not.toContain("tmux attach -t groundcrew:{{task}}");
+  });
+
+  it("resolves an explicit git.stacking: true", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      validConfigSource({ workspace: VALID_WORKSPACE(temporary), git: { stacking: true } }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    expect((await loadConfig()).git.stacking).toBe(true);
   });
 
   it("resolves a valid git.branchPrefix", async () => {

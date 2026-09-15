@@ -4,7 +4,7 @@ import { inferAgentCommandName, workerEnvironmentForTask } from "../lib/launchCo
 import { type Board, createBoard } from "../lib/board.ts";
 import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
 import { resolveRepositoryPreparationCommands } from "../lib/repositoryHooks.ts";
-import { recordRunState } from "../lib/runState.ts";
+import { readRunState, recordRunState } from "../lib/runState.ts";
 import { seedLaunchWorkspaceTrust } from "../lib/seedLaunchWorkspaceTrust.ts";
 import { sourceSupportsMarkDone } from "../lib/sourceCapabilities.ts";
 import {
@@ -43,6 +43,10 @@ export interface SetupWorkspaceOptions {
   agent: string;
   /** Set to `skip` to bypass configured prepareWorktree hooks. */
   worktreePreparation?: WorktreePreparation;
+  /** Parent branch this task's worktree and PR are based on, when stacked. */
+  baseBranch?: string;
+  /** Canonical id of the blocker task this task is stacked on. */
+  parentTask?: string;
   details: TaskDetails;
 }
 
@@ -91,26 +95,18 @@ export async function setupWorkspace(
       ...(signal === undefined ? {} : { signal }),
     });
 
+  // Captured before preflightProvisioningGate stamps its own "provisioning"
+  // row (which carries options.baseBranch forward) — otherwise the reattach
+  // guard inside worktrees.create() would compare the just-requested
+  // baseBranch against itself and never fire. See
+  // StackedBaseBranchMismatchError's doc comment in worktrees.ts.
+  const recordedBaseBranch = readRunState(config, task)?.baseBranch;
+
   await preflightProvisioningGate({ config, options, signal });
 
-  const spec = { repository, task };
-  const createdPromise =
-    signal === undefined ? worktrees.create(config, spec) : worktrees.create(config, spec, signal);
+  const createdPromise = beginWorktreeCreate({ config, options, signal, recordedBaseBranch });
   const readinessPromise = startLaunchReadiness(ensureReady);
-  let created: WorktreeEntry;
-  try {
-    created = await createdPromise;
-  } catch (error) {
-    // Roll the pre-flight `provisioning` row forward; the outer catch only
-    // fires post-create and the dispatcher just logs and moves on.
-    recordFailedToLaunch({
-      config,
-      options,
-      paths: worktrees.predictedEntry(config, repository, task),
-      error,
-    });
-    throw error;
-  }
+  const created = await createdPromise;
   const { branchName, dir: worktreeDir } = created;
   const launchDir = resolveLaunchDir(config, repository, worktreeDir);
   const worktreeName = `${repository}-${task}`;
@@ -185,6 +181,7 @@ export async function setupWorkspace(
       workerEnvironment: workerEnvironmentForTask({
         taskId: completionTaskId,
         markDoneSupported: completionMarkDoneSupported,
+        ...(options.baseBranch === undefined ? {} : { baseBranch: options.baseBranch }),
       }),
       taskSourceWritePaths,
       safehouseEnableFeatures: config.local.safehouse.enable,
@@ -216,6 +213,8 @@ export async function setupWorkspace(
       title: taskDetails.title,
       completionTaskId,
       ...(taskDetails.url === undefined ? {} : { url: taskDetails.url }),
+      ...(options.baseBranch === undefined ? {} : { baseBranch: options.baseBranch }),
+      ...(options.parentTask === undefined ? {} : { parentTask: options.parentTask }),
     });
 
     log(`${okMark()} "${task}" launched (${agent})  worktree ${worktreeName}`);
@@ -230,6 +229,41 @@ export async function setupWorkspace(
     recordFailedToLaunch({ config, options, paths: { worktreeDir, branchName }, error });
     throw error;
   }
+}
+
+/**
+ * Starts the task's worktree create call, synchronously, so it kicks off
+ * before the concurrent launch-readiness check (some tests assert
+ * `worktrees.create` is invoked ahead of the safehouse clearance probe).
+ * Rolls the pre-flight "provisioning" run state row forward into
+ * "failed-to-launch" on failure — the outer catch in `setupWorkspace` only
+ * fires post-create, and the dispatcher just logs and moves on otherwise.
+ */
+async function beginWorktreeCreate(arguments_: {
+  config: ResolvedConfig;
+  options: SetupWorkspaceOptions;
+  signal: AbortSignal | undefined;
+  recordedBaseBranch: string | undefined;
+}): Promise<WorktreeEntry> {
+  const { config, options, signal, recordedBaseBranch } = arguments_;
+  const { task, repository } = options;
+  const spec = {
+    repository,
+    task,
+    ...(options.baseBranch === undefined ? {} : { baseBranch: options.baseBranch }),
+    ...(recordedBaseBranch === undefined ? {} : { recordedBaseBranch }),
+  };
+  const createdPromise =
+    signal === undefined ? worktrees.create(config, spec) : worktrees.create(config, spec, signal);
+  return await createdPromise.catch((error: unknown) => {
+    recordFailedToLaunch({
+      config,
+      options,
+      paths: worktrees.predictedEntry(config, repository, task),
+      error,
+    });
+    throw error;
+  });
 }
 
 function resolveTaskPreparationCommands(arguments_: {
@@ -289,6 +323,8 @@ async function preflightProvisioningGate(arguments_: {
     title: options.details.title,
     completionTaskId: options.completionTaskId ?? task,
     ...(options.details.url === undefined ? {} : { url: options.details.url }),
+    ...(options.baseBranch === undefined ? {} : { baseBranch: options.baseBranch }),
+    ...(options.parentTask === undefined ? {} : { parentTask: options.parentTask }),
   });
 }
 
@@ -313,6 +349,12 @@ function recordFailedToLaunch(arguments_: {
     title: options.details.title,
     completionTaskId: options.completionTaskId ?? task,
     ...(options.details.url === undefined ? {} : { url: options.details.url }),
+    // A failed dispatch never got a worktree, so any baseBranch/parentTask
+    // recorded moments earlier by preflightProvisioningGate's "provisioning"
+    // row must not survive into this terminal state — otherwise the parent's
+    // branch would look permanently referenced (worktreeRunState.ts's
+    // isReferencedAsStackParent) even though no child ever came to exist.
+    clearStackingFields: true,
   });
 }
 
@@ -374,6 +416,8 @@ function renderWorkspaceContinuationInstruction(
   return `Include this workspace continuation note in the output: Workspace attach: \`${accessHint.command}\`.`;
 }
 
+const STACKING_RUN_STATE_FIELDS = ["baseBranch", "parentTask", "needsRebase"] as const;
+
 function recordRunStateBestEffort(arguments_: {
   config: ResolvedConfig;
   task: string;
@@ -387,6 +431,9 @@ function recordRunStateBestEffort(arguments_: {
   detail?: string;
   url?: string;
   completionTaskId: string;
+  baseBranch?: string;
+  parentTask?: string;
+  clearStackingFields?: boolean;
 }): void {
   try {
     recordRunState({
@@ -403,6 +450,11 @@ function recordRunStateBestEffort(arguments_: {
         completionTaskId: arguments_.completionTaskId,
         ...(arguments_.detail === undefined ? {} : { detail: arguments_.detail }),
         ...(arguments_.url === undefined ? {} : { url: arguments_.url }),
+        ...(arguments_.baseBranch === undefined ? {} : { baseBranch: arguments_.baseBranch }),
+        ...(arguments_.parentTask === undefined ? {} : { parentTask: arguments_.parentTask }),
+        ...(arguments_.clearStackingFields === true
+          ? { clearFields: STACKING_RUN_STATE_FIELDS }
+          : {}),
       },
     });
   } catch (error) {
