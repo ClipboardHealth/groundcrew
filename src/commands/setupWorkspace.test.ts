@@ -214,7 +214,7 @@ function makeConfig(overrides: Partial<ResolvedConfig["agents"]> = {}): Resolved
     local: {
       runner: "auto",
       networkEgress: "allowlisted",
-      safehouse: { enable: [] },
+      safehouse: { enable: [], appendProfile: [] },
       readOnlyDirs: [],
     },
     logging: { file: "/tmp/groundcrew-test.log" },

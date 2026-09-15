@@ -376,6 +376,18 @@ export interface Config {
        * launch. Defaults to none.
        */
       enable?: string[];
+      /**
+       * Extra sandbox-exec profile files layered after the generated policy on
+       * the agent wrap, forwarded as a repeated
+       * `safehouse --append-profile=<path>`. Later rules win in sandbox-exec,
+       * so these can re-allow something the base policy denies — e.g. an
+       * `(allow network-outbound (literal "<socket>"))` rule granting the one
+       * unix socket an agent's editor integration needs. `~` is expanded.
+       * Paths are not checked here: safehouse refuses to launch on a path that
+       * does not exist, which is the right signal for a typo in a rule that
+       * something else silently depends on. Defaults to none.
+       */
+      appendProfile?: string[];
     };
     /**
      * Host directories re-opened read-only inside the safehouse sandbox, for
@@ -458,11 +470,12 @@ export interface ResolvedConfig {
      */
     networkEgress: NetworkEgressSetting;
     /**
-     * Resolved Safehouse tuning. Always present; `enable` defaults to `[]`.
+     * Resolved Safehouse tuning. Always present; both lists default to `[]`.
      * Only the safehouse runner consumes it.
      */
     safehouse: {
       enable: readonly string[];
+      appendProfile: readonly string[];
     };
     /** Resolved, `~`-expanded read-only sandbox dirs. Defaults to tfenv's config root. */
     readOnlyDirs: string[];
@@ -521,9 +534,7 @@ function normalizeLocal(
     runner: normalizeLocalRunner(userLocal?.runner, "local.runner") ?? "auto",
     networkEgress:
       normalizeNetworkEgress(userLocal?.networkEgress, "local.networkEgress") ?? "allowlisted",
-    safehouse: {
-      enable: normalizeSafehouseEnable(userLocal?.safehouse, "local.safehouse"),
-    },
+    safehouse: normalizeSafehouse(userLocal?.safehouse, "local.safehouse"),
     readOnlyDirs: normalizeReadOnlyDirs(userLocal?.readOnlyDirs),
   };
 }
@@ -903,32 +914,59 @@ function normalizeNetworkEgress(
 
 const SAFEHOUSE_FEATURE_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 
-function normalizeSafehouseEnable(value: unknown, configKey: string): readonly string[] {
+function normalizeSafehouse(
+  value: unknown,
+  configKey: string,
+): ResolvedConfig["local"]["safehouse"] {
   if (value === undefined) {
-    return [];
+    return { enable: [], appendProfile: [] };
   }
   if (!isPlainObject(value)) {
     fail(`${configKey} must be an object`);
   }
-  const { enable } = value;
-  if (enable === undefined) {
+  return {
+    enable: normalizeSafehouseEnable(value["enable"], `${configKey}.enable`),
+    appendProfile: normalizeSafehouseAppendProfile(
+      value["appendProfile"],
+      `${configKey}.appendProfile`,
+    ),
+  };
+}
+
+function normalizeSafehouseEnable(value: unknown, configKey: string): readonly string[] {
+  if (value === undefined) {
     return [];
   }
-  if (!Array.isArray(enable)) {
-    fail(
-      `${configKey}.enable must be an array of safehouse feature names (got ${JSON.stringify(enable)})`,
-    );
+  if (!Array.isArray(value)) {
+    fail(`${configKey} must be an array of safehouse feature names (got ${JSON.stringify(value)})`);
   }
   const features: string[] = [];
-  for (const [index, entry] of enable.entries()) {
+  for (const [index, entry] of value.entries()) {
     if (typeof entry !== "string" || !SAFEHOUSE_FEATURE_PATTERN.test(entry)) {
       fail(
-        `${configKey}.enable[${index}] must be a safehouse feature slug matching ${SAFEHOUSE_FEATURE_PATTERN.source} (got ${JSON.stringify(entry)})`,
+        `${configKey}[${index}] must be a safehouse feature slug matching ${SAFEHOUSE_FEATURE_PATTERN.source} (got ${JSON.stringify(entry)})`,
       );
     }
     features.push(entry);
   }
   return [...new Set(features)];
+}
+
+function normalizeSafehouseAppendProfile(value: unknown, configKey: string): readonly string[] {
+  if (value === undefined) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    fail(`${configKey} must be an array of profile paths (got ${JSON.stringify(value)})`);
+  }
+  const profiles: string[] = [];
+  for (const [index, entry] of value.entries()) {
+    if (typeof entry !== "string" || entry.trim().length === 0) {
+      fail(`${configKey}[${index}] must be a non-empty path (got ${JSON.stringify(entry)})`);
+    }
+    profiles.push(expandHome(entry.trim()));
+  }
+  return [...new Set(profiles)];
 }
 
 function normalizeResumeArgs(value: unknown, configKey: string): string {

@@ -191,7 +191,7 @@ function makeConfig(): ResolvedConfig {
     local: {
       runner: "auto",
       networkEgress: "allowlisted",
-      safehouse: { enable: [] },
+      safehouse: { enable: [], appendProfile: [] },
       readOnlyDirs: [],
     },
     logging: { file: "/tmp/groundcrew-test.log" },
@@ -438,7 +438,7 @@ describe(openWorkspace, () => {
       ...config,
       local: {
         ...config.local,
-        safehouse: { enable: ["agent-browser", "docker"] },
+        safehouse: { enable: ["agent-browser", "docker"], appendProfile: [] },
       },
     };
     const composeAgentLaunchMock = vi.spyOn(agentLaunch, "composeAgentLaunch");

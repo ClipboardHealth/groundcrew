@@ -186,6 +186,19 @@ export default {
   // // sdx/none runners.
   // local: { safehouse: { enable: ["agent-browser"] } },
   //
+  // // Extra sandbox-exec profiles layered after the generated policy on the
+  // // agent wrap (forwarded as one `safehouse --append-profile=<path>` each).
+  // // sandbox-exec resolves by last matching rule, so these re-allow something
+  // // the base policy denies. The usual case is a unix socket: Safehouse denies
+  // // socket connects, which silently breaks editor integrations whose hooks
+  // // call back over one. `~` is expanded, and Safehouse refuses to launch if a
+  // // path does not exist. Ignored by the sdx/none runners.
+  // //
+  // //   (version 1)
+  // //   (allow network-outbound (regex #"^/private/tmp/cmux-[^/]*\.sock$"))
+  // //
+  // local: { safehouse: { appendProfile: ["~/.config/groundcrew/cmux-socket.sb"] } },
+  //
   // // Groundcrew does not create or authenticate sdx sandboxes. For an sdx
   // // agent, create the matching sandbox yourself before first launch:
   // //   sbx create --name groundcrew-claude claude ~/dev/groundcrew

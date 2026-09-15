@@ -459,6 +459,18 @@ describe(composeAgentLaunch, () => {
     expect(launchCommand).not.toContain("--add-dirs-ro");
   });
 
+  it("layers configured append profiles onto the Safehouse agent wrap", () => {
+    const launchCommand = compose({ safehouseAppendProfiles: ["/etc/cmux.sb"] });
+
+    expect(launchCommand).toContain("--append-profile='/etc/cmux.sb'");
+  });
+
+  it("omits --append-profile for non-safehouse runners", () => {
+    const launchCommand = compose({ runner: "none", safehouseAppendProfiles: ["/etc/cmux.sb"] });
+
+    expect(launchCommand).not.toContain("--append-profile");
+  });
+
   it("forwards prepareWorktreeUnsandboxed into the launch command", () => {
     const launchCommand = compose({
       runner: "none",

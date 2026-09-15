@@ -27,7 +27,7 @@ function resolvedConfigWithWorkspace(
     local: {
       runner: "auto",
       networkEgress: "allowlisted",
-      safehouse: { enable: [] },
+      safehouse: { enable: [], appendProfile: [] },
       readOnlyDirs: [],
     },
     logging: { file: "/tmp/x.log" },

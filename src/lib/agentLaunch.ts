@@ -61,6 +61,7 @@ export function composeAgentLaunch(input: {
   omitPromptArgument?: boolean | undefined;
   taskSourceWritePaths?: readonly string[] | undefined;
   safehouseEnableFeatures?: readonly string[] | undefined;
+  safehouseAppendProfiles?: readonly string[] | undefined;
   readOnlyDirs?: readonly string[] | undefined;
   /**
    * Test-only seam: overrides `os.homedir()` when staging a relocated agent
@@ -106,6 +107,8 @@ export function composeAgentLaunch(input: {
           input.runner === "safehouse" ? (input.taskSourceWritePaths ?? []) : undefined,
         safehouseEnableFeatures:
           input.runner === "safehouse" ? input.safehouseEnableFeatures : undefined,
+        safehouseAppendProfiles:
+          input.runner === "safehouse" ? input.safehouseAppendProfiles : undefined,
         // Safehouse rejects nonexistent --add-dirs-ro paths, so drop absent ones.
         safehouseAgentAddDirsReadOnly:
           input.runner === "safehouse" ? (input.readOnlyDirs ?? []).filter(existsSync) : undefined,
