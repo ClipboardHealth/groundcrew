@@ -175,9 +175,9 @@ describe("loadConfig local.safehouse", () => {
         local: {
           safehouse: {
             appendProfile: [
-              "~/.config/groundcrew/cmux.sb",
+              "~/.config/groundcrew/mytool.sb",
               "/etc/a.sb",
-              "~/.config/groundcrew/cmux.sb",
+              "~/.config/groundcrew/mytool.sb",
             ],
           },
         },
@@ -187,7 +187,7 @@ describe("loadConfig local.safehouse", () => {
     const { loadConfig } = await loadFreshConfig();
     const actual = await loadConfig();
     expect(actual.local.safehouse.appendProfile).toStrictEqual([
-      path.join(homedir(), ".config/groundcrew/cmux.sb"),
+      path.join(homedir(), ".config/groundcrew/mytool.sb"),
       "/etc/a.sb",
     ]);
   });

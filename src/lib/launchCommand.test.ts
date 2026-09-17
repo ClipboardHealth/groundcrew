@@ -156,11 +156,11 @@ describe(buildLaunchCommand, () => {
     const out = buildLaunchCommand(
       arguments_({
         prepareWorktreeCommand: "npm ci",
-        safehouseAppendProfiles: ["/etc/cmux.sb", "/etc/extra profile.sb"],
+        safehouseAppendProfiles: ["/etc/mytool.sb", "/etc/extra profile.sb"],
       }),
     );
 
-    const flags = "--append-profile='/etc/cmux.sb' --append-profile='/etc/extra profile.sb'";
+    const flags = "--append-profile='/etc/mytool.sb' --append-profile='/etc/extra profile.sb'";
     // The shim-dir line splits the prepareWorktree wrap (before) from the agent
     // wrap (after); appended profiles belong only to the latter.
     const agentWrapStart = out.indexOf("_safehouse_shim_dir=$(mktemp");
@@ -168,24 +168,6 @@ describe(buildLaunchCommand, () => {
     expect(out.split(flags).length - 1).toBe(1);
     expect(out).toContain(`${flags} "$_safehouse_shim" -c`);
     expect(out.slice(0, agentWrapStart)).not.toContain("--append-profile");
-  });
-
-  it("appends an integration-supplied sandbox profile alongside configured ones", () => {
-    const out = buildLaunchCommand(
-      arguments_({
-        safehouseAppendProfiles: ["/etc/from-config.sb"],
-        safehouseAgentIntegration: {
-          addDirsReadOnly: [],
-          envPass: [],
-          commandPreludes: [],
-          appendProfiles: ["/tmp/staged/cmux-socket.sb"],
-        },
-      }),
-    );
-
-    expect(out).toContain(
-      "--append-profile='/etc/from-config.sb' --append-profile='/tmp/staged/cmux-socket.sb'",
-    );
   });
 
   it("omits --append-profile when no sandbox profiles are requested", () => {

@@ -380,12 +380,16 @@ export interface Config {
        * Extra sandbox-exec profile files layered after the generated policy on
        * the agent wrap, forwarded as a repeated
        * `safehouse --append-profile=<path>`. Later rules win in sandbox-exec,
-       * so these can re-allow something the base policy denies — e.g. an
-       * `(allow network-outbound (literal "<socket>"))` rule granting the one
-       * unix socket an agent's editor integration needs. `~` is expanded.
-       * Paths are not checked here: safehouse refuses to launch on a path that
-       * does not exist, which is the right signal for a typo in a rule that
-       * something else silently depends on. Defaults to none.
+       * so these can re-allow something the base policy denies — e.g. a
+       * `(allow file-read* (subpath "<prefix>"))` rule for a host toolchain the
+       * generated policy does not know about. `~` is expanded. Paths are not
+       * checked here: safehouse refuses to launch on a path that does not
+       * exist, which is the right signal for a typo in a rule that something
+       * else silently depends on. Defaults to none.
+       *
+       * Whatever an appended profile re-opens is reachable by sandboxed code,
+       * so grant a concrete path rather than a control socket or RPC endpoint
+       * that can act on the sandbox's behalf.
        */
       appendProfile?: string[];
     };

@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -161,14 +161,6 @@ function safehouseAgentIntegrationFor(input: {
     task: input.task,
     homeDir: input.homeDir,
   });
-  const stagedSocketProfile = stageCmuxSocketProfile({
-    socketProfile: cmuxIntegration.socketProfile,
-    task: input.task,
-  });
-  const teardownPaths = [
-    ...(relocatedCmuxHooksHome === undefined ? [] : [relocatedCmuxHooksHome.parentDir]),
-    ...(stagedSocketProfile === undefined ? [] : [stagedSocketProfile.parentDir]),
-  ];
 
   return {
     addDirs: [
@@ -177,9 +169,6 @@ function safehouseAgentIntegrationFor(input: {
     ],
     addDirsReadOnly: cmuxIntegration.addDirsReadOnly,
     envPass: cmuxIntegration.envPass,
-    ...(stagedSocketProfile === undefined
-      ? {}
-      : { appendProfiles: [stagedSocketProfile.profilePath] }),
     commandPreludes: [
       ...(isClaudeAgent ? [cmuxIntegration.claudeCommandPrelude] : []),
       ...(relocatedCmuxHooksHome === undefined
@@ -198,28 +187,11 @@ function safehouseAgentIntegrationFor(input: {
       : {}),
     ...(relocatedCmuxHooksHome === undefined
       ? {}
-      : { writeBackFiles: relocatedCmuxHooksHome.writeBackFiles }),
-    ...(teardownPaths.length === 0 ? {} : { teardownPaths }),
+      : {
+          writeBackFiles: relocatedCmuxHooksHome.writeBackFiles,
+          teardownPaths: [relocatedCmuxHooksHome.parentDir],
+        }),
   };
-}
-
-/**
- * Stage clearance's cmux socket profile so safehouse can `--append-profile` it.
- * The rule depends on the runtime `CMUX_SOCKET_PATH`, so it cannot be a file
- * checked into either repo. Undefined when clearance reports no socket, which
- * leaves the launch exactly as it was before.
- */
-function stageCmuxSocketProfile(input: {
-  socketProfile: string | undefined;
-  task: string;
-}): { parentDir: string; profilePath: string } | undefined {
-  if (input.socketProfile === undefined) {
-    return undefined;
-  }
-  const parentDir = mkdtempSync(path.join(os.tmpdir(), `groundcrew-cmux-profile-${input.task}-`));
-  const profilePath = path.join(parentDir, "cmux-socket.sb");
-  writeFileSync(profilePath, input.socketProfile, { mode: 0o600 });
-  return { parentDir, profilePath };
 }
 
 /**
