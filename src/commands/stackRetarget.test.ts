@@ -6,7 +6,7 @@ import type { RunCommandOptions } from "../lib/commandRunner.ts";
 import type { ResolvedConfig } from "../lib/config.ts";
 import type { GitHubStack, StacksClient } from "../lib/githubStacks.ts";
 import type { CountMergeCommits, PullRequestSummary } from "../lib/pullRequests.ts";
-import { readRunState, recordRunState } from "../lib/runState.ts";
+import { readRunState, recordRunState, updateRunState } from "../lib/runState.ts";
 import type { BoardState, Issue } from "../lib/taskSource.ts";
 import { canonicalLinearIssue } from "../lib/testing/canonicalFixtures.ts";
 import { setVerbose } from "../lib/util.ts";
@@ -810,7 +810,7 @@ describe(createStackRetarget, () => {
     expect(readRunState(config, "team-2")?.baseBranch).toBe("dev-team-1");
   });
 
-  it("treats an empty parent-PR lookup (gh failure) as parent-not-merged and retargets to the parent", async () => {
+  it("leaves the PR base alone when the parent lookup is empty (no PR yet, or gh failed)", async () => {
     recordChildRunState({ baseBranch: "dev-team-1", parentTask: "team-1" });
     const findPullRequests = findPullRequestsRoutedBy({
       "dev-team-2": [pullRequest({ baseRefName: "main" })],
@@ -826,10 +826,44 @@ describe(createStackRetarget, () => {
       dryRun: false,
     });
 
+    expect(runGh).not.toHaveBeenCalled();
+    expect(consoleLog.output()).not.toContain("outcome=retargeted_to_parent");
+  });
+
+  it("treats a parent with an open PR as open even when an older PR on the same branch merged", async () => {
+    recordChildRunState({ baseBranch: "dev-team-1", parentTask: "team-1" });
+    const findPullRequests = findPullRequestsRoutedBy({
+      "dev-team-2": [pullRequest({ baseRefName: "main" })],
+      "dev-team-1": [
+        pullRequest({ number: 2, state: "merged" }),
+        pullRequest({ number: 3, state: "open", baseRefName: "main" }),
+      ],
+    });
+    const runGh = vi.fn<RunGhCommand>().mockResolvedValue("");
+    const runGit = gitFake({});
+
+    await runStackTick(stacksFake(), { findPullRequests, runGh, runGit });
+
+    expect(runGit.calls).toEqual([]);
     expect(runGh).toHaveBeenCalledWith(
       expect.objectContaining({ args: ["pr", "edit", "7", "--base", "dev-team-1"] }),
     );
     expect(consoleLog.output()).toContain("outcome=retargeted_to_parent");
+    expect(consoleLog.output()).not.toContain("outcome=rebased_onto_default");
+  });
+
+  it("logs lookup_failed and moves on when the parent PR lookup rejects for a non-abort reason", async () => {
+    recordChildRunState({ baseBranch: "dev-team-1", parentTask: "team-1" });
+    const findPullRequests = findPullRequestsRoutedBy({
+      "dev-team-2": [pullRequest({ baseRefName: "dev-team-1" })],
+      "dev-team-1": new Error("gh exploded"),
+    });
+    const runGit = gitFake({});
+
+    await runStackTick(stacksFake(), { findPullRequests, runGit });
+
+    expect(runGit.calls).toEqual([]);
+    expect(consoleLog.output()).toContain("outcome=lookup_failed");
   });
 
   it("logs retarget_failed when gh pr edit fails while retargeting a merged parent's PR onto the default branch", async () => {
@@ -1185,6 +1219,7 @@ describe(createStackRetarget, () => {
     expect(stacks.calls.created).toEqual([[3, 7]]);
     expect(consoleLog.output()).toContain("flow=stack-register");
     expect(consoleLog.output()).toContain("outcome=created");
+    expect(readRunState(config, "team-2")?.stackRegistered).toBe(true);
   });
 
   it("adds the child to the stack its parent is already part of", async () => {
@@ -1196,6 +1231,7 @@ describe(createStackRetarget, () => {
     expect(stacks.calls.added).toEqual([{ stackNumber: 55, pullRequests: [7] }]);
     expect(stacks.calls.created).toEqual([]);
     expect(consoleLog.output()).toContain("outcome=extended");
+    expect(readRunState(config, "team-2")?.stackRegistered).toBe(true);
   });
 
   it("leaves a child that is already stacked alone", async () => {
@@ -1207,6 +1243,7 @@ describe(createStackRetarget, () => {
     expect(stacks.calls.created).toEqual([]);
     expect(stacks.calls.added).toEqual([]);
     expect(consoleLog.output()).not.toContain("flow=stack-register");
+    expect(readRunState(config, "team-2")?.stackRegistered).toBe(true);
   });
 
   it("registers nothing when the stacks API is unavailable", async () => {
@@ -1217,6 +1254,7 @@ describe(createStackRetarget, () => {
 
     expect(stacks.calls.created).toEqual([]);
     expect(consoleLog.output()).not.toContain("flow=stack-register");
+    expect(readRunState(config, "team-2")?.stackRegistered).toBeUndefined();
   });
 
   it("reports a failed registration", async () => {
@@ -1410,6 +1448,67 @@ describe(createStackRetarget, () => {
     expect(consoleLog.output()).not.toContain("outcome=restacked_by_github");
   });
 
+  it("ignores a closed stack and rebases locally when a merged parent's child is only in that closed stack", async () => {
+    recordChildRunState({ baseBranch: "dev-team-1", parentTask: "team-1" });
+    const stacks = stacksFake({ listing: [{ number: 55, open: false, pullRequests: [3, 7] }] });
+    const runGit = gitFake({});
+    const findPullRequests = findPullRequestsRoutedBy({
+      "dev-team-2": [pullRequest({ baseRefName: "main" })],
+      "dev-team-1": [pullRequest({ number: 3, state: "merged" })],
+    });
+
+    await runStackTick(stacks, { findPullRequests, runGit });
+
+    expect(runGit.calls.map((call) => call.args[0])).toEqual(["fetch", "rebase", "push"]);
+    expect(consoleLog.output()).toContain("outcome=rebased_onto_default");
+    expect(consoleLog.output()).not.toContain("outcome=restacked_by_github");
+  });
+
+  it("waits instead of rewriting history when the listing is unavailable for a child registered earlier", async () => {
+    recordChildRunState({ baseBranch: "dev-team-1", parentTask: "team-1" });
+    updateRunState({ config, task: "team-2", patch: { state: "running", stackRegistered: true } });
+    const stacks = stacksFake({ available: false });
+    const runGit = gitFake({});
+    const findPullRequests = findPullRequestsRoutedBy({
+      "dev-team-2": [pullRequest({ baseRefName: "main" })],
+      "dev-team-1": [pullRequest({ number: 3, state: "merged" })],
+    });
+
+    await runStackTick(stacks, { findPullRequests, runGit });
+
+    expect(runGit.calls).toEqual([]);
+    expect(readRunState(config, "team-2")?.baseBranch).toBe("dev-team-1");
+    expect(consoleLog.output()).not.toContain("outcome=rebased_onto_default");
+  });
+
+  it("falls back to the local rebase when the listing is unavailable and the child was never registered", async () => {
+    recordChildRunState({ baseBranch: "dev-team-1", parentTask: "team-1" });
+    const stacks = stacksFake({ available: false });
+    const runGit = gitFake({});
+    const findPullRequests = findPullRequestsRoutedBy({
+      "dev-team-2": [pullRequest({ baseRefName: "main" })],
+      "dev-team-1": [pullRequest({ number: 3, state: "merged" })],
+    });
+
+    await runStackTick(stacks, { findPullRequests, runGit });
+
+    expect(runGit.calls.map((call) => call.args[0])).toEqual(["fetch", "rebase", "push"]);
+    expect(consoleLog.output()).toContain("outcome=rebased_onto_default");
+  });
+
+  it("records stackRegistered once the child is seen in an open GitHub stack after its parent merged", async () => {
+    recordChildRunState({ baseBranch: "dev-team-1", parentTask: "team-1" });
+    const stacks = stacksFake({ listing: [{ number: 55, open: true, pullRequests: [3, 7] }] });
+    const findPullRequests = findPullRequestsRoutedBy({
+      "dev-team-2": [pullRequest({ baseRefName: "dev-team-1" })],
+      "dev-team-1": [pullRequest({ number: 3, state: "merged" })],
+    });
+
+    await runStackTick(stacks, { findPullRequests, runGit: gitFake({}) });
+
+    expect(readRunState(config, "team-2")?.stackRegistered).toBe(true);
+  });
+
   it("still rebases locally when a merged parent's child was never stacked", async () => {
     recordChildRunState({ baseBranch: "dev-team-1", parentTask: "team-1" });
     const stacks = stacksFake();
@@ -1423,5 +1522,27 @@ describe(createStackRetarget, () => {
 
     expect(runGit.calls.map((call) => call.args[0])).toEqual(["fetch", "rebase", "push"]);
     expect(consoleLog.output()).toContain("outcome=rebased_onto_default");
+  });
+  it("rethrows when the parent PR lookup rejects after the run has been aborted", async () => {
+    recordChildRunState({ baseBranch: "dev-team-1", parentTask: "team-1" });
+    const findPullRequests = findPullRequestsRoutedBy({
+      "dev-team-2": [pullRequest({ baseRefName: "dev-team-1" })],
+      "dev-team-1": new Error("The operation was aborted"),
+    });
+    const stackRetarget = createStackRetarget({ findPullRequests, runGit: gitFake({}) });
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      stackRetarget.runOnce({
+        config,
+        state: boardOf([inProgressIssue("team-2")]),
+        worktreeEntries: [hostEntryFor("team-2")],
+        dryRun: false,
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow("The operation was aborted");
+
+    expect(consoleLog.output()).not.toContain("outcome=lookup_failed");
   });
 });

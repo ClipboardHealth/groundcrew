@@ -10,10 +10,13 @@
  * organisation has the preview off answers 404, so `listStacks` reports itself
  * unavailable rather than returning an empty list — the caller falls back to
  * the local retarget path instead of trying to create a stack every tick.
+ *
+ * Listing walks every page (`--paginate --slurp`, 100 per page) so a stack's
+ * page position never reads as absence.
  */
 
 import { runCommandAsync } from "./commandRunner.ts";
-import { debug, errorMessage, isRecord } from "./util.ts";
+import { debug, errorMessage, isRecord, isUnknownArray } from "./util.ts";
 
 const STACKS_API_VERSION = "2026-03-10";
 
@@ -71,11 +74,11 @@ function parseStacks(output: string): readonly GitHubStack[] {
   } catch {
     return [];
   }
-  if (!Array.isArray(parsed)) {
+  if (!isUnknownArray(parsed)) {
     return [];
   }
   const stacks: GitHubStack[] = [];
-  for (const entry of parsed) {
+  for (const entry of parsed.flatMap((page) => (isUnknownArray(page) ? page : []))) {
     const stack = toStack(entry);
     if (stack !== undefined) {
       stacks.push(stack);
@@ -132,7 +135,7 @@ export function createStacksClient(runGhApi: RunGhApi = runGhApiCommand): Stacks
       try {
         const output = await runGhApi({
           cwd,
-          args: apiArguments("repos/{owner}/{repo}/stacks"),
+          args: apiArguments("repos/{owner}/{repo}/stacks?per_page=100", ["--paginate", "--slurp"]),
           ...(signal === undefined ? {} : { signal }),
         });
         return { available: true, stacks: parseStacks(output) };

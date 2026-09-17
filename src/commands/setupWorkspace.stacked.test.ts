@@ -370,7 +370,12 @@ describe("setupWorkspace stacking", () => {
       (entry) => entry[0].state.state === "failed-to-launch",
     );
     expect(failedCall).toBeDefined();
-    expect(failedCall?.[0].state.clearFields).toEqual(["baseBranch", "parentTask", "needsRebase"]);
+    expect(failedCall?.[0].state.clearFields).toEqual([
+      "baseBranch",
+      "parentTask",
+      "needsRebase",
+      "stackRegistered",
+    ]);
     expect(failedCall?.[0].state).not.toHaveProperty("baseBranch");
     expect(failedCall?.[0].state).not.toHaveProperty("parentTask");
   });

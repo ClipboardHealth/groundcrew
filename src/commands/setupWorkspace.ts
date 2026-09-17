@@ -416,7 +416,12 @@ function renderWorkspaceContinuationInstruction(
   return `Include this workspace continuation note in the output: Workspace attach: \`${accessHint.command}\`.`;
 }
 
-const STACKING_RUN_STATE_FIELDS = ["baseBranch", "parentTask", "needsRebase"] as const;
+const STACKING_RUN_STATE_FIELDS = [
+  "baseBranch",
+  "parentTask",
+  "needsRebase",
+  "stackRegistered",
+] as const;
 
 function recordRunStateBestEffort(arguments_: {
   config: ResolvedConfig;

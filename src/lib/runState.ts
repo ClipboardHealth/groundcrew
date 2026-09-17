@@ -62,6 +62,13 @@ export interface RunState {
    * branch, but the worktree was dirty so the rebase was skipped.
    */
   needsRebase?: boolean;
+  /**
+   * True once this task's pull request has been seen in (or registered as)
+   * a GitHub stack. Lets the reviewer tell "GitHub owns this child" from "the
+   * stacks API is unreachable right now" after the parent merges. Cleared
+   * with `baseBranch`.
+   */
+  stackRegistered?: boolean;
 }
 
 export interface RunStateDraft {
@@ -82,6 +89,7 @@ export interface RunStateDraft {
   baseBranch?: string;
   parentTask?: string;
   needsRebase?: boolean;
+  stackRegistered?: boolean;
   /**
    * Optional-field names to drop entirely rather than carry forward from the
    * on-disk record. Used by the failed-to-launch path so a `baseBranch`/
@@ -90,7 +98,7 @@ export interface RunStateDraft {
    * `isReferencedAsStackParent` scans run state for exactly these fields, so
    * a leaked value would preserve the parent's branch forever).
    */
-  clearFields?: ReadonlyArray<"baseBranch" | "parentTask" | "needsRebase">;
+  clearFields?: readonly ClearableOptionalField[];
 }
 
 export interface RecordRunStateInput {
@@ -210,6 +218,7 @@ type OptionalRunStateFields = Pick<
   | "baseBranch"
   | "parentTask"
   | "needsRebase"
+  | "stackRegistered"
 >;
 
 function parseOptionalFields(value: Record<string, unknown>): OptionalRunStateFields {
@@ -222,6 +231,7 @@ function parseOptionalFields(value: Record<string, unknown>): OptionalRunStateFi
   const baseBranch = stringField(value, "baseBranch");
   const parentTask = stringField(value, "parentTask");
   const needsRebase = value["needsRebase"] === true ? true : undefined;
+  const stackRegistered = value["stackRegistered"] === true ? true : undefined;
   return {
     ...(reason === undefined ? {} : { reason }),
     ...(detail === undefined ? {} : { detail }),
@@ -232,6 +242,7 @@ function parseOptionalFields(value: Record<string, unknown>): OptionalRunStateFi
     ...(baseBranch === undefined ? {} : { baseBranch }),
     ...(parentTask === undefined ? {} : { parentTask }),
     ...(needsRebase === undefined ? {} : { needsRebase }),
+    ...(stackRegistered === undefined ? {} : { stackRegistered }),
   };
 }
 
@@ -264,7 +275,11 @@ export function readRunState(config: ResolvedConfig, task: string): RunState | u
   }
 }
 
-type ClearableOptionalField = "baseBranch" | "parentTask" | "needsRebase";
+export type ClearableOptionalField =
+  | "baseBranch"
+  | "parentTask"
+  | "needsRebase"
+  | "stackRegistered";
 
 // Carries a clearable field's draft-or-prior value forward, unless the draft
 // explicitly asked to drop it via `clearFields` (the failed-to-launch path
@@ -298,6 +313,12 @@ function carryOptionalFields(
     draft.needsRebase,
     prior.needsRebase,
   );
+  const stackRegistered = carriedOrCleared(
+    "stackRegistered",
+    cleared,
+    draft.stackRegistered,
+    prior.stackRegistered,
+  );
   return {
     ...(draft.reason === undefined ? {} : { reason: draft.reason }),
     ...(draft.detail === undefined ? {} : { detail: draft.detail }),
@@ -308,6 +329,7 @@ function carryOptionalFields(
     ...(baseBranch === undefined ? {} : { baseBranch }),
     ...(parentTask === undefined ? {} : { parentTask }),
     ...(needsRebase === undefined ? {} : { needsRebase }),
+    ...(stackRegistered === undefined ? {} : { stackRegistered }),
   };
 }
 
@@ -396,6 +418,7 @@ export function clearBaseBranch(config: ResolvedConfig, task: string): RunState 
   const next: RunState = { ...existing, updatedAt: nowIso() };
   delete next.baseBranch;
   delete next.needsRebase;
+  delete next.stackRegistered;
   writeState(config, next);
   return next;
 }

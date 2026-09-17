@@ -423,6 +423,7 @@ describe("run state store", () => {
         baseBranch: "dev-team-1",
         parentTask: "team-1",
         needsRebase: true,
+        stackRegistered: true,
       },
     });
 
@@ -453,6 +454,7 @@ describe("run state store", () => {
         baseBranch: "dev-team-1",
         parentTask: "team-1",
         needsRebase: true,
+        stackRegistered: true,
       },
     });
 
@@ -466,13 +468,14 @@ describe("run state store", () => {
         branchName: "dev-team-2",
         workspaceName: "team-2",
         state: "failed-to-launch",
-        clearFields: ["baseBranch", "parentTask", "needsRebase"],
+        clearFields: ["baseBranch", "parentTask", "needsRebase", "stackRegistered"],
       },
     });
 
     expect(cleared.baseBranch).toBeUndefined();
     expect(cleared.parentTask).toBeUndefined();
     expect(cleared.needsRebase).toBeUndefined();
+    expect(cleared.stackRegistered).toBeUndefined();
     expect(readRunState(config, "team-2")?.baseBranch).toBeUndefined();
     expect(readRunState(config, "team-2")?.parentTask).toBeUndefined();
     expect(readRunState(config, "team-2")?.needsRebase).toBeUndefined();
@@ -495,6 +498,7 @@ describe("run state store", () => {
         baseBranch: "dev-team-1",
         parentTask: "team-1",
         needsRebase: true,
+        stackRegistered: true,
       },
     });
 
@@ -515,6 +519,7 @@ describe("run state store", () => {
       baseBranch: "dev-team-1",
       parentTask: "team-1",
       needsRebase: true,
+      stackRegistered: true,
     });
   });
 

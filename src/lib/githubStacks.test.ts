@@ -15,11 +15,13 @@ function ghFake(response: string | Error): RunGhApi & { calls: Array<readonly st
 }
 
 const STACK_LISTING = JSON.stringify([
-  {
-    number: 1600,
-    open: true,
-    pull_requests: [{ number: 1591 }, { number: 1598 }],
-  },
+  [
+    {
+      number: 1600,
+      open: true,
+      pull_requests: [{ number: 1591 }, { number: 1598 }],
+    },
+  ],
 ]);
 
 describe(createStacksClient, () => {
@@ -36,7 +38,9 @@ describe(createStacksClient, () => {
       "api",
       "-H",
       "X-GitHub-Api-Version: 2026-03-10",
-      "repos/{owner}/{repo}/stacks",
+      "repos/{owner}/{repo}/stacks?per_page=100",
+      "--paginate",
+      "--slurp",
     ]);
   });
 
@@ -51,6 +55,7 @@ describe(createStacksClient, () => {
   it.each([
     ["output that is not JSON", "not json"],
     ["output that is not an array", '{"number":1}'],
+    ["a page that is not an array", '[{"number":1}]'],
   ])("reads %s as no stacks", async (_name, response) => {
     const listing = await createStacksClient(ghFake(response)).listStacks(REPOSITORY_CALL);
 
@@ -60,10 +65,12 @@ describe(createStacksClient, () => {
   it("skips entries that do not describe a stack", async () => {
     const runGh = ghFake(
       JSON.stringify([
-        null,
-        { number: "1600", pull_requests: [] },
-        { number: 1601, pull_requests: "nope" },
-        { number: 1602, pull_requests: [{ number: 7 }, null, { number: "8" }] },
+        [
+          null,
+          { number: "1600", pull_requests: [] },
+          { number: 1601, pull_requests: "nope" },
+          { number: 1602, pull_requests: [{ number: 7 }, null, { number: "8" }] },
+        ],
       ]),
     );
 
@@ -75,14 +82,32 @@ describe(createStacksClient, () => {
   it("treats a stack without an explicit open flag as open, and a closed one as closed", async () => {
     const runGh = ghFake(
       JSON.stringify([
-        { number: 1, pull_requests: [] },
-        { number: 2, open: false, pull_requests: [] },
+        [
+          { number: 1, pull_requests: [] },
+          { number: 2, open: false, pull_requests: [] },
+        ],
       ]),
     );
 
     const listing = await createStacksClient(runGh).listStacks(REPOSITORY_CALL);
 
     expect(listing.stacks.map((stack) => stack.open)).toEqual([true, false]);
+  });
+
+  it("flattens every page of a paginated listing", async () => {
+    const runGh = ghFake(
+      JSON.stringify([
+        [{ number: 1, pull_requests: [{ number: 10 }] }],
+        [{ number: 2, open: false, pull_requests: [{ number: 20 }] }],
+      ]),
+    );
+
+    const listing = await createStacksClient(runGh).listStacks(REPOSITORY_CALL);
+
+    expect(listing.stacks).toEqual([
+      { number: 1, open: true, pullRequests: [10] },
+      { number: 2, open: false, pullRequests: [20] },
+    ]);
   });
 
   it("creates a stack from an ordered list of pull requests", async () => {
