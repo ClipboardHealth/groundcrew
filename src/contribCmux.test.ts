@@ -37,9 +37,12 @@ describe("cmux contrib sidebar", () => {
       actual.indexOf("func agentColor"),
     );
 
+    const icons = [...iconSource.matchAll(/return "[^"]+"/gu)].map((match) => match[0]);
+
     expect(iconSource).toContain('k.contains("claude")');
     expect(iconSource).toContain('k.contains("codex")');
-    expect(new Set(iconSource.match(/return "[^"]+"/gu)).size).toBeGreaterThan(1);
+    expect(icons.length).toBeGreaterThan(1);
+    expect(new Set(icons).size).toBe(icons.length);
   });
 
   it("renders one row per agent session rather than merging them", () => {
