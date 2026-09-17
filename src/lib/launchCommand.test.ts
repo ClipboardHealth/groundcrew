@@ -170,6 +170,24 @@ describe(buildLaunchCommand, () => {
     expect(out.slice(0, agentWrapStart)).not.toContain("--append-profile");
   });
 
+  it("appends an integration-supplied sandbox profile alongside configured ones", () => {
+    const out = buildLaunchCommand(
+      arguments_({
+        safehouseAppendProfiles: ["/etc/from-config.sb"],
+        safehouseAgentIntegration: {
+          addDirsReadOnly: [],
+          envPass: [],
+          commandPreludes: [],
+          appendProfiles: ["/tmp/staged/cmux-socket.sb"],
+        },
+      }),
+    );
+
+    expect(out).toContain(
+      "--append-profile='/etc/from-config.sb' --append-profile='/tmp/staged/cmux-socket.sb'",
+    );
+  });
+
   it("omits --append-profile when no sandbox profiles are requested", () => {
     const out = buildLaunchCommand(arguments_({ prepareWorktreeCommand: "npm ci" }));
 

@@ -413,6 +413,13 @@ export interface SafehouseAgentIntegration {
    */
   addDirs?: readonly string[];
   /**
+   * Extra sandbox-exec profiles contributed by the integration, appended after
+   * the ones from `local.safehouse.appendProfile`. Used for grants the
+   * integration alone can compute — e.g. clearance's cmux socket profile, whose
+   * rule depends on the runtime `CMUX_SOCKET_PATH`.
+   */
+  appendProfiles?: readonly string[];
+  /**
    * Files copied from their staged sandbox location back to the source store
    * by the host after the agent exits. This keeps credential refreshes without
    * granting the sandbox write access to the source config home.
@@ -727,7 +734,8 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
   // profile only — the repo-controlled prepareWorktree hook never needs them.
   const safehouseEnableFlag = safehouseEnableFeaturesFlag(arguments_.safehouseEnableFeatures ?? []);
   const safehouseAppendProfileFlag = safehouseAppendProfilesFlag(
-    arguments_.safehouseAppendProfiles ?? [],
+    arguments_.safehouseAppendProfiles,
+    safehouseAgentIntegration?.appendProfiles,
   );
   const safehouseWrapper = safehouseWrapperCommand(arguments_.networkEgress);
 
@@ -889,8 +897,16 @@ function safehouseEnableFeaturesFlag(features: readonly string[]): string {
   return features.length === 0 ? "" : `--enable=${shellSingleQuote(features.join(","))} `;
 }
 
-function safehouseAppendProfilesFlag(profiles: readonly string[]): string {
-  return uniqueStrings([...profiles])
+/**
+ * Configured profiles first, then integration-supplied ones. Order is only
+ * cosmetic — sandbox-exec resolves by last matching rule across all appended
+ * profiles, and these grant disjoint things.
+ */
+function safehouseAppendProfilesFlag(
+  configured: readonly string[] | undefined,
+  integration: readonly string[] | undefined,
+): string {
+  return uniqueStrings([...(configured ?? []), ...(integration ?? [])])
     .map((profile) => `--append-profile=${shellSingleQuote(profile)} `)
     .join("");
 }

@@ -465,6 +465,36 @@ describe(composeAgentLaunch, () => {
     expect(launchCommand).toContain("--append-profile='/etc/cmux.sb'");
   });
 
+  it("stages clearance's cmux socket profile and appends it to the agent wrap", () => {
+    const launchCommand = compose({ workspaceKind: "cmux" });
+
+    const staged = /--append-profile='([^']+cmux-socket\.sb)'/.exec(launchCommand);
+    expect(staged).not.toBeNull();
+    expect(readFileSync(staged![1]!, "utf8")).toContain("network-outbound");
+  });
+
+  it("omits the socket profile when clearance reports no cmux socket", () => {
+    resolveSafehouseCmuxIntegrationMock.mockReturnValue(
+      safehouseCmuxIntegrationFixture({ socketProfile: undefined }),
+    );
+
+    const launchCommand = compose({ workspaceKind: "cmux" });
+
+    expect(launchCommand).not.toContain("cmux-socket.sb");
+  });
+
+  it("cleans up without error when the launch staged nothing", () => {
+    resolveSafehouseCmuxIntegrationMock.mockReturnValue(
+      safehouseCmuxIntegrationFixture({ socketProfile: undefined }),
+    );
+
+    const result = composeLaunch({ definition: definition({ cmd: "claude", color: "#000" }) });
+
+    expect(() => {
+      result.cleanup();
+    }).not.toThrow();
+  });
+
   it("omits --append-profile for non-safehouse runners", () => {
     const launchCommand = compose({ runner: "none", safehouseAppendProfiles: ["/etc/cmux.sb"] });
 
