@@ -605,6 +605,53 @@ describe(status, () => {
     expect(output).not.toMatch(/team-2[\s\S]* {2}attach:/);
   });
 
+  it("shows `stacked on <parentTask>` in the inventory for a task with baseBranch set", async () => {
+    listWorktreesMock.mockReturnValue([worktree({ task: "team-2", repository: "repo-a" })]);
+    readRunStateMock.mockReturnValue(
+      runState({ task: "team-2", baseBranch: "dev-team-1", parentTask: "team-1" }),
+    );
+
+    await status(makeConfig());
+
+    expect(consoleLog.output()).toContain("  stack:     stacked on team-1");
+  });
+
+  it("shows `needs rebase` in the inventory when the run state's needsRebase flag is set", async () => {
+    listWorktreesMock.mockReturnValue([worktree({ task: "team-1", repository: "repo-a" })]);
+    readRunStateMock.mockReturnValue(runState({ needsRebase: true }));
+
+    await status(makeConfig());
+
+    expect(consoleLog.output()).toContain("  stack:     needs rebase");
+  });
+
+  it("combines both stack facts into a single `stack:` row when a dirty stacked child couldn't rebase", async () => {
+    listWorktreesMock.mockReturnValue([worktree({ task: "team-2", repository: "repo-a" })]);
+    readRunStateMock.mockReturnValue(
+      runState({
+        task: "team-2",
+        baseBranch: "dev-team-1",
+        parentTask: "team-1",
+        needsRebase: true,
+      }),
+    );
+
+    await status(makeConfig());
+
+    const output = consoleLog.output();
+    expect(output).toContain("  stack:     stacked on team-1, needs rebase");
+    expect(output.match(/ {2}stack:/g)).toHaveLength(1);
+  });
+
+  it("omits the `stack:` lines for a task with no stacking run-state fields", async () => {
+    listWorktreesMock.mockReturnValue([worktree({ task: "team-1", repository: "repo-a" })]);
+    readRunStateMock.mockReturnValue(runState());
+
+    await status(makeConfig());
+
+    expect(consoleLog.output()).not.toContain("  stack:");
+  });
+
   it("omits only the failed attach hint when one workspace access hint lookup rejects", async () => {
     listWorktreesMock.mockReturnValue([
       worktree({ task: "team-1", repository: "repo-a" }),

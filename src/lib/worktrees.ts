@@ -25,7 +25,7 @@ import {
 import { resolveDefaultBranch } from "./defaultBranch.ts";
 import { assertPlainTaskId, isPlainTaskId } from "./taskId.ts";
 import { debug, errorMessage, isVerbose } from "./util.ts";
-import { hasAdoptedBranch } from "./worktreeRunState.ts";
+import { hasAdoptedBranch, isReferencedAsStackParent } from "./worktreeRunState.ts";
 import { type WorkspaceProbe, workspaces } from "./workspaces.ts";
 
 const WORKTREE_LIST_PREFIX = "worktree ";
@@ -39,6 +39,34 @@ export class WorktreeAlreadyExistsError extends Error {
     super(`Worktree already exists: ${dir}`);
     this.dir = dir;
     this.name = "WorktreeAlreadyExistsError";
+  }
+}
+
+/**
+ * Thrown when a stacked create() would reattach a surviving local branch
+ * whose run state names a different (or no) baseBranch. Reattaching anyway
+ * would silently drop the stack: the branch stays where it is, but callers
+ * would believe it was rebuilt on the newly requested parent.
+ */
+export class StackedBaseBranchMismatchError extends Error {
+  public readonly task: string;
+  public readonly requestedBaseBranch: string | undefined;
+  public readonly recordedBaseBranch: string | undefined;
+
+  public constructor(arguments_: {
+    task: string;
+    requestedBaseBranch: string | undefined;
+    recordedBaseBranch: string | undefined;
+  }) {
+    const recorded = arguments_.recordedBaseBranch ?? "none";
+    const requested = arguments_.requestedBaseBranch ?? "none";
+    super(
+      `Branch for "${arguments_.task}" already exists locally, but its run state records baseBranch "${recorded}", not the requested "${requested}". Run 'crew cleanup ${arguments_.task}' first rather than silently reattaching.`,
+    );
+    this.task = arguments_.task;
+    this.requestedBaseBranch = arguments_.requestedBaseBranch;
+    this.recordedBaseBranch = arguments_.recordedBaseBranch;
+    this.name = "StackedBaseBranchMismatchError";
   }
 }
 
@@ -61,6 +89,15 @@ export interface WorktreeEntry {
 export interface WorktreeSpec {
   repository: string;
   task: string;
+  /** Parent branch to base the worktree (and PR) on, when stacking is enabled. */
+  baseBranch?: string;
+  /**
+   * The baseBranch already on record for this task before this call, read by
+   * the caller before it wrote any run state of its own. Drives the reattach
+   * guard (`assertReattachableBaseBranch`) without racing a "provisioning"
+   * row the same call is about to stamp with `baseBranch`.
+   */
+  recordedBaseBranch?: string;
 }
 
 export interface WorktreeOpenSpec {
@@ -87,11 +124,16 @@ function branchNameForTask(config: ResolvedConfig, task: string): string {
   return `${branchPrefix(config)}-${task}`;
 }
 
+/** Pure path resolution for a known repository's clone dir; no existence check. */
+export function resolveRepoDir(config: ResolvedConfig, repository: string): string {
+  return path.resolve(repositoryBaseDir(config, repository), repository);
+}
+
 // Membership in knownRepositories is enforced by recipeFor (called first in
 // basePaths), so this resolves the clone dir for a repo already known to exist
 // in config and only guards against the clone being absent on disk.
 function repoDirFor(config: ResolvedConfig, repository: string): string {
-  const repoDir = path.resolve(repositoryBaseDir(config, repository), repository);
+  const repoDir = resolveRepoDir(config, repository);
   if (!existsSync(repoDir)) {
     throw new Error(`Repository not found: ${repoDir}`);
   }
@@ -212,7 +254,9 @@ function basePaths(config: ResolvedConfig, repository: string, task: string): Ba
   };
 }
 
-function signalProperty(signal?: AbortSignal): { signal: AbortSignal } | Record<never, never> {
+export function signalProperty(
+  signal?: AbortSignal,
+): { signal: AbortSignal } | Record<never, never> {
   return signal === undefined ? {} : { signal };
 }
 
@@ -284,6 +328,28 @@ function hostWorktreeEntry(arguments_: {
   return { ...arguments_, kind: "host" };
 }
 
+/**
+ * Refuse to silently reattach a surviving local branch under a different
+ * stack than the one just requested — that would leave the branch based on
+ * whatever it was created from while every caller believes it is now stacked
+ * on `requestedBaseBranch`. Fires both when the requested and recorded
+ * baseBranch disagree, and when a stack was recorded but none is requested
+ * now (the task was stacked, got interrupted, and its blocker has since
+ * resolved). `recordedBaseBranch` is supplied by the caller rather than read
+ * from disk here, so it reflects the state *before* any write this call
+ * makes of its own — see `WorktreeSpec.recordedBaseBranch`.
+ */
+function assertReattachableBaseBranch(arguments_: {
+  task: string;
+  requestedBaseBranch: string | undefined;
+  recordedBaseBranch: string | undefined;
+}): void {
+  if (arguments_.recordedBaseBranch === arguments_.requestedBaseBranch) {
+    return;
+  }
+  throw new StackedBaseBranchMismatchError(arguments_);
+}
+
 async function createWorktree(
   config: ResolvedConfig,
   spec: WorktreeSpec,
@@ -291,6 +357,11 @@ async function createWorktree(
 ): Promise<WorktreeEntry> {
   const base = basePaths(config, spec.repository, spec.task);
   const recipe = recipeFor(config, spec.repository);
+  if (spec.baseBranch !== undefined && recipe.provision !== undefined) {
+    throw new Error(
+      `Stacked worktrees are not supported for provision/sparse-checkout repository "${spec.repository}".`,
+    );
+  }
   if (recipe.provision === undefined) {
     // A prior run can leave the `<prefix>-<task>` branch behind after its
     // worktree directory is gone — teardown deletes the branch only
@@ -298,6 +369,11 @@ async function createWorktree(
     // Attaching the surviving branch reuses its work instead of crashing on
     // `git worktree add -b <existing branch>`.
     if (await localBranchExists(base.repoDir, base.branchName, signal)) {
+      assertReattachableBaseBranch({
+        task: spec.task,
+        requestedBaseBranch: spec.baseBranch,
+        recordedBaseBranch: spec.recordedBaseBranch,
+      });
       debug(
         `Branch ${base.branchName} already exists; attaching it to worktree ${spec.repository}-${spec.task}...`,
       );
@@ -306,16 +382,18 @@ async function createWorktree(
         signal,
       );
     } else {
-      const defaultBranch = await resolveDefaultBranch({
-        repoDir: base.repoDir,
-        remote: config.git.remote,
-        fallback: config.git.defaultBranch,
-        ...signalProperty(signal),
-      });
-      const baseRef = `${config.git.remote}/${defaultBranch}`;
+      const branchToFetch =
+        spec.baseBranch ??
+        (await resolveDefaultBranch({
+          repoDir: base.repoDir,
+          remote: config.git.remote,
+          fallback: config.git.defaultBranch,
+          ...signalProperty(signal),
+        }));
+      const baseRef = `${config.git.remote}/${branchToFetch}`;
       debug(`Fetching ${baseRef} in ${spec.repository}...`);
       await runLongGitCommand(
-        ["-C", base.repoDir, "fetch", config.git.remote, defaultBranch],
+        ["-C", base.repoDir, "fetch", config.git.remote, branchToFetch],
         signal,
       );
       debug(
@@ -356,7 +434,7 @@ async function createWorktree(
   });
 }
 
-async function localBranchExists(
+export async function localBranchExists(
   repoDir: string,
   branch: string,
   signal?: AbortSignal,
@@ -502,7 +580,7 @@ async function removeWorktree(
     await removeScriptedWorktree(config, entry, recipe.provision.remove, options);
     return;
   }
-  const repoDir = path.resolve(repositoryBaseDir(config, entry.repository), entry.repository);
+  const repoDir = resolveRepoDir(config, entry.repository);
 
   if (existsSync(entry.dir)) {
     debug(`Removing worktree ${entry.dir}${options.force ? " (--force)" : ""}...`);
@@ -560,11 +638,50 @@ async function removeWorktree(
     debug(`Preserving adopted branch ${entry.branchName} (not groundcrew-created).`);
     return;
   }
+  if (isReferencedAsStackParent({ config, task: entry.task })) {
+    debug(`Preserving branch ${entry.branchName}: a stacked child still references it as parent.`);
+    return;
+  }
   await deleteBranchBestEffort({
     cmd: "git",
     cmdArgs: ["-C", repoDir, "branch", "-D", entry.branchName],
     branchName: entry.branchName,
     ...signalProperty(options.signal),
+  });
+}
+
+/**
+ * Deletes a stack parent's local branch once nothing references it anymore.
+ * `removeWorktree` preserves a parent's branch while `isReferencedAsStackParent`
+ * holds, but that check only runs at the moment the parent's own worktree is
+ * torn down — usually before its child gets a chance to rebase. Once the
+ * child rebases and clears its own `baseBranch` (`stackRetarget.ts`), it is
+ * this function's job to reclaim the branch if the parent is by then long
+ * gone: still a no-op (git refuses) if the parent's worktree is somehow
+ * still live, and a no-op if another child still references the parent.
+ */
+export async function reclaimStackParentBranch(
+  config: ResolvedConfig,
+  arguments_: {
+    repository: string;
+    parentTask: string;
+    branchName: string;
+    signal?: AbortSignal;
+  },
+): Promise<void> {
+  const { repository, parentTask, branchName, signal } = arguments_;
+  if (isReferencedAsStackParent({ config, task: parentTask })) {
+    return;
+  }
+  if (findByTask(config, parentTask).length > 0) {
+    return;
+  }
+  const repoDir = resolveRepoDir(config, repository);
+  await deleteBranchBestEffort({
+    cmd: "git",
+    cmdArgs: ["-C", repoDir, "branch", "-D", branchName],
+    branchName,
+    ...signalProperty(signal),
   });
 }
 

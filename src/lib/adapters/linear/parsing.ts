@@ -4,10 +4,15 @@
  */
 
 import { AGENT_ANY, isBuiltInAgentNotEnabled, type ResolvedConfig } from "../../config.ts";
-import { RepositoryResolutionError, type WorktreePreparation } from "../../taskSource.ts";
+import {
+  RepositoryResolutionError,
+  type StackingPreference,
+  type WorktreePreparation,
+} from "../../taskSource.ts";
 
 export const AGENT_LABEL_PREFIX = "agent-";
 const SKIP_PREPARE_WORKTREE_LABEL = "groundcrew-skip-prepare";
+const NO_STACK_LABEL = "groundcrew-no-stack";
 
 export type RepositoryResolution = { kind: "ok"; repository: string } | { kind: "missing" };
 
@@ -23,6 +28,12 @@ export function resolveWorktreePreparation(arguments_: {
   return arguments_.labels.some((label) => label.name === SKIP_PREPARE_WORKTREE_LABEL)
     ? "skip"
     : undefined;
+}
+
+export function resolveStackingPreference(arguments_: {
+  labels: Array<{ name: string }>;
+}): StackingPreference | undefined {
+  return arguments_.labels.some((label) => label.name === NO_STACK_LABEL) ? "opted-out" : undefined;
 }
 
 function escapeRegex(value: string): string {

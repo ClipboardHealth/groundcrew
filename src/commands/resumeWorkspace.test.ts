@@ -485,6 +485,24 @@ describe(resumeWorkspace, () => {
     expect(lastRecordedRunState().completionTaskId).toBe("team-1");
   });
 
+  it("threads the recorded baseBranch into the resumed worker's environment", async () => {
+    readRunStateMock.mockReturnValue(makeRunState({ baseBranch: "dev-team-0" }));
+
+    await resumeWorkspace(config, { task: "team-1" });
+
+    const launchScript = stagedLaunchScript();
+    expect(launchScript).toContain("export GROUNDCREW_BASE_BRANCH='dev-team-0'");
+  });
+
+  it("omits GROUNDCREW_BASE_BRANCH from the resumed worker's environment when the task isn't stacked", async () => {
+    readRunStateMock.mockReturnValue(makeRunState());
+
+    await resumeWorkspace(config, { task: "team-1" });
+
+    const launchScript = stagedLaunchScript();
+    expect(launchScript).not.toContain("GROUNDCREW_BASE_BRANCH");
+  });
+
   it("sets worker self-completion command when the recorded source can mark done", async () => {
     const todoConfig: ResolvedConfig = {
       ...config,

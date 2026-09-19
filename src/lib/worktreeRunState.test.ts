@@ -1,6 +1,14 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
 import type { RunCommandOptions } from "./commandRunner.ts";
-import type { RunState } from "./runState.ts";
-import { effectiveBranchNameFromRunState as resolveBranch } from "./worktreeRunState.ts";
+import type { ResolvedConfig } from "./config.ts";
+import { recordRunState, type RunState } from "./runState.ts";
+import {
+  effectiveBranchNameFromRunState as resolveBranch,
+  isReferencedAsStackParent,
+} from "./worktreeRunState.ts";
 
 type RunCommandAsyncMock = (
   command: string,
@@ -152,5 +160,124 @@ describe(resolveBranch, () => {
     });
 
     expect(result).toBe(ENTRY_BRANCH);
+  });
+});
+
+function makeStackedConfig(stateRoot: string): ResolvedConfig {
+  return {
+    sources: [],
+    defaults: { hooks: {} },
+    git: { remote: "origin", defaultBranch: "main" },
+    workspace: {
+      projectDir: "/work",
+      knownRepositories: ["repo-a"],
+      repositories: [{ name: "repo-a" }],
+    },
+    orchestrator: {
+      maximumInProgress: 4,
+      pollIntervalMilliseconds: 1000,
+      sessionLimitPercentage: 85,
+    },
+    agents: { default: "claude", definitions: { claude: { cmd: "claude", color: "#fff" } } },
+    prompts: { initial: "x" },
+    workspaceKind: "auto",
+    local: {
+      runner: "auto",
+      networkEgress: "allowlisted",
+      safehouse: { enable: [] },
+      readOnlyDirs: [],
+    },
+    logging: { file: path.join(stateRoot, "groundcrew.log") },
+  };
+}
+
+describe(isReferencedAsStackParent, () => {
+  let stateRoot: string;
+  let config: ResolvedConfig;
+
+  beforeEach(() => {
+    stateRoot = mkdtempSync(path.join(tmpdir(), "groundcrew-stack-parent-"));
+    config = makeStackedConfig(stateRoot);
+  });
+
+  afterEach(() => {
+    rmSync(stateRoot, { recursive: true, force: true });
+  });
+
+  it("is true when a child's run state names the task as parentTask with baseBranch set", () => {
+    recordRunState({
+      config,
+      state: {
+        task: "team-2",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-2",
+        branchName: "dev-team-2",
+        workspaceName: "team-2",
+        state: "running",
+        baseBranch: "dev-team-1",
+        parentTask: "team-1",
+      },
+    });
+
+    expect(isReferencedAsStackParent({ config, task: "team-1" })).toBe(true);
+  });
+
+  it("is false once the child has rebased and baseBranch was cleared", () => {
+    recordRunState({
+      config,
+      state: {
+        task: "team-2",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-2",
+        branchName: "dev-team-2",
+        workspaceName: "team-2",
+        state: "running",
+        parentTask: "team-1",
+      },
+    });
+
+    expect(isReferencedAsStackParent({ config, task: "team-1" })).toBe(false);
+  });
+
+  it("is false when no run state names the task as parentTask", () => {
+    recordRunState({
+      config,
+      state: {
+        task: "team-2",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-2",
+        branchName: "dev-team-2",
+        workspaceName: "team-2",
+        state: "running",
+      },
+    });
+
+    expect(isReferencedAsStackParent({ config, task: "team-1" })).toBe(false);
+  });
+
+  it("is false when the runs directory does not exist", () => {
+    expect(isReferencedAsStackParent({ config, task: "team-1" })).toBe(false);
+  });
+
+  it("is false for a failed-to-launch run state even with baseBranch and parentTask set", () => {
+    recordRunState({
+      config,
+      state: {
+        task: "team-2",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-2",
+        branchName: "dev-team-2",
+        workspaceName: "team-2",
+        state: "failed-to-launch",
+        baseBranch: "dev-team-1",
+        parentTask: "team-1",
+      },
+    });
+
+    expect(isReferencedAsStackParent({ config, task: "team-1" })).toBe(false);
   });
 });
