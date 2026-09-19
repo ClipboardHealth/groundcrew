@@ -30,6 +30,41 @@ describe("cmux contrib sidebar", () => {
     expect(titleParserSource).toContain("if segs.count != 2 {");
   });
 
+  it("distinguishes agent runtimes so claude and codex are told apart", () => {
+    const actual = readFileSync(SIDEBAR_PATH, "utf8");
+    const iconSource = actual.slice(
+      actual.indexOf("func agentIcon"),
+      actual.indexOf("func agentColor"),
+    );
+
+    const icons = [...iconSource.matchAll(/return "[^"]+"/gu)].map((match) => match[0]);
+
+    expect(iconSource).toContain('k.contains("claude")');
+    expect(iconSource).toContain('k.contains("codex")');
+    expect(icons.length).toBeGreaterThan(1);
+    expect(new Set(icons).size).toBe(icons.length);
+  });
+
+  it("renders one row per agent session rather than merging them", () => {
+    const actual = readFileSync(SIDEBAR_PATH, "utf8");
+
+    expect(actual).toContain("ForEach(ags) { a in");
+    expect(actual).toContain("stateIcon(a.status)");
+    expect(actual).toContain("help(agentTooltip(a))");
+  });
+
+  it("falls back to the native status pill when no agents are reported", () => {
+    const actual = readFileSync(SIDEBAR_PATH, "utf8");
+    const gateSource = actual.slice(
+      actual.indexOf("func showsNativeStatus"),
+      actual.indexOf("func isTask"),
+    );
+
+    expect(gateSource).toContain("if hasAgents(w) {");
+    expect(gateSource).toContain("return false");
+    expect(actual).toContain("if showsNativeStatus(w) {");
+  });
+
   it("preserves the dirty-worktree guard during cleanup", () => {
     const actual = readFileSync(SIDEBAR_PATH, "utf8");
 
