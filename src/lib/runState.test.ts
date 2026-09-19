@@ -37,7 +37,7 @@ function makeConfig(stateRoot: string): ResolvedConfig {
     local: {
       runner: "auto",
       networkEgress: "allowlisted",
-      safehouse: { enable: [] },
+      safehouse: { enable: [], appendProfile: [] },
       readOnlyDirs: [],
     },
     logging: { file: path.join(stateRoot, "groundcrew.log") },
