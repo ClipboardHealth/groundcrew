@@ -7,6 +7,7 @@ import { workspaces } from "../lib/workspaces.ts";
 import type { WorktreeEntry } from "../lib/worktrees.ts";
 import { setVerbose } from "../lib/util.ts";
 import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCapture.ts";
+import { makeLocalConfig } from "../testHelpers/localConfig.ts";
 import { createDispatcher, formatActiveSlotList } from "./dispatcher.ts";
 import { setupWorkspace } from "./setupWorkspace.ts";
 
@@ -58,12 +59,7 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
     },
     prompts: { initial: "x", ...overrides.prompts },
     workspaceKind: overrides.workspaceKind ?? "auto",
-    local: {
-      runner: "auto",
-      networkEgress: "allowlisted",
-      safehouse: { enable: [] },
-      readOnlyDirs: [],
-    },
+    local: makeLocalConfig(overrides.local),
     logging: { file: "/tmp/groundcrew-test.log", ...overrides.logging },
   };
 }

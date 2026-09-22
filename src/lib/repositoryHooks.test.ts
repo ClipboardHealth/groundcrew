@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import type { ResolvedConfig } from "./config.ts";
+import { makeLocalConfig } from "../testHelpers/localConfig.ts";
 import {
   resolvePrepareWorktreeCommand,
   resolveRepositoryPreparationCommands,
@@ -47,12 +48,7 @@ function preparationConfig(): ResolvedConfig {
     },
     prompts: { initial: "x" },
     workspaceKind: "auto",
-    local: {
-      runner: "auto",
-      networkEgress: "allowlisted",
-      safehouse: { enable: [] },
-      readOnlyDirs: [],
-    },
+    local: makeLocalConfig(),
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }

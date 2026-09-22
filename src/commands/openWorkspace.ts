@@ -289,7 +289,7 @@ export async function openWorkspace(
       sandboxName,
       workspaceKind,
       readOnlyDirs: config.local.readOnlyDirs,
-      safehouseEnableFeatures: config.local.safehouse.enable,
+      safehouse: config.local.safehouse,
       omitPromptArgument,
     });
     cleanupAgentLaunch = launch.cleanup;

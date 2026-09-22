@@ -3,6 +3,7 @@ import { canonicalBlocker, canonicalLinearIssue } from "../lib/testing/canonical
 import { isGroundcrewIssue, type GroundcrewIssue } from "../lib/taskSource.ts";
 import type { UsageByAgent } from "../lib/usage.ts";
 import type { WorktreeEntry } from "../lib/worktrees.ts";
+import { makeLocalConfig } from "../testHelpers/localConfig.ts";
 import {
   type ClassifyArguments,
   classifyBlockers,
@@ -47,12 +48,7 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
     },
     prompts: { initial: "x", ...overrides.prompts },
     workspaceKind: overrides.workspaceKind ?? "auto",
-    local: {
-      runner: "auto",
-      networkEgress: "allowlisted",
-      safehouse: { enable: [] },
-      readOnlyDirs: [],
-    },
+    local: makeLocalConfig(overrides.local),
     logging: { file: "/tmp/groundcrew-test.log", ...overrides.logging },
   };
 }

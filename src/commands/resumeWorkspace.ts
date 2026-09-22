@@ -296,7 +296,7 @@ export async function resumeWorkspace(
         markDoneSupported: context.completionMarkDoneSupported,
       }),
       taskSourceWritePaths,
-      safehouseEnableFeatures: config.local.safehouse.enable,
+      safehouse: config.local.safehouse,
     });
     cleanupAgentLaunch = launch.cleanup;
     const launchCmd = stageWorkspaceLaunchCommand(stagedPrompt.directory, launch.command);

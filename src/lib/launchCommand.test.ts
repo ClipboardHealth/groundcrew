@@ -3,6 +3,8 @@ import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+import { makeLocalConfig } from "../testHelpers/localConfig.ts";
+
 import { BUILD_SECRET_NAMES, type AgentDefinition } from "./config.ts";
 import {
   buildLaunchCommand,
@@ -27,6 +29,7 @@ function arguments_(
     workingDir: worktreeDir,
     runner: "safehouse",
     networkEgress: "allowlisted",
+    safehouse: makeLocalConfig().safehouse,
     ...overrides,
   };
 }
@@ -138,7 +141,7 @@ describe(buildLaunchCommand, () => {
     const out = buildLaunchCommand(
       arguments_({
         prepareWorktreeCommand: "npm ci",
-        safehouseEnableFeatures: ["browser-native-messaging", "agent-browser"],
+        safehouse: { enable: ["browser-native-messaging", "agent-browser"], appendProfile: [] },
       }),
     );
 
@@ -150,6 +153,30 @@ describe(buildLaunchCommand, () => {
     expect(out.split(enableFlag).length - 1).toBe(1);
     expect(out).toContain(`${enableFlag} "$_safehouse_shim" -c`);
     expect(out.slice(0, agentWrapStart)).not.toContain("--enable");
+  });
+
+  it("layers requested sandbox profiles on the agent wrap only via --append-profile", () => {
+    const out = buildLaunchCommand(
+      arguments_({
+        prepareWorktreeCommand: "npm ci",
+        safehouse: { enable: [], appendProfile: ["/etc/mytool.sb", "/etc/extra profile.sb"] },
+      }),
+    );
+
+    const flags = "--append-profile='/etc/mytool.sb' --append-profile='/etc/extra profile.sb'";
+    // The shim-dir line splits the prepareWorktree wrap (before) from the agent
+    // wrap (after); appended profiles belong only to the latter.
+    const agentWrapStart = out.indexOf("_safehouse_shim_dir=$(mktemp");
+
+    expect(out.split(flags).length - 1).toBe(1);
+    expect(out).toContain(`${flags} "$_safehouse_shim" -c`);
+    expect(out.slice(0, agentWrapStart)).not.toContain("--append-profile");
+  });
+
+  it("omits --append-profile when no sandbox profiles are requested", () => {
+    const out = buildLaunchCommand(arguments_({ prepareWorktreeCommand: "npm ci" }));
+
+    expect(out).not.toContain("--append-profile");
   });
 
   it("omits --enable when no Safehouse features are requested", () => {

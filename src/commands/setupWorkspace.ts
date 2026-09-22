@@ -187,7 +187,7 @@ export async function setupWorkspace(
         markDoneSupported: completionMarkDoneSupported,
       }),
       taskSourceWritePaths,
-      safehouseEnableFeatures: config.local.safehouse.enable,
+      safehouse: config.local.safehouse,
     });
     cleanupAgentLaunch = launch.cleanup;
     const launchCmd = stageWorkspaceLaunchCommand(promptDir, launch.command);

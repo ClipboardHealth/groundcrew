@@ -6,6 +6,7 @@ import path from "node:path";
 
 import type { RunCommandOptions } from "./commandRunner.ts";
 import type { ResolvedConfig } from "./config.ts";
+import { makeLocalConfig } from "../testHelpers/localConfig.ts";
 import { recordRunState } from "./runState.ts";
 import { setVerbose } from "./util.ts";
 import { worktrees } from "./worktrees.ts";
@@ -65,12 +66,7 @@ function makeConfig(overrides: {
     agents: { default: "claude", definitions: { claude: { cmd: "claude", color: "#fff" } } },
     prompts: { initial: "x" },
     workspaceKind: "auto",
-    local: {
-      runner: "auto",
-      networkEgress: "allowlisted",
-      safehouse: { enable: [] },
-      readOnlyDirs: [],
-    },
+    local: makeLocalConfig(),
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }

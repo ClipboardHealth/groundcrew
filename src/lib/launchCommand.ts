@@ -8,6 +8,7 @@ import {
   type LocalRunner,
   type AgentDefinition,
   type NetworkEgressSetting,
+  type ResolvedConfig,
 } from "./config.ts";
 import { clearanceAllowHostsFilesFromEnvironment } from "./clearanceAllowlist.ts";
 import { buildPreLaunchEmptyCheckLines } from "./preLaunchEmptyCheck.ts";
@@ -499,14 +500,11 @@ interface LaunchCommandArguments {
    */
   safehouseAgentAddDirs?: readonly string[] | undefined;
   /**
-   * Optional Safehouse integrations turned on for the agent wrap, emitted as
-   * `--enable=<comma-list>` before the profile shim. Each name layers the
-   * matching optional sandbox profile (e.g. `agent-browser`) on top of the
-   * agent's deny-by-default policy. Withheld from the repo-controlled
-   * prepareWorktree wrap, which never needs them. Empty/undefined → no
-   * `--enable` flag.
+   * Resolved operator tuning, consumed only by the Safehouse agent wrap.
+   * Feature names emit --enable; profile paths emit repeated --append-profile
+   * flags. Neither applies to the repo-controlled prepareWorktree wrap.
    */
-  safehouseEnableFeatures?: readonly string[] | undefined;
+  safehouse: ResolvedConfig["local"]["safehouse"];
   /**
    * Extra read-only paths granted only to the Safehouse agent wrap via
    * `--add-dirs-ro` (host toolchains the Safehouse profile masks but doesn't
@@ -716,7 +714,10 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
   );
   // Optional sandbox integrations (e.g. `agent-browser`) layered onto the agent
   // profile only — the repo-controlled prepareWorktree hook never needs them.
-  const safehouseEnableFlag = safehouseEnableFeaturesFlag(arguments_.safehouseEnableFeatures ?? []);
+  const safehouseEnableFlag = safehouseEnableFeaturesFlag(arguments_.safehouse.enable);
+  const safehouseAppendProfileFlag = safehouseAppendProfilesFlag(
+    arguments_.safehouse.appendProfile,
+  );
   const safehouseWrapper = safehouseWrapperCommand(arguments_.networkEgress);
 
   // Extra paths an integration staged for the agent wrap (e.g. codex's
@@ -780,7 +781,7 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
     // Running the real launch chain as `sh -c` would make it see `sh`, so use
     // an agent-named symlink to /bin/sh. This preserves per-agent profile
     // selection without enabling every agent profile.
-    `{ ${safehouseWrapper} ${safehouseAgentAddDirsFlag}${safehouseAgentAddDirsReadOnlyFlag}${safehouseEnableFlag}${agentEnvPassFlag}"$_safehouse_shim" -c ${shellSingleQuote(agentCommand)} sh${promptPositional(arguments_.omitPromptArgument)}; _safehouse_status=$?; rm -rf "$_safehouse_shim_dir";${successPathCleanupSegment(writeBackCmd, teardownCleanupCmd)} trap - EXIT; exit "$_safehouse_status"; }`,
+    `{ ${safehouseWrapper} ${safehouseAgentAddDirsFlag}${safehouseAgentAddDirsReadOnlyFlag}${safehouseEnableFlag}${safehouseAppendProfileFlag}${agentEnvPassFlag}"$_safehouse_shim" -c ${shellSingleQuote(agentCommand)} sh${promptPositional(arguments_.omitPromptArgument)}; _safehouse_status=$?; rm -rf "$_safehouse_shim_dir";${successPathCleanupSegment(writeBackCmd, teardownCleanupCmd)} trap - EXIT; exit "$_safehouse_status"; }`,
   );
   return lines.join(" && ");
 }
@@ -875,6 +876,10 @@ function safehousePathListFlag(
 
 function safehouseEnableFeaturesFlag(features: readonly string[]): string {
   return features.length === 0 ? "" : `--enable=${shellSingleQuote(features.join(","))} `;
+}
+
+function safehouseAppendProfilesFlag(profiles: readonly string[]): string {
+  return profiles.map((profile) => `--append-profile=${shellSingleQuote(profile)} `).join("");
 }
 
 function uniqueStrings(values: readonly string[]): string[] {

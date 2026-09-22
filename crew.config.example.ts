@@ -186,6 +186,15 @@ export default {
   // // sdx/none runners.
   // local: { safehouse: { enable: ["agent-browser"] } },
   //
+  // // Custom sandbox-exec rules for the agent wrap, forwarded as repeated
+  // // `safehouse --append-profile=<path>` flags. For read-only toolchain
+  // // directories, prefer `local.readOnlyDirs`; use profiles for other policy
+  // // rules. `~` is expanded; missing profiles fail the launch. Ignored by
+  // // sdx/none and withheld from repo-controlled prepareWorktree hooks.
+  // // Grant only the required access: a supervisor's control socket can let
+  // // sandboxed code launch commands outside the sandbox.
+  // local: { safehouse: { appendProfile: ["~/.config/groundcrew/mytool.sb"] } },
+  //
   // // Groundcrew does not create or authenticate sdx sandboxes. For an sdx
   // // agent, create the matching sandbox yourself before first launch:
   // //   sbx create --name groundcrew-claude claude ~/dev/groundcrew

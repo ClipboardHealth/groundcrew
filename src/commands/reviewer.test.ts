@@ -12,6 +12,7 @@ import type { BoardState, Issue, MarkDoneResult, MarkInReviewResult } from "../l
 import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 import { makeBoard } from "../testHelpers/boardFixtures.ts";
 import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCapture.ts";
+import { makeLocalConfig } from "../testHelpers/localConfig.ts";
 import { emptyTeardownResult } from "../testHelpers/teardownResult.ts";
 import { createReviewer, type FindPullRequests } from "./reviewer.ts";
 
@@ -86,12 +87,7 @@ function makeConfig(stateRoot: string): ResolvedConfig {
     },
     prompts: { initial: "x" },
     workspaceKind: "auto",
-    local: {
-      runner: "auto",
-      networkEgress: "allowlisted",
-      safehouse: { enable: [] },
-      readOnlyDirs: [],
-    },
+    local: makeLocalConfig(),
     logging: { file: path.join(stateRoot, "groundcrew.log") },
   };
 }

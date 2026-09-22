@@ -10,6 +10,7 @@ import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
 import { readRunState, recordRunState, type RunState } from "../lib/runState.ts";
 import { seedLaunchWorkspaceTrust } from "../lib/seedLaunchWorkspaceTrust.ts";
 import { safehouseCmuxIntegrationFixture } from "../testHelpers/safehouseCmuxIntegration.ts";
+import { makeLocalConfig } from "../testHelpers/localConfig.ts";
 import { log } from "../lib/util.ts";
 import { workspaces } from "../lib/workspaces.ts";
 import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
@@ -204,12 +205,7 @@ function makeConfig(): ResolvedConfig {
     },
     prompts: { initial: "x" },
     workspaceKind: "auto",
-    local: {
-      runner: "auto",
-      networkEgress: "allowlisted",
-      safehouse: { enable: [] },
-      readOnlyDirs: [],
-    },
+    local: makeLocalConfig(),
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }
@@ -632,12 +628,7 @@ describe(resumeWorkspace, () => {
   it("wraps with bare safehouse and skips the clearance daemon when networkEgress is open", async () => {
     const openEgress = {
       ...makeConfig(),
-      local: {
-        runner: "safehouse" as const,
-        networkEgress: "open" as const,
-        safehouse: { enable: [] },
-        readOnlyDirs: [],
-      },
+      local: makeLocalConfig({ runner: "safehouse", networkEgress: "open" }),
     };
 
     await resumeWorkspace(openEgress, { task: "team-1" });
@@ -658,12 +649,7 @@ describe(resumeWorkspace, () => {
     // has no effect: it is rejected by the same worker-env guard as allowlisted.
     const cmdOwned: ResolvedConfig = {
       ...makeConfig(),
-      local: {
-        runner: "safehouse",
-        networkEgress: "open",
-        safehouse: { enable: [] },
-        readOnlyDirs: [],
-      },
+      local: makeLocalConfig({ runner: "safehouse", networkEgress: "open" }),
       agents: {
         default: "claude",
         definitions: { claude: { cmd: "safehouse claude --auto", color: "#fff" } },
@@ -678,12 +664,7 @@ describe(resumeWorkspace, () => {
   it("does not add task source sandbox grants for unsandboxed resume runners", async () => {
     const noneConfig: ResolvedConfig = {
       ...makeConfig(),
-      local: {
-        runner: "none",
-        networkEgress: "allowlisted",
-        safehouse: { enable: [] },
-        readOnlyDirs: [],
-      },
+      local: makeLocalConfig({ runner: "none" }),
       sources: [
         { kind: "linear" },
         {
