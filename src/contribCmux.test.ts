@@ -48,9 +48,22 @@ describe("cmux contrib sidebar", () => {
   it("renders one row per agent session rather than merging them", () => {
     const actual = readFileSync(SIDEBAR_PATH, "utf8");
 
-    expect(actual).toContain("ForEach(ags) { a in");
     expect(actual).toContain("stateIcon(a.status)");
     expect(actual).toContain("help(agentTooltip(a))");
+  });
+
+  it("collapses registry records that share a pid into one row", () => {
+    const actual = readFileSync(SIDEBAR_PATH, "utf8");
+    const dedupeSource = actual.slice(
+      actual.indexOf("func agentKey"),
+      actual.indexOf("func agentName"),
+    );
+
+    expect(dedupeSource).toContain('return "pid:" + String(p)');
+    expect(dedupeSource).toContain('return "id:" + a.id');
+    expect(dedupeSource).toContain("list.first(where: { b in agentKey(b) == key })");
+    expect(actual).toContain("ForEach(distinctAgents(ags)) { a in");
+    expect(actual).not.toContain("ForEach(ags) { a in");
   });
 
   it("falls back to the native status pill when no agents are reported", () => {

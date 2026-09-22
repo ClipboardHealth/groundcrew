@@ -360,6 +360,29 @@ func agentColor(_ k) -> String {
   return "#475569"
 }
 
+// One codex process can hold two registry records: cmux keys sessions by id and
+// only reconciles a superseded id back to its canonical one for claude, so a
+// second id resolved for the same pid becomes a second record. Collapse by pid
+// so a process renders once; records without a pid fall back to their own id
+// and are never merged together.
+func agentKey(_ a) -> String {
+  if let p = a.pid {
+    return "pid:" + String(p)
+  }
+  return "id:" + a.id
+}
+
+func firstAgentIdWithKey(_ list, _ key) -> String {
+  if let f = list.first(where: { b in agentKey(b) == key }) {
+    return f.id
+  }
+  return ""
+}
+
+func distinctAgents(_ list) -> Array {
+  return list.filter { a in firstAgentIdWithKey(list, agentKey(a)) == a.id }
+}
+
 func agentName(_ a) -> String {
   if a.name != "" {
     return a.name
@@ -474,7 +497,7 @@ VStack(alignment: .leading, spacing: 8) {
         }
 
         if let ags = w.agents {
-          ForEach(ags) { a in
+          ForEach(distinctAgents(ags)) { a in
             HStack(spacing: 6) {
               Image(systemName: agentIcon(a.kind))
                 .font(.system(size: 11))
