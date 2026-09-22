@@ -4,6 +4,7 @@ import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import type { TaskSource } from "../lib/taskSource.ts";
 import { captureConsoleLog } from "../testHelpers/consoleCapture.ts";
+import { makeLocalConfig } from "../testHelpers/localConfig.ts";
 
 import { sourceCli } from "./source.ts";
 
@@ -51,12 +52,7 @@ function makeConfig(): ResolvedConfig {
     },
     prompts: { initial: "x" },
     workspaceKind: "auto",
-    local: {
-      runner: "auto",
-      networkEgress: "allowlisted",
-      safehouse: { enable: [], appendProfile: [] },
-      readOnlyDirs: [],
-    },
+    local: makeLocalConfig(),
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }

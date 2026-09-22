@@ -8,6 +8,7 @@ import { probeError } from "../testHelpers/workspaceProbe.ts";
 import type * as commandRunnerModule from "./commandRunner.ts";
 import { runCommandAsync, type RunCommandOptions } from "./commandRunner.ts";
 import type { ResolvedConfig } from "./config.ts";
+import { makeLocalConfig } from "../testHelpers/localConfig.ts";
 import { setVerbose } from "./util.ts";
 import { workspaces } from "./workspaces.ts";
 import { resolveLaunchDir, type WorktreeEntry, worktrees } from "./worktrees.ts";
@@ -91,12 +92,7 @@ function makeConfig(overrides: {
     agents: { default: "claude", definitions: agents },
     prompts: { initial: "x" },
     workspaceKind: "auto",
-    local: {
-      runner: "auto",
-      networkEgress: "allowlisted",
-      safehouse: { enable: [], appendProfile: [] },
-      readOnlyDirs: [],
-    },
+    local: makeLocalConfig(),
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }

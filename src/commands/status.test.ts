@@ -11,6 +11,7 @@ import path from "node:path";
 
 import { buildSources } from "../lib/buildSources.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
+import { makeLocalConfig } from "../testHelpers/localConfig.ts";
 import { findPullRequestsForBranch, type PullRequestSummary } from "../lib/pullRequests.ts";
 import { readRunState, type RunState } from "../lib/runState.ts";
 import type { LocalStatusDocument, RemoteStatusDocument } from "../lib/statusSnapshot.ts";
@@ -166,13 +167,7 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
     },
     prompts: { initial: "x", ...overrides.prompts },
     workspaceKind: overrides.workspaceKind ?? "auto",
-    local: {
-      runner: "auto",
-      networkEgress: "allowlisted",
-      safehouse: { enable: [], appendProfile: [] },
-      readOnlyDirs: [],
-      ...overrides.local,
-    },
+    local: makeLocalConfig(overrides.local),
     logging: { file: "/tmp/groundcrew-test.log", ...overrides.logging },
   };
 }

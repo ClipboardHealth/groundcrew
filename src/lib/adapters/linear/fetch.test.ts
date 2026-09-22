@@ -1,6 +1,7 @@
 import type { LinearClient } from "@linear/sdk";
 
 import { captureConsoleLog, type ConsoleCapture } from "../../../testHelpers/consoleCapture.ts";
+import { makeLocalConfig } from "../../../testHelpers/localConfig.ts";
 import type { ResolvedConfig } from "../../config.ts";
 import {
   blockersFromRelations,
@@ -74,12 +75,7 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
     },
     prompts: { initial: "x", ...overrides.prompts },
     workspaceKind: overrides.workspaceKind ?? "auto",
-    local: {
-      runner: "auto",
-      networkEgress: "allowlisted",
-      safehouse: { enable: [], appendProfile: [] },
-      readOnlyDirs: [],
-    },
+    local: makeLocalConfig(),
     logging: { file: "/tmp/groundcrew-test.log", ...overrides.logging },
   };
 }

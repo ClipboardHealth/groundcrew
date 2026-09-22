@@ -3,6 +3,7 @@ import { readRunState, recordRunState, type RunState } from "../lib/runState.ts"
 import { workspaces } from "../lib/workspaces.ts";
 import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCapture.ts";
+import { makeLocalConfig } from "../testHelpers/localConfig.ts";
 import { interruptWorkspace, interruptWorkspaceCli } from "./interruptWorkspace.ts";
 
 vi.mock(import("../lib/config.ts"), async (importOriginal) => {
@@ -77,12 +78,7 @@ function makeConfig(): ResolvedConfig {
     },
     prompts: { initial: "x" },
     workspaceKind: "auto",
-    local: {
-      runner: "auto",
-      networkEgress: "allowlisted",
-      safehouse: { enable: [], appendProfile: [] },
-      readOnlyDirs: [],
-    },
+    local: makeLocalConfig(),
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }

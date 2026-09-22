@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import type { ResolvedConfig } from "./config.ts";
+import { makeLocalConfig } from "../testHelpers/localConfig.ts";
 import {
   readRunState,
   recordRunState,
@@ -34,12 +35,7 @@ function makeConfig(stateRoot: string): ResolvedConfig {
     },
     prompts: { initial: "x" },
     workspaceKind: "auto",
-    local: {
-      runner: "auto",
-      networkEgress: "allowlisted",
-      safehouse: { enable: [], appendProfile: [] },
-      readOnlyDirs: [],
-    },
+    local: makeLocalConfig(),
     logging: { file: path.join(stateRoot, "groundcrew.log") },
   };
 }

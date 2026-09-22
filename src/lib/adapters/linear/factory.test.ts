@@ -14,6 +14,7 @@ import type {
 } from "../../taskSource.ts";
 import { readEnvironmentVariable } from "../../util.ts";
 import { deleteEnvironmentVariable, setEnvironmentVariable } from "../../../testHelpers/env.ts";
+import { makeLocalConfig } from "../../../testHelpers/localConfig.ts";
 import * as boardSource from "./fetch.ts";
 import type { Issue as LinearIssue } from "./fetch.ts";
 import * as linearIssueStatus from "./writeback.ts";
@@ -47,12 +48,7 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
     },
     prompts: { initial: "x", ...overrides.prompts },
     workspaceKind: overrides.workspaceKind ?? "auto",
-    local: {
-      runner: "auto",
-      networkEgress: "allowlisted",
-      safehouse: { enable: [], appendProfile: [] },
-      readOnlyDirs: [],
-    },
+    local: makeLocalConfig(),
     logging: { file: "/tmp/groundcrew-test.log", ...overrides.logging },
   };
 }

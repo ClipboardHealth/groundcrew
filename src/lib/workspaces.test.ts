@@ -4,6 +4,7 @@ import path from "node:path";
 
 import { deleteEnvironmentVariable, setEnvironmentVariable } from "../testHelpers/env.ts";
 import { probeError } from "../testHelpers/workspaceProbe.ts";
+import { makeLocalConfig } from "../testHelpers/localConfig.ts";
 import type { RunCommandOptions } from "./commandRunner.ts";
 import type { ResolvedConfig, WorkspaceKindSetting } from "./config.ts";
 import type * as hostModule from "./host.ts";
@@ -96,12 +97,7 @@ function makeConfig(workspaceKind: WorkspaceKindSetting = "auto"): ResolvedConfi
     },
     prompts: { initial: "x" },
     workspaceKind,
-    local: {
-      runner: "auto",
-      networkEgress: "allowlisted",
-      safehouse: { enable: [], appendProfile: [] },
-      readOnlyDirs: [],
-    },
+    local: makeLocalConfig(),
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }

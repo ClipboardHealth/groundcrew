@@ -11,6 +11,7 @@ import {
 import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
 import type { Task, TaskSource } from "../lib/taskSource.ts";
 import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCapture.ts";
+import { makeLocalConfig } from "../testHelpers/localConfig.ts";
 import { doctor } from "./doctor.ts";
 
 interface NodeFsMock {
@@ -120,12 +121,7 @@ function makeConfig(overrides: Partial<ResolvedConfig["agents"]> = {}): Resolved
     },
     prompts: { initial: "x" },
     workspaceKind: "auto",
-    local: {
-      runner: "auto",
-      networkEgress: "allowlisted",
-      safehouse: { enable: [], appendProfile: [] },
-      readOnlyDirs: [],
-    },
+    local: makeLocalConfig(),
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }
@@ -719,12 +715,7 @@ describe(doctor, () => {
     detectHostMock.mockResolvedValue(host());
     loadConfigMock.mockResolvedValue({
       ...makeConfig(),
-      local: {
-        runner: "none",
-        networkEgress: "allowlisted",
-        safehouse: { enable: [], appendProfile: [] },
-        readOnlyDirs: [],
-      },
+      local: makeLocalConfig({ runner: "none" }),
     });
 
     const actual = await doctor();
@@ -739,12 +730,7 @@ describe(doctor, () => {
     detectHostMock.mockResolvedValue(host({ hasSbx: true }));
     loadConfigMock.mockResolvedValue({
       ...makeConfig(),
-      local: {
-        runner: "sdx",
-        networkEgress: "allowlisted",
-        safehouse: { enable: [], appendProfile: [] },
-        readOnlyDirs: [],
-      },
+      local: makeLocalConfig({ runner: "sdx" }),
     });
 
     const actual = await doctor();
