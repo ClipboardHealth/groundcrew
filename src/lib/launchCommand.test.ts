@@ -3,6 +3,8 @@ import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+import { makeLocalConfig } from "../testHelpers/localConfig.ts";
+
 import { BUILD_SECRET_NAMES, type AgentDefinition } from "./config.ts";
 import {
   buildLaunchCommand,
@@ -27,6 +29,7 @@ function arguments_(
     workingDir: worktreeDir,
     runner: "safehouse",
     networkEgress: "allowlisted",
+    safehouse: makeLocalConfig().safehouse,
     ...overrides,
   };
 }
@@ -138,7 +141,7 @@ describe(buildLaunchCommand, () => {
     const out = buildLaunchCommand(
       arguments_({
         prepareWorktreeCommand: "npm ci",
-        safehouseEnableFeatures: ["browser-native-messaging", "agent-browser"],
+        safehouse: { enable: ["browser-native-messaging", "agent-browser"], appendProfile: [] },
       }),
     );
 
@@ -156,7 +159,7 @@ describe(buildLaunchCommand, () => {
     const out = buildLaunchCommand(
       arguments_({
         prepareWorktreeCommand: "npm ci",
-        safehouseAppendProfiles: ["/etc/mytool.sb", "/etc/extra profile.sb"],
+        safehouse: { enable: [], appendProfile: ["/etc/mytool.sb", "/etc/extra profile.sb"] },
       }),
     );
 

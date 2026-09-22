@@ -186,22 +186,13 @@ export default {
   // // sdx/none runners.
   // local: { safehouse: { enable: ["agent-browser"] } },
   //
-  // // Extra sandbox-exec profiles layered after the generated policy on the
-  // // agent wrap (forwarded as one `safehouse --append-profile=<path>` each).
-  // // sandbox-exec resolves by last matching rule, so these re-allow something
-  // // the base policy denies — an escape hatch for a host-specific toolchain
-  // // path the generated policy does not know about. `~` is expanded, and
-  // // Safehouse refuses to launch if a path does not exist. Ignored by the
-  // // sdx/none runners.
-  // //
-  // // Grant the narrowest thing that unblocks the tool. A profile that re-opens
-  // // a control socket or an RPC endpoint hands sandboxed code whatever that
-  // // endpoint can do, which for a supervisor that spawns processes is the
-  // // whole sandbox.
-  // //
-  // //   (version 1)
-  // //   (allow file-read* (subpath "/opt/homebrew/Cellar/mytool"))
-  // //
+  // // Custom sandbox-exec rules for the agent wrap, forwarded as repeated
+  // // `safehouse --append-profile=<path>` flags. For read-only toolchain
+  // // directories, prefer `local.readOnlyDirs`; use profiles for other policy
+  // // rules. `~` is expanded; missing profiles fail the launch. Ignored by
+  // // sdx/none and withheld from repo-controlled prepareWorktree hooks.
+  // // Grant only the required access: a supervisor's control socket can let
+  // // sandboxed code launch commands outside the sandbox.
   // local: { safehouse: { appendProfile: ["~/.config/groundcrew/mytool.sb"] } },
   //
   // // Groundcrew does not create or authenticate sdx sandboxes. For an sdx

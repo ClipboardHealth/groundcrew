@@ -43,7 +43,7 @@ export interface ComposedAgentLaunch {
   cleanup: () => void;
 }
 
-/** Build the workspace launch command shared by fresh runs and resumes. */
+/** Build the workspace launch command shared by setup, resume, and open. */
 export function composeAgentLaunch(input: {
   runner: LocalRunner;
   networkEgress: NetworkEgressSetting;
@@ -60,8 +60,7 @@ export function composeAgentLaunch(input: {
   workerEnvironment?: WorkerEnvironment | undefined;
   omitPromptArgument?: boolean | undefined;
   taskSourceWritePaths?: readonly string[] | undefined;
-  safehouseEnableFeatures?: readonly string[] | undefined;
-  safehouseAppendProfiles?: readonly string[] | undefined;
+  safehouse: ResolvedConfig["local"]["safehouse"];
   readOnlyDirs?: readonly string[] | undefined;
   /**
    * Test-only seam: overrides `os.homedir()` when staging a relocated agent
@@ -105,10 +104,7 @@ export function composeAgentLaunch(input: {
           input.runner === "safehouse" ? resolveSafehouseAddDirs(input.worktreeDir) : undefined,
         safehouseAgentAddDirs:
           input.runner === "safehouse" ? (input.taskSourceWritePaths ?? []) : undefined,
-        safehouseEnableFeatures:
-          input.runner === "safehouse" ? input.safehouseEnableFeatures : undefined,
-        safehouseAppendProfiles:
-          input.runner === "safehouse" ? input.safehouseAppendProfiles : undefined,
+        safehouse: input.safehouse,
         // Safehouse rejects nonexistent --add-dirs-ro paths, so drop absent ones.
         safehouseAgentAddDirsReadOnly:
           input.runner === "safehouse" ? (input.readOnlyDirs ?? []).filter(existsSync) : undefined,

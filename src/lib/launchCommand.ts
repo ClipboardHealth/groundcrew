@@ -8,6 +8,7 @@ import {
   type LocalRunner,
   type AgentDefinition,
   type NetworkEgressSetting,
+  type ResolvedConfig,
 } from "./config.ts";
 import { clearanceAllowHostsFilesFromEnvironment } from "./clearanceAllowlist.ts";
 import { buildPreLaunchEmptyCheckLines } from "./preLaunchEmptyCheck.ts";
@@ -499,23 +500,11 @@ interface LaunchCommandArguments {
    */
   safehouseAgentAddDirs?: readonly string[] | undefined;
   /**
-   * Optional Safehouse integrations turned on for the agent wrap, emitted as
-   * `--enable=<comma-list>` before the profile shim. Each name layers the
-   * matching optional sandbox profile (e.g. `agent-browser`) on top of the
-   * agent's deny-by-default policy. Withheld from the repo-controlled
-   * prepareWorktree wrap, which never needs them. Empty/undefined → no
-   * `--enable` flag.
+   * Resolved operator tuning, consumed only by the Safehouse agent wrap.
+   * Feature names emit --enable; profile paths emit repeated --append-profile
+   * flags. Neither applies to the repo-controlled prepareWorktree wrap.
    */
-  safehouseEnableFeatures?: readonly string[] | undefined;
-  /**
-   * Extra sandbox-exec profile files layered after the generated policy on the
-   * agent wrap, emitted as one `--append-profile=<path>` per entry. sandbox-exec
-   * resolves by last matching rule, so an appended profile can re-allow
-   * something the base policy denies. Withheld from the repo-controlled
-   * prepareWorktree wrap, which never needs them. Empty/undefined → no
-   * `--append-profile` flag.
-   */
-  safehouseAppendProfiles?: readonly string[] | undefined;
+  safehouse: ResolvedConfig["local"]["safehouse"];
   /**
    * Extra read-only paths granted only to the Safehouse agent wrap via
    * `--add-dirs-ro` (host toolchains the Safehouse profile masks but doesn't
@@ -725,9 +714,9 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
   );
   // Optional sandbox integrations (e.g. `agent-browser`) layered onto the agent
   // profile only — the repo-controlled prepareWorktree hook never needs them.
-  const safehouseEnableFlag = safehouseEnableFeaturesFlag(arguments_.safehouseEnableFeatures ?? []);
+  const safehouseEnableFlag = safehouseEnableFeaturesFlag(arguments_.safehouse.enable);
   const safehouseAppendProfileFlag = safehouseAppendProfilesFlag(
-    arguments_.safehouseAppendProfiles,
+    arguments_.safehouse.appendProfile,
   );
   const safehouseWrapper = safehouseWrapperCommand(arguments_.networkEgress);
 
@@ -889,10 +878,8 @@ function safehouseEnableFeaturesFlag(features: readonly string[]): string {
   return features.length === 0 ? "" : `--enable=${shellSingleQuote(features.join(","))} `;
 }
 
-function safehouseAppendProfilesFlag(profiles: readonly string[] | undefined): string {
-  return uniqueStrings(profiles ?? [])
-    .map((profile) => `--append-profile=${shellSingleQuote(profile)} `)
-    .join("");
+function safehouseAppendProfilesFlag(profiles: readonly string[]): string {
+  return profiles.map((profile) => `--append-profile=${shellSingleQuote(profile)} `).join("");
 }
 
 function uniqueStrings(values: readonly string[]): string[] {
