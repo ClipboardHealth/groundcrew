@@ -123,11 +123,32 @@ func ticketOf(_ w) -> String {
   return ticketFromTitle(w)
 }
 
+func hasAgents(_ w) -> Bool {
+  if let ags = w.agents {
+    if ags.count > 0 {
+      return true
+    }
+  }
+  return false
+}
+
+// Agent rows supersede the native pill: both describe lifecycle state, and the
+// per-agent rows carry strictly more (runtime identity, one state per session).
+func showsNativeStatus(_ w) -> Bool {
+  if hasAgents(w) {
+    return false
+  }
+  return hasStatus(w)
+}
+
 func isTask(_ w) -> Bool {
   if hasPR(w) {
     return true
   }
   if hasStatus(w) {
+    return true
+  }
+  if hasAgents(w) {
     return true
   }
   if ticketOf(w) != "" {
@@ -165,6 +186,9 @@ func stateColor(_ s) -> String {
   if s.contains("interrupt") {
     return "#B7791F"
   }
+  if s.contains("needs_input") {
+    return "#F59E0B"
+  }
   if s.contains("resumed") {
     return "#1D4ED8"
   }
@@ -177,6 +201,12 @@ func stateColor(_ s) -> String {
   if s.contains("running") {
     return "#15803D"
   }
+  if s.contains("idle") {
+    return "#15803D"
+  }
+  if s.contains("ended") {
+    return "#64748B"
+  }
   return "#475569"
 }
 
@@ -186,6 +216,9 @@ func stateBackground(_ s) -> String {
   }
   if s.contains("interrupt") {
     return "#B7791F14"
+  }
+  if s.contains("needs_input") {
+    return "#F59E0B1A"
   }
   if s.contains("resumed") {
     return "#1D4ED814"
@@ -199,6 +232,12 @@ func stateBackground(_ s) -> String {
   if s.contains("running") {
     return "#15803D14"
   }
+  if s.contains("idle") {
+    return "#15803D14"
+  }
+  if s.contains("ended") {
+    return "#64748B12"
+  }
   return "#0000000A"
 }
 
@@ -208,6 +247,9 @@ func stateIcon(_ s) -> String {
   }
   if s.contains("interrupt") {
     return "exclamationmark.triangle.fill"
+  }
+  if s.contains("needs_input") {
+    return "exclamationmark.circle.fill"
   }
   if s.contains("done") {
     return "checkmark.circle.fill"
@@ -224,6 +266,9 @@ func stateIcon(_ s) -> String {
   if s.contains("idle") {
     return "pause.circle"
   }
+  if s.contains("ended") {
+    return "checkmark.circle"
+  }
   return "circle"
 }
 
@@ -237,12 +282,22 @@ func activeState(_ s) -> Bool {
   if s.contains("resumed") {
     return true
   }
+  if s.contains("needs_input") {
+    return true
+  }
   return false
 }
 
-func statusValue(_ w) -> String {
+// The row's lifecycle state: the native entry when one exists, else the most
+// recent agent session's own state.
+func rowStateValue(_ w) -> String {
   if let s = w.status {
     return s.value
+  }
+  if let ags = w.agents {
+    if ags.count > 0 {
+      return ags[0].status
+    }
   }
   return ""
 }
@@ -254,7 +309,118 @@ func statusColor(_ w) -> String {
     }
     return stateColor(s.value)
   }
+  return stateColor(rowStateValue(w))
+}
+
+func stateText(_ s) -> String {
+  if s.contains("needs_input") {
+    return "needs you"
+  }
+  return s
+}
+
+// SF Symbols stand in for each runtime's brand mark: the interpreter's Image
+// only resolves system symbols, so cmux's own AgentIcons assets are out of
+// reach here. The tooltip carries the unambiguous name.
+func agentIcon(_ k) -> String {
+  if k.contains("claude") {
+    return "sparkles"
+  }
+  if k.contains("codex") {
+    return "circle.hexagongrid.fill"
+  }
+  if k.contains("gemini") {
+    return "diamond.fill"
+  }
+  if k.contains("grok") {
+    return "bolt.fill"
+  }
+  if k.contains("opencode") {
+    return "chevron.left.forwardslash.chevron.right"
+  }
+  return "cpu"
+}
+
+func agentColor(_ k) -> String {
+  if k.contains("claude") {
+    return "#D97757"
+  }
+  if k.contains("codex") {
+    return "#111827"
+  }
+  if k.contains("gemini") {
+    return "#1A73E8"
+  }
+  if k.contains("grok") {
+    return "#7C3AED"
+  }
+  if k.contains("opencode") {
+    return "#0891B2"
+  }
   return "#475569"
+}
+
+// One codex process can hold two registry records: cmux keys sessions by id and
+// only reconciles a superseded id back to its canonical one for claude, so a
+// second id resolved for the same pid becomes a second record. Collapse by pid
+// so a process renders once; records without a pid fall back to their own id
+// and are never merged together. The surviving record is the one whose state is
+// most worth showing, because the duplicates disagree: the stale copy commonly
+// reads idle while the process is still working.
+func stateRank(_ s) -> Int {
+  if s == "needs_input" {
+    return 3
+  }
+  if s == "working" {
+    return 2
+  }
+  if s == "idle" {
+    return 1
+  }
+  return 0
+}
+
+func agentKey(_ a) -> String {
+  if let p = a.pid {
+    return "pid:" + String(p)
+  }
+  return "id:" + a.id
+}
+
+func bestRankForKey(_ list, _ key) -> Int {
+  return list.reduce(0) { acc, b in
+    if agentKey(b) == key && stateRank(b.status) > acc {
+      return stateRank(b.status)
+    }
+    return acc
+  }
+}
+
+func bestAgentIdForKey(_ list, _ key) -> String {
+  let rank = bestRankForKey(list, key)
+  if let f = list.first(where: { b in agentKey(b) == key && stateRank(b.status) == rank }) {
+    return f.id
+  }
+  return ""
+}
+
+func distinctAgents(_ list) -> Array {
+  return list.filter { a in bestAgentIdForKey(list, agentKey(a)) == a.id }
+}
+
+func agentName(_ a) -> String {
+  if a.name != "" {
+    return a.name
+  }
+  return a.kind
+}
+
+func agentTooltip(_ a) -> String {
+  let base = agentName(a) + " · " + stateText(a.status)
+  if let t = a.title {
+    return base + " — " + t
+  }
+  return base
 }
 
 func statusIcon(_ w) -> String {
@@ -316,7 +482,7 @@ VStack(alignment: .leading, spacing: 8) {
   Divider()
 
   ForEach(tasks) { w in
-    let lab = statusValue(w)
+    let lab = rowStateValue(w)
     let color = statusColor(w)
     let active = activeState(lab)
     let task = ticketOf(w).lowercased()
@@ -355,7 +521,26 @@ VStack(alignment: .leading, spacing: 8) {
           }
         }
 
-        if hasStatus(w) {
+        if let ags = w.agents {
+          ForEach(distinctAgents(ags)) { a in
+            HStack(spacing: 6) {
+              Image(systemName: agentIcon(a.kind))
+                .font(.system(size: 11))
+                .foregroundColor(agentColor(a.kind))
+              Image(systemName: stateIcon(a.status))
+                .font(.system(size: 11))
+                .foregroundColor(stateColor(a.status))
+                .opacity(activeState(a.status) ? (pulse ? 1.0 : 0.4) : 1.0)
+              Text(stateText(a.status))
+                .font(.callout).bold()
+                .foregroundColor(stateColor(a.status))
+              Spacer()
+            }
+            .help(agentTooltip(a))
+          }
+        }
+
+        if showsNativeStatus(w) {
           HStack(spacing: 6) {
             Image(systemName: statusIcon(w))
               .font(.system(size: 11))
