@@ -364,7 +364,22 @@ func agentColor(_ k) -> String {
 // only reconciles a superseded id back to its canonical one for claude, so a
 // second id resolved for the same pid becomes a second record. Collapse by pid
 // so a process renders once; records without a pid fall back to their own id
-// and are never merged together.
+// and are never merged together. The surviving record is the one whose state is
+// most worth showing, because the duplicates disagree: the stale copy commonly
+// reads idle while the process is still working.
+func stateRank(_ s) -> Int {
+  if s == "needs_input" {
+    return 3
+  }
+  if s == "working" {
+    return 2
+  }
+  if s == "idle" {
+    return 1
+  }
+  return 0
+}
+
 func agentKey(_ a) -> String {
   if let p = a.pid {
     return "pid:" + String(p)
@@ -372,15 +387,25 @@ func agentKey(_ a) -> String {
   return "id:" + a.id
 }
 
-func firstAgentIdWithKey(_ list, _ key) -> String {
-  if let f = list.first(where: { b in agentKey(b) == key }) {
+func bestRankForKey(_ list, _ key) -> Int {
+  return list.reduce(0) { acc, b in
+    if agentKey(b) == key && stateRank(b.status) > acc {
+      return stateRank(b.status)
+    }
+    return acc
+  }
+}
+
+func bestAgentIdForKey(_ list, _ key) -> String {
+  let rank = bestRankForKey(list, key)
+  if let f = list.first(where: { b in agentKey(b) == key && stateRank(b.status) == rank }) {
     return f.id
   }
   return ""
 }
 
 func distinctAgents(_ list) -> Array {
-  return list.filter { a in firstAgentIdWithKey(list, agentKey(a)) == a.id }
+  return list.filter { a in bestAgentIdForKey(list, agentKey(a)) == a.id }
 }
 
 func agentName(_ a) -> String {

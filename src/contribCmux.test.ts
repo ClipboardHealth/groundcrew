@@ -8,6 +8,11 @@ const SIDEBAR_PATH = new URL("../contrib/cmux/groundcrew.swift", import.meta.url
 const INSTALLER_PATH = new URL("../contrib/cmux/install.sh", import.meta.url);
 const REPOSITORY_PATH = fileURLToPath(new URL("..", import.meta.url));
 
+function stateRankIn(source: string, state: string): number {
+  const match = source.match(new RegExp(`if s == "${state}" \\{\\s*return (\\d+)`, "u"));
+  return match ? Number(match[1]) : 0;
+}
+
 describe("cmux contrib sidebar", () => {
   it("validates raw ticket prefixes before Unicode normalization", () => {
     const actual = readFileSync(SIDEBAR_PATH, "utf8");
@@ -55,15 +60,35 @@ describe("cmux contrib sidebar", () => {
   it("collapses registry records that share a pid into one row", () => {
     const actual = readFileSync(SIDEBAR_PATH, "utf8");
     const dedupeSource = actual.slice(
-      actual.indexOf("func agentKey"),
+      actual.indexOf("func stateRank"),
       actual.indexOf("func agentName"),
     );
 
     expect(dedupeSource).toContain('return "pid:" + String(p)');
     expect(dedupeSource).toContain('return "id:" + a.id');
-    expect(dedupeSource).toContain("list.first(where: { b in agentKey(b) == key })");
     expect(actual).toContain("ForEach(distinctAgents(ags)) { a in");
     expect(actual).not.toContain("ForEach(ags) { a in");
+  });
+
+  it("keeps the most active record when duplicates of one process disagree", () => {
+    const actual = readFileSync(SIDEBAR_PATH, "utf8");
+    const dedupeSource = actual.slice(
+      actual.indexOf("func stateRank"),
+      actual.indexOf("func agentName"),
+    );
+
+    // The duplicates routinely disagree -- the stale copy reads idle while the
+    // process is still working -- so keeping the first record would show the
+    // wrong state. Rank has to order needs_input > working > idle > ended, and
+    // the survivor has to be chosen by that rank rather than by position.
+    expect(stateRankIn(dedupeSource, "needs_input")).toBeGreaterThan(
+      stateRankIn(dedupeSource, "working"),
+    );
+    expect(stateRankIn(dedupeSource, "working")).toBeGreaterThan(stateRankIn(dedupeSource, "idle"));
+    expect(stateRankIn(dedupeSource, "idle")).toBeGreaterThan(0);
+    expect(dedupeSource).toContain("let rank = bestRankForKey(list, key)");
+    expect(dedupeSource).toContain("stateRank(b.status) == rank");
+    expect(dedupeSource).toContain("bestAgentIdForKey(list, agentKey(a)) == a.id");
   });
 
   it("falls back to the native status pill when no agents are reported", () => {
