@@ -147,6 +147,7 @@ export function toCanonicalIssue(
     ...(linearIssue.worktreePreparation === undefined
       ? {}
       : { worktreePreparation: linearIssue.worktreePreparation }),
+    ...(linearIssue.stacking === undefined ? {} : { stacking: linearIssue.stacking }),
     sourceRef,
   };
 }
@@ -231,6 +232,7 @@ export function createLinearTaskSource(
       ...(resolved.worktreePreparation === undefined
         ? {}
         : { worktreePreparation: resolved.worktreePreparation }),
+      ...(resolved.stacking === undefined ? {} : { stacking: resolved.stacking }),
       sourceRef,
     };
   }

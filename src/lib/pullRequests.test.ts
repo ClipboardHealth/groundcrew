@@ -1,5 +1,9 @@
 import type { RunCommandOptions } from "./commandRunner.ts";
-import { findPullRequestsForBranch, resolvePullRequest } from "./pullRequests.ts";
+import {
+  countMergeCommits,
+  findPullRequestsForBranch,
+  resolvePullRequest,
+} from "./pullRequests.ts";
 
 type RunCommandAsyncMock = (
   command: string,
@@ -22,6 +26,7 @@ interface RawPullRequestFixture {
   number: number;
   state: string;
   title: string;
+  baseRefName?: string;
 }
 
 function rawPullRequest(overrides: Partial<RawPullRequestFixture> = {}): RawPullRequestFixture {
@@ -30,6 +35,7 @@ function rawPullRequest(overrides: Partial<RawPullRequestFixture> = {}): RawPull
     number: overrides.number ?? 42,
     state: overrides.state ?? "OPEN",
     title: overrides.title ?? "Wire up auth",
+    ...(overrides.baseRefName === undefined ? {} : { baseRefName: overrides.baseRefName }),
   };
 }
 
@@ -72,6 +78,45 @@ describe(findPullRequestsForBranch, () => {
     expect(runCommandMock).toHaveBeenCalledWith("gh", expect.not.arrayContaining(["--repo"]), {
       cwd: "/work/widgets-team-1",
     });
+  });
+
+  it("requests baseRefName in the --json field list", async () => {
+    runCommandMock.mockResolvedValue("[]");
+
+    await findPullRequestsForBranch({
+      cwd: "/work/widgets-team-1",
+      branchName: "feature/auth",
+    });
+
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "gh",
+      [
+        "pr",
+        "list",
+        "--head",
+        "feature/auth",
+        "--state",
+        "all",
+        "--limit",
+        "5",
+        "--json",
+        "url,number,state,title,baseRefName",
+      ],
+      { cwd: "/work/widgets-team-1" },
+    );
+  });
+
+  it("parses baseRefName into the PR summary when gh returns it", async () => {
+    runCommandMock.mockResolvedValue(
+      JSON.stringify([rawPullRequest({ baseRefName: "team-1-branch" })]),
+    );
+
+    const prs = await findPullRequestsForBranch({
+      cwd: "/work/widgets-team-1",
+      branchName: "feature/auth",
+    });
+
+    expect(prs[0]?.baseRefName).toBe("team-1-branch");
   });
 
   it("normalises MERGED and CLOSED states to lowercase", async () => {
@@ -376,5 +421,60 @@ describe(resolvePullRequest, () => {
     });
 
     expect(actual.state).toBe("draft");
+  });
+});
+
+describe(countMergeCommits, () => {
+  afterEach(() => {
+    vi.resetAllMocks();
+  });
+
+  const lookup = { cwd: "/work/widgets-team-2", pullRequestNumber: 42 };
+
+  it("counts the commits with more than one parent", async () => {
+    runCommandMock.mockResolvedValue(
+      JSON.stringify([
+        { parents: [{ sha: "a" }] },
+        { parents: [{ sha: "a" }, { sha: "b" }] },
+        { parents: "not a list" },
+        {},
+        null,
+        { parents: [{ sha: "c" }, { sha: "d" }, { sha: "e" }] },
+      ]),
+    );
+
+    const count = await countMergeCommits(lookup);
+
+    expect(count).toBe(2);
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "gh",
+      ["api", "repos/{owner}/{repo}/pulls/42/commits?per_page=100"],
+      { cwd: "/work/widgets-team-2" },
+    );
+  });
+
+  it("reports no count when gh fails", async () => {
+    runCommandMock.mockRejectedValue(new Error("HTTP 404"));
+
+    await expect(countMergeCommits(lookup)).resolves.toBeUndefined();
+  });
+
+  it.each([
+    ["output that is not JSON", "not json"],
+    ["output that is not a list", '{"parents":[]}'],
+  ])("reports no count for %s", async (_name, output) => {
+    runCommandMock.mockResolvedValue(output);
+
+    await expect(countMergeCommits(lookup)).resolves.toBeUndefined();
+  });
+
+  it("rethrows when the lookup was aborted", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    runCommandMock.mockRejectedValue(new Error("aborted"));
+
+    await expect(countMergeCommits({ ...lookup, signal: controller.signal })).rejects.toThrow(
+      "aborted",
+    );
   });
 });

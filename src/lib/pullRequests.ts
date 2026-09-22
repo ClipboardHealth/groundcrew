@@ -19,6 +19,7 @@
  */
 
 import { runCommandAsync } from "./commandRunner.ts";
+import { isRecord } from "./util.ts";
 
 export interface PullRequestSummary {
   url: string;
@@ -26,6 +27,8 @@ export interface PullRequestSummary {
   /** Lowercased lifecycle: "open" | "merged" | "closed". */
   state: string;
   title: string;
+  /** PR's current base branch, when gh returns it. Used to detect stacked PRs that need retargeting. */
+  baseRefName?: string;
 }
 
 const GH_PR_LIST_LIMIT = 5;
@@ -48,6 +51,7 @@ interface RawPullRequest {
   number: number;
   state: string;
   title: string;
+  baseRefName?: string;
 }
 
 function parsePullRequests(output: string): PullRequestSummary[] {
@@ -70,6 +74,7 @@ function parsePullRequests(output: string): PullRequestSummary[] {
       number: entry.number,
       state: STATE_MAP[entry.state] ?? entry.state.toLowerCase(),
       title: entry.title,
+      ...(entry.baseRefName === undefined ? {} : { baseRefName: entry.baseRefName }),
     });
   }
   return summaries;
@@ -85,7 +90,8 @@ function isRawPullRequest(value: unknown): value is RawPullRequest {
     typeof record["url"] === "string" &&
     typeof record["number"] === "number" &&
     typeof record["state"] === "string" &&
-    typeof record["title"] === "string"
+    typeof record["title"] === "string" &&
+    (record["baseRefName"] === undefined || typeof record["baseRefName"] === "string")
   );
 }
 
@@ -201,7 +207,7 @@ export async function findPullRequestsForBranch(
         "--limit",
         String(GH_PR_LIST_LIMIT),
         "--json",
-        "url,number,state,title",
+        "url,number,state,title,baseRefName",
       ],
       options,
     );
@@ -214,4 +220,53 @@ export async function findPullRequestsForBranch(
     // error / etc. All resolve to "no PR info available" for display.
     return [];
   }
+}
+
+const GH_PR_COMMITS_PAGE_SIZE = 100;
+
+interface MergeCommitLookupArgs {
+  cwd: string;
+  pullRequestNumber: number;
+  signal?: AbortSignal;
+}
+
+/**
+ * Number of merge commits (two or more parents) among a pull request's
+ * commits, or `undefined` when the lookup fails. GitHub stacks are
+ * rebase-only, so a merge commit on a stacked child is worth surfacing before
+ * the parent merges and GitHub replays it as duplicates. Reads one page of
+ * 100 commits, which covers any stacked pull request worth having.
+ */
+export type CountMergeCommits = (arguments_: MergeCommitLookupArgs) => Promise<number | undefined>;
+
+export const countMergeCommits: CountMergeCommits = async (arguments_) => {
+  const { cwd, pullRequestNumber, signal } = arguments_;
+  const options = signal === undefined ? { cwd } : { cwd, signal };
+  const output = await runCommandAsync(
+    "gh",
+    [
+      "api",
+      `repos/{owner}/{repo}/pulls/${pullRequestNumber}/commits?per_page=${GH_PR_COMMITS_PAGE_SIZE}`,
+    ],
+    options,
+  ).catch((error: unknown) => {
+    if (signal?.aborted === true) {
+      throw error;
+    }
+    return "";
+  });
+  const parsed = parseJsonOrNull(output);
+  return Array.isArray(parsed) ? parsed.filter(isMergeCommit).length : undefined;
+};
+
+function parseJsonOrNull(output: string): unknown {
+  try {
+    return JSON.parse(output);
+  } catch {
+    return null;
+  }
+}
+
+function isMergeCommit(value: unknown): boolean {
+  return isRecord(value) && Array.isArray(value["parents"]) && value["parents"].length > 1;
 }

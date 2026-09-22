@@ -4,6 +4,8 @@ import path from "node:path";
 
 import type { ResolvedConfig } from "./config.ts";
 import {
+  clearBaseBranch,
+  listRunStates,
   readRunState,
   recordRunState,
   removeRunState,
@@ -285,6 +287,267 @@ describe("run state store", () => {
     });
   });
 
+  it("round-trips stacking fields and preserves them across transitions", () => {
+    recordRunState({
+      config,
+      state: {
+        task: "team-2",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-2",
+        branchName: "dev-team-2",
+        workspaceName: "team-2",
+        state: "running",
+        baseBranch: "dev-team-1",
+        parentTask: "team-1",
+      },
+    });
+
+    expect(readRunState(config, "team-2")).toMatchObject({
+      baseBranch: "dev-team-1",
+      parentTask: "team-1",
+    });
+    expect(readRunState(config, "team-2")?.needsRebase).toBeUndefined();
+
+    // Resume/interrupt callers don't carry stacking fields; they should
+    // survive on disk.
+    recordRunState({
+      config,
+      state: {
+        task: "team-2",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-2",
+        branchName: "dev-team-2",
+        workspaceName: "team-2",
+        state: "interrupted",
+      },
+    });
+
+    expect(readRunState(config, "team-2")).toMatchObject({
+      state: "interrupted",
+      baseBranch: "dev-team-1",
+      parentTask: "team-1",
+    });
+  });
+
+  it("round-trips needsRebase via updateRunState while preserving stacking fields", () => {
+    recordRunState({
+      config,
+      state: {
+        task: "team-2",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-2",
+        branchName: "dev-team-2",
+        workspaceName: "team-2",
+        state: "running",
+        baseBranch: "dev-team-1",
+        parentTask: "team-1",
+      },
+    });
+
+    const flagged = updateRunState({
+      config,
+      task: "team-2",
+      patch: { state: "running", needsRebase: true },
+    });
+    expect(flagged).toMatchObject({
+      needsRebase: true,
+      baseBranch: "dev-team-1",
+      parentTask: "team-1",
+    });
+
+    // A resume/interrupt recordRunState call omits needsRebase; it should
+    // survive on disk, the same as the other stacking fields above.
+    recordRunState({
+      config,
+      state: {
+        task: "team-2",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-2",
+        branchName: "dev-team-2",
+        workspaceName: "team-2",
+        state: "interrupted",
+      },
+    });
+
+    expect(readRunState(config, "team-2")).toMatchObject({
+      state: "interrupted",
+      needsRebase: true,
+      baseBranch: "dev-team-1",
+      parentTask: "team-1",
+    });
+  });
+
+  it("clears baseBranch while retaining parentTask and other fields", () => {
+    recordRunState({
+      config,
+      state: {
+        task: "team-2",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-2",
+        branchName: "dev-team-2",
+        workspaceName: "team-2",
+        state: "running",
+        baseBranch: "dev-team-1",
+        parentTask: "team-1",
+      },
+    });
+
+    const cleared = clearBaseBranch(config, "team-2");
+
+    expect(cleared?.baseBranch).toBeUndefined();
+    expect(cleared?.parentTask).toBe("team-1");
+    expect(cleared?.branchName).toBe("dev-team-2");
+    expect(readRunState(config, "team-2")?.baseBranch).toBeUndefined();
+    expect(readRunState(config, "team-2")?.parentTask).toBe("team-1");
+    expect(JSON.parse(readFileSync(runStatePath(config, "team-2"), "utf8"))).not.toHaveProperty(
+      "baseBranch",
+    );
+  });
+
+  it("clears needsRebase along with baseBranch when a deferred rebase later succeeds", () => {
+    recordRunState({
+      config,
+      state: {
+        task: "team-2",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-2",
+        branchName: "dev-team-2",
+        workspaceName: "team-2",
+        state: "running",
+        baseBranch: "dev-team-1",
+        parentTask: "team-1",
+        needsRebase: true,
+        stackRegistered: true,
+      },
+    });
+
+    const cleared = clearBaseBranch(config, "team-2");
+
+    expect(cleared?.needsRebase).toBeUndefined();
+    expect(readRunState(config, "team-2")?.needsRebase).toBeUndefined();
+    expect(JSON.parse(readFileSync(runStatePath(config, "team-2"), "utf8"))).not.toHaveProperty(
+      "needsRebase",
+    );
+  });
+
+  it("clearBaseBranch is a no-op returning undefined when no run state exists", () => {
+    expect(clearBaseBranch(config, "team-9")).toBeUndefined();
+  });
+
+  it("clearFields drops baseBranch, parentTask, and needsRebase instead of carrying them forward", () => {
+    recordRunState({
+      config,
+      state: {
+        task: "team-2",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-2",
+        branchName: "dev-team-2",
+        workspaceName: "team-2",
+        state: "provisioning",
+        baseBranch: "dev-team-1",
+        parentTask: "team-1",
+        needsRebase: true,
+        stackRegistered: true,
+      },
+    });
+
+    const cleared = recordRunState({
+      config,
+      state: {
+        task: "team-2",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-2",
+        branchName: "dev-team-2",
+        workspaceName: "team-2",
+        state: "failed-to-launch",
+        clearFields: ["baseBranch", "parentTask", "needsRebase", "stackRegistered"],
+      },
+    });
+
+    expect(cleared.baseBranch).toBeUndefined();
+    expect(cleared.parentTask).toBeUndefined();
+    expect(cleared.needsRebase).toBeUndefined();
+    expect(cleared.stackRegistered).toBeUndefined();
+    expect(readRunState(config, "team-2")?.baseBranch).toBeUndefined();
+    expect(readRunState(config, "team-2")?.parentTask).toBeUndefined();
+    expect(readRunState(config, "team-2")?.needsRebase).toBeUndefined();
+    expect(JSON.parse(readFileSync(runStatePath(config, "team-2"), "utf8"))).not.toHaveProperty(
+      "baseBranch",
+    );
+  });
+
+  it("omitting clearFields still carries baseBranch, parentTask, and needsRebase forward", () => {
+    recordRunState({
+      config,
+      state: {
+        task: "team-2",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-2",
+        branchName: "dev-team-2",
+        workspaceName: "team-2",
+        state: "provisioning",
+        baseBranch: "dev-team-1",
+        parentTask: "team-1",
+        needsRebase: true,
+        stackRegistered: true,
+      },
+    });
+
+    const carried = recordRunState({
+      config,
+      state: {
+        task: "team-2",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-2",
+        branchName: "dev-team-2",
+        workspaceName: "team-2",
+        state: "running",
+      },
+    });
+
+    expect(carried).toMatchObject({
+      baseBranch: "dev-team-1",
+      parentTask: "team-1",
+      needsRebase: true,
+      stackRegistered: true,
+    });
+  });
+
+  it("parses an old-shaped run state file with no stacking fields", () => {
+    mkdirSync(path.dirname(runStatePath(config, "team-1")), { recursive: true });
+    writeFileSync(
+      runStatePath(config, "team-1"),
+      JSON.stringify({
+        task: "team-1",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-1",
+        branchName: "dev-team-1",
+        workspaceName: "team-1",
+        state: "running",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        resumeCount: 0,
+      }),
+    );
+
+    const actual = readRunState(config, "team-1");
+    expect(actual).toMatchObject({ task: "team-1", state: "running" });
+    expect(actual?.baseBranch).toBeUndefined();
+    expect(actual?.parentTask).toBeUndefined();
+    expect(actual?.needsRebase).toBeUndefined();
+  });
+
   it("prefers a freshly provided title over the previously-recorded one", () => {
     recordRunState({
       config,
@@ -467,5 +730,64 @@ describe("run state store", () => {
       task: "team-1",
       state: "running",
     });
+  });
+
+  it("listRunStates returns every recorded run state", () => {
+    recordRunState({
+      config,
+      state: {
+        task: "team-1",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-1",
+        branchName: "dev-team-1",
+        workspaceName: "team-1",
+        state: "running",
+      },
+    });
+    recordRunState({
+      config,
+      state: {
+        task: "team-2",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-2",
+        branchName: "dev-team-2",
+        workspaceName: "team-2",
+        state: "running",
+        baseBranch: "dev-team-1",
+        parentTask: "team-1",
+      },
+    });
+
+    const states = listRunStates(config).toSorted((left, right) =>
+      left.task.localeCompare(right.task),
+    );
+
+    expect(states).toMatchObject([{ task: "team-1" }, { task: "team-2", parentTask: "team-1" }]);
+  });
+
+  it("listRunStates returns an empty array when the runs directory does not exist", () => {
+    expect(listRunStates(config)).toStrictEqual([]);
+  });
+
+  it("listRunStates skips a malformed run state file and a non-JSON file rather than throwing", () => {
+    mkdirSync(runStateDirectory(config), { recursive: true });
+    writeFileSync(path.join(runStateDirectory(config), "team-9.json"), "not json");
+    writeFileSync(path.join(runStateDirectory(config), "team-9.json.lock"), "");
+    recordRunState({
+      config,
+      state: {
+        task: "team-1",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-1",
+        branchName: "dev-team-1",
+        workspaceName: "team-1",
+        state: "running",
+      },
+    });
+
+    expect(listRunStates(config)).toMatchObject([{ task: "team-1" }]);
   });
 });
