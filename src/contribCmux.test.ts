@@ -85,7 +85,7 @@ describe("cmux contrib sidebar", () => {
       stateRankIn(dedupeSource, "working"),
     );
     expect(stateRankIn(dedupeSource, "working")).toBeGreaterThan(stateRankIn(dedupeSource, "idle"));
-    expect(stateRankIn(dedupeSource, "idle")).toBeGreaterThan(0);
+    expect(stateRankIn(dedupeSource, "idle")).toBeGreaterThan(stateRankIn(dedupeSource, "ended"));
     expect(dedupeSource).toContain("let rank = bestRankForKey(list, key)");
     expect(dedupeSource).toContain("stateRank(b.status) == rank");
     expect(dedupeSource).toContain("bestAgentIdForKey(list, agentKey(a)) == a.id");
