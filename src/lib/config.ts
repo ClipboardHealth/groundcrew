@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { inspect } from "node:util";
 
 import { cosmiconfig, type CosmiconfigResult, type Loader } from "cosmiconfig";
 
@@ -1122,7 +1123,7 @@ function mergeDefinitions(
     if (weight !== undefined) {
       if (typeof weight !== "number" || !Number.isFinite(weight) || weight <= 0) {
         fail(
-          `agents.definitions.${name}.weight must be a positive finite number (got ${typeof weight === "number" ? String(weight) : JSON.stringify(weight)})`,
+          `agents.definitions.${name}.weight must be a positive finite number (got ${typeof weight === "string" ? JSON.stringify(weight) : inspect(weight)})`,
         );
       }
       definition.weight = weight;

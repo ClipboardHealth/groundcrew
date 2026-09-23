@@ -148,6 +148,7 @@ describe("loadConfig", () => {
     ["Infinity", "Infinity"],
     ["-Infinity", "-Infinity"],
     ["NaN", "NaN"],
+    ["1n", "1n"],
     ['"2"', '"2"'],
     ["null", "null"],
     ["true", "true"],
