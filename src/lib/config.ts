@@ -1496,7 +1496,7 @@ function validate(config: ResolvedConfig): void {
   }
   if (Object.hasOwn(definitions, AGENT_ANY)) {
     fail(
-      `agents.definitions cannot contain "${AGENT_ANY}" — it is reserved for the agent-any label, which routes to the agent with the most available session capacity`,
+      `agents.definitions cannot contain "${AGENT_ANY}" — it is reserved for the agent-any label, which routes to the agent with the lowest weighted session score`,
     );
   }
   for (const [name, definition] of Object.entries(definitions)) {

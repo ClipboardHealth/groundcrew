@@ -81,7 +81,7 @@ Stop or finish every active Groundcrew task and save work in every other tmux se
 Linear works out of the box: assign tasks to yourself and add an `agent-*` label.
 
 - `agent-claude`, `agent-codex`, `agent-pi`, or `agent-<name>` routes to that enabled launch profile.
-- `agent-any` routes to the enabled agent with the most session headroom, after skipping agents over their session limit or weekly paced budget.
+- `agent-any` routes to the enabled agent with the lowest weighted session score, after skipping agents over their session limit or weekly paced budget. See [agent weights](./docs/configuration.md#agent-label-routing).
 - Tasks without an `agent-*` label are ignored by `crew run`; dispatch one manually with `crew start <TASK>`.
 
 Agent names are launch profiles, so you can use them to pick model tiers. For example,
