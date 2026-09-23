@@ -130,9 +130,9 @@ function blockerVerdictFor(issue: GroundcrewIssue): SkipVerdict | undefined {
 }
 
 /**
- * Pick the configured agent with the most available session capacity.
+ * Pick the configured agent with the lowest weighted session score.
  * Agents flagged exhausted (over `sessionLimitPercentage`) are excluded.
- * Score is `usage[agent].session` with `null`/missing treated as 0
+ * Score is `(usage[agent].session ?? 0) / (weight ?? 1)`, with missing usage treated as 0
  * (maximum headroom), so when no usage data is available every agent
  * ties at 0 and the default agent wins the tiebreak — `agent-any` then
  * falls back to the default predictably.
@@ -146,7 +146,10 @@ export function pickBestAgent(
   if (candidates.length === 0) {
     return undefined;
   }
-  const scored = candidates.map((name) => ({ name, score: usage[name]?.session ?? 0 }));
+  const scored = candidates.map((name) => ({
+    name,
+    score: (usage[name]?.session ?? 0) / (config.agents.definitions[name]?.weight ?? 1),
+  }));
   return scored.reduce((best, candidate) => {
     if (candidate.score < best.score) {
       return candidate;
