@@ -95,11 +95,22 @@ The "Loaded config from ..." line at startup tells you which config won.
 ## Agent Label Routing
 
 - `agent-claude`, `agent-codex`, `agent-pi`, or `agent-<name>` routes to that enabled launch profile.
-- `agent-any` routes to the agent with the most session headroom, after skipping agents over their session limit or weekly paced budget.
+- `agent-any` routes to the agent with the lowest weighted session score, after skipping agents over their session limit or weekly paced budget.
 - Unknown `agent-<name>` falls back to `agents.default`.
 - A built-in `agent-<name>` label whose agent is not enabled falls back to `agents.default` with a warning.
 - No `agent-*` label is ignored by `crew run`. Dispatch on demand with `crew start <TASK>`, which falls back to `agents.default`.
 - Todo tasks blocked by non-terminal blockers are skipped until their blockers reach a terminal status.
+
+Bias `agent-any` with `agents.definitions.<name>.weight`, a positive finite number.
+The score is `(session usage ?? 0) / (weight ?? 1)`; lower wins, with exact ties
+going to `agents.default`. Omitted weight behaves as `1` and remains undefined
+in the resolved definition. Missing or null session usage counts as zero.
+
+For example, enable `claude: { weight: 2 }` alongside `codex: {}` to make Claude
+look half as busy. Claude at 50% session usage then beats Codex at 30%; Claude
+wins until its usage reaches twice Codex's, when the default breaks the tie.
+Weight only affects ranking: `sessionLimitPercentage` exhaustion and weekly
+paced budget gating still use unweighted usage.
 
 Agent names are launch profiles, not just vendor names. To choose a model per
 task, define model-specific profiles and route tasks to them:
@@ -332,6 +343,7 @@ and hook contract.
 | `orchestrator.sessionLimitPercentage`                 | `85`                 | Number in `(0, 100]`. An agent whose codexbar session window exceeds this percentage is skipped that tick. Agents are also skipped when codexbar reports weekly usage over the current weekly paced budget.                                                                                                                                                                                                                                                                                                      |
 | `agents.default`                                      | `"claude"`           | Tiebreak for `agent-any` resolution and fallback for explicit but unknown `agent-*` labels. Also used by `crew start <TASK>` for unlabeled tasks. `crew run` ignores unlabeled tasks and does not apply this default. Must exist in `agents.definitions`. If you enable only `codex`, set `default: "codex"`.                                                                                                                                                                                                    |
 | `agents.definitions`                                  | **required**         | Enabled launch profile set. Built-in keys (`claude`, `codex`, `cursor`, `cursor-grok`, `pi`) can use `{}` to opt into the shipped preset. Custom profile names must provide `cmd` and `color`; use custom profiles such as `claude-fable` and `claude-opus` to select model-specific commands per task.                                                                                                                                                                                                          |
+| `agents.definitions.<name>.weight`                    | `1` (when omitted)   | Positive finite number dividing session usage for `agent-any` ranking. Higher weight favors an agent; session and weekly exhaustion gates are unchanged.                                                                                                                                                                                                                                                                                                                                                         |
 | `agents.definitions.<name>.cmd`                       | preset for built-ins | Shell command launched for the agent. Required for custom profiles. Runs in the worktree through the resolved `local.runner`. `{{worktree}}` is replaced before launch; `{{sandbox}}` expands to the sbx sandbox name under the sdx runner and an empty string otherwise.                                                                                                                                                                                                                                        |
 | `agents.definitions.<name>.color`                     | preset for built-ins | Color for the workspace status pill (cmux only; tmux and zellij silently drop it). Required for custom profiles.                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `agents.definitions.<name>.usage`                     | preset for built-ins | If set, codexbar usage is fetched for this agent and gated by `sessionLimitPercentage` plus the weekly paced budget when codexbar exposes a weekly window. When `usage.codexbar.source` is omitted, groundcrew uses `oauth` for Codex on macOS, `cli` for Claude on macOS (its OAuth probe breaks whenever the token rotates, and codexbar's CLI cannot refresh it), `auto` for other macOS providers, and `cli` elsewhere. Set to `{ disabled: true }` to disable usage gating while keeping the agent enabled. |
