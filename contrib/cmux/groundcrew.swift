@@ -1,3 +1,19 @@
+// PR links open in: "linear-app" (desktop app), "linear" (browser), or "github".
+func prLinkTarget() -> String {
+  return "github"
+}
+
+func prLink(_ pr) -> String {
+  let path = pr.url.replacingOccurrences(of: "https://github.com/", with: "")
+  if prLinkTarget() == "linear-app" {
+    return "linear://linear.app/review/" + path
+  }
+  if prLinkTarget() == "linear" {
+    return pr.url.replacingOccurrences(of: "github.com", with: "linear.review")
+  }
+  return pr.url
+}
+
 func hasPR(_ w) -> Bool {
   if let pr = w.pr {
     return true
@@ -513,7 +529,7 @@ VStack(alignment: .leading, spacing: 8) {
         }
 
         if let pr = w.pr {
-          Button(action: { openURL(pr.url) }) {
+          Button(action: { openURL(prLink(pr)) }) {
             HStack(spacing: 4) {
               Image(systemName: "arrow.triangle.branch")
               Text("PR #" + String(pr.number) + " · " + pr.status).font(.caption)
