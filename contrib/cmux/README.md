@@ -30,9 +30,9 @@ workspace title (`TG-4265 …`), then linked into the Linear desktop app. The ri
 the groundcrew checkout running `crew cleanup <ticket>` and closes the task workspace on success.
 Cleanup keeps crew's dirty-worktree guard, so uncommitted changes must be inspected before removal.
 
-PR links open in Linear Reviews by default. Set `prLinkTarget()` at the top of the file to
-`"linear-app"` (desktop app, the default), `"linear"` (`linear.review` in the browser), or
-`"github"`. Both Linear targets are derived from the GitHub PR URL, so they work whether or not the
+PR links open on GitHub by default. To open them in Linear Reviews instead, set `prLinkTarget()` at
+the top of the file to `"linear-app"` (desktop app) or `"linear"` (`linear.review` in the
+browser). Both Linear targets are derived from the GitHub PR URL, so they work whether or not the
 PR has a linked Linear ticket.
 Both Linear targets need Linear Reviews set up: the workspace GitHub integration with code access to
 the repository, your personal GitHub account connected in Linear, and Reviews enabled under

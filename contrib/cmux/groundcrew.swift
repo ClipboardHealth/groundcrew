@@ -1,6 +1,6 @@
 // PR links open in: "linear-app" (desktop app), "linear" (browser), or "github".
 func prLinkTarget() -> String {
-  return "linear-app"
+  return "github"
 }
 
 func prLink(_ pr) -> String {
