@@ -297,7 +297,10 @@ func stateIcon(_ s) -> String {
   return "circle"
 }
 
-func activeState(_ s) -> Bool {
+// States that imply the agent is executing. Separate from activeState because
+// silence means something different here: an executing agent that goes quiet
+// has stopped, whereas one waiting on a person is quiet by design.
+func executingState(_ s) -> Bool {
   if s.contains("working") {
     return true
   }
@@ -305,6 +308,13 @@ func activeState(_ s) -> Bool {
     return true
   }
   if s.contains("resumed") {
+    return true
+  }
+  return false
+}
+
+func activeState(_ s) -> Bool {
+  if executingState(s) {
     return true
   }
   if s.contains("needs_input") {
@@ -332,8 +342,10 @@ func silentSeconds(_ a, _ now) -> Double {
 // forever, so an abandoned record reads "working" indefinitely. The longest
 // gap between hook events inside a live codex session measured 34 minutes, so
 // two hours of silence means the record is abandoned rather than busy.
+// needs_input is excluded deliberately: it waits on a person, so silence there
+// is expected and demoting it would hide the prompt the user has to answer.
 func effectiveStatus(_ a, _ now) -> String {
-  if activeState(a.status) {
+  if executingState(a.status) {
     if silentSeconds(a, now) > 7200 {
       return "stale"
     }

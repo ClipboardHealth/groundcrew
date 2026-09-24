@@ -103,11 +103,33 @@ describe("cmux contrib sidebar", () => {
     // record reads "working" indefinitely. The longest gap between hook events
     // inside a live codex session measured 34 minutes, so the silence window
     // has to stay well clear of that to avoid demoting a busy agent.
-    expect(staleSource).toContain("activeState(a.status)");
     expect(staleSource).toContain('return "stale"');
-    const windowSeconds = /silentSeconds\(a, now\) > (\d+)/u.exec(staleSource)?.[1];
-    expect(Number(windowSeconds)).toBeGreaterThanOrEqual(7200);
     expect(actual).toContain('return "no signal"');
+
+    // Pinned exactly: widening the window to a day would pass a lower bound
+    // while restoring the "working forever" symptom in practice.
+    const windowSeconds = /silentSeconds\(a, now\) > (\d+)/u.exec(staleSource)?.[1];
+    expect(Number(windowSeconds)).toBe(7200);
+  });
+
+  it("never demotes an agent that is waiting on the user", () => {
+    const actual = readFileSync(SIDEBAR_PATH, "utf8");
+    const staleSource = actual.slice(
+      actual.indexOf("func effectiveStatus"),
+      actual.indexOf("func ageLabel"),
+    );
+    const executingSource = actual.slice(
+      actual.indexOf("func executingState"),
+      actual.indexOf("func activeState"),
+    );
+
+    // needs_input waits on a person, so silence there is expected rather than
+    // evidence of an abandoned record. Demoting it would hide the one state
+    // that requires the user to act, so the window keys off execution states
+    // only and must not reach for the broader activeState.
+    expect(staleSource).toContain("executingState(a.status)");
+    expect(staleSource).not.toContain("activeState(a.status)");
+    expect(executingSource).not.toContain("needs_input");
   });
 
   it("falls back to the native status pill when no agents are reported", () => {
