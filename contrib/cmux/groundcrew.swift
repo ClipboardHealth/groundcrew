@@ -196,6 +196,9 @@ func shortDir(_ d) -> String {
 }
 
 func stateColor(_ s) -> String {
+  if s.contains("stale") {
+    return "#94A3B8"
+  }
   if s.contains("fail") {
     return "#C0392B"
   }
@@ -227,6 +230,9 @@ func stateColor(_ s) -> String {
 }
 
 func stateBackground(_ s) -> String {
+  if s.contains("stale") {
+    return "#94A3B812"
+  }
   if s.contains("fail") {
     return "#C0392B14"
   }
@@ -258,6 +264,9 @@ func stateBackground(_ s) -> String {
 }
 
 func stateIcon(_ s) -> String {
+  if s.contains("stale") {
+    return "questionmark.circle"
+  }
   if s.contains("fail") {
     return "xmark.circle.fill"
   }
@@ -304,33 +313,79 @@ func activeState(_ s) -> Bool {
   return false
 }
 
-// The row's lifecycle state: the native entry when one exists, else the most
-// recent agent session's own state.
-func rowStateValue(_ w) -> String {
+func activityAt(_ a) -> Double {
+  if let t = a.lastActivityAt {
+    return t
+  }
+  return 0
+}
+
+func silentSeconds(_ a, _ now) -> Double {
+  let t = activityAt(a)
+  if t <= 0 {
+    return 0
+  }
+  return now - t
+}
+
+// An agent that stops emitting hook events keeps its last reported state
+// forever, so an abandoned record reads "working" indefinitely. The longest
+// gap between hook events inside a live codex session measured 34 minutes, so
+// two hours of silence means the record is abandoned rather than busy.
+func effectiveStatus(_ a, _ now) -> String {
+  if activeState(a.status) {
+    if silentSeconds(a, now) > 7200 {
+      return "stale"
+    }
+  }
+  return a.status
+}
+
+func ageLabel(_ a, _ now) -> String {
+  let secs = silentSeconds(a, now)
+  if secs <= 0 {
+    return "no activity time"
+  }
+  if secs < 90 {
+    return String(Int(secs)) + "s ago"
+  }
+  if secs < 5400 {
+    return String(Int(secs / 60)) + "m ago"
+  }
+  return String(Int(secs / 3600)) + "h ago"
+}
+
+// The row's lifecycle state: the native entry when one exists, else the
+// surviving agent record's own state.
+func rowStateValue(_ w, _ now) -> String {
   if let s = w.status {
     return s.value
   }
   if let ags = w.agents {
-    if ags.count > 0 {
-      return ags[0].status
+    let live = distinctAgents(ags, now)
+    if live.count > 0 {
+      return effectiveStatus(live[0], now)
     }
   }
   return ""
 }
 
-func statusColor(_ w) -> String {
+func statusColor(_ w, _ now) -> String {
   if let s = w.status {
     if let c = s.color {
       return c
     }
     return stateColor(s.value)
   }
-  return stateColor(rowStateValue(w))
+  return stateColor(rowStateValue(w, now))
 }
 
 func stateText(_ s) -> String {
   if s.contains("needs_input") {
     return "needs you"
+  }
+  if s.contains("stale") {
+    return "no signal"
   }
   return s
 }
@@ -377,12 +432,12 @@ func agentColor(_ k) -> String {
 }
 
 // One codex process can hold two registry records: cmux keys sessions by id and
-// only reconciles a superseded id back to its canonical one for claude, so a
-// second id resolved for the same pid becomes a second record. Collapse by pid
-// so a process renders once; records without a pid fall back to their own id
-// and are never merged together. The surviving record is the one whose state is
-// most worth showing, because the duplicates disagree: the stale copy commonly
-// reads idle while the process is still working.
+// its codex session-start path never retires the previous id for the same
+// process, so a second resolved id becomes a second record. Collapse by pid so
+// a process renders once; records without a pid fall back to their own id and
+// are never merged together. The duplicates disagree, and the abandoned one is
+// always the one that stopped receiving events, so the freshest record wins and
+// state rank only breaks ties between equally recent records.
 func stateRank(_ s) -> Int {
   if s == "needs_input" {
     return 3
@@ -403,25 +458,42 @@ func agentKey(_ a) -> String {
   return "id:" + a.id
 }
 
-func bestRankForKey(_ list, _ key) -> Int {
+func newestActivityForKey(_ list, _ key) -> Double {
   return list.reduce(0) { acc, b in
-    if agentKey(b) == key && stateRank(b.status) > acc {
-      return stateRank(b.status)
+    if agentKey(b) == key {
+      if activityAt(b) > acc {
+        return activityAt(b)
+      }
     }
     return acc
   }
 }
 
-func bestAgentIdForKey(_ list, _ key) -> String {
-  let rank = bestRankForKey(list, key)
-  if let f = list.first(where: { b in agentKey(b) == key && stateRank(b.status) == rank }) {
+func bestRankForKey(_ list, _ key, _ now) -> Int {
+  let newest = newestActivityForKey(list, key)
+  return list.reduce(0) { acc, b in
+    if agentKey(b) == key {
+      if activityAt(b) == newest {
+        if stateRank(effectiveStatus(b, now)) > acc {
+          return stateRank(effectiveStatus(b, now))
+        }
+      }
+    }
+    return acc
+  }
+}
+
+func bestAgentIdForKey(_ list, _ key, _ now) -> String {
+  let newest = newestActivityForKey(list, key)
+  let rank = bestRankForKey(list, key, now)
+  if let f = list.first(where: { b in agentKey(b) == key && activityAt(b) == newest && stateRank(effectiveStatus(b, now)) == rank }) {
     return f.id
   }
   return ""
 }
 
-func distinctAgents(_ list) -> Array {
-  return list.filter { a in bestAgentIdForKey(list, agentKey(a)) == a.id }
+func distinctAgents(_ list, _ now) -> Array {
+  return list.filter { a in bestAgentIdForKey(list, agentKey(a), now) == a.id }
 }
 
 func agentName(_ a) -> String {
@@ -431,8 +503,8 @@ func agentName(_ a) -> String {
   return a.kind
 }
 
-func agentTooltip(_ a) -> String {
-  let base = agentName(a) + " · " + stateText(a.status)
+func agentTooltip(_ a, _ now) -> String {
+  let base = agentName(a) + " · " + stateText(effectiveStatus(a, now)) + " · " + ageLabel(a, now)
   if let t = a.title {
     return base + " — " + t
   }
@@ -460,6 +532,7 @@ VStack(alignment: .leading, spacing: 8) {
   let workbench = workspaces.filter { isWorkbench($0) }
   let tasks = workspaces.filter { isTaskRow($0) }
   let pulse = clock.second % 2 == 0
+  let now = clock.epoch
 
   if workbench.count > 0 {
     Text("Workbench").font(.headline)
@@ -498,8 +571,8 @@ VStack(alignment: .leading, spacing: 8) {
   Divider()
 
   ForEach(tasks) { w in
-    let lab = rowStateValue(w)
-    let color = statusColor(w)
+    let lab = rowStateValue(w, now)
+    let color = statusColor(w, now)
     let active = activeState(lab)
     let task = ticketOf(w).lowercased()
     HStack(spacing: 0) {
@@ -538,21 +611,21 @@ VStack(alignment: .leading, spacing: 8) {
         }
 
         if let ags = w.agents {
-          ForEach(distinctAgents(ags)) { a in
+          ForEach(distinctAgents(ags, now)) { a in
             HStack(spacing: 6) {
               Image(systemName: agentIcon(a.kind))
                 .font(.system(size: 11))
                 .foregroundColor(agentColor(a.kind))
-              Image(systemName: stateIcon(a.status))
+              Image(systemName: stateIcon(effectiveStatus(a, now)))
                 .font(.system(size: 11))
-                .foregroundColor(stateColor(a.status))
-                .opacity(activeState(a.status) ? (pulse ? 1.0 : 0.4) : 1.0)
-              Text(stateText(a.status))
+                .foregroundColor(stateColor(effectiveStatus(a, now)))
+                .opacity(activeState(effectiveStatus(a, now)) ? (pulse ? 1.0 : 0.4) : 1.0)
+              Text(stateText(effectiveStatus(a, now)))
                 .font(.callout).bold()
-                .foregroundColor(stateColor(a.status))
+                .foregroundColor(stateColor(effectiveStatus(a, now)))
               Spacer()
             }
-            .help(agentTooltip(a))
+            .help(agentTooltip(a, now))
           }
         }
 
