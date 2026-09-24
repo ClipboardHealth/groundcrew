@@ -34,6 +34,9 @@ PR links open in Linear Reviews by default. Set `prLinkTarget()` at the top of t
 `"linear-app"` (desktop app, the default), `"linear"` (`linear.review` in the browser), or
 `"github"`. Both Linear targets are derived from the GitHub PR URL, so they work whether or not the
 PR has a linked Linear ticket.
+Both Linear targets need Linear Reviews set up: the workspace GitHub integration with code access to
+the repository, your personal GitHub account connected in Linear, and Reviews enabled under
+Settings → Account → Code & reviews.
 
 ## Requirements
 
