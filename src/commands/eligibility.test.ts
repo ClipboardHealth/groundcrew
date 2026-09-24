@@ -365,6 +365,43 @@ describe(classifyEligibility, () => {
 });
 
 describe(pickBestAgent, () => {
+  it.each([
+    { claudeSession: 0.5, codexSession: 0.3, defaultAgent: "codex", expected: "claude" },
+    { claudeSession: 0.8, codexSession: 0.3, defaultAgent: "claude", expected: "codex" },
+    { claudeSession: 0.5, codexSession: 0.25, defaultAgent: "claude", expected: "claude" },
+    { claudeSession: 0.5, codexSession: 0.25, defaultAgent: "codex", expected: "codex" },
+    { claudeSession: null, codexSession: 0.3, defaultAgent: "codex", expected: "claude" },
+  ])(
+    "scores weighted sessions with default $defaultAgent: $claudeSession vs $codexSession",
+    ({ claudeSession, codexSession, defaultAgent, expected }) => {
+      const config = makeConfig({
+        agents: {
+          default: defaultAgent,
+          definitions: {
+            claude: { cmd: "claude", color: "#fff", weight: 2 },
+            codex: { cmd: "codex", color: "#000" },
+          },
+        },
+      });
+      const usage: UsageByAgent = {
+        claude: {
+          session: claudeSession,
+          sessionEndDuration: 30,
+          weekly: null,
+          weekEndDuration: null,
+        },
+        codex: {
+          session: codexSession,
+          sessionEndDuration: 30,
+          weekly: null,
+          weekEndDuration: null,
+        },
+      };
+
+      expect(pickBestAgent(config, usage, new Set())).toBe(expected);
+    },
+  );
+
   it("returns undefined when every agent is exhausted", () => {
     expect(pickBestAgent(makeConfig(), {}, new Set(["claude", "codex"]))).toBeUndefined();
   });
@@ -394,9 +431,16 @@ describe(classifyUsageExhaustion, () => {
   const MINUTES_PER_DAY = 24 * 60;
   const MINUTES_PER_WEEK = 7 * MINUTES_PER_DAY;
 
-  it("reports session exhaustion", () => {
+  it.each([{}, { weight: 2 }])("reports session exhaustion with %j", (definition) => {
+    const config = makeConfig({
+      agents: {
+        default: "claude",
+        definitions: { claude: { cmd: "claude", color: "#fff", ...definition } },
+      },
+    });
+
     expect(
-      classifyUsageExhaustion(makeConfig(), {
+      classifyUsageExhaustion(config, {
         claude: { session: 0.95, sessionEndDuration: 30, weekly: null, weekEndDuration: null },
       }),
     ).toStrictEqual([
@@ -410,9 +454,16 @@ describe(classifyUsageExhaustion, () => {
     ]);
   });
 
-  it("reports weekly paced-budget exhaustion", () => {
+  it.each([{}, { weight: 2 }])("reports weekly paced-budget exhaustion with %j", (definition) => {
+    const config = makeConfig({
+      agents: {
+        default: "claude",
+        definitions: { claude: { cmd: "claude", color: "#fff", ...definition } },
+      },
+    });
+
     expect(
-      classifyUsageExhaustion(makeConfig(), {
+      classifyUsageExhaustion(config, {
         claude: {
           session: 0.1,
           sessionEndDuration: 30,

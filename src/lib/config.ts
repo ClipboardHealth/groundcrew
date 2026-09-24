@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { inspect } from "node:util";
 
 import { cosmiconfig, type CosmiconfigResult, type Loader } from "cosmiconfig";
 
@@ -161,6 +162,8 @@ export interface AgentDefinition {
    */
   preLaunchEnv?: string[];
   color: string;
+  /** Positive finite divisor for agent-any session scoring; defaults to 1 when omitted. */
+  weight?: number;
   usage?: {
     codexbar: { provider: string; source?: string };
   };
@@ -1066,6 +1069,9 @@ function buildOverrideCandidate(
   if (override.color !== undefined) {
     candidate.color = override.color;
   }
+  if (override.weight !== undefined) {
+    candidate.weight = override.weight;
+  }
   if (override.usage !== undefined) {
     if (isUsageDisableSentinel(override.usage)) {
       delete candidate.usage;
@@ -1106,7 +1112,7 @@ function mergeDefinitions(
 
     const builtIn = BUILT_IN_AGENT_DEFINITIONS[name];
     const candidate = buildOverrideCandidate(name, override, builtIn);
-    const { cmd, color, usage, sandbox, resumeArgs, preLaunch, preLaunchEnv } = candidate;
+    const { cmd, color, weight, usage, sandbox, resumeArgs, preLaunch, preLaunchEnv } = candidate;
     if (typeof cmd !== "string" || cmd.length === 0) {
       fail(`agents.definitions.${name}.cmd must be a non-empty string`);
     }
@@ -1114,6 +1120,14 @@ function mergeDefinitions(
       fail(`agents.definitions.${name}.color must be a non-empty string`);
     }
     const definition: AgentDefinition = { cmd, color };
+    if (weight !== undefined) {
+      if (typeof weight !== "number" || !Number.isFinite(weight) || weight <= 0) {
+        fail(
+          `agents.definitions.${name}.weight must be a positive finite number (got ${typeof weight === "string" ? JSON.stringify(weight) : inspect(weight)})`,
+        );
+      }
+      definition.weight = weight;
+    }
     if (usage !== undefined) {
       definition.usage = usage;
     }
@@ -1482,7 +1496,7 @@ function validate(config: ResolvedConfig): void {
   }
   if (Object.hasOwn(definitions, AGENT_ANY)) {
     fail(
-      `agents.definitions cannot contain "${AGENT_ANY}" — it is reserved for the agent-any label, which routes to the agent with the most available session capacity`,
+      `agents.definitions cannot contain "${AGENT_ANY}" — it is reserved for the agent-any label, which routes to the agent with the lowest weighted session score`,
     );
   }
   for (const [name, definition] of Object.entries(definitions)) {

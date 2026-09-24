@@ -124,6 +124,51 @@ describe("loadConfig", () => {
     expect(actual.sources).toStrictEqual([]);
   });
 
+  it.each([2, 0.5])("merges agent weight %s over a built-in preset", async (weight) => {
+    const configPath = writeConfigFile(
+      temporary,
+      validConfigSource({
+        workspace: VALID_WORKSPACE(temporary),
+        agents: { definitions: { claude: { weight }, codex: {} } },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+
+    expect(actual.agents.definitions["claude"]?.weight).toBe(weight);
+    expect(actual.agents.definitions["claude"]?.cmd).toBe("claude --permission-mode auto");
+    expect(actual.agents.definitions["codex"]?.weight).toBeUndefined();
+  });
+
+  it.each([
+    ["0", "0"],
+    ["-1", "-1"],
+    ["Infinity", "Infinity"],
+    ["-Infinity", "-Infinity"],
+    ["NaN", "NaN"],
+    ["1n", "1n"],
+    ['"2"', '"2"'],
+    ["null", "null"],
+    ["true", "true"],
+  ])("rejects agent weight %s", async (source, displayed) => {
+    const configPath = writeConfigFile(
+      temporary,
+      `export default {
+        workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},
+        agents: { definitions: { claude: { weight: ${source} } } },
+      };`,
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(
+      `agents.definitions.claude.weight must be a positive finite number (got ${displayed})`,
+    );
+  });
+
   it("ships a agent-agnostic unattended default prompt", async () => {
     const configPath = writeConfigFile(
       temporary,
