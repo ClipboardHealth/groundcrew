@@ -330,6 +330,11 @@ func activityAt(_ a) -> Double {
   return 0
 }
 
+// cmux documents lastActivityAt as always present, so a missing value means the
+// host broke that contract and nothing here can date the record. Reporting zero
+// silence degrades to the behaviour that predates the silence window rather than
+// demoting a record that may well be working, and leaves duplicate collapse to
+// fall back on state rank.
 func silentSeconds(_ a, _ now) -> Double {
   let t = activityAt(a)
   if t <= 0 {
