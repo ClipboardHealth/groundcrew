@@ -53,8 +53,8 @@ describe("cmux contrib sidebar", () => {
   it("renders one row per agent session rather than merging them", () => {
     const actual = readFileSync(SIDEBAR_PATH, "utf8");
 
-    expect(actual).toContain("stateIcon(a.status)");
-    expect(actual).toContain("help(agentTooltip(a))");
+    expect(actual).toContain("stateIcon(effectiveStatus(a, now))");
+    expect(actual).toContain("help(agentTooltip(a, now))");
   });
 
   it("collapses registry records that share a pid into one row", () => {
@@ -66,29 +66,70 @@ describe("cmux contrib sidebar", () => {
 
     expect(dedupeSource).toContain('return "pid:" + String(p)');
     expect(dedupeSource).toContain('return "id:" + a.id');
-    expect(actual).toContain("ForEach(distinctAgents(ags)) { a in");
+    expect(actual).toContain("ForEach(distinctAgents(ags, now)) { a in");
     expect(actual).not.toContain("ForEach(ags) { a in");
   });
 
-  it("keeps the most active record when duplicates of one process disagree", () => {
+  it("keeps the freshest record when duplicates of one process disagree", () => {
     const actual = readFileSync(SIDEBAR_PATH, "utf8");
     const dedupeSource = actual.slice(
       actual.indexOf("func stateRank"),
       actual.indexOf("func agentName"),
     );
 
-    // The duplicates routinely disagree -- the stale copy reads idle while the
-    // process is still working -- so keeping the first record would show the
-    // wrong state. Rank has to order needs_input > working > idle > ended, and
-    // the survivor has to be chosen by that rank rather than by position.
+    // The abandoned duplicate is the one that stopped receiving hook events,
+    // and it keeps whatever state it froze in -- routinely "working". Ranking
+    // by state alone therefore pins the row to working forever, so the survivor
+    // has to be chosen by last activity, with rank breaking ties only between
+    // equally recent records.
+    expect(dedupeSource).toContain("let newest = newestActivityForKey(list, key)");
+    expect(dedupeSource).toContain("activityAt(b) == newest");
+    expect(dedupeSource).toContain("bestAgentIdForKey(list, agentKey(a), now) == a.id");
     expect(stateRankIn(dedupeSource, "needs_input")).toBeGreaterThan(
       stateRankIn(dedupeSource, "working"),
     );
     expect(stateRankIn(dedupeSource, "working")).toBeGreaterThan(stateRankIn(dedupeSource, "idle"));
     expect(stateRankIn(dedupeSource, "idle")).toBeGreaterThan(stateRankIn(dedupeSource, "ended"));
-    expect(dedupeSource).toContain("let rank = bestRankForKey(list, key)");
-    expect(dedupeSource).toContain("stateRank(b.status) == rank");
-    expect(dedupeSource).toContain("bestAgentIdForKey(list, agentKey(a)) == a.id");
+  });
+
+  it("demotes an active state that has gone silent for hours", () => {
+    const actual = readFileSync(SIDEBAR_PATH, "utf8");
+    const staleSource = actual.slice(
+      actual.indexOf("func effectiveStatus"),
+      actual.indexOf("func ageLabel"),
+    );
+
+    // A process that dies mid-turn never reports a terminal state, so its
+    // record reads "working" indefinitely. The longest gap between hook events
+    // inside a live codex session measured 34 minutes, so the silence window
+    // has to stay well clear of that to avoid demoting a busy agent.
+    expect(staleSource).toContain('return "stale"');
+    expect(actual).toContain('return "no signal"');
+
+    // Pinned exactly: widening the window to a day would pass a lower bound
+    // while restoring the "working forever" symptom in practice.
+    const windowSeconds = /silentSeconds\(a, now\) > (\d+)/u.exec(staleSource)?.[1];
+    expect(Number(windowSeconds)).toBe(7200);
+  });
+
+  it("never demotes an agent that is waiting on the user", () => {
+    const actual = readFileSync(SIDEBAR_PATH, "utf8");
+    const staleSource = actual.slice(
+      actual.indexOf("func effectiveStatus"),
+      actual.indexOf("func ageLabel"),
+    );
+    const executingSource = actual.slice(
+      actual.indexOf("func executingState"),
+      actual.indexOf("func activeState"),
+    );
+
+    // needs_input waits on a person, so silence there is expected rather than
+    // evidence of an abandoned record. Demoting it would hide the one state
+    // that requires the user to act, so the window keys off execution states
+    // only and must not reach for the broader activeState.
+    expect(staleSource).toContain("executingState(a.status)");
+    expect(staleSource).not.toContain("activeState(a.status)");
+    expect(executingSource).not.toContain("needs_input");
   });
 
   it("falls back to the native status pill when no agents are reported", () => {
