@@ -26,4 +26,12 @@ describe("npm package contents", () => {
     expect(() => readFileSync(manifestPath, "utf8")).not.toThrow();
     expect(() => readFileSync(scriptPath, "utf8")).not.toThrow();
   });
+
+  it("has the packaged github source files on disk", () => {
+    const manifestPath = path.join(REPO_ROOT, "task-sources/github/source.json");
+    const scriptPath = path.join(REPO_ROOT, "task-sources/github/github.sh");
+
+    expect(() => readFileSync(manifestPath, "utf8")).not.toThrow();
+    expect(() => readFileSync(scriptPath, "utf8")).not.toThrow();
+  });
 });

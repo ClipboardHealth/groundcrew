@@ -1,0 +1,38 @@
+{
+  "name": "github",
+  "kind": "shell",
+  "description": "Feed GitHub issues into groundcrew via the gh CLI.",
+  "installDir": "~/.config/groundcrew",
+  "files": ["github.sh"],
+  "prerequisites": [
+    {
+      "bin": "gh",
+      "install": {
+        "darwin": "brew install gh",
+        "linux": "sudo apt-get install gh"
+      },
+      "setup": "gh auth login"
+    },
+    {
+      "bin": "jq",
+      "install": {
+        "darwin": "brew install jq",
+        "linux": "sudo apt-get install jq"
+      }
+    }
+  ],
+  "env": {
+    "GITHUB_GROUNDCREW_QUERY": "label:groundcrew assignee:@me",
+    "GITHUB_DEFAULT_AGENT": "",
+    "GITHUB_IN_PROGRESS_LABEL": "groundcrew:in-progress",
+    "GITHUB_IN_REVIEW_LABEL": "groundcrew:in-review"
+  },
+  "commands": {
+    "verify": "~/.config/groundcrew/github.sh verify",
+    "listTasks": "~/.config/groundcrew/github.sh list",
+    "getTask": "~/.config/groundcrew/github.sh get ${id}",
+    "markInProgress": "~/.config/groundcrew/github.sh move ${id} in-progress",
+    "markInReview": "~/.config/groundcrew/github.sh move ${id} in-review",
+    "markDone": "~/.config/groundcrew/github.sh move ${id} done"
+  }
+}

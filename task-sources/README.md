@@ -39,3 +39,5 @@ The command keys (`verify`, `listTasks`, `getTask`, `markInProgress`,
 
 - [`jira/`](./jira/README.md) — JIRA issues via the
   [`jira` CLI](https://github.com/ankitpokhrel/jira-cli).
+- [`github/`](./github/README.md) — GitHub issues via the
+  [GitHub CLI](https://cli.github.com/) (`gh`).

@@ -57,6 +57,14 @@ describe("sourceManifestSchema", () => {
     expect(parse).not.toThrow();
   });
 
+  it("validates the shipped github source manifest", () => {
+    const raw = readFileSync(path.join(REPO_ROOT, "task-sources/github/source.json"), "utf8");
+    const input: unknown = JSON.parse(raw);
+    const parse = (): unknown => sourceManifestSchema.parse(input);
+
+    expect(parse).not.toThrow();
+  });
+
   it("ships the jira config knobs as editable env defaults", () => {
     const raw = readFileSync(path.join(REPO_ROOT, "task-sources/jira/source.json"), "utf8");
     const manifest = sourceManifestSchema.parse(JSON.parse(raw));
