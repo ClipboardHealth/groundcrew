@@ -395,7 +395,7 @@ describe("workspaces.open (cmux)", () => {
     ).rejects.toThrow(/Unexpected cmux output/);
 
     expect(runMock).not.toHaveBeenCalledWith("cmux", expect.arrayContaining(["close-workspace"]));
-    expect(runMock).not.toHaveBeenCalledWith("cmux", expect.arrayContaining(["list-workspaces"]));
+    expect(runMock).not.toHaveBeenCalledWith("cmux", expect.arrayContaining(["workspace", "list"]));
   });
 
   it("keeps the workspace when set-status fails (status painting is best-effort)", async () => {
@@ -444,7 +444,7 @@ describe("workspaces.open (cmux)", () => {
 
   it("closes the leaked workspace by id when new-workspace exits non-zero but emitted an id, without re-enumerating", async () => {
     // new-workspace fails carrying an id; the follow-up close-workspace succeeds
-    // (the default ""). A re-enumeration via list-workspaces is never attempted,
+    // (the default ""). A re-enumeration via workspace list is never attempted,
     // so a concurrent list failure can't strand the orphan.
     runMock.mockImplementationOnce(() => {
       throw cmuxNewWorkspaceFailure(JSON.stringify({ workspace_id: "leaked-id" }));
@@ -455,7 +455,7 @@ describe("workspaces.open (cmux)", () => {
     ).rejects.toThrow(/Command failed: cmux/);
 
     expect(runMock).toHaveBeenCalledWith("cmux", ["close-workspace", "--workspace", "leaked-id"]);
-    expect(runMock).not.toHaveBeenCalledWith("cmux", expect.arrayContaining(["list-workspaces"]));
+    expect(runMock).not.toHaveBeenCalledWith("cmux", expect.arrayContaining(["workspace", "list"]));
   });
 
   it("closes the leaked workspace by the workspace:N ref parsed from a non-JSON failure", async () => {
@@ -569,7 +569,7 @@ describe("workspaces.probe (cmux)", () => {
       kind: "ok",
       names: new Set(["TEAM-1", "TEAM-2"]),
     });
-    expect(runMock).toHaveBeenCalledWith("cmux", ["--json", "list-workspaces"]);
+    expect(runMock).toHaveBeenCalledWith("cmux", ["--json", "workspace", "list"]);
   });
 
   it("tracks a workspace by its marker even when the title has been renamed", async () => {
@@ -1845,7 +1845,7 @@ describe("workspaces tmux session-per-task env", () => {
 
     await workspaces.probe(makeConfig("auto"));
 
-    expect(runMock).toHaveBeenCalledWith("cmux", ["--json", "list-workspaces"]);
+    expect(runMock).toHaveBeenCalledWith("cmux", ["--json", "workspace", "list"]);
     expect(writeErrorMock).not.toHaveBeenCalled();
   });
 

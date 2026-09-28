@@ -74,7 +74,7 @@ export const cmuxAdapter: Adapter = {
       // cmux v2 `workspace.close` rejects titles, so forwarding `name`
       // would always fail. The list failure has already been logged by
       // `listCmuxRaw`; bail rather than guarantee a downstream error.
-      debug(`cmux close-workspace skipped for ${name}: list-workspaces failed, no usable id`);
+      debug(`cmux close-workspace skipped for ${name}: workspace list failed, no usable id`);
       return { kind: "unavailable" };
     }
     const matches = raw.filter((ws) => cmuxTaskId(ws) === name);
@@ -133,7 +133,7 @@ interface CmuxRawWorkspace {
 }
 
 function parseCmuxList(output: string): CmuxRawWorkspace[] {
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- cmux --json list-workspaces always emits this shape
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- cmux --json workspace list always emits this shape
   const parsed = JSON.parse(output) as {
     workspaces?: Array<{ title?: string; ref?: string; id?: string; description?: string | null }>;
   };
@@ -146,7 +146,7 @@ function parseCmuxList(output: string): CmuxRawWorkspace[] {
     const id = pickCmuxId(ws);
     if (id === undefined) {
       debug(
-        `cmux list-workspaces returned workspace "${ws.title}" without a usable id or ref; skipping`,
+        `cmux workspace list returned workspace "${ws.title}" without a usable id or ref; skipping`,
       );
       continue;
     }
@@ -174,12 +174,14 @@ function pickCmuxId(ws: { ref?: string; id?: string }): string | undefined {
 
 async function listCmuxRaw(signal?: AbortSignal): Promise<CmuxRawWorkspace[] | undefined> {
   try {
-    return parseCmuxList(await runWorkspaceCommand("cmux", ["--json", "list-workspaces"], signal));
+    return parseCmuxList(
+      await runWorkspaceCommand("cmux", ["--json", "workspace", "list"], signal),
+    );
   } catch (error) {
     if (isSignalAborted(signal)) {
       throw error;
     }
-    debug(`cmux list-workspaces failed: ${errorMessage(error)}`);
+    debug(`cmux workspace list failed: ${errorMessage(error)}`);
     return undefined;
   }
 }
@@ -332,7 +334,7 @@ async function closeCmuxWorkspace(workspaceId: string, signal?: AbortSignal): Pr
  * The id rides along in the failed command's captured output, so recover it and
  * close that exact workspace by id — a failed launch must not strand an orphan
  * tagged with the task's `groundcrew:<taskId>` marker. Closing by the recovered
- * id needs no `list-workspaces`, so it survives a concurrent list failure that
+ * id needs no workspace list, so it survives a concurrent list failure that
  * would defeat re-enumeration. Re-enumeration close is unsafe here anyway; we
  * hold the precise id cmux returned, so there is no same-named-sibling risk.
  */
