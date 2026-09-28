@@ -94,7 +94,7 @@
     "nx": "23.1.0",
     "oxfmt": "0.63.0",
     "oxlint": "1.78.0",
-    "oxlint-tsgolint": "7.0.2001",
+    "oxlint-tsgolint": "7.0.2002",
     "syncpack": "15.3.3",
     "vite": "8.3.0",
     "vitest": "5.0.0"
