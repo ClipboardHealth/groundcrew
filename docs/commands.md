@@ -176,6 +176,18 @@ When `--prompt`/`--prompt-file` is given, the agent starts with that prompt; oth
 
 `crew cleanup <task>` removes the opened worktree but never deletes the remote PR branch. Fork (cross-repository) PRs and `provision`/sparse-checkout repositories are not supported; for a fork, check the branch out locally and use `--branch`.
 
+## Stage
+
+`crew stage` manages `cmux.prStages`'s two gating labels and runs an on-demand sync pass. It requires `cmux.prStages.enabled: true` (see [Configuration](./configuration.md)) and the resolved `workspaceKind` to be `cmux`.
+
+```bash
+crew stage label-add <pr-url> <label>      # add a configured gating label to a PR
+crew stage label-remove <pr-url> <label>   # remove a configured gating label from a PR
+crew stage refresh                         # run one pr-stage-sync pass now
+```
+
+`<pr-url>` must be a full `https://github.com/<owner>/<repo>/pull/<number>` link. `<label>` must be one of the two names configured under `cmux.prStages.labels` (`self-reviewed`/`tested` by default) — any other label is rejected. `label-add` creates the label in the PR's repo on first use (`self-reviewed`: `#5319E7`, `tested`: `#0E8A16`) before applying it with `gh pr edit`. Both `label-add` and `label-remove` trigger a sync pass afterward so the cmux sidebar reflects the change immediately, without waiting for the next watch tick.
+
 ## Completions
 
 `crew completions <bash|zsh|fish>` prints a shell completion script to stdout. The script completes command names, subcommands (for `crew source` and `crew task`), flags, and enumerated flag values (`--runner`, `--status`, `--agent`); `--prompt-file` and `--project-dir` fall back to file and directory completion. Task IDs, source names, and repositories are configuration-specific and are not completed.

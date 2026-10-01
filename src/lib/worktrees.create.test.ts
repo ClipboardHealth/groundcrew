@@ -6,6 +6,7 @@ import path from "node:path";
 
 import type { RunCommandOptions } from "./commandRunner.ts";
 import type { ResolvedConfig } from "./config.ts";
+import { makeCmuxConfig } from "../testHelpers/cmuxConfig.ts";
 import { makeLocalConfig } from "../testHelpers/localConfig.ts";
 import { setVerbose } from "./util.ts";
 import { worktrees } from "./worktrees.ts";
@@ -77,6 +78,7 @@ function makeConfig(overrides: {
     prompts: { initial: "x" },
     workspaceKind: "auto",
     local: makeLocalConfig(),
+    cmux: makeCmuxConfig(),
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }

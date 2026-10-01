@@ -12,6 +12,7 @@ import type * as boardModule from "../lib/board.ts";
 import { buildSources } from "../lib/buildSources.ts";
 import type * as buildSourcesModule from "../lib/buildSources.ts";
 import type { BoardState, Issue } from "../lib/taskSource.ts";
+import { makeCmuxConfig } from "../testHelpers/cmuxConfig.ts";
 import { makeLocalConfig } from "../testHelpers/localConfig.ts";
 import type * as utilModule from "../lib/util.ts";
 import { debug, log } from "../lib/util.ts";
@@ -213,6 +214,7 @@ function makeConfig(overrides: Partial<ResolvedConfig["agents"]> = {}): Resolved
     },
     workspaceKind: "auto",
     local: makeLocalConfig(),
+    cmux: makeCmuxConfig(),
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }

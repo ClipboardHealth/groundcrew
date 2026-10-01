@@ -130,12 +130,20 @@ interface CmuxRawWorkspace {
   id: string;
   /** cmux per-workspace description; carries the task-id marker, or null for legacy workspaces. */
   description: string | null;
+  /** cmux's reported cwd for the workspace, when present. */
+  currentDirectory?: string;
 }
 
 function parseCmuxList(output: string): CmuxRawWorkspace[] {
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- cmux --json workspace list always emits this shape
   const parsed = JSON.parse(output) as {
-    workspaces?: Array<{ title?: string; ref?: string; id?: string; description?: string | null }>;
+    workspaces?: Array<{
+      title?: string;
+      ref?: string;
+      id?: string;
+      description?: string | null;
+      current_directory?: string;
+    }>;
   };
   const items: CmuxRawWorkspace[] = [];
   /* v8 ignore next @preserve -- cmux always emits a workspaces field; default keeps the loop safe */
@@ -150,7 +158,14 @@ function parseCmuxList(output: string): CmuxRawWorkspace[] {
       );
       continue;
     }
-    items.push({ title: ws.title, id, description: ws.description ?? null });
+    items.push({
+      title: ws.title,
+      id,
+      description: ws.description ?? null,
+      ...(typeof ws.current_directory === "string"
+        ? { currentDirectory: ws.current_directory }
+        : {}),
+    });
   }
   return items;
 }
@@ -184,6 +199,33 @@ async function listCmuxRaw(signal?: AbortSignal): Promise<CmuxRawWorkspace[] | u
     debug(`cmux workspace list failed: ${errorMessage(error)}`);
     return undefined;
   }
+}
+
+/** A live cmux workspace, shaped for `pr-stage-sync` matching: its stable id (to target with `set-status`/`clear-status`), the task id it carries (or its title, for legacy workspaces), its title, and cmux's reported cwd. */
+export interface CmuxWorkspaceSummary {
+  /** Stable id to pass as `--workspace` to status commands. */
+  id: string;
+  taskId: string;
+  title: string;
+  currentDirectory: string | undefined;
+}
+
+/**
+ * Enumerates live cmux workspaces for `pr-stage-sync`, independent of the
+ * `Adapter.list()` contract (which returns only `{name}` for workspace-probe
+ * purposes). Returns `undefined` on the same unavailable-vs-empty terms as
+ * `listCmuxRaw`.
+ */
+export async function listCmuxWorkspaceSummaries(
+  signal?: AbortSignal,
+): Promise<CmuxWorkspaceSummary[] | undefined> {
+  const raw = await listCmuxRaw(signal);
+  return raw?.map((ws) => ({
+    id: ws.id,
+    taskId: cmuxTaskId(ws),
+    title: ws.title,
+    currentDirectory: ws.currentDirectory,
+  }));
 }
 
 function extractCmuxOpenId(output: string): string | undefined {

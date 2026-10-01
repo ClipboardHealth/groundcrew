@@ -1,4 +1,5 @@
 import { repositoryBaseDir, worktreeBaseDir, type ResolvedConfig } from "./config.ts";
+import { makeCmuxConfig } from "../testHelpers/cmuxConfig.ts";
 import { makeLocalConfig } from "../testHelpers/localConfig.ts";
 
 function resolvedConfigWithWorkspace(
@@ -26,6 +27,7 @@ function resolvedConfigWithWorkspace(
     prompts: { initial: "x" },
     workspaceKind: "auto",
     local: makeLocalConfig(),
+    cmux: makeCmuxConfig(),
     logging: { file: "/tmp/x.log" },
   };
 }
