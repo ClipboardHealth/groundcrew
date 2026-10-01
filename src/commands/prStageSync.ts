@@ -351,17 +351,28 @@ async function resolvePullRequestsByWorkspace(arguments_: {
   return { byWorkspace, failedWorkspaceIds };
 }
 
+/**
+ * Prefers the watch loop's own cmux workspace (`$CMUX_WORKSPACE_ID`), so the
+ * heartbeat sits on a workspace the user can see even when it tracks no
+ * task itself. When the watch loop runs outside a cmux-spawned shell (a
+ * background daemon, say) that variable is unset, so this falls back to the
+ * first matched task workspace instead of silently writing no heartbeat at
+ * all — a sidebar that gates "is PR-stage sync even running" on heartbeat
+ * presence would otherwise read a fully-working sync as never having run.
+ */
 async function writeHeartbeat(arguments_: {
+  matches: readonly MatchedWorkspace[];
   writeStatus: WriteCmuxStatus;
   signal: AbortSignal | undefined;
 }): Promise<void> {
-  const ownWorkspaceId = readEnvironmentVariable(CMUX_WORKSPACE_ID_ENV);
-  if (ownWorkspaceId === undefined) {
+  const targetWorkspaceId =
+    readEnvironmentVariable(CMUX_WORKSPACE_ID_ENV) ?? arguments_.matches[0]?.workspace.id;
+  if (targetWorkspaceId === undefined) {
     return;
   }
   const epochSeconds = String(Math.floor(Date.now() / 1000));
   await arguments_.writeStatus(
-    ownWorkspaceId,
+    targetWorkspaceId,
     { key: HEARTBEAT_KEY, priority: HEARTBEAT_PRIORITY, value: epochSeconds },
     arguments_.signal,
   );
@@ -499,7 +510,19 @@ export function createPrStageSync(deps: PrStageSyncDeps): PrStageSync {
         }
       }
 
-      await writeHeartbeat({ writeStatus: deps.writeCmuxStatus, signal });
+      try {
+        await writeHeartbeat({ matches, writeStatus: deps.writeCmuxStatus, signal });
+      } catch (error) {
+        // A heartbeat failure is reported only when nothing else already
+        // flagged this pass as an error, so it never masks a more specific
+        // reason (like a per-workspace status_write_failed) from an earlier
+        // step in the same pass.
+        if (outcome !== "error") {
+          outcome = "error";
+          reason = "heartbeat_write_failed";
+        }
+        debug(`pr-stage-sync: heartbeat write failed: ${errorMessage(error)}`);
+      }
     } catch (error) {
       outcome = "error";
       reason = errorMessage(error);

@@ -77,12 +77,14 @@ For a task with a PR, the context menu additionally offers (via `crew stage labe
 - `Testing done` / `Undo testing` — toggles the `tested` gating label
 - `Refresh stages` — runs `crew stage refresh` directly
 
-The menu labels are hardcoded to the **default** label names (`self-reviewed` and `tested`). If your
-`cmux.prStages.labels` config overrides either name, the context menu will still toggle the
-configured label (the label text is read from `crew_labels`), but the menu's own wording
-(`Self-review done`, `Undo testing`, …) will no longer match it — `crew stage label-add`/
-`label-remove` reject any label that isn't one of the two configured names, so a stale menu action
-fails loudly rather than silently tagging the wrong label.
+Both the menu's "has this label already?" check and the label name it sends to `crew stage
+label-add`/`label-remove` are hardcoded to the **default** names (`self-reviewed` and `tested`),
+not read from `crew_labels` or anywhere else. If your `cmux.prStages.labels` config overrides either
+name, these two toggle actions stop working: the "has this label?" check never matches (so the menu
+always offers the "add" action, never "undo"), and `crew stage label-add`/`label-remove` reject the
+hardcoded default name since it no longer matches your configured one. `Refresh stages` is
+unaffected, since it carries no label name. Keep `cmux.prStages.labels` at its defaults to use the
+toggles from this sidebar, or toggle labels with `crew stage label-add`/`label-remove` directly.
 
 ## Requirements
 

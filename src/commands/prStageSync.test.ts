@@ -156,6 +156,15 @@ function rejectWritesFor(failingWorkspaceId: string): (workspaceId: string) => P
   };
 }
 
+function rejectHeartbeatWrites(): (workspaceId: string, write: CmuxStatusWrite) => Promise<void> {
+  const failingKeys = new Set(["crew_poller_heartbeat"]);
+  return async (_workspaceId, write) => {
+    if (failingKeys.has(write.key)) {
+      throw new Error("heartbeat write failed");
+    }
+  };
+}
+
 const originalEnvironment = snapshotEnvironmentVariables();
 
 afterEach(() => {
@@ -613,7 +622,12 @@ describe(createPrStageSync, () => {
 
       await prStageSync.syncOnce({ worktreeEntries: [entry] });
 
-      expect(deps.writeCmuxStatus).not.toHaveBeenCalled();
+      expect(deps.writeCmuxStatus).toHaveBeenCalledTimes(1);
+      expect(deps.writeCmuxStatus).toHaveBeenCalledWith(
+        workspace.id,
+        expect.objectContaining({ key: "crew_poller_heartbeat" }),
+        undefined,
+      );
       expect(logEventMock).toHaveBeenCalledWith(
         "pr-stage-sync",
         expect.objectContaining({ written: 0, cleared: 0 }),
@@ -701,7 +715,7 @@ describe(createPrStageSync, () => {
       );
     });
 
-    it("skips the heartbeat write when CMUX_WORKSPACE_ID is unset", async () => {
+    it("skips the heartbeat write when CMUX_WORKSPACE_ID is unset and no task workspace matched either", async () => {
       deleteEnvironmentVariable("CMUX_WORKSPACE_ID");
       const config = makeConfig();
       const deps = makeDeps(config);
@@ -710,6 +724,48 @@ describe(createPrStageSync, () => {
       await prStageSync.syncOnce({ worktreeEntries: [] });
 
       expect(deps.writeCmuxStatus).not.toHaveBeenCalled();
+    });
+
+    it("falls back to a matched task workspace's heartbeat when CMUX_WORKSPACE_ID is unset", async () => {
+      deleteEnvironmentVariable("CMUX_WORKSPACE_ID");
+      const config = makeConfig();
+      const entry = entryFor("team-1");
+      const workspace = workspaceFor("ws-1", { currentDirectory: entry.dir, title: "no ticket" });
+      const deps = makeDeps(config, {
+        listCmuxWorkspaces: vi.fn<ListCmuxWorkspaces>().mockResolvedValue([workspace]),
+      });
+      const prStageSync = createPrStageSync(deps);
+
+      await prStageSync.syncOnce({ worktreeEntries: [entry] });
+
+      expect(deps.writeCmuxStatus).toHaveBeenCalledWith(
+        "ws-1",
+        expect.objectContaining({ key: "crew_poller_heartbeat", priority: -12 }),
+        undefined,
+      );
+    });
+
+    it("reports heartbeat_write_failed when only the heartbeat write fails", async () => {
+      const config = makeConfig();
+      const entry = entryFor("adhoc");
+      const workspace = workspaceFor("ws-1", { currentDirectory: entry.dir, title: "no ticket" });
+      const writeCmuxStatus = vi
+        .fn<PrStageSyncDeps["writeCmuxStatus"]>()
+        .mockImplementation(rejectHeartbeatWrites());
+      const deps = makeDeps(config, {
+        listCmuxWorkspaces: vi.fn<ListCmuxWorkspaces>().mockResolvedValue([workspace]),
+        findPullRequests: vi.fn<FindPullRequests>().mockResolvedValue([]),
+        writeCmuxStatus,
+      });
+      const prStageSync = createPrStageSync(deps);
+
+      await prStageSync.syncOnce({ worktreeEntries: [entry] });
+
+      expect(writeCmuxStatus).toHaveBeenCalledTimes(1);
+      expect(logEventMock).toHaveBeenCalledWith(
+        "pr-stage-sync",
+        expect.objectContaining({ outcome: "error", reason: "heartbeat_write_failed" }),
+      );
     });
 
     it("forwards the abort signal through to the cmux and gh calls", async () => {

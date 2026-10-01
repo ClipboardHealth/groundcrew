@@ -365,8 +365,9 @@ func lastSegment(_ s, _ sep) -> String {
 }
 
 // pr-stage-sync writes crew_stage/crew_ticket/crew_labels only on change,
-// plus one crew_poller_heartbeat on its OWN workspace per pass (not per
-// task) — so staleness is "no workspace has a heartbeat newer than 600s",
+// plus one crew_poller_heartbeat per pass (not per task) — on its own
+// workspace when the watch loop runs inside one, else on a matched task
+// workspace — so staleness is "no workspace has a heartbeat newer than 600s",
 // never a per-row epoch. No workspace carrying a heartbeat AT ALL means
 // cmux.prStages is disabled for every tracked task, not merely stale.
 func heartbeatFresh(_ workspaces, _ now) -> Bool {
