@@ -142,6 +142,7 @@ async function stageLabelRemoveCli(argv: string[]): Promise<void> {
   const { prUrl, label } = parseLabelCliArgs(argv, LABEL_REMOVE_USAGE);
   const config = await loadConfig();
   resolveLabelRole(label, config.cmux.prStages.labels);
+  parsePullRequestUrl(prUrl);
   await runCommandAsync("gh", ["pr", "edit", prUrl, "--remove-label", label]);
   await syncOnce(config);
 }

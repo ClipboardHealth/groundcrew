@@ -3,7 +3,7 @@ import { type CmuxStatusWrite, readCmuxStatus, writeCmuxStatus } from "../lib/cm
 import type { ResolvedConfig } from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
 import { fetchPullRequestDetails, type PullRequestDetail } from "../lib/pullRequestDetails.ts";
-import { findPullRequestsForBranch, type PullRequestSummary } from "../lib/pullRequests.ts";
+import { findPullRequestsForBranchOrThrow, type PullRequestSummary } from "../lib/pullRequests.ts";
 import * as util from "../lib/util.ts";
 import type { WorktreeEntry } from "../lib/worktrees.ts";
 import { makeCmuxConfig } from "../testHelpers/cmuxConfig.ts";
@@ -196,6 +196,32 @@ describe(createPrStageSync, () => {
 
       expect(deps.isCmuxAdapterActive).toHaveBeenCalledTimes(1);
     });
+
+    it("skips the pass and writes no cmux status when the orchestrator is in a dry run", async () => {
+      const config = makeConfig({ cmux: makeCmuxConfig({ enabled: true }) });
+      const deps = makeDeps(config);
+      const prStageSync = createPrStageSync(deps);
+
+      await prStageSync.runOnce({ worktreeEntries: [entryFor("adhoc")], dryRun: true });
+
+      expect(deps.isCmuxAdapterActive).not.toHaveBeenCalled();
+      expect(deps.listCmuxWorkspaces).not.toHaveBeenCalled();
+      expect(deps.writeCmuxStatus).not.toHaveBeenCalled();
+      expect(logEventMock).toHaveBeenCalledWith(
+        "pr-stage-sync",
+        expect.objectContaining({ outcome: "skipped", reason: "dry_run" }),
+      );
+    });
+
+    it("still runs the pass when dryRun is explicitly false", async () => {
+      const config = makeConfig({ cmux: makeCmuxConfig({ enabled: true }) });
+      const deps = makeDeps(config);
+      const prStageSync = createPrStageSync(deps);
+
+      await prStageSync.runOnce({ worktreeEntries: [], dryRun: false });
+
+      expect(deps.isCmuxAdapterActive).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe("syncOnce (ungated, still requires the cmux adapter)", () => {
@@ -212,6 +238,26 @@ describe(createPrStageSync, () => {
 
       expect(deps.listCmuxWorkspaces).not.toHaveBeenCalled();
       expect(logEventMock).not.toHaveBeenCalled();
+    });
+
+    it("ignores dryRun — the label CLI's trailing sync and `crew stage refresh` always write", async () => {
+      const config = makeConfig();
+      const entry = entryFor("adhoc");
+      const workspace = workspaceFor("ws-1", { currentDirectory: entry.dir, title: "no ticket" });
+      const deps = makeDeps(config, {
+        listCmuxWorkspaces: vi.fn<ListCmuxWorkspaces>().mockResolvedValue([workspace]),
+        readCmuxStatus: vi
+          .fn<PrStageSyncDeps["readCmuxStatus"]>()
+          .mockResolvedValue(new Map([["crew_stage", "my_review"]])),
+      });
+      const prStageSync = createPrStageSync(deps);
+
+      await prStageSync.syncOnce({ worktreeEntries: [entry], dryRun: true });
+
+      expect(deps.listCmuxWorkspaces).toHaveBeenCalledTimes(1);
+      expect(writesFor(deps, "crew_stage")).toStrictEqual([
+        expect.objectContaining({ key: "crew_stage", value: "" }),
+      ]);
     });
 
     it("logs an error outcome and returns when listing workspaces fails", async () => {
@@ -525,7 +571,7 @@ describe(createPrStageSync, () => {
       );
     });
 
-    it("treats a PR lookup failure for one workspace as 'no PR' without aborting the pass", async () => {
+    it("preserves a workspace's saved stage and labels when PR discovery fails, without aborting the pass", async () => {
       const config = makeConfig();
       const entry = entryFor("team-1");
       const workspace = workspaceFor("ws-1", { currentDirectory: entry.dir, title: "no ticket" });
@@ -534,15 +580,23 @@ describe(createPrStageSync, () => {
         findPullRequests: vi
           .fn<FindPullRequests>()
           .mockRejectedValue(new Error("gh pr list failed")),
+        readCmuxStatus: vi.fn<PrStageSyncDeps["readCmuxStatus"]>().mockResolvedValue(
+          new Map([
+            ["crew_stage", "ready_to_merge"],
+            ["crew_labels", "self-reviewed,tested"],
+          ]),
+        ),
       });
       const prStageSync = createPrStageSync(deps);
 
       await prStageSync.syncOnce({ worktreeEntries: [entry] });
 
       expect(deps.fetchPullRequestDetails).not.toHaveBeenCalled();
+      expect(writesFor(deps, "crew_stage")).toStrictEqual([]);
+      expect(writesFor(deps, "crew_labels")).toStrictEqual([]);
       expect(logEventMock).toHaveBeenCalledWith(
         "pr-stage-sync",
-        expect.objectContaining({ outcome: "updated" }),
+        expect.objectContaining({ outcome: "error", reason: "pull_request_lookup_failed" }),
       );
     });
 
@@ -672,7 +726,7 @@ describe(createPrStageSyncDeps, () => {
     const deps = createPrStageSyncDeps(config);
 
     expect(deps.config).toBe(config);
-    expect(deps.findPullRequests).toBe(findPullRequestsForBranch);
+    expect(deps.findPullRequests).toBe(findPullRequestsForBranchOrThrow);
     expect(deps.fetchPullRequestDetails).toBe(fetchPullRequestDetails);
     expect(deps.listCmuxWorkspaces).toBe(listCmuxWorkspaceSummaries);
     expect(deps.readCmuxStatus).toBe(readCmuxStatus);

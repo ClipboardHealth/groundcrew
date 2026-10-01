@@ -235,6 +235,13 @@ describe(stageCli, () => {
         /unknown label: not-configured/,
       );
     });
+
+    it("rejects a pull request URL that isn't a github.com PR link", async () => {
+      await expect(
+        stageCli(["label-remove", "https://example.com/not-a-pr", "tested"]),
+      ).rejects.toThrow(/invalid pull request URL/);
+      expect(runCommandMock).not.toHaveBeenCalled();
+    });
   });
 
   describe("refresh", () => {

@@ -4,7 +4,7 @@
  * standalone `crew-pr-stages` bash poller: same stage/ticket derivation
  * rules (`../lib/prStageRules.ts`), same status-key contract the installed
  * sidebar reads, but PRs are resolved from the task's own worktree branch
- * (`findPullRequestsForBranch`) instead of cmux's own git-branch PR
+ * (`findPullRequestsForBranchOrThrow`) instead of cmux's own git-branch PR
  * detection.
  *
  * Runs after the other tick steps in `orchestrator.ts`. Every failure is
@@ -17,7 +17,7 @@ import { type CmuxStatusWrite, readCmuxStatus, writeCmuxStatus } from "../lib/cm
 import type { ResolvedConfig } from "../lib/config.ts";
 import { detectHostCapabilities } from "../lib/host.ts";
 import { fetchPullRequestDetails, type PullRequestDetail } from "../lib/pullRequestDetails.ts";
-import { findPullRequestsForBranch, type PullRequestSummary } from "../lib/pullRequests.ts";
+import { findPullRequestsForBranchOrThrow, type PullRequestSummary } from "../lib/pullRequests.ts";
 import {
   deriveTicket,
   derivePrStage,
@@ -79,11 +79,13 @@ export interface PrStageSyncDeps {
 
 export interface PrStageSyncTickArgs {
   worktreeEntries: readonly WorktreeEntry[];
+  /** Orchestrator `--dry-run`; only `runOnce` honors it — `syncOnce` (`crew stage refresh`) always writes. */
+  dryRun?: boolean;
   signal?: AbortSignal;
 }
 
 export interface PrStageSync {
-  /** Gated on `config.cmux.prStages.enabled` — the orchestrator tick step. */
+  /** Gated on `config.cmux.prStages.enabled` and `dryRun` — the orchestrator tick step. */
   runOnce: (arguments_: PrStageSyncTickArgs) => Promise<void>;
   /** Ungated (still requires the cmux adapter): `crew stage refresh` and the label CLI's trailing sync. */
   syncOnce: (arguments_: PrStageSyncTickArgs) => Promise<void>;
@@ -184,6 +186,7 @@ interface SyncWorkspaceArguments {
   match: MatchedWorkspace;
   labelNames: PrStageLabelNames;
   pullRequest: PullRequestSummary | undefined;
+  pullRequestLookupFailed: boolean;
   detail: PullRequestDetail | undefined;
   deps: Pick<PrStageSyncDeps, "readCmuxStatus" | "writeCmuxStatus">;
   signal: AbortSignal | undefined;
@@ -193,12 +196,22 @@ interface SyncWorkspaceArguments {
 /**
  * The ticket field is independent of PR resolution (derived from the
  * workspace's own title/cwd) and is always applied. Stage and labels are
- * cleared only when the branch genuinely has no PR; when a PR exists but its
- * detail couldn't be (re)confirmed this tick (a failed or partial GraphQL
- * batch), they are left exactly as they were — never guessed, never cleared.
+ * cleared only when the branch is confirmed to have no PR; when discovery
+ * itself failed (network/auth error) or a PR exists but its detail couldn't
+ * be (re)confirmed this tick (a failed or partial GraphQL batch), they are
+ * left exactly as they were — never guessed, never cleared.
  */
 async function syncWorkspace(arguments_: SyncWorkspaceArguments): Promise<void> {
-  const { match, labelNames, pullRequest, detail, deps, signal, counters } = arguments_;
+  const {
+    match,
+    labelNames,
+    pullRequest,
+    pullRequestLookupFailed,
+    detail,
+    deps,
+    signal,
+    counters,
+  } = arguments_;
   const { workspace } = match;
   const current = await deps.readCmuxStatus(workspace.id, signal);
 
@@ -218,6 +231,11 @@ async function syncWorkspace(arguments_: SyncWorkspaceArguments): Promise<void> 
     writeStatus: deps.writeCmuxStatus,
     counters,
   });
+
+  if (pullRequestLookupFailed) {
+    counters.skipped += 2;
+    return;
+  }
 
   if (pullRequest === undefined) {
     await applyField({
@@ -270,32 +288,37 @@ async function syncWorkspace(arguments_: SyncWorkspaceArguments): Promise<void> 
   });
 }
 
+interface PullRequestLookupResult {
+  byWorkspace: Map<string, PullRequestSummary | undefined>;
+  failedWorkspaceIds: Set<string>;
+}
+
 async function resolvePullRequestsByWorkspace(arguments_: {
   matches: readonly MatchedWorkspace[];
   config: ResolvedConfig;
   findPullRequests: FindPullRequests;
   signal: AbortSignal | undefined;
-}): Promise<Map<string, PullRequestSummary | undefined>> {
+}): Promise<PullRequestLookupResult> {
   const { matches, config, findPullRequests, signal } = arguments_;
-  const result = new Map<string, PullRequestSummary | undefined>();
+  const byWorkspace = new Map<string, PullRequestSummary | undefined>();
+  const failedWorkspaceIds = new Set<string>();
   for (const match of matches) {
     // oxlint-disable-next-line no-await-in-loop -- one gh lookup per matched workspace; mirrors reviewer.ts's sequential PR lookups
     const branchName = await effectiveBranchName({ config, entry: match.entry });
-    let pullRequests: readonly PullRequestSummary[];
     try {
       // oxlint-disable-next-line no-await-in-loop -- see above
-      pullRequests = await findPullRequests({
+      const pullRequests = await findPullRequests({
         cwd: match.entry.dir,
         branchName,
         ...(signal === undefined ? {} : { signal }),
       });
+      byWorkspace.set(match.workspace.id, selectTrackedPullRequest(pullRequests));
     } catch (error) {
       debug(`pr-stage-sync: PR lookup failed for ${match.entry.task}: ${errorMessage(error)}`);
-      pullRequests = [];
+      failedWorkspaceIds.add(match.workspace.id);
     }
-    result.set(match.workspace.id, selectTrackedPullRequest(pullRequests));
   }
-  return result;
+  return { byWorkspace, failedWorkspaceIds };
 }
 
 async function writeHeartbeat(arguments_: {
@@ -336,12 +359,17 @@ export function createPrStageSync(deps: PrStageSyncDeps): PrStageSync {
       }
 
       const matches = matchWorkspacesToTasks(workspaces, worktreeEntries);
-      const pullRequestByWorkspace = await resolvePullRequestsByWorkspace({
-        matches,
-        config,
-        findPullRequests: deps.findPullRequests,
-        signal,
-      });
+      const { byWorkspace: pullRequestByWorkspace, failedWorkspaceIds } =
+        await resolvePullRequestsByWorkspace({
+          matches,
+          config,
+          findPullRequests: deps.findPullRequests,
+          signal,
+        });
+      if (failedWorkspaceIds.size > 0) {
+        outcome = "error";
+        reason = "pull_request_lookup_failed";
+      }
 
       const urls = [
         ...new Set(
@@ -371,6 +399,7 @@ export function createPrStageSync(deps: PrStageSyncDeps): PrStageSync {
             match,
             labelNames: config.cmux.prStages.labels,
             pullRequest,
+            pullRequestLookupFailed: failedWorkspaceIds.has(match.workspace.id),
             detail,
             deps,
             signal,
@@ -402,6 +431,10 @@ export function createPrStageSync(deps: PrStageSyncDeps): PrStageSync {
     if (!deps.config.cmux.prStages.enabled) {
       return;
     }
+    if (arguments_.dryRun === true) {
+      logEvent(FLOW, { outcome: "skipped", reason: "dry_run" });
+      return;
+    }
     await syncOnce(arguments_);
   }
 
@@ -412,7 +445,7 @@ export function createPrStageSync(deps: PrStageSyncDeps): PrStageSync {
 export function createPrStageSyncDeps(config: ResolvedConfig): PrStageSyncDeps {
   return {
     config,
-    findPullRequests: findPullRequestsForBranch,
+    findPullRequests: findPullRequestsForBranchOrThrow,
     fetchPullRequestDetails,
     listCmuxWorkspaces: listCmuxWorkspaceSummaries,
     readCmuxStatus,

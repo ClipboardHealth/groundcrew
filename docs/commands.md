@@ -178,7 +178,7 @@ When `--prompt`/`--prompt-file` is given, the agent starts with that prompt; oth
 
 ## Stage
 
-`crew stage` manages `cmux.prStages`'s two gating labels and runs an on-demand sync pass. It requires `cmux.prStages.enabled: true` (see [Configuration](./configuration.md)) and the resolved `workspaceKind` to be `cmux`.
+`crew stage` manages `cmux.prStages`'s two gating labels and runs an on-demand sync pass. The sync pass requires the resolved `workspaceKind` to be `cmux`; it runs even when `cmux.prStages.enabled` is `false` (see [Configuration](./configuration.md)) — that flag only gates the per-tick sync inside the watch loop.
 
 ```bash
 crew stage label-add <pr-url> <label>      # add a configured gating label to a PR
