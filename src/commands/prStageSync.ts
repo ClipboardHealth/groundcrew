@@ -12,7 +12,9 @@
  * of the `cmux.prStages.enabled` opt-in, since a custom sidebar may read it
  * independent of PR-stage sync; the opt-in only gates the `gh`-backed stage
  * and label writes (and the `crew_poller_heartbeat` that signals they're
- * running).
+ * running). `cmuxAdapter.ts` also writes it once at workspace-creation time
+ * (straight from the task id), so a brand-new workspace shows a ticket pill
+ * even before the first tick — this module keeps it current afterward.
  *
  * Runs after the other tick steps in `orchestrator.ts`. Every failure is
  * caught and logged here — a flaky `gh` call or a single misbehaving
@@ -20,7 +22,13 @@
  */
 
 import { type CmuxWorkspaceSummary, listCmuxWorkspaceSummaries } from "../lib/cmuxAdapter.ts";
-import { type CmuxStatusWrite, readCmuxStatus, writeCmuxStatus } from "../lib/cmuxStatusFields.ts";
+import {
+  type CmuxStatusWrite,
+  readCmuxStatus,
+  TICKET_KEY,
+  TICKET_PRIORITY,
+  writeCmuxStatus,
+} from "../lib/cmuxStatusFields.ts";
 import type { ResolvedConfig } from "../lib/config.ts";
 import { detectHostCapabilities } from "../lib/host.ts";
 import { fetchPullRequestDetails, type PullRequestDetail } from "../lib/pullRequestDetails.ts";
@@ -40,8 +48,6 @@ const FLOW = "pr-stage-sync";
 
 const STAGE_KEY = "crew_stage";
 const STAGE_PRIORITY = -10;
-const TICKET_KEY = "crew_ticket";
-const TICKET_PRIORITY = -11;
 const HEARTBEAT_KEY = "crew_poller_heartbeat";
 const HEARTBEAT_PRIORITY = -12;
 const LABELS_KEY = "crew_labels";
@@ -352,13 +358,17 @@ async function resolvePullRequestsByWorkspace(arguments_: {
 }
 
 /**
- * Prefers the watch loop's own cmux workspace (`$CMUX_WORKSPACE_ID`), so the
- * heartbeat sits on a workspace the user can see even when it tracks no
- * task itself. When the watch loop runs outside a cmux-spawned shell (a
- * background daemon, say) that variable is unset, so this falls back to the
- * first matched task workspace instead of silently writing no heartbeat at
- * all — a sidebar that gates "is PR-stage sync even running" on heartbeat
- * presence would otherwise read a fully-working sync as never having run.
+ * Prefers the first matched task workspace, since the sidebar's staleness
+ * check (`heartbeatFresh`) scans every workspace for any recent heartbeat —
+ * it doesn't matter which task workspace carries it from pass to pass. This
+ * matters because `crew stage refresh`/`label-add`/`label-remove` run this
+ * same pass from a cmux Action's own ephemeral workspace, which cmux closes
+ * right after the command exits; a heartbeat written there would vanish with
+ * it, making a successful on-demand refresh look stale on the very next
+ * render. Falls back to the watch loop's own cmux workspace
+ * (`$CMUX_WORKSPACE_ID`) only when no task is currently tracked, so a
+ * fully-working sync with zero matched tasks still reports a heartbeat
+ * somewhere instead of silently writing none at all.
  */
 async function writeHeartbeat(arguments_: {
   matches: readonly MatchedWorkspace[];
@@ -366,7 +376,7 @@ async function writeHeartbeat(arguments_: {
   signal: AbortSignal | undefined;
 }): Promise<void> {
   const targetWorkspaceId =
-    readEnvironmentVariable(CMUX_WORKSPACE_ID_ENV) ?? arguments_.matches[0]?.workspace.id;
+    arguments_.matches[0]?.workspace.id ?? readEnvironmentVariable(CMUX_WORKSPACE_ID_ENV);
   if (targetWorkspaceId === undefined) {
     return;
   }

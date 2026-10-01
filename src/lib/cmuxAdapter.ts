@@ -4,6 +4,7 @@
  * per-workspace status pill, which `open` applies best-effort.
  */
 
+import { TICKET_KEY, TICKET_PRIORITY, writeCmuxStatus } from "./cmuxStatusFields.ts";
 import {
   type Adapter,
   isSignalAborted,
@@ -63,6 +64,11 @@ export const cmuxAdapter: Adapter = {
         signal,
       });
     }
+    await writeCrewTicketBestEffort({
+      workspaceId,
+      taskId: spec.name,
+      ...(signal === undefined ? {} : { signal }),
+    });
   },
   async list(signal) {
     const raw = await listCmuxRaw(signal);
@@ -259,6 +265,35 @@ interface CmuxStatusInput {
   format?: "plain" | "markdown";
   workspaceName: string;
   signal?: AbortSignal | undefined;
+}
+
+/**
+ * Written straight from the task id — no title/cwd parsing — the moment a
+ * workspace exists, so a brand-new ticket-shaped workspace shows its ticket
+ * pill and `Cleanup workspace` action immediately, without waiting on an
+ * orchestrator tick (`pr-stage-sync.ts`'s ticket-only pass covers every tick
+ * after this one, including when `cmux.prStages.enabled` is false). Sidebar
+ * metadata is best-effort for the same reason `applyCmuxStatusBestEffort` is:
+ * a cmux build that dropped `set-status` must never fail workspace creation.
+ */
+async function writeCrewTicketBestEffort(input: {
+  workspaceId: string;
+  taskId: string;
+  signal?: AbortSignal;
+}): Promise<void> {
+  try {
+    await writeCmuxStatus(
+      input.workspaceId,
+      { key: TICKET_KEY, priority: TICKET_PRIORITY, value: input.taskId },
+      input.signal,
+    );
+  } catch (error) {
+    if (!isCmuxSetStatusUnsupported(error)) {
+      debug(
+        `cmux crew_ticket write failed for ${input.taskId} (continuing): ${errorMessage(error)}`,
+      );
+    }
+  }
 }
 
 async function applyCmuxStatusBestEffort(input: CmuxStatusInput): Promise<void> {

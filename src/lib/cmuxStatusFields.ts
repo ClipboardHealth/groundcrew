@@ -9,6 +9,15 @@
 
 import { runWorkspaceCommand } from "./workspaceAdapter.ts";
 
+/**
+ * Shared by `cmuxAdapter.ts` (writes it once, from the task id, the moment a
+ * cmux workspace is created — so a custom sidebar has a ticket to show
+ * before any watch-loop tick ever runs) and `prStageSync.ts` (keeps it
+ * current on every tick, including when `cmux.prStages.enabled` is false).
+ */
+export const TICKET_KEY = "crew_ticket";
+export const TICKET_PRIORITY = -11;
+
 export interface CmuxStatusWrite {
   key: string;
   priority: number;

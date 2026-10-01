@@ -700,7 +700,7 @@ describe(createPrStageSync, () => {
       );
     });
 
-    it("writes the heartbeat on the watcher's own workspace when CMUX_WORKSPACE_ID is set", async () => {
+    it("falls back to CMUX_WORKSPACE_ID's workspace when no task is matched", async () => {
       setEnvironmentVariable("CMUX_WORKSPACE_ID", "watcher-ws");
       const config = makeConfig();
       const deps = makeDeps(config);
@@ -726,8 +726,8 @@ describe(createPrStageSync, () => {
       expect(deps.writeCmuxStatus).not.toHaveBeenCalled();
     });
 
-    it("falls back to a matched task workspace's heartbeat when CMUX_WORKSPACE_ID is unset", async () => {
-      deleteEnvironmentVariable("CMUX_WORKSPACE_ID");
+    it("writes the heartbeat on the first matched task workspace, even when CMUX_WORKSPACE_ID is set", async () => {
+      setEnvironmentVariable("CMUX_WORKSPACE_ID", "action-ws");
       const config = makeConfig();
       const entry = entryFor("team-1");
       const workspace = workspaceFor("ws-1", { currentDirectory: entry.dir, title: "no ticket" });
@@ -742,6 +742,11 @@ describe(createPrStageSync, () => {
         "ws-1",
         expect.objectContaining({ key: "crew_poller_heartbeat", priority: -12 }),
         undefined,
+      );
+      expect(deps.writeCmuxStatus).not.toHaveBeenCalledWith(
+        "action-ws",
+        expect.anything(),
+        expect.anything(),
       );
     });
 
