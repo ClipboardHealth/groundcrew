@@ -5,6 +5,7 @@
  */
 
 import { TICKET_KEY, TICKET_PRIORITY, writeCmuxStatus } from "./cmuxStatusFields.ts";
+import { deriveTicket } from "./prStageRules.ts";
 import {
   type Adapter,
   isSignalAborted,
@@ -67,6 +68,10 @@ export const cmuxAdapter: Adapter = {
     await writeCrewTicketBestEffort({
       workspaceId,
       taskId: spec.name,
+      derivedTicket: deriveTicket({
+        title: spec.displayName ?? spec.name,
+        currentDirectory: spec.cwd,
+      }),
       ...(signal === undefined ? {} : { signal }),
     });
   },
@@ -268,23 +273,33 @@ interface CmuxStatusInput {
 }
 
 /**
- * Written straight from the task id — no title/cwd parsing — the moment a
- * workspace exists, so a brand-new ticket-shaped workspace shows its ticket
- * pill and `Cleanup workspace` action immediately, without waiting on an
- * orchestrator tick (`pr-stage-sync.ts`'s ticket-only pass covers every tick
- * after this one, including when `cmux.prStages.enabled` is false). Sidebar
- * metadata is best-effort for the same reason `applyCmuxStatusBestEffort` is:
- * a cmux build that dropped `set-status` must never fail workspace creation.
+ * Written the moment a workspace exists, so a brand-new ticket-shaped
+ * workspace shows its ticket pill and `Cleanup workspace` action
+ * immediately, without waiting on an orchestrator tick (`pr-stage-sync.ts`'s
+ * ticket-only pass covers every tick after this one, including when
+ * `cmux.prStages.enabled` is false). `derivedTicket` must use the exact same
+ * `deriveTicket` rule the sync loop applies on every subsequent tick — a raw
+ * task id (which may be a whole branch slug, lowercase, or carry no ticket
+ * at all) would disagree with that derivation and either flicker to a
+ * different value or paint a bogus Linear link on the very first sync.
+ * `undefined` skips the write entirely rather than clearing a key that was
+ * never set. Sidebar metadata is best-effort for the same reason
+ * `applyCmuxStatusBestEffort` is: a cmux build that dropped `set-status`
+ * must never fail workspace creation.
  */
 async function writeCrewTicketBestEffort(input: {
   workspaceId: string;
   taskId: string;
+  derivedTicket: string | undefined;
   signal?: AbortSignal;
 }): Promise<void> {
+  if (input.derivedTicket === undefined) {
+    return;
+  }
   try {
     await writeCmuxStatus(
       input.workspaceId,
-      { key: TICKET_KEY, priority: TICKET_PRIORITY, value: input.taskId },
+      { key: TICKET_KEY, priority: TICKET_PRIORITY, value: input.derivedTicket },
       input.signal,
     );
   } catch (error) {

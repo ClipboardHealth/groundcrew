@@ -326,7 +326,7 @@ describe("workspaces.open (cmux)", () => {
     );
   });
 
-  it("writes crew_ticket from the task id on every open, even when status and url are both omitted", async () => {
+  it("writes crew_ticket on every open, even when status and url are both omitted", async () => {
     runMock.mockReturnValue(JSON.stringify({ ref: "workspace:42" }));
 
     await workspaces.open(makeConfig(), {
@@ -344,6 +344,45 @@ describe("workspaces.open (cmux)", () => {
       "--workspace",
       "workspace:42",
     ]);
+  });
+
+  it("derives crew_ticket from the cwd the same way the sync loop does, rather than the raw task slug", async () => {
+    runMock.mockReturnValue(JSON.stringify({ ref: "workspace:42" }));
+
+    await workspaces.open(makeConfig(), {
+      name: "feature-tg-123",
+      cwd: "/work/repo-a-feature-tg-123",
+      command: "exec claude",
+    });
+
+    expect(runMock).toHaveBeenCalledWith("cmux", [
+      "set-status",
+      "crew_ticket",
+      "TG-123",
+      "--priority",
+      "-11",
+      "--workspace",
+      "workspace:42",
+    ]);
+  });
+
+  it("skips the crew_ticket write entirely when no ticket can be derived from the cwd or title", async () => {
+    runMock.mockReturnValue(JSON.stringify({ ref: "workspace:42" }));
+
+    await workspaces.open(makeConfig(), {
+      name: "adhoc",
+      cwd: "/work/repo-a-adhoc",
+      command: "exec claude",
+    });
+
+    expect(runMock).not.toHaveBeenCalledWith(
+      "cmux",
+      expect.arrayContaining(["set-status", "crew_ticket"]),
+    );
+    expect(runMock).not.toHaveBeenCalledWith(
+      "cmux",
+      expect.arrayContaining(["clear-status", "crew_ticket"]),
+    );
   });
 
   it("keeps the workspace when the crew_ticket write fails (best-effort, like other sidebar painting)", async () => {

@@ -12,9 +12,10 @@
  * of the `cmux.prStages.enabled` opt-in, since a custom sidebar may read it
  * independent of PR-stage sync; the opt-in only gates the `gh`-backed stage
  * and label writes (and the `crew_poller_heartbeat` that signals they're
- * running). `cmuxAdapter.ts` also writes it once at workspace-creation time
- * (straight from the task id), so a brand-new workspace shows a ticket pill
- * even before the first tick — this module keeps it current afterward.
+ * running). `cmuxAdapter.ts` also writes it once at workspace-creation time,
+ * using the same `deriveTicket` rule, so a brand-new workspace shows a
+ * ticket pill before the first tick without disagreeing with it — this
+ * module keeps the value current afterward.
  *
  * Runs after the other tick steps in `orchestrator.ts`. Every failure is
  * caught and logged here — a flaky `gh` call or a single misbehaving
