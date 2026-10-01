@@ -1,11 +1,18 @@
 /**
- * Per-tick sync that paints each tracked task's cmux sidebar with its pull
- * request's review stage, gating labels, and ticket id. Replaces the
- * standalone `crew-pr-stages` bash poller: same stage/ticket derivation
- * rules (`../lib/prStageRules.ts`), same status-key contract the installed
- * sidebar reads, but PRs are resolved from the task's own worktree branch
+ * Per-tick sync that paints each tracked task's cmux sidebar with its ticket
+ * id, and — when `cmux.prStages.enabled` — its pull request's review stage
+ * and gating labels too. Replaces the standalone `crew-pr-stages` bash
+ * poller: same stage/ticket derivation rules (`../lib/prStageRules.ts`),
+ * same status-key contract the installed sidebar reads, but PRs are
+ * resolved from the task's own worktree branch
  * (`findPullRequestsForBranchOrThrow`) instead of cmux's own git-branch PR
  * detection.
+ *
+ * `crew_ticket` is written for every matched cmux task workspace regardless
+ * of the `cmux.prStages.enabled` opt-in, since a custom sidebar may read it
+ * independent of PR-stage sync; the opt-in only gates the `gh`-backed stage
+ * and label writes (and the `crew_poller_heartbeat` that signals they're
+ * running).
  *
  * Runs after the other tick steps in `orchestrator.ts`. Every failure is
  * caught and logged here — a flaky `gh` call or a single misbehaving
@@ -85,7 +92,12 @@ export interface PrStageSyncTickArgs {
 }
 
 export interface PrStageSync {
-  /** Gated on `config.cmux.prStages.enabled` and `dryRun` — the orchestrator tick step. */
+  /**
+   * The orchestrator tick step. A dry run skips everything. Otherwise
+   * `crew_ticket` is always written for matched cmux task workspaces; stage,
+   * labels, and the heartbeat are additionally synced only when
+   * `config.cmux.prStages.enabled` is true.
+   */
   runOnce: (arguments_: PrStageSyncTickArgs) => Promise<void>;
   /** Ungated (still requires the cmux adapter): `crew stage refresh` and the label CLI's trailing sync. */
   syncOnce: (arguments_: PrStageSyncTickArgs) => Promise<void>;
@@ -182,39 +194,22 @@ async function applyField(arguments_: {
   }
 }
 
-interface SyncWorkspaceArguments {
-  match: MatchedWorkspace;
-  labelNames: PrStageLabelNames;
-  pullRequest: PullRequestSummary | undefined;
-  pullRequestLookupFailed: boolean;
-  detail: PullRequestDetail | undefined;
-  deps: Pick<PrStageSyncDeps, "readCmuxStatus" | "writeCmuxStatus">;
+interface WriteTicketFieldArguments {
+  workspace: CmuxWorkspaceSummary;
+  current: ReadonlyMap<string, string>;
+  deps: Pick<PrStageSyncDeps, "writeCmuxStatus">;
   signal: AbortSignal | undefined;
   counters: SyncCounters;
 }
 
 /**
- * The ticket field is independent of PR resolution (derived from the
- * workspace's own title/cwd) and is always applied. Stage and labels are
- * cleared only when the branch is confirmed to have no PR; when discovery
- * itself failed (network/auth error) or a PR exists but its detail couldn't
- * be (re)confirmed this tick (a failed or partial GraphQL batch), they are
- * left exactly as they were — never guessed, never cleared.
+ * The ticket field is derived from the workspace's own title/cwd, so it
+ * needs no PR lookup and is written for every matched cmux task workspace —
+ * including when `cmux.prStages.enabled` is false, so the sidebar's
+ * `crew_ticket` read works for everyone regardless of the PR-stage opt-in.
  */
-async function syncWorkspace(arguments_: SyncWorkspaceArguments): Promise<void> {
-  const {
-    match,
-    labelNames,
-    pullRequest,
-    pullRequestLookupFailed,
-    detail,
-    deps,
-    signal,
-    counters,
-  } = arguments_;
-  const { workspace } = match;
-  const current = await deps.readCmuxStatus(workspace.id, signal);
-
+async function writeTicketField(arguments_: WriteTicketFieldArguments): Promise<void> {
+  const { workspace, current, deps, signal, counters } = arguments_;
   await applyField({
     workspaceId: workspace.id,
     key: TICKET_KEY,
@@ -231,6 +226,41 @@ async function syncWorkspace(arguments_: SyncWorkspaceArguments): Promise<void> 
     writeStatus: deps.writeCmuxStatus,
     counters,
   });
+}
+
+interface SyncWorkspaceArguments {
+  match: MatchedWorkspace;
+  labelNames: PrStageLabelNames;
+  pullRequest: PullRequestSummary | undefined;
+  pullRequestLookupFailed: boolean;
+  detail: PullRequestDetail | undefined;
+  deps: Pick<PrStageSyncDeps, "readCmuxStatus" | "writeCmuxStatus">;
+  signal: AbortSignal | undefined;
+  counters: SyncCounters;
+}
+
+/**
+ * Stage and labels are cleared only when the branch is confirmed to have no
+ * PR; when discovery itself failed (network/auth error) or a PR exists but
+ * its detail couldn't be (re)confirmed this tick (a failed or partial
+ * GraphQL batch), they are left exactly as they were — never guessed, never
+ * cleared.
+ */
+async function syncWorkspace(arguments_: SyncWorkspaceArguments): Promise<void> {
+  const {
+    match,
+    labelNames,
+    pullRequest,
+    pullRequestLookupFailed,
+    detail,
+    deps,
+    signal,
+    counters,
+  } = arguments_;
+  const { workspace } = match;
+  const current = await deps.readCmuxStatus(workspace.id, signal);
+
+  await writeTicketField({ workspace, current, deps, signal, counters });
 
   if (pullRequestLookupFailed) {
     counters.skipped += 2;
@@ -337,7 +367,64 @@ async function writeHeartbeat(arguments_: {
   );
 }
 
+const TICKETS_ONLY_FLOW = "pr-stage-sync.tickets-only";
+
 export function createPrStageSync(deps: PrStageSyncDeps): PrStageSync {
+  /**
+   * Runs when `cmux.prStages.enabled` is false: writes only `crew_ticket` for
+   * each matched task workspace, with no `gh` lookups, no stage/label
+   * writes, and no `crew_poller_heartbeat` — the absence of any heartbeat is
+   * exactly what tells the sidebar the PR-stage feature is off, so it must
+   * never be written from this path.
+   */
+  async function syncTicketsOnly(arguments_: PrStageSyncTickArgs): Promise<void> {
+    const { worktreeEntries, signal } = arguments_;
+
+    if (!(await deps.isCmuxAdapterActive(signal))) {
+      return;
+    }
+
+    debug("pr-stage-sync: starting (tickets-only, cmux.prStages disabled)");
+    const counters = newCounters();
+    let outcome: "updated" | "error" = "updated";
+    let reason: string | undefined;
+
+    try {
+      const workspaces = await deps.listCmuxWorkspaces(signal);
+      if (workspaces === undefined) {
+        logEvent(TICKETS_ONLY_FLOW, { outcome: "error", reason: "workspace_list_failed" });
+        return;
+      }
+
+      const matches = matchWorkspacesToTasks(workspaces, worktreeEntries);
+      for (const match of matches) {
+        try {
+          // oxlint-disable-next-line no-await-in-loop -- sequential per workspace, mirrors syncOnce
+          const current = await deps.readCmuxStatus(match.workspace.id, signal);
+          // oxlint-disable-next-line no-await-in-loop -- sequential per workspace, mirrors syncOnce
+          await writeTicketField({ workspace: match.workspace, current, deps, signal, counters });
+        } catch (error) {
+          outcome = "error";
+          reason = "status_write_failed";
+          debug(
+            `pr-stage-sync: ticket write failed for ${match.entry.task}: ${errorMessage(error)}`,
+          );
+        }
+      }
+    } catch (error) {
+      outcome = "error";
+      reason = errorMessage(error);
+    }
+
+    logEvent(TICKETS_ONLY_FLOW, {
+      outcome,
+      written: counters.written,
+      cleared: counters.cleared,
+      skipped: counters.skipped,
+      ...(reason === undefined ? {} : { reason }),
+    });
+  }
+
   async function syncOnce(arguments_: PrStageSyncTickArgs): Promise<void> {
     const { worktreeEntries, signal } = arguments_;
     const { config } = deps;
@@ -428,11 +515,12 @@ export function createPrStageSync(deps: PrStageSyncDeps): PrStageSync {
   }
 
   async function runOnce(arguments_: PrStageSyncTickArgs): Promise<void> {
-    if (!deps.config.cmux.prStages.enabled) {
-      return;
-    }
     if (arguments_.dryRun === true) {
       logEvent(FLOW, { outcome: "skipped", reason: "dry_run" });
+      return;
+    }
+    if (!deps.config.cmux.prStages.enabled) {
+      await syncTicketsOnly(arguments_);
       return;
     }
     await syncOnce(arguments_);

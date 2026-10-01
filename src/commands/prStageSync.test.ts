@@ -176,15 +176,101 @@ beforeEach(() => {
 
 describe(createPrStageSync, () => {
   describe("runOnce (gated on config)", () => {
-    it("no-ops without touching the adapter when cmux.prStages.enabled is false", async () => {
+    it("writes only crew_ticket, with no stage/label/heartbeat writes, when cmux.prStages.enabled is false", async () => {
       const config = makeConfig({ cmux: makeCmuxConfig({ enabled: false }) });
-      const deps = makeDeps(config);
+      const entry = entryFor("adhoc");
+      const workspace = workspaceFor("ws-1", {
+        currentDirectory: entry.dir,
+        title: "TG-1 do a thing",
+      });
+      const deps = makeDeps(config, {
+        listCmuxWorkspaces: vi.fn<ListCmuxWorkspaces>().mockResolvedValue([workspace]),
+      });
+      const prStageSync = createPrStageSync(deps);
+
+      await prStageSync.runOnce({ worktreeEntries: [entry] });
+
+      expect(deps.isCmuxAdapterActive).toHaveBeenCalledTimes(1);
+      expect(deps.listCmuxWorkspaces).toHaveBeenCalledTimes(1);
+      expect(deps.findPullRequests).not.toHaveBeenCalled();
+      expect(writesFor(deps, "crew_ticket")).toStrictEqual([
+        expect.objectContaining({ key: "crew_ticket", value: "TG-1" }),
+      ]);
+      expect(writesFor(deps, "crew_stage")).toStrictEqual([]);
+      expect(writesFor(deps, "crew_labels")).toStrictEqual([]);
+      expect(writesFor(deps, "crew_poller_heartbeat")).toStrictEqual([]);
+    });
+
+    it("tickets-only path no-ops when the resolved workspace backend isn't cmux", async () => {
+      const config = makeConfig({ cmux: makeCmuxConfig({ enabled: false }) });
+      const deps = makeDeps(config, {
+        isCmuxAdapterActive: vi
+          .fn<PrStageSyncDeps["isCmuxAdapterActive"]>()
+          .mockResolvedValue(false),
+      });
+      const prStageSync = createPrStageSync(deps);
+
+      await prStageSync.runOnce({ worktreeEntries: [entryFor("team-1")] });
+
+      expect(deps.listCmuxWorkspaces).not.toHaveBeenCalled();
+      expect(deps.writeCmuxStatus).not.toHaveBeenCalled();
+    });
+
+    it("logs a tickets-only error outcome and returns when listing workspaces fails", async () => {
+      const config = makeConfig({ cmux: makeCmuxConfig({ enabled: false }) });
+      const deps = makeDeps(config, {
+        // oxlint-disable-next-line unicorn/no-useless-undefined -- undefined is the listing-failed signal here
+        listCmuxWorkspaces: vi.fn<ListCmuxWorkspaces>().mockResolvedValue(undefined),
+      });
       const prStageSync = createPrStageSync(deps);
 
       await prStageSync.runOnce({ worktreeEntries: [] });
 
-      expect(deps.isCmuxAdapterActive).not.toHaveBeenCalled();
-      expect(deps.listCmuxWorkspaces).not.toHaveBeenCalled();
+      expect(deps.writeCmuxStatus).not.toHaveBeenCalled();
+      expect(logEventMock).toHaveBeenCalledWith(
+        "pr-stage-sync.tickets-only",
+        expect.objectContaining({ outcome: "error", reason: "workspace_list_failed" }),
+      );
+    });
+
+    it("catches an unexpected rejection from the tickets-only pass and logs it as an error outcome", async () => {
+      const config = makeConfig({ cmux: makeCmuxConfig({ enabled: false }) });
+      const deps = makeDeps(config, {
+        listCmuxWorkspaces: vi
+          .fn<ListCmuxWorkspaces>()
+          .mockRejectedValue(new Error("unexpected cmux failure")),
+      });
+      const prStageSync = createPrStageSync(deps);
+
+      await prStageSync.runOnce({ worktreeEntries: [entryFor("team-1")] });
+
+      expect(logEventMock).toHaveBeenCalledWith(
+        "pr-stage-sync.tickets-only",
+        expect.objectContaining({ outcome: "error", reason: "unexpected cmux failure" }),
+      );
+    });
+
+    it("logs a tickets-only status_write_failed outcome when a single workspace's write rejects", async () => {
+      const config = makeConfig({ cmux: makeCmuxConfig({ enabled: false }) });
+      const entry = entryFor("team-1");
+      const failingWorkspace = workspaceFor("ws-fail", {
+        currentDirectory: entry.dir,
+        title: "TG-2 do a thing",
+      });
+      const deps = makeDeps(config, {
+        listCmuxWorkspaces: vi.fn<ListCmuxWorkspaces>().mockResolvedValue([failingWorkspace]),
+        writeCmuxStatus: vi
+          .fn<PrStageSyncDeps["writeCmuxStatus"]>()
+          .mockImplementation(rejectWritesFor(failingWorkspace.id)),
+      });
+      const prStageSync = createPrStageSync(deps);
+
+      await prStageSync.runOnce({ worktreeEntries: [entry] });
+
+      expect(logEventMock).toHaveBeenCalledWith(
+        "pr-stage-sync.tickets-only",
+        expect.objectContaining({ outcome: "error", reason: "status_write_failed" }),
+      );
     });
 
     it("runs a sync pass when cmux.prStages.enabled is true", async () => {
