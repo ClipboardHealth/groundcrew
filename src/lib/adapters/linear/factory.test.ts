@@ -14,6 +14,7 @@ import type {
 } from "../../taskSource.ts";
 import { readEnvironmentVariable } from "../../util.ts";
 import { deleteEnvironmentVariable, setEnvironmentVariable } from "../../../testHelpers/env.ts";
+import { makeCmuxConfig } from "../../../testHelpers/cmuxConfig.ts";
 import { makeLocalConfig } from "../../../testHelpers/localConfig.ts";
 import * as boardSource from "./fetch.ts";
 import type { Issue as LinearIssue } from "./fetch.ts";
@@ -49,6 +50,7 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
     prompts: { initial: "x", ...overrides.prompts },
     workspaceKind: overrides.workspaceKind ?? "auto",
     local: makeLocalConfig(),
+    cmux: makeCmuxConfig(),
     logging: { file: "/tmp/groundcrew-test.log", ...overrides.logging },
   };
 }

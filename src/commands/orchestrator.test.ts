@@ -9,6 +9,7 @@ import { loadConfigWithSource, type ResolvedConfig } from "../lib/config.ts";
 import { findPullRequestsForBranch } from "../lib/pullRequests.ts";
 import { getUsageByAgent } from "../lib/usage.ts";
 import type * as utilModule from "../lib/util.ts";
+import { makeCmuxConfig } from "../testHelpers/cmuxConfig.ts";
 import { makeLocalConfig } from "../testHelpers/localConfig.ts";
 import { setVerbose, sleep } from "../lib/util.ts";
 import { getLinearClient } from "../lib/adapters/linear/client.ts";
@@ -124,6 +125,7 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
     prompts: { initial: "x", ...overrides.prompts },
     workspaceKind: overrides.workspaceKind ?? "auto",
     local: makeLocalConfig(overrides.local),
+    cmux: makeCmuxConfig(),
     logging: { file: "/tmp/groundcrew-test.log", ...overrides.logging },
   };
 }

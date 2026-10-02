@@ -8,6 +8,7 @@ import { probeError } from "../testHelpers/workspaceProbe.ts";
 import type * as commandRunnerModule from "./commandRunner.ts";
 import { runCommandAsync, type RunCommandOptions } from "./commandRunner.ts";
 import type { ResolvedConfig } from "./config.ts";
+import { makeCmuxConfig } from "../testHelpers/cmuxConfig.ts";
 import { makeLocalConfig } from "../testHelpers/localConfig.ts";
 import { setVerbose } from "./util.ts";
 import { workspaces } from "./workspaces.ts";
@@ -93,6 +94,7 @@ function makeConfig(overrides: {
     prompts: { initial: "x" },
     workspaceKind: "auto",
     local: makeLocalConfig(),
+    cmux: makeCmuxConfig(),
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }

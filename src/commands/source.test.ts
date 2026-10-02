@@ -4,6 +4,7 @@ import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import type { TaskSource } from "../lib/taskSource.ts";
 import { captureConsoleLog } from "../testHelpers/consoleCapture.ts";
+import { makeCmuxConfig } from "../testHelpers/cmuxConfig.ts";
 import { makeLocalConfig } from "../testHelpers/localConfig.ts";
 
 import { sourceCli } from "./source.ts";
@@ -53,6 +54,7 @@ function makeConfig(): ResolvedConfig {
     prompts: { initial: "x" },
     workspaceKind: "auto",
     local: makeLocalConfig(),
+    cmux: makeCmuxConfig(),
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }

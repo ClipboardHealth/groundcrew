@@ -4,6 +4,8 @@
  * per-workspace status pill, which `open` applies best-effort.
  */
 
+import { TICKET_KEY, TICKET_PRIORITY, writeCmuxStatus } from "./cmuxStatusFields.ts";
+import { deriveTicket } from "./prStageRules.ts";
 import {
   type Adapter,
   isSignalAborted,
@@ -63,6 +65,15 @@ export const cmuxAdapter: Adapter = {
         signal,
       });
     }
+    await writeCrewTicketBestEffort({
+      workspaceId,
+      taskId: spec.name,
+      derivedTicket: deriveTicket({
+        title: spec.displayName ?? spec.name,
+        currentDirectory: spec.cwd,
+      }),
+      ...(signal === undefined ? {} : { signal }),
+    });
   },
   async list(signal) {
     const raw = await listCmuxRaw(signal);
@@ -130,12 +141,20 @@ interface CmuxRawWorkspace {
   id: string;
   /** cmux per-workspace description; carries the task-id marker, or null for legacy workspaces. */
   description: string | null;
+  /** cmux's reported cwd for the workspace, when present. */
+  currentDirectory?: string;
 }
 
 function parseCmuxList(output: string): CmuxRawWorkspace[] {
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- cmux --json workspace list always emits this shape
   const parsed = JSON.parse(output) as {
-    workspaces?: Array<{ title?: string; ref?: string; id?: string; description?: string | null }>;
+    workspaces?: Array<{
+      title?: string;
+      ref?: string;
+      id?: string;
+      description?: string | null;
+      current_directory?: string;
+    }>;
   };
   const items: CmuxRawWorkspace[] = [];
   /* v8 ignore next @preserve -- cmux always emits a workspaces field; default keeps the loop safe */
@@ -150,7 +169,14 @@ function parseCmuxList(output: string): CmuxRawWorkspace[] {
       );
       continue;
     }
-    items.push({ title: ws.title, id, description: ws.description ?? null });
+    items.push({
+      title: ws.title,
+      id,
+      description: ws.description ?? null,
+      ...(typeof ws.current_directory === "string"
+        ? { currentDirectory: ws.current_directory }
+        : {}),
+    });
   }
   return items;
 }
@@ -186,6 +212,33 @@ async function listCmuxRaw(signal?: AbortSignal): Promise<CmuxRawWorkspace[] | u
   }
 }
 
+/** A live cmux workspace, shaped for `pr-stage-sync` matching: its stable id (to target with `set-status`/`clear-status`), the task id it carries (or its title, for legacy workspaces), its title, and cmux's reported cwd. */
+export interface CmuxWorkspaceSummary {
+  /** Stable id to pass as `--workspace` to status commands. */
+  id: string;
+  taskId: string;
+  title: string;
+  currentDirectory: string | undefined;
+}
+
+/**
+ * Enumerates live cmux workspaces for `pr-stage-sync`, independent of the
+ * `Adapter.list()` contract (which returns only `{name}` for workspace-probe
+ * purposes). Returns `undefined` on the same unavailable-vs-empty terms as
+ * `listCmuxRaw`.
+ */
+export async function listCmuxWorkspaceSummaries(
+  signal?: AbortSignal,
+): Promise<CmuxWorkspaceSummary[] | undefined> {
+  const raw = await listCmuxRaw(signal);
+  return raw?.map((ws) => ({
+    id: ws.id,
+    taskId: cmuxTaskId(ws),
+    title: ws.title,
+    currentDirectory: ws.currentDirectory,
+  }));
+}
+
 function extractCmuxOpenId(output: string): string | undefined {
   try {
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- cmux --json prints a workspace_id/ref object
@@ -217,6 +270,45 @@ interface CmuxStatusInput {
   format?: "plain" | "markdown";
   workspaceName: string;
   signal?: AbortSignal | undefined;
+}
+
+/**
+ * Written the moment a workspace exists, so a brand-new ticket-shaped
+ * workspace shows its ticket pill and `Cleanup workspace` action
+ * immediately, without waiting on an orchestrator tick (`pr-stage-sync.ts`'s
+ * ticket-only pass covers every tick after this one, including when
+ * `cmux.prStages.enabled` is false). `derivedTicket` must use the exact same
+ * `deriveTicket` rule the sync loop applies on every subsequent tick — a raw
+ * task id (which may be a whole branch slug, lowercase, or carry no ticket
+ * at all) would disagree with that derivation and either flicker to a
+ * different value or paint a bogus Linear link on the very first sync.
+ * `undefined` skips the write entirely rather than clearing a key that was
+ * never set. Sidebar metadata is best-effort for the same reason
+ * `applyCmuxStatusBestEffort` is: a cmux build that dropped `set-status`
+ * must never fail workspace creation.
+ */
+async function writeCrewTicketBestEffort(input: {
+  workspaceId: string;
+  taskId: string;
+  derivedTicket: string | undefined;
+  signal?: AbortSignal;
+}): Promise<void> {
+  if (input.derivedTicket === undefined) {
+    return;
+  }
+  try {
+    await writeCmuxStatus(
+      input.workspaceId,
+      { key: TICKET_KEY, priority: TICKET_PRIORITY, value: input.derivedTicket },
+      input.signal,
+    );
+  } catch (error) {
+    if (!isCmuxSetStatusUnsupported(error)) {
+      debug(
+        `cmux crew_ticket write failed for ${input.taskId} (continuing): ${errorMessage(error)}`,
+      );
+    }
+  }
 }
 
 async function applyCmuxStatusBestEffort(input: CmuxStatusInput): Promise<void> {

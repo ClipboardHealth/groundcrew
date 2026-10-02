@@ -123,6 +123,9 @@ crew cleanup [--force] <TASK>                          # tear down every worktre
 crew cleanup [--force] --all                           # tear down every idle worktree (no live workspace)
 crew upgrade [<version>]                                 # reinstall crew globally through npm
 crew completions <bash|zsh|fish>                        # print a shell completion script
+crew stage label-add <pr-url> <label>                   # add a configured pr-stage-sync gating label
+crew stage label-remove <pr-url> <label>                # remove a configured pr-stage-sync gating label
+crew stage refresh                                      # run one pr-stage-sync pass now
 ```
 
 See [command details](./docs/commands.md) for status output, doctor behavior, and the stop/resume workflow.

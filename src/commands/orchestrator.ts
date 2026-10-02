@@ -19,6 +19,7 @@ import { errorMessage, log, sleep, writeOutput } from "../lib/util.ts";
 import { worktrees } from "../lib/worktrees.ts";
 import { type Cleaner, createCleaner } from "./cleaner.ts";
 import { createDispatcher, type Dispatcher } from "./dispatcher.ts";
+import { createPrStageSync, createPrStageSyncDeps, type PrStageSync } from "./prStageSync.ts";
 import { createReviewer, type Reviewer } from "./reviewer.ts";
 
 const RATE_LIMIT_DELAY_MS = 60_000;
@@ -124,6 +125,7 @@ export async function orchestrate(options: OrchestratorOptions): Promise<void> {
     findPullRequests: findPullRequestsForBranch,
   });
   const dispatcher: Dispatcher = createDispatcher({ config, board });
+  const prStageSync: PrStageSync = createPrStageSync(createPrStageSyncDeps(config));
 
   // Folded into the dispatcher's idle log lines in watch mode so each idle
   // tick prints one combined line instead of "<reason>" + "Next poll in Xs".
@@ -153,6 +155,8 @@ export async function orchestrate(options: OrchestratorOptions): Promise<void> {
     await reviewer.runOnce(tickArguments);
 
     await cleaner.runOnce(tickArguments);
+
+    await prStageSync.runOnce(tickArguments);
   };
 
   await (options.watch ? runWatchLoop(tick, config) : tick());

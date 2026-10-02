@@ -1,5 +1,9 @@
 import type { RunCommandOptions } from "./commandRunner.ts";
-import { findPullRequestsForBranch, resolvePullRequest } from "./pullRequests.ts";
+import {
+  findPullRequestsForBranch,
+  findPullRequestsForBranchOrThrow,
+  resolvePullRequest,
+} from "./pullRequests.ts";
 
 type RunCommandAsyncMock = (
   command: string,
@@ -201,6 +205,30 @@ describe(findPullRequestsForBranch, () => {
     });
 
     expect(prs[0]?.state).toBe("draft");
+  });
+});
+
+describe(findPullRequestsForBranchOrThrow, () => {
+  it("returns the parsed PRs on success, same as findPullRequestsForBranch", async () => {
+    runCommandMock.mockResolvedValue(JSON.stringify([rawPullRequest()]));
+
+    const prs = await findPullRequestsForBranchOrThrow({
+      cwd: "/work/widgets-team-1",
+      branchName: "x",
+    });
+
+    expect(prs.map((p) => p.number)).toStrictEqual([42]);
+  });
+
+  it("propagates a gh failure instead of degrading to an empty list", async () => {
+    runCommandMock.mockRejectedValue(new Error("gh: command not found"));
+
+    const actual = findPullRequestsForBranchOrThrow({
+      cwd: "/work/widgets-team-1",
+      branchName: "x",
+    });
+
+    await expect(actual).rejects.toThrow("gh: command not found");
   });
 });
 
