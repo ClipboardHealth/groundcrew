@@ -367,7 +367,12 @@ function buildLinearIssue(input: {
 
 function issueFromNode(node: IssueNode, config: ResolvedConfig): Issue {
   const agentResolution = resolveAgentFor({ labels: node.labels.nodes, config });
-  warnIfNotEnabledFallback(node.identifier, agentResolution, config);
+  warnIfNotEnabledFallback({
+    task: node.identifier,
+    agentResolution,
+    config,
+    stateType: node.state?.type,
+  });
   const { repository, agent } = resolveAgentMetadata({
     task: node.identifier,
     /* v8 ignore next @preserve -- BoardIssues query selects description; the ?? guard normalises a null vs undefined edge */
@@ -657,7 +662,7 @@ export async function fetchResolvedIssue(arguments_: {
     });
   }
   const agentResolution = resolveAgentFor({ labels: raw.labels, config });
-  warnIfNotEnabledFallback(task, agentResolution, config);
+  warnIfNotEnabledFallback({ task, agentResolution, config, stateType: raw.stateType });
   let agent = config.agents.default;
   if (agentResolution.kind === "matched") {
     ({ agent } = agentResolution);
@@ -685,12 +690,18 @@ export async function fetchResolvedIssue(arguments_: {
   };
 }
 
-export function warnIfNotEnabledFallback(
-  task: string,
-  agentResolution: AgentResolution,
-  config: ResolvedConfig,
-): void {
-  if (agentResolution.kind !== "not-enabled-fallback") {
+/**
+ * Terminal tickets are skipped: the board fetches done work for cleanup, and
+ * a stale label there would otherwise warn on every tick.
+ */
+export function warnIfNotEnabledFallback(arguments_: {
+  task: string;
+  agentResolution: AgentResolution;
+  config: ResolvedConfig;
+  stateType: string | undefined;
+}): void {
+  const { task, agentResolution, config, stateType } = arguments_;
+  if (agentResolution.kind !== "not-enabled-fallback" || isTerminalStateType(stateType)) {
     return;
   }
   log(

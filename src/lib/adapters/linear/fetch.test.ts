@@ -389,7 +389,31 @@ describe(createBoardSource, () => {
       const { source } = makeBoardSource(makeClient({ pages: [[node]] }), config);
       const state = await source.fetch();
       expect(state.issues[0]?.agent).toBe("claude");
+      expect(consoleLog.output()).toContain(
+        "agent-codex label refers to an agent that is not enabled",
+      );
     });
+
+    it.each(["completed", "canceled", "duplicate"])(
+      "does not warn about a not-enabled agent-* label on a %s ticket",
+      async (stateType) => {
+        const config = makeConfig({
+          agents: {
+            default: "claude",
+            definitions: { claude: { cmd: "claude", color: "#fff" } },
+          },
+        });
+        const node = issueNode({
+          identifier: "TEAM-1",
+          state: { id: "state-terminal", name: "Done", type: stateType },
+          labels: { nodes: [{ name: "agent-codex" }] },
+        });
+        const { source } = makeBoardSource(makeClient({ pages: [[node]] }), config);
+        const state = await source.fetch();
+        expect(state.issues[0]?.agent).toBe("claude");
+        expect(consoleLog.output()).not.toContain("not enabled");
+      },
+    );
 
     it("captures blockers from inverseRelations with stateType", async () => {
       const node = issueNode({
@@ -506,6 +530,36 @@ describe(fetchResolvedIssue, () => {
     expect(consoleLog.output()).toContain(
       "agent-codex label refers to an agent that is not enabled",
     );
+  });
+
+  it("does not warn about a not-enabled agent-* label on a completed ticket", async () => {
+    const client = {
+      client: {
+        rawRequest: vi.fn<RawRequest>(async () => ({
+          data: {
+            issue: issueNode({
+              state: { id: "state-done", name: "Done", type: "completed" },
+              labels: { nodes: [{ name: "agent-codex" }] },
+            }),
+          },
+        })),
+      },
+    };
+    const config = makeConfig({
+      agents: {
+        default: "claude",
+        definitions: {
+          claude: { cmd: "claude", color: "#fff" },
+        },
+      },
+    });
+    const resolved = await fetchResolvedIssue({
+      client: client as unknown as LinearClient,
+      config,
+      task: "TEAM-1",
+    });
+    expect(resolved.agent).toBe("claude");
+    expect(consoleLog.output()).not.toContain("not enabled");
   });
 
   it("throws RepositoryResolutionError when the description has no known repository", async () => {
