@@ -2,7 +2,11 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { setEnvironmentVariable, snapshotEnvironmentVariables } from "../testHelpers/env.ts";
+import {
+  deleteEnvironmentVariable,
+  setEnvironmentVariable,
+  snapshotEnvironmentVariables,
+} from "../testHelpers/env.ts";
 import { recoverWorkingDirectory, type WorkingDirectoryDeps } from "./workingDirectory.ts";
 
 function missingCwdError(): Error {
@@ -108,7 +112,11 @@ describe(recoverWorkingDirectory, () => {
 
     afterEach(() => {
       process.chdir(original);
-      setEnvironmentVariable("PWD", originalPwd ?? original);
+      if (originalPwd === undefined) {
+        deleteEnvironmentVariable("PWD");
+      } else {
+        setEnvironmentVariable("PWD", originalPwd);
+      }
       rmSync(parent, { recursive: true, force: true });
     });
 

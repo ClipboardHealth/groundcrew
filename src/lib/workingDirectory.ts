@@ -18,6 +18,27 @@ export interface RecoveredWorkingDirectory {
   recovered: string;
 }
 
+/**
+ * When the shell's working directory was removed (e.g. `crew cleanup` run from
+ * inside a worktree an earlier cleanup deleted), every `process.cwd()` call —
+ * including cosmiconfig's at module load — throws ENOENT. Move to the nearest
+ * surviving ancestor of `$PWD`, or the home directory, so commands can still run.
+ * Returns undefined when the working directory is intact.
+ */
+export function recoverWorkingDirectory(
+  deps: WorkingDirectoryDeps = defaultDeps(),
+): RecoveredWorkingDirectory | undefined {
+  if (!isMissingWorkingDirectory(deps)) {
+    return undefined;
+  }
+  const ancestor = existingAncestors(deps).find((directory) => tryChdir({ deps, directory }));
+  if (ancestor !== undefined) {
+    return { missing: deps.pwd, recovered: ancestor };
+  }
+  deps.chdir(deps.home);
+  return { missing: deps.pwd, recovered: deps.home };
+}
+
 function defaultDeps(): WorkingDirectoryDeps {
   return {
     cwd: () => process.cwd(),
@@ -60,32 +81,17 @@ function existingAncestors(deps: WorkingDirectoryDeps): string[] {
   }
 }
 
-function tryChdir(deps: WorkingDirectoryDeps, directory: string): boolean {
+interface TryChdirInput {
+  deps: WorkingDirectoryDeps;
+  directory: string;
+}
+
+function tryChdir(input: TryChdirInput): boolean {
+  const { deps, directory } = input;
   try {
     deps.chdir(directory);
     return true;
   } catch {
     return false;
   }
-}
-
-/**
- * When the shell's working directory was removed (e.g. `crew cleanup` run from
- * inside a worktree an earlier cleanup deleted), every `process.cwd()` call —
- * including cosmiconfig's at module load — throws ENOENT. Move to the nearest
- * surviving ancestor of `$PWD`, or the home directory, so commands can still run.
- * Returns undefined when the working directory is intact.
- */
-export function recoverWorkingDirectory(
-  deps: WorkingDirectoryDeps = defaultDeps(),
-): RecoveredWorkingDirectory | undefined {
-  if (!isMissingWorkingDirectory(deps)) {
-    return undefined;
-  }
-  const ancestor = existingAncestors(deps).find((directory) => tryChdir(deps, directory));
-  if (ancestor !== undefined) {
-    return { missing: deps.pwd, recovered: ancestor };
-  }
-  deps.chdir(deps.home);
-  return { missing: deps.pwd, recovered: deps.home };
 }
