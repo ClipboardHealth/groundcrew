@@ -9,7 +9,7 @@
 
 import type { ResolvedConfig, WorkspaceKindSetting } from "./config.ts";
 import { detectHostCapabilities, type HostCapabilities } from "./host.ts";
-import { readEnvironmentVariable, writeError } from "./util.ts";
+import { readEnvironmentVariable } from "./util.ts";
 import {
   type Adapter,
   isSignalAborted,
@@ -84,12 +84,6 @@ const HOST_CAPABILITY_BY_KIND: Record<WorkspaceKind, "hasCmux" | "hasTmux" | "ha
 
 const TMUX_SESSION_PER_TASK_ENV = "GROUNDCREW_TMUX_SESSION_PER_TASK";
 
-const TMUX_SESSION_DEFAULT_WARNING = [
-  "WARNING: tmux window mode is deprecated; tmux session-per-task mode will become the default soon.",
-  `Opt in now with ${TMUX_SESSION_PER_TASK_ENV}=1.`,
-  "Migration: attach with 'tmux attach -t <task>' instead of 'tmux attach -t groundcrew:<task>'; each task gets its own tmux session; 'crew stop' and 'crew cleanup' close that managed session; set GROUNDCREW_KEEP_DEAD_WINDOWS=1 to keep exited scrollback.",
-].join("\n");
-
 const ADAPTER_LOADER_BY_KIND: Record<WorkspaceKind, () => Promise<Adapter>> = {
   cmux: async () => {
     const { cmuxAdapter } = await import("./cmuxAdapter.ts");
@@ -97,11 +91,7 @@ const ADAPTER_LOADER_BY_KIND: Record<WorkspaceKind, () => Promise<Adapter>> = {
   },
   tmux: async () => {
     const { createTmuxAdapter } = await import("./tmuxAdapter.ts");
-    const sessionPerTask = resolveTmuxSessionPerTask();
-    if (!sessionPerTask) {
-      writeError(TMUX_SESSION_DEFAULT_WARNING);
-    }
-    return createTmuxAdapter({ sessionPerTask });
+    return createTmuxAdapter({ sessionPerTask: resolveTmuxSessionPerTask() });
   },
   zellij: async () => {
     const { zellijAdapter } = await import("./zellijAdapter.ts");

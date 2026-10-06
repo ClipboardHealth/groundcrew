@@ -1825,19 +1825,14 @@ describe("workspaces tmux session-per-task env", () => {
     );
   });
 
-  it("warns window-mode tmux users about the upcoming session-mode default", async () => {
+  it("does not warn window-mode tmux users", async () => {
     await workspaces.open(makeConfig("tmux"), {
       name: "TEAM-1",
       cwd: "/cwd",
       command: "x",
     });
 
-    const actual = writeErrorMock.mock.calls.map(([message]) => message).join("\n");
-
-    expect(actual).toContain("tmux session-per-task mode will become the default soon");
-    expect(actual).toContain("GROUNDCREW_TMUX_SESSION_PER_TASK=1");
-    expect(actual).toContain("'tmux attach -t <task>'");
-    expect(actual).not.toContain("`");
+    expect(writeErrorMock).not.toHaveBeenCalled();
   });
 
   it("does not warn auto users when auto resolves to cmux", async () => {
