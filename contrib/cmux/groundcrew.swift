@@ -583,14 +583,14 @@ func taskRow(_ r, _ now, _ pulse) -> some View {
     Rectangle().fill(color).frame(width: 3)
     VStack(alignment: .leading, spacing: 4) {
       HStack(spacing: 6) {
-        Text(w.selected ? "●" : "○")
-          .foregroundColor(w.selected ? "#F59E0B" : .secondary)
         if panelNumber(w) != "" {
           Text("#" + panelNumber(w))
             .font(.system(size: 10)).monospacedDigit()
             .foregroundColor("#1E293B")
         }
-        Text(w.title).font(.body).bold().lineLimit(1)
+        Text(w.title).font(.body).bold()
+          .foregroundColor(w.selected ? "#EC4899" : .primary)
+          .lineLimit(1)
         Spacer()
         HStack(spacing: 4) {
           ForEach(liveAgents) { a in agentIconView(a, now, pulse) }
@@ -625,8 +625,10 @@ func taskRow(_ r, _ now, _ pulse) -> some View {
     .padding(8)
   }
   .frame(maxWidth: .infinity, alignment: .leading)
-  .background(w.selected ? "#F59E0B14" : color + "14")
+  .background(w.selected ? "#EC489926" : color + "14")
   .cornerRadius(8)
+  .overlay { if w.selected { RoundedRectangle(cornerRadius: 8).stroke("#EC4899B3", lineWidth: 1.5) } }
+  .opacity(w.selected ? 1.0 : 0.9)
   .contextMenu {
     Button(action: { cmux("workspace.close", workspace_id: w.id) }) {
       Label("Close workspace", systemImage: "xmark.circle")
@@ -696,6 +698,7 @@ VStack(alignment: .leading, spacing: 8) {
               .foregroundColor("#1E293B")
           }
           Text(w.title).font(.body).bold()
+            .foregroundColor(w.selected ? "#EC4899" : .primary)
           Spacer()
         }
         ForEach(w.tabs) { t in
@@ -709,8 +712,10 @@ VStack(alignment: .leading, spacing: 8) {
       }
       .frame(maxWidth: .infinity, alignment: .leading)
       .padding(8)
-      .background(w.selected ? "#F59E0B14" : "#2563EB12")
+      .background(w.selected ? "#EC489926" : "#2563EB12")
       .cornerRadius(8)
+      .overlay { if w.selected { RoundedRectangle(cornerRadius: 8).stroke("#EC4899B3", lineWidth: 1.5) } }
+      .opacity(w.selected ? 1.0 : 0.9)
       .onTapGesture { cmux("workspace.select", workspace_id: w.id) }
     }
     Divider()
