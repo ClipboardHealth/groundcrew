@@ -3,7 +3,8 @@ import { type CmuxStatusWrite, readCmuxStatus, writeCmuxStatus } from "../lib/cm
 import type { ResolvedConfig } from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
 import { fetchPullRequestDetails, type PullRequestDetail } from "../lib/pullRequestDetails.ts";
-import { findPullRequestsForBranchOrThrow, type PullRequestSummary } from "../lib/pullRequests.ts";
+import { listPullRequestsForRepositoryOrThrow, type TaskPullRequest } from "../lib/pullRequests.ts";
+import { encodePrStatuses } from "../lib/prStageRules.ts";
 import * as util from "../lib/util.ts";
 import type { WorktreeEntry } from "../lib/worktrees.ts";
 import { makeCmuxConfig } from "../testHelpers/cmuxConfig.ts";
@@ -18,8 +19,8 @@ import {
   createPrStageSyncDeps,
   isCmuxAdapterActive,
   type FetchPullRequestDetails,
-  type FindPullRequests,
   type ListCmuxWorkspaces,
+  type ListPullRequestsForRepository,
   type PrStageSyncDeps,
 } from "./prStageSync.ts";
 
@@ -97,12 +98,14 @@ function workspaceFor(
   };
 }
 
-function pullRequestFor(overrides: Partial<PullRequestSummary> = {}): PullRequestSummary {
+function taskPullRequestFor(overrides: Partial<TaskPullRequest> = {}): TaskPullRequest {
   return {
     url: "https://github.com/acme/repo-a/pull/1",
     number: 1,
     state: "open",
     title: "x",
+    headRefName: "dev-team-1",
+    baseRefName: "main",
     ...overrides,
   };
 }
@@ -120,7 +123,7 @@ function detailFor(overrides: Partial<PullRequestDetail> = {}): PullRequestDetai
 }
 
 interface Deps extends PrStageSyncDeps {
-  findPullRequests: ReturnType<typeof vi.fn<FindPullRequests>>;
+  listPullRequests: ReturnType<typeof vi.fn<ListPullRequestsForRepository>>;
   fetchPullRequestDetails: ReturnType<typeof vi.fn<FetchPullRequestDetails>>;
   listCmuxWorkspaces: ReturnType<typeof vi.fn<ListCmuxWorkspaces>>;
   readCmuxStatus: ReturnType<typeof vi.fn<PrStageSyncDeps["readCmuxStatus"]>>;
@@ -131,7 +134,7 @@ interface Deps extends PrStageSyncDeps {
 function makeDeps(config: ResolvedConfig, overrides: Partial<Deps> = {}): Deps {
   return {
     config,
-    findPullRequests: vi.fn<FindPullRequests>().mockResolvedValue([]),
+    listPullRequests: vi.fn<ListPullRequestsForRepository>().mockResolvedValue([]),
     fetchPullRequestDetails: vi.fn<FetchPullRequestDetails>().mockResolvedValue(new Map()),
     listCmuxWorkspaces: vi.fn<ListCmuxWorkspaces>().mockResolvedValue([]),
     readCmuxStatus: vi.fn<PrStageSyncDeps["readCmuxStatus"]>().mockResolvedValue(new Map()),
@@ -201,12 +204,13 @@ describe(createPrStageSync, () => {
 
       expect(deps.isCmuxAdapterActive).toHaveBeenCalledTimes(1);
       expect(deps.listCmuxWorkspaces).toHaveBeenCalledTimes(1);
-      expect(deps.findPullRequests).not.toHaveBeenCalled();
+      expect(deps.listPullRequests).not.toHaveBeenCalled();
       expect(writesFor(deps, "crew_ticket")).toStrictEqual([
         expect.objectContaining({ key: "crew_ticket", value: "TG-1" }),
       ]);
       expect(writesFor(deps, "crew_stage")).toStrictEqual([]);
       expect(writesFor(deps, "crew_labels")).toStrictEqual([]);
+      expect(writesFor(deps, "crew_prs")).toStrictEqual([]);
       expect(writesFor(deps, "crew_poller_heartbeat")).toStrictEqual([]);
     });
 
@@ -402,7 +406,7 @@ describe(createPrStageSync, () => {
 
       await prStageSync.syncOnce({ worktreeEntries: [entryFor("team-1")] });
 
-      expect(deps.findPullRequests).not.toHaveBeenCalled();
+      expect(deps.listPullRequests).not.toHaveBeenCalled();
       expect(deps.writeCmuxStatus).not.toHaveBeenCalled();
       expect(logEventMock).toHaveBeenCalledWith(
         "pr-stage-sync",
@@ -410,7 +414,7 @@ describe(createPrStageSync, () => {
       );
     });
 
-    it("matches a workspace by its reported current directory", async () => {
+    it("matches a workspace by its reported current directory and lists PRs from its repository dir", async () => {
       const config = makeConfig();
       const entry = entryFor("team-1");
       const workspace = workspaceFor("ws-1", { currentDirectory: entry.dir, taskId: "unrelated" });
@@ -421,8 +425,8 @@ describe(createPrStageSync, () => {
 
       await prStageSync.syncOnce({ worktreeEntries: [entry] });
 
-      expect(deps.findPullRequests).toHaveBeenCalledWith(
-        expect.objectContaining({ cwd: entry.dir, branchName: entry.branchName }),
+      expect(deps.listPullRequests).toHaveBeenCalledWith(
+        expect.objectContaining({ cwd: entry.dir }),
       );
     });
 
@@ -437,8 +441,53 @@ describe(createPrStageSync, () => {
 
       await prStageSync.syncOnce({ worktreeEntries: [entry] });
 
-      expect(deps.findPullRequests).toHaveBeenCalledWith(
-        expect.objectContaining({ cwd: entry.dir, branchName: entry.branchName }),
+      expect(deps.listPullRequests).toHaveBeenCalledWith(
+        expect.objectContaining({ cwd: entry.dir }),
+      );
+    });
+
+    it("issues one gh pr list call per repository, shared across every matched task in it", async () => {
+      const config = makeConfig();
+      const entryOne = entryFor("team-1");
+      const entryTwo = entryFor("team-2");
+      const workspaceOne = workspaceFor("ws-1", { currentDirectory: entryOne.dir });
+      const workspaceTwo = workspaceFor("ws-2", { currentDirectory: entryTwo.dir });
+      const deps = makeDeps(config, {
+        listCmuxWorkspaces: vi
+          .fn<ListCmuxWorkspaces>()
+          .mockResolvedValue([workspaceOne, workspaceTwo]),
+      });
+      const prStageSync = createPrStageSync(deps);
+
+      await prStageSync.syncOnce({ worktreeEntries: [entryOne, entryTwo] });
+
+      expect(deps.listPullRequests).toHaveBeenCalledTimes(1);
+      expect(deps.listPullRequests).toHaveBeenCalledWith(
+        expect.objectContaining({ cwd: entryOne.dir }),
+      );
+    });
+
+    it("issues a separate gh pr list call per distinct repository", async () => {
+      const config = makeConfig();
+      const entryOne = entryFor("team-1", { repository: "repo-a" });
+      const entryTwo = entryFor("team-2", { repository: "repo-b" });
+      const workspaceOne = workspaceFor("ws-1", { currentDirectory: entryOne.dir });
+      const workspaceTwo = workspaceFor("ws-2", { currentDirectory: entryTwo.dir });
+      const deps = makeDeps(config, {
+        listCmuxWorkspaces: vi
+          .fn<ListCmuxWorkspaces>()
+          .mockResolvedValue([workspaceOne, workspaceTwo]),
+      });
+      const prStageSync = createPrStageSync(deps);
+
+      await prStageSync.syncOnce({ worktreeEntries: [entryOne, entryTwo] });
+
+      expect(deps.listPullRequests).toHaveBeenCalledTimes(2);
+      expect(deps.listPullRequests).toHaveBeenCalledWith(
+        expect.objectContaining({ cwd: entryOne.dir }),
+      );
+      expect(deps.listPullRequests).toHaveBeenCalledWith(
+        expect.objectContaining({ cwd: entryTwo.dir }),
       );
     });
 
@@ -454,7 +503,6 @@ describe(createPrStageSync, () => {
       });
       const deps = makeDeps(config, {
         listCmuxWorkspaces: vi.fn<ListCmuxWorkspaces>().mockResolvedValue([workspace]),
-        findPullRequests: vi.fn<FindPullRequests>().mockResolvedValue([]),
       });
       const prStageSync = createPrStageSync(deps);
 
@@ -465,7 +513,7 @@ describe(createPrStageSync, () => {
       ]);
     });
 
-    it("clears stage and labels, but still writes the ticket, when the branch has no pull request", async () => {
+    it("clears stage, labels, and the PR list, but still writes the ticket, when the branch has no pull request", async () => {
       const config = makeConfig();
       const entry = entryFor("team-1");
       const workspace = workspaceFor("ws-1", {
@@ -474,11 +522,11 @@ describe(createPrStageSync, () => {
       });
       const deps = makeDeps(config, {
         listCmuxWorkspaces: vi.fn<ListCmuxWorkspaces>().mockResolvedValue([workspace]),
-        findPullRequests: vi.fn<FindPullRequests>().mockResolvedValue([]),
         readCmuxStatus: vi.fn<PrStageSyncDeps["readCmuxStatus"]>().mockResolvedValue(
           new Map([
             ["crew_stage", "ready_to_merge"],
             ["crew_labels", "tested"],
+            ["crew_prs", "1,ready_to_merge,https://github.com/acme/repo-a/pull/1"],
           ]),
         ),
       });
@@ -492,20 +540,23 @@ describe(createPrStageSync, () => {
       expect(writesFor(deps, "crew_labels")).toStrictEqual([
         { key: "crew_labels", priority: -13, value: "" },
       ]);
+      expect(writesFor(deps, "crew_prs")).toStrictEqual([
+        { key: "crew_prs", priority: -14, value: "" },
+      ]);
       expect(writesFor(deps, "crew_ticket")).toStrictEqual([
         { key: "crew_ticket", priority: -11, value: "TEAM-1" },
       ]);
     });
 
-    it("writes the derived stage and managed labels for a resolved pull request", async () => {
+    it("writes the derived stage, managed labels, and PR list for a single resolved pull request", async () => {
       const config = makeConfig();
       const entry = entryFor("team-1");
       const workspace = workspaceFor("ws-1", { currentDirectory: entry.dir, title: "no ticket" });
-      const pullRequest = pullRequestFor();
+      const pullRequest = taskPullRequestFor({ headRefName: entry.branchName });
       const detail = detailFor({ reviewDecision: "APPROVED" });
       const deps = makeDeps(config, {
         listCmuxWorkspaces: vi.fn<ListCmuxWorkspaces>().mockResolvedValue([workspace]),
-        findPullRequests: vi.fn<FindPullRequests>().mockResolvedValue([pullRequest]),
+        listPullRequests: vi.fn<ListPullRequestsForRepository>().mockResolvedValue([pullRequest]),
         fetchPullRequestDetails: vi
           .fn<FetchPullRequestDetails>()
           .mockResolvedValue(new Map([[pullRequest.url, detail]])),
@@ -520,36 +571,63 @@ describe(createPrStageSync, () => {
       expect(writesFor(deps, "crew_labels")).toStrictEqual([
         { key: "crew_labels", priority: -13, value: "self-reviewed,tested" },
       ]);
+      expect(writesFor(deps, "crew_prs")).toStrictEqual([
+        {
+          key: "crew_prs",
+          priority: -14,
+          value: encodePrStatuses([
+            { number: pullRequest.number, stage: "ready_to_merge", url: pullRequest.url },
+          ]),
+        },
+      ]);
     });
 
-    it("prefers an open pull request over merged/closed ones when several are returned", async () => {
+    it("shows every open and merged PR for the task, not just one", async () => {
       const config = makeConfig();
       const entry = entryFor("team-1");
       const workspace = workspaceFor("ws-1", { currentDirectory: entry.dir });
-      const openPr = pullRequestFor({
+      const openPr = taskPullRequestFor({
         url: "https://github.com/acme/repo-a/pull/2",
+        number: 2,
         state: "open",
+        headRefName: entry.branchName,
       });
-      const mergedPr = pullRequestFor({
+      const mergedPr = taskPullRequestFor({
         url: "https://github.com/acme/repo-a/pull/1",
+        number: 1,
         state: "merged",
+        headRefName: `${entry.branchName}-followup`,
+        baseRefName: entry.branchName,
       });
       const deps = makeDeps(config, {
         listCmuxWorkspaces: vi.fn<ListCmuxWorkspaces>().mockResolvedValue([workspace]),
-        findPullRequests: vi.fn<FindPullRequests>().mockResolvedValue([mergedPr, openPr]),
-        fetchPullRequestDetails: vi
-          .fn<FetchPullRequestDetails>()
-          .mockResolvedValue(
-            new Map([[openPr.url, detailFor({ url: openPr.url, state: "OPEN" })]]),
-          ),
+        listPullRequests: vi
+          .fn<ListPullRequestsForRepository>()
+          .mockResolvedValue([mergedPr, openPr]),
+        fetchPullRequestDetails: vi.fn<FetchPullRequestDetails>().mockResolvedValue(
+          new Map([
+            [openPr.url, detailFor({ url: openPr.url, state: "OPEN" })],
+            [mergedPr.url, detailFor({ url: mergedPr.url, state: "MERGED" })],
+          ]),
+        ),
       });
       const prStageSync = createPrStageSync(deps);
 
       await prStageSync.syncOnce({ worktreeEntries: [entry] });
 
       expect(deps.fetchPullRequestDetails).toHaveBeenCalledWith(
-        expect.objectContaining({ urls: [openPr.url] }),
+        expect.objectContaining({ urls: expect.arrayContaining([openPr.url, mergedPr.url]) }),
       );
+      expect(writesFor(deps, "crew_prs")).toStrictEqual([
+        {
+          key: "crew_prs",
+          priority: -14,
+          value: encodePrStatuses([
+            { number: openPr.number, stage: "ready_to_merge", url: openPr.url },
+            { number: mergedPr.number, stage: "merged", url: mergedPr.url },
+          ]),
+        },
+      ]);
     });
 
     it.each([
@@ -563,35 +641,111 @@ describe(createPrStageSync, () => {
         states: ["closed"],
         tracked: "closed",
       },
-    ] as const)("tracks $name when no open pull request exists", async ({ states, tracked }) => {
+    ] as const)(
+      "shows only $name when no open pull request exists",
+      async ({ states, tracked }) => {
+        const config = makeConfig();
+        const entry = entryFor("team-1");
+        const workspace = workspaceFor("ws-1", { currentDirectory: entry.dir });
+        const pullRequests = states.map((state, index) =>
+          taskPullRequestFor({
+            url: `https://github.com/acme/repo-a/pull/${index + 1}`,
+            number: index + 1,
+            state,
+            headRefName: entry.branchName,
+          }),
+        );
+        const trackedPr = pullRequests.find((pr) => pr.state === tracked);
+        const deps = makeDeps(config, {
+          listCmuxWorkspaces: vi.fn<ListCmuxWorkspaces>().mockResolvedValue([workspace]),
+          listPullRequests: vi.fn<ListPullRequestsForRepository>().mockResolvedValue(pullRequests),
+        });
+        const prStageSync = createPrStageSync(deps);
+
+        await prStageSync.syncOnce({ worktreeEntries: [entry] });
+
+        expect(deps.fetchPullRequestDetails).toHaveBeenCalledWith(
+          expect.objectContaining({ urls: [trackedPr?.url] }),
+        );
+      },
+    );
+
+    it("shows a task's stack of PRs in bottom-to-top order and drives stage/labels from the most urgent one", async () => {
       const config = makeConfig();
-      const entry = entryFor("team-1");
+      const entry = entryFor("team-1", { branchName: "jason-tg-4829" });
       const workspace = workspaceFor("ws-1", { currentDirectory: entry.dir });
-      const pullRequests = states.map((state, index) =>
-        pullRequestFor({ url: `https://github.com/acme/repo-a/pull/${index + 1}`, state }),
-      );
-      const trackedPr = pullRequests.find((pr) => pr.state === tracked);
+      const bottom = taskPullRequestFor({
+        url: "https://github.com/acme/repo-a/pull/6195",
+        number: 6195,
+        headRefName: "jason-tg-4829-limited-tier-read-gate",
+        baseRefName: "main",
+      });
+      const middle = taskPullRequestFor({
+        url: "https://github.com/acme/repo-a/pull/6196",
+        number: 6196,
+        headRefName: "jason-tg-4829-limited-tier-notifications",
+        baseRefName: "jason-tg-4829-limited-tier-read-gate",
+      });
+      const top = taskPullRequestFor({
+        url: "https://github.com/acme/repo-a/pull/6197",
+        number: 6197,
+        headRefName: "jason-tg-4829-limited-tier-shift-alert",
+        baseRefName: "jason-tg-4829-limited-tier-notifications",
+      });
+      const closedUnsplit = taskPullRequestFor({
+        url: "https://github.com/acme/repo-a/pull/6176",
+        number: 6176,
+        state: "closed",
+        headRefName: "jason-tg-4829",
+        baseRefName: "main",
+      });
       const deps = makeDeps(config, {
         listCmuxWorkspaces: vi.fn<ListCmuxWorkspaces>().mockResolvedValue([workspace]),
-        findPullRequests: vi.fn<FindPullRequests>().mockResolvedValue(pullRequests),
+        listPullRequests: vi
+          .fn<ListPullRequestsForRepository>()
+          .mockResolvedValue([top, closedUnsplit, bottom, middle]),
+        fetchPullRequestDetails: vi.fn<FetchPullRequestDetails>().mockResolvedValue(
+          new Map([
+            [bottom.url, detailFor({ url: bottom.url, reviewDecision: "APPROVED" })],
+            [
+              middle.url,
+              detailFor({ url: middle.url, labels: ["self-reviewed"], reviewDecision: null }),
+            ],
+            [top.url, detailFor({ url: top.url, labels: [], isDraft: true })],
+          ]),
+        ),
       });
       const prStageSync = createPrStageSync(deps);
 
       await prStageSync.syncOnce({ worktreeEntries: [entry] });
 
-      expect(deps.fetchPullRequestDetails).toHaveBeenCalledWith(
-        expect.objectContaining({ urls: [trackedPr?.url] }),
-      );
+      expect(writesFor(deps, "crew_stage")).toStrictEqual([
+        { key: "crew_stage", priority: -10, value: "my_review" },
+      ]);
+      // The driving PR (top) has no managed labels, which already matches the
+      // default empty current value, so no write happens for crew_labels.
+      expect(writesFor(deps, "crew_labels")).toStrictEqual([]);
+      expect(writesFor(deps, "crew_prs")).toStrictEqual([
+        {
+          key: "crew_prs",
+          priority: -14,
+          value: encodePrStatuses([
+            { number: 6195, stage: "ready_to_merge", url: bottom.url },
+            { number: 6196, stage: "needs_testing", url: middle.url },
+            { number: 6197, stage: "my_review", url: top.url },
+          ]),
+        },
+      ]);
     });
 
-    it("skips (never clears) stage and labels when a pull request exists but its detail is missing", async () => {
+    it("skips (never clears) stage, labels, and the PR list when a shown pull request's detail is missing", async () => {
       const config = makeConfig();
       const entry = entryFor("team-1");
       const workspace = workspaceFor("ws-1", { currentDirectory: entry.dir, title: "no ticket" });
-      const pullRequest = pullRequestFor();
+      const pullRequest = taskPullRequestFor({ headRefName: entry.branchName });
       const deps = makeDeps(config, {
         listCmuxWorkspaces: vi.fn<ListCmuxWorkspaces>().mockResolvedValue([workspace]),
-        findPullRequests: vi.fn<FindPullRequests>().mockResolvedValue([pullRequest]),
+        listPullRequests: vi.fn<ListPullRequestsForRepository>().mockResolvedValue([pullRequest]),
         fetchPullRequestDetails: vi.fn<FetchPullRequestDetails>().mockResolvedValue(new Map()),
         readCmuxStatus: vi
           .fn<PrStageSyncDeps["readCmuxStatus"]>()
@@ -603,16 +757,17 @@ describe(createPrStageSync, () => {
 
       expect(writesFor(deps, "crew_stage")).toStrictEqual([]);
       expect(writesFor(deps, "crew_labels")).toStrictEqual([]);
+      expect(writesFor(deps, "crew_prs")).toStrictEqual([]);
     });
 
-    it("leaves stage and labels untouched when the whole pull request detail batch fails, and logs an error", async () => {
+    it("leaves stage, labels, and the PR list untouched when the whole pull request detail batch fails, and logs an error", async () => {
       const config = makeConfig();
       const entry = entryFor("team-1");
       const workspace = workspaceFor("ws-1", { currentDirectory: entry.dir, title: "no ticket" });
-      const pullRequest = pullRequestFor();
+      const pullRequest = taskPullRequestFor({ headRefName: entry.branchName });
       const deps = makeDeps(config, {
         listCmuxWorkspaces: vi.fn<ListCmuxWorkspaces>().mockResolvedValue([workspace]),
-        findPullRequests: vi.fn<FindPullRequests>().mockResolvedValue([pullRequest]),
+        listPullRequests: vi.fn<ListPullRequestsForRepository>().mockResolvedValue([pullRequest]),
         fetchPullRequestDetails: vi
           .fn<FetchPullRequestDetails>()
           .mockRejectedValue(new Error("gh api graphql failed")),
@@ -625,6 +780,7 @@ describe(createPrStageSync, () => {
       await prStageSync.syncOnce({ worktreeEntries: [entry] });
 
       expect(writesFor(deps, "crew_stage")).toStrictEqual([]);
+      expect(writesFor(deps, "crew_prs")).toStrictEqual([]);
       expect(logEventMock).toHaveBeenCalledWith(
         "pr-stage-sync",
         expect.objectContaining({ outcome: "error", reason: "pull_request_detail_lookup_failed" }),
@@ -635,11 +791,11 @@ describe(createPrStageSync, () => {
       const config = makeConfig();
       const entry = entryFor("adhoc");
       const workspace = workspaceFor("ws-1", { currentDirectory: entry.dir, title: "no ticket" });
-      const pullRequest = pullRequestFor();
+      const pullRequest = taskPullRequestFor({ headRefName: entry.branchName });
       const detail = detailFor({ reviewDecision: "APPROVED" });
       const deps = makeDeps(config, {
         listCmuxWorkspaces: vi.fn<ListCmuxWorkspaces>().mockResolvedValue([workspace]),
-        findPullRequests: vi.fn<FindPullRequests>().mockResolvedValue([pullRequest]),
+        listPullRequests: vi.fn<ListPullRequestsForRepository>().mockResolvedValue([pullRequest]),
         fetchPullRequestDetails: vi
           .fn<FetchPullRequestDetails>()
           .mockResolvedValue(new Map([[pullRequest.url, detail]])),
@@ -647,6 +803,12 @@ describe(createPrStageSync, () => {
           new Map([
             ["crew_stage", "ready_to_merge"],
             ["crew_labels", "self-reviewed,tested"],
+            [
+              "crew_prs",
+              encodePrStatuses([
+                { number: pullRequest.number, stage: "ready_to_merge", url: pullRequest.url },
+              ]),
+            ],
           ]),
         ),
       });
@@ -685,7 +847,6 @@ describe(createPrStageSync, () => {
         listCmuxWorkspaces: vi
           .fn<ListCmuxWorkspaces>()
           .mockResolvedValue([failingWorkspace, okWorkspace]),
-        findPullRequests: vi.fn<FindPullRequests>().mockResolvedValue([]),
         writeCmuxStatus,
       });
       const prStageSync = createPrStageSync(deps);
@@ -703,19 +864,20 @@ describe(createPrStageSync, () => {
       );
     });
 
-    it("preserves a workspace's saved stage and labels when PR discovery fails, without aborting the pass", async () => {
+    it("preserves a workspace's saved stage, labels, and PR list when PR discovery fails, without aborting the pass", async () => {
       const config = makeConfig();
       const entry = entryFor("team-1");
       const workspace = workspaceFor("ws-1", { currentDirectory: entry.dir, title: "no ticket" });
       const deps = makeDeps(config, {
         listCmuxWorkspaces: vi.fn<ListCmuxWorkspaces>().mockResolvedValue([workspace]),
-        findPullRequests: vi
-          .fn<FindPullRequests>()
+        listPullRequests: vi
+          .fn<ListPullRequestsForRepository>()
           .mockRejectedValue(new Error("gh pr list failed")),
         readCmuxStatus: vi.fn<PrStageSyncDeps["readCmuxStatus"]>().mockResolvedValue(
           new Map([
             ["crew_stage", "ready_to_merge"],
             ["crew_labels", "self-reviewed,tested"],
+            ["crew_prs", "1,ready_to_merge,https://github.com/acme/repo-a/pull/1"],
           ]),
         ),
       });
@@ -726,6 +888,7 @@ describe(createPrStageSync, () => {
       expect(deps.fetchPullRequestDetails).not.toHaveBeenCalled();
       expect(writesFor(deps, "crew_stage")).toStrictEqual([]);
       expect(writesFor(deps, "crew_labels")).toStrictEqual([]);
+      expect(writesFor(deps, "crew_prs")).toStrictEqual([]);
       expect(logEventMock).toHaveBeenCalledWith(
         "pr-stage-sync",
         expect.objectContaining({ outcome: "error", reason: "pull_request_lookup_failed" }),
@@ -791,7 +954,6 @@ describe(createPrStageSync, () => {
         .mockImplementation(rejectHeartbeatWrites());
       const deps = makeDeps(config, {
         listCmuxWorkspaces: vi.fn<ListCmuxWorkspaces>().mockResolvedValue([workspace]),
-        findPullRequests: vi.fn<FindPullRequests>().mockResolvedValue([]),
         writeCmuxStatus,
       });
       const prStageSync = createPrStageSync(deps);
@@ -809,10 +971,10 @@ describe(createPrStageSync, () => {
       const config = makeConfig();
       const entry = entryFor("team-1");
       const workspace = workspaceFor("ws-1", { currentDirectory: entry.dir, title: "no ticket" });
-      const pullRequest = pullRequestFor();
+      const pullRequest = taskPullRequestFor({ headRefName: entry.branchName });
       const deps = makeDeps(config, {
         listCmuxWorkspaces: vi.fn<ListCmuxWorkspaces>().mockResolvedValue([workspace]),
-        findPullRequests: vi.fn<FindPullRequests>().mockResolvedValue([pullRequest]),
+        listPullRequests: vi.fn<ListPullRequestsForRepository>().mockResolvedValue([pullRequest]),
         fetchPullRequestDetails: vi
           .fn<FetchPullRequestDetails>()
           .mockResolvedValue(new Map([[pullRequest.url, detailFor()]])),
@@ -824,6 +986,9 @@ describe(createPrStageSync, () => {
 
       expect(deps.listCmuxWorkspaces).toHaveBeenCalledWith(signal);
       expect(deps.readCmuxStatus).toHaveBeenCalledWith(workspace.id, signal);
+      expect(deps.listPullRequests).toHaveBeenCalledWith(
+        expect.objectContaining({ cwd: entry.dir, signal }),
+      );
       expect(deps.fetchPullRequestDetails).toHaveBeenCalledWith(
         expect.objectContaining({ urls: [pullRequest.url], signal }),
       );
@@ -833,11 +998,11 @@ describe(createPrStageSync, () => {
       const config = makeConfig();
       const entry = entryFor("adhoc");
       const workspace = workspaceFor("ws-1", { currentDirectory: entry.dir, title: "no ticket" });
-      const pullRequest = pullRequestFor();
+      const pullRequest = taskPullRequestFor({ headRefName: entry.branchName });
       const detail = detailFor({ reviewDecision: "APPROVED" });
       const deps = makeDeps(config, {
         listCmuxWorkspaces: vi.fn<ListCmuxWorkspaces>().mockResolvedValue([workspace]),
-        findPullRequests: vi.fn<FindPullRequests>().mockResolvedValue([pullRequest]),
+        listPullRequests: vi.fn<ListPullRequestsForRepository>().mockResolvedValue([pullRequest]),
         fetchPullRequestDetails: vi
           .fn<FetchPullRequestDetails>()
           .mockResolvedValue(new Map([[pullRequest.url, detail]])),
@@ -848,7 +1013,7 @@ describe(createPrStageSync, () => {
 
       expect(logEventMock).toHaveBeenCalledWith("pr-stage-sync", {
         outcome: "updated",
-        written: 2,
+        written: 3,
         cleared: 0,
         skipped: 1,
       });
@@ -905,7 +1070,7 @@ describe(createPrStageSyncDeps, () => {
     const deps = createPrStageSyncDeps(config);
 
     expect(deps.config).toBe(config);
-    expect(deps.findPullRequests).toBe(findPullRequestsForBranchOrThrow);
+    expect(deps.listPullRequests).toBe(listPullRequestsForRepositoryOrThrow);
     expect(deps.fetchPullRequestDetails).toBe(fetchPullRequestDetails);
     expect(deps.listCmuxWorkspaces).toBe(listCmuxWorkspaceSummaries);
     expect(deps.readCmuxStatus).toBe(readCmuxStatus);

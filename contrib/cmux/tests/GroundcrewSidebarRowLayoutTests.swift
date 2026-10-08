@@ -32,6 +32,10 @@ import Testing
         statusEntry(key: "crew_stage", value: slug, priority: -10)
     }
 
+    private func crewPrs(_ entries: String) -> SwiftValue {
+        statusEntry(key: "crew_prs", value: entries, priority: -14)
+    }
+
     private func pr(url: String, number: Int = 406, status: String = "open") -> SwiftValue {
         .object(["number": .int(number), "status": .string(status), "url": .string(url)])
     }
@@ -267,6 +271,34 @@ import Testing
         #expect(rendered.contains("PR #8011 · open"))
         #expect(rendered.contains("PR #8012 · merged"))
         #expect(!rendered.contains("·"))
+    }
+
+    @Test func rendersCrewPrsEntriesInsteadOfNativePrsWhenPresent() throws {
+        guard try source() != nil else { return }
+        let w = workspace(
+            ticket: "TG-8013",
+            statuses: [
+                crewPrs(
+                    "6195,merged,https://github.com/clipboard-health/clipboard-health/pull/6195;"
+                        + "6196,my_review,https://github.com/clipboard-health/clipboard-health/pull/6196"
+                )
+            ],
+            prs: [pr(url: "https://github.com/clipboard-health/groundcrew/pull/1", number: 1)]
+        )
+        let rendered = texts(try render([w]))
+        #expect(rendered.contains("PR #6195 · Merged"))
+        #expect(rendered.contains("PR #6196 · Your review"))
+        #expect(!rendered.contains { $0.hasPrefix("PR #1 ") })
+    }
+
+    @Test func fallsBackToNativePrsWhenCrewPrsIsAbsent() throws {
+        guard try source() != nil else { return }
+        let w = workspace(
+            ticket: "TG-8014",
+            prs: [pr(url: "https://github.com/clipboard-health/groundcrew/pull/2", number: 2, status: "open")]
+        )
+        let rendered = texts(try render([w]))
+        #expect(rendered.contains("PR #2 · open"))
     }
 
     @Test func captionLineOmitsMissingTicketPill() throws {

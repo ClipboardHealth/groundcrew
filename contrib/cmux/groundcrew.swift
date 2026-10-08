@@ -414,6 +414,70 @@ func hasCrewLabel(_ w, _ label) -> Bool {
   return crewLabelsRaw(w).contains(label)
 }
 
+func crewPrsRaw(_ w) -> String {
+  if let ss = w.statuses {
+    if let entry = ss.first(where: { e in e.key == "crew_prs" }) {
+      return entry.value
+    }
+  }
+  return ""
+}
+
+// One crew_prs entry is "<number>,<stage>,<url>"; a malformed entry (wrong
+// field count, or a non-numeric number) becomes "number": -1 here and is
+// dropped by crewPrEntries's filter, so one bad entry never breaks the rest.
+func parsedPrEntry(_ entry) -> Any {
+  let fields = entry.split(separator: ",")
+  if fields.count != 3 {
+    return ["number": -1, "stage": "", "url": ""]
+  }
+  if let n = Int(fields[0]) {
+    return ["number": n, "stage": fields[1], "url": fields[2]]
+  }
+  return ["number": -1, "stage": "", "url": ""]
+}
+
+// Every shown PR for the task, from the single crew_prs status pr-stage-sync
+// writes — parsed once per row (called from the row-precompute pass below,
+// not from taskRow itself) so re-parsing never happens once per 1s render.
+func crewPrEntries(_ w) -> Array {
+  let raw = crewPrsRaw(w)
+  if raw == "" {
+    return []
+  }
+  return raw.split(separator: ";").map { e in parsedPrEntry(e) }.filter { r in r.number >= 0 }
+}
+
+// The PR driving crew_stage/crew_labels: the first shown entry whose own
+// stage matches the row's crew_stage status. Falls back to the row's native
+// w.pr when crew_prs is absent (cmux.prStages off, or no PRs at all), so the
+// context-menu label toggles keep working exactly as before this feature.
+func menuPrUrl(_ w, _ prEntries) -> String {
+  let slug = crewStageSlug(w)
+  if slug != "" {
+    if let match = prEntries.first(where: { e in e.stage == slug }) {
+      return match.url
+    }
+  }
+  if let pr = w.pr {
+    return pr.url
+  }
+  return ""
+}
+
+func prStageLabel(_ slug) -> String {
+  if slug == "my_review" { return "Your review" }
+  if slug == "ci_failing" { return "CI failing" }
+  if slug == "ci_running" { return "CI running" }
+  if slug == "changes_requested" { return "Changes requested" }
+  if slug == "needs_testing" { return "Needs testing" }
+  if slug == "ready_to_merge" { return "Ready to merge" }
+  if slug == "peer_review" { return "Peer review" }
+  if slug == "merged" { return "Merged" }
+  if slug == "closed" { return "Closed" }
+  return slug
+}
+
 // Raw existence checks, not identity: whether ANY agent record (including an
 // abandoned duplicate) reports the state, which is what the stage decision
 // needs. Cheaper than distinctAgents (no pid-dedup pass) and behaves the same
@@ -578,6 +642,8 @@ func taskRow(_ r, _ now, _ pulse) -> some View {
   let ticket = r.ticket
   let task = ticket.lowercased()
   let liveAgents = r.agents
+  let prEntries = r.prEntries
+  let rowMenuPrUrl = r.menuPrUrl
   let hasTicketPill = ticket != ""
   HStack(spacing: 0) {
     Rectangle().fill(color).frame(width: 3)
@@ -606,7 +672,16 @@ func taskRow(_ r, _ now, _ pulse) -> some View {
             }
           }
         }
-        if let prs = w.prs {
+        if prEntries.count > 0 {
+          ForEach(prEntries) { entry in
+            Button(action: { openURL(prLink(["url": entry.url])) }) {
+              HStack(spacing: 4) {
+                Image(systemName: "arrow.triangle.branch")
+                Text("PR #" + String(entry.number) + " · " + prStageLabel(entry.stage)).font(.caption)
+              }
+            }
+          }
+        } else if let prs = w.prs {
           ForEach(prs) { pr in
             Button(action: { openURL(prLink(pr)) }) {
               HStack(spacing: 4) {
@@ -635,24 +710,24 @@ func taskRow(_ r, _ now, _ pulse) -> some View {
         Label("Cleanup workspace", systemImage: "trash")
       }
     }
-    if let pr = w.pr {
-      if isSafePrUrl(pr.url) {
+    if rowMenuPrUrl != "" {
+      if isSafePrUrl(rowMenuPrUrl) {
         Divider()
         if hasCrewLabel(w, "self-reviewed") {
-          Button(action: { cmux("workspace.create", initial_command: labelToggleCommand(pr.url, "self-reviewed", false), cwd: crewStagesCwd(), focus: false) }) {
+          Button(action: { cmux("workspace.create", initial_command: labelToggleCommand(rowMenuPrUrl, "self-reviewed", false), cwd: crewStagesCwd(), focus: false) }) {
             Label("Undo self-review", systemImage: "eye.slash")
           }
         } else {
-          Button(action: { cmux("workspace.create", initial_command: labelToggleCommand(pr.url, "self-reviewed", true), cwd: crewStagesCwd(), focus: false) }) {
+          Button(action: { cmux("workspace.create", initial_command: labelToggleCommand(rowMenuPrUrl, "self-reviewed", true), cwd: crewStagesCwd(), focus: false) }) {
             Label("Self-review done", systemImage: "eye")
           }
         }
         if hasCrewLabel(w, "tested") {
-          Button(action: { cmux("workspace.create", initial_command: labelToggleCommand(pr.url, "tested", false), cwd: crewStagesCwd(), focus: false) }) {
+          Button(action: { cmux("workspace.create", initial_command: labelToggleCommand(rowMenuPrUrl, "tested", false), cwd: crewStagesCwd(), focus: false) }) {
             Label("Undo testing", systemImage: "checkmark.circle")
           }
         } else {
-          Button(action: { cmux("workspace.create", initial_command: labelToggleCommand(pr.url, "tested", true), cwd: crewStagesCwd(), focus: false) }) {
+          Button(action: { cmux("workspace.create", initial_command: labelToggleCommand(rowMenuPrUrl, "tested", true), cwd: crewStagesCwd(), focus: false) }) {
             Label("Testing done", systemImage: "checkmark.circle.fill")
           }
         }
@@ -736,7 +811,11 @@ VStack(alignment: .leading, spacing: 8) {
   let rows = tasks.map { w in
     let liveAgents = liveAgentsOf(w, now)
     let stage = rowStage(w, liveAgents, now, stagesFresh)
-    ["w": w, "color": stageBadgeColor(stage), "stage": stage, "ticket": crewTicket(w), "agents": liveAgents]
+    let prEntries = crewPrEntries(w)
+    [
+      "w": w, "color": stageBadgeColor(stage), "stage": stage, "ticket": crewTicket(w),
+      "agents": liveAgents, "prEntries": prEntries, "menuPrUrl": menuPrUrl(w, prEntries),
+    ]
   }
 
   let needsYou = rows.filter { r in r.stage == "needs_you" }

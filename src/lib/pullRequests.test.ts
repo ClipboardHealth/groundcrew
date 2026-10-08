@@ -1,7 +1,7 @@
 import type { RunCommandOptions } from "./commandRunner.ts";
 import {
   findPullRequestsForBranch,
-  findPullRequestsForBranchOrThrow,
+  listPullRequestsForRepositoryOrThrow,
   resolvePullRequest,
 } from "./pullRequests.ts";
 
@@ -208,27 +208,123 @@ describe(findPullRequestsForBranch, () => {
   });
 });
 
-describe(findPullRequestsForBranchOrThrow, () => {
-  it("returns the parsed PRs on success, same as findPullRequestsForBranch", async () => {
-    runCommandMock.mockResolvedValue(JSON.stringify([rawPullRequest()]));
+interface RawTaskPullRequestFixture extends RawPullRequestFixture {
+  headRefName: string;
+  baseRefName: string;
+}
 
-    const prs = await findPullRequestsForBranchOrThrow({
-      cwd: "/work/widgets-team-1",
-      branchName: "x",
-    });
+function rawTaskPullRequest(
+  overrides: Partial<RawTaskPullRequestFixture> = {},
+): RawTaskPullRequestFixture {
+  return {
+    ...rawPullRequest(overrides),
+    headRefName: overrides.headRefName ?? "team-1",
+    baseRefName: overrides.baseRefName ?? "main",
+  };
+}
 
-    expect(prs.map((p) => p.number)).toStrictEqual([42]);
+describe(listPullRequestsForRepositoryOrThrow, () => {
+  afterEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it("lists every state with headRefName/baseRefName, bounded to a single repository-wide call", async () => {
+    runCommandMock.mockResolvedValue(JSON.stringify([rawTaskPullRequest()]));
+
+    const prs = await listPullRequestsForRepositoryOrThrow({ cwd: "/work/widgets-team-1" });
+
+    expect(runCommandMock).toHaveBeenCalledTimes(1);
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "gh",
+      [
+        "pr",
+        "list",
+        "--state",
+        "all",
+        "--limit",
+        "100",
+        "--json",
+        "url,number,state,title,headRefName,baseRefName",
+      ],
+      { cwd: "/work/widgets-team-1" },
+    );
+    expect(prs).toStrictEqual([
+      {
+        url: "https://github.com/acme/widgets/pull/42",
+        number: 42,
+        state: "open",
+        title: "Wire up auth",
+        headRefName: "team-1",
+        baseRefName: "main",
+      },
+    ]);
+  });
+
+  it("normalises MERGED and CLOSED states to lowercase", async () => {
+    runCommandMock.mockResolvedValue(
+      JSON.stringify([
+        rawTaskPullRequest({ number: 1, state: "MERGED" }),
+        rawTaskPullRequest({ number: 2, state: "CLOSED" }),
+      ]),
+    );
+
+    const prs = await listPullRequestsForRepositoryOrThrow({ cwd: "/work/widgets-team-1" });
+
+    expect(prs.map((pr) => pr.state)).toStrictEqual(["merged", "closed"]);
+  });
+
+  it("skips entries that don't match the expected shape", async () => {
+    runCommandMock.mockResolvedValue(
+      JSON.stringify([rawTaskPullRequest({ number: 1 }), { url: 42, number: "nope" }, null]),
+    );
+
+    const prs = await listPullRequestsForRepositoryOrThrow({ cwd: "/work/widgets-team-1" });
+
+    expect(prs.map((pr) => pr.number)).toStrictEqual([1]);
+  });
+
+  it("forwards a lowercased unknown state value verbatim", async () => {
+    runCommandMock.mockResolvedValue(JSON.stringify([rawTaskPullRequest({ state: "DRAFT" })]));
+
+    const prs = await listPullRequestsForRepositoryOrThrow({ cwd: "/work/widgets-team-1" });
+
+    expect(prs[0]?.state).toBe("draft");
+  });
+
+  it("returns empty when gh emits non-JSON output", async () => {
+    runCommandMock.mockResolvedValue("not json");
+
+    await expect(
+      listPullRequestsForRepositoryOrThrow({ cwd: "/work/widgets-team-1" }),
+    ).resolves.toStrictEqual([]);
+  });
+
+  it("returns empty when gh emits a non-array JSON value", async () => {
+    runCommandMock.mockResolvedValue("null");
+
+    await expect(
+      listPullRequestsForRepositoryOrThrow({ cwd: "/work/widgets-team-1" }),
+    ).resolves.toStrictEqual([]);
   });
 
   it("propagates a gh failure instead of degrading to an empty list", async () => {
     runCommandMock.mockRejectedValue(new Error("gh: command not found"));
 
-    const actual = findPullRequestsForBranchOrThrow({
-      cwd: "/work/widgets-team-1",
-      branchName: "x",
-    });
+    const actual = listPullRequestsForRepositoryOrThrow({ cwd: "/work/widgets-team-1" });
 
     await expect(actual).rejects.toThrow("gh: command not found");
+  });
+
+  it("forwards the AbortSignal alongside cwd when provided", async () => {
+    runCommandMock.mockResolvedValue("[]");
+    const { signal } = new AbortController();
+
+    await listPullRequestsForRepositoryOrThrow({ cwd: "/work/widgets-team-1", signal });
+
+    expect(runCommandMock).toHaveBeenCalledWith("gh", expect.any(Array), {
+      cwd: "/work/widgets-team-1",
+      signal,
+    });
   });
 });
 

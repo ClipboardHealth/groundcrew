@@ -1,7 +1,14 @@
 import {
   deriveTicket,
   derivePrStage,
+  encodePrStatuses,
+  isTaskBranch,
   managedLabelsField,
+  mostUrgentStage,
+  orderPullRequestStack,
+  PR_STAGE_URGENCY_ORDER,
+  selectShownPullRequests,
+  selectTaskPullRequests,
   type PrStage,
   type PrStageInput,
   type TicketDerivationInput,
@@ -317,5 +324,210 @@ describe(deriveTicket, () => {
 
   it("returns undefined when both title and directory are absent", () => {
     expect(deriveTicket({})).toBeUndefined();
+  });
+});
+
+describe(isTaskBranch, () => {
+  it("matches the exact task branch", () => {
+    expect(isTaskBranch("jason-tg-4829", "jason-tg-4829")).toBe(true);
+  });
+
+  it("matches a branch stacked off the task branch", () => {
+    expect(isTaskBranch("jason-tg-4829-limited-tier-read-gate", "jason-tg-4829")).toBe(true);
+  });
+
+  it("does not match a branch that merely shares a prefix without the hyphen boundary", () => {
+    expect(isTaskBranch("jason-tg-48290-other-task", "jason-tg-4829")).toBe(false);
+  });
+
+  it("does not match an unrelated branch", () => {
+    expect(isTaskBranch("main", "jason-tg-4829")).toBe(false);
+  });
+});
+
+describe(mostUrgentStage, () => {
+  it("picks my_review over every other stage", () => {
+    expect(mostUrgentStage(["peer_review", "my_review", "merged"])).toBe("my_review");
+  });
+
+  it("ranks ci_failing above changes_requested", () => {
+    expect(mostUrgentStage(["changes_requested", "ci_failing"])).toBe("ci_failing");
+  });
+
+  it("ranks merged and closed last", () => {
+    expect(mostUrgentStage(["closed", "merged", "peer_review"])).toBe("peer_review");
+  });
+
+  it("returns the single stage given", () => {
+    expect(mostUrgentStage(["ready_to_merge"])).toBe("ready_to_merge");
+  });
+
+  it("returns undefined for an empty list", () => {
+    expect(mostUrgentStage([])).toBeUndefined();
+  });
+
+  it("enumerates every PrStage exactly once", () => {
+    const allStages: readonly PrStage[] = [
+      "merged",
+      "closed",
+      "ci_failing",
+      "ci_running",
+      "my_review",
+      "needs_testing",
+      "changes_requested",
+      "ready_to_merge",
+      "peer_review",
+    ];
+    expect([...PR_STAGE_URGENCY_ORDER].toSorted()).toStrictEqual([...allStages].toSorted());
+  });
+});
+
+interface StackFixture {
+  number: number;
+  state: string;
+  headRefName: string;
+  baseRefName: string;
+}
+
+function stackPr(overrides: Partial<StackFixture> & { number: number }): StackFixture {
+  return {
+    state: "open",
+    headRefName: `branch-${overrides.number}`,
+    baseRefName: "main",
+    ...overrides,
+  };
+}
+
+describe(selectShownPullRequests, () => {
+  it("shows every open and merged PR", () => {
+    const open = stackPr({ number: 1, state: "open" });
+    const merged = stackPr({ number: 2, state: "merged" });
+    const closed = stackPr({ number: 3, state: "closed" });
+
+    expect(selectShownPullRequests([open, merged, closed])).toStrictEqual([open, merged]);
+  });
+
+  it("falls back to closed PRs only when none are open or merged", () => {
+    const closed = stackPr({ number: 1, state: "closed" });
+
+    expect(selectShownPullRequests([closed])).toStrictEqual([closed]);
+  });
+
+  it("returns empty when there are no matched PRs at all", () => {
+    expect(selectShownPullRequests([])).toStrictEqual([]);
+  });
+});
+
+describe(orderPullRequestStack, () => {
+  it("orders a clean stack bottom to top via baseRefName -> headRefName", () => {
+    const bottom = stackPr({ number: 6195, headRefName: "read-gate", baseRefName: "main" });
+    const middle = stackPr({
+      number: 6196,
+      headRefName: "notifications",
+      baseRefName: "read-gate",
+    });
+    const top = stackPr({ number: 6197, headRefName: "shift-alert", baseRefName: "notifications" });
+
+    expect(orderPullRequestStack([top, bottom, middle])).toStrictEqual([bottom, middle, top]);
+  });
+
+  it("returns the single PR unchanged", () => {
+    const only = stackPr({ number: 1 });
+
+    expect(orderPullRequestStack([only])).toStrictEqual([only]);
+  });
+
+  it("falls back to ascending PR number when there is more than one root", () => {
+    const a = stackPr({ number: 2, headRefName: "a", baseRefName: "main" });
+    const b = stackPr({ number: 1, headRefName: "b", baseRefName: "develop" });
+
+    expect(orderPullRequestStack([a, b])).toStrictEqual([b, a]);
+  });
+
+  it("falls back to ascending PR number when a fork gives one PR two children", () => {
+    const root = stackPr({ number: 3, headRefName: "r", baseRefName: "main" });
+    const childA = stackPr({ number: 2, headRefName: "a", baseRefName: "r" });
+    const childB = stackPr({ number: 1, headRefName: "b", baseRefName: "r" });
+
+    expect(orderPullRequestStack([root, childA, childB])).toStrictEqual([childB, childA, root]);
+  });
+
+  it("falls back to ascending PR number when a disconnected pair leaves the single-root chain short of every PR", () => {
+    const root = stackPr({ number: 3, headRefName: "r", baseRefName: "main" });
+    const x = stackPr({ number: 2, headRefName: "x", baseRefName: "y" });
+    const y = stackPr({ number: 1, headRefName: "y", baseRefName: "x" });
+
+    expect(orderPullRequestStack([root, x, y])).toStrictEqual([y, x, root]);
+  });
+});
+
+describe(selectTaskPullRequests, () => {
+  it("matches the task's branch and its stack, shows open/merged, and orders bottom to top", () => {
+    const unrelated = stackPr({ number: 1, headRefName: "other-task", baseRefName: "main" });
+    const bottom = stackPr({
+      number: 6195,
+      headRefName: "jason-tg-4829-limited-tier-read-gate",
+      baseRefName: "main",
+    });
+    const middle = stackPr({
+      number: 6196,
+      headRefName: "jason-tg-4829-limited-tier-notifications",
+      baseRefName: "jason-tg-4829-limited-tier-read-gate",
+    });
+    const top = stackPr({
+      number: 6197,
+      headRefName: "jason-tg-4829-limited-tier-shift-alert",
+      baseRefName: "jason-tg-4829-limited-tier-notifications",
+    });
+    const supersededClosed = stackPr({
+      number: 6176,
+      state: "closed",
+      headRefName: "jason-tg-4829",
+      baseRefName: "main",
+    });
+
+    const actual = selectTaskPullRequests(
+      [unrelated, top, supersededClosed, bottom, middle],
+      "jason-tg-4829",
+    );
+
+    expect(actual).toStrictEqual([bottom, middle, top]);
+  });
+
+  it("falls back to the closed PR when the task has no open or merged PR", () => {
+    const closed = stackPr({ number: 6176, state: "closed", headRefName: "jason-tg-4829" });
+
+    expect(selectTaskPullRequests([closed], "jason-tg-4829")).toStrictEqual([closed]);
+  });
+
+  it("returns empty when the task has no matching PR at all", () => {
+    const other = stackPr({ number: 1, headRefName: "someone-else-task" });
+
+    expect(selectTaskPullRequests([other], "jason-tg-4829")).toStrictEqual([]);
+  });
+});
+
+describe(encodePrStatuses, () => {
+  it("encodes no entries as an empty string", () => {
+    expect(encodePrStatuses([])).toBe("");
+  });
+
+  it("encodes one entry as number,stage,url", () => {
+    expect(
+      encodePrStatuses([
+        { number: 6195, stage: "ready_to_merge", url: "https://github.com/acme/x/pull/6195" },
+      ]),
+    ).toBe("6195,ready_to_merge,https://github.com/acme/x/pull/6195");
+  });
+
+  it("joins multiple entries with ;", () => {
+    expect(
+      encodePrStatuses([
+        { number: 1, stage: "my_review", url: "https://github.com/acme/x/pull/1" },
+        { number: 2, stage: "peer_review", url: "https://github.com/acme/x/pull/2" },
+      ]),
+    ).toBe(
+      "1,my_review,https://github.com/acme/x/pull/1;2,peer_review,https://github.com/acme/x/pull/2",
+    );
   });
 });
