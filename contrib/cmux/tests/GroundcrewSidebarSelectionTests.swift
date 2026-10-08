@@ -46,7 +46,10 @@ import Testing
             "statuses": .array(statuses),
         ]
         fields["status"] = statuses.first
-        if let pr { fields["pr"] = pr }
+        if let pr {
+            fields["pr"] = pr
+            fields["prs"] = .array([pr])
+        }
         return .object(fields)
     }
 
