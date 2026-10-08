@@ -125,7 +125,10 @@ import Testing
             ]
         )
 
-        let needsYou = workspace(
+        // No PR/crew_stage, so this lands in Waiting like any other idle,
+        // PR-less task — there's no separate "Needs you" section to pull it
+        // into, though the per-agent icon still rings it in amber.
+        let needsInputAgent = workspace(
             ref: "workspace:2",
             ticket: "TG-6101",
             agents: [agent(id: "a2", pid: 201, kind: "claude", status: "needs_input", secondsAgo: 40)],
@@ -182,7 +185,7 @@ import Testing
         let merged = prTask(ref: "workspace:12", ticket: "TG-6111", number: 5111, slug: "merged", fresh: true)
 
         return [
-            pinned, needsYou, workingDupPid, waiting,
+            pinned, needsInputAgent, workingDupPid, waiting,
             myReview, ciFailing, changesRequested, needsTesting,
             peerReview, readyToMerge, unknown, merged,
         ]
