@@ -552,6 +552,38 @@ describe(createPrStageSync, () => {
       );
     });
 
+    it.each([
+      {
+        name: "a merged pull request over a closed one",
+        states: ["closed", "merged"],
+        tracked: "merged",
+      },
+      {
+        name: "a closed pull request when it is the only one",
+        states: ["closed"],
+        tracked: "closed",
+      },
+    ] as const)("tracks $name when no open pull request exists", async ({ states, tracked }) => {
+      const config = makeConfig();
+      const entry = entryFor("team-1");
+      const workspace = workspaceFor("ws-1", { currentDirectory: entry.dir });
+      const pullRequests = states.map((state, index) =>
+        pullRequestFor({ url: `https://github.com/acme/repo-a/pull/${index + 1}`, state }),
+      );
+      const trackedPr = pullRequests.find((pr) => pr.state === tracked);
+      const deps = makeDeps(config, {
+        listCmuxWorkspaces: vi.fn<ListCmuxWorkspaces>().mockResolvedValue([workspace]),
+        findPullRequests: vi.fn<FindPullRequests>().mockResolvedValue(pullRequests),
+      });
+      const prStageSync = createPrStageSync(deps);
+
+      await prStageSync.syncOnce({ worktreeEntries: [entry] });
+
+      expect(deps.fetchPullRequestDetails).toHaveBeenCalledWith(
+        expect.objectContaining({ urls: [trackedPr?.url] }),
+      );
+    });
+
     it("skips (never clears) stage and labels when a pull request exists but its detail is missing", async () => {
       const config = makeConfig();
       const entry = entryFor("team-1");

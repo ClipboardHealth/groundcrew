@@ -64,7 +64,7 @@ ticket pill and `Cleanup workspace` action work whether or not PR-stage sync is 
 
 When `cmux.prStages` has never run for any tracked task (no workspace carries a
 `crew_poller_heartbeat` status at all), the sidebar assumes the feature is off rather than broken:
-the "PR stages stale — is crew-pr-stages running?" caption stays hidden, and PR-bearing rows with no
+the "PR stages stale — is crew run --watch running?" caption stays hidden, and PR-bearing rows with no
 stage information render under "Open PRs" instead of "Stage unknown". Once PR-stage sync has run at
 least once, a missing or outdated heartbeat goes back to meaning "stale" and the caption reappears.
 

@@ -723,7 +723,7 @@ VStack(alignment: .leading, spacing: 8) {
 
   Text("Groundcrew").font(.headline)
   if stagesStale(tasks, stagesFresh, stagesEverRun) {
-    Text("PR stages stale — is crew-pr-stages running?")
+    Text("PR stages stale — is crew run --watch running?")
       .font(.caption).foregroundColor("#B45309")
   }
   Text(String(tasks.count) + " tasks").font(.caption).foregroundColor(.secondary)
