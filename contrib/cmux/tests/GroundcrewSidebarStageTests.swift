@@ -361,7 +361,7 @@ import Testing
             ),
         ]
         let rendered = texts(try render(workspaces, heartbeatSecondsAgo: 900))
-        #expect(rendered.contains("PR stages stale — is crew-pr-stages running?"))
+        #expect(rendered.contains("PR stages stale — is crew run --watch running?"))
     }
 
     /// No heartbeat anywhere means the feature has never run for anyone, not
@@ -373,7 +373,7 @@ import Testing
             workspace(ticket: "TG-6001B", pr: pr(url: "https://github.com/clipboard-health/groundcrew/pull/6001")),
         ]
         let rendered = texts(try render(workspaces, heartbeatSecondsAgo: nil))
-        #expect(!rendered.contains("PR stages stale — is crew-pr-stages running?"))
+        #expect(!rendered.contains("PR stages stale — is crew run --watch running?"))
         #expect(rendered.contains("Open PRs (1)"))
     }
 
@@ -388,7 +388,7 @@ import Testing
             ),
         ]
         let rendered = texts(try render(workspaces, heartbeatSecondsAgo: 5))
-        #expect(!rendered.contains("PR stages stale — is crew-pr-stages running?"))
+        #expect(!rendered.contains("PR stages stale — is crew run --watch running?"))
     }
 
     // MARK: - Context menu: self-review / testing toggles (crew_labels-driven)
