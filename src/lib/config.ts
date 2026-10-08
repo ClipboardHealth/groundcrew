@@ -349,6 +349,34 @@ export interface Config {
    */
   workspaceKind?: WorkspaceKindSetting;
   /**
+   * cmux-only features. Every setting here is inert under the tmux/zellij
+   * adapters: `resolveWorkspaceKind` must resolve to `"cmux"` for any of it
+   * to run.
+   */
+  cmux?: {
+    /**
+     * Paints each tracked task's cmux sidebar with its pull request's review
+     * stage (`crew_stage`), the two gating labels present (`crew_labels`),
+     * and the task id (`crew_ticket`), refreshed once per orchestrator tick.
+     * Off by default — this replaces a previously standalone poller, so
+     * existing setups opt in explicitly rather than getting new sidebar
+     * writes on upgrade.
+     */
+    prStages?: {
+      enabled?: boolean;
+      /**
+       * PR label names gating the `my_review`/`needs_testing` stages and
+       * toggled by `crew stage label-add`/`label-remove`. Defaults to
+       * `"self-reviewed"`/`"tested"`; override only if those names collide
+       * with existing repo labels.
+       */
+      labels?: {
+        selfReviewed?: string;
+        tested?: string;
+      };
+    };
+  };
+  /**
    * Local isolation backend selector. Defaults to `"auto"` (macOS →
    * safehouse, Linux → sdx). `"none"` is an explicit unsandboxed escape
    * hatch — never selected implicitly.
@@ -459,6 +487,16 @@ export interface ResolvedConfig {
    * `auto` resolves to cmux when installed, else tmux.
    */
   workspaceKind: WorkspaceKindSetting;
+  /** cmux-only features; always resolved, inert unless the cmux adapter is active. */
+  cmux: {
+    prStages: {
+      enabled: boolean;
+      labels: {
+        selfReviewed: string;
+        tested: string;
+      };
+    };
+  };
   /**
    * Local isolation selection. The user-facing `auto` is preserved here
    * so `localRunner.resolve()` can pick the platform default later — the
@@ -547,6 +585,59 @@ function normalizeReadOnlyDirs(value: unknown): string[] {
     fail("local.readOnlyDirs must be an array of strings");
   }
   return dirs.map(expandHome);
+}
+
+export const DEFAULT_PR_STAGE_LABELS = {
+  selfReviewed: "self-reviewed",
+  tested: "tested",
+} as const satisfies ResolvedConfig["cmux"]["prStages"]["labels"];
+
+const DEFAULT_CMUX: ResolvedConfig["cmux"] = {
+  prStages: { enabled: false, labels: { ...DEFAULT_PR_STAGE_LABELS } },
+};
+
+function normalizePrStageLabels(value: unknown): ResolvedConfig["cmux"]["prStages"]["labels"] {
+  if (value === undefined) {
+    return { ...DEFAULT_PR_STAGE_LABELS };
+  }
+  if (!isPlainObject(value)) {
+    fail("cmux.prStages.labels must be an object");
+  }
+  return {
+    selfReviewed:
+      normalizeOptionalString(value["selfReviewed"], "cmux.prStages.labels.selfReviewed") ??
+      DEFAULT_PR_STAGE_LABELS.selfReviewed,
+    tested:
+      normalizeOptionalString(value["tested"], "cmux.prStages.labels.tested") ??
+      DEFAULT_PR_STAGE_LABELS.tested,
+  };
+}
+
+function normalizePrStages(value: unknown): ResolvedConfig["cmux"]["prStages"] {
+  if (value === undefined) {
+    return { ...DEFAULT_CMUX.prStages };
+  }
+  if (!isPlainObject(value)) {
+    fail("cmux.prStages must be an object");
+  }
+  const { enabled } = value;
+  if (enabled !== undefined && typeof enabled !== "boolean") {
+    fail(`cmux.prStages.enabled must be a boolean (got ${JSON.stringify(enabled)})`);
+  }
+  return {
+    enabled: enabled ?? false,
+    labels: normalizePrStageLabels(value["labels"]),
+  };
+}
+
+function normalizeCmux(value: unknown): ResolvedConfig["cmux"] {
+  if (value === undefined) {
+    return { prStages: { ...DEFAULT_CMUX.prStages } };
+  }
+  if (!isPlainObject(value)) {
+    fail("cmux must be an object");
+  }
+  return { prStages: normalizePrStages(value["prStages"]) };
 }
 
 const DEFAULT_ORCHESTRATOR: ResolvedConfig["orchestrator"] = {
@@ -1440,6 +1531,7 @@ function applyDefaults(user: Config, configDir: string): ResolvedConfig {
       initial: resolveInitialPrompt(user.prompts, configDir),
     },
     workspaceKind: normalizeWorkspaceKind(user.workspaceKind, "workspaceKind") ?? "auto",
+    cmux: normalizeCmux(user.cmux),
     local: normalizeLocal(userLocal),
     logging: {
       file: expandHome(
@@ -1462,6 +1554,13 @@ function validatePromptPlaceholders(template: string): void {
 function validate(config: ResolvedConfig): void {
   requireString(config.git.remote, "git.remote");
   requireString(config.git.defaultBranch, "git.defaultBranch");
+
+  const { selfReviewed, tested } = config.cmux.prStages.labels;
+  if (selfReviewed === tested) {
+    fail(
+      `cmux.prStages.labels.selfReviewed and cmux.prStages.labels.tested must be distinct (both "${selfReviewed}")`,
+    );
+  }
 
   requireString(config.workspace.projectDir, "workspace.projectDir");
 

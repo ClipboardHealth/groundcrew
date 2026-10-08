@@ -14,25 +14,19 @@ function stateRankIn(source: string, state: string): number {
 }
 
 describe("cmux contrib sidebar", () => {
-  it("validates raw ticket prefixes before Unicode normalization", () => {
+  // Ticket-prefix validation (alpha-only prefix, exact two-segment title
+  // match) used to live here as Swift string assertions. The sidebar no
+  // longer parses tickets at all -- it reads the `crew_ticket` status
+  // pr-stage-sync writes -- and that derivation logic, including these same
+  // rules, now lives in `src/lib/prStageRules.ts` with its own 8-case fixture
+  // suite (`deriveTicket` in `prStageRules.test.ts`).
+  it("reads crew_ticket instead of re-deriving it from title or directory", () => {
     const actual = readFileSync(SIDEBAR_PATH, "utf8");
 
-    expect(actual).toContain('replacingOccurrences(of: "a", with: "")');
-    expect(actual).toContain('replacingOccurrences(of: "z", with: "")');
-    expect(actual).toContain("isAlphaOnly(segs[segs.count - 2])");
-    expect(actual).toContain("isAlphaOnly(segs[0])");
-    expect(actual).not.toContain("isAlphaOnly(segs[0].uppercased())");
-    expect(actual).not.toContain("isAlphaOnly(segs[segs.count - 2].uppercased())");
-  });
-
-  it("requires an exact ticket match in workspace titles", () => {
-    const actual = readFileSync(SIDEBAR_PATH, "utf8");
-    const titleParserSource = actual.slice(
-      actual.indexOf("func ticketFromTitle"),
-      actual.indexOf("func ticketOf"),
-    );
-
-    expect(titleParserSource).toContain("if segs.count != 2 {");
+    expect(actual).toContain('e.key == "crew_ticket"');
+    expect(actual).not.toContain("func ticketFromDirectory");
+    expect(actual).not.toContain("func ticketFromTitle");
+    expect(actual).not.toContain("func isAlphaOnly");
   });
 
   it("distinguishes agent runtimes so claude and codex are told apart", () => {
@@ -50,31 +44,32 @@ describe("cmux contrib sidebar", () => {
     expect(new Set(icons).size).toBe(icons.length);
   });
 
-  it("renders one row per agent session rather than merging them", () => {
+  it("renders one deduped icon per agent session instead of a per-agent state row", () => {
     const actual = readFileSync(SIDEBAR_PATH, "utf8");
 
-    expect(actual).toContain("stateIcon(effectiveStatus(a, now))");
-    expect(actual).toContain("help(agentTooltip(a, now))");
+    expect(actual).toContain("ForEach(liveAgents) { a in agentIconView(a, now, pulse) }");
+    expect(actual).toContain(".help(tooltip)");
   });
 
   it("collapses registry records that share a pid into one row", () => {
     const actual = readFileSync(SIDEBAR_PATH, "utf8");
     const dedupeSource = actual.slice(
       actual.indexOf("func stateRank"),
-      actual.indexOf("func agentName"),
+      actual.indexOf("func liveAgentsOf"),
     );
 
     expect(dedupeSource).toContain('return "pid:" + String(p)');
     expect(dedupeSource).toContain('return "id:" + a.id');
-    expect(actual).toContain("ForEach(distinctAgents(ags, now)) { a in");
+    expect(actual).toContain("return distinctAgents(ags, now)");
     expect(actual).not.toContain("ForEach(ags) { a in");
+    expect(actual).not.toContain("ForEach(w.agents)");
   });
 
   it("keeps the freshest record when duplicates of one process disagree", () => {
     const actual = readFileSync(SIDEBAR_PATH, "utf8");
     const dedupeSource = actual.slice(
       actual.indexOf("func stateRank"),
-      actual.indexOf("func agentName"),
+      actual.indexOf("func liveAgentsOf"),
     );
 
     // The abandoned duplicate is the one that stopped receiving hook events,
@@ -120,7 +115,7 @@ describe("cmux contrib sidebar", () => {
     );
     const executingSource = actual.slice(
       actual.indexOf("func executingState"),
-      actual.indexOf("func activeState"),
+      actual.indexOf("func activityAt"),
     );
 
     // needs_input waits on a person, so silence there is expected rather than
@@ -132,16 +127,58 @@ describe("cmux contrib sidebar", () => {
     expect(executingSource).not.toContain("needs_input");
   });
 
-  it("falls back to the native status pill when no agents are reported", () => {
+  it("counts a workspace as a task from crew_ticket alone, with no native status pill rendered", () => {
     const actual = readFileSync(SIDEBAR_PATH, "utf8");
-    const gateSource = actual.slice(
-      actual.indexOf("func showsNativeStatus"),
+    const isTaskSource = actual.slice(
       actual.indexOf("func isTask"),
+      actual.indexOf("func isWorkbench"),
     );
 
-    expect(gateSource).toContain("if hasAgents(w) {");
-    expect(gateSource).toContain("return false");
-    expect(actual).toContain("if showsNativeStatus(w) {");
+    expect(isTaskSource).toContain('if crewTicket(w) != "" {');
+    expect(actual).not.toContain("func showsNativeStatus");
+    expect(actual).not.toContain("rowStateValue");
+  });
+
+  it("defaults PR links to GitHub", () => {
+    const actual = readFileSync(SIDEBAR_PATH, "utf8");
+    const targetSource = actual.slice(
+      actual.indexOf("func prLinkTarget"),
+      actual.indexOf("func prLink("),
+    );
+
+    expect(targetSource).toContain('return "github"');
+  });
+
+  it("toggles labels and refreshes stages through crew stage, not the retired crew-pr-stages poller", () => {
+    const actual = readFileSync(SIDEBAR_PATH, "utf8");
+    const commandSource = actual.slice(
+      actual.indexOf("func labelToggleCommand"),
+      actual.indexOf("func taskRow"),
+    );
+
+    expect(commandSource).toContain('crew stage " + verb');
+    expect(commandSource).toContain("echo '→ crew stage refresh'; crew stage refresh");
+    expect(commandSource).not.toContain("crew-pr-stages");
+    expect(commandSource).not.toContain("~/.config/cmux/bin");
+  });
+
+  it("runs the label toggle and refresh actions from the __GROUNDCREW_DIR__ placeholder install.sh substitutes", () => {
+    const actual = readFileSync(SIDEBAR_PATH, "utf8");
+
+    expect(actual).toContain('func crewStagesCwd() -> String {\n  return "__GROUNDCREW_DIR__"');
+    expect(actual).toContain("cwd: crewStagesCwd()");
+  });
+
+  it("hides the stale caption and renames the unknown-stage section when PR-stage sync has never run", () => {
+    const actual = readFileSync(SIDEBAR_PATH, "utf8");
+    const staleSource = actual.slice(
+      actual.indexOf("func stagesStale"),
+      actual.indexOf("func stageBadgeColor"),
+    );
+
+    expect(actual).toContain("func anyHeartbeatSeen");
+    expect(staleSource).toContain("if !stagesEverRun {");
+    expect(actual).toContain('let unknownTitle = stagesEverRun ? "Stage unknown" : "Open PRs"');
   });
 
   it("preserves the dirty-worktree guard during cleanup", () => {

@@ -183,35 +183,53 @@ export async function resolvePullRequest(
   };
 }
 
-export async function findPullRequestsForBranch(
+async function listPullRequestsForBranch(
   arguments_: LookupArgs,
 ): Promise<readonly PullRequestSummary[]> {
   const { cwd, branchName, signal } = arguments_;
   const options = signal === undefined ? { cwd } : { cwd, signal };
+  const output = await runCommandAsync(
+    "gh",
+    [
+      "pr",
+      "list",
+      "--head",
+      branchName,
+      "--state",
+      "all",
+      "--limit",
+      String(GH_PR_LIST_LIMIT),
+      "--json",
+      "url,number,state,title",
+    ],
+    options,
+  );
+  return parsePullRequests(output);
+}
+
+export async function findPullRequestsForBranch(
+  arguments_: LookupArgs,
+): Promise<readonly PullRequestSummary[]> {
   try {
-    const output = await runCommandAsync(
-      "gh",
-      [
-        "pr",
-        "list",
-        "--head",
-        branchName,
-        "--state",
-        "all",
-        "--limit",
-        String(GH_PR_LIST_LIMIT),
-        "--json",
-        "url,number,state,title",
-      ],
-      options,
-    );
-    return parsePullRequests(output);
+    return await listPullRequestsForBranch(arguments_);
   } catch (error) {
-    if (signal?.aborted === true) {
+    if (arguments_.signal?.aborted === true) {
       throw error;
     }
     // gh not installed / not authenticated / non-GitHub remote / network
     // error / etc. All resolve to "no PR info available" for display.
     return [];
   }
+}
+
+/**
+ * Same lookup as `findPullRequestsForBranch`, but lets failures propagate
+ * instead of degrading to "no PR info". `pr-stage-sync` needs to tell "the
+ * branch truly has no PR" apart from "couldn't confirm this tick" so a flaky
+ * `gh` call never clears a saved stage or label.
+ */
+export async function findPullRequestsForBranchOrThrow(
+  arguments_: LookupArgs,
+): Promise<readonly PullRequestSummary[]> {
+  return await listPullRequestsForBranch(arguments_);
 }

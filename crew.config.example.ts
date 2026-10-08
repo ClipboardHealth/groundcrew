@@ -224,4 +224,18 @@ export default {
   //   // evidence with it. Default: `${XDG_STATE_HOME:-~/.local/state}/groundcrew/groundcrew.log`.
   //   file: "~/Library/Logs/groundcrew/groundcrew.log",
   // },
+  //
+  // // Paints each task's cmux sidebar with its pull request's review stage
+  // // (crew_stage), gating labels (crew_labels), and ticket id (crew_ticket)
+  // // once per watch tick. Opt-in and cmux-only; other workspaceKind backends
+  // // no-op. The two gating labels below are created on the PR's repo on
+  // // first use via `crew stage label-add`/`label-remove`; a PR sits at
+  // // `my_review` until `selfReviewed` is applied and `needs_testing` until
+  // // `tested` is applied, ahead of CI and review-decision state.
+  // cmux: {
+  //   prStages: {
+  //     enabled: true,
+  //     labels: { selfReviewed: "self-reviewed", tested: "tested" },
+  //   },
+  // },
 } satisfies Config;

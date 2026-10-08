@@ -11,6 +11,7 @@ import {
 import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
 import type { Task, TaskSource } from "../lib/taskSource.ts";
 import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCapture.ts";
+import { makeCmuxConfig } from "../testHelpers/cmuxConfig.ts";
 import { makeLocalConfig } from "../testHelpers/localConfig.ts";
 import { doctor } from "./doctor.ts";
 
@@ -122,6 +123,7 @@ function makeConfig(overrides: Partial<ResolvedConfig["agents"]> = {}): Resolved
     prompts: { initial: "x" },
     workspaceKind: "auto",
     local: makeLocalConfig(),
+    cmux: makeCmuxConfig(),
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }

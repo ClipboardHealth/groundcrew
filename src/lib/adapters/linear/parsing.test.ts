@@ -1,4 +1,5 @@
 import type { ResolvedConfig } from "../../config.ts";
+import { makeCmuxConfig } from "../../../testHelpers/cmuxConfig.ts";
 import { makeLocalConfig } from "../../../testHelpers/localConfig.ts";
 import { RepositoryResolutionError } from "../../taskSource.ts";
 import {
@@ -41,6 +42,7 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
     prompts: { initial: "x", ...overrides.prompts },
     workspaceKind: overrides.workspaceKind ?? "auto",
     local: makeLocalConfig(),
+    cmux: makeCmuxConfig(),
     logging: { file: "/tmp/groundcrew-test.log", ...overrides.logging },
   };
 }

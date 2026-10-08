@@ -217,6 +217,23 @@ export const COMPLETION_SPEC: readonly CompletionCommand[] = [
     summary: "Print a shell completion script",
     argValues: SUPPORTED_SHELLS,
   },
+  {
+    name: "stage",
+    summary: "Manage pr-stage-sync's gating labels, or run a sync pass now",
+    subcommands: [
+      {
+        name: "label-add",
+        summary: "Add a configured gating label to a pull request",
+        options: [],
+      },
+      {
+        name: "label-remove",
+        summary: "Remove a configured gating label from a pull request",
+        options: [],
+      },
+      { name: "refresh", summary: "Run one pr-stage-sync pass now" },
+    ],
+  },
 ];
 
 /** Global flags valid only as the first token. */
