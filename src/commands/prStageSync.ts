@@ -1,12 +1,23 @@
 /**
  * Per-tick sync that paints each tracked task's cmux sidebar with its ticket
- * id, and — when `cmux.prStages.enabled` — its pull request's review stage
+ * id, and — when `cmux.prStages.enabled` — its pull requests' review stages
  * and gating labels too. Replaces the standalone `crew-pr-stages` bash
  * poller: same stage/ticket derivation rules (`../lib/prStageRules.ts`),
- * same status-key contract the installed sidebar reads, but PRs are
- * resolved from the task's own worktree branch
- * (`findPullRequestsForBranchOrThrow`) instead of cmux's own git-branch PR
- * detection.
+ * same status-key contract the installed sidebar reads, but a task's PRs are
+ * discovered from its worktree branch plus every branch stacked off it
+ * (`listPullRequestsForRepositoryOrThrow` + `selectTaskPullRequests`)
+ * instead of cmux's own single-branch PR detection. That repository-wide
+ * list is bounded and author-scoped (`--author @me`, 100 PRs), so a task
+ * whose PR falls outside it is recovered by a per-task exact-branch fallback
+ * (`findTaskPullRequestsForBranchOrThrow`) — see
+ * `resolveTaskPullRequestsByWorkspace` for the two-tier lookup.
+ *
+ * A task can have several shown PRs (an unsplit branch, or a stack of
+ * follow-up PRs chained by base branch). `crew_stage`/`crew_labels` describe
+ * only the single most urgent one (`selectDrivingPullRequest`) — the
+ * "stage-driving" PR a right-click label toggle acts on — while the
+ * `crew_prs` status carries every shown PR so the sidebar can render one row
+ * per PR. See `contrib/cmux/README.md` for the full status-key contract.
  *
  * `crew_ticket` is written for every matched cmux task workspace regardless
  * of the `cmux.prStages.enabled` opt-in, since a custom sidebar may read it
@@ -25,6 +36,8 @@
 import { type CmuxWorkspaceSummary, listCmuxWorkspaceSummaries } from "../lib/cmuxAdapter.ts";
 import {
   type CmuxStatusWrite,
+  PULL_REQUESTS_KEY,
+  PULL_REQUESTS_PRIORITY,
   readCmuxStatus,
   TICKET_KEY,
   TICKET_PRIORITY,
@@ -33,11 +46,19 @@ import {
 import type { ResolvedConfig } from "../lib/config.ts";
 import { detectHostCapabilities } from "../lib/host.ts";
 import { fetchPullRequestDetails, type PullRequestDetail } from "../lib/pullRequestDetails.ts";
-import { findPullRequestsForBranchOrThrow, type PullRequestSummary } from "../lib/pullRequests.ts";
+import {
+  findTaskPullRequestsForBranchOrThrow,
+  listPullRequestsForRepositoryOrThrow,
+  type TaskPullRequest,
+} from "../lib/pullRequests.ts";
 import {
   deriveTicket,
   derivePrStage,
+  encodePrStatuses,
   managedLabelsField,
+  PR_STAGE_URGENCY_ORDER,
+  selectTaskPullRequests,
+  type PrStage,
   type PrStageLabelNames,
 } from "../lib/prStageRules.ts";
 import { debug, errorMessage, logEvent, readEnvironmentVariable } from "../lib/util.ts";
@@ -56,11 +77,22 @@ const LABELS_PRIORITY = -13;
 
 const CMUX_WORKSPACE_ID_ENV = "CMUX_WORKSPACE_ID";
 
-export type FindPullRequests = (arguments_: {
+/** One `gh pr list` call per repository per tick; matched tasks sharing a repository share its result. */
+export type ListPullRequestsForRepository = (arguments_: {
+  cwd: string;
+  signal?: AbortSignal;
+}) => Promise<readonly TaskPullRequest[]>;
+
+/**
+ * Per-task fallback used only when a matched task's branch (and its stack)
+ * are absent from the repository-wide list — e.g. the task's PR is older
+ * than that list's 100-PR window. One call per such task, not per tick.
+ */
+export type FindPullRequestsForBranch = (arguments_: {
   cwd: string;
   branchName: string;
   signal?: AbortSignal;
-}) => Promise<readonly PullRequestSummary[]>;
+}) => Promise<readonly TaskPullRequest[]>;
 
 export type FetchPullRequestDetails = (arguments_: {
   urls: readonly string[];
@@ -83,7 +115,8 @@ export type IsCmuxAdapterActive = (signal?: AbortSignal) => Promise<boolean>;
 
 export interface PrStageSyncDeps {
   config: ResolvedConfig;
-  findPullRequests: FindPullRequests;
+  listPullRequests: ListPullRequestsForRepository;
+  findPullRequestsForBranch: FindPullRequestsForBranch;
   fetchPullRequestDetails: FetchPullRequestDetails;
   listCmuxWorkspaces: ListCmuxWorkspaces;
   readCmuxStatus: ReadCmuxStatus;
@@ -155,18 +188,6 @@ function matchWorkspacesToTasks(
   return matches;
 }
 
-/** One PR to track per workspace: prefer a live one, then whichever terminal state, else whatever gh returned first. */
-function selectTrackedPullRequest(
-  pullRequests: readonly PullRequestSummary[],
-): PullRequestSummary | undefined {
-  return (
-    pullRequests.find((pr) => pr.state === "open") ??
-    pullRequests.find((pr) => pr.state === "merged") ??
-    pullRequests.find((pr) => pr.state === "closed") ??
-    pullRequests[0]
-  );
-}
-
 interface SyncCounters {
   written: number;
   cleared: number;
@@ -235,31 +256,73 @@ async function writeTicketField(arguments_: WriteTicketFieldArguments): Promise<
   });
 }
 
+interface StagedPullRequest {
+  pullRequest: TaskPullRequest;
+  detail: PullRequestDetail;
+  stage: PrStage;
+}
+
+/** The single most urgent PR among a task's shown PRs, per `PR_STAGE_URGENCY_ORDER` — never empty, since `staged` is only built from a non-empty pull-request list. */
+function selectDrivingPullRequest(staged: readonly StagedPullRequest[]): StagedPullRequest {
+  return staged.reduce((best, candidate) =>
+    PR_STAGE_URGENCY_ORDER.indexOf(candidate.stage) < PR_STAGE_URGENCY_ORDER.indexOf(best.stage)
+      ? candidate
+      : best,
+  );
+}
+
+async function clearPullRequestFields(arguments_: {
+  workspaceId: string;
+  current: ReadonlyMap<string, string>;
+  deps: Pick<PrStageSyncDeps, "writeCmuxStatus">;
+  signal: AbortSignal | undefined;
+  counters: SyncCounters;
+}): Promise<void> {
+  const { workspaceId, current, deps, signal, counters } = arguments_;
+  for (const { key, priority } of [
+    { key: STAGE_KEY, priority: STAGE_PRIORITY },
+    { key: LABELS_KEY, priority: LABELS_PRIORITY },
+    { key: PULL_REQUESTS_KEY, priority: PULL_REQUESTS_PRIORITY },
+  ]) {
+    // oxlint-disable-next-line no-await-in-loop -- three related status writes for one workspace; sequential keeps them from interleaving with another workspace's
+    await applyField({
+      workspaceId,
+      key,
+      priority,
+      current: current.get(key) ?? "",
+      desired: "",
+      signal,
+      writeStatus: deps.writeCmuxStatus,
+      counters,
+    });
+  }
+}
+
 interface SyncWorkspaceArguments {
   match: MatchedWorkspace;
   labelNames: PrStageLabelNames;
-  pullRequest: PullRequestSummary | undefined;
+  pullRequests: readonly TaskPullRequest[];
   pullRequestLookupFailed: boolean;
-  detail: PullRequestDetail | undefined;
+  detailsByUrl: ReadonlyMap<string, PullRequestDetail | undefined>;
   deps: Pick<PrStageSyncDeps, "readCmuxStatus" | "writeCmuxStatus">;
   signal: AbortSignal | undefined;
   counters: SyncCounters;
 }
 
 /**
- * Stage and labels are cleared only when the branch is confirmed to have no
- * PR; when discovery itself failed (network/auth error) or a PR exists but
- * its detail couldn't be (re)confirmed this tick (a failed or partial
- * GraphQL batch), they are left exactly as they were — never guessed, never
- * cleared.
+ * Stage, labels, and the PR list are cleared only when the task is confirmed
+ * to have no shown PR; when discovery itself failed (network/auth error) or
+ * a shown PR's detail couldn't be (re)confirmed this tick (a failed or
+ * partial GraphQL batch), all three are left exactly as they were — never
+ * guessed, never cleared.
  */
 async function syncWorkspace(arguments_: SyncWorkspaceArguments): Promise<void> {
   const {
     match,
     labelNames,
-    pullRequest,
+    pullRequests,
     pullRequestLookupFailed,
-    detail,
+    detailsByUrl,
     deps,
     signal,
     counters,
@@ -270,45 +333,33 @@ async function syncWorkspace(arguments_: SyncWorkspaceArguments): Promise<void> 
   await writeTicketField({ workspace, current, deps, signal, counters });
 
   if (pullRequestLookupFailed) {
-    counters.skipped += 2;
+    counters.skipped += 3;
     return;
   }
 
-  if (pullRequest === undefined) {
-    await applyField({
-      workspaceId: workspace.id,
-      key: STAGE_KEY,
-      priority: STAGE_PRIORITY,
-      current: current.get(STAGE_KEY) ?? "",
-      desired: "",
-      signal,
-      writeStatus: deps.writeCmuxStatus,
-      counters,
-    });
-    await applyField({
-      workspaceId: workspace.id,
-      key: LABELS_KEY,
-      priority: LABELS_PRIORITY,
-      current: current.get(LABELS_KEY) ?? "",
-      desired: "",
-      signal,
-      writeStatus: deps.writeCmuxStatus,
-      counters,
-    });
+  if (pullRequests.length === 0) {
+    await clearPullRequestFields({ workspaceId: workspace.id, current, deps, signal, counters });
     return;
   }
 
-  if (detail === undefined) {
-    counters.skipped += 2;
-    return;
+  const staged: StagedPullRequest[] = [];
+  for (const pullRequest of pullRequests) {
+    const detail = detailsByUrl.get(pullRequest.url);
+    if (detail === undefined) {
+      counters.skipped += 3;
+      return;
+    }
+    staged.push({ pullRequest, detail, stage: derivePrStage(detail, labelNames) });
   }
+
+  const driving = selectDrivingPullRequest(staged);
 
   await applyField({
     workspaceId: workspace.id,
     key: STAGE_KEY,
     priority: STAGE_PRIORITY,
     current: current.get(STAGE_KEY) ?? "",
-    desired: derivePrStage(detail, labelNames),
+    desired: driving.stage,
     signal,
     writeStatus: deps.writeCmuxStatus,
     counters,
@@ -318,7 +369,23 @@ async function syncWorkspace(arguments_: SyncWorkspaceArguments): Promise<void> 
     key: LABELS_KEY,
     priority: LABELS_PRIORITY,
     current: current.get(LABELS_KEY) ?? "",
-    desired: managedLabelsField(detail.labels, labelNames),
+    desired: managedLabelsField(driving.detail.labels, labelNames),
+    signal,
+    writeStatus: deps.writeCmuxStatus,
+    counters,
+  });
+  await applyField({
+    workspaceId: workspace.id,
+    key: PULL_REQUESTS_KEY,
+    priority: PULL_REQUESTS_PRIORITY,
+    current: current.get(PULL_REQUESTS_KEY) ?? "",
+    desired: encodePrStatuses(
+      staged.map((entry) => ({
+        number: entry.pullRequest.number,
+        stage: entry.stage,
+        url: entry.pullRequest.url,
+      })),
+    ),
     signal,
     writeStatus: deps.writeCmuxStatus,
     counters,
@@ -326,35 +393,91 @@ async function syncWorkspace(arguments_: SyncWorkspaceArguments): Promise<void> 
 }
 
 interface PullRequestLookupResult {
-  byWorkspace: Map<string, PullRequestSummary | undefined>;
+  byWorkspace: Map<string, readonly TaskPullRequest[]>;
   failedWorkspaceIds: Set<string>;
 }
 
-async function resolvePullRequestsByWorkspace(arguments_: {
+/**
+ * One `gh pr list` call per distinct repository among the matched
+ * workspaces, not one per workspace: every matched task sharing a
+ * repository reuses that single repository-wide list, filtered client-side
+ * (`selectTaskPullRequests`) down to each task's own branch and its stack.
+ *
+ * That repository-wide list is bounded (100 PRs, `--author @me`), so a task
+ * whose PR is older than the window — or for any other reason absent from
+ * it — would otherwise read as "no PR" and get its stage/labels/PR list
+ * cleared. When a matched task's filtered result is empty, this falls back
+ * to one exact-branch `gh pr list --head` lookup for that task alone
+ * (`findPullRequestsForBranch`), the same lookup `pr-stage-sync` used before
+ * stack discovery existed. A fallback failure is treated exactly like a
+ * repository-list failure — the workspace is marked failed so its fields are
+ * left untouched rather than cleared — never silently treated as "no PR".
+ */
+async function resolveTaskPullRequestsByWorkspace(arguments_: {
   matches: readonly MatchedWorkspace[];
   config: ResolvedConfig;
-  findPullRequests: FindPullRequests;
+  listPullRequests: ListPullRequestsForRepository;
+  findPullRequestsForBranch: FindPullRequestsForBranch;
   signal: AbortSignal | undefined;
 }): Promise<PullRequestLookupResult> {
-  const { matches, config, findPullRequests, signal } = arguments_;
-  const byWorkspace = new Map<string, PullRequestSummary | undefined>();
+  const { matches, config, listPullRequests, findPullRequestsForBranch, signal } = arguments_;
+  const byWorkspace = new Map<string, readonly TaskPullRequest[]>();
   const failedWorkspaceIds = new Set<string>();
+
+  const representativeByRepository = new Map<string, MatchedWorkspace>();
   for (const match of matches) {
-    // oxlint-disable-next-line no-await-in-loop -- one gh lookup per matched workspace; mirrors reviewer.ts's sequential PR lookups
-    const branchName = await effectiveBranchName({ config, entry: match.entry });
+    if (!representativeByRepository.has(match.entry.repository)) {
+      representativeByRepository.set(match.entry.repository, match);
+    }
+  }
+
+  const pullRequestsByRepository = new Map<string, readonly TaskPullRequest[]>();
+  const failedRepositories = new Set<string>();
+  for (const [repository, representative] of representativeByRepository) {
     try {
-      // oxlint-disable-next-line no-await-in-loop -- see above
-      const pullRequests = await findPullRequests({
-        cwd: match.entry.dir,
-        branchName,
+      // oxlint-disable-next-line no-await-in-loop -- one gh lookup per repository, shared by every matched task in it
+      const pullRequests = await listPullRequests({
+        cwd: representative.entry.dir,
         ...(signal === undefined ? {} : { signal }),
       });
-      byWorkspace.set(match.workspace.id, selectTrackedPullRequest(pullRequests));
+      pullRequestsByRepository.set(repository, pullRequests);
     } catch (error) {
-      debug(`pr-stage-sync: PR lookup failed for ${match.entry.task}: ${errorMessage(error)}`);
+      debug(`pr-stage-sync: PR list failed for repository ${repository}: ${errorMessage(error)}`);
+      failedRepositories.add(repository);
+    }
+  }
+
+  for (const match of matches) {
+    if (failedRepositories.has(match.entry.repository)) {
+      failedWorkspaceIds.add(match.workspace.id);
+      continue;
+    }
+    // oxlint-disable-next-line no-await-in-loop -- one branch resolution per matched workspace; mirrors the per-repository gh lookup above
+    const taskBranch = await effectiveBranchName({ config, entry: match.entry });
+    /* v8 ignore next @preserve -- every non-failed repository was populated in the loop above, since every match's repository is added to representativeByRepository first */
+    const repositoryPullRequests = pullRequestsByRepository.get(match.entry.repository) ?? [];
+    const discovered = selectTaskPullRequests(repositoryPullRequests, taskBranch);
+    if (discovered.length > 0) {
+      byWorkspace.set(match.workspace.id, discovered);
+      continue;
+    }
+
+    try {
+      // oxlint-disable-next-line no-await-in-loop -- one exact-branch fallback call per task whose PR fell outside the repository-wide window; sequential keeps it from interleaving with another task's status writes
+      const fallbackPullRequests = await findPullRequestsForBranch({
+        cwd: match.entry.dir,
+        branchName: taskBranch,
+        ...(signal === undefined ? {} : { signal }),
+      });
+      byWorkspace.set(match.workspace.id, selectTaskPullRequests(fallbackPullRequests, taskBranch));
+    } catch (error) {
+      debug(
+        `pr-stage-sync: exact-branch PR fallback failed for ${match.entry.task}: ${errorMessage(error)}`,
+      );
       failedWorkspaceIds.add(match.workspace.id);
     }
   }
+
   return { byWorkspace, failedWorkspaceIds };
 }
 
@@ -468,11 +591,12 @@ export function createPrStageSync(deps: PrStageSyncDeps): PrStageSync {
       }
 
       const matches = matchWorkspacesToTasks(workspaces, worktreeEntries);
-      const { byWorkspace: pullRequestByWorkspace, failedWorkspaceIds } =
-        await resolvePullRequestsByWorkspace({
+      const { byWorkspace: pullRequestsByWorkspace, failedWorkspaceIds } =
+        await resolveTaskPullRequestsByWorkspace({
           matches,
           config,
-          findPullRequests: deps.findPullRequests,
+          listPullRequests: deps.listPullRequests,
+          findPullRequestsForBranch: deps.findPullRequestsForBranch,
           signal,
         });
       if (failedWorkspaceIds.size > 0) {
@@ -481,9 +605,7 @@ export function createPrStageSync(deps: PrStageSyncDeps): PrStageSync {
       }
 
       const urls = [
-        ...new Set(
-          [...pullRequestByWorkspace.values()].flatMap((pr) => (pr === undefined ? [] : [pr.url])),
-        ),
+        ...new Set([...pullRequestsByWorkspace.values()].flatMap((prs) => prs.map((pr) => pr.url))),
       ];
       let details = new Map<string, PullRequestDetail | undefined>();
       if (urls.length > 0) {
@@ -500,16 +622,15 @@ export function createPrStageSync(deps: PrStageSyncDeps): PrStageSync {
       }
 
       for (const match of matches) {
-        const pullRequest = pullRequestByWorkspace.get(match.workspace.id);
-        const detail = pullRequest === undefined ? undefined : details.get(pullRequest.url);
+        const pullRequests = pullRequestsByWorkspace.get(match.workspace.id) ?? [];
         try {
           // oxlint-disable-next-line no-await-in-loop -- sequential per workspace so one workspace's status calls never interleave with another's
           await syncWorkspace({
             match,
             labelNames: config.cmux.prStages.labels,
-            pullRequest,
+            pullRequests,
             pullRequestLookupFailed: failedWorkspaceIds.has(match.workspace.id),
-            detail,
+            detailsByUrl: details,
             deps,
             signal,
             counters,
@@ -567,7 +688,8 @@ export function createPrStageSync(deps: PrStageSyncDeps): PrStageSync {
 export function createPrStageSyncDeps(config: ResolvedConfig): PrStageSyncDeps {
   return {
     config,
-    findPullRequests: findPullRequestsForBranchOrThrow,
+    listPullRequests: listPullRequestsForRepositoryOrThrow,
+    findPullRequestsForBranch: findTaskPullRequestsForBranchOrThrow,
     fetchPullRequestDetails,
     listCmuxWorkspaces: listCmuxWorkspaceSummaries,
     readCmuxStatus,

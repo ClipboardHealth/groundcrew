@@ -44,6 +44,10 @@ import Testing
         statusEntry(key: "crew_labels", value: labels, priority: -13)
     }
 
+    private func crewPrs(_ entries: String) -> SwiftValue {
+        statusEntry(key: "crew_prs", value: entries, priority: -14)
+    }
+
     private func pr(url: String, number: Int = 406, status: String = "open") -> SwiftValue {
         .object(["number": .int(number), "status": .string(status), "url": .string(url)])
     }
@@ -445,6 +449,28 @@ import Testing
         let initialCommands = commands.compactMap { $0.params["initial_command"] }
         #expect(initialCommands.contains { $0.contains("label-remove") && $0.contains(" tested") && $0.contains(url) })
         #expect(!initialCommands.contains { $0.contains("label-add") && $0.contains(" tested") })
+    }
+
+    /// In a stack, the toggles must follow crew_stage's own PR — not the
+    /// workspace's native (checked-out) PR, which may be a different entry
+    /// in the stack entirely once the driving PR moves to a later one.
+    @Test func labelToggleActsOnTheStackDrivingPrWhenCrewPrsIsPresent() throws {
+        guard try source() != nil else { return }
+        let nativeUrl = "https://github.com/clipboard-health/clipboard-health/pull/6195"
+        let drivingUrl = "https://github.com/clipboard-health/clipboard-health/pull/6196"
+        let w = workspace(
+            ticket: "TG-4829",
+            statuses: [
+                crewStage("my_review"),
+                crewLabels(""),
+                crewPrs("6195,ci_failing,\(nativeUrl);6196,my_review,\(drivingUrl)"),
+            ],
+            pr: pr(url: nativeUrl, number: 6195)
+        )
+        let commands = cmuxCommands(try render([w]))
+        let initialCommands = commands.compactMap { $0.params["initial_command"] }
+        #expect(initialCommands.contains { $0.contains("label-add") && $0.contains("self-reviewed") && $0.contains(drivingUrl) })
+        #expect(!initialCommands.contains { $0.contains(nativeUrl) })
     }
 
     @Test func refreshStagesActionOffersOnAnyPrBearingRow() throws {

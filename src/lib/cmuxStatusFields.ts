@@ -18,6 +18,16 @@ import { runWorkspaceCommand } from "./workspaceAdapter.ts";
 export const TICKET_KEY = "crew_ticket";
 export const TICKET_PRIORITY = -11;
 
+/**
+ * Every shown PR for the task, encoded by `prStageRules.ts#encodePrStatuses`
+ * so the cmux sidebar can render one line per PR without re-deriving stage
+ * from scratch per row. Written by `prStageSync.ts` alongside `crew_stage`
+ * (which carries just the single most urgent stage across these PRs) and
+ * `crew_labels` (which describes the same most-urgent, "stage-driving" PR).
+ */
+export const PULL_REQUESTS_KEY = "crew_prs";
+export const PULL_REQUESTS_PRIORITY = -14;
+
 export interface CmuxStatusWrite {
   key: string;
   priority: number;

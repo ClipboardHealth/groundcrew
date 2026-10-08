@@ -223,13 +223,160 @@ export async function findPullRequestsForBranch(
 }
 
 /**
- * Same lookup as `findPullRequestsForBranch`, but lets failures propagate
- * instead of degrading to "no PR info". `pr-stage-sync` needs to tell "the
- * branch truly has no PR" apart from "couldn't confirm this tick" so a flaky
- * `gh` call never clears a saved stage or label.
+ * A repository's full open/merged/closed PR list, with the head/base branch
+ * names `pr-stage-sync` needs for stack discovery (a task's PRs are its exact
+ * branch plus everything stacked off it) and stack ordering. Unlike
+ * `findPullRequestsForBranch`, this isn't filtered server-side by `--head` —
+ * `gh` has no "head starts with" filter — so the task-branch match happens
+ * client-side (`prStageRules.ts#selectTaskPullRequests`) against one list
+ * fetched per repository per tick, not one `gh` call per task.
  */
-export async function findPullRequestsForBranchOrThrow(
-  arguments_: LookupArgs,
-): Promise<readonly PullRequestSummary[]> {
-  return await listPullRequestsForBranch(arguments_);
+export interface TaskPullRequest {
+  url: string;
+  number: number;
+  /** Lowercased lifecycle: "open" | "merged" | "closed". */
+  state: string;
+  title: string;
+  headRefName: string;
+  baseRefName: string;
+}
+
+const GH_PR_LIST_TASK_DISCOVERY_LIMIT = 100;
+
+interface RawTaskPullRequest {
+  url: string;
+  number: number;
+  state: string;
+  title: string;
+  headRefName: string;
+  baseRefName: string;
+}
+
+function isRawTaskPullRequest(value: unknown): value is RawTaskPullRequest {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- narrowing untyped JSON.parse output to a record so we can probe its keys
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record["url"] === "string" &&
+    typeof record["number"] === "number" &&
+    typeof record["state"] === "string" &&
+    typeof record["title"] === "string" &&
+    typeof record["headRefName"] === "string" &&
+    typeof record["baseRefName"] === "string"
+  );
+}
+
+function parseTaskPullRequests(output: string): TaskPullRequest[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(output);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) {
+    return [];
+  }
+  const summaries: TaskPullRequest[] = [];
+  for (const entry of parsed) {
+    if (!isRawTaskPullRequest(entry)) {
+      continue;
+    }
+    summaries.push({
+      url: entry.url,
+      number: entry.number,
+      state: STATE_MAP[entry.state] ?? entry.state.toLowerCase(),
+      title: entry.title,
+      headRefName: entry.headRefName,
+      baseRefName: entry.baseRefName,
+    });
+  }
+  return summaries;
+}
+
+interface ListPullRequestsForRepositoryArgs {
+  /** Any worktree dir for the repository; `gh` resolves the GitHub repo from its git remote. */
+  cwd: string;
+  signal?: AbortSignal;
+}
+
+/**
+ * Lists every open/merged/closed PR for the repository `cwd` belongs to, in
+ * one `gh pr list` call. Lets failures propagate — `pr-stage-sync` needs to
+ * tell "the repository truly has no matching PR" apart from "couldn't
+ * confirm this tick" so a flaky `gh` call never clears a saved stage.
+ *
+ * Scoped to `--author @me`: groundcrew runs under the operator's own `gh`
+ * identity, which is who every agent-created PR is authored by, so this
+ * keeps the 100-PR window to PRs that can plausibly be a tracked task's
+ * rather than spending it on the rest of the repository's traffic. A task
+ * whose PR still falls outside that window — or isn't under the operator's
+ * identity for some other reason — is recovered by the exact-branch fallback
+ * in `findTaskPullRequestsForBranchOrThrow`, not by widening this call.
+ */
+export async function listPullRequestsForRepositoryOrThrow(
+  arguments_: ListPullRequestsForRepositoryArgs,
+): Promise<readonly TaskPullRequest[]> {
+  const { cwd, signal } = arguments_;
+  const options = signal === undefined ? { cwd } : { cwd, signal };
+  const output = await runCommandAsync(
+    "gh",
+    [
+      "pr",
+      "list",
+      "--state",
+      "all",
+      "--author",
+      "@me",
+      "--limit",
+      String(GH_PR_LIST_TASK_DISCOVERY_LIMIT),
+      "--json",
+      "url,number,state,title,headRefName,baseRefName",
+    ],
+    options,
+  );
+  return parseTaskPullRequests(output);
+}
+
+interface FindTaskPullRequestsForBranchArgs {
+  /** Worktree directory; `gh` resolves the GitHub repo from its git remote. */
+  cwd: string;
+  /** Exact head branch name to filter PRs by (no prefix/stack matching — that needs the repository-wide list). */
+  branchName: string;
+  signal?: AbortSignal;
+}
+
+/**
+ * Exact-branch fallback for when a task's PR fell outside the repository-wide
+ * list's 100-PR window (`listPullRequestsForRepositoryOrThrow`): the same
+ * `gh pr list --head <branch>` lookup `pr-stage-sync` used before stack
+ * discovery existed, reshaped to the `TaskPullRequest` fields so its result
+ * composes with `prStageRules.ts#selectTaskPullRequests` like the
+ * repository-wide list does. Lets failures propagate, same as
+ * `listPullRequestsForRepositoryOrThrow` and for the same reason: a flaky
+ * `gh` call must read as "couldn't confirm this tick", not "no PR".
+ */
+export async function findTaskPullRequestsForBranchOrThrow(
+  arguments_: FindTaskPullRequestsForBranchArgs,
+): Promise<readonly TaskPullRequest[]> {
+  const { cwd, branchName, signal } = arguments_;
+  const options = signal === undefined ? { cwd } : { cwd, signal };
+  const output = await runCommandAsync(
+    "gh",
+    [
+      "pr",
+      "list",
+      "--head",
+      branchName,
+      "--state",
+      "all",
+      "--limit",
+      String(GH_PR_LIST_LIMIT),
+      "--json",
+      "url,number,state,title,headRefName,baseRefName",
+    ],
+    options,
+  );
+  return parseTaskPullRequests(output);
 }

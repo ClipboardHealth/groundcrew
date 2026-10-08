@@ -87,6 +87,127 @@ export function managedLabelsField(
     .join(",");
 }
 
+/**
+ * Most urgent to least urgent, mirroring the sidebar's section order
+ * (`contrib/cmux/groundcrew.swift`) for the stages this module derives —
+ * `merged`/`closed` sit last since a shown closed PR only appears when the
+ * task has no open or merged PR, and a shown merged PR only appears
+ * alongside PRs this urgent or less. Defined once here so `prStageSync.ts`
+ * (picking the task's single most urgent stage across its shown PRs) and any
+ * other ranking need share the same order instead of re-deriving it.
+ */
+export const PR_STAGE_URGENCY_ORDER: readonly PrStage[] = [
+  "my_review",
+  "ci_failing",
+  "changes_requested",
+  "needs_testing",
+  "ready_to_merge",
+  "ci_running",
+  "peer_review",
+  "merged",
+  "closed",
+];
+
+/** The most urgent stage present in `stages`, per `PR_STAGE_URGENCY_ORDER`. */
+export function mostUrgentStage(stages: readonly PrStage[]): PrStage | undefined {
+  return PR_STAGE_URGENCY_ORDER.find((stage) => stages.includes(stage));
+}
+
+export interface TaskPullRequestRef {
+  headRefName: string;
+  baseRefName: string;
+}
+
+/** A task's PRs: its exact branch, plus every branch stacked off it (`<taskBranch>-*`). */
+export function isTaskBranch(headRefName: string, taskBranch: string): boolean {
+  return headRefName === taskBranch || headRefName.startsWith(`${taskBranch}-`);
+}
+
+/**
+ * Which of a task's matched pull requests the sidebar shows: every open or
+ * merged one, falling back to closed ones only when none are open or
+ * merged — a closed PR superseded by a later stack split is noise once the
+ * replacement stack exists, but is the only signal left once it's all that
+ * remains.
+ */
+export function selectShownPullRequests<T extends { state: string }>(
+  pullRequests: readonly T[],
+): T[] {
+  const openOrMerged = pullRequests.filter((pr) => pr.state === "open" || pr.state === "merged");
+  if (openOrMerged.length > 0) {
+    return openOrMerged;
+  }
+  return pullRequests.filter((pr) => pr.state === "closed");
+}
+
+/**
+ * Orders a task's shown PRs bottom-of-stack to top when they chain cleanly
+ * through baseRefName -> headRefName (each PR's base is either outside the
+ * shown set — the bottom — or exactly one other shown PR's head, and no two
+ * PRs share a base); falls back to ascending PR number for anything that
+ * doesn't form that single linear chain (a fork, a gap, or a cycle).
+ */
+export function orderPullRequestStack<T extends TaskPullRequestRef & { number: number }>(
+  pullRequests: readonly T[],
+): T[] {
+  if (pullRequests.length <= 1) {
+    return [...pullRequests];
+  }
+
+  const byHead = new Map(pullRequests.map((pr) => [pr.headRefName, pr]));
+  const childByParentHead = new Map<string, T>();
+  const roots: T[] = [];
+  for (const pr of pullRequests) {
+    const parent = byHead.get(pr.baseRefName);
+    if (parent === undefined) {
+      roots.push(pr);
+      continue;
+    }
+    if (childByParentHead.has(parent.headRefName)) {
+      return pullRequests.toSorted((a, b) => a.number - b.number);
+    }
+    childByParentHead.set(parent.headRefName, pr);
+  }
+  if (roots.length !== 1) {
+    return pullRequests.toSorted((a, b) => a.number - b.number);
+  }
+
+  const ordered: T[] = [];
+  let current: T | undefined = roots[0];
+  while (current !== undefined) {
+    ordered.push(current);
+    current = childByParentHead.get(current.headRefName);
+  }
+  if (ordered.length !== pullRequests.length) {
+    return pullRequests.toSorted((a, b) => a.number - b.number);
+  }
+  return ordered;
+}
+
+/** Shown PRs for a task, in display order: `selectShownPullRequests` then `orderPullRequestStack`. */
+export function selectTaskPullRequests<
+  T extends TaskPullRequestRef & { number: number; state: string },
+>(pullRequests: readonly T[], taskBranch: string): T[] {
+  const matched = pullRequests.filter((pr) => isTaskBranch(pr.headRefName, taskBranch));
+  return orderPullRequestStack(selectShownPullRequests(matched));
+}
+
+export interface PrStatusEntry {
+  number: number;
+  stage: PrStage;
+  url: string;
+}
+
+const PR_ENTRY_SEPARATOR = ";";
+const PR_FIELD_SEPARATOR = ",";
+
+/** The `crew_prs` sidebar value: `<number>,<stage>,<url>` entries joined by `;`. */
+export function encodePrStatuses(entries: readonly PrStatusEntry[]): string {
+  return entries
+    .map((entry) => [entry.number, entry.stage, entry.url].join(PR_FIELD_SEPARATOR))
+    .join(PR_ENTRY_SEPARATOR);
+}
+
 const TICKET_PREFIX_RE = /^[A-Za-z]+$/;
 const TICKET_NUMBER_RE = /^[0-9]+$/;
 const TICKET_PREFIX_MAX_LENGTH = 5;

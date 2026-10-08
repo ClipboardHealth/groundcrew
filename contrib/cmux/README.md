@@ -53,14 +53,35 @@ Settings → Account → Code & reviews.
 ## PR-stage sync (`cmux.prStages`)
 
 Stage sections, the per-row stage badge color, and the gating-label toggles below all depend on
-`crew` (the watch loop's `pr-stage-sync` step) painting each task workspace with `crew_stage` and
-`crew_labels`, gated on the opt-in [`cmux.prStages.enabled`](../../docs/configuration.md) config
-flag — see `node --run crew -- --help` and `docs/configuration.md` in the repository root. Run a
-pass on demand with `crew stage refresh`, or manage the gating labels directly with
-`crew stage label-add`/`crew stage label-remove`.
+`crew` (the watch loop's `pr-stage-sync` step) painting each task workspace with `crew_stage`,
+`crew_labels`, and `crew_prs`, gated on the opt-in
+[`cmux.prStages.enabled`](../../docs/configuration.md) config flag — see `node --run crew -- --help`
+and `docs/configuration.md` in the repository root. Run a pass on demand with `crew stage refresh`,
+or manage the gating labels directly with `crew stage label-add`/`crew stage label-remove`.
 
 `crew_ticket` is written for every matched cmux task workspace regardless of this flag, so the
 ticket pill and `Cleanup workspace` action work whether or not PR-stage sync is enabled.
+
+### Stacked PRs
+
+A task's PRs are every pull request whose head branch is the task's worktree branch, or starts with
+`<branch>-` (how an agent splits one task into a stack). `pr-stage-sync` discovers them with one
+`gh pr list --state all --author @me` call per repository per tick, not per task, scoped to the
+operator's own PRs (who every agent-created PR is authored by) and capped at the 100 most recent to
+keep that call cheap. A task whose PR falls outside that window — too old, or for any other reason
+missing from the repository-wide list — is recovered by one exact-branch `gh pr list --head <branch>`
+fallback call for that task alone, the same lookup `pr-stage-sync` used before stack discovery
+existed. Either way, `pr-stage-sync` shows every open or merged PR for the task, falling back to its
+closed PRs only when none are open or merged. When the shown PRs chain by base branch into a single
+stack, they're ordered bottom to top; otherwise by PR number.
+
+Each shown PR's stage is encoded into the `crew_prs` status, and a row renders one "PR #&lt;n&gt; ·
+&lt;stage&gt;" line per entry instead of cmux's native PR list. `crew_stage` (the row's section) and
+`crew_labels` both describe whichever shown PR is most urgent, ranked by the same order the sections
+render in (`Your review` first, then `CI failing`, `Changes requested`, `Needs testing`,
+`Ready to merge`, CI running, `Peer review`, merged, closed last) — so a stack with one PR needing
+your review and another still in CI shows the review PR's stage and labels. Workspaces without
+`crew_prs` (PR-stage sync off, or no matched PR) keep rendering from cmux's native single-PR data.
 
 When `cmux.prStages` has never run for any tracked task (no workspace carries a
 `crew_poller_heartbeat` status at all), the sidebar assumes the feature is off rather than broken:
@@ -71,7 +92,10 @@ least once, a missing or outdated heartbeat goes back to meaning "stale" and the
 ### Label toggles
 
 For a task with a PR, the context menu additionally offers (via `crew stage label-add` /
-`crew stage label-remove`, run from the groundcrew checkout and followed by a `crew stage refresh`):
+`crew stage label-remove`, run from the groundcrew checkout and followed by a `crew stage refresh`).
+When `crew_prs` is present, the toggles act on the same stage-driving PR described above — in a
+stack, that's whichever PR is currently most urgent, not always the task's original PR — so
+right-clicking a stack's row walks the stack naturally as PRs move through review:
 
 - `Self-review done` / `Undo self-review` — toggles the `selfReviewed` gating label
 - `Testing done` / `Undo testing` — toggles the `tested` gating label
