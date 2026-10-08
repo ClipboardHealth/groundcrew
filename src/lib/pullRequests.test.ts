@@ -1,6 +1,7 @@
 import type { RunCommandOptions } from "./commandRunner.ts";
 import {
   findPullRequestsForBranch,
+  findTaskPullRequestsForBranchOrThrow,
   listPullRequestsForRepositoryOrThrow,
   resolvePullRequest,
 } from "./pullRequests.ts";
@@ -223,6 +224,78 @@ function rawTaskPullRequest(
   };
 }
 
+describe(findTaskPullRequestsForBranchOrThrow, () => {
+  afterEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it("filters by exact head branch, not scoped to --author, with headRefName/baseRefName in the response", async () => {
+    runCommandMock.mockResolvedValue(JSON.stringify([rawTaskPullRequest()]));
+
+    const prs = await findTaskPullRequestsForBranchOrThrow({
+      cwd: "/work/widgets-team-1",
+      branchName: "team-1",
+    });
+
+    expect(runCommandMock).toHaveBeenCalledWith(
+      "gh",
+      [
+        "pr",
+        "list",
+        "--head",
+        "team-1",
+        "--state",
+        "all",
+        "--limit",
+        "5",
+        "--json",
+        "url,number,state,title,headRefName,baseRefName",
+      ],
+      { cwd: "/work/widgets-team-1" },
+    );
+    expect(runCommandMock).toHaveBeenCalledWith("gh", expect.not.arrayContaining(["--author"]), {
+      cwd: "/work/widgets-team-1",
+    });
+    expect(prs).toStrictEqual([
+      {
+        url: "https://github.com/acme/widgets/pull/42",
+        number: 42,
+        state: "open",
+        title: "Wire up auth",
+        headRefName: "team-1",
+        baseRefName: "main",
+      },
+    ]);
+  });
+
+  it("propagates a gh failure instead of degrading to an empty list", async () => {
+    runCommandMock.mockRejectedValue(new Error("gh: command not found"));
+
+    const actual = findTaskPullRequestsForBranchOrThrow({
+      cwd: "/work/widgets-team-1",
+      branchName: "team-1",
+    });
+
+    await expect(actual).rejects.toThrow("gh: command not found");
+  });
+
+  it("forwards the AbortSignal alongside cwd when provided", async () => {
+    runCommandMock.mockResolvedValue("[]");
+    const { signal } = new AbortController();
+
+    await findTaskPullRequestsForBranchOrThrow({
+      cwd: "/work/widgets-team-1",
+      branchName: "team-1",
+      signal,
+    });
+
+    expect(runCommandMock).toHaveBeenCalledWith("gh", expect.any(Array), {
+      cwd: "/work/widgets-team-1",
+      signal,
+    });
+  });
+});
+
 describe(listPullRequestsForRepositoryOrThrow, () => {
   afterEach(() => {
     vi.resetAllMocks();
@@ -241,6 +314,8 @@ describe(listPullRequestsForRepositoryOrThrow, () => {
         "list",
         "--state",
         "all",
+        "--author",
+        "@me",
         "--limit",
         "100",
         "--json",
@@ -258,6 +333,16 @@ describe(listPullRequestsForRepositoryOrThrow, () => {
         baseRefName: "main",
       },
     ]);
+  });
+
+  it("scopes the repository-wide list to the operator's own PRs with --author @me", async () => {
+    runCommandMock.mockResolvedValue("[]");
+
+    await listPullRequestsForRepositoryOrThrow({ cwd: "/work/widgets-team-1" });
+
+    expect(runCommandMock).toHaveBeenCalledWith("gh", expect.arrayContaining(["--author", "@me"]), {
+      cwd: "/work/widgets-team-1",
+    });
   });
 
   it("normalises MERGED and CLOSED states to lowercase", async () => {

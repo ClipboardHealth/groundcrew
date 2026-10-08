@@ -3,7 +3,11 @@ import { type CmuxStatusWrite, readCmuxStatus, writeCmuxStatus } from "../lib/cm
 import type { ResolvedConfig } from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
 import { fetchPullRequestDetails, type PullRequestDetail } from "../lib/pullRequestDetails.ts";
-import { listPullRequestsForRepositoryOrThrow, type TaskPullRequest } from "../lib/pullRequests.ts";
+import {
+  findTaskPullRequestsForBranchOrThrow,
+  listPullRequestsForRepositoryOrThrow,
+  type TaskPullRequest,
+} from "../lib/pullRequests.ts";
 import { encodePrStatuses } from "../lib/prStageRules.ts";
 import * as util from "../lib/util.ts";
 import type { WorktreeEntry } from "../lib/worktrees.ts";
@@ -19,6 +23,7 @@ import {
   createPrStageSyncDeps,
   isCmuxAdapterActive,
   type FetchPullRequestDetails,
+  type FindPullRequestsForBranch,
   type ListCmuxWorkspaces,
   type ListPullRequestsForRepository,
   type PrStageSyncDeps,
@@ -124,6 +129,7 @@ function detailFor(overrides: Partial<PullRequestDetail> = {}): PullRequestDetai
 
 interface Deps extends PrStageSyncDeps {
   listPullRequests: ReturnType<typeof vi.fn<ListPullRequestsForRepository>>;
+  findPullRequestsForBranch: ReturnType<typeof vi.fn<FindPullRequestsForBranch>>;
   fetchPullRequestDetails: ReturnType<typeof vi.fn<FetchPullRequestDetails>>;
   listCmuxWorkspaces: ReturnType<typeof vi.fn<ListCmuxWorkspaces>>;
   readCmuxStatus: ReturnType<typeof vi.fn<PrStageSyncDeps["readCmuxStatus"]>>;
@@ -135,6 +141,7 @@ function makeDeps(config: ResolvedConfig, overrides: Partial<Deps> = {}): Deps {
   return {
     config,
     listPullRequests: vi.fn<ListPullRequestsForRepository>().mockResolvedValue([]),
+    findPullRequestsForBranch: vi.fn<FindPullRequestsForBranch>().mockResolvedValue([]),
     fetchPullRequestDetails: vi.fn<FetchPullRequestDetails>().mockResolvedValue(new Map()),
     listCmuxWorkspaces: vi.fn<ListCmuxWorkspaces>().mockResolvedValue([]),
     readCmuxStatus: vi.fn<PrStageSyncDeps["readCmuxStatus"]>().mockResolvedValue(new Map()),
@@ -738,6 +745,100 @@ describe(createPrStageSync, () => {
       ]);
     });
 
+    it("falls back to the exact-branch lookup when the task's PR is missing from the repository-wide list", async () => {
+      const config = makeConfig();
+      const entry = entryFor("team-1");
+      const workspace = workspaceFor("ws-1", { currentDirectory: entry.dir, title: "no ticket" });
+      // The repository-wide list comes back empty for this task — standing
+      // in for the PR having aged out of its bounded (100-PR, --author @me)
+      // window — while the exact-branch fallback still finds it.
+      const pullRequest = taskPullRequestFor({ headRefName: entry.branchName });
+      const detail = detailFor({ reviewDecision: "APPROVED" });
+      const deps = makeDeps(config, {
+        listCmuxWorkspaces: vi.fn<ListCmuxWorkspaces>().mockResolvedValue([workspace]),
+        listPullRequests: vi.fn<ListPullRequestsForRepository>().mockResolvedValue([]),
+        findPullRequestsForBranch: vi
+          .fn<FindPullRequestsForBranch>()
+          .mockResolvedValue([pullRequest]),
+        fetchPullRequestDetails: vi
+          .fn<FetchPullRequestDetails>()
+          .mockResolvedValue(new Map([[pullRequest.url, detail]])),
+      });
+      const prStageSync = createPrStageSync(deps);
+      const { signal } = new AbortController();
+
+      await prStageSync.syncOnce({ worktreeEntries: [entry], signal });
+
+      expect(deps.findPullRequestsForBranch).toHaveBeenCalledWith({
+        cwd: entry.dir,
+        branchName: entry.branchName,
+        signal,
+      });
+      expect(writesFor(deps, "crew_stage")).toStrictEqual([
+        { key: "crew_stage", priority: -10, value: "ready_to_merge" },
+      ]);
+      expect(writesFor(deps, "crew_prs")).toStrictEqual([
+        {
+          key: "crew_prs",
+          priority: -14,
+          value: encodePrStatuses([
+            { number: pullRequest.number, stage: "ready_to_merge", url: pullRequest.url },
+          ]),
+        },
+      ]);
+    });
+
+    it("does not call the exact-branch fallback when the repository-wide list already found the task's PR", async () => {
+      const config = makeConfig();
+      const entry = entryFor("team-1");
+      const workspace = workspaceFor("ws-1", { currentDirectory: entry.dir, title: "no ticket" });
+      const pullRequest = taskPullRequestFor({ headRefName: entry.branchName });
+      const deps = makeDeps(config, {
+        listCmuxWorkspaces: vi.fn<ListCmuxWorkspaces>().mockResolvedValue([workspace]),
+        listPullRequests: vi.fn<ListPullRequestsForRepository>().mockResolvedValue([pullRequest]),
+        fetchPullRequestDetails: vi
+          .fn<FetchPullRequestDetails>()
+          .mockResolvedValue(new Map([[pullRequest.url, detailFor()]])),
+      });
+      const prStageSync = createPrStageSync(deps);
+
+      await prStageSync.syncOnce({ worktreeEntries: [entry] });
+
+      expect(deps.findPullRequestsForBranch).not.toHaveBeenCalled();
+    });
+
+    it("leaves stage, labels, and the PR list untouched (never clears) when the exact-branch fallback itself fails", async () => {
+      const config = makeConfig();
+      const entry = entryFor("team-1");
+      const workspace = workspaceFor("ws-1", { currentDirectory: entry.dir, title: "no ticket" });
+      const deps = makeDeps(config, {
+        listCmuxWorkspaces: vi.fn<ListCmuxWorkspaces>().mockResolvedValue([workspace]),
+        listPullRequests: vi.fn<ListPullRequestsForRepository>().mockResolvedValue([]),
+        findPullRequestsForBranch: vi
+          .fn<FindPullRequestsForBranch>()
+          .mockRejectedValue(new Error("gh pr list --head failed")),
+        readCmuxStatus: vi.fn<PrStageSyncDeps["readCmuxStatus"]>().mockResolvedValue(
+          new Map([
+            ["crew_stage", "ready_to_merge"],
+            ["crew_labels", "self-reviewed,tested"],
+            ["crew_prs", "1,ready_to_merge,https://github.com/acme/repo-a/pull/1"],
+          ]),
+        ),
+      });
+      const prStageSync = createPrStageSync(deps);
+
+      await prStageSync.syncOnce({ worktreeEntries: [entry] });
+
+      expect(deps.fetchPullRequestDetails).not.toHaveBeenCalled();
+      expect(writesFor(deps, "crew_stage")).toStrictEqual([]);
+      expect(writesFor(deps, "crew_labels")).toStrictEqual([]);
+      expect(writesFor(deps, "crew_prs")).toStrictEqual([]);
+      expect(logEventMock).toHaveBeenCalledWith(
+        "pr-stage-sync",
+        expect.objectContaining({ outcome: "error", reason: "pull_request_lookup_failed" }),
+      );
+    });
+
     it("skips (never clears) stage, labels, and the PR list when a shown pull request's detail is missing", async () => {
       const config = makeConfig();
       const entry = entryFor("team-1");
@@ -1071,6 +1172,7 @@ describe(createPrStageSyncDeps, () => {
 
     expect(deps.config).toBe(config);
     expect(deps.listPullRequests).toBe(listPullRequestsForRepositoryOrThrow);
+    expect(deps.findPullRequestsForBranch).toBe(findTaskPullRequestsForBranchOrThrow);
     expect(deps.fetchPullRequestDetails).toBe(fetchPullRequestDetails);
     expect(deps.listCmuxWorkspaces).toBe(listCmuxWorkspaceSummaries);
     expect(deps.readCmuxStatus).toBe(readCmuxStatus);

@@ -306,6 +306,14 @@ interface ListPullRequestsForRepositoryArgs {
  * one `gh pr list` call. Lets failures propagate — `pr-stage-sync` needs to
  * tell "the repository truly has no matching PR" apart from "couldn't
  * confirm this tick" so a flaky `gh` call never clears a saved stage.
+ *
+ * Scoped to `--author @me`: groundcrew runs under the operator's own `gh`
+ * identity, which is who every agent-created PR is authored by, so this
+ * keeps the 100-PR window to PRs that can plausibly be a tracked task's
+ * rather than spending it on the rest of the repository's traffic. A task
+ * whose PR still falls outside that window — or isn't under the operator's
+ * identity for some other reason — is recovered by the exact-branch fallback
+ * in `findTaskPullRequestsForBranchOrThrow`, not by widening this call.
  */
 export async function listPullRequestsForRepositoryOrThrow(
   arguments_: ListPullRequestsForRepositoryArgs,
@@ -319,8 +327,52 @@ export async function listPullRequestsForRepositoryOrThrow(
       "list",
       "--state",
       "all",
+      "--author",
+      "@me",
       "--limit",
       String(GH_PR_LIST_TASK_DISCOVERY_LIMIT),
+      "--json",
+      "url,number,state,title,headRefName,baseRefName",
+    ],
+    options,
+  );
+  return parseTaskPullRequests(output);
+}
+
+interface FindTaskPullRequestsForBranchArgs {
+  /** Worktree directory; `gh` resolves the GitHub repo from its git remote. */
+  cwd: string;
+  /** Exact head branch name to filter PRs by (no prefix/stack matching — that needs the repository-wide list). */
+  branchName: string;
+  signal?: AbortSignal;
+}
+
+/**
+ * Exact-branch fallback for when a task's PR fell outside the repository-wide
+ * list's 100-PR window (`listPullRequestsForRepositoryOrThrow`): the same
+ * `gh pr list --head <branch>` lookup `pr-stage-sync` used before stack
+ * discovery existed, reshaped to the `TaskPullRequest` fields so its result
+ * composes with `prStageRules.ts#selectTaskPullRequests` like the
+ * repository-wide list does. Lets failures propagate, same as
+ * `listPullRequestsForRepositoryOrThrow` and for the same reason: a flaky
+ * `gh` call must read as "couldn't confirm this tick", not "no PR".
+ */
+export async function findTaskPullRequestsForBranchOrThrow(
+  arguments_: FindTaskPullRequestsForBranchArgs,
+): Promise<readonly TaskPullRequest[]> {
+  const { cwd, branchName, signal } = arguments_;
+  const options = signal === undefined ? { cwd } : { cwd, signal };
+  const output = await runCommandAsync(
+    "gh",
+    [
+      "pr",
+      "list",
+      "--head",
+      branchName,
+      "--state",
+      "all",
+      "--limit",
+      String(GH_PR_LIST_LIMIT),
       "--json",
       "url,number,state,title,headRefName,baseRefName",
     ],

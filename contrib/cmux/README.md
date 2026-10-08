@@ -64,11 +64,16 @@ ticket pill and `Cleanup workspace` action work whether or not PR-stage sync is 
 
 ### Stacked PRs
 
-A task's PRs are every open pull request whose head branch is the task's worktree branch, or starts
-with `<branch>-` (how an agent splits one task into a stack). `pr-stage-sync` lists all of them —
-one `gh pr list` call per repository per tick, not per task — and shows every open or merged PR for
-the task, falling back to its closed PRs only when none are open or merged. When the shown PRs chain
-by base branch into a single stack, they're ordered bottom to top; otherwise by PR number.
+A task's PRs are every pull request whose head branch is the task's worktree branch, or starts with
+`<branch>-` (how an agent splits one task into a stack). `pr-stage-sync` discovers them with one
+`gh pr list --state all --author @me` call per repository per tick, not per task, scoped to the
+operator's own PRs (who every agent-created PR is authored by) and capped at the 100 most recent to
+keep that call cheap. A task whose PR falls outside that window — too old, or for any other reason
+missing from the repository-wide list — is recovered by one exact-branch `gh pr list --head <branch>`
+fallback call for that task alone, the same lookup `pr-stage-sync` used before stack discovery
+existed. Either way, `pr-stage-sync` shows every open or merged PR for the task, falling back to its
+closed PRs only when none are open or merged. When the shown PRs chain by base branch into a single
+stack, they're ordered bottom to top; otherwise by PR number.
 
 Each shown PR's stage is encoded into the `crew_prs` status, and a row renders one "PR #&lt;n&gt; ·
 &lt;stage&gt;" line per entry instead of cmux's native PR list. `crew_stage` (the row's section) and

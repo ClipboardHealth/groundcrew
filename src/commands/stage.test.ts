@@ -100,6 +100,7 @@ describe(stageCli, () => {
     createPrStageSyncDepsMock.mockReturnValue({
       config,
       listPullRequests: vi.fn<PrStageSyncDeps["listPullRequests"]>(),
+      findPullRequestsForBranch: vi.fn<PrStageSyncDeps["findPullRequestsForBranch"]>(),
       fetchPullRequestDetails: vi.fn<PrStageSyncDeps["fetchPullRequestDetails"]>(),
       listCmuxWorkspaces: vi.fn<PrStageSyncDeps["listCmuxWorkspaces"]>(),
       readCmuxStatus: vi.fn<PrStageSyncDeps["readCmuxStatus"]>(),

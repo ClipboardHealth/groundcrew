@@ -6,14 +6,18 @@
  * same status-key contract the installed sidebar reads, but a task's PRs are
  * discovered from its worktree branch plus every branch stacked off it
  * (`listPullRequestsForRepositoryOrThrow` + `selectTaskPullRequests`)
- * instead of cmux's own single-branch PR detection.
+ * instead of cmux's own single-branch PR detection. That repository-wide
+ * list is bounded and author-scoped (`--author @me`, 100 PRs), so a task
+ * whose PR falls outside it is recovered by a per-task exact-branch fallback
+ * (`findTaskPullRequestsForBranchOrThrow`) — see
+ * `resolveTaskPullRequestsByWorkspace` for the two-tier lookup.
  *
  * A task can have several shown PRs (an unsplit branch, or a stack of
  * follow-up PRs chained by base branch). `crew_stage`/`crew_labels` describe
- * only the single most urgent one (`mostUrgentStage`) — the "stage-driving"
- * PR a right-click label toggle acts on — while the `crew_prs` status
- * carries every shown PR so the sidebar can render one row per PR. See
- * `contrib/cmux/README.md` for the full status-key contract.
+ * only the single most urgent one (`selectDrivingPullRequest`) — the
+ * "stage-driving" PR a right-click label toggle acts on — while the
+ * `crew_prs` status carries every shown PR so the sidebar can render one row
+ * per PR. See `contrib/cmux/README.md` for the full status-key contract.
  *
  * `crew_ticket` is written for every matched cmux task workspace regardless
  * of the `cmux.prStages.enabled` opt-in, since a custom sidebar may read it
@@ -42,7 +46,11 @@ import {
 import type { ResolvedConfig } from "../lib/config.ts";
 import { detectHostCapabilities } from "../lib/host.ts";
 import { fetchPullRequestDetails, type PullRequestDetail } from "../lib/pullRequestDetails.ts";
-import { listPullRequestsForRepositoryOrThrow, type TaskPullRequest } from "../lib/pullRequests.ts";
+import {
+  findTaskPullRequestsForBranchOrThrow,
+  listPullRequestsForRepositoryOrThrow,
+  type TaskPullRequest,
+} from "../lib/pullRequests.ts";
 import {
   deriveTicket,
   derivePrStage,
@@ -75,6 +83,17 @@ export type ListPullRequestsForRepository = (arguments_: {
   signal?: AbortSignal;
 }) => Promise<readonly TaskPullRequest[]>;
 
+/**
+ * Per-task fallback used only when a matched task's branch (and its stack)
+ * are absent from the repository-wide list — e.g. the task's PR is older
+ * than that list's 100-PR window. One call per such task, not per tick.
+ */
+export type FindPullRequestsForBranch = (arguments_: {
+  cwd: string;
+  branchName: string;
+  signal?: AbortSignal;
+}) => Promise<readonly TaskPullRequest[]>;
+
 export type FetchPullRequestDetails = (arguments_: {
   urls: readonly string[];
   signal?: AbortSignal;
@@ -97,6 +116,7 @@ export type IsCmuxAdapterActive = (signal?: AbortSignal) => Promise<boolean>;
 export interface PrStageSyncDeps {
   config: ResolvedConfig;
   listPullRequests: ListPullRequestsForRepository;
+  findPullRequestsForBranch: FindPullRequestsForBranch;
   fetchPullRequestDetails: FetchPullRequestDetails;
   listCmuxWorkspaces: ListCmuxWorkspaces;
   readCmuxStatus: ReadCmuxStatus;
@@ -382,14 +402,25 @@ interface PullRequestLookupResult {
  * workspaces, not one per workspace: every matched task sharing a
  * repository reuses that single repository-wide list, filtered client-side
  * (`selectTaskPullRequests`) down to each task's own branch and its stack.
+ *
+ * That repository-wide list is bounded (100 PRs, `--author @me`), so a task
+ * whose PR is older than the window — or for any other reason absent from
+ * it — would otherwise read as "no PR" and get its stage/labels/PR list
+ * cleared. When a matched task's filtered result is empty, this falls back
+ * to one exact-branch `gh pr list --head` lookup for that task alone
+ * (`findPullRequestsForBranch`), the same lookup `pr-stage-sync` used before
+ * stack discovery existed. A fallback failure is treated exactly like a
+ * repository-list failure — the workspace is marked failed so its fields are
+ * left untouched rather than cleared — never silently treated as "no PR".
  */
 async function resolveTaskPullRequestsByWorkspace(arguments_: {
   matches: readonly MatchedWorkspace[];
   config: ResolvedConfig;
   listPullRequests: ListPullRequestsForRepository;
+  findPullRequestsForBranch: FindPullRequestsForBranch;
   signal: AbortSignal | undefined;
 }): Promise<PullRequestLookupResult> {
-  const { matches, config, listPullRequests, signal } = arguments_;
+  const { matches, config, listPullRequests, findPullRequestsForBranch, signal } = arguments_;
   const byWorkspace = new Map<string, readonly TaskPullRequest[]>();
   const failedWorkspaceIds = new Set<string>();
 
@@ -425,7 +456,26 @@ async function resolveTaskPullRequestsByWorkspace(arguments_: {
     const taskBranch = await effectiveBranchName({ config, entry: match.entry });
     /* v8 ignore next @preserve -- every non-failed repository was populated in the loop above, since every match's repository is added to representativeByRepository first */
     const repositoryPullRequests = pullRequestsByRepository.get(match.entry.repository) ?? [];
-    byWorkspace.set(match.workspace.id, selectTaskPullRequests(repositoryPullRequests, taskBranch));
+    const discovered = selectTaskPullRequests(repositoryPullRequests, taskBranch);
+    if (discovered.length > 0) {
+      byWorkspace.set(match.workspace.id, discovered);
+      continue;
+    }
+
+    try {
+      // oxlint-disable-next-line no-await-in-loop -- one exact-branch fallback call per task whose PR fell outside the repository-wide window; sequential keeps it from interleaving with another task's status writes
+      const fallbackPullRequests = await findPullRequestsForBranch({
+        cwd: match.entry.dir,
+        branchName: taskBranch,
+        ...(signal === undefined ? {} : { signal }),
+      });
+      byWorkspace.set(match.workspace.id, selectTaskPullRequests(fallbackPullRequests, taskBranch));
+    } catch (error) {
+      debug(
+        `pr-stage-sync: exact-branch PR fallback failed for ${match.entry.task}: ${errorMessage(error)}`,
+      );
+      failedWorkspaceIds.add(match.workspace.id);
+    }
   }
 
   return { byWorkspace, failedWorkspaceIds };
@@ -546,6 +596,7 @@ export function createPrStageSync(deps: PrStageSyncDeps): PrStageSync {
           matches,
           config,
           listPullRequests: deps.listPullRequests,
+          findPullRequestsForBranch: deps.findPullRequestsForBranch,
           signal,
         });
       if (failedWorkspaceIds.size > 0) {
@@ -638,6 +689,7 @@ export function createPrStageSyncDeps(config: ResolvedConfig): PrStageSyncDeps {
   return {
     config,
     listPullRequests: listPullRequestsForRepositoryOrThrow,
+    findPullRequestsForBranch: findTaskPullRequestsForBranchOrThrow,
     fetchPullRequestDetails,
     listCmuxWorkspaces: listCmuxWorkspaceSummaries,
     readCmuxStatus,
