@@ -83,6 +83,7 @@ import Testing
         if let first = allStatuses.first { fields["status"] = first }
         if let pr {
             fields["pr"] = pr
+            fields["prs"] = .array([pr])
         }
         return .object(fields)
     }

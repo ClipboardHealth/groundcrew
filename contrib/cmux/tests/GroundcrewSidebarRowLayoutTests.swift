@@ -52,6 +52,7 @@ import Testing
         directory: String = "/Users/jason/Documents/work/repo",
         statuses: [SwiftValue] = [],
         pr: SwiftValue? = nil,
+        prs: [SwiftValue] = [],
         agents: [SwiftValue] = []
     ) -> SwiftValue {
         var allStatuses = statuses
@@ -67,7 +68,11 @@ import Testing
             "statuses": .array(allStatuses),
         ]
         if let first = allStatuses.first { fields["status"] = first }
-        if let pr { fields["pr"] = pr }
+        let allPrs = prs.isEmpty ? (pr.map { [$0] } ?? []) : prs
+        if let first = allPrs.first {
+            fields["pr"] = first
+            fields["prs"] = .array(allPrs)
+        }
         return .object(fields)
     }
 
@@ -247,6 +252,21 @@ import Testing
         let rendered = texts(try render([w]))
         #expect(rendered.contains("TG-8009"))
         #expect(!rendered.contains { $0.hasPrefix("PR #") })
+    }
+
+    @Test func listsEveryPullRequestOnItsOwnLineUnderTheTicket() throws {
+        guard try source() != nil else { return }
+        let w = workspace(
+            ticket: "TG-8011",
+            prs: [
+                pr(url: "https://github.com/clipboard-health/groundcrew/pull/8011", number: 8011),
+                pr(url: "https://github.com/clipboard-health/groundcrew/pull/8012", number: 8012, status: "merged"),
+            ]
+        )
+        let rendered = texts(try render([w]))
+        #expect(rendered.contains("PR #8011 · open"))
+        #expect(rendered.contains("PR #8012 · merged"))
+        #expect(!rendered.contains("·"))
     }
 
     @Test func captionLineOmitsMissingTicketPill() throws {

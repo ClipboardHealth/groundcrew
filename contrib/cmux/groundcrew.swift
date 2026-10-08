@@ -597,7 +597,7 @@ func taskRow(_ r, _ now, _ pulse) -> some View {
         }
       }
 
-      HStack(spacing: 4) {
+      VStack(alignment: .leading, spacing: 2) {
         if hasTicketPill {
           Button(action: { openURL("linear://linear.app/clipboardhealth/issue/" + ticket) }) {
             HStack(spacing: 4) {
@@ -606,16 +606,13 @@ func taskRow(_ r, _ now, _ pulse) -> some View {
             }
           }
         }
-        if hasTicketPill {
-          if let pr = w.pr {
-            Text("·").font(.caption).foregroundColor(.secondary)
-          }
-        }
-        if let pr = w.pr {
-          Button(action: { openURL(prLink(pr)) }) {
-            HStack(spacing: 4) {
-              Image(systemName: "arrow.triangle.branch")
-              Text("PR #" + String(pr.number) + " · " + pr.status).font(.caption)
+        if let prs = w.prs {
+          ForEach(prs) { pr in
+            Button(action: { openURL(prLink(pr)) }) {
+              HStack(spacing: 4) {
+                Image(systemName: "arrow.triangle.branch")
+                Text("PR #" + String(pr.number) + " · " + pr.status).font(.caption)
+              }
             }
           }
         }

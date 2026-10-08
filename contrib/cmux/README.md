@@ -1,8 +1,8 @@
 # cmux custom sidebar
 
 A [custom cmux sidebar](https://cmux.com/docs/custom-sidebars) that groups crew tasks by PR review
-stage, with a compact two-line row per task: title and a horizontal agent-icon strip on line one,
-ticket/PR pills on line two.
+stage, with a compact row per task: title and a horizontal agent-icon strip on the first line, then
+the ticket pill and one line per pull request the workspace has open or recently closed.
 
 ## Install
 
@@ -123,7 +123,7 @@ array is absent and a row simply shows no icon strip.
 
 A workspace's native cmux status entry (`cmux set-status <key> <value>`, `cmux list-status`) never
 renders as its own row element in this layout — not even as a fallback. The only pills on a task row
-are the ticket id and PR number/status, both sourced from the poller-managed status keys above. A
+are the ticket id and each PR's number/status, both sourced from the poller-managed status keys above. A
 native status pill with no agent session and no PR is still enough to make a workspace count as a
 task (so it doesn't fall out of the list entirely), but its value is not itself displayed.
 
