@@ -61,6 +61,7 @@
     "knip": "knip --config config/knip.json",
     "lint": "oxlint --config config/oxlint.config.ts --deny-warnings --ignore-pattern 'v2/**'",
     "markdown:lint": "markdownlint-cli2 --config config/markdownlint-cli2.jsonc",
+    "postinstall": "node --run sync-ai-rules",
     "prepack": "node --run build",
     "prepare": "husky",
     "sync-ai-rules": "npm exec --yes --package=@clipboard-health/engineering-practices@latest -- engineering-practices-sync common || true",
