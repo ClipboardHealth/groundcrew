@@ -26,14 +26,18 @@ Workspaces split into two sections:
   lane, an agent session, or a ticket id — then groups those task rows into stage sections instead
   of one flat list:
 
-  `Needs you` → `Your review` → `CI failing` → `Changes requested` → `Needs testing` →
-  `Ready to merge` → `Working` → `Waiting` → `Peer review` → `Stage unknown` (or `Open PRs`, see
+  `Your review` → `CI failing` → `Changes requested` → `Needs testing` → `Ready to merge` →
+  `Working` → `Waiting` → `Peer review` → `Stage unknown` (or `Open PRs`, see
   [PR-stage sync](#pr-stage-sync-cmuxprstages)) → `Done`
 
-  A row's stage comes first from live signal (an agent waiting on you, or one still executing)
-  before falling back to the synced PR stage, so a row never gets stuck showing a stale badge while
-  an agent is actively working it. Empty sections are hidden. Each row's left stripe and background
-  tint match the color of the section it sits under.
+  A row's stage comes first from live signal (a still-executing agent) before falling back to the
+  synced PR stage, so a row never gets stuck showing a stale badge while an agent is actively working
+  it. Empty sections are hidden. Each row's left stripe and background tint match the color of the
+  section it sits under. There is no separate "Needs you" section: an agent in `needs_input` still
+  gets the amber ring on its icon (see [Agent icon strip](#agent-icon-strip)), but the row itself
+  stays under its normal PR-stage or Waiting/Working section instead of being pulled out of it — the
+  native-status heuristic the old section used to promote a row was inaccurate often enough to do
+  more harm (hiding the row from the section it actually belonged in) than good.
 
 Ticket ids come from `crew_ticket`, a cmux status [`pr-stage-sync`](#pr-stage-sync-cmuxprstages)
 writes on each matched task workspace — not parsed from the title or directory name — and link into
