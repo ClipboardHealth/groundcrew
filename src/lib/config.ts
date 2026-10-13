@@ -12,9 +12,9 @@ import { expandHome } from "./paths.ts";
 import { debug, log, readEnvironmentVariable, setLogFile } from "./util.ts";
 import { xdgConfigPath, xdgStatePath } from "./xdg.ts";
 
-import { BUILD_SECRET_NAMES } from "./buildSecrets.ts";
+import { BUILD_SECRET_NAMES, type BuildSecretName } from "./buildSecrets.ts";
 
-export { BUILD_SECRET_NAMES } from "./buildSecrets.ts";
+export { BUILD_SECRET_NAMES, type BuildSecretName } from "./buildSecrets.ts";
 
 export const WORKER_ENVIRONMENT_NAMES = ["GROUNDCREW_TASK_ID", "GROUNDCREW_COMPLETE"] as const;
 
@@ -391,6 +391,14 @@ export interface Config {
      */
     networkEgress?: NetworkEgressSetting;
     /**
+     * Build secrets (`BUILD_SECRET_NAMES` entries) that stay in the launched
+     * agent's environment instead of being cleared after prepareWorktree, e.g.
+     * so an agent can reinstall private packages mid-task. Opt in only for
+     * read-scoped tokens. Supported by the `safehouse` and `sdx` runners.
+     * Defaults to none.
+     */
+    agentBuildSecrets?: BuildSecretName[];
+    /**
      * Safehouse sandbox tuning. Consumed only by the `safehouse` runner; other
      * runners ignore it.
      */
@@ -509,6 +517,7 @@ export interface ResolvedConfig {
      * `"allowlisted"`. Only the safehouse runner consumes this today.
      */
     networkEgress: NetworkEgressSetting;
+    agentBuildSecrets: readonly BuildSecretName[];
     /**
      * Resolved Safehouse tuning. Always present; both lists default to `[]`.
      * Only the safehouse runner consumes it.
@@ -567,13 +576,23 @@ const DEFAULT_LOCAL_READ_ONLY_DIRS: readonly string[] = ["~/.config/tfenv"];
 
 function normalizeLocal(
   userLocal:
-    | { runner?: unknown; networkEgress?: unknown; safehouse?: unknown; readOnlyDirs?: unknown }
+    | {
+        runner?: unknown;
+        networkEgress?: unknown;
+        agentBuildSecrets?: unknown;
+        safehouse?: unknown;
+        readOnlyDirs?: unknown;
+      }
     | undefined,
 ): ResolvedConfig["local"] {
   return {
     runner: normalizeLocalRunner(userLocal?.runner, "local.runner") ?? "auto",
     networkEgress:
       normalizeNetworkEgress(userLocal?.networkEgress, "local.networkEgress") ?? "allowlisted",
+    agentBuildSecrets: normalizeAgentBuildSecrets(
+      userLocal?.agentBuildSecrets,
+      "local.agentBuildSecrets",
+    ),
     safehouse: normalizeSafehouse(userLocal?.safehouse, "local.safehouse"),
     readOnlyDirs: normalizeReadOnlyDirs(userLocal?.readOnlyDirs),
   };
@@ -913,15 +932,11 @@ function validatePreLaunchEnv(agentName: string, value: unknown): asserts value 
         `${configPath}[${index}] must be a POSIX env var name matching ${ENV_VAR_NAME_PATTERN.source} (got ${JSON.stringify(entry)})`,
       );
     }
-    // Build secrets are sourced into the host launch shell, forwarded only to
-    // the Safehouse *prepareWorktree* wrap, and `unset` on the host before the agent
-    // wrap is exec'd. Listing one here would silently never reach the agent —
-    // fail loudly so the operator picks a different name (or removes the
-    // entry) instead of debugging a missing env var at runtime.
     if ((BUILD_SECRET_NAMES as readonly string[]).includes(entry)) {
       fail(
         `${configPath}[${index}] cannot be a BUILD_SECRET_NAMES entry (${BUILD_SECRET_NAMES.join(", ")}); ` +
-          "those are unset on the host before the agent wrap is exec'd, so forwarding them via --env-pass would be a no-op.",
+          "those are unset on the host before the agent wrap is exec'd, so forwarding them via --env-pass would be a no-op. " +
+          "To keep a build secret in the agent's environment, list it in local.agentBuildSecrets.",
       );
     }
     if ((WORKER_ENVIRONMENT_NAMES as readonly string[]).includes(entry)) {
@@ -1003,6 +1018,29 @@ function normalizeNetworkEgress(
     );
   }
   return value;
+}
+
+function isBuildSecretName(value: unknown): value is BuildSecretName {
+  return BUILD_SECRET_NAMES.some((name) => name === value);
+}
+
+function normalizeAgentBuildSecrets(value: unknown, configKey: string): BuildSecretName[] {
+  if (value === undefined) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    fail(`${configKey} must be an array of build secret names (got ${JSON.stringify(value)})`);
+  }
+  const names: BuildSecretName[] = [];
+  for (const [index, entry] of value.entries()) {
+    if (!isBuildSecretName(entry)) {
+      fail(
+        `${configKey}[${index}] must be one of ${BUILD_SECRET_NAMES.join(", ")} (got ${JSON.stringify(entry)})`,
+      );
+    }
+    names.push(entry);
+  }
+  return [...new Set(names)];
 }
 
 const SAFEHOUSE_FEATURE_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
@@ -1500,6 +1538,7 @@ function applyDefaults(user: Config, configDir: string): ResolvedConfig {
       local?: {
         runner?: unknown;
         networkEgress?: unknown;
+        agentBuildSecrets?: unknown;
         safehouse?: unknown;
         readOnlyDirs?: unknown;
       };

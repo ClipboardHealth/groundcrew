@@ -903,7 +903,7 @@ describe("loadConfig", () => {
     setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(
-      /agents\.definitions\.claude\.preLaunchEnv\[1\] cannot be a BUILD_SECRET_NAMES entry/,
+      /agents\.definitions\.claude\.preLaunchEnv\[1\] cannot be a BUILD_SECRET_NAMES entry.*local\.agentBuildSecrets/s,
     );
   });
 
@@ -1139,6 +1139,58 @@ describe("loadConfig", () => {
     await expect(loadConfig()).rejects.toThrow(
       /local\.networkEgress must be one of allowlisted, open/,
     );
+  });
+
+  it("defaults local.agentBuildSecrets to empty", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      validConfigSource({ workspace: VALID_WORKSPACE(temporary) }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+    expect(actual.local.agentBuildSecrets).toEqual([]);
+  });
+
+  it("preserves and dedupes explicit local.agentBuildSecrets", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      validConfigSource({
+        workspace: VALID_WORKSPACE(temporary),
+        local: { agentBuildSecrets: ["NPM_TOKEN", "NPM_TOKEN"] },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+    expect(actual.local.agentBuildSecrets).toEqual(["NPM_TOKEN"]);
+  });
+
+  it.each([
+    [
+      "an unknown name",
+      `["NPM_TOKEN", "AWS_SECRET"]`,
+      /local\.agentBuildSecrets\[1\] must be one of NPM_TOKEN, BUF_TOKEN/,
+    ],
+    [
+      "a non-array",
+      `"NPM_TOKEN"`,
+      /local\.agentBuildSecrets must be an array of build secret names/,
+    ],
+  ])("rejects local.agentBuildSecrets with %s", async (_caseName, valueSource, expected) => {
+    const configPath = writeConfigFile(
+      temporary,
+      [
+        "export default {",
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        `  agents: { definitions: { claude: {} } },`,
+        `  local: { agentBuildSecrets: ${valueSource} },`,
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(expected);
   });
 
   it("defaults local.readOnlyDirs to tfenv's config root when omitted", async () => {

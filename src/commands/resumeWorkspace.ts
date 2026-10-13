@@ -297,6 +297,7 @@ export async function resumeWorkspace(
       }),
       taskSourceWritePaths,
       safehouse: config.local.safehouse,
+      agentBuildSecrets: config.local.agentBuildSecrets,
     });
     cleanupAgentLaunch = launch.cleanup;
     const launchCmd = stageWorkspaceLaunchCommand(stagedPrompt.directory, launch.command);

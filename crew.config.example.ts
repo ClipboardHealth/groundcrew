@@ -195,6 +195,11 @@ export default {
   // // sandboxed code launch commands outside the sandbox.
   // local: { safehouse: { appendProfile: ["~/.config/groundcrew/mytool.sb"] } },
   //
+  // // Build secrets (NPM_TOKEN, BUF_TOKEN) the agent keeps after
+  // // prepareWorktree, e.g. to reinstall private packages mid-task. Only list
+  // // read-scoped tokens. Supported by the safehouse and sdx runners.
+  // local: { agentBuildSecrets: ["NPM_TOKEN"] },
+  //
   // // Groundcrew does not create or authenticate sdx sandboxes. For an sdx
   // // agent, create the matching sandbox yourself before first launch:
   // //   sbx create --name groundcrew-claude claude ~/dev/groundcrew

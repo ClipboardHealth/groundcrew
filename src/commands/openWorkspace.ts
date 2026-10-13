@@ -290,6 +290,7 @@ export async function openWorkspace(
       workspaceKind,
       readOnlyDirs: config.local.readOnlyDirs,
       safehouse: config.local.safehouse,
+      agentBuildSecrets: config.local.agentBuildSecrets,
       omitPromptArgument,
     });
     cleanupAgentLaunch = launch.cleanup;
