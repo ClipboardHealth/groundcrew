@@ -3,6 +3,7 @@ import path from "node:path";
 
 import {
   BUILD_SECRET_NAMES,
+  type BuildSecretName,
   hasPreLaunchEnv,
   WORKER_ENVIRONMENT_NAMES,
   type LocalRunner,
@@ -105,8 +106,9 @@ function unsetEnvironmentLine(names: readonly string[]): string {
   return `unset ${[...new Set(names)].join(" ")}`;
 }
 
-function unsetSecretsLine(): string {
-  return unsetEnvironmentLine(BUILD_SECRET_NAMES);
+function unsetSecretsLines(retained: readonly string[]): string[] {
+  const names = BUILD_SECRET_NAMES.filter((name) => !retained.includes(name));
+  return names.length === 0 ? [] : [unsetEnvironmentLine(names)];
 }
 
 function safehouseClearanceWrapperCommand(): string {
@@ -454,6 +456,12 @@ interface LaunchCommandArguments {
    */
   secretsFile?: string | undefined;
   /**
+   * Build-secret names the operator opted to keep in the agent's environment
+   * (`local.agentBuildSecrets`). Honored by the safehouse wrap and sdx runner;
+   * the unwrapped host path rejects a non-empty list.
+   */
+  agentBuildSecrets?: readonly BuildSecretName[] | undefined;
+  /**
    * Optional repo-preparation hook resolved by the caller from the freshly
    * created worktree's `.groundcrew/config.json`, falling back to
    * `defaults.hooks.prepareWorktree` from crew.config.ts.
@@ -571,6 +579,11 @@ export function buildLaunchCommand(arguments_: LaunchCommandArguments): string {
       "preLaunchEnv cannot be injected when 'cmd' starts with 'safehouse' — your cmd owns the wrap, so add the names to its own '--env-pass=' flag, or drop the 'safehouse' prefix from 'cmd' to let groundcrew compose the flag for you.",
     );
   }
+  if ((arguments_.agentBuildSecrets ?? []).length > 0) {
+    throw new Error(
+      "local.agentBuildSecrets is not supported when the agent runs outside groundcrew's Safehouse wrap (runner 'none' or a 'cmd' starting with 'safehouse'). Use runner 'safehouse' or 'sdx', or clear local.agentBuildSecrets.",
+    );
+  }
   if (arguments_.workerEnvironment !== undefined && arguments_.runner === "safehouse") {
     throw new Error(
       "workerEnvironment cannot be injected when 'cmd' starts with 'safehouse' — your cmd owns the wrap, so add GROUNDCREW_TASK_ID,GROUNDCREW_COMPLETE to its own '--env-pass=' flag, or drop the 'safehouse' prefix from 'cmd' to let groundcrew compose the flag for you.",
@@ -623,7 +636,7 @@ function buildUnwrappedHostLaunchCommand(arguments_: LaunchCommandArguments): st
     lines.push(prepareWorktreeWithStatusReporting(arguments_.prepareWorktreeCommand));
   }
   if (arguments_.secretsFile !== undefined) {
-    lines.push(unsetSecretsLine());
+    lines.push(...unsetSecretsLines([]));
   }
   lines.push(
     ...workerEnvironmentExports(arguments_.workerEnvironment),
@@ -681,13 +694,14 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
 
   // Split --env-pass per wrap: the prepareWorktree wrap only needs build secrets (so
   // `npm install` etc. can authenticate); the agent wrap only needs the
-  // user's preLaunchEnv (build secrets are `unset` on the host between the
-  // two wraps, so forwarding them here would silently no-op). Keeps preLaunch
+  // user's preLaunchEnv plus any build secrets opted in via
+  // local.agentBuildSecrets (the rest are `unset` on the host between the wraps). Keeps preLaunch
   // credentials out of the profile-neutral prepare phase — see PR #128.
   // Trailing space keeps each flag separated from the next argv token.
   const prepareWorktreeEnvPassFlag =
     arguments_.secretsFile === undefined ? "" : `--env-pass=${BUILD_SECRET_NAMES.join(",")} `;
   const agentEnvPassFlag = envPassFlag([
+    ...(arguments_.secretsFile === undefined ? [] : (arguments_.agentBuildSecrets ?? [])),
     ...(arguments_.definition.preLaunchEnv ?? []),
     ...workerEnvironmentNames(arguments_.workerEnvironment),
     ...(safehouseAgentIntegration?.envPass ?? []),
@@ -769,7 +783,7 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
     );
   }
   if (arguments_.secretsFile !== undefined) {
-    lines.push(unsetSecretsLine());
+    lines.push(...unsetSecretsLines(arguments_.agentBuildSecrets ?? []));
   }
   lines.push(
     ...workerEnvironmentExports(arguments_.workerEnvironment),
@@ -900,7 +914,7 @@ function buildSdxLaunchCommand(arguments_: LaunchCommandArguments): string {
     innerParts.push(prepareWorktreeCommand);
   }
   if (arguments_.secretsFile !== undefined) {
-    innerParts.push(unsetSecretsLine());
+    innerParts.push(...unsetSecretsLines(arguments_.agentBuildSecrets ?? []));
   }
   innerParts.push(...workerEnvironmentExports(arguments_.workerEnvironment), agentCommand);
   const innerCommand = innerParts.join("; ");

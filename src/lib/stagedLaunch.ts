@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { BUILD_SECRET_NAMES, type ResolvedConfig } from "./config.ts";
+import { BUILD_SECRET_NAMES, type BuildSecretName, type ResolvedConfig } from "./config.ts";
 import { shellSingleQuote } from "./launchCommand.ts";
 import { readEnvironmentVariable } from "./util.ts";
 
@@ -72,6 +72,21 @@ export function stageBuildSecrets(promptDir: string): string | undefined {
   const secretsFile = path.join(promptDir, "secrets.env");
   writeFileSync(secretsFile, `${lines.join("\n")}\n`, { mode: 0o600 });
   return secretsFile;
+}
+
+/**
+ * Stage build secrets only when something in the launch consumes them: a
+ * prepareWorktree command, or an agent that retains them via
+ * `local.agentBuildSecrets`.
+ */
+export function stageBuildSecretsForLaunch(arguments_: {
+  promptDir: string;
+  hasPreparationCommand: boolean;
+  agentBuildSecrets: readonly BuildSecretName[];
+}): string | undefined {
+  const needsBuildSecrets =
+    arguments_.hasPreparationCommand || arguments_.agentBuildSecrets.length > 0;
+  return needsBuildSecrets ? stageBuildSecrets(arguments_.promptDir) : undefined;
 }
 
 function stageLaunchScript(promptDir: string, command: string): string {

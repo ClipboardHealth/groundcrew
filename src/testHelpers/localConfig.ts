@@ -6,6 +6,7 @@ export function makeLocalConfig(
   return {
     runner: "auto",
     networkEgress: "allowlisted",
+    agentBuildSecrets: [],
     safehouse: { enable: [], appendProfile: [] },
     readOnlyDirs: [],
     ...overrides,

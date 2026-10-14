@@ -8,6 +8,7 @@ import {
   safehouseCmuxIntegrationWarningLines,
 } from "@clipboard-health/clearance";
 
+import type { BuildSecretName } from "./buildSecrets.ts";
 import { clearanceAllowHostsFilesFromEnvironment } from "./clearanceAllowlist.ts";
 import { installCmuxAgentHooks } from "./cmuxAgentHookInstall.ts";
 import { cmuxAgentHookSettingsJson } from "./cmuxAgentHooks.ts";
@@ -60,6 +61,7 @@ export function composeAgentLaunch(input: {
   workerEnvironment?: WorkerEnvironment | undefined;
   omitPromptArgument?: boolean | undefined;
   taskSourceWritePaths?: readonly string[] | undefined;
+  agentBuildSecrets?: readonly BuildSecretName[] | undefined;
   safehouse: ResolvedConfig["local"]["safehouse"];
   readOnlyDirs?: readonly string[] | undefined;
   /**
@@ -105,6 +107,7 @@ export function composeAgentLaunch(input: {
         safehouseAgentAddDirs:
           input.runner === "safehouse" ? (input.taskSourceWritePaths ?? []) : undefined,
         safehouse: input.safehouse,
+        agentBuildSecrets: input.agentBuildSecrets,
         // Safehouse rejects nonexistent --add-dirs-ro paths, so drop absent ones.
         safehouseAgentAddDirsReadOnly:
           input.runner === "safehouse" ? (input.readOnlyDirs ?? []).filter(existsSync) : undefined,

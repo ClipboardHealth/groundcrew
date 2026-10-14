@@ -569,6 +569,70 @@ describe(buildLaunchCommand, () => {
   });
 
   describe("secretsFile (build-time secret shuttling)", () => {
+    describe("agentBuildSecrets", () => {
+      const secretsFile = "/tmp/prompt-team-1/secrets.env";
+
+      it("defaults to unsetting every build secret and passing none to the agent wrap", () => {
+        const out = buildLaunchCommand(
+          arguments_({ secretsFile, prepareWorktreeCommand: "npm ci" }),
+        );
+
+        expect(out).toContain("unset NPM_TOKEN BUF_TOKEN");
+        expect(out.slice(out.indexOf('"$_safehouse_shim" -c'))).not.toContain("NPM_TOKEN");
+        expect(out).not.toMatch(/--env-pass=[^ ]*\$_safehouse_shim/);
+      });
+
+      it("keeps a listed secret out of the unset and passes it to the agent wrap", () => {
+        const out = buildLaunchCommand(
+          arguments_({
+            secretsFile,
+            prepareWorktreeCommand: "npm ci",
+            agentBuildSecrets: ["NPM_TOKEN"],
+          }),
+        );
+
+        expect(out).toContain("unset BUF_TOKEN");
+        expect(out).not.toContain("unset NPM_TOKEN");
+        expect(out).toContain('--env-pass=NPM_TOKEN "$_safehouse_shim" -c');
+        expect(out).toContain("safehouse-clearance' --env-pass=NPM_TOKEN,BUF_TOKEN sh -c");
+      });
+
+      it("emits no unset when every build secret is listed", () => {
+        const out = buildLaunchCommand(
+          arguments_({ secretsFile, agentBuildSecrets: ["NPM_TOKEN", "BUF_TOKEN"] }),
+        );
+
+        expect(out).not.toContain("unset NPM_TOKEN");
+        expect(out).not.toContain("unset BUF_TOKEN");
+        expect(out).toContain('--env-pass=NPM_TOKEN,BUF_TOKEN "$_safehouse_shim" -c');
+      });
+
+      it("still scrubs every build secret before preLaunch", () => {
+        const out = buildLaunchCommand(
+          arguments_({
+            definition: { cmd: "claude", color: "#fff", preLaunch: "export FOO=bar" },
+            secretsFile,
+            agentBuildSecrets: ["NPM_TOKEN"],
+          }),
+        );
+
+        expect(out.indexOf("unset NPM_TOKEN BUF_TOKEN")).toBeLessThan(
+          out.indexOf("export FOO=bar"),
+        );
+        expect(out.indexOf("export FOO=bar")).toBeLessThan(
+          out.indexOf(". '/tmp/prompt-team-1/secrets.env'"),
+        );
+      });
+
+      it("rejects a listed secret when the agent runs outside the Safehouse wrap", () => {
+        expect(() =>
+          buildLaunchCommand(
+            arguments_({ secretsFile, runner: "none", agentBuildSecrets: ["NPM_TOKEN"] }),
+          ),
+        ).toThrow(/local\.agentBuildSecrets is not supported/);
+      });
+    });
+
     it("omits source/unset/env-pass when secretsFile is undefined", () => {
       const out = buildLaunchCommand(arguments_());
 
@@ -1502,6 +1566,19 @@ describe(buildLaunchCommand, () => {
       expect(out).toContain(". '/tmp/prompt-team-1/secrets.env'");
       expect(out).toContain("-e NPM_TOKEN -e BUF_TOKEN");
       expect(out).toContain("unset NPM_TOKEN BUF_TOKEN");
+    });
+
+    it("keeps listed agentBuildSecrets out of the in-sandbox unset", () => {
+      const out = buildLaunchCommand(
+        sdxArguments({
+          secretsFile: "/tmp/prompt-team-1/secrets.env",
+          agentBuildSecrets: ["NPM_TOKEN"],
+        }),
+      );
+
+      expect(out).toContain("unset BUF_TOKEN");
+      expect(out).not.toContain("unset NPM_TOKEN");
+      expect(out).toContain("-e NPM_TOKEN -e BUF_TOKEN");
     });
 
     it("exports worker completion env inside the sandbox after prepareWorktree", () => {

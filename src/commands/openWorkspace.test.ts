@@ -571,6 +571,27 @@ describe(openWorkspace, () => {
     expect(stagedLaunchScript()).toContain("npm ci");
   });
 
+  it("forwards local.agentBuildSecrets to the agent even when no preparation command exists", async () => {
+    vi.stubEnv("NPM_TOKEN", "npm-token-value");
+    const secretsConfig: ResolvedConfig = {
+      ...config,
+      local: makeLocalConfig({ agentBuildSecrets: ["NPM_TOKEN"] }),
+    };
+
+    try {
+      await openWorkspace(secretsConfig, {
+        input: { kind: "pr", pr: "42" },
+        repository: "acme/widgets",
+        promptText: "go",
+      });
+
+      expect(stagedLaunchScript()).toContain("secrets.env");
+      expect(stagedLaunchScript()).toMatch(/--env-pass=[^ ]*NPM_TOKEN/);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("forwards repository context when resolving preparation commands", async () => {
     const repoConfig = makeConfigWithRepositories(["acme/widgets"]);
     repoConfig.workspace.repositories = [

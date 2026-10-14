@@ -10,7 +10,7 @@ import { recordRunState, readRunState } from "../lib/runState.ts";
 import { seedLaunchWorkspaceTrust } from "../lib/seedLaunchWorkspaceTrust.ts";
 import {
   removeStagedPrompt,
-  stageBuildSecrets,
+  stageBuildSecretsForLaunch,
   stagePromptText,
   stageWorkspaceLaunchCommand,
 } from "../lib/stagedLaunch.ts";
@@ -267,10 +267,12 @@ export async function openWorkspace(
         repository,
         worktreeDir: launchDir,
       });
-    const secretsFile =
-      prepareWorktreeCommand === undefined && prepareWorktreeUnsandboxedCommand === undefined
-        ? undefined
-        : stageBuildSecrets(stagedPrompt.directory);
+    const secretsFile = stageBuildSecretsForLaunch({
+      promptDir: stagedPrompt.directory,
+      hasPreparationCommand:
+        prepareWorktreeCommand !== undefined || prepareWorktreeUnsandboxedCommand !== undefined,
+      agentBuildSecrets: config.local.agentBuildSecrets,
+    });
     seedLaunchWorkspaceTrust({
       agentCommandName: inferAgentCommandName(definition.cmd),
       launchDir,
@@ -290,6 +292,7 @@ export async function openWorkspace(
       workspaceKind,
       readOnlyDirs: config.local.readOnlyDirs,
       safehouse: config.local.safehouse,
+      agentBuildSecrets: config.local.agentBuildSecrets,
       omitPromptArgument,
     });
     cleanupAgentLaunch = launch.cleanup;
