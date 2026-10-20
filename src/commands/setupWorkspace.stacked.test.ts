@@ -243,8 +243,9 @@ describe("setupWorkspace stacking", () => {
     );
     const launchScript = writtenFileContent("/tmp/groundcrew-team-2-x/launch.sh");
     expect(launchScript).toContain("export GROUNDCREW_BASE_BRANCH='dev-team-1'");
+    expect(launchScript).toContain("export GROUNDCREW_BASE_REMOTE='origin'");
     expect(launchScript).toContain(
-      "--env-pass=GROUNDCREW_TASK_ID,GROUNDCREW_COMPLETE,GROUNDCREW_BASE_BRANCH,CMUX_SURFACE_ID,CMUX_SOCKET_PATH",
+      "--env-pass=GROUNDCREW_TASK_ID,GROUNDCREW_COMPLETE,GROUNDCREW_BASE_BRANCH,GROUNDCREW_BASE_REMOTE,CMUX_SURFACE_ID,CMUX_SOCKET_PATH",
     );
     expect(provisioningRunState()).toMatchObject({
       baseBranch: "dev-team-1",

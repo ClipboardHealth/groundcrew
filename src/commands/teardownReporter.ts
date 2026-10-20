@@ -38,7 +38,7 @@ export async function reapWorktrees(
     signal === undefined
       ? await worktrees.teardown(config, entries)
       : await worktrees.teardown(config, entries, { signal });
-  recordCleanedUpRuns(config, result.removed);
+  await recordCleanedUpRuns(config, result.removed);
   logTeardown(result);
   recordTeardownEvents(result);
   return result;

@@ -194,6 +194,28 @@ type PushRejectionCounts = Map<string, number>;
 /** Merge-commit count already reported per task, for the life of this process. */
 type MergeCommitWarnings = Map<string, number>;
 
+type HoldOutcome = Extract<StackRetargetOutcome, "parent_done_unmerged" | "base_drifted">;
+
+/**
+ * Hold outcome last logged per task, for the life of this process. These
+ * outcomes leave run state untouched, so they would otherwise repeat every tick.
+ */
+type HoldOutcomesLogged = Map<string, HoldOutcome>;
+
+function logHoldOutcome(arguments_: {
+  logContext: ReturnType<typeof logContextFor>;
+  outcome: HoldOutcome;
+  holdOutcomesLogged: HoldOutcomesLogged;
+}): void {
+  const { logContext, outcome, holdOutcomesLogged } = arguments_;
+  if (holdOutcomesLogged.get(logContext.task) === outcome) {
+    debug(`Stack retarget still holding ${logContext.task}: ${outcome}`);
+    return;
+  }
+  holdOutcomesLogged.set(logContext.task, outcome);
+  logTerminal(logContext, outcome);
+}
+
 const MAX_PUSH_REJECTIONS = 3;
 
 async function fetchParentPullRequests(arguments_: {
@@ -675,7 +697,10 @@ async function rebaseOntoDefault(arguments_: {
   } catch (error) {
     debug(`Rebase onto ${defaultBranch} failed for ${task}: ${errorMessage(error)}`);
     try {
-      await runGit({ cwd: entry.dir, args: ["rebase", "--abort"], ...signalOption });
+      // Deliberately unsignalled: the rebase most likely failed because the
+      // signal fired, and an aborted signal would stop this cleanup from
+      // starting, leaving the worktree mid-rebase.
+      await runGit({ cwd: entry.dir, args: ["rebase", "--abort"] });
     } catch (abortError) {
       debug(`git rebase --abort failed for ${task}: ${errorMessage(abortError)}`);
     }
@@ -745,6 +770,7 @@ async function retargetTask(arguments_: {
   countMergeCommits: CountMergeCommits;
   mergeCommitWarnings: MergeCommitWarnings;
   pushRejections: PushRejectionCounts;
+  holdOutcomesLogged: HoldOutcomesLogged;
   runGit: RunGitCommand;
   runGh: RunGhCommand;
   dryRun: boolean;
@@ -765,6 +791,7 @@ async function retargetTask(arguments_: {
     countMergeCommits,
     mergeCommitWarnings,
     pushRejections,
+    holdOutcomesLogged,
     runGit,
     runGh,
     dryRun,
@@ -803,9 +830,10 @@ async function retargetTask(arguments_: {
 
   if (parentState !== "merged") {
     if (parentStatus === "done" || !parentWorktreeExists) {
-      logTerminal(logContext, "parent_done_unmerged");
+      logHoldOutcome({ logContext, outcome: "parent_done_unmerged", holdOutcomesLogged });
       return;
     }
+    holdOutcomesLogged.delete(task);
     await trackOpenParent({
       config,
       entry,
@@ -886,9 +914,10 @@ async function retargetTask(arguments_: {
       return;
     }
   } else {
-    logTerminal(logContext, "base_drifted");
+    logHoldOutcome({ logContext, outcome: "base_drifted", holdOutcomesLogged });
     return;
   }
+  holdOutcomesLogged.delete(task);
 
   const rebaseOutcome = await rebaseOntoDefault({
     config,
@@ -951,6 +980,7 @@ export function createStackRetarget(deps: StackRetargetDeps): StackRetarget {
   } = deps;
   const pushRejections: PushRejectionCounts = new Map();
   const mergeCommitWarnings: MergeCommitWarnings = new Map();
+  const holdOutcomesLogged: HoldOutcomesLogged = new Map();
 
   async function runOnce(arguments_: StackRetargetArguments): Promise<void> {
     const { config, state, worktreeEntries, dryRun, signal } = arguments_;
@@ -985,6 +1015,7 @@ export function createStackRetarget(deps: StackRetargetDeps): StackRetarget {
         countMergeCommits,
         mergeCommitWarnings,
         pushRejections,
+        holdOutcomesLogged,
         runGit,
         runGh,
         dryRun,

@@ -126,7 +126,7 @@ async function isBranchOnRemote(arguments_: {
       "ls-remote",
       "--heads",
       arguments_.remote,
-      arguments_.branch,
+      `refs/heads/${arguments_.branch}`,
     ]);
     return output.length > 0;
   } catch (error) {

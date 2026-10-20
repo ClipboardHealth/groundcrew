@@ -490,6 +490,7 @@ describe(resumeWorkspace, () => {
 
     const launchScript = stagedLaunchScript();
     expect(launchScript).toContain("export GROUNDCREW_BASE_BRANCH='dev-team-0'");
+    expect(launchScript).toContain("export GROUNDCREW_BASE_REMOTE='origin'");
   });
 
   it("omits GROUNDCREW_BASE_BRANCH from the resumed worker's environment when the task isn't stacked", async () => {
@@ -499,6 +500,7 @@ describe(resumeWorkspace, () => {
 
     const launchScript = stagedLaunchScript();
     expect(launchScript).not.toContain("GROUNDCREW_BASE_BRANCH");
+    expect(launchScript).not.toContain("GROUNDCREW_BASE_REMOTE");
   });
 
   it("sets worker self-completion command when the recorded source can mark done", async () => {

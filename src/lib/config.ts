@@ -20,6 +20,7 @@ export const WORKER_ENVIRONMENT_NAMES = [
   "GROUNDCREW_TASK_ID",
   "GROUNDCREW_COMPLETE",
   "GROUNDCREW_BASE_BRANCH",
+  "GROUNDCREW_BASE_REMOTE",
 ] as const;
 
 /**
@@ -302,9 +303,10 @@ export interface Config {
      */
     branchPrefix?: string;
     /**
-     * When true, a Todo task blocked by exactly one unresolved same-repo
-     * blocker is dispatched as a child stacked on the blocker's branch,
-     * instead of waiting for the blocker to merge. Defaults to false.
+     * When true, a Todo task whose unresolved same-repo blockers are a single
+     * blocker, or a single chain of blockers (each blocked by the previous),
+     * is dispatched as a child stacked on the blocker's branch (the chain's
+     * tip), instead of waiting for the blocker to merge. Defaults to false.
      * Config is cached per process, so a running `crew run --watch` needs
      * a restart to pick up a change. Opt an individual task out with the
      * `groundcrew-no-stack` Linear label.
@@ -784,7 +786,7 @@ const DEFAULT_PROMPT_INITIAL = [
   "1. Inspect the repo instructions and existing patterns before edits.",
   "2. Implement the smallest sensible change that completes the task.",
   "3. Run the repo's documented verification command. If no documented command exists, run the smallest relevant test suite you can find and fix failures you introduced before continuing.",
-  '4. Follow the task description for output. If no output instructions exist, open a PR with `Closes {{task}}` in the description. If you cannot open one, leave the branch ready and record the blocker. If `GROUNDCREW_BASE_BRANCH` is set, open the PR with that branch as the base and state in the description which PR it is stacked on. That branch is then part of a GitHub stack: update it only with `git fetch origin "$GROUNDCREW_BASE_BRANCH" && git rebase "origin/$GROUNDCREW_BASE_BRANCH"`, never `git merge`, and never merge or rebase onto the default branch directly (its changes arrive through the parent).',
+  '4. Follow the task description for output. If no output instructions exist, open a PR with `Closes {{task}}` in the description. If you cannot open one, leave the branch ready and record the blocker. If `GROUNDCREW_BASE_BRANCH` is set, open the PR with that branch as the base and state in the description which PR it is stacked on. That branch is then part of a GitHub stack: update it only with `git fetch "$GROUNDCREW_BASE_REMOTE" "$GROUNDCREW_BASE_BRANCH" && git rebase "$GROUNDCREW_BASE_REMOTE/$GROUNDCREW_BASE_BRANCH"`, never `git merge`, and never merge or rebase onto the default branch directly (its changes arrive through the parent).',
   "5. If the requested work is complete, no PR is needed, `GROUNDCREW_COMPLETE` is set, and any dirty worktree state is expected or explicitly allowed, run the command in `GROUNDCREW_COMPLETE` to mark the task done.",
 ].join("\n");
 

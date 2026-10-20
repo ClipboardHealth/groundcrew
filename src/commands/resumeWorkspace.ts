@@ -297,6 +297,7 @@ export async function resumeWorkspace(
       workerEnvironment: workerEnvironmentForTask({
         taskId: context.completionTaskId,
         markDoneSupported: context.completionMarkDoneSupported,
+        remote: config.git.remote,
         ...(context.baseBranch === undefined ? {} : { baseBranch: context.baseBranch }),
       }),
       taskSourceWritePaths,

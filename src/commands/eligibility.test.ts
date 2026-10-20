@@ -172,7 +172,7 @@ describe(defaultEligibilityDeps.probeParentBranch, () => {
       "ls-remote",
       "--heads",
       "origin",
-      "dev-team-1",
+      "refs/heads/dev-team-1",
     ]);
   });
 

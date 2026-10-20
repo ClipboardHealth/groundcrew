@@ -508,6 +508,50 @@ describe(createStackRetarget, () => {
     expect(consoleLog.output()).toContain("outcome=parent_done_unmerged");
   });
 
+  it("logs parent_done_unmerged once across repeated ticks", async () => {
+    recordChildRunState({ baseBranch: "dev-team-1", parentTask: "team-1" });
+    const findPullRequests = findPullRequestsRoutedBy({
+      "dev-team-2": [pullRequest({ baseRefName: "main" })],
+      "dev-team-1": [pullRequest({ number: 3, state: "closed", baseRefName: "main" })],
+    });
+    const stackRetarget = createStackRetarget({ findPullRequests });
+    const tick = async (): Promise<void> => {
+      await stackRetarget.runOnce({
+        config,
+        state: boardOf([canonicalLinearIssue({ naturalId: "team-1", status: "done" })]),
+        worktreeEntries: [hostEntryFor("team-1"), hostEntryFor("team-2")],
+        dryRun: false,
+      });
+    };
+
+    await tick();
+    await tick();
+
+    expect(consoleLog.output().split("outcome=parent_done_unmerged")).toHaveLength(2);
+  });
+
+  it("logs base_drifted once across repeated ticks", async () => {
+    recordChildRunState({ baseBranch: "dev-team-1", parentTask: "team-1" });
+    const findPullRequests = findPullRequestsRoutedBy({
+      "dev-team-2": [pullRequest({ baseRefName: "some-other-branch" })],
+      "dev-team-1": [pullRequest({ number: 3, state: "merged" })],
+    });
+    const stackRetarget = createStackRetarget({ findPullRequests, runGit: gitFake({}) });
+    const tick = async (): Promise<void> => {
+      await stackRetarget.runOnce({
+        config,
+        state: boardOf([]),
+        worktreeEntries: [hostEntryFor("team-2")],
+        dryRun: false,
+      });
+    };
+
+    await tick();
+    await tick();
+
+    expect(consoleLog.output().split("outcome=base_drifted")).toHaveLength(2);
+  });
+
   it("still rebases onto the default branch when the parent issue is done and a PR on its branch actually merged", async () => {
     recordChildRunState({ baseBranch: "dev-team-1", parentTask: "team-1" });
     const findPullRequests = findPullRequestsRoutedBy({
@@ -1029,6 +1073,33 @@ describe(createStackRetarget, () => {
     expect(state?.needsRebase).toBe(true);
     expect(state?.baseBranch).toBe("dev-team-1");
     expect(consoleLog.output()).toContain("outcome=retargeted_needs_rebase");
+  });
+
+  it("runs rebase --abort without the already-cancelled signal", async () => {
+    recordChildRunState({ baseBranch: "dev-team-1", parentTask: "team-1" });
+    const findPullRequests = findPullRequestsRoutedBy({
+      "dev-team-2": [pullRequest({ baseRefName: "main" })],
+      "dev-team-1": [pullRequest({ number: 3, state: "merged" })],
+    });
+    const runGit = gitFake({
+      rebase: async () => {
+        throw new Error("Command aborted");
+      },
+    });
+    const stackRetarget = createStackRetarget({ findPullRequests, runGit });
+    const controller = new AbortController();
+
+    await stackRetarget.runOnce({
+      config,
+      state: boardOf([inProgressIssue("team-2")]),
+      worktreeEntries: [hostEntryFor("team-2")],
+      dryRun: false,
+      signal: controller.signal,
+    });
+
+    const abortCall = runGit.calls.find((call) => call.args.includes("--abort"));
+    expect(abortCall).toBeDefined();
+    expect(abortCall?.signal).toBeUndefined();
   });
 
   it("swallows a failed rebase --abort and still flags needsRebase", async () => {

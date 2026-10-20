@@ -183,6 +183,7 @@ export async function setupWorkspace(
       workerEnvironment: workerEnvironmentForTask({
         taskId: completionTaskId,
         markDoneSupported: completionMarkDoneSupported,
+        remote: config.git.remote,
         ...(options.baseBranch === undefined ? {} : { baseBranch: options.baseBranch }),
       }),
       taskSourceWritePaths,
