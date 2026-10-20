@@ -62,6 +62,18 @@ For each task:
 
 Net effect: by the time the agent process exists, the values are gone from the environment and the file is gone from disk.
 
+### Letting the agent keep a build secret
+
+By default an agent that reinstalls a private package mid-task cannot authenticate. To keep a build secret in the agent's environment, list it in `local.agentBuildSecrets`:
+
+```ts
+local: {
+  agentBuildSecrets: ["NPM_TOKEN"],
+}
+```
+
+Listed names are skipped by the post-`prepareWorktree` unset and forwarded to the agent wrap (`--env-pass` under `safehouse`; kept in the sandbox shell under `sdx`). Unlisted names are still removed. `preLaunch` still never sees build secrets. Only list read-scoped tokens: the agent can read and exfiltrate anything it receives. Not supported with `local.runner: "none"` or a `cmd` that starts with `safehouse`; launch fails loudly.
+
 </details>
 
 ## Per-Session Credentials

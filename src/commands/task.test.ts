@@ -11,6 +11,8 @@ import { recordRunState } from "../lib/runState.ts";
 import { naturalIdFromCanonical, type TaskSource, type Issue } from "../lib/taskSource.ts";
 import { worktrees, type WorktreeEntry } from "../lib/worktrees.ts";
 import { captureConsoleLog } from "../testHelpers/consoleCapture.ts";
+import { makeCmuxConfig } from "../testHelpers/cmuxConfig.ts";
+import { makeLocalConfig } from "../testHelpers/localConfig.ts";
 
 import { taskCli } from "./task.ts";
 
@@ -83,12 +85,8 @@ function makeConfig(): ResolvedConfig {
     },
     prompts: { initial: "x" },
     workspaceKind: "auto",
-    local: {
-      runner: "auto",
-      networkEgress: "allowlisted",
-      safehouse: { enable: [] },
-      readOnlyDirs: [],
-    },
+    local: makeLocalConfig(),
+    cmux: makeCmuxConfig(),
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }

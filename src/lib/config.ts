@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { inspect } from "node:util";
 
 import { cosmiconfig, type CosmiconfigResult, type Loader } from "cosmiconfig";
 
@@ -11,9 +12,9 @@ import { expandHome } from "./paths.ts";
 import { debug, log, readEnvironmentVariable, setLogFile } from "./util.ts";
 import { xdgConfigPath, xdgStatePath } from "./xdg.ts";
 
-import { BUILD_SECRET_NAMES } from "./buildSecrets.ts";
+import { BUILD_SECRET_NAMES, type BuildSecretName } from "./buildSecrets.ts";
 
-export { BUILD_SECRET_NAMES } from "./buildSecrets.ts";
+export { BUILD_SECRET_NAMES, type BuildSecretName } from "./buildSecrets.ts";
 
 export const WORKER_ENVIRONMENT_NAMES = [
   "GROUNDCREW_TASK_ID",
@@ -165,6 +166,8 @@ export interface AgentDefinition {
    */
   preLaunchEnv?: string[];
   color: string;
+  /** Positive finite divisor for agent-any session scoring; defaults to 1 when omitted. */
+  weight?: number;
   usage?: {
     codexbar: { provider: string; source?: string };
   };
@@ -359,6 +362,34 @@ export interface Config {
    */
   workspaceKind?: WorkspaceKindSetting;
   /**
+   * cmux-only features. Every setting here is inert under the tmux/zellij
+   * adapters: `resolveWorkspaceKind` must resolve to `"cmux"` for any of it
+   * to run.
+   */
+  cmux?: {
+    /**
+     * Paints each tracked task's cmux sidebar with its pull request's review
+     * stage (`crew_stage`), the two gating labels present (`crew_labels`),
+     * and the task id (`crew_ticket`), refreshed once per orchestrator tick.
+     * Off by default — this replaces a previously standalone poller, so
+     * existing setups opt in explicitly rather than getting new sidebar
+     * writes on upgrade.
+     */
+    prStages?: {
+      enabled?: boolean;
+      /**
+       * PR label names gating the `my_review`/`needs_testing` stages and
+       * toggled by `crew stage label-add`/`label-remove`. Defaults to
+       * `"self-reviewed"`/`"tested"`; override only if those names collide
+       * with existing repo labels.
+       */
+      labels?: {
+        selfReviewed?: string;
+        tested?: string;
+      };
+    };
+  };
+  /**
    * Local isolation backend selector. Defaults to `"auto"` (macOS →
    * safehouse, Linux → sdx). `"none"` is an explicit unsandboxed escape
    * hatch — never selected implicitly.
@@ -372,6 +403,14 @@ export interface Config {
      * unrestricted network egress. `sdx`/`none` ignore this setting.
      */
     networkEgress?: NetworkEgressSetting;
+    /**
+     * Build secrets (`BUILD_SECRET_NAMES` entries) that stay in the launched
+     * agent's environment instead of being cleared after prepareWorktree, e.g.
+     * so an agent can reinstall private packages mid-task. Opt in only for
+     * read-scoped tokens. Supported by the `safehouse` and `sdx` runners.
+     * Defaults to none.
+     */
+    agentBuildSecrets?: BuildSecretName[];
     /**
      * Safehouse sandbox tuning. Consumed only by the `safehouse` runner; other
      * runners ignore it.
@@ -389,6 +428,17 @@ export interface Config {
        * launch. Defaults to none.
        */
       enable?: string[];
+      /**
+       * Custom sandbox-exec rules, forwarded as repeated --append-profile
+       * flags on the agent wrap only. Later matching rules can override the
+       * generated policy. Prefer local.readOnlyDirs for read-only toolchain
+       * access. Paths are trimmed, ~-expanded, and de-duplicated; Safehouse
+       * rejects missing profiles at launch. Defaults to none.
+       *
+       * Grant only the required access. A supervisor's control socket can
+       * let sandboxed code launch commands outside the sandbox.
+       */
+      appendProfile?: string[];
     };
     /**
      * Host directories re-opened read-only inside the safehouse sandbox, for
@@ -459,6 +509,16 @@ export interface ResolvedConfig {
    * `auto` resolves to cmux when installed, else tmux.
    */
   workspaceKind: WorkspaceKindSetting;
+  /** cmux-only features; always resolved, inert unless the cmux adapter is active. */
+  cmux: {
+    prStages: {
+      enabled: boolean;
+      labels: {
+        selfReviewed: string;
+        tested: string;
+      };
+    };
+  };
   /**
    * Local isolation selection. The user-facing `auto` is preserved here
    * so `localRunner.resolve()` can pick the platform default later — the
@@ -471,12 +531,14 @@ export interface ResolvedConfig {
      * `"allowlisted"`. Only the safehouse runner consumes this today.
      */
     networkEgress: NetworkEgressSetting;
+    agentBuildSecrets: readonly BuildSecretName[];
     /**
-     * Resolved Safehouse tuning. Always present; `enable` defaults to `[]`.
+     * Resolved Safehouse tuning. Always present; both lists default to `[]`.
      * Only the safehouse runner consumes it.
      */
     safehouse: {
       enable: readonly string[];
+      appendProfile: readonly string[];
     };
     /** Resolved, `~`-expanded read-only sandbox dirs. Defaults to tfenv's config root. */
     readOnlyDirs: string[];
@@ -529,16 +591,24 @@ const DEFAULT_LOCAL_READ_ONLY_DIRS: readonly string[] = ["~/.config/tfenv"];
 
 function normalizeLocal(
   userLocal:
-    | { runner?: unknown; networkEgress?: unknown; safehouse?: unknown; readOnlyDirs?: unknown }
+    | {
+        runner?: unknown;
+        networkEgress?: unknown;
+        agentBuildSecrets?: unknown;
+        safehouse?: unknown;
+        readOnlyDirs?: unknown;
+      }
     | undefined,
 ): ResolvedConfig["local"] {
   return {
     runner: normalizeLocalRunner(userLocal?.runner, "local.runner") ?? "auto",
     networkEgress:
       normalizeNetworkEgress(userLocal?.networkEgress, "local.networkEgress") ?? "allowlisted",
-    safehouse: {
-      enable: normalizeSafehouseEnable(userLocal?.safehouse, "local.safehouse"),
-    },
+    agentBuildSecrets: normalizeAgentBuildSecrets(
+      userLocal?.agentBuildSecrets,
+      "local.agentBuildSecrets",
+    ),
+    safehouse: normalizeSafehouse(userLocal?.safehouse, "local.safehouse"),
     readOnlyDirs: normalizeReadOnlyDirs(userLocal?.readOnlyDirs),
   };
 }
@@ -549,6 +619,59 @@ function normalizeReadOnlyDirs(value: unknown): string[] {
     fail("local.readOnlyDirs must be an array of strings");
   }
   return dirs.map(expandHome);
+}
+
+export const DEFAULT_PR_STAGE_LABELS = {
+  selfReviewed: "self-reviewed",
+  tested: "tested",
+} as const satisfies ResolvedConfig["cmux"]["prStages"]["labels"];
+
+const DEFAULT_CMUX: ResolvedConfig["cmux"] = {
+  prStages: { enabled: false, labels: { ...DEFAULT_PR_STAGE_LABELS } },
+};
+
+function normalizePrStageLabels(value: unknown): ResolvedConfig["cmux"]["prStages"]["labels"] {
+  if (value === undefined) {
+    return { ...DEFAULT_PR_STAGE_LABELS };
+  }
+  if (!isPlainObject(value)) {
+    fail("cmux.prStages.labels must be an object");
+  }
+  return {
+    selfReviewed:
+      normalizeOptionalString(value["selfReviewed"], "cmux.prStages.labels.selfReviewed") ??
+      DEFAULT_PR_STAGE_LABELS.selfReviewed,
+    tested:
+      normalizeOptionalString(value["tested"], "cmux.prStages.labels.tested") ??
+      DEFAULT_PR_STAGE_LABELS.tested,
+  };
+}
+
+function normalizePrStages(value: unknown): ResolvedConfig["cmux"]["prStages"] {
+  if (value === undefined) {
+    return { ...DEFAULT_CMUX.prStages };
+  }
+  if (!isPlainObject(value)) {
+    fail("cmux.prStages must be an object");
+  }
+  const { enabled } = value;
+  if (enabled !== undefined && typeof enabled !== "boolean") {
+    fail(`cmux.prStages.enabled must be a boolean (got ${JSON.stringify(enabled)})`);
+  }
+  return {
+    enabled: enabled ?? false,
+    labels: normalizePrStageLabels(value["labels"]),
+  };
+}
+
+function normalizeCmux(value: unknown): ResolvedConfig["cmux"] {
+  if (value === undefined) {
+    return { prStages: { ...DEFAULT_CMUX.prStages } };
+  }
+  if (!isPlainObject(value)) {
+    fail("cmux must be an object");
+  }
+  return { prStages: normalizePrStages(value["prStages"]) };
 }
 
 const DEFAULT_ORCHESTRATOR: ResolvedConfig["orchestrator"] = {
@@ -824,15 +947,11 @@ function validatePreLaunchEnv(agentName: string, value: unknown): asserts value 
         `${configPath}[${index}] must be a POSIX env var name matching ${ENV_VAR_NAME_PATTERN.source} (got ${JSON.stringify(entry)})`,
       );
     }
-    // Build secrets are sourced into the host launch shell, forwarded only to
-    // the Safehouse *prepareWorktree* wrap, and `unset` on the host before the agent
-    // wrap is exec'd. Listing one here would silently never reach the agent —
-    // fail loudly so the operator picks a different name (or removes the
-    // entry) instead of debugging a missing env var at runtime.
     if ((BUILD_SECRET_NAMES as readonly string[]).includes(entry)) {
       fail(
         `${configPath}[${index}] cannot be a BUILD_SECRET_NAMES entry (${BUILD_SECRET_NAMES.join(", ")}); ` +
-          "those are unset on the host before the agent wrap is exec'd, so forwarding them via --env-pass would be a no-op.",
+          "those are unset on the host before the agent wrap is exec'd, so forwarding them via --env-pass would be a no-op. " +
+          "To keep a build secret in the agent's environment, list it in local.agentBuildSecrets.",
       );
     }
     if ((WORKER_ENVIRONMENT_NAMES as readonly string[]).includes(entry)) {
@@ -916,34 +1035,84 @@ function normalizeNetworkEgress(
   return value;
 }
 
+function isBuildSecretName(value: unknown): value is BuildSecretName {
+  return BUILD_SECRET_NAMES.some((name) => name === value);
+}
+
+function normalizeAgentBuildSecrets(value: unknown, configKey: string): BuildSecretName[] {
+  if (value === undefined) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    fail(`${configKey} must be an array of build secret names (got ${JSON.stringify(value)})`);
+  }
+  const names: BuildSecretName[] = [];
+  for (const [index, entry] of value.entries()) {
+    if (!isBuildSecretName(entry)) {
+      fail(
+        `${configKey}[${index}] must be one of ${BUILD_SECRET_NAMES.join(", ")} (got ${JSON.stringify(entry)})`,
+      );
+    }
+    names.push(entry);
+  }
+  return [...new Set(names)];
+}
+
 const SAFEHOUSE_FEATURE_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
+
+function normalizeSafehouse(
+  value: unknown,
+  configKey: string,
+): ResolvedConfig["local"]["safehouse"] {
+  if (value === undefined) {
+    return { enable: [], appendProfile: [] };
+  }
+  if (!isPlainObject(value)) {
+    fail(`${configKey} must be an object`);
+  }
+  return {
+    enable: normalizeSafehouseEnable(value["enable"], `${configKey}.enable`),
+    appendProfile: normalizeSafehouseAppendProfile(
+      value["appendProfile"],
+      `${configKey}.appendProfile`,
+    ),
+  };
+}
 
 function normalizeSafehouseEnable(value: unknown, configKey: string): readonly string[] {
   if (value === undefined) {
     return [];
   }
-  if (!isPlainObject(value)) {
-    fail(`${configKey} must be an object`);
-  }
-  const { enable } = value;
-  if (enable === undefined) {
-    return [];
-  }
-  if (!Array.isArray(enable)) {
-    fail(
-      `${configKey}.enable must be an array of safehouse feature names (got ${JSON.stringify(enable)})`,
-    );
+  if (!Array.isArray(value)) {
+    fail(`${configKey} must be an array of safehouse feature names (got ${JSON.stringify(value)})`);
   }
   const features: string[] = [];
-  for (const [index, entry] of enable.entries()) {
+  for (const [index, entry] of value.entries()) {
     if (typeof entry !== "string" || !SAFEHOUSE_FEATURE_PATTERN.test(entry)) {
       fail(
-        `${configKey}.enable[${index}] must be a safehouse feature slug matching ${SAFEHOUSE_FEATURE_PATTERN.source} (got ${JSON.stringify(entry)})`,
+        `${configKey}[${index}] must be a safehouse feature slug matching ${SAFEHOUSE_FEATURE_PATTERN.source} (got ${JSON.stringify(entry)})`,
       );
     }
     features.push(entry);
   }
   return [...new Set(features)];
+}
+
+function normalizeSafehouseAppendProfile(value: unknown, configKey: string): readonly string[] {
+  if (value === undefined) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    fail(`${configKey} must be an array of profile paths (got ${JSON.stringify(value)})`);
+  }
+  const profiles: string[] = [];
+  for (const [index, entry] of value.entries()) {
+    if (typeof entry !== "string" || entry.trim().length === 0) {
+      fail(`${configKey}[${index}] must be a non-empty path (got ${JSON.stringify(entry)})`);
+    }
+    profiles.push(expandHome(entry.trim()));
+  }
+  return [...new Set(profiles)];
 }
 
 function normalizeResumeArgs(value: unknown, configKey: string): string {
@@ -1044,6 +1213,9 @@ function buildOverrideCandidate(
   if (override.color !== undefined) {
     candidate.color = override.color;
   }
+  if (override.weight !== undefined) {
+    candidate.weight = override.weight;
+  }
   if (override.usage !== undefined) {
     if (isUsageDisableSentinel(override.usage)) {
       delete candidate.usage;
@@ -1084,7 +1256,7 @@ function mergeDefinitions(
 
     const builtIn = BUILT_IN_AGENT_DEFINITIONS[name];
     const candidate = buildOverrideCandidate(name, override, builtIn);
-    const { cmd, color, usage, sandbox, resumeArgs, preLaunch, preLaunchEnv } = candidate;
+    const { cmd, color, weight, usage, sandbox, resumeArgs, preLaunch, preLaunchEnv } = candidate;
     if (typeof cmd !== "string" || cmd.length === 0) {
       fail(`agents.definitions.${name}.cmd must be a non-empty string`);
     }
@@ -1092,6 +1264,14 @@ function mergeDefinitions(
       fail(`agents.definitions.${name}.color must be a non-empty string`);
     }
     const definition: AgentDefinition = { cmd, color };
+    if (weight !== undefined) {
+      if (typeof weight !== "number" || !Number.isFinite(weight) || weight <= 0) {
+        fail(
+          `agents.definitions.${name}.weight must be a positive finite number (got ${typeof weight === "string" ? JSON.stringify(weight) : inspect(weight)})`,
+        );
+      }
+      definition.weight = weight;
+    }
     if (usage !== undefined) {
       definition.usage = usage;
     }
@@ -1373,6 +1553,7 @@ function applyDefaults(user: Config, configDir: string): ResolvedConfig {
       local?: {
         runner?: unknown;
         networkEgress?: unknown;
+        agentBuildSecrets?: unknown;
         safehouse?: unknown;
         readOnlyDirs?: unknown;
       };
@@ -1404,6 +1585,7 @@ function applyDefaults(user: Config, configDir: string): ResolvedConfig {
       initial: resolveInitialPrompt(user.prompts, configDir),
     },
     workspaceKind: normalizeWorkspaceKind(user.workspaceKind, "workspaceKind") ?? "auto",
+    cmux: normalizeCmux(user.cmux),
     local: normalizeLocal(userLocal),
     logging: {
       file: expandHome(
@@ -1426,6 +1608,13 @@ function validatePromptPlaceholders(template: string): void {
 function validate(config: ResolvedConfig): void {
   requireString(config.git.remote, "git.remote");
   requireString(config.git.defaultBranch, "git.defaultBranch");
+
+  const { selfReviewed, tested } = config.cmux.prStages.labels;
+  if (selfReviewed === tested) {
+    fail(
+      `cmux.prStages.labels.selfReviewed and cmux.prStages.labels.tested must be distinct (both "${selfReviewed}")`,
+    );
+  }
 
   requireString(config.workspace.projectDir, "workspace.projectDir");
 
@@ -1460,7 +1649,7 @@ function validate(config: ResolvedConfig): void {
   }
   if (Object.hasOwn(definitions, AGENT_ANY)) {
     fail(
-      `agents.definitions cannot contain "${AGENT_ANY}" — it is reserved for the agent-any label, which routes to the agent with the most available session capacity`,
+      `agents.definitions cannot contain "${AGENT_ANY}" — it is reserved for the agent-any label, which routes to the agent with the lowest weighted session score`,
     );
   }
   for (const [name, definition] of Object.entries(definitions)) {

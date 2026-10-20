@@ -10,6 +10,7 @@ import { orchestrate } from "./commands/orchestrator.ts";
 import { resumeWorkspaceCli } from "./commands/resumeWorkspace.ts";
 import { setupWorkspaceCli } from "./commands/setupWorkspace.ts";
 import { sourceCli } from "./commands/source.ts";
+import { stageCli } from "./commands/stage.ts";
 import { statusCli } from "./commands/status.ts";
 import { taskCli } from "./commands/task.ts";
 import { createDefaultUpgradeCliOptions, upgradeCli } from "./commands/upgrade.ts";
@@ -238,6 +239,11 @@ const SUBCOMMANDS: Record<string, Subcommand> = {
     summary: "Print a shell completion script for bash, zsh, or fish",
     usage: "<bash|zsh|fish>",
     invoke: completionsCli,
+  },
+  stage: {
+    summary: "Manage pr-stage-sync's gating labels, or run a sync pass now",
+    usage: "<label-add|label-remove|refresh> [...]",
+    invoke: stageCli,
   },
 };
 

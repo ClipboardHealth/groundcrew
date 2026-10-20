@@ -2,6 +2,8 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import type * as nodeFs from "node:fs";
 
 import { ensureClearance } from "@clipboard-health/clearance";
+import { makeCmuxConfig } from "../testHelpers/cmuxConfig.ts";
+import { makeLocalConfig } from "../testHelpers/localConfig.ts";
 import * as agentLaunch from "../lib/agentLaunch.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
@@ -188,12 +190,8 @@ function makeConfig(): ResolvedConfig {
     },
     prompts: { initial: "x" },
     workspaceKind: "auto",
-    local: {
-      runner: "auto",
-      networkEgress: "allowlisted",
-      safehouse: { enable: [] },
-      readOnlyDirs: [],
-    },
+    local: makeLocalConfig(),
+    cmux: makeCmuxConfig(),
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }
@@ -433,24 +431,26 @@ describe(openWorkspace, () => {
     });
   });
 
-  it("passes configured safehouse features to the agent launch", async () => {
+  it("applies configured Safehouse features and profiles to the launched agent", async () => {
     const configWithSafehouseFeatures: ResolvedConfig = {
       ...config,
       local: {
         ...config.local,
-        safehouse: { enable: ["agent-browser", "docker"] },
+        safehouse: {
+          enable: ["agent-browser", "docker"],
+          appendProfile: ["/etc/extra profile.sb"],
+        },
       },
     };
-    const composeAgentLaunchMock = vi.spyOn(agentLaunch, "composeAgentLaunch");
 
     await openWorkspace(configWithSafehouseFeatures, {
       input: { kind: "pr", pr: "42" },
       repository: "acme/widgets",
     });
 
-    expect(composeAgentLaunchMock).toHaveBeenCalledWith(
-      expect.objectContaining({ safehouseEnableFeatures: ["agent-browser", "docker"] }),
-    );
+    const script = stagedLaunchScript();
+    expect(script).toContain("--enable='agent-browser,docker'");
+    expect(script).toContain("--append-profile='/etc/extra profile.sb'");
   });
 
   it("resolves a PR URL to a unique bare known repository", async () => {
@@ -569,6 +569,27 @@ describe(openWorkspace, () => {
     });
 
     expect(stagedLaunchScript()).toContain("npm ci");
+  });
+
+  it("forwards local.agentBuildSecrets to the agent even when no preparation command exists", async () => {
+    vi.stubEnv("NPM_TOKEN", "npm-token-value");
+    const secretsConfig: ResolvedConfig = {
+      ...config,
+      local: makeLocalConfig({ agentBuildSecrets: ["NPM_TOKEN"] }),
+    };
+
+    try {
+      await openWorkspace(secretsConfig, {
+        input: { kind: "pr", pr: "42" },
+        repository: "acme/widgets",
+        promptText: "go",
+      });
+
+      expect(stagedLaunchScript()).toContain("secrets.env");
+      expect(stagedLaunchScript()).toMatch(/--env-pass=[^ ]*NPM_TOKEN/);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("forwards repository context when resolving preparation commands", async () => {

@@ -3,6 +3,8 @@ import type * as nodeFs from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { ensureClearance, type SafehouseCmuxIntegration } from "@clipboard-health/clearance";
+import { makeCmuxConfig } from "../testHelpers/cmuxConfig.ts";
+import { makeLocalConfig } from "../testHelpers/localConfig.ts";
 import type { RunCommandOptions } from "../lib/commandRunner.ts";
 import type { ResolvedConfig } from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
@@ -172,12 +174,8 @@ function makeConfig(): ResolvedConfig {
       initial: "Begin {{task}} ({{title}}) in {{worktree}}\n{{description}}",
     },
     workspaceKind: "auto",
-    local: {
-      runner: "auto",
-      networkEgress: "allowlisted",
-      safehouse: { enable: [] },
-      readOnlyDirs: [],
-    },
+    cmux: makeCmuxConfig(),
+    local: makeLocalConfig(),
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }

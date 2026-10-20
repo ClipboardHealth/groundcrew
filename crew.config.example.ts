@@ -195,6 +195,20 @@ export default {
   // // sdx/none runners.
   // local: { safehouse: { enable: ["agent-browser"] } },
   //
+  // // Custom sandbox-exec rules for the agent wrap, forwarded as repeated
+  // // `safehouse --append-profile=<path>` flags. For read-only toolchain
+  // // directories, prefer `local.readOnlyDirs`; use profiles for other policy
+  // // rules. `~` is expanded; missing profiles fail the launch. Ignored by
+  // // sdx/none and withheld from repo-controlled prepareWorktree hooks.
+  // // Grant only the required access: a supervisor's control socket can let
+  // // sandboxed code launch commands outside the sandbox.
+  // local: { safehouse: { appendProfile: ["~/.config/groundcrew/mytool.sb"] } },
+  //
+  // // Build secrets (NPM_TOKEN, BUF_TOKEN) the agent keeps after
+  // // prepareWorktree, e.g. to reinstall private packages mid-task. Only list
+  // // read-scoped tokens. Supported by the safehouse and sdx runners.
+  // local: { agentBuildSecrets: ["NPM_TOKEN"] },
+  //
   // // Groundcrew does not create or authenticate sdx sandboxes. For an sdx
   // // agent, create the matching sandbox yourself before first launch:
   // //   sbx create --name groundcrew-claude claude ~/dev/groundcrew
@@ -223,5 +237,19 @@ export default {
   //   // in addition to stdout, so a vanished workspace doesn't take the
   //   // evidence with it. Default: `${XDG_STATE_HOME:-~/.local/state}/groundcrew/groundcrew.log`.
   //   file: "~/Library/Logs/groundcrew/groundcrew.log",
+  // },
+  //
+  // // Paints each task's cmux sidebar with its pull request's review stage
+  // // (crew_stage), gating labels (crew_labels), and ticket id (crew_ticket)
+  // // once per watch tick. Opt-in and cmux-only; other workspaceKind backends
+  // // no-op. The two gating labels below are created on the PR's repo on
+  // // first use via `crew stage label-add`/`label-remove`; a PR sits at
+  // // `my_review` until `selfReviewed` is applied and `needs_testing` until
+  // // `tested` is applied, ahead of CI and review-decision state.
+  // cmux: {
+  //   prStages: {
+  //     enabled: true,
+  //     labels: { selfReviewed: "self-reviewed", tested: "tested" },
+  //   },
   // },
 } satisfies Config;

@@ -18,6 +18,7 @@ import { composeAgentLaunch, openAgentWorkspace } from "./agentLaunch.ts";
 import { shellSingleQuote } from "./launchCommand.ts";
 import { readEnvironmentVariable } from "./util.ts";
 import { deleteEnvironmentVariable, setEnvironmentVariable } from "../testHelpers/env.ts";
+import { makeLocalConfig } from "../testHelpers/localConfig.ts";
 import { safehouseCmuxIntegrationFixture } from "../testHelpers/safehouseCmuxIntegration.ts";
 
 const runCommandMock = vi.hoisted(() =>
@@ -115,6 +116,7 @@ describe(composeAgentLaunch, () => {
     return composeAgentLaunch({
       runner: "safehouse",
       networkEgress: "allowlisted",
+      safehouse: makeLocalConfig().safehouse,
       task: "team-1",
       definition: definition(),
       promptFile: "/tmp/prompt-team-1/prompt.txt",
@@ -457,6 +459,29 @@ describe(composeAgentLaunch, () => {
     const launchCommand = compose({ workspaceKind: "tmux", readOnlyDirs: undefined });
 
     expect(launchCommand).not.toContain("--add-dirs-ro");
+  });
+
+  it("layers configured append profiles onto the Safehouse agent wrap", () => {
+    const launchCommand = compose({ safehouse: { enable: [], appendProfile: ["/etc/mytool.sb"] } });
+
+    expect(launchCommand).toContain("--append-profile='/etc/mytool.sb'");
+  });
+
+  it("cleans up without error when the launch staged nothing", () => {
+    const result = composeLaunch({ definition: definition({ cmd: "claude", color: "#000" }) });
+
+    expect(() => {
+      result.cleanup();
+    }).not.toThrow();
+  });
+
+  it("omits --append-profile for non-safehouse runners", () => {
+    const launchCommand = compose({
+      runner: "none",
+      safehouse: { enable: [], appendProfile: ["/etc/mytool.sb"] },
+    });
+
+    expect(launchCommand).not.toContain("--append-profile");
   });
 
   it("forwards prepareWorktreeUnsandboxed into the launch command", () => {

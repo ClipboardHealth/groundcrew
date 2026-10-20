@@ -9,7 +9,7 @@ import { seedLaunchWorkspaceTrust } from "../lib/seedLaunchWorkspaceTrust.ts";
 import { sourceSupportsMarkDone } from "../lib/sourceCapabilities.ts";
 import {
   removeStagedPrompt,
-  stageBuildSecrets,
+  stageBuildSecretsForLaunch,
   stagePromptFromTemplate,
   stageWorkspaceLaunchCommand,
   type StagedPrompt,
@@ -146,10 +146,12 @@ export async function setupWorkspace(
     if (!shouldPrepareWorktree) {
       log(`Skipping prepareWorktree for ${task} (task policy)`);
     }
-    const secretsFile =
-      prepareWorktreeCommand === undefined && prepareWorktreeUnsandboxedCommand === undefined
-        ? undefined
-        : stageBuildSecrets(promptDir);
+    const secretsFile = stageBuildSecretsForLaunch({
+      promptDir,
+      hasPreparationCommand:
+        prepareWorktreeCommand !== undefined || prepareWorktreeUnsandboxedCommand !== undefined,
+      agentBuildSecrets: config.local.agentBuildSecrets,
+    });
     const completionTaskId = options.completionTaskId ?? task;
     const completionMarkDoneSupported = options.completionMarkDoneSupported ?? true;
     const taskSourceWritePaths =
@@ -184,7 +186,8 @@ export async function setupWorkspace(
         ...(options.baseBranch === undefined ? {} : { baseBranch: options.baseBranch }),
       }),
       taskSourceWritePaths,
-      safehouseEnableFeatures: config.local.safehouse.enable,
+      safehouse: config.local.safehouse,
+      agentBuildSecrets: config.local.agentBuildSecrets,
     });
     cleanupAgentLaunch = launch.cleanup;
     const launchCmd = stageWorkspaceLaunchCommand(promptDir, launch.command);

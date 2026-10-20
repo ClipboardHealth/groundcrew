@@ -300,7 +300,8 @@ export async function resumeWorkspace(
         ...(context.baseBranch === undefined ? {} : { baseBranch: context.baseBranch }),
       }),
       taskSourceWritePaths,
-      safehouseEnableFeatures: config.local.safehouse.enable,
+      safehouse: config.local.safehouse,
+      agentBuildSecrets: config.local.agentBuildSecrets,
     });
     cleanupAgentLaunch = launch.cleanup;
     const launchCmd = stageWorkspaceLaunchCommand(stagedPrompt.directory, launch.command);

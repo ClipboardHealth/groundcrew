@@ -3,11 +3,13 @@ import path from "node:path";
 
 import {
   BUILD_SECRET_NAMES,
+  type BuildSecretName,
   hasPreLaunchEnv,
   WORKER_ENVIRONMENT_NAMES,
   type LocalRunner,
   type AgentDefinition,
   type NetworkEgressSetting,
+  type ResolvedConfig,
 } from "./config.ts";
 import { clearanceAllowHostsFilesFromEnvironment } from "./clearanceAllowlist.ts";
 import { buildPreLaunchEmptyCheckLines } from "./preLaunchEmptyCheck.ts";
@@ -104,8 +106,9 @@ function unsetEnvironmentLine(names: readonly string[]): string {
   return `unset ${[...new Set(names)].join(" ")}`;
 }
 
-function unsetSecretsLine(): string {
-  return unsetEnvironmentLine(BUILD_SECRET_NAMES);
+function unsetSecretsLines(retained: readonly string[]): string[] {
+  const names = BUILD_SECRET_NAMES.filter((name) => !retained.includes(name));
+  return names.length === 0 ? [] : [unsetEnvironmentLine(names)];
 }
 
 function safehouseClearanceWrapperCommand(): string {
@@ -457,6 +460,12 @@ interface LaunchCommandArguments {
    */
   secretsFile?: string | undefined;
   /**
+   * Build-secret names the operator opted to keep in the agent's environment
+   * (`local.agentBuildSecrets`). Honored by the safehouse wrap and sdx runner;
+   * the unwrapped host path rejects a non-empty list.
+   */
+  agentBuildSecrets?: readonly BuildSecretName[] | undefined;
+  /**
    * Optional repo-preparation hook resolved by the caller from the freshly
    * created worktree's `.groundcrew/config.json`, falling back to
    * `defaults.hooks.prepareWorktree` from crew.config.ts.
@@ -503,14 +512,11 @@ interface LaunchCommandArguments {
    */
   safehouseAgentAddDirs?: readonly string[] | undefined;
   /**
-   * Optional Safehouse integrations turned on for the agent wrap, emitted as
-   * `--enable=<comma-list>` before the profile shim. Each name layers the
-   * matching optional sandbox profile (e.g. `agent-browser`) on top of the
-   * agent's deny-by-default policy. Withheld from the repo-controlled
-   * prepareWorktree wrap, which never needs them. Empty/undefined → no
-   * `--enable` flag.
+   * Resolved operator tuning, consumed only by the Safehouse agent wrap.
+   * Feature names emit --enable; profile paths emit repeated --append-profile
+   * flags. Neither applies to the repo-controlled prepareWorktree wrap.
    */
-  safehouseEnableFeatures?: readonly string[] | undefined;
+  safehouse: ResolvedConfig["local"]["safehouse"];
   /**
    * Extra read-only paths granted only to the Safehouse agent wrap via
    * `--add-dirs-ro` (host toolchains the Safehouse profile masks but doesn't
@@ -577,6 +583,11 @@ export function buildLaunchCommand(arguments_: LaunchCommandArguments): string {
       "preLaunchEnv cannot be injected when 'cmd' starts with 'safehouse' — your cmd owns the wrap, so add the names to its own '--env-pass=' flag, or drop the 'safehouse' prefix from 'cmd' to let groundcrew compose the flag for you.",
     );
   }
+  if ((arguments_.agentBuildSecrets ?? []).length > 0) {
+    throw new Error(
+      "local.agentBuildSecrets is not supported when the agent runs outside groundcrew's Safehouse wrap (runner 'none' or a 'cmd' starting with 'safehouse'). Use runner 'safehouse' or 'sdx', or clear local.agentBuildSecrets.",
+    );
+  }
   if (arguments_.workerEnvironment !== undefined && arguments_.runner === "safehouse") {
     throw new Error(
       "workerEnvironment cannot be injected when 'cmd' starts with 'safehouse' — your cmd owns the wrap, so add GROUNDCREW_TASK_ID,GROUNDCREW_COMPLETE to its own '--env-pass=' flag, or drop the 'safehouse' prefix from 'cmd' to let groundcrew compose the flag for you.",
@@ -629,7 +640,7 @@ function buildUnwrappedHostLaunchCommand(arguments_: LaunchCommandArguments): st
     lines.push(prepareWorktreeWithStatusReporting(arguments_.prepareWorktreeCommand));
   }
   if (arguments_.secretsFile !== undefined) {
-    lines.push(unsetSecretsLine());
+    lines.push(...unsetSecretsLines([]));
   }
   lines.push(
     ...workerEnvironmentExports(arguments_.workerEnvironment),
@@ -687,13 +698,14 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
 
   // Split --env-pass per wrap: the prepareWorktree wrap only needs build secrets (so
   // `npm install` etc. can authenticate); the agent wrap only needs the
-  // user's preLaunchEnv (build secrets are `unset` on the host between the
-  // two wraps, so forwarding them here would silently no-op). Keeps preLaunch
+  // user's preLaunchEnv plus any build secrets opted in via
+  // local.agentBuildSecrets (the rest are `unset` on the host between the wraps). Keeps preLaunch
   // credentials out of the profile-neutral prepare phase — see PR #128.
   // Trailing space keeps each flag separated from the next argv token.
   const prepareWorktreeEnvPassFlag =
     arguments_.secretsFile === undefined ? "" : `--env-pass=${BUILD_SECRET_NAMES.join(",")} `;
   const agentEnvPassFlag = envPassFlag([
+    ...(arguments_.secretsFile === undefined ? [] : (arguments_.agentBuildSecrets ?? [])),
     ...(arguments_.definition.preLaunchEnv ?? []),
     ...workerEnvironmentNames(arguments_.workerEnvironment),
     ...(safehouseAgentIntegration?.envPass ?? []),
@@ -720,7 +732,10 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
   );
   // Optional sandbox integrations (e.g. `agent-browser`) layered onto the agent
   // profile only — the repo-controlled prepareWorktree hook never needs them.
-  const safehouseEnableFlag = safehouseEnableFeaturesFlag(arguments_.safehouseEnableFeatures ?? []);
+  const safehouseEnableFlag = safehouseEnableFeaturesFlag(arguments_.safehouse.enable);
+  const safehouseAppendProfileFlag = safehouseAppendProfilesFlag(
+    arguments_.safehouse.appendProfile,
+  );
   const safehouseWrapper = safehouseWrapperCommand(arguments_.networkEgress);
 
   // Extra paths an integration staged for the agent wrap (e.g. codex's
@@ -772,7 +787,7 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
     );
   }
   if (arguments_.secretsFile !== undefined) {
-    lines.push(unsetSecretsLine());
+    lines.push(...unsetSecretsLines(arguments_.agentBuildSecrets ?? []));
   }
   lines.push(
     ...workerEnvironmentExports(arguments_.workerEnvironment),
@@ -784,7 +799,7 @@ function buildSafehouseLaunchCommand(arguments_: LaunchCommandArguments): string
     // Running the real launch chain as `sh -c` would make it see `sh`, so use
     // an agent-named symlink to /bin/sh. This preserves per-agent profile
     // selection without enabling every agent profile.
-    `{ ${safehouseWrapper} ${safehouseAgentAddDirsFlag}${safehouseAgentAddDirsReadOnlyFlag}${safehouseEnableFlag}${agentEnvPassFlag}"$_safehouse_shim" -c ${shellSingleQuote(agentCommand)} sh${promptPositional(arguments_.omitPromptArgument)}; _safehouse_status=$?; rm -rf "$_safehouse_shim_dir";${successPathCleanupSegment(writeBackCmd, teardownCleanupCmd)} trap - EXIT; exit "$_safehouse_status"; }`,
+    `{ ${safehouseWrapper} ${safehouseAgentAddDirsFlag}${safehouseAgentAddDirsReadOnlyFlag}${safehouseEnableFlag}${safehouseAppendProfileFlag}${agentEnvPassFlag}"$_safehouse_shim" -c ${shellSingleQuote(agentCommand)} sh${promptPositional(arguments_.omitPromptArgument)}; _safehouse_status=$?; rm -rf "$_safehouse_shim_dir";${successPathCleanupSegment(writeBackCmd, teardownCleanupCmd)} trap - EXIT; exit "$_safehouse_status"; }`,
   );
   return lines.join(" && ");
 }
@@ -881,6 +896,10 @@ function safehouseEnableFeaturesFlag(features: readonly string[]): string {
   return features.length === 0 ? "" : `--enable=${shellSingleQuote(features.join(","))} `;
 }
 
+function safehouseAppendProfilesFlag(profiles: readonly string[]): string {
+  return profiles.map((profile) => `--append-profile=${shellSingleQuote(profile)} `).join("");
+}
+
 function uniqueStrings(values: readonly string[]): string[] {
   return [...new Set(values)];
 }
@@ -899,7 +918,7 @@ function buildSdxLaunchCommand(arguments_: LaunchCommandArguments): string {
     innerParts.push(prepareWorktreeCommand);
   }
   if (arguments_.secretsFile !== undefined) {
-    innerParts.push(unsetSecretsLine());
+    innerParts.push(...unsetSecretsLines(arguments_.agentBuildSecrets ?? []));
   }
   innerParts.push(...workerEnvironmentExports(arguments_.workerEnvironment), agentCommand);
   const innerCommand = innerParts.join("; ");

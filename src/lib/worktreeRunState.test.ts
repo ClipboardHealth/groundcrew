@@ -2,6 +2,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+import { makeCmuxConfig } from "../testHelpers/cmuxConfig.ts";
+import { makeLocalConfig } from "../testHelpers/localConfig.ts";
 import type { RunCommandOptions } from "./commandRunner.ts";
 import type { ResolvedConfig } from "./config.ts";
 import { recordRunState, type RunState } from "./runState.ts";
@@ -181,12 +183,8 @@ function makeStackedConfig(stateRoot: string): ResolvedConfig {
     agents: { default: "claude", definitions: { claude: { cmd: "claude", color: "#fff" } } },
     prompts: { initial: "x" },
     workspaceKind: "auto",
-    local: {
-      runner: "auto",
-      networkEgress: "allowlisted",
-      safehouse: { enable: [] },
-      readOnlyDirs: [],
-    },
+    cmux: makeCmuxConfig(),
+    local: makeLocalConfig(),
     logging: { file: path.join(stateRoot, "groundcrew.log") },
   };
 }

@@ -12,6 +12,8 @@ import type * as boardModule from "../lib/board.ts";
 import { buildSources } from "../lib/buildSources.ts";
 import type * as buildSourcesModule from "../lib/buildSources.ts";
 import type { BoardState, Issue } from "../lib/taskSource.ts";
+import { makeCmuxConfig } from "../testHelpers/cmuxConfig.ts";
+import { makeLocalConfig } from "../testHelpers/localConfig.ts";
 import type * as utilModule from "../lib/util.ts";
 import { debug, log } from "../lib/util.ts";
 import { WorktreeAlreadyExistsError, type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
@@ -211,12 +213,8 @@ function makeConfig(overrides: Partial<ResolvedConfig["agents"]> = {}): Resolved
       initial: "Begin {{task}} ({{title}}) in {{worktree}}\n{{description}}",
     },
     workspaceKind: "auto",
-    local: {
-      runner: "auto",
-      networkEgress: "allowlisted",
-      safehouse: { enable: [] },
-      readOnlyDirs: [],
-    },
+    local: makeLocalConfig(),
+    cmux: makeCmuxConfig(),
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }

@@ -111,11 +111,7 @@ describe("loadConfig", () => {
     const actual = await loadConfig();
 
     expect(actual.workspace.useTaskTitleForPanelName).toBe(true);
-    expect(actual.git).toStrictEqual({
-      remote: "origin",
-      defaultBranch: "main",
-      stacking: false,
-    });
+    expect(actual.git).toStrictEqual({ remote: "origin", defaultBranch: "main", stacking: false });
     expect(actual.orchestrator).toStrictEqual({
       maximumInProgress: 4,
       pollIntervalMilliseconds: 120_000,
@@ -126,6 +122,51 @@ describe("loadConfig", () => {
     expect(actual.agents.definitions["claude"]?.cmd).toBe("claude --permission-mode auto");
     expect(actual.prompts.initial).toContain("{{task}}");
     expect(actual.sources).toStrictEqual([]);
+  });
+
+  it.each([2, 0.5])("merges agent weight %s over a built-in preset", async (weight) => {
+    const configPath = writeConfigFile(
+      temporary,
+      validConfigSource({
+        workspace: VALID_WORKSPACE(temporary),
+        agents: { definitions: { claude: { weight }, codex: {} } },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+
+    expect(actual.agents.definitions["claude"]?.weight).toBe(weight);
+    expect(actual.agents.definitions["claude"]?.cmd).toBe("claude --permission-mode auto");
+    expect(actual.agents.definitions["codex"]?.weight).toBeUndefined();
+  });
+
+  it.each([
+    ["0", "0"],
+    ["-1", "-1"],
+    ["Infinity", "Infinity"],
+    ["-Infinity", "-Infinity"],
+    ["NaN", "NaN"],
+    ["1n", "1n"],
+    ['"2"', '"2"'],
+    ["null", "null"],
+    ["true", "true"],
+  ])("rejects agent weight %s", async (source, displayed) => {
+    const configPath = writeConfigFile(
+      temporary,
+      `export default {
+        workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},
+        agents: { definitions: { claude: { weight: ${source} } } },
+      };`,
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+
+    const { loadConfig } = await loadFreshConfig();
+
+    await expect(loadConfig()).rejects.toThrow(
+      `agents.definitions.claude.weight must be a positive finite number (got ${displayed})`,
+    );
   });
 
   it("ships a agent-agnostic unattended default prompt", async () => {
@@ -873,7 +914,7 @@ describe("loadConfig", () => {
     setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
     const { loadConfig } = await loadFreshConfig();
     await expect(loadConfig()).rejects.toThrow(
-      /agents\.definitions\.claude\.preLaunchEnv\[1\] cannot be a BUILD_SECRET_NAMES entry/,
+      /agents\.definitions\.claude\.preLaunchEnv\[1\] cannot be a BUILD_SECRET_NAMES entry.*local\.agentBuildSecrets/s,
     );
   });
 
@@ -1062,100 +1103,6 @@ describe("loadConfig", () => {
     expect(actual.local.runner).toBe("safehouse");
   });
 
-  it("defaults local.safehouse.enable to an empty list when omitted", async () => {
-    const configPath = writeConfigFile(
-      temporary,
-      validConfigSource({ workspace: VALID_WORKSPACE(temporary) }),
-    );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
-    const { loadConfig } = await loadFreshConfig();
-    const actual = await loadConfig();
-    expect(actual.local.safehouse.enable).toStrictEqual([]);
-  });
-
-  it("preserves and de-duplicates local.safehouse.enable feature names", async () => {
-    const configPath = writeConfigFile(
-      temporary,
-      validConfigSource({
-        workspace: VALID_WORKSPACE(temporary),
-        local: {
-          safehouse: { enable: ["agent-browser", "browser-native-messaging", "agent-browser"] },
-        },
-      }),
-    );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
-    const { loadConfig } = await loadFreshConfig();
-    const actual = await loadConfig();
-    expect(actual.local.safehouse.enable).toStrictEqual([
-      "agent-browser",
-      "browser-native-messaging",
-    ]);
-  });
-
-  it("defaults local.safehouse.enable to an empty list when safehouse is set without enable", async () => {
-    const configPath = writeConfigFile(
-      temporary,
-      validConfigSource({
-        workspace: VALID_WORKSPACE(temporary),
-        local: { safehouse: {} },
-      }),
-    );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
-    const { loadConfig } = await loadFreshConfig();
-    const actual = await loadConfig();
-    expect(actual.local.safehouse.enable).toStrictEqual([]);
-  });
-
-  it("rejects a non-object local.safehouse", async () => {
-    const configPath = writeConfigFile(
-      temporary,
-      [
-        "export default {",
-        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        `  agents: { definitions: { claude: {} } },`,
-        `  local: { safehouse: 5 },`,
-        "};",
-      ].join("\n"),
-    );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
-    const { loadConfig } = await loadFreshConfig();
-    await expect(loadConfig()).rejects.toThrow(/local\.safehouse must be an object/);
-  });
-
-  it("rejects a non-array local.safehouse.enable", async () => {
-    const configPath = writeConfigFile(
-      temporary,
-      [
-        "export default {",
-        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        `  agents: { definitions: { claude: {} } },`,
-        `  local: { safehouse: { enable: 'agent-browser' } },`,
-        "};",
-      ].join("\n"),
-    );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
-    const { loadConfig } = await loadFreshConfig();
-    await expect(loadConfig()).rejects.toThrow(/local\.safehouse\.enable must be an array/);
-  });
-
-  it("rejects an invalid local.safehouse.enable feature slug", async () => {
-    const configPath = writeConfigFile(
-      temporary,
-      [
-        "export default {",
-        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
-        `  agents: { definitions: { claude: {} } },`,
-        `  local: { safehouse: { enable: ['Agent Browser'] } },`,
-        "};",
-      ].join("\n"),
-    );
-    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
-    const { loadConfig } = await loadFreshConfig();
-    await expect(loadConfig()).rejects.toThrow(
-      /local\.safehouse\.enable\[0\] must be a safehouse feature slug/,
-    );
-  });
-
   it("defaults local.networkEgress to allowlisted when omitted", async () => {
     const configPath = writeConfigFile(
       temporary,
@@ -1203,6 +1150,58 @@ describe("loadConfig", () => {
     await expect(loadConfig()).rejects.toThrow(
       /local\.networkEgress must be one of allowlisted, open/,
     );
+  });
+
+  it("defaults local.agentBuildSecrets to empty", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      validConfigSource({ workspace: VALID_WORKSPACE(temporary) }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+    expect(actual.local.agentBuildSecrets).toEqual([]);
+  });
+
+  it("preserves and dedupes explicit local.agentBuildSecrets", async () => {
+    const configPath = writeConfigFile(
+      temporary,
+      validConfigSource({
+        workspace: VALID_WORKSPACE(temporary),
+        local: { agentBuildSecrets: ["NPM_TOKEN", "NPM_TOKEN"] },
+      }),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    const actual = await loadConfig();
+    expect(actual.local.agentBuildSecrets).toEqual(["NPM_TOKEN"]);
+  });
+
+  it.each([
+    [
+      "an unknown name",
+      `["NPM_TOKEN", "AWS_SECRET"]`,
+      /local\.agentBuildSecrets\[1\] must be one of NPM_TOKEN, BUF_TOKEN/,
+    ],
+    [
+      "a non-array",
+      `"NPM_TOKEN"`,
+      /local\.agentBuildSecrets must be an array of build secret names/,
+    ],
+  ])("rejects local.agentBuildSecrets with %s", async (_caseName, valueSource, expected) => {
+    const configPath = writeConfigFile(
+      temporary,
+      [
+        "export default {",
+        `  workspace: ${JSON.stringify(VALID_WORKSPACE(temporary))},`,
+        `  agents: { definitions: { claude: {} } },`,
+        `  local: { agentBuildSecrets: ${valueSource} },`,
+        "};",
+      ].join("\n"),
+    );
+    setEnvironmentVariable("GROUNDCREW_CONFIG", configPath);
+    const { loadConfig } = await loadFreshConfig();
+    await expect(loadConfig()).rejects.toThrow(expected);
   });
 
   it("defaults local.readOnlyDirs to tfenv's config root when omitted", async () => {

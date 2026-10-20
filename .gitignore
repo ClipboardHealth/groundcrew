@@ -38,3 +38,5 @@ vitest.config.*.timestamp*
 .claude/settings.local.json
 docs/superpowers/
 static/logo-concept.html
+
+.rules/

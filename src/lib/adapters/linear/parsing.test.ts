@@ -1,4 +1,6 @@
 import type { ResolvedConfig } from "../../config.ts";
+import { makeCmuxConfig } from "../../../testHelpers/cmuxConfig.ts";
+import { makeLocalConfig } from "../../../testHelpers/localConfig.ts";
 import { RepositoryResolutionError } from "../../taskSource.ts";
 import {
   buildRepositoryRegex,
@@ -40,12 +42,8 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
     },
     prompts: { initial: "x", ...overrides.prompts },
     workspaceKind: overrides.workspaceKind ?? "auto",
-    local: {
-      runner: "auto",
-      networkEgress: "allowlisted",
-      safehouse: { enable: [] },
-      readOnlyDirs: [],
-    },
+    local: makeLocalConfig(),
+    cmux: makeCmuxConfig(),
     logging: { file: "/tmp/groundcrew-test.log", ...overrides.logging },
   };
 }

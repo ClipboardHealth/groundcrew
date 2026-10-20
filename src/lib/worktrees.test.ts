@@ -8,6 +8,8 @@ import { probeError } from "../testHelpers/workspaceProbe.ts";
 import type * as commandRunnerModule from "./commandRunner.ts";
 import { runCommandAsync, type RunCommandOptions } from "./commandRunner.ts";
 import type { ResolvedConfig } from "./config.ts";
+import { makeCmuxConfig } from "../testHelpers/cmuxConfig.ts";
+import { makeLocalConfig } from "../testHelpers/localConfig.ts";
 import { recordRunState } from "./runState.ts";
 import { setVerbose } from "./util.ts";
 import { workspaces } from "./workspaces.ts";
@@ -97,12 +99,8 @@ function makeConfig(overrides: {
     agents: { default: "claude", definitions: agents },
     prompts: { initial: "x" },
     workspaceKind: "auto",
-    local: {
-      runner: "auto",
-      networkEgress: "allowlisted",
-      safehouse: { enable: [] },
-      readOnlyDirs: [],
-    },
+    local: makeLocalConfig(),
+    cmux: makeCmuxConfig(),
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }

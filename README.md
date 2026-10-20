@@ -81,7 +81,7 @@ Stop or finish every active Groundcrew task and save work in every other tmux se
 Linear works out of the box: assign tasks to yourself and add an `agent-*` label.
 
 - `agent-claude`, `agent-codex`, `agent-pi`, or `agent-<name>` routes to that enabled launch profile.
-- `agent-any` routes to the enabled agent with the most session headroom, after skipping agents over their session limit or weekly paced budget.
+- `agent-any` routes to the enabled agent with the lowest weighted session score, after skipping agents over their session limit or weekly paced budget. See [agent weights](./docs/configuration.md#agent-label-routing).
 - Tasks without an `agent-*` label are ignored by `crew run`; dispatch one manually with `crew start <TASK>`.
 
 Agent names are launch profiles, so you can use them to pick model tiers. For example,
@@ -123,6 +123,9 @@ crew cleanup [--force] <TASK>                          # tear down every worktre
 crew cleanup [--force] --all                           # tear down every idle worktree (no live workspace)
 crew upgrade [<version>]                                 # reinstall crew globally through npm
 crew completions <bash|zsh|fish>                        # print a shell completion script
+crew stage label-add <pr-url> <label>                   # add a configured pr-stage-sync gating label
+crew stage label-remove <pr-url> <label>                # remove a configured pr-stage-sync gating label
+crew stage refresh                                      # run one pr-stage-sync pass now
 ```
 
 See [command details](./docs/commands.md) for status output, doctor behavior, and the stop/resume workflow.

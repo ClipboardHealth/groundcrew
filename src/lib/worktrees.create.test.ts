@@ -6,6 +6,8 @@ import path from "node:path";
 
 import type { RunCommandOptions } from "./commandRunner.ts";
 import type { ResolvedConfig } from "./config.ts";
+import { makeCmuxConfig } from "../testHelpers/cmuxConfig.ts";
+import { makeLocalConfig } from "../testHelpers/localConfig.ts";
 import { setVerbose } from "./util.ts";
 import { worktrees } from "./worktrees.ts";
 
@@ -75,12 +77,8 @@ function makeConfig(overrides: {
     agents: { default: "claude", definitions: agents },
     prompts: { initial: "x" },
     workspaceKind: "auto",
-    local: {
-      runner: "auto",
-      networkEgress: "allowlisted",
-      safehouse: { enable: [] },
-      readOnlyDirs: [],
-    },
+    local: makeLocalConfig(),
+    cmux: makeCmuxConfig(),
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }

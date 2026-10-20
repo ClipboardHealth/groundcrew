@@ -4,6 +4,8 @@ import type * as nodeOs from "node:os";
 import { tmpdir, userInfo } from "node:os";
 import path from "node:path";
 
+import { makeCmuxConfig } from "../testHelpers/cmuxConfig.ts";
+import { makeLocalConfig } from "../testHelpers/localConfig.ts";
 import type { RunCommandOptions } from "./commandRunner.ts";
 import type { ResolvedConfig } from "./config.ts";
 import { setVerbose } from "./util.ts";
@@ -65,12 +67,8 @@ function makeConfig(overrides: {
     agents: { default: "claude", definitions: { claude: { cmd: "claude", color: "#fff" } } },
     prompts: { initial: "x" },
     workspaceKind: "auto",
-    local: {
-      runner: "auto",
-      networkEgress: "allowlisted",
-      safehouse: { enable: [] },
-      readOnlyDirs: [],
-    },
+    cmux: makeCmuxConfig(),
+    local: makeLocalConfig(),
     logging: { file: path.join(overrides.projectDir, "state", "groundcrew.log") },
   };
 }

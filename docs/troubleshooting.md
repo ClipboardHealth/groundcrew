@@ -29,14 +29,13 @@ This applies to the tmux backend only.
 
 ## Tmux Workspaces Share One Session By Default
 
-By default the tmux backend runs every task as a window inside one shared `groundcrew` session, so opening your own extra window or split while attached lands it next to every other task. This window mode is deprecated; when `crew` starts on the tmux backend without the new mode enabled, it warns that session-per-task mode will become the default soon.
+By default the tmux backend runs every task as a window inside one shared `groundcrew` session, so opening your own extra window or split while attached lands it next to every other task. Attach with `tmux attach -t groundcrew:<task>`.
 
-To opt in before the default changes, set `GROUNDCREW_TMUX_SESSION_PER_TASK=1` in the env you launch `crew` from. Each task gets its own dedicated tmux session named after the task id (cmux-style), tagged with the `@groundcrew_managed` tmux option.
+If you prefer isolated tasks, set `GROUNDCREW_TMUX_SESSION_PER_TASK=1` in the env you launch `crew` from. Both modes are supported; pick whichever fits your workflow. In session-per-task mode:
 
-Migration plan:
-
+- Each task gets its own dedicated tmux session named after the task id (cmux-style), tagged with the `@groundcrew_managed` tmux option.
 - Attach with `tmux attach -t <task>` instead of `tmux attach -t groundcrew:<task>`.
-- Treat each task as a full tmux session: windows are task-local tabs and panes are task-local splits.
+- Windows are task-local tabs and panes are task-local splits.
 - `crew stop` and `crew cleanup` close the whole managed task session, including extra windows and panes you opened inside it. Same-named user sessions without `@groundcrew_managed` are ignored.
 - Finished task sessions disappear once the command exits unless `GROUNDCREW_KEEP_DEAD_WINDOWS=1` is set; with that env, `crew status` reports the kept session as `exited` for scrollback inspection.
 

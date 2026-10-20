@@ -3,6 +3,8 @@ import { removeRunState } from "../lib/runState.ts";
 import { setVerbose } from "../lib/util.ts";
 import { type TeardownResult, type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCapture.ts";
+import { makeCmuxConfig } from "../testHelpers/cmuxConfig.ts";
+import { makeLocalConfig } from "../testHelpers/localConfig.ts";
 import { emptyTeardownResult } from "../testHelpers/teardownResult.ts";
 import { logTeardown, reapWorktrees, recordTeardownEvents } from "./teardownReporter.ts";
 
@@ -226,12 +228,8 @@ function makeConfig(): ResolvedConfig {
     },
     prompts: { initial: "x" },
     workspaceKind: "auto",
-    local: {
-      runner: "auto",
-      networkEgress: "allowlisted",
-      safehouse: { enable: [] },
-      readOnlyDirs: [],
-    },
+    local: makeLocalConfig(),
+    cmux: makeCmuxConfig(),
     logging: { file: "/tmp/groundcrew-test.log" },
   };
 }
