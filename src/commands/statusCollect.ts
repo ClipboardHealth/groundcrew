@@ -101,6 +101,9 @@ export async function collectLocalStatus(
       hint: disagreement === undefined ? undefined : disagreementHint({ disagreement, task }),
       worktrees: taskWorktrees,
       recentLogLines: recentLogs.linesByTask.get(task) ?? [],
+      baseBranch: runState?.baseBranch,
+      parentTask: runState?.parentTask,
+      needsRebase: runState?.needsRebase,
     };
   });
 

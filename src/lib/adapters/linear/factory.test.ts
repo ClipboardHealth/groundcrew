@@ -76,6 +76,7 @@ function linearIssue(overrides: Partial<LinearIssue> = {}): LinearIssue {
     ...(overrides.worktreePreparation === undefined
       ? {}
       : { worktreePreparation: overrides.worktreePreparation }),
+    ...(overrides.stacking === undefined ? {} : { stacking: overrides.stacking }),
   };
 }
 
@@ -354,6 +355,12 @@ describe(toCanonicalIssue, () => {
     expect(result.worktreePreparation).toBe("skip");
   });
 
+  it("preserves the stacking preference", () => {
+    const result = toCanonicalIssue(linearIssue({ stacking: "opted-out" }), "linear");
+
+    expect(result.stacking).toBe("opted-out");
+  });
+
   it("source-prefixes blocker ids and canonicalizes their statuses via stateType", () => {
     const issue = linearIssue({
       blockers: [
@@ -605,6 +612,7 @@ describe(createLinearTaskSource, () => {
       url: "https://linear.app/example/issue/TEAM-1",
       priority: 0,
       worktreePreparation: "skip",
+      stacking: "opted-out",
     });
     const source = createLinearTaskSource({ kind: "linear" }, {
       globalConfig: makeConfig(),
@@ -617,6 +625,7 @@ describe(createLinearTaskSource, () => {
     expect(issue?.agent).toBe("claude");
     expect(issue?.status).toBe("todo");
     expect(issue?.worktreePreparation).toBe("skip");
+    expect(issue?.stacking).toBe("opted-out");
   });
 
   it("getTask() returns a canonical Issue with description populated from fetchResolvedIssue", async () => {

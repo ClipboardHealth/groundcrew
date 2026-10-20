@@ -10,9 +10,11 @@ import {
   isVerbose,
   log,
   logEvent,
+  memoizeAsync,
   okMark,
   setLogFile,
   setVerbose,
+  signalProperty,
   sleep,
   styleDim,
   styleWarning,
@@ -362,5 +364,41 @@ describe(errorMessage, () => {
     const actual = errorMessage(circular);
 
     expect(actual).toBe("[object Object]");
+  });
+});
+
+describe(signalProperty, () => {
+  it("omits the key when no signal is given", () => {
+    expect(signalProperty()).toStrictEqual({});
+  });
+
+  it("carries the signal when one is given", () => {
+    const { signal } = new AbortController();
+
+    expect(signalProperty(signal)).toStrictEqual({ signal });
+  });
+});
+
+describe(memoizeAsync, () => {
+  it("loads each key once and shares the result across callers", async () => {
+    const cache = new Map<string, Promise<number>>();
+    const load = vi.fn<() => Promise<number>>(async () => await Promise.resolve(42));
+
+    const results = await Promise.all([
+      memoizeAsync(cache, "a", load),
+      memoizeAsync(cache, "a", load),
+    ]);
+
+    expect(results).toStrictEqual([42, 42]);
+    expect(load).toHaveBeenCalledOnce();
+  });
+
+  it("loads distinct keys independently", async () => {
+    const cache = new Map<string, Promise<string>>();
+
+    const first = await memoizeAsync(cache, "a", async () => await Promise.resolve("first"));
+    const second = await memoizeAsync(cache, "b", async () => await Promise.resolve("second"));
+
+    expect([first, second]).toStrictEqual(["first", "second"]);
   });
 });

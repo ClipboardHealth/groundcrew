@@ -345,16 +345,25 @@ type WorkerEnvironmentName = (typeof WORKER_ENVIRONMENT_NAMES)[number];
 export type WorkerEnvironment = Readonly<{
   GROUNDCREW_TASK_ID: string;
   GROUNDCREW_COMPLETE?: string;
+  /** Parent branch to base the PR on, set only when the task is stacked. */
+  GROUNDCREW_BASE_BRANCH?: string;
+  /** Git remote the parent branch lives on, set alongside GROUNDCREW_BASE_BRANCH. */
+  GROUNDCREW_BASE_REMOTE?: string;
 }>;
 
 export function workerEnvironmentForTask(arguments_: {
   taskId: string;
   markDoneSupported: boolean;
+  baseBranch?: string;
+  remote: string;
 }): WorkerEnvironment {
-  const { taskId, markDoneSupported } = arguments_;
+  const { taskId, markDoneSupported, baseBranch, remote } = arguments_;
   return {
     GROUNDCREW_TASK_ID: taskId,
     ...(markDoneSupported ? { GROUNDCREW_COMPLETE: `crew task done ${taskId}` } : {}),
+    ...(baseBranch === undefined
+      ? {}
+      : { GROUNDCREW_BASE_BRANCH: baseBranch, GROUNDCREW_BASE_REMOTE: remote }),
   };
 }
 

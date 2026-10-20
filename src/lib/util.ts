@@ -276,6 +276,14 @@ export function parseSourceFilterArgs(
   return { targetSource, jsonOutput };
 }
 
+export function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+export function isUnknownArray(value: unknown): value is readonly unknown[] {
+  return Array.isArray(value);
+}
+
 export function errorMessage(error: unknown): string {
   if (error instanceof Error) {
     return error.message;
@@ -290,4 +298,24 @@ export function errorMessage(error: unknown): string {
   } catch {
     return Object.prototype.toString.call(error);
   }
+}
+
+export function signalProperty(
+  signal?: AbortSignal,
+): { signal: AbortSignal } | Record<never, never> {
+  return signal === undefined ? {} : { signal };
+}
+
+export async function memoizeAsync<K, V>(
+  cache: Map<K, Promise<V>>,
+  key: K,
+  load: () => Promise<V>,
+): Promise<V> {
+  const cached = cache.get(key);
+  if (cached !== undefined) {
+    return await cached;
+  }
+  const pending = load();
+  cache.set(key, pending);
+  return await pending;
 }

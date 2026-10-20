@@ -25,6 +25,9 @@ export type CanonicalStatus = "todo" | "in-progress" | "in-review" | "done" | "o
 
 export type WorktreePreparation = "skip";
 
+/** Task-level opt-out of stacking, driven by the `groundcrew-no-stack` label. */
+export type StackingPreference = "opted-out";
+
 export interface Blocker {
   /** Canonical (source-prefixed) id of the blocking task. */
   id: string;
@@ -89,6 +92,8 @@ export interface Issue {
   sourceRef: unknown;
   /** Task-level opt-out from configured worktree preparation hooks. */
   worktreePreparation?: WorktreePreparation;
+  /** Undefined means stacking is allowed; `"opted-out"` means the `groundcrew-no-stack` label is present. */
+  stacking?: StackingPreference;
 }
 
 export type Task = Issue;

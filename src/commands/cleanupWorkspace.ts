@@ -77,7 +77,7 @@ async function teardownEntries(
   force: boolean,
 ): Promise<void> {
   const result = await worktrees.teardown(config, entries, { force });
-  recordCleanedUpRuns(config, result.removed);
+  await recordCleanedUpRuns(config, result.removed);
   logTeardown(result);
   if (result.failures.length > 0) {
     throw result.failures[0]?.error;

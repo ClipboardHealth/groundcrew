@@ -70,6 +70,12 @@ export interface StatusTask {
    * The same ten most recent matching lines shown by `crew status <task>`.
    */
   recentLogLines: string[];
+  /** Parent branch this task's PR is based on, when stacked (run state `baseBranch`). */
+  baseBranch?: string | undefined;
+  /** Canonical id of the blocker task this task is stacked on. */
+  parentTask?: string | undefined;
+  /** Parent merged and the PR was retargeted, but the worktree was dirty so the rebase was skipped. */
+  needsRebase?: boolean | undefined;
 }
 
 export interface StatusLogCursor {

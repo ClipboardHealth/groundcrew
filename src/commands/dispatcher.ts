@@ -27,7 +27,9 @@ import {
   classifyBlockers,
   classifyEligibility,
   classifyUsageExhaustion,
+  defaultEligibilityDeps,
   type AgentUsageExhaustion,
+  type EligibilityDeps,
   type SkipVerdict,
   type StartVerdict,
 } from "./eligibility.ts";
@@ -36,6 +38,8 @@ import { setupWorkspace } from "./setupWorkspace.ts";
 interface DispatcherDeps {
   config: ResolvedConfig;
   board: Board;
+  /** Injection point for the stacking decision's run-state read and git probe; defaults to the real implementations. */
+  eligibilityDeps?: EligibilityDeps;
 }
 
 export interface Dispatcher {
@@ -53,6 +57,12 @@ export interface Dispatcher {
      */
     idleSuffix?: string;
   }) => Promise<void>;
+}
+
+function logStackDispatch(input: { task: string; parentTask: string; baseBranch: string }): void {
+  const logContext = { flow: "stack-dispatch", ...input };
+  log("Dispatching stacked task on its parent's branch");
+  logEvent("dispatch", { ...logContext, outcome: "stacking" });
 }
 
 function logSkip(verdict: SkipVerdict): void {
@@ -87,7 +97,7 @@ function logMissingRepositorySkip(
 }
 
 export function createDispatcher(deps: DispatcherDeps): Dispatcher {
-  const { config, board } = deps;
+  const { config, board, eligibilityDeps = defaultEligibilityDeps } = deps;
   const rawSources = sourcesFromConfig(config);
 
   function buildExhaustedSet(usage: UsageByAgent): Set<string> {
@@ -104,7 +114,7 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     dryRun: boolean,
     signal?: AbortSignal,
   ): Promise<void> {
-    const { issue, recovery } = start;
+    const { issue, recovery, baseBranch, parentTask } = start;
     const taskId = naturalIdFromCanonical(issue.id);
     if (start.resolvedFromAny) {
       log(`Resolved agent-any for ${taskId} → ${issue.agent}`);
@@ -131,6 +141,9 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
       if (recovery) {
         log(`Worktree and workspace already exist for ${taskId}; resuming with markInProgress`);
       } else {
+        if (baseBranch !== undefined && parentTask !== undefined) {
+          logStackDispatch({ task: taskId, parentTask, baseBranch });
+        }
         const setupOptions = {
           repository: issue.repository,
           task: taskId,
@@ -143,6 +156,8 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
           ...(issue.worktreePreparation === undefined
             ? {}
             : { worktreePreparation: issue.worktreePreparation }),
+          ...(baseBranch === undefined ? {} : { baseBranch }),
+          ...(parentTask === undefined ? {} : { parentTask }),
           details: {
             title: issue.title,
             description: issue.description,
@@ -236,7 +251,11 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
 
     // Run the blocker pre-pass first so an all-blocked board short-circuits
     // before the codexbar HTTP call and the cmux/tmux shell-out fire.
-    const { unblocked, skips: blockerSkips } = classifyBlockers(todo);
+    const {
+      unblocked,
+      stackDecisions,
+      skips: blockerSkips,
+    } = await classifyBlockers(todo, config, eligibilityDeps);
     for (const skip of blockerSkips) {
       logSkip(skip);
     }
@@ -287,6 +306,7 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     const verdicts = classifyEligibility({
       config,
       unblocked: dispatchableUnblocked,
+      stackDecisions,
       worktreeEntries,
       workspaceProbe,
       usage: fetchedUsage,
