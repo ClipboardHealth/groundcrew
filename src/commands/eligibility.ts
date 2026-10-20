@@ -19,7 +19,7 @@ import { AGENT_ANY, type ResolvedConfig } from "../lib/config.ts";
 import { readRunState, type RunState } from "../lib/runState.ts";
 import { naturalIdFromCanonical, type Blocker, type GroundcrewIssue } from "../lib/taskSource.ts";
 import type { UsageByAgent } from "../lib/usage.ts";
-import { errorMessage, log } from "../lib/util.ts";
+import { errorMessage, log, memoizeAsync } from "../lib/util.ts";
 import type { WorkspaceProbe } from "../lib/workspaces.ts";
 import { localBranchExists, resolveRepoDir, type WorktreeEntry } from "../lib/worktrees.ts";
 
@@ -167,15 +167,12 @@ function memoizedProbeParentBranch(
   probeParentBranchDep: EligibilityDeps["probeParentBranch"],
 ): EligibilityDeps["probeParentBranch"] {
   const cache = new Map<string, ReturnType<EligibilityDeps["probeParentBranch"]>>();
-  return async (arguments_) => {
-    const cached = cache.get(arguments_.branch);
-    if (cached !== undefined) {
-      return await cached;
-    }
-    const probe = probeParentBranchDep(arguments_);
-    cache.set(arguments_.branch, probe);
-    return await probe;
-  };
+  return async (arguments_) =>
+    await memoizeAsync(
+      cache,
+      arguments_.branch,
+      async () => await probeParentBranchDep(arguments_),
+    );
 }
 
 export const defaultEligibilityDeps: EligibilityDeps = {
@@ -612,8 +609,6 @@ export async function classifyBlockers(
   const unblocked: GroundcrewIssue[] = [];
   const skips: SkipVerdict[] = [];
   const stackDecisions = new Map<string, StackDecision>();
-  // Scoped to this call only: memoizing probeParentBranch across ticks would
-  // let a since-pushed branch keep reading as unpushed indefinitely.
   const memoizedDeps: EligibilityDeps = {
     ...deps,
     probeParentBranch: memoizedProbeParentBranch(deps.probeParentBranch),

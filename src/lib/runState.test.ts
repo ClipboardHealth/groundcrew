@@ -6,7 +6,7 @@ import type { ResolvedConfig } from "./config.ts";
 import { makeCmuxConfig } from "../testHelpers/cmuxConfig.ts";
 import { makeLocalConfig } from "../testHelpers/localConfig.ts";
 import {
-  clearBaseBranch,
+  clearStackingState,
   listRunStates,
   readRunState,
   recordRunState,
@@ -395,7 +395,7 @@ describe("run state store", () => {
       },
     });
 
-    const cleared = clearBaseBranch(config, "team-2");
+    const cleared = clearStackingState(config, "team-2");
 
     expect(cleared?.baseBranch).toBeUndefined();
     expect(cleared?.parentTask).toBe("team-1");
@@ -425,7 +425,7 @@ describe("run state store", () => {
       },
     });
 
-    const cleared = clearBaseBranch(config, "team-2");
+    const cleared = clearStackingState(config, "team-2");
 
     expect(cleared?.needsRebase).toBeUndefined();
     expect(readRunState(config, "team-2")?.needsRebase).toBeUndefined();
@@ -434,8 +434,8 @@ describe("run state store", () => {
     );
   });
 
-  it("clearBaseBranch is a no-op returning undefined when no run state exists", () => {
-    expect(clearBaseBranch(config, "team-9")).toBeUndefined();
+  it("clearStackingState is a no-op returning undefined when no run state exists", () => {
+    expect(clearStackingState(config, "team-9")).toBeUndefined();
   });
 
   it("clearFields drops baseBranch, parentTask, and needsRebase instead of carrying them forward", () => {

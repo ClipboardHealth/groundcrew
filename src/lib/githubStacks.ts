@@ -16,7 +16,7 @@
  */
 
 import { runCommandAsync } from "./commandRunner.ts";
-import { debug, errorMessage, isRecord, isUnknownArray } from "./util.ts";
+import { debug, errorMessage, isRecord, isUnknownArray, signalProperty } from "./util.ts";
 
 const STACKS_API_VERSION = "2026-03-10";
 
@@ -33,7 +33,7 @@ export type RunGhApi = (arguments_: {
 }) => Promise<string>;
 
 const runGhApiCommand: RunGhApi = async ({ cwd, args, signal }) =>
-  await runCommandAsync("gh", args, { cwd, ...(signal === undefined ? {} : { signal }) });
+  await runCommandAsync("gh", args, { cwd, ...signalProperty(signal) });
 
 interface RepositoryCall {
   cwd: string;
@@ -121,7 +121,7 @@ export function createStacksClient(runGhApi: RunGhApi = runGhApiCommand): Stacks
       await runGhApi({
         cwd,
         args: apiArguments(path, ["--method", "POST", ...pullRequestFields(pullRequests)]),
-        ...(signal === undefined ? {} : { signal }),
+        ...signalProperty(signal),
       });
       return true;
     } catch (error) {
@@ -136,7 +136,7 @@ export function createStacksClient(runGhApi: RunGhApi = runGhApiCommand): Stacks
         const output = await runGhApi({
           cwd,
           args: apiArguments("repos/{owner}/{repo}/stacks?per_page=100", ["--paginate", "--slurp"]),
-          ...(signal === undefined ? {} : { signal }),
+          ...signalProperty(signal),
         });
         return { available: true, stacks: parseStacks(output) };
       } catch (error) {
@@ -150,7 +150,7 @@ export function createStacksClient(runGhApi: RunGhApi = runGhApiCommand): Stacks
         repository,
         path: "repos/{owner}/{repo}/stacks",
         pullRequests,
-        ...(signal === undefined ? {} : { signal }),
+        ...signalProperty(signal),
       }),
     addToStack: async ({ cwd, repository, stackNumber, pullRequests, signal }) =>
       await post({
@@ -158,7 +158,7 @@ export function createStacksClient(runGhApi: RunGhApi = runGhApiCommand): Stacks
         repository,
         path: `repos/{owner}/{repo}/stacks/${stackNumber}/add`,
         pullRequests,
-        ...(signal === undefined ? {} : { signal }),
+        ...signalProperty(signal),
       }),
   };
 }

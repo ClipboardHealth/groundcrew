@@ -19,7 +19,7 @@
  */
 
 import { runCommandAsync } from "./commandRunner.ts";
-import { isRecord } from "./util.ts";
+import { isRecord, signalProperty } from "./util.ts";
 
 export interface PullRequestSummary {
   url: string;
@@ -406,14 +406,13 @@ export type CountMergeCommits = (arguments_: MergeCommitLookupArgs) => Promise<n
 
 export const countMergeCommits: CountMergeCommits = async (arguments_) => {
   const { cwd, pullRequestNumber, signal } = arguments_;
-  const options = signal === undefined ? { cwd } : { cwd, signal };
   const output = await runCommandAsync(
     "gh",
     [
       "api",
       `repos/{owner}/{repo}/pulls/${pullRequestNumber}/commits?per_page=${GH_PR_COMMITS_PAGE_SIZE}`,
     ],
-    options,
+    { cwd, ...signalProperty(signal) },
   ).catch((error: unknown) => {
     if (signal?.aborted === true) {
       throw error;

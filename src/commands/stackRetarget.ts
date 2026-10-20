@@ -40,18 +40,22 @@ import {
   countMergeCommits as countMergeCommitsForPullRequest,
   type PullRequestSummary,
 } from "../lib/pullRequests.ts";
-import { clearBaseBranch, readRunState, type RunState, updateRunState } from "../lib/runState.ts";
+import {
+  clearStackingState,
+  readRunState,
+  type RunState,
+  updateRunState,
+} from "../lib/runState.ts";
 import {
   type BoardState,
   type CanonicalStatus,
   naturalIdFromCanonical,
 } from "../lib/taskSource.ts";
-import { debug, errorMessage, log, logEvent } from "../lib/util.ts";
+import { debug, errorMessage, log, logEvent, memoizeAsync, signalProperty } from "../lib/util.ts";
 import { effectiveBranchName } from "../lib/worktreeRunState.ts";
 import {
   localBranchExists,
   reclaimStackParentBranch,
-  signalProperty,
   worktrees,
   type WorktreeEntry,
 } from "../lib/worktrees.ts";
@@ -63,29 +67,12 @@ type StackRetargetOutcome =
   | "rebase_conflict"
   | "retargeted_needs_rebase"
   | "retarget_failed"
-  // Not one of spec section 8's named outcomes: `--force-with-lease` was
-  // rejected after a successful rebase, distinct from a rebase conflict.
   | "push_rejected"
-  // `push_rejected` this many times in a row, so the task is left for a
-  // human instead of re-running the rebase every tick. Counted per watcher
-  // process: a restart gives the task another round of attempts.
   | "push_retries_exhausted"
-  // The parent issue is done (or its worktree is gone) but no PR on its
-  // branch ever merged — the parent will never merge, so the child is left
-  // untouched rather than retargeted onto or rebased onto a dead branch.
   | "parent_done_unmerged"
-  // The child's own PR lookup, or branch resolution, failed.
   | "lookup_failed"
-  // Post-merge, the child PR's base is neither the parent nor the default
-  // branch — someone retargeted it elsewhere; outside the spec's covered
-  // cases, left alone rather than forced back.
   | "base_drifted"
-  // The combined fetch failed and its default-branch-only fallback
-  // succeeded, but the local parent ref it was counting on doesn't exist.
   | "parent_ref_missing"
-  // The parent merged while the pair was registered as a GitHub stack, so
-  // GitHub retargeted and rebased the child itself; nothing left to do but
-  // stop tracking the parent branch.
   | "restacked_by_github";
 
 const TERMINAL_MESSAGES: Record<StackRetargetOutcome, string> = {
@@ -216,6 +203,7 @@ function logHoldOutcome(arguments_: {
   logTerminal(logContext, outcome);
 }
 
+// Counted per watcher process: a restart gives the task another round of attempts.
 const MAX_PUSH_REJECTIONS = 3;
 
 async function fetchParentPullRequests(arguments_: {
@@ -226,27 +214,13 @@ async function fetchParentPullRequests(arguments_: {
   signal?: AbortSignal;
 }): Promise<readonly PullRequestSummary[]> {
   const { cache, findPullRequests, cwd, baseBranch, signal } = arguments_;
-  const cached = cache.get(baseBranch);
-  if (cached !== undefined) {
-    return await cached;
-  }
-  const pullRequests = findPullRequests({
-    cwd,
-    branchName: baseBranch,
-    ...signalProperty(signal),
-  });
-  cache.set(baseBranch, pullRequests);
-  return await pullRequests;
+  return await memoizeAsync(
+    cache,
+    baseBranch,
+    async () => await findPullRequests({ cwd, branchName: baseBranch, ...signalProperty(signal) }),
+  );
 }
 
-/**
- * Parent-merged is PR-state-only: a PR on the parent's branch with state
- * `merged`. The parent issue's canonical `done` status is deliberately not
- * treated as proof — a ticket closed as duplicate, or completed via
- * `crew task done` with an unmerged/closed PR, is `done` without ever having
- * merged, and rebasing the child onto the default branch in that case would
- * strip the parent's commits out from under it.
- */
 /**
  * `open` wins over `merged`: a reused task branch can carry an older merged
  * pull request alongside the current open one, and only the open one says
@@ -284,17 +258,16 @@ async function listStacks(arguments_: {
   signal?: AbortSignal;
 }): Promise<StackListing> {
   const { stacks, stacksCache, entry, signal } = arguments_;
-  const cached = stacksCache.get(entry.repository);
-  if (cached !== undefined) {
-    return await cached;
-  }
-  const pending = stacks.listStacks({
-    cwd: entry.dir,
-    repository: entry.repository,
-    ...signalProperty(signal),
-  });
-  stacksCache.set(entry.repository, pending);
-  return await pending;
+  return await memoizeAsync(
+    stacksCache,
+    entry.repository,
+    async () =>
+      await stacks.listStacks({
+        cwd: entry.dir,
+        repository: entry.repository,
+        ...signalProperty(signal),
+      }),
+  );
 }
 
 /**
@@ -403,9 +376,7 @@ async function registerStack(arguments_: {
     return;
   }
 
-  const parentStack = listing.stacks.find(
-    (stack) => stack.open && stack.pullRequests.includes(parentPullRequest.number),
-  );
+  const parentStack = openStackContaining(listing, parentPullRequest.number);
   const logContext = {
     flow: "stack-register" as const,
     task,
@@ -742,7 +713,7 @@ async function releaseParentBranch(arguments_: {
   signal?: AbortSignal;
 }): Promise<void> {
   const { config, entry, parentTask, baseBranch, signal } = arguments_;
-  clearBaseBranch(config, entry.task);
+  clearStackingState(config, entry.task);
   try {
     await reclaimStackParentBranch(config, {
       repository: entry.repository,

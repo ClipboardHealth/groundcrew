@@ -299,3 +299,23 @@ export function errorMessage(error: unknown): string {
     return Object.prototype.toString.call(error);
   }
 }
+
+export function signalProperty(
+  signal?: AbortSignal,
+): { signal: AbortSignal } | Record<never, never> {
+  return signal === undefined ? {} : { signal };
+}
+
+export async function memoizeAsync<K, V>(
+  cache: Map<K, Promise<V>>,
+  key: K,
+  load: () => Promise<V>,
+): Promise<V> {
+  const cached = cache.get(key);
+  if (cached !== undefined) {
+    return await cached;
+  }
+  const pending = load();
+  cache.set(key, pending);
+  return await pending;
+}

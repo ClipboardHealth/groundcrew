@@ -402,15 +402,16 @@ export function listRunStates(config: ResolvedConfig): RunState[] {
 }
 
 /**
- * Clears `baseBranch` once a stacked child has rebased onto the default
- * branch, retaining `parentTask`. Also clears `needsRebase` — a prior tick
- * may have set it (dirty worktree or a rebase conflict) before this rebase
- * succeeded, and nothing else unsets it. `updateRunState`'s patch can only
+ * Clears `baseBranch`, `stackRegistered` and `needsRebase` once a stacked
+ * child has rebased onto the default branch, retaining `parentTask`.
+ * `needsRebase` matters because a prior tick may have set it (dirty worktree
+ * or a rebase conflict) before this rebase succeeded, and nothing else unsets
+ * it. `updateRunState`'s patch can only
  * merge fields in, never omit one, so this reads-modifies-writes the full
  * record instead; `delete` (not `= undefined`) is required under
  * `exactOptionalPropertyTypes`.
  */
-export function clearBaseBranch(config: ResolvedConfig, task: string): RunState | undefined {
+export function clearStackingState(config: ResolvedConfig, task: string): RunState | undefined {
   const existing = readRunState(config, task);
   if (existing === undefined) {
     return undefined;

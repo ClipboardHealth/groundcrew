@@ -24,7 +24,7 @@ import {
 } from "./config.ts";
 import { resolveDefaultBranch } from "./defaultBranch.ts";
 import { assertPlainTaskId, isPlainTaskId } from "./taskId.ts";
-import { debug, errorMessage, isVerbose } from "./util.ts";
+import { debug, errorMessage, isVerbose, signalProperty } from "./util.ts";
 import { hasAdoptedBranch, isReferencedAsStackParent } from "./worktreeRunState.ts";
 import { type WorkspaceProbe, workspaces } from "./workspaces.ts";
 
@@ -203,7 +203,7 @@ async function runLongShellCommand(
   cwd: string,
   signal?: AbortSignal,
 ): Promise<void> {
-  const signalOption = signal === undefined ? {} : { signal };
+  const signalOption = signalProperty(signal);
   if (isVerbose()) {
     await runCommandAsync("sh", ["-c", command], {
       cwd,
@@ -254,12 +254,6 @@ function basePaths(config: ResolvedConfig, repository: string, task: string): Ba
   };
 }
 
-export function signalProperty(
-  signal?: AbortSignal,
-): { signal: AbortSignal } | Record<never, never> {
-  return signal === undefined ? {} : { signal };
-}
-
 function parseWorktreeDirectoryName(
   directoryName: string,
   repositoryEntriesByLongestName: ReadonlyArray<readonly [string, string]>,
@@ -291,7 +285,7 @@ async function runLongGitCommand(
   arguments_: readonly string[],
   signal?: AbortSignal,
 ): Promise<void> {
-  const signalOption = signal === undefined ? {} : { signal };
+  const signalOption = signalProperty(signal);
   if (isVerbose()) {
     await runCommandAsync("git", arguments_, { stdio: "inherit", timeoutMs: 0, ...signalOption });
     return;
