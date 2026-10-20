@@ -478,39 +478,19 @@ func prStageLabel(_ slug) -> String {
   return slug
 }
 
-// Raw existence checks, not identity: whether ANY agent record (including an
-// abandoned duplicate) reports the state, which is what the stage decision
-// needs. Cheaper than distinctAgents (no pid-dedup pass) and behaves the same
-// for this question, since dedup only changes which record's identity wins,
-// never whether the state exists somewhere in the list.
-func agentNeedsInput(_ liveAgents, _ now) -> Bool {
-  return liveAgents.contains { a in effectiveStatus(a, now) == "needs_input" }
-}
-
 func agentExecuting(_ liveAgents, _ now) -> Bool {
   return liveAgents.contains { a in executingState(effectiveStatus(a, now)) }
 }
 
-func nativeStatusNeedsInput(_ w) -> Bool {
-  if hasStatus(w) {
-    if let s = w.status {
-      return s.value.contains("needs_input")
-    }
-  }
-  return false
-}
-
-// First match wins: an agent waiting on a person outranks everything else,
-// a still-running agent outranks a possibly-outdated PR stage, and a stale
-// or absent PR stage on a workspace with no agent activity is unknown
-// rather than silently hidden.
+// First match wins: a still-running agent outranks a possibly-outdated PR
+// stage, and a stale or absent PR stage on a workspace with no agent
+// activity is unknown rather than silently hidden. An agent in needs_input
+// falls through to whatever its PR stage (or Waiting/Working) resolves to —
+// the per-agent icon still rings it in amber, but it no longer pulls the row
+// into its own section, since that section was both inaccurate (native
+// status heuristics false-positive) and hid the row from the PR-stage
+// section it actually belonged in.
 func rowStage(_ w, _ liveAgents, _ now, _ stagesFresh) -> String {
-  if agentNeedsInput(liveAgents, now) {
-    return "needs_you"
-  }
-  if nativeStatusNeedsInput(w) {
-    return "needs_you"
-  }
   if agentExecuting(liveAgents, now) {
     return "working"
   }
@@ -550,9 +530,6 @@ func stagesStale(_ tasks, _ stagesFresh, _ stagesEverRun) -> Bool {
 // in — the per-row badge this used to feed is gone; this now feeds only the
 // left stripe and background tint.
 func stageBadgeColor(_ s) -> String {
-  if s == "needs_you" {
-    return "#F59E0B"
-  }
   if s == "my_review" {
     return "#7C3AED"
   }
@@ -803,7 +780,7 @@ VStack(alignment: .leading, spacing: 8) {
 
   // One pass over `tasks` computes each row's stage/color/ticket/live agents
   // exactly once; every section below filters this array instead of
-  // re-deriving those values per section (previously 11 filters x rowStage,
+  // re-deriving those values per section (previously 10 filters x rowStage,
   // plus separate distinctAgents/ticketOf recomputation inside taskRow
   // itself). `color` is the row's section (stage) color, not a lifecycle
   // color, so the left stripe and background tint always match the header
@@ -818,7 +795,6 @@ VStack(alignment: .leading, spacing: 8) {
     ]
   }
 
-  let needsYou = rows.filter { r in r.stage == "needs_you" }
   let myReview = rows.filter { r in r.stage == "my_review" }
   let ciFailing = rows.filter { r in r.stage == "ci_failing" }
   let changesRequested = rows.filter { r in r.stage == "changes_requested" }
@@ -836,7 +812,6 @@ VStack(alignment: .leading, spacing: 8) {
   // implying something is broken.
   let unknownTitle = stagesEverRun ? "Stage unknown" : "Open PRs"
 
-  stageSection("Needs you", "#F59E0B", needsYou, now, pulse)
   stageSection("Your review", "#7C3AED", myReview, now, pulse)
   stageSection("CI failing", "#DC2626", ciFailing, now, pulse)
   stageSection("Changes requested", "#DC2626", changesRequested, now, pulse)

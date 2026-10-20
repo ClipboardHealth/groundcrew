@@ -149,7 +149,12 @@ import Testing
 
     // MARK: - Rule order (first match wins)
 
-    @Test func needsInputAgentOutranksFreshCrewStage() throws {
+    /// There is no "Needs you" section any more: a needs_input agent no
+    /// longer pulls its row out of the normal stage order. The row still
+    /// renders under its synced PR stage, and the per-agent icon still gets
+    /// its amber needs_input ring (covered separately in
+    /// GroundcrewSidebarStaleAgentTests), but the section itself is gone.
+    @Test func needsInputAgentRowRendersUnderItsFreshCrewStageNotASeparateSection() throws {
         guard try source() != nil else { return }
         let w = workspace(
             ticket: "TG-4001",
@@ -158,8 +163,22 @@ import Testing
             agents: [agent(id: "a1", status: "needs_input", secondsAgo: 30)]
         )
         let rendered = texts(try render([w]))
-        #expect(rendered.contains("Needs you (1)"))
-        #expect(!rendered.contains("Ready to merge (1)"))
+        #expect(rendered.contains("Ready to merge (1)"))
+        #expect(!rendered.contains { $0.hasPrefix("Needs you") })
+    }
+
+    /// Same as above, but with no synced PR stage at all: the row falls all
+    /// the way through to the same non-PR fallback any other idle, PR-less
+    /// task lands in.
+    @Test func needsInputAgentRowWithNoPrStageLandsInWaiting() throws {
+        guard try source() != nil else { return }
+        let w = workspace(
+            ticket: "TG-4001B",
+            agents: [agent(id: "a1", status: "needs_input", secondsAgo: 30)]
+        )
+        let rendered = texts(try render([w]))
+        #expect(rendered.contains("Waiting (1)"))
+        #expect(!rendered.contains { $0.hasPrefix("Needs you") })
     }
 
     @Test func executingAgentOutranksFreshCrewStage() throws {
@@ -291,7 +310,6 @@ import Testing
     @Test func sectionsRenderInSpecifiedOrderWithHiddenEmptySections() throws {
         guard try source() != nil else { return }
         let workspaces = [
-            workspace(ticket: "TG-5001", agents: [agent(id: "n1", status: "needs_input", secondsAgo: 10)]),
             workspace(
                 ticket: "TG-5002",
                 statuses: [crewStage("my_review")],
@@ -334,7 +352,6 @@ import Testing
         let rendered = texts(try render(workspaces))
 
         let expectedHeadersInOrder = [
-            "Needs you (1)",
             "Your review (1)",
             "CI failing (1)",
             "Changes requested (1)",
@@ -351,6 +368,7 @@ import Testing
         let resolved = indices.compactMap { $0 }
         #expect(resolved == resolved.sorted())
         #expect(resolved.count == expectedHeadersInOrder.count)
+        #expect(!rendered.contains { $0.hasPrefix("Needs you") })
     }
 
     // MARK: - Stale-poller caption (heartbeat-driven)
