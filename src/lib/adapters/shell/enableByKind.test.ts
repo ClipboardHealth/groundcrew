@@ -5,13 +5,17 @@ import path from "node:path";
 import type { AdapterContext } from "../../adapterDefinition.ts";
 import { buildSourcesWith } from "../../buildSources.ts";
 import type { ResolvedConfig } from "../../config.ts";
-import { mergeManifestAdapters } from "../registry.ts";
+import { adapterRegistry, mergeManifestAdapters } from "../registry.ts";
 
 import { discoverFromRoots } from "./discovery.ts";
 
 const fakeContext: AdapterContext = { globalConfig: {} as ResolvedConfig };
 
 describe("enable a manifest source by kind", () => {
+  afterAll(async () => {
+    await adapterRegistry;
+  });
+
   it("discovers, registers, and builds a source from { kind } alone", () => {
     const root = mkdtempSync(path.join(tmpdir(), "enable-by-kind-"));
     try {
