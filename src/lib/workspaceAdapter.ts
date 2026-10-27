@@ -57,10 +57,20 @@ export type WorkspaceInterruptResult =
   | { kind: "missing" }
   | { kind: "unavailable"; error?: unknown };
 
+/**
+ * `in_use` means the backend refused an unforced close because the workspace
+ * still has a running process; it is left open.
+ */
 export type WorkspaceCloseResult =
   | { kind: "closed" }
   | { kind: "missing" }
+  | { kind: "in_use" }
   | { kind: "unavailable"; error?: unknown };
+
+export interface WorkspaceCloseOptions {
+  /** Close even when the workspace still has a running process. */
+  force?: boolean;
+}
 
 export interface Adapter {
   open: (spec: OpenSpec, signal?: AbortSignal) => Promise<void>;
@@ -71,8 +81,15 @@ export interface Adapter {
    *   distinguish "no live workspaces" from "couldn't ask".
    */
   list: (signal?: AbortSignal) => Promise<Workspace[] | undefined>;
-  /** Closes the workspace or confirms it is not present. */
-  close: (name: string, signal?: AbortSignal) => Promise<WorkspaceCloseResult>;
+  /**
+   * Closes the workspace or confirms it is not present. Backends that can
+   * refuse to close a busy workspace return `in_use` unless `force` is set.
+   */
+  close: (
+    name: string,
+    signal?: AbortSignal,
+    options?: WorkspaceCloseOptions,
+  ) => Promise<WorkspaceCloseResult>;
   /**
    * User-facing way to reach the workspace, or `undefined` when the backend
    * has no concise external hint.

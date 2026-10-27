@@ -785,7 +785,7 @@ describe(resumeWorkspace, () => {
     await expect(resumeWorkspace(config, { task: "team-1" })).rejects.toThrow(
       "state directory is read-only",
     );
-    expect(workspacesCloseMock).toHaveBeenCalledWith(config, "team-1");
+    expect(workspacesCloseMock).toHaveBeenCalledWith(config, "team-1", undefined, { force: true });
     expect(rmSyncMock).toHaveBeenCalledWith("/tmp/groundcrew-resume-team-1-x", {
       recursive: true,
       force: true,
@@ -860,7 +860,7 @@ describe(resumeWorkspace, () => {
       composeAgentLaunchMock.mockRestore();
     }
 
-    expect(workspacesCloseMock).toHaveBeenCalledWith(config, "team-1");
+    expect(workspacesCloseMock).toHaveBeenCalledWith(config, "team-1", undefined, { force: true });
     expect(cleanup).toHaveBeenCalledOnce();
     expect(logMock).toHaveBeenCalledWith(
       "Agent launch cleanup failed during resume rollback for team-1: launch cleanup failed",

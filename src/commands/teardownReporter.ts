@@ -14,6 +14,11 @@ export function logTeardown(result: TeardownResult): void {
     log(`${okMark()} Cleanup complete for ${entry.task} (${entry.kind})`);
     debug(`  Worktree: ${entry.dir} (removed)`);
   }
+  for (const entry of result.inUse) {
+    log(
+      `Skipped cleanup for ${entry.task} (${entry.kind}): its workspace still has a running process. Cleanup retries on the next pass; run 'crew cleanup --force ${entry.task}' to close it now.`,
+    );
+  }
   for (const failure of result.failures) {
     const message = errorMessage(failure.error);
     if (failure.step === "workspace_close") {
@@ -60,6 +65,15 @@ export function recordTeardownEvents(result: TeardownResult): void {
   for (const entry of result.removed) {
     logEvent("cleanup", {
       outcome: "cleaned",
+      task: entry.task,
+      repository: entry.repository,
+      kind: entry.kind,
+    });
+  }
+  for (const entry of result.inUse) {
+    logEvent("cleanup", {
+      outcome: "skipped",
+      reason: "workspace_in_use",
       task: entry.task,
       repository: entry.repository,
       kind: entry.kind,

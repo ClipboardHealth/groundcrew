@@ -92,6 +92,16 @@ describe(logTeardown, () => {
     expect(out).toContain("/work/repo-a-team-2 (removed)");
   });
 
+  it("logs an in-use skip instead of a failure", () => {
+    logTeardown(emptyTeardownResult({ inUse: [hostEntry("team-1")] }));
+
+    const out = consoleLog.output();
+    expect(out).toContain(
+      "Skipped cleanup for team-1 (host): its workspace still has a running process.",
+    );
+    expect(out).not.toContain("workspace close failed");
+  });
+
   it("logs workspace_close failures with the standard wording", () => {
     logTeardown(
       emptyTeardownResult({
@@ -172,6 +182,16 @@ describe(recordTeardownEvents, () => {
     const out = consoleLog.output();
     expect(out).toContain("event=cleanup outcome=cleaned task=team-1 repository=repo-a kind=host");
     expect(out).toContain("event=cleanup outcome=cleaned task=team-2 repository=repo-a kind=host");
+  });
+
+  it("emits a workspace_in_use skip for each in-use entry", () => {
+    recordTeardownEvents(emptyTeardownResult({ inUse: [hostEntry("team-1")] }));
+
+    const out = consoleLog.output();
+    expect(out).toContain(
+      "event=cleanup outcome=skipped reason=workspace_in_use task=team-1 repository=repo-a kind=host",
+    );
+    expect(out).not.toContain("workspace_close_failed");
   });
 
   it("emits workspace_close_failed for workspace_close failures", () => {
