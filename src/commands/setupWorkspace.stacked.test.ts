@@ -5,6 +5,7 @@ import path from "node:path";
 import { ensureClearance, type SafehouseCmuxIntegration } from "@clipboard-health/clearance";
 import { makeCmuxConfig } from "../testHelpers/cmuxConfig.ts";
 import { makeLocalConfig } from "../testHelpers/localConfig.ts";
+import { adapterRegistry } from "../lib/adapters/registry.ts";
 import type { RunCommandOptions } from "../lib/commandRunner.ts";
 import type { ResolvedConfig } from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
@@ -205,6 +206,10 @@ function writtenFileContent(filePath: string): string {
 }
 
 describe("setupWorkspace stacking", () => {
+  afterAll(async () => {
+    await adapterRegistry;
+  });
+
   beforeEach(() => {
     detectHostMock.mockResolvedValue(host());
     createMock.mockImplementation(async () => hostEntry());
