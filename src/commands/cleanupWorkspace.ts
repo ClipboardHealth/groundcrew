@@ -82,6 +82,12 @@ async function teardownEntries(
   if (result.failures.length > 0) {
     throw result.failures[0]?.error;
   }
+  const [inUse] = result.inUse;
+  if (inUse !== undefined) {
+    throw new Error(
+      `Workspace for ${inUse.task} still has a running process; rerun with --force to close it.`,
+    );
+  }
 }
 
 export async function cleanupWorkspace(

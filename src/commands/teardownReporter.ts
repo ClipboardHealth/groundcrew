@@ -16,7 +16,7 @@ export function logTeardown(result: TeardownResult): void {
   }
   for (const entry of result.inUse) {
     log(
-      `Skipped cleanup for ${entry.task} (${entry.kind}): its workspace still has a running process. Cleanup retries on the next pass; run 'crew cleanup --force ${entry.task}' to close it now.`,
+      `Skipped cleanup for ${entry.task} (${entry.kind}): its workspace still has a running process. Run 'crew cleanup --force ${entry.task}' to close it anyway.`,
     );
   }
   for (const failure of result.failures) {

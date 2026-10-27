@@ -364,8 +364,8 @@ function cmuxTaskLinkText(url: string): string {
  * state. Each match is attempted even when an earlier one fails, so a single
  * stuck duplicate can't orphan the rest; a confirmed-still-present failure is
  * collected and rethrown only after the loop (preserving single-match
- * semantics). Any match cmux refused as busy yields `in_use`, so the caller
- * keeps the task's worktree. A failure that cannot be confirmed yields
+ * semantics). Any match cmux refused as busy yields `in_use`, even over those
+ * errors, so the caller keeps the task's worktree. A failure that cannot be confirmed yields
  * `unavailable`; `closed` wins only when every match is gone.
  */
 async function closeAllCmuxMatches(
@@ -392,11 +392,15 @@ async function closeAllCmuxMatches(
       errors.push(error);
     }
   }
+  if (isInUse) {
+    // A busy match must keep the task's worktree even when another match failed.
+    for (const error of errors) {
+      debug(`cmux workspace close failed alongside a busy duplicate: ${errorMessage(error)}`);
+    }
+    return { kind: "in_use" };
+  }
   if (errors.length > 0) {
     throw errors.length === 1 ? errors[0] : new AggregateError(errors);
-  }
-  if (isInUse) {
-    return { kind: "in_use" };
   }
   return unavailable ?? { kind: "closed" };
 }

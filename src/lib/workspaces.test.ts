@@ -589,6 +589,28 @@ describe("workspaces.close (cmux running-process confirmation)", () => {
     expect(runMock).toHaveBeenCalledWith("cmux", ["workspace", "close", "workspace:2"]);
   });
 
+  it("reports in_use over a duplicate whose close failed and is still present", async () => {
+    const duplicates = JSON.stringify({
+      workspaces: [
+        { title: "first", ref: "workspace:1", description: "groundcrew:TEAM-1" },
+        { title: "second", ref: "workspace:2", description: "groundcrew:TEAM-1" },
+      ],
+    });
+    runMock
+      .mockReturnValueOnce(duplicates)
+      .mockImplementationOnce(() => {
+        throw confirmationRequired;
+      })
+      .mockImplementationOnce(() => {
+        throw new Error("permission denied");
+      })
+      .mockReturnValueOnce(duplicates);
+
+    await expect(workspaces.close(makeConfig(), "TEAM-1")).resolves.toStrictEqual({
+      kind: "in_use",
+    });
+  });
+
   it("falls back to the legacy close-workspace verb on a cmux without workspace close", async () => {
     runMock
       .mockReturnValueOnce(list)
