@@ -109,12 +109,14 @@ function cmuxNewWorkspaceFailure(stdout: string): Error {
   );
 }
 
-// Signature-agnostic: matches a close-workspace invocation regardless of how
-// many arguments (e.g. a trailing signal) accompany it.
+// Signature-agnostic: matches a workspace close invocation, current or legacy,
+// regardless of how many arguments (e.g. a trailing signal) accompany it.
 function closeWorkspaceWasCalled(): boolean {
   return runMock.mock.calls.some(
     ([command, arguments_]) =>
-      command === "cmux" && Array.isArray(arguments_) && arguments_.includes("close-workspace"),
+      command === "cmux" &&
+      Array.isArray(arguments_) &&
+      (arguments_.includes("close") || arguments_.includes("close-workspace")),
   );
 }
 
@@ -400,7 +402,10 @@ describe("workspaces.open (cmux)", () => {
       }),
     ).resolves.toBeUndefined();
 
-    expect(runMock).not.toHaveBeenCalledWith("cmux", expect.arrayContaining(["close-workspace"]));
+    expect(runMock).not.toHaveBeenCalledWith(
+      "cmux",
+      expect.arrayContaining(["workspace", "close"]),
+    );
     expect(debugMock).toHaveBeenCalledWith(
       expect.stringContaining("cmux crew_ticket write failed"),
     );
@@ -423,7 +428,10 @@ describe("workspaces.open (cmux)", () => {
       }),
     ).resolves.toBeUndefined();
 
-    expect(runMock).not.toHaveBeenCalledWith("cmux", expect.arrayContaining(["close-workspace"]));
+    expect(runMock).not.toHaveBeenCalledWith(
+      "cmux",
+      expect.arrayContaining(["workspace", "close"]),
+    );
     expect(debugMock).not.toHaveBeenCalledWith(expect.stringContaining("crew_ticket"));
   });
 
@@ -475,7 +483,10 @@ describe("workspaces.open (cmux)", () => {
       workspaces.open(makeConfig(), { name: "TEAM-1", cwd: "/cwd", command: "x" }),
     ).rejects.toThrow(/Unexpected cmux output/);
 
-    expect(runMock).not.toHaveBeenCalledWith("cmux", expect.arrayContaining(["close-workspace"]));
+    expect(runMock).not.toHaveBeenCalledWith(
+      "cmux",
+      expect.arrayContaining(["workspace", "close"]),
+    );
     expect(runMock).not.toHaveBeenCalledWith("cmux", expect.arrayContaining(["workspace", "list"]));
   });
 
@@ -496,7 +507,10 @@ describe("workspaces.open (cmux)", () => {
       }),
     ).resolves.toBeUndefined();
 
-    expect(runMock).not.toHaveBeenCalledWith("cmux", expect.arrayContaining(["close-workspace"]));
+    expect(runMock).not.toHaveBeenCalledWith(
+      "cmux",
+      expect.arrayContaining(["workspace", "close"]),
+    );
     expect(debugMock).toHaveBeenCalledWith(expect.stringContaining("cmux set-status failed"));
   });
 
@@ -519,12 +533,15 @@ describe("workspaces.open (cmux)", () => {
       }),
     ).resolves.toBeUndefined();
 
-    expect(runMock).not.toHaveBeenCalledWith("cmux", expect.arrayContaining(["close-workspace"]));
+    expect(runMock).not.toHaveBeenCalledWith(
+      "cmux",
+      expect.arrayContaining(["workspace", "close"]),
+    );
     expect(debugMock).not.toHaveBeenCalledWith(expect.stringContaining("set-status"));
   });
 
   it("closes the leaked workspace by id when new-workspace exits non-zero but emitted an id, without re-enumerating", async () => {
-    // new-workspace fails carrying an id; the follow-up close-workspace succeeds
+    // new-workspace fails carrying an id; the follow-up workspace close succeeds
     // (the default ""). A re-enumeration via workspace list is never attempted,
     // so a concurrent list failure can't strand the orphan.
     runMock.mockImplementationOnce(() => {
@@ -535,7 +552,7 @@ describe("workspaces.open (cmux)", () => {
       workspaces.open(makeConfig(), { name: "TEAM-1", cwd: "/cwd", command: "x" }),
     ).rejects.toThrow(/Command failed: cmux/);
 
-    expect(runMock).toHaveBeenCalledWith("cmux", ["close-workspace", "--workspace", "leaked-id"]);
+    expect(runMock).toHaveBeenCalledWith("cmux", ["workspace", "close", "leaked-id", "--force"]);
     expect(runMock).not.toHaveBeenCalledWith("cmux", expect.arrayContaining(["workspace", "list"]));
   });
 
@@ -548,11 +565,7 @@ describe("workspaces.open (cmux)", () => {
       workspaces.open(makeConfig(), { name: "TEAM-1", cwd: "/cwd", command: "x" }),
     ).rejects.toThrow(/Command failed: cmux/);
 
-    expect(runMock).toHaveBeenCalledWith("cmux", [
-      "close-workspace",
-      "--workspace",
-      "workspace:99",
-    ]);
+    expect(runMock).toHaveBeenCalledWith("cmux", ["workspace", "close", "workspace:99", "--force"]);
   });
 
   it("rethrows without attempting a close when the failed new-workspace stdout carries no id", async () => {
@@ -616,7 +629,7 @@ describe("workspaces.open (cmux)", () => {
 
     const actual = logMock.mock.calls.map(([message]) => message).join("\n");
 
-    expect(actual).toContain("Run 'cmux close-workspace --workspace leaked-id' by hand.");
+    expect(actual).toContain("Run 'cmux workspace close leaked-id --force' by hand.");
     expect(actual).not.toContain("`");
   });
 

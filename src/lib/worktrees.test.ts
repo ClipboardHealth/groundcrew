@@ -1393,6 +1393,7 @@ describe(teardown, () => {
     expect(result).toStrictEqual({
       closed: [],
       removed: [],
+      inUse: [],
       failures: [],
       workspaceProbe: { kind: "ok", names: new Set<string>() },
     });
@@ -1409,7 +1410,9 @@ describe(teardown, () => {
 
     await teardown(config, [entry]);
 
-    expect(workspacesCloseMock).toHaveBeenCalledWith(expect.anything(), "team-1", undefined);
+    expect(workspacesCloseMock).toHaveBeenCalledWith(expect.anything(), "team-1", undefined, {
+      force: false,
+    });
     expect(Number(workspacesCloseMock.mock.invocationCallOrder[0])).toBeLessThan(
       Number(runCommandMock.mock.invocationCallOrder[0]),
     );
@@ -1425,7 +1428,7 @@ describe(teardown, () => {
 
     const result = await teardown(config, [hostEntry("team-1")]);
 
-    expect(workspacesCloseMock).toHaveBeenCalledWith(config, "team-1", undefined);
+    expect(workspacesCloseMock).toHaveBeenCalledWith(config, "team-1", undefined, { force: false });
     expect(result.closed).toStrictEqual([]);
     expect(result.removed).toHaveLength(1);
   });
@@ -1480,7 +1483,7 @@ describe(teardown, () => {
 
     const result = await teardown(config, [hostEntry("team-1")]);
 
-    expect(workspacesCloseMock).toHaveBeenCalledWith(config, "team-1", undefined);
+    expect(workspacesCloseMock).toHaveBeenCalledWith(config, "team-1", undefined, { force: false });
     expect(result.workspaceProbe).toStrictEqual({ kind: "unavailable" });
     expect(result.closed).toStrictEqual(["team-1"]);
     expect(result.removed).toHaveLength(1);
@@ -1501,8 +1504,8 @@ describe(teardown, () => {
     expect(result.workspaceProbe.kind).toBe("unavailable");
     expect(probeError(result.workspaceProbe)).toBeInstanceOf(Error);
     expect(workspacesCloseMock).toHaveBeenCalledTimes(2);
-    expect(workspacesCloseMock).toHaveBeenCalledWith(config, "team-1", undefined);
-    expect(workspacesCloseMock).toHaveBeenCalledWith(config, "team-2", undefined);
+    expect(workspacesCloseMock).toHaveBeenCalledWith(config, "team-1", undefined, { force: false });
+    expect(workspacesCloseMock).toHaveBeenCalledWith(config, "team-2", undefined, { force: false });
     expect(result.closed).toStrictEqual(["team-1", "team-2"]);
     expect(result.removed).toHaveLength(2);
   });
@@ -1529,9 +1532,56 @@ describe(teardown, () => {
     const result = await teardown(config, entries);
 
     expect(workspacesCloseMock).toHaveBeenCalledTimes(1);
-    expect(workspacesCloseMock).toHaveBeenCalledWith(config, "team-1", undefined);
+    expect(workspacesCloseMock).toHaveBeenCalledWith(config, "team-1", undefined, { force: false });
     expect(result.closed).toStrictEqual(["team-1"]);
     expect(result.removed).toHaveLength(2);
+  });
+
+  it("leaves an in-use workspace's worktree in place when teardown is not forced", async () => {
+    workspacesProbeMock.mockResolvedValue({
+      kind: "ok",
+      names: new Set(["team-1"]),
+    });
+    workspacesCloseMock.mockResolvedValue({ kind: "in_use" });
+    const config = makeConfig({
+      projectDir,
+      knownRepositories: ["repo-a", "repo-b"],
+    });
+    mkdirSync(path.join(projectDir, "repo-b-team-1"), { recursive: true });
+    mkdirSync(path.join(projectDir, "repo-b"), { recursive: true });
+    const entries = [
+      hostEntry("team-1"),
+      {
+        repository: "repo-b",
+        task: "team-1",
+        branchName: "dev-team-1",
+        dir: path.join(projectDir, "repo-b-team-1"),
+        kind: "host" as const,
+      },
+    ];
+
+    const result = await teardown(config, entries);
+
+    expect(result.inUse).toStrictEqual(entries);
+    expect(result.closed).toStrictEqual([]);
+    expect(result.removed).toStrictEqual([]);
+    expect(result.failures).toStrictEqual([]);
+    expect(runCommandMock).not.toHaveBeenCalled();
+    expect(existsSync(path.join(projectDir, "repo-a-team-1"))).toBe(true);
+  });
+
+  it("forwards force to the workspace close", async () => {
+    workspacesProbeMock.mockResolvedValue({
+      kind: "ok",
+      names: new Set(["team-1"]),
+    });
+    const config = makeConfig({ projectDir });
+
+    const result = await teardown(config, [hostEntry("team-1")], { force: true });
+
+    expect(workspacesCloseMock).toHaveBeenCalledWith(config, "team-1", undefined, { force: true });
+    expect(result.closed).toStrictEqual(["team-1"]);
+    expect(result.removed).toHaveLength(1);
   });
 
   it("records workspace_close failures and continues to remove the worktree", async () => {

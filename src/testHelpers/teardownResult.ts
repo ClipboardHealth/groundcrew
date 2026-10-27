@@ -4,6 +4,7 @@ export function emptyTeardownResult(overrides: Partial<TeardownResult> = {}): Te
   return {
     closed: [],
     removed: [],
+    inUse: [],
     failures: [],
     workspaceProbe: { kind: "ok", names: new Set<string>() },
     ...overrides,

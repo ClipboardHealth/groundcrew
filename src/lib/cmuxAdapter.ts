@@ -42,7 +42,7 @@ export const cmuxAdapter: Adapter = {
     const workspaceId = extractCmuxOpenId(output);
     if (workspaceId === undefined) {
       log(
-        `cmux new-workspace returned unrecognized output for ${spec.name}; if a workspace was created, run 'cmux close-workspace' manually.`,
+        `cmux new-workspace returned unrecognized output for ${spec.name}; if a workspace was created, run 'cmux workspace close' manually.`,
       );
       throw new Error(`Unexpected cmux output: ${output}`);
     }
@@ -79,13 +79,13 @@ export const cmuxAdapter: Adapter = {
     const raw = await listCmuxRaw(signal);
     return raw?.map((ws) => ({ name: cmuxTaskId(ws) }));
   },
-  async close(name, signal) {
+  async close(name, signal, options) {
     const raw = await listCmuxRaw(signal);
     if (raw === undefined) {
       // cmux v2 `workspace.close` rejects titles, so forwarding `name`
       // would always fail. The list failure has already been logged by
       // `listCmuxRaw`; bail rather than guarantee a downstream error.
-      debug(`cmux close-workspace skipped for ${name}: workspace list failed, no usable id`);
+      debug(`cmux workspace close skipped for ${name}: workspace list failed, no usable id`);
       return { kind: "unavailable" };
     }
     const matches = raw.filter((ws) => cmuxTaskId(ws) === name);
@@ -102,7 +102,7 @@ export const cmuxAdapter: Adapter = {
         duplicates: matches.length,
       });
     }
-    return await closeAllCmuxMatches(matches, signal);
+    return await closeAllCmuxMatches(matches, { force: options?.force ?? false, signal });
   },
   accessHint(_name) {
     // cmux is a TUI; users surface workspaces by launching the cmux app,
@@ -364,21 +364,26 @@ function cmuxTaskLinkText(url: string): string {
  * state. Each match is attempted even when an earlier one fails, so a single
  * stuck duplicate can't orphan the rest; a confirmed-still-present failure is
  * collected and rethrown only after the loop (preserving single-match
- * semantics). A failure that cannot be confirmed yields `unavailable`; `closed`
- * wins only when every match is gone.
+ * semantics). Any match cmux refused as busy yields `in_use`, even over those
+ * errors, so the caller keeps the task's worktree. A failure that cannot be confirmed yields
+ * `unavailable`; `closed` wins only when every match is gone.
  */
 async function closeAllCmuxMatches(
   matches: readonly CmuxRawWorkspace[],
-  signal?: AbortSignal,
+  options: CmuxCloseOptions,
 ): Promise<WorkspaceCloseResult> {
+  const { signal } = options;
   let unavailable: { kind: "unavailable"; error?: unknown } | undefined;
+  let isInUse = false;
   const errors: unknown[] = [];
   for (const match of matches) {
     try {
       // oxlint-disable-next-line no-await-in-loop -- sequential by design; failure re-lists shared cmux state
-      const result = await closeCmuxMatch(match, signal);
+      const result = await closeCmuxMatch(match, options);
       if (result.kind === "unavailable") {
         unavailable = result;
+      } else if (result.kind === "in_use") {
+        isInUse = true;
       }
     } catch (error) {
       if (isSignalAborted(signal)) {
@@ -387,22 +392,38 @@ async function closeAllCmuxMatches(
       errors.push(error);
     }
   }
+  if (isInUse) {
+    // A busy match must keep the task's worktree even when another match failed.
+    for (const error of errors) {
+      debug(`cmux workspace close failed alongside a busy duplicate: ${errorMessage(error)}`);
+    }
+    return { kind: "in_use" };
+  }
   if (errors.length > 0) {
     throw errors.length === 1 ? errors[0] : new AggregateError(errors);
   }
   return unavailable ?? { kind: "closed" };
 }
 
+interface CmuxCloseOptions {
+  force: boolean;
+  signal?: AbortSignal | undefined;
+}
+
 async function closeCmuxMatch(
   match: CmuxRawWorkspace,
-  signal?: AbortSignal,
-): Promise<{ kind: "closed" } | { kind: "unavailable"; error?: unknown }> {
+  options: CmuxCloseOptions,
+): Promise<{ kind: "closed" } | { kind: "in_use" } | { kind: "unavailable"; error?: unknown }> {
+  const { signal } = options;
   try {
-    await closeCmuxWorkspace(match.id, signal);
+    await closeCmuxWorkspace(match.id, options);
     return { kind: "closed" };
   } catch (error) {
     if (isSignalAborted(signal)) {
       throw error;
+    }
+    if (!options.force && isCmuxCloseConfirmationRequired(error)) {
+      return { kind: "in_use" };
     }
     const remaining = await listCmuxRaw(signal);
     if (remaining === undefined) {
@@ -416,8 +437,22 @@ async function closeCmuxMatch(
   }
 }
 
-async function closeCmuxWorkspace(workspaceId: string, signal?: AbortSignal): Promise<void> {
-  await runWorkspaceCommand("cmux", ["close-workspace", "--workspace", workspaceId], signal);
+async function closeCmuxWorkspace(workspaceId: string, options: CmuxCloseOptions): Promise<void> {
+  const { signal } = options;
+  const arguments_ = ["workspace", "close", workspaceId];
+  if (options.force) {
+    arguments_.push("--force");
+  }
+  try {
+    await runWorkspaceCommand("cmux", arguments_, signal);
+  } catch (error) {
+    if (isSignalAborted(signal) || !isCmuxWorkspaceCloseUnsupported(error)) {
+      throw error;
+    }
+    // Older cmux lacks `workspace close` and `--force`, and it also predates the
+    // running-process confirmation, so the legacy verb closes unconditionally.
+    await runWorkspaceCommand("cmux", ["close-workspace", "--workspace", workspaceId], signal);
+  }
 }
 
 /**
@@ -443,13 +478,14 @@ async function closeWorkspaceLeakedByFailedOpen(
     return;
   }
   try {
-    await closeCmuxWorkspace(workspaceId, signal);
+    // The leaked workspace is already running the agent command, so force the close.
+    await closeCmuxWorkspace(workspaceId, { force: true, signal });
     debug(
       `cmux new-workspace for ${name} exited non-zero but had created ${workspaceId}; closed the leaked workspace.`,
     );
   } catch (closeError) {
     log(
-      `cmux new-workspace for ${name} exited non-zero and left workspace ${workspaceId}; automatic close failed (${errorMessage(closeError)}). Run 'cmux close-workspace --workspace ${workspaceId}' by hand.`,
+      `cmux new-workspace for ${name} exited non-zero and left workspace ${workspaceId}; automatic close failed (${errorMessage(closeError)}). Run 'cmux workspace close ${workspaceId} --force' by hand.`,
     );
   }
 }
@@ -470,6 +506,14 @@ function extractCmuxOpenIdFromFailure(error: unknown): string | undefined {
 
 function cmuxStdoutFromFailureMessage(message: string): string | undefined {
   return /\nStdout:\n([\s\S]*?)(?:\nCause: |$)/.exec(message)?.[1];
+}
+
+function isCmuxCloseConfirmationRequired(error: unknown): boolean {
+  return errorMessage(error).includes("confirmation_required");
+}
+
+function isCmuxWorkspaceCloseUnsupported(error: unknown): boolean {
+  return /unknown (?:command|subcommand|flag|option)/i.test(errorMessage(error));
 }
 
 function isCmuxSetStatusUnsupported(error: unknown): boolean {

@@ -1807,7 +1807,7 @@ describe(setupWorkspace, () => {
 
     expect(runCommandMock).not.toHaveBeenCalledWith(
       "cmux",
-      expect.arrayContaining(["close-workspace"]),
+      expect.arrayContaining(["workspace", "close"]),
     );
     expect(teardownMock).not.toHaveBeenCalled();
   });

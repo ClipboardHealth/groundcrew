@@ -299,6 +299,16 @@ describe(cleanupWorkspace, () => {
     expect(consoleLog.output()).toContain("workspace close failed for team-1: cmux down");
   });
 
+  it("fails with a --force hint when the workspace still has a running process", async () => {
+    findByTaskMock.mockReturnValue([hostEntry]);
+    teardownMock.mockResolvedValue(emptyTeardownResult({ inUse: [hostEntry] }));
+
+    await expect(cleanupWorkspace(config, { task: "team-1" })).rejects.toThrow(
+      "Workspace for team-1 still has a running process; rerun with --force to close it.",
+    );
+    expect(consoleLog.output()).toContain("Skipped cleanup for team-1 (host)");
+  });
+
   it("logs Cleanup failed for a worktree_remove failure", async () => {
     findByTaskMock.mockReturnValue([hostEntry]);
     teardownMock.mockResolvedValue(

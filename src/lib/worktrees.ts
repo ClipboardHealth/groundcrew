@@ -26,7 +26,7 @@ import { resolveDefaultBranch } from "./defaultBranch.ts";
 import { assertPlainTaskId, isPlainTaskId } from "./taskId.ts";
 import { debug, errorMessage, isVerbose, signalProperty } from "./util.ts";
 import { hasAdoptedBranch, isReferencedAsStackParent } from "./worktreeRunState.ts";
-import { type WorkspaceProbe, workspaces } from "./workspaces.ts";
+import { type WorkspaceCloseResult, type WorkspaceProbe, workspaces } from "./workspaces.ts";
 
 const WORKTREE_LIST_PREFIX = "worktree ";
 
@@ -1034,18 +1034,41 @@ export interface TeardownResult {
   closed: string[];
   /** Worktrees successfully removed. */
   removed: WorktreeEntry[];
+  /**
+   * Worktrees left in place because their Workspace still has a running
+   * process and teardown was not forced; a later pass retries them.
+   */
+  inUse: WorktreeEntry[];
   /** Per-entry failures; teardown continues past them. */
   failures: TeardownFailure[];
   workspaceProbe: WorkspaceProbe;
 }
 
+/**
+ * Closes the entry's Workspace, recording a close on `result.closed` and a
+ * failure on `result.failures`. Returns the close outcome, or `failed`.
+ */
 async function closeWorkspaceForTeardown(
   config: ResolvedConfig,
-  task: string,
-  signal: AbortSignal | undefined,
-): Promise<boolean> {
-  const closeResult = await workspaces.close(config, task, signal);
-  return closeResult.kind === "closed";
+  entry: WorktreeEntry,
+  result: TeardownResult,
+  options: { force: boolean; signal: AbortSignal | undefined },
+): Promise<WorkspaceCloseResult["kind"] | "failed"> {
+  try {
+    const closeResult = await workspaces.close(config, entry.task, options.signal, {
+      force: options.force,
+    });
+    if (closeResult.kind === "closed") {
+      result.closed.push(entry.task);
+    }
+    return closeResult.kind;
+  } catch (error) {
+    if (options.signal?.aborted === true) {
+      throw error;
+    }
+    result.failures.push({ entry, step: "workspace_close", error });
+    return "failed";
+  }
 }
 
 function shouldCloseWorkspaceForTeardown(
@@ -1069,6 +1092,7 @@ async function teardown(
     return {
       closed: [],
       removed: [],
+      inUse: [],
       failures: [],
       workspaceProbe: { kind: "ok", names: new Set<string>() },
     };
@@ -1077,28 +1101,32 @@ async function teardown(
   const workspaceProbe = await workspaces.probe(config, options?.signal);
   const liveNames = workspaceProbe.kind === "ok" ? workspaceProbe.names : new Set<string>();
   const closedTasks = new Set<string>();
+  const inUseTasks = new Set<string>();
   const result: TeardownResult = {
     closed: [],
     removed: [],
+    inUse: [],
     failures: [],
     workspaceProbe,
   };
 
   for (const entry of entries) {
     if (shouldCloseWorkspaceForTeardown(entry.task, workspaceProbe, liveNames, closedTasks)) {
-      try {
-        // oxlint-disable-next-line no-await-in-loop -- teardown is intentionally sequential per task
-        const closed = await closeWorkspaceForTeardown(config, entry.task, options?.signal);
-        if (closed) {
-          result.closed.push(entry.task);
-        }
-      } catch (error) {
-        if (options?.signal?.aborted === true) {
-          throw error;
-        }
-        result.failures.push({ entry, step: "workspace_close", error });
+      // oxlint-disable-next-line no-await-in-loop -- teardown is intentionally sequential per task
+      const closeKind = await closeWorkspaceForTeardown(config, entry, result, {
+        force,
+        signal: options?.signal,
+      });
+      if (closeKind === "in_use") {
+        inUseTasks.add(entry.task);
       }
       closedTasks.add(entry.task);
+    }
+    if (inUseTasks.has(entry.task)) {
+      // Removing the worktree would pull the working directory out from under
+      // the live process.
+      result.inUse.push(entry);
+      continue;
     }
     try {
       // oxlint-disable-next-line no-await-in-loop -- one worktree at a time avoids racing on git

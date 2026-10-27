@@ -372,6 +372,7 @@ describe(openWorkspace, () => {
     teardownMock.mockResolvedValue({
       closed: [],
       removed: [],
+      inUse: [],
       failures: [],
       workspaceProbe: { kind: "ok", names: new Set() },
     });
@@ -659,6 +660,7 @@ describe(openWorkspace, () => {
     teardownMock.mockResolvedValue({
       closed: [],
       removed: [openedWorktree()],
+      inUse: [],
       failures: [
         {
           entry: openedWorktree(),
@@ -879,6 +881,7 @@ describe(openWorkspaceCli, () => {
     teardownMock.mockResolvedValue({
       closed: [],
       removed: [],
+      inUse: [],
       failures: [],
       workspaceProbe: { kind: "ok", names: new Set() },
     });

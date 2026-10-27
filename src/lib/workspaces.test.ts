@@ -246,7 +246,7 @@ describe("workspaces.close (cmux)", () => {
   beforeEach(commonBeforeEach);
   afterEach(commonAfterEach);
 
-  it("looks up the ref by name and calls close-workspace", async () => {
+  it("looks up the ref by name and calls workspace close", async () => {
     runMock.mockReturnValue(
       JSON.stringify({ workspaces: [{ title: "TEAM-1", ref: "workspace:42" }] }),
     );
@@ -255,11 +255,7 @@ describe("workspaces.close (cmux)", () => {
       kind: "closed",
     });
 
-    expect(runMock).toHaveBeenCalledWith("cmux", [
-      "close-workspace",
-      "--workspace",
-      "workspace:42",
-    ]);
+    expect(runMock).toHaveBeenCalledWith("cmux", ["workspace", "close", "workspace:42"]);
   });
 
   it("closes by the description marker even when the title was renamed", async () => {
@@ -275,11 +271,7 @@ describe("workspaces.close (cmux)", () => {
       kind: "closed",
     });
 
-    expect(runMock).toHaveBeenCalledWith("cmux", [
-      "close-workspace",
-      "--workspace",
-      "workspace:42",
-    ]);
+    expect(runMock).toHaveBeenCalledWith("cmux", ["workspace", "close", "workspace:42"]);
   });
 
   it("closes a legacy workspace by title when no marker is present", async () => {
@@ -291,11 +283,7 @@ describe("workspaces.close (cmux)", () => {
       kind: "closed",
     });
 
-    expect(runMock).toHaveBeenCalledWith("cmux", [
-      "close-workspace",
-      "--workspace",
-      "workspace:42",
-    ]);
+    expect(runMock).toHaveBeenCalledWith("cmux", ["workspace", "close", "workspace:42"]);
   });
 
   it("is missing when neither a marker nor the title matches the requested name", async () => {
@@ -311,7 +299,10 @@ describe("workspaces.close (cmux)", () => {
       kind: "missing",
     });
 
-    expect(runMock).not.toHaveBeenCalledWith("cmux", expect.arrayContaining(["close-workspace"]));
+    expect(runMock).not.toHaveBeenCalledWith(
+      "cmux",
+      expect.arrayContaining(["workspace", "close"]),
+    );
   });
 
   it("falls back to the workspace id when ref is omitted", async () => {
@@ -321,7 +312,7 @@ describe("workspaces.close (cmux)", () => {
       kind: "closed",
     });
 
-    expect(runMock).toHaveBeenCalledWith("cmux", ["close-workspace", "--workspace", "abc123"]);
+    expect(runMock).toHaveBeenCalledWith("cmux", ["workspace", "close", "abc123"]);
   });
 
   it("is a no-op when no workspace exists for the name", async () => {
@@ -331,10 +322,13 @@ describe("workspaces.close (cmux)", () => {
       kind: "missing",
     });
 
-    expect(runMock).not.toHaveBeenCalledWith("cmux", expect.arrayContaining(["close-workspace"]));
+    expect(runMock).not.toHaveBeenCalledWith(
+      "cmux",
+      expect.arrayContaining(["workspace", "close"]),
+    );
   });
 
-  it("skips close-workspace entirely when the cmux list itself fails (v2 close rejects titles)", async () => {
+  it("skips workspace close entirely when the cmux list itself fails (v2 close rejects titles)", async () => {
     runMock.mockImplementationOnce(() => {
       throw new Error("cmux down");
     });
@@ -342,7 +336,10 @@ describe("workspaces.close (cmux)", () => {
     await expect(workspaces.close(makeConfig(), "TEAM-1")).resolves.toStrictEqual({
       kind: "unavailable",
     });
-    expect(runMock).not.toHaveBeenCalledWith("cmux", expect.arrayContaining(["close-workspace"]));
+    expect(runMock).not.toHaveBeenCalledWith(
+      "cmux",
+      expect.arrayContaining(["workspace", "close"]),
+    );
   });
 
   it("is a no-op when the workspace disappears between cmux list and close", async () => {
@@ -425,9 +422,9 @@ describe("workspaces.close (cmux)", () => {
       kind: "closed",
     });
 
-    expect(runMock).toHaveBeenCalledWith("cmux", ["close-workspace", "--workspace", "workspace:1"]);
-    expect(runMock).toHaveBeenCalledWith("cmux", ["close-workspace", "--workspace", "workspace:2"]);
-    expect(runMock).toHaveBeenCalledWith("cmux", ["close-workspace", "--workspace", "workspace:3"]);
+    expect(runMock).toHaveBeenCalledWith("cmux", ["workspace", "close", "workspace:1"]);
+    expect(runMock).toHaveBeenCalledWith("cmux", ["workspace", "close", "workspace:2"]);
+    expect(runMock).toHaveBeenCalledWith("cmux", ["workspace", "close", "workspace:3"]);
   });
 
   it("emits a structured duplicate-marker event when more than one workspace matches", async () => {
@@ -477,7 +474,7 @@ describe("workspaces.close (cmux)", () => {
       kind: "closed",
     });
 
-    expect(runMock).toHaveBeenCalledWith("cmux", ["close-workspace", "--workspace", "workspace:2"]);
+    expect(runMock).toHaveBeenCalledWith("cmux", ["workspace", "close", "workspace:2"]);
   });
 
   it("still attempts later duplicates when an earlier one fails confirmed-still-present", async () => {
@@ -497,7 +494,7 @@ describe("workspaces.close (cmux)", () => {
 
     await expect(workspaces.close(makeConfig(), "TEAM-1")).rejects.toThrow("permission denied");
 
-    expect(runMock).toHaveBeenCalledWith("cmux", ["close-workspace", "--workspace", "workspace:2"]);
+    expect(runMock).toHaveBeenCalledWith("cmux", ["workspace", "close", "workspace:2"]);
   });
 
   it("aggregates errors when every duplicate fails confirmed-still-present", async () => {
@@ -520,8 +517,119 @@ describe("workspaces.close (cmux)", () => {
 
     await expect(workspaces.close(makeConfig(), "TEAM-1")).rejects.toThrow(AggregateError);
 
-    expect(runMock).toHaveBeenCalledWith("cmux", ["close-workspace", "--workspace", "workspace:1"]);
-    expect(runMock).toHaveBeenCalledWith("cmux", ["close-workspace", "--workspace", "workspace:2"]);
+    expect(runMock).toHaveBeenCalledWith("cmux", ["workspace", "close", "workspace:1"]);
+    expect(runMock).toHaveBeenCalledWith("cmux", ["workspace", "close", "workspace:2"]);
+  });
+});
+
+describe("workspaces.close (cmux running-process confirmation)", () => {
+  beforeEach(commonBeforeEach);
+  afterEach(commonAfterEach);
+
+  const list = JSON.stringify({ workspaces: [{ title: "TEAM-1", ref: "workspace:42" }] });
+  const confirmationRequired = new Error(
+    "Command failed: cmux workspace close workspace:42\nExit status: 1\nStderr:\nError: confirmation_required: Workspace has a running process; retry with --force",
+  );
+
+  it("reports in_use without forcing when cmux asks for confirmation", async () => {
+    runMock.mockReturnValueOnce(list).mockImplementationOnce(() => {
+      throw confirmationRequired;
+    });
+
+    await expect(workspaces.close(makeConfig(), "TEAM-1")).resolves.toStrictEqual({
+      kind: "in_use",
+    });
+
+    expect(runMock).toHaveBeenCalledWith("cmux", ["workspace", "close", "workspace:42"]);
+    expect(runMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("passes --force when the close is forced", async () => {
+    runMock.mockReturnValueOnce(list).mockReturnValue("");
+
+    await expect(
+      workspaces.close(makeConfig(), "TEAM-1", undefined, { force: true }),
+    ).resolves.toStrictEqual({ kind: "closed" });
+
+    expect(runMock).toHaveBeenCalledWith("cmux", ["workspace", "close", "workspace:42", "--force"]);
+  });
+
+  it("does not treat a forced close that still asks for confirmation as in_use", async () => {
+    runMock
+      .mockReturnValueOnce(list)
+      .mockImplementationOnce(() => {
+        throw confirmationRequired;
+      })
+      .mockReturnValueOnce(list);
+
+    await expect(
+      workspaces.close(makeConfig(), "TEAM-1", undefined, { force: true }),
+    ).rejects.toThrow("confirmation_required");
+  });
+
+  it("reports in_use when any duplicate is busy, after closing the rest", async () => {
+    runMock
+      .mockReturnValueOnce(
+        JSON.stringify({
+          workspaces: [
+            { title: "first", ref: "workspace:1", description: "groundcrew:TEAM-1" },
+            { title: "second", ref: "workspace:2", description: "groundcrew:TEAM-1" },
+          ],
+        }),
+      )
+      .mockImplementationOnce(() => {
+        throw confirmationRequired;
+      })
+      .mockReturnValue("");
+
+    await expect(workspaces.close(makeConfig(), "TEAM-1")).resolves.toStrictEqual({
+      kind: "in_use",
+    });
+
+    expect(runMock).toHaveBeenCalledWith("cmux", ["workspace", "close", "workspace:2"]);
+  });
+
+  it("reports in_use over a duplicate whose close failed and is still present", async () => {
+    const duplicates = JSON.stringify({
+      workspaces: [
+        { title: "first", ref: "workspace:1", description: "groundcrew:TEAM-1" },
+        { title: "second", ref: "workspace:2", description: "groundcrew:TEAM-1" },
+      ],
+    });
+    runMock
+      .mockReturnValueOnce(duplicates)
+      .mockImplementationOnce(() => {
+        throw confirmationRequired;
+      })
+      .mockImplementationOnce(() => {
+        throw new Error("permission denied");
+      })
+      .mockReturnValueOnce(duplicates);
+
+    await expect(workspaces.close(makeConfig(), "TEAM-1")).resolves.toStrictEqual({
+      kind: "in_use",
+    });
+  });
+
+  it("falls back to the legacy close-workspace verb on a cmux without workspace close", async () => {
+    runMock
+      .mockReturnValueOnce(list)
+      .mockImplementationOnce(() => {
+        throw new Error(
+          'Command failed: cmux workspace close workspace:42 --force\nExit status: 1\nStderr:\nError: unknown flag "--force"',
+        );
+      })
+      .mockReturnValue("");
+
+    await expect(
+      workspaces.close(makeConfig(), "TEAM-1", undefined, { force: true }),
+    ).resolves.toStrictEqual({ kind: "closed" });
+
+    expect(runMock).toHaveBeenLastCalledWith("cmux", [
+      "close-workspace",
+      "--workspace",
+      "workspace:42",
+    ]);
   });
 });
 
@@ -920,7 +1028,10 @@ describe("workspaces.interrupt", () => {
       kind: "missing",
     });
 
-    expect(runMock).not.toHaveBeenCalledWith("cmux", expect.arrayContaining(["close-workspace"]));
+    expect(runMock).not.toHaveBeenCalledWith(
+      "cmux",
+      expect.arrayContaining(["workspace", "close"]),
+    );
   });
 
   it("closes a live cmux workspace by id", async () => {
@@ -932,11 +1043,7 @@ describe("workspaces.interrupt", () => {
       kind: "interrupted",
     });
 
-    expect(runMock).toHaveBeenCalledWith("cmux", [
-      "close-workspace",
-      "--workspace",
-      "workspace-id",
-    ]);
+    expect(runMock).toHaveBeenCalledWith("cmux", ["workspace", "close", "workspace-id", "--force"]);
   });
 
   it("returns unavailable when the workspace backend cannot be probed", async () => {

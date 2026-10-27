@@ -336,7 +336,8 @@ export async function resumeWorkspace(
   } catch (error) {
     if (workspaceOpened) {
       try {
-        const result = await workspaces.close(config, task);
+        // Rollback closes the workspace it just launched, whose agent is still running.
+        const result = await workspaces.close(config, task, undefined, { force: true });
         if (result.kind === "unavailable") {
           const detail =
             result.error === undefined

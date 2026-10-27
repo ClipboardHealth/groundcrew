@@ -15,6 +15,7 @@ import {
   isSignalAborted,
   type OpenSpec,
   type WorkspaceAccessHint,
+  type WorkspaceCloseOptions,
   type WorkspaceCloseResult,
   type WorkspaceInterruptResult,
   type WorkspaceKind,
@@ -25,6 +26,7 @@ export type {
   OpenSpec,
   Workspace,
   WorkspaceAccessHint,
+  WorkspaceCloseOptions,
   WorkspaceCloseResult,
   WorkspaceInterruptResult,
   WorkspaceKind,
@@ -173,7 +175,8 @@ async function interruptWorkspace(
   if (!probe.names.has(name)) {
     return { kind: "missing" };
   }
-  const result = await workspaces.close(config, name, signal);
+  // Interrupting exists to stop the running agent, so a busy workspace is expected.
+  const result = await workspaces.close(config, name, signal, { force: true });
   if (result.kind === "unavailable") {
     return result.error === undefined
       ? { kind: "unavailable" }
@@ -192,9 +195,10 @@ export const workspaces = {
     config: ResolvedConfig,
     name: string,
     signal?: AbortSignal,
+    options?: WorkspaceCloseOptions,
   ): Promise<WorkspaceCloseResult> {
     const adapter = await adapterFor(config, signal);
-    return await adapter.close(name, signal);
+    return await adapter.close(name, signal, options);
   },
   interrupt: interruptWorkspace,
   accessHint: accessHintForWorkspace,
