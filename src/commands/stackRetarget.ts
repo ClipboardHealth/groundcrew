@@ -970,7 +970,6 @@ export function createStackRetarget(deps: StackRetargetDeps): StackRetarget {
         continue;
       }
       const { baseBranch, parentTask } = runState;
-      // oxlint-disable-next-line no-await-in-loop -- few stacked tasks per tick; sequential keeps git/gh load predictable.
       await retargetTask({
         config,
         entry,

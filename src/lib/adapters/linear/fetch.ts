@@ -210,7 +210,6 @@ async function fetchBoard(client: LinearClient, config: ResolvedConfig): Promise
   const stateTypes = [...ACTIONABLE_STATE_TYPES];
 
   for (;;) {
-    // oxlint-disable-next-line no-await-in-loop -- pagination cursor depends on the previous response
     const response: { data?: unknown } = await client.client.rawRequest(
       `query BoardIssues($stateTypes: [String!]!, $agentLabelPrefix: String!, $after: String) {
         issues(
@@ -475,7 +474,6 @@ export async function fetchBlockersForTask(arguments_: {
   let after: string | null = null;
 
   for (;;) {
-    // oxlint-disable-next-line no-await-in-loop -- pagination cursor depends on the previous response
     const response: { data?: unknown } = await client.client.rawRequest(
       `query IssueBlockers($id: String!, $after: String) {
         issue(id: $id) {
@@ -614,7 +612,6 @@ export async function fetchInProgressIssueCount(arguments_: {
   let after: string | null = null;
   let count = 0;
   for (;;) {
-    // oxlint-disable-next-line no-await-in-loop -- pagination cursor depends on the previous response
     const response: { data?: unknown } = await client.client.rawRequest(
       `query InProgressIssues($agentLabelPrefix: String!, $after: String) {
         issues(

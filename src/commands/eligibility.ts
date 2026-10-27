@@ -614,7 +614,6 @@ export async function classifyBlockers(
     probeParentBranch: memoizedProbeParentBranch(deps.probeParentBranch),
   };
   for (const issue of todo) {
-    // oxlint-disable-next-line no-await-in-loop -- one blocker check at a time mirrors the dispatcher's own "one workspace at a time" git serialization
     const verdict = await blockerVerdictFor(issue, config, memoizedDeps);
     if (verdict === undefined) {
       unblocked.push(issue);

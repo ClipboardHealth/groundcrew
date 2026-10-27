@@ -705,13 +705,11 @@ async function assertCanMarkDone(arguments_: {
     config: arguments_.config,
     issue: arguments_.issue,
   })) {
-    // oxlint-disable-next-line no-await-in-loop -- one git status per matching worktree keeps diagnostics deterministic.
     const dirtiness = await worktrees.probeWorkingTree({ worktreeDir: entry.dir });
     if (dirtiness.kind === "clean") {
       continue;
     }
     if (dirtiness.kind === "dirty") {
-      // oxlint-disable-next-line no-await-in-loop -- one PR lookup per dirty worktree keeps diagnostics deterministic.
       const hasPullRequest = await worktreeHasPullRequest({ config: arguments_.config, entry });
       if (hasPullRequest) {
         continue;

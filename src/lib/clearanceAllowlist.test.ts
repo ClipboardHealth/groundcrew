@@ -58,7 +58,6 @@ describe(clearanceAllowHostsFilesFromEnvironment, () => {
   });
 
   it("uses only the bundled allowlist when env-provided files are unset", () => {
-    // oxlint-disable-next-line unicorn/no-useless-undefined -- undefined is the unset signal here
     vi.stubEnv("CLEARANCE_ALLOW_HOSTS_FILES", undefined);
 
     const actual = clearanceAllowHostsFilesFromEnvironment();

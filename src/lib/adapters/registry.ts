@@ -33,7 +33,6 @@ export async function buildRegistry(
 ): Promise<Record<string, AdapterDefinition>> {
   const registry: Record<string, AdapterDefinition> = {};
   for (const name of directoryNames) {
-    // oxlint-disable-next-line no-await-in-loop -- adapter loading is sequential by design
     const def = await loader(name);
     if (def.kind !== name) {
       throw new Error(

@@ -35,7 +35,6 @@ async function withRetry<T>(
 ): Promise<T> {
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
     try {
-      // oxlint-disable-next-line no-await-in-loop -- retry loop sequences attempts deliberately
       return await function_();
     } catch (error) {
       /* v8 ignore next 2 @preserve -- fetch() warns-and-skips since PR#88; guard is a defensive no-op in practice */
@@ -54,7 +53,6 @@ async function withRetry<T>(
       const isRateLimit = message.includes("Rate limit");
       const delay = isRateLimit ? RATE_LIMIT_DELAY_MS : baseDelayMs * 2 ** attempt;
       log(`Retrying in ${delay / MS_PER_SECOND}s (attempt ${attempt + 1}/${maxRetries})...`);
-      // oxlint-disable-next-line no-await-in-loop -- backoff is intentionally sequential
       await sleep(delay, signal);
       if (signal?.aborted === true) {
         throw new WatchLoopShutdownError();
@@ -212,7 +210,6 @@ async function runWatchLoop(
   try {
     while (!shutdown.signal.aborted) {
       try {
-        // oxlint-disable-next-line no-await-in-loop -- watch loop ticks sequentially with a delay between
         await tick(shutdown.signal);
       } catch (error) {
         if (error instanceof WatchLoopShutdownError) {
@@ -234,7 +231,6 @@ async function runWatchLoop(
       if (shutdown.signal.aborted) {
         break;
       }
-      // oxlint-disable-next-line no-await-in-loop -- watch loop is intentionally serial
       await sleep(config.orchestrator.pollIntervalMilliseconds, shutdown.signal);
     }
   } finally {

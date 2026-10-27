@@ -338,7 +338,6 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     });
 
     for (const start of dispatchable) {
-      // oxlint-disable-next-line no-await-in-loop -- one workspace at a time avoids racing on git
       await startEligibleIssue(start, dryRun, signal);
     }
   }

@@ -250,7 +250,6 @@ export async function getUsageByAgent(
       continue;
     }
     try {
-      // oxlint-disable-next-line no-await-in-loop -- codexbar probes are intentionally sequential to avoid launching multiple CLI probes at once
       out[agent] = normalize(await codexbarUsage(definition, signal));
     } catch (error) {
       if (signal?.aborted === true) {

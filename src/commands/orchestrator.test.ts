@@ -349,7 +349,6 @@ function stopAfterMoreThanSleepCalls(count: number): void {
 
 async function flushMicrotasks(count = 10): Promise<void> {
   for (let index = 0; index < count; index += 1) {
-    // oxlint-disable-next-line no-await-in-loop -- deterministic test helper for promise chains
     await Promise.resolve();
   }
 }

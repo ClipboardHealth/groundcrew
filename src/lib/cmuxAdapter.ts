@@ -107,7 +107,6 @@ export const cmuxAdapter: Adapter = {
   accessHint(_name) {
     // cmux is a TUI; users surface workspaces by launching the cmux app,
     // not a shell command. No useful hint to emit.
-    // oxlint-disable-next-line unicorn/no-useless-undefined -- explicit signal that the backend has no hint
     return undefined;
   },
 };
@@ -375,7 +374,6 @@ async function closeAllCmuxMatches(
   const errors: unknown[] = [];
   for (const match of matches) {
     try {
-      // oxlint-disable-next-line no-await-in-loop -- sequential by design; failure re-lists shared cmux state
       const result = await closeCmuxMatch(match, signal);
       if (result.kind === "unavailable") {
         unavailable = result;

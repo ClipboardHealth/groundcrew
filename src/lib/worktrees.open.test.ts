@@ -218,7 +218,6 @@ describe(open, () => {
     mkdirSync(path.join(projectDir, "repo-a"));
     const config = makeConfig({ projectDir });
     runCommandMock.mockImplementation((_command, arguments_) => {
-      // oxlint-disable-next-line vitest/no-conditional-in-test -- the show-ref probe exits non-zero when the branch is not local
       if (hasArguments(arguments_, "show-ref", "--verify")) {
         throw new Error("not a local branch");
       }
@@ -260,7 +259,6 @@ describe(open, () => {
     const controller = new AbortController();
     controller.abort();
     runCommandMock.mockImplementation((_command, arguments_) => {
-      // oxlint-disable-next-line vitest/no-conditional-in-test -- the show-ref probe throws while the signal is aborted
       if (hasArguments(arguments_, "show-ref", "--verify")) {
         throw new Error("aborted probe");
       }

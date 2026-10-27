@@ -157,7 +157,6 @@ describe(create, () => {
     const config = makeConfig({ projectDir });
     runCommandMock.mockImplementation((_command, arguments_) => {
       throwWhenProbingBranch(arguments_);
-      // oxlint-disable-next-line vitest/no-conditional-in-test -- discriminator picks out the symbolic-ref probe so it returns origin/<branch>
       if (hasArguments(arguments_, "symbolic-ref", "refs/remotes/origin/HEAD")) {
         return "origin/main\n";
       }

@@ -14,7 +14,6 @@ function fakeSource(name: string, overrides: Partial<TaskSource> = {}): TaskSour
     listTasks: vi.fn<() => Promise<Issue[]>>().mockResolvedValue([]),
     getTask: vi.fn<(id: string) => Promise<Issue | null>>().mockResolvedValue(null),
     fetch: vi.fn<() => Promise<Issue[]>>().mockResolvedValue([]),
-    // eslint-disable-next-line unicorn/no-useless-undefined -- mockResolvedValue requires a value for non-void return type
     resolveOne: vi.fn<(id: string) => Promise<Issue | undefined>>().mockResolvedValue(undefined),
     markInProgress: vi.fn<(issue: Issue) => Promise<void>>().mockResolvedValue(),
     markInReview: vi

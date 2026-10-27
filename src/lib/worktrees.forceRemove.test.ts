@@ -55,7 +55,6 @@ describe("forceRemoveDirectory", () => {
     let attemptsMade = 0;
     const remove = vi.fn<(target: string) => void>(() => {
       attemptsMade += 1;
-      // oxlint-disable-next-line vitest/no-conditional-in-test -- simulate a transient ENOTEMPTY that clears after two tries.
       if (attemptsMade < 3) {
         throw errorWithCode("ENOTEMPTY");
       }

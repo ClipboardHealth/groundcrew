@@ -284,7 +284,6 @@ async function clearPullRequestFields(arguments_: {
     { key: LABELS_KEY, priority: LABELS_PRIORITY },
     { key: PULL_REQUESTS_KEY, priority: PULL_REQUESTS_PRIORITY },
   ]) {
-    // oxlint-disable-next-line no-await-in-loop -- three related status writes for one workspace; sequential keeps them from interleaving with another workspace's
     await applyField({
       workspaceId,
       key,
@@ -435,7 +434,6 @@ async function resolveTaskPullRequestsByWorkspace(arguments_: {
   const failedRepositories = new Set<string>();
   for (const [repository, representative] of representativeByRepository) {
     try {
-      // oxlint-disable-next-line no-await-in-loop -- one gh lookup per repository, shared by every matched task in it
       const pullRequests = await listPullRequests({
         cwd: representative.entry.dir,
         ...(signal === undefined ? {} : { signal }),
@@ -452,7 +450,6 @@ async function resolveTaskPullRequestsByWorkspace(arguments_: {
       failedWorkspaceIds.add(match.workspace.id);
       continue;
     }
-    // oxlint-disable-next-line no-await-in-loop -- one branch resolution per matched workspace; mirrors the per-repository gh lookup above
     const taskBranch = await effectiveBranchName({ config, entry: match.entry });
     /* v8 ignore next @preserve -- every non-failed repository was populated in the loop above, since every match's repository is added to representativeByRepository first */
     const repositoryPullRequests = pullRequestsByRepository.get(match.entry.repository) ?? [];
@@ -463,7 +460,6 @@ async function resolveTaskPullRequestsByWorkspace(arguments_: {
     }
 
     try {
-      // oxlint-disable-next-line no-await-in-loop -- one exact-branch fallback call per task whose PR fell outside the repository-wide window; sequential keeps it from interleaving with another task's status writes
       const fallbackPullRequests = await findPullRequestsForBranch({
         cwd: match.entry.dir,
         branchName: taskBranch,
@@ -544,9 +540,7 @@ export function createPrStageSync(deps: PrStageSyncDeps): PrStageSync {
       const matches = matchWorkspacesToTasks(workspaces, worktreeEntries);
       for (const match of matches) {
         try {
-          // oxlint-disable-next-line no-await-in-loop -- sequential per workspace, mirrors syncOnce
           const current = await deps.readCmuxStatus(match.workspace.id, signal);
-          // oxlint-disable-next-line no-await-in-loop -- sequential per workspace, mirrors syncOnce
           await writeTicketField({ workspace: match.workspace, current, deps, signal, counters });
         } catch (error) {
           outcome = "error";
@@ -624,7 +618,6 @@ export function createPrStageSync(deps: PrStageSyncDeps): PrStageSync {
       for (const match of matches) {
         const pullRequests = pullRequestsByWorkspace.get(match.workspace.id) ?? [];
         try {
-          // oxlint-disable-next-line no-await-in-loop -- sequential per workspace so one workspace's status calls never interleave with another's
           await syncWorkspace({
             match,
             labelNames: config.cmux.prStages.labels,

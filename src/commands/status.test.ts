@@ -103,7 +103,6 @@ const markInReview: TaskSource["markInReview"] = async () => ({ outcome: "applie
 
 async function flushMicrotasks(count = 10): Promise<void> {
   for (let index = 0; index < count; index += 1) {
-    // oxlint-disable-next-line no-await-in-loop -- test helper intentionally drains queued promise work.
     await Promise.resolve();
   }
 }
