@@ -239,7 +239,6 @@ describe(createPrStageSync, () => {
     it("logs a tickets-only error outcome and returns when listing workspaces fails", async () => {
       const config = makeConfig({ cmux: makeCmuxConfig({ enabled: false }) });
       const deps = makeDeps(config, {
-        // oxlint-disable-next-line unicorn/no-useless-undefined -- undefined is the listing-failed signal here
         listCmuxWorkspaces: vi.fn<ListCmuxWorkspaces>().mockResolvedValue(undefined),
       });
       const prStageSync = createPrStageSync(deps);
@@ -369,7 +368,6 @@ describe(createPrStageSync, () => {
     it("logs an error outcome and returns when listing workspaces fails", async () => {
       const config = makeConfig();
       const deps = makeDeps(config, {
-        // oxlint-disable-next-line unicorn/no-useless-undefined -- undefined is the listing-failed signal here
         listCmuxWorkspaces: vi.fn<ListCmuxWorkspaces>().mockResolvedValue(undefined),
       });
       const prStageSync = createPrStageSync(deps);

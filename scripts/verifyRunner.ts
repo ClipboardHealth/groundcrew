@@ -70,7 +70,6 @@ export async function runVerify(input: RunVerifyInput): Promise<RunVerifyResult>
   const exclusiveResults: CheckResult[] = [];
   for (const check of exclusiveChecks) {
     print(`▶ Running ${check.name} separately`);
-    // oxlint-disable-next-line no-await-in-loop -- exclusive checks intentionally avoid resource contention
     exclusiveResults.push(await runCheck({ check }));
   }
 

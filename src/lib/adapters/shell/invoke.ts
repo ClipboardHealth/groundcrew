@@ -73,7 +73,6 @@ export async function invokeShellCommand(args: InvokeArgs): Promise<InvokeResult
   return await new Promise<InvokeResult>((resolve, reject) => {
     const child = spawn("sh", ["-c", command], {
       cwd: args.cwd,
-      // oxlint-disable-next-line node/no-process-env -- subprocess inherits the parent's full env by design; user-supplied vars layer on top
       env: { ...process.env, ...args.env },
       stdio: ["pipe", "pipe", "pipe"],
     });

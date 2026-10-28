@@ -27,7 +27,6 @@ export function installCmuxAgentHooks(input: { agent: string; configDir: string 
 
   try {
     runCommand("cmux", ["hooks", input.agent, "install", "--yes"], {
-      // oxlint-disable-next-line node/no-process-env -- the cmux CLI must inherit PATH etc.; only the agent's config-dir var is overridden
       env: { ...process.env, [relocation.configDirEnv]: input.configDir },
       timeoutMs: CMUX_HOOKS_INSTALL_TIMEOUT_MS,
     });

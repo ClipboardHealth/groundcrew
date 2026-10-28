@@ -2161,7 +2161,6 @@ describe(setupWorkspaceCli, () => {
   });
 
   it("throws a clear error when the task is not found", async () => {
-    // oxlint-disable-next-line unicorn/no-useless-undefined -- explicit signal that resolveOne returns no match
     createBoardMock.mockReturnValueOnce(fakeBoard(undefined));
 
     await expect(setupWorkspaceCli("ghost-999")).rejects.toThrow(

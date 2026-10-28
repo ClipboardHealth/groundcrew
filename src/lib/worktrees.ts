@@ -910,7 +910,6 @@ export async function forceRemoveDirectory(
       if (attempt >= attempts || !isRecoverableRemovalError(error)) {
         throw error;
       }
-      // oxlint-disable-next-line no-await-in-loop -- retries are intentionally serial with a settle delay between attempts.
       await sleep(delayMs);
     }
   }
@@ -1087,7 +1086,6 @@ async function teardown(
   for (const entry of entries) {
     if (shouldCloseWorkspaceForTeardown(entry.task, workspaceProbe, liveNames, closedTasks)) {
       try {
-        // oxlint-disable-next-line no-await-in-loop -- teardown is intentionally sequential per task
         const closed = await closeWorkspaceForTeardown(config, entry.task, options?.signal);
         if (closed) {
           result.closed.push(entry.task);
@@ -1101,7 +1099,6 @@ async function teardown(
       closedTasks.add(entry.task);
     }
     try {
-      // oxlint-disable-next-line no-await-in-loop -- one worktree at a time avoids racing on git
       await remove(config, entry, { force, ...signalProperty(options?.signal) });
       result.removed.push(entry);
     } catch (error) {

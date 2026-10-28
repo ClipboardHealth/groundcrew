@@ -128,7 +128,6 @@ async function checkSourceProbes(config: ResolvedConfig): Promise<Check[]> {
   const checks: Check[] = [];
   for (const [index, source] of sources.entries()) {
     const shellReadProbe = shellReadProbeFor(rawSources[index]);
-    // oxlint-disable-next-line no-await-in-loop -- sequential keeps each verdict attributable to one source
     checks.push(await probeSource(source, shellReadProbe));
   }
   return checks;
@@ -351,7 +350,6 @@ export async function doctor(): Promise<boolean> {
   const toolTargets = gatherToolTargets(config);
   for (const { token, hint } of toolTargets) {
     const required = localCapability.ok;
-    // oxlint-disable-next-line no-await-in-loop -- doctor reports tools in deterministic order
     const check = await checkCmd(token, required, required ? hint : "required for local runs");
     checks.push(check);
   }

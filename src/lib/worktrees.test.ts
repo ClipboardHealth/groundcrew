@@ -391,7 +391,6 @@ describe(remove, () => {
     userInfoMock.mockReturnValue(makeUserInfo("paul"));
     // git status --porcelain reports one modified file.
     runCommandMock.mockImplementation((command, arguments_) =>
-      // oxlint-disable-next-line vitest/no-conditional-in-test -- the dirty-probe discriminator reports a modified file
       command === "git" && arguments_.includes("status") ? " M file.ts" : "",
     );
 
@@ -426,7 +425,6 @@ describe(remove, () => {
     userInfoMock.mockReturnValue(makeUserInfo("paul"));
     // The dirtiness probe (git status) fails, so cleanliness is unknown.
     runCommandMock.mockImplementation((command, arguments_) => {
-      // oxlint-disable-next-line vitest/no-conditional-in-test -- the status probe throws to force an "unknown" dirtiness
       if (command === "git" && arguments_.includes("status")) {
         throw new Error("git status failed");
       }
@@ -498,7 +496,6 @@ describe(remove, () => {
     userInfoMock.mockReturnValue(makeUserInfo("paul"));
     // Even if probed, the worktree would read as dirty — --force must skip it.
     runCommandMock.mockImplementation((command, arguments_) =>
-      // oxlint-disable-next-line vitest/no-conditional-in-test -- guards against an unexpected dirty-probe shell-out
       command === "git" && arguments_.includes("status") ? " M file.ts" : "",
     );
 
@@ -579,7 +576,6 @@ describe(remove, () => {
     // "worktree ... not found in repo ..."). With --force the caller has
     // opted into aggressive cleanup, so the host dir must still be scrubbed.
     runCommandMock.mockImplementation((command) => {
-      // oxlint-disable-next-line vitest/no-conditional-in-test -- the mock discriminates so only the template throws
       if (command === "sh") {
         throw new Error("remove failed: worktree 'paul-team-220' not found in repo 'billing'");
       }
@@ -623,7 +619,6 @@ describe(remove, () => {
     // must NOT silently mask the failure — the caller relies on it to notice
     // real provisioner problems (missing binary, permissions, etc.).
     runCommandMock.mockImplementation((command) => {
-      // oxlint-disable-next-line vitest/no-conditional-in-test -- the mock discriminates so only the template throws
       if (command === "sh") {
         throw new Error("remove failed: some other real problem");
       }
@@ -660,7 +655,6 @@ describe(remove, () => {
   it("remove with --force treats a missing scripted worktree as cleaned when the template fails", async () => {
     userInfoMock.mockReturnValue(makeUserInfo("paul"));
     runCommandMock.mockImplementation((command) => {
-      // oxlint-disable-next-line vitest/no-conditional-in-test -- the mock discriminates so only the template throws
       if (command === "sh") {
         throw new Error("remove failed: worktree 'paul-team-220' not found in repo 'billing'");
       }
@@ -880,9 +874,7 @@ describe(remove, () => {
     mkdirSync(path.join(projectDir, "repo-a-team-1"));
     const config = makeConfig({ projectDir });
     runCommandMock.mockImplementation((_cmd, arguments_) => {
-      // oxlint-disable-next-line jest/no-conditional-in-test -- discriminator selects the branch-D call to fail; mirrors the real branch-D failure shape
       const includesBranchDelete = Array.isArray(arguments_) && arguments_.includes("-D");
-      // oxlint-disable-next-line jest/no-conditional-in-test -- as above
       if (includesBranchDelete) {
         throw new Error("branch missing");
       }
@@ -908,11 +900,9 @@ describe(remove, () => {
     const config = makeConfig({ projectDir });
 
     runCommandMock.mockImplementation((_command, arguments_) => {
-      // oxlint-disable-next-line vitest/no-conditional-in-test -- discriminator selects the worktree-remove call to fail; status --porcelain reports a dirty tree.
       if (hasArguments(arguments_, "worktree", "remove")) {
         throw new Error("Command failed: git worktree remove\nExit status: 128");
       }
-      // oxlint-disable-next-line vitest/no-conditional-in-test -- as above
       if (hasArguments(arguments_, "status", "--porcelain")) {
         return " M src/foo.ts\nM  src/bar.ts\n?? src/new.ts\n?? src/other.ts\n";
       }
@@ -947,11 +937,9 @@ describe(remove, () => {
     const config = makeConfig({ projectDir });
 
     runCommandMock.mockImplementation((_command, arguments_) => {
-      // oxlint-disable-next-line vitest/no-conditional-in-test -- single modified file produces singular "modified file"/"it" wording.
       if (hasArguments(arguments_, "worktree", "remove")) {
         throw new Error("remove failed");
       }
-      // oxlint-disable-next-line vitest/no-conditional-in-test -- as above
       if (hasArguments(arguments_, "status", "--porcelain")) {
         return " M src/foo.ts\n";
       }
@@ -979,11 +967,9 @@ describe(remove, () => {
     const config = makeConfig({ projectDir });
 
     runCommandMock.mockImplementation((_command, arguments_) => {
-      // oxlint-disable-next-line vitest/no-conditional-in-test -- single untracked file produces singular "untracked file"/"it" wording.
       if (hasArguments(arguments_, "worktree", "remove")) {
         throw new Error("remove failed");
       }
-      // oxlint-disable-next-line vitest/no-conditional-in-test -- as above
       if (hasArguments(arguments_, "status", "--porcelain")) {
         return "?? src/new.ts\n";
       }
@@ -1011,15 +997,12 @@ describe(remove, () => {
     const config = makeConfig({ projectDir });
 
     runCommandMock.mockImplementation((_command, arguments_) => {
-      // oxlint-disable-next-line vitest/no-conditional-in-test -- discriminator selects the worktree-remove call to fail; status fails because the dir has no .git.
       if (hasArguments(arguments_, "worktree", "remove")) {
         throw new Error("Command failed: git worktree remove\nExit status: 128");
       }
-      // oxlint-disable-next-line vitest/no-conditional-in-test -- as above
       if (hasArguments(arguments_, "status", "--porcelain")) {
         throw new Error("not a git repository");
       }
-      // oxlint-disable-next-line vitest/no-conditional-in-test -- as above
       if (hasArguments(arguments_, "worktree", "list", "--porcelain")) {
         return `worktree ${path.join(projectDir, "repo-a")}\nHEAD abc123\nbranch refs/heads/main\n`;
       }
@@ -1055,15 +1038,12 @@ describe(remove, () => {
     const config = makeConfig({ projectDir });
 
     runCommandMock.mockImplementation((_command, arguments_) => {
-      // oxlint-disable-next-line vitest/no-conditional-in-test -- both the dirtiness and registration probes fail; we cannot prove the orphan condition, so rethrow.
       if (hasArguments(arguments_, "worktree", "remove")) {
         throw new Error("original remove failure");
       }
-      // oxlint-disable-next-line vitest/no-conditional-in-test -- as above
       if (hasArguments(arguments_, "status", "--porcelain")) {
         throw new Error("status probe blew up");
       }
-      // oxlint-disable-next-line vitest/no-conditional-in-test -- as above
       if (hasArguments(arguments_, "worktree", "list", "--porcelain")) {
         throw new Error("worktree list blew up");
       }
@@ -1087,15 +1067,12 @@ describe(remove, () => {
     const config = makeConfig({ projectDir });
 
     runCommandMock.mockImplementation((_command, arguments_) => {
-      // oxlint-disable-next-line vitest/no-conditional-in-test -- dirtiness probe is unavailable but worktree list reports a real working tree; the orphan explanation would be wrong, so rethrow.
       if (hasArguments(arguments_, "worktree", "remove")) {
         throw new Error("registered but still failed");
       }
-      // oxlint-disable-next-line vitest/no-conditional-in-test -- as above
       if (hasArguments(arguments_, "status", "--porcelain")) {
         throw new Error("status probe blew up");
       }
-      // oxlint-disable-next-line vitest/no-conditional-in-test -- as above
       if (hasArguments(arguments_, "worktree", "list", "--porcelain")) {
         return `worktree ${path.join(projectDir, "repo-a")}\nHEAD abc123\nbranch refs/heads/main\n\nworktree ${path.join(projectDir, "repo-a-team-1")}\nHEAD def456\nbranch refs/heads/dev-team-1\n`;
       }
@@ -1119,7 +1096,6 @@ describe(remove, () => {
     const config = makeConfig({ projectDir });
 
     runCommandMock.mockImplementation((_command, arguments_) => {
-      // oxlint-disable-next-line vitest/no-conditional-in-test -- discriminator selects the worktree-remove call to fail; status --porcelain returns clean.
       if (hasArguments(arguments_, "worktree", "remove")) {
         throw new Error("git worktree remove failed for some other reason");
       }
@@ -1144,11 +1120,9 @@ describe(remove, () => {
     const config = makeConfig({ projectDir });
 
     runCommandMock.mockImplementation((_command, arguments_) => {
-      // oxlint-disable-next-line vitest/no-conditional-in-test -- forced worktree remove fails after Git has already deregistered the path.
       if (hasArguments(arguments_, "worktree", "remove")) {
         throw new Error("fatal: is not a working tree");
       }
-      // oxlint-disable-next-line vitest/no-conditional-in-test -- the parent repo no longer lists the leftover path.
       if (hasArguments(arguments_, "worktree", "list", "--porcelain")) {
         return `worktree ${path.join(projectDir, "repo-a")}\nHEAD abc123\nbranch refs/heads/main\n`;
       }
@@ -1184,11 +1158,9 @@ describe(remove, () => {
     const config = makeConfig({ projectDir });
 
     runCommandMock.mockImplementation((_command, arguments_) => {
-      // oxlint-disable-next-line vitest/no-conditional-in-test -- forced worktree remove fails after Git has already deregistered the path.
       if (hasArguments(arguments_, "worktree", "remove")) {
         throw new Error("fatal: is not a working tree");
       }
-      // oxlint-disable-next-line vitest/no-conditional-in-test -- the parent repo no longer lists the leftover path.
       if (hasArguments(arguments_, "worktree", "list", "--porcelain")) {
         return `worktree ${path.join(projectDir, "repo-a")}\nHEAD abc123\nbranch refs/heads/main\n`;
       }
@@ -1218,11 +1190,9 @@ describe(remove, () => {
     const config = makeConfig({ projectDir });
 
     runCommandMock.mockImplementation((_command, arguments_) => {
-      // oxlint-disable-next-line vitest/no-conditional-in-test -- discriminator fails the worktree-remove call even with --force.
       if (hasArguments(arguments_, "worktree", "remove")) {
         throw new Error("forced remove still failed");
       }
-      // oxlint-disable-next-line vitest/no-conditional-in-test -- the failed forced remove still targets a registered worktree.
       if (hasArguments(arguments_, "worktree", "list", "--porcelain")) {
         return `worktree ${path.join(projectDir, "repo-a")}\nHEAD abc123\nbranch refs/heads/main\n\nworktree ${path.join(projectDir, "repo-a-team-1")}\nHEAD def456\nbranch refs/heads/dev-team-1\n`;
       }
@@ -1260,7 +1230,6 @@ describe(remove, () => {
     controller.abort();
     const config = makeConfig({ projectDir });
     runCommandMock.mockImplementation((_cmd, arguments_) => {
-      // oxlint-disable-next-line jest/no-conditional-in-test -- this selects the best-effort branch cleanup command.
       if (Array.isArray(arguments_) && arguments_.includes("-D")) {
         throw new Error("interrupted branch delete");
       }
@@ -1681,11 +1650,8 @@ describe("worktrees.probeWorkingTree", () => {
     // vi.stubEnv with undefined removes the var; neutralizes an inherited
     // GIT_DIR (e.g. from a pre-push hook) that would otherwise override the
     // `git -C <tempdir>` flag inside probeWorktreeDirtiness.
-    // oxlint-disable-next-line unicorn/no-useless-undefined -- undefined is the unset signal here
     vi.stubEnv("GIT_DIR", undefined);
-    // oxlint-disable-next-line unicorn/no-useless-undefined
     vi.stubEnv("GIT_WORK_TREE", undefined);
-    // oxlint-disable-next-line unicorn/no-useless-undefined
     vi.stubEnv("GIT_INDEX_FILE", undefined);
     // Restore the real runCommandAsync for these tests so the probe actually
     // shells out to git against a real temp repo.
@@ -1864,11 +1830,9 @@ describe("multi-directory worktrees", () => {
     });
 
     runCommandMock.mockImplementation((_command, arguments_) => {
-      // oxlint-disable-next-line vitest/no-conditional-in-test -- forced worktree remove fails after Git has already deregistered the path.
       if (hasArguments(arguments_, "worktree", "remove")) {
         throw new Error("fatal: is not a working tree");
       }
-      // oxlint-disable-next-line vitest/no-conditional-in-test -- the override repo no longer lists the orphaned worktree path.
       if (hasArguments(arguments_, "worktree", "list", "--porcelain")) {
         return `worktree ${repoDir}\nHEAD abc123\nbranch refs/heads/main\n`;
       }

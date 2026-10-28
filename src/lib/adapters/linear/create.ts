@@ -78,7 +78,6 @@ export async function createLinearIssue(
   });
 
   for (const dependency of input.dependencies) {
-    // oxlint-disable-next-line no-await-in-loop -- relation creation targets the issue created above and should fail fast in input order
     await createBlockedByRelation({
       client,
       dependency,

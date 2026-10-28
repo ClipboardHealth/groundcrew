@@ -18,7 +18,6 @@ export async function recordCleanedUpRuns(
       const runState = readRunState(config, entry.task);
       removeRunState(config, entry.task);
       if (runState?.baseBranch !== undefined && runState.parentTask !== undefined) {
-        // oxlint-disable-next-line no-await-in-loop -- few stacked tasks per teardown; sequential keeps git load predictable.
         await reclaimStackParentBranch(config, {
           repository: entry.repository,
           parentTask: runState.parentTask,

@@ -143,7 +143,6 @@ export function createReviewer(deps: ReviewerDeps): Reviewer {
     }
 
     for (const issue of candidates) {
-      // oxlint-disable-next-line no-await-in-loop -- few candidates per tick; sequential keeps gh load low.
       await advanceIfReviewable({
         issue,
         worktreeEntries,
@@ -173,15 +172,13 @@ export function createReviewer(deps: ReviewerDeps): Reviewer {
       const branchName =
         reviewerConfig === undefined
           ? entry.branchName
-          : // oxlint-disable-next-line no-await-in-loop -- one git lookup per worktree; a task almost always has one entry.
-            await effectiveBranchName({ config: reviewerConfig, entry });
+          : await effectiveBranchName({ config: reviewerConfig, entry });
       // The injected lookup is contracted never to reject (failures resolve to
       // []), but we still guard it so one bad lookup can never abort the tick
       // and starve the other candidates. A failure means "can't tell yet" →
       // skip this worktree and retry next tick.
       let pullRequests: readonly PullRequestSummary[];
       try {
-        // oxlint-disable-next-line no-await-in-loop -- a task almost always has one worktree; sequential lookups are fine.
         pullRequests = await findPullRequests({
           cwd: entry.dir,
           branchName,
@@ -207,7 +204,6 @@ export function createReviewer(deps: ReviewerDeps): Reviewer {
         });
         return;
       }
-      // oxlint-disable-next-line no-await-in-loop -- single write-back then return; never iterates past the first actionable worktree.
       await advance({
         issue,
         task,

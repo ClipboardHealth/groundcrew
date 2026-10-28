@@ -125,7 +125,6 @@ export const zellijAdapter: Adapter = {
         return [];
       }
       debug(`zellij query-tab-names failed: ${errorMessage(error)}`);
-      // oxlint-disable-next-line unicorn/no-useless-undefined -- undefined marks the workspace backend as unavailable.
       return undefined;
     }
     return parseTabNames(output).map((workspace) =>

@@ -5,7 +5,6 @@ export default defineConfig(
   createOxlintConfig({
     localConfig: {
       options: {
-        reportUnusedDisableDirectives: "error",
         typeAware: true,
         typeCheck: true,
       },

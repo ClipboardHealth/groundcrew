@@ -224,7 +224,6 @@ describe(upgradeCli, () => {
   });
 
   it("falls back to a generic success when the version reads fail", async () => {
-    // oxlint-disable-next-line unicorn/no-useless-undefined -- exercises the fallback path
     const readInstalledVersion = vi.fn<ReadInstalledVersionFn>().mockReturnValue(undefined);
 
     await upgradeCli([], makeOptions({ readInstalledVersion }));
@@ -236,7 +235,6 @@ describe(upgradeCli, () => {
   it("reports the new version when only the post-install read succeeds", async () => {
     const readInstalledVersion = vi
       .fn<ReadInstalledVersionFn>()
-      // oxlint-disable-next-line unicorn/no-useless-undefined -- first read fails, second succeeds
       .mockReturnValueOnce(undefined)
       .mockReturnValueOnce("4.3.0");
 
@@ -326,7 +324,6 @@ describe(createDefaultUpgradeCliOptions, () => {
   });
 
   it("resolves npmBin=undefined and skips npm root -g when npm is missing", async () => {
-    // oxlint-disable-next-line unicorn/no-useless-undefined -- exercises the npmBin === undefined branch
     whichMock.mockResolvedValue(undefined);
 
     const options = await createDefaultUpgradeCliOptions({

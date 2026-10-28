@@ -220,7 +220,6 @@ async function acquireLock(lockPath: string, maxAttempts = 40, delayMs = 50): Pr
       }
       /* v8 ignore next 5 @preserve -- retry sleep requires concurrent lock ownership, untestable in unit tests */
       if (attempt + 1 < maxAttempts) {
-        // oxlint-disable-next-line no-await-in-loop -- polling lock acquisition
         await new Promise<void>((resolve) => {
           setTimeout(resolve, delayMs);
         });

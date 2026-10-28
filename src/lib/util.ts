@@ -202,7 +202,6 @@ export function logEvent(event: string, fields: Record<string, LogEventFieldValu
 }
 
 export function readEnvironmentVariable(name: string): string | undefined {
-  // oxlint-disable-next-line node/no-process-env -- Centralized environment accessor.
   return process.env[name];
 }
 

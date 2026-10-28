@@ -140,7 +140,6 @@ describe(create, () => {
     const config = makeConfig({ projectDir });
     runCommandMock.mockImplementation((_command, arguments_) => {
       throwWhenProbingBranch(arguments_);
-      // oxlint-disable-next-line vitest/no-conditional-in-test -- discriminator picks out the symbolic-ref probe so it returns origin/<branch>
       if (hasArguments(arguments_, "symbolic-ref", "refs/remotes/origin/HEAD")) {
         return "origin/main\n";
       }
@@ -250,7 +249,6 @@ describe(create, () => {
     const config = makeConfig({ projectDir });
     runCommandMock.mockImplementation((_command, arguments_) => {
       throwWhenProbingBranch(arguments_);
-      // oxlint-disable-next-line vitest/no-conditional-in-test -- discriminator picks out the symbolic-ref probe so it returns origin/<branch>
       if (hasArguments(arguments_, "symbolic-ref", "refs/remotes/origin/HEAD")) {
         return "origin/main\n";
       }
@@ -290,7 +288,6 @@ describe(create, () => {
     const config = makeConfig({ projectDir });
     runCommandMock.mockImplementation((_command, arguments_) => {
       throwWhenProbingBranch(arguments_);
-      // oxlint-disable-next-line vitest/no-conditional-in-test -- discriminator picks out the symbolic-ref probe so it returns origin/<branch>
       if (hasArguments(arguments_, "symbolic-ref", "refs/remotes/origin/HEAD")) {
         return "origin/main\n";
       }
@@ -330,7 +327,6 @@ describe(create, () => {
     const config = makeConfig({ projectDir });
     runCommandMock.mockImplementation((_command, arguments_) => {
       throwWhenProbingBranch(arguments_);
-      // oxlint-disable-next-line vitest/no-conditional-in-test -- discriminator reports an origin/main-backed repo
       if (hasArguments(arguments_, "symbolic-ref", "refs/remotes/origin/HEAD")) {
         return "origin/main\n";
       }
@@ -352,7 +348,6 @@ describe(create, () => {
     const config = makeConfig({ projectDir });
     runCommandMock.mockImplementation((_command, arguments_) => {
       throwWhenProbingBranch(arguments_);
-      // oxlint-disable-next-line vitest/no-conditional-in-test -- discriminator picks out the symbolic-ref probe so it reports a master-backed repo
       if (hasArguments(arguments_, "symbolic-ref", "refs/remotes/origin/HEAD")) {
         return "origin/master\n";
       }
@@ -393,7 +388,6 @@ describe(create, () => {
     });
     runCommandMock.mockImplementation((_command, arguments_) => {
       throwWhenProbingBranch(arguments_);
-      // oxlint-disable-next-line vitest/no-conditional-in-test -- mirrors `git symbolic-ref` exit status 1 when refs/remotes/origin/HEAD is unset
       if (hasArguments(arguments_, "symbolic-ref", "refs/remotes/origin/HEAD")) {
         throw new Error(
           "Command failed: git symbolic-ref --short refs/remotes/origin/HEAD\nExit status: 1",
