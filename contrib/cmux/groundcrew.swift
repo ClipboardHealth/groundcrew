@@ -369,10 +369,14 @@ func lastSegment(_ s, _ sep) -> String {
 func repoName(_ w, _ ticket) -> String {
   if let d = w.directory {
     let folder = lastSegment(d, "/")
-    if ticket == "" {
+    let suffix = "-" + ticket.lowercased()
+    if ticket == "" || !folder.hasSuffix(suffix) {
       return folder
     }
-    return folder.replacingOccurrences(of: "-" + ticket.lowercased(), with: "")
+    // The interpreter has no string slicing; "/" can't occur inside a path
+    // segment, so anchoring on it removes only the trailing match.
+    let anchored = folder + "/"
+    return anchored.replacingOccurrences(of: suffix + "/", with: "")
   }
   return ""
 }

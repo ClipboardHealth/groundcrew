@@ -167,6 +167,17 @@ import Testing
         #expect(!rendered.contains("attendance-policy-tg-5057"))
     }
 
+    @Test func rowKeepsTicketTextThatIsNotTheFolderSuffix() throws {
+        guard try source() != nil else { return }
+        let w = workspace(
+            ticket: "TG-5057",
+            directory: "/Users/jason/Documents/work/ClipboardHealth/repo-tg-5057-extra"
+        )
+        let rendered = texts(try render([w]))
+        #expect(rendered.contains("repo-tg-5057-extra"))
+        #expect(!rendered.contains("repo-extra"))
+    }
+
     @Test func rowRendersFolderNameWhenNoTicket() throws {
         guard try source() != nil else { return }
         let w = workspace(
