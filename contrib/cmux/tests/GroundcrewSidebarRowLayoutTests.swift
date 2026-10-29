@@ -3,10 +3,11 @@ import Testing
 @testable import CmuxSwiftRender
 
 /// Drives the groundcrew sidebar's redesigned task row (title + horizontal
-/// agent-icon strip on line 1, ticket/PR pills on line 2) against synthetic
-/// workspace snapshots. The per-row stage badge, directory line, per-agent
-/// text rows, and native status line were all removed in favor of the
-/// section header (stage) and a compact icon strip (agents). Set
+/// agent-icon strip on line 1, ticket pill + repo name and PR pills below)
+/// against synthetic workspace snapshots. The per-row stage badge, full
+/// directory line, per-agent text rows, and native status line were all
+/// removed in favor of the section header (stage) and a compact icon strip
+/// (agents). Set
 /// GROUNDCREW_SIDEBAR_PATH to the sidebar file under test.
 @Suite struct GroundcrewSidebarRowLayoutTests {
     private let interp = SwiftViewInterpreter()
@@ -151,6 +152,41 @@ import Testing
         let rendered = texts(try render([w]))
         #expect(!rendered.contains("work/some-repo"))
         #expect(!rendered.contains("/Users/jason/Documents/work/some-repo"))
+    }
+
+    // MARK: - Repo name sits beside the ticket pill
+
+    @Test func rowRendersRepoNameWithTicketSuffixStripped() throws {
+        guard try source() != nil else { return }
+        let w = workspace(
+            ticket: "TG-5057",
+            directory: "/Users/jason/Documents/work/ClipboardHealth/attendance-policy-tg-5057"
+        )
+        let rendered = texts(try render([w]))
+        #expect(rendered.contains("attendance-policy"))
+        #expect(!rendered.contains("attendance-policy-tg-5057"))
+    }
+
+    @Test func rowKeepsTicketTextThatIsNotTheFolderSuffix() throws {
+        guard try source() != nil else { return }
+        let w = workspace(
+            ticket: "TG-5057",
+            directory: "/Users/jason/Documents/work/ClipboardHealth/repo-tg-5057-extra"
+        )
+        let rendered = texts(try render([w]))
+        #expect(rendered.contains("repo-tg-5057-extra"))
+        #expect(!rendered.contains("repo-extra"))
+    }
+
+    @Test func rowRendersFolderNameWhenNoTicket() throws {
+        guard try source() != nil else { return }
+        let w = workspace(
+            ticket: "",
+            directory: "/Users/jason/Documents/work/ClipboardHealth/open-shifts-babysit-6195",
+            pr: pr(url: "https://github.com/clipboard-health/open-shifts/pull/6195")
+        )
+        let rendered = texts(try render([w]))
+        #expect(rendered.contains("open-shifts-babysit-6195"))
     }
 
     // MARK: - Native status line is gone

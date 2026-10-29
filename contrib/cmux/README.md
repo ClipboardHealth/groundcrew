@@ -2,7 +2,9 @@
 
 A [custom cmux sidebar](https://cmux.com/docs/custom-sidebars) that groups crew tasks by PR review
 stage, with a compact row per task: title and a horizontal agent-icon strip on the first line, then
-the ticket pill and one line per pull request the workspace has open or recently closed.
+the ticket pill beside the repo name, and one line per pull request the workspace has open or
+recently closed. The repo name is the workspace directory's last segment with the crew worktree's
+`-<ticket>` suffix removed.
 
 ## Install
 
