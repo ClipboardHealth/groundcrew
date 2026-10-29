@@ -89,7 +89,7 @@
     "jscpd": "5.4.2",
     "knip": "6.42.1",
     "lint-staged": "17.6.0",
-    "markdownlint-cli2": "0.23.3",
+    "markdownlint-cli2": "0.24.0",
     "nx": "23.1.0",
     "oxfmt": "0.63.0",
     "oxlint": "1.78.0",
