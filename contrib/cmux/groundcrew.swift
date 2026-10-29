@@ -364,6 +364,19 @@ func lastSegment(_ s, _ sep) -> String {
   return parts[parts.count - 1]
 }
 
+// crew worktrees sit at <parent>/<repo>-<ticket>, so dropping the ticket
+// suffix names the repo rather than the worktree.
+func repoName(_ w, _ ticket) -> String {
+  if let d = w.directory {
+    let folder = lastSegment(d, "/")
+    if ticket == "" {
+      return folder
+    }
+    return folder.replacingOccurrences(of: "-" + ticket.lowercased(), with: "")
+  }
+  return ""
+}
+
 // pr-stage-sync writes crew_stage/crew_ticket/crew_labels only on change,
 // plus one crew_poller_heartbeat per pass (not per task) — on its own
 // workspace when the watch loop runs inside one, else on a matched task
@@ -622,6 +635,7 @@ func taskRow(_ r, _ now, _ pulse) -> some View {
   let prEntries = r.prEntries
   let rowMenuPrUrl = r.menuPrUrl
   let hasTicketPill = ticket != ""
+  let repo = r.repo
   HStack(spacing: 0) {
     Rectangle().fill(color).frame(width: 3)
     VStack(alignment: .leading, spacing: 4) {
@@ -641,11 +655,22 @@ func taskRow(_ r, _ now, _ pulse) -> some View {
       }
 
       VStack(alignment: .leading, spacing: 2) {
-        if hasTicketPill {
-          Button(action: { openURL("linear://linear.app/clipboardhealth/issue/" + ticket) }) {
-            HStack(spacing: 4) {
-              Image(systemName: "ticket")
-              Text(ticket).font(.caption)
+        if hasTicketPill || repo != "" {
+          HStack(spacing: 8) {
+            if hasTicketPill {
+              Button(action: { openURL("linear://linear.app/clipboardhealth/issue/" + ticket) }) {
+                HStack(spacing: 4) {
+                  Image(systemName: "ticket")
+                  Text(ticket).font(.caption)
+                }
+              }
+            }
+            if repo != "" {
+              HStack(spacing: 4) {
+                Image(systemName: "folder").font(.caption).foregroundColor(.secondary)
+                Text(repo).font(.caption).foregroundColor(.secondary).lineLimit(1)
+              }
+              .help(repo)
             }
           }
         }
@@ -789,8 +814,9 @@ VStack(alignment: .leading, spacing: 8) {
     let liveAgents = liveAgentsOf(w, now)
     let stage = rowStage(w, liveAgents, now, stagesFresh)
     let prEntries = crewPrEntries(w)
+    let ticket = crewTicket(w)
     [
-      "w": w, "color": stageBadgeColor(stage), "stage": stage, "ticket": crewTicket(w),
+      "w": w, "color": stageBadgeColor(stage), "stage": stage, "ticket": ticket, "repo": repoName(w, ticket),
       "agents": liveAgents, "prEntries": prEntries, "menuPrUrl": menuPrUrl(w, prEntries),
     ]
   }
