@@ -4,27 +4,27 @@
 
 Read the rule files relevant to the code you're changing or reviewing.
 
-| Rule                    | File                                  | When to Read                                                                                                                 |
-| ----------------------- | ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| AI Rules                | .rules/common/aiRules.md              | Editing Clipboard agent instructions: shared rules, repository overlays, or generated .rules, AGENTS.md, and CLAUDE.md files |
-| CI Runners              | .rules/common/ciRunners.md            | Writing or editing GitHub Actions workflows: choosing runs-on runners, runner OS and egress constraints                      |
-| Comments and Copy       | .rules/common/commentsAndCopy.md      | Writing code comments, docs, UI or notification copy, or identifier names                                                    |
-| Configuration           | .rules/common/configuration.md        | Adding configuration: choosing SSM, @clipboard-health/config, LaunchDarkly, or the database                                  |
-| Container Registry      | .rules/common/containerRegistry.md    | Choosing or pulling a container image: Dockerfile FROM, Compose services, CI workflow images                                 |
-| Core Libraries          | .rules/common/coreLibraries.md        | Adding dependencies, implementing functionality, or debugging errors involving a @clipboard-health/* library                 |
-| Date & Time             | .rules/common/dateTime.md             | Working with dates, times, timezones, or date comparisons                                                                    |
-| Dependencies            | .rules/common/dependencies.md         | Adding an npm package: license, overlap with installed packages, download thresholds, PR evaluation                          |
-| Error Handling          | .rules/common/errorHandling.md        | Returning or throwing errors: ServiceResult, ServiceError, ERROR_CODES, toError                                              |
-| Feature Flags           | .rules/common/featureFlags.md         | Creating or managing feature flags: naming, lifecycle, targeting rules, SDK usage, Zod schemas                               |
-| Git Workflow            | .rules/common/gitWorkflow.md          | Writing commit messages, PR titles and descriptions, or reviewing pull requests                                              |
-| Clipboard Context       | .rules/common/groundtruth.md          | Making engineering decisions that depend on Clipboard-specific context                                                       |
-| Library Authoring       | .rules/common/libraryAuthoring.md     | Authoring shared library code: @clipboard-health/* packages or shared library modules within services (e.g., src/lib)        |
-| Local Checks            | .rules/common/localChecks.md          | Running type checks, lint, or tests locally to verify a change                                                               |
-| Logging & Observability | .rules/common/loggingObservability.md | Adding logging, metrics, monitoring, or observability: levels, context, PII, Datadog                                         |
-| Rules Engine            | .rules/common/rulesEngine.md          | Writing or modifying @clipboard-health/rules-engine rule functions                                                           |
-| Security                | .rules/common/security.md             | Handling secrets or API keys: storage, naming, hashing, or passing one to a command                                          |
-| Testing                 | .rules/common/testing.md              | Writing unit tests: conventions, naming, structure                                                                           |
-| TypeScript              | .rules/common/typeScript.md           | Writing ANY TypeScript code                                                                                                  |
+| Rule                    | File                                  | When to Read                                                                                                                                                    |
+| ----------------------- | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| AI Rules                | .rules/common/aiRules.md              | Creating or editing agent-facing docs (shared rules, guides, overlays, skills, AGENTS.md, CLAUDE.md): writing-for-agents skill, sources of truth, sync          |
+| CI Runners              | .rules/common/ciRunners.md            | Writing or editing GitHub Actions workflows or actions: choosing runs-on runners, runner OS and egress constraints, checkout history depth, the action template |
+| Comments and Copy       | .rules/common/commentsAndCopy.md      | Writing code comments, docs, UI or notification copy, or identifier names                                                                                       |
+| Configuration           | .rules/common/configuration.md        | Adding configuration: choosing SSM, @clipboard-health/config, LaunchDarkly, or the database                                                                     |
+| Container Registry      | .rules/common/containerRegistry.md    | Choosing or pulling a container image: Dockerfile FROM, Compose services, CI workflow images                                                                    |
+| Core Libraries          | .rules/common/coreLibraries.md        | Adding dependencies, implementing functionality, or debugging errors involving a @clipboard-health/* library                                                    |
+| Date & Time             | .rules/common/dateTime.md             | Working with dates, times, timezones, or date comparisons                                                                                                       |
+| Dependencies            | .rules/common/dependencies.md         | Adding an npm package: license, overlap with installed packages, download thresholds, PR evaluation                                                             |
+| Error Handling          | .rules/common/errorHandling.md        | Returning or throwing errors: ServiceResult, ServiceError, ERROR_CODES, toError, HTTP handler error responses                                                   |
+| Feature Flags           | .rules/common/featureFlags.md         | Creating or managing feature flags: naming, lifecycle, targeting rules, SDK usage, Zod schemas                                                                  |
+| Git Workflow            | .rules/common/gitWorkflow.md          | Writing commit messages, PR titles and descriptions, or reviewing pull requests                                                                                 |
+| Clipboard Context       | .rules/common/groundtruth.md          | Making engineering decisions that depend on Clipboard-specific context                                                                                          |
+| Library Authoring       | .rules/common/libraryAuthoring.md     | Authoring shared library code: @clipboard-health/* packages or shared library modules within services (e.g., src/lib)                                           |
+| Local Checks            | .rules/common/localChecks.md          | Running type checks, lint, or tests locally to verify a change                                                                                                  |
+| Logging & Observability | .rules/common/loggingObservability.md | Adding logging, metrics, monitoring, or observability: loggers, levels, context, PII, Datadog, Error Tracking                                                   |
+| Rules Engine            | .rules/common/rulesEngine.md          | Writing or modifying @clipboard-health/rules-engine rule functions                                                                                              |
+| Security                | .rules/common/security.md             | Handling secrets or API keys: storage, naming, hashing, or passing one to a command                                                                             |
+| Testing                 | .rules/common/testing.md              | Writing unit tests: conventions, naming, structure                                                                                                              |
+| TypeScript              | .rules/common/typeScript.md           | Writing ANY TypeScript code                                                                                                                                     |
 
 <!-- Source: ./OVERLAY.md -->
 
@@ -33,8 +33,7 @@ Read the rule files relevant to the code you're changing or reviewing.
 - **CLI behavior:** use red-green TDD through the local npm scripts in
   [`docs/development.md`](./docs/development.md). The globally installed `crew` runs the
   published version, not the checkout.
-- **Validation:** for changes outside `v2/`, run `node --run verify` from the repository root.
-  Changes in the independent v2 workspace follow [`v2/AGENTS.md`](./v2/AGENTS.md).
+- **Validation:** run `node --run verify` from the repository root.
 - **Coverage exclusions:** Vite/esbuild strips plain V8 hints during coverage remapping. For
   genuinely unreachable code, use `/* v8 ignore next @preserve */` for a statement or function
   and `/* v8 ignore else @preserve */` before an `if` whose else branch is unreachable.

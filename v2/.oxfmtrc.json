@@ -1,5 +1,0 @@
-{
-  "$schema": "../node_modules/oxfmt/configuration_schema.json",
-  "experimentalSortPackageJson": true,
-  "ignorePatterns": ["dist", "node_modules", "test-output"]
-}
