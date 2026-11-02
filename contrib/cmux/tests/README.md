@@ -6,9 +6,10 @@ the context-menu actions can be checked without launching cmux itself.
 
 - `GroundcrewSidebarStageTests.swift` — stage rule order, section grouping, the stale-poller
   caption and its feature-off degradation, and the `crew stage` context-menu actions.
-- `GroundcrewSidebarRowLayoutTests.swift` — the compact two-line row (title + agent-icon strip,
-  ticket/PR pills), confirming the per-row stage badge text, directory line, and native status line
-  are all gone from the row itself (that information lives in the section header instead).
+- `GroundcrewSidebarRowLayoutTests.swift` — the compact row (title + agent-icon strip, ticket pill
+  and repo name, PR pills), confirming the repo name drops the worktree's ticket suffix, and that the
+  per-row stage badge text, full directory path, and native status line are all gone from the row
+  itself (that information lives in the section header instead).
 - `GroundcrewSidebarStaleAgentTests.swift` — per-agent icon color/opacity for idle, executing,
   `needs_input`, and abandoned (2h+ silent) agent states.
 - `GroundcrewSidebarPrLinkTests.swift` — `prLink`/`prLinkTarget` against the shipped default
