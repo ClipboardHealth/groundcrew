@@ -87,7 +87,7 @@
     "dependency-cruiser": "18.7.2",
     "husky": "9.1.7",
     "jscpd": "5.4.2",
-    "knip": "6.43.0",
+    "knip": "6.44.1",
     "lint-staged": "17.6.0",
     "markdownlint-cli2": "0.24.0",
     "nx": "23.1.0",
