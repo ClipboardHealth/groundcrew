@@ -8,15 +8,12 @@ export async function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   }
   await new Promise<void>((resolve) => {
     // Both paths funnel through `settle`, which clears the timer and
-    // removes the listener before resolving. Once settle runs, neither
-    // caller can fire again — but the lint plugin can't see that, so the
-    // disable below is necessary. Without the explicit listener removal,
-    // reusing one signal across many sleeps (the watch loop pattern)
-    // leaks a listener per call.
+    // removes the listener before resolving. Without the explicit listener
+    // removal, reusing one signal across many sleeps (the watch loop
+    // pattern) leaks a listener per call.
     const settle = (): void => {
       clearTimeout(timer);
       signal?.removeEventListener("abort", settle);
-      // oxlint-disable-next-line promise/no-multiple-resolved -- settle is callable from two sources but disarms both before resolving
       resolve();
     };
     const timer = setTimeout(settle, ms);
@@ -299,9 +296,7 @@ export function errorMessage(error: unknown): string {
   }
 }
 
-export function signalProperty(
-  signal?: AbortSignal,
-): { signal: AbortSignal } | Record<never, never> {
+export function signalProperty(signal?: AbortSignal): { signal?: AbortSignal } {
   return signal === undefined ? {} : { signal };
 }
 
