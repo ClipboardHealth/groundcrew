@@ -60,7 +60,7 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
       },
       ...overrides.agents,
     },
-    execution: makeExecutionConfig(),
+    execution: overrides.execution ?? makeExecutionConfig(),
     prompts: { initial: "x", cloudInitial: "x", ...overrides.prompts },
     workspaceKind: overrides.workspaceKind ?? "auto",
     local: makeLocalConfig(overrides.local),
@@ -224,6 +224,150 @@ describe(createDispatcher, () => {
       expect(consoleLog.output()).toContain(
         "At capacity (1/1) [team-a(claude)], no new work to start",
       );
+    });
+
+    describe("cloud capacity", () => {
+      const cloudAgents: ResolvedConfig["agents"] = {
+        default: "claude",
+        definitions: {
+          claude: { cmd: "claude", color: "#fff" },
+          "claude-cloud": { cmd: "claude", color: "#fff", execution: "cloud" },
+        },
+      };
+
+      function capacityConfig(cloudMaximum = 10): ResolvedConfig {
+        return makeConfig({
+          orchestrator: {
+            maximumInProgress: 1,
+            pollIntervalMilliseconds: 1,
+            sessionLimitPercentage: 85,
+          },
+          agents: cloudAgents,
+          execution: makeExecutionConfig({ maximumInProgress: cloudMaximum }),
+        });
+      }
+
+      async function runWith(
+        config: ResolvedConfig,
+        issues: Issue[],
+        cloudTasks: string[],
+        board = makeBoard(),
+      ): Promise<void> {
+        const dispatcher = createDispatcher({
+          config,
+          board,
+          cloudRunTasks: () => new Set(cloudTasks),
+        });
+        await dispatcher.runOnce({
+          state: boardOf(issues),
+          worktreeEntries: [],
+          usage: async () => ({}),
+          dryRun: false,
+        });
+      }
+
+      it("a cloud run in progress does not consume a local slot", async () => {
+        await runWith(
+          capacityConfig(),
+          [
+            activeIssue({ id: "linear:team-a", agent: "claude-cloud" }),
+            todoIssue({ id: "linear:team-b" }),
+          ],
+          ["team-a"],
+        );
+
+        expect(setupMock).toHaveBeenCalledOnce();
+        expect(setupMock.mock.calls[0]?.[1]).toMatchObject({ task: "team-b" });
+      });
+
+      it("cloud tasks are capped by execution.maximumInProgress", async () => {
+        await runWith(
+          capacityConfig(1),
+          [
+            activeIssue({ id: "linear:team-a", agent: "claude-cloud" }),
+            todoIssue({ id: "linear:team-b", agent: "claude-cloud" }),
+          ],
+          ["team-a"],
+        );
+
+        expect(setupMock).not.toHaveBeenCalled();
+      });
+
+      it("an In-Progress issue without run state counts as local", async () => {
+        await runWith(
+          capacityConfig(),
+          [
+            activeIssue({ id: "linear:team-a", agent: "claude" }),
+            todoIssue({ id: "linear:team-b" }),
+          ],
+          [],
+        );
+
+        expect(setupMock).not.toHaveBeenCalled();
+        expect(consoleLog.output()).toContain("At capacity (1/1) [team-a(claude)]");
+      });
+
+      it("reports At capacity with the existing text when local is full and no Todo routes to cloud", async () => {
+        await runWith(
+          capacityConfig(),
+          [
+            activeIssue({ id: "linear:team-a", agent: "claude" }),
+            activeIssue({ id: "linear:team-c", agent: "claude-cloud" }),
+            todoIssue({ id: "linear:team-b", agent: "any" }),
+          ],
+          ["team-c"],
+        );
+
+        expect(setupMock).not.toHaveBeenCalled();
+        expect(consoleLog.output()).toContain(
+          "At capacity (1/1) [team-a(claude)], no new work to start",
+        );
+      });
+
+      it("a cloud-routed Todo starts when local slots are full but cloud slots remain", async () => {
+        await runWith(
+          capacityConfig(),
+          [
+            activeIssue({ id: "linear:team-a", agent: "claude" }),
+            todoIssue({ id: "linear:team-b", agent: "claude-cloud" }),
+          ],
+          [],
+        );
+
+        expect(setupMock).toHaveBeenCalledOnce();
+        expect(setupMock.mock.calls[0]?.[1]).toMatchObject({
+          task: "team-b",
+          agent: "claude-cloud",
+        });
+        expect(consoleLog.output()).toContain("; cloud 0/10");
+      });
+
+      it("markInProgress runs after setupWorkspace for a cloud start", async () => {
+        const board = makeBoard();
+        await runWith(
+          capacityConfig(),
+          [todoIssue({ id: "linear:team-b", agent: "claude-cloud" })],
+          [],
+          board,
+        );
+
+        expect(setupMock.mock.invocationCallOrder[0]).toBeLessThan(
+          vi.mocked(board.markInProgress).mock.invocationCallOrder[0] ?? 0,
+        );
+      });
+
+      it("a failed cloud setup does not call markInProgress", async () => {
+        setupMock.mockRejectedValueOnce(new Error("launch failed"));
+        const board = makeBoard();
+        await runWith(
+          capacityConfig(),
+          [todoIssue({ id: "linear:team-b", agent: "claude-cloud" })],
+          [],
+          board,
+        );
+
+        expect(board.markInProgress).not.toHaveBeenCalled();
+      });
     });
 
     it("enumerates all in-progress tasks in the `At capacity` line, sorted by id", async () => {

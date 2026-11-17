@@ -81,7 +81,7 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
       },
       ...overrides.agents,
     },
-    execution: makeExecutionConfig(),
+    execution: overrides.execution ?? makeExecutionConfig(),
     prompts: { initial: "x", cloudInitial: "x", ...overrides.prompts },
     workspaceKind: overrides.workspaceKind ?? "auto",
     local: makeLocalConfig(overrides.local),
@@ -454,6 +454,42 @@ describe(classifyBlockers, () => {
       expect(deps.probeParentBranch).toHaveBeenCalledTimes(1);
     });
 
+    it("cloud-routed issue is not stacked when stacking is enabled and blocked by one same-repo blocker", async () => {
+      recordParentRunState();
+      const config = stackingConfig({
+        agents: {
+          default: "claude",
+          definitions: {
+            claude: { cmd: "claude", color: "#fff" },
+            "claude-cloud": { cmd: "claude", color: "#fff", execution: "cloud" },
+          },
+        },
+      });
+
+      const { unblocked, stackDecisions, skips } = await classifyBlockers(
+        [blockedIssue({ agent: "claude-cloud" })],
+        config,
+        realReadDeps(true),
+      );
+
+      expect(unblocked).toHaveLength(0);
+      expect(stackDecisions.size).toBe(0);
+      expect(skips[0]).toMatchObject({ kind: "skip", eventReason: "blocked" });
+    });
+
+    it("local-routed issue still stacks", async () => {
+      recordParentRunState();
+
+      const { unblocked, stackDecisions } = await classifyBlockers(
+        [blockedIssue({ agent: "claude" })],
+        stackingConfig(),
+        realReadDeps(true),
+      );
+
+      expect(unblocked).toHaveLength(1);
+      expect(stackDecisions.size).toBe(1);
+    });
+
     it("emits `stack_multiple_blockers` when unresolved blockers are siblings rather than a chain", async () => {
       recordParentRunState({ task: "team-0" });
       recordParentRunState({ task: "team-a" });
@@ -692,6 +728,122 @@ describe(classifyEligibility, () => {
       );
 
       expect(verdicts[0]).toMatchObject({ kind: "start", resolvedFromAny: false });
+    });
+  });
+
+  describe("cloud routing", () => {
+    const cloudAgents: ResolvedConfig["agents"] = {
+      default: "claude",
+      definitions: {
+        claude: { cmd: "claude", color: "#fff" },
+        "claude-cloud": { cmd: "claude", color: "#fff", execution: "cloud" },
+      },
+    };
+
+    it("agent-any never resolves to a cloud profile", () => {
+      const verdicts = classifyEligibility(
+        defaultArguments({
+          config: makeConfig({ agents: cloudAgents }),
+          unblocked: [todoIssue({ agent: "any" })],
+          usage: {
+            claude: { session: 0.9, sessionEndDuration: 30, weekly: null, weekEndDuration: null },
+            "claude-cloud": {
+              session: 0,
+              sessionEndDuration: 30,
+              weekly: null,
+              weekEndDuration: null,
+            },
+          },
+        }),
+      );
+
+      expect(verdicts[0]).toMatchObject({ kind: "start", issue: { agent: "claude" } });
+    });
+
+    it("logs agent-any skips cloud profiles: claude-cloud", () => {
+      classifyEligibility(
+        defaultArguments({
+          config: makeConfig({ agents: cloudAgents }),
+          unblocked: [
+            todoIssue({ id: "linear:team-1", agent: "any" }),
+            todoIssue({ id: "linear:team-2", agent: "any" }),
+          ],
+        }),
+      );
+
+      expect(
+        logMock.mock.calls.filter(([message]) => message.includes("skips cloud")),
+      ).toStrictEqual([["agent-any skips cloud profiles: claude-cloud"]]);
+    });
+
+    it("agent-any with only cloud profiles skips with agent_any_capacity", () => {
+      const verdicts = classifyEligibility(
+        defaultArguments({
+          config: makeConfig({
+            agents: {
+              default: "claude-cloud",
+              definitions: {
+                "claude-cloud": { cmd: "claude", color: "#fff", execution: "cloud" },
+              },
+            },
+          }),
+          unblocked: [todoIssue({ agent: "any" })],
+        }),
+      );
+
+      expect(verdicts[0]).toMatchObject({ kind: "skip", eventReason: "agent_any_capacity" });
+    });
+
+    it("does not log the cloud exclusion when no cloud profiles exist", () => {
+      classifyEligibility(defaultArguments({ unblocked: [todoIssue({ agent: "any" })] }));
+
+      expect(logMock).not.toHaveBeenCalled();
+    });
+
+    it("cloud-routed issue with a leftover worktree and no live workspace is skipped as workspace_missing", () => {
+      const verdicts = classifyEligibility(
+        defaultArguments({
+          config: makeConfig({ agents: cloudAgents }),
+          unblocked: [todoIssue({ agent: "claude-cloud" })],
+          cloudSlots: 1,
+          worktreeEntries: [hostEntryFor("repo-a", "team-1")],
+          workspaceProbe: { kind: "ok", names: new Set<string>() },
+        }),
+      );
+
+      expect(verdicts[0]).toMatchObject({ kind: "skip", eventReason: "workspace_missing" });
+    });
+
+    it("local and cloud slots are consumed independently", () => {
+      const verdicts = classifyEligibility(
+        defaultArguments({
+          config: makeConfig({ agents: cloudAgents }),
+          slots: 1,
+          cloudSlots: 1,
+          unblocked: [
+            todoIssue({ id: "linear:team-1", agent: "claude" }),
+            todoIssue({ id: "linear:team-2", agent: "claude" }),
+            todoIssue({ id: "linear:team-3", agent: "claude-cloud" }),
+            todoIssue({ id: "linear:team-4", agent: "claude-cloud" }),
+          ],
+        }),
+      );
+
+      expect(verdicts.map((verdict) => verdict.issue.id)).toStrictEqual([
+        "linear:team-1",
+        "linear:team-3",
+      ]);
+    });
+
+    it("does not start cloud-routed issues when no cloud slots are given", () => {
+      const verdicts = classifyEligibility(
+        defaultArguments({
+          config: makeConfig({ agents: cloudAgents }),
+          unblocked: [todoIssue({ agent: "claude-cloud" })],
+        }),
+      );
+
+      expect(verdicts).toHaveLength(0);
     });
   });
 
