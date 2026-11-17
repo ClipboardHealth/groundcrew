@@ -28,6 +28,7 @@ import { debug, errorMessage, log, okMark } from "../lib/util.ts";
 import { type WorkspaceAccessHint, workspaces } from "../lib/workspaces.ts";
 import {
   resolveLaunchDir,
+  resolveRepoDir,
   WorktreeAlreadyExistsError,
   type WorktreeEntry,
   worktrees,
@@ -114,7 +115,7 @@ export async function setupWorkspace(
   // StackedBaseBranchMismatchError's doc comment in worktrees.ts.
   const recordedBaseBranch = readRunState(config, task)?.baseBranch;
 
-  await preflightProvisioningGate({ config, options, signal, execution: "local" });
+  await preflightProvisioningGate({ config, options, signal });
 
   const createdPromise = beginWorktreeCreate({ config, options, signal, recordedBaseBranch });
   const readinessPromise = startLaunchReadiness(ensureReady);
@@ -269,12 +270,14 @@ async function setupCloudWorkspace(
   });
   const { branchName, dir: worktreeDir } = created;
   const launchDir = resolveLaunchDir(config, repository, worktreeDir);
+  let branchPushed = false;
   try {
     await runCommandAsync(
       "git",
       ["-C", worktreeDir, "push", "--no-verify", config.git.remote, branchName],
       signal === undefined ? {} : { signal },
     );
+    branchPushed = true;
     const prompt = renderCloudPrompt(config.prompts.cloudInitial, {
       task,
       title: options.details.title,
@@ -304,6 +307,9 @@ async function setupCloudWorkspace(
     log(`${okMark()} "${task}" launched in the cloud (${agent})  session ${session.url}`);
   } catch (error) {
     await rollbackWorktree({ config, entry: created, promptDir: undefined });
+    if (branchPushed) {
+      await deleteRemoteBranchBestEffort({ config, repository, branchName });
+    }
     recordFailedToLaunch({
       config,
       options,
@@ -312,6 +318,32 @@ async function setupCloudWorkspace(
       execution: "cloud",
     });
     throw error;
+  }
+}
+
+/**
+ * The rolled-back worktree is gone, so `crew cleanup` can no longer find the
+ * pushed branch; delete it from the remote here, from the source repo clone
+ * which survives the rollback.
+ */
+async function deleteRemoteBranchBestEffort(arguments_: {
+  config: ResolvedConfig;
+  repository: string;
+  branchName: string;
+}): Promise<void> {
+  const { config, repository, branchName } = arguments_;
+  try {
+    await runCommandAsync("git", [
+      "-C",
+      resolveRepoDir(config, repository),
+      "push",
+      "--no-verify",
+      config.git.remote,
+      "--delete",
+      branchName,
+    ]);
+  } catch (error) {
+    debug(`Remote branch cleanup failed for ${branchName}: ${errorMessage(error)}`);
   }
 }
 
@@ -386,7 +418,7 @@ async function preflightProvisioningGate(arguments_: {
   config: ResolvedConfig;
   options: SetupWorkspaceOptions;
   signal: AbortSignal | undefined;
-  execution: "local" | "cloud";
+  execution?: "cloud";
 }): Promise<void> {
   const { config, options, signal, execution } = arguments_;
   const { task, repository, agent } = options;

@@ -2050,13 +2050,23 @@ describe(setupWorkspace, () => {
     });
 
     it("never calls prepareAgentLaunch, openAgentWorkspace or prepareWorktree", async () => {
-      await setupWorkspace(makeCloudConfig(), cloudOptions);
+      const config = makeCloudConfig();
+      config.defaults = { hooks: { prepareWorktree: "npm ci" } };
+      config.workspace.repositories = [
+        { name: "repo-a", unsandboxedHooks: { prepareWorktree: "bin/setup" } },
+      ];
+
+      await setupWorkspace(config, cloudOptions);
 
       expect(detectHostMock).not.toHaveBeenCalled();
       expect(ensureClearanceMock).not.toHaveBeenCalled();
       expect(mkdtempMock).not.toHaveBeenCalled();
       expect(writeFileMock).not.toHaveBeenCalled();
       expect(runCommandMock).not.toHaveBeenCalledWith("cmux", expect.anything(), expect.anything());
+      const everyArgument = runCommandMock.mock.calls.flatMap(([, arguments_]) => arguments_);
+      expect(everyArgument).not.toContain("npm ci");
+      expect(everyArgument).not.toContain("bin/setup");
+      expect(logMock).not.toHaveBeenCalledWith(expect.stringContaining("prepareWorktree"));
     });
 
     it("records provisioning with execution cloud before creating the worktree", async () => {
@@ -2078,8 +2088,11 @@ describe(setupWorkspace, () => {
       expect(pushCalls()).toStrictEqual([
         ["-C", "/work/repo-a-team-1", "push", "--no-verify", "origin", "dev-team-1"],
       ]);
-      const pushOrder = runCommandMock.mock.invocationCallOrder.at(0);
-      expect(firstInvocationOrder(createMock)).toBeLessThan(pushOrder ?? 0);
+      const pushCallIndex = runCommandMock.mock.calls.findIndex(([, arguments_]) =>
+        arguments_.includes("--no-verify"),
+      );
+      const pushOrder = runCommandMock.mock.invocationCallOrder[pushCallIndex] ?? 0;
+      expect(firstInvocationOrder(createMock)).toBeLessThan(pushOrder);
       expect(pushOrder).toBeLessThan(firstInvocationOrder(launchCloudSessionMock));
     });
 
@@ -2159,6 +2172,53 @@ describe(setupWorkspace, () => {
       expect(last.clearFields).toContain("baseBranch");
     });
 
+    const remoteBranchDeleteArguments = [
+      "-C",
+      "/work/repo-a",
+      "push",
+      "--no-verify",
+      "origin",
+      "--delete",
+      "dev-team-1",
+    ];
+
+    it("deletes the pushed remote branch after the worktree rollback when the launch fails", async () => {
+      launchCloudSessionMock.mockRejectedValue(new Error("launch failed"));
+
+      await expect(setupWorkspace(makeCloudConfig(), cloudOptions)).rejects.toThrow(
+        "launch failed",
+      );
+
+      expect(pushCalls()).toStrictEqual([
+        ["-C", "/work/repo-a-team-1", "push", "--no-verify", "origin", "dev-team-1"],
+        remoteBranchDeleteArguments,
+      ]);
+      const deleteCallIndex = runCommandMock.mock.calls.findIndex(([, arguments_]) =>
+        arguments_.includes("--delete"),
+      );
+      expect(firstInvocationOrder(teardownMock)).toBeLessThan(
+        runCommandMock.mock.invocationCallOrder[deleteCallIndex] ?? 0,
+      );
+      expect(lastRecordedRunState().detail).toBe("launch failed");
+    });
+
+    it("rethrows the original launch error when the remote branch delete fails", async () => {
+      launchCloudSessionMock.mockRejectedValue(new Error("launch failed"));
+      runCommandMock.mockImplementation((command, arguments_) => {
+        if (command === "git" && arguments_.includes("--delete")) {
+          throw new Error("delete rejected");
+        }
+        return "";
+      });
+
+      await expect(setupWorkspace(makeCloudConfig(), cloudOptions)).rejects.toThrow(
+        "launch failed",
+      );
+
+      expect(lastRecordedRunState().detail).toBe("launch failed");
+      expect(debugMock).toHaveBeenCalledWith(expect.stringContaining("delete rejected"));
+    });
+
     it("takes the same failure path when the push fails and never calls the launcher", async () => {
       runCommandMock.mockImplementation((command, arguments_) => {
         if (command === "git" && arguments_.includes("push")) {
@@ -2173,6 +2233,8 @@ describe(setupWorkspace, () => {
 
       expect(launchCloudSessionMock).not.toHaveBeenCalled();
       expect(teardownMock).toHaveBeenCalledOnce();
+      expect(pushCalls()).toHaveLength(1);
+      expect(pushCalls().flat()).not.toContain("--delete");
       expect(lastRecordedRunState()).toMatchObject({
         state: "failed-to-launch",
         execution: "cloud",
