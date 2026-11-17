@@ -8,13 +8,6 @@ export default defineConfig(
         typeAware: true,
         typeCheck: true,
       },
-      // `crew.config.example.ts` is a template the `crew init` command writes
-      // into user projects. It imports from `@clipboard-health/groundcrew` so
-      // it resolves there, but locally that path lives only in
-      // `tsconfig.base.json`'s `paths` mapping — and the file isn't included
-      // in any leaf tsconfig project, so oxlint's typeAware pass can't apply
-      // the mapping. The file isn't internal source, so exclude it from lint.
-      ignorePatterns: ["crew.config.example.ts"],
       overrides: [
         {
           files: ["**/bin/**/*.js", "**/bin/**/*.cjs"],
