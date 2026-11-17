@@ -970,6 +970,64 @@ describe(resumeWorkspace, () => {
       );
     });
 
+    describe("replacing the placeholder workspace", () => {
+      beforeEach(() => {
+        workspacesProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-1"]) });
+      });
+
+      it("closes the placeholder before opening the local workspace", async () => {
+        await resumeWorkspace(cloudConfig(), { task: "team-1" });
+
+        expect(workspacesCloseMock).toHaveBeenCalledWith(expect.anything(), "team-1");
+        expect(workspacesCloseMock.mock.invocationCallOrder[0]).toBeLessThan(
+          workspacesOpenMock.mock.invocationCallOrder[0] ?? 0,
+        );
+      });
+
+      it("does not refuse to resume because the placeholder is live", async () => {
+        await expect(resumeWorkspace(cloudConfig(), { task: "team-1" })).resolves.toBeUndefined();
+
+        expect(workspacesOpenMock).toHaveBeenCalledTimes(1);
+      });
+
+      it("still opens the local workspace when the placeholder is already gone", async () => {
+        workspacesCloseMock.mockResolvedValue({ kind: "missing" });
+
+        await resumeWorkspace(cloudConfig(), { task: "team-1" });
+
+        expect(workspacesOpenMock).toHaveBeenCalledTimes(1);
+      });
+
+      it.each([
+        ["with the backend error", new Error("cmux down"), "cmux down"],
+        ["without a backend error", undefined, "workspace backend unavailable"],
+      ])(
+        "refuses to open a duplicate when the close is unavailable %s",
+        async (_label, error, detail) => {
+          workspacesCloseMock.mockResolvedValue(
+            error === undefined ? { kind: "unavailable" } : { kind: "unavailable", error },
+          );
+
+          await expect(resumeWorkspace(cloudConfig(), { task: "team-1" })).rejects.toThrow(
+            `Could not close the cloud placeholder workspace for team-1: ${detail}`,
+          );
+
+          expect(workspacesOpenMock).not.toHaveBeenCalled();
+          expect(recordRunStateMock).not.toHaveBeenCalled();
+        },
+      );
+
+      it("keeps the live-workspace guard for local runs", async () => {
+        readRunStateMock.mockReturnValue(makeRunState());
+
+        await expect(resumeWorkspace(cloudConfig(), { task: "team-1" })).rejects.toThrow(
+          "Workspace for team-1 is already live",
+        );
+
+        expect(workspacesCloseMock).not.toHaveBeenCalled();
+      });
+    });
+
     it("failed-to-launch cloud record resumes locally as before", async () => {
       readRunStateMock.mockReturnValue(
         makeRunState({ state: "failed-to-launch", execution: "cloud" }),
