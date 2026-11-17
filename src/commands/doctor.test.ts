@@ -1,3 +1,4 @@
+import { makeExecutionConfig } from "../testHelpers/executionConfig.ts";
 import { existsSync, statSync } from "node:fs";
 
 import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
@@ -120,7 +121,8 @@ function makeConfig(overrides: Partial<ResolvedConfig["agents"]> = {}): Resolved
       },
       ...overrides,
     },
-    prompts: { initial: "x" },
+    execution: makeExecutionConfig(),
+    prompts: { initial: "x", cloudInitial: "x" },
     workspaceKind: "auto",
     local: makeLocalConfig(),
     cmux: makeCmuxConfig(),

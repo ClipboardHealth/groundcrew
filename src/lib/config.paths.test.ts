@@ -1,3 +1,4 @@
+import { makeExecutionConfig } from "../testHelpers/executionConfig.ts";
 import { repositoryBaseDir, worktreeBaseDir, type ResolvedConfig } from "./config.ts";
 import { makeCmuxConfig } from "../testHelpers/cmuxConfig.ts";
 import { makeLocalConfig } from "../testHelpers/localConfig.ts";
@@ -24,7 +25,8 @@ function resolvedConfigWithWorkspace(
       default: "claude",
       definitions: { claude: { cmd: "claude", color: "#fff" } },
     },
-    prompts: { initial: "x" },
+    execution: makeExecutionConfig(),
+    prompts: { initial: "x", cloudInitial: "x" },
     workspaceKind: "auto",
     local: makeLocalConfig(),
     cmux: makeCmuxConfig(),

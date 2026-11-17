@@ -1,3 +1,4 @@
+import { makeExecutionConfig } from "../testHelpers/executionConfig.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { readRunState, recordRunState, type RunState } from "../lib/runState.ts";
 import { workspaces } from "../lib/workspaces.ts";
@@ -77,7 +78,8 @@ function makeConfig(): ResolvedConfig {
       default: "claude",
       definitions: { claude: { cmd: "claude", color: "#fff" } },
     },
-    prompts: { initial: "x" },
+    execution: makeExecutionConfig(),
+    prompts: { initial: "x", cloudInitial: "x" },
     workspaceKind: "auto",
     local: makeLocalConfig(),
     cmux: makeCmuxConfig(),

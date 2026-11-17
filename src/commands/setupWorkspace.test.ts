@@ -1,3 +1,4 @@
+import { makeExecutionConfig } from "../testHelpers/executionConfig.ts";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import type * as nodeFs from "node:fs";
 import path from "node:path";
@@ -209,8 +210,10 @@ function makeConfig(overrides: Partial<ResolvedConfig["agents"]> = {}): Resolved
       },
       ...overrides,
     },
+    execution: makeExecutionConfig(),
     prompts: {
       initial: "Begin {{task}} ({{title}}) in {{worktree}}\n{{description}}",
+      cloudInitial: "x",
     },
     workspaceKind: "auto",
     local: makeLocalConfig(),
@@ -707,6 +710,7 @@ describe(setupWorkspace, () => {
       ...makeConfig(),
       prompts: {
         initial: "Before\n{{workspaceContinuationInstruction}}\nAfter",
+        cloudInitial: "x",
       },
     };
 
@@ -727,6 +731,7 @@ describe(setupWorkspace, () => {
       ...makeConfig(),
       prompts: {
         initial: "Before\n{{workspaceContinuationInstruction}}\nAfter",
+        cloudInitial: "x",
       },
     };
     mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));

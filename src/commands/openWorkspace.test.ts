@@ -1,3 +1,4 @@
+import { makeExecutionConfig } from "../testHelpers/executionConfig.ts";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import type * as nodeFs from "node:fs";
 
@@ -188,7 +189,8 @@ function makeConfig(): ResolvedConfig {
       default: "claude",
       definitions: { claude: { cmd: "claude", color: "#fff" } },
     },
-    prompts: { initial: "x" },
+    execution: makeExecutionConfig(),
+    prompts: { initial: "x", cloudInitial: "x" },
     workspaceKind: "auto",
     local: makeLocalConfig(),
     cmux: makeCmuxConfig(),

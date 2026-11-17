@@ -8,6 +8,7 @@ import { cosmiconfig, type CosmiconfigResult, type Loader } from "cosmiconfig";
 import type { LinearAdapterConfig } from "./adapters/linear/schema.ts";
 import type { ShellAdapterConfig } from "./adapters/shell/schema.ts";
 import type { TodoTxtAdapterConfig } from "./adapters/todo-txt/schema.ts";
+import { CLOUD_PROMPT_PLACEHOLDERS, DEFAULT_CLOUD_PROMPT_INITIAL } from "./cloudPrompt.ts";
 import { expandHome } from "./paths.ts";
 import { debug, log, readEnvironmentVariable, setLogFile } from "./util.ts";
 import { xdgConfigPath, xdgStatePath } from "./xdg.ts";
@@ -132,6 +133,10 @@ export interface SandboxDefinition {
   agent: string;
 }
 
+export type ExecutionMode = "local" | "cloud";
+
+const EXECUTION_MODES: readonly ExecutionMode[] = ["local", "cloud"];
+
 export interface AgentDefinition {
   /**
    * Shell command launched for the agent. Wrapped with Safehouse/clearance
@@ -167,6 +172,11 @@ export interface AgentDefinition {
    */
   preLaunchEnv?: string[];
   color: string;
+  /**
+   * Where this agent runs. Defaults to `execution.default` for Claude
+   * commands and `"local"` otherwise. `"cloud"` requires a Claude command.
+   */
+  execution?: ExecutionMode;
   /** Positive finite divisor for agent-any session scoring; defaults to 1 when omitted. */
   weight?: number;
   usage?: {
@@ -337,6 +347,10 @@ export interface Config {
     pollIntervalMilliseconds?: number;
     sessionLimitPercentage?: number;
   };
+  execution?: {
+    default?: ExecutionMode;
+    maximumInProgress?: number;
+  };
   agents?: {
     default?: string;
     /**
@@ -356,6 +370,10 @@ export interface Config {
      * are used as-is. Mutually exclusive with `initial`.
      */
     promptFile?: string;
+    /** Inline cloud prompt. Mutually exclusive with `cloudPromptFile`. */
+    cloudInitial?: string;
+    /** Like `promptFile`, for the cloud prompt. Mutually exclusive with `cloudInitial`. */
+    cloudPromptFile?: string;
   };
   /**
    * Terminal session manager that hosts agent processes. Defaults to
@@ -499,12 +517,17 @@ export interface ResolvedConfig {
     pollIntervalMilliseconds: number;
     sessionLimitPercentage: number;
   };
+  execution: {
+    default: ExecutionMode;
+    maximumInProgress: number;
+  };
   agents: {
     default: string;
     definitions: Record<string, AgentDefinition>;
   };
   prompts: {
     initial: string;
+    cloudInitial: string;
   };
   /**
    * Terminal session manager. Always present — defaults to `"auto"`.
@@ -682,6 +705,11 @@ const DEFAULT_ORCHESTRATOR: ResolvedConfig["orchestrator"] = {
   sessionLimitPercentage: 85,
 };
 
+const DEFAULT_EXECUTION: ResolvedConfig["execution"] = {
+  default: "local",
+  maximumInProgress: 10,
+};
+
 const BUILT_IN_AGENT_DEFINITIONS: Record<string, AgentDefinition> = {
   claude: {
     cmd: "claude --permission-mode auto",
@@ -843,6 +871,50 @@ function requirePositiveInt(value: unknown, configKey: string, min = 1): asserts
   if (typeof value !== "number" || !Number.isInteger(value) || value < min) {
     fail(`${configKey} must be an integer ≥ ${min} (got ${JSON.stringify(value)})`);
   }
+}
+
+function normalizeExecutionMode(value: unknown, configKey: string): ExecutionMode {
+  const mode = EXECUTION_MODES.find((candidate) => candidate === value);
+  if (mode === undefined) {
+    fail(
+      `${configKey} must be one of ${EXECUTION_MODES.join(", ")} (got ${JSON.stringify(value)})`,
+    );
+  }
+  return mode;
+}
+
+function isClaudeCommand(cmd: string): boolean {
+  const [firstToken = ""] = cmd.trim().split(/\s+/);
+  return path.basename(firstToken) === "claude";
+}
+
+export function resolveAgentExecution(
+  config: Pick<ResolvedConfig, "agents" | "execution">,
+  agent: string,
+): ExecutionMode {
+  const definition = Object.hasOwn(config.agents.definitions, agent)
+    ? config.agents.definitions[agent]
+    : undefined;
+  if (definition === undefined) {
+    return config.execution.default;
+  }
+  if (definition.execution !== undefined) {
+    return definition.execution;
+  }
+  return isClaudeCommand(definition.cmd) ? config.execution.default : "local";
+}
+
+function normalizeExecution(value: Config["execution"]): ResolvedConfig["execution"] {
+  if (value !== undefined && !isPlainObject(value)) {
+    fail("execution must be an object");
+  }
+  return {
+    default:
+      value?.default === undefined
+        ? DEFAULT_EXECUTION.default
+        : normalizeExecutionMode(value.default, "execution.default"),
+    maximumInProgress: value?.maximumInProgress ?? DEFAULT_EXECUTION.maximumInProgress,
+  };
 }
 
 function requirePercent(value: unknown, configKey: string): asserts value is number {
@@ -1218,6 +1290,12 @@ function buildOverrideCandidate(
   if (override.weight !== undefined) {
     candidate.weight = override.weight;
   }
+  if (override.execution !== undefined) {
+    candidate.execution = normalizeExecutionMode(
+      override.execution,
+      `agents.definitions.${name}.execution`,
+    );
+  }
   if (override.usage !== undefined) {
     if (isUsageDisableSentinel(override.usage)) {
       delete candidate.usage;
@@ -1258,7 +1336,8 @@ function mergeDefinitions(
 
     const builtIn = BUILT_IN_AGENT_DEFINITIONS[name];
     const candidate = buildOverrideCandidate(name, override, builtIn);
-    const { cmd, color, weight, usage, sandbox, resumeArgs, preLaunch, preLaunchEnv } = candidate;
+    const { cmd, color, weight, execution, usage, sandbox, resumeArgs, preLaunch, preLaunchEnv } =
+      candidate;
     if (typeof cmd !== "string" || cmd.length === 0) {
       fail(`agents.definitions.${name}.cmd must be a non-empty string`);
     }
@@ -1273,6 +1352,9 @@ function mergeDefinitions(
         );
       }
       definition.weight = weight;
+    }
+    if (execution !== undefined) {
+      definition.execution = execution;
     }
     if (usage !== undefined) {
       definition.usage = usage;
@@ -1500,32 +1582,43 @@ function normalizeWorkspace(workspace: Config["workspace"]): ResolvedConfig["wor
   };
 }
 
+interface PromptSourceKeys {
+  inlineKey: "initial" | "cloudInitial";
+  fileKey: "promptFile" | "cloudPromptFile";
+  fallback: string;
+}
+
 /**
- * Resolve the initial prompt from the user's `prompts` block. `promptFile` and
- * `initial` are mutually exclusive; when neither is set the built-in default is
- * used. A `promptFile` is resolved relative to the config file's directory
- * (matching the `.ts` `import.meta.url` behavior), with `~` expanded and
- * absolute paths used as-is, then read at load time.
+ * Resolve a prompt from the user's `prompts` block. The inline key and file
+ * key are mutually exclusive; when neither is set the fallback is used. A
+ * file is resolved relative to the config file's directory (matching the
+ * `.ts` `import.meta.url` behavior), with `~` expanded and absolute paths
+ * used as-is, then read at load time.
  */
-function resolveInitialPrompt(prompts: Config["prompts"], configDir: string): string {
-  const { initial, promptFile } = prompts ?? {};
-  if (initial !== undefined && promptFile !== undefined) {
-    fail("prompts: set either `initial` or `promptFile`, not both");
+function resolvePrompt(
+  prompts: Config["prompts"],
+  configDir: string,
+  { inlineKey, fileKey, fallback }: PromptSourceKeys,
+): string {
+  const inline = prompts?.[inlineKey];
+  const file = prompts?.[fileKey];
+  if (inline !== undefined && file !== undefined) {
+    fail(`prompts: set either \`${inlineKey}\` or \`${fileKey}\`, not both`);
   }
 
-  if (promptFile !== undefined) {
-    requireString(promptFile, "prompts.promptFile");
+  if (file !== undefined) {
+    requireString(file, `prompts.${fileKey}`);
 
-    const expanded = expandHome(promptFile);
+    const expanded = expandHome(file);
     const resolved = path.isAbsolute(expanded) ? expanded : path.resolve(configDir, expanded);
     try {
       return readFileSync(resolved, "utf8");
     } catch (error) {
-      fail(`prompts.promptFile could not be read at ${resolved}: ${String(error)}`);
+      fail(`prompts.${fileKey} could not be read at ${resolved}: ${String(error)}`);
     }
   }
 
-  return initial ?? DEFAULT_PROMPT_INITIAL;
+  return inline ?? fallback;
 }
 
 function applyDefaults(user: Config, configDir: string): ResolvedConfig {
@@ -1579,12 +1672,22 @@ function applyDefaults(user: Config, configDir: string): ResolvedConfig {
     workspace: normalizeWorkspace(user.workspace),
     defaults: normalizeDefaults((user as { defaults?: unknown }).defaults),
     orchestrator: { ...DEFAULT_ORCHESTRATOR, ...user.orchestrator },
+    execution: normalizeExecution(user.execution),
     agents: {
       default: user.agents?.default ?? "claude",
       definitions: mergeDefinitions(user.agents?.definitions),
     },
     prompts: {
-      initial: resolveInitialPrompt(user.prompts, configDir),
+      initial: resolvePrompt(user.prompts, configDir, {
+        inlineKey: "initial",
+        fileKey: "promptFile",
+        fallback: DEFAULT_PROMPT_INITIAL,
+      }),
+      cloudInitial: resolvePrompt(user.prompts, configDir, {
+        inlineKey: "cloudInitial",
+        fileKey: "cloudPromptFile",
+        fallback: DEFAULT_CLOUD_PROMPT_INITIAL,
+      }),
     },
     workspaceKind: normalizeWorkspaceKind(user.workspaceKind, "workspaceKind") ?? "auto",
     cmux: normalizeCmux(user.cmux),
@@ -1597,12 +1700,16 @@ function applyDefaults(user: Config, configDir: string): ResolvedConfig {
   };
 }
 
-function validatePromptPlaceholders(template: string): void {
+function validatePromptPlaceholders(
+  template: string,
+  promptKey: "initial" | "cloudInitial",
+  allowed: ReadonlySet<string>,
+): void {
   const placeholders = template.match(PROMPT_PLACEHOLDER_RE) ?? [];
-  const unknown = placeholders.find((placeholder) => !ALLOWED_PROMPT_PLACEHOLDERS.has(placeholder));
+  const unknown = placeholders.find((placeholder) => !allowed.has(placeholder));
   if (unknown !== undefined) {
     fail(
-      `prompts.initial contains unknown placeholder ${JSON.stringify(unknown)}. Allowed placeholders: ${[...ALLOWED_PROMPT_PLACEHOLDERS].join(", ")}`,
+      `prompts.${promptKey} contains unknown placeholder ${JSON.stringify(unknown)}. Allowed placeholders: ${[...allowed].join(", ")}`,
     );
   }
 }
@@ -1645,6 +1752,8 @@ function validate(config: ResolvedConfig): void {
 
   requirePercent(config.orchestrator.sessionLimitPercentage, "orchestrator.sessionLimitPercentage");
 
+  requirePositiveInt(config.execution.maximumInProgress, "execution.maximumInProgress");
+
   const { definitions } = config.agents;
   if (Object.keys(definitions).length === 0) {
     fail("agents.definitions must contain at least one agent");
@@ -1657,6 +1766,11 @@ function validate(config: ResolvedConfig): void {
   for (const [name, definition] of Object.entries(definitions)) {
     requireString(definition.cmd, `agents.definitions.${name}.cmd`);
     requireString(definition.color, `agents.definitions.${name}.color`);
+    if (definition.execution === "cloud" && !isClaudeCommand(definition.cmd)) {
+      fail(
+        `agents.definitions.${name}.execution "cloud" requires a Claude command (got cmd ${JSON.stringify(definition.cmd)})`,
+      );
+    }
     if (definition.usage !== undefined) {
       const usagePath = `agents.definitions.${name}.usage`;
       /* v8 ignore next 3 @preserve -- mergeDefinitions only assigns usage from validated overrides or built-in presets; reaching this guard requires hand-mutating the resolved config */
@@ -1706,7 +1820,14 @@ function validate(config: ResolvedConfig): void {
   }
 
   requireString(config.prompts.initial, "prompts.initial");
-  validatePromptPlaceholders(config.prompts.initial);
+  validatePromptPlaceholders(config.prompts.initial, "initial", ALLOWED_PROMPT_PLACEHOLDERS);
+
+  requireString(config.prompts.cloudInitial, "prompts.cloudInitial");
+  validatePromptPlaceholders(
+    config.prompts.cloudInitial,
+    "cloudInitial",
+    CLOUD_PROMPT_PLACEHOLDERS,
+  );
 
   requireString(config.logging.file, "logging.file");
 }

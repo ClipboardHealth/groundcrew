@@ -1,3 +1,4 @@
+import { makeExecutionConfig } from "../testHelpers/executionConfig.ts";
 import type { RunCommandOptions } from "../lib/commandRunner.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { worktrees } from "../lib/worktrees.ts";
@@ -69,7 +70,8 @@ function makeConfig(
       sessionLimitPercentage: 85,
     },
     agents: { default: "claude", definitions: { claude: { cmd: "claude", color: "#fff" } } },
-    prompts: { initial: "x" },
+    execution: makeExecutionConfig(),
+    prompts: { initial: "x", cloudInitial: "x" },
     workspaceKind: "auto",
     local: makeLocalConfig(),
     cmux: makeCmuxConfig({
