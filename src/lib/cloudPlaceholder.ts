@@ -7,7 +7,7 @@ export interface CloudPlaceholderInput {
   crewEntrypoint: readonly string[];
 }
 
-const CLOUD_PROGRESS_LABEL = "running · cloud";
+const CLOUD_PROGRESS_LABEL = "running (cloud)";
 
 export function buildCloudPlaceholderCommand(input: CloudPlaceholderInput): string {
   const { task, title, sessionUrl, crewEntrypoint } = input;
@@ -25,6 +25,7 @@ export function buildCloudPlaceholderCommand(input: CloudPlaceholderInput): stri
     .join(" ");
   const reportProgress = `"\${CMUX_BUNDLED_CLI_PATH:-cmux}" set-progress 0.5 --label ${shellSingleQuote(CLOUD_PROGRESS_LABEL)} --workspace "$CMUX_WORKSPACE_ID" >/dev/null 2>&1 || true`;
   return [
+    "clear 2>/dev/null || true",
     `printf '%s\\n' ${banner}`,
     `if [ -n "$CMUX_WORKSPACE_ID" ]; then ${reportProgress}; fi`,
     `exec "\${SHELL:-/bin/sh}"`,

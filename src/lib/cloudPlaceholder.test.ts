@@ -33,6 +33,14 @@ describe(buildCloudPlaceholderCommand, () => {
     );
   });
 
+  it("contains only ASCII characters for ASCII inputs", () => {
+    expect(buildCloudPlaceholderCommand(input)).toMatch(/^[\u0020-\u007E]*$/);
+  });
+
+  it("starts by clearing the screen without aborting when clear is missing", () => {
+    expect(buildCloudPlaceholderCommand(input)).toMatch(/^clear 2>\/dev\/null \|\| true; printf /);
+  });
+
   it("keeps the pane open by exec-ing the user's shell", () => {
     expect(buildCloudPlaceholderCommand(input)).toMatch(/; exec "\$\{SHELL:-\/bin\/sh\}"$/);
   });
@@ -41,7 +49,7 @@ describe(buildCloudPlaceholderCommand, () => {
     const command = buildCloudPlaceholderCommand(input);
 
     expect(command).toContain(
-      `if [ -n "$CMUX_WORKSPACE_ID" ]; then "\${CMUX_BUNDLED_CLI_PATH:-cmux}" set-progress 0.5 --label 'running · cloud' --workspace "$CMUX_WORKSPACE_ID" >/dev/null 2>&1 || true; fi`,
+      `if [ -n "$CMUX_WORKSPACE_ID" ]; then "\${CMUX_BUNDLED_CLI_PATH:-cmux}" set-progress 0.5 --label 'running (cloud)' --workspace "$CMUX_WORKSPACE_ID" >/dev/null 2>&1 || true; fi`,
     );
   });
 
@@ -77,7 +85,7 @@ describe(buildCloudPlaceholderCommand, () => {
       runWith("ws-9");
 
       expect(readFileSync(callLog, "utf8")).toBe(
-        "set-progress 0.5 --label running · cloud --workspace ws-9\n",
+        "set-progress 0.5 --label running (cloud) --workspace ws-9\n",
       );
     });
 
