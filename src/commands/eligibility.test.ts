@@ -5,7 +5,7 @@ import path from "node:path";
 
 import type { RunCommandOptions } from "../lib/commandRunner.ts";
 import type { ResolvedConfig } from "../lib/config.ts";
-import { recordRunState, readRunState } from "../lib/runState.ts";
+import { recordRunState, readRunState, type RunState } from "../lib/runState.ts";
 import { canonicalBlocker, canonicalLinearIssue } from "../lib/testing/canonicalFixtures.ts";
 import { isGroundcrewIssue, toCanonicalId, type GroundcrewIssue } from "../lib/taskSource.ts";
 import type * as utilModule from "../lib/util.ts";
@@ -812,6 +812,109 @@ describe(classifyEligibility, () => {
       );
 
       expect(verdicts[0]).toMatchObject({ kind: "skip", eventReason: "workspace_missing" });
+    });
+
+    describe("failed cloud launches", () => {
+      function failedToLaunchState(execution?: "cloud"): RunState {
+        return {
+          task: "team-1",
+          repository: "repo-a",
+          agent: "claude-cloud",
+          worktreeDir: "/work/repo-a-team-1",
+          branchName: "dev-team-1",
+          workspaceName: "team-1",
+          state: "failed-to-launch",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          resumeCount: 0,
+          ...(execution === undefined ? {} : { execution }),
+        };
+      }
+
+      it("skips a Todo task whose cloud launch failed, pointing at status, cleanup and start", () => {
+        const verdicts = classifyEligibility(
+          defaultArguments({
+            config: makeConfig({ agents: cloudAgents }),
+            unblocked: [todoIssue({ agent: "claude-cloud" })],
+            cloudSlots: 1,
+            readTaskRunState: () => failedToLaunchState("cloud"),
+          }),
+        );
+
+        expect(verdicts).toHaveLength(1);
+        expect(verdicts[0]).toMatchObject({
+          kind: "skip",
+          eventReason: "cloud_launch_failed",
+          agent: "claude-cloud",
+        });
+        expect(verdicts[0]).toMatchObject({
+          message: expect.stringContaining("crew status team-1") as string,
+        });
+        expect(verdicts[0]).toMatchObject({
+          message: expect.stringContaining("crew cleanup team-1") as string,
+        });
+        expect(verdicts[0]).toMatchObject({
+          message: expect.stringContaining("crew start team-1") as string,
+        });
+      });
+
+      it("still starts a local failed-to-launch Todo task", () => {
+        const verdicts = classifyEligibility(
+          defaultArguments({
+            readTaskRunState: () => failedToLaunchState(),
+          }),
+        );
+
+        expect(verdicts[0]).toMatchObject({ kind: "start" });
+      });
+
+      it("starts the cloud task again once its run state is removed", () => {
+        const verdicts = classifyEligibility(
+          defaultArguments({
+            config: makeConfig({ agents: cloudAgents }),
+            unblocked: [todoIssue({ agent: "claude-cloud" })],
+            cloudSlots: 1,
+            readTaskRunState: () => undefined,
+          }),
+        );
+
+        expect(verdicts[0]).toMatchObject({ kind: "start" });
+      });
+
+      it("reads real run state from disk by default", () => {
+        const tempDir = mkdtempSync(path.join(tmpdir(), "groundcrew-eligibility-cloud-"));
+        try {
+          const config = makeConfig({
+            agents: cloudAgents,
+            logging: { file: path.join(tempDir, "groundcrew.log") },
+          });
+          recordRunState({
+            config,
+            state: {
+              task: "team-1",
+              repository: "repo-a",
+              agent: "claude-cloud",
+              worktreeDir: "/work/repo-a-team-1",
+              branchName: "dev-team-1",
+              workspaceName: "team-1",
+              state: "failed-to-launch",
+              execution: "cloud",
+            },
+          });
+
+          const verdicts = classifyEligibility(
+            defaultArguments({
+              config,
+              unblocked: [todoIssue({ agent: "claude-cloud" })],
+              cloudSlots: 1,
+            }),
+          );
+
+          expect(verdicts[0]).toMatchObject({ kind: "skip", eventReason: "cloud_launch_failed" });
+        } finally {
+          rmSync(tempDir, { recursive: true, force: true });
+        }
+      });
     });
 
     it("local and cloud slots are consumed independently", () => {

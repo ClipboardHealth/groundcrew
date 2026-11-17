@@ -35,6 +35,7 @@ type SkipReason =
   | "agent_exhausted"
   | "workspace_list_unavailable"
   | "workspace_missing"
+  | "cloud_launch_failed"
   | "stack_multiple_blockers"
   | "stack_parent_unknown"
   | "stack_parent_unpushed"
@@ -221,6 +222,8 @@ export interface ClassifyArguments {
   slots: number;
   /** Maximum number of cloud-routed `start` verdicts; `slots` counts local starts only. */
   cloudSlots?: number;
+  /** Reads a task's run state; defaults to the on-disk record for `config`. */
+  readTaskRunState?: (task: string) => RunState | undefined;
   dryRun: boolean;
 }
 
@@ -663,6 +666,7 @@ export function classifyEligibility(arguments_: ClassifyArguments): Verdict[] {
     exhausted,
     slots,
     cloudSlots = 0,
+    readTaskRunState = (task: string) => readRunState(config, task),
     dryRun,
   } = arguments_;
 
@@ -713,6 +717,21 @@ export function classifyEligibility(arguments_: ClassifyArguments): Verdict[] {
         agent: resolved.agent,
       });
       continue;
+    }
+
+    if (mode === "cloud") {
+      const naturalId = naturalIdFromCanonical(resolved.id);
+      const runState = readTaskRunState(naturalId);
+      if (runState?.state === "failed-to-launch" && runState.execution === "cloud") {
+        verdicts.push({
+          kind: "skip",
+          issue: resolved,
+          message: `Skipping ${resolved.id}: the previous cloud launch failed and is not retried automatically. Inspect it with 'crew status ${naturalId}', then retry with 'crew cleanup ${naturalId}' and 'crew start ${naturalId}'.`,
+          eventReason: "cloud_launch_failed",
+          agent: resolved.agent,
+        });
+        continue;
+      }
     }
 
     const recovery = classifyRecovery({

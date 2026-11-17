@@ -66,6 +66,27 @@ describe(parseCloudLaunchOutput, () => {
     expect(parseCloudLaunchOutput(raw)).toStrictEqual({ sessionId: SESSION_ID, url: SESSION_URL });
   });
 
+  it("accepts session ids containing underscores and hyphens", () => {
+    const sessionId = "session_01AB-cd_EF";
+    const url = `https://claude.ai/code/${sessionId}?from=cli`;
+    const raw = [`View: ${url}`, `Resume with: claude --teleport ${sessionId}`].join("\n");
+
+    expect(parseCloudLaunchOutput(raw)).toStrictEqual({ sessionId, url });
+  });
+
+  it("accepts a View line without a resume line", () => {
+    expect(parseCloudLaunchOutput(`View: ${SESSION_URL}`)).toStrictEqual({
+      sessionId: SESSION_ID,
+      url: SESSION_URL,
+    });
+  });
+
+  it("treats a View line that disagrees with the resume line as unparsable", () => {
+    const raw = [`View: ${SESSION_URL}`, "Resume with: claude --teleport session_other"].join("\n");
+
+    expect(parseCloudLaunchOutput(raw)).toBeUndefined();
+  });
+
   it("returns undefined without a View line", () => {
     expect(parseCloudLaunchOutput(decorate(NON_TTY_ERROR))).toBeUndefined();
   });

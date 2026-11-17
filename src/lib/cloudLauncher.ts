@@ -16,7 +16,8 @@ const ANSI_ESCAPE_PATTERN = new RegExp(
   ].join("|"),
   "g",
 );
-const VIEW_LINE_PATTERN = /^View:\s+(https:\/\/claude\.ai\/code\/(session_[A-Za-z0-9]+)\S*)$/;
+const VIEW_LINE_PATTERN = /^View:\s+(https:\/\/claude\.ai\/code\/(session_[A-Za-z0-9_-]+)\S*)$/;
+const RESUME_LINE_PATTERN = /^Resume with:\s+claude --teleport\s+(session_[A-Za-z0-9_-]+)\s*$/;
 
 export interface CloudSession {
   sessionId: string;
@@ -54,13 +55,22 @@ export function stripTerminalNoise(raw: string): string {
 }
 
 export function parseCloudLaunchOutput(raw: string): CloudSession | undefined {
-  for (const line of stripTerminalNoise(raw).split("\n")) {
-    const match = VIEW_LINE_PATTERN.exec(line.trim());
+  const lines = stripTerminalNoise(raw)
+    .split("\n")
+    .map((line) => line.trim());
+  const resumeIds = lines.flatMap((line) => {
+    const [, resumeId] = RESUME_LINE_PATTERN.exec(line) ?? [];
+    return resumeId === undefined ? [] : [resumeId];
+  });
+  for (const line of lines) {
+    const match = VIEW_LINE_PATTERN.exec(line);
     if (match !== null) {
       const [, url, sessionId] = match;
       /* v8 ignore else @preserve -- both capture groups always participate once the pattern matches */
       if (url !== undefined && sessionId !== undefined) {
-        return { sessionId, url };
+        return resumeIds.every((resumeId) => resumeId === sessionId)
+          ? { sessionId, url }
+          : undefined;
       }
     }
   }
