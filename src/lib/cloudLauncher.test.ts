@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import {
   CloudLaunchError,
+  type CloudProcessResult,
   type CloudProcessRunner,
   launchCloudSession,
   parseCloudLaunchOutput,
@@ -36,7 +37,7 @@ function decorate(text: string): string {
     .join("\n");
 }
 
-function recordingRunner(result: { exitCode: number; output: string }): {
+function recordingRunner(result: CloudProcessResult): {
   run: CloudProcessRunner;
   calls: Parameters<CloudProcessRunner>[0][];
 } {
@@ -159,6 +160,38 @@ describe(launchCloudSession, () => {
     expect(error).toHaveProperty("message", expect.stringContaining(NON_TTY_ERROR));
   });
 
+  it("returns the session when the run timed out after printing the View line", async () => {
+    const { run } = recordingRunner({
+      exitCode: 1,
+      output: decorate(CLOUD_OUTPUT),
+      timedOut: true,
+    });
+
+    const session = await launchCloudSession({
+      cwd: "/work/repo",
+      prompt: PROMPT,
+      platform: "darwin",
+      run,
+    });
+
+    expect(session).toStrictEqual({ sessionId: SESSION_ID, url: SESSION_URL });
+  });
+
+  it("throws CloudLaunchError when the run timed out before printing a session URL", async () => {
+    const { run } = recordingRunner({ exitCode: 1, output: "Thinking...", timedOut: true });
+
+    const error: unknown = await launchCloudSession({
+      cwd: "/work/repo",
+      prompt: PROMPT,
+      platform: "darwin",
+      run,
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(CloudLaunchError);
+    expect(error).toHaveProperty("message", expect.stringContaining("timed out"));
+    expect(error).toHaveProperty("output", "Thinking...");
+  });
+
   it("truncates the error detail to 2000 characters, keeping the end", async () => {
     const { run } = recordingRunner({ exitCode: 1, output: `${"x".repeat(2500)}THE-END` });
 
@@ -212,17 +245,36 @@ describe(runCloudProcess, () => {
     expect(result.exitCode).toBe(1);
   });
 
-  it("kills the child and rejects when the timeout elapses", async () => {
-    const error: unknown = await runCloudProcess({
+  it("kills the child and resolves as timed out with the output collected so far", async () => {
+    const result = await runCloudProcess({
       command: "sh",
       args: ["-c", "printf partial; exec sleep 30"],
       cwd: tmpdir(),
-      timeoutMs: 50,
-    }).catch((caught: unknown) => caught);
+      timeoutMs: 200,
+    });
 
-    expect(error).toBeInstanceOf(CloudLaunchError);
-    expect(error).toHaveProperty("message", expect.stringContaining("timed out after 50ms"));
-    expect(error).toHaveProperty("output", "partial");
+    expect(result).toStrictEqual({ exitCode: 1, output: "partial", timedOut: true });
+  });
+
+  it("escalates to SIGKILL when the child ignores SIGTERM", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "cloud-launcher-pid-"));
+    try {
+      const pidFile = join(directory, "child.pid");
+      const result = await runCloudProcess({
+        command: "sh",
+        args: ["-c", `printf %s $$ > '${pidFile}'; trap "" TERM; exec sleep 30`],
+        cwd: tmpdir(),
+        timeoutMs: 500,
+      });
+      const childPid = Number(readFileSync(pidFile, "utf8"));
+
+      expect(result.timedOut).toBe(true);
+      expect(() => {
+        process.kill(childPid, 0);
+      }).toThrow("ESRCH");
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it("kills the child and rejects when the signal aborts mid-run", async () => {

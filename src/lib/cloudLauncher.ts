@@ -5,6 +5,7 @@ import { shellSingleQuote } from "./shell.ts";
 
 const CLOUD_LAUNCH_TIMEOUT_MS = 90_000;
 const CLOUD_ERROR_OUTPUT_MAX_CHARS = 2000;
+const CLOUD_PROCESS_KILL_GRACE_MS = 2000;
 
 const ESCAPE_CHARACTER = String.fromCodePoint(27);
 const BELL_CHARACTER = String.fromCodePoint(7);
@@ -35,6 +36,7 @@ export class CloudLaunchError extends Error {
 export interface CloudProcessResult {
   exitCode: number;
   output: string;
+  timedOut?: boolean;
 }
 
 export interface CloudProcessInput {
@@ -75,6 +77,8 @@ export function scriptInvocation(
   return { command: "script", args: ["-qec", argv.map(shellSingleQuote).join(" "), "/dev/null"] };
 }
 
+type CloudProcessStopReason = "timeout" | "aborted";
+
 export async function runCloudProcess(input: CloudProcessInput): Promise<CloudProcessResult> {
   return await new Promise((resolve, reject) => {
     if (input.signal?.aborted === true) {
@@ -87,59 +91,55 @@ export async function runCloudProcess(input: CloudProcessInput): Promise<CloudPr
       stdio: ["ignore", "pipe", "pipe"],
     });
     const outputChunks: Buffer[] = [];
-    let settled = false;
+    let stopReason: CloudProcessStopReason | undefined;
+    let killTimer: NodeJS.Timeout | undefined;
 
-    function finish(settle: () => void): void {
-      if (settled) {
-        return;
-      }
-      settled = true;
+    function stopForAbort(): void {
+      stop("aborted");
+    }
+
+    function clearTimers(): void {
       clearTimeout(timeoutTimer);
-      input.signal?.removeEventListener("abort", handleAbort);
-      settle();
+      clearTimeout(killTimer);
+      input.signal?.removeEventListener("abort", stopForAbort);
     }
 
-    function terminate(reason: string): void {
+    function stop(reason: CloudProcessStopReason): void {
+      stopReason = reason;
+      clearTimeout(timeoutTimer);
+      input.signal?.removeEventListener("abort", stopForAbort);
       child.kill("SIGTERM");
-      finish(() => {
-        reject(
-          cloudLaunchFailure({
-            message: `claude --cloud ${reason}`,
-            output: Buffer.concat(outputChunks).toString("utf8"),
-          }),
-        );
-      });
-    }
-
-    function handleAbort(): void {
-      terminate("was aborted");
+      killTimer = setTimeout(() => {
+        child.kill("SIGKILL");
+      }, CLOUD_PROCESS_KILL_GRACE_MS);
+      killTimer.unref();
     }
 
     const timeoutTimer = setTimeout(() => {
-      terminate(`timed out after ${input.timeoutMs}ms`);
+      stop("timeout");
     }, input.timeoutMs);
 
     child.stdout.on("data", (chunk: Buffer) => outputChunks.push(chunk));
     child.stderr.on("data", (chunk: Buffer) => outputChunks.push(chunk));
     child.once("error", (error) => {
-      finish(() => {
-        reject(
-          cloudLaunchFailure({
-            message: `failed to start ${input.command}: ${error.message}`,
-            output: "",
-          }),
-        );
-      });
+      clearTimers();
+      reject(
+        cloudLaunchFailure({
+          message: `failed to start ${input.command}: ${error.message}`,
+          output: "",
+        }),
+      );
     });
     child.once("close", (exitCode) => {
-      finish(() => {
-        resolve({
-          exitCode: exitCode ?? 1,
-          output: Buffer.concat(outputChunks).toString("utf8"),
-        });
-      });
+      clearTimers();
+      const output = Buffer.concat(outputChunks).toString("utf8");
+      if (stopReason === "aborted") {
+        reject(cloudLaunchFailure({ message: "claude --cloud was aborted", output }));
+        return;
+      }
+      resolve({ exitCode: exitCode ?? 1, output, timedOut: stopReason === "timeout" });
     });
-    input.signal?.addEventListener("abort", handleAbort, { once: true });
+    input.signal?.addEventListener("abort", stopForAbort, { once: true });
   });
 }
 
@@ -162,13 +162,22 @@ export async function launchCloudSession(input: {
     signal: input.signal,
   });
 
+  const session = parseCloudLaunchOutput(result.output);
+  if (result.timedOut === true) {
+    if (session !== undefined) {
+      return session;
+    }
+    throw cloudLaunchFailure({
+      message: "claude --cloud timed out before printing a session URL",
+      output: result.output,
+    });
+  }
   if (result.exitCode !== 0) {
     throw cloudLaunchFailure({
       message: `claude --cloud exited with code ${result.exitCode}`,
       output: result.output,
     });
   }
-  const session = parseCloudLaunchOutput(result.output);
   if (session === undefined) {
     throw cloudLaunchFailure({
       message: "claude --cloud did not print a session URL",
