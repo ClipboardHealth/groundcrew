@@ -164,6 +164,29 @@ export default {
   //   sessionLimitPercentage: 85,
   // },
   //
+  // // Where Claude profiles run. `local` (the default) uses a worktree and pane
+  // // on this machine. `cloud` starts a claude.ai session with `claude --cloud`
+  // // and holds no local process. Cloud runs count against `maximumInProgress`
+  // // here, not the orchestrator cap. Non-Claude profiles stay local under a
+  // // cloud default; an explicit `execution: "cloud"` on one is a config error.
+  // // Requires a claude.ai cloud environment; see docs/configuration.md#cloud-execution.
+  // execution: {
+  //   default: "local",
+  //   maximumInProgress: 10,
+  // },
+  //
+  // // Add these profiles under `agents.definitions`, then label a task
+  // // `agent-claude-cloud` to run it in the cloud or `agent-claude-local` to keep
+  // // it here. `agents.default` resolves the same way.
+  // // The cloud session is created without this profile's `cmd`, so model and
+  // // permission flags apply only after `crew resume` teleports the run locally.
+  // // "claude-local": { cmd: "claude --permission-mode auto", color: "#C15F3C" },
+  // // "claude-cloud": {
+  // //   cmd: "claude --permission-mode auto",
+  // //   color: "#C15F3C",
+  // //   execution: "cloud",
+  // // },
+  //
   // To customize an enabled built-in, replace `claude: {}` above with:
   // claude: {
   //   // Optional: mint a short-lived credential outside Safehouse and forward
@@ -223,6 +246,11 @@ export default {
   //   // Or, instead of `initial`, point at a file (also works in crew.config.json).
   //   // Resolved relative to this config's directory; `~` and absolute paths work.
   //   // promptFile: "initial-prompt.md",
+  //   // First message for profiles with `execution: "cloud"`. Allowed
+  //   // placeholders: `{{task}}`, `{{title}}`, `{{description}}`. Mutually
+  //   // exclusive with `cloudPromptFile`.
+  //   // cloudInitial: "...",
+  //   // cloudPromptFile: "cloud-prompt.md",
   // },
   //
   // // Terminal session manager. "auto" picks cmux when on PATH, else tmux.

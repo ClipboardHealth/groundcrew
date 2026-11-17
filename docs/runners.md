@@ -8,6 +8,8 @@
 | `sdx`       | Linux / WSL | [Docker Sandboxes](https://docs.docker.com/sandboxes/) (`sbx`) — required when the agent needs `docker`. |
 | `none`      | —           | Unsandboxed escape hatch. Never picked implicitly; doctor warns when configured.                         |
 
+Cloud execution is not a local runner. A profile with `execution: "cloud"` bypasses `local.runner` entirely: the agent runs on claude.ai, and the only host process is the unsandboxed `claude --cloud` launcher that creates the session. See [Cloud execution](./configuration.md#cloud-execution).
+
 ## Safehouse Clearance Allowlist
 
 Only applies when `local.runner` resolves to `safehouse`. Groundcrew starts `clearance` on `http://127.0.0.1:19999` and runs the agent through the bundled `safehouse-clearance` wrapper. Groundcrew automatically points clearance at its shipped starter allowlist, so a fresh install does not need a `CLEARANCE_ALLOW_HOSTS_FILES` export.
