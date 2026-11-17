@@ -1,4 +1,4 @@
-import { captureConsoleLog } from "../testHelpers/consoleCapture.ts";
+import { captureConsoleLog, type ConsoleCapture } from "../testHelpers/consoleCapture.ts";
 import type { ResolvedConfig } from "./config.ts";
 import { runCommandAsync } from "./commandRunner.ts";
 import { listPullRequestsForBranch } from "./pullRequests.ts";
@@ -164,8 +164,15 @@ describe(recordCleanedUpRuns, () => {
       "dev-team-2",
     ];
 
+    let consoleLog: ConsoleCapture;
+
     beforeEach(() => {
+      consoleLog = captureConsoleLog();
       readRunStateMock.mockReturnValue(cloudRunState);
+    });
+
+    afterEach(() => {
+      consoleLog.restore();
     });
 
     it("deletes the remote branch when a cloud run had no PR", async () => {
@@ -192,12 +199,10 @@ describe(recordCleanedUpRuns, () => {
 
     it("keeps the remote branch and logs when the PR lookup throws", async () => {
       listPullRequestsMock.mockRejectedValue(new Error("gh: not authenticated"));
-      const consoleLog = captureConsoleLog();
 
       await recordCleanedUpRuns(cloudConfig, [entryFor("team-2")]);
 
       expect(runCommandMock).not.toHaveBeenCalled();
-      consoleLog.restore();
       expect(consoleLog.output()).toContain("Kept remote branch dev-team-2");
     });
 

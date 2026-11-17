@@ -1,7 +1,7 @@
-import { runCommandAsync } from "./commandRunner.ts";
 import type { ResolvedConfig } from "./config.ts";
 import { listPullRequestsForBranch } from "./pullRequests.ts";
 import { isCloudRun, readRunState, removeRunState, type RunState } from "./runState.ts";
+import { deleteRemoteBranchBestEffort } from "./remoteBranch.ts";
 import { debug, errorMessage, log } from "./util.ts";
 import { reclaimStackParentBranch, resolveRepoDir, type WorktreeEntry } from "./worktrees.ts";
 
@@ -54,17 +54,5 @@ async function deleteUnpublishedRemoteBranch(arguments_: {
     debug(`Pull request lookup failed for ${branchName}: ${errorMessage(error)}`);
     return;
   }
-  try {
-    await runCommandAsync("git", [
-      "-C",
-      repoDir,
-      "push",
-      "--no-verify",
-      config.git.remote,
-      "--delete",
-      branchName,
-    ]);
-  } catch (error) {
-    debug(`Remote branch cleanup failed for ${branchName}: ${errorMessage(error)}`);
-  }
+  await deleteRemoteBranchBestEffort({ config, repository: entry.repository, branchName });
 }

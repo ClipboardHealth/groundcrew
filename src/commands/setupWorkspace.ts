@@ -24,11 +24,11 @@ import {
 } from "../lib/stagedLaunch.ts";
 import { taskSourceWritePathsForCompletion } from "../lib/taskSourceFilesystem.ts";
 import { naturalIdFromCanonical, type WorktreePreparation } from "../lib/taskSource.ts";
+import { deleteRemoteBranchBestEffort } from "../lib/remoteBranch.ts";
 import { debug, errorMessage, log, okMark } from "../lib/util.ts";
 import { type WorkspaceAccessHint, workspaces } from "../lib/workspaces.ts";
 import {
   resolveLaunchDir,
-  resolveRepoDir,
   WorktreeAlreadyExistsError,
   type WorktreeEntry,
   worktrees,
@@ -318,32 +318,6 @@ async function setupCloudWorkspace(
       execution: "cloud",
     });
     throw error;
-  }
-}
-
-/**
- * The rolled-back worktree is gone, so `crew cleanup` can no longer find the
- * pushed branch; delete it from the remote here, from the source repo clone
- * which survives the rollback.
- */
-async function deleteRemoteBranchBestEffort(arguments_: {
-  config: ResolvedConfig;
-  repository: string;
-  branchName: string;
-}): Promise<void> {
-  const { config, repository, branchName } = arguments_;
-  try {
-    await runCommandAsync("git", [
-      "-C",
-      resolveRepoDir(config, repository),
-      "push",
-      "--no-verify",
-      config.git.remote,
-      "--delete",
-      branchName,
-    ]);
-  } catch (error) {
-    debug(`Remote branch cleanup failed for ${branchName}: ${errorMessage(error)}`);
   }
 }
 
