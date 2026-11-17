@@ -54,7 +54,7 @@ export default defineConfig(
           // duplicate module mocks to race under Vitest's parallel runner.
           files: ["**/setupWorkspace.test.ts"],
           rules: {
-            "max-lines": ["error", 2300],
+            "max-lines": ["error", 2550],
           },
         },
         {
