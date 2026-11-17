@@ -1,4 +1,5 @@
 import { launchCloudSession } from "../lib/cloudLauncher.ts";
+import { buildCloudPlaceholderCommand } from "../lib/cloudPlaceholder.ts";
 import { renderCloudPrompt } from "../lib/cloudPrompt.ts";
 import { runCommandAsync } from "../lib/commandRunner.ts";
 import { loadConfig, resolveAgentExecution, type ResolvedConfig } from "../lib/config.ts";
@@ -254,6 +255,44 @@ function displayTaskId(task: string): string {
   return LINEAR_IDENTIFIER_RE.test(task) ? task.toUpperCase() : task;
 }
 
+function crewEntrypoint(): string[] {
+  const [, scriptPath] = process.argv;
+  return scriptPath === undefined ? ["crew"] : [process.execPath, scriptPath];
+}
+
+async function openCloudPlaceholderBestEffort(input: {
+  config: ResolvedConfig;
+  task: string;
+  title: string;
+  url?: string;
+  sessionUrl: string;
+  cwd: string;
+  signal?: AbortSignal;
+}): Promise<void> {
+  const { config, task, title, url, sessionUrl, cwd, signal } = input;
+  const spec = {
+    name: task,
+    ...(config.workspace.useTaskTitleForPanelName === true ? { displayName: title } : {}),
+    ...(url === undefined ? {} : { url }),
+    cwd,
+    command: buildCloudPlaceholderCommand({
+      task,
+      title,
+      sessionUrl,
+      crewEntrypoint: crewEntrypoint(),
+    }),
+  };
+  try {
+    await (signal === undefined
+      ? workspaces.open(config, spec)
+      : workspaces.open(config, spec, signal));
+  } catch (error) {
+    log(
+      `Could not open the cloud placeholder workspace for ${task}: ${errorMessage(error)}. The cloud run continues.`,
+    );
+  }
+}
+
 async function setupCloudWorkspace(input: {
   config: ResolvedConfig;
   options: SetupWorkspaceOptions;
@@ -318,6 +357,15 @@ async function setupCloudWorkspace(input: {
       title: options.details.title,
       completionTaskId: options.completionTaskId ?? task,
       ...(options.details.url === undefined ? {} : { url: options.details.url }),
+    });
+    await openCloudPlaceholderBestEffort({
+      config,
+      task,
+      title: options.details.title,
+      ...(options.details.url === undefined ? {} : { url: options.details.url }),
+      sessionUrl: session.url,
+      cwd: launchDir,
+      ...(signal === undefined ? {} : { signal }),
     });
     log(`${okMark()} "${task}" launched in the cloud (${agent})  session ${session.url}`);
   } catch (error) {
