@@ -259,13 +259,15 @@ async function setupCloudWorkspace(
     throw new Error(`Cloud runs cannot be stacked: ${task}`);
   }
 
+  const recordedBaseBranch = readRunState(config, task)?.baseBranch;
+
   await preflightProvisioningGate({ config, options, signal, execution: "cloud" });
 
   const created = await beginWorktreeCreate({
     config,
     options,
     signal,
-    recordedBaseBranch: undefined,
+    recordedBaseBranch,
     execution: "cloud",
   });
   const { branchName, dir: worktreeDir } = created;

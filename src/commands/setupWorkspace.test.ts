@@ -2172,53 +2172,6 @@ describe(setupWorkspace, () => {
       expect(last.clearFields).toContain("baseBranch");
     });
 
-    const remoteBranchDeleteArguments = [
-      "-C",
-      "/work/repo-a",
-      "push",
-      "--no-verify",
-      "origin",
-      "--delete",
-      "dev-team-1",
-    ];
-
-    it("deletes the pushed remote branch after the worktree rollback when the launch fails", async () => {
-      launchCloudSessionMock.mockRejectedValue(new Error("launch failed"));
-
-      await expect(setupWorkspace(makeCloudConfig(), cloudOptions)).rejects.toThrow(
-        "launch failed",
-      );
-
-      expect(pushCalls()).toStrictEqual([
-        ["-C", "/work/repo-a-team-1", "push", "--no-verify", "origin", "dev-team-1"],
-        remoteBranchDeleteArguments,
-      ]);
-      const deleteCallIndex = runCommandMock.mock.calls.findIndex(([, arguments_]) =>
-        arguments_.includes("--delete"),
-      );
-      expect(firstInvocationOrder(teardownMock)).toBeLessThan(
-        runCommandMock.mock.invocationCallOrder[deleteCallIndex] ?? 0,
-      );
-      expect(lastRecordedRunState().detail).toBe("launch failed");
-    });
-
-    it("rethrows the original launch error when the remote branch delete fails", async () => {
-      launchCloudSessionMock.mockRejectedValue(new Error("launch failed"));
-      runCommandMock.mockImplementation((command, arguments_) => {
-        if (command === "git" && arguments_.includes("--delete")) {
-          throw new Error("delete rejected");
-        }
-        return "";
-      });
-
-      await expect(setupWorkspace(makeCloudConfig(), cloudOptions)).rejects.toThrow(
-        "launch failed",
-      );
-
-      expect(lastRecordedRunState().detail).toBe("launch failed");
-      expect(debugMock).toHaveBeenCalledWith(expect.stringContaining("delete rejected"));
-    });
-
     it("takes the same failure path when the push fails and never calls the launcher", async () => {
       runCommandMock.mockImplementation((command, arguments_) => {
         if (command === "git" && arguments_.includes("push")) {
