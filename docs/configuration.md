@@ -279,9 +279,11 @@ Route tasks with the usual `agent-<name>` labels: `agent-claude-cloud` runs in t
 3. Runs `claude --cloud "<prompt>"` from the worktree under `script(1)` to get a terminal. This needs `script` on `PATH` and a working `claude` login. The launcher is not sandboxed because it needs claude.ai auth. The process exits once the session exists.
 4. Records the run with the session ID and URL, then marks the ticket In Progress last.
 
-If any step fails (a non-zero exit, no session URL, or a timeout), the task is recorded as `failed-to-launch` with the captured output, the worktree is rolled back, and the pushed branch is deleted on a best-effort basis. The ticket stays out of In Progress, and the task does not fall back to local.
+If any step fails (a non-zero exit, no session URL, or a timeout), the task is recorded as `failed-to-launch` with the captured output, the worktree is rolled back, and the pushed branch is deleted on a best-effort basis, but only when the remote branch carries no commits beyond the default branch; otherwise it is kept and the keep is logged. The ticket stays out of In Progress, and the task does not fall back to local.
 
-Once the session starts, it works on the pushed branch, and the PR is found by the same branch lookup as local runs. The first time the reviewer sees a cloud run's open PR, it queues a one-time "watch this PR" message into the session as a backstop for Auto-fix.
+A failed cloud launch is not retried automatically: `crew run` skips the task with `cloud_launch_failed` until you act. Inspect it with `crew status <TASK>`, then retry with `crew cleanup <TASK>` followed by `crew start <TASK>`.
+
+Once the session starts, it works on the pushed branch, and the PR is found by the same branch lookup as local runs. The first time the reviewer sees a cloud run's open PR, it makes one attempt per session to queue a "watch this PR" message into the session as a backstop for Auto-fix. The attempt is recorded whether or not the queue succeeds, so an expired session is not retried every tick.
 
 ### One-time operator setup
 

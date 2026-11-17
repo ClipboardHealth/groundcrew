@@ -162,11 +162,11 @@ The resume prompt tells the agent to inspect git status and diff before editing,
 
 `crew resume <TASK>` reopens the agent's previous conversation in the worktree by default — the built-in `claude`, `codex`, `cursor`, `cursor-grok`, and `pi` presets ship a [`resumeArgs`](./configuration.md#resuming-the-agents-conversation) default (`--continue`, `resume --last`, `--continue`, `--continue`, `--continue`) that groundcrew appends to the agent's command. `crew resume --new <TASK>` ignores `resumeArgs` and forces a fresh conversation. Custom agents cold-start unless they set `resumeArgs`. groundcrew stores no session id — it relies on one conversation per worktree.
 
-For a cloud run, `crew resume` runs the repo's `prepareWorktree` in the light worktree, then opens a normal local pane running `claude --teleport <session>`. Teleport needs a clean worktree and checks out the session's pushed branch. From then on the run is a local run and counts against `orchestrator.maximumInProgress`. `--new` is ignored because the conversation is teleported, not restarted.
+For a cloud run, `crew resume` runs the repo's `prepareWorktree` in the light worktree, then opens a normal local pane running `claude --teleport <session>`. Teleport needs a clean worktree and checks out the session's pushed branch. From then on the run is a local run and counts against `orchestrator.maximumInProgress`. Resume keeps the session URL in the run state and logs it; if teleport fails the session is still there, and once the local run takes over you stop the cloud session on claude.ai. `--new` is ignored because the conversation is teleported, not restarted.
 
 ## Cleanup
 
-`crew cleanup <TASK>` removes the task's run state and worktree. For a cloud run it also deletes the pushed task branch from the remote, but only when the PR lookup succeeds and finds no PR on that branch; if the lookup fails, the branch is kept. It never touches the claude.ai session, so stop or archive that on claude.ai yourself.
+`crew cleanup <TASK>` removes the task's run state and worktree. For a cloud run it also deletes the pushed task branch from the remote, but only when the PR lookup succeeds and finds no PR on that branch, and the remote branch carries no commits beyond the default branch (an agent may have pushed unpublished work); otherwise the branch is kept and the keep is logged. It never touches the claude.ai session, so stop or archive that on claude.ai yourself.
 
 `crew cleanup --all` skips live cloud runs and logs each skip. Clean those up one at a time with `crew cleanup <TASK>`.
 
