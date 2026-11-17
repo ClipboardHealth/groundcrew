@@ -3,7 +3,7 @@ import path from "node:path";
 
 import { writeJsonAtomic } from "./atomicJson.ts";
 
-import type { ResolvedConfig } from "./config.ts";
+import type { ExecutionMode, ResolvedConfig } from "./config.ts";
 import { normalizePlainTaskId } from "./taskId.ts";
 
 export type RunLifecycleState =
@@ -69,6 +69,11 @@ export interface RunState {
    * with `baseBranch`.
    */
   stackRegistered?: boolean;
+  /** Absent means local. */
+  execution?: ExecutionMode;
+  cloudSessionId?: string;
+  cloudSessionUrl?: string;
+  autofixRequestedAt?: string;
 }
 
 export interface RunStateDraft {
@@ -90,6 +95,10 @@ export interface RunStateDraft {
   parentTask?: string;
   needsRebase?: boolean;
   stackRegistered?: boolean;
+  execution?: ExecutionMode;
+  cloudSessionId?: string;
+  cloudSessionUrl?: string;
+  autofixRequestedAt?: string;
   /**
    * Optional-field names to drop entirely rather than carry forward from the
    * on-disk record. Used by the failed-to-launch path so a `baseBranch`/
@@ -149,6 +158,10 @@ function isRunLifecycleState(value: unknown): value is RunLifecycleState {
     value === "resumed" ||
     value === "failed-to-launch"
   );
+}
+
+function isExecutionMode(value: unknown): value is ExecutionMode {
+  return value === "local" || value === "cloud";
 }
 
 function isValidResumeCount(value: unknown): value is number {
@@ -219,6 +232,10 @@ type OptionalRunStateFields = Pick<
   | "parentTask"
   | "needsRebase"
   | "stackRegistered"
+  | "execution"
+  | "cloudSessionId"
+  | "cloudSessionUrl"
+  | "autofixRequestedAt"
 >;
 
 function parseOptionalFields(value: Record<string, unknown>): OptionalRunStateFields {
@@ -232,6 +249,11 @@ function parseOptionalFields(value: Record<string, unknown>): OptionalRunStateFi
   const parentTask = stringField(value, "parentTask");
   const needsRebase = value["needsRebase"] === true ? true : undefined;
   const stackRegistered = value["stackRegistered"] === true ? true : undefined;
+  const { execution: rawExecution } = value;
+  const execution = isExecutionMode(rawExecution) ? rawExecution : undefined;
+  const cloudSessionId = stringField(value, "cloudSessionId");
+  const cloudSessionUrl = stringField(value, "cloudSessionUrl");
+  const autofixRequestedAt = stringField(value, "autofixRequestedAt");
   return {
     ...(reason === undefined ? {} : { reason }),
     ...(detail === undefined ? {} : { detail }),
@@ -243,6 +265,10 @@ function parseOptionalFields(value: Record<string, unknown>): OptionalRunStateFi
     ...(parentTask === undefined ? {} : { parentTask }),
     ...(needsRebase === undefined ? {} : { needsRebase }),
     ...(stackRegistered === undefined ? {} : { stackRegistered }),
+    ...(execution === undefined ? {} : { execution }),
+    ...(cloudSessionId === undefined ? {} : { cloudSessionId }),
+    ...(cloudSessionUrl === undefined ? {} : { cloudSessionUrl }),
+    ...(autofixRequestedAt === undefined ? {} : { autofixRequestedAt }),
   };
 }
 
@@ -279,7 +305,18 @@ export type ClearableOptionalField =
   | "baseBranch"
   | "parentTask"
   | "needsRebase"
-  | "stackRegistered";
+  | "stackRegistered"
+  | "execution"
+  | "cloudSessionId"
+  | "cloudSessionUrl"
+  | "autofixRequestedAt";
+
+export const CLOUD_RUN_STATE_FIELDS: readonly ClearableOptionalField[] = [
+  "execution",
+  "cloudSessionId",
+  "cloudSessionUrl",
+  "autofixRequestedAt",
+];
 
 // Carries a clearable field's draft-or-prior value forward, unless the draft
 // explicitly asked to drop it via `clearFields` (the failed-to-launch path
@@ -291,6 +328,43 @@ function carriedOrCleared<T>(
   priorValue: T | undefined,
 ): T | undefined {
   return cleared.has(field) ? undefined : (draftValue ?? priorValue);
+}
+
+type CloudRunStateFields = Pick<
+  RunState,
+  "execution" | "cloudSessionId" | "cloudSessionUrl" | "autofixRequestedAt"
+>;
+
+function carryCloudFields(
+  draft: RunStateDraft,
+  prior: OptionalRunStateFields,
+): CloudRunStateFields {
+  const cleared = new Set(draft.clearFields ?? []);
+  const execution = carriedOrCleared("execution", cleared, draft.execution, prior.execution);
+  const cloudSessionId = carriedOrCleared(
+    "cloudSessionId",
+    cleared,
+    draft.cloudSessionId,
+    prior.cloudSessionId,
+  );
+  const cloudSessionUrl = carriedOrCleared(
+    "cloudSessionUrl",
+    cleared,
+    draft.cloudSessionUrl,
+    prior.cloudSessionUrl,
+  );
+  const autofixRequestedAt = carriedOrCleared(
+    "autofixRequestedAt",
+    cleared,
+    draft.autofixRequestedAt,
+    prior.autofixRequestedAt,
+  );
+  return {
+    ...(execution === undefined ? {} : { execution }),
+    ...(cloudSessionId === undefined ? {} : { cloudSessionId }),
+    ...(cloudSessionUrl === undefined ? {} : { cloudSessionUrl }),
+    ...(autofixRequestedAt === undefined ? {} : { autofixRequestedAt }),
+  };
 }
 
 // Resume/interrupt callers don't know these cached/stacking fields, so they
@@ -330,6 +404,7 @@ function carryOptionalFields(
     ...(parentTask === undefined ? {} : { parentTask }),
     ...(needsRebase === undefined ? {} : { needsRebase }),
     ...(stackRegistered === undefined ? {} : { stackRegistered }),
+    ...carryCloudFields(draft, prior),
   };
 }
 
@@ -422,4 +497,26 @@ export function clearStackingState(config: ResolvedConfig, task: string): RunSta
   delete next.stackRegistered;
   writeState(config, next);
   return next;
+}
+
+export function isCloudRun(state: RunState | undefined): boolean {
+  return state?.execution === "cloud";
+}
+
+export function isLiveCloudRun(
+  state: RunState | undefined,
+): state is RunState & { execution: "cloud"; cloudSessionId: string; cloudSessionUrl: string } {
+  return (
+    state?.execution === "cloud" &&
+    state.cloudSessionId !== undefined &&
+    state.cloudSessionUrl !== undefined
+  );
+}
+
+export function listCloudRunTasks(config: ResolvedConfig): Set<string> {
+  return new Set(
+    listRunStates(config)
+      .filter(isCloudRun)
+      .map((state) => state.task),
+  );
 }
