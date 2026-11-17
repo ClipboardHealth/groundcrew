@@ -169,7 +169,7 @@ export default {
   // // and holds no local process. Cloud runs count against `maximumInProgress`
   // // here, not the orchestrator cap. Non-Claude profiles stay local under a
   // // cloud default; an explicit `execution: "cloud"` on one is a config error.
-  // // Requires a claude.ai cloud environment; see docs/configuration.md#cloud-execution.
+  // // Requires a claude.ai cloud environment.
   // execution: {
   //   default: "local",
   //   maximumInProgress: 10,

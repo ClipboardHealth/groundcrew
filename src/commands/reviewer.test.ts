@@ -6,9 +6,10 @@ import path from "node:path";
 import { setVerbose } from "../lib/util.ts";
 import { canonicalLinearIssue } from "../lib/testing/canonicalFixtures.ts";
 import type { Board } from "../lib/board.ts";
+import type { queueCloudMessage as queueCloudMessageFunction } from "../lib/cloudLauncher.ts";
 import type { ResolvedConfig } from "../lib/config.ts";
 import type { PullRequestSummary } from "../lib/pullRequests.ts";
-import { recordRunState } from "../lib/runState.ts";
+import { readRunState, recordRunState } from "../lib/runState.ts";
 import type { BoardState, Issue, MarkDoneResult, MarkInReviewResult } from "../lib/taskSource.ts";
 import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 import { makeBoard } from "../testHelpers/boardFixtures.ts";
@@ -30,6 +31,8 @@ vi.mock(import("../lib/worktrees.ts"), async (importOriginal) => {
 });
 
 const teardownMock = vi.mocked(worktrees.teardown);
+
+type QueueCloudMessage = typeof queueCloudMessageFunction;
 
 function boardOf(issues: BoardState["issues"]): BoardState {
   return { timestamp: "2025-01-01T00:00:00.000Z", issues, parentSkips: [] };
@@ -725,5 +728,146 @@ describe(createReviewer, () => {
     }
 
     expect(teardownMock).toHaveBeenCalledWith(expect.anything(), [entry], { signal });
+  });
+
+  describe("auto-fix nudge", () => {
+    const watchMessage = "Watch https://gh/pr/9 and fix any CI failures or review comments.";
+    let stateRoot: string;
+    let config: ResolvedConfig;
+    let queueCloudMessage: ReturnType<typeof vi.fn<QueueCloudMessage>>;
+
+    function recordCloudRun(
+      overrides: { autofixRequestedAt?: string; local?: boolean } = {},
+    ): void {
+      recordRunState({
+        config,
+        state: {
+          task: "team-1",
+          repository: "repo-a",
+          agent: "claude",
+          worktreeDir: "/work/repo-a-team-1",
+          branchName: "dev-team-1",
+          workspaceName: "team-1",
+          state: "running",
+          ...(overrides.local === true
+            ? {}
+            : {
+                execution: "cloud",
+                cloudSessionId: "session_abc",
+                cloudSessionUrl: "https://claude.ai/code/session_abc",
+              }),
+          ...(overrides.autofixRequestedAt === undefined
+            ? {}
+            : { autofixRequestedAt: overrides.autofixRequestedAt }),
+        },
+      });
+    }
+
+    async function runReviewer(arguments_: {
+      pullRequests: readonly PullRequestSummary[];
+      dryRun?: boolean;
+      status?: Issue["status"];
+    }): Promise<void> {
+      const reviewer = createReviewer({
+        board,
+        findPullRequests: findReturning(arguments_.pullRequests),
+        config,
+        queueCloudMessage,
+      });
+      await reviewer.runOnce({
+        state: boardOf([inProgressIssue("team-1", { status: arguments_.status ?? "in-progress" })]),
+        worktreeEntries: [hostEntryFor("team-1")],
+        dryRun: arguments_.dryRun ?? false,
+      });
+    }
+
+    beforeEach(() => {
+      stateRoot = mkdtempSync(path.join(tmpdir(), "groundcrew-reviewer-autofix-"));
+      config = makeConfig(stateRoot);
+      queueCloudMessage = vi.fn<QueueCloudMessage>();
+      queueCloudMessage.mockResolvedValue();
+    });
+
+    afterEach(() => {
+      rmSync(stateRoot, { recursive: true, force: true });
+    });
+
+    it("queues the watch message once when a cloud run's open PR is first found", async () => {
+      recordCloudRun();
+
+      await runReviewer({ pullRequests: [pullRequest({ url: "https://gh/pr/9" })] });
+
+      expect(queueCloudMessage).toHaveBeenCalledExactlyOnceWith({
+        sessionId: "session_abc",
+        message: watchMessage,
+      });
+      expect(readRunState(config, "team-1")?.autofixRequestedAt).toBeDefined();
+      expect(readRunState(config, "team-1")?.state).toBe("running");
+    });
+
+    it("does not queue again when autofixRequestedAt is set", async () => {
+      recordCloudRun({ autofixRequestedAt: "2026-11-17T10:00:00.000Z" });
+
+      await runReviewer({ pullRequests: [pullRequest()] });
+
+      expect(queueCloudMessage).not.toHaveBeenCalled();
+    });
+
+    it("does not queue for local runs", async () => {
+      recordCloudRun({ local: true });
+
+      await runReviewer({ pullRequests: [pullRequest()] });
+
+      expect(queueCloudMessage).not.toHaveBeenCalled();
+    });
+
+    it("does not queue when there is no run state", async () => {
+      await runReviewer({ pullRequests: [pullRequest()] });
+
+      expect(queueCloudMessage).not.toHaveBeenCalled();
+    });
+
+    it("does not queue for merged-only PRs", async () => {
+      recordCloudRun();
+
+      await runReviewer({ pullRequests: [pullRequest({ state: "merged" })] });
+
+      expect(queueCloudMessage).not.toHaveBeenCalled();
+    });
+
+    it("does not queue in dry-run", async () => {
+      recordCloudRun();
+
+      await runReviewer({ pullRequests: [pullRequest()], dryRun: true });
+
+      expect(queueCloudMessage).not.toHaveBeenCalled();
+      expect(readRunState(config, "team-1")?.autofixRequestedAt).toBeUndefined();
+    });
+
+    it("logs a queue failure, does not record it, and still moves the task to in-review", async () => {
+      recordCloudRun();
+      queueCloudMessage.mockRejectedValueOnce(new Error("claude exploded"));
+
+      await runReviewer({ pullRequests: [pullRequest({ url: "https://gh/pr/9" })] });
+
+      expect(readRunState(config, "team-1")?.autofixRequestedAt).toBeUndefined();
+      expect(markInReviewMock).toHaveBeenCalledTimes(1);
+      expect(consoleLog.output()).toContain("claude exploded");
+    });
+
+    it("queues for a cloud run already in review when the PR is first seen", async () => {
+      recordCloudRun();
+
+      await runReviewer({
+        pullRequests: [pullRequest({ url: "https://gh/pr/9" })],
+        status: "in-review",
+      });
+
+      expect(queueCloudMessage).toHaveBeenCalledExactlyOnceWith({
+        sessionId: "session_abc",
+        message: watchMessage,
+      });
+      expect(markInReviewMock).not.toHaveBeenCalled();
+    });
   });
 });
