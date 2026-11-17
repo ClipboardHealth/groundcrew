@@ -13,27 +13,41 @@ function renderDefaultPrompt(): string {
     task: "TG-1",
     title: "T",
     description: "D",
+    branch: "dev-tg-1",
   });
 }
 
 describe("renderCloudPrompt", () => {
-  it("renders task, title and description placeholders", () => {
+  it("renders task, title, description and branch placeholders", () => {
     expect(
-      renderCloudPrompt("{{task}}|{{title}}|{{description}}", {
+      renderCloudPrompt("{{task}}|{{title}}|{{description}}|{{branch}}", {
         task: "TG-1",
         title: "T",
         description: "D",
+        branch: "dev-tg-1",
       }),
-    ).toBe("TG-1|T|D");
+    ).toBe("TG-1|T|D|dev-tg-1");
   });
 });
 
 describe("DEFAULT_CLOUD_PROMPT_INITIAL", () => {
-  it("tells the agent to open the PR through the REST API", () => {
+  it("tells the agent to open the PR through the GitHub API with the task branch as head", () => {
     const prompt = renderDefaultPrompt();
 
     expect(prompt).toContain("gh api repos/{owner}/{repo}/pulls");
+    expect(prompt).toContain("gh pr create");
+    expect(prompt).toContain("head `dev-tg-1`");
     expect(prompt).toContain("Closes TG-1");
+  });
+
+  it("names the task branch explicitly for checkout, commit and push", () => {
+    const prompt = renderDefaultPrompt();
+
+    expect(prompt).toContain("git fetch origin dev-tg-1 && git checkout dev-tg-1");
+    expect(prompt).toContain("Commit only to `dev-tg-1`");
+    expect(prompt).toContain("push only to `dev-tg-1`");
+    expect(prompt).toContain("Never create or push any other branch");
+    expect(prompt).toContain("exactly what the error was");
   });
 
   it("drops local-only wording", () => {
@@ -45,12 +59,13 @@ describe("DEFAULT_CLOUD_PROMPT_INITIAL", () => {
     expect(prompt).not.toMatch(/crew task done/);
   });
 
-  it("asks the agent to stay on the cloned branch and watch the PR", () => {
+  it("asks the agent to watch the PR and push fixes to the task branch", () => {
     const prompt = renderDefaultPrompt();
 
-    expect(prompt).toContain("cloned on");
+    expect(prompt).not.toContain("cloned on");
     expect(prompt).toContain("CI failures");
     expect(prompt).toContain("review comments");
+    expect(prompt).toContain("pushing new commits to `dev-tg-1`");
   });
 
   it("only uses allowed placeholders", () => {

@@ -248,6 +248,12 @@ export async function setupWorkspace(
   }
 }
 
+const LINEAR_IDENTIFIER_RE = /^[a-z][a-z0-9]*-\d+$/i;
+
+function displayTaskId(task: string): string {
+  return LINEAR_IDENTIFIER_RE.test(task) ? task.toUpperCase() : task;
+}
+
 async function setupCloudWorkspace(input: {
   config: ResolvedConfig;
   options: SetupWorkspaceOptions;
@@ -283,9 +289,10 @@ async function setupCloudWorkspace(input: {
     );
     branchPushed = true;
     const prompt = renderCloudPrompt(config.prompts.cloudInitial, {
-      task,
+      task: displayTaskId(task),
       title: options.details.title,
       description: options.details.description,
+      branch: branchName,
     });
     seedLaunchWorkspaceTrust({
       agentCommandName: inferAgentCommandName(agentCommand),

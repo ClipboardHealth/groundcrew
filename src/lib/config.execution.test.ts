@@ -224,6 +224,15 @@ describe("config execution and cloud prompt", () => {
     );
   });
 
+  it("cloudInitial accepts {{branch}}", async () => {
+    const { loadConfig } = await loadWith({
+      agents: claudeOnly,
+      prompts: { cloudInitial: "Push to {{branch}} for {{task}}" },
+    });
+
+    expect((await loadConfig()).prompts.cloudInitial).toBe("Push to {{branch}} for {{task}}");
+  });
+
   it("cloudInitial rejects {{worktree}}", async () => {
     const { loadConfig } = await loadWith({
       agents: claudeOnly,
@@ -231,7 +240,7 @@ describe("config execution and cloud prompt", () => {
     });
 
     await expect(loadConfig()).rejects.toThrow(
-      /prompts\.cloudInitial contains unknown placeholder "\{\{worktree\}\}".*\{\{task\}\}, \{\{title\}\}, \{\{description\}\}/,
+      /prompts\.cloudInitial contains unknown placeholder "\{\{worktree\}\}".*\{\{task\}\}, \{\{title\}\}, \{\{description\}\}, \{\{branch\}\}/,
     );
   });
 });

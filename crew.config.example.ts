@@ -247,7 +247,7 @@ export default {
   //   // Resolved relative to this config's directory; `~` and absolute paths work.
   //   // promptFile: "initial-prompt.md",
   //   // First message for profiles with `execution: "cloud"`. Allowed
-  //   // placeholders: `{{task}}`, `{{title}}`, `{{description}}`. Mutually
+  //   // placeholders: `{{task}}`, `{{title}}`, `{{description}}`, `{{branch}}`. Mutually
   //   // exclusive with `cloudPromptFile`.
   //   // cloudInitial: "...",
   //   // cloudPromptFile: "cloud-prompt.md",

@@ -2116,7 +2116,7 @@ describe(setupWorkspace, () => {
       const [launchInput] = launchCloudSessionMock.mock.calls[0] ?? [];
       expect(launchInput?.cwd).toBe("/work/repo-a-team-1/services/api");
       expect(launchInput?.prompt).toContain("Do the cloud thing");
-      expect(launchInput?.prompt).toContain("Closes team-1");
+      expect(launchInput?.prompt).toContain("Closes TEAM-1");
     });
 
     it("forwards the abort signal to the push and the launcher", async () => {

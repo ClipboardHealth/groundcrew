@@ -239,4 +239,35 @@ describe("setupWorkspace cloud launch failure and the remote branch", () => {
 
     expect(launchCloudSessionMock).toHaveBeenCalledTimes(1);
   });
+
+  describe("cloud prompt variables", () => {
+    async function launchedPrompt(options: SetupWorkspaceOptions): Promise<string> {
+      launchCloudSessionMock.mockResolvedValue({
+        sessionId: "session_abc",
+        url: "https://claude.ai/code/session_abc",
+      });
+      await setupWorkspace(makeCloudConfig(), options);
+      return launchCloudSessionMock.mock.calls[0]?.[0].prompt ?? "";
+    }
+
+    it("names the pushed task branch in the prompt", async () => {
+      const prompt = await launchedPrompt(cloudOptions);
+
+      expect(prompt).toContain("git fetch origin dev-team-1 && git checkout dev-team-1");
+      expect(prompt).toContain("head `dev-team-1`");
+    });
+
+    it("renders a Linear-shaped task id in canonical uppercase", async () => {
+      const prompt = await launchedPrompt(cloudOptions);
+
+      expect(prompt).toContain("Closes TEAM-1");
+      expect(prompt).not.toContain("Closes team-1");
+    });
+
+    it("leaves a task id that is not Linear-shaped untouched", async () => {
+      const prompt = await launchedPrompt({ ...cloudOptions, task: "fix-the-thing" });
+
+      expect(prompt).toContain("Closes fix-the-thing");
+    });
+  });
 });
