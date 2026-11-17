@@ -9,7 +9,7 @@ import {
   workerEnvironmentForTask,
 } from "../lib/launchCommand.ts";
 import {
-  CLOUD_RUN_STATE_FIELDS,
+  type ClearableOptionalField,
   isLiveCloudRun,
   readRunState,
   recordRunState,
@@ -62,7 +62,7 @@ interface ResumeContext {
   resumeCount: number;
   /** Stacked parent branch, when this task is a stacked child; threaded to the resumed worker's environment. */
   baseBranch?: string;
-  cloudSessionId?: string;
+  cloudSession?: { id: string; url: string };
 }
 
 function parseArguments(argv: string[]): ResumeWorkspaceOptions {
@@ -153,7 +153,9 @@ async function contextFromState(
     ...(state.reason === undefined ? {} : { reason: state.reason }),
     resumeCount: state.resumeCount,
     ...(state.baseBranch === undefined ? {} : { baseBranch: state.baseBranch }),
-    ...(isLiveCloudRun(state) ? { cloudSessionId: state.cloudSessionId } : {}),
+    ...(isLiveCloudRun(state)
+      ? { cloudSession: { id: state.cloudSessionId, url: state.cloudSessionUrl } }
+      : {}),
   };
 }
 
@@ -220,15 +222,24 @@ function renderResumePrompt(context: ResumeContext): string {
   ].join("\n");
 }
 
+const RESUMED_CLOUD_CLEARED_FIELDS: readonly ClearableOptionalField[] = [
+  "execution",
+  "autofixRequestedAt",
+];
+
 interface CloudResumeSettings {
   teleportArgs: string;
+  sessionUrl: string;
 }
 
 function cloudResumeSettings(context: ResumeContext): CloudResumeSettings | undefined {
-  if (context.cloudSessionId === undefined) {
+  if (context.cloudSession === undefined) {
     return undefined;
   }
-  return { teleportArgs: `--teleport ${context.cloudSessionId}` };
+  return {
+    teleportArgs: `--teleport ${context.cloudSession.id}`,
+    sessionUrl: context.cloudSession.url,
+  };
 }
 
 /**
@@ -247,6 +258,10 @@ function resolveResumeLaunch(input: {
     if (fresh) {
       log(`Ignoring --new for ${task}: teleporting the cloud session`);
     }
+    const { sessionUrl } = cloudSettings;
+    log(
+      `Resuming ${task} from cloud session ${sessionUrl}; if teleport fails, the session is still at ${sessionUrl}; stop it there once the local run takes over.`,
+    );
     return withResumeArgs(definition, cloudSettings.teleportArgs);
   }
   if (fresh || definition.resumeArgs === undefined) {
@@ -370,7 +385,7 @@ export async function resumeWorkspace(
         completionTaskId: context.completionTaskId,
         ...(context.url === undefined ? {} : { url: context.url }),
         ...(context.reason === undefined ? {} : { reason: context.reason }),
-        ...(cloudSettings === undefined ? {} : { clearFields: CLOUD_RUN_STATE_FIELDS }),
+        ...(cloudSettings === undefined ? {} : { clearFields: RESUMED_CLOUD_CLEARED_FIELDS }),
       },
     });
   } catch (error) {

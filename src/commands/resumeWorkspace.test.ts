@@ -9,12 +9,7 @@ import { fetchResolvedIssue } from "../lib/adapters/linear/fetch.ts";
 import { getLinearClient } from "../lib/adapters/linear/client.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
-import {
-  CLOUD_RUN_STATE_FIELDS,
-  readRunState,
-  recordRunState,
-  type RunState,
-} from "../lib/runState.ts";
+import { readRunState, recordRunState, type RunState } from "../lib/runState.ts";
 import { seedLaunchWorkspaceTrust } from "../lib/seedLaunchWorkspaceTrust.ts";
 import { safehouseCmuxIntegrationFixture } from "../testHelpers/safehouseCmuxIntegration.ts";
 import { makeCmuxConfig } from "../testHelpers/cmuxConfig.ts";
@@ -921,12 +916,21 @@ describe(resumeWorkspace, () => {
       });
     });
 
-    it("cloud run resume records resumed with the cloud fields cleared", async () => {
+    it("cloud run resume records resumed, clearing only execution and the nudge marker", async () => {
       await resumeWorkspace(cloudConfig(), { task: "team-1" });
 
       expect(lastRecordedRunState()).toMatchObject({ state: "resumed", resumeCount: 2 });
       expect(lastRecordedRunState()).not.toHaveProperty("execution");
-      expect(lastRecordedRunState().clearFields).toStrictEqual(CLOUD_RUN_STATE_FIELDS);
+      expect(lastRecordedRunState().clearFields).toStrictEqual(["execution", "autofixRequestedAt"]);
+    });
+
+    it("cloud run resume logs where the session still lives in case teleport fails", async () => {
+      await resumeWorkspace(cloudConfig(), { task: "team-1" });
+
+      const sessionUrl = `https://claude.ai/code/${cloudSessionId}`;
+      expect(logMock).toHaveBeenCalledWith(
+        `Resuming ${"team-1"} from cloud session ${sessionUrl}; if teleport fails, the session is still at ${sessionUrl}; stop it there once the local run takes over.`,
+      );
     });
 
     it("cloud run resume ignores resumeArgs and --new", async () => {

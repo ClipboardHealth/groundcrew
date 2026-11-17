@@ -1166,6 +1166,17 @@ describe(status, () => {
       expect(consoleLog.output()).not.toContain("session dead");
     });
 
+    it("a resumed run that kept its session url renders as local, not cloud", async () => {
+      readRunStateMock.mockReturnValue(
+        cloudRunState({ state: "resumed", execution: undefined as unknown as "cloud" }),
+      );
+
+      await status(makeConfig());
+
+      expect(consoleLog.output()).not.toContain("(cloud");
+      expect(consoleLog.output()).not.toContain(sessionUrl);
+    });
+
     it("inventory state renders running (cloud, 12m) with duration", async () => {
       await status(makeConfig());
 
