@@ -124,6 +124,7 @@ export interface UpdateRunStateInput {
 }
 
 const RUN_STATE_DIRECTORY_NAME = "runs";
+const CLOUD_SESSION_ID_PATTERN = /^session_[A-Za-z0-9_-]+$/;
 
 function taskKey(task: string): string {
   return normalizePlainTaskId(task);
@@ -148,6 +149,11 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 function stringField(value: Record<string, unknown>, key: string): string | undefined {
   const field = value[key];
   return typeof field === "string" && field.length > 0 ? field : undefined;
+}
+
+function cloudSessionIdField(value: Record<string, unknown>): string | undefined {
+  const field = stringField(value, "cloudSessionId");
+  return field !== undefined && CLOUD_SESSION_ID_PATTERN.test(field) ? field : undefined;
 }
 
 function isRunLifecycleState(value: unknown): value is RunLifecycleState {
@@ -251,7 +257,7 @@ function parseOptionalFields(value: Record<string, unknown>): OptionalRunStateFi
   const stackRegistered = value["stackRegistered"] === true ? true : undefined;
   const { execution: rawExecution } = value;
   const execution = isExecutionMode(rawExecution) ? rawExecution : undefined;
-  const cloudSessionId = stringField(value, "cloudSessionId");
+  const cloudSessionId = cloudSessionIdField(value);
   const cloudSessionUrl = stringField(value, "cloudSessionUrl");
   const autofixRequestedAt = stringField(value, "autofixRequestedAt");
   return {
@@ -318,9 +324,7 @@ export const CLOUD_RUN_STATE_FIELDS: readonly ClearableOptionalField[] = [
   "autofixRequestedAt",
 ];
 
-// Carries a clearable field's draft-or-prior value forward, unless the draft
-// explicitly asked to drop it via `clearFields` (the failed-to-launch path
-// clearing a leaked `baseBranch`/`parentTask`/`needsRebase`).
+// A draft value wins over the prior one; `clearFields` drops the field outright.
 function carriedOrCleared<T>(
   field: ClearableOptionalField,
   cleared: ReadonlySet<string>,

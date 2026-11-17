@@ -416,7 +416,8 @@ async function preflightProvisioningGate(arguments_: {
     workspaceName: task,
     state: "provisioning",
     title: options.details.title,
-    ...(execution === "cloud" ? { execution } : { clearFields: CLOUD_RUN_STATE_FIELDS }),
+    ...(execution === "cloud" ? { execution } : {}),
+    clearFields: execution === "cloud" ? STALE_CLOUD_SESSION_FIELDS : CLOUD_RUN_STATE_FIELDS,
     completionTaskId: options.completionTaskId ?? task,
     ...(options.details.url === undefined ? {} : { url: options.details.url }),
     ...(options.baseBranch === undefined ? {} : { baseBranch: options.baseBranch }),
@@ -455,6 +456,12 @@ function recordFailedToLaunch(arguments_: {
     clearStackingFields: true,
   });
 }
+
+const STALE_CLOUD_SESSION_FIELDS: readonly ClearableOptionalField[] = [
+  "cloudSessionId",
+  "cloudSessionUrl",
+  "autofixRequestedAt",
+];
 
 type LaunchReadinessResult = { kind: "ready" } | { kind: "failed"; error: unknown };
 

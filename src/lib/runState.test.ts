@@ -821,6 +821,51 @@ describe("run state store", () => {
     });
   });
 
+  it.each(["session_abc; rm -rf ~", "abc", "session_", "session_a b", "$(whoami)"])(
+    "drops a cloudSessionId read from disk that is not a session id: %s",
+    (cloudSessionId) => {
+      mkdirSync(path.dirname(runStatePath(config, "team-1")), { recursive: true });
+      writeFileSync(
+        runStatePath(config, "team-1"),
+        JSON.stringify({
+          task: "team-1",
+          repository: "repo-a",
+          agent: "claude",
+          worktreeDir: "/work/repo-a-team-1",
+          branchName: "dev-team-1",
+          workspaceName: "team-1",
+          state: "running",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          resumeCount: 0,
+          execution: "cloud",
+          cloudSessionId,
+          cloudSessionUrl: "https://claude.ai/code/session_abc",
+        }),
+      );
+
+      expect(readRunState(config, "team-1")).not.toHaveProperty("cloudSessionId");
+    },
+  );
+
+  it("keeps a well-formed cloudSessionId read from disk", () => {
+    recordRunState({
+      config,
+      state: {
+        task: "team-1",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-1",
+        branchName: "dev-team-1",
+        workspaceName: "team-1",
+        state: "running",
+        cloudSessionId: "session_01AB-cd_EF",
+      },
+    });
+
+    expect(readRunState(config, "team-1")?.cloudSessionId).toBe("session_01AB-cd_EF");
+  });
+
   it("carries cloud fields across a later record that omits them", () => {
     recordRunState({
       config,

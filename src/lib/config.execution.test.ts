@@ -162,7 +162,7 @@ describe("config execution and cloud prompt", () => {
     expect(resolveAgentExecution(config, "codex")).toBe("local");
   });
 
-  it("recognises a Claude command behind a path or env prefix", async () => {
+  it("recognises a Claude command behind a path", async () => {
     const { loadConfig, resolveAgentExecution } = await loadWith({
       agents: {
         default: "pathed",

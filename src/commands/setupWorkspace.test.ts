@@ -2076,7 +2076,11 @@ describe(setupWorkspace, () => {
         ([input]) => input.state.state === "provisioning",
       )?.[0].state;
       expect(provisioning).toMatchObject({ state: "provisioning", execution: "cloud" });
-      expect(provisioning?.clearFields).toBeUndefined();
+      expect(provisioning?.clearFields).toStrictEqual([
+        "cloudSessionId",
+        "cloudSessionUrl",
+        "autofixRequestedAt",
+      ]);
       expect(firstInvocationOrder(recordRunStateMock)).toBeLessThan(
         firstInvocationOrder(createMock),
       );
