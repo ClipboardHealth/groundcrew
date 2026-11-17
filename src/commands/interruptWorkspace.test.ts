@@ -129,7 +129,7 @@ describe(interruptWorkspace, () => {
     vi.resetAllMocks();
   });
 
-  it("live cloud run closes the placeholder, prints the session url, and leaves run state untouched", async () => {
+  it("live cloud run prints the session url, does not interrupt a workspace, and leaves run state untouched", async () => {
     readRunStateMock.mockReturnValue(
       makeRunState({
         execution: "cloud",
@@ -143,26 +143,7 @@ describe(interruptWorkspace, () => {
     expect(consoleLog.output()).toContain(
       "team-1 runs in the cloud and cannot be stopped from here. Stop it at https://claude.ai/code/session_1.",
     );
-    expect(interruptMock).toHaveBeenCalledExactlyOnceWith(config, "team-1");
-    expect(recordRunStateMock).not.toHaveBeenCalled();
-  });
-
-  it("live cloud run warns when the placeholder close cannot be confirmed", async () => {
-    readRunStateMock.mockReturnValue(
-      makeRunState({
-        execution: "cloud",
-        cloudSessionId: "session_1",
-        cloudSessionUrl: "https://claude.ai/code/session_1",
-      }),
-    );
-    interruptMock.mockResolvedValue({ kind: "unavailable" });
-
-    await interruptWorkspace(config, { task: "team-1" });
-
-    expect(consoleLog.output()).toContain(
-      "Could not confirm the cloud placeholder workspace for team-1 is closed.",
-    );
-    expect(consoleLog.output()).toContain("Stop it at https://claude.ai/code/session_1.");
+    expect(interruptMock).not.toHaveBeenCalled();
     expect(recordRunStateMock).not.toHaveBeenCalled();
   });
 
