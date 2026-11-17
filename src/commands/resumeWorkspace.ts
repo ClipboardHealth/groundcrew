@@ -8,7 +8,14 @@ import {
   withResumeArgs,
   workerEnvironmentForTask,
 } from "../lib/launchCommand.ts";
-import { readRunState, recordRunState, type RunState } from "../lib/runState.ts";
+import {
+  CLOUD_RUN_STATE_FIELDS,
+  isLiveCloudRun,
+  readRunState,
+  recordRunState,
+  type RunState,
+} from "../lib/runState.ts";
+import { resolveRepositoryPreparationCommands } from "../lib/repositoryHooks.ts";
 import { seedLaunchWorkspaceTrust } from "../lib/seedLaunchWorkspaceTrust.ts";
 import { summarizeSource, taskSupportsCompletionCommand } from "../lib/sourceCapabilities.ts";
 import {
@@ -55,6 +62,7 @@ interface ResumeContext {
   resumeCount: number;
   /** Stacked parent branch, when this task is a stacked child; threaded to the resumed worker's environment. */
   baseBranch?: string;
+  cloudSessionId?: string;
 }
 
 function parseArguments(argv: string[]): ResumeWorkspaceOptions {
@@ -145,6 +153,7 @@ async function contextFromState(
     ...(state.reason === undefined ? {} : { reason: state.reason }),
     resumeCount: state.resumeCount,
     ...(state.baseBranch === undefined ? {} : { baseBranch: state.baseBranch }),
+    ...(isLiveCloudRun(state) ? { cloudSessionId: state.cloudSessionId } : {}),
   };
 }
 
@@ -211,6 +220,17 @@ function renderResumePrompt(context: ResumeContext): string {
   ].join("\n");
 }
 
+interface CloudResumeSettings {
+  teleportArgs: string;
+}
+
+function cloudResumeSettings(context: ResumeContext): CloudResumeSettings | undefined {
+  if (context.cloudSessionId === undefined) {
+    return undefined;
+  }
+  return { teleportArgs: `--teleport ${context.cloudSessionId}` };
+}
+
 /**
  * Decide the definition to launch on resume: when the agent has `resumeArgs`
  * and `--new` was not passed, append them so the agent reopens its previous
@@ -220,8 +240,15 @@ function resolveResumeLaunch(input: {
   task: string;
   definition: AgentDefinition;
   fresh: boolean;
+  cloudSettings: CloudResumeSettings | undefined;
 }): AgentDefinition {
-  const { task, definition, fresh } = input;
+  const { task, definition, fresh, cloudSettings } = input;
+  if (cloudSettings !== undefined) {
+    if (fresh) {
+      log(`Ignoring --new for ${task}: teleporting the cloud session`);
+    }
+    return withResumeArgs(definition, cloudSettings.teleportArgs);
+  }
   if (fresh || definition.resumeArgs === undefined) {
     if (fresh && definition.resumeArgs !== undefined) {
       log(`Starting a fresh conversation for ${task}`);
@@ -244,10 +271,12 @@ export async function resumeWorkspace(
     throw new Error(`Unknown agent: ${context.agent}`);
   }
 
+  const cloudSettings = cloudResumeSettings(context);
   const launchDefinition = resolveResumeLaunch({
     task,
     definition,
     fresh: options.fresh === true,
+    cloudSettings,
   });
 
   const { runner, networkEgress, sandboxName, workspaceKind, ensureReady } =
@@ -303,6 +332,16 @@ export async function resumeWorkspace(
       taskSourceWritePaths,
       safehouse: config.local.safehouse,
       agentBuildSecrets: config.local.agentBuildSecrets,
+      ...(cloudSettings === undefined
+        ? {}
+        : {
+            omitPromptArgument: true,
+            ...resolveRepositoryPreparationCommands({
+              config,
+              repository: context.repository,
+              worktreeDir: launchDir,
+            }),
+          }),
     });
     cleanupAgentLaunch = launch.cleanup;
     const launchCmd = stageWorkspaceLaunchCommand(stagedPrompt.directory, launch.command);
@@ -331,6 +370,7 @@ export async function resumeWorkspace(
         completionTaskId: context.completionTaskId,
         ...(context.url === undefined ? {} : { url: context.url }),
         ...(context.reason === undefined ? {} : { reason: context.reason }),
+        ...(cloudSettings === undefined ? {} : { clearFields: CLOUD_RUN_STATE_FIELDS }),
       },
     });
   } catch (error) {

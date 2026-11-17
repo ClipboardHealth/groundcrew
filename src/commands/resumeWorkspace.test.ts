@@ -3,12 +3,18 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import type * as nodeFs from "node:fs";
 
 import { ensureClearance, type SafehouseCmuxIntegration } from "@clipboard-health/clearance";
+import type { MockInstance } from "vitest";
 import * as agentLaunch from "../lib/agentLaunch.ts";
 import { fetchResolvedIssue } from "../lib/adapters/linear/fetch.ts";
 import { getLinearClient } from "../lib/adapters/linear/client.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
-import { readRunState, recordRunState, type RunState } from "../lib/runState.ts";
+import {
+  CLOUD_RUN_STATE_FIELDS,
+  readRunState,
+  recordRunState,
+  type RunState,
+} from "../lib/runState.ts";
 import { seedLaunchWorkspaceTrust } from "../lib/seedLaunchWorkspaceTrust.ts";
 import { safehouseCmuxIntegrationFixture } from "../testHelpers/safehouseCmuxIntegration.ts";
 import { makeCmuxConfig } from "../testHelpers/cmuxConfig.ts";
@@ -838,6 +844,140 @@ describe(resumeWorkspace, () => {
     expect(logMock).toHaveBeenCalledWith(
       "Workspace close was not confirmed during resume rollback for team-1: workspace backend unavailable. Close it manually in the configured workspace backend.",
     );
+  });
+
+  describe("cloud runs", () => {
+    const cloudSessionId = "session_01FG5BTFfKdTVvxpu7wMe3p5";
+
+    function cloudRunState(overrides: Partial<RunState> = {}): RunState {
+      return makeRunState({
+        state: "running",
+        execution: "cloud",
+        cloudSessionId,
+        cloudSessionUrl: `https://claude.ai/code/${cloudSessionId}`,
+        ...overrides,
+      });
+    }
+
+    function cloudConfig(): ResolvedConfig {
+      return {
+        ...config,
+        defaults: { hooks: { prepareWorktree: "npm ci" } },
+        agents: {
+          default: "claude",
+          definitions: {
+            claude: {
+              cmd: "claude --permission-mode auto",
+              color: "#fff",
+              resumeArgs: "--continue",
+            },
+          },
+        },
+      };
+    }
+
+    function spyOnCompose(): MockInstance<typeof agentLaunch.composeAgentLaunch> {
+      return vi.spyOn(agentLaunch, "composeAgentLaunch");
+    }
+
+    function firstComposeInput(
+      spy: MockInstance<typeof agentLaunch.composeAgentLaunch>,
+    ): Parameters<typeof agentLaunch.composeAgentLaunch>[0] {
+      const input = spy.mock.calls[0]?.[0];
+      if (input === undefined) {
+        throw new Error("composeAgentLaunch was not called");
+      }
+      return input;
+    }
+
+    beforeEach(() => {
+      readRunStateMock.mockReturnValue(cloudRunState());
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it("cloud run resume launches the profile cmd with --teleport <session id>", async () => {
+      const compose = spyOnCompose();
+
+      await resumeWorkspace(cloudConfig(), { task: "team-1" });
+
+      const input = firstComposeInput(compose);
+      expect(input.definition.cmd).toBe(
+        "claude --permission-mode auto --teleport session_01FG5BTFfKdTVvxpu7wMe3p5",
+      );
+      expect(input.omitPromptArgument).toBe(true);
+    });
+
+    it("cloud run resume passes the repo prepareWorktree commands to the launch", async () => {
+      const compose = spyOnCompose();
+
+      await resumeWorkspace(cloudConfig(), { task: "team-1" });
+
+      expect(firstComposeInput(compose)).toMatchObject({
+        prepareWorktreeCommand: "npm ci",
+        workingDir: "/work/repo-a-team-1",
+      });
+    });
+
+    it("cloud run resume records resumed with the cloud fields cleared", async () => {
+      await resumeWorkspace(cloudConfig(), { task: "team-1" });
+
+      expect(lastRecordedRunState()).toMatchObject({ state: "resumed", resumeCount: 2 });
+      expect(lastRecordedRunState()).not.toHaveProperty("execution");
+      expect(lastRecordedRunState().clearFields).toStrictEqual(CLOUD_RUN_STATE_FIELDS);
+    });
+
+    it("cloud run resume ignores resumeArgs and --new", async () => {
+      const compose = spyOnCompose();
+
+      await resumeWorkspace(cloudConfig(), { task: "team-1", fresh: true });
+
+      expect(firstComposeInput(compose).definition.cmd).not.toContain("--continue");
+      expect(logMock).toHaveBeenCalledWith(
+        "Ignoring --new for team-1: teleporting the cloud session",
+      );
+    });
+
+    it("cloud run resume without --new does not log the ignored flag", async () => {
+      await resumeWorkspace(cloudConfig(), { task: "team-1" });
+
+      expect(logMock).not.toHaveBeenCalledWith(expect.stringContaining("Ignoring --new"));
+    });
+
+    it("a second resume after the flip uses the normal local path", async () => {
+      readRunStateMock.mockReturnValue(makeRunState({ state: "resumed" }));
+      const compose = spyOnCompose();
+
+      await resumeWorkspace(cloudConfig(), { task: "team-1" });
+
+      const input = firstComposeInput(compose);
+      expect(input.definition.cmd).toBe("claude --permission-mode auto --continue");
+      expect(input.omitPromptArgument).toBeUndefined();
+      expect(lastRecordedRunState().clearFields).toBeUndefined();
+    });
+
+    it("cloud run resume still fails when the worktree is missing", async () => {
+      findByTaskMock.mockReturnValue([]);
+
+      await expect(resumeWorkspace(cloudConfig(), { task: "team-1" })).rejects.toThrow(
+        "No worktree found for team-1; cannot resume.",
+      );
+    });
+
+    it("failed-to-launch cloud record resumes locally as before", async () => {
+      readRunStateMock.mockReturnValue(
+        makeRunState({ state: "failed-to-launch", execution: "cloud" }),
+      );
+      const compose = spyOnCompose();
+
+      await resumeWorkspace(cloudConfig(), { task: "team-1" });
+
+      const input = firstComposeInput(compose);
+      expect(input.definition.cmd).toBe("claude --permission-mode auto --continue");
+      expect(input.omitPromptArgument).toBeUndefined();
+    });
   });
 
   it("preserves the state failure when launch and prompt cleanup fail", async () => {
