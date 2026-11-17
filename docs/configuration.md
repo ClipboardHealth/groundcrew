@@ -289,8 +289,22 @@ Once the session starts, it works on the pushed branch, and the PR is found by t
 
 Groundcrew does not manage these settings; configure them once on claude.ai and GitHub:
 
-- A cloud environment for the repositories you run, with a setup script that installs `mise` and puts its shims ahead of the system Node on `PATH`. The setup script cannot install dependencies, because it runs before environment variables such as `NPM_TOKEN` exist; the default cloud prompt has the agent run `mise install` and the repository's documented install step in-session.
-- `NPM_TOKEN` as an environment variable on that cloud environment, for private packages. Cloud network-secret injection excludes `registry.npmjs.org`, so the token has to be an environment variable, and anyone who uses that environment can read it. Decide whether that is acceptable before adding it.
+- A cloud environment for the repositories you run, with network access set to Limited, "Allow package managers" on, and the allowed domains `mise.run`, `mise.jdx.dev`, `mise-versions.jdx.dev`, and `nodejs.org`. Use this setup script:
+
+  ```bash
+  #!/bin/bash
+  set -euo pipefail
+  curl -fsSL https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh
+  mise settings set idiomatic_version_file_enable_tools node
+  mise use -g node@24
+  for bin in node npm npx corepack; do
+    ln -sf /usr/local/bin/mise "/opt/node22/bin/$bin"
+  done
+  ```
+
+  The agent's shell is non-interactive, so `PATH` changes in shell rc files do not apply and the preinstalled Node 22 always wins. The script relinks those binaries to `mise` instead; `mise` picks the tool from the name it is invoked as, so each repository's pinned Node and npm resolve. The script cannot install dependencies, because it runs before environment variables such as `NPM_TOKEN` exist; the default cloud prompt has the agent run `mise install` and the repository's documented install step in-session.
+
+- `NPM_TOKEN` as an environment variable on that cloud environment, for private packages. Dependencies are installed in-session, after environment variables exist. Cloud network-secret injection excludes `registry.npmjs.org`, so the token has to be an environment variable, and anyone who uses that environment can read it. Decide whether that is acceptable before adding it.
 - The Claude GitHub App installed on those repositories. It is required for Auto-fix, not only for cloning.
 
 Cloud sessions load the repository's `CLAUDE.md`, `.claude/settings.json`, skills, agents, and `.mcp.json`. User-level `~/.claude` configuration and user-scoped MCP servers do not load.
