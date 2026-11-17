@@ -50,6 +50,18 @@ describe("DEFAULT_CLOUD_PROMPT_INITIAL", () => {
     expect(prompt).toContain("exactly what the error was");
   });
 
+  it("prepares the pinned toolchain and dependencies before committing or opening the PR", () => {
+    const prompt = renderDefaultPrompt();
+    const setupIndex = prompt.indexOf("mise install");
+
+    expect(setupIndex).toBeGreaterThan(-1);
+    expect(prompt).toContain("node -v");
+    expect(prompt).toContain("npm ci");
+    expect(prompt).toContain("exact error");
+    expect(setupIndex).toBeLessThan(prompt.indexOf("Commit only to"));
+    expect(setupIndex).toBeLessThan(prompt.indexOf("Open the PR"));
+  });
+
   it("drops local-only wording", () => {
     const prompt = renderDefaultPrompt();
 

@@ -289,7 +289,7 @@ Once the session starts, it works on the pushed branch, and the PR is found by t
 
 Groundcrew does not manage these settings; configure them once on claude.ai and GitHub:
 
-- A cloud environment for the repositories you run, with a setup script that runs `npm ci` (or the repository's equivalent of `prepareWorktree`).
+- A cloud environment for the repositories you run, with a setup script that installs `mise` and puts its shims ahead of the system Node on `PATH`. The setup script cannot install dependencies, because it runs before environment variables such as `NPM_TOKEN` exist; the default cloud prompt has the agent run `mise install` and the repository's documented install step in-session.
 - `NPM_TOKEN` as an environment variable on that cloud environment, for private packages. Cloud network-secret injection excludes `registry.npmjs.org`, so the token has to be an environment variable, and anyone who uses that environment can read it. Decide whether that is acceptable before adding it.
 - The Claude GitHub App installed on those repositories. It is required for Auto-fix, not only for cloning.
 
@@ -340,7 +340,7 @@ This keeps package defaults portable while letting your private config reference
 
 ### Cloud prompt (`prompts.cloudInitial`)
 
-Cloud runs use `prompts.cloudInitial` in place of `prompts.initial`. The default tells the agent to check out the pushed task branch (`{{branch}}`), commit and push only there, never create another branch, open the PR with that branch as head through `gh api repos/{owner}/{repo}/pulls` (because `gh pr create` fails in the cloud), put `Closes <TASK>` in the PR body, and then watch the PR and fix CI failures and review comments on that branch. The cloud default has no worktree instructions, no `GROUNDCREW_*` variables, and no self-completion step.
+Cloud runs use `prompts.cloudInitial` in place of `prompts.initial`. The default tells the agent to install the repository's pinned toolchain with `mise install` when one is present (then install dependencies as the repository documents), check out the pushed task branch (`{{branch}}`), commit and push only there, never create another branch, open the PR with that branch as head through `gh api repos/{owner}/{repo}/pulls` (because `gh pr create` fails in the cloud), put `Closes <TASK>` in the PR body, and then watch the PR and fix CI failures and review comments on that branch. The cloud default has no worktree instructions, no `GROUNDCREW_*` variables, and no self-completion step.
 
 Override it with `{{task}}`, `{{title}}`, `{{description}}`, and `{{branch}}` (the pushed task branch); any other placeholder fails config load. Load it from a file with `prompts.cloudPromptFile`, which resolves like `prompts.promptFile`. `cloudInitial` and `cloudPromptFile` are mutually exclusive.
 
