@@ -10,5 +10,5 @@
     "src/main.ts"
   ],
   "ignoreBinaries": ["op", "taskkill"],
-  "ignoreDependencies": ["@nx/js"]
+  "ignoreDependencies": ["@nx/js", "tsrs"]
 }
