@@ -96,7 +96,7 @@ export async function setupWorkspace(
     throw new Error(`Unknown agent: ${agent}`);
   }
   if (resolveAgentExecution(config, agent) === "cloud") {
-    await setupCloudWorkspace(config, options, runOptions);
+    await setupCloudWorkspace({ config, options, runOptions, agentCommand: definition.cmd });
     return;
   }
   const { runner, networkEgress, sandboxName, workspaceKind, ensureReady } =
@@ -248,11 +248,13 @@ export async function setupWorkspace(
   }
 }
 
-async function setupCloudWorkspace(
-  config: ResolvedConfig,
-  options: SetupWorkspaceOptions,
-  runOptions: SetupWorkspaceRunOptions,
-): Promise<void> {
+async function setupCloudWorkspace(input: {
+  config: ResolvedConfig;
+  options: SetupWorkspaceOptions;
+  runOptions: SetupWorkspaceRunOptions;
+  agentCommand: string;
+}): Promise<void> {
+  const { config, options, runOptions, agentCommand } = input;
   const { task, repository, agent } = options;
   const { signal } = runOptions;
   if (options.baseBranch !== undefined) {
@@ -284,6 +286,10 @@ async function setupCloudWorkspace(
       task,
       title: options.details.title,
       description: options.details.description,
+    });
+    seedLaunchWorkspaceTrust({
+      agentCommandName: inferAgentCommandName(agentCommand),
+      launchDir,
     });
     const session = await launchCloudSession({
       cwd: launchDir,

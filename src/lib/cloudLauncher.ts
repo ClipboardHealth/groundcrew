@@ -16,6 +16,7 @@ const ANSI_ESCAPE_PATTERN = new RegExp(
   ].join("|"),
   "g",
 );
+const CURSOR_FORWARD_PATTERN = new RegExp(`${ESCAPE_CHARACTER}\\[(\\d*)C`, "g");
 const VIEW_LINE_PATTERN = /^View:\s+(https:\/\/claude\.ai\/code\/(session_[A-Za-z0-9_-]+)\S*)$/;
 const RESUME_LINE_PATTERN = /^Resume with:\s+claude --teleport\s+(session_[A-Za-z0-9_-]+)\s*$/;
 
@@ -51,7 +52,10 @@ export interface CloudProcessInput {
 export type CloudProcessRunner = (input: CloudProcessInput) => Promise<CloudProcessResult>;
 
 export function stripTerminalNoise(raw: string): string {
-  return raw.replaceAll(ANSI_ESCAPE_PATTERN, "").replaceAll("\r", "");
+  return raw
+    .replaceAll(CURSOR_FORWARD_PATTERN, (_match, count: string) => " ".repeat(Number(count || 1)))
+    .replaceAll(ANSI_ESCAPE_PATTERN, "")
+    .replaceAll("\r", "");
 }
 
 export function parseCloudLaunchOutput(raw: string): CloudSession | undefined {

@@ -57,6 +57,14 @@ describe(stripTerminalNoise, () => {
 
     expect(stripTerminalNoise(raw)).toBe("red line\nnext\n");
   });
+
+  it("turns cursor-forward escapes into spaces", () => {
+    expect(stripTerminalNoise(`Quick${ESC}[1Csafety${ESC}[3Ccheck`)).toBe("Quick safety   check");
+  });
+
+  it("treats a bare cursor-forward escape as one space", () => {
+    expect(stripTerminalNoise(`a${ESC}[Cb`)).toBe("a b");
+  });
 });
 
 describe(parseCloudLaunchOutput, () => {

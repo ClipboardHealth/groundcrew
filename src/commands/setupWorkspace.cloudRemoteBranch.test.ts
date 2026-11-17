@@ -1,3 +1,5 @@
+import { agentTrustDir } from "agent-trust";
+
 import type { RunCommandOptions } from "../lib/commandRunner.ts";
 import { launchCloudSession } from "../lib/cloudLauncher.ts";
 import { DEFAULT_CLOUD_PROMPT_INITIAL } from "../lib/cloudPrompt.ts";
@@ -31,6 +33,10 @@ vi.mock(import("../lib/cloudLauncher.ts"), async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, launchCloudSession: vi.fn<typeof actual.launchCloudSession>() };
 });
+vi.mock(import("agent-trust"), async (importOriginal) => {
+  const actual = await importOriginal<typeof import("agent-trust")>();
+  return { ...actual, agentTrustDir: vi.fn<typeof agentTrustDir>() };
+});
 vi.mock(import("../lib/runState.ts"), async (importOriginal) => {
   const actual = await importOriginal();
   return {
@@ -57,6 +63,7 @@ vi.mock(import("../lib/worktrees.ts"), async (importOriginal) => {
   };
 });
 
+const agentTrustDirMock = vi.mocked(agentTrustDir);
 const logMock = vi.mocked(log);
 const launchCloudSessionMock = vi.mocked(launchCloudSession);
 const readRunStateMock = vi.mocked(readRunState);
@@ -141,6 +148,7 @@ describe("setupWorkspace cloud launch failure and the remote branch", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     runCommandMock.mockReturnValue("");
+    agentTrustDirMock.mockReturnValue({ ok: true } as ReturnType<typeof agentTrustDir>);
     createMock.mockResolvedValue(entry);
     vi.mocked(worktrees.findByTask).mockReturnValue([]);
     vi.mocked(worktrees.predictedEntry).mockReturnValue({
@@ -200,5 +208,35 @@ describe("setupWorkspace cloud launch failure and the remote branch", () => {
       expect.anything(),
       expect.objectContaining({ recordedBaseBranch: "dev-team-0" }),
     );
+  });
+
+  it("seeds workspace trust for the launch dir before launching the cloud session", async () => {
+    launchCloudSessionMock.mockResolvedValue({
+      sessionId: "session_abc",
+      url: "https://claude.ai/code/session_abc",
+    });
+
+    await setupWorkspace(makeCloudConfig(), cloudOptions);
+
+    expect(agentTrustDirMock).toHaveBeenCalledWith(
+      expect.objectContaining({ agent: "claude", dirPath: entry.dir }),
+    );
+    expect(agentTrustDirMock.mock.invocationCallOrder[0]).toBeLessThan(
+      launchCloudSessionMock.mock.invocationCallOrder[0] ?? 0,
+    );
+  });
+
+  it("still launches when trust seeding reports a failure, like the local path", async () => {
+    agentTrustDirMock.mockReturnValue({ ok: false, error: "no trust" } as ReturnType<
+      typeof agentTrustDir
+    >);
+    launchCloudSessionMock.mockResolvedValue({
+      sessionId: "session_abc",
+      url: "https://claude.ai/code/session_abc",
+    });
+
+    await setupWorkspace(makeCloudConfig(), cloudOptions);
+
+    expect(launchCloudSessionMock).toHaveBeenCalledTimes(1);
   });
 });
