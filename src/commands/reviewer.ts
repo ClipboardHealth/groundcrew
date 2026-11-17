@@ -156,8 +156,9 @@ export function createReviewer(deps: ReviewerDeps): Reviewer {
     }
   }
 
-  // Backstop for the cloud prompt asking the agent to enable Auto-fix. A failed
-  // queue is not recorded, so the next tick retries; it never blocks the transition.
+  // Backstop for the cloud prompt asking the agent to enable Auto-fix. One attempt
+  // per session whatever its outcome, so an expired session is not retried every
+  // tick; it never blocks the transition.
   async function nudgeAutoFixOnce(arguments_: {
     config: ResolvedConfig;
     task: string;
@@ -173,22 +174,30 @@ export function createReviewer(deps: ReviewerDeps): Reviewer {
     ) {
       return;
     }
+    let queued = false;
     try {
       await queueCloudMessage({
         sessionId: runState.cloudSessionId,
         message: `Watch ${openPullRequest.url} and fix any CI failures or review comments.`,
       });
+      queued = true;
     } catch (error) {
       log(`Auto-fix nudge failed for ${task}: ${errorMessage(error)}`);
-      logEvent("review", { outcome: "error", reason: "autofix_nudge_failed", task });
-      return;
+      logEvent("review", { outcome: "failed", reason: "autofix_nudge_failed", task });
     }
-    updateRunState({
-      config: nudgeConfig,
-      task,
-      patch: { state: runState.state, autofixRequestedAt: new Date().toISOString() },
-    });
-    logEvent("review", { outcome: "autofix_requested", task, pr: openPullRequest.url });
+    try {
+      updateRunState({
+        config: nudgeConfig,
+        task,
+        patch: { state: runState.state, autofixRequestedAt: new Date().toISOString() },
+      });
+    } catch (error) {
+      log(`Auto-fix nudge could not be recorded for ${task}: ${errorMessage(error)}`);
+      logEvent("review", { outcome: "failed", reason: "autofix_nudge_record_failed", task });
+    }
+    if (queued) {
+      logEvent("review", { outcome: "autofix_requested", task, pr: openPullRequest.url });
+    }
   }
 
   // Idempotent after an applied transition: once advanced, the issue leaves the

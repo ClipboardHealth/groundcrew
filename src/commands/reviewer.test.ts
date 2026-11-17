@@ -1,5 +1,5 @@
 import { makeExecutionConfig } from "../testHelpers/executionConfig.ts";
-import { mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -9,7 +9,7 @@ import type { Board } from "../lib/board.ts";
 import type { queueCloudMessage as queueCloudMessageFunction } from "../lib/cloudLauncher.ts";
 import type { ResolvedConfig } from "../lib/config.ts";
 import type { PullRequestSummary } from "../lib/pullRequests.ts";
-import { readRunState, recordRunState } from "../lib/runState.ts";
+import { readRunState, recordRunState, runStateDirectory } from "../lib/runState.ts";
 import type { BoardState, Issue, MarkDoneResult, MarkInReviewResult } from "../lib/taskSource.ts";
 import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
 import { makeBoard } from "../testHelpers/boardFixtures.ts";
@@ -844,15 +844,41 @@ describe(createReviewer, () => {
       expect(readRunState(config, "team-1")?.autofixRequestedAt).toBeUndefined();
     });
 
-    it("logs a queue failure, does not record it, and still moves the task to in-review", async () => {
+    it("logs a queue failure, records the attempt, and still moves the task to in-review", async () => {
       recordCloudRun();
       queueCloudMessage.mockRejectedValueOnce(new Error("claude exploded"));
 
       await runReviewer({ pullRequests: [pullRequest({ url: "https://gh/pr/9" })] });
 
-      expect(readRunState(config, "team-1")?.autofixRequestedAt).toBeUndefined();
+      expect(readRunState(config, "team-1")?.autofixRequestedAt).toBeDefined();
       expect(markInReviewMock).toHaveBeenCalledTimes(1);
       expect(consoleLog.output()).toContain("claude exploded");
+    });
+
+    it("does not retry a failed nudge on the next tick", async () => {
+      recordCloudRun();
+      queueCloudMessage.mockRejectedValue(new Error("session expired"));
+
+      await runReviewer({ pullRequests: [pullRequest({ url: "https://gh/pr/9" })] });
+      await runReviewer({ pullRequests: [pullRequest({ url: "https://gh/pr/9" })] });
+
+      expect(queueCloudMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it("logs and carries on when recording the attempt fails", async () => {
+      recordCloudRun();
+      const runsDirectory = runStateDirectory(config);
+      chmodSync(runsDirectory, 0o500);
+
+      try {
+        await runReviewer({ pullRequests: [pullRequest({ url: "https://gh/pr/9" })] });
+      } finally {
+        chmodSync(runsDirectory, 0o700);
+      }
+
+      expect(queueCloudMessage).toHaveBeenCalledTimes(1);
+      expect(consoleLog.output()).toContain("could not be recorded for team-1");
+      expect(markInReviewMock).toHaveBeenCalledTimes(1);
     });
 
     it("queues for a cloud run already in review when the PR is first seen", async () => {
