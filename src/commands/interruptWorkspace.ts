@@ -115,6 +115,10 @@ export async function interruptWorkspace(
   const task = options.task.toLowerCase();
   const state = readRunState(config, task);
   if (isLiveCloudRun(state)) {
+    const placeholder = await workspaces.interrupt(config, task);
+    if (placeholder.kind === "unavailable") {
+      log(`Could not confirm the cloud placeholder workspace for ${task} is closed.`);
+    }
     log(
       `${task} runs in the cloud and cannot be stopped from here. Stop it at ${state.cloudSessionUrl}.`,
     );
