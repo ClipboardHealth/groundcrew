@@ -138,6 +138,30 @@ describe("writeLocalSnapshot", () => {
     expect(readLocalSnapshot(config)).toEqual(input);
   });
 
+  it("local document with the new optional fields is accepted and round-trips", () => {
+    const config = makeConfig(directory);
+    const input: LocalStatusDocument = {
+      ...makeLocal("2026-08-04T03:00:00.000Z"),
+      tasks: [
+        {
+          task: "eng-220",
+          lifecycle: "running",
+          flags: [],
+          session: "unknown",
+          worktrees: [],
+          recentLogLines: [],
+          execution: "cloud",
+          cloudSessionUrl: "https://claude.ai/code/session_1",
+          attachCommand: "https://claude.ai/code/session_1",
+        },
+      ],
+    };
+
+    writeLocalSnapshot({ config, document: input });
+
+    expect(readLocalSnapshot(config)).toEqual(input);
+  });
+
   it("discards a write captured earlier than the file's", () => {
     const config = makeConfig(directory);
     const mockNewer = makeLocal("2026-08-04T03:05:00.000Z");

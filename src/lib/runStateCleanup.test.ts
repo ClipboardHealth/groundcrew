@@ -1,4 +1,7 @@
+import { captureConsoleLog } from "../testHelpers/consoleCapture.ts";
 import type { ResolvedConfig } from "./config.ts";
+import { runCommandAsync } from "./commandRunner.ts";
+import { listPullRequestsForBranch } from "./pullRequests.ts";
 import { readRunState, removeRunState, type RunState } from "./runState.ts";
 import { recordCleanedUpRuns } from "./runStateCleanup.ts";
 import { reclaimStackParentBranch, type WorktreeEntry } from "./worktrees.ts";
@@ -11,6 +14,19 @@ vi.mock(import("./runState.ts"), async (importOriginal) => {
     removeRunState: vi.fn<typeof removeRunState>(),
   };
 });
+vi.mock(import("./commandRunner.ts"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    runCommandAsync: vi.fn<
+      (command: string, arguments_: readonly string[]) => Promise<string>
+    >() as unknown as typeof actual.runCommandAsync,
+  };
+});
+vi.mock(import("./pullRequests.ts"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, listPullRequestsForBranch: vi.fn<typeof listPullRequestsForBranch>() };
+});
 vi.mock(import("./worktrees.ts"), async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, reclaimStackParentBranch: vi.fn<typeof reclaimStackParentBranch>() };
@@ -19,8 +35,14 @@ vi.mock(import("./worktrees.ts"), async (importOriginal) => {
 const readRunStateMock = vi.mocked(readRunState);
 const removeRunStateMock = vi.mocked(removeRunState);
 const reclaimMock = vi.mocked(reclaimStackParentBranch);
+const runCommandMock = vi.mocked(runCommandAsync);
+const listPullRequestsMock = vi.mocked(listPullRequestsForBranch);
 
 const config: ResolvedConfig = Object.assign(Object.create(null), {});
+const cloudConfig: ResolvedConfig = Object.assign(Object.create(null), {
+  git: { remote: "origin" },
+  workspace: { projectDir: "/work" },
+});
 
 function entryFor(task: string): WorktreeEntry {
   return {
@@ -53,6 +75,8 @@ describe(recordCleanedUpRuns, () => {
     readRunStateMock.mockReset();
     removeRunStateMock.mockReset();
     reclaimMock.mockReset();
+    runCommandMock.mockReset();
+    listPullRequestsMock.mockReset();
   });
 
   it("reclaims the parent branch a removed stacked child was pinning", async () => {
@@ -123,5 +147,78 @@ describe(recordCleanedUpRuns, () => {
     await recordCleanedUpRuns(config, [entryFor("team-2")]);
 
     expect(reclaimMock).not.toHaveBeenCalled();
+  });
+  describe("cloud runs", () => {
+    const cloudRunState = runStateWith({
+      execution: "cloud",
+      cloudSessionId: "session_1",
+      cloudSessionUrl: "https://claude.ai/code/session_1",
+    });
+    const remoteBranchDeleteArguments = [
+      "-C",
+      "/work/repo-a",
+      "push",
+      "--no-verify",
+      "origin",
+      "--delete",
+      "dev-team-2",
+    ];
+
+    beforeEach(() => {
+      readRunStateMock.mockReturnValue(cloudRunState);
+    });
+
+    it("deletes the remote branch when a cloud run had no PR", async () => {
+      listPullRequestsMock.mockResolvedValue([]);
+
+      await recordCleanedUpRuns(cloudConfig, [entryFor("team-2")]);
+
+      expect(listPullRequestsMock).toHaveBeenCalledWith({
+        cwd: "/work/repo-a",
+        branchName: "dev-team-2",
+      });
+      expect(runCommandMock).toHaveBeenCalledExactlyOnceWith("git", remoteBranchDeleteArguments);
+    });
+
+    it("keeps the remote branch when a PR exists", async () => {
+      listPullRequestsMock.mockResolvedValue([
+        { url: "https://github.com/acme/repo-a/pull/1", number: 1, state: "open", title: "t" },
+      ]);
+
+      await recordCleanedUpRuns(cloudConfig, [entryFor("team-2")]);
+
+      expect(runCommandMock).not.toHaveBeenCalled();
+    });
+
+    it("keeps the remote branch and logs when the PR lookup throws", async () => {
+      listPullRequestsMock.mockRejectedValue(new Error("gh: not authenticated"));
+      const consoleLog = captureConsoleLog();
+
+      await recordCleanedUpRuns(cloudConfig, [entryFor("team-2")]);
+
+      expect(runCommandMock).not.toHaveBeenCalled();
+      consoleLog.restore();
+      expect(consoleLog.output()).toContain("Kept remote branch dev-team-2");
+    });
+
+    it("does nothing remote for local runs", async () => {
+      readRunStateMock.mockReturnValue(runStateWith({}));
+
+      await recordCleanedUpRuns(cloudConfig, [entryFor("team-2")]);
+
+      expect(listPullRequestsMock).not.toHaveBeenCalled();
+      expect(runCommandMock).not.toHaveBeenCalled();
+    });
+
+    it("does not throw when the remote delete fails", async () => {
+      listPullRequestsMock.mockResolvedValue([]);
+      runCommandMock.mockRejectedValue(new Error("remote rejected"));
+
+      await expect(
+        recordCleanedUpRuns(cloudConfig, [entryFor("team-2"), entryFor("team-3")]),
+      ).resolves.toBeUndefined();
+
+      expect(removeRunStateMock).toHaveBeenCalledTimes(2);
+    });
   });
 });

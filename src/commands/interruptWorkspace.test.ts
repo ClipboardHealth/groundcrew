@@ -129,6 +129,35 @@ describe(interruptWorkspace, () => {
     vi.resetAllMocks();
   });
 
+  it("live cloud run prints the session url, does not interrupt a workspace, and leaves run state untouched", async () => {
+    readRunStateMock.mockReturnValue(
+      makeRunState({
+        execution: "cloud",
+        cloudSessionId: "session_1",
+        cloudSessionUrl: "https://claude.ai/code/session_1",
+      }),
+    );
+
+    await interruptWorkspace(config, { task: "team-1" });
+
+    expect(consoleLog.output()).toContain(
+      "team-1 runs in the cloud and cannot be stopped from here. Stop it at https://claude.ai/code/session_1.",
+    );
+    expect(interruptMock).not.toHaveBeenCalled();
+    expect(recordRunStateMock).not.toHaveBeenCalled();
+  });
+
+  it("non-live cloud record (failed-to-launch) falls through to the normal path", async () => {
+    readRunStateMock.mockReturnValue(
+      makeRunState({ execution: "cloud", state: "failed-to-launch" }),
+    );
+
+    await interruptWorkspace(config, { task: "team-1" });
+
+    expect(interruptMock).toHaveBeenCalledWith(config, "team-1");
+    expect(recordRunStateMock).toHaveBeenCalledOnce();
+  });
+
   it("interrupts the recorded workspace and preserves the worktree", async () => {
     await interruptWorkspace(config, { task: "TEAM-1", reason: "wrong direction" });
 

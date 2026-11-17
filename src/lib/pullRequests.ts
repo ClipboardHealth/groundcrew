@@ -189,7 +189,7 @@ export async function resolvePullRequest(
   };
 }
 
-async function listPullRequestsForBranch(
+export async function listPullRequestsForBranch(
   arguments_: LookupArgs,
 ): Promise<readonly PullRequestSummary[]> {
   const { cwd, branchName, signal } = arguments_;

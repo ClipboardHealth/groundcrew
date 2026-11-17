@@ -13,7 +13,7 @@ import { type Board, createBoard } from "../lib/board.ts";
 import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
 import type { ResolvedConfig } from "../lib/config.ts";
 import { findPullRequestsForBranch, type PullRequestSummary } from "../lib/pullRequests.ts";
-import { readRunState, type RunState } from "../lib/runState.ts";
+import { isCloudRun, readRunState, type RunState } from "../lib/runState.ts";
 import {
   type LocalStatusDocument,
   readLocalSnapshot,
@@ -83,27 +83,32 @@ export async function collectLocalStatus(
   const tasks: StatusTask[] = [...collected].map(([task, taskWorktrees]) => {
     const runState = runStates.get(task);
     const lifecycle = lifecycleOf(runState);
-    const disagreement = probeDisagreement({ lifecycle, probe, task });
+    const sessionFacts = sessionFactsOf({
+      runState,
+      lifecycle,
+      probe,
+      task,
+      accessCommand: accessHints.get(task)?.command,
+    });
     return {
       task,
       title: runState?.title,
       url: runState?.url,
       agent: runState?.agent,
       lifecycle,
-      flags: disagreement === undefined ? [] : [disagreementLabel(disagreement)],
       startedAt: runState?.createdAt,
       updatedAt: runState?.updatedAt,
       resumeCount: runState?.resumeCount,
       reason: runState?.reason,
       detail: runState?.detail,
-      session: sessionState({ probe, task }),
-      attachCommand: accessHints.get(task)?.command,
-      hint: disagreement === undefined ? undefined : disagreementHint({ disagreement, task }),
+      ...sessionFacts,
       worktrees: taskWorktrees,
       recentLogLines: recentLogs.linesByTask.get(task) ?? [],
       baseBranch: runState?.baseBranch,
       parentTask: runState?.parentTask,
       needsRebase: runState?.needsRebase,
+      execution: runState?.execution,
+      cloudSessionUrl: runState?.cloudSessionUrl,
     };
   });
 
@@ -606,6 +611,32 @@ export function recentTaskLogLines(input: { lines: readonly string[]; task: stri
 
 function lifecycleOf(runState: RunState | undefined): StatusLifecycle {
   return runState?.state ?? "idle";
+}
+
+/** A cloud run has no pane to probe, so a missing session is never evidence it died. */
+function sessionFactsOf(input: {
+  runState: RunState | undefined;
+  lifecycle: StatusLifecycle;
+  probe: WorkspaceProbe;
+  task: string;
+  accessCommand: string | undefined;
+}): Pick<StatusTask, "flags" | "session" | "attachCommand" | "hint"> {
+  const { runState, lifecycle, probe, task, accessCommand } = input;
+  if (isCloudRun(runState)) {
+    return {
+      flags: [],
+      session: "unknown",
+      attachCommand: runState?.cloudSessionUrl,
+      hint: undefined,
+    };
+  }
+  const disagreement = probeDisagreement({ lifecycle, probe, task });
+  return {
+    flags: disagreement === undefined ? [] : [disagreementLabel(disagreement)],
+    session: sessionState({ probe, task }),
+    attachCommand: accessCommand,
+    hint: disagreement === undefined ? undefined : disagreementHint({ disagreement, task }),
+  };
 }
 
 function sessionState(input: { probe: WorkspaceProbe; task: string }): StatusSessionState {
