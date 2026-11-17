@@ -7,7 +7,7 @@ export interface CloudPlaceholderInput {
   crewEntrypoint: readonly string[];
 }
 
-const CLOUD_PROGRESS_LABEL = "running (cloud)";
+const CLOUD_PROGRESS_LABEL = "running · cloud";
 
 export function buildCloudPlaceholderCommand(input: CloudPlaceholderInput): string {
   const { task, title, sessionUrl, crewEntrypoint } = input;

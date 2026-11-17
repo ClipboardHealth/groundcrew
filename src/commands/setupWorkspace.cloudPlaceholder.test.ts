@@ -1,6 +1,8 @@
 import { agentTrustDir } from "agent-trust";
 
 import { spawnSync } from "node:child_process";
+import { readFileSync, rmSync } from "node:fs";
+import path from "node:path";
 
 import type { RunCommandOptions } from "../lib/commandRunner.ts";
 import { launchCloudSession } from "../lib/cloudLauncher.ts";
@@ -156,6 +158,20 @@ describe("setupWorkspace cloud placeholder workspace", () => {
     expect(printedBanner(spec?.command)).toContain(session.url);
     expect(printedBanner(spec?.command)).toContain("'resume' 'team-1'");
     expect(spec?.status).toBeUndefined();
+  });
+
+  it("passes a short bash command and stages the stub in a launch script", async () => {
+    await setupWorkspace(makeCloudConfig(), cloudOptions);
+
+    const command = openMock.mock.calls[0]?.[1].command ?? "";
+    const scriptPath = /^bash '(?<script>[^']+)'$/.exec(command)?.groups?.["script"];
+    expect(scriptPath).toMatch(/groundcrew-cloud-team-1-[^/]+\/launch\.sh$/);
+    const script = readFileSync(scriptPath ?? "", "utf8");
+    expect(script).toContain("#!/usr/bin/env bash");
+    expect(script).toContain(session.url);
+    expect(script).toContain("running · cloud");
+    expect(script).toContain("clear 2>/dev/null || true");
+    rmSync(path.dirname(scriptPath ?? ""), { recursive: true, force: true });
   });
 
   it("opens the placeholder only after the run is recorded as running", async () => {

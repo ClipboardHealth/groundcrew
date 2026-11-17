@@ -2049,7 +2049,7 @@ describe(setupWorkspace, () => {
       launchCloudSessionMock.mockResolvedValue(cloudSession);
     });
 
-    it("never sandboxes the launch, writes agent files or runs prepareWorktree", async () => {
+    it("never sandboxes the launch or runs prepareWorktree", async () => {
       const config = makeCloudConfig();
       config.defaults = { hooks: { prepareWorktree: "npm ci" } };
       config.workspace.repositories = [
@@ -2059,8 +2059,6 @@ describe(setupWorkspace, () => {
       await setupWorkspace(config, cloudOptions);
 
       expect(ensureClearanceMock).not.toHaveBeenCalled();
-      expect(mkdtempMock).not.toHaveBeenCalled();
-      expect(writeFileMock).not.toHaveBeenCalled();
       const everyArgument = runCommandMock.mock.calls.flatMap(([, arguments_]) => arguments_);
       expect(everyArgument).not.toContain("npm ci");
       expect(everyArgument).not.toContain("bin/setup");

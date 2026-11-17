@@ -1,3 +1,7 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
 import { launchCloudSession } from "../lib/cloudLauncher.ts";
 import { buildCloudPlaceholderCommand } from "../lib/cloudPlaceholder.ts";
 import { renderCloudPrompt } from "../lib/cloudPrompt.ts";
@@ -270,19 +274,23 @@ async function openCloudPlaceholderBestEffort(input: {
   signal?: AbortSignal;
 }): Promise<void> {
   const { config, task, title, url, sessionUrl, cwd, signal } = input;
-  const spec = {
-    name: task,
-    ...(config.workspace.useTaskTitleForPanelName === true ? { displayName: title } : {}),
-    ...(url === undefined ? {} : { url }),
-    cwd,
-    command: buildCloudPlaceholderCommand({
-      task,
-      title,
-      sessionUrl,
-      crewEntrypoint: crewEntrypoint(),
-    }),
-  };
   try {
+    const stubDirectory = mkdtempSync(path.join(tmpdir(), `groundcrew-cloud-${task}-`));
+    const spec = {
+      name: task,
+      ...(config.workspace.useTaskTitleForPanelName === true ? { displayName: title } : {}),
+      ...(url === undefined ? {} : { url }),
+      cwd,
+      command: stageWorkspaceLaunchCommand(
+        stubDirectory,
+        buildCloudPlaceholderCommand({
+          task,
+          title,
+          sessionUrl,
+          crewEntrypoint: crewEntrypoint(),
+        }),
+      ),
+    };
     await (signal === undefined
       ? workspaces.open(config, spec)
       : workspaces.open(config, spec, signal));
