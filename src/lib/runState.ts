@@ -507,6 +507,10 @@ export function isCloudRun(state: RunState | undefined): boolean {
   return state?.execution === "cloud";
 }
 
+export function wasLaunchedInCloud(state: RunState): boolean {
+  return isCloudRun(state) || state.cloudSessionId !== undefined;
+}
+
 export function isLiveCloudRun(
   state: RunState | undefined,
 ): state is RunState & { execution: "cloud"; cloudSessionId: string; cloudSessionUrl: string } {

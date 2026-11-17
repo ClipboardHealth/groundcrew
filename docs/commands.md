@@ -166,7 +166,7 @@ For a cloud run, `crew resume` runs the repo's `prepareWorktree` in the light wo
 
 ## Cleanup
 
-`crew cleanup <TASK>` removes the task's run state and worktree. For a cloud run it also deletes the pushed task branch from the remote, but only when the PR lookup succeeds and finds no PR on that branch, and the remote branch carries no commits beyond the default branch (an agent may have pushed unpublished work); otherwise the branch is kept and the keep is logged. It never touches the claude.ai session, so stop or archive that on claude.ai yourself.
+`crew cleanup <TASK>` removes the task's run state and worktree. For a run launched in the cloud, including one since resumed locally, it also deletes the pushed task branch from the remote, but only when the PR lookup succeeds and finds no PR on that branch, and the remote branch carries no commits beyond the default branch (an agent may have pushed unpublished work); otherwise the branch is kept and the keep is logged. It never touches the claude.ai session, so stop or archive that on claude.ai yourself.
 
 `crew cleanup --all` skips live cloud runs and logs each skip. Clean those up one at a time with `crew cleanup <TASK>`.
 

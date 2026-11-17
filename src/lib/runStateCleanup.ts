@@ -1,6 +1,6 @@
 import type { ResolvedConfig } from "./config.ts";
 import { listPullRequestsForBranch } from "./pullRequests.ts";
-import { isCloudRun, readRunState, removeRunState, type RunState } from "./runState.ts";
+import { readRunState, removeRunState, wasLaunchedInCloud, type RunState } from "./runState.ts";
 import { deleteRemoteBranchBestEffort } from "./remoteBranch.ts";
 import { debug, errorMessage, log } from "./util.ts";
 import { reclaimStackParentBranch, resolveRepoDir, type WorktreeEntry } from "./worktrees.ts";
@@ -9,7 +9,7 @@ import { reclaimStackParentBranch, resolveRepoDir, type WorktreeEntry } from "./
  * Drops each removed task's run state, then reclaims the parent branch a
  * stacked child was pinning: `removeWorktree` preserved it while the child's
  * run state referenced it, and nothing else revisits it once that state is
- * gone. A cloud run's pushed branch is deleted from the remote only when it
+ * gone. A cloud-launched run's pushed branch is deleted from the remote only when it
  * never produced a PR.
  */
 export async function recordCleanedUpRuns(
@@ -27,7 +27,7 @@ export async function recordCleanedUpRuns(
           branchName: runState.baseBranch,
         });
       }
-      if (runState !== undefined && isCloudRun(runState)) {
+      if (runState !== undefined && wasLaunchedInCloud(runState)) {
         await deleteUnpublishedRemoteBranch({ config, entry, runState });
       }
     } catch (error) {

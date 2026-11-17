@@ -275,6 +275,36 @@ describe(recordCleanedUpRuns, () => {
       expect(runCommandMock).not.toHaveBeenCalled();
     });
 
+    describe("a cloud run resumed locally", () => {
+      const resumedRunState = runStateWith({
+        cloudSessionId: "session_1",
+        cloudSessionUrl: "https://claude.ai/code/session_1",
+      });
+
+      beforeEach(() => {
+        readRunStateMock.mockReturnValue(resumedRunState);
+      });
+
+      it("deletes the remote branch when it had no PR and the branch carries no work", async () => {
+        fakeRemoteBranch();
+        listPullRequestsMock.mockResolvedValue([]);
+
+        await recordCleanedUpRuns(cloudConfig, [entryFor("team-2")]);
+
+        expect(deleteCalls()).toStrictEqual([remoteBranchDeleteArguments]);
+      });
+
+      it("keeps the remote branch when a PR exists", async () => {
+        listPullRequestsMock.mockResolvedValue([
+          { url: "https://github.com/acme/repo-a/pull/1", number: 1, state: "open", title: "t" },
+        ]);
+
+        await recordCleanedUpRuns(cloudConfig, [entryFor("team-2")]);
+
+        expect(runCommandMock).not.toHaveBeenCalled();
+      });
+    });
+
     it("does not throw when the remote delete fails", async () => {
       listPullRequestsMock.mockResolvedValue([]);
       runCommandMock.mockRejectedValue(new Error("remote rejected"));
