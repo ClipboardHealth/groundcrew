@@ -68,6 +68,12 @@ function logStackDispatch(input: { task: string; parentTask: string; baseBranch:
   logEvent("dispatch", { ...logContext, outcome: "stacking" });
 }
 
+function logShutdownSkip({ issue }: StartVerdict): void {
+  const task = naturalIdFromCanonical(issue.id);
+  log(`Shutdown requested; not starting ${task}`);
+  logEvent("dispatch", { outcome: "skipped", reason: "shutdown", task, agent: issue.agent });
+}
+
 function logSkip(verdict: SkipVerdict): void {
   log(verdict.message);
   logEvent("dispatch", {
@@ -349,7 +355,19 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
       tasks: dispatchable.map(({ issue }) => `${naturalIdFromCanonical(issue.id)}:${issue.agent}`),
     });
 
-    for (const start of dispatchable) {
+    await startUnlessShuttingDown(dispatchable, dryRun, signal);
+  }
+
+  async function startUnlessShuttingDown(
+    starts: readonly StartVerdict[],
+    dryRun: boolean,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    for (const start of starts) {
+      if (signal?.aborted === true) {
+        logShutdownSkip(start);
+        continue;
+      }
       await startEligibleIssue(start, dryRun, signal);
     }
   }
