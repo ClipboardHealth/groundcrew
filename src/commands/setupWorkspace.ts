@@ -17,6 +17,7 @@ import {
   type ClearableOptionalField,
   readRunState,
   recordRunState,
+  removeRunState,
 } from "../lib/runState.ts";
 import { seedLaunchWorkspaceTrust } from "../lib/seedLaunchWorkspaceTrust.ts";
 import { sourceSupportsMarkDone } from "../lib/sourceCapabilities.ts";
@@ -328,6 +329,7 @@ async function setupCloudWorkspace(input: {
   const { branchName, dir: worktreeDir } = created;
   const launchDir = resolveLaunchDir(config, repository, worktreeDir);
   let branchPushed = false;
+  let launchStarted = false;
   try {
     await runCommandAsync(
       "git",
@@ -345,6 +347,7 @@ async function setupCloudWorkspace(input: {
       agentCommandName: inferAgentCommandName(agentCommand),
       launchDir,
     });
+    launchStarted = true;
     const session = await launchCloudSession({
       cwd: launchDir,
       prompt,
@@ -381,13 +384,17 @@ async function setupCloudWorkspace(input: {
     if (branchPushed) {
       await deleteRemoteBranchBestEffort({ config, repository, branchName });
     }
-    recordFailedToLaunch({
-      config,
-      options,
-      paths: { worktreeDir, branchName },
-      error,
-      execution: "cloud",
-    });
+    if (signal?.aborted === true && !launchStarted) {
+      clearRunStateBestEffort(config, task);
+    } else {
+      recordFailedToLaunch({
+        config,
+        options,
+        paths: { worktreeDir, branchName },
+        error,
+        execution: "cloud",
+      });
+    }
     throw error;
   }
 }
@@ -418,6 +425,10 @@ async function beginWorktreeCreate(arguments_: {
   const createdPromise =
     signal === undefined ? worktrees.create(config, spec) : worktrees.create(config, spec, signal);
   return await createdPromise.catch((error: unknown) => {
+    if (execution === "cloud" && signal?.aborted === true) {
+      clearRunStateBestEffort(config, task);
+      throw error;
+    }
     recordFailedToLaunch({
       config,
       options,
@@ -492,6 +503,16 @@ async function preflightProvisioningGate(arguments_: {
     ...(options.baseBranch === undefined ? {} : { baseBranch: options.baseBranch }),
     ...(options.parentTask === undefined ? {} : { parentTask: options.parentTask }),
   });
+}
+
+// No cloud session can exist before launchCloudSession is called, so a
+// failed-to-launch row would block automatic retries for nothing.
+function clearRunStateBestEffort(config: ResolvedConfig, task: string): void {
+  try {
+    removeRunState(config, task);
+  } catch (error) {
+    log(`Run state removal failed for ${task}: ${errorMessage(error)}`);
+  }
 }
 
 function recordFailedToLaunch(arguments_: {

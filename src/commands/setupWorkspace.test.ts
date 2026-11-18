@@ -8,7 +8,7 @@ import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
 import { CloudLaunchError, launchCloudSession } from "../lib/cloudLauncher.ts";
 import { DEFAULT_CLOUD_PROMPT_INITIAL } from "../lib/cloudPrompt.ts";
-import { CLOUD_RUN_STATE_FIELDS, recordRunState } from "../lib/runState.ts";
+import { CLOUD_RUN_STATE_FIELDS, recordRunState, removeRunState } from "../lib/runState.ts";
 import { canonicalLinearIssue, canonicalShellIssue } from "../lib/testing/canonicalFixtures.ts";
 import { createBoard, type Board } from "../lib/board.ts";
 import type * as boardModule from "../lib/board.ts";
@@ -92,7 +92,11 @@ vi.mock(import("../lib/cloudLauncher.ts"), async (importOriginal) => {
 });
 vi.mock(import("../lib/runState.ts"), async (importOriginal) => {
   const actual = await importOriginal();
-  return { ...actual, recordRunState: vi.fn<typeof recordRunState>() };
+  return {
+    ...actual,
+    recordRunState: vi.fn<typeof recordRunState>(),
+    removeRunState: vi.fn<typeof removeRunState>(),
+  };
 });
 vi.mock(import("../lib/util.ts"), async (importOriginal) => {
   const actual = await importOriginal<typeof utilModule>();
@@ -153,6 +157,7 @@ const ensureClearanceMock = vi.mocked(ensureClearance);
 const logMock = vi.mocked(log);
 const debugMock = vi.mocked(debug);
 const recordRunStateMock = vi.mocked(recordRunState);
+const removeRunStateMock = vi.mocked(removeRunState);
 const launchCloudSessionMock = vi.mocked(launchCloudSession);
 const createMock = vi.mocked(worktrees.create);
 const teardownMock = vi.mocked(worktrees.teardown);
@@ -2170,6 +2175,76 @@ describe(setupWorkspace, () => {
       expect(last.execution).toBe("cloud");
       expect(last.detail).toContain(output);
       expect(last.clearFields).toContain("baseBranch");
+    });
+
+    it("removes the run state row instead of recording failed-to-launch when the signal aborts before launch", async () => {
+      const controller = new AbortController();
+      controller.abort();
+      runCommandMock.mockImplementation((command, arguments_) => {
+        if (command === "git" && arguments_.includes("push")) {
+          throw new Error("Command aborted before start");
+        }
+        return "";
+      });
+
+      await expect(
+        setupWorkspace(makeCloudConfig(), cloudOptions, { signal: controller.signal }),
+      ).rejects.toThrow(/aborted/);
+
+      expect(launchCloudSessionMock).not.toHaveBeenCalled();
+      expect(teardownMock).toHaveBeenCalledOnce();
+      expect(removeRunStateMock).toHaveBeenCalledWith(expect.anything(), "team-1");
+      expect(
+        recordRunStateMock.mock.calls.filter(([input]) => input.state.state === "failed-to-launch"),
+      ).toHaveLength(0);
+    });
+
+    it("removes the run state row when worktree creation fails under an aborted signal", async () => {
+      const controller = new AbortController();
+      controller.abort();
+      createMock.mockRejectedValue(new Error("Command aborted before start"));
+
+      await expect(
+        setupWorkspace(makeCloudConfig(), cloudOptions, { signal: controller.signal }),
+      ).rejects.toThrow(/aborted/);
+
+      expect(removeRunStateMock).toHaveBeenCalledWith(expect.anything(), "team-1");
+      expect(
+        recordRunStateMock.mock.calls.filter(([input]) => input.state.state === "failed-to-launch"),
+      ).toHaveLength(0);
+    });
+
+    it("logs and still rethrows the original error when removing the run state fails", async () => {
+      const controller = new AbortController();
+      controller.abort();
+      createMock.mockRejectedValue(new Error("Command aborted before start"));
+      removeRunStateMock.mockImplementation(() => {
+        throw new Error("disk full");
+      });
+
+      await expect(
+        setupWorkspace(makeCloudConfig(), cloudOptions, { signal: controller.signal }),
+      ).rejects.toThrow(/aborted/);
+
+      expect(logMock).toHaveBeenCalledWith(expect.stringContaining("Run state removal failed"));
+    });
+
+    it("still records failed-to-launch when the signal aborts after the launch began", async () => {
+      const controller = new AbortController();
+      launchCloudSessionMock.mockImplementation(async () => {
+        controller.abort();
+        throw new Error("launch aborted");
+      });
+
+      await expect(
+        setupWorkspace(makeCloudConfig(), cloudOptions, { signal: controller.signal }),
+      ).rejects.toThrow(/launch aborted/);
+
+      expect(removeRunStateMock).not.toHaveBeenCalled();
+      expect(lastRecordedRunState()).toMatchObject({
+        state: "failed-to-launch",
+        execution: "cloud",
+      });
     });
 
     it("takes the same failure path when the push fails and never calls the launcher", async () => {
