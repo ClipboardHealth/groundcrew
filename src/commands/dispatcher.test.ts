@@ -1250,6 +1250,27 @@ describe(createDispatcher, () => {
     });
   });
 
+  describe("shutdown", () => {
+    it("starts no task once the signal is aborted and logs each skipped task", async () => {
+      const board = makeBoard();
+      const dispatcher = createDispatcher({ config: makeConfig(), board });
+      const controller = new AbortController();
+      controller.abort();
+
+      await dispatcher.runOnce({
+        state: boardOf([todoIssue()]),
+        worktreeEntries: [],
+        usage: async () => ({}),
+        dryRun: false,
+        signal: controller.signal,
+      });
+
+      expect(setupMock).not.toHaveBeenCalled();
+      expect(consoleLog.output()).toContain("Shutdown requested; not starting team-1");
+      expect(consoleLog.output()).toContain("reason=shutdown");
+    });
+  });
+
   describe("repository validation", () => {
     it("WARN-skips an issue whose repository is not in knownRepositories", async () => {
       const board = makeBoard();

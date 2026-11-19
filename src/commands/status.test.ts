@@ -1201,15 +1201,42 @@ describe(status, () => {
 
     it("single-task view shows cloud run, workspace and attach lines", async () => {
       readRunStateMock.mockReturnValue(cloudRunState({ task: "team-1" }));
+      workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-1"]) });
 
       await status(makeConfig(), { task: "team-1" });
 
       const output = consoleLog.output();
       expect(output).toContain("run: running (cloud); agent=claude;");
-      expect(output).toContain("workspace: cloud (no pane)");
+      expect(output).toContain("workspace: cloud, placeholder live");
       expect(output).toContain(`attach: ${sessionUrl}`);
       expect(output).not.toContain("session dead");
     });
+
+    it.each([
+      ["missing", { kind: "ok", names: new Set<string>() } satisfies WorkspaceProbe, "not live"],
+      [
+        "exited",
+        {
+          kind: "ok",
+          names: new Set(["team-1"]),
+          exitedNames: new Set(["team-1"]),
+        } satisfies WorkspaceProbe,
+        "exited",
+      ],
+    ])(
+      "single-task view reports a %s placeholder without flagging the cloud run as dead",
+      async (_label, probe, text) => {
+        readRunStateMock.mockReturnValue(cloudRunState({ task: "team-1" }));
+        workspaceProbeMock.mockResolvedValue(probe);
+
+        await status(makeConfig(), { task: "team-1" });
+
+        const output = consoleLog.output();
+        expect(output).toContain(`workspace: cloud, placeholder ${text}`);
+        expect(output).toContain("run: running (cloud); agent=claude;");
+        expect(output).not.toContain("session dead");
+      },
+    );
   });
 
   it("shows the bare canonical status for a worktree whose task holds no slot", async () => {

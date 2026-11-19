@@ -1,4 +1,9 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
 import { launchCloudSession } from "../lib/cloudLauncher.ts";
+import { buildCloudPlaceholderCommand } from "../lib/cloudPlaceholder.ts";
 import { renderCloudPrompt } from "../lib/cloudPrompt.ts";
 import { runCommandAsync } from "../lib/commandRunner.ts";
 import { loadConfig, resolveAgentExecution, type ResolvedConfig } from "../lib/config.ts";
@@ -12,6 +17,7 @@ import {
   type ClearableOptionalField,
   readRunState,
   recordRunState,
+  removeRunState,
 } from "../lib/runState.ts";
 import { seedLaunchWorkspaceTrust } from "../lib/seedLaunchWorkspaceTrust.ts";
 import { sourceSupportsMarkDone } from "../lib/sourceCapabilities.ts";
@@ -254,6 +260,48 @@ function displayTaskId(task: string): string {
   return LINEAR_IDENTIFIER_RE.test(task) ? task.toUpperCase() : task;
 }
 
+function crewEntrypoint(): string[] {
+  const [, scriptPath] = process.argv;
+  return scriptPath === undefined ? ["crew"] : [process.execPath, scriptPath];
+}
+
+async function openCloudPlaceholderBestEffort(input: {
+  config: ResolvedConfig;
+  task: string;
+  title: string;
+  url?: string;
+  sessionUrl: string;
+  cwd: string;
+  signal?: AbortSignal;
+}): Promise<void> {
+  const { config, task, title, url, sessionUrl, cwd, signal } = input;
+  try {
+    const stubDirectory = mkdtempSync(path.join(tmpdir(), `groundcrew-cloud-${task}-`));
+    const spec = {
+      name: task,
+      ...(config.workspace.useTaskTitleForPanelName === true ? { displayName: title } : {}),
+      ...(url === undefined ? {} : { url }),
+      cwd,
+      command: stageWorkspaceLaunchCommand(
+        stubDirectory,
+        buildCloudPlaceholderCommand({
+          task,
+          title,
+          sessionUrl,
+          crewEntrypoint: crewEntrypoint(),
+        }),
+      ),
+    };
+    await (signal === undefined
+      ? workspaces.open(config, spec)
+      : workspaces.open(config, spec, signal));
+  } catch (error) {
+    log(
+      `Could not open the cloud placeholder workspace for ${task}: ${errorMessage(error)}. The cloud run continues.`,
+    );
+  }
+}
+
 async function setupCloudWorkspace(input: {
   config: ResolvedConfig;
   options: SetupWorkspaceOptions;
@@ -281,6 +329,7 @@ async function setupCloudWorkspace(input: {
   const { branchName, dir: worktreeDir } = created;
   const launchDir = resolveLaunchDir(config, repository, worktreeDir);
   let branchPushed = false;
+  let launchStarted = false;
   try {
     await runCommandAsync(
       "git",
@@ -298,6 +347,7 @@ async function setupCloudWorkspace(input: {
       agentCommandName: inferAgentCommandName(agentCommand),
       launchDir,
     });
+    launchStarted = true;
     const session = await launchCloudSession({
       cwd: launchDir,
       prompt,
@@ -319,19 +369,32 @@ async function setupCloudWorkspace(input: {
       completionTaskId: options.completionTaskId ?? task,
       ...(options.details.url === undefined ? {} : { url: options.details.url }),
     });
+    await openCloudPlaceholderBestEffort({
+      config,
+      task,
+      title: options.details.title,
+      ...(options.details.url === undefined ? {} : { url: options.details.url }),
+      sessionUrl: session.url,
+      cwd: launchDir,
+      ...(signal === undefined ? {} : { signal }),
+    });
     log(`${okMark()} "${task}" launched in the cloud (${agent})  session ${session.url}`);
   } catch (error) {
     await rollbackWorktree({ config, entry: created, promptDir: undefined });
     if (branchPushed) {
       await deleteRemoteBranchBestEffort({ config, repository, branchName });
     }
-    recordFailedToLaunch({
-      config,
-      options,
-      paths: { worktreeDir, branchName },
-      error,
-      execution: "cloud",
-    });
+    if (signal?.aborted === true && !launchStarted) {
+      clearRunStateBestEffort(config, task);
+    } else {
+      recordFailedToLaunch({
+        config,
+        options,
+        paths: { worktreeDir, branchName },
+        error,
+        execution: "cloud",
+      });
+    }
     throw error;
   }
 }
@@ -362,6 +425,10 @@ async function beginWorktreeCreate(arguments_: {
   const createdPromise =
     signal === undefined ? worktrees.create(config, spec) : worktrees.create(config, spec, signal);
   return await createdPromise.catch((error: unknown) => {
+    if (execution === "cloud" && signal?.aborted === true) {
+      clearRunStateBestEffort(config, task);
+      throw error;
+    }
     recordFailedToLaunch({
       config,
       options,
@@ -436,6 +503,16 @@ async function preflightProvisioningGate(arguments_: {
     ...(options.baseBranch === undefined ? {} : { baseBranch: options.baseBranch }),
     ...(options.parentTask === undefined ? {} : { parentTask: options.parentTask }),
   });
+}
+
+// No cloud session can exist before launchCloudSession is called, so a
+// failed-to-launch row would block automatic retries for nothing.
+function clearRunStateBestEffort(config: ResolvedConfig, task: string): void {
+  try {
+    removeRunState(config, task);
+  } catch (error) {
+    log(`Run state removal failed for ${task}: ${errorMessage(error)}`);
+  }
 }
 
 function recordFailedToLaunch(arguments_: {

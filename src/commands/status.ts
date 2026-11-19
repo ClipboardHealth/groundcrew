@@ -268,7 +268,8 @@ async function writeTaskStatus(config: ResolvedConfig, rawTask: string): Promise
     ...(disagreement === undefined ? [] : [disagreementLabel(disagreement)]),
   ];
   writeOutput(`run: ${formatRunState(runState, flags)}`);
-  writeOutput(`workspace: ${cloud ? "cloud (no pane)" : taskWorkspaceText(workspaceProbe, task)}`);
+  const workspaceText = taskWorkspaceText(workspaceProbe, task);
+  writeOutput(`workspace: ${cloud ? `cloud, placeholder ${workspaceText}` : workspaceText}`);
   const attachTarget = cloud ? runState?.cloudSessionUrl : accessHint?.command;
   if (attachTarget !== undefined) {
     writeOutput(`attach: ${attachTarget}`);

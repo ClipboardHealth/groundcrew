@@ -274,12 +274,25 @@ function resolveResumeLaunch(input: {
   return withResumeArgs(definition, definition.resumeArgs);
 }
 
+async function closeCloudPlaceholder(config: ResolvedConfig, task: string): Promise<void> {
+  const result = await workspaces.close(config, task);
+  if (result.kind === "unavailable") {
+    const detail =
+      result.error === undefined ? "workspace backend unavailable" : errorMessage(result.error);
+    throw new Error(
+      `Could not close the cloud placeholder workspace for ${task}: ${detail}. Close it manually, then retry.`,
+    );
+  }
+}
+
 export async function resumeWorkspace(
   config: ResolvedConfig,
   options: ResumeWorkspaceOptions,
 ): Promise<void> {
   const task = options.task.toLowerCase();
-  await failIfWorkspaceAlreadyLive(config, task, "resuming");
+  if (!isLiveCloudRun(readRunState(config, task))) {
+    await failIfWorkspaceAlreadyLive(config, task, "resuming");
+  }
   const context = await buildResumeContext(config, task);
   const definition = config.agents.definitions[context.agent];
   if (definition === undefined) {
@@ -360,6 +373,9 @@ export async function resumeWorkspace(
     });
     cleanupAgentLaunch = launch.cleanup;
     const launchCmd = stageWorkspaceLaunchCommand(stagedPrompt.directory, launch.command);
+    if (cloudSettings !== undefined) {
+      await closeCloudPlaceholder(config, task);
+    }
     await openAgentWorkspace({
       config,
       name: task,
