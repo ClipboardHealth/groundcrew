@@ -79,6 +79,10 @@ export interface StatusTask {
   /** Set only for cloud runs, which have no pane to probe. */
   execution?: ExecutionMode | undefined;
   cloudSessionUrl?: string | undefined;
+  /** Session id a local Claude launch was pinned to with `--session-id`. */
+  claudeSessionId?: string | undefined;
+  /** Remote Control name the local Claude launch registered, when enabled. */
+  remoteControlName?: string | undefined;
 }
 
 export interface StatusLogCursor {

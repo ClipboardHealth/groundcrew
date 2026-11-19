@@ -207,6 +207,7 @@ function makeConfig(): ResolvedConfig {
       definitions: { claude: { cmd: "claude --auto", color: "#fff" } },
     },
     execution: makeExecutionConfig(),
+    remoteControl: { enabled: false },
     prompts: { initial: "x", cloudInitial: "x" },
     workspaceKind: "auto",
     local: makeLocalConfig(),
@@ -399,6 +400,79 @@ describe(resumeWorkspace, () => {
     await resumeWorkspace(config, { task: "team-1" });
 
     expect(stagedLaunchScript()).not.toContain("--continue");
+  });
+
+  describe("claude session resume", () => {
+    const claudeSessionId = "6f1f5f0e-9d0e-4d9a-8e57-0a5d3b0f6a11";
+    const quotedName = "'\\''TEAM-1 repo-a'\\''";
+
+    function remoteControlConfig(enabled: boolean): ResolvedConfig {
+      return { ...resumeArgsConfig(), remoteControl: { enabled } };
+    }
+
+    it("resumes the recorded session instead of resumeArgs", async () => {
+      readRunStateMock.mockReturnValue(makeRunState({ claudeSessionId }));
+
+      await resumeWorkspace(remoteControlConfig(false), { task: "team-1" });
+
+      const script = stagedLaunchScript();
+      expect(script).toContain(`--resume ${claudeSessionId}`);
+      expect(script).not.toContain("--continue");
+      expect(script).not.toContain("--remote-control");
+      expect(lastRecordedRunState()).toMatchObject({ claudeSessionId });
+      expect(lastRecordedRunState().remoteControlName).toBeUndefined();
+    });
+
+    it("re-registers Remote Control when enabled", async () => {
+      readRunStateMock.mockReturnValue(makeRunState({ claudeSessionId }));
+
+      await resumeWorkspace(remoteControlConfig(true), { task: "team-1" });
+
+      expect(stagedLaunchScript()).toContain(
+        `--resume ${claudeSessionId} --remote-control ${quotedName} -n ${quotedName}`,
+      );
+      expect(lastRecordedRunState().remoteControlName).toBe("TEAM-1 repo-a");
+    });
+
+    it("keeps resumeArgs when no session id was recorded", async () => {
+      await resumeWorkspace(remoteControlConfig(true), { task: "team-1" });
+
+      const script = stagedLaunchScript();
+      expect(script).toContain("--continue");
+      expect(script).not.toContain("--resume");
+      expect(script).not.toContain("--remote-control");
+      expect(lastRecordedRunState().claudeSessionId).toBeUndefined();
+    });
+
+    it("starts a new pinned session with --new", async () => {
+      readRunStateMock.mockReturnValue(makeRunState({ claudeSessionId }));
+
+      await resumeWorkspace(remoteControlConfig(false), { task: "team-1", fresh: true });
+
+      const script = stagedLaunchScript();
+      expect(script).not.toContain("--resume");
+      expect(script).not.toContain("--continue");
+      expect(script).toMatch(/--session-id [0-9a-f-]{36}/);
+      expect(lastRecordedRunState().claudeSessionId).not.toBe(claudeSessionId);
+    });
+
+    it("leaves a non-Claude agent on its own resumeArgs", async () => {
+      readRunStateMock.mockReturnValue(makeRunState({ agent: "codex", claudeSessionId }));
+      const codexConfig: ResolvedConfig = {
+        ...remoteControlConfig(true),
+        agents: {
+          default: "codex",
+          definitions: { codex: { cmd: "codex", color: "#000", resumeArgs: "resume --last" } },
+        },
+      };
+
+      await resumeWorkspace(codexConfig, { task: "team-1" });
+
+      const script = stagedLaunchScript();
+      expect(script).toContain("resume --last");
+      expect(script).not.toContain("--resume");
+      expect(script).not.toContain("--remote-control");
+    });
   });
 
   it("prefers the run-state branch over the task-derived worktree branch", async () => {

@@ -13,6 +13,7 @@ import {
   isLiveCloudRun,
   listCloudRunTasks,
   listRunStates,
+  LOCAL_CLAUDE_SESSION_STATE_FIELDS,
   readRunState,
   recordRunState,
   removeRunState,
@@ -42,6 +43,7 @@ function makeConfig(stateRoot: string): ResolvedConfig {
       definitions: { claude: { cmd: "claude", color: "#fff" } },
     },
     execution: makeExecutionConfig(),
+    remoteControl: { enabled: false },
     prompts: { initial: "x", cloudInitial: "x" },
     workspaceKind: "auto",
     local: makeLocalConfig(),
@@ -819,6 +821,103 @@ describe("run state store", () => {
       cloudSessionUrl: "https://claude.ai/code/session_abc",
       autofixRequestedAt: "2026-11-17T10:00:00.000Z",
     });
+  });
+
+  describe("claude session fields", () => {
+    const claudeSessionId = "6f1f5f0e-9d0e-4d9a-8e57-0a5d3b0f6a11";
+    const base = {
+      task: "team-1",
+      repository: "repo-a",
+      agent: "claude",
+      worktreeDir: "/work/repo-a-team-1",
+      branchName: "dev-team-1",
+      workspaceName: "team-1",
+    } as const;
+
+    it("round-trips claudeSessionId and remoteControlName", () => {
+      recordRunState({
+        config,
+        state: {
+          ...base,
+          state: "running",
+          claudeSessionId,
+          remoteControlName: "TEAM-1 repo-a",
+        },
+      });
+
+      expect(readRunState(config, "team-1")).toMatchObject({
+        claudeSessionId,
+        remoteControlName: "TEAM-1 repo-a",
+      });
+    });
+
+    it("carries the session fields across a transition that omits them", () => {
+      recordRunState({
+        config,
+        state: { ...base, state: "running", claudeSessionId, remoteControlName: "TEAM-1 repo-a" },
+      });
+
+      recordRunState({ config, state: { ...base, state: "interrupted" } });
+
+      expect(readRunState(config, "team-1")).toMatchObject({
+        claudeSessionId,
+        remoteControlName: "TEAM-1 repo-a",
+      });
+    });
+
+    it("does not carry a stale remote control name into a new session", () => {
+      recordRunState({
+        config,
+        state: { ...base, state: "running", claudeSessionId, remoteControlName: "TEAM-1 repo-a" },
+      });
+
+      recordRunState({
+        config,
+        state: {
+          ...base,
+          state: "running",
+          claudeSessionId: "11111111-2222-4333-8444-555555555555",
+        },
+      });
+
+      expect(readRunState(config, "team-1")).not.toHaveProperty("remoteControlName");
+    });
+
+    it("drops the session fields named in clearFields", () => {
+      recordRunState({
+        config,
+        state: { ...base, state: "running", claudeSessionId, remoteControlName: "TEAM-1 repo-a" },
+      });
+
+      recordRunState({
+        config,
+        state: { ...base, state: "running", clearFields: LOCAL_CLAUDE_SESSION_STATE_FIELDS },
+      });
+
+      const reread = readRunState(config, "team-1");
+      expect(reread).not.toHaveProperty("claudeSessionId");
+      expect(reread).not.toHaveProperty("remoteControlName");
+    });
+
+    it.each(["abc", "$(whoami)", `${claudeSessionId}; rm -rf ~`])(
+      "drops a claudeSessionId read from disk that is not a UUID: %s",
+      (badId) => {
+        mkdirSync(path.dirname(runStatePath(config, "team-1")), { recursive: true });
+        writeFileSync(
+          runStatePath(config, "team-1"),
+          JSON.stringify({
+            ...base,
+            state: "running",
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+            resumeCount: 0,
+            claudeSessionId: badId,
+          }),
+        );
+
+        expect(readRunState(config, "team-1")).not.toHaveProperty("claudeSessionId");
+      },
+    );
   });
 
   it.each(["session_abc; rm -rf ~", "abc", "session_", "session_a b", "$(whoami)"])(

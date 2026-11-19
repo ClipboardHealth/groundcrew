@@ -1,12 +1,17 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
+import { claudeRunStateFields, planClaudeLaunch } from "../lib/claudeSession.ts";
 import { composeAgentLaunch, openAgentWorkspace, prepareAgentLaunch } from "../lib/agentLaunch.ts";
 import { inferAgentCommandName } from "../lib/launchCommand.ts";
 import { loadConfig, repositoryBaseDir, type ResolvedConfig } from "../lib/config.ts";
 import { resolvePullRequest } from "../lib/pullRequests.ts";
 import { resolveRepositoryPreparationCommands } from "../lib/repositoryHooks.ts";
-import { recordRunState, readRunState } from "../lib/runState.ts";
+import {
+  LOCAL_CLAUDE_SESSION_STATE_FIELDS,
+  recordRunState,
+  readRunState,
+} from "../lib/runState.ts";
 import { seedLaunchWorkspaceTrust } from "../lib/seedLaunchWorkspaceTrust.ts";
 import {
   removeStagedPrompt,
@@ -277,11 +282,18 @@ export async function openWorkspace(
       agentCommandName: inferAgentCommandName(definition.cmd),
       launchDir,
     });
+    const claudeLaunch = planClaudeLaunch({
+      definition,
+      task: target.task,
+      repository,
+      remoteControlEnabled: config.remoteControl.enabled,
+      mode: "new",
+    });
     const launch = composeAgentLaunch({
       runner,
       networkEgress,
       task: target.task,
-      definition,
+      definition: claudeLaunch.definition,
       promptFile: stagedPrompt.file,
       worktreeDir: created.dir,
       workingDir: launchDir,
@@ -319,6 +331,9 @@ export async function openWorkspace(
         state: "running",
         title: target.title,
         adoptedBranch: true,
+        ...(claudeLaunch.claudeSessionId === undefined
+          ? { clearFields: LOCAL_CLAUDE_SESSION_STATE_FIELDS }
+          : claudeRunStateFields(claudeLaunch)),
         ...(target.url === undefined ? {} : { url: target.url }),
       },
     });

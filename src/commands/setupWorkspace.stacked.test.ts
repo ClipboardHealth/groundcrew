@@ -173,6 +173,7 @@ function makeConfig(): ResolvedConfig {
       definitions: { claude: { cmd: "claude --auto", color: "#fff" } },
     },
     execution: makeExecutionConfig(),
+    remoteControl: { enabled: false },
     prompts: {
       initial: "Begin {{task}} ({{title}}) in {{worktree}}\n{{description}}",
       cloudInitial: "x",

@@ -49,6 +49,7 @@ function preparationConfig(): ResolvedConfig {
       definitions: { claude: { cmd: "claude", color: "#fff" } },
     },
     execution: makeExecutionConfig(),
+    remoteControl: { enabled: false },
     prompts: { initial: "x", cloudInitial: "x" },
     workspaceKind: "auto",
     local: makeLocalConfig(),

@@ -223,7 +223,7 @@ Rules:
 How it works:
 
 - The first launch is unchanged — the agent creates its own conversation in the worktree.
-- `crew resume <TASK>` appends `resumeArgs` to the agent's `cmd`, so the agent reopens that conversation (`claude --continue`, `codex … resume --last`). groundcrew stores no session id — each task has its own worktree, so the agent's "resume the latest conversation in this directory" primitive is enough.
+- `crew resume <TASK>` appends `resumeArgs` to the agent's `cmd`, so the agent reopens that conversation (`claude --continue`, `codex … resume --last`). for agents other than local Claude, groundcrew stores no session id — each task has its own worktree, so the agent's "resume the latest conversation in this directory" primitive is enough. Local Claude launches are the exception; see [Remote Control](#remote-control-claude-app-visibility).
 - `crew resume --new <TASK>` ignores `resumeArgs` and cold-starts a fresh conversation.
 - `resumeArgs` is appended after `cmd`, so the agent binary (and its safehouse profile) and the trailing prompt argument are unaffected. It assumes one conversation per worktree — if you manually open extra sessions in that directory, "latest" may not be the one you expect.
 
@@ -236,6 +236,24 @@ agents: {
   },
 },
 ```
+
+## Remote Control (Claude app visibility)
+
+Local Claude workers can register with Remote Control so they show up in the Claude app (desktop, web, and phone) next to cloud runs, where you can watch and steer them. It is off by default: Remote Control needs a claude.ai subscription login and fails with API-key authentication.
+
+```ts
+export default {
+  remoteControl: { enabled: true },
+};
+```
+
+Session pinning does not depend on this setting. Every new local launch of a Claude profile gets `--session-id <uuid>`, and groundcrew records the id in run state as `claudeSessionId`. Codex, Cursor, other non-Claude profiles, and cloud runs are never pinned.
+
+With `remoteControl.enabled`, a Claude launch also gets `--remote-control "<name>" -n "<name>"`, where `<name>` is the task id and repository short name, for example `TG-1234 shift-reviews-service`. These flags go before the prompt argument, in `crew start`, `crew run`, `crew open`, and `crew resume`.
+
+- `crew resume <TASK>` resumes the recorded session with `--resume <claudeSessionId>` instead of the profile's `resumeArgs`, and re-registers Remote Control when enabled. A run with no recorded session id keeps the `resumeArgs` behavior, and `crew resume --new` starts a new pinned session.
+- `crew status <TASK>` and the inventory show the session id, the Remote Control name when enabled, and `claude --desktop --resume <claudeSessionId>` to open the session in the desktop app. `crew status --json` adds `claudeSessionId` and `remoteControlName` to each task.
+- The claude.ai URL of the Remote Control session is printed only in the Claude pane, so groundcrew cannot record it. Find the session by its name in the Claude app.
 
 ## Cloud execution
 
@@ -429,6 +447,7 @@ and hook contract.
 | `orchestrator.sessionLimitPercentage`                 | `85`                                                         | Number in `(0, 100]`. An agent whose codexbar session window exceeds this percentage is skipped that tick. Agents are also skipped when codexbar reports weekly usage over the current weekly paced budget.                                                                                                                                                                                                                                                                                                                                               |
 | `execution.default`                                   | `"local"`                                                    | Execution mode for profiles whose command is `claude` (optionally with a path) and that do not set `agents.definitions.<name>.execution`. `"cloud"` starts them as claude.ai cloud sessions; non-Claude profiles stay local. See [Cloud execution](#cloud-execution).                                                                                                                                                                                                                                                                                     |
 | `execution.maximumInProgress`                         | `10`                                                         | Cap on cloud runs in progress at once. Separate from `orchestrator.maximumInProgress`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `remoteControl.enabled`                               | `false`                                                      | When `true`, local Claude launches pass `--remote-control` and `-n` with a `<TASK> <repo>` name so the run appears in the Claude app. Requires a claude.ai subscription login. See [Remote Control](#remote-control-claude-app-visibility).                                                                                                                                                                                                                                                                                                               |
 | `agents.default`                                      | `"claude"`                                                   | Tiebreak for `agent-any` resolution and fallback for explicit but unknown `agent-*` labels. Also used by `crew start <TASK>` for unlabeled tasks. `crew run` ignores unlabeled tasks and does not apply this default. Must exist in `agents.definitions`. If you enable only `codex`, set `default: "codex"`.                                                                                                                                                                                                                                             |
 | `agents.definitions`                                  | **required**                                                 | Enabled launch profile set. Built-in keys (`claude`, `codex`, `cursor`, `cursor-grok`, `pi`) can use `{}` to opt into the shipped preset. Custom profile names must provide `cmd` and `color`; use custom profiles such as `claude-fable` and `claude-opus` to select model-specific commands per task.                                                                                                                                                                                                                                                   |
 | `agents.definitions.<name>.weight`                    | `1` (when omitted)                                           | Positive finite number dividing session usage for `agent-any` ranking. Higher weight favors an agent; session and weekly exhaustion gates are unchanged.                                                                                                                                                                                                                                                                                                                                                                                                  |

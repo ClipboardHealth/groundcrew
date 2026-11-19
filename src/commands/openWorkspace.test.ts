@@ -10,7 +10,11 @@ import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
 import { resolvePullRequest } from "../lib/pullRequests.ts";
 import { resolveRepositoryPreparationCommands } from "../lib/repositoryHooks.ts";
-import { readRunState, recordRunState } from "../lib/runState.ts";
+import {
+  LOCAL_CLAUDE_SESSION_STATE_FIELDS,
+  readRunState,
+  recordRunState,
+} from "../lib/runState.ts";
 import { seedLaunchWorkspaceTrust } from "../lib/seedLaunchWorkspaceTrust.ts";
 import { log } from "../lib/util.ts";
 import { workspaces } from "../lib/workspaces.ts";
@@ -190,6 +194,7 @@ function makeConfig(): ResolvedConfig {
       definitions: { claude: { cmd: "claude", color: "#fff" } },
     },
     execution: makeExecutionConfig(),
+    remoteControl: { enabled: false },
     prompts: { initial: "x", cloudInitial: "x" },
     workspaceKind: "auto",
     local: makeLocalConfig(),
@@ -556,6 +561,46 @@ describe(openWorkspace, () => {
     });
 
     expect(stagedLaunchScript()).not.toContain(`sh "$_p"`);
+  });
+
+  it("pins a session id on the interactive launch and records it", async () => {
+    await openWorkspace(config, {
+      input: { kind: "pr", pr: "42" },
+      repository: "acme/widgets",
+    });
+
+    const { claudeSessionId } = lastRecordedRunState();
+    expect(claudeSessionId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(stagedLaunchScript()).toContain(`--session-id ${claudeSessionId}`);
+    expect(stagedLaunchScript()).not.toContain("--remote-control");
+  });
+
+  it("adds Remote Control flags with no prompt positional when enabled", async () => {
+    await openWorkspace(
+      { ...config, remoteControl: { enabled: true } },
+      { input: { kind: "pr", pr: "42" }, repository: "acme/widgets" },
+    );
+
+    const script = stagedLaunchScript();
+    expect(script).toContain("--remote-control");
+    expect(script).not.toContain(`sh "$_p"`);
+    expect(lastRecordedRunState().remoteControlName).toBe("PR-42 widgets");
+  });
+
+  it("clears stale session fields when the agent is not Claude", async () => {
+    await openWorkspace(
+      {
+        ...config,
+        agents: {
+          default: "cursor",
+          definitions: { cursor: { cmd: "cursor-agent", color: "#000" } },
+        },
+      },
+      { input: { kind: "pr", pr: "42" }, repository: "acme/widgets" },
+    );
+
+    expect(lastRecordedRunState().claudeSessionId).toBeUndefined();
+    expect(lastRecordedRunState().clearFields).toStrictEqual(LOCAL_CLAUDE_SESSION_STATE_FIELDS);
   });
 
   it("stages the prepareWorktree hook into the launch when one is configured", async () => {

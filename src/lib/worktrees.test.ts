@@ -99,6 +99,7 @@ function makeConfig(overrides: {
     },
     agents: { default: "claude", definitions: agents },
     execution: makeExecutionConfig(),
+    remoteControl: { enabled: false },
     prompts: { initial: "x", cloudInitial: "x" },
     workspaceKind: "auto",
     local: makeLocalConfig(),

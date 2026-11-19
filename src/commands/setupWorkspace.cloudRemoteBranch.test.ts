@@ -115,6 +115,7 @@ function makeCloudConfig(): ResolvedConfig {
       definitions: { claude: { cmd: "claude", color: "#fff", execution: "cloud" } },
     },
     execution: makeExecutionConfig(),
+    remoteControl: { enabled: false },
     prompts: { initial: "x", cloudInitial: DEFAULT_CLOUD_PROMPT_INITIAL },
     workspaceKind: "auto",
     local: makeLocalConfig(),

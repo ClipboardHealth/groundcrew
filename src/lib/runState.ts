@@ -74,6 +74,10 @@ export interface RunState {
   cloudSessionId?: string;
   cloudSessionUrl?: string;
   autofixRequestedAt?: string;
+  /** Session id passed to a local Claude launch with `--session-id`. */
+  claudeSessionId?: string;
+  /** Remote Control name the local Claude launch registered, when enabled. */
+  remoteControlName?: string;
 }
 
 export interface RunStateDraft {
@@ -99,6 +103,8 @@ export interface RunStateDraft {
   cloudSessionId?: string;
   cloudSessionUrl?: string;
   autofixRequestedAt?: string;
+  claudeSessionId?: string;
+  remoteControlName?: string;
   /**
    * Optional-field names to drop entirely rather than carry forward from the
    * on-disk record. Used by the failed-to-launch path so a `baseBranch`/
@@ -125,6 +131,7 @@ export interface UpdateRunStateInput {
 
 const RUN_STATE_DIRECTORY_NAME = "runs";
 const CLOUD_SESSION_ID_PATTERN = /^session_[A-Za-z0-9_-]+$/;
+const CLAUDE_SESSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function taskKey(task: string): string {
   return normalizePlainTaskId(task);
@@ -154,6 +161,11 @@ function stringField(value: Record<string, unknown>, key: string): string | unde
 function cloudSessionIdField(value: Record<string, unknown>): string | undefined {
   const field = stringField(value, "cloudSessionId");
   return field !== undefined && CLOUD_SESSION_ID_PATTERN.test(field) ? field : undefined;
+}
+
+function claudeSessionIdField(value: Record<string, unknown>): string | undefined {
+  const field = stringField(value, "claudeSessionId");
+  return field !== undefined && CLAUDE_SESSION_ID_PATTERN.test(field) ? field : undefined;
 }
 
 function isRunLifecycleState(value: unknown): value is RunLifecycleState {
@@ -242,7 +254,20 @@ type OptionalRunStateFields = Pick<
   | "cloudSessionId"
   | "cloudSessionUrl"
   | "autofixRequestedAt"
+  | "claudeSessionId"
+  | "remoteControlName"
 >;
+
+function parseClaudeSessionFields(
+  value: Record<string, unknown>,
+): Pick<RunState, "claudeSessionId" | "remoteControlName"> {
+  const claudeSessionId = claudeSessionIdField(value);
+  const remoteControlName = stringField(value, "remoteControlName");
+  return {
+    ...(claudeSessionId === undefined ? {} : { claudeSessionId }),
+    ...(remoteControlName === undefined ? {} : { remoteControlName }),
+  };
+}
 
 function parseOptionalFields(value: Record<string, unknown>): OptionalRunStateFields {
   const reason = stringField(value, "reason");
@@ -275,6 +300,7 @@ function parseOptionalFields(value: Record<string, unknown>): OptionalRunStateFi
     ...(cloudSessionId === undefined ? {} : { cloudSessionId }),
     ...(cloudSessionUrl === undefined ? {} : { cloudSessionUrl }),
     ...(autofixRequestedAt === undefined ? {} : { autofixRequestedAt }),
+    ...parseClaudeSessionFields(value),
   };
 }
 
@@ -315,7 +341,14 @@ export type ClearableOptionalField =
   | "execution"
   | "cloudSessionId"
   | "cloudSessionUrl"
-  | "autofixRequestedAt";
+  | "autofixRequestedAt"
+  | "claudeSessionId"
+  | "remoteControlName";
+
+export const LOCAL_CLAUDE_SESSION_STATE_FIELDS: readonly ClearableOptionalField[] = [
+  "claudeSessionId",
+  "remoteControlName",
+];
 
 export const CLOUD_RUN_STATE_FIELDS: readonly ClearableOptionalField[] = [
   "execution",
@@ -371,6 +404,30 @@ function carryCloudFields(
   };
 }
 
+function carryClaudeSessionFields(
+  draft: RunStateDraft,
+  prior: OptionalRunStateFields,
+): Pick<RunState, "claudeSessionId" | "remoteControlName"> {
+  const cleared = new Set(draft.clearFields ?? []);
+  const claudeSessionId = carriedOrCleared(
+    "claudeSessionId",
+    cleared,
+    draft.claudeSessionId,
+    prior.claudeSessionId,
+  );
+  const startsNewSession = draft.claudeSessionId !== undefined;
+  const remoteControlName = carriedOrCleared(
+    "remoteControlName",
+    cleared,
+    draft.remoteControlName,
+    startsNewSession ? undefined : prior.remoteControlName,
+  );
+  return {
+    ...(claudeSessionId === undefined ? {} : { claudeSessionId }),
+    ...(remoteControlName === undefined ? {} : { remoteControlName }),
+  };
+}
+
 // Resume/interrupt callers don't know these cached/stacking fields, so they
 // omit them. Fall back to the on-disk value so they survive transitions.
 function carryOptionalFields(
@@ -409,6 +466,7 @@ function carryOptionalFields(
     ...(needsRebase === undefined ? {} : { needsRebase }),
     ...(stackRegistered === undefined ? {} : { stackRegistered }),
     ...carryCloudFields(draft, prior),
+    ...carryClaudeSessionFields(draft, prior),
   };
 }
 
