@@ -591,7 +591,10 @@ describe(openWorkspace, () => {
     await openWorkspace(
       {
         ...config,
-        agents: { default: "codex", definitions: { codex: { cmd: "codex", color: "#000" } } },
+        agents: {
+          default: "cursor",
+          definitions: { cursor: { cmd: "cursor-agent", color: "#000" } },
+        },
       },
       { input: { kind: "pr", pr: "42" }, repository: "acme/widgets" },
     );
