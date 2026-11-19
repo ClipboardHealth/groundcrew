@@ -53,6 +53,7 @@ function makeConfig(): ResolvedConfig {
       },
     },
     execution: makeExecutionConfig(),
+    remoteControl: { enabled: false },
     prompts: { initial: "x", cloudInitial: "x" },
     workspaceKind: "auto",
     local: makeLocalConfig(),

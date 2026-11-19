@@ -8,7 +8,7 @@ import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
 import { CloudLaunchError, launchCloudSession } from "../lib/cloudLauncher.ts";
 import { DEFAULT_CLOUD_PROMPT_INITIAL } from "../lib/cloudPrompt.ts";
-import { CLOUD_RUN_STATE_FIELDS, recordRunState, removeRunState } from "../lib/runState.ts";
+import { recordRunState, removeRunState } from "../lib/runState.ts";
 import { canonicalLinearIssue, canonicalShellIssue } from "../lib/testing/canonicalFixtures.ts";
 import { createBoard, type Board } from "../lib/board.ts";
 import type * as boardModule from "../lib/board.ts";
@@ -223,6 +223,7 @@ function makeConfig(overrides: Partial<ResolvedConfig["agents"]> = {}): Resolved
       ...overrides,
     },
     execution: makeExecutionConfig(),
+    remoteControl: { enabled: false },
     prompts: {
       initial: "Begin {{task}} ({{title}}) in {{worktree}}\n{{description}}",
       cloudInitial: "x",
@@ -802,7 +803,9 @@ describe(setupWorkspace, () => {
     );
     expect(launchScript).toContain('_safehouse_shim="$_safehouse_shim_dir/claude"');
     expect(launchScript).not.toContain("--enable=all-agents");
-    expect(launchScript).toContain("exec claude --permission-mode auto --settings ");
+    expect(launchScript).toMatch(
+      /exec claude --permission-mode auto --session-id [0-9a-f-]{36} --settings /,
+    );
     expect(launchScript).toContain('"$@"');
     expect(launchScript).toContain('sh "$_p"');
     // prepareWorktree status guard so a failed install still launches the agent
@@ -2081,6 +2084,8 @@ describe(setupWorkspace, () => {
         "cloudSessionId",
         "cloudSessionUrl",
         "autofixRequestedAt",
+        "claudeSessionId",
+        "remoteControlName",
       ]);
       expect(firstInvocationOrder(recordRunStateMock)).toBeLessThan(
         firstInvocationOrder(createMock),
@@ -2290,18 +2295,6 @@ describe(setupWorkspace, () => {
 
       expect(createMock).not.toHaveBeenCalled();
       expect(recordRunStateMock).not.toHaveBeenCalled();
-      expect(launchCloudSessionMock).not.toHaveBeenCalled();
-    });
-
-    it("clears leftover cloud fields on a local launch's provisioning row", async () => {
-      mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:1" }));
-
-      await setupWorkspace(makeConfig(), cloudOptions);
-
-      const provisioning = recordRunStateMock.mock.calls.find(
-        ([input]) => input.state.state === "provisioning",
-      )?.[0].state;
-      expect(provisioning?.clearFields).toStrictEqual(CLOUD_RUN_STATE_FIELDS);
       expect(launchCloudSessionMock).not.toHaveBeenCalled();
     });
   });

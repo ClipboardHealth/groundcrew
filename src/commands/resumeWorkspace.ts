@@ -2,6 +2,12 @@ import { fetchResolvedIssue } from "../lib/adapters/linear/fetch.ts";
 import { getLinearClient } from "../lib/adapters/linear/client.ts";
 import { isLinearEnabled, sourcesFromConfig } from "../lib/buildSources.ts";
 import { type AgentDefinition, loadConfig, type ResolvedConfig } from "../lib/config.ts";
+import {
+  claudeRunStateFields,
+  isClaudeLocalDefinition,
+  planClaudeLaunch,
+  type ClaudeLaunchPlan,
+} from "../lib/claudeSession.ts";
 import { composeAgentLaunch, openAgentWorkspace, prepareAgentLaunch } from "../lib/agentLaunch.ts";
 import {
   inferAgentCommandName,
@@ -63,6 +69,7 @@ interface ResumeContext {
   /** Stacked parent branch, when this task is a stacked child; threaded to the resumed worker's environment. */
   baseBranch?: string;
   cloudSession?: { id: string; url: string };
+  claudeSessionId?: string;
 }
 
 function parseArguments(argv: string[]): ResumeWorkspaceOptions {
@@ -156,6 +163,7 @@ async function contextFromState(
     ...(isLiveCloudRun(state)
       ? { cloudSession: { id: state.cloudSessionId, url: state.cloudSessionUrl } }
       : {}),
+    ...(state.claudeSessionId === undefined ? {} : { claudeSessionId: state.claudeSessionId }),
   };
 }
 
@@ -249,11 +257,14 @@ function cloudResumeSettings(context: ResumeContext): CloudResumeSettings | unde
  */
 function resolveResumeLaunch(input: {
   task: string;
+  repository: string;
   definition: AgentDefinition;
   fresh: boolean;
   cloudSettings: CloudResumeSettings | undefined;
-}): AgentDefinition {
-  const { task, definition, fresh, cloudSettings } = input;
+  claudeSessionId: string | undefined;
+  remoteControlEnabled: boolean;
+}): ResumeLaunch {
+  const { task, repository, definition, fresh, cloudSettings, claudeSessionId } = input;
   if (cloudSettings !== undefined) {
     if (fresh) {
       log(`Ignoring --new for ${task}: teleporting the cloud session`);
@@ -262,16 +273,41 @@ function resolveResumeLaunch(input: {
     log(
       `Resuming ${task} from cloud session ${sessionUrl}; if teleport fails, the session is still at ${sessionUrl}; stop it there once the local run takes over.`,
     );
-    return withResumeArgs(definition, cloudSettings.teleportArgs);
+    return { definition: withResumeArgs(definition, cloudSettings.teleportArgs) };
   }
-  if (fresh || definition.resumeArgs === undefined) {
-    if (fresh && definition.resumeArgs !== undefined) {
+  const claudePlan = (mode: "new" | "resume"): ClaudeLaunchPlan =>
+    planClaudeLaunch({
+      definition,
+      task,
+      repository,
+      remoteControlEnabled: input.remoteControlEnabled,
+      mode,
+      sessionId: mode === "resume" ? claudeSessionId : undefined,
+    });
+  if (fresh) {
+    if (definition.resumeArgs !== undefined) {
       log(`Starting a fresh conversation for ${task}`);
     }
-    return definition;
+    return resumeLaunchOf(claudePlan("new"));
+  }
+  if (claudeSessionId !== undefined && isClaudeLocalDefinition(definition)) {
+    log(`Reopening the previous conversation for ${task}`);
+    return resumeLaunchOf(claudePlan("resume"));
+  }
+  if (definition.resumeArgs === undefined) {
+    return { definition };
   }
   log(`Reopening the previous conversation for ${task}`);
-  return withResumeArgs(definition, definition.resumeArgs);
+  return { definition: withResumeArgs(definition, definition.resumeArgs) };
+}
+
+interface ResumeLaunch {
+  definition: AgentDefinition;
+  claude?: ClaudeLaunchPlan;
+}
+
+function resumeLaunchOf(plan: ClaudeLaunchPlan): ResumeLaunch {
+  return { definition: plan.definition, claude: plan };
 }
 
 async function closeCloudPlaceholder(config: ResolvedConfig, task: string): Promise<void> {
@@ -300,11 +336,14 @@ export async function resumeWorkspace(
   }
 
   const cloudSettings = cloudResumeSettings(context);
-  const launchDefinition = resolveResumeLaunch({
+  const { definition: launchDefinition, claude: claudeLaunch } = resolveResumeLaunch({
     task,
+    repository: context.repository,
     definition,
     fresh: options.fresh === true,
     cloudSettings,
+    claudeSessionId: context.claudeSessionId,
+    remoteControlEnabled: config.remoteControl.enabled,
   });
 
   const { runner, networkEgress, sandboxName, workspaceKind, ensureReady } =
@@ -402,6 +441,7 @@ export async function resumeWorkspace(
         ...(context.url === undefined ? {} : { url: context.url }),
         ...(context.reason === undefined ? {} : { reason: context.reason }),
         ...(cloudSettings === undefined ? {} : { clearFields: RESUMED_CLOUD_CLEARED_FIELDS }),
+        ...claudeRunStateFields(claudeLaunch),
       },
     });
   } catch (error) {

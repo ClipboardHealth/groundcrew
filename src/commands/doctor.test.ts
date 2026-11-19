@@ -122,6 +122,7 @@ function makeConfig(overrides: Partial<ResolvedConfig["agents"]> = {}): Resolved
       ...overrides,
     },
     execution: makeExecutionConfig(),
+    remoteControl: { enabled: false },
     prompts: { initial: "x", cloudInitial: "x" },
     workspaceKind: "auto",
     local: makeLocalConfig(),

@@ -243,4 +243,47 @@ describe("config execution and cloud prompt", () => {
       /prompts\.cloudInitial contains unknown placeholder "\{\{worktree\}\}".*\{\{task\}\}, \{\{title\}\}, \{\{description\}\}, \{\{branch\}\}/,
     );
   });
+
+  describe("remoteControl", () => {
+    it("is disabled by default", async () => {
+      const { loadConfig } = await loadWith({ agents: claudeOnly });
+
+      expect((await loadConfig()).remoteControl).toStrictEqual({ enabled: false });
+    });
+
+    it("is enabled from the user config", async () => {
+      const { loadConfig } = await loadWith({
+        agents: claudeOnly,
+        remoteControl: { enabled: true },
+      });
+
+      expect((await loadConfig()).remoteControl).toStrictEqual({ enabled: true });
+    });
+
+    it("treats an empty block as disabled", async () => {
+      const { loadConfig } = await loadWith({ agents: claudeOnly, remoteControl: {} });
+
+      expect((await loadConfig()).remoteControl).toStrictEqual({ enabled: false });
+    });
+
+    it("rejects a non-object remoteControl", async () => {
+      const { loadConfig } = await loadWith({
+        agents: claudeOnly,
+        // @ts-expect-error exercising runtime validation
+        remoteControl: true,
+      });
+
+      await expect(loadConfig()).rejects.toThrow(/remoteControl must be an object/);
+    });
+
+    it("rejects a non-boolean enabled", async () => {
+      const { loadConfig } = await loadWith({
+        agents: claudeOnly,
+        // @ts-expect-error exercising runtime validation
+        remoteControl: { enabled: "yes" },
+      });
+
+      await expect(loadConfig()).rejects.toThrow(/remoteControl\.enabled must be a boolean/);
+    });
+  });
 });

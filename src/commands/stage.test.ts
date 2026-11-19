@@ -71,6 +71,7 @@ function makeConfig(
     },
     agents: { default: "claude", definitions: { claude: { cmd: "claude", color: "#fff" } } },
     execution: makeExecutionConfig(),
+    remoteControl: { enabled: false },
     prompts: { initial: "x", cloudInitial: "x" },
     workspaceKind: "auto",
     local: makeLocalConfig(),

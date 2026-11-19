@@ -7,6 +7,7 @@ import { buildCloudPlaceholderCommand } from "../lib/cloudPlaceholder.ts";
 import { renderCloudPrompt } from "../lib/cloudPrompt.ts";
 import { runCommandAsync } from "../lib/commandRunner.ts";
 import { loadConfig, resolveAgentExecution, type ResolvedConfig } from "../lib/config.ts";
+import { claudeRunStateFields, planClaudeLaunch } from "../lib/claudeSession.ts";
 import { composeAgentLaunch, openAgentWorkspace, prepareAgentLaunch } from "../lib/agentLaunch.ts";
 import { inferAgentCommandName, workerEnvironmentForTask } from "../lib/launchCommand.ts";
 import { type Board, createBoard } from "../lib/board.ts";
@@ -14,6 +15,7 @@ import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
 import { resolveRepositoryPreparationCommands } from "../lib/repositoryHooks.ts";
 import {
   CLOUD_RUN_STATE_FIELDS,
+  LOCAL_CLAUDE_SESSION_STATE_FIELDS,
   type ClearableOptionalField,
   readRunState,
   recordRunState,
@@ -181,6 +183,13 @@ export async function setupWorkspace(
             workingDir: launchDir,
           })
         : undefined;
+    const claudeLaunch = planClaudeLaunch({
+      definition,
+      task,
+      repository,
+      remoteControlEnabled: config.remoteControl.enabled,
+      mode: "new",
+    });
     seedLaunchWorkspaceTrust({
       agentCommandName: inferAgentCommandName(definition.cmd),
       launchDir,
@@ -189,7 +198,7 @@ export async function setupWorkspace(
       runner,
       networkEgress,
       task,
-      definition,
+      definition: claudeLaunch.definition,
       promptFile: stagedPrompt.file,
       worktreeDir,
       workingDir: launchDir,
@@ -235,6 +244,7 @@ export async function setupWorkspace(
       state: "running",
       title: taskDetails.title,
       completionTaskId,
+      ...claudeRunStateFields(claudeLaunch),
       ...(taskDetails.url === undefined ? {} : { url: taskDetails.url }),
       ...(options.baseBranch === undefined ? {} : { baseBranch: options.baseBranch }),
       ...(options.parentTask === undefined ? {} : { parentTask: options.parentTask }),
@@ -497,7 +507,10 @@ async function preflightProvisioningGate(arguments_: {
     state: "provisioning",
     title: options.details.title,
     ...(execution === "cloud" ? { execution } : {}),
-    clearFields: execution === "cloud" ? STALE_CLOUD_SESSION_FIELDS : CLOUD_RUN_STATE_FIELDS,
+    clearFields: [
+      ...(execution === "cloud" ? STALE_CLOUD_SESSION_FIELDS : CLOUD_RUN_STATE_FIELDS),
+      ...LOCAL_CLAUDE_SESSION_STATE_FIELDS,
+    ],
     completionTaskId: options.completionTaskId ?? task,
     ...(options.details.url === undefined ? {} : { url: options.details.url }),
     ...(options.baseBranch === undefined ? {} : { baseBranch: options.baseBranch }),
@@ -630,6 +643,8 @@ function recordRunStateBestEffort(arguments_: {
   execution?: "cloud";
   cloudSessionId?: string;
   cloudSessionUrl?: string;
+  claudeSessionId?: string;
+  remoteControlName?: string;
   clearFields?: readonly ClearableOptionalField[];
   title: string;
   detail?: string;
@@ -664,6 +679,12 @@ function recordRunStateBestEffort(arguments_: {
         ...(arguments_.cloudSessionUrl === undefined
           ? {}
           : { cloudSessionUrl: arguments_.cloudSessionUrl }),
+        ...(arguments_.claudeSessionId === undefined
+          ? {}
+          : { claudeSessionId: arguments_.claudeSessionId }),
+        ...(arguments_.remoteControlName === undefined
+          ? {}
+          : { remoteControlName: arguments_.remoteControlName }),
         ...(arguments_.url === undefined ? {} : { url: arguments_.url }),
         ...(arguments_.baseBranch === undefined ? {} : { baseBranch: arguments_.baseBranch }),
         ...(arguments_.parentTask === undefined ? {} : { parentTask: arguments_.parentTask }),

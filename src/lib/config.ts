@@ -351,6 +351,8 @@ export interface Config {
     default?: ExecutionMode;
     maximumInProgress?: number;
   };
+  /** Opt-in: Remote Control needs a claude.ai subscription login. */
+  remoteControl?: { enabled?: boolean };
   agents?: {
     default?: string;
     /**
@@ -521,6 +523,7 @@ export interface ResolvedConfig {
     default: ExecutionMode;
     maximumInProgress: number;
   };
+  remoteControl: { enabled: boolean };
   agents: {
     default: string;
     definitions: Record<string, AgentDefinition>;
@@ -883,7 +886,7 @@ function normalizeExecutionMode(value: unknown, configKey: string): ExecutionMod
   return mode;
 }
 
-function isClaudeCommand(cmd: string): boolean {
+export function isClaudeCommand(cmd: string): boolean {
   const [firstToken = ""] = cmd.trim().split(/\s+/);
   return path.basename(firstToken) === "claude";
 }
@@ -915,6 +918,14 @@ function normalizeExecution(value: Config["execution"]): ResolvedConfig["executi
         : normalizeExecutionMode(value.default, "execution.default"),
     maximumInProgress: value?.maximumInProgress ?? DEFAULT_EXECUTION.maximumInProgress,
   };
+}
+
+function normalizeRemoteControl(value: Config["remoteControl"]): ResolvedConfig["remoteControl"] {
+  requireObject(value ?? {}, "remoteControl");
+  const enabled = value?.enabled ?? false;
+  return typeof enabled === "boolean"
+    ? { enabled }
+    : fail("remoteControl.enabled must be a boolean");
 }
 
 function requirePercent(value: unknown, configKey: string): asserts value is number {
@@ -1673,6 +1684,7 @@ function applyDefaults(user: Config, configDir: string): ResolvedConfig {
     defaults: normalizeDefaults((user as { defaults?: unknown }).defaults),
     orchestrator: { ...DEFAULT_ORCHESTRATOR, ...user.orchestrator },
     execution: normalizeExecution(user.execution),
+    remoteControl: normalizeRemoteControl(user.remoteControl),
     agents: {
       default: user.agents?.default ?? "claude",
       definitions: mergeDefinitions(user.agents?.definitions),
