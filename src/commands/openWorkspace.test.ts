@@ -584,7 +584,7 @@ describe(openWorkspace, () => {
     const script = stagedLaunchScript();
     expect(script).toContain("--remote-control");
     expect(script).not.toContain(`sh "$_p"`);
-    expect(lastRecordedRunState().remoteControlName).toBe("PR-42 acme/widgets");
+    expect(lastRecordedRunState().remoteControlName).toBe("PR-42 widgets");
   });
 
   it("clears stale session fields when the agent is not Claude", async () => {

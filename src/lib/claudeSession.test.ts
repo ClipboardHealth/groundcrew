@@ -31,6 +31,12 @@ describe("remoteControlName", () => {
     );
   });
 
+  it("drops the owner from an owner/repo repository", () => {
+    expect(
+      remoteControlName({ task: "tg-5271", repository: "ClipboardHealth/cbh-admin-frontend" }),
+    ).toBe("TG-5271 cbh-admin-frontend");
+  });
+
   it("keeps non-Linear task ids as given", () => {
     expect(remoteControlName({ task: "notion:abc", repository: "repo" })).toBe("notion:abc repo");
   });

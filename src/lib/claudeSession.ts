@@ -27,7 +27,8 @@ export function newClaudeSessionId(): string {
 
 export function remoteControlName(input: { task: string; repository: string }): string {
   const task = LINEAR_IDENTIFIER.test(input.task) ? input.task.toUpperCase() : input.task;
-  return `${task} ${input.repository}`.replaceAll(NON_PRINTABLE_ASCII, "");
+  const repositoryShortName = input.repository.slice(input.repository.lastIndexOf("/") + 1);
+  return `${task} ${repositoryShortName}`.replaceAll(NON_PRINTABLE_ASCII, "");
 }
 
 /**
