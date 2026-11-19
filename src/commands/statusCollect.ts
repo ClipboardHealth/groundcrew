@@ -109,6 +109,8 @@ export async function collectLocalStatus(
       needsRebase: runState?.needsRebase,
       execution: runState?.execution,
       cloudSessionUrl: runState?.cloudSessionUrl,
+      claudeSessionId: runState?.claudeSessionId,
+      remoteControlName: runState?.remoteControlName,
     };
   });
 

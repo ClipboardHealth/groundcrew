@@ -167,6 +167,7 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
       ...overrides.agents,
     },
     execution: makeExecutionConfig(),
+    remoteControl: { enabled: false },
     prompts: { initial: "x", cloudInitial: "x", ...overrides.prompts },
     workspaceKind: overrides.workspaceKind ?? "auto",
     local: makeLocalConfig(overrides.local),
@@ -1135,6 +1136,60 @@ describe(status, () => {
     await status(makeConfig({ sources: [{ kind: "linear", name: "linear" }] }));
 
     expect(consoleLog.output()).toContain("  task:      in-progress (slot held)");
+  });
+
+  describe("claude sessions", () => {
+    const claudeSessionId = "6f1f5f0e-9d0e-4d9a-8e57-0a5d3b0f6a11";
+
+    beforeEach(() => {
+      listWorktreesMock.mockReturnValue([
+        worktree({ task: "team-906", repository: "repo-a", dir: "/work/repo-a-team-906" }),
+      ]);
+      workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set(["team-906"]) });
+    });
+
+    it("inventory row shows the session id, Remote Control name, and desktop command", async () => {
+      readRunStateMock.mockReturnValue(
+        runState({ task: "team-906", claudeSessionId, remoteControlName: "TEAM-906 repo-a" }),
+      );
+
+      await status(makeConfig());
+
+      const output = consoleLog.output();
+      expect(output).toContain(`  claude:    ${claudeSessionId}\n`);
+      expect(output).toContain("  remote:    TEAM-906 repo-a\n");
+      expect(output).toContain(`  desktop:   claude --desktop --resume ${claudeSessionId}\n`);
+    });
+
+    it("omits the Remote Control line when it is off", async () => {
+      readRunStateMock.mockReturnValue(runState({ task: "team-906", claudeSessionId }));
+
+      await status(makeConfig());
+
+      expect(consoleLog.output()).toContain(`claude --desktop --resume ${claudeSessionId}`);
+      expect(consoleLog.output()).not.toContain("remote:");
+    });
+
+    it("shows nothing for a run with no recorded session", async () => {
+      readRunStateMock.mockReturnValue(runState({ task: "team-906" }));
+
+      await status(makeConfig());
+
+      expect(consoleLog.output()).not.toContain("desktop:");
+    });
+
+    it("single-task view shows the session lines", async () => {
+      readRunStateMock.mockReturnValue(
+        runState({ task: "team-906", claudeSessionId, remoteControlName: "TEAM-906 repo-a" }),
+      );
+
+      await status(makeConfig(), { task: "team-906" });
+
+      const output = consoleLog.output();
+      expect(output).toContain(`claude: ${claudeSessionId}`);
+      expect(output).toContain("remote: TEAM-906 repo-a");
+      expect(output).toContain(`desktop: claude --desktop --resume ${claudeSessionId}`);
+    });
   });
 
   describe("cloud runs", () => {

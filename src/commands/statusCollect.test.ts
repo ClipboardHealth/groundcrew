@@ -207,6 +207,22 @@ describe("collectLocalStatus", () => {
     expect(actual.tasks[0]?.flags).not.toContain("session dead");
   });
 
+  it("carries the Claude session id and Remote Control name onto the row", async () => {
+    vi.mocked(readRunState).mockReturnValue(
+      makeRunState({
+        claudeSessionId: "6f1f5f0e-9d0e-4d9a-8e57-0a5d3b0f6a11",
+        remoteControlName: "ENG-220 repo-a",
+      }),
+    );
+
+    const actual = await collectLocalStatus({ config: mockConfig });
+
+    expect(actual.tasks[0]).toMatchObject({
+      claudeSessionId: "6f1f5f0e-9d0e-4d9a-8e57-0a5d3b0f6a11",
+      remoteControlName: "ENG-220 repo-a",
+    });
+  });
+
   it("local run rows are unchanged", async () => {
     const actual = await collectLocalStatus({ config: mockConfig });
 

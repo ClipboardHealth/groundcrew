@@ -13,6 +13,7 @@
 
 import { readFileSync } from "node:fs";
 
+import { claudeDesktopResumeCommand } from "../lib/claudeSession.ts";
 import { type ExecutionMode, loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { findPullRequestsForBranch, type PullRequestSummary } from "../lib/pullRequests.ts";
 import { isCloudRun, readRunState, type RunState } from "../lib/runState.ts";
@@ -274,6 +275,9 @@ async function writeTaskStatus(config: ResolvedConfig, rawTask: string): Promise
   if (attachTarget !== undefined) {
     writeOutput(`attach: ${attachTarget}`);
   }
+  for (const [label, value] of claudeSessionFields(runState ?? {})) {
+    writeOutput(`${label}: ${value}`);
+  }
 
   await writeTaskWorktrees(config, task);
   writeRecentLogs(config, task);
@@ -332,6 +336,22 @@ function inventoryStateText(task: JoinedTask, now: Date): string {
 }
 
 const INVENTORY_LABEL_WIDTH = "worktree:".length;
+
+function claudeSessionFields(input: {
+  claudeSessionId?: string | undefined;
+  remoteControlName?: string | undefined;
+}): Array<[label: string, value: string]> {
+  const { claudeSessionId, remoteControlName } = input;
+  if (claudeSessionId === undefined) {
+    return [];
+  }
+  const fields: Array<[string, string]> = [["claude", claudeSessionId]];
+  if (remoteControlName !== undefined) {
+    fields.push(["remote", remoteControlName]);
+  }
+  fields.push(["desktop", claudeDesktopResumeCommand(claudeSessionId)]);
+  return fields;
+}
 
 function inventoryField(label: string, value: string): string {
   return `  ${`${label}:`.padEnd(INVENTORY_LABEL_WIDTH)}  ${value}`;
@@ -400,6 +420,9 @@ function writeInventoryRow(input: { task: JoinedTask; worktree: JoinedWorktree; 
   writeOutput(inventoryField("worktree", worktree.dir));
   if (task.attachCommand !== undefined) {
     writeOutput(inventoryField("attach", task.attachCommand));
+  }
+  for (const [label, value] of claudeSessionFields(task)) {
+    writeOutput(inventoryField(label, value));
   }
   if (worktree.pullRequests.length > 0) {
     writeOutput(inventoryField("pr", formatPullRequests(worktree.pullRequests)));
