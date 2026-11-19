@@ -164,6 +164,14 @@ export default {
   //   sessionLimitPercentage: 85,
   // },
   //
+  // // Show local Claude workers in the Claude app (desktop, web, phone) through
+  // // Remote Control. Off by default; it needs a claude.ai subscription login
+  // // and fails with API-key authentication. Local Claude launches are pinned
+  // // with `--session-id` either way, and `crew resume` reuses that session.
+  // remoteControl: {
+  //   enabled: false,
+  // },
+  //
   // // Where Claude profiles run. `local` (the default) uses a worktree and pane
   // // on this machine. `cloud` starts a claude.ai session with `claude --cloud`
   // // and holds no local process. Cloud runs count against `maximumInProgress`
