@@ -2,6 +2,7 @@ import type { RunCommandOptions } from "./commandRunner.ts";
 import {
   countMergeCommits,
   findPullRequestsForBranch,
+  listPullRequestsForBranch,
   findTaskPullRequestsForBranchOrThrow,
   listPullRequestsForRepositoryOrThrow,
   resolvePullRequest,
@@ -682,5 +683,19 @@ describe(countMergeCommits, () => {
     await expect(countMergeCommits({ ...lookup, signal: controller.signal })).rejects.toThrow(
       "aborted",
     );
+  });
+});
+
+describe(listPullRequestsForBranch, () => {
+  afterEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it("rejects when gh fails while findPullRequestsForBranch still resolves to []", async () => {
+    runCommandMock.mockRejectedValue(new Error("gh: not authenticated"));
+    const lookup = { cwd: "/work/widgets", branchName: "feature/auth" };
+
+    await expect(listPullRequestsForBranch(lookup)).rejects.toThrow("gh: not authenticated");
+    await expect(findPullRequestsForBranch(lookup)).resolves.toStrictEqual([]);
   });
 });

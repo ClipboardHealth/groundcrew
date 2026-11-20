@@ -1,3 +1,4 @@
+import { makeExecutionConfig } from "../testHelpers/executionConfig.ts";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import type * as nodeFs from "node:fs";
 import path from "node:path";
@@ -5,7 +6,9 @@ import { ensureClearance, type SafehouseCmuxIntegration } from "@clipboard-healt
 import type { RunCommandOptions } from "../lib/commandRunner.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { detectHostCapabilities, type HostCapabilities } from "../lib/host.ts";
-import { recordRunState } from "../lib/runState.ts";
+import { CloudLaunchError, launchCloudSession } from "../lib/cloudLauncher.ts";
+import { DEFAULT_CLOUD_PROMPT_INITIAL } from "../lib/cloudPrompt.ts";
+import { CLOUD_RUN_STATE_FIELDS, recordRunState } from "../lib/runState.ts";
 import { canonicalLinearIssue, canonicalShellIssue } from "../lib/testing/canonicalFixtures.ts";
 import { createBoard, type Board } from "../lib/board.ts";
 import type * as boardModule from "../lib/board.ts";
@@ -83,6 +86,10 @@ vi.mock(import("../lib/commandRunner.ts"), async (importOriginal) => {
     runCommandAsync: runCommandMock as unknown as typeof actual.runCommandAsync,
   };
 });
+vi.mock(import("../lib/cloudLauncher.ts"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, launchCloudSession: vi.fn<typeof actual.launchCloudSession>() };
+});
 vi.mock(import("../lib/runState.ts"), async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, recordRunState: vi.fn<typeof recordRunState>() };
@@ -146,6 +153,7 @@ const ensureClearanceMock = vi.mocked(ensureClearance);
 const logMock = vi.mocked(log);
 const debugMock = vi.mocked(debug);
 const recordRunStateMock = vi.mocked(recordRunState);
+const launchCloudSessionMock = vi.mocked(launchCloudSession);
 const createMock = vi.mocked(worktrees.create);
 const teardownMock = vi.mocked(worktrees.teardown);
 const findByTaskMock = vi.mocked(worktrees.findByTask);
@@ -209,8 +217,10 @@ function makeConfig(overrides: Partial<ResolvedConfig["agents"]> = {}): Resolved
       },
       ...overrides,
     },
+    execution: makeExecutionConfig(),
     prompts: {
       initial: "Begin {{task}} ({{title}}) in {{worktree}}\n{{description}}",
+      cloudInitial: "x",
     },
     workspaceKind: "auto",
     local: makeLocalConfig(),
@@ -707,6 +717,7 @@ describe(setupWorkspace, () => {
       ...makeConfig(),
       prompts: {
         initial: "Before\n{{workspaceContinuationInstruction}}\nAfter",
+        cloudInitial: "x",
       },
     };
 
@@ -727,6 +738,7 @@ describe(setupWorkspace, () => {
       ...makeConfig(),
       prompts: {
         initial: "Before\n{{workspaceContinuationInstruction}}\nAfter",
+        cloudInitial: "x",
       },
     };
     mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:42" }));
@@ -2000,6 +2012,227 @@ describe(setupWorkspace, () => {
     const launchScript = writtenFileContent("/tmp/with'quote-1/launch.sh");
     expect(cmd).toContain(String.raw`'\''`);
     expect(launchScript).toContain(String.raw`_p=$(cat '/tmp/with'\''quote-1/prompt.txt')`);
+  });
+
+  describe("cloud execution", () => {
+    const cloudSession = { sessionId: "session_abc", url: "https://claude.ai/code/session_abc" };
+
+    function makeCloudConfig(): ResolvedConfig {
+      const config = makeConfig();
+      config.agents.definitions["claude"] = {
+        cmd: "claude --auto",
+        color: "#fff",
+        execution: "cloud",
+      };
+      config.prompts.cloudInitial = DEFAULT_CLOUD_PROMPT_INITIAL;
+      return config;
+    }
+
+    const cloudOptions: SetupWorkspaceOptions = {
+      task: "team-1",
+      repository: "repo-a",
+      agent: "claude",
+      details: {
+        title: "Cloud Title",
+        description: "Do the cloud thing",
+        url: "https://example/TEAM-1",
+      },
+    };
+
+    function pushCalls(): readonly (readonly string[])[] {
+      return runCommandMock.mock.calls
+        .filter(([command, arguments_]) => command === "git" && arguments_.includes("push"))
+        .map(([, arguments_]) => arguments_);
+    }
+
+    beforeEach(() => {
+      launchCloudSessionMock.mockResolvedValue(cloudSession);
+    });
+
+    it("never calls prepareAgentLaunch, openAgentWorkspace or prepareWorktree", async () => {
+      const config = makeCloudConfig();
+      config.defaults = { hooks: { prepareWorktree: "npm ci" } };
+      config.workspace.repositories = [
+        { name: "repo-a", unsandboxedHooks: { prepareWorktree: "bin/setup" } },
+      ];
+
+      await setupWorkspace(config, cloudOptions);
+
+      expect(detectHostMock).not.toHaveBeenCalled();
+      expect(ensureClearanceMock).not.toHaveBeenCalled();
+      expect(mkdtempMock).not.toHaveBeenCalled();
+      expect(writeFileMock).not.toHaveBeenCalled();
+      expect(runCommandMock).not.toHaveBeenCalledWith("cmux", expect.anything(), expect.anything());
+      const everyArgument = runCommandMock.mock.calls.flatMap(([, arguments_]) => arguments_);
+      expect(everyArgument).not.toContain("npm ci");
+      expect(everyArgument).not.toContain("bin/setup");
+      expect(logMock).not.toHaveBeenCalledWith(expect.stringContaining("prepareWorktree"));
+    });
+
+    it("records provisioning with execution cloud before creating the worktree", async () => {
+      await setupWorkspace(makeCloudConfig(), cloudOptions);
+
+      const provisioning = recordRunStateMock.mock.calls.find(
+        ([input]) => input.state.state === "provisioning",
+      )?.[0].state;
+      expect(provisioning).toMatchObject({ state: "provisioning", execution: "cloud" });
+      expect(provisioning?.clearFields).toStrictEqual([
+        "cloudSessionId",
+        "cloudSessionUrl",
+        "autofixRequestedAt",
+      ]);
+      expect(firstInvocationOrder(recordRunStateMock)).toBeLessThan(
+        firstInvocationOrder(createMock),
+      );
+    });
+
+    it("pushes the task branch with --no-verify before launching", async () => {
+      await setupWorkspace(makeCloudConfig(), cloudOptions);
+
+      expect(pushCalls()).toStrictEqual([
+        ["-C", "/work/repo-a-team-1", "push", "--no-verify", "origin", "dev-team-1"],
+      ]);
+      const pushCallIndex = runCommandMock.mock.calls.findIndex(([, arguments_]) =>
+        arguments_.includes("--no-verify"),
+      );
+      const pushOrder = runCommandMock.mock.invocationCallOrder[pushCallIndex] ?? 0;
+      expect(firstInvocationOrder(createMock)).toBeLessThan(pushOrder);
+      expect(pushOrder).toBeLessThan(firstInvocationOrder(launchCloudSessionMock));
+    });
+
+    it("launches from the resolved launch dir with the rendered cloud prompt", async () => {
+      const config = makeCloudConfig();
+      config.workspace.repositories = [
+        {
+          name: "repo-a",
+          provision: { create: "graft new x", remove: "graft rm x" },
+          workdir: "services/api",
+        },
+      ];
+
+      await setupWorkspace(config, cloudOptions);
+
+      expect(launchCloudSessionMock).toHaveBeenCalledOnce();
+      const [launchInput] = launchCloudSessionMock.mock.calls[0] ?? [];
+      expect(launchInput?.cwd).toBe("/work/repo-a-team-1/services/api");
+      expect(launchInput?.prompt).toContain("Do the cloud thing");
+      expect(launchInput?.prompt).toContain("Closes TEAM-1");
+    });
+
+    it("forwards the abort signal to the push and the launcher", async () => {
+      const controller = new AbortController();
+
+      await setupWorkspace(makeCloudConfig(), cloudOptions, { signal: controller.signal });
+
+      expect(launchCloudSessionMock.mock.calls[0]?.[0].signal).toBe(controller.signal);
+      expect(runCommandMock).toHaveBeenCalledWith(
+        "git",
+        expect.arrayContaining(["push"]),
+        expect.objectContaining({ signal: controller.signal }),
+      );
+    });
+
+    it("records running with session id, url and workspaceName equal to the task", async () => {
+      await setupWorkspace(makeCloudConfig(), cloudOptions);
+
+      expect(lastRecordedRunState()).toMatchObject({
+        state: "running",
+        execution: "cloud",
+        cloudSessionId: "session_abc",
+        cloudSessionUrl: "https://claude.ai/code/session_abc",
+        workspaceName: "team-1",
+        title: "Cloud Title",
+        completionTaskId: "team-1",
+        url: "https://example/TEAM-1",
+      });
+      expect(logMock).toHaveBeenCalledWith(expect.stringContaining(cloudSession.url));
+    });
+
+    it("omits the url and honors completionTaskId when the task has none", async () => {
+      await setupWorkspace(makeCloudConfig(), {
+        ...cloudOptions,
+        completionTaskId: "linear:team-1",
+        details: { title: "Cloud Title", description: "Do the cloud thing" },
+      });
+
+      const last = lastRecordedRunState();
+      expect(last.url).toBeUndefined();
+      expect(last.completionTaskId).toBe("linear:team-1");
+    });
+
+    it("rolls back the worktree, records failed-to-launch with the captured output, and rethrows when the launch fails", async () => {
+      const output = "Error: --cloud requires an interactive terminal.";
+      launchCloudSessionMock.mockRejectedValue(
+        new CloudLaunchError({ message: `claude --cloud failed: ${output}`, output }),
+      );
+
+      await expect(setupWorkspace(makeCloudConfig(), cloudOptions)).rejects.toThrow(output);
+
+      expect(teardownMock).toHaveBeenCalledWith(expect.anything(), [hostEntry()], { force: true });
+      const last = lastRecordedRunState();
+      expect(last.state).toBe("failed-to-launch");
+      expect(last.execution).toBe("cloud");
+      expect(last.detail).toContain(output);
+      expect(last.clearFields).toContain("baseBranch");
+    });
+
+    it("takes the same failure path when the push fails and never calls the launcher", async () => {
+      runCommandMock.mockImplementation((command, arguments_) => {
+        if (command === "git" && arguments_.includes("push")) {
+          throw new Error("remote rejected");
+        }
+        return "";
+      });
+
+      await expect(setupWorkspace(makeCloudConfig(), cloudOptions)).rejects.toThrow(
+        /remote rejected/,
+      );
+
+      expect(launchCloudSessionMock).not.toHaveBeenCalled();
+      expect(teardownMock).toHaveBeenCalledOnce();
+      expect(pushCalls()).toHaveLength(1);
+      expect(pushCalls().flat()).not.toContain("--delete");
+      expect(lastRecordedRunState()).toMatchObject({
+        state: "failed-to-launch",
+        execution: "cloud",
+      });
+    });
+
+    it("records failed-to-launch as cloud when worktree creation fails", async () => {
+      createMock.mockRejectedValue(new Error("git fetch failed"));
+
+      await expect(setupWorkspace(makeCloudConfig(), cloudOptions)).rejects.toThrow(
+        /git fetch failed/,
+      );
+
+      expect(lastRecordedRunState()).toMatchObject({
+        state: "failed-to-launch",
+        execution: "cloud",
+      });
+      expect(launchCloudSessionMock).not.toHaveBeenCalled();
+    });
+
+    it("throws for a stacked cloud task and creates nothing", async () => {
+      await expect(
+        setupWorkspace(makeCloudConfig(), { ...cloudOptions, baseBranch: "dev-parent" }),
+      ).rejects.toThrow("Cloud runs cannot be stacked: team-1");
+
+      expect(createMock).not.toHaveBeenCalled();
+      expect(recordRunStateMock).not.toHaveBeenCalled();
+      expect(launchCloudSessionMock).not.toHaveBeenCalled();
+    });
+
+    it("clears leftover cloud fields on a local launch's provisioning row", async () => {
+      mockCmuxNewWorkspaceOutput(JSON.stringify({ ref: "workspace:1" }));
+
+      await setupWorkspace(makeConfig(), cloudOptions);
+
+      const provisioning = recordRunStateMock.mock.calls.find(
+        ([input]) => input.state.state === "provisioning",
+      )?.[0].state;
+      expect(provisioning?.clearFields).toStrictEqual(CLOUD_RUN_STATE_FIELDS);
+      expect(launchCloudSessionMock).not.toHaveBeenCalled();
+    });
   });
 
   it("requires details from the caller (no Linear re-fetch)", () => {

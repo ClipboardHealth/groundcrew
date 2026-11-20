@@ -13,9 +13,9 @@
 
 import { readFileSync } from "node:fs";
 
-import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
+import { type ExecutionMode, loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { findPullRequestsForBranch, type PullRequestSummary } from "../lib/pullRequests.ts";
-import { readRunState, type RunState } from "../lib/runState.ts";
+import { isCloudRun, readRunState, type RunState } from "../lib/runState.ts";
 import {
   type JoinedStatus,
   type JoinedTask,
@@ -259,17 +259,19 @@ async function writeTaskStatus(config: ResolvedConfig, rawTask: string): Promise
   const accessHint = await exitedWorkspaceAccessHint(config, workspaceProbe, task);
   writeOutput(formatTaskLine(task, runState, sourceStatus));
   writeTaskTitle(runState, sourceStatus);
-  const disagreement = probeDisagreement({
-    lifecycle: runState?.state ?? "idle",
-    probe: workspaceProbe,
-    task,
-  });
-  writeOutput(
-    `run: ${formatRunState(runState, disagreement === undefined ? [] : [disagreementLabel(disagreement)])}`,
-  );
-  writeOutput(`workspace: ${taskWorkspaceText(workspaceProbe, task)}`);
-  if (accessHint !== undefined) {
-    writeOutput(`attach: ${accessHint.command}`);
+  const cloud = isCloudRun(runState);
+  const disagreement = cloud
+    ? undefined
+    : probeDisagreement({ lifecycle: runState?.state ?? "idle", probe: workspaceProbe, task });
+  const flags = [
+    ...(cloud ? ["cloud"] : []),
+    ...(disagreement === undefined ? [] : [disagreementLabel(disagreement)]),
+  ];
+  writeOutput(`run: ${formatRunState(runState, flags)}`);
+  writeOutput(`workspace: ${cloud ? "cloud (no pane)" : taskWorkspaceText(workspaceProbe, task)}`);
+  const attachTarget = cloud ? runState?.cloudSessionUrl : accessHint?.command;
+  if (attachTarget !== undefined) {
+    writeOutput(`attach: ${attachTarget}`);
   }
 
   await writeTaskWorktrees(config, task);
@@ -320,7 +322,7 @@ function formatDuration(ms: number): string {
 
 /** Elapsed time is derived here, never stored, so a row cannot show a stale age. */
 function inventoryStateText(task: JoinedTask, now: Date): string {
-  const flags = [...task.flags];
+  const flags = task.execution === "cloud" ? ["cloud", ...task.flags] : [...task.flags];
   const duration = runDurationMs({ lifecycle: task.lifecycle, startedAt: task.startedAt, now });
   if (duration !== undefined) {
     flags.push(formatDuration(duration));
@@ -344,8 +346,11 @@ function formatPullRequests(prs: readonly PullRequestSummary[]): string {
  * `slot held` to make the otherwise-implicit rule legible on the row; every
  * other status renders bare.
  */
-function formatTaskStatus(canonicalStatus: CanonicalStatus): string {
-  return canonicalStatus === "in-progress" ? "in-progress (slot held)" : canonicalStatus;
+function formatTaskStatus(canonicalStatus: CanonicalStatus, execution?: ExecutionMode): string {
+  if (canonicalStatus !== "in-progress") {
+    return canonicalStatus;
+  }
+  return execution === "cloud" ? "in-progress (cloud slot held)" : "in-progress (slot held)";
 }
 
 /** The document groups worktrees by task; rows are per worktree. */
@@ -388,7 +393,7 @@ function writeInventoryRow(input: { task: JoinedTask; worktree: JoinedWorktree; 
   // legitimately disagree, so they sit adjacent. Omitted when the board fetch
   // failed or the task isn't in the fetched board.
   if (task.boardStatus !== undefined) {
-    writeOutput(inventoryField("task", formatTaskStatus(task.boardStatus)));
+    writeOutput(inventoryField("task", formatTaskStatus(task.boardStatus, task.execution)));
   }
   writeOutput(inventoryField("repo", worktree.repository));
   writeOutput(inventoryField("worktree", worktree.dir));

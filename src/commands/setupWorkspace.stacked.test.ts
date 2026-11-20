@@ -1,3 +1,4 @@
+import { makeExecutionConfig } from "../testHelpers/executionConfig.ts";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import type * as nodeFs from "node:fs";
 import { tmpdir } from "node:os";
@@ -171,8 +172,10 @@ function makeConfig(): ResolvedConfig {
       default: "claude",
       definitions: { claude: { cmd: "claude --auto", color: "#fff" } },
     },
+    execution: makeExecutionConfig(),
     prompts: {
       initial: "Begin {{task}} ({{title}}) in {{worktree}}\n{{description}}",
+      cloudInitial: "x",
     },
     workspaceKind: "auto",
     cmux: makeCmuxConfig(),

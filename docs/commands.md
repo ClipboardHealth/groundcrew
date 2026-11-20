@@ -88,6 +88,8 @@ crew task done todo:flaky-triage-1
 
 Status is informational only. Use `crew cleanup <TASK>` to tear down stale worktrees and `crew resume <TASK>` to reopen preserved work.
 
+A cloud run shows `run: running (cloud)`, `workspace: cloud (no pane)`, and the claude.ai session URL as `attach:`. Status does not report what the session is doing; open the URL to see it. The PR appears once the branch has one.
+
 `crew status --json` emits the same state as two JSON documents instead of text,
 and writes them beside the log file as `status-local.json` and
 `status-remote.json`. The split is by cost: the local document is subprocess
@@ -150,6 +152,8 @@ crew resume ENG-123
 
 The command closes the cmux/tmux/zellij workspace if present, records local run state, and never tears down the worktree. If the workspace was already gone but the worktree is still present, stop records that fact so status can show the preserved branch.
 
+For a [cloud run](./configuration.md#cloud-execution), `crew stop` changes nothing. It prints the session URL, and you stop the session on claude.ai. The run state is left as it was.
+
 ## Resume
 
 `crew resume [--new] <TASK>` reopens an existing task worktree with a continuation prompt. Resume never creates a new worktree; if none exists it fails and leaves re-dispatch to `crew start <task>`.
@@ -157,6 +161,14 @@ The command closes the cmux/tmux/zellij workspace if present, records local run 
 The resume prompt tells the agent to inspect git status and diff before editing, includes the previous interrupt reason when recorded, and reuses the recorded agent, repository, branch, runner, sandbox, and workspace backend. When no run-state file exists but a worktree does, resume falls back to Linear resolution for the agent and task context.
 
 `crew resume <TASK>` reopens the agent's previous conversation in the worktree by default — the built-in `claude`, `codex`, `cursor`, `cursor-grok`, and `pi` presets ship a [`resumeArgs`](./configuration.md#resuming-the-agents-conversation) default (`--continue`, `resume --last`, `--continue`, `--continue`, `--continue`) that groundcrew appends to the agent's command. `crew resume --new <TASK>` ignores `resumeArgs` and forces a fresh conversation. Custom agents cold-start unless they set `resumeArgs`. groundcrew stores no session id — it relies on one conversation per worktree.
+
+For a cloud run, `crew resume` runs the repo's `prepareWorktree` in the light worktree, then opens a normal local pane running `claude --teleport <session>`. Teleport needs a clean worktree and checks out the session's pushed branch. From then on the run is a local run and counts against `orchestrator.maximumInProgress`. Resume keeps the session URL in the run state and logs it; if teleport fails the session is still there, and once the local run takes over you stop the cloud session on claude.ai. `--new` is ignored because the conversation is teleported, not restarted.
+
+## Cleanup
+
+`crew cleanup <TASK>` removes the task's run state and worktree. For a run launched in the cloud, including one since resumed locally, it also deletes the pushed task branch from the remote, but only when the PR lookup succeeds and finds no PR on that branch, and the remote branch carries no commits beyond the default branch (an agent may have pushed unpublished work); otherwise the branch is kept and the keep is logged. It never touches the claude.ai session, so stop or archive that on claude.ai yourself.
+
+`crew cleanup --all` skips live cloud runs and logs each skip. Clean those up one at a time with `crew cleanup <TASK>`.
 
 ## Open
 

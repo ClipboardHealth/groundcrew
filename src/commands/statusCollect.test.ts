@@ -169,6 +169,53 @@ describe("collectLocalStatus", () => {
     expect(actual.tasks[0]?.session).toBe("not-live");
   });
 
+  it("cloud run row carries execution and cloudSessionUrl, attach command is the url, session is unknown, and no probe flag", async () => {
+    vi.mocked(workspaces.probe).mockResolvedValue({ kind: "ok", names: new Set() });
+    vi.mocked(readRunState).mockReturnValue(
+      makeRunState({
+        execution: "cloud",
+        cloudSessionId: "session_1",
+        cloudSessionUrl: "https://claude.ai/code/session_1",
+      }),
+    );
+
+    const actual = await collectLocalStatus({ config: mockConfig });
+
+    expect(actual.tasks[0]).toMatchObject({
+      execution: "cloud",
+      cloudSessionUrl: "https://claude.ai/code/session_1",
+      attachCommand: "https://claude.ai/code/session_1",
+      session: "unknown",
+      flags: [],
+      hint: undefined,
+    });
+  });
+
+  it("live cloud run with no pane is not marked interrupted", async () => {
+    vi.mocked(workspaces.probe).mockResolvedValue({ kind: "ok", names: new Set() });
+    vi.mocked(readRunState).mockReturnValue(
+      makeRunState({
+        execution: "cloud",
+        cloudSessionId: "session_1",
+        cloudSessionUrl: "https://claude.ai/code/session_1",
+      }),
+    );
+
+    const actual = await collectLocalStatus({ config: mockConfig });
+
+    expect(actual.tasks[0]?.lifecycle).toBe("running");
+    expect(actual.tasks[0]?.flags).not.toContain("session dead");
+  });
+
+  it("local run rows are unchanged", async () => {
+    const actual = await collectLocalStatus({ config: mockConfig });
+
+    expect(actual.tasks[0]?.execution).toBeUndefined();
+    expect(actual.tasks[0]?.cloudSessionUrl).toBeUndefined();
+    expect(actual.tasks[0]?.attachCommand).toBe("cmux open eng-220");
+    expect(actual.tasks[0]?.session).toBe("live");
+  });
+
   it("flags a worktree with no run state and a live session as stray", async () => {
     // An empty map misses, which yields undefined without writing it literally.
     const statesByTask = new Map<string, RunState>();

@@ -9,8 +9,9 @@
 
 import type { Board } from "../lib/board.ts";
 import { sourcesFromConfig } from "../lib/buildSources.ts";
-import type { ResolvedConfig } from "../lib/config.ts";
+import { AGENT_ANY, type ResolvedConfig, resolveAgentExecution } from "../lib/config.ts";
 import { dispatchableRepository, formatKnownRepositories } from "../lib/repositoryValidation.ts";
+import { listCloudRunTasks } from "../lib/runState.ts";
 import { sourceSupportsMarkDone } from "../lib/sourceCapabilities.ts";
 import {
   type BoardState,
@@ -40,6 +41,8 @@ interface DispatcherDeps {
   board: Board;
   /** Injection point for the stacking decision's run-state read and git probe; defaults to the real implementations. */
   eligibilityDeps?: EligibilityDeps;
+  /** Task keys whose run state is a cloud run; defaults to reading run state from disk. */
+  cloudRunTasks?: () => ReadonlySet<string>;
 }
 
 export interface Dispatcher {
@@ -97,7 +100,12 @@ function logMissingRepositorySkip(
 }
 
 export function createDispatcher(deps: DispatcherDeps): Dispatcher {
-  const { config, board, eligibilityDeps = defaultEligibilityDeps } = deps;
+  const {
+    config,
+    board,
+    eligibilityDeps = defaultEligibilityDeps,
+    cloudRunTasks = () => listCloudRunTasks(config),
+  } = deps;
   const rawSources = sourcesFromConfig(config);
 
   function buildExhaustedSet(usage: UsageByAgent): Set<string> {
@@ -216,8 +224,10 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     const active = state.issues
       .filter((issue) => issue.status === "in-progress")
       .toSorted((a, b) => a.id.localeCompare(b.id));
-    const activeCount = active.length;
+    const { activeLocal, activeCloud } = splitActiveByExecution(active, cloudRunTasks());
+    const activeCount = activeLocal.length;
     const slots = config.orchestrator.maximumInProgress - activeCount;
+    const cloudSlots = config.execution.maximumInProgress - activeCloud.length;
     const rawTodo = state.issues.filter((issue) => issue.status === "todo");
     for (const issue of rawTodo) {
       const { agent, repository } = issue;
@@ -233,9 +243,9 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
       .filter((issue): issue is GroundcrewIssue => isGroundcrewIssue(issue))
       .toSorted((a, b) => prioritySortKey(a.priority) - prioritySortKey(b.priority));
 
-    if (slots <= 0) {
+    if (slots <= 0 && !(cloudSlots > 0 && anyRoutesToCloud(todo, config))) {
       log(
-        `At capacity (${activeCount}/${config.orchestrator.maximumInProgress})${formatActiveSlotList(active)}, no new work to start${idleSuffix}`,
+        `At capacity (${activeCount}/${config.orchestrator.maximumInProgress})${formatActiveSlotList(activeLocal)}, no new work to start${idleSuffix}`,
       );
       return;
     }
@@ -312,6 +322,7 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
       usage: fetchedUsage,
       exhausted,
       slots,
+      cloudSlots,
       dryRun,
     });
 
@@ -329,8 +340,9 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
 
     const dispatchable = starts;
 
+    const cloudSuffix = formatCloudSuffix(dispatchable, config, activeCloud.length);
     log(
-      `Slots ${activeCount}/${config.orchestrator.maximumInProgress} used${formatActiveSlotList(active)}, starting ${dispatchable.length} task(s): ${dispatchable.map(({ issue }) => `${naturalIdFromCanonical(issue.id)}(${issue.agent})`).join(", ")}`,
+      `Slots ${activeCount}/${config.orchestrator.maximumInProgress} used${formatActiveSlotList(activeLocal)}, starting ${dispatchable.length} task(s): ${dispatchable.map(({ issue }) => `${naturalIdFromCanonical(issue.id)}(${issue.agent})`).join(", ")}${cloudSuffix}`,
     );
     logEvent("dispatch", {
       outcome: "starting",
@@ -343,6 +355,37 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
   }
 
   return { runOnce };
+}
+
+function anyRoutesToCloud(issues: readonly GroundcrewIssue[], config: ResolvedConfig): boolean {
+  return issues.some(
+    ({ agent }) => agent !== AGENT_ANY && resolveAgentExecution(config, agent) === "cloud",
+  );
+}
+
+function formatCloudSuffix(
+  starts: readonly StartVerdict[],
+  config: ResolvedConfig,
+  activeCloudCount: number,
+): string {
+  return anyRoutesToCloud(
+    starts.map(({ issue }) => issue),
+    config,
+  )
+    ? `; cloud ${activeCloudCount}/${config.execution.maximumInProgress}`
+    : "";
+}
+
+function splitActiveByExecution(
+  active: readonly Issue[],
+  cloudTasks: ReadonlySet<string>,
+): { activeLocal: Issue[]; activeCloud: Issue[] } {
+  const isCloud = (issue: Issue): boolean =>
+    cloudTasks.has(naturalIdFromCanonical(issue.id).toLowerCase());
+  return {
+    activeLocal: active.filter((issue) => !isCloud(issue)),
+    activeCloud: active.filter(isCloud),
+  };
 }
 
 function hasRecoverableCandidate(

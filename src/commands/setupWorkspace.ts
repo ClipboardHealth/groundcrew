@@ -1,10 +1,18 @@
-import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
+import { launchCloudSession } from "../lib/cloudLauncher.ts";
+import { renderCloudPrompt } from "../lib/cloudPrompt.ts";
+import { runCommandAsync } from "../lib/commandRunner.ts";
+import { loadConfig, resolveAgentExecution, type ResolvedConfig } from "../lib/config.ts";
 import { composeAgentLaunch, openAgentWorkspace, prepareAgentLaunch } from "../lib/agentLaunch.ts";
 import { inferAgentCommandName, workerEnvironmentForTask } from "../lib/launchCommand.ts";
 import { type Board, createBoard } from "../lib/board.ts";
 import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
 import { resolveRepositoryPreparationCommands } from "../lib/repositoryHooks.ts";
-import { readRunState, recordRunState } from "../lib/runState.ts";
+import {
+  CLOUD_RUN_STATE_FIELDS,
+  type ClearableOptionalField,
+  readRunState,
+  recordRunState,
+} from "../lib/runState.ts";
 import { seedLaunchWorkspaceTrust } from "../lib/seedLaunchWorkspaceTrust.ts";
 import { sourceSupportsMarkDone } from "../lib/sourceCapabilities.ts";
 import {
@@ -16,6 +24,7 @@ import {
 } from "../lib/stagedLaunch.ts";
 import { taskSourceWritePathsForCompletion } from "../lib/taskSourceFilesystem.ts";
 import { naturalIdFromCanonical, type WorktreePreparation } from "../lib/taskSource.ts";
+import { deleteRemoteBranchBestEffort } from "../lib/remoteBranch.ts";
 import { debug, errorMessage, log, okMark } from "../lib/util.ts";
 import { type WorkspaceAccessHint, workspaces } from "../lib/workspaces.ts";
 import {
@@ -85,6 +94,10 @@ export async function setupWorkspace(
   const definition = config.agents.definitions[agent];
   if (!definition) {
     throw new Error(`Unknown agent: ${agent}`);
+  }
+  if (resolveAgentExecution(config, agent) === "cloud") {
+    await setupCloudWorkspace({ config, options, runOptions, agentCommand: definition.cmd });
+    return;
   }
   const { runner, networkEgress, sandboxName, workspaceKind, ensureReady } =
     await prepareAgentLaunch({
@@ -235,6 +248,94 @@ export async function setupWorkspace(
   }
 }
 
+const LINEAR_IDENTIFIER_RE = /^[a-z][a-z0-9]*-\d+$/i;
+
+function displayTaskId(task: string): string {
+  return LINEAR_IDENTIFIER_RE.test(task) ? task.toUpperCase() : task;
+}
+
+async function setupCloudWorkspace(input: {
+  config: ResolvedConfig;
+  options: SetupWorkspaceOptions;
+  runOptions: SetupWorkspaceRunOptions;
+  agentCommand: string;
+}): Promise<void> {
+  const { config, options, runOptions, agentCommand } = input;
+  const { task, repository, agent } = options;
+  const { signal } = runOptions;
+  if (options.baseBranch !== undefined) {
+    throw new Error(`Cloud runs cannot be stacked: ${task}`);
+  }
+
+  const recordedBaseBranch = readRunState(config, task)?.baseBranch;
+
+  await preflightProvisioningGate({ config, options, signal, execution: "cloud" });
+
+  const created = await beginWorktreeCreate({
+    config,
+    options,
+    signal,
+    recordedBaseBranch,
+    execution: "cloud",
+  });
+  const { branchName, dir: worktreeDir } = created;
+  const launchDir = resolveLaunchDir(config, repository, worktreeDir);
+  let branchPushed = false;
+  try {
+    await runCommandAsync(
+      "git",
+      ["-C", worktreeDir, "push", "--no-verify", config.git.remote, branchName],
+      signal === undefined ? {} : { signal },
+    );
+    branchPushed = true;
+    const prompt = renderCloudPrompt(config.prompts.cloudInitial, {
+      task: displayTaskId(task),
+      title: options.details.title,
+      description: options.details.description,
+      branch: branchName,
+    });
+    seedLaunchWorkspaceTrust({
+      agentCommandName: inferAgentCommandName(agentCommand),
+      launchDir,
+    });
+    const session = await launchCloudSession({
+      cwd: launchDir,
+      prompt,
+      ...(signal === undefined ? {} : { signal }),
+    });
+    recordRunStateBestEffort({
+      config,
+      task,
+      repository,
+      agent,
+      worktreeDir,
+      branchName,
+      workspaceName: task,
+      state: "running",
+      execution: "cloud",
+      cloudSessionId: session.sessionId,
+      cloudSessionUrl: session.url,
+      title: options.details.title,
+      completionTaskId: options.completionTaskId ?? task,
+      ...(options.details.url === undefined ? {} : { url: options.details.url }),
+    });
+    log(`${okMark()} "${task}" launched in the cloud (${agent})  session ${session.url}`);
+  } catch (error) {
+    await rollbackWorktree({ config, entry: created, promptDir: undefined });
+    if (branchPushed) {
+      await deleteRemoteBranchBestEffort({ config, repository, branchName });
+    }
+    recordFailedToLaunch({
+      config,
+      options,
+      paths: { worktreeDir, branchName },
+      error,
+      execution: "cloud",
+    });
+    throw error;
+  }
+}
+
 /**
  * Starts the task's worktree create call, synchronously, so it kicks off
  * before the concurrent launch-readiness check (some tests assert
@@ -248,8 +349,9 @@ async function beginWorktreeCreate(arguments_: {
   options: SetupWorkspaceOptions;
   signal: AbortSignal | undefined;
   recordedBaseBranch: string | undefined;
+  execution?: "cloud";
 }): Promise<WorktreeEntry> {
-  const { config, options, signal, recordedBaseBranch } = arguments_;
+  const { config, options, signal, recordedBaseBranch, execution } = arguments_;
   const { task, repository } = options;
   const spec = {
     repository,
@@ -265,6 +367,7 @@ async function beginWorktreeCreate(arguments_: {
       options,
       paths: worktrees.predictedEntry(config, repository, task),
       error,
+      ...(execution === undefined ? {} : { execution }),
     });
     throw error;
   });
@@ -304,8 +407,9 @@ async function preflightProvisioningGate(arguments_: {
   config: ResolvedConfig;
   options: SetupWorkspaceOptions;
   signal: AbortSignal | undefined;
+  execution?: "cloud";
 }): Promise<void> {
-  const { config, options, signal } = arguments_;
+  const { config, options, signal, execution } = arguments_;
   const { task, repository, agent } = options;
   const existing = worktrees
     .findByTask(config, task)
@@ -325,6 +429,8 @@ async function preflightProvisioningGate(arguments_: {
     workspaceName: task,
     state: "provisioning",
     title: options.details.title,
+    ...(execution === "cloud" ? { execution } : {}),
+    clearFields: execution === "cloud" ? STALE_CLOUD_SESSION_FIELDS : CLOUD_RUN_STATE_FIELDS,
     completionTaskId: options.completionTaskId ?? task,
     ...(options.details.url === undefined ? {} : { url: options.details.url }),
     ...(options.baseBranch === undefined ? {} : { baseBranch: options.baseBranch }),
@@ -337,8 +443,9 @@ function recordFailedToLaunch(arguments_: {
   options: SetupWorkspaceOptions;
   paths: { worktreeDir: string; branchName: string };
   error: unknown;
+  execution?: "cloud";
 }): void {
-  const { config, options, paths, error } = arguments_;
+  const { config, options, paths, error, execution } = arguments_;
   const { task, repository, agent } = options;
   recordRunStateBestEffort({
     config,
@@ -350,6 +457,7 @@ function recordFailedToLaunch(arguments_: {
     workspaceName: task,
     state: "failed-to-launch",
     detail: errorMessage(error),
+    ...(execution === undefined ? {} : { execution }),
     title: options.details.title,
     completionTaskId: options.completionTaskId ?? task,
     ...(options.details.url === undefined ? {} : { url: options.details.url }),
@@ -361,6 +469,12 @@ function recordFailedToLaunch(arguments_: {
     clearStackingFields: true,
   });
 }
+
+const STALE_CLOUD_SESSION_FIELDS: readonly ClearableOptionalField[] = [
+  "cloudSessionId",
+  "cloudSessionUrl",
+  "autofixRequestedAt",
+];
 
 type LaunchReadinessResult = { kind: "ready" } | { kind: "failed"; error: unknown };
 
@@ -436,6 +550,10 @@ function recordRunStateBestEffort(arguments_: {
   branchName: string;
   workspaceName: string;
   state: "provisioning" | "running" | "failed-to-launch";
+  execution?: "cloud";
+  cloudSessionId?: string;
+  cloudSessionUrl?: string;
+  clearFields?: readonly ClearableOptionalField[];
   title: string;
   detail?: string;
   url?: string;
@@ -444,6 +562,10 @@ function recordRunStateBestEffort(arguments_: {
   parentTask?: string;
   clearStackingFields?: boolean;
 }): void {
+  const clearFields = [
+    ...(arguments_.clearStackingFields === true ? STACKING_RUN_STATE_FIELDS : []),
+    ...(arguments_.clearFields ?? []),
+  ];
   try {
     recordRunState({
       config: arguments_.config,
@@ -458,12 +580,17 @@ function recordRunStateBestEffort(arguments_: {
         title: arguments_.title,
         completionTaskId: arguments_.completionTaskId,
         ...(arguments_.detail === undefined ? {} : { detail: arguments_.detail }),
+        ...(arguments_.execution === undefined ? {} : { execution: arguments_.execution }),
+        ...(arguments_.cloudSessionId === undefined
+          ? {}
+          : { cloudSessionId: arguments_.cloudSessionId }),
+        ...(arguments_.cloudSessionUrl === undefined
+          ? {}
+          : { cloudSessionUrl: arguments_.cloudSessionUrl }),
         ...(arguments_.url === undefined ? {} : { url: arguments_.url }),
         ...(arguments_.baseBranch === undefined ? {} : { baseBranch: arguments_.baseBranch }),
         ...(arguments_.parentTask === undefined ? {} : { parentTask: arguments_.parentTask }),
-        ...(arguments_.clearStackingFields === true
-          ? { clearFields: STACKING_RUN_STATE_FIELDS }
-          : {}),
+        ...(clearFields.length === 0 ? {} : { clearFields }),
       },
     });
   } catch (error) {

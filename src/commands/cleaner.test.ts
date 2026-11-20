@@ -1,3 +1,4 @@
+import { makeExecutionConfig } from "../testHelpers/executionConfig.ts";
 import type { ResolvedConfig } from "../lib/config.ts";
 import { removeRunState } from "../lib/runState.ts";
 import { setVerbose } from "../lib/util.ts";
@@ -50,7 +51,8 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
       definitions: { claude: { cmd: "claude", color: "#fff" } },
       ...overrides.agents,
     },
-    prompts: { initial: "x", ...overrides.prompts },
+    execution: makeExecutionConfig(),
+    prompts: { initial: "x", cloudInitial: "x", ...overrides.prompts },
     workspaceKind: overrides.workspaceKind ?? "auto",
     local: makeLocalConfig(),
     cmux: makeCmuxConfig(),

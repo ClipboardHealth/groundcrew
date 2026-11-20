@@ -1,5 +1,6 @@
 /* eslint-disable no-template-curly-in-string -- ${id}-style placeholders are intentional shell substitution literals, not JS template expressions */
 
+import { makeExecutionConfig } from "../testHelpers/executionConfig.ts";
 import { buildSources, sourcesFromConfig } from "../lib/buildSources.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import type { TaskSource } from "../lib/taskSource.ts";
@@ -51,7 +52,8 @@ function makeConfig(): ResolvedConfig {
         claude: { cmd: "safehouse claude --permission-mode auto", color: "#fff" },
       },
     },
-    prompts: { initial: "x" },
+    execution: makeExecutionConfig(),
+    prompts: { initial: "x", cloudInitial: "x" },
     workspaceKind: "auto",
     local: makeLocalConfig(),
     cmux: makeCmuxConfig(),

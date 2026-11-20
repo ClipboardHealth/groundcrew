@@ -1,3 +1,4 @@
+import { makeExecutionConfig } from "../../../testHelpers/executionConfig.ts";
 import type { LinearClient } from "@linear/sdk";
 
 import { captureConsoleLog, type ConsoleCapture } from "../../../testHelpers/consoleCapture.ts";
@@ -74,7 +75,8 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
       },
       ...overrides.agents,
     },
-    prompts: { initial: "x", ...overrides.prompts },
+    execution: makeExecutionConfig(),
+    prompts: { initial: "x", cloudInitial: "x", ...overrides.prompts },
     workspaceKind: overrides.workspaceKind ?? "auto",
     local: makeLocalConfig(),
     cmux: makeCmuxConfig(),

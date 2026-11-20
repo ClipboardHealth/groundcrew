@@ -1,3 +1,4 @@
+import { makeExecutionConfig } from "../testHelpers/executionConfig.ts";
 import {
   appendFileSync,
   existsSync,
@@ -165,7 +166,8 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
       },
       ...overrides.agents,
     },
-    prompts: { initial: "x", ...overrides.prompts },
+    execution: makeExecutionConfig(),
+    prompts: { initial: "x", cloudInitial: "x", ...overrides.prompts },
     workspaceKind: overrides.workspaceKind ?? "auto",
     local: makeLocalConfig(overrides.local),
     cmux: makeCmuxConfig(),
@@ -1133,6 +1135,81 @@ describe(status, () => {
     await status(makeConfig({ sources: [{ kind: "linear", name: "linear" }] }));
 
     expect(consoleLog.output()).toContain("  task:      in-progress (slot held)");
+  });
+
+  describe("cloud runs", () => {
+    const sessionUrl = "https://claude.ai/code/session_1";
+    const cloudRunState = (overrides: Partial<RunState> = {}): RunState =>
+      runState({
+        task: "team-905",
+        execution: "cloud",
+        cloudSessionId: "session_1",
+        cloudSessionUrl: sessionUrl,
+        createdAt: "2026-05-26T02:02:30.000Z",
+        ...overrides,
+      });
+
+    beforeEach(() => {
+      listWorktreesMock.mockReturnValue([
+        worktree({ task: "team-905", repository: "repo-a", dir: "/work/repo-a-team-905" }),
+      ]);
+      workspaceProbeMock.mockResolvedValue({ kind: "ok", names: new Set() });
+      readRunStateMock.mockReturnValue(cloudRunState());
+    });
+
+    it("inventory state renders running (cloud)", async () => {
+      readRunStateMock.mockReturnValue(cloudRunState({ createdAt: "not a date" }));
+
+      await status(makeConfig());
+
+      expect(consoleLog.output()).toContain("  state:     running (cloud)\n");
+      expect(consoleLog.output()).not.toContain("session dead");
+    });
+
+    it("a resumed run that kept its session url renders as local, not cloud", async () => {
+      readRunStateMock.mockReturnValue(
+        cloudRunState({ state: "resumed", execution: undefined as unknown as "cloud" }),
+      );
+
+      await status(makeConfig());
+
+      expect(consoleLog.output()).not.toContain("(cloud");
+      expect(consoleLog.output()).not.toContain(sessionUrl);
+    });
+
+    it("inventory state renders running (cloud, 12m) with duration", async () => {
+      await status(makeConfig());
+
+      expect(consoleLog.output()).toContain("  state:     running (cloud, 12m)");
+    });
+
+    it("attach line shows the session url", async () => {
+      await status(makeConfig());
+
+      expect(consoleLog.output()).toContain(`  attach:    ${sessionUrl}`);
+    });
+
+    it("task line shows in-progress (cloud slot held)", async () => {
+      buildSourcesMock.mockResolvedValue([
+        fakeSource([sourceIssue({ id: "linear:team-905", status: "in-progress" })]),
+      ]);
+
+      await status(makeConfig({ sources: [{ kind: "linear", name: "linear" }] }));
+
+      expect(consoleLog.output()).toContain("  task:      in-progress (cloud slot held)");
+    });
+
+    it("single-task view shows cloud run, workspace and attach lines", async () => {
+      readRunStateMock.mockReturnValue(cloudRunState({ task: "team-1" }));
+
+      await status(makeConfig(), { task: "team-1" });
+
+      const output = consoleLog.output();
+      expect(output).toContain("run: running (cloud); agent=claude;");
+      expect(output).toContain("workspace: cloud (no pane)");
+      expect(output).toContain(`attach: ${sessionUrl}`);
+      expect(output).not.toContain("session dead");
+    });
   });
 
   it("shows the bare canonical status for a worktree whose task holds no slot", async () => {

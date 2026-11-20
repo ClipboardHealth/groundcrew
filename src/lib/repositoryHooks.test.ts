@@ -1,3 +1,4 @@
+import { makeExecutionConfig } from "../testHelpers/executionConfig.ts";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -47,7 +48,8 @@ function preparationConfig(): ResolvedConfig {
       default: "claude",
       definitions: { claude: { cmd: "claude", color: "#fff" } },
     },
-    prompts: { initial: "x" },
+    execution: makeExecutionConfig(),
+    prompts: { initial: "x", cloudInitial: "x" },
     workspaceKind: "auto",
     local: makeLocalConfig(),
     cmux: makeCmuxConfig(),

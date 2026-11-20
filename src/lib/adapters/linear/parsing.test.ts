@@ -1,3 +1,4 @@
+import { makeExecutionConfig } from "../../../testHelpers/executionConfig.ts";
 import type { ResolvedConfig } from "../../config.ts";
 import { makeCmuxConfig } from "../../../testHelpers/cmuxConfig.ts";
 import { makeLocalConfig } from "../../../testHelpers/localConfig.ts";
@@ -40,7 +41,8 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
       },
       ...overrides.agents,
     },
-    prompts: { initial: "x", ...overrides.prompts },
+    execution: makeExecutionConfig(),
+    prompts: { initial: "x", cloudInitial: "x", ...overrides.prompts },
     workspaceKind: overrides.workspaceKind ?? "auto",
     local: makeLocalConfig(),
     cmux: makeCmuxConfig(),

@@ -1,10 +1,11 @@
+import { makeExecutionConfig } from "../testHelpers/executionConfig.ts";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
 import type { RunCommandOptions } from "../lib/commandRunner.ts";
 import type { ResolvedConfig } from "../lib/config.ts";
-import { recordRunState, readRunState } from "../lib/runState.ts";
+import { recordRunState, readRunState, type RunState } from "../lib/runState.ts";
 import { canonicalBlocker, canonicalLinearIssue } from "../lib/testing/canonicalFixtures.ts";
 import { isGroundcrewIssue, toCanonicalId, type GroundcrewIssue } from "../lib/taskSource.ts";
 import type * as utilModule from "../lib/util.ts";
@@ -80,7 +81,8 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
       },
       ...overrides.agents,
     },
-    prompts: { initial: "x", ...overrides.prompts },
+    execution: overrides.execution ?? makeExecutionConfig(),
+    prompts: { initial: "x", cloudInitial: "x", ...overrides.prompts },
     workspaceKind: overrides.workspaceKind ?? "auto",
     local: makeLocalConfig(overrides.local),
     cmux: makeCmuxConfig(),
@@ -452,6 +454,42 @@ describe(classifyBlockers, () => {
       expect(deps.probeParentBranch).toHaveBeenCalledTimes(1);
     });
 
+    it("cloud-routed issue is not stacked when stacking is enabled and blocked by one same-repo blocker", async () => {
+      recordParentRunState();
+      const config = stackingConfig({
+        agents: {
+          default: "claude",
+          definitions: {
+            claude: { cmd: "claude", color: "#fff" },
+            "claude-cloud": { cmd: "claude", color: "#fff", execution: "cloud" },
+          },
+        },
+      });
+
+      const { unblocked, stackDecisions, skips } = await classifyBlockers(
+        [blockedIssue({ agent: "claude-cloud" })],
+        config,
+        realReadDeps(true),
+      );
+
+      expect(unblocked).toHaveLength(0);
+      expect(stackDecisions.size).toBe(0);
+      expect(skips[0]).toMatchObject({ kind: "skip", eventReason: "blocked" });
+    });
+
+    it("local-routed issue still stacks", async () => {
+      recordParentRunState();
+
+      const { unblocked, stackDecisions } = await classifyBlockers(
+        [blockedIssue({ agent: "claude" })],
+        stackingConfig(),
+        realReadDeps(true),
+      );
+
+      expect(unblocked).toHaveLength(1);
+      expect(stackDecisions.size).toBe(1);
+    });
+
     it("emits `stack_multiple_blockers` when unresolved blockers are siblings rather than a chain", async () => {
       recordParentRunState({ task: "team-0" });
       recordParentRunState({ task: "team-a" });
@@ -690,6 +728,225 @@ describe(classifyEligibility, () => {
       );
 
       expect(verdicts[0]).toMatchObject({ kind: "start", resolvedFromAny: false });
+    });
+  });
+
+  describe("cloud routing", () => {
+    const cloudAgents: ResolvedConfig["agents"] = {
+      default: "claude",
+      definitions: {
+        claude: { cmd: "claude", color: "#fff" },
+        "claude-cloud": { cmd: "claude", color: "#fff", execution: "cloud" },
+      },
+    };
+
+    it("agent-any never resolves to a cloud profile", () => {
+      const verdicts = classifyEligibility(
+        defaultArguments({
+          config: makeConfig({ agents: cloudAgents }),
+          unblocked: [todoIssue({ agent: "any" })],
+          usage: {
+            claude: { session: 0.9, sessionEndDuration: 30, weekly: null, weekEndDuration: null },
+            "claude-cloud": {
+              session: 0,
+              sessionEndDuration: 30,
+              weekly: null,
+              weekEndDuration: null,
+            },
+          },
+        }),
+      );
+
+      expect(verdicts[0]).toMatchObject({ kind: "start", issue: { agent: "claude" } });
+    });
+
+    it("logs agent-any skips cloud profiles: claude-cloud", () => {
+      classifyEligibility(
+        defaultArguments({
+          config: makeConfig({ agents: cloudAgents }),
+          unblocked: [
+            todoIssue({ id: "linear:team-1", agent: "any" }),
+            todoIssue({ id: "linear:team-2", agent: "any" }),
+          ],
+        }),
+      );
+
+      expect(
+        logMock.mock.calls.filter(([message]) => message.includes("skips cloud")),
+      ).toStrictEqual([["agent-any skips cloud profiles: claude-cloud"]]);
+    });
+
+    it("agent-any with only cloud profiles skips with agent_any_capacity", () => {
+      const verdicts = classifyEligibility(
+        defaultArguments({
+          config: makeConfig({
+            agents: {
+              default: "claude-cloud",
+              definitions: {
+                "claude-cloud": { cmd: "claude", color: "#fff", execution: "cloud" },
+              },
+            },
+          }),
+          unblocked: [todoIssue({ agent: "any" })],
+        }),
+      );
+
+      expect(verdicts[0]).toMatchObject({ kind: "skip", eventReason: "agent_any_capacity" });
+    });
+
+    it("does not log the cloud exclusion when no cloud profiles exist", () => {
+      classifyEligibility(defaultArguments({ unblocked: [todoIssue({ agent: "any" })] }));
+
+      expect(logMock).not.toHaveBeenCalled();
+    });
+
+    it("cloud-routed issue with a leftover worktree and no live workspace is skipped as workspace_missing", () => {
+      const verdicts = classifyEligibility(
+        defaultArguments({
+          config: makeConfig({ agents: cloudAgents }),
+          unblocked: [todoIssue({ agent: "claude-cloud" })],
+          cloudSlots: 1,
+          worktreeEntries: [hostEntryFor("repo-a", "team-1")],
+          workspaceProbe: { kind: "ok", names: new Set<string>() },
+        }),
+      );
+
+      expect(verdicts[0]).toMatchObject({ kind: "skip", eventReason: "workspace_missing" });
+    });
+
+    describe("failed cloud launches", () => {
+      function failedToLaunchState(execution?: "cloud"): RunState {
+        return {
+          task: "team-1",
+          repository: "repo-a",
+          agent: "claude-cloud",
+          worktreeDir: "/work/repo-a-team-1",
+          branchName: "dev-team-1",
+          workspaceName: "team-1",
+          state: "failed-to-launch",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          resumeCount: 0,
+          ...(execution === undefined ? {} : { execution }),
+        };
+      }
+
+      it("skips a Todo task whose cloud launch failed, pointing at status, cleanup and start", () => {
+        const verdicts = classifyEligibility(
+          defaultArguments({
+            config: makeConfig({ agents: cloudAgents }),
+            unblocked: [todoIssue({ agent: "claude-cloud" })],
+            cloudSlots: 1,
+            readTaskRunState: () => failedToLaunchState("cloud"),
+          }),
+        );
+
+        expect(verdicts).toHaveLength(1);
+        expect(verdicts[0]).toMatchObject({
+          kind: "skip",
+          eventReason: "cloud_launch_failed",
+          agent: "claude-cloud",
+        });
+        expect(verdicts[0]).toMatchObject({
+          message: expect.stringContaining("crew status team-1") as string,
+        });
+        expect(verdicts[0]).toMatchObject({
+          message: expect.stringContaining("crew cleanup team-1") as string,
+        });
+        expect(verdicts[0]).toMatchObject({
+          message: expect.stringContaining("crew start team-1") as string,
+        });
+      });
+
+      it("still starts a local failed-to-launch Todo task", () => {
+        const verdicts = classifyEligibility(
+          defaultArguments({
+            readTaskRunState: () => failedToLaunchState(),
+          }),
+        );
+
+        expect(verdicts[0]).toMatchObject({ kind: "start" });
+      });
+
+      it("starts the cloud task again once its run state is removed", () => {
+        const verdicts = classifyEligibility(
+          defaultArguments({
+            config: makeConfig({ agents: cloudAgents }),
+            unblocked: [todoIssue({ agent: "claude-cloud" })],
+            cloudSlots: 1,
+            readTaskRunState: () => undefined,
+          }),
+        );
+
+        expect(verdicts[0]).toMatchObject({ kind: "start" });
+      });
+
+      it("reads real run state from disk by default", () => {
+        const tempDir = mkdtempSync(path.join(tmpdir(), "groundcrew-eligibility-cloud-"));
+        try {
+          const config = makeConfig({
+            agents: cloudAgents,
+            logging: { file: path.join(tempDir, "groundcrew.log") },
+          });
+          recordRunState({
+            config,
+            state: {
+              task: "team-1",
+              repository: "repo-a",
+              agent: "claude-cloud",
+              worktreeDir: "/work/repo-a-team-1",
+              branchName: "dev-team-1",
+              workspaceName: "team-1",
+              state: "failed-to-launch",
+              execution: "cloud",
+            },
+          });
+
+          const verdicts = classifyEligibility(
+            defaultArguments({
+              config,
+              unblocked: [todoIssue({ agent: "claude-cloud" })],
+              cloudSlots: 1,
+            }),
+          );
+
+          expect(verdicts[0]).toMatchObject({ kind: "skip", eventReason: "cloud_launch_failed" });
+        } finally {
+          rmSync(tempDir, { recursive: true, force: true });
+        }
+      });
+    });
+
+    it("local and cloud slots are consumed independently", () => {
+      const verdicts = classifyEligibility(
+        defaultArguments({
+          config: makeConfig({ agents: cloudAgents }),
+          slots: 1,
+          cloudSlots: 1,
+          unblocked: [
+            todoIssue({ id: "linear:team-1", agent: "claude" }),
+            todoIssue({ id: "linear:team-2", agent: "claude" }),
+            todoIssue({ id: "linear:team-3", agent: "claude-cloud" }),
+            todoIssue({ id: "linear:team-4", agent: "claude-cloud" }),
+          ],
+        }),
+      );
+
+      expect(verdicts.map((verdict) => verdict.issue.id)).toStrictEqual([
+        "linear:team-1",
+        "linear:team-3",
+      ]);
+    });
+
+    it("does not start cloud-routed issues when no cloud slots are given", () => {
+      const verdicts = classifyEligibility(
+        defaultArguments({
+          config: makeConfig({ agents: cloudAgents }),
+          unblocked: [todoIssue({ agent: "claude-cloud" })],
+        }),
+      );
+
+      expect(verdicts).toHaveLength(0);
     });
   });
 

@@ -9,7 +9,7 @@ import path from "node:path";
 
 import { writeJsonAtomic } from "./atomicJson.ts";
 
-import type { ResolvedConfig } from "./config.ts";
+import type { ExecutionMode, ResolvedConfig } from "./config.ts";
 import type { PullRequestSummary } from "./pullRequests.ts";
 import type { RunLifecycleState } from "./runState.ts";
 import type { CanonicalStatus } from "./taskSource.ts";
@@ -76,6 +76,9 @@ export interface StatusTask {
   parentTask?: string | undefined;
   /** Parent merged and the PR was retargeted, but the worktree was dirty so the rebase was skipped. */
   needsRebase?: boolean | undefined;
+  /** Set only for cloud runs, which have no pane to probe. */
+  execution?: ExecutionMode | undefined;
+  cloudSessionUrl?: string | undefined;
 }
 
 export interface StatusLogCursor {

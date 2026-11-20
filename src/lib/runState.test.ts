@@ -1,3 +1,4 @@
+import { makeExecutionConfig } from "../testHelpers/executionConfig.ts";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -6,7 +7,11 @@ import type { ResolvedConfig } from "./config.ts";
 import { makeCmuxConfig } from "../testHelpers/cmuxConfig.ts";
 import { makeLocalConfig } from "../testHelpers/localConfig.ts";
 import {
+  CLOUD_RUN_STATE_FIELDS,
   clearStackingState,
+  isCloudRun,
+  isLiveCloudRun,
+  listCloudRunTasks,
   listRunStates,
   readRunState,
   recordRunState,
@@ -36,7 +41,8 @@ function makeConfig(stateRoot: string): ResolvedConfig {
       default: "claude",
       definitions: { claude: { cmd: "claude", color: "#fff" } },
     },
-    prompts: { initial: "x" },
+    execution: makeExecutionConfig(),
+    prompts: { initial: "x", cloudInitial: "x" },
     workspaceKind: "auto",
     local: makeLocalConfig(),
     cmux: makeCmuxConfig(),
@@ -787,5 +793,265 @@ describe("run state store", () => {
     });
 
     expect(listRunStates(config)).toMatchObject([{ task: "team-1" }]);
+  });
+
+  it("round-trips execution, cloudSessionId, cloudSessionUrl and autofixRequestedAt through record/read", () => {
+    recordRunState({
+      config,
+      state: {
+        task: "team-1",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-1",
+        branchName: "dev-team-1",
+        workspaceName: "team-1",
+        state: "running",
+        execution: "cloud",
+        cloudSessionId: "session_abc",
+        cloudSessionUrl: "https://claude.ai/code/session_abc",
+        autofixRequestedAt: "2026-11-17T10:00:00.000Z",
+      },
+    });
+
+    expect(readRunState(config, "team-1")).toMatchObject({
+      execution: "cloud",
+      cloudSessionId: "session_abc",
+      cloudSessionUrl: "https://claude.ai/code/session_abc",
+      autofixRequestedAt: "2026-11-17T10:00:00.000Z",
+    });
+  });
+
+  it.each(["session_abc; rm -rf ~", "abc", "session_", "session_a b", "$(whoami)"])(
+    "drops a cloudSessionId read from disk that is not a session id: %s",
+    (cloudSessionId) => {
+      mkdirSync(path.dirname(runStatePath(config, "team-1")), { recursive: true });
+      writeFileSync(
+        runStatePath(config, "team-1"),
+        JSON.stringify({
+          task: "team-1",
+          repository: "repo-a",
+          agent: "claude",
+          worktreeDir: "/work/repo-a-team-1",
+          branchName: "dev-team-1",
+          workspaceName: "team-1",
+          state: "running",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          resumeCount: 0,
+          execution: "cloud",
+          cloudSessionId,
+          cloudSessionUrl: "https://claude.ai/code/session_abc",
+        }),
+      );
+
+      expect(readRunState(config, "team-1")).not.toHaveProperty("cloudSessionId");
+    },
+  );
+
+  it("keeps a well-formed cloudSessionId read from disk", () => {
+    recordRunState({
+      config,
+      state: {
+        task: "team-1",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-1",
+        branchName: "dev-team-1",
+        workspaceName: "team-1",
+        state: "running",
+        cloudSessionId: "session_01AB-cd_EF",
+      },
+    });
+
+    expect(readRunState(config, "team-1")?.cloudSessionId).toBe("session_01AB-cd_EF");
+  });
+
+  it("carries cloud fields across a later record that omits them", () => {
+    recordRunState({
+      config,
+      state: {
+        task: "team-1",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-1",
+        branchName: "dev-team-1",
+        workspaceName: "team-1",
+        state: "provisioning",
+        execution: "cloud",
+        cloudSessionId: "session_abc",
+        cloudSessionUrl: "https://claude.ai/code/session_abc",
+        autofixRequestedAt: "2026-11-17T10:00:00.000Z",
+      },
+    });
+
+    recordRunState({
+      config,
+      state: {
+        task: "team-1",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-1",
+        branchName: "dev-team-1",
+        workspaceName: "team-1",
+        state: "interrupted",
+      },
+    });
+
+    expect(readRunState(config, "team-1")).toMatchObject({
+      state: "interrupted",
+      execution: "cloud",
+      cloudSessionId: "session_abc",
+      cloudSessionUrl: "https://claude.ai/code/session_abc",
+      autofixRequestedAt: "2026-11-17T10:00:00.000Z",
+    });
+  });
+
+  it("clearFields drops each cloud field", () => {
+    recordRunState({
+      config,
+      state: {
+        task: "team-1",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-1",
+        branchName: "dev-team-1",
+        workspaceName: "team-1",
+        state: "running",
+        execution: "cloud",
+        cloudSessionId: "session_abc",
+        cloudSessionUrl: "https://claude.ai/code/session_abc",
+        autofixRequestedAt: "2026-11-17T10:00:00.000Z",
+      },
+    });
+
+    const cleared = recordRunState({
+      config,
+      state: {
+        task: "team-1",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-1",
+        branchName: "dev-team-1",
+        workspaceName: "team-1",
+        state: "failed-to-launch",
+        clearFields: CLOUD_RUN_STATE_FIELDS,
+      },
+    });
+
+    expect(cleared.execution).toBeUndefined();
+    expect(cleared.cloudSessionId).toBeUndefined();
+    expect(cleared.cloudSessionUrl).toBeUndefined();
+    expect(cleared.autofixRequestedAt).toBeUndefined();
+    const onDisk = JSON.parse(readFileSync(runStatePath(config, "team-1"), "utf8"));
+    expect(onDisk).not.toHaveProperty("execution");
+    expect(onDisk).not.toHaveProperty("cloudSessionId");
+    expect(onDisk).not.toHaveProperty("cloudSessionUrl");
+    expect(onDisk).not.toHaveProperty("autofixRequestedAt");
+  });
+
+  it("ignores an unrecognised execution value on read", () => {
+    recordRunState({
+      config,
+      state: {
+        task: "team-1",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-1",
+        branchName: "dev-team-1",
+        workspaceName: "team-1",
+        state: "running",
+      },
+    });
+    const filePath = runStatePath(config, "team-1");
+    writeFileSync(
+      filePath,
+      JSON.stringify({ ...JSON.parse(readFileSync(filePath, "utf8")), execution: "bogus" }),
+    );
+
+    expect(readRunState(config, "team-1")).toBeDefined();
+    expect(readRunState(config, "team-1")?.execution).toBeUndefined();
+  });
+
+  it("isCloudRun is true for any cloud record and isLiveCloudRun needs both session id and url", () => {
+    const base = {
+      config,
+      state: {
+        task: "team-1",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-1",
+        branchName: "dev-team-1",
+        workspaceName: "team-1",
+        state: "failed-to-launch" as const,
+        execution: "cloud" as const,
+      },
+    };
+    const launchFailed = recordRunState(base);
+
+    expect(isCloudRun(launchFailed)).toBe(true);
+    expect(isLiveCloudRun(launchFailed)).toBe(false);
+    expect(isLiveCloudRun(undefined)).toBe(false);
+
+    const live = recordRunState({
+      ...base,
+      state: {
+        ...base.state,
+        state: "running",
+        cloudSessionId: "session_abc",
+        cloudSessionUrl: "https://claude.ai/code/session_abc",
+      },
+    });
+
+    expect(isCloudRun(live)).toBe(true);
+    expect(isLiveCloudRun(live)).toBe(true);
+  });
+
+  it("isCloudRun is false for a local record and for no record", () => {
+    const local = recordRunState({
+      config,
+      state: {
+        task: "team-1",
+        repository: "repo-a",
+        agent: "claude",
+        worktreeDir: "/work/repo-a-team-1",
+        branchName: "dev-team-1",
+        workspaceName: "team-1",
+        state: "running",
+      },
+    });
+
+    expect(isCloudRun(local)).toBe(false);
+    expect(isCloudRun(undefined)).toBe(false);
+  });
+
+  it("listCloudRunTasks returns only cloud tasks, including failed-to-launch ones", () => {
+    const baseState = {
+      repository: "repo-a",
+      agent: "claude",
+      worktreeDir: "/work/repo-a",
+      branchName: "dev",
+      workspaceName: "ws",
+    };
+    recordRunState({
+      config,
+      state: { ...baseState, task: "team-1", state: "running" },
+    });
+    recordRunState({
+      config,
+      state: {
+        ...baseState,
+        task: "team-2",
+        state: "running",
+        execution: "cloud",
+        cloudSessionId: "session_2",
+        cloudSessionUrl: "https://claude.ai/code/session_2",
+      },
+    });
+    recordRunState({
+      config,
+      state: { ...baseState, task: "team-3", state: "failed-to-launch", execution: "cloud" },
+    });
+
+    expect(listCloudRunTasks(config)).toStrictEqual(new Set(["team-2", "team-3"]));
   });
 });

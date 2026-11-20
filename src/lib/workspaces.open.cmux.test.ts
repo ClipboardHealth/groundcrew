@@ -1,3 +1,4 @@
+import { makeExecutionConfig } from "../testHelpers/executionConfig.ts";
 import { makeCmuxConfig } from "../testHelpers/cmuxConfig.ts";
 import { makeLocalConfig } from "../testHelpers/localConfig.ts";
 import type { RunCommandOptions } from "./commandRunner.ts";
@@ -83,7 +84,8 @@ function makeConfig(workspaceKind: WorkspaceKindSetting = "auto"): ResolvedConfi
         claude: { cmd: "claude", color: "#fff" },
       },
     },
-    prompts: { initial: "x" },
+    execution: makeExecutionConfig(),
+    prompts: { initial: "x", cloudInitial: "x" },
     workspaceKind,
     local: makeLocalConfig(),
     cmux: makeCmuxConfig(),

@@ -1,5 +1,5 @@
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
-import { readRunState, recordRunState, type RunState } from "../lib/runState.ts";
+import { isLiveCloudRun, readRunState, recordRunState, type RunState } from "../lib/runState.ts";
 import { errorMessage, log } from "../lib/util.ts";
 import { workspaces, type WorkspaceInterruptResult } from "../lib/workspaces.ts";
 import { type WorktreeEntry, worktrees } from "../lib/worktrees.ts";
@@ -114,6 +114,12 @@ export async function interruptWorkspace(
 ): Promise<void> {
   const task = options.task.toLowerCase();
   const state = readRunState(config, task);
+  if (isLiveCloudRun(state)) {
+    log(
+      `${task} runs in the cloud and cannot be stopped from here. Stop it at ${state.cloudSessionUrl}.`,
+    );
+    return;
+  }
   const [entry] = worktrees.findByTask(config, task);
   const source = resolveInterruptSource({ config, task, state, entry });
   if (source === undefined) {

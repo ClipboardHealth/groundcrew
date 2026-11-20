@@ -1,4 +1,5 @@
 /* eslint-disable no-template-curly-in-string -- ${branch}-style placeholders appear as literal strings in RepoRecipe create/remove command templates; they're NOT JS template literals */
+import { makeExecutionConfig } from "../testHelpers/executionConfig.ts";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import type * as nodeOs from "node:os";
 import { tmpdir, userInfo } from "node:os";
@@ -65,7 +66,8 @@ function makeConfig(overrides: {
       sessionLimitPercentage: 85,
     },
     agents: { default: "claude", definitions: { claude: { cmd: "claude", color: "#fff" } } },
-    prompts: { initial: "x" },
+    execution: makeExecutionConfig(),
+    prompts: { initial: "x", cloudInitial: "x" },
     workspaceKind: "auto",
     cmux: makeCmuxConfig(),
     local: makeLocalConfig(),

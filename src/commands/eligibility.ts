@@ -15,7 +15,7 @@
  */
 
 import { runCommandAsync } from "../lib/commandRunner.ts";
-import { AGENT_ANY, type ResolvedConfig } from "../lib/config.ts";
+import { AGENT_ANY, type ResolvedConfig, resolveAgentExecution } from "../lib/config.ts";
 import { readRunState, type RunState } from "../lib/runState.ts";
 import { naturalIdFromCanonical, type Blocker, type GroundcrewIssue } from "../lib/taskSource.ts";
 import type { UsageByAgent } from "../lib/usage.ts";
@@ -35,6 +35,7 @@ type SkipReason =
   | "agent_exhausted"
   | "workspace_list_unavailable"
   | "workspace_missing"
+  | "cloud_launch_failed"
   | "stack_multiple_blockers"
   | "stack_parent_unknown"
   | "stack_parent_unpushed"
@@ -219,6 +220,10 @@ export interface ClassifyArguments {
   exhausted: Set<string>;
   /** Maximum number of `start` verdicts to produce. */
   slots: number;
+  /** Maximum number of cloud-routed `start` verdicts; `slots` counts local starts only. */
+  cloudSlots?: number;
+  /** Reads a task's run state; defaults to the on-disk record for `config`. */
+  readTaskRunState?: (task: string) => RunState | undefined;
   dryRun: boolean;
 }
 
@@ -445,7 +450,9 @@ async function blockerVerdictFor(
     return undefined;
   }
 
-  if (config.git.stacking === true) {
+  const routesToCloud =
+    issue.agent !== AGENT_ANY && resolveAgentExecution(config, issue.agent) === "cloud";
+  if (config.git.stacking === true && !routesToCloud) {
     return await stackDecisionFor(issue, unresolved, config, deps);
   }
 
@@ -461,7 +468,8 @@ async function blockerVerdictFor(
 
 /**
  * Pick the configured agent with the lowest weighted session score.
- * Agents flagged exhausted (over `sessionLimitPercentage`) are excluded.
+ * Agents flagged exhausted (over `sessionLimitPercentage`) and cloud-resolved
+ * profiles are excluded; `agent-any` only ever lands on the local machine.
  * Score is `(usage[agent].session ?? 0) / (weight ?? 1)`, with missing usage treated as 0
  * (maximum headroom), so when no usage data is available every agent
  * ties at 0 and the default agent wins the tiebreak — `agent-any` then
@@ -472,7 +480,9 @@ export function pickBestAgent(
   usage: UsageByAgent,
   exhausted: Set<string>,
 ): string | undefined {
-  const candidates = Object.keys(config.agents.definitions).filter((name) => !exhausted.has(name));
+  const candidates = Object.keys(config.agents.definitions).filter(
+    (name) => !exhausted.has(name) && resolveAgentExecution(config, name) !== "cloud",
+  );
   if (candidates.length === 0) {
     return undefined;
   }
@@ -630,6 +640,15 @@ export async function classifyBlockers(
   return { unblocked, stackDecisions, skips };
 }
 
+function logCloudProfilesSkippedForAny(config: ResolvedConfig): void {
+  const cloudProfiles = Object.keys(config.agents.definitions).filter(
+    (name) => resolveAgentExecution(config, name) === "cloud",
+  );
+  if (cloudProfiles.length > 0) {
+    log(`agent-any skips cloud profiles: ${cloudProfiles.join(", ")}`);
+  }
+}
+
 /**
  * Eligibility verdicts for already-unblocked Todo issues — handles
  * agent-any resolution, session exhaustion, worktree/workspace recovery,
@@ -646,23 +665,29 @@ export function classifyEligibility(arguments_: ClassifyArguments): Verdict[] {
     usage,
     exhausted,
     slots,
+    cloudSlots = 0,
+    readTaskRunState = (task: string) => readRunState(config, task),
     dryRun,
   } = arguments_;
 
   const verdicts: Verdict[] = [];
-  let started = 0;
+  const started = { local: 0, cloud: 0 };
+  let loggedCloudExclusion = false;
 
   for (const original of unblocked) {
-    if (started >= slots) {
-      // Slot cap reached — stop classifying further issues. Today's
-      // dispatcher behaves the same: it stops scanning Todo issues once the
-      // slot count is filled, so unreached issues never produce a verdict.
+    if (started.local >= slots && started.cloud >= cloudSlots) {
+      // Both slot caps reached — stop classifying further issues. Unreached
+      // issues never produce a verdict.
       break;
     }
 
     let resolved = original;
     let resolvedFromAny = false;
     if (original.agent === AGENT_ANY) {
+      if (!loggedCloudExclusion) {
+        loggedCloudExclusion = true;
+        logCloudProfilesSkippedForAny(config);
+      }
       const picked = pickBestAgent(config, usage, exhausted);
       if (picked === undefined) {
         verdicts.push({
@@ -677,6 +702,12 @@ export function classifyEligibility(arguments_: ClassifyArguments): Verdict[] {
       resolvedFromAny = true;
     }
 
+    const mode = resolveAgentExecution(config, resolved.agent) === "cloud" ? "cloud" : "local";
+    const modeSlots = mode === "cloud" ? cloudSlots : slots;
+    if (started[mode] >= modeSlots) {
+      continue;
+    }
+
     if (exhausted.has(resolved.agent)) {
       verdicts.push({
         kind: "skip",
@@ -686,6 +717,21 @@ export function classifyEligibility(arguments_: ClassifyArguments): Verdict[] {
         agent: resolved.agent,
       });
       continue;
+    }
+
+    if (mode === "cloud") {
+      const naturalId = naturalIdFromCanonical(resolved.id);
+      const runState = readTaskRunState(naturalId);
+      if (runState?.state === "failed-to-launch" && runState.execution === "cloud") {
+        verdicts.push({
+          kind: "skip",
+          issue: resolved,
+          message: `Skipping ${resolved.id}: the previous cloud launch failed and is not retried automatically. Inspect it with 'crew status ${naturalId}', then retry with 'crew cleanup ${naturalId}' and 'crew start ${naturalId}'.`,
+          eventReason: "cloud_launch_failed",
+          agent: resolved.agent,
+        });
+        continue;
+      }
     }
 
     const recovery = classifyRecovery({
@@ -709,7 +755,7 @@ export function classifyEligibility(arguments_: ClassifyArguments): Verdict[] {
         ? {}
         : { baseBranch: stackDecision.baseBranch, parentTask: stackDecision.parentTask }),
     });
-    started += 1;
+    started[mode] += 1;
   }
 
   return verdicts;

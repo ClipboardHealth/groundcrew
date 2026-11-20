@@ -26,6 +26,7 @@
  */
 
 import type { Board } from "../lib/board.ts";
+import { queueCloudMessage as defaultQueueCloudMessage } from "../lib/cloudLauncher.ts";
 import type { ResolvedConfig } from "../lib/config.ts";
 import type { PullRequestSummary } from "../lib/pullRequests.ts";
 import {
@@ -34,6 +35,7 @@ import {
   type Issue,
   naturalIdFromCanonical,
 } from "../lib/taskSource.ts";
+import { isLiveCloudRun, readRunState, updateRunState } from "../lib/runState.ts";
 import { debug, errorMessage, log, logEvent } from "../lib/util.ts";
 import type { WorktreeEntry } from "../lib/worktrees.ts";
 import { effectiveBranchName } from "../lib/worktreeRunState.ts";
@@ -56,6 +58,7 @@ interface ReviewerDeps {
   board: Board;
   findPullRequests: FindPullRequests;
   config?: ResolvedConfig;
+  queueCloudMessage?: typeof defaultQueueCloudMessage;
 }
 
 /** Per-tick inputs, mirroring the other orchestrator steps' shape. */
@@ -116,7 +119,7 @@ function matchingWorktreeEntries(arguments_: {
 }
 
 export function createReviewer(deps: ReviewerDeps): Reviewer {
-  const { board, config, findPullRequests } = deps;
+  const { board, config, findPullRequests, queueCloudMessage = defaultQueueCloudMessage } = deps;
   const stackRetarget = createStackRetarget({ findPullRequests });
 
   async function runOnce(arguments_: ReviewArguments): Promise<void> {
@@ -150,6 +153,50 @@ export function createReviewer(deps: ReviewerDeps): Reviewer {
         ...(config === undefined ? {} : { config }),
         ...(signal === undefined ? {} : { signal }),
       });
+    }
+  }
+
+  // Backstop for the cloud prompt asking the agent to enable Auto-fix. One attempt
+  // per session whatever its outcome, so an expired session is not retried every
+  // tick; it never blocks the transition.
+  async function nudgeAutoFixOnce(arguments_: {
+    config: ResolvedConfig;
+    task: string;
+    pullRequests: readonly PullRequestSummary[];
+  }): Promise<void> {
+    const { config: nudgeConfig, task, pullRequests } = arguments_;
+    const runState = readRunState(nudgeConfig, task);
+    const openPullRequest = pullRequests.find((pr) => pr.state === "open");
+    if (
+      !isLiveCloudRun(runState) ||
+      runState.autofixRequestedAt !== undefined ||
+      openPullRequest === undefined
+    ) {
+      return;
+    }
+    let queued = false;
+    try {
+      await queueCloudMessage({
+        sessionId: runState.cloudSessionId,
+        message: `Watch ${openPullRequest.url} and fix any CI failures or review comments.`,
+      });
+      queued = true;
+    } catch (error) {
+      log(`Auto-fix nudge failed for ${task}: ${errorMessage(error)}`);
+      logEvent("review", { outcome: "failed", reason: "autofix_nudge_failed", task });
+    }
+    try {
+      updateRunState({
+        config: nudgeConfig,
+        task,
+        patch: { state: runState.state, autofixRequestedAt: new Date().toISOString() },
+      });
+    } catch (error) {
+      log(`Auto-fix nudge could not be recorded for ${task}: ${errorMessage(error)}`);
+      logEvent("review", { outcome: "failed", reason: "autofix_nudge_record_failed", task });
+    }
+    if (queued) {
+      logEvent("review", { outcome: "autofix_requested", task, pr: openPullRequest.url });
     }
   }
 
@@ -187,6 +234,9 @@ export function createReviewer(deps: ReviewerDeps): Reviewer {
       } catch (error) {
         debug(`PR lookup failed for ${task} (${branchName}): ${errorMessage(error)}`);
         continue;
+      }
+      if (reviewerConfig !== undefined && !dryRun) {
+        await nudgeAutoFixOnce({ config: reviewerConfig, task, pullRequests });
       }
       const transition = intendedTransition(pullRequests, issue.status);
       if (transition === undefined) {

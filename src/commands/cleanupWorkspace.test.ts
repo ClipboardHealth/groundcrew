@@ -1,3 +1,4 @@
+import { makeExecutionConfig } from "../testHelpers/executionConfig.ts";
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
 import { readRunState, removeRunState, type RunState } from "../lib/runState.ts";
 import { setVerbose } from "../lib/util.ts";
@@ -99,7 +100,8 @@ const config: ResolvedConfig = {
     default: "claude",
     definitions: { claude: { cmd: "claude", color: "#fff" } },
   },
-  prompts: { initial: "x" },
+  execution: makeExecutionConfig(),
+  prompts: { initial: "x", cloudInitial: "x" },
   workspaceKind: "auto",
   local: makeLocalConfig(),
   cmux: makeCmuxConfig(),
@@ -347,6 +349,28 @@ describe(cleanupAllWorkspaces, () => {
     expect(teardownMock).toHaveBeenCalledWith(config, [secondEntry], { force: false });
     expect(consoleLog.output()).toContain("team-1");
     expect(consoleLog.output()).toContain("in use");
+  });
+
+  it("skips live cloud runs and still removes idle local worktrees", async () => {
+    listMock.mockReturnValue([hostEntry, secondEntry]);
+    readRunStateMock.mockImplementation((_config, task) =>
+      task === "team-1"
+        ? {
+            ...orphanRunState,
+            execution: "cloud",
+            cloudSessionId: "session_1",
+            cloudSessionUrl: "https://claude.ai/code/session_1",
+          }
+        : undefined,
+    );
+    teardownMock.mockResolvedValue(emptyTeardownResult({ removed: [secondEntry] }));
+
+    await cleanupAllWorkspaces(config, {});
+
+    expect(teardownMock).toHaveBeenCalledWith(config, [secondEntry], { force: false });
+    expect(consoleLog.output()).toContain(
+      "Skipping team-1 (repo-a); cloud run in progress. Use 'crew cleanup team-1' to remove it.",
+    );
   });
 
   it("treats an exited workspace session as idle and cleans it up", async () => {

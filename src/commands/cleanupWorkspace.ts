@@ -1,5 +1,5 @@
 import { loadConfig, type ResolvedConfig } from "../lib/config.ts";
-import { readRunState, removeRunState } from "../lib/runState.ts";
+import { isLiveCloudRun, readRunState, removeRunState } from "../lib/runState.ts";
 import { recordCleanedUpRuns } from "../lib/runStateCleanup.ts";
 import { log } from "../lib/util.ts";
 import { type WorkspaceProbe, workspaces } from "../lib/workspaces.ts";
@@ -138,6 +138,12 @@ export async function cleanupAllWorkspaces(
 
   const idle: WorktreeEntry[] = [];
   for (const entry of entries) {
+    if (isLiveCloudRun(readRunState(config, entry.task))) {
+      log(
+        `Skipping ${entry.task} (${entry.repository}); cloud run in progress. Use 'crew cleanup ${entry.task}' to remove it.`,
+      );
+      continue;
+    }
     if (isWorkspaceInUse(workspaceProbe, entry.task)) {
       log(`Skipping ${entry.task} (${entry.repository}); workspace in use.`);
       continue;
