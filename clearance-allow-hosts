@@ -32,6 +32,7 @@ api.linear.app
 api.notion.com
 api.slack.com
 app.incident.io
+app.launchdarkly.com
 developers.notion.com
 developers.openai.com
 linear.app
@@ -39,6 +40,7 @@ mcp-proxy.anthropic.com
 mcp.datadoghq.com
 mcp.devin.ai
 mcp.incident.io
+mcp.launchdarkly.com
 mcp.linear.app
 mcp.notion.com
 mcp.slack.com
